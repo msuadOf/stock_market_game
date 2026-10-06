@@ -39,6 +39,7 @@ export interface SaveCommandPorts {
   floatAllocationDraft: FloatAllocation;
   reportFrequencyDraft: ReportFrequencyDraft;
   companySystemDraft: string;
+  dividendTaxModeDraft: SessionSetup["dividend_tax_mode"];
   seedDraft: string;
   loadFromFile(beforeRead?: () => Promise<void>): Promise<StrictSaveEnvelope | null>;
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
@@ -58,6 +59,7 @@ export interface SaveCommandPorts {
   setFloatAllocationDraft(allocation: FloatAllocation): void;
   setReportFrequencyDraft(frequency: SessionSetup["report_frequency"]): void;
   setCompanySystemDraft(config: string): void;
+  setDividendTaxModeDraft(mode: SessionSetup["dividend_tax_mode"]): void;
   setInitialAllocation(allocation: InitialAllocation | null): void;
   setStartDateError(error: string | null): void;
   setSpeedMetricsPollingGeneration(generation: number): void;
@@ -70,10 +72,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
   const {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
-    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft,
+    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft,
     loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionCreation, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
   } = ports;
   // 存档/读档
@@ -148,6 +150,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setFloatAllocationDraft(slot.setup.float_allocation);
         setReportFrequencyDraft(slot.setup.report_frequency);
         setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
+        setDividendTaxModeDraft(slot.setup.dividend_tax_mode);
         ports.setSeedDraft(slot.seed);
         setInitialAllocation(null);
         restored = true;
@@ -237,6 +240,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setFloatAllocationDraft(slot.setup.float_allocation);
         setReportFrequencyDraft(slot.setup.report_frequency);
         setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
+        setDividendTaxModeDraft(slot.setup.dividend_tax_mode);
         ports.setSeedDraft(slot.seed);
         setInitialAllocation(null);
         restored = true;
@@ -305,6 +309,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         float_allocation: floatAllocationDraft,
         report_frequency: reportFrequency,
         company_system: companySystem,
+        dividend_tax_mode: dividendTaxModeDraft,
       };
       const host = hostRef.current;
       if (host?.capabilities.persistence === "remote") {

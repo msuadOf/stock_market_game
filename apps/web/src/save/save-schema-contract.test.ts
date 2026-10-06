@@ -14,6 +14,18 @@ function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unk
   return save
 }
 
+test("新局税务模式必须显式保存且只接受大A个人差别化或不扣税", () => {
+  const slot = structuredClone(currentSaveFixture());
+  assert.equal(parseSaveSlot(slot).setup.dividend_tax_mode, "IndividualPublicMarket");
+  const setup = slot.setup as unknown as Record<string, unknown>;
+  setup.dividend_tax_mode = "Exempt";
+  assert.equal(parseSaveSlot(slot).setup.dividend_tax_mode, "Exempt");
+  delete setup.dividend_tax_mode;
+  assert.throws(() => parseSaveSlot(slot), /dividend_tax_mode/);
+  setup.dividend_tax_mode = "NoTax";
+  assert.throws(() => parseSaveSlot(slot), /dividend_tax_mode/);
+});
+
 test("财报频率必须显式保存且只接受月度或季度", () => {
   const slot = structuredClone(currentSaveFixture());
   assert.equal(parseSaveSlot(slot).setup.report_frequency, "Quarterly");

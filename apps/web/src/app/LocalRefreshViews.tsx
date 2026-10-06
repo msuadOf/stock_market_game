@@ -247,8 +247,12 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContex
   const onReadingChange = (changes: Partial<CompanyReading>) => {
     if (companyId !== null) store.dispatch(updateCompanyReading({ generation: companyState.generation, companyId, changes }));
   };
-  const { queryPublicReportAvailability } = useMarketRuntimeActions();
-  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onReadingChange={onReadingChange} onQuery={props.onCompanyQuery} onAvailabilityQuery={queryPublicReportAvailability} onAdvanceCivilDay={props.onAdvanceCivilDay} reportCorrectionControl={props.reportCorrectionControl} timelineGeneration={props.timelineGeneration} />;
+  const { queryPublicReportAvailability, queryDividendTaxStatus, queryDividendTaxOutstanding } = useMarketRuntimeActions();
+  const onDividendTaxQuery = useCallback(async () => ({
+    status: await queryDividendTaxStatus(),
+    outstanding: await queryDividendTaxOutstanding(),
+  }), [queryDividendTaxStatus, queryDividendTaxOutstanding]);
+  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onReadingChange={onReadingChange} onQuery={props.onCompanyQuery} onAvailabilityQuery={queryPublicReportAvailability} onAdvanceCivilDay={props.onAdvanceCivilDay} reportCorrectionControl={props.reportCorrectionControl} timelineGeneration={props.timelineGeneration} onDividendTaxQuery={onDividendTaxQuery} />;
 }
 
 export function ConnectedMobileDetail(props: MobileDetailProps) {

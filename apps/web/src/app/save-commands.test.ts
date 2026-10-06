@@ -23,7 +23,7 @@ function fixture(archive = commandDayEndArchiveFixture()) {
     dayEndFileTargetRef: { current: null }, playerOrderRefreshGateRef: { current: new PlayerOrderRefreshGate() },
     speedMetricsLoadInProgressRef: { current: false }, speedMetricsRequestGateRef: { current: new SpeedMetricsRequestGate() },
     fatalHostErrorRef: { current: (value) => { calls.push(`fatal:${String(value)}`); } },
-    activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false, floatAllocationDraft: DEFAULT_SETUP.float_allocation, reportFrequencyDraft: { Monthly: { schedule: { Preset: { preset: "FirstDayEvening", delay: "None" } } } },
+    activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false, floatAllocationDraft: DEFAULT_SETUP.float_allocation, reportFrequencyDraft: { Monthly: { schedule: { Preset: { preset: "FirstDayEvening", delay: "None" } } } }, dividendTaxModeDraft: DEFAULT_SETUP.dividend_tax_mode,
     companySystemDraft: JSON.stringify({ mode: "Simple", config: { environment: { initial_change_bp: 0, persistence_bp: 0, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } }, settlement_cycle: "Monthly", companies: [], prehistory_periods: 0 } }), seedDraft: "123456789",
     loadFromFile: async beforeRead => { await beforeRead?.(); return archive; }, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
     getBrowserSaveRepository: () => ({ load: async () => archive, select: async () => true, cancelPending: () => {}, newSlot: () => {} }), resetMarketHistory: () => { calls.push("history"); },
@@ -31,7 +31,7 @@ function fixture(archive = commandDayEndArchiveFixture()) {
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
     setNotice: (value) => { notices.push(value); }, setError: (value) => { calls.push(`error:${String(value)}`); }, setReady: (value) => { calls.push(`ready:${value}`); },
     setSessionCreation: (value, seed) => { assert.equal(typeof value, "object"); assert.match(seed, /^(0|[1-9]\d*)$/); setup = value; calls.push("session-setup"); }, setSeedDraft: () => {},
-    setActiveSetup: () => { calls.push("active-setup"); }, setStartDateDraft: () => { calls.push("date-draft"); }, setPriceCageEnabledDraft: () => { calls.push("cage-draft"); }, setFloatAllocationDraft: () => { calls.push("allocation-draft"); }, setReportFrequencyDraft: () => { calls.push("frequency-draft"); }, setCompanySystemDraft: () => { calls.push("company-draft"); }, setInitialAllocation: () => {},
+    setActiveSetup: () => { calls.push("active-setup"); }, setStartDateDraft: () => { calls.push("date-draft"); }, setPriceCageEnabledDraft: () => { calls.push("cage-draft"); }, setFloatAllocationDraft: () => { calls.push("allocation-draft"); }, setReportFrequencyDraft: () => { calls.push("frequency-draft"); }, setCompanySystemDraft: () => { calls.push("company-draft"); }, setDividendTaxModeDraft: () => { calls.push("tax-mode-draft"); }, setInitialAllocation: () => {},
     setStartDateError: (value) => { calls.push(`date-error:${String(value)}`); }, setSpeedMetricsPollingGeneration: (value) => { calls.push(`poll:${value}`); },
     setSpeedMetrics: (value) => { calls.push(`metrics:${value}`); }, setSpeedMetricsError: (value) => { calls.push(`metrics-error:${value}`); },
   };
@@ -228,7 +228,7 @@ test("快速槽与文件 load 共用宿主/metrics 令牌；成功只更新当�
       assert.equal(f.ports.playerOrderRefreshGateRef.current.isCurrent(refresh), false); f.calls.push("load");
     };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "company-draft", "history", "orders-clear", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:1", "metrics:null", "metrics-error:null", "load", "poll:2", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "company-draft", "tax-mode-draft", "history", "orders-clear", "orders-refresh"]);
     assert.equal(f.setup(), null); assert.equal(f.ports.speedMetricsLoadInProgressRef.current, false);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/); assert.ok(f.ports.sessionReplacementGateRef.current.begin() !== null);
   }
@@ -296,6 +296,9 @@ test("新局日期错误不进入替换；合法新局只请求重建并保留�
   assert.equal(f.setup()?.start_date, "2031-02-03"); assert.equal(f.setup()?.config.price_cage_enabled, false);
   assert.deepEqual(f.setup()?.float_allocation, f.ports.floatAllocationDraft);
   assert.deepEqual(f.setup()?.report_frequency, f.ports.reportFrequencyDraft);
+  assert.equal(f.setup()?.dividend_tax_mode, DEFAULT_SETUP.dividend_tax_mode);
+  f.ports.dividendTaxModeDraft = "Exempt"; await createSaveCommands(f.ports).newGame();
+  assert.equal(f.setup()?.dividend_tax_mode, "Exempt", "新局税务模式草稿须进入重建 setup");
   let reads = 0; assert.equal(await f.ports.initialSaveSourceRef.current.read(async () => { reads++; return f.archive; }), null); assert.equal(reads, 0);
 });
 
@@ -346,7 +349,7 @@ test("快速槽与文件 load 失败释放替换屏障和 metrics 状态，同�
     f.calls.length = 0;
     f.host.load = async (slot) => { assert.equal(slot, f.archive); f.calls.push("load-retried"); };
     await f.commands[kind]();
-    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "company-draft", "history", "orders-clear", "orders-refresh"]);
+    assert.deepEqual(f.calls, ["poll:3", "metrics:null", "metrics-error:null", "load-retried", "poll:4", "timing", "active-setup", "date-draft", "cage-draft", "allocation-draft", "frequency-draft", "company-draft", "tax-mode-draft", "history", "orders-clear", "orders-refresh"]);
     assert.match(f.notices.at(-1)!, /第 4 个交易日/);
   }
 });

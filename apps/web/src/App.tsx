@@ -27,6 +27,7 @@ import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { ReportFrequencyInput, type ReportFrequencyDraft } from "./components/ReportFrequencyInput.tsx";
 import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
+import { TaxModeInput } from "./components/TaxModeInput.tsx";
 import { CompanySystemInput } from "./components/company/CompanySystemInput.tsx";
 import { InitialAllocationSummary } from "./components/InitialAllocationSummary.tsx";
 import type { InitialAllocation } from "./host/initial-allocation.ts";
@@ -204,6 +205,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     catch (failure) { setNotice(`更新结算周期失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
   };
   const [floatAllocationDraft, setFloatAllocationDraft] = useState(sessionSetup.float_allocation);
+  const [dividendTaxModeDraft, setDividendTaxModeDraft] = useState(sessionSetup.dividend_tax_mode);
   const [initialAllocation, setInitialAllocation] = useState<InitialAllocation | null>(null);
   const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
@@ -503,9 +505,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     browserLocal: startupTarget.kind === "wasm",
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
-    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, seedDraft: companyDraft.seed, setSeedDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
+    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, seedDraft: companyDraft.seed, setSeedDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
     resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionCreation,
-    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
+    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
   const { recoverFromFile, noticeSavePolicy: handleSave, load: loadMarketArchive, selectFile: handleSaveFile,
     loadFile: loadMarketFile, newGame: resetMarket } = saveCommands;
@@ -824,6 +826,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <h4>新游戏</h4>
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
+            <TaxModeInput value={dividendTaxModeDraft} onChange={setDividendTaxModeDraft} />
             <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
             <ReportFrequencyInput value={reportFrequencyDraft} onChange={setReportFrequencyDraft} />
             <CompanySystemInput value={companySystemDraft} onChange={(companySystem) => setCompanyDraft(draft => ({ ...draft, companySystem, origin: "custom" }))} seed={companyDraft.seed} origin={companyDraft.origin} onSeedChange={changeCompanySeed} onRegenerate={regenerateCompanyDraft} onSettlementCycleChange={changeCompanySettlementCycle} />

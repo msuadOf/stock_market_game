@@ -16,6 +16,7 @@ import {
 import { ReportNotes } from "./ReportNotes.tsx";
 import { visibleReports } from "./company-view-model.ts";
 import { ReportCorrectionPanel, type ReportCorrectionControl } from "./ReportCorrectionPanel.tsx";
+import { DividendTaxPanel, type DividendTaxQueryResult } from "./DividendTaxPanel.tsx";
 import { isIsoMonthEnd, reportAvailabilityReason } from "./report-availability.ts";
 import "./company.css";
 
@@ -31,6 +32,8 @@ interface CompanyPanelProps {
   readonly onAdvanceCivilDay: () => Promise<void>;
   readonly reportCorrectionControl?: ReportCorrectionControl | null;
   readonly timelineGeneration?: string | null;
+  /** 本人股息税状态查询（owner 隔离）；undefined 表示宿主明确不支持，面板显式提示。 */
+  readonly onDividendTaxQuery?: (() => Promise<DividendTaxQueryResult>) | undefined;
 }
 
 function CompanyIdentity({ company }: { readonly company: PublicCompany }) {
@@ -46,7 +49,7 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
   buttons[(next + ids.length) % ids.length]?.focus();
 }
 
-export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration }: CompanyPanelProps) {
+export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration, onDividendTaxQuery }: CompanyPanelProps) {
   const company = companyId === null ? undefined : publicCompanyById(companyId);
   const cache = companyId === null ? undefined : companyState.companies[companyId];
   const rootPage = cache?.pages.root;
@@ -149,6 +152,7 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
         </div>
       </header>
       {reportCorrectionControl != null && <ReportCorrectionPanel key={`${timelineGeneration}:${companyId}`} companyId={companyId} reportId={currentReportId} control={reportCorrectionControl} refreshKey={companyState.civilDate ?? initialCivilDate} />}
+      <DividendTaxPanel onQuery={onDividendTaxQuery} refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`} />
       {state.kind === "idle" && <p className="company-state">正在请求已公开报告…</p>}
       {state.kind === "loading" && <p className="company-state" aria-live="polite">正在加载已公开报告…</p>}
       {state.kind === "empty" && availabilityReport === undefined && <p className="company-state">截至当前模拟自然日，该公司没有已公开报告。</p>}
