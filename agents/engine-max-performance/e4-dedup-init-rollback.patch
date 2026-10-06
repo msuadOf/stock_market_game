@@ -1,0 +1,176 @@
+diff --git a/packages/engine/src/session/pipeline/continuous_matching.rs b/packages/engine/src/session/pipeline/continuous_matching.rs
+index bdaaba72..a16a0640 100644
+--- a/packages/engine/src/session/pipeline/continuous_matching.rs
++++ b/packages/engine/src/session/pipeline/continuous_matching.rs
+@@ -15,6 +15,14 @@ use crate::{
+ use rayon::prelude::*;
+ use std::collections::{BTreeMap, BTreeSet};
+ 
++#[cfg(test)]
++use std::sync::atomic::AtomicUsize;
++
++/// 测试专用回归防线：validate_initial_snapshots 走引用遍历到达序，
++/// 不再克隆全簿 Order（Market::resting_orders）。
++#[cfg(test)]
++pub(in crate::session::pipeline) static RESTING_ORDER_CLONES: AtomicUsize = AtomicUsize::new(0);
++
+ #[path = "incremental_continuous_stock_shadow.rs"]
+ pub(in crate::session::pipeline) mod incremental_continuous_stock_shadow;
+ 
+@@ -607,8 +615,10 @@ impl ContinuousStockRoundProcessor {
+         validate_execution_facts(&self.execution_facts)?;
+         if !self.private_round {
+             // 初始 shadow 与独立 worker 在这里拒绝错误来源证据；后续轮次校验每次转换，
+-            // 全部轮次完成后再统一核对订单簿与 ledger。
+-            self.ledger.validate_complete_evidence()?;
++            // 全部轮次完成后再统一核对订单簿与 ledger。行内 envelope 在账本构造前
++            // 已全量验证（validate_initial_snapshots / created 校验），零 op 收尾
++            // 使用 prevalidated 变体跳过恒为同结果的逐行重跑。
++            self.ledger.validate_complete_evidence_prevalidated()?;
+             validate_private_market_ledger(&self.output.market, &self.ledger, &self.config)?;
+         }
+         let market_delta = self
+@@ -841,7 +851,10 @@ fn validate_initial_snapshots(
+     market: &Market,
+     snapshots: &[ContinuousEnvelopeSnapshot],
+ ) -> Result<(), StepFatal> {
+-    let orders = market.resting_orders();
++    // 到达序（seq 升序）与 Market::resting_orders 的输出序列完全一致，
++    // 但只借用引用，不为逐行核对克隆整簿 Order。
++    let mut orders: Vec<&crate::Order> = market.resting_order_refs().collect();
++    orders.sort_by_key(|order| order.seq);
+     let mut by_order = BTreeMap::new();
+     for snapshot in snapshots {
+         snapshot.envelope.validate()?;
+@@ -858,7 +871,7 @@ fn validate_initial_snapshots(
+             return Err(invariant("duplicate continuous envelope snapshot"));
+         }
+     }
+-    for order in &orders {
++    for order in orders {
+         let snapshot = by_order
+             .remove(&order.id)
+             .ok_or_else(|| invariant("resting order has no continuous envelope snapshot"))?;
+diff --git a/packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs b/packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs
+index b40c288f..903f8f8c 100644
+--- a/packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs
++++ b/packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs
+@@ -1276,6 +1276,62 @@ fn validated_operations_in_session(
+     output.operations().to_vec()
+ }
+ 
++#[test]
++fn from_post_expiry_does_not_revalidate_unchanged_envelopes() {
++    // 回归防线（红→绿证据见 findings）：零 op 初始化中每行 envelope 已在
++    // validate_initial_snapshots 全量 Envelope::validate，且期间不可变；
++    // 完整证据路径不应再逐行重跑同一验证。
++    use std::sync::atomic::Ordering;
++    let before =
++        crate::session::pipeline::private_stock_ledger::ENVELOPE_REVALIDATE_ROWS
++            .load(Ordering::SeqCst);
++    let code = stock("600888");
++    let mut market = empty_market(&code);
++    let snapshots = vec![
++        add_resting(&mut market, &code, AccountId(11), OrderId(100), Side::Sell, 100),
++        add_resting(&mut market, &code, AccountId(12), OrderId(101), Side::Sell, 200),
++    ];
++    let _ = IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
++        market,
++        snapshots,
++        GameConfig::proposed_defaults(),
++    )])
++    .unwrap();
++    let delta = crate::session::pipeline::private_stock_ledger::ENVELOPE_REVALIDATE_ROWS
++        .load(Ordering::SeqCst)
++        - before;
++    assert_eq!(
++        delta, 0,
++        "零 op 初始化不应逐行重跑 Envelope::validate（重验证 {delta} 行）"
++    );
++}
++
++#[test]
++fn from_post_expiry_walks_arrival_order_without_cloning_orders() {
++    // 回归防线（红→绿证据见 findings）：簿序核对按到达序（seq 升序）遍历，
++    // 与 Market::resting_orders 的输出序列一致，但只借用引用、不克隆 Order。
++    use std::sync::atomic::Ordering;
++    let before = super::super::RESTING_ORDER_CLONES.load(Ordering::SeqCst);
++    let code = stock("600888");
++    let mut market = empty_market(&code);
++    let snapshots = vec![
++        add_resting(&mut market, &code, AccountId(11), OrderId(100), Side::Sell, 100),
++        add_resting(&mut market, &code, AccountId(12), OrderId(101), Side::Sell, 200),
++        add_resting(&mut market, &code, AccountId(13), OrderId(102), Side::Sell, 300),
++    ];
++    let _ = IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
++        market,
++        snapshots,
++        GameConfig::proposed_defaults(),
++    )])
++    .unwrap();
++    let delta = super::super::RESTING_ORDER_CLONES.load(Ordering::SeqCst) - before;
++    assert_eq!(
++        delta, 0,
++        "零 op 初始化不应克隆全簿 Order（resting_orders 克隆 {delta} 次）"
++    );
++}
++
+ fn stock_input(
+     market: Market,
+     envelopes: Vec<ContinuousEnvelopeSnapshot>,
+diff --git a/packages/engine/src/session/pipeline/private_stock_ledger.rs b/packages/engine/src/session/pipeline/private_stock_ledger.rs
+index b2b6030f..6d787eec 100644
+--- a/packages/engine/src/session/pipeline/private_stock_ledger.rs
++++ b/packages/engine/src/session/pipeline/private_stock_ledger.rs
+@@ -7,6 +7,14 @@ use super::{
+ };
+ use std::collections::{BTreeMap, BTreeSet};
+ 
++#[cfg(test)]
++use std::sync::atomic::AtomicUsize;
++
++/// 测试专用回归防线：零 op 初始化路径的完整证据校验不逐行重跑 Envelope::validate。
++#[cfg(test)]
++pub(in crate::session::pipeline) static ENVELOPE_REVALIDATE_ROWS: AtomicUsize =
++    AtomicUsize::new(0);
++
+ #[derive(Clone, Debug)]
+ pub(super) struct PrivateStockLedger {
+     rows: Vec<PrivateRow>,
+@@ -181,6 +189,21 @@ impl PrivateStockLedger {
+     }
+ 
+     pub(super) fn validate_complete_evidence(&self) -> Result<(), StepFatal> {
++        self.validate_complete_evidence_with(false)
++    }
++
++    /// 供行内 envelope 已在本轮构造前全量验证过的调用方使用。
++    ///
++    /// 私有账本的每个 envelope 在进入账本前都已通过 `Envelope::validate`：
++    /// tick 起点行来自 `validate_initial_snapshots`，created 行来自逐个 `validate`；
++    /// 其后任何变更都经 `Envelope::apply` 对 candidate 重新验证后才落账。
++    /// 因此零 op 初始化收尾时逐行重跑 `Envelope::validate` 恒为同一结果，
++    /// 该变体跳过这次重复执行；守恒证据、live/terminal 资源与聚合门禁全部保留。
++    pub(super) fn validate_complete_evidence_prevalidated(&self) -> Result<(), StepFatal> {
++        self.validate_complete_evidence_with(true)
++    }
++
++    fn validate_complete_evidence_with(&self, envelopes_prevalidated: bool) -> Result<(), StepFatal> {
+         // 原完整门禁先处理全部 live 再处理 terminal；不能混成按 key 排序的一次循环。
+         let ordered: Vec<_> = self
+             .ordered_rows()
+@@ -205,8 +228,12 @@ impl PrivateStockLedger {
+                 "terminal envelope row still has live resources",
+             ));
+         }
+-        for (envelope, _) in ordered {
+-            envelope.validate()?;
++        if !envelopes_prevalidated {
++            for (envelope, _) in ordered {
++                #[cfg(test)]
++                ENVELOPE_REVALIDATE_ROWS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
++                envelope.validate()?;
++            }
+         }
+         // audit 属于 Envelope，同键 conservation 属于同一 PrivateRow；三者不能独立丢行或漂移。
+         Ok(())

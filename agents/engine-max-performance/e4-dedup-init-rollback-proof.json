@@ -1,0 +1,19 @@
+{
+  "files": {
+    "packages/engine/src/session/pipeline/continuous_matching.rs": {
+      "head_sha256": "4f66cd4c3776ee66a88d7b8deb9d2f4457a3277a446a2b4637f2aeacdf971023"
+    },
+    "packages/engine/src/session/pipeline/private_stock_ledger.rs": {
+      "head_sha256": "d308e81157371c5baa108950d7f472a7a90044683f4540883ad6d79108d08f00"
+    },
+    "packages/engine/src/session/pipeline/incremental_continuous_stock_shadow_tests.rs": {
+      "head_sha256": "42914200aacabf3bb67bac0536da8c2033f7be2764e2ef195cbf90d5904c4219"
+    }
+  },
+  "candidate_binary_sha256": "e0ba34f922dff7e6d3e43c3a3eecf109fcf9f1224dd46d2ac04518521d922486",
+  "head_baseline_binary_sha256": "30ce134db3a78b465e71274bd54857f20fec7b6b2ad4060c7cab8c499249842b",
+  "verdict": "rollback_below_threshold",
+  "head_mean_x": 241.261,
+  "candidate_mean_x": 244.087,
+  "gain_pct": 1.17
+}
