@@ -2,7 +2,21 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { parseSessionCorporateActions } from "./schema/corporate-actions.ts"
+import type { AcquisitionSource, Context, ShareRestriction } from "./schema/corporate-actions.ts"
 import { parseSaveSnapshot, validateCashExReferenceFacts } from "./schema/save-snapshot.ts"
+
+// 送转测试内深拷贝回执的可变形状：与 schema 的 ShareDayReceipt 同构，但允许
+// 测试改写 changes 与 acquisition.source（schema 导出类型为 readonly），并保持
+// acquisition 可空、source 为完整 AcquisitionSource 联合，供负例直接构造。
+type MutableShareDayReceipt = {
+  request: {
+    event_id: string
+    day: string
+    scope: "PublicMarket" | { NonTradingTransfer: { basis: string } }
+    changes: { holder: { Account: string } | { External: string }; change: string; acquisition: { lot_id: string; source: AcquisitionSource; restriction: ShareRestriction } | null }[]
+  }
+  disposals: unknown[]
+}
 
 const emptyContext = {
   issuers: {},
@@ -284,7 +298,7 @@ test("非交易过户送转入账按同日追加回执登记并守恒发行股�
     request: { event_id: "session-market:600101:2030-01-02", day: "2030-01-02", scope: "PublicMarket", changes: [] },
     disposals: [],
   }
-  const issueDay = {
+  const issueDay: MutableShareDayReceipt = {
     request: {
       event_id: "stock-distribution:distribution-1", day: "2030-01-02", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
       changes: [{ holder, change: "2", acquisition: { lot_id: "stock-distribution:distribution-1:account-0", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
@@ -298,7 +312,7 @@ test("非交易过户送转入账按同日追加回执登记并守恒发行股�
     receipts: [marketDay, issueDay], registrations: [],
   }
   // setup 初始股数 10，送转入账后名册与发行人身份均为 12。
-  const context = {
+  const context: Context = {
     issuers: { "C-600101": { listed_stock: "600101", issued_shares: "12" } },
     setup: { stocks: [{ code: "600101", total_shares: "10", exchange: "Shanghai", tick: "1" }] },
     snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 8 } } } } },
@@ -327,7 +341,7 @@ test("登记快照发行股数按登记日后的非交易过户增发回放核�
   const holder = { External: "holder-a" }
   const lot = { id: "lot-a", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
   const marketDay = { request: { event_id: "session-market:600101:2030-01-02", day: "2030-01-02", scope: "PublicMarket", changes: [] }, disposals: [] }
-  const issueDay = {
+  const issueDay: MutableShareDayReceipt = {
     request: {
       event_id: "stock-distribution:distribution-1", day: "2030-01-02", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
       changes: [{ holder: { Account: "0" }, change: "2", acquisition: { lot_id: "bonus-a", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
@@ -337,7 +351,7 @@ test("登记快照发行股数按登记日后的非交易过户增发回放核�
   const registration = { event_id: "record-1", stock: "600101", issuer: "C-600101", registered_on: "2030-01-02", issued_shares: "10", settled_receipts: "1", issuer_repurchase_account: null, holdings: [{ holder, lots: [lot] }] }
   const bonusLot = { id: "bonus-a", qty: "2", acquired_on: "2030-01-02", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" }
   const registry = { ...validRegistry("12"), settled_on: "2030-01-02", holdings: [{ holder, lots: [lot] }, { holder: { Account: "0" }, lots: [bonusLot] }], receipts: [marketDay, issueDay], registrations: [registration] }
-  const context = {
+  const context: Context = {
     issuers: { "C-600101": { listed_stock: "600101", issued_shares: "12" } },
     setup: { stocks: [{ code: "600101", total_shares: "10", exchange: "Shanghai", tick: "1" }] },
     snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 2 } } } } },
@@ -385,7 +399,7 @@ test("送转账簿严格解析并交叉核对入账非交易过户回执", () =>
   }
   const anchor = { ex_date: "2030-01-03", reference_price: "800" }
   const group = { date: "2030-01-03", stock: "600101", cash_plan_ids: [], stock_event_ids: ["distribution-1"], reference: anchor }
-  const context = {
+  const context: Context = {
     issuers: { "C-600101": { listed_stock: "600101", issued_shares: "12" } },
     setup: { stocks: [{ code: "600101", total_shares: "10", exchange: "Shanghai", tick: "1" }] },
     snapshot: { markets: { "600101": { last_cash_ex_reference: anchor } }, accounts: { "0": { positions: { "600101": { qty: 8 } } } } },

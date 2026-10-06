@@ -64,7 +64,7 @@ export type StockDistributionBook = { readonly plan: StockDistributionEventPlan;
 export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly stock_distributions: readonly StockDistributionBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_reference_groups: readonly AppliedExReferenceGroup[] }
 export type AppliedExReferenceGroup = { readonly date: string; readonly stock: string; readonly cash_plan_ids: readonly string[]; readonly stock_event_ids: readonly string[]; readonly reference: import("./company/ex-reference-price.ts").ExReferencePrice }
 
-type Context = {
+export type Context = {
   readonly issuers: Readonly<Record<string, { readonly listed_stock: string | null; readonly issued_shares: string }>>
   readonly setup: { readonly stocks: readonly { readonly code: string; readonly total_shares: string; readonly exchange: "Shanghai" | "Shenzhen"; readonly tick: string }[] }
   readonly snapshot: { readonly markets: Readonly<Record<string, { readonly last_cash_ex_reference: { readonly ex_date: string; readonly reference_price: string } | null }>>; readonly accounts: Readonly<Record<string, { readonly positions: Readonly<Record<string, { readonly qty: number }>> }>> }
