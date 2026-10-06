@@ -13,7 +13,7 @@ use crate::{
         rng::{OperatingRng, RngStream},
     },
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +22,10 @@ pub(crate) struct SimpleCompanyState {
     pub finance: SimpleFinanceState,
     #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     pub pending_restart: Option<(AccountingAmount, String)>,
+    /// 偏好提案拒绝台账（ADR-0037）：严格持久化字段，无 serde 默认；接受的
+    /// 提案由 finance 事实与 Session 账簿记录，不在此重复。恢复后同周期幂等
+    /// 与频率判定依赖该台账，缺失该字段的旧档被显式拒绝。
+    pub preference_ledger: super::preferences::SimplePreferenceLedger,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -74,6 +78,7 @@ impl SimpleFundamentals {
                     generation,
                     finance,
                     pending_restart: None,
+                    preference_ledger: super::preferences::SimplePreferenceLedger::default(),
                 },
             );
         }
@@ -216,6 +221,7 @@ impl SimpleFundamentals {
         } else {
             current_start.prev()?
         };
+        let known_companies: BTreeSet<CompanyId> = self.companies.keys().cloned().collect();
         for config in &self.config.companies {
             let state = self
                 .companies
@@ -223,6 +229,9 @@ impl SimpleFundamentals {
                 .ok_or_else(|| CompanySystemError::Invalid("Simple 缺少公司状态".into()))?;
             state.finance.validate()?;
             state.generation.validate(&config.generation)?;
+            state
+                .preference_ledger
+                .validate(&known_companies, self.advanced_through)?;
             if state.finance.company_id() != &config.company
                 || state.finance.kind() != config.kind
                 || state.finance.config() != &config.finance

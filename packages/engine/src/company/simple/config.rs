@@ -47,6 +47,7 @@ impl SimpleConfig {
                 .tax_policy
                 .validate()
                 .map_err(|error| CompanySystemError::Invalid(error.to_string()))?;
+            config.preferences.validate()?;
         }
         if ids.len() != issuers.iter().count() {
             return Err(CompanySystemError::Invalid(
@@ -75,4 +76,7 @@ pub struct SimpleCompanyConfig {
     pub kind: crate::company::CompanyKind,
     pub generation: PeriodGenerationParameters,
     pub finance: SimpleFinanceConfig,
+    /// 公司行为偏好（ADR-0037）：严格持久化字段，无 serde 默认；旧档缺失该
+    /// 字段被显式拒绝。未配置（两项皆 `None`）= 不自动产生任何方案。
+    pub preferences: super::preferences::SimpleCompanyPreferences,
 }

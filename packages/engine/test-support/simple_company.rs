@@ -92,6 +92,7 @@ macro_rules! simple_company_fixture {
                     },
                     summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
                 },
+                preferences: fixture_engine::company::simple::SimpleCompanyPreferences::none(),
             }).collect(),
             prehistory_periods: 24,
             settlement_cycle: SettlementCycle::Monthly,

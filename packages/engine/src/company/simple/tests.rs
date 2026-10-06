@@ -87,6 +87,7 @@ fn config() -> SimpleConfig {
                 },
                 summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
             },
+            preferences: super::preferences::SimpleCompanyPreferences::none(),
         }],
         prehistory_periods: 2,
         settlement_cycle: SettlementCycle::Monthly,

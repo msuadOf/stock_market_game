@@ -148,6 +148,7 @@ fn simple_model_with_cycle(prehistory_periods: u16, settlement_cycle: crate::com
                 tax_policy: TaxPolicy { version: 1, vat: VatPolicy { output_rate_bp: 0, input_rate_bp: 0, deductible_share_bp: 10000 }, income_tax: IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 } },
                 summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
             },
+            preferences: crate::company::simple::SimpleCompanyPreferences::none(),
         }],
     }), start, 17).unwrap();
     system
