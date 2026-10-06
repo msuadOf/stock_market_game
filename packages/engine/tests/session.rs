@@ -90,6 +90,7 @@ fn sample_setup() -> SessionSetup {
         float_allocation: engine::FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
     }
 }
 

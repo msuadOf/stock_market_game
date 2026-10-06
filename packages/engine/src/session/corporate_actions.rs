@@ -41,6 +41,59 @@ pub enum DividendTaxStatus {
     TreatmentNotConfigured,
 }
 
+/// 税务身份查询的账户身份分类。
+///
+/// 抽象层留白：非个人身份目前统一为 [`TaxpayerIdentity::NonIndividualPending`]
+/// （企业/机构计税未实现，保持 `TreatmentNotConfigured`）；后续批次接入企业口径时，
+/// 在此枚举扩展具体身份（居民企业 / 证券投资基金 / 非居民），并与
+/// `company::cash_dividend_tax::DividendTaxProfile` 的既有变体对应，
+/// 不实现其计税前不得把非个人身份映射为任何已实现身份。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub enum TaxpayerIdentity {
+    /// 个人（玩家与自然人散户 NPC）：大 A 个人差别化口径的可计税身份。
+    Personal,
+    /// 非个人（机构、游资 NPC 及外部持有人）：企业/机构税未实现，保持 TreatmentNotConfigured。
+    NonIndividualPending,
+}
+
+/// 按账户种类映射税务身份：玩家与自然人散户 NPC 属个人；机构与游资 NPC 属非个人。
+/// 该映射是开局默认税籍的权威分类，宿主不得由策略风格另行推断。
+pub fn taxpayer_identity_of_kind(kind: crate::account::AccountKind) -> TaxpayerIdentity {
+    match kind {
+        crate::account::AccountKind::Player | crate::account::AccountKind::Retail => {
+            TaxpayerIdentity::Personal
+        }
+        crate::account::AccountKind::Inst | crate::account::AccountKind::Hot => {
+            TaxpayerIdentity::NonIndividualPending
+        }
+    }
+}
+
+/// 单账户在单个已登记证券上的税账状态。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct AccountStockDividendTaxStatus {
+    pub stock: StockCode,
+    pub status: DividendTaxStatus,
+}
+
+/// 单账户的现金分红税务状态查询视图：会话税务模式、按账户种类映射的身份分类
+/// 与每个已配置完整名册证券上的税账状态。只读汇总既有事实，不产生新事实。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct AccountDividendTaxStatusView {
+    /// 本局新选定的现金分红税务模式。
+    pub mode: crate::company::cash_dividend_tax::CashDividendTaxMode,
+    /// 账户的纳税人身份分类（个人 / 非个人待实现）。
+    pub identity: TaxpayerIdentity,
+    /// 每个已配置完整名册证券上的税账状态；无任何名册时为空。
+    pub stocks: Vec<AccountStockDividendTaxStatus>,
+}
+
 /// 个人现金分红税未划收税额的原因。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
