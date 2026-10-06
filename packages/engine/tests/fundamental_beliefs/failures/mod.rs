@@ -1,25 +1,26 @@
 //! 失败路径（类型化不可用/错误，绝不静默 fallback、绝不偷偷改股价）。
 
+mod credit_default;
 mod flows;
 mod guards;
 
 use crate::scenario;
-use crate::{assumptions_rng, hour_after, market, ISSUED_SHARES};
 use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
+use crate::{ISSUED_SHARES, assumptions_rng, hour_after, market};
 use engine::account::StockCode;
 use engine::company::CompanyKind;
 use engine::information::AcquisitionError;
 use engine::orderbook::AccountId;
 use engine::strategy::{
-    AnalysisProfile, AnalysisWeights, BeliefCause, BeliefError, FundamentalMethod, RetailStyle,
-    StrategyProfile,
+    AnalysisProfile, AnalysisWeights, BeliefCause, BeliefError, ForecastBasis, FundamentalMethod,
+    RetailStyle, StrategyProfile, ValuationOutcome, ValuationUnavailable,
 };
 
 pub(crate) fn stock_code() -> StockCode {
     StockCode("600101".to_string())
 }
 
-/// 无任何已获知年报的参与者 + CreditDefault 重估 ⇒ 类型化 NoOwnAnnualMaterial。
+/// 无任何已获知年报的参与者 + CreditDefault 重估 ⇒ 记录年度基准不可用。
 #[test]
 fn credit_default_without_own_annual_material_is_typed_error() {
     let sc = scenario();
@@ -54,16 +55,26 @@ fn credit_default_without_own_annual_material_is_typed_error() {
     )
     .expect("acquire announcement");
 
-    let err = case
-        .apply_cause(
-            &stock_code(),
-            BeliefCause::CreditDefault {
-                announcement: case.scenario.announcement_id,
-            },
-            1_100,
-        )
-        .expect_err("no own annual material");
-    assert!(matches!(err, BeliefError::NoOwnAnnualMaterial));
+    case.apply_cause(
+        &stock_code(),
+        BeliefCause::CreditDefault {
+            announcement: case.scenario.announcement_id,
+        },
+        1_100,
+    )
+    .expect("missing own annual must be recorded as unavailable, not block the day");
+    let entry = case.book.entry(&stock_code()).expect("belief entry");
+    assert_eq!(
+        entry.forecast.basis,
+        ForecastBasis::AnnualBaselineUnavailable
+    );
+    assert_eq!(
+        entry.valuation,
+        ValuationOutcome::Unavailable {
+            reason: ValuationUnavailable::AnnualBaselineNotOwnKnown,
+        }
+    );
+    assert!(entry.used_report_ids.is_empty());
 }
 
 /// 未获知的材料 id ⇒ NotAcquired 守卫透传（无前视）。

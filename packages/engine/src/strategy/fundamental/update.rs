@@ -224,7 +224,13 @@ impl BeliefBook {
         let Some((annual_id, annual_at)) =
             self.latest_own_annual_for_scope(inputs, Some(&report.reports.scope))?
         else {
-            return self.record_interim_without_annual(stock, cause, report_id, inputs, direct);
+            return self.record_annual_baseline_unavailable(
+                stock,
+                cause,
+                Some(report_id),
+                inputs,
+                direct,
+            );
         };
         let facts =
             extract_annual_facts(inputs.ctx.report(annual_id)?, &inputs.company, annual_at)?;
@@ -274,21 +280,23 @@ impl BeliefBook {
         Ok(())
     }
 
-    fn record_interim_without_annual(
+    fn record_annual_baseline_unavailable(
         &mut self,
         stock: &StockCode,
         cause: BeliefCause,
-        report_id: PublicationId,
+        report_id: Option<PublicationId>,
         inputs: &BeliefInputs<'_, impl Sized>,
         direct: bool,
     ) -> Result<(), BeliefError> {
-        if !direct
-            && self
-                .entries
-                .get(stock)
-                .is_some_and(|entry| entry.used_report_ids.contains(&report_id))
-        {
-            return Ok(());
+        if let Some(report_id) = report_id {
+            if !direct
+                && self
+                    .entries
+                    .get(stock)
+                    .is_some_and(|entry| entry.used_report_ids.contains(&report_id))
+            {
+                return Ok(());
+            }
         }
         let old = self.entries.get(stock);
         let forecast = super::ForecastState {
@@ -308,7 +316,7 @@ impl BeliefBook {
             valuation: ValuationOutcome::Unavailable {
                 reason: ValuationUnavailable::AnnualBaselineNotOwnKnown,
             },
-            used_report_ids: vec![report_id],
+            used_report_ids: report_id.into_iter().collect(),
             anchor_trading_day: inputs.as_of_trading_day,
             horizon_trading_days: old.map_or_else(
                 || belief_horizon_days(&self.profile),
@@ -341,9 +349,19 @@ impl BeliefBook {
                 company: inputs.company.clone(),
             });
         }
-        let (report_id, observed_at) = self
-            .latest_own_annual(inputs)?
-            .ok_or(BeliefError::NoOwnAnnualMaterial)?;
+        let Some((report_id, observed_at)) = self.latest_own_annual_for_scope(
+            inputs,
+            self.entries
+                .get(stock)
+                .and_then(|entry| entry.used_report_ids.first())
+                .map(|report| inputs.ctx.report(*report))
+                .transpose()?
+                .map(|report| report.reports.scope.clone())
+                .as_ref(),
+        )?
+        else {
+            return self.record_annual_baseline_unavailable(stock, cause, None, inputs, true);
+        };
         let report = inputs.ctx.report(report_id)?;
         let facts = extract_annual_facts(report, &inputs.company, observed_at)?;
         self.write_derived_entry(stock, cause, report_id, facts, inputs, true);
@@ -518,14 +536,6 @@ impl BeliefBook {
             });
         }
         Ok(())
-    }
-
-    /// 本人已知最新年报（期间序，同期取最高版本序——更正版本优先）。
-    fn latest_own_annual(
-        &self,
-        inputs: &BeliefInputs<'_, impl Sized>,
-    ) -> Result<Option<(PublicationId, CivilInstant)>, BeliefError> {
-        self.latest_own_annual_for_scope(inputs, None)
     }
 
     fn latest_own_annual_for_scope(

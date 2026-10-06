@@ -1,8 +1,8 @@
+use crate::Money;
 use crate::behavior::PositionAction;
 use crate::strategy::{
     RelativeStrengthIndex, SimpleMovingAverage, TechnicalError, ValuationOutcome,
 };
-use crate::Money;
 
 use super::types::{CandidateError, SignalContribution, SignalScore, SignalUnavailableReason};
 
@@ -30,7 +30,11 @@ pub fn fundamental_range_signal(
     optimistic: Money,
 ) -> Result<SignalContribution, CandidateError> {
     require_positive("current price", current)?;
-    require_positive("pessimistic valuation", pessimistic)?;
+    if pessimistic.cents() <= 0 || optimistic.cents() <= 0 {
+        return Ok(SignalContribution::unavailable(
+            SignalUnavailableReason::FundamentalUnavailable,
+        ));
+    }
     require_positive("optimistic valuation", optimistic)?;
     if pessimistic > optimistic {
         return Err(CandidateError::InvertedValuationRange {
@@ -57,6 +61,25 @@ pub fn fundamental_range_signal(
         relative_bp,
         2_000,
     )?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_positive_fundamental_range_is_unavailable_not_zero_price() {
+        let contribution = fundamental_range_signal(
+            Money::from_cents(100),
+            Money::from_cents(0),
+            Money::from_cents(200),
+        )
+        .unwrap();
+        assert_eq!(
+            contribution.unavailable_atoms(),
+            &[SignalUnavailableReason::FundamentalUnavailable]
+        );
+    }
 }
 
 pub fn fundamental_signal(
