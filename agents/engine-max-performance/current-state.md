@@ -192,3 +192,7 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 ## 追加：当前 critical path 插桩结果（2026-10-06）
 
 对已提交 `382c1871` 源码做 22-span 临时插桩并独占采样（诊断 218.378x，不作正式提速）：协议/发布外层成本合计小（checkpoint 0.355s、frame after step 0.161s、frame validate 0.150s、snapshot runtime 0.107s、tick batch delta 0.102s、prepare frame 0.088s/3000 tick）；`runtime_snapshot` 的 NPC order 全量扫描与重复 canonical 静态担忧实测只有约 0.1–0.15s，暂不优先改。`npc_queue_next_tick` wall 2.057s/CPU 0.979s，`npc_snapshot_capture` wall 1.765s/CPU 0.696s，是下批最明显等待/重复准备段。read-only start 命中 2098/3002 tick，join wall 1.779s 与其中 hydration 1.777s 基本一致；未命中约 904 tick 回退旧路径。CPU 密集仍在 continuous shadow initialize 1.825s、borrowed hydration projection 1.777s、continuous input prepare 1.520s、seal 1.227s。18 份源码已原字节恢复并删除临时 module；首次插桩 build 曾因 `engine::` 路径写错失败，修正后 exit0。详见 `current-critical-path-findings.md`。1000x 未达成，frontend 继续暂停。
+
+## 追加：NPC queue 嵌套诊断（2026-10-06）
+
+针对 `npc_queue_next_tick` 再做 5-span 临时插桩。诊断吞吐 161.059x，样本前半段约 5 秒低 CPU 窗口，疑似外部扰动，因此只用于相对定位。结果：`capture_decision_snapshot` wall 2.745s / CPU 0.852s；`stream_npc_decisions` 外层 0.425s / 0.349s；31,011 个 projection callback 0.196s / 0.165s；31,011 个策略 decide 0.262s / 0.210s；11,840 个 `receive_private_intent` 仅 0.034s / 0.023s。结论：串行 receive 不是瓶颈，下一步拆 `capture_decision_snapshot` 内部。首次诊断 build 因生成 FFI 单行语法错误失败，修正后 exit0；4 份源码已原字节恢复、临时 module 删除。详见 `npc-queue-findings.md`。1000x 未达成，frontend 继续暂停。
