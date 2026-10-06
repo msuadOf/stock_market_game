@@ -44,6 +44,7 @@ pub mod scheduler;
 mod spec;
 pub mod share_registry;
 pub mod stock_distribution;
+pub mod rights_offering;
 pub mod cash_dividend_tax;
 pub use cash_dividend_tax::{CashDividendTaxBook, CashDividendTaxMode, DividendTaxProfile};
 pub mod cash_dividend;

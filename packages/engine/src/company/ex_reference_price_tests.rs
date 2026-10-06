@@ -330,3 +330,139 @@ fn stock_distribution_ex_rights_rejects_cross_market_formula_and_invalid_inputs(
         Err(ExReferencePriceError::NonPositiveReferencePrice { .. })
     ));
 }
+
+// ==== 配股除权公式（2026-10-07 M 批）====
+
+use super::{rights_offering_ex_rights_reference_price, RightsOfferingExRightsFormula};
+
+#[test]
+fn rights_formula_combines_cash_dividend_and_rights_price_components() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    // 沪市：前收 1000 分、红利 40 分、配股价 600 分、实际比例 30%（300_000 micros）：
+    // [(1000−40)+600×0.3]/1.3 = (960+180)/1.3 = 1140/1.3 = 876.923… → 877 分。
+    let result = rights_offering_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+            ratio_micros: 300_000,
+        },
+        date("2030-06-10"),
+        Money::from_cents(1_000),
+        Money::from_cents(40),
+        Money::from_cents(600),
+    )
+    .unwrap();
+    assert_eq!(result.ex_date, date("2030-06-11"));
+    assert_eq!(result.reference_price, Money::from_cents(877));
+
+    // 深市：无红利、前收 1300 分、配股价 800 分、比例 50%：
+    // (1300+400)/1.5 = 1700/1.5 = 1133.33… → 1133 分。
+    let result = rights_offering_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Szse,
+        RightsOfferingExRightsFormula::ShenzhenRightsShareChange {
+            ratio_micros: 500_000,
+        },
+        date("2030-06-10"),
+        Money::from_cents(1_300),
+        Money::from_cents(0),
+        Money::from_cents(800),
+    )
+    .unwrap();
+    assert_eq!(result.reference_price, Money::from_cents(1_133));
+}
+
+#[test]
+fn rights_formula_rejects_exchange_mismatch_and_invalid_inputs() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    assert!(matches!(
+        rights_offering_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Szse,
+            RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+                ratio_micros: 300_000
+            },
+            date("2030-06-10"),
+            Money::from_cents(1_000),
+            Money::from_cents(0),
+            Money::from_cents(600),
+        ),
+        Err(ExReferencePriceError::RightsFormulaExchangeMismatch { .. })
+    ));
+    assert!(matches!(
+        rights_offering_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange { ratio_micros: 0 },
+            date("2030-06-10"),
+            Money::from_cents(1_000),
+            Money::from_cents(0),
+            Money::from_cents(600),
+        ),
+        Err(ExReferencePriceError::InvalidRightsChangeRatio)
+    ));
+    assert!(matches!(
+        rights_offering_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+                ratio_micros: 300_000
+            },
+            date("2030-06-10"),
+            Money::from_cents(1_000),
+            Money::from_cents(0),
+            Money::from_cents(0),
+        ),
+        Err(ExReferencePriceError::InvalidRightsPrice { .. })
+    ));
+    // 非交易日 L 拒绝。
+    assert!(matches!(
+        rights_offering_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+                ratio_micros: 300_000
+            },
+            date("2030-06-08"),
+            Money::from_cents(1_000),
+            Money::from_cents(0),
+            Money::from_cents(600),
+        ),
+        Err(ExReferencePriceError::InvalidRegistrationDate { .. })
+    ));
+}
+
+#[test]
+fn rights_formula_rounds_half_to_even_at_the_cent() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    // 构造 .5 分边界：前收 1300、无红利、配股价 500、比例 20%：
+    // (1300+100)/1.2 = 1400/1.2 = 1166.666… → 1167（非 .5，先做正常取整锚）。
+    let even_case = rights_offering_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+            ratio_micros: 200_000,
+        },
+        date("2030-06-10"),
+        Money::from_cents(1_300),
+        Money::from_cents(0),
+        Money::from_cents(500),
+    )
+    .unwrap();
+    assert_eq!(even_case.reference_price, Money::from_cents(1_167));
+    // .5 精确边界：前收 1001、无红利、配股价 1001、比例 100_000（10%）：
+    // (1001 + 100.1)/1.1 = 1101.1/1.1 = 1001.0 → 恰整除，锚定无舍入路径。
+    let exact = rights_offering_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+            ratio_micros: 100_000,
+        },
+        date("2030-06-10"),
+        Money::from_cents(1_001),
+        Money::from_cents(0),
+        Money::from_cents(1_001),
+    )
+    .unwrap();
+    assert_eq!(exact.reference_price, Money::from_cents(1_001));
+}
