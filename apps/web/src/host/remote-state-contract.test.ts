@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { wireIntentOf } from "./protocol/stock-identity.ts";
 import test from "node:test";
 import type { Intent, SessionSetup } from "../types/engine.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
@@ -7,7 +8,8 @@ import { createRemoteHost } from "./remote-host.ts";
 const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
 const baseline = (generation = 1) => ({ Baseline: { timeline_generation: generation, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
 const protocol = (generation = 1) => ({ PublisherFrame: { timeline_generation: generation, update: { TickBatch: { frames: [], runtime_snapshot: null } }, civil_date: "2030-01-02", public_revision: 0 } });
-const intent = {} as Intent;
+// 公共 Intent 形态（代码串 code；宿主经 wireIntentOf 译数值后上 wire）。
+const intent = { PlaceLimit: { code: "600101", side: "Buy" as const, price: { Fixed: "1000" }, qty: 100 } } satisfies Intent;
 
 class FakeSocket {
   readyState = 1;
@@ -63,11 +65,12 @@ test("Remote SubmitIntent 严格携带权威 generation，不用默认值且旧�
   socket.receive(baseline(2));
   socket.receive({ CommandQueued: { request_id: commandId(socket, 0) } });
   await rejected;
-  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent } });
+  // wire 携带数值 StockId（wireIntentOf 译码串→数值，ADR 0041）。
+  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent: wireIntentOf(intent) } });
   const current = host.submitIntent(intent);
   socket.receive({ CommandQueued: { request_id: commandId(socket, 1) } });
   await current;
-  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent } });
+  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent: wireIntentOf(intent) } });
   await host.dispose();
 });
 

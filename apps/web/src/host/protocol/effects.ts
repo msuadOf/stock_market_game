@@ -1,14 +1,12 @@
 import type { ContinuousPoint } from "../../types/generated/ContinuousPoint.ts";
-import type { Event } from "../../types/generated/Event.ts";
-import type { EventFact } from "../../types/generated/EventFact.ts";
-import { factIdentity } from "./canonical.ts";
 import { ProtocolError, type AutomaticOrderPoint, type ProtocolEffect } from "./types.ts";
+import { codedFactIdentity, type CodedEvent, type CodedEventFact } from "./stock-identity.ts";
 
 function assertNever(value: never): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.effects", `未处理拒单原因：${String(value)}`);
 }
 
-function effectsFromEvent(event: Event, tick: number): readonly ProtocolEffect[] {
+function effectsFromEvent(event: CodedEvent, tick: number): readonly ProtocolEffect[] {
   if ("IntentRejected" in event) {
     const reason = rejectionMessage(event.IntentRejected.reason);
     // account 0 是现有玩家账户；NPC 业务拒单保留为事实，不冒充玩家操作反馈。
@@ -22,7 +20,7 @@ function effectsFromEvent(event: Event, tick: number): readonly ProtocolEffect[]
   return [];
 }
 
-function rejectionMessage(reason: Extract<Event, { IntentRejected: unknown }>["IntentRejected"]["reason"]): string {
+function rejectionMessage(reason: Extract<CodedEvent, { IntentRejected: unknown }>["IntentRejected"]["reason"]): string {
   switch (reason) {
     case "InsufficientCash":
       return "资金不足";
@@ -60,13 +58,13 @@ function sortedPoints(points: Readonly<Record<string, ContinuousPoint>>): readon
 }
 
 export function effectsFromFacts(
-  facts: readonly EventFact[],
+  facts: readonly CodedEventFact[],
   continuousPoints: Readonly<Record<string, ContinuousPoint>>,
   tick: number,
 ): readonly ProtocolEffect[] {
   const effects = facts
     .slice()
-    .sort((left, right) => factIdentity(left).localeCompare(factIdentity(right)))
+    .sort((left, right) => codedFactIdentity(left).localeCompare(codedFactIdentity(right)))
     .flatMap((fact) => effectsFromEvent(fact.event, tick));
   const points = sortedPoints(continuousPoints);
   if (points.length > 0) effects.push({ kind: "automatic-order", points });

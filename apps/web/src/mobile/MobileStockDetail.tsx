@@ -60,9 +60,9 @@ function tone(diff: number): "rise" | "fall" | "flat" {
 }
 
 
-function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "code" | "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
+function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick, activeDailyCandle }: Pick<Props, "code" | "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick" | "activeDailyCandle">) {
   const timeline = useTradingTimeline();
-  const projection = MobileIntradayProjection.fromInputs({ timeline, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick });
+  const projection = MobileIntradayProjection.fromInputs({ timeline, market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick, activeDailyCandle });
   const { visiblePoints, visibleAuctionPoints, scale, displayedAverage, progress } = projection;
   const latestPoint = visiblePoints.at(-1);
   const volumeMarks = projection.volumeMarks();

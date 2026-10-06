@@ -1,15 +1,18 @@
-import type { AuctionPoint } from "../../types/generated/AuctionPoint.ts";
-import type { CivilRefresh } from "../../types/generated/CivilRefresh.ts";
-import type { CivilUpdate } from "../../types/generated/CivilUpdate.ts";
 import type { ContinuousPoint } from "../../types/generated/ContinuousPoint.ts";
 import type { EngineUpdate } from "../../types/generated/EngineUpdate.ts";
-import type { Event } from "../../types/generated/Event.ts";
-import type { EventFact } from "../../types/generated/EventFact.ts";
 import type { PausePreferences } from "../../types/generated/PausePreferences.ts";
-import type { Snapshot } from "../../types/generated/Snapshot.ts";
 import type { StockSpec } from "../../types/generated/StockSpec.ts";
-import type { RuntimeDelta } from "../../types/generated/RuntimeDelta.ts";
 import type { PlayerWorkingOrder } from "../player-working-orders.ts";
+import type {
+  CodedAuctionPoint,
+  CodedCivilRefresh,
+  CodedCivilUpdate,
+  CodedEvent,
+  CodedEventFact,
+  CodedRuntimeDelta,
+  CodedSnapshot,
+  CodedTradeEvent,
+} from "./stock-identity.ts";
 
 export type ProtocolCursor = {
   readonly generation: string;
@@ -19,7 +22,7 @@ export type ProtocolCursor = {
 
 export type ProtocolState = {
   readonly cursor: ProtocolCursor;
-  readonly snapshot: Snapshot;
+  readonly snapshot: CodedSnapshot;
   readonly securities: readonly StockSpec[];
   readonly publicPublicationIds: readonly string[];
   readonly intraday: readonly NormalizedTickFrame[];
@@ -32,13 +35,13 @@ export type AcceptedUpdate = string;
 
 export type NormalizedTickFrame = {
   readonly tick: number;
-  readonly events: readonly Event[];
-  readonly facts: readonly EventFact[];
+  readonly events: readonly CodedEvent[];
+  readonly facts: readonly CodedEventFact[];
   readonly continuousPoints: Readonly<Record<string, ContinuousPoint>>;
-  readonly auctionPoints: Readonly<Record<string, readonly AuctionPoint[]>>;
-  readonly closedDailyCandles: Snapshot["active_daily_candles"];
-  readonly activeDailyCandles: Snapshot["active_daily_candles"];
-  readonly markets: Snapshot["markets"];
+  readonly auctionPoints: Readonly<Record<string, readonly CodedAuctionPoint[]>>;
+  readonly closedDailyCandles: CodedSnapshot["active_daily_candles"];
+  readonly activeDailyCandles: CodedSnapshot["active_daily_candles"];
+  readonly markets: CodedSnapshot["markets"];
   readonly seqFrom: number;
   readonly seqTo: number;
 };
@@ -46,14 +49,14 @@ export type NormalizedTickFrame = {
 export type NormalizedTickBatch = {
   readonly kind: "tick-batch";
   readonly frames: readonly NormalizedTickFrame[];
-  readonly runtimeSnapshot: Snapshot | null;
-  readonly runtimeDelta: RuntimeDelta | null;
+  readonly runtimeSnapshot: CodedSnapshot | null;
+  readonly runtimeDelta: CodedRuntimeDelta | null;
 };
 
 export type NormalizedCivilUpdate = {
   readonly kind: "civil-update";
-  readonly update: CivilUpdate;
-  readonly refresh: CivilRefresh;
+  readonly update: CodedCivilUpdate;
+  readonly refresh: CodedCivilRefresh;
   readonly intraday: readonly NormalizedTickFrame[];
 };
 
@@ -65,7 +68,7 @@ export type AutomaticOrderPoint = ContinuousPoint & {
 
 export type ProtocolEffect =
   | { readonly kind: "notice"; readonly message: string }
-  | { readonly kind: "trade"; readonly event: Extract<Event, { Trade: unknown }>["Trade"] & { readonly tick: number } }
+  | { readonly kind: "trade"; readonly event: CodedTradeEvent & { readonly tick: number } }
   | { readonly kind: "automatic-order"; readonly points: readonly AutomaticOrderPoint[] }
   | {
       readonly kind: "civil-barrier";
@@ -102,7 +105,7 @@ export class ProtocolError extends Error {
   }
 }
 
-export function createProtocolState(snapshot: Snapshot, generation: string): ProtocolState {
+export function createProtocolState(snapshot: CodedSnapshot, generation: string): ProtocolState {
   return {
     cursor: { generation, tick: snapshot.tick, seq: snapshot.seq },
     snapshot,

@@ -72,10 +72,10 @@ test("belief confidence rejects values above 10000 at the save boundary", () => 
     last_cause: null, applied_experience_orders: [],
   }
   const withConfidence = (confidence: number) => ({
-    ...base, entries: { "600001": { ...entry, confidence_bp: confidence } },
+    ...base, entries: { "0": { ...entry, confidence_bp: confidence } },
   })
   for (const confidence of [0, 10_000]) {
-    assert.equal(parseBeliefBook(withConfidence(confidence), "book").entries["600001"].confidence_bp, confidence)
+    assert.equal(parseBeliefBook(withConfidence(confidence), "book").entries["0"].confidence_bp, confidence)
   }
   for (const confidence of [10_001, 65_535]) {
     assert.throws(() => parseBeliefBook(withConfidence(confidence), "book"), /confidence_bp/)
@@ -90,7 +90,7 @@ const withExitFact = {
       failure_events: [],
       stocks: {},
       exit_records: [{
-        code: "600001",
+        code: 0,
         order_id: "9",
         cooldown_until_market_minute: null,
         realized_profit: true,

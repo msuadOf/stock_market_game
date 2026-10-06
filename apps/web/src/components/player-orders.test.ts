@@ -46,23 +46,25 @@ test("keeps same-price orders distinct when projected from the authoritative sav
 })
 
 test("projects only the player's authoritative auction and continuous orders", () => {
+  // 存档 wire 的委托 map 键是 StockId 字符串（ADR 0041）：3=600101、1=002156；
+  // 投影结果 code 原样透传该键。
   const orders = projectPlayerOrders({
     auction_orders: {
-      "600101": [
+      "3": [
         { owner: 0, side: "Buy", limit: "1105", qty: 200, order_id: 7 },
         { owner: 3, side: "Sell", limit: "1120", qty: 100, order_id: 8 },
       ],
     },
     resting_orders: {
-      "002156": [
+      "1": [
         { id: 11, owner: 0, side: "Sell", price: "2700", qty: 100, original_qty: 200, filled_qty: 100, filled_value: "270000", seq: 19 },
       ],
     },
   })
 
   assert.deepEqual(orders, [
-    { id: 7, code: "600101", side: "Buy", price: "1105", remainingQty: 200, venue: "auction", frozen: "cash" },
-    { id: 11, code: "002156", side: "Sell", price: "2700", remainingQty: 100, venue: "continuous", frozen: "shares" },
+    { id: 7, code: "3", side: "Buy", price: "1105", remainingQty: 200, venue: "auction", frozen: "cash" },
+    { id: 11, code: "1", side: "Sell", price: "2700", remainingQty: 100, venue: "continuous", frozen: "shares" },
   ])
 })
 

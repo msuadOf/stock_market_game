@@ -15,6 +15,8 @@ import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-
 import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { exact } from "./protocol/guards.ts";
+import { wireIntentOf } from "./protocol/stock-identity.ts";
+import { stockIdOf } from "../config/stock-ids.ts";
 
 type EngineEventPayload = {
   readonly session_id: string;
@@ -256,7 +258,8 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     },
     async submitIntent(intent) {
       const generation = timeline.captureGeneration();
-      await invoke("enqueue", { sessionId: requireSession(), generation, intent });
+      // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再入队（ADR 0041）。
+      await invoke("enqueue", { sessionId: requireSession(), generation, intent: wireIntentOf(intent) });
       assertResponseCurrent(generation, "submitIntent");
     },
     snapshot() {
@@ -292,7 +295,8 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
       timeline.baselineForRead("Tauri 基线尚未就绪，不能查询股票历史");
       const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("query_stock_history", { sessionId: requireSession(), generation: cursor.generation, code }), "Tauri query_stock_history");
+      // Tauri 命令参数 code 为数值 StockId（ADR 0041）。
+      const response = record(await invoke<unknown>("query_stock_history", { sessionId: requireSession(), generation: cursor.generation, code: stockIdOf(code) }), "Tauri query_stock_history");
       timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri query_stock_history.generation"), "Tauri 股票历史响应属于已过期会话 generation");
       return parseHistoricalStockData(response.value, code);
     },

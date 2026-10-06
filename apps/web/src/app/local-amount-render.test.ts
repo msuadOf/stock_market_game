@@ -113,7 +113,9 @@ test("审计G46：一档、两档、五档卖盘标签对应真实rank，卖一�
 test("审计G49：持仓成本半偶到分，浮盈使用同一每股成本口径", () => {
   for (const [invested, recovered, cost, pnl] of [[200100, 0, "10.00", "+2"], [0, 200100, "-10.00", "+4002"]] as const) {
     const active = structuredClone(snapshot);
-    active.accounts["0"].positions["600101"] = { qty: 200, t1_locked: 0, invested_cents: String(invested), recovered_cents: String(recovered) };
+    // positions 是 Readonly Record：以新账户对象整体替换该持仓项，不原位改写。
+    const account = active.accounts["0"];
+    active.accounts["0"] = { ...account, positions: { ...account.positions, "600101": { qty: 200, t1_locked: 0, invested_cents: String(invested), recovered_cents: String(recovered) } } };
     active.markets["600101"].last_price = "1001";
     const html = renderView(createElement(views.PositionsPanel, { onOpenMarket() {} }), active);
     assert.match(html, new RegExp(`<td class="num">${cost.replace(".", "\\.")}<\\/td>`));
@@ -123,7 +125,9 @@ test("审计G49：持仓成本半偶到分，浮盈使用同一每股成本口�
 
 test("Q16：持仓SSR保留真实负净成本金额与浮盈金额，不显示误导收益率", { timeout: 10000 }, () => {
   const active = structuredClone(snapshot);
-  active.accounts["0"].positions["600101"] = { qty: 200, t1_locked: 0, invested_cents: "200000", recovered_cents: "400000" };
+  // positions 是 Readonly Record：以新账户对象整体替换该持仓项，不原位改写。
+  const account = active.accounts["0"];
+  active.accounts["0"] = { ...account, positions: { ...account.positions, "600101": { qty: 200, t1_locked: 0, invested_cents: "200000", recovered_cents: "400000" } } };
   active.markets["600101"].last_price = "1001";
   const html = renderView(createElement(views.PositionsPanel, { onOpenMarket() {} }), active);
   assert.match(html, /<td class="num">-10\.00<\/td>/);

@@ -3,7 +3,7 @@ import test from "node:test";
 import { applyProtocolRuntimeDelta, installProtocolSnapshotBaseline, snapshotReducer } from "./store.ts";
 import { parseProtocolSnapshot } from "../host/protocol/parse.ts";
 import { snapshot } from "../host/protocol-test-fixtures.ts";
-import type { RuntimeDelta } from "../types/generated/RuntimeDelta.ts";
+import type { CodedRuntimeDelta } from "../host/protocol/stock-identity.ts";
 
 function baseline() {
   return snapshotReducer(undefined, installProtocolSnapshotBaseline({ generation: "1", snapshot: parseProtocolSnapshot({
@@ -11,7 +11,7 @@ function baseline() {
   }) }));
 }
 
-function delta(): RuntimeDelta {
+function delta(): CodedRuntimeDelta {
   return {
     tick: 1, seq_from: 0, seq_to: 0, day: 0, phase: "Continuous",
     accounts: {}, working_orders: { reset: true, upserts: [], removed: [] },

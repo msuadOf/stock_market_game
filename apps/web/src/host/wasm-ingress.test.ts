@@ -6,8 +6,8 @@ test("Browser ingress 不等待 engine worker 返回便把完整 Intent 交给�
   const received: unknown[] = [];
   const ingress = new WasmIngressReceiver((token, intent) => { received.push([token, intent]); });
   ingress.bind(1, 42);
-  ingress.submit(1, { Cancel: { code: "600000", id: 7 } });
-  assert.deepEqual(received, [[42, { Cancel: { code: "600000", id: 7 } }]]);
+  ingress.submit(1, { Cancel: { code: 0, id: 7 } });
+  assert.deepEqual(received, [[42, { Cancel: { code: 0, id: 7 } }]]);
 });
 
 test("Browser ingress 拒绝未绑定、旧 generation 和销毁后请求", { timeout: 10000 }, () => {

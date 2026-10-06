@@ -8,7 +8,7 @@ async function fixture(autoAcknowledge = true) {
   let nextTimer = 0;
   let steps = 0;
   let failure: unknown = null;
-  let update: unknown = tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1));
+  let update: unknown = tickBatch([frame(1, 0, [0])], snapshot(1, 1));
   const timers = new Map<number, { callback: () => void; delay: number }>();
   const posted: unknown[] = [];
   const failed: unknown[] = [];
@@ -194,7 +194,7 @@ test("WasmTickLoop 16ms 聚合完整提交，消费者接纳确认不依赖绘�
   const delivery = fixtureState.posted[0] as { type: string; updates: unknown[]; deliveryId: number };
   assert.equal(delivery.type, "protocolBatch");
   assert.equal(delivery.updates.length, 2);
-  assert.deepEqual(delivery.updates[0], tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)));
+  assert.deepEqual(delivery.updates[0], tickBatch([frame(1, 0, [0])], snapshot(1, 1)));
   fixtureState.loop.acknowledge(3, delivery.deliveryId);
   assert.equal(fixtureState.loop.isRunning(), true);
 });

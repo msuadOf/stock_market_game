@@ -15,7 +15,7 @@ test("Given three frames including an empty one, when reduced, then every frame 
   const result = reduceEngineUpdate(
     baseState(),
     "generation-1",
-    tickBatch([frame(1, 0, ["600000"]), frame(2, 1, []), frame(3, 1, ["600002"])], snapshot(3, 2)),
+    tickBatch([frame(1, 0, [0]), frame(2, 1, []), frame(3, 1, [2])], snapshot(3, 2)),
   );
 
   assert.equal(result.kind, "applied");
@@ -23,7 +23,7 @@ test("Given three frames including an empty one, when reduced, then every frame 
 });
 
 test("Given facts and events reversed together, when replayed, then it is exact and emits no effects", () => {
-  const update = tickBatch([frame(1, 0, ["600000", "600001"])], snapshot(1, 2));
+  const update = tickBatch([frame(1, 0, [0, 1])], snapshot(1, 2));
   const first = reduceEngineUpdate(baseState(), "generation-1", update);
   assert.equal(first.kind, "applied");
   const original = firstFrame(update.TickBatch);
@@ -40,32 +40,32 @@ test("Given facts and events reversed together, when replayed, then it is exact 
 });
 
 test("Given an event-fact pair moved between valid frames, when replayed, then it rejects changed tick boundaries", () => {
-  const original = tickBatch([frame(1, 0, ["600000"]), frame(2, 1, ["600001"])], snapshot(2, 2));
+  const original = tickBatch([frame(1, 0, [0]), frame(2, 1, [1])], snapshot(2, 2));
   const first = reduceEngineUpdate(baseState(), "generation-1", original);
   assert.equal(first.kind, "applied");
 
   assert.throws(
     () => reduceEngineUpdate(first.state, "generation-1", tickBatch([
-      frame(1, 0, ["600001"]),
-      frame(2, 1, ["600000"]),
+      frame(1, 0, [1]),
+      frame(2, 1, [0]),
     ], snapshot(2, 2))),
     { code: "PROTOCOL_REPLAY" },
   );
 });
 
 test("Given a coherent mutation ending at an accepted cursor, when replayed, then it rejects PROTOCOL_REPLAY", () => {
-  const accepted = reduceEngineUpdate(baseState(), "generation-1", tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)));
+  const accepted = reduceEngineUpdate(baseState(), "generation-1", tickBatch([frame(1, 0, [0])], snapshot(1, 1)));
   assert.equal(accepted.kind, "applied");
 
   assert.throws(
-    () => reduceEngineUpdate(accepted.state, "generation-1", tickBatch([frame(1, 0, ["600001"])], snapshot(1, 1))),
+    () => reduceEngineUpdate(accepted.state, "generation-1", tickBatch([frame(1, 0, [1])], snapshot(1, 1))),
     { code: "PROTOCOL_REPLAY" },
   );
 });
 
 test("Given missing, duplicate, or mutated facts, when reduced, then input state remains unchanged", () => {
   const state = baseState();
-  const valid = tickBatch([frame(1, 0, ["600000", "600001"])], snapshot(1, 2));
+  const valid = tickBatch([frame(1, 0, [0, 1])], snapshot(1, 2));
   const current = firstFrame(valid.TickBatch);
   const facts = recordArray(current.facts, "facts");
   const missingFact = tickBatch([{ ...current, facts: [facts[0] ?? {}] }], snapshot(1, 2));
@@ -82,9 +82,9 @@ test("Given missing, duplicate, or mutated facts, when reduced, then input state
 
 test("Given a snapshot mismatch or cursor gap, when reduced, then input state remains unchanged", () => {
   const state = baseState();
-  const snapshotSequenceMismatch = tickBatch([frame(1, 0, ["600000"])], snapshot(1, 2));
-  const snapshotTickMismatch = tickBatch([frame(1, 0, ["600000"])], snapshot(2, 1));
-  const cursorGap = tickBatch([frame(2, 1, ["600000"])], snapshot(2, 2));
+  const snapshotSequenceMismatch = tickBatch([frame(1, 0, [0])], snapshot(1, 2));
+  const snapshotTickMismatch = tickBatch([frame(1, 0, [0])], snapshot(2, 1));
+  const cursorGap = tickBatch([frame(2, 1, [0])], snapshot(2, 2));
 
   for (const malformed of [snapshotSequenceMismatch, snapshotTickMismatch, cursorGap]) {
     assert.throws(() => reduceEngineUpdate(state, "generation-1", malformed));
@@ -94,8 +94,8 @@ test("Given a snapshot mismatch or cursor gap, when reduced, then input state re
 
 test("Given a tick or sequence gap inside one batch, when reduced, then the whole batch is rejected", () => {
   const state = baseState();
-  const tickGap = tickBatch([frame(1, 0, ["600000"]), frame(3, 1, ["600001"])], snapshot(3, 2));
-  const sequenceGap = tickBatch([frame(1, 0, ["600000"]), frame(2, 2, ["600001"])], snapshot(2, 3));
+  const tickGap = tickBatch([frame(1, 0, [0]), frame(3, 1, [1])], snapshot(3, 2));
+  const sequenceGap = tickBatch([frame(1, 0, [0]), frame(2, 2, [1])], snapshot(2, 3));
 
   for (const malformed of [tickGap, sequenceGap]) {
     assert.throws(() => reduceEngineUpdate(state, "generation-1", malformed), { code: "PROTOCOL_MALFORMED" });
@@ -104,7 +104,7 @@ test("Given a tick or sequence gap inside one batch, when reduced, then the whol
 });
 
 test("Given reversed fact arrays, when reduced, then effects and canonical state are invariant", () => {
-  const original = tickBatch([frame(1, 0, ["600000", "600001"])], snapshot(1, 2));
+  const original = tickBatch([frame(1, 0, [0, 1])], snapshot(1, 2));
   const current = firstFrame(original.TickBatch);
   const reversed = tickBatch([{
     ...current,
@@ -123,10 +123,10 @@ test("Given reversed fact arrays, when reduced, then effects and canonical state
 });
 
 test("Given JSON and WASM Map forms, when reduced, then they produce equal state", () => {
-  const json = tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1));
+  const json = tickBatch([frame(1, 0, [0])], snapshot(1, 1));
   const wasm: JsonRecord = {
     TickBatch: new Map<string, JsonValue>([
-      ["frames", [frame(1, 0, ["600000"])]],
+      ["frames", [frame(1, 0, [0])]],
       ["runtime_snapshot", snapshot(1, 1)],
     ]),
   };
@@ -141,7 +141,7 @@ test("Given JSON and WASM Map forms, when reduced, then they produce equal state
 
 test("Given null final snapshot or a valid empty frame, when reduced, then the cursor advances without replacing authority", () => {
   const state = baseState();
-  const withoutSnapshot = reduceEngineUpdate(state, "generation-1", tickBatch([frame(1, 0, ["600000"])], null));
+  const withoutSnapshot = reduceEngineUpdate(state, "generation-1", tickBatch([frame(1, 0, [0])], null));
   assert.equal(withoutSnapshot.kind, "applied");
   assert.deepEqual(withoutSnapshot.state.snapshot, state.snapshot);
 

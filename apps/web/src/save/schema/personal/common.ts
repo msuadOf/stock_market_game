@@ -17,7 +17,9 @@ export function planKey(key: string, path: string): void {
 }
 
 export function stockKey(key: string, path: string): void {
-  if (!/^\d{6}$/.test(key)) throw new SaveSchemaError(path, "必须是六码股票代码")
+  if (!/^(0|[1-9]\d*)$/.test(key) || BigInt(key) > U32_MAX) {
+    throw new SaveSchemaError(path, "必须是数值 StockId 的规范十进制字符串形态（ADR 0041）")
+  }
 }
 
 export function companyKey(key: string, path: string): void {

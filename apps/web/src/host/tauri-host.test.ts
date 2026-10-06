@@ -5,6 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { setImmediate } from "node:timers/promises";
 import { createTauriHost } from "./tauri-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
+import { wireIntentOf } from "./protocol/stock-identity.ts";
 
 test("Tauri save pins generation for keyed and latest candidates and rejects a late response after load", async () => {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -83,13 +84,13 @@ test("Tauri enqueue 严格携带当前 generation，restore 后旧入队确认�
     assert.ok(complete);
     complete();
     await rejected;
-    assert.deepEqual(requests[0], { sessionId: "session-1", generation: "1", intent });
+    assert.deepEqual(requests[0], { sessionId: "session-1", generation: "1", intent: wireIntentOf(intent) });
     const current = host.submitIntent(intent);
     await Promise.resolve();
     assert.ok(complete);
     complete();
     await current;
-    assert.deepEqual(requests[1], { sessionId: "session-1", generation: "2", intent });
+    assert.deepEqual(requests[1], { sessionId: "session-1", generation: "2", intent: wireIntentOf(intent) });
   }, (command, args) => {
     if (command !== "enqueue") return undefined;
     requests.push(args);
@@ -140,14 +141,14 @@ test("Tauri 同 generation refresh 使 orders 与 NPC 查询失效，但 save �
 test("Tauri 股票历史查询绑定 generation，刷新后拒绝旧结果，调用参数不含账户", { timeout: 10000 }, async () => {
   let finishHistory!: (value: unknown) => void;
   await withTauriHost(async (host, calls) => {
-    const history = assert.rejects(host.queryStockHistory("600000"), /股票历史响应属于已过期/);
+    const history = assert.rejects(host.queryStockHistory("000812"), /股票历史响应属于已过期/);
     await host.refreshBaseline();
-    finishHistory({ generation: "1", value: { code: "600000", daily_candles: [], active_daily_candle: null } });
+    finishHistory({ generation: "1", value: { code: 0, daily_candles: [], active_daily_candle: null } });
     await history;
     assert.ok(calls.includes("query_stock_history"));
   }, (command, args) => {
     if (command === "query_stock_history") {
-      assert.deepEqual(args, { sessionId: "session-1", generation: "1", code: "600000" });
+      assert.deepEqual(args, { sessionId: "session-1", generation: "1", code: 0 });
       return new Promise((resolve) => { finishHistory = resolve; });
     }
   });

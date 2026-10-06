@@ -1,18 +1,22 @@
-import type { AccountSnap } from "../../types/generated/AccountSnap.ts";
 import type { AuctionPoint } from "../../types/generated/AuctionPoint.ts";
-import type { CivilRefresh } from "../../types/generated/CivilRefresh.ts";
-import type { CivilUpdate } from "../../types/generated/CivilUpdate.ts";
 import type { ContinuousPoint } from "../../types/generated/ContinuousPoint.ts";
-import type { EngineUpdate } from "../../types/generated/EngineUpdate.ts";
 import type { EntityTag } from "../../types/generated/EntityTag.ts";
-import type { Event } from "../../types/generated/Event.ts";
-import type { EventFact } from "../../types/generated/EventFact.ts";
 import type { EventStableKey } from "../../types/generated/EventStableKey.ts";
-import type { Snapshot } from "../../types/generated/Snapshot.ts";
-import type { TickFrame } from "../../types/generated/TickFrame.ts";
-import type { TickTimeseriesPayload } from "../../types/generated/TickTimeseriesPayload.ts";
 import { exact, enumValue, field, mapEntries, normalizeSerdeValue, nullable, record, safeInteger, safeU8, safeU32, text, values } from "./guards.ts";
 import { ProtocolError } from "./types.ts";
+import {
+  type CodedSnapshot,
+  translateSnapshot,
+  type WireAccountSnap,
+  type WireCivilRefresh,
+  type WireCivilUpdate,
+  type WireEngineUpdate,
+  type WireEvent,
+  type WireEventFact,
+  type WireSnapshot,
+  type WireTickFrame,
+  type WireTickTimeseriesPayload,
+} from "./stock-identity.ts";
 import { parseRuntimeDelta } from "./runtime-delta.ts";
 import {
   parseDayStatus,
@@ -52,7 +56,9 @@ function entity(value: unknown, path: string): EntityTag {
   const [kind, payload] = entries[0] ?? malformed(path, "实体缺失");
   switch (kind) {
     case "Stock":
-      return { Stock: text(payload, `${path}.Stock`) };
+      // wire 股票身份为数值 StockId（u32）；翻译回代码串发生在 validate 之后的
+      // stock-identity.ts，保证稳定键/canonical_payload 仍按数值比对。
+      return { Stock: safeU32(payload, `${path}.Stock`) };
     case "Account":
       return { Account: safeInteger(payload, `${path}.Account`) };
     default:
@@ -71,7 +77,7 @@ function stableKey(value: unknown, path: string): EventStableKey {
   };
 }
 
-function event(value: unknown, path: string): Event {
+function event(value: unknown, path: string): WireEvent {
   const source = record(value, path);
   const entries = Object.entries(source);
   if (entries.length !== 1 || !isEventName(entries[0]?.[0])) {
@@ -83,16 +89,16 @@ function event(value: unknown, path: string): Event {
   switch (kind) {
     case "Trade":
       exact(payload, ["seq", "code", "price", "qty", "maker", "taker"], `${path}.Trade`);
-      return { Trade: { seq, code: text(field(payload, "code", `${path}.Trade`), `${path}.Trade.code`), price: parseMoney(field(payload, "price", `${path}.Trade`), `${path}.Trade.price`), qty: safeU32(field(payload, "qty", `${path}.Trade`), `${path}.Trade.qty`), maker: safeInteger(field(payload, "maker", `${path}.Trade`), `${path}.Trade.maker`), taker: safeInteger(field(payload, "taker", `${path}.Trade`), `${path}.Trade.taker`) } };
+      return { Trade: { seq, code: safeU32(field(payload, "code", `${path}.Trade`), `${path}.Trade.code`), price: parseMoney(field(payload, "price", `${path}.Trade`), `${path}.Trade.price`), qty: safeU32(field(payload, "qty", `${path}.Trade`), `${path}.Trade.qty`), maker: safeInteger(field(payload, "maker", `${path}.Trade`), `${path}.Trade.maker`), taker: safeInteger(field(payload, "taker", `${path}.Trade`), `${path}.Trade.taker`) } };
     case "AuctionTick":
       exact(payload, ["seq", "tick", "phase", "code", "indicative_price", "matched_volume", "imbalance"], `${path}.AuctionTick`);
-      return { AuctionTick: { seq, tick: safeInteger(field(payload, "tick", `${path}.AuctionTick`), `${path}.AuctionTick.tick`), phase: enumValue(field(payload, "phase", `${path}.AuctionTick`), TRADING_PHASES, `${path}.AuctionTick.phase`), code: text(field(payload, "code", `${path}.AuctionTick`), `${path}.AuctionTick.code`), indicative_price: nullable(field(payload, "indicative_price", `${path}.AuctionTick`), parseMoney, `${path}.AuctionTick.indicative_price`), matched_volume: safeInteger(field(payload, "matched_volume", `${path}.AuctionTick`), `${path}.AuctionTick.matched_volume`), imbalance: safeInteger(field(payload, "imbalance", `${path}.AuctionTick`), `${path}.AuctionTick.imbalance`) } };
+      return { AuctionTick: { seq, tick: safeInteger(field(payload, "tick", `${path}.AuctionTick`), `${path}.AuctionTick.tick`), phase: enumValue(field(payload, "phase", `${path}.AuctionTick`), TRADING_PHASES, `${path}.AuctionTick.phase`), code: safeU32(field(payload, "code", `${path}.AuctionTick`), `${path}.AuctionTick.code`), indicative_price: nullable(field(payload, "indicative_price", `${path}.AuctionTick`), parseMoney, `${path}.AuctionTick.indicative_price`), matched_volume: safeInteger(field(payload, "matched_volume", `${path}.AuctionTick`), `${path}.AuctionTick.matched_volume`), imbalance: safeInteger(field(payload, "imbalance", `${path}.AuctionTick`), `${path}.AuctionTick.imbalance`) } };
     case "AuctionCompleted":
       exact(payload, ["seq", "tick", "phase", "code", "clearing_price", "matched_volume"], `${path}.AuctionCompleted`);
-      return { AuctionCompleted: { seq, tick: safeInteger(field(payload, "tick", `${path}.AuctionCompleted`), `${path}.AuctionCompleted.tick`), phase: enumValue(field(payload, "phase", `${path}.AuctionCompleted`), TRADING_PHASES, `${path}.AuctionCompleted.phase`), code: text(field(payload, "code", `${path}.AuctionCompleted`), `${path}.AuctionCompleted.code`), clearing_price: nullable(field(payload, "clearing_price", `${path}.AuctionCompleted`), parseMoney, `${path}.AuctionCompleted.clearing_price`), matched_volume: safeInteger(field(payload, "matched_volume", `${path}.AuctionCompleted`), `${path}.AuctionCompleted.matched_volume`) } };
+      return { AuctionCompleted: { seq, tick: safeInteger(field(payload, "tick", `${path}.AuctionCompleted`), `${path}.AuctionCompleted.tick`), phase: enumValue(field(payload, "phase", `${path}.AuctionCompleted`), TRADING_PHASES, `${path}.AuctionCompleted.phase`), code: safeU32(field(payload, "code", `${path}.AuctionCompleted`), `${path}.AuctionCompleted.code`), clearing_price: nullable(field(payload, "clearing_price", `${path}.AuctionCompleted`), parseMoney, `${path}.AuctionCompleted.clearing_price`), matched_volume: safeInteger(field(payload, "matched_volume", `${path}.AuctionCompleted`), `${path}.AuctionCompleted.matched_volume`) } };
     case "PriceTick":
       exact(payload, ["seq", "tick", "code", "last_price", "daily_candle", "bids", "asks"], `${path}.PriceTick`);
-      return { PriceTick: { seq, tick: safeInteger(field(payload, "tick", `${path}.PriceTick`), `${path}.PriceTick.tick`), code: text(field(payload, "code", `${path}.PriceTick`), `${path}.PriceTick.code`), last_price: parseMoney(field(payload, "last_price", `${path}.PriceTick`), `${path}.PriceTick.last_price`), daily_candle: parseDailyCandle(field(payload, "daily_candle", `${path}.PriceTick`), `${path}.PriceTick.daily_candle`), bids: parseDepth(field(payload, "bids", `${path}.PriceTick`), `${path}.PriceTick.bids`), asks: parseDepth(field(payload, "asks", `${path}.PriceTick`), `${path}.PriceTick.asks`) } };
+      return { PriceTick: { seq, tick: safeInteger(field(payload, "tick", `${path}.PriceTick`), `${path}.PriceTick.tick`), code: safeU32(field(payload, "code", `${path}.PriceTick`), `${path}.PriceTick.code`), last_price: parseMoney(field(payload, "last_price", `${path}.PriceTick`), `${path}.PriceTick.last_price`), daily_candle: parseDailyCandle(field(payload, "daily_candle", `${path}.PriceTick`), `${path}.PriceTick.daily_candle`), bids: parseDepth(field(payload, "bids", `${path}.PriceTick`), `${path}.PriceTick.bids`), asks: parseDepth(field(payload, "asks", `${path}.PriceTick`), `${path}.PriceTick.asks`) } };
     case "DayBoundary":
       exact(payload, ["seq", "day", "closed_daily_candles"], `${path}.DayBoundary`);
       return { DayBoundary: { seq, day: safeU32(field(payload, "day", `${path}.DayBoundary`), `${path}.DayBoundary.day`), closed_daily_candles: mapEntries(field(payload, "closed_daily_candles", `${path}.DayBoundary`), `${path}.DayBoundary.closed_daily_candles`, parseDailyCandle) } };
@@ -104,16 +110,16 @@ function event(value: unknown, path: string): Event {
       return { CompanyDisclosurePublished: { seq, publication_id: safeU32(field(payload, "publication_id", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.publication_id`), company: text(field(payload, "company", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.company`), published_at: parseInstant(field(payload, "published_at", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.published_at`), kind: parseDisclosureKind(field(payload, "kind", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.kind`) } };
     case "IntentRejected":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.IntentRejected`);
-      return { IntentRejected: { seq, account: safeInteger(field(payload, "account", `${path}.IntentRejected`), `${path}.IntentRejected.account`), code: text(field(payload, "code", `${path}.IntentRejected`), `${path}.IntentRejected.code`), reason: enumValue(field(payload, "reason", `${path}.IntentRejected`), REJECTION_REASONS, `${path}.IntentRejected.reason`) } };
+      return { IntentRejected: { seq, account: safeInteger(field(payload, "account", `${path}.IntentRejected`), `${path}.IntentRejected.account`), code: safeU32(field(payload, "code", `${path}.IntentRejected`), `${path}.IntentRejected.code`), reason: enumValue(field(payload, "reason", `${path}.IntentRejected`), REJECTION_REASONS, `${path}.IntentRejected.reason`) } };
     case "SettlementError":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.SettlementError`);
-      return { SettlementError: { seq, account: safeInteger(field(payload, "account", `${path}.SettlementError`), `${path}.SettlementError.account`), code: text(field(payload, "code", `${path}.SettlementError`), `${path}.SettlementError.code`), reason: text(field(payload, "reason", `${path}.SettlementError`), `${path}.SettlementError.reason`) } };
+      return { SettlementError: { seq, account: safeInteger(field(payload, "account", `${path}.SettlementError`), `${path}.SettlementError.account`), code: safeU32(field(payload, "code", `${path}.SettlementError`), `${path}.SettlementError.code`), reason: text(field(payload, "reason", `${path}.SettlementError`), `${path}.SettlementError.reason`) } };
     case "OrderCanceled":
       exact(payload, ["seq", "account", "code", "id", "remaining_qty"], `${path}.OrderCanceled`);
-      return { OrderCanceled: { seq, account: safeInteger(field(payload, "account", `${path}.OrderCanceled`), `${path}.OrderCanceled.account`), code: text(field(payload, "code", `${path}.OrderCanceled`), `${path}.OrderCanceled.code`), id: safeInteger(field(payload, "id", `${path}.OrderCanceled`), `${path}.OrderCanceled.id`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderCanceled`), `${path}.OrderCanceled.remaining_qty`) } };
+      return { OrderCanceled: { seq, account: safeInteger(field(payload, "account", `${path}.OrderCanceled`), `${path}.OrderCanceled.account`), code: safeU32(field(payload, "code", `${path}.OrderCanceled`), `${path}.OrderCanceled.code`), id: safeInteger(field(payload, "id", `${path}.OrderCanceled`), `${path}.OrderCanceled.id`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderCanceled`), `${path}.OrderCanceled.remaining_qty`) } };
     case "OrderAccepted":
       exact(payload, ["seq", "account", "code", "id", "side", "price", "remaining_qty"], `${path}.OrderAccepted`);
-      return { OrderAccepted: { seq, account: safeInteger(field(payload, "account", `${path}.OrderAccepted`), `${path}.OrderAccepted.account`), code: text(field(payload, "code", `${path}.OrderAccepted`), `${path}.OrderAccepted.code`), id: safeInteger(field(payload, "id", `${path}.OrderAccepted`), `${path}.OrderAccepted.id`), side: enumValue(field(payload, "side", `${path}.OrderAccepted`), ["Buy", "Sell"], `${path}.OrderAccepted.side`), price: parseMoney(field(payload, "price", `${path}.OrderAccepted`), `${path}.OrderAccepted.price`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderAccepted`), `${path}.OrderAccepted.remaining_qty`) } };
+      return { OrderAccepted: { seq, account: safeInteger(field(payload, "account", `${path}.OrderAccepted`), `${path}.OrderAccepted.account`), code: safeU32(field(payload, "code", `${path}.OrderAccepted`), `${path}.OrderAccepted.code`), id: safeInteger(field(payload, "id", `${path}.OrderAccepted`), `${path}.OrderAccepted.id`), side: enumValue(field(payload, "side", `${path}.OrderAccepted`), ["Buy", "Sell"], `${path}.OrderAccepted.side`), price: parseMoney(field(payload, "price", `${path}.OrderAccepted`), `${path}.OrderAccepted.price`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderAccepted`), `${path}.OrderAccepted.remaining_qty`) } };
     default:
       return malformed(path, `未处理事件变体：${kind}`);
   }
@@ -123,7 +129,7 @@ function isEventName(value: string | undefined): value is typeof EVENT_NAMES[num
   return value !== undefined && EVENT_NAMES.some((candidate) => candidate === value);
 }
 
-function fact(value: unknown, path: string): EventFact {
+function fact(value: unknown, path: string): WireEventFact {
   const source = record(value, path);
   exact(source, ["key", "event", "canonical_payload"], path);
   return { key: stableKey(field(source, "key", path), `${path}.key`), event: event(field(source, "event", path), `${path}.event`), canonical_payload: text(field(source, "canonical_payload", path), `${path}.canonical_payload`) };
@@ -141,7 +147,7 @@ function auction(value: unknown, path: string): AuctionPoint {
   return { key: stableKey(field(source, "key", path), `${path}.key`), tick: safeInteger(field(source, "tick", path), `${path}.tick`), kind: enumValue(field(source, "kind", path), ["Indication", "Completion"], `${path}.kind`), phase: enumValue(field(source, "phase", path), TRADING_PHASES, `${path}.phase`), indicative_price: nullable(field(source, "indicative_price", path), parseMoney, `${path}.indicative_price`), matched_volume: safeInteger(field(source, "matched_volume", path), `${path}.matched_volume`), imbalance: nullable(field(source, "imbalance", path), safeInteger, `${path}.imbalance`) };
 }
 
-function payload(value: unknown, path: string): TickTimeseriesPayload {
+function payload(value: unknown, path: string): WireTickTimeseriesPayload {
   const source = record(value, path);
   exact(source, ["markets", "active_daily_candles", "closed_daily_candles", "auction_points", "continuous_points"], path);
   return {
@@ -153,10 +159,11 @@ function payload(value: unknown, path: string): TickTimeseriesPayload {
   };
 }
 
-export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): Snapshot {
+/** 原始（数值 StockId 键）快照解析：仅供 parseEngineUpdate 组装原始 EngineUpdate 使用。 */
+export function parseSnapshotRaw(value: unknown, path = "Snapshot"): WireSnapshot {
   const source = record(normalizeSerdeValue(value, path), path);
   exact(source, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path);
-  const snapshot: Snapshot = {
+  const snapshot: WireSnapshot = {
     seq: safeInteger(field(source, "seq", path), `${path}.seq`),
     tick: safeInteger(field(source, "tick", path), `${path}.tick`),
     day: safeU32(field(source, "day", path), `${path}.day`),
@@ -166,6 +173,12 @@ export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): Snapsh
     daily_candles: mapEntries(field(source, "daily_candles", path), `${path}.daily_candles`, (candles, candlePath) => values(candles, candlePath).map((candle, index) => parseDailyCandle(candle, `${candlePath}[${index}]`))),
     active_daily_candles: mapEntries(field(source, "active_daily_candles", path), `${path}.active_daily_candles`, parseDailyCandle),
   };
+  return snapshot;
+}
+
+/** 基线快照摄入：解析原始数值形态后立即翻译为代码串键（ADR 0041）。 */
+export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): CodedSnapshot {
+  const snapshot = translateSnapshot(parseSnapshotRaw(value, path), path);
   for (const [accountId, account] of Object.entries(snapshot.accounts)) {
     for (const code of Object.keys(account.positions)) {
       if (!Object.hasOwn(snapshot.markets, code)) {
@@ -176,7 +189,7 @@ export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): Snapsh
   return snapshot;
 }
 
-function account(value: unknown, path: string): AccountSnap {
+function account(value: unknown, path: string): WireAccountSnap {
   const source = record(value, path);
   exact(source, ["cash", "positions", "reserved_cash", "reserved_sell_qty"], path);
   return {
@@ -191,19 +204,19 @@ function account(value: unknown, path: string): AccountSnap {
   };
 }
 
-function frame(value: unknown, path: string): TickFrame {
+function frame(value: unknown, path: string): WireTickFrame {
   const source = record(value, path);
   exact(source, ["tick", "events", "facts", "timeseries_payload", "seq_from", "seq_to"], path);
   return { tick: safeInteger(field(source, "tick", path), `${path}.tick`), events: values(field(source, "events", path), `${path}.events`).map((entry, index) => event(entry, `${path}.events[${index}]`)), facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)), timeseries_payload: payload(field(source, "timeseries_payload", path), `${path}.timeseries_payload`), seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`), seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`) };
 }
 
-function refresh(value: unknown, path: string): CivilRefresh {
+function refresh(value: unknown, path: string): WireCivilRefresh {
   const source = record(value, path);
   exact(source, ["ticks_per_day", "snapshot", "securities", "intraday", "public_publication_ids"], path);
-  return { ticks_per_day: safeInteger(field(source, "ticks_per_day", path), `${path}.ticks_per_day`, 1), snapshot: parseProtocolSnapshot(field(source, "snapshot", path), `${path}.snapshot`), securities: values(field(source, "securities", path), `${path}.securities`).map((entry, index) => parseStock(entry, `${path}.securities[${index}]`)), intraday: values(field(source, "intraday", path), `${path}.intraday`).map((entry, index) => frame(entry, `${path}.intraday[${index}]`)), public_publication_ids: values(field(source, "public_publication_ids", path), `${path}.public_publication_ids`).map((entry, index) => parseDecimalId(entry, `${path}.public_publication_ids[${index}]`)) };
+  return { ticks_per_day: safeInteger(field(source, "ticks_per_day", path), `${path}.ticks_per_day`, 1), snapshot: parseSnapshotRaw(field(source, "snapshot", path), `${path}.snapshot`), securities: values(field(source, "securities", path), `${path}.securities`).map((entry, index) => parseStock(entry, `${path}.securities[${index}]`)), intraday: values(field(source, "intraday", path), `${path}.intraday`).map((entry, index) => frame(entry, `${path}.intraday[${index}]`)), public_publication_ids: values(field(source, "public_publication_ids", path), `${path}.public_publication_ids`).map((entry, index) => parseDecimalId(entry, `${path}.public_publication_ids[${index}]`)) };
 }
 
-function civil(value: unknown, path: string): CivilUpdate {
+function civil(value: unknown, path: string): WireCivilUpdate {
   const source = record(value, path);
   exact(source, ["boundary", "kinds", "tick", "civil_date", "events", "facts", "seq_from", "seq_to", "refresh"], path);
   const boundary = record(field(source, "boundary", path), `${path}.boundary`);
@@ -221,7 +234,7 @@ function civil(value: unknown, path: string): CivilUpdate {
   };
 }
 
-export function parseEngineUpdate(value: unknown): EngineUpdate {
+export function parseEngineUpdate(value: unknown): WireEngineUpdate {
   const source = record(normalizeSerdeValue(value, "EngineUpdate"), "EngineUpdate");
   const entries = Object.entries(source);
   if (entries.length !== 1) malformed("EngineUpdate", "EngineUpdate 必须恰有一个外部标签");
@@ -231,7 +244,7 @@ export function parseEngineUpdate(value: unknown): EngineUpdate {
       const payload = record(payloadValue, "EngineUpdate.TickBatch");
       const hasDelta = Object.hasOwn(payload, "runtime_delta");
       exact(payload, hasDelta ? ["frames", "runtime_snapshot", "runtime_delta"] : ["frames", "runtime_snapshot"], "EngineUpdate.TickBatch");
-      const batch = { frames: values(field(payload, "frames", "EngineUpdate.TickBatch"), "EngineUpdate.TickBatch.frames").map((entry, index) => frame(entry, `EngineUpdate.TickBatch.frames[${index}]`)), runtime_snapshot: nullable(field(payload, "runtime_snapshot", "EngineUpdate.TickBatch"), parseProtocolSnapshot, "EngineUpdate.TickBatch.runtime_snapshot") };
+      const batch = { frames: values(field(payload, "frames", "EngineUpdate.TickBatch"), "EngineUpdate.TickBatch.frames").map((entry, index) => frame(entry, `EngineUpdate.TickBatch.frames[${index}]`)), runtime_snapshot: nullable(field(payload, "runtime_snapshot", "EngineUpdate.TickBatch"), parseSnapshotRaw, "EngineUpdate.TickBatch.runtime_snapshot") };
       return { TickBatch: hasDelta ? { ...batch, runtime_delta: parseRuntimeDelta(field(payload, "runtime_delta", "EngineUpdate.TickBatch"), "EngineUpdate.TickBatch.runtime_delta", account) } : batch };
     }
     case "CivilUpdate":

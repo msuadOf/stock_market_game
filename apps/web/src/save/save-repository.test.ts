@@ -58,9 +58,9 @@ test("compressed browser save repository reports malformed JSON and rejects old 
   await assert.rejects(repository.load(), /schema_version/)
   stored = `gzip:${JSON.stringify({ ...mature, seed: Number.MAX_SAFE_INTEGER + 1 })}`
   await assert.rejects(repository.load(), /seed/)
-  const candle = mature.snapshot.daily_candles["600101"]?.[0]
+  const candle = mature.snapshot.daily_candles["0"]?.[0]
   if (candle === undefined) throw new Error("current save fixture must contain a daily candle")
-  const daily_candles = { ...mature.snapshot.daily_candles, "600101": [{ ...candle, trade_stats: { turnover_cents: 42, trade_count: 1 } }] }
+  const daily_candles = { ...mature.snapshot.daily_candles, "0": [{ ...candle, trade_stats: { turnover_cents: 42, trade_count: 1 } }] }
   stored = `gzip:${JSON.stringify({ ...mature, snapshot: { ...mature.snapshot, daily_candles } })}`
   await assert.rejects(repository.load(), /turnover_cents/)
 })

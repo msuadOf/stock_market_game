@@ -67,7 +67,7 @@ export function currentSaveFixture(): JsonObject {
       seq: 0,
       tick: 0,
       markets: {
-        "600101": {
+        "0": {
           last_price: "1120",
           last_close: "1120",
         },
@@ -76,16 +76,16 @@ export function currentSaveFixture(): JsonObject {
         "0": { cash: "1000000000", positions: {} },
       },
       daily_candles: {
-        "600101": [{ time: 1893369600, open: "1120", high: "1120", low: "1120", close: "1120", volume: 0 }],
+        "0": [{ time: 1893369600, open: "1120", high: "1120", low: "1120", close: "1120", volume: 0 }],
       },
       active_daily_candles: {},
     },
     auction_orders: {},
     resting_orders: {},
-    book_next_sequences: { "600101": "0" },
+    book_next_sequences: { "0": "0" },
     filled_orders: {},
-    price_history: { "600101": ["1120"] },
-    market_minute_closes: { "600101": [] },
+    price_history: { "0": ["1120"] },
+    market_minute_closes: { "0": [] },
     rng_state: "0",
     npc_attention: {},
     retail_experience: {},

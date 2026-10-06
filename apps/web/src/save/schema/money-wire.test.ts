@@ -30,7 +30,7 @@ test("盘口价格严格使用无损分字符串，股数仍是整数", { timeou
 test("公共存档资金与成本在安全整数外精确保留", { timeout: 10000 }, () => {
   const snapshot = {
     seq: 0, tick: 0, markets: {}, daily_candles: {}, active_daily_candles: {},
-    accounts: { "0": { cash: "9007199254740993", positions: { "600000": { qty: 100, t1_locked: 0, invested_cents: "9007199254740993", recovered_cents: "2" } } } },
+    accounts: { "0": { cash: "9007199254740993", positions: { "0": { qty: 100, t1_locked: 0, invested_cents: "9007199254740993", recovered_cents: "2" } } } },
   };
   assert.equal(parseSaveSnapshot(snapshot, "snapshot").accounts[0]!.cash, "9007199254740993");
   assert.throws(() => parseSaveSnapshot({ ...snapshot, accounts: { "0": { cash: "-1", positions: {} } } }, "snapshot"), /cash.*不能为负数/);
@@ -40,12 +40,12 @@ test("运行快照 PositionSnap 成本严格接受大额字符串并拒绝旧数
   const position = { qty: 100, t1_locked: 0, invested_cents: "9007199254740993", recovered_cents: "9223372036854775807" };
   const snapshot = {
     seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, daily_candles: {}, active_daily_candles: {},
-    accounts: { "0": { cash: "10", reserved_cash: "0", reserved_sell_qty: {}, positions: { "600000": position } } },
+    accounts: { "0": { cash: "10", reserved_cash: "0", reserved_sell_qty: {}, positions: { "0": position } } },
   };
-  assert.deepEqual(parseSnapshot(snapshot, "snapshot").accounts[0]!.positions["600000"], position);
+  assert.deepEqual(parseSnapshot(snapshot, "snapshot").accounts[0]!.positions["0"], position);
   for (const field of ["invested_cents", "recovered_cents"]) {
     const invalid = structuredClone(snapshot);
-    Object.assign(invalid.accounts[0].positions["600000"], { [field]: 1 });
+    Object.assign(invalid.accounts[0].positions["0"], { [field]: 1 });
     assert.throws(() => parseSnapshot(invalid, "snapshot"), new RegExp(field));
   }
 });
@@ -58,7 +58,7 @@ test("NPC 经历金额严格使用 Money 而不误改失败计数", { timeout: 1
 
 test("计划历史资源按整数金额而非字符串字典序校验占用", { timeout: 10000 }, () => {
   const plan = {
-    plan_id: 1, account: 1, code: "600000", direction: "Buy", target: { ShareCount: 100 }, filled_qty: 0,
+    plan_id: 1, account: 1, code: 0, direction: "Buy", target: { ShareCount: 100 }, filled_qty: 0,
     opinion: { signal_score_bp: 1, source: "Fundamental" }, confidence_bp: 1, urgency: "Normal", status: "Active",
     version: 1, last_revision: null, last_resume: null, created_trading_day: 0, horizon_trading_days: 1,
     active_child_order_id: null, last_event_trading_day: 0,

@@ -1,4 +1,5 @@
-import type { Snapshot, StockSpec } from "../types/engine.ts";
+import type { StockSpec } from "../types/engine.ts";
+import type { CodedSnapshot } from "./protocol/stock-identity.ts";
 
 export const UI_UPDATE_INTERVAL_MS = 16;
 export const UI_TARGET_HZ = 1_000 / UI_UPDATE_INTERVAL_MS;
@@ -12,7 +13,7 @@ export type HostUpdate =
   | ({
       readonly type: "baseline";
       readonly generation: string;
-      readonly snapshot: Snapshot;
+      readonly snapshot: CodedSnapshot;
       readonly securities: readonly StockSpec[];
       readonly publicPublicationIds: readonly string[];
     } & PublicMetadata)
@@ -34,7 +35,7 @@ export type HostFailure = {
 
 export function createBaselineUpdate(
   generation: string,
-  snapshot: Snapshot,
+  snapshot: CodedSnapshot,
   metadata: PublicMetadata = { civilDate: null, revision: null },
   securities: readonly StockSpec[] = [],
   publicPublicationIds: readonly string[] = [],

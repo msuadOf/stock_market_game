@@ -39,13 +39,13 @@ test("daily archives cannot restore either live continuous or auction orders", (
 
 test("daily archives reject live resource envelopes and order expiry timers", () => {
   const slot = archive();
-  assert.throws(() => validate({ ...slot, runtime_state: { ...slot.runtime_state, live_envelopes: [{ key: { account: 0, stock: "600101", order: 1, side: "Buy" }, charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" } }] } }), /活动委托/);
-  assert.throws(() => validate({ ...slot, npc_order_lifecycles: [{ account: 1, code: "600101", order_id: 1, placed_market_minute: 0, expires_market_minute: 1 }] }), /活动委托/);
+  assert.throws(() => validate({ ...slot, runtime_state: { ...slot.runtime_state, live_envelopes: [{ key: { account: 0, stock: 3, order: 1, side: "Buy" }, charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" } }] } }), /活动委托/);
+  assert.throws(() => validate({ ...slot, npc_order_lifecycles: [{ account: 1, code: 3, order_id: 1, placed_market_minute: 0, expires_market_minute: 1 }] }), /活动委托/);
 });
 
 test("daily archives cannot contain unprocessed player or NPC requests", () => {
   const slot = archive();
-  const intent = { PlaceLimit: { code: "600101", side: "Buy" as const, price: { Fixed: "1120" }, qty: 100 } };
+  const intent = { PlaceLimit: { code: 3, side: "Buy" as const, price: { Fixed: "1120" }, qty: 100 } };
   const receipt = { owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" };
   assert.throws(() => validate({ ...slot, pending_player: [receipt] }), /日内请求/);
   const batch = slot.pending_npc;
@@ -56,7 +56,7 @@ test("daily archives cannot contain unprocessed player or NPC requests", () => {
 test("daily archives cannot resume an unfinished intraday parent order", () => {
   const slot = archive();
   assert.throws(() => validate({ ...slot, parent_orders: { "1": { "600101": {
-    code: "600101", side: "Buy", target_qty: 100, filled_qty: 0, child_qty: 100,
+    code: 3, side: "Buy", target_qty: 100, filled_qty: 0, child_qty: 100,
     active_child_order_id: null, limit_price: "1120", expires_market_minute: "500",
   } } } }), /活动委托/);
 });

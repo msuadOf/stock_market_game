@@ -156,14 +156,14 @@ describe("fast-forward event buffer", () => {
         seq: 3,
         day: 2,
         closed_daily_candles: new Map([
-          ["600101", { time: 1893542400, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 }],
+          ["3", { time: 1893542400, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 }],
         ]),
       },
     }, {
       AuctionCompleted: {
         seq: 4,
         tick: 900,
-        code: "600101",
+        code: 3,
         clearing_price: undefined,
         matched_volume: 0,
       },
@@ -174,14 +174,14 @@ describe("fast-forward event buffer", () => {
         seq: 3,
         day: 2,
         closed_daily_candles: {
-          "600101": { time: 1893542400, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 },
+          "3": { time: 1893542400, open: "1000", high: "1010", low: "990", close: "1005", volume: 100 },
         },
       },
     }, {
       AuctionCompleted: {
         seq: 4,
         tick: 900,
-        code: "600101",
+        code: 3,
         clearing_price: null,
         matched_volume: 0,
       },

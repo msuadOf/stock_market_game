@@ -11,7 +11,8 @@ const trace = [{
   plan_changes: ["PlanId(3): Created -> Active/v1"],
   budget_constraints: [],
   order_ids: [7],
-  codes: ["600101"],
+  // wire 的 codes 为数值 StockId 数组（摄入层译回代码串）。
+  codes: [3],
 }];
 
 describe("NPC decision trace boundary", { timeout: 10_000 }, () => {
@@ -43,7 +44,8 @@ describe("NPC decision trace boundary", { timeout: 10_000 }, () => {
   });
 
   it("retains the approved causal provenance fields", () => {
-    assert.deepEqual(parseNpcDecisionTrace(trace), trace);
+    // wire codes 数值 → 摄入译回代码串：往返后与公共形态一致。
+    assert.deepEqual(parseNpcDecisionTrace(trace), trace.map((row) => ({ ...row, codes: ["600101"] })));
   });
 
   it("accepts unsupported results only without private payload", () => {

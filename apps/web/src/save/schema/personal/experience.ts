@@ -9,10 +9,10 @@ export type ExperienceFeedback = {
   readonly stocks: StringMap<HoldingEpoch>
   readonly exit_records: readonly ExitRecord[]
 }
-export type FailureEventRecord = { readonly code: string; readonly order_id: string | null; readonly moment: ExperienceMoment }
+export type FailureEventRecord = { readonly code: number; readonly order_id: string | null; readonly moment: ExperienceMoment }
 export type HoldingEpoch = { readonly entry_moment: ExperienceMoment; readonly last_own_observation: OwnObservation | null; readonly institutional_fees_paid: string | null }
 export type OwnObservation = { readonly price: string; readonly moment: ExperienceMoment }
-export type ExitRecord = { readonly code: string; readonly order_id: string | null; readonly cooldown_until_market_minute: string | null; readonly realized_profit: boolean; readonly moment: ExperienceMoment }
+export type ExitRecord = { readonly code: number; readonly order_id: string | null; readonly cooldown_until_market_minute: string | null; readonly realized_profit: boolean; readonly moment: ExperienceMoment }
 export type RetailExperienceState = {
   readonly reference_equity: string | null
   readonly peak_equity: string | null
@@ -104,9 +104,10 @@ function parseExitRecord(value: unknown, path: string): ExitRecord {
   return { code: parseStock(parsed.code, `${path}.code`), order_id: nullable(parsed.order_id, `${path}.order_id`, marketMinute), cooldown_until_market_minute: nullable(parsed.cooldown_until_market_minute, `${path}.cooldown_until_market_minute`, marketMinute), realized_profit: boolean(parsed.realized_profit, `${path}.realized_profit`), moment: parseExperienceMoment(parsed.moment, `${path}.moment`) }
 }
 
-function parseStock(value: unknown, path: string): string {
-  if (typeof value !== "string") throw new Error(`存档 ${path} 必须是字符串`)
-  stockKey(value, path)
+/** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
+function parseStock(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`存档 ${path} 必须是数值 StockId`)
+  if (value > 4_294_967_295) throw new Error(`存档 ${path} 超出 u32 范围`)
   return value
 }
 

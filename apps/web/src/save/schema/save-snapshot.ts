@@ -1,23 +1,23 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
-import type { AccountId } from "../../types/generated/AccountId.ts"
 import type { DailyCandle } from "../../types/generated/DailyCandle.ts"
 import type { Money } from "../../types/generated/Money.ts"
 import type { PositionSnap } from "../../types/generated/PositionSnap.ts"
-import type { StockCode } from "../../types/generated/StockCode.ts"
 import { parseDailyCandle } from "./market.ts"
 import { stockKey } from "./personal/common.ts"
 import { array, exact, integer, map, record, safeIntegerKey } from "./primitives.ts"
 
+// 存档 wire（ADR 0041）：股票 map 键为数值 StockId 的 JSON 字符串形态（"0"、"1"…）。
+// 键原样保留以随存档回传引擎恢复；根 cross-check（root.ts）负责将其对齐 setup 证券。
 type SaveMarket = { readonly last_price: Money; readonly last_close: Money }
-type SaveAccount = { readonly cash: Money; readonly positions: Readonly<Record<StockCode, PositionSnap>> }
+type SaveAccount = { readonly cash: Money; readonly positions: Readonly<Record<string, PositionSnap>> }
 
 export type SaveSnapshot = {
   readonly seq: number
   readonly tick: number
-  readonly markets: Readonly<Record<StockCode, SaveMarket>>
-  readonly accounts: Readonly<Record<AccountId, SaveAccount>>
-  readonly daily_candles: Readonly<Record<StockCode, readonly DailyCandle[]>>
-  readonly active_daily_candles: Readonly<Record<StockCode, DailyCandle>>
+  readonly markets: Readonly<Record<string, SaveMarket>>
+  readonly accounts: Readonly<Record<string, SaveAccount>>
+  readonly daily_candles: Readonly<Record<string, readonly DailyCandle[]>>
+  readonly active_daily_candles: Readonly<Record<string, DailyCandle>>
 }
 
 function parsePosition(value: unknown, path: string): PositionSnap {

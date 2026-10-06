@@ -1,17 +1,26 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
-import type { Intent } from "../../types/engine"
+// 存档 wire 持数值 StockId（ADR 0041），Intent 取生成数值形态而非 types/engine 的 Coded 别名。
+import type { Intent } from "../../types/generated/Intent"
 import { parseNpcAttention } from "./npc-attention.ts"
 import type { NpcOrderLifecycle } from "../../types/generated/NpcOrderLifecycle"
 import type { Order } from "../../types/generated/Order"
 import type { SaveParentOrderPlan } from "../../types/generated/SaveParentOrderPlan"
 import type { PendingNpcBatch } from "../../types/generated/PendingNpcBatch"
 import type { ReceiptBearingIntent } from "../../types/generated/ReceiptBearingIntent"
-import { array, decimal, exact, integer, map, oneOf, record, safeIntegerKey, SaveSchemaError, string } from "./primitives.ts"
+import { array, decimal, exact, integer, map, oneOf, record, safeIntegerKey, SaveSchemaError } from "./primitives.ts"
+
+import { stockKey } from "./personal/common.ts"
 
 const side = ["Buy", "Sell"] as const
 
+/** 存档 wire 的股票 map 键：数值 StockId 的 JSON 字符串形态（ADR 0041）。 */
 function stockCode(value: string, path: string): void {
-  if (value.length === 0) throw new Error(`存档 ${path} 股票代码不能为空`)
+  stockKey(value, path)
+}
+
+/** 存档 wire 的股票身份字段：数值 StockId（u32）。 */
+function stockId(value: unknown, path: string): number {
+  return integer(value, path, 0)
 }
 
 function accountKey(value: string, path: string): void {
@@ -43,17 +52,17 @@ function intent(value: unknown, path: string): Intent {
     case "PlaceLimit": {
       const payload = record(parsed.PlaceLimit, `${path}.PlaceLimit`)
       exact(payload, ["code", "side", "price", "qty"], `${path}.PlaceLimit`)
-      return { PlaceLimit: { code: string(payload.code, `${path}.PlaceLimit.code`), side: oneOf(payload.side, `${path}.PlaceLimit.side`, side), price: limitPrice(payload.price, `${path}.PlaceLimit.price`), qty: integer(payload.qty, `${path}.PlaceLimit.qty`, 1) } }
+      return { PlaceLimit: { code: stockId(payload.code, `${path}.PlaceLimit.code`), side: oneOf(payload.side, `${path}.PlaceLimit.side`, side), price: limitPrice(payload.price, `${path}.PlaceLimit.price`), qty: integer(payload.qty, `${path}.PlaceLimit.qty`, 1) } }
     }
     case "PlaceMarket": {
       const payload = record(parsed.PlaceMarket, `${path}.PlaceMarket`)
       exact(payload, ["code", "side", "qty"], `${path}.PlaceMarket`)
-      return { PlaceMarket: { code: string(payload.code, `${path}.PlaceMarket.code`), side: oneOf(payload.side, `${path}.PlaceMarket.side`, side), qty: integer(payload.qty, `${path}.PlaceMarket.qty`, 1) } }
+      return { PlaceMarket: { code: stockId(payload.code, `${path}.PlaceMarket.code`), side: oneOf(payload.side, `${path}.PlaceMarket.side`, side), qty: integer(payload.qty, `${path}.PlaceMarket.qty`, 1) } }
     }
     case "Cancel": {
       const payload = record(parsed.Cancel, `${path}.Cancel`)
       exact(payload, ["code", "id"], `${path}.Cancel`)
-      return { Cancel: { code: string(payload.code, `${path}.Cancel.code`), id: integer(payload.id, `${path}.Cancel.id`, 1) } }
+      return { Cancel: { code: stockId(payload.code, `${path}.Cancel.code`), id: integer(payload.id, `${path}.Cancel.id`, 1) } }
     }
     default:
       throw new Error(`存档 ${path} 包含无效意图变体`)
@@ -114,8 +123,8 @@ export function parseOrderState(value: Record<string, unknown>): Pick<import("..
   const price_history = map(value.price_history, "price_history", stockCode, (items, path) => array(items, path).map((item, index) => money(item, `${path}[${index}]`)))
   const market_minute_closes = map(value.market_minute_closes, "market_minute_closes", stockCode, (items, path) => array(items, path).map((item, index) => { const close = record(item, `${path}[${index}]`); exact(close, ["absolute_trading_minute", "close"], `${path}[${index}]`); return { absolute_trading_minute: integer(close.absolute_trading_minute, `${path}[${index}].absolute_trading_minute`, 0), close: money(close.close, `${path}[${index}].close`) } }))
   const npc_attention = map(value.npc_attention, "npc_attention", accountKey, parseNpcAttention)
-  const parent_orders = map(value.parent_orders, "parent_orders", accountKey, (items, path) => map(items, path, stockCode, (item, itemPath): SaveParentOrderPlan => { const plan = record(item, itemPath); const keys = "linked_plan_id" in plan ? ["code", "side", "target_qty", "filled_qty", "child_qty", "active_child_order_id", "linked_plan_id", "limit_price", "expires_market_minute"] : ["code", "side", "target_qty", "filled_qty", "child_qty", "active_child_order_id", "limit_price", "expires_market_minute"]; exact(plan, keys, itemPath); return { code: string(plan.code, `${itemPath}.code`), side: oneOf(plan.side, `${itemPath}.side`, side), target_qty: integer(plan.target_qty, `${itemPath}.target_qty`, 1), filled_qty: integer(plan.filled_qty, `${itemPath}.filled_qty`, 0), child_qty: integer(plan.child_qty, `${itemPath}.child_qty`, 1), active_child_order_id: plan.active_child_order_id === null ? null : integer(plan.active_child_order_id, `${itemPath}.active_child_order_id`, 1), ...( "linked_plan_id" in plan ? { linked_plan_id: integer(plan.linked_plan_id, `${itemPath}.linked_plan_id`, 1) } : {}), limit_price: money(plan.limit_price, `${itemPath}.limit_price`), expires_market_minute: decimal(plan.expires_market_minute, `${itemPath}.expires_market_minute`) } }))
-  const npc_order_lifecycles = array(value.npc_order_lifecycles, "npc_order_lifecycles").map((item, index): NpcOrderLifecycle => { const lifecycle = record(item, `npc_order_lifecycles[${index}]`); exact(lifecycle, ["account", "code", "order_id", "placed_market_minute", "expires_market_minute"], `npc_order_lifecycles[${index}]`); return { account: integer(lifecycle.account, `npc_order_lifecycles[${index}].account`, 0), code: string(lifecycle.code, `npc_order_lifecycles[${index}].code`), order_id: integer(lifecycle.order_id, `npc_order_lifecycles[${index}].order_id`, 1), placed_market_minute: integer(lifecycle.placed_market_minute, `npc_order_lifecycles[${index}].placed_market_minute`, 0), expires_market_minute: integer(lifecycle.expires_market_minute, `npc_order_lifecycles[${index}].expires_market_minute`, 0) } })
+  const parent_orders = map(value.parent_orders, "parent_orders", accountKey, (items, path) => map(items, path, stockCode, (item, itemPath): SaveParentOrderPlan => { const plan = record(item, itemPath); const keys = "linked_plan_id" in plan ? ["code", "side", "target_qty", "filled_qty", "child_qty", "active_child_order_id", "linked_plan_id", "limit_price", "expires_market_minute"] : ["code", "side", "target_qty", "filled_qty", "child_qty", "active_child_order_id", "limit_price", "expires_market_minute"]; exact(plan, keys, itemPath); return { code: stockId(plan.code, `${itemPath}.code`), side: oneOf(plan.side, `${itemPath}.side`, side), target_qty: integer(plan.target_qty, `${itemPath}.target_qty`, 1), filled_qty: integer(plan.filled_qty, `${itemPath}.filled_qty`, 0), child_qty: integer(plan.child_qty, `${itemPath}.child_qty`, 1), active_child_order_id: plan.active_child_order_id === null ? null : integer(plan.active_child_order_id, `${itemPath}.active_child_order_id`, 1), ...( "linked_plan_id" in plan ? { linked_plan_id: integer(plan.linked_plan_id, `${itemPath}.linked_plan_id`, 1) } : {}), limit_price: money(plan.limit_price, `${itemPath}.limit_price`), expires_market_minute: decimal(plan.expires_market_minute, `${itemPath}.expires_market_minute`) } }))
+  const npc_order_lifecycles = array(value.npc_order_lifecycles, "npc_order_lifecycles").map((item, index): NpcOrderLifecycle => { const lifecycle = record(item, `npc_order_lifecycles[${index}]`); exact(lifecycle, ["account", "code", "order_id", "placed_market_minute", "expires_market_minute"], `npc_order_lifecycles[${index}]`); return { account: integer(lifecycle.account, `npc_order_lifecycles[${index}].account`, 0), code: stockId(lifecycle.code, `npc_order_lifecycles[${index}].code`), order_id: integer(lifecycle.order_id, `npc_order_lifecycles[${index}].order_id`, 1), placed_market_minute: integer(lifecycle.placed_market_minute, `npc_order_lifecycles[${index}].placed_market_minute`, 0), expires_market_minute: integer(lifecycle.expires_market_minute, `npc_order_lifecycles[${index}].expires_market_minute`, 0) } })
   const pending_player = array(value.pending_player, "pending_player").map((item, index): ReceiptBearingIntent => { const path = `pending_player[${index}]`; const receipt = record(item, path); exact(receipt, ["owner", "intent", "account_ordinal", "stock_ordinal"], path); return { owner: integer(receipt.owner, `${path}.owner`, 0), intent: intent(receipt.intent, `${path}.intent`), account_ordinal: receiptOrdinal(receipt.account_ordinal, `${path}.account_ordinal`), stock_ordinal: receiptOrdinal(receipt.stock_ordinal, `${path}.stock_ordinal`) } })
   const ingress_receipt_cursors = record(value.ingress_receipt_cursors, "ingress_receipt_cursors")
   exact(ingress_receipt_cursors, ["next_account_ordinal", "next_stock_ordinal"], "ingress_receipt_cursors")

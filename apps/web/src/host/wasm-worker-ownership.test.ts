@@ -52,7 +52,7 @@ async function createFixture(
     drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop") throw new Error("drop failed"); },
     restore_json: (encoded: string) => { assert.deepEqual(JSON.parse(encoded), saved); calls.push(`restore:${handle}`); return handle; },
     host_capabilities: () => ({ npcDecisionDiagnostics: false }),
-    step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)); },
+    step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, [0])], snapshot(1, 1)); },
     tick: () => 1n,
     save: (current: number) => { calls.push(`save:${current}`); return saved; },
     end_civil_day: () => civilUpdate(),

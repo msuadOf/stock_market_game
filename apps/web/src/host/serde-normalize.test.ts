@@ -46,12 +46,12 @@ const publicReport = {
 test("WASM save normalization preserves nested Rust maps as JSON objects", () => {
   const raw = new Map<unknown, unknown>([
     ["snapshot", new Map([
-      ["markets", new Map<unknown, unknown>([["600000", new Map([["last_price", "1000"]])]])],
+      ["markets", new Map<unknown, unknown>([["0", new Map([["last_price", "1000"]])]])],
       ["accounts", new Map<unknown, unknown>([[0, new Map([["cash", "100000"]])]])],
     ])],
-    ["resting_orders", new Map<unknown, unknown>([["600000", []]])],
-    ["price_history", new Map<unknown, unknown>([["600000", ["1000", "1001"]]])],
-    ["market_minute_closes", new Map<unknown, unknown>([["600000", [
+    ["resting_orders", new Map<unknown, unknown>([["0", []]])],
+    ["price_history", new Map<unknown, unknown>([["0", ["1000", "1001"]]])],
+    ["market_minute_closes", new Map<unknown, unknown>([["0", [
       { absolute_trading_minute: 0, close: "1001" },
     ]]])],
   ]);
@@ -60,13 +60,13 @@ test("WASM save normalization preserves nested Rust maps as JSON objects", () =>
 
   assert.deepEqual(normalized, {
     snapshot: {
-      markets: { "600000": { last_price: "1000" } },
+      markets: { "0": { last_price: "1000" } },
       accounts: { "0": { cash: "100000" } },
     },
-    resting_orders: { "600000": [] },
-    price_history: { "600000": ["1000", "1001"] },
+    resting_orders: { "0": [] },
+    price_history: { "0": ["1000", "1001"] },
     market_minute_closes: {
-      "600000": [{ absolute_trading_minute: 0, close: "1001" }],
+      "0": [{ absolute_trading_minute: 0, close: "1001" }],
     },
   });
   assert.doesNotThrow(() => JSON.stringify(normalized));
@@ -133,7 +133,7 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     },
     npc_attention: {},
     parent_orders: {
-      "12": { "600000": { target_qty: 100 } },
+      "12": { "0": { target_qty: 100 } },
     },
     runtime_state: {
       poisoned: false,

@@ -37,14 +37,16 @@ test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确�
     const binding = intake.sent[0];
     assert.equal(binding.type, "bindIngress");
     intake.emit({ type: "ingressBound", requestId: binding.requestId, generation: 1 });
-    engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    // ADR 0041: baseline wire 契约携带 civilDate，E8 改写时遗漏导致协议解析失败
+    engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
-    const intent = { Cancel: { code: "600000", id: 7 } } as Parameters<typeof host.submitIntent>[0];
+    const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
     const submitting = host.submitIntent(intent);
     await Promise.resolve();
     const request = intake.sent.at(-1)!;
     assert.equal(request.type, "enqueue");
-    assert.deepEqual(request.intent, intent);
+    // 公共 Intent（代码串）入队前已译为 wire 数值 StockId（ADR 0041）。
+    assert.deepEqual(request.intent, { Cancel: { code: 0, id: 7 } });
     assert.equal(engine.sent.some((message) => message.type === "enqueue"), false);
     intake.emit({ type: "enqueued", requestId: request.requestId, generation: 1 });
     await submitting;
@@ -89,7 +91,8 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
         return;
       }
       intake.emit({ type: "ingressBound", requestId: intake.sent[0].requestId, generation: 1 });
-      engine.emit({ type: "baseline", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      // ADR 0041: baseline wire 契约携带 civilDate，E8 改写时遗漏导致协议解析失败
+      engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
       host = await creating;
       const intent = { Cancel: { code: "600101", id: 7 } } as Parameters<typeof host.submitIntent>[0];
       const pending = host.submitIntent(intent);
@@ -101,7 +104,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
         engine.emit({ type: "started", generation: 1, requestId: engine.sent.at(-1)!.requestId });
         await starting;
         accept = false;
-        engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)) });
+        engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)) });
       } else {
         const request = intake.sent.at(-1)!;
         intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
@@ -126,10 +129,10 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
 test("Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户", { timeout: 10000 }, async () => {
   const worker = new FakeWorker();
   const requests = new WorkerRequestScope(worker);
-  const pending = readWorkerStockHistory(requests, 12, 3, "600000");
-  assert.deepEqual(worker.sent, [{ type: "stockHistory", requestId: 12, generation: 3, code: "600000" }]);
-  worker.emit({ type: "stockHistory", requestId: 12, generation: 3, data: { code: "600000", daily_candles: [], active_daily_candle: null } });
-  assert.deepEqual(await pending, { code: "600000", daily_candles: [], active_daily_candle: null });
+  const pending = readWorkerStockHistory(requests, 12, 3, "000812");
+  assert.deepEqual(worker.sent, [{ type: "stockHistory", requestId: 12, generation: 3, code: "000812" }]);
+  worker.emit({ type: "stockHistory", requestId: 12, generation: 3, data: { code: 0, daily_candles: [], active_daily_candle: null } });
+  assert.deepEqual(await pending, { code: "000812", daily_candles: [], active_daily_candle: null });
   assert.equal(requests.pendingCount(), 0);
 });
 
@@ -283,10 +286,10 @@ test("Given a generation-correlated Worker order response, when read, then it pr
   const worker = new FakeWorker();
   const pending = readWorkerPlayerWorkingOrders(new WorkerRequestScope(worker), 5, 2);
   worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
-    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
+    id: 7, code: 0, side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
   }] });
   assert.deepEqual(await pending, [{
-    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
+    id: 7, code: "000812", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
   }]);
 });
 
@@ -622,9 +625,9 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     await starting;
     const pending = assert.rejects(host.setSpeed(10), /消费者拒绝/);
     worker.emit({ type: "protocolBatch", generation: 1, deliveryId: 7, updates: [
-      tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)),
-      tickBatch([frame(3, 1, ["600000"])], protocolSnapshot(3, 2)),
-      tickBatch([frame(2, 1, ["600000"])], protocolSnapshot(2, 2)),
+      tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)),
+      tickBatch([frame(3, 1, [0])], protocolSnapshot(3, 2)),
+      tickBatch([frame(2, 1, [0])], protocolSnapshot(2, 2)),
     ] });
     await pending;
     assert.equal(applications, 1);
@@ -632,7 +635,7 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     assert.equal(coordinator.status().kind, "failure");
     assert.equal(worker.sent.filter((message) => message.type === "uiFrame").length, 0);
     assert.equal(worker.terminations, 1);
-    worker.emit({ type: "protocol", generation: 1, deliveryId: 8, update: tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)) });
+    worker.emit({ type: "protocol", generation: 1, deliveryId: 8, update: tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)) });
     assert.equal(applications, 1);
     await host.dispose();
     assert.equal(worker.terminations, 1);

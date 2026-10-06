@@ -119,7 +119,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
     if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
     if (url.includes("/api/player-working-orders?")) {
       return new Response(JSON.stringify({ generation: "2", orders: [{
-        id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
+        id: 7, code: 0, side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
       }] }), { status: 200 });
     }
     if (url.endsWith("/api/indicators")) return new Response(JSON.stringify({
@@ -141,7 +141,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
   await host.start(() => undefined);
   socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   assert.deepEqual(await host.playerWorkingOrders(), [{
-    id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
+    id: 7, code: "000812", side: "Buy", price: "1234", remainingQty: 200, venue: "continuous", frozen: "cash",
   }]);
   assert.equal((await host.calculateIndicators({ prices: [10], candles: [{ high: 11, low: 9, close: 10 }] })).macd.dif[0], 0);
   const request = requests.find(({ url }) => url.includes("/api/player-working-orders?"));
@@ -158,7 +158,7 @@ test("远程股票历史只通过显式 query endpoint 读取并绑定 generatio
     requests.push({ url, init });
     if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
     if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
-    if (url.includes("/api/stock-history?")) return new Response(JSON.stringify({ generation: "2", data: { code: "600000", daily_candles: [], active_daily_candle: null } }), { status: 200 });
+    if (url.includes("/api/stock-history?")) return new Response(JSON.stringify({ generation: "2", data: { code: 0, daily_candles: [], active_daily_candle: null } }), { status: 200 });
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   let socket: WebSocket | null = null;
@@ -171,12 +171,12 @@ test("远程股票历史只通过显式 query endpoint 读取并绑定 generatio
   });
   await host.start(() => undefined);
   socket!.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
-  assert.deepEqual(await host.queryStockHistory("600000"), { code: "600000", daily_candles: [], active_daily_candle: null });
+  assert.deepEqual(await host.queryStockHistory("000812"), { code: "000812", daily_candles: [], active_daily_candle: null });
   const request = requests.find(({ url }) => url.includes("/api/stock-history?"));
   assert.ok(request);
   const params = new URL(request.url).searchParams;
   assert.equal(params.get("generation"), "2");
-  assert.equal(params.get("code"), "600000");
+  assert.equal(params.get("code"), "0");
   assert.equal(params.has("account"), false);
   assert.equal(new Headers(request.init?.headers).get("authorization"), "Bearer token-1");
   await host.dispose();

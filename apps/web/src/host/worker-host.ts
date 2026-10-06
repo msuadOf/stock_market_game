@@ -3,10 +3,10 @@ import type {
   PublicReportQuery,
   PublicReportSummary,
   SessionSetup,
-  Snapshot,
   StockCode,
   HistoricalStockData,
 } from "../types/engine.ts";
+import { wireIntentOf, type CodedSnapshot } from "./protocol/stock-identity.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
 import type { EngineHost, SpeedMetrics } from "./engine-host.ts";
@@ -91,7 +91,7 @@ export async function restoreWorkerSlot(
   slot: unknown,
   requestId: number,
   currentGeneration: number,
-): Promise<{ readonly snapshot: Snapshot; readonly civilDate: string; readonly nextGeneration: number }> {
+): Promise<{ readonly snapshot: CodedSnapshot; readonly civilDate: string; readonly nextGeneration: number }> {
   const response = await requests.request({
     type: "restore",
     requestId,
@@ -109,7 +109,7 @@ export async function restoreWorkerSlot(
   };
 }
 
-export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<{ readonly snapshot: Snapshot; readonly civilDate: string }> {
+export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<{ readonly snapshot: CodedSnapshot; readonly civilDate: string }> {
   const response = await requests.request({ type: "refreshBaseline", requestId, generation: currentGeneration }, "refreshed");
   return {
     snapshot: parseProtocolSnapshot(response.snapshot, "Worker refreshed.snapshot"),
@@ -427,7 +427,8 @@ export function createWorkerHost(
           await ready;
           if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 请求属于已过期 generation");
           if (ingressRequests === null) throw new Error("Browser ingress 已关闭");
-          await ingressRequests.request({ type: "enqueue", requestId: ingressRequests.nextRequestId(), generation: requestedGeneration, intent }, "enqueued");
+          // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再入队（ADR 0041）。
+          await ingressRequests.request({ type: "enqueue", requestId: ingressRequests.nextRequestId(), generation: requestedGeneration, intent: wireIntentOf(intent) }, "enqueued");
           if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
         },
         snapshot() {

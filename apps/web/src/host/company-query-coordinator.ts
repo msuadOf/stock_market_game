@@ -1,5 +1,6 @@
 import type { EngineHost } from "./engine-host.ts";
-import type { EngineEvent, PublicReportSummary } from "../types/engine.ts";
+import type { PublicReportSummary } from "../types/engine.ts";
+import type { CodedEvent } from "./protocol/stock-identity.ts";
 import type { NormalizedCivilUpdate, NormalizedTickFrame } from "./protocol/index.ts";
 import type { UnknownAction } from "@reduxjs/toolkit";
 import {
@@ -155,7 +156,7 @@ export class CompanyQueryCoordinator {
   }
 
   private acceptEvents(
-    events: readonly EngineEvent[],
+    events: readonly CodedEvent[],
     seqFrom: number,
     seqTo: number,
     refreshDisclosures: boolean,
@@ -185,7 +186,7 @@ export class CompanyQueryCoordinator {
     this.dispatch(advanceCompanyEventCoverage({ generation: this.generation, toSeq: seqTo }));
   }
 
-  private assertEventCoverage(events: readonly EngineEvent[], seqFrom: number, seqTo: number): void {
+  private assertEventCoverage(events: readonly CodedEvent[], seqFrom: number, seqTo: number): void {
     if (!Number.isSafeInteger(seqFrom) || !Number.isSafeInteger(seqTo) || seqFrom < 0 || seqTo < seqFrom) {
       throw new Error("公共公司状态事件覆盖区间无效");
     }
@@ -210,7 +211,7 @@ export class CompanyQueryCoordinator {
   }
 }
 
-function companyEventSeq(event: EngineEvent): number {
+function companyEventSeq(event: CodedEvent): number {
   if ("Trade" in event) return event.Trade.seq;
   if ("AuctionTick" in event) return event.AuctionTick.seq;
   if ("AuctionCompleted" in event) return event.AuctionCompleted.seq;

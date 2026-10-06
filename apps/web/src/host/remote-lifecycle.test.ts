@@ -67,7 +67,7 @@ test("dispose 与切换 delivery 为已发送写请求提供结果未知出口",
     const context = await fixture();
     await context.host.start(() => {});
     context.receive(0, baseline);
-    const pending = context.host.submitIntent({} as Intent);
+    const pending = context.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent);
     const rejection = assert.rejects(pending, /结果未知/);
     if (action === "dispose") await context.host.dispose();
     else context.host.setDeliveryMode!("pull");
@@ -110,7 +110,7 @@ test("已中断的写请求迟到 queued 不冒充完成，不关闭同 socket �
   const failures: unknown[] = [];
   await context.host.start(() => {}, (failure) => failures.push(failure));
   context.receive(0, baseline);
-  const command = context.host.submitIntent({} as Intent);
+  const command = context.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent);
   const rejected = assert.rejects(command, /结果未知/);
   const refreshing = context.host.refreshBaseline!();
   await rejected;
@@ -127,7 +127,7 @@ test("无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID
   const failures: unknown[] = [];
   await fixtureContext.host.start(() => {}, (failure) => failures.push(failure));
   fixtureContext.receive(0, baseline);
-  const command = fixtureContext.host.submitIntent({} as Intent);
+  const command = fixtureContext.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent);
   const rejected = assert.rejects(command, /5000ms.*结果未知/);
   context.mock.timers.tick(5000);
   await rejected;
@@ -165,7 +165,7 @@ test("应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不
   context.receive(0, baseline);
   await rejected;
   assert.equal(failures.length, 0);
-  await assert.rejects(context.host.submitIntent({} as Intent), /尚未完成权威基线同步/);
+  await assert.rejects(context.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent), /尚未完成权威基线同步/);
   await context.host.dispose();
 });
 

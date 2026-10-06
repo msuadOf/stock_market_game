@@ -4,7 +4,7 @@ import { frame, tickBatch } from "../protocol-test-fixtures.ts";
 import { parseEngineUpdate } from "./parse.ts";
 
 function expiryBatch(source: string) {
-  const value = structuredClone(frame(1, 0, ["600000"])) as unknown as { facts: { key: { phase_rank: number; source: string } }[] };
+  const value = structuredClone(frame(1, 0, [0])) as unknown as { facts: { key: { phase_rank: number; source: string } }[] };
   value.facts[0]!.key.phase_rank = 1;
   value.facts[0]!.key.source = source;
   return tickBatch([value as never], null);

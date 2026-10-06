@@ -6,18 +6,21 @@ import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
 import { resolveThreadCount } from "./thread-count.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
+import { stockIdOf } from "../config/stock-ids.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
 import type { HostFailure } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 
 type WorkerMessage = Readonly<Record<string, unknown>> & { readonly type: string };
 type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDecisionTraceRecord[];
-type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
+// 旧 bindings 的声明文件仍把 query_stock_history 标为 code: string；按 ADR 0041 以
+// 数值 StockId（u32）覆盖该成员，重建 bindings 后声明亦为数值。
+type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"), "query_stock_history"> & {
   readonly ingress_token?: (handle: number) => number;
   readonly prepare_public_baseline?: (handle: number) => void;
   readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean };
   readonly player_working_orders?: (handle: number) => unknown;
-  readonly query_stock_history?: (handle: number, code: string) => unknown;
+  readonly query_stock_history?: (handle: number, code: number) => unknown;
   readonly initial_allocation?: (handle: number) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
@@ -27,6 +30,14 @@ type WorkerPort = {
   postMessage(message: unknown): void;
   addEventListener(type: "message", listener: (event: MessageEvent<WorkerMessage>) => void): void;
 };
+
+/** 把 bindings 模块视为传输扩展面。
+ * 旧 bindings 声明（query_stock_history 的 code: string）与 ADR 0041 数值签名不重叠，
+ * 直接 as 断言会被 TS2352 拒绝，故经 unknown 中转；所有扩展成员均为可选探测，
+ * 运行期缺失时各调用点已显式报错并提示重建 bindings。 */
+function transportExtensions(wasm: typeof import("../../wasm-pkg/web_wasm.js")): WasmTransportExtensions {
+  return wasm as unknown as WasmTransportExtensions;
+}
 
 const ctx: WorkerPort = self;
 
@@ -78,12 +89,12 @@ function requireRecord(value: unknown, label: string): Readonly<Record<string, u
 }
 
 function readWasmCapabilities(wasm: typeof import("../../wasm-pkg/web_wasm.js")) {
-  const capabilities = (wasm as WasmTransportExtensions).host_capabilities;
+  const capabilities = transportExtensions(wasm).host_capabilities;
   return capabilities?.() ?? { npcDecisionDiagnostics: false };
 }
 
 function optionalNpcDecisionTrace(wasm: typeof import("../../wasm-pkg/web_wasm.js")): WasmNpcDecisionTrace | undefined {
-  return (wasm as WasmTransportExtensions).npc_decision_trace;
+  return transportExtensions(wasm).npc_decision_trace;
 }
 
 export function postFailure(where: string, error: unknown): void {
@@ -109,7 +120,7 @@ function postBaseline(): void {
 function postIngressBridge(): void {
   const [session, wasm] = slot.requireHandle();
   if (ingressBridge === null) throw new Error("共享 WASM ingress memory 尚未初始化");
-  const token = (wasm as WasmTransportExtensions).ingress_token;
+  const token = transportExtensions(wasm).ingress_token;
   if (token === undefined) throw new Error("当前 WASM bindings 缺少共享 ingress，请重建 bindings");
   ctx.postMessage({ type: "ingress", generation: slot.readGeneration(), token: token(session), ...ingressBridge });
 }
@@ -235,7 +246,7 @@ ctx.addEventListener("message", (event) => {
           let saved: unknown;
           if (key === undefined) saved = wasm.save(session);
           else {
-            const saveCandidate = (wasm as WasmTransportExtensions).save_candidate;
+            const saveCandidate = transportExtensions(wasm).save_candidate;
             if (saveCandidate === undefined) throw new Error("当前 WASM binding 不支持按日终候选保存，请重建 bindings");
             saved = saveCandidate(session, key as { readonly seq: number; readonly settledDate: string });
           }
@@ -302,7 +313,7 @@ ctx.addEventListener("message", (event) => {
         case "playerWorkingOrders": {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const [session, wasm] = slot.requireHandle();
-          const readOrders = (wasm as WasmTransportExtensions).player_working_orders;
+          const readOrders = transportExtensions(wasm).player_working_orders;
           if (readOrders === undefined) throw new Error("当前 WASM bindings 不支持玩家活动委托查询，请重建 bindings");
           ctx.postMessage({
             type: "playerWorkingOrders",
@@ -316,15 +327,16 @@ ctx.addEventListener("message", (event) => {
           const requestedGeneration = slot.requireGeneration(message.generation);
           if (typeof message.code !== "string" || message.code.length === 0) throw new Error("股票历史查询代码无效");
           const [session, wasm] = slot.requireHandle();
-          const queryHistory = (wasm as WasmTransportExtensions).query_stock_history;
+          const queryHistory = transportExtensions(wasm).query_stock_history;
           if (queryHistory === undefined) throw new Error("当前 WASM bindings 不支持股票历史查询，请重建 bindings");
-          ctx.postMessage({ type: "stockHistory", requestId: message.requestId, generation: requestedGeneration, data: queryHistory(session, message.code) });
+          // 请求层翻译：主线程传来的代码串 code 译为数值 StockId 再调用 wasm FFI（u32）。
+          ctx.postMessage({ type: "stockHistory", requestId: message.requestId, generation: requestedGeneration, data: queryHistory(session, stockIdOf(message.code)) });
           return;
         }
         case "initialAllocation": {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const [session, wasm] = slot.requireHandle();
-          const queryAllocation = (wasm as WasmTransportExtensions).initial_allocation;
+          const queryAllocation = transportExtensions(wasm).initial_allocation;
           if (queryAllocation === undefined) throw new Error("当前 WASM bindings 不支持初始分配查询，请重建 bindings");
           ctx.postMessage({ type: "initialAllocation", requestId: message.requestId, generation: requestedGeneration, data: queryAllocation(session) });
           return;
@@ -360,7 +372,7 @@ ctx.addEventListener("message", (event) => {
             return bar.high >= bar.low && bar.close >= bar.low && bar.close <= bar.high;
           })) throw new Error("指标 candles 必须满足 low ≤ close ≤ high");
           const [, wasm] = slot.requireHandle();
-          const calculateIndicators = (wasm as WasmTransportExtensions).calculate_indicators;
+          const calculateIndicators = transportExtensions(wasm).calculate_indicators;
           if (calculateIndicators === undefined) throw new Error("当前 WASM bindings 不支持指标计算，请重建 bindings");
           const result = calculateIndicators(prices, candles);
           ctx.postMessage({ type: "indicatorsCalculated", requestId: message.requestId, generation: requestedGeneration, result });

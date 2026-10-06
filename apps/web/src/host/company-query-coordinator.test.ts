@@ -108,7 +108,7 @@ test("Given a normalized tick frame, when public metadata advances, then company
   const actions: unknown[] = [];
   const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [frame(1, 0, ["600000"])], runtime_snapshot: null } });
+  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [frame(1, 0, [0])], runtime_snapshot: null } });
   if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
   coordinator.acceptFrame(normalized.frames[0]!, { civilDate: "2030-01-01", revision: "2" });
   assert.match(JSON.stringify(actions), /advanceCompanyEventCoverage/);
@@ -246,7 +246,8 @@ test("rejects a reversed empty TickFrame range before it can desynchronize the c
 test("accepts reordered TickFrame events after protocol normalization restores canonical seq order", () => {
   const coordinator = new CompanyQueryCoordinator(host, () => {});
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  const wireFrame = frame(1, 0, ["600001", "600002"]);
+  // frame 的 code 参数是 wire 数值 StockId（ADR 0041）：0=000812、1=002156。
+  const wireFrame = frame(1, 0, [0, 1]);
   const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [{
     ...wireFrame,
     events: [...recordArray(wireFrame.events, "events")].reverse(),

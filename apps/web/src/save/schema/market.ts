@@ -1,7 +1,8 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
 import { candleDate } from "../../utils/candle-date.ts"
-import type { FloatAllocation, SessionSetup, Snapshot } from "../../types/engine"
+import type { FloatAllocation, SessionSetup } from "../../types/engine"
 import type { DailyCandle } from "../../types/generated/DailyCandle"
+import type { MarketSnap } from "../../types/generated/MarketSnap"
 import { parseCompanyOperationsConfig } from "./company/operations.ts"
 import { parseGroups } from "./company/groups.ts"
 import { array, boolean, civilDate, decimal, exact, finite, integer, map, nullable, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
@@ -10,6 +11,12 @@ const exchange = ["Shanghai", "Shenzhen"] as const
 const category = ["MainBoard", "StMainBoard", "ChiNext"] as const
 const phase = ["CallAuction", "PreOpen", "ClosingAuction", "Continuous"] as const
 
+/** 存档 wire 的股票 map 键：数值 StockId 的 JSON 字符串形态（ADR 0041）。 */
+function stockIdKey(value: string, path: string): void {
+  if (!/^(0|[1-9]\d*)$/.test(value)) throw new Error(`存档 ${path} 必须是数值 StockId 的规范十进制字符串形态`)
+}
+
+/** setup.stocks[].code 保持人类可读 A 股代码串（非 StockId），仅做非空校验。 */
 function stockCode(value: string, path: string): void {
   if (value.length === 0) throw new Error(`存档 ${path} 股票代码不能为空`)
 }
@@ -100,8 +107,20 @@ export function parseDailyCandle(value: unknown, path: string): DailyCandle {
   return stats === undefined ? { time: integer(parsed.time, `${path}.time`), open: money(parsed.open, `${path}.open`), high: money(parsed.high, `${path}.high`), low: money(parsed.low, `${path}.low`), close: money(parsed.close, `${path}.close`), volume: integer(parsed.volume, `${path}.volume`, 0) } : { time: integer(parsed.time, `${path}.time`), open: money(parsed.open, `${path}.open`), high: money(parsed.high, `${path}.high`), low: money(parsed.low, `${path}.low`), close: money(parsed.close, `${path}.close`), volume: integer(parsed.volume, `${path}.volume`, 0), trade_stats: stats }
 }
 
-export function parseSnapshot(value: unknown, path: string): Snapshot {
+/** 运行快照 wire 形态：股票 map 键为数值 StockId 的 JSON 字符串形态（ADR 0041）。 */
+export type WireRuntimeSnapshot = {
+  readonly seq: number
+  readonly tick: number
+  readonly day: number
+  readonly phase: string
+  readonly markets: Record<string, MarketSnap>
+  readonly accounts: Record<string, { readonly cash: string; readonly positions: Record<string, { readonly qty: number; readonly t1_locked: number; readonly invested_cents: string; readonly recovered_cents: string }>; readonly reserved_cash: string; readonly reserved_sell_qty: Record<string, number> }>
+  readonly daily_candles: Record<string, readonly DailyCandle[]>
+  readonly active_daily_candles: Record<string, DailyCandle>
+}
+
+export function parseSnapshot(value: unknown, path: string): WireRuntimeSnapshot {
   const parsed = record(value, path)
   exact(parsed, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path)
-  return { seq: integer(parsed.seq, `${path}.seq`, 0), tick: integer(parsed.tick, `${path}.tick`, 0), day: integer(parsed.day, `${path}.day`, 0), phase: oneOf(parsed.phase, `${path}.phase`, phase), markets: map(parsed.markets, `${path}.markets`, stockCode, (item, itemPath) => { const market = record(item, itemPath); exact(market, ["last_price", "last_close", "best_bid", "best_ask", "bids", "asks"], itemPath); return { last_price: money(market.last_price, `${itemPath}.last_price`), last_close: money(market.last_close, `${itemPath}.last_close`), best_bid: nullable(market.best_bid, `${itemPath}.best_bid`, money), best_ask: nullable(market.best_ask, `${itemPath}.best_ask`, money), bids: array(market.bids, `${itemPath}.bids`).map((quote, index) => { const tuple = array(quote, `${itemPath}.bids[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.bids[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.bids[${index}][0]`), integer(tuple[1], `${itemPath}.bids[${index}][1]`, 0)] }), asks: array(market.asks, `${itemPath}.asks`).map((quote, index) => { const tuple = array(quote, `${itemPath}.asks[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.asks[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.asks[${index}][0]`), integer(tuple[1], `${itemPath}.asks[${index}][1]`, 0)] }) } }), accounts: map(parsed.accounts, `${path}.accounts`, safeIntegerKey, (item, itemPath) => { const account = record(item, itemPath); exact(account, ["cash", "positions", "reserved_cash", "reserved_sell_qty"], itemPath); return { cash: money(account.cash, `${itemPath}.cash`), positions: map(account.positions, `${itemPath}.positions`, stockCode, (position, positionPath) => { const result = record(position, positionPath); exact(result, ["qty", "t1_locked", "invested_cents", "recovered_cents"], positionPath); return { qty: integer(result.qty, `${positionPath}.qty`, 0), t1_locked: integer(result.t1_locked, `${positionPath}.t1_locked`, 0), invested_cents: money(result.invested_cents, `${positionPath}.invested_cents`), recovered_cents: money(result.recovered_cents, `${positionPath}.recovered_cents`) } }), reserved_cash: money(account.reserved_cash, `${itemPath}.reserved_cash`), reserved_sell_qty: map(account.reserved_sell_qty, `${itemPath}.reserved_sell_qty`, stockCode, (qty, qtyPath) => integer(qty, qtyPath, 0)) } }), daily_candles: map(parsed.daily_candles, `${path}.daily_candles`, stockCode, (items, itemPath) => array(items, itemPath).map((item, index) => parseDailyCandle(item, `${itemPath}[${index}]`))), active_daily_candles: map(parsed.active_daily_candles, `${path}.active_daily_candles`, stockCode, parseDailyCandle) }
+  return { seq: integer(parsed.seq, `${path}.seq`, 0), tick: integer(parsed.tick, `${path}.tick`, 0), day: integer(parsed.day, `${path}.day`, 0), phase: oneOf(parsed.phase, `${path}.phase`, phase), markets: map(parsed.markets, `${path}.markets`, stockIdKey, (item, itemPath) => { const market = record(item, itemPath); exact(market, ["last_price", "last_close", "best_bid", "best_ask", "bids", "asks"], itemPath); return { last_price: money(market.last_price, `${itemPath}.last_price`), last_close: money(market.last_close, `${itemPath}.last_close`), best_bid: nullable(market.best_bid, `${itemPath}.best_bid`, money), best_ask: nullable(market.best_ask, `${itemPath}.best_ask`, money), bids: array(market.bids, `${itemPath}.bids`).map((quote, index) => { const tuple = array(quote, `${itemPath}.bids[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.bids[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.bids[${index}][0]`), integer(tuple[1], `${itemPath}.bids[${index}][1]`, 0)] }), asks: array(market.asks, `${itemPath}.asks`).map((quote, index) => { const tuple = array(quote, `${itemPath}.asks[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.asks[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.asks[${index}][0]`), integer(tuple[1], `${itemPath}.asks[${index}][1]`, 0)] }) } }), accounts: map(parsed.accounts, `${path}.accounts`, safeIntegerKey, (item, itemPath) => { const account = record(item, itemPath); exact(account, ["cash", "positions", "reserved_cash", "reserved_sell_qty"], itemPath); return { cash: money(account.cash, `${itemPath}.cash`), positions: map(account.positions, `${itemPath}.positions`, stockIdKey, (position, positionPath) => { const result = record(position, positionPath); exact(result, ["qty", "t1_locked", "invested_cents", "recovered_cents"], positionPath); return { qty: integer(result.qty, `${positionPath}.qty`, 0), t1_locked: integer(result.t1_locked, `${positionPath}.t1_locked`, 0), invested_cents: money(result.invested_cents, `${positionPath}.invested_cents`), recovered_cents: money(result.recovered_cents, `${positionPath}.recovered_cents`) } }), reserved_cash: money(account.reserved_cash, `${itemPath}.reserved_cash`), reserved_sell_qty: map(account.reserved_sell_qty, `${itemPath}.reserved_sell_qty`, stockIdKey, (qty, qtyPath) => integer(qty, qtyPath, 0)) } }), daily_candles: map(parsed.daily_candles, `${path}.daily_candles`, stockIdKey, (items, itemPath) => array(items, itemPath).map((item, index) => parseDailyCandle(item, `${itemPath}[${index}]`))), active_daily_candles: map(parsed.active_daily_candles, `${path}.active_daily_candles`, stockIdKey, parseDailyCandle) }
 }

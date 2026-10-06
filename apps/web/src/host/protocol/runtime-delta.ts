@@ -1,16 +1,35 @@
-import type { AccountSnap } from "../../types/generated/AccountSnap.ts";
-import type { RuntimeDelta } from "../../types/generated/RuntimeDelta.ts";
-import type { Snapshot } from "../../types/generated/Snapshot.ts";
 import type { PlayerWorkingOrder } from "../player-working-orders.ts";
 import { canonicalJson } from "./canonical.ts";
 import { boolean, enumValue, exact, field, mapEntries, record, safeInteger, safeU32, text, values } from "./guards.ts";
 import { ProtocolError, type ProtocolState } from "./types.ts";
+import { type CodedRuntimeDelta, type CodedSnapshot, type WireAccountSnap, type WirePlayerWorkingOrder, type WireRuntimeDelta } from "./stock-identity.ts";
 import { parseMoney, TRADING_PHASES } from "./wire-values.ts";
 
 function malformed(where: string, message: string): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", where, message);
 }
 
+/** wire 活动委托：code 为数值 StockId（ADR 0041），翻译发生在 stock-identity.ts。 */
+function wireWorkingOrder(value: unknown, path: string): WirePlayerWorkingOrder {
+  const source = record(value, path);
+  exact(source, ["id", "code", "side", "price", "remainingQty", "venue", "frozen"], path);
+  const order = {
+    id: safeInteger(field(source, "id", path), `${path}.id`),
+    code: safeU32(field(source, "code", path), `${path}.code`),
+    side: enumValue(field(source, "side", path), ["Buy", "Sell"], `${path}.side`),
+    price: parseMoney(field(source, "price", path), `${path}.price`),
+    remainingQty: safeU32(field(source, "remainingQty", path), `${path}.remainingQty`),
+    venue: enumValue(field(source, "venue", path), ["auction", "continuous"], `${path}.venue`),
+    frozen: enumValue(field(source, "frozen", path), ["cash", "shares"], `${path}.frozen`),
+  };
+  if (BigInt(order.price) <= 0n || order.remainingQty === 0
+    || order.frozen !== (order.side === "Buy" ? "cash" : "shares")) {
+    malformed(path, "活动委托价格、余量或冻结资源不合法");
+  }
+  return order;
+}
+
+/** 公共 DTO 活动委托：code 已由摄入层译为代码串（player-working-orders.ts 归一化后）。 */
 function workingOrder(value: unknown, path: string): PlayerWorkingOrder {
   const source = record(value, path);
   exact(source, ["id", "code", "side", "price", "remainingQty", "venue", "frozen"], path);
@@ -30,7 +49,7 @@ function workingOrder(value: unknown, path: string): PlayerWorkingOrder {
   return order;
 }
 
-export function parseBaselineWorkingOrders(value: unknown, markets: Snapshot["markets"]): Record<number, PlayerWorkingOrder> {
+export function parseBaselineWorkingOrders(value: unknown, markets: CodedSnapshot["markets"]): Record<number, PlayerWorkingOrder> {
   const path = "protocol.baseline.working_orders";
   const orders: Record<number, PlayerWorkingOrder> = {};
   for (const [index, entry] of values(value, path).entries()) {
@@ -43,7 +62,7 @@ export function parseBaselineWorkingOrders(value: unknown, markets: Snapshot["ma
   return orders;
 }
 
-function validateAccount(account: AccountSnap, path: string): void {
+function validateAccount(account: WireAccountSnap, path: string): void {
   if (BigInt(account.cash) < 0n || BigInt(account.reserved_cash) < 0n || BigInt(account.reserved_cash) > BigInt(account.cash)) {
     malformed(path, "账户现金或资金占用不合法");
   }
@@ -63,8 +82,8 @@ function validateAccount(account: AccountSnap, path: string): void {
 export function parseRuntimeDelta(
   value: unknown,
   path: string,
-  parseAccount: (value: unknown, path: string) => AccountSnap,
-): RuntimeDelta {
+  parseAccount: (value: unknown, path: string) => WireAccountSnap,
+): WireRuntimeDelta {
   const source = record(value, path);
   exact(source, ["seq_from", "seq_to", "tick", "day", "phase", "accounts", "working_orders"], path);
   const accounts = mapEntries(field(source, "accounts", path), `${path}.accounts`, parseAccount);
@@ -76,7 +95,7 @@ export function parseRuntimeDelta(
   const orders = record(field(source, "working_orders", path), orderPath);
   exact(orders, ["reset", "upserts", "removed"], orderPath);
   const reset = boolean(field(orders, "reset", orderPath), `${orderPath}.reset`);
-  const upserts = values(field(orders, "upserts", orderPath), `${orderPath}.upserts`).map((order, index) => workingOrder(order, `${orderPath}.upserts[${index}]`));
+  const upserts = values(field(orders, "upserts", orderPath), `${orderPath}.upserts`).map((order, index) => wireWorkingOrder(order, `${orderPath}.upserts[${index}]`));
   const removed = values(field(orders, "removed", orderPath), `${orderPath}.removed`).map((id, index) => safeInteger(id, `${orderPath}.removed[${index}]`));
   const ids = new Set<number>();
   for (const id of [...upserts.map((order) => order.id), ...removed]) {
@@ -97,9 +116,9 @@ export function parseRuntimeDelta(
 
 export function applyRuntimeDelta(
   state: Pick<ProtocolState, "snapshot" | "playerWorkingOrders" | "playerOrdersReady">,
-  delta: RuntimeDelta,
-  markets: Snapshot["markets"],
-  activeDailyCandles: Snapshot["active_daily_candles"],
+  delta: CodedRuntimeDelta,
+  markets: CodedSnapshot["markets"],
+  activeDailyCandles: CodedSnapshot["active_daily_candles"],
 ): Pick<ProtocolState, "snapshot" | "playerWorkingOrders" | "playerOrdersReady"> {
   const orderPath = "protocol.reduce.runtime_delta.working_orders";
   if (!state.playerOrdersReady && !delta.working_orders.reset) malformed(orderPath, "基线后的首批委托增量必须显式 reset");

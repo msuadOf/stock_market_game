@@ -1,12 +1,11 @@
 import type {
-  Intent,
   PublicReportPage,
   PublicReportQuery,
   PublicReportSummary,
-  Snapshot,
   StockCode,
   HistoricalStockData,
 } from "../types/engine";
+import type { CodedIntent, CodedSnapshot } from "./protocol/stock-identity.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
@@ -54,8 +53,8 @@ export interface EngineHost {
   /** 仅远程宿主提供；缺省表示该宿主没有网络 Publisher。 */
   getDeliveryMode?(): DeliveryMode;
   setDeliveryMode?(mode: DeliveryMode): void;
-  submitIntent(intent: Intent): Promise<void>;
-  snapshot(): Snapshot;
+  submitIntent(intent: CodedIntent): Promise<void>;
+  snapshot(): CodedSnapshot;
   tick(): number;
   day(): number;
   civilDate?(): Promise<string>;

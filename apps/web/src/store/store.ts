@@ -7,22 +7,23 @@
  * 各 slice 拆到独立文件，这里只做装配与统一导出。
  */
 import { configureStore, createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { Cents, Snapshot, TradeEvent } from "../types/engine";
+import type { Cents } from "../types/engine";
 import type { DailyCandle } from "../types/generated/DailyCandle.ts";
 import type { MarketSnap } from "../types/generated/MarketSnap.ts";
+import type { CodedRuntimeDelta, CodedSnapshot, CodedTradeEvent } from "../host/protocol/stock-identity.ts";
 import { priceHistoryReducer } from "./priceHistorySlice.ts";
 import { selectedStockReducer } from "./selectedStockSlice.ts";
 import { companyReducer } from "./company-slice.ts";
 import { chartSettingsReducer } from "./chart-settings-slice.ts";
 import type { PlayerWorkingOrder } from "../host/player-working-orders.ts";
-import type { RuntimeDelta } from "../types/generated/RuntimeDelta.ts";
+
 import { applyRuntimeDelta, retainUnchangedEntries } from "../host/protocol/runtime-delta.ts";
 import { ProtocolError } from "../host/protocol/types.ts";
 
 // ── snapshotSlice ──
 
 interface SnapshotState {
-  snapshot: Snapshot | null;
+  snapshot: CodedSnapshot | null;
   lastSeq: number;
   generation: string | null;
   playerWorkingOrders: Record<number, PlayerWorkingOrder>;
@@ -41,11 +42,11 @@ const snapshotSlice = createSlice({
   name: "snapshot",
   initialState: initialSnapshotState,
   reducers: {
-    setSnapshot(state, action: PayloadAction<Snapshot>) {
+    setSnapshot(state, action: PayloadAction<CodedSnapshot>) {
       state.snapshot = action.payload;
       state.lastSeq = action.payload.seq;
     },
-    installProtocolSnapshotBaseline(state, action: PayloadAction<{ readonly snapshot: Snapshot; readonly generation: string }>) {
+    installProtocolSnapshotBaseline(state, action: PayloadAction<{ readonly snapshot: CodedSnapshot; readonly generation: string }>) {
       state.snapshot = action.payload.snapshot;
       state.lastSeq = action.payload.snapshot.seq;
       state.generation = action.payload.generation;
@@ -66,9 +67,9 @@ const snapshotSlice = createSlice({
     },
     applyProtocolRuntimeDelta(state, action: PayloadAction<{
       readonly generation: string;
-      readonly delta: RuntimeDelta;
-      readonly markets: Snapshot["markets"];
-      readonly activeDailyCandles: Snapshot["active_daily_candles"];
+      readonly delta: CodedRuntimeDelta;
+      readonly markets: CodedSnapshot["markets"];
+      readonly activeDailyCandles: CodedSnapshot["active_daily_candles"];
     }>) {
       const snap = state.snapshot;
       const { delta, generation, markets, activeDailyCandles } = action.payload;
@@ -101,7 +102,7 @@ const snapshotSlice = createSlice({
 // ── tradesSlice ──
 
 interface TradesState {
-  items: TradeEvent[];
+  items: CodedTradeEvent[];
 }
 
 const MAX_TRADES = 100;
@@ -114,7 +115,7 @@ const tradesSlice = createSlice({
   name: "trades",
   initialState: initialTradesState,
   reducers: {
-    appendTrades(state, action: PayloadAction<TradeEvent[]>) {
+    appendTrades(state, action: PayloadAction<CodedTradeEvent[]>) {
       const incoming = action.payload;
       if (incoming.length === 0) return;
       const merged = [...[...incoming].reverse(), ...state.items];

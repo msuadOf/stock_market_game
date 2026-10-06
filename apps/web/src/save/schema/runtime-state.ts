@@ -18,7 +18,8 @@ export type SavedFeeComponents = {
 
 export type SavedEnvelopeKey = {
   readonly account: number
-  readonly stock: string
+  /** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
+  readonly stock: number
   readonly order: number
   readonly side: (typeof sides)[number]
 }
@@ -86,10 +87,8 @@ function accountKey(value: string, path: string): void {
   safeIntegerKey(value, path)
 }
 
-function stock(value: unknown, path: string): string {
-  const parsed = string(value, path)
-  if (parsed.length === 0) throw new Error(`存档 ${path} 股票代码不能为空`)
-  return parsed
+function stock(value: unknown, path: string): number {
+  return u32(integer(value, path, 0), path)
 }
 
 function money(value: unknown, path: string): string {

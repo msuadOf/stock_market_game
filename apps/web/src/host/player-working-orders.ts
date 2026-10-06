@@ -1,5 +1,6 @@
 import { parseMoney, compareMoney } from "../utils/money.ts";
 import type { Cents } from "../types/engine.ts";
+import { stockCodeOf } from "./protocol/stock-identity.ts";
 
 export type PlayerWorkingOrder = {
   readonly id: number;
@@ -34,7 +35,8 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
     if (Object.keys(order).length !== expected.length || expected.some((key) => !Object.hasOwn(order, key))) {
       throw new TypeError(`${path} 字段不符合 DTO 契约`);
     }
-    if (typeof order.code !== "string" || order.code.length === 0) throw new TypeError(`${path}.code 必须是非空证券代码`);
+    // wire 的 code 为数值 StockId（ADR 0041）；摄入时译回非空代码串。
+    if (typeof order.code !== "number" || !Number.isSafeInteger(order.code) || order.code < 0) throw new TypeError(`${path}.code 必须是数值 StockId`);
     if (order.side !== "Buy" && order.side !== "Sell") throw new TypeError(`${path}.side 无效`);
     if (order.venue !== "auction" && order.venue !== "continuous") throw new TypeError(`${path}.venue 无效`);
     if (order.frozen !== "cash" && order.frozen !== "shares") throw new TypeError(`${path}.frozen 无效`);
@@ -46,7 +48,7 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
     if (remainingQty > 0xffff_ffff) throw new TypeError(`${path}.remainingQty 必须是 u32`);
     return {
       id: nonnegativeSafeInteger(order.id, `${path}.id`),
-      code: order.code,
+      code: stockCodeOf(order.code, `${path}.code`),
       side: order.side,
       price,
       remainingQty,

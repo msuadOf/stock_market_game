@@ -1,5 +1,5 @@
 import type { StrictSaveEnvelope } from "../save/schema/root.ts"
-import type { Event } from "../types/generated/Event.ts"
+import type { CodedEvent as Event } from "../host/protocol/stock-identity.ts"
 import type { Cents } from "../types/engine.ts"
 
 export type PlayerWorkingOrder = {

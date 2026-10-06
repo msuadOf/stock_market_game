@@ -1,3 +1,5 @@
+import { stockCodeOf } from "./protocol/stock-identity.ts";
+
 export type NpcDecisionTraceRecord = {
   readonly account: number;
   readonly tick: string;
@@ -55,7 +57,7 @@ function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
     || !isStringArray(value["source_report_ids"]) || !isStringOrNull(value["expectation_method"])
     || !isNonNegativeIntegerArray(value["plan_ids"]) || !isStringArray(value["plan_changes"])
     || !isStringArray(value["budget_constraints"])
-    || !isNonNegativeIntegerArray(value["order_ids"]) || !isStringArray(value["codes"])) {
+    || !isNonNegativeIntegerArray(value["order_ids"]) || !isNonNegativeIntegerArray(value["codes"])) {
     throw new Error(`NPC 决策诊断第 ${index} 条字段无效`);
   }
   return {
@@ -67,7 +69,8 @@ function parseRecord(value: unknown, index: number): NpcDecisionTraceRecord {
     plan_changes: value["plan_changes"],
     budget_constraints: value["budget_constraints"],
     order_ids: value["order_ids"],
-    codes: value["codes"],
+    // wire 的 codes 为数值 StockId 数组（ADR 0041）；摄入时逐个译回代码串。
+    codes: value["codes"].map((id, codeIndex) => stockCodeOf(id, `NPC 决策诊断第 ${index} 条 codes[${codeIndex}]`)),
   };
 }
 
