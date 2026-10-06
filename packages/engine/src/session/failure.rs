@@ -81,6 +81,86 @@ impl GameSession {
         }
     }
 
+    pub(super) fn prepare_cash_ex_references_for_current_date(&mut self) -> Result<(), StepFatal> {
+        let date = self.civil_date();
+        let calendar = self.state.civil_clock.calendar().clone();
+        let mut combined = std::collections::BTreeMap::<
+            crate::account::StockCode,
+            (crate::calendar::CalendarExchange, crate::calendar::CivilDate, crate::company::ex_reference_price::CashDividendFormula, crate::money::Money, Vec<String>),
+        >::new();
+        for book in &self.state.corporate_actions.dividends {
+            let plan = book.plan();
+            if plan.ex_dividend_on != date || book.registration().is_none() {
+                continue;
+            }
+            if plan.formula != crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!("证券 {} 的除息调整公式不受支持", plan.stock.0),
+                    location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+                });
+            }
+            let entry = combined.entry(plan.stock.clone()).or_insert((plan.exchange, plan.registered_on, plan.formula, crate::money::Money::ZERO, Vec::new()));
+            if entry.0 != plan.exchange || entry.1 != plan.registered_on || entry.2 != plan.formula {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!("证券 {} 的同日除息事件交易所不一致", plan.stock.0),
+                    location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+                });
+            }
+            entry.3 = entry.3.add(plan.gross_per_share).map_err(|error| StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+            })?;
+            entry.4.push(plan.plan_id.clone());
+        }
+        if combined.is_empty() {
+            return Ok(());
+        }
+        let mut candidate_markets = self.state.markets.clone();
+        let mut applied_groups = self.state.corporate_actions.applied_ex_dividend_groups.clone();
+        for (stock, (exchange, registered_on, formula, gross_per_share, mut plan_ids)) in combined {
+            plan_ids.sort();
+            let market = candidate_markets.get_mut(&stock).ok_or_else(|| StepFatal::InvariantViolation {
+                description: format!("除息计划引用未知证券 {}", stock.0),
+                location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+            })?;
+            if let Some(group) = applied_groups.iter().find(|group| group.date == date && group.stock == stock) {
+                if group.plan_ids != plan_ids || market.last_cash_ex_reference() != Some(group.reference) {
+                    return Err(StepFatal::InvariantViolation {
+                        description: format!("证券 {} 的已应用除息事实与当前登记计划不一致", stock.0),
+                        location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+                    });
+                }
+                continue;
+            }
+            if market.last_cash_ex_reference().is_some_and(|reference| reference.ex_date == date) {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!("证券 {} 有无对应计划组的已应用除息参考价", stock.0),
+                    location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+                });
+            }
+            let reference = crate::company::ex_reference_price::cash_dividend_ex_reference_price(
+                &calendar,
+                exchange,
+                formula,
+                registered_on,
+                market.last_close(),
+                gross_per_share,
+            ).map_err(|error| StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+            })?;
+            market.prepare_ex_date_reference(date, reference).map_err(|error| StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "GameSession::prepare_cash_ex_references_for_current_date".into(),
+            })?;
+            applied_groups.push(super::AppliedCashExDividendGroup { date, stock, plan_ids, reference });
+        }
+        self.state.markets = candidate_markets;
+        applied_groups.sort_by(|left, right| (left.date, &left.stock).cmp(&(right.date, &right.stock)));
+        self.state.corporate_actions.applied_ex_dividend_groups = applied_groups;
+        Ok(())
+    }
+
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
         self.poison = Some(fatal.clone());
         fatal

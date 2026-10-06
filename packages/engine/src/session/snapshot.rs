@@ -8,6 +8,11 @@ use super::*;
 pub struct MarketSnap {
     pub last_price: Money,
     pub last_close: Money,
+    pub cash_ex_reference_pending_trade: bool,
+    pub day_market_activity: bool,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
+    #[ts(type = "import(\"../../save/schema/company/ex-reference-price\").ExReferencePrice | null")]
+    pub last_cash_ex_reference: Option<crate::company::ex_reference_price::ExReferencePrice>,
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
     /// 买盘深度（价高→低，每价聚合总量）。前端取前 N 档渲染五档盘口。
@@ -169,6 +174,9 @@ impl GameSession {
                     MarketSnap {
                         last_price: m.last_price(),
                         last_close: m.last_close(),
+                        cash_ex_reference_pending_trade: m.cash_ex_reference_pending_trade(),
+                        day_market_activity: m.day_market_activity(),
+                        last_cash_ex_reference: m.last_cash_ex_reference(),
                         best_bid: m.best_bid(),
                         best_ask: m.best_ask(),
                         bids: m.bid_depth(),

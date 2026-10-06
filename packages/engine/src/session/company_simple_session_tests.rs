@@ -10,6 +10,147 @@ fn simple_setup() -> SessionSetup {
 }
 
 #[test]
+fn repeated_session_ticks_on_cash_ex_date_do_not_subtract_dividend_twice() {
+    use crate::company::{
+        cash_dividend::CashDividendPlan,
+        ex_reference_price::CashDividendFormula,
+        share_registry::{AcquisitionSource, HolderId, ShareHolding, ShareLot, ShareRegistry, ShareRestriction},
+    };
+    use crate::account::Position;
+    use crate::orderbook::AccountId;
+    use crate::accounting::AccountingAmount;
+
+    let mut setup = simple_setup();
+    setup.ticks_per_day = 2;
+    setup.start_date = crate::calendar::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    let issuer = crate::company::CompanyId(format!("C-{}", stock.0));
+    let approved_on = crate::calendar::CivilDate::from_iso("2030-01-02").unwrap();
+    let announced_on = crate::calendar::CivilDate::from_iso("2030-01-03").unwrap();
+    let registered_on = crate::calendar::CivilDate::from_iso("2030-01-04").unwrap();
+    let ex_date = crate::calendar::CivilDate::from_iso("2030-01-07").unwrap();
+    let payable_on = crate::calendar::CivilDate::from_iso("2030-01-08").unwrap();
+    let capital = AccountingAmount::from_cents(1_000_000);
+    session.define_dividend_legal_facts(&issuer, capital, "explicit test legal fact".into()).unwrap();
+    session.state.accounts.get_mut(&AccountId(0)).unwrap().fixture_insert_position(
+        stock.clone(), Position::from_restored_parts(1, 0, 1_000, 0),
+    );
+    let registry = ShareRegistry::new(
+        stock.clone(),
+        issuer.clone(),
+        session.state.setup.stocks[0].total_shares,
+        approved_on,
+        vec![
+            ShareHolding { holder: HolderId::Account(AccountId(0)), lots: vec![ShareLot {
+                id: "explicit-player-lot".into(), qty: 1, acquired_on: approved_on,
+                source: AcquisitionSource::InitialAllocation { evidence: "explicit setup facts".into() },
+                restriction: ShareRestriction::Unrestricted,
+            }] },
+            ShareHolding { holder: HolderId::IssuerTreasury, lots: vec![ShareLot {
+                id: "explicit-treasury-lot".into(), qty: session.state.setup.stocks[0].total_shares - 2,
+                acquired_on: approved_on,
+                source: AcquisitionSource::InitialAllocation { evidence: "explicit setup facts".into() },
+                restriction: ShareRestriction::Unrestricted,
+            }] },
+            ShareHolding {
+            holder: HolderId::External("explicit-owner".into()),
+            lots: vec![ShareLot {
+                id: "explicit-lot".into(),
+                qty: 1,
+                acquired_on: approved_on,
+                source: AcquisitionSource::InitialAllocation { evidence: "fixture".into() },
+                restriction: ShareRestriction::Unrestricted,
+            }],
+        }],
+    ).unwrap();
+    session.configure_share_registry(registry.clone()).unwrap();
+    let calendar = session.state.civil_clock.calendar().clone();
+    let initial_cash = session.account(AccountId(0)).unwrap().cash();
+    for (plan_id, cents) in [("ex-a", 1), ("ex-b", 2)] {
+        let plan = CashDividendPlan::new(
+            plan_id.into(), issuer.clone(), stock.clone(), crate::calendar::CalendarExchange::Sse,
+            CashDividendFormula::StandardCashOnly,
+            approved_on, announced_on, registered_on, ex_date, payable_on,
+            Money::from_cents(cents), Money::from_cents(cents * 2), &calendar,
+        ).unwrap();
+        session.approve_cash_dividend(crate::company::simple::DividendDeclaration {
+            plan_id: plan_id.into(), approved_on,
+            total_gross: AccountingAmount::from_cents(i128::from(cents) * 2), registered_capital: capital,
+        }, plan).unwrap();
+    }
+    let finish_day = |session: &mut GameSession| {
+        for _ in 0..session.state.setup.ticks_per_day { session.step().unwrap(); }
+        session.end_civil_day().unwrap();
+    };
+    finish_day(&mut session);
+    finish_day(&mut session);
+    finish_day(&mut session);
+    session.end_civil_day().unwrap();
+    session.end_civil_day().unwrap();
+    let previous_close = session.state.markets[&stock].last_close();
+    let mut failed_candidate = session.clone_for_tick_shadow().unwrap();
+    failed_candidate.inject_post_shadow_failure(crate::session::StepFatal::InvariantViolation {
+        description: "fixture rejects completed private shadow".into(),
+        location: "cash-ex-atomicity-test".into(),
+    });
+    let before_failure = failed_candidate.business_state_hash().unwrap();
+    assert!(failed_candidate.step().is_err());
+    assert_eq!(failed_candidate.business_state_hash().unwrap(), before_failure);
+    assert!(failed_candidate.state.corporate_actions.applied_ex_dividend_groups.is_empty());
+    assert_eq!(failed_candidate.state.markets[&stock].last_cash_ex_reference(), None);
+    session.step().unwrap();
+    let once = session.state.markets[&stock].last_close();
+    let intraday_save = session.save().unwrap();
+    let mut restored = GameSession::restore(&intraday_save).unwrap();
+    restored.step().unwrap();
+    let twice = restored.state.markets[&stock].last_close();
+    assert_eq!(once, previous_close.sub(Money::from_cents(3)).unwrap());
+    assert_eq!(twice, once);
+    restored.end_civil_day().unwrap();
+    finish_day(&mut restored);
+    let before_payment = restored.account(AccountId(0)).unwrap().cash();
+    assert_eq!(before_payment, initial_cash.add(Money::from_cents(3)).unwrap());
+    assert_eq!(restored.corporate_actions().account_gross_receipts.len(), 2);
+    assert_eq!(restored.corporate_actions().external_receipts.len(), 2);
+    assert!(restored.corporate_actions().account_gross_receipts.iter().all(|receipt| receipt.tax_status == crate::session::corporate_actions::DividendTaxStatus::TreatmentNotConfigured));
+    let mut corrupt_actions = restored.state.corporate_actions.clone();
+    corrupt_actions.account_gross_receipts[0].paid_on = restored.civil_date().next().unwrap();
+    let positions = restored.state.accounts.iter().map(|(id, account)| {
+        (*id, account.positions().iter().map(|(code, position)| (code.clone(), u64::from(position.qty()))).collect())
+    }).collect();
+    assert!(matches!(corrupt_actions.validate(&positions, &restored.state.company_system, restored.civil_date()), Err(crate::session::SessionCorporateActionsError::Invalid(message)) if message.contains("到账日期晚于")));
+    let saved = restored.save().unwrap();
+    let mut paid_restore = GameSession::restore(&saved).unwrap();
+    assert_eq!(paid_restore.account(AccountId(0)).unwrap().cash(), before_payment);
+    assert_eq!(paid_restore.corporate_actions().account_gross_receipts.len(), 2);
+}
+
+#[test]
+fn future_approved_date_cash_dividend_is_rejected_atomically() {
+    let session = GameSession::new(simple_setup(), 42).unwrap();
+    let before = session.business_state_hash().unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    let issuer = crate::company::CompanyId(format!("C-{}", stock.0));
+    let date = |value| crate::calendar::CivilDate::from_iso(value).unwrap();
+    let plan = crate::company::cash_dividend::CashDividendPlan::new(
+        "future-plan".into(), issuer, stock, crate::calendar::CalendarExchange::Sse,
+        crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+        date("2030-01-02"), date("2030-01-02"), date("2030-01-03"), date("2030-01-04"), date("2030-01-07"),
+        Money::from_cents(1), Money::from_cents(1), session.state.civil_clock.calendar(),
+    ).unwrap();
+    let declaration = crate::company::simple::DividendDeclaration {
+        plan_id: "future-plan".into(), approved_on: date("2030-01-02"),
+        total_gross: crate::accounting::AccountingAmount::from_cents(1),
+        registered_capital: crate::accounting::AccountingAmount::from_cents(1),
+    };
+    let mut candidate = session;
+    assert!(candidate.approve_cash_dividend(declaration, plan).is_err());
+    assert_eq!(candidate.business_state_hash().unwrap(), before);
+    assert!(candidate.corporate_actions().dividends.is_empty());
+}
+
+#[test]
 fn issuer_identity_uses_explicit_company_kind_instead_of_stock_code() {
     for kind in [crate::company::CompanyKind::Bank, crate::company::CompanyKind::Insurance, crate::company::CompanyKind::RealEstate] {
         let mut setup = simple_setup();

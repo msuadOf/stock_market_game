@@ -76,6 +76,9 @@ export function currentSaveFixture(): JsonObject {
         "600101": {
           last_price: "1120",
           last_close: "1120",
+          cash_ex_reference_pending_trade: false,
+          day_market_activity: false,
+          last_cash_ex_reference: null,
         },
       },
       accounts: {
@@ -145,6 +148,7 @@ export function currentSaveFixture(): JsonObject {
       next_expected: null,
       history: null,
     },
+    corporate_actions: { registries: [], dividends: [], account_gross_receipts: [], external_receipts: [], applied_ex_dividend_groups: [] },
     closing_registry: { versions: [], restatements: [] },
     public_library: { next_seq: 0, reports: [], announcements: [] },
     ops_wiring: { mirrored: [] },

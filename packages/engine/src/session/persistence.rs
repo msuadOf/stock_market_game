@@ -439,6 +439,25 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             )));
         }
     }
+    for (code, market) in &save.snapshot.markets {
+        let stock = save.setup.stocks.iter().find(|stock| &stock.code == code)
+            .expect("已核对证券代码集合");
+        crate::market::Market::validate_restored_facts(
+            code,
+            save.civil_clock.current_date,
+            market.last_price,
+            market.last_close,
+            market.cash_ex_reference_pending_trade,
+            market.last_cash_ex_reference,
+            stock.tick,
+        ).map_err(|error| SessionError::InvalidSave(format!("证券 {} 的恢复行情状态非法：{error}", code.0)))?;
+        if market.day_market_activity {
+            let is_open = stock_calendar.is_trading_day(session_calendar_exchange(stock.exchange), save.civil_clock.current_date)?;
+            if !is_open || day_tick == 0 {
+                return Err(SessionError::InvalidSave(format!("证券 {} 的日内市场活动标记与自然日时钟不一致", code.0)));
+            }
+        }
+    }
 
     let minute_markets: BTreeSet<StockCode> = save.market_minute_closes.keys().cloned().collect();
     if minute_markets != expected_markets {
@@ -1237,6 +1256,11 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     }
     save.company_system.issuers().validate_issuer_mapping(&save.setup.stocks.iter().map(|stock| (stock.code.clone(), stock.total_shares)).collect::<Vec<_>>())
         .map_err(|error| SessionError::InvalidSave(format!("发行人映射非法：{error}")))?;
+    let account_positions = save.snapshot.accounts.iter().map(|(id, account)| {
+        (*id, account.positions.iter().map(|(code, position)| (code.clone(), u64::from(position.qty))).collect())
+    }).collect();
+    save.corporate_actions.validate(&account_positions, &save.company_system, save.civil_clock.current_date)
+        .map_err(|error| SessionError::InvalidSave(format!("公司行为状态非法：{error}")))?;
     let expected = save.civil_clock.current_date.prev().map_err(|error| SessionError::InvalidSave(error.to_string()))?;
     if save.company_system.advanced_through() != expected {
         return Err(SessionError::InvalidSave("公司系统推进日期与自然日时钟不一致".into()));

@@ -19,7 +19,7 @@ export function dailyCandle(): JsonRecord {
 }
 
 export function market(): JsonRecord {
-  return { last_price: "1000", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] };
+  return { last_price: "1000", last_close: "1000", cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null, best_bid: null, best_ask: null, bids: [], asks: [] };
 }
 
 export function snapshot(tick: number, seq: number): JsonRecord {

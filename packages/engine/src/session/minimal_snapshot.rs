@@ -6,6 +6,11 @@ use std::collections::BTreeMap;
 pub struct SaveMarketSnap {
     pub last_price: Money,
     pub last_close: Money,
+    pub cash_ex_reference_pending_trade: bool,
+    pub day_market_activity: bool,
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
+    #[ts(type = "import(\"../../save/schema/company/ex-reference-price\").ExReferencePrice | null")]
+    pub last_cash_ex_reference: Option<crate::company::ex_reference_price::ExReferencePrice>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]

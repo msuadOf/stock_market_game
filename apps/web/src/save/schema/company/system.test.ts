@@ -15,7 +15,7 @@ function fixture() {
     implementation: { mode: "Simple", state: {
       config: { environment: { initial_change_bp: 0, persistence_bp: 0, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } }, companies: [{ company: "C-600101", kind: "Industrial", generation: { initial_revenue: "1000.00", initial_fixed_expense: "300.00", revenue_trend: { kind: "Fixed", annual_growth_bp: 0 }, demand_sensitivity_bp: 0, revenue_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, fixed_expense_trend: { kind: "Fixed", annual_growth_bp: 0 }, fixed_expense_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, variable_expense: { rule: "RevenueRatio", ratio_bp: 4000, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } } }, finance: financeConfig }], prehistory_periods: 0, settlement_cycle: "Monthly" },
       history_start: "2030-01-01", advanced_through: "2030-01-31", environment_change_bp: 0, environment_rng: { state: "18446744073709551615" },
-      companies: { "C-600101": { generation: { amounts, rng: { state: "19" }, revenue_trend: { annual_growth_bp: 0, remaining_months: 0 }, fixed_expense_trend: { annual_growth_bp: 0, remaining_months: 0 }, variable_expense_trend: null }, finance: { company: "C-600101", kind: "Industrial", config: financeConfig, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "2", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]] }, pending_restart: null } },
+      companies: { "C-600101": { generation: { amounts, rng: { state: "19" }, revenue_trend: { annual_growth_bp: 0, remaining_months: 0 }, fixed_expense_trend: { annual_growth_bp: 0, remaining_months: 0 }, variable_expense_trend: null }, finance: { company: "C-600101", kind: "Industrial", config: financeConfig, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "2", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: {}, legal_facts: null }, pending_restart: null } },
       history: [{ company: "C-600101", period_start: "2030-01-01", period_end: "2030-01-31", amounts, explanation: { previous: amounts, cycle: "Monthly", environment_change_bp: 0, demand_contribution_bp: 0, revenue_segments: [{ annual_growth_bp: 0, months: 1 }], fixed_expense_segments: [{ annual_growth_bp: 0, months: 1 }], variable_expense_segments: [], revenue_noise_bp: 0, fixed_expense_noise_bp: 0, variable_expense_noise_bp: 0, restart_revenue: null, restart_source: null } }],
     } },
   };
@@ -155,4 +155,15 @@ test("公司日期服从 CivilDate 验证窗，不接受不存在的仿真年代
     const value = fixture(); value.implementation.state.history_start = date;
     assert.throws(() => parseCompanySystemState(value), /CivilDate/);
   }
+});
+
+test("完整槽拒绝晚于 Session 日期的实际公司分红付款", { timeout: 10000 }, () => {
+  const value = fixture();
+  value.issuers["C-600101"].name = "虚构上市公司600101";
+  value.implementation.state.companies["C-600101"].finance.dividends = {
+    "plan-1": { payments: { "payment-1": { paid_on: "2030-02-02" } } },
+  } as never;
+  const system = value as unknown as ReturnType<typeof parseCompanySystemState>;
+  const setup = { stocks: [{ ...DEFAULT_SETUP.stocks[0]!, total_shares: "1000" }], company_system: { mode: "Simple" as const, config: system.implementation.state.config } };
+  assert.throws(() => validateCompanySystemSession(system, setup, "2030-02-01"), /实际付款日期晚于当前会话日期/);
 });

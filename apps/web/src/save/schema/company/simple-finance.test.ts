@@ -22,7 +22,7 @@ test("Simple 四种公司类别保存精确基础科目表与独立汇总科目�
   for (const kind of ["Industrial", "Bank", "Insurance", "RealEstate"] as const) {
     const currentBooks = { ...baseBooks, chart: simpleAccountChart(kind) };
     const currentConfig = { ...config, opening_lines: [{ account: "simple_receivable", side: "Debit", amount: "1000.00" }, { account: "4001", side: "Credit", amount: "1000.00" }] };
-    const value = { company: "C", kind, config: currentConfig, books: currentBooks, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2029-12-31", last_month: "2029-12", next_event_id: "1", income_tax_position: position, recognized_periods: [] };
+    const value = { company: "C", kind, config: currentConfig, books: currentBooks, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2029-12-31", last_month: "2029-12", next_event_id: "1", income_tax_position: position, recognized_periods: [], dividends: {}, legal_facts: null };
     assert.deepEqual(parseSimpleFinanceState(value), value);
     assert.equal(currentBooks.chart.accounts.simple_revenue?.name, "Simple 汇总营业收入");
     assert.equal(currentBooks.chart.accounts.simple_revenue?.is_cash, false);
@@ -46,7 +46,7 @@ test("期间摘要使用独立 SimplePeriodSummary 非现金标识，不伪造�
 });
 
 test("Simple 财务状态保存同一 Books 和 Closing、规范大事件游标，拒绝未知或缺字段", { timeout: 10000 }, () => {
-  const value = { company: "C-600101", kind: "Industrial", config, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "18446744073709551615", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]] };
+  const value = { company: "C-600101", kind: "Industrial", config, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "18446744073709551615", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: {}, legal_facts: null };
   assert.deepEqual(parseSimpleFinanceState(value), value);
   for (const key of Object.keys(value)) {
     const missing: Record<string, unknown> = { ...value }; delete missing[key];
@@ -60,4 +60,44 @@ test("Simple 财务状态保存同一 Books 和 Closing、规范大事件游标�
   assert.throws(() => parseSimpleFinanceState({ ...value, loss_pool: [] }), /loss_pool/);
   assert.throws(() => parseSimpleFinanceState({ ...value, recognized_periods: [] }), /recognized_periods/);
   assert.throws(() => parseSimpleFinanceState({ ...value, recognized_periods: [["2030-01-02", "2030-01-31"]] }), /连续/);
+  for (const key of ["dividends", "legal_facts"]) {
+    const missing: Record<string, unknown> = { ...value }; delete missing[key];
+    assert.throws(() => parseSimpleFinanceState(missing), new RegExp(key));
+  }
+  assert.throws(() => parseSimpleFinanceState({ ...value, dividends: { plan: { declaration: { plan_id: "other" } } } }), /dividends/);
+  assert.throws(() => parseSimpleFinanceState({ ...value, legal_facts: { registered_capital: 10000, source_evidence: "监管披露" } }), /registered_capital/);
+  assert.throws(() => parseSimpleFinanceState({ ...value, legal_facts: { registered_capital: "1000.00", source_evidence: " " } }), /source_evidence/);
+});
+
+test("Simple 分红计划 wire 要保留完整决议、公积年度与付款批次事实", { timeout: 10000 }, () => {
+  const declaration = { plan_id: "dividend-plan-1", approved_on: "2030-02-01", total_gross: "100.00", registered_capital: "1000.00" };
+  const plan = { declaration, declaration_source: 2, reserve: "10.00", reserve_basis_year: 2029, payments: { "payment-1": { source: 3, paid_on: "2030-02-02", amount: "30.00" } } };
+  const journal = { batches: [[
+    { source: 2, date: "2030-02-01", kind: "CompanyDividendDeclaration", cash_flow: "NonCash", lines: [{ account: "4103", side: "Debit", amount: "110.00" }, { account: "simple_statutory_reserve", side: "Credit", amount: "10.00" }, { account: "simple_dividend_payable", side: "Credit", amount: "100.00" }] },
+    { source: 3, date: "2030-02-02", kind: "CompanyDividendPayment", cash_flow: "NonCash", lines: [{ account: "simple_dividend_payable", side: "Debit", amount: "30.00" }, { account: "simple_dividend_settlement_asset", side: "Credit", amount: "30.00" }] },
+  ]], closed: [] };
+  const dividendBooks = { ...books, chart: simpleAccountChart("Industrial"), journal };
+  const value = { company: "C-600101", kind: "Industrial", config, books: dividendBooks, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "4", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: { "dividend-plan-1": plan }, legal_facts: { registered_capital: "1000.00", source_evidence: "章程及登记材料" } };
+  assert.deepEqual(parseSimpleFinanceState(value), value);
+  for (const malformed of [
+    { ...plan, declaration: { ...declaration, plan_id: "wrong-id" } },
+    { ...plan, reserve_basis_year: null },
+    { ...plan, reserve: "0.00", reserve_basis_year: 2029 },
+    { ...plan, reserve_basis_year: 2028 },
+    { ...plan, payments: { "": { source: 3, paid_on: "2030-02-02", amount: "30.00" } } },
+    { ...plan, payments: { "payment-1": { source: 3, paid_on: "2030-02-02", amount: "30.00", extra: true } } },
+  ]) {
+    const candidate = { ...value, dividends: { "dividend-plan-1": malformed } };
+    assert.throws(() => parseSimpleFinanceState(candidate), /dividends/);
+  }
+  assert.throws(() => parseSimpleFinanceState({ ...value, dividends: { "dividend-plan-1": { ...plan, declaration_source: 3 } } }), /declaration_source|dividends/);
+  assert.throws(() => parseSimpleFinanceState({ ...value, books: { ...dividendBooks, journal: { batches: [journal.batches[0].slice(0, 1)], closed: [] } } }), /dividends|simple_dividend_payable/);
+  const unbalancedJournal = { batches: [...journal.batches, [{ source: 4, date: "2030-02-03", kind: "SimplePeriodSummary", cash_flow: "NonCash", lines: [{ account: "4103", side: "Debit", amount: "1.00" }] }]], closed: [] };
+  assert.throws(() => parseSimpleFinanceState({ ...value, next_event_id: "5", books: { ...dividendBooks, journal: unbalancedJournal } }), /借贷不平衡/);
+  const unknownAccountJournal = { batches: [...journal.batches, [{ source: 4, date: "2030-02-03", kind: "SimplePeriodSummary", cash_flow: "NonCash", lines: [{ account: "unknown", side: "Debit", amount: "1.00" }, { account: "4103", side: "Credit", amount: "1.00" }] }]], closed: [] };
+  assert.throws(() => parseSimpleFinanceState({ ...value, next_event_id: "5", books: { ...dividendBooks, journal: unknownAccountJournal } }), /科目/);
+  const emptyVoucherJournal = { batches: [...journal.batches, [{ source: 4, date: "2030-02-03", kind: "SimplePeriodSummary", cash_flow: "NonCash", lines: [] }]], closed: [] };
+  assert.throws(() => parseSimpleFinanceState({ ...value, next_event_id: "5", books: { ...dividendBooks, journal: emptyVoucherJournal } }), /不得为空/);
+  const overdrawThenRestore = { batches: [...journal.batches, [{ source: 4, date: "2030-02-03", kind: "SimplePeriodSummary", cash_flow: "NonCash", lines: [{ account: "4103", side: "Debit", amount: "5.00" }, { account: "1001", side: "Credit", amount: "5.00" }] }], [{ source: 5, date: "2030-02-04", kind: "SimplePeriodSummary", cash_flow: "NonCash", lines: [{ account: "1001", side: "Debit", amount: "5.00" }, { account: "4103", side: "Credit", amount: "5.00" }] }]], closed: [] };
+  assert.throws(() => parseSimpleFinanceState({ ...value, next_event_id: "6", books: { ...dividendBooks, journal: overdrawThenRestore } }), /现金科目/);
 });

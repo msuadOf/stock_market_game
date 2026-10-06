@@ -51,6 +51,8 @@ impl SimpleFinanceState {
             next_event_id: 2,
             income_tax_position,
             recognized_periods: Vec::new(),
+            dividends: std::collections::BTreeMap::new(),
+            legal_facts: RequiredOption(None),
         };
         state.validate()?;
         Ok(state)

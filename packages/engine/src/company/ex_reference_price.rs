@@ -2,13 +2,16 @@ use crate::calendar::{CalendarError, CalendarExchange, CivilDate, TradingCalenda
 use crate::{Money, MoneyError};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
 pub struct ExReferencePrice {
     pub ex_date: CivilDate,
     pub reference_price: Money,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub enum CashDividendFormula {
     StandardCashOnly,
     ExchangeApprovedAdjustment,

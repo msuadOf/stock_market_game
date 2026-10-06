@@ -82,6 +82,53 @@ fixture 股票代码；实际生成输出符合上述跨层字段。host70 日�
 短测仍 pending，host64、typegen、Server availability 记录也不扩展成完整回归或三宿主
 验收。
 
+## 两个 Producer 当前增量复核
+
+重新全文检查两个 producer 的当前源码及其相对前版 diff，确认原生成流程仍在：current
+fixture 仍经 `ProtocolSession` 实际推进两个 60-tick 日终，随后 `ProtocolSession::restore`
+并检查原会话和恢复会话各自连续 3 frame 的 NPC `OrderAccepted`；closed-day fixture
+仍经真实 `ProtocolSession` 做零 tick 日结并深度恢复比较。新增 corporate action 五个空数组
+（含 `applied_ex_dividend_groups`）和 Market 两个布尔字段的结构校验符合 fixture 场景；
+`day_market_activity` 未被误断言为必须 false，因此没有把活跃行情伪装为静态状态。
+
+发现两项需修复后再复核：
+
+1. 两个 validator 的 Market `last_cash_ex_reference` 目前只检查 key 存在；Simple
+   `finance.legal_facts` 也只检查 key 存在。错误值（如非 null 对象/字符串）仍会通过，
+   与新局/零股利状态及“显式 nullable”错误文案不符。对当前两种 fixture，应该显式要求
+   这两个字段为 JSON `null`；dividends 已正确要求为空对象，corporate action 字段已正确
+   要求空数组。
+2. current-save validator 对 journal entries 检查整数 source、无重复、最小 source 为 1，
+   并检查 `next_event_id` 十进制 cursor 大于最大 source；这是合理的非回退/游标检查，
+   允许序号有合法空洞。closed-day validator 只要求 `journal.batches` 非空，未逐 entry
+   检查 source，也未核对 `next_event_id`；损坏、缺失或重复的 source 可通过该 fixture
+   producer。应为 closed-day 的期初 journal 做相称的 source/cursor 检查（至少验证
+   source 为合法正整数、唯一、从 1 开始且 next cursor 大于最大 source），无需未经领域
+   依据额外强制所有 event ID 连续无空洞。
+
+这些是 fixture 结构校验缺口，不是 A 股撮合或结算语义变化。当前 HEAD 的 producer
+增量复核未运行 Cargo、未改生成器、未改 index 或 JSON；实际再次生成仍由主 agent 执行。
+上述 finding 修复后需要对新 diff 再复核，之后再记录生成结果；不把本节当作 release70
+运行或短测证据。
+
+### 修复复核
+
+作者随后将两处 nullable 校验改为 `is_some_and(Value::is_null)`，因此 key 缺失及非-null
+值都会拒绝；`dividends` 仍要求对象且为空。closed-day producer 现在逐批逐 entry
+读取正整数 `source`、拒绝重复 source，并检查最小 source 为 1、十进制字符串
+`next_event_id` 大于最大 source；这与 current-save producer 的 source 集合/cursor
+规则一致，并允许合法空洞。两个 producer 中 `corporate_actions` 五个空数组、Market
+状态字段、Simple finance nullable/dividends、journal source 验证均位于 Engine 生成
+并序列化的 Save 上。原 current-save 两日日终、restore 深等与原/恢复各三 frame 的 NPC
+`OrderAccepted` 断言，以及 closed-day 零 tick 日结、公司自然日推进和 restore 深等仍保留。
+
+逐项对照后，上节两项 finding 均已关闭；没有新增有效 finding。本次复核没有运行 Cargo、
+生成器或 Web 测试。主 agent 报告作者修复后两个 producer 已再次正规 Rust 编译和真实执行、
+JSON 已安装，Web strict gold 10 项通过（记录称 `web-gold-fresh.log`）；这些作为作者
+提供的运行证据记录，不冒称由本复核重跑。主 agent 报告当前 HEAD producer 又在执行
+Rustc，故本复核结论只针对已读到的源码修复，不能代表这次在途运行通过，也不将旧
+release70 结果计入本批验证。
+
 本记录的范围仍限于这两份 fixture 的真实性/交叉字段及前述 fixture 生成器和指定
 actor test include hunk，不是 regression 审查。Web 短测尚未运行；host64、typegen、
 Server availability 数字仍只是 `fixture-migration.md` 所记既有、限定范围的证据，不

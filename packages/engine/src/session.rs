@@ -15,6 +15,7 @@ mod exchange_calendar;
 #[cfg(test)]
 mod exchange_calendar_tests;
 mod company_assembly;
+mod corporate_actions;
 #[cfg(test)]
 mod company_simple_session_tests;
 mod company_groups;
@@ -99,6 +100,7 @@ pub use civil_clock::{
     DueBusinessId, DueKind,
 };
 pub use company_groups::{GroupHolding, GroupStructure};
+pub use corporate_actions::{AppliedCashExDividendGroup, ExternalDividendReceipt, SessionCorporateActions, SessionCorporateActionsError};
 pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
 pub use disclosures::{
@@ -516,6 +518,8 @@ pub struct SaveSlot {
     pub next_order_id: u64,
     /// 自然日经营时钟权威状态；完整存档携带冻结的日历政策。
     pub civil_clock: CivilClockSave,
+    #[ts(type = "import(\"../../save/schema/corporate-actions\").SessionCorporateActions")]
+    pub corporate_actions: SessionCorporateActions,
     /// ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
     ///    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
     /// 新局选定的公司系统、财务事实与独立随机状态。
@@ -1466,6 +1470,7 @@ struct CommittableSessionState {
     attention_scheduler: NpcAttentionScheduler,
     // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
     company_system: std::sync::Arc<crate::company::CompanySystem>,
+    corporate_actions: SessionCorporateActions,
     /// 公开信息库（公开信息；前史已播种）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
     /// 披露派发游标。
@@ -1746,6 +1751,7 @@ impl GameSession {
                     crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
                 attention_scheduler: NpcAttentionScheduler::default(),
                 company_system: std::sync::Arc::new(system),
+                corporate_actions: SessionCorporateActions::default(),
                 library: std::sync::Arc::new(library),
                 disclosures,
                 plans: crate::plans::PlanBook::default(),
@@ -2317,6 +2323,110 @@ impl GameSession {
     pub fn account(&self, id: AccountId) -> Option<&Account> {
         self.state.accounts.get(&id)
     }
+
+    /// 配置某只证券的完整股东登记事实；账户、外部股东及股份来源必须由调用方明确提供。
+    pub fn configure_share_registry(
+        &mut self,
+        registry: crate::company::share_registry::ShareRegistry,
+    ) -> Result<(), SessionCorporateActionsError> {
+        let positions = self.state.accounts.iter().map(|(id, account)| {
+            (*id, account.positions().iter().map(|(code, position)| (code.clone(), u64::from(position.qty()))).collect())
+        }).collect();
+        self.state.corporate_actions.configure_registry(
+            registry,
+            &positions,
+            self.state.company_system.issuers(),
+        )
+    }
+
+    /// 显式绑定公司注册资本及其来源证据；不会从股本或账户持仓推断法定事实。
+    pub fn define_dividend_legal_facts(
+        &mut self,
+        company: &crate::company::CompanyId,
+        registered_capital: crate::accounting::AccountingAmount,
+        source_evidence: String,
+    ) -> Result<(), SessionCorporateActionsError> {
+        let mut candidate = self.state.company_system.as_ref().clone();
+        candidate.define_dividend_legal_facts(company, registered_capital, source_evidence)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        self.state.company_system = std::sync::Arc::new(candidate);
+        Ok(())
+    }
+
+    /// 当前会话共同股东登记与分红结算状态；空登记表表示尚未配置完整股份来源事实。
+    pub fn corporate_actions(&self) -> &SessionCorporateActions {
+        &self.state.corporate_actions
+    }
+
+    /// 以 SimpleFinanceState 的已结算财务与显式注册资本事实受理现金分红决议。
+    pub fn approve_cash_dividend(
+        &mut self,
+        declaration: crate::company::simple::DividendDeclaration,
+        plan: crate::company::cash_dividend::CashDividendPlan,
+    ) -> Result<(), SessionCorporateActionsError> {
+        if declaration.plan_id != plan.plan_id
+            || declaration.approved_on != plan.approved_on
+            || plan.approved_on > self.civil_date()
+            || plan.announced_on < self.civil_date()
+        {
+            return Err(SessionCorporateActionsError::Invalid("分红决议与计划的身份、批准日期、授权总额或公告日期不一致".into()));
+        }
+        let registry = self.state.corporate_actions.registries.iter().find(|registry| {
+            registry.stock() == &plan.stock && registry.issuer() == &plan.issuer
+        }).ok_or_else(|| SessionCorporateActionsError::Invalid("现金分红需要已显式配置的完整股东名册".into()))?;
+        if registry.settled_on() > self.civil_date() {
+            return Err(SessionCorporateActionsError::Invalid("股东名册日期晚于当前会话日期".into()));
+        }
+        let eligible_shares = registry.holdings().iter().filter(|holding| !matches!(
+            &holding.holder,
+            crate::company::share_registry::HolderId::IssuerTreasury
+        )).try_fold(0_u64, |total, holding| {
+            holding.lots.iter().try_fold(total, |sum, lot| sum.checked_add(lot.qty))
+        }).ok_or_else(|| SessionCorporateActionsError::Invalid("可分红股数溢出".into()))?;
+        let calculated_gross_cents = i128::from(plan.gross_per_share.cents())
+            .checked_mul(i128::from(eligible_shares))
+            .and_then(|cents| i64::try_from(cents).ok())
+            .ok_or_else(|| SessionCorporateActionsError::Invalid("现金分红总额溢出".into()))?;
+        if declaration.total_gross.to_money().map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+            != Money::from_cents(calculated_gross_cents)
+        {
+            return Err(SessionCorporateActionsError::Invalid("决议总额必须等于完整名册中非库存股的税前每股金额乘以股数".into()));
+        }
+        if declaration.total_gross.to_money().map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+            > plan.distributable_amount
+        {
+            return Err(SessionCorporateActionsError::Invalid("决议总额超过计划明确授权的可分配金额".into()));
+        }
+        if plan.formula == crate::company::ex_reference_price::CashDividendFormula::ExchangeApprovedAdjustment {
+            return Err(SessionCorporateActionsError::Invalid("尚不支持交易所批准的特殊除息调整公式".into()));
+        }
+        let mut candidate_system = self.state.company_system.as_ref().clone();
+        let issuer = candidate_system.issuers().get(&plan.issuer)
+            .ok_or_else(|| SessionCorporateActionsError::Invalid("分红计划发行人不存在".into()))?;
+        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+            return Err(SessionCorporateActionsError::Invalid("分红计划证券与发行人不匹配".into()));
+        }
+        let approved = candidate_system.distributable_profit(&plan.issuer)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        let authorized = approved.available_for_distribution.to_money()
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        if declaration.total_gross.to_money().map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))? > authorized {
+            return Err(SessionCorporateActionsError::Invalid("决议总额超过已核定的 Simple 可分配利润".into()));
+        }
+        plan.validate_calendar(self.state.civil_clock.calendar())
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        candidate_system.declare_dividend(&plan.issuer, declaration)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        let book = crate::company::cash_dividend::CashDividendBook::new(plan)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        if self.state.corporate_actions.dividends.iter().any(|existing| existing.plan().plan_id == book.plan().plan_id) {
+            return Err(SessionCorporateActionsError::Invalid("分红计划 id 已存在".into()));
+        }
+        self.state.company_system = std::sync::Arc::new(candidate_system);
+        self.state.corporate_actions.dividends.push(book);
+        self.state.corporate_actions.dividends.sort_by(|left, right| left.plan().plan_id.cmp(&right.plan().plan_id));
+        Ok(())
+    }
     /// 当前 tick（从 0 起，step 后自增）。
     pub fn tick(&self) -> u64 {
         self.state.tick
@@ -2510,7 +2620,31 @@ impl GameSession {
             .state
             .civil_clock
             .end_day(self.state.civil_clock.current_date())?;
+        let account_positions = self.state.accounts.iter().map(|(id, account)| {
+            (*id, account.positions().iter().map(|(code, position)| (code.clone(), u64::from(position.qty()))).collect())
+        }).collect();
+        self.state.corporate_actions.close_registries_through(
+            report.settled_date,
+            &account_positions,
+            &self.state.personal_trade_confirmations,
+        ).map_err(|error| SessionError::InvalidSave(format!("股东名册日终推进失败：{error}")))?;
         let correction_publications = self.apply_report_corrections_at_day_end(&report)?;
+        let issuers = self.state.company_system.issuers().clone();
+        self.state.corporate_actions.process_dividends_on_day_end(
+            report.settled_date,
+            self.state.civil_clock.calendar(),
+            &issuers,
+            std::sync::Arc::make_mut(&mut self.state.company_system),
+            &mut self.state.accounts,
+        ).map_err(|error| SessionError::InvalidSave(format!("现金分红日终结算失败：{error}")))?;
+        let account_positions = self.state.accounts.iter().map(|(id, account)| {
+            (*id, account.positions().iter().map(|(code, position)| (code.clone(), u64::from(position.qty()))).collect())
+        }).collect();
+        self.state.corporate_actions.validate(
+            &account_positions,
+            &self.state.company_system,
+            report.settled_date,
+        ).map_err(|error| SessionError::InvalidSave(format!("日终公司行为与Simple账务勾稽失败：{error}")))?;
         std::sync::Arc::make_mut(&mut self.state.company_system)
             .advance_day(report.settled_date)
             .map_err(|error| SessionError::InvalidSave(format!("公司日终推进失败：{error}")))?;
@@ -2922,6 +3056,9 @@ impl GameSession {
                         SaveMarketSnap {
                             last_price: market.last_price(),
                             last_close: market.last_close(),
+                            cash_ex_reference_pending_trade: market.cash_ex_reference_pending_trade(),
+                            day_market_activity: market.day_market_activity(),
+                            last_cash_ex_reference: market.last_cash_ex_reference(),
                         },
                     )
                 })
@@ -3032,6 +3169,7 @@ impl GameSession {
             ingress_receipt_cursors: self.state.ingress_receipt_cursors.clone(),
             next_order_id: self.state.next_order_id,
             civil_clock: self.state.civil_clock.save(),
+            corporate_actions: self.state.corporate_actions.clone(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
             company_system: self.state.company_system.export_state(),
             public_library: self.state.library.as_ref().clone(),
@@ -3139,12 +3277,39 @@ impl GameSession {
 
         // 恢复市场状态（last_price/last_close）
         for (code, snap_mkt) in &save.snapshot.markets {
+            let configured_tick = save.setup.stocks.iter()
+                .find(|spec| &spec.code == code)
+                .expect("validated save market set exactly matches setup")
+                .tick;
+            Market::validate_restored_facts(
+                code,
+                save.civil_clock.current_date,
+                snap_mkt.last_price,
+                snap_mkt.last_close,
+                snap_mkt.cash_ex_reference_pending_trade,
+                snap_mkt.last_cash_ex_reference,
+                configured_tick,
+            ).map_err(|error| SessionError::InvalidSave(format!("market {:?} restore facts invalid: {error}", code)))?;
+            if !snap_mkt.day_market_activity
+                && (save.resting_orders.get(code).is_some_and(|orders| !orders.is_empty())
+                    || save.auction_orders.get(code).is_some_and(|orders| !orders.is_empty()))
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "market {:?} has active orders without day market activity", code
+                )));
+            }
             let market = sess
                 .state
                 .markets
                 .get_mut(code)
                 .expect("validated save market set exactly matches setup");
-            market.restore_prices(snap_mkt.last_price, snap_mkt.last_close);
+            market.restore_prices(
+                snap_mkt.last_price,
+                snap_mkt.last_close,
+                snap_mkt.cash_ex_reference_pending_trade,
+                snap_mkt.day_market_activity,
+                snap_mkt.last_cash_ex_reference,
+            );
         }
 
         // 保留原始时间排序键与历史游标；空簿也可能已有已撤/已成交委托。
@@ -3332,6 +3497,7 @@ impl GameSession {
             )));
         }
         sess.state.company_system = std::sync::Arc::new(save.company_system.export_state());
+        sess.state.corporate_actions = save.corporate_actions.clone();
         sess.state.report_correction_operations = save.report_correction_operations.clone();
         sess.state.library = std::sync::Arc::new(save.public_library.clone());
         sess.state.disclosures = save.disclosures.clone();
@@ -4490,6 +4656,7 @@ impl CommittableSessionState {
             causal,
             attention_scheduler,
             company_system,
+            corporate_actions,
             library,
             disclosures,
             plans,
@@ -4543,6 +4710,7 @@ impl CommittableSessionState {
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
             company_system: company_system.clone(),
+            corporate_actions: corporate_actions.clone(),
             library: library.clone(),
             disclosures: disclosures.clone(),
             plans: plans.clone(),
@@ -4592,6 +4760,7 @@ impl CommittableSessionState {
             causal,
             attention_scheduler,
             company_system,
+            corporate_actions,
             library,
             disclosures,
             plans,
@@ -4640,6 +4809,7 @@ impl CommittableSessionState {
         }
         self.attention_scheduler = attention_scheduler;
         self.company_system = company_system;
+        self.corporate_actions = corporate_actions;
         self.library = library;
         self.disclosures = disclosures;
         self.plans = plans;

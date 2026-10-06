@@ -1,7 +1,7 @@
 use super::super::super::account_validation_context::build_account_validation_context;
-use super::super::super::{plan_tick, CandidateValidationInput, IntentCandidate, PhaseInput};
+use super::super::super::{CandidateValidationInput, IntentCandidate, PhaseInput, plan_tick};
 use super::super::super::{
-    with_executor_perturbation, ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation,
+    ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation, with_executor_perturbation,
 };
 use super::*;
 use crate::{AccountId, Intent, OrderId, Side};
@@ -63,9 +63,11 @@ fn incremental_auction_accepts_reverse_keys_and_rejects_replayed_identity() {
     assert_eq!(coordinator.seen_candidate_keys.len(), 2);
     assert_eq!(coordinator.seen_sealed_indices.len(), 2);
     assert_eq!(coordinator.applied_operation_count, 2);
-    assert!(coordinator
-        .apply_round(vec![cancel(IntentCandidateKey::player(1), 2)])
-        .is_err());
+    assert!(
+        coordinator
+            .apply_round(vec![cancel(IntentCandidateKey::player(1), 2)])
+            .is_err()
+    );
     assert_eq!(coordinator.applied_operation_count, 2);
 }
 
@@ -99,9 +101,11 @@ fn incremental_auction_does_not_order_stocks_by_sealed_identity() {
         .apply_round(vec![cancel(codes[1].clone(), 2, 0)])
         .unwrap();
     assert_eq!(coordinator.applied_operation_count, 3);
-    assert!(coordinator
-        .apply_round(vec![cancel(codes[1].clone(), 2, 3)])
-        .is_err());
+    assert!(
+        coordinator
+            .apply_round(vec![cancel(codes[1].clone(), 2, 3)])
+            .is_err()
+    );
     assert_eq!(coordinator.applied_operation_count, 3);
 }
 
@@ -307,14 +311,18 @@ fn two_auction_worker_errors_select_first_stock_under_reversed_delivery() {
     }
     assert_eq!(coordinator.applied_operation_count, 0);
     assert!(coordinator.seen_candidate_keys.is_empty());
-    assert!(coordinator.stocks[&codes[0]]
-        .completion
-        .state
-        .orders()
-        .is_empty());
-    assert!(coordinator.stocks[&codes[1]]
-        .completion
-        .state
-        .orders()
-        .is_empty());
+    assert!(
+        coordinator.stocks[&codes[0]]
+            .completion
+            .state
+            .orders()
+            .is_empty()
+    );
+    assert!(
+        coordinator.stocks[&codes[1]]
+            .completion
+            .state
+            .orders()
+            .is_empty()
+    );
 }

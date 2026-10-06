@@ -22,9 +22,43 @@ test("存档和宿主严格拒绝非规范 Money 并保留错误路径", { timeo
 test("盘口价格严格使用无损分字符串，股数仍是整数", { timeout: 10000 }, () => {
   assert.deepEqual(parseDepth([["9007199254740993", 100]], "bids"), [["9007199254740993", 100]]);
   assert.throws(() => parseDepth([[Number("9007199254740993"), 100]], "bids"), /bids\[0\]\[0\]/);
-  const market = { last_price: "9007199254740993", last_close: "9007199254740992", best_bid: null, best_ask: null, bids: [], asks: [] };
+  const market = { last_price: "9007199254740993", last_close: "9007199254740992", best_bid: null, best_ask: null, bids: [], asks: [], cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null };
   assert.deepEqual(parseMarket(market, "market"), market);
   assert.throws(() => parseMarket({ ...market, last_close: 1 }, "market"), /last_close/);
+});
+
+test("运行快照与存档快照严格传输除息状态与可空锚点", { timeout: 10000 }, () => {
+  const anchor = { ex_date: "2030-01-02", reference_price: "9007199254740993" };
+  const market = {
+    last_price: "9007199254740993", last_close: "9007199254740992", best_bid: null, best_ask: null,
+    bids: [], asks: [], cash_ex_reference_pending_trade: true, day_market_activity: false,
+    last_cash_ex_reference: anchor,
+  };
+  const snapshot = {
+    seq: 0, tick: 0, day: 1, phase: "Continuous", markets: { "600000": market },
+    accounts: {}, daily_candles: {}, active_daily_candles: {},
+  };
+
+  assert.deepEqual(parseMarket(market, "market"), market);
+  assert.deepEqual(parseSnapshot(snapshot, "snapshot").markets["600000"], market);
+  for (const field of ["cash_ex_reference_pending_trade", "day_market_activity", "last_cash_ex_reference"]) {
+    const missing = { ...market };
+    delete missing[field as keyof typeof missing];
+    assert.throws(() => parseMarket(missing, "market"), /字段不符合协议契约/);
+    assert.throws(() => parseSnapshot({ ...snapshot, markets: { "600000": missing } }, "snapshot"), /是必填字段/);
+  }
+  assert.throws(() => parseMarket({ ...market, day_market_activity: "false" }, "market"), /day_market_activity/);
+  assert.throws(() => parseSnapshot({ ...snapshot, markets: { "600000": { ...market, last_cash_ex_reference: { ...anchor, reference_price: "0" } } } }, "snapshot"), /参考价必须为正/);
+  for (const exDate of ["1800-01-01", "2200-01-01"]) {
+    const outOfRangeMarket = { ...market, last_cash_ex_reference: { ...anchor, ex_date: exDate } };
+    assert.throws(() => parseMarket(outOfRangeMarket, "market"), /有效 ISO 日期/);
+    assert.throws(() => parseSnapshot({ ...snapshot, markets: { "600000": outOfRangeMarket } }, "snapshot"), /1900.*2199/);
+  }
+  for (const exDate of ["1900-01-01", "2199-12-31"]) {
+    const boundaryMarket = { ...market, last_cash_ex_reference: { ...anchor, ex_date: exDate } };
+    assert.equal(parseMarket(boundaryMarket, "market").last_cash_ex_reference?.ex_date, exDate);
+    assert.equal(parseSnapshot({ ...snapshot, markets: { "600000": boundaryMarket } }, "snapshot").markets["600000"]?.last_cash_ex_reference?.ex_date, exDate);
+  }
 });
 
 test("公共存档资金与成本在安全整数外精确保留", { timeout: 10000 }, () => {

@@ -198,5 +198,11 @@ export function validateCompanySystemSession(system: ReturnType<typeof parseComp
     const id = `C-${stock.code}`, issuer = system.issuers[id]!;
     const company = system.implementation.state.config.companies.find(company => company.company === id)!;
     if (issuer.name !== `虚构上市公司${stock.code}` || issuer.industry !== "listed-simple" || issuer.kind !== company.kind || issuer.listed_stock !== stock.code || BigInt(issuer.issued_shares) !== BigInt(stock.total_shares) || issuer.group_parent !== null) throw new SaveSchemaError(`company_system.issuers.${id}`, "发行人身份与 setup 股票配置不一致");
+    const finance = system.implementation.state.companies[id]!.finance;
+    for (const [planId, plan] of Object.entries(finance.dividends)) {
+      for (const [paymentId, payment] of Object.entries(plan.payments)) {
+        if (payment.paid_on > currentDate) throw new SaveSchemaError(`company_system.implementation.state.companies.${id}.finance.dividends.${planId}.payments.${paymentId}.paid_on`, "实际付款日期晚于当前会话日期");
+      }
+    }
   }
 }

@@ -1,8 +1,8 @@
 use super::{
-    transition::{BuyFillInput, FillTransition, SellFillInput},
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt,
     FeeComponents, JournalRank, PlaceKind, ReceiptDelta, ReceiptKind, ReceiptLocalKey,
     ReceiptSource, ReceiptTransition, ResVec, StepFatal, ValidatedOperation,
+    transition::{BuyFillInput, FillTransition, SellFillInput},
 };
 use crate::market::MarketDelta;
 use crate::{
@@ -258,6 +258,9 @@ struct ContinuousStockRoundProcessor {
     private_round: bool,
     before_last_price: Money,
     before_last_close: Money,
+    before_cash_ex_reference_pending_trade: bool,
+    before_last_cash_ex_reference: Option<crate::company::ex_reference_price::ExReferencePrice>,
+    before_day_market_activity: bool,
     before_next_seq: u64,
     original_orders: BTreeMap<OrderId, Option<crate::Order>>,
     output: ContinuousStockOutput,
@@ -278,6 +281,9 @@ impl ContinuousStockRoundProcessor {
         let private_round = prior_ledger.is_some();
         let before_last_price = input.market.last_price();
         let before_last_close = input.market.last_close();
+        let before_cash_ex_reference_pending_trade = input.market.cash_ex_reference_pending_trade();
+        let before_last_cash_ex_reference = input.market.last_cash_ex_reference();
+        let before_day_market_activity = input.market.day_market_activity();
         let before_next_seq = input.market.book_next_sequence();
         validate_operation_identities(&input.operations)?;
         if prior_ledger.is_some() {
@@ -329,6 +335,9 @@ impl ContinuousStockRoundProcessor {
             private_round,
             before_last_price,
             before_last_close,
+            before_cash_ex_reference_pending_trade,
+            before_last_cash_ex_reference,
+            before_day_market_activity,
             before_next_seq,
             original_orders: BTreeMap::new(),
             output,
@@ -613,6 +622,9 @@ impl ContinuousStockRoundProcessor {
             .changed_orders_since(
                 self.before_last_price,
                 self.before_last_close,
+                self.before_cash_ex_reference_pending_trade,
+                self.before_last_cash_ex_reference,
+                self.before_day_market_activity,
                 self.before_next_seq,
                 self.original_orders,
             )

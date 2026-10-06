@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildMarketRows, type MarketRowTransaction } from "./market-grid-rows.ts";
 import { MarketGridRowSynchronizer } from "./market-grid-row-synchronizer.ts";
 
-const market = (last_price: number) => ({ last_price: String(last_price), last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] });
+const market = (last_price: number) => ({ last_price: String(last_price), last_close: "1000", cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null, best_bid: null, best_ask: null, bids: [], asks: [] });
 const rows = (price: number) => buildMarketRows({ AAA: market(price), BBB: market(2000) }, ["AAA", "BBB"]);
 
 test("成员或顺序变化刷新有序 rowData，先清空旧异步事务；报价更新仍只提交对应行", { timeout: 10000 }, () => {

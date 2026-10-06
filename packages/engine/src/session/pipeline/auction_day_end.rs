@@ -1401,6 +1401,9 @@ pub(super) fn process_auction_stock(
     let mut day_end_cancellations = Vec::new();
     let mut matches = Vec::new();
     let mut clearing_price = None;
+    if input.completion.state.had_market_activity() {
+        market.mark_day_market_activity();
+    }
     if finish_auction {
         let completion_phase = input.completion.phase;
         input.completion.day_end_envelopes = if finish_day {

@@ -62,6 +62,163 @@ impl SimpleFinanceState {
                 "下一个摘要事件来源不能重用既有来源".into(),
             ));
         }
+        let mut unpaid_dividends = AccountingAmount::ZERO;
+        let mut reserved_amount = AccountingAmount::ZERO;
+        let mut dividend_sources = std::collections::BTreeSet::new();
+        if self.legal_facts.0.as_ref().is_some_and(|facts| {
+            !facts.registered_capital.is_positive() || facts.source_evidence.trim().is_empty()
+        }) {
+            return Err(SimpleFinanceError::DividendInvalid(
+                "已绑定的分红法律事实金额或来源说明非法".into(),
+            ));
+        }
+        for (plan_id, plan) in &self.dividends {
+            if plan_id.trim().is_empty()
+                || plan.declaration.plan_id != *plan_id
+                || !plan.declaration.total_gross.is_positive()
+                || plan.declaration.registered_capital.is_negative()
+                || plan.declaration.registered_capital.is_zero()
+                || self
+                    .legal_facts
+                    .0
+                    .as_ref()
+                    .map(|facts| facts.registered_capital)
+                    != Some(plan.declaration.registered_capital)
+                || plan.declaration.approved_on <= self.opening_date
+                || plan.reserve.is_negative()
+            {
+                return Err(SimpleFinanceError::DividendInvalid(format!(
+                    "分红计划 {plan_id} 状态或注册资本事实不一致"
+                )));
+            }
+            let declaration_source = self
+                .books
+                .journal()
+                .entries()
+                .find(|entry| entry.source == plan.declaration_source)
+                .ok_or_else(|| {
+                    SimpleFinanceError::DividendInvalid(format!(
+                        "分红计划 {plan_id} 缺少绑定的批准分录"
+                    ))
+                })?;
+            if !dividend_sources.insert(plan.declaration_source) {
+                return Err(SimpleFinanceError::DividendInvalid(
+                    "多个分红计划共用批准分录来源".into(),
+                ));
+            }
+            let retained_debit = plan.declaration.total_gross.add(plan.reserve)?;
+            let mut expected_declaration_lines = vec![JournalLine {
+                account: LedgerAccountId("4103".into()),
+                side: PostingSide::Debit,
+                amount: retained_debit,
+            }];
+            if plan.reserve.is_positive() {
+                expected_declaration_lines.push(JournalLine {
+                    account: LedgerAccountId(
+                        crate::accounting::reports::simple_summary::STATUTORY_RESERVE.into(),
+                    ),
+                    side: PostingSide::Credit,
+                    amount: plan.reserve,
+                });
+            }
+            expected_declaration_lines.push(JournalLine {
+                account: LedgerAccountId(
+                    crate::accounting::reports::simple_summary::DIVIDEND_PAYABLE.into(),
+                ),
+                side: PostingSide::Credit,
+                amount: plan.declaration.total_gross,
+            });
+            if declaration_source.kind != BusinessKind::CompanyDividendDeclaration
+                || declaration_source.date != plan.declaration.approved_on
+                || declaration_source.cash_flow != CashFlowClass::NonCash
+                || declaration_source.lines != expected_declaration_lines
+            {
+                return Err(SimpleFinanceError::DividendInvalid(format!(
+                    "分红计划 {plan_id} 与批准分录不一致"
+                )));
+            }
+            if plan.reserve.is_positive() != plan.reserve_basis_year.0.is_some() {
+                return Err(SimpleFinanceError::DividendInvalid(format!(
+                    "分红计划 {plan_id} 的公积金计提年度缺失或多余"
+                )));
+            }
+            if let Some(year) = plan.reserve_basis_year.0 {
+                if year > self.as_of.year() || year < self.opening_date.year() {
+                    return Err(SimpleFinanceError::DividendInvalid(format!(
+                        "分红计划 {plan_id} 的公积金年度越界"
+                    )));
+                }
+            }
+            let paid = plan.payments.iter().try_fold(AccountingAmount::ZERO, |sum, (payment_id, payment)| {
+                if payment_id.trim().is_empty() || !payment.amount.is_positive()
+                    || payment.paid_on < plan.declaration.approved_on
+                {
+                    return Err(SimpleFinanceError::DividendInvalid(format!(
+                        "分红付款批次 {payment_id} 状态非法"
+                    )));
+                }
+                let payment_source = self.books.journal().entries()
+                    .find(|entry| entry.source == payment.source)
+                    .ok_or_else(|| SimpleFinanceError::DividendInvalid(format!(
+                        "付款批次 {payment_id} 缺少绑定的账簿分录"
+                    )))?;
+                if !dividend_sources.insert(payment.source) {
+                    return Err(SimpleFinanceError::DividendInvalid(
+                        "多个分红计划或付款批次共用账簿来源".into(),
+                    ));
+                }
+                if payment_source.kind != BusinessKind::CompanyDividendPayment
+                    || payment_source.date != payment.paid_on
+                    || payment_source.cash_flow != CashFlowClass::NonCash
+                    || payment_source.lines != vec![
+                        JournalLine {
+                            account: LedgerAccountId(crate::accounting::reports::simple_summary::DIVIDEND_PAYABLE.into()),
+                            side: PostingSide::Debit, amount: payment.amount,
+                        },
+                        JournalLine {
+                            account: LedgerAccountId(crate::accounting::reports::simple_summary::DIVIDEND_SETTLEMENT_ASSET.into()),
+                            side: PostingSide::Credit, amount: payment.amount,
+                        },
+                    ]
+                {
+                    return Err(SimpleFinanceError::DividendInvalid(format!(
+                        "付款批次 {payment_id} 与账簿分录不一致"
+                    )));
+                }
+                sum.add(payment.amount).map_err(SimpleFinanceError::from)
+            })?;
+            if paid > plan.declaration.total_gross {
+                return Err(SimpleFinanceError::DividendInvalid(format!(
+                    "分红计划 {plan_id} 实付超过批准总额"
+                )));
+            }
+            unpaid_dividends = unpaid_dividends.add(plan.declaration.total_gross.sub(paid)?)?;
+            reserved_amount = reserved_amount.add(plan.reserve)?;
+        }
+        let payable = self
+            .books
+            .ledger()
+            .account_net_debit(&LedgerAccountId(
+                crate::accounting::reports::simple_summary::DIVIDEND_PAYABLE.into(),
+            ))?
+            .neg()?;
+        if payable != unpaid_dividends {
+            return Err(SimpleFinanceError::DividendInvalid(
+                "应付股利科目与未支付计划不一致".into(),
+            ));
+        }
+        let reserve_account = self
+            .books
+            .ledger()
+            .account_net_debit(&LedgerAccountId(
+                crate::accounting::reports::simple_summary::STATUTORY_RESERVE.into(),
+            ))?
+            .neg()?;
+        if reserve_account < reserved_amount {
+            return Err(SimpleFinanceError::DividendInvalid(
+                "法定公积金科目低于已批准计划提取额".into(),
+            ));
+        }
         self.books.ledger().trial_balance()?;
         self.income_tax_position
             .validate(&self.config.tax_policy.income_tax)?;

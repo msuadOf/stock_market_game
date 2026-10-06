@@ -1,7 +1,7 @@
 import { SaveSchemaError, array, civilDate, exact, integer, oneOf, record, string } from "../../primitives.ts"
 import { parseAccountingPeriod, type AccountingPeriod } from "./period.ts"
 
-const businessKinds = ["OpeningBalance", "SimplePeriodSummary", "LoanDisbursement", "LoanRepayment", "CashRevenue", "CreditSale", "ReceivableCollection", "CashExpense", "InterestAccrual", "InterestPayment", "TaxAccrual", "TaxPayment", "Depreciation", "CustomerDeposit", "CustomerWithdrawal", "LoanIssued", "LoanPrincipalCollected", "LoanInterestAccrued", "LoanInterestCollected", "DepositInterestAccrued", "DepositInterestPaid", "FeeAndCommissionEarned", "CreditImpairment", "LoanWriteOff", "WriteOffRecovery", "LandAcquisition", "DevelopmentCostIncurred", "PresaleCollection", "RealEstateDelivery", "FinalPaymentCollected", "BorrowingCostCapitalized", "DevelopmentImpairment", "InsurancePremiumAccrued", "InsurancePremiumCollected", "InsuranceServiceRevenue", "InsuranceFinance", "InsuranceLossComponent", "InsuranceClaimIncurred", "InsuranceClaimPaid"] as const
+const businessKinds = ["OpeningBalance", "SimplePeriodSummary", "CompanyDividendDeclaration", "CompanyDividendPayment", "LoanDisbursement", "LoanRepayment", "CashRevenue", "CreditSale", "ReceivableCollection", "CashExpense", "InterestAccrual", "InterestPayment", "TaxAccrual", "TaxPayment", "Depreciation", "CustomerDeposit", "CustomerWithdrawal", "LoanIssued", "LoanPrincipalCollected", "LoanInterestAccrued", "LoanInterestCollected", "DepositInterestAccrued", "DepositInterestPaid", "FeeAndCommissionEarned", "CreditImpairment", "LoanWriteOff", "WriteOffRecovery", "LandAcquisition", "DevelopmentCostIncurred", "PresaleCollection", "RealEstateDelivery", "FinalPaymentCollected", "BorrowingCostCapitalized", "DevelopmentImpairment", "InsurancePremiumAccrued", "InsurancePremiumCollected", "InsuranceServiceRevenue", "InsuranceFinance", "InsuranceLossComponent", "InsuranceClaimIncurred", "InsuranceClaimPaid"] as const
 const cashFlows = ["Operating", "Investing", "Financing", "NonCash"] as const
 const postingSides = ["Debit", "Credit"] as const
 const AMOUNT = /^\s*[+-]?\d+(?:\.\d{1,2})?\s*$/
@@ -27,6 +27,7 @@ export function parseJournalEntry(value: unknown, path: string): JournalEntry {
   const parsed = record(value, path)
   exact(parsed, ["source", "date", "kind", "cash_flow", "lines"], path)
   if (parsed.kind === "SimplePeriodSummary" && parsed.cash_flow !== "NonCash") throw new SaveSchemaError(`${path}.cash_flow`, "SimplePeriodSummary 必须为 NonCash")
+  if ((parsed.kind === "CompanyDividendDeclaration" || parsed.kind === "CompanyDividendPayment") && parsed.cash_flow !== "NonCash") throw new SaveSchemaError(`${path}.cash_flow`, "Simple 分红账面凭证必须为 NonCash")
   return { source: integer(parsed.source, `${path}.source`, 0), date: civilDate(parsed.date, `${path}.date`), kind: oneOf(parsed.kind, `${path}.kind`, businessKinds), cash_flow: oneOf(parsed.cash_flow, `${path}.cash_flow`, cashFlows), lines: array(parsed.lines, `${path}.lines`).map((line, index) => parseJournalLine(line, `${path}.lines[${index}]`)) }
 }
 

@@ -1295,6 +1295,9 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
         markets: BTreeMap::from([(
             code.clone(),
             MarketSnap {
+                cash_ex_reference_pending_trade: false,
+                day_market_activity: false,
+                last_cash_ex_reference: None,
                 last_price: Money::from_cents(i64::MAX),
                 last_close: Money::from_cents(i64::MIN),
                 best_bid: Some(Money::from_cents(i64::MAX)),

@@ -70,6 +70,7 @@ impl GameSession {
                 causal: _,
             attention_scheduler: _,
             company_system: _,
+            corporate_actions: _,
             library: _,
             disclosures: _,
             plans: _,
@@ -143,6 +144,7 @@ impl GameSession {
             }
         })?;
         hash.field(&system)?;
+        hash.field(&self.state.corporate_actions)?;
         hash.field(&self.state.library.hash_projection())?;
         hash.field(&self.state.disclosures)?;
         hash.field(&self.state.plans)?;

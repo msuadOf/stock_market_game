@@ -1,6 +1,6 @@
 use super::{
-    api::*, capabilities::CompanyCapabilities, config::CompanySystemConfig,
-    identity::IssuerRegistry, simple::SimpleFundamentals, CompanyId, CompanySpec,
+    CompanyId, CompanySpec, api::*, capabilities::CompanyCapabilities, config::CompanySystemConfig,
+    identity::IssuerRegistry, simple::SimpleFundamentals,
 };
 use crate::calendar::CivilDate;
 
@@ -59,6 +59,201 @@ impl PartialEq for CompanySystemHashCache {
 impl Eq for CompanySystemHashCache {}
 
 impl CompanySystem {
+    pub fn distributable_profit(
+        &self,
+        company: &CompanyId,
+    ) -> Result<super::simple::DistributableProfit, CompanySystemError> {
+        Ok(self.finance(company)?.distributable_profit()?)
+    }
+
+    pub fn define_dividend_legal_facts(
+        &mut self,
+        company: &CompanyId,
+        registered_capital: crate::accounting::AccountingAmount,
+        source_evidence: String,
+    ) -> Result<(), CompanySystemError> {
+        self.finance_mut(company)?.define_dividend_legal_facts(
+            super::simple::DividendLegalFacts {
+                registered_capital,
+                source_evidence,
+            },
+        )?;
+        self.hash_cache = CompanySystemHashCache::default();
+        Ok(())
+    }
+
+    pub fn declare_dividend(
+        &mut self,
+        company: &CompanyId,
+        declaration: super::simple::DividendDeclaration,
+    ) -> Result<super::simple::DividendPlanReceipt, CompanySystemError> {
+        let result = self.finance_mut(company)?.declare_dividend(declaration)?;
+        self.hash_cache = CompanySystemHashCache::default();
+        Ok(result)
+    }
+
+    pub fn pay_dividend(
+        &mut self,
+        company: &CompanyId,
+        plan_id: &str,
+        payment_id: &str,
+        paid_on: CivilDate,
+        amount: crate::accounting::AccountingAmount,
+    ) -> Result<super::simple::DividendPaymentReceipt, CompanySystemError> {
+        let result = self
+            .finance_mut(company)?
+            .pay_dividend(plan_id, payment_id, paid_on, amount)?;
+        self.hash_cache = CompanySystemHashCache::default();
+        Ok(result)
+    }
+
+    pub fn dividend_plan_facts(
+        &self,
+        company: &CompanyId,
+    ) -> Result<Vec<super::simple::DividendPlanFact>, CompanySystemError> {
+        Ok(self.finance(company)?.dividend_plan_facts()?)
+    }
+
+    pub fn dividend_payment_facts(
+        &self,
+        company: &CompanyId,
+        plan_id: &str,
+    ) -> Result<Option<Vec<super::simple::DividendPaymentFact>>, CompanySystemError> {
+        Ok(self.finance(company)?.dividend_payment_facts(plan_id))
+    }
+
+    pub fn validate_cash_dividend_books(
+        &self,
+        books: &[super::cash_dividend::CashDividendBook],
+    ) -> Result<(), CompanySystemError> {
+        use std::collections::{BTreeMap, BTreeSet};
+        let mut seen = BTreeSet::new();
+        if books
+            .iter()
+            .any(|book| self.issuers.get(&book.plan().issuer).is_none())
+        {
+            return Err(CompanySystemError::Invalid(
+                "现金分红账簿引用未知发行人".into(),
+            ));
+        }
+        for (company, _) in self.issuers.iter() {
+            let plans = self.dividend_plan_facts(company)?;
+            let plan_ids = plans
+                .iter()
+                .map(|plan| plan.plan_id.clone())
+                .collect::<BTreeSet<_>>();
+            let issuer_books = books
+                .iter()
+                .filter(|book| &book.plan().issuer == company)
+                .collect::<Vec<_>>();
+            let by_plan = issuer_books
+                .iter()
+                .map(|book| (book.plan().plan_id.as_str(), *book))
+                .collect::<BTreeMap<_, _>>();
+            if by_plan.len() != issuer_books.len() {
+                return Err(CompanySystemError::Invalid(format!(
+                    "公司 {} 存在重复现金分红计划",
+                    company.0
+                )));
+            }
+            for plan in plans {
+                let book = by_plan.get(plan.plan_id.as_str()).ok_or_else(|| {
+                    CompanySystemError::Invalid(format!(
+                        "Simple 分红计划 {} 缺少对应现金分红账簿",
+                        plan.plan_id
+                    ))
+                })?;
+                let cash_plan = book.plan();
+                let cash_limit =
+                    crate::accounting::AccountingAmount::from_money(cash_plan.distributable_amount);
+                let registered_gross = if book.registration().is_some() {
+                    Some(crate::accounting::AccountingAmount::from_money(
+                        book.total_gross()
+                            .map_err(|error| CompanySystemError::Invalid(error.to_string()))?,
+                    ))
+                } else {
+                    None
+                };
+                if cash_plan.approved_on != plan.approved_on
+                    || plan.total_gross > cash_limit
+                    || registered_gross.is_some_and(|gross| gross != plan.total_gross)
+                    || plan.registered_capital_source_evidence.trim().is_empty()
+                    || cash_plan.issuer != *company
+                {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "现金分红计划 {} 与 Simple 批准金额、日期或法律事实来源不一致",
+                        plan.plan_id
+                    )));
+                }
+                let finance_payments = plan
+                    .payments
+                    .iter()
+                    .map(|payment| (payment.payment_id.as_str(), payment))
+                    .collect::<BTreeMap<_, _>>();
+                if finance_payments.len() != plan.payments.len() {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "Simple 分红计划 {} 存在重复付款批次",
+                        plan.plan_id
+                    )));
+                }
+                for receipt in book.payments() {
+                    let successful = receipt
+                        .outcomes()
+                        .iter()
+                        .try_fold(crate::money::Money::ZERO, |total, outcome| match outcome {
+                            super::cash_dividend::HolderPaymentOutcome::Paid { amount, .. } => {
+                                total.add(*amount)
+                            }
+                            super::cash_dividend::HolderPaymentOutcome::Failed { .. } => Ok(total),
+                        })
+                        .map_err(|error| CompanySystemError::Invalid(error.to_string()))?;
+                    let Some(payment) = finance_payments.get(receipt.payment_id()) else {
+                        if successful.cents() == 0 {
+                            continue;
+                        }
+                        return Err(CompanySystemError::Invalid(format!(
+                            "成功现金到账批次 {} 缺少 Simple 付款凭证",
+                            receipt.payment_id()
+                        )));
+                    };
+                    if payment.paid_on != receipt.paid_on()
+                        || crate::accounting::AccountingAmount::from_money(successful)
+                            != payment.amount
+                    {
+                        return Err(CompanySystemError::Invalid(format!(
+                            "付款批次 {} 的 Simple 账簿与持有人到账不一致",
+                            receipt.payment_id()
+                        )));
+                    }
+                    seen.insert((
+                        company.clone(),
+                        plan.plan_id.clone(),
+                        payment.payment_id.clone(),
+                    ));
+                }
+                for payment in plan.payments {
+                    if !seen.contains(&(
+                        company.clone(),
+                        plan.plan_id.clone(),
+                        payment.payment_id.clone(),
+                    )) {
+                        return Err(CompanySystemError::Invalid(format!(
+                            "Simple 付款批次 {} 缺少匹配的持有人到账回执",
+                            payment.payment_id
+                        )));
+                    }
+                }
+            }
+            if by_plan.keys().any(|plan_id| !plan_ids.contains(*plan_id)) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "公司 {} 存在未绑定 Simple 声明的现金分红计划",
+                    company.0
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn create(
         issuers: Vec<CompanySpec>,
         config: CompanySystemConfig,
@@ -73,7 +268,7 @@ impl CompanySystem {
             CompanySystemConfig::Simulation => {
                 return Err(CompanySystemError::Unsupported(
                     "Simulation 在独立分支实现；当前不能创建".into(),
-                ))
+                ));
             }
         };
         Ok(Self {

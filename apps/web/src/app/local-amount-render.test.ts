@@ -41,6 +41,9 @@ const snapshot: Snapshot = {
     "600101": {
       last_price: "1000",
       last_close: "1000",
+      cash_ex_reference_pending_trade: false,
+      day_market_activity: true,
+      last_cash_ex_reference: null,
       best_bid: "999",
       best_ask: "1001",
       bids: [["999", 250]],

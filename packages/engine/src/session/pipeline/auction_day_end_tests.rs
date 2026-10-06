@@ -51,6 +51,21 @@ fn nonfinal_opening_tick_drains_limit_order_before_one_indicative_tail() {
             .collect::<Vec<_>>(),
         vec![order_id]
     );
+    assert!(session.state.markets[&code].day_market_activity());
+    let ex_date = crate::calendar::CivilDate::from_ymd(2030, 1, 7).unwrap();
+    let reference = crate::company::ex_reference_price::ExReferencePrice {
+        ex_date,
+        reference_price: Money::from_cents(900),
+    };
+    assert!(
+        session
+            .state
+            .markets
+            .get_mut(&code)
+            .unwrap()
+            .prepare_ex_date_reference(ex_date, reference)
+            .is_err()
+    );
 }
 
 #[test]
@@ -144,7 +159,11 @@ fn opening_0920_boundary_and_every_closing_tick_reject_cancellation() {
 
 #[test]
 fn opening_before_0920_cancels_existing_envelope_through_sealed_receipt() {
-    let mut session = opening_session(299);
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(900);
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2030, 1, 7).unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    session.state.tick = 299;
+    assert_eq!(session.phase(), TradingPhase::CallAuction);
     let code = only_code(&session);
     install_auction_orders(
         &mut session,
@@ -191,6 +210,21 @@ fn opening_before_0920_cancels_existing_envelope_through_sealed_receipt() {
             ..
         } if canceled_code == &code
     )));
+    assert!(session.state.markets[&code].day_market_activity());
+    let ex_date = crate::calendar::CivilDate::from_ymd(2030, 1, 7).unwrap();
+    let reference = crate::company::ex_reference_price::ExReferencePrice {
+        ex_date,
+        reference_price: Money::from_cents(900),
+    };
+    assert!(
+        session
+            .state
+            .markets
+            .get_mut(&code)
+            .unwrap()
+            .prepare_ex_date_reference(ex_date, reference)
+            .is_err()
+    );
 }
 
 #[test]

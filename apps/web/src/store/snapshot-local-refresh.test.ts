@@ -8,8 +8,8 @@ const SNAPSHOT = {
   day: 0,
   phase: "Continuous" as const,
   markets: {
-    "600101": { last_price: "1000", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
-    "000001": { last_price: "2000", last_close: "2000", best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
+    "600101": { last_price: "1000", last_close: "1000", cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null, best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
+    "000001": { last_price: "2000", last_close: "2000", cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null, best_bid: null, best_ask: null, bids: [], asks: [], price_history: [] },
   },
   accounts: {},
   daily_candles: {},

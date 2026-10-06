@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{
+    ex_reference_price::CashDividendFormula,
     share_registry::{HolderId, RegistrationSnapshot, ShareRegistryError},
     CompanyId,
 };
@@ -27,6 +28,7 @@ pub struct CashDividendPlan {
     pub issuer: CompanyId,
     pub stock: StockCode,
     pub exchange: CalendarExchange,
+    pub formula: CashDividendFormula,
     pub approved_on: CivilDate,
     pub announced_on: CivilDate,
     pub registered_on: CivilDate,
@@ -43,6 +45,7 @@ struct CashDividendPlanState {
     issuer: CompanyId,
     stock: StockCode,
     exchange: CalendarExchange,
+    formula: CashDividendFormula,
     approved_on: CivilDate,
     announced_on: CivilDate,
     registered_on: CivilDate,
@@ -61,6 +64,7 @@ impl TryFrom<CashDividendPlanState> for CashDividendPlan {
             issuer: state.issuer,
             stock: state.stock,
             exchange: state.exchange,
+            formula: state.formula,
             approved_on: state.approved_on,
             announced_on: state.announced_on,
             registered_on: state.registered_on,
@@ -81,6 +85,7 @@ impl CashDividendPlan {
         issuer: CompanyId,
         stock: StockCode,
         exchange: CalendarExchange,
+        formula: CashDividendFormula,
         approved_on: CivilDate,
         announced_on: CivilDate,
         registered_on: CivilDate,
@@ -95,6 +100,7 @@ impl CashDividendPlan {
             issuer,
             stock,
             exchange,
+            formula,
             approved_on,
             announced_on,
             registered_on,
@@ -159,6 +165,7 @@ impl CashDividendPlan {
 #[serde(deny_unknown_fields)]
 pub struct CashDividendEntitlement {
     pub holder: HolderId,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     pub shares: u64,
     pub gross: Money,
 }

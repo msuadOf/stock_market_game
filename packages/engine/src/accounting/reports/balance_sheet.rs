@@ -24,6 +24,7 @@ use super::{Comparative, ReportError, UnavailableReason};
 pub enum BsLine {
     CashFunds,
     Receivables,
+    SimpleDividendSettlementAdjustment,
     InsuranceReceivables,
     Inventory,
     DevelopmentInventory,
@@ -41,6 +42,7 @@ pub enum BsLine {
     InsuranceContractLiabilities,
     DeferredTaxLiabilities,
     PaidInCapital,
+    StatutoryReserve,
     RetainedEarnings,
     MinorityEquity,
 }
@@ -50,6 +52,7 @@ impl BsLine {
     pub const ALL: &'static [BsLine] = &[
         BsLine::CashFunds,
         BsLine::Receivables,
+        BsLine::SimpleDividendSettlementAdjustment,
         BsLine::InsuranceReceivables,
         BsLine::Inventory,
         BsLine::DevelopmentInventory,
@@ -67,6 +70,7 @@ impl BsLine {
         BsLine::InsuranceContractLiabilities,
         BsLine::DeferredTaxLiabilities,
         BsLine::PaidInCapital,
+        BsLine::StatutoryReserve,
         BsLine::RetainedEarnings,
         BsLine::MinorityEquity,
     ];
@@ -86,6 +90,7 @@ impl BsLine {
                 | InsuranceContractLiabilities
                 | DeferredTaxLiabilities
                 | PaidInCapital
+                | StatutoryReserve
                 | RetainedEarnings
                 | MinorityEquity
         )
@@ -98,6 +103,7 @@ impl BsLine {
             self,
             CashFunds
                 | Receivables
+                | SimpleDividendSettlementAdjustment
                 | InsuranceReceivables
                 | Inventory
                 | DevelopmentInventory
@@ -112,7 +118,7 @@ impl BsLine {
     pub fn is_equity(&self) -> bool {
         matches!(
             self,
-            BsLine::PaidInCapital | BsLine::RetainedEarnings | BsLine::MinorityEquity
+            BsLine::PaidInCapital | BsLine::StatutoryReserve | BsLine::RetainedEarnings | BsLine::MinorityEquity
         )
     }
 
@@ -269,6 +275,7 @@ fn prior_lines(
 /// 本次列报的权益行值；比较期路径不额外计算原先未校验的总额。
 struct EquityPresentation {
     paid_in: AccountingAmount,
+    statutory_reserve: AccountingAmount,
     retained: AccountingAmount,
     minority: Option<AccountingAmount>,
 }
@@ -281,6 +288,7 @@ impl EquityPresentation {
         let facts = windows.consolidation.as_ref();
         // 实收资本：合并口径 = Σ成员 − 非根成员贡献（根成员 4001）。
         let mut paid_in = signed_sum(&windows.closing, classification, BsLine::PaidInCapital)?;
+        let statutory_reserve = signed_sum(&windows.closing, classification, BsLine::StatutoryReserve)?;
         if let Some(facts) = facts {
             for (code, credit) in &facts.non_root_equity {
                 if matches!(
@@ -292,7 +300,7 @@ impl EquityPresentation {
             }
         }
         let retained = match facts {
-            Some(facts) => facts.equity_to_parent.sub(paid_in)?,
+            Some(facts) => facts.equity_to_parent.sub(paid_in)?.sub(statutory_reserve)?,
             None => net_income_of(&windows.closing, &windows.defs)?.add(signed_sum(
                 &windows.closing,
                 classification,
@@ -302,6 +310,7 @@ impl EquityPresentation {
         let minority = facts.map(|facts| facts.minority_equity);
         Ok(Self {
             paid_in,
+            statutory_reserve,
             retained,
             minority,
         })
@@ -313,27 +322,29 @@ impl EquityPresentation {
         windows: &StatementWindows,
         facts: Option<&super::consolidated_window::ConsolidationFacts>,
     ) -> Result<Option<Self>, ReportError> {
-        let (paid_in, retained, minority) = match facts {
+        let (paid_in, statutory_reserve, retained, minority) = match facts {
             None => {
                 let paid_in = signed_sum(prior, classification, BsLine::PaidInCapital)?;
+                let statutory_reserve = signed_sum(prior, classification, BsLine::StatutoryReserve)?;
                 let retained = net_income_of(prior, &windows.defs)?.add(signed_sum(
                     prior,
                     classification,
                     BsLine::RetainedEarnings,
                 )?)?;
-                (paid_in, retained, None)
+                (paid_in, statutory_reserve, retained, None)
             }
             Some(facts) => match &facts.prior_split {
                 None => return Ok(None),
-                Some(split) => (
-                    split.root_capital,
-                    split.parent.sub(split.root_capital)?,
-                    Some(split.minority),
-                ),
+                Some(split) => {
+                    let statutory_reserve = signed_sum(prior, classification, BsLine::StatutoryReserve)?;
+                    (split.root_capital, statutory_reserve,
+                        split.parent.sub(split.root_capital)?.sub(statutory_reserve)?, Some(split.minority))
+                }
             },
         };
         Ok(Some(Self {
             paid_in,
+            statutory_reserve,
             retained,
             minority,
         }))
@@ -342,6 +353,7 @@ impl EquityPresentation {
     fn lines(&self) -> Vec<(BsLine, AccountingAmount)> {
         let mut lines = vec![
             (BsLine::PaidInCapital, self.paid_in),
+            (BsLine::StatutoryReserve, self.statutory_reserve),
             (BsLine::RetainedEarnings, self.retained),
         ];
         if let Some(minority) = self.minority {
@@ -351,7 +363,7 @@ impl EquityPresentation {
     }
 
     fn total_equity(&self) -> Result<AccountingAmount, ReportError> {
-        let mut total = self.paid_in.add(self.retained)?;
+        let mut total = self.paid_in.add(self.statutory_reserve)?.add(self.retained)?;
         if let Some(minority) = self.minority {
             total = total.add(minority)?;
         }

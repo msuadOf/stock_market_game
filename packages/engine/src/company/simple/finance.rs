@@ -10,6 +10,8 @@ use crate::calendar::CivilDate;
 use crate::company::api::PeriodAmounts;
 use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition};
 use crate::company::{CompanyId, CompanyKind};
+#[path = "finance_dividend.rs"]
+mod dividend;
 #[path = "finance_kind.rs"]
 mod kind;
 #[path = "finance_posting.rs"]
@@ -37,6 +39,107 @@ pub enum SimpleFinanceError {
     Tax(#[from] IncomeTaxOwnerError),
     #[error(transparent)]
     Date(#[from] crate::calendar::CivilDateError),
+    #[error("分红计划标识已被不同内容占用：{0}")]
+    DividendPlanConflict(String),
+    #[error("分红法定事实已被不同内容占用：{0}")]
+    DividendLegalFactsConflict(String),
+    #[error("Simple 分红暂不支持：{0}")]
+    DividendUnsupported(String),
+    #[error("Simple 分红状态非法：{0}")]
+    DividendInvalid(String),
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DividendDeclaration {
+    pub plan_id: String,
+    pub approved_on: CivilDate,
+    pub total_gross: AccountingAmount,
+    pub registered_capital: AccountingAmount,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DividendLegalFacts {
+    pub registered_capital: AccountingAmount,
+    pub source_evidence: String,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DividendPlanState {
+    declaration: DividendDeclaration,
+    declaration_source: BusinessEventId,
+    reserve: AccountingAmount,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    reserve_basis_year: RequiredOption<i32>,
+    payments: std::collections::BTreeMap<String, DividendPaymentState>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DividendPaymentState {
+    source: BusinessEventId,
+    paid_on: CivilDate,
+    amount: AccountingAmount,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub struct DistributableProfit {
+    pub accumulated_after_loss: AccountingAmount,
+    pub statutory_reserve: AccountingAmount,
+    pub available_for_distribution: AccountingAmount,
+    pub reserve_basis_year: Option<i32>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct DividendPlanReceipt {
+    pub plan_id: String,
+    pub amount: AccountingAmount,
+    pub statutory_reserve: AccountingAmount,
+    pub already_declared: bool,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct DividendPaymentReceipt {
+    pub plan_id: String,
+    pub payment_id: String,
+    pub amount: AccountingAmount,
+    pub paid_on: CivilDate,
+    pub already_paid: bool,
+    pub simple_display_only: bool,
+    pub within_six_month_deadline: bool,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct DividendPaymentFact {
+    pub payment_id: String,
+    pub paid_on: CivilDate,
+    pub amount: AccountingAmount,
+    pub source: BusinessEventId,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct DividendPlanFact {
+    pub plan_id: String,
+    pub approved_on: CivilDate,
+    pub total_gross: AccountingAmount,
+    pub registered_capital: AccountingAmount,
+    pub registered_capital_source_evidence: String,
+    pub declaration_source: BusinessEventId,
+    pub payments: Vec<DividendPaymentFact>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct RequiredOption<T>(Option<T>);
+
+fn deserialize_required_option<'de, T, D>(deserializer: D) -> Result<RequiredOption<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer)
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -54,6 +157,9 @@ pub struct SimpleFinanceState {
     next_event_id: u64,
     income_tax_position: IncomeTaxPosition,
     recognized_periods: Vec<(CivilDate, CivilDate)>,
+    dividends: std::collections::BTreeMap<String, DividendPlanState>,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    legal_facts: RequiredOption<DividendLegalFacts>,
 }
 impl SimpleFinanceState {
     pub fn apply_month(
@@ -114,6 +220,9 @@ fn line(account: &str, side: PostingSide, amount: AccountingAmount) -> JournalLi
         amount,
     }
 }
+#[cfg(test)]
+#[path = "finance_dividend_tests.rs"]
+mod dividend_tests;
 #[cfg(test)]
 #[path = "finance_kind_tests.rs"]
 mod kind_tests;

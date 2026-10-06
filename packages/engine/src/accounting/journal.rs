@@ -60,6 +60,8 @@ impl BusinessEventId {
 )]
 pub enum BusinessKind {
     SimplePeriodSummary,
+    CompanyDividendDeclaration,
+    CompanyDividendPayment,
     /// 期初余额凭证（显式平衡的开业账套）。
     OpeningBalance,
     /// 取得借款（现金入，负债增）。

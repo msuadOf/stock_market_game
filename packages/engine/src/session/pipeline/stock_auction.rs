@@ -95,6 +95,7 @@ pub(super) struct StockAuctionState {
     stock: StockCode,
     orders: Vec<AuctionOrder>,
     next_arrival_seq: u64,
+    had_market_activity: bool,
     filled_market: Option<Market>,
 }
 
@@ -104,6 +105,7 @@ impl StockAuctionState {
             stock,
             orders: Vec::new(),
             next_arrival_seq: 0,
+            had_market_activity: false,
             filled_market: None,
         }
     }
@@ -114,6 +116,10 @@ impl StockAuctionState {
 
     pub(super) fn orders(&self) -> &[AuctionOrder] {
         &self.orders
+    }
+
+    pub(super) const fn had_market_activity(&self) -> bool {
+        self.had_market_activity
     }
 
     pub(super) fn apply_operation(
@@ -148,6 +154,7 @@ impl StockAuctionState {
         order.arrival_seq = self.next_arrival_seq;
         self.next_arrival_seq = next;
         self.orders.push(order);
+        self.had_market_activity = true;
         Ok(AuctionOperationOutput {
             fact: AuctionOperationFact::Placed {
                 account: key.account,

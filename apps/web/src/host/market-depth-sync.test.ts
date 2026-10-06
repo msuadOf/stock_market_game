@@ -7,6 +7,9 @@ test("PriceTick refreshes the visible top-five order book instead of leaving the
   const market: MarketSnap = {
     last_price: "1000",
     last_close: "1000",
+    cash_ex_reference_pending_trade: false,
+    day_market_activity: false,
+    last_cash_ex_reference: null,
     best_bid: "999",
     best_ask: "1001",
     bids: [["999", 100]],

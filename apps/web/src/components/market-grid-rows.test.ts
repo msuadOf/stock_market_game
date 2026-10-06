@@ -6,6 +6,9 @@ import { buildMarketRows, diffMarketRows } from "./market-grid-rows.ts";
 const market = (lastPrice: number): MarketSnap => ({
   last_price: String(lastPrice),
   last_close: "1000",
+  cash_ex_reference_pending_trade: false,
+  day_market_activity: false,
+  last_cash_ex_reference: null,
   best_bid: null,
   best_ask: null,
   bids: [],

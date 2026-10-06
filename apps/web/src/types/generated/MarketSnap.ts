@@ -7,6 +7,11 @@ import type { Money } from "./Money";
 export type MarketSnap = {
   last_price: Money;
   last_close: Money;
+  cash_ex_reference_pending_trade: boolean;
+  day_market_activity: boolean;
+  last_cash_ex_reference:
+    | import("../../save/schema/company/ex-reference-price").ExReferencePrice
+    | null;
   best_bid: Money | null;
   best_ask: Money | null;
   /**

@@ -45,6 +45,7 @@ pub(crate) struct StatementWindows {
     pub cash_closing_actual: AccountingAmount,
     /// 重述现金调整（间接法配平行；无重述 ⇒ 0）。
     pub restated_cash_correction: AccountingAmount,
+    pub owner_distributions: AccountingAmount,
     /// 合并专属事实（单体 ⇒ None）。
     pub consolidation: Option<super::consolidated_window::ConsolidationFacts>,
 }
@@ -138,6 +139,7 @@ pub(crate) struct Accumulator {
     cash: CashWindowTotals,
     cash_closing_actual: AccountingAmount,
     restated_cash_correction: AccountingAmount,
+    owner_distributions: AccountingAmount,
 }
 
 impl Accumulator {
@@ -170,6 +172,7 @@ impl Accumulator {
             },
             cash_closing_actual: AccountingAmount::ZERO,
             restated_cash_correction: AccountingAmount::ZERO,
+            owner_distributions: AccountingAmount::ZERO,
         })
     }
 
@@ -187,6 +190,20 @@ impl Accumulator {
     ) -> Result<(), AccountingError> {
         let (first, last) = self.window;
         let in_win = first <= effective && effective <= last;
+        if in_win && entry.kind == crate::accounting::journal::BusinessKind::CompanyDividendDeclaration {
+            let mut equity_delta = AccountingAmount::ZERO;
+            for row in &entry.lines {
+                if defs.get(&row.account).is_some_and(|def| def.element == crate::accounting::ledger::AccountElement::Equity) {
+                    equity_delta = match row.side {
+                        PostingSide::Debit => equity_delta.add(row.amount)?,
+                        PostingSide::Credit => equity_delta.sub(row.amount)?,
+                    };
+                }
+            }
+            if equity_delta.is_positive() {
+                self.owner_distributions = self.owner_distributions.add(equity_delta)?;
+            }
+        }
         let mut net_cash = AccountingAmount::ZERO;
         for line in &entry.lines {
             let delta = match line.side {
@@ -312,6 +329,7 @@ impl Accumulator {
             cash: self.cash,
             cash_closing_actual: self.cash_closing_actual,
             restated_cash_correction: self.restated_cash_correction,
+            owner_distributions: self.owner_distributions,
             consolidation,
         }
     }

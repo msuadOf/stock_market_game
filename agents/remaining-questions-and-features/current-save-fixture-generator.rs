@@ -1,4 +1,4 @@
-use engine::{Event, SessionSetup, session::protocol::ProtocolSession};
+use engine::{session::protocol::ProtocolSession, Event, SessionSetup};
 use serde_json::Value;
 use std::error::Error;
 use std::fs;
@@ -37,6 +37,119 @@ fn ensure_receipt_cursors_do_not_regress(
     for (code, ordinal) in &before.next_stock_ordinal {
         if after.next_stock_ordinal.get(code).copied().unwrap_or(0) < *ordinal {
             return Err(format!("证券 {code:?} 的 receipt cursor 回退").into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_corporate_action_and_finance_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
+    let actions = encoded
+        .get("corporate_actions")
+        .and_then(Value::as_object)
+        .ok_or("Engine 保存结果缺少 corporate_actions 对象")?;
+    for field in [
+        "registries",
+        "dividends",
+        "account_gross_receipts",
+        "external_receipts",
+        "applied_ex_dividend_groups",
+    ] {
+        if actions
+            .get(field)
+            .and_then(Value::as_array)
+            .is_none_or(|rows| !rows.is_empty())
+        {
+            return Err(
+                format!("新局 corporate_actions.{field} 必须是 Engine 生成的空数组").into(),
+            );
+        }
+    }
+
+    let markets = encoded
+        .get("snapshot")
+        .and_then(|snapshot| snapshot.get("markets"))
+        .and_then(Value::as_object)
+        .ok_or("Engine 保存结果缺少 snapshot.markets")?;
+    for (code, market) in markets {
+        for field in ["cash_ex_reference_pending_trade", "day_market_activity"] {
+            if market.get(field).and_then(Value::as_bool).is_none() {
+                return Err(
+                    format!("snapshot.markets.{code}.{field} 缺少 Engine 生成的布尔状态").into(),
+                );
+            }
+        }
+        if !market
+            .get("last_cash_ex_reference")
+            .is_some_and(Value::is_null)
+        {
+            return Err(format!(
+                "新局 snapshot.markets.{code}.last_cash_ex_reference 必须为 Engine 生成的 null"
+            )
+            .into());
+        }
+    }
+
+    let companies = encoded
+        .get("company_system")
+        .and_then(|system| system.get("implementation"))
+        .and_then(|implementation| implementation.get("state"))
+        .and_then(|state| state.get("companies"))
+        .and_then(Value::as_object)
+        .ok_or("Engine 保存结果缺少 Simple companies")?;
+    for (company, state) in companies {
+        let finance = state
+            .get("finance")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("Simple company {company} 缺少 finance"))?;
+        if !finance.get("legal_facts").is_some_and(Value::is_null)
+            || finance
+                .get("dividends")
+                .and_then(Value::as_object)
+                .is_none_or(|rows| !rows.is_empty())
+        {
+            return Err(format!(
+                "新局 Simple company {company} 的 legal_facts 必须为 null 且 dividends 必须为空对象"
+            )
+            .into());
+        }
+        let batches = finance
+            .get("books")
+            .and_then(|books| books.get("journal"))
+            .and_then(|journal| journal.get("batches"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!("Simple company {company} 缺少 Engine 生成的 books.journal.batches sources")
+            })?;
+        let mut sources = std::collections::BTreeSet::new();
+        for batch in batches {
+            for entry in batch
+                .as_array()
+                .ok_or_else(|| format!("Simple company {company} 的 journal batch 不是数组"))?
+            {
+                let source = entry.get("source").and_then(Value::as_u64).ok_or_else(|| {
+                    format!("Simple company {company} 的 journal entry 缺少整数 source")
+                })?;
+                if !sources.insert(source) {
+                    return Err(format!("Simple company {company} 的 journal source 重复").into());
+                }
+            }
+        }
+        let next_source = finance
+            .get("next_event_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Simple company {company} 缺少十进制字符串 next_event_id"))?
+            .parse::<u64>()?;
+        if sources.is_empty()
+            || sources.iter().next() != Some(&1)
+            || sources
+                .iter()
+                .next_back()
+                .is_none_or(|source| next_source <= *source)
+        {
+            return Err(format!(
+                "Simple company {company} 的 journal source 与 next_event_id 不一致"
+            )
+            .into());
         }
     }
     Ok(())
@@ -155,6 +268,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("生成结果未完成两个交易日的日终结算".into());
     }
     let encoded = serde_json::to_value(&save)?;
+    validate_corporate_action_and_finance_state(&encoded)?;
     let memberships = encoded
         .get("market_memberships")
         .and_then(|value| value.get("members"))

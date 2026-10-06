@@ -1,11 +1,11 @@
 use super::*;
 use crate::session::pipeline::{
-    plan_tick, AccountValidationContext, CandidateValidationInput, Envelope, EnvelopeAudit,
-    EnvelopeKey, EnvelopeLedger, FeeComponents, IntentCandidate, IntentCandidateBatch,
-    IntentCandidateKey, PhaseInput, ReceiptKind, ResVec, StockValidation,
+    AccountValidationContext, CandidateValidationInput, Envelope, EnvelopeAudit, EnvelopeKey,
+    EnvelopeLedger, FeeComponents, IntentCandidate, IntentCandidateBatch, IntentCandidateKey,
+    PhaseInput, ReceiptKind, ResVec, StockValidation, plan_tick,
 };
 use crate::session::pipeline::{
-    with_executor_perturbation, ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation,
+    ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation, with_executor_perturbation,
 };
 use crate::{
     AccountId, Event, GameConfig, GameSession, Intent, Money, Order, OrderId, SecurityCategory,
@@ -776,14 +776,16 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
         )])
         .unwrap();
     assert_eq!(following.facts[0].sealed_index(), 4);
-    assert!(coordinator
-        .apply_round(vec![cancel_operation(
-            IntentCandidateKey::player(5),
-            1,
-            AccountId(2),
-            &second_code,
-        )])
-        .is_err());
+    assert!(
+        coordinator
+            .apply_round(vec![cancel_operation(
+                IntentCandidateKey::player(5),
+                1,
+                AccountId(2),
+                &second_code,
+            )])
+            .is_err()
+    );
 }
 
 #[test]
@@ -843,14 +845,18 @@ fn one_stock_worker_failure_invalidates_the_discardable_tick_coordinator() {
         .unwrap()
         .next_trade_event_index = u64::MAX;
 
-    assert!(coordinator
-        .apply_round(vec![operations[1].clone(), operations[2].clone()])
-        .is_err());
+    assert!(
+        coordinator
+            .apply_round(vec![operations[1].clone(), operations[2].clone()])
+            .is_err()
+    );
 
     assert!(coordinator.failed);
-    assert!(coordinator
-        .apply_round(vec![operations[1].clone(), operations[2].clone()])
-        .is_err());
+    assert!(
+        coordinator
+            .apply_round(vec![operations[1].clone(), operations[2].clone()])
+            .is_err()
+    );
     assert!(coordinator.finish().is_err());
 }
 
@@ -1048,18 +1054,22 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
             .collect::<Vec<_>>(),
         vec![0, 1, 2, 3]
     );
-    assert!(output
-        .receipts
-        .iter()
-        .all(|receipt| receipt.kind == ReceiptKind::Fill));
+    assert!(
+        output
+            .receipts
+            .iter()
+            .all(|receipt| receipt.kind == ReceiptKind::Fill)
+    );
     assert_eq!(output.settlement.settlement.applied_receipts, 4);
     assert_eq!(output.settlement.settlement.applied_groups, 4);
     assert_eq!(game.state.envelope_ledger.iter().count(), 0);
     assert_eq!(game.state.envelope_ledger.terminal_count(), 4);
     assert_eq!(game.state.next_receipt_base, 4);
-    assert!(codes
-        .iter()
-        .all(|code| game.state.markets[code].resting_order_count() == 0));
+    assert!(
+        codes
+            .iter()
+            .all(|code| game.state.markets[code].resting_order_count() == 0)
+    );
 
     let total_fees = output
         .receipts

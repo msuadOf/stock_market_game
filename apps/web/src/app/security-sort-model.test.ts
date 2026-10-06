@@ -6,7 +6,7 @@ import { adjacentSecurityCode } from "./security-browser-model.ts";
 import { compareSecurityRows, sortSecurityCodes, mobileSecuritySort, cycleChangeSort, validateSecuritySort } from "./security-sort-model.ts";
 
 function market(last: string, close = "1000", bid: string | null = null): MarketSnap {
-  return { last_price: last, last_close: close, best_bid: bid, best_ask: null, bids: [], asks: [] };
+  return { last_price: last, last_close: close, cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null, best_bid: bid, best_ask: null, bids: [], asks: [] };
 }
 const codes = ["600101", "002156", "300260"];
 const markets = { "600101": market("900"), "002156": market("1200"), "300260": market("1100") };

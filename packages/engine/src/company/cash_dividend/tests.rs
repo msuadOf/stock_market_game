@@ -1,4 +1,21 @@
 use super::*;
+
+#[test]
+fn entitlement_share_quantity_uses_exact_canonical_decimal_wire() {
+    let entitlement = CashDividendEntitlement {
+        holder: HolderId::Account(AccountId(1)),
+        shares: 9_007_199_254_740_993,
+        gross: Money::from_cents(9_007_199_254_740_993),
+    };
+    let encoded = serde_json::to_value(&entitlement).unwrap();
+    assert_eq!(encoded["shares"], "9007199254740993");
+    assert_eq!(serde_json::from_value::<CashDividendEntitlement>(encoded.clone()).unwrap(), entitlement);
+    for invalid in [serde_json::json!(9_007_199_254_740_993_u64), serde_json::json!("09007199254740993"), serde_json::json!("+1"), serde_json::json!("18446744073709551616")] {
+        let mut changed = encoded.clone();
+        changed["shares"] = invalid;
+        assert!(serde_json::from_value::<CashDividendEntitlement>(changed).is_err());
+    }
+}
 use crate::company::share_registry::{
     AcquisitionSource, HolderId, RegistrationSnapshot, ShareHolding, ShareLot, ShareRegistry,
     ShareRestriction,
@@ -68,6 +85,7 @@ fn plan() -> CashDividendPlan {
         CompanyId("issuer-A".into()),
         StockCode("600001".into()),
         CalendarExchange::Sse,
+        super::super::ex_reference_price::CashDividendFormula::StandardCashOnly,
         day("2030-01-03"),
         day("2030-01-04"),
         day("2030-01-07"),
@@ -78,6 +96,15 @@ fn plan() -> CashDividendPlan {
         &calendar(),
     )
     .unwrap()
+}
+
+#[test]
+fn dividend_plan_requires_an_explicit_cash_formula_in_its_wire_contract() {
+    let encoded = serde_json::to_value(plan()).unwrap();
+    assert_eq!(encoded["formula"], "StandardCashOnly");
+    let mut missing_formula = encoded;
+    missing_formula.as_object_mut().unwrap().remove("formula");
+    assert!(serde_json::from_value::<CashDividendPlan>(missing_formula).is_err());
 }
 
 fn ready_book() -> CashDividendBook {
@@ -157,6 +184,7 @@ fn date_and_distributable_validation_is_explicit() {
         CompanyId("issuer-A".into()),
         StockCode("600001".into()),
         CalendarExchange::Sse,
+        super::super::ex_reference_price::CashDividendFormula::StandardCashOnly,
         day("2030-01-03"),
         day("2030-01-04"),
         day("2030-01-07"),
