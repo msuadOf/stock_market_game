@@ -10,7 +10,7 @@ const account = {
   cash: "100000", reserved_cash: "1000", reserved_sell_qty: {},
   positions: { "0": { qty: 100, t1_locked: 100, invested_cents: "1000", recovered_cents: "0" } },
 };
-const order = { id: 1, code: 0, side: "Buy" as const, price: "1000", remainingQty: 100, venue: "continuous" as const, frozen: "cash" as const };
+const order = { id: 1, code: 0, side: "Buy" as const, price: "1000", remainingQty: 100, venue: "Continuous" as const, frozen: "Cash" as const };
 /** 摄入翻译后（代码串）的同一委托，用于断言 store/状态侧的期望。 */
 const codedOrder = { ...order, code: "000812" };
 

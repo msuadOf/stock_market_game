@@ -27,7 +27,7 @@ test("production coordinator consumes delta before the existing chart frame call
     runtime_delta: {
       seq_from: 0, seq_to: 1, tick: 1, day: 0, phase: "CallAuction",
       accounts: { "0": { cash: "99000", reserved_cash: "1000", reserved_sell_qty: {}, positions: {} } },
-      working_orders: { reset: true, upserts: [{ id: 9, code: 0, side: "Buy", price: "1000", remainingQty: 100, venue: "auction", frozen: "cash" }], removed: [] },
+      working_orders: { reset: true, upserts: [{ id: 9, code: 0, side: "Buy", price: "1000", remainingQty: 100, venue: "Auction", frozen: "Cash" }], removed: [] },
     },
   } }));
   assert.deepEqual(failures, []);
@@ -37,7 +37,7 @@ test("production coordinator consumes delta before the existing chart frame call
   assert.equal(after.snapshot!.phase, "CallAuction");
   assert.equal(after.snapshot!.daily_candles, before.daily_candles);
   assert.deepEqual(Reflect.get(after, "playerWorkingOrders"), {
-    "9": { id: 9, code: "000812", side: "Buy", price: "1000", remainingQty: 100, venue: "auction", frozen: "cash" },
+    "9": { id: 9, code: "000812", side: "Buy", price: "1000", remainingQty: 100, venue: "Auction", frozen: "Cash" },
   });
 });
 
@@ -51,7 +51,7 @@ test("a reconnect baseline can seed exact-cursor public orders before consuming 
   const seed = Reflect.get(coordinator, "installPlayerWorkingOrdersBaseline");
   assert.equal(typeof seed, "function");
   seed.call(coordinator, { generation: "2", tick: 5, seq: 5 }, [
-    { id: 9, code: "000812", side: "Buy", price: "1000", remainingQty: 100, venue: "continuous", frozen: "cash" },
+    { id: 9, code: "000812", side: "Buy", price: "1000", remainingQty: 100, venue: "Continuous", frozen: "Cash" },
   ]);
   coordinator.accept(createProtocolUpdate("2", { TickBatch: {
     frames: [frame(6, 5, [0])], runtime_snapshot: null,

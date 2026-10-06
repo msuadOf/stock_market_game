@@ -595,7 +595,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
                     <span className={order.side === "Buy" ? "up" : "down"}>{order.side === "Buy" ? "买" : "卖"}</span>
                     <span className="mono">{order.code}</span>
                     <span className="num">{yuan(order.price)} 元 · {order.remainingQty} 股</span>
-                    <span className="player-order-freeze">{order.frozen === "cash" ? "资金已冻结" : "股份已冻结"}</span>
+                    <span className="player-order-freeze">{order.frozen === "Cash" ? "资金已冻结" : "股份已冻结"}</span>
                     <Button small minimal intent="warning" loading={cancelingOrderIds.has(order.id)} disabled={cancelingOrderIds.has(order.id)} onClick={() => void cancelPlayerOrder(order)}>撤单</Button>
                   </li>
                 ))}

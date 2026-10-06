@@ -8,8 +8,8 @@ export type PlayerWorkingOrder = {
   readonly side: "Buy" | "Sell"
   readonly price: Cents
   readonly remainingQty: number
-  readonly venue: "auction" | "continuous"
-  readonly frozen: "cash" | "shares"
+  readonly venue: "Auction" | "Continuous"
+  readonly frozen: "Cash" | "Shares"
 }
 
 type WorkingOrderSource = Pick<StrictSaveEnvelope, "auction_orders" | "resting_orders">
@@ -25,8 +25,8 @@ export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWo
         side: order.side,
         price: order.limit,
         remainingQty: order.qty,
-        venue: "auction",
-        frozen: order.side === "Buy" ? "cash" : "shares",
+        venue: "Auction",
+        frozen: order.side === "Buy" ? "Cash" : "Shares",
       })
     }
   }
@@ -39,8 +39,8 @@ export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWo
         side: order.side,
         price: order.price,
         remainingQty: order.qty,
-        venue: "continuous",
-        frozen: order.side === "Buy" ? "cash" : "shares",
+        venue: "Continuous",
+        frozen: order.side === "Buy" ? "Cash" : "Shares",
       })
     }
   }

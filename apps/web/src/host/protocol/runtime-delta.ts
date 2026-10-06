@@ -19,11 +19,11 @@ function wireWorkingOrder(value: unknown, path: string): WirePlayerWorkingOrder 
     side: enumValue(field(source, "side", path), ["Buy", "Sell"], `${path}.side`),
     price: parseMoney(field(source, "price", path), `${path}.price`),
     remainingQty: safeU32(field(source, "remainingQty", path), `${path}.remainingQty`),
-    venue: enumValue(field(source, "venue", path), ["auction", "continuous"], `${path}.venue`),
-    frozen: enumValue(field(source, "frozen", path), ["cash", "shares"], `${path}.frozen`),
+    venue: enumValue(field(source, "venue", path), ["Auction", "Continuous"], `${path}.venue`),
+    frozen: enumValue(field(source, "frozen", path), ["Cash", "Shares"], `${path}.frozen`),
   };
   if (BigInt(order.price) <= 0n || order.remainingQty === 0
-    || order.frozen !== (order.side === "Buy" ? "cash" : "shares")) {
+    || order.frozen !== (order.side === "Buy" ? "Cash" : "Shares")) {
     malformed(path, "活动委托价格、余量或冻结资源不合法");
   }
   return order;
@@ -39,11 +39,11 @@ function workingOrder(value: unknown, path: string): PlayerWorkingOrder {
     side: enumValue(field(source, "side", path), ["Buy", "Sell"], `${path}.side`),
     price: parseMoney(field(source, "price", path), `${path}.price`),
     remainingQty: safeU32(field(source, "remainingQty", path), `${path}.remainingQty`),
-    venue: enumValue(field(source, "venue", path), ["auction", "continuous"], `${path}.venue`),
-    frozen: enumValue(field(source, "frozen", path), ["cash", "shares"], `${path}.frozen`),
+    venue: enumValue(field(source, "venue", path), ["Auction", "Continuous"], `${path}.venue`),
+    frozen: enumValue(field(source, "frozen", path), ["Cash", "Shares"], `${path}.frozen`),
   };
   if (order.code.length === 0 || BigInt(order.price) <= 0n || order.remainingQty === 0
-    || order.frozen !== (order.side === "Buy" ? "cash" : "shares")) {
+    || order.frozen !== (order.side === "Buy" ? "Cash" : "Shares")) {
     malformed(path, "活动委托代码、价格、余量或冻结资源不合法");
   }
   return order;

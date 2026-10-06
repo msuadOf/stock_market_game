@@ -8,8 +8,8 @@ export type PlayerWorkingOrder = {
   readonly side: "Buy" | "Sell";
   readonly price: Cents;
   readonly remainingQty: number;
-  readonly venue: "auction" | "continuous";
-  readonly frozen: "cash" | "shares";
+  readonly venue: "Auction" | "Continuous";
+  readonly frozen: "Cash" | "Shares";
 };
 
 function record(value: unknown, path: string): Readonly<Record<string, unknown>> {
@@ -38,9 +38,9 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
     // wire 的 code 为数值 StockId（ADR 0041）；摄入时译回非空代码串。
     if (typeof order.code !== "number" || !Number.isSafeInteger(order.code) || order.code < 0) throw new TypeError(`${path}.code 必须是数值 StockId`);
     if (order.side !== "Buy" && order.side !== "Sell") throw new TypeError(`${path}.side 无效`);
-    if (order.venue !== "auction" && order.venue !== "continuous") throw new TypeError(`${path}.venue 无效`);
-    if (order.frozen !== "cash" && order.frozen !== "shares") throw new TypeError(`${path}.frozen 无效`);
-    if (order.frozen !== (order.side === "Buy" ? "cash" : "shares")) throw new TypeError(`${path}.frozen 与 side 不一致`);
+    if (order.venue !== "Auction" && order.venue !== "Continuous") throw new TypeError(`${path}.venue 无效`);
+    if (order.frozen !== "Cash" && order.frozen !== "Shares") throw new TypeError(`${path}.frozen 无效`);
+    if (order.frozen !== (order.side === "Buy" ? "Cash" : "Shares")) throw new TypeError(`${path}.frozen 与 side 不一致`);
     const price = parseMoney(order.price, `${path}.price`);
     if (compareMoney(price, "0") <= 0) throw new TypeError(`${path}.price 必须是正数（Money 原始分值）`);
     const remainingQty = nonnegativeSafeInteger(order.remainingQty, `${path}.remainingQty`);

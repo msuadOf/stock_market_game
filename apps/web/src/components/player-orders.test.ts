@@ -63,8 +63,8 @@ test("projects only the player's authoritative auction and continuous orders", (
   })
 
   assert.deepEqual(orders, [
-    { id: 7, code: "3", side: "Buy", price: "1105", remainingQty: 200, venue: "auction", frozen: "cash" },
-    { id: 11, code: "1", side: "Sell", price: "2700", remainingQty: 100, venue: "continuous", frozen: "shares" },
+    { id: 7, code: "3", side: "Buy", price: "1105", remainingQty: 200, venue: "Auction", frozen: "Cash" },
+    { id: 11, code: "1", side: "Sell", price: "2700", remainingQty: 100, venue: "Continuous", frozen: "Shares" },
   ])
 })
 
