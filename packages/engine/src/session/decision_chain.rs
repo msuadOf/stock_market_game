@@ -72,29 +72,39 @@ pub(in crate::session) struct DecisionChainObservation {
 
 impl DecisionChainObservation {
     fn capture_for_roots(session: &GameSession, market: MarketView) -> Result<Self, StepFatal> {
-        let now = session.observation_civil_instant();
+        Self::capture_for_roots_on(&session.read_view(), market)
+    }
+
+    /// 读视图版本（queue 链转换目标形态）。
+    fn capture_for_roots_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView,
+        market: MarketView,
+    ) -> Result<Self, StepFatal> {
+        let now = view.observation_civil_instant();
         Ok(Self {
             market,
-            paths: session.market_price_path_observations().map_err(|error| {
-                StepFatal::InvariantViolation {
+            paths: crate::session::views::market_price_path_observations_on(view).map_err(
+                |error| StepFatal::InvariantViolation {
                     description: error.to_string(),
                     location: "decision_chain::capture_decision_chain_roots_with_market".to_owned(),
-                }
-            })?,
-            technical: Self::build_technical(session)?,
+                },
+            )?,
+            technical: Self::build_technical_on(view)?,
             now,
-            exposed: Self::exposed_stocks(session, now),
+            exposed: Self::exposed_stocks_on(view, now),
         })
     }
     fn build_technical(
         session: &GameSession,
     ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {
-        let stocks = session
-            .state
-            .candle_book
-            .histories()
-            .iter()
-            .collect::<Vec<_>>();
+        Self::build_technical_on(&session.read_view())
+    }
+
+    /// 读视图版本（与 build_technical 逐行同源）。
+    fn build_technical_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView,
+    ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {
+        let stocks = view.candle_book.histories().iter().collect::<Vec<_>>();
         let prepared = stocks
             .into_par_iter()
             .map(|(code, candles)| {
@@ -133,6 +143,14 @@ impl DecisionChainObservation {
         session: &GameSession,
         now: crate::calendar::CivilInstant,
     ) -> BTreeSet<StockId> {
+        Self::exposed_stocks_on(&session.read_view(), now)
+    }
+
+    /// 读视图版本。
+    fn exposed_stocks_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView,
+        now: crate::calendar::CivilInstant,
+    ) -> BTreeSet<StockId> {
         let mut threshold = now.date();
         for _ in 0..EXPOSURE_FRESHNESS_DAYS {
             threshold = threshold
@@ -140,27 +158,23 @@ impl DecisionChainObservation {
                 .expect("runtime window stays above the civil floor");
         }
         let mut exposed = BTreeSet::new();
-        for stock in &session.state.setup.stocks {
-            let Some(company) = session.state.company_registry.issuer_of(&stock.code) else {
+        for stock in &view.setup.stocks {
+            let Some(company) = view.company_registry.issuer_of(&stock.code) else {
                 continue;
             };
-            let fresh = session
-                .state
+            let fresh = view
                 .library
                 .reports_for_company(&company, now)
                 .iter()
                 .any(|report| report.published_at.date() >= threshold)
-                || session
-                    .state
+                || view
                     .library
                     .announcements_for_company(&company, now)
                     .iter()
                     .any(|announcement| announcement.published_at.date() >= threshold);
             if fresh {
                 exposed.insert(
-                    session
-                        .state
-                        .stocks
+                    view.stocks
                         .id(&stock.code.0)
                         .expect("配置股票必须已入目录"),
                 );

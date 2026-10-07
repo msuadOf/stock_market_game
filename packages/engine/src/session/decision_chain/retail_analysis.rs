@@ -11,12 +11,22 @@ impl GameSession {
         observed: &[AccountId],
         market: &MarketView,
     ) -> Result<BTreeMap<AccountId, BTreeMap<StockId, CandidateAssessment>>, StepFatal> {
+        let (view, mut writes) = crate::session::pipeline::npc_split::npc_split(self);
+        Self::capture_retail_analysis_on(&view, &mut writes, observed, market)
+    }
+
+    /// 读视图+写组版本（queue 链转换目标形态）。
+    pub(in crate::session) fn capture_retail_analysis_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
+        writes: &mut crate::session::pipeline::npc_split::NpcWriteFields<'_>,
+        observed: &[AccountId],
+        market: &MarketView,
+    ) -> Result<BTreeMap<AccountId, BTreeMap<StockId, CandidateAssessment>>, StepFatal> {
         let accounts = observed
             .iter()
             .copied()
             .filter(|id| {
-                self.state
-                    .accounts
+                view.accounts
                     .get(id)
                     .is_some_and(|account| account.kind() == AccountKind::Retail)
             })
@@ -24,7 +34,7 @@ impl GameSession {
         if accounts.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let observation = DecisionChainObservation::capture_for_roots(self, market.clone())?;
+        let observation = DecisionChainObservation::capture_for_roots_on(view, market.clone())?;
         let returns = observation
             .paths
             .iter()
@@ -39,12 +49,17 @@ impl GameSession {
             })?;
         let work = accounts
             .into_iter()
-            .map(|id| (id, PlanPersonalState::take(self, id)))
+            .map(|id| (id, PlanPersonalState::take_on(writes, id)))
             .collect::<Vec<_>>();
+        let plans = &*writes.plans;
+        let experience = &*writes.retail_experience;
         let results = work
             .into_par_iter()
             .map(|(id, mut personal)| {
-                let assessments = self.observe_retail_analysis(
+                let assessments = Self::observe_retail_analysis_on(
+                    view,
+                    plans,
+                    experience,
                     id,
                     &mut personal,
                     &observation,
@@ -57,7 +72,7 @@ impl GameSession {
             .collect::<Result<Vec<_>, _>>()?;
         let mut output = BTreeMap::new();
         for (id, personal, assessments) in results {
-            personal.install(self, id);
+            personal.install_on(writes, id);
             output.insert(id, assessments);
         }
         Ok(output)
@@ -70,21 +85,42 @@ impl GameSession {
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
     ) -> Result<BTreeMap<StockId, CandidateAssessment>, StepFatal> {
+        Self::observe_retail_analysis_on(
+            &self.read_view(),
+            &self.state.plans,
+            &self.state.retail_experience,
+            id,
+            personal,
+            observation,
+            thirty_minute_market,
+        )
+    }
+
+    /// 读视图+写组再借用版本。
+    fn observe_retail_analysis_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
+        plans: &crate::plans::PlanBook,
+        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
+        id: AccountId,
+        personal: &mut PlanPersonalState,
+        observation: &DecisionChainObservation,
+        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
+    ) -> Result<BTreeMap<StockId, CandidateAssessment>, StepFatal> {
         let invariant = |description: String| StepFatal::InvariantViolation {
             description,
             location: "decision_chain::retail_analysis".to_owned(),
         };
-        let account = &self.state.accounts[&id];
+        let account = &view.accounts[&id];
         let held = account.positions().keys().cloned().collect::<BTreeSet<_>>();
         let mut protected = held.clone();
-        protected.extend(self.state.plans.active_codes(id).cloned());
+        protected.extend(plans.active_codes(id).cloned());
         let discovered = personal.attention.sample_discovery_stock(
             &observation.market,
             &held,
             &personal.watchlist,
             &observation.exposed,
         );
-        let minute = self.current_market_minute();
+        let minute = view.current_market_minute();
         if let Some(code) = &discovered {
             personal
                 .watchlist
@@ -96,10 +132,10 @@ impl GameSession {
             id,
             &held,
             &personal.watchlist,
-            &self.state.plans,
+            &plans,
             discovered,
         );
-        let day = u64::from(self.state.day);
+        let day = u64::from(view.day);
         let mut reports: BTreeMap<StockId, PublicationId> = BTreeMap::new();
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
@@ -112,13 +148,13 @@ impl GameSession {
                 .price_memory
                 .observe_price(code, stock.last_price, minute)
                 .map_err(|error| invariant(error.to_string()))?;
-            let Some(company) = self.state.issuer_of_stock(*code) else {
+            let Some(company) = view.issuer_of_stock(*code) else {
                 continue;
             };
             if !checks_information {
                 continue;
             }
-            for report in discovery_candidates(&self.state.library, &company, observation.now) {
+            for report in discovery_candidates(&view.library, &company, observation.now) {
                 if personal
                     .information
                     .records_for_company(&company)
@@ -129,9 +165,9 @@ impl GameSession {
                 }
                 personal
                     .information
-                    .record_acquisition(id, &self.state.library, report, observation.now)
+                    .record_acquisition(id, &view.library, report, observation.now)
                     .map_err(|error| invariant(error.to_string()))?;
-                if let Ok(material) = self.state.library.report(report, observation.now) {
+                if let Ok(material) = view.library.report(report, observation.now) {
                     if matches!(
                         material.origin,
                         crate::information::PublicationOrigin::Correction
@@ -140,9 +176,7 @@ impl GameSession {
                     }
                     let newer = match reports.get(code) {
                         Some(prior) => {
-                            let prior = self
-                                .state
-                                .library
+                            let prior = view.library
                                 .report(*prior, observation.now)
                                 .map_err(|error| invariant(error.to_string()))?;
                             crate::strategy::own_known_report_priority(material)
@@ -154,7 +188,7 @@ impl GameSession {
                         reports.insert(code.clone(), report);
                     }
                 } else if let Some(cause) = crate::session::notices::credit_default_cause(
-                    &self.state.library,
+                    &view.library,
                     report,
                     observation.now,
                 )
@@ -167,17 +201,15 @@ impl GameSession {
         let ctx = NpcObservationContext::new(
             id,
             &personal.information,
-            &self.state.library,
+            &view.library,
             &observation.market,
         )
         .map_err(|error| invariant(error.to_string()))?;
         for code in &candidates {
-            let Some(company) = self.state.issuer_of_stock(*code) else {
+            let Some(company) = view.issuer_of_stock(*code) else {
                 continue;
             };
-            let spec = self
-                .state
-                .operations
+            let spec = view.operations
                 .company(&company)
                 .ok_or_else(|| {
                     invariant(format!("retail issuer {company:?} has no operating books"))
@@ -203,7 +235,7 @@ impl GameSession {
                     .apply_cause(
                         code,
                         crate::session::notices::material_cause(
-                            &self.state.library,
+                            &view.library,
                             report,
                             observation.now,
                         )
@@ -235,9 +267,7 @@ impl GameSession {
                     .map_err(|error| invariant(error.to_string()))?;
             }
         }
-        let experience = self
-            .state
-            .retail_experience
+        let account_experience = experience
             .get(&id)
             .ok_or_else(|| invariant(format!("retail {id:?} has no personal experience")))?;
         if checks_information {
@@ -246,7 +276,7 @@ impl GameSession {
                 .record_information_check(observation.now)
                 .map_err(|error| invariant(error.to_string()))?;
         }
-        apply_personal_experience_feedback(&mut personal.belief, experience, day).map_err(
+        apply_personal_experience_feedback(&mut personal.belief, account_experience, day).map_err(
             |error| {
                 invariant(format!(
                     "retail {id:?} experience confidence failed: {error}"
@@ -255,8 +285,16 @@ impl GameSession {
         )?;
         let mut assessments = BTreeMap::new();
         for code in &candidates {
-            let signals = self
-                .retail_candidate_signals(id, code, personal, observation, thirty_minute_market)
+            let signals = Self::retail_candidate_signals_on(
+                view,
+                plans,
+                experience,
+                id,
+                code,
+                personal,
+                observation,
+                thirty_minute_market,
+            )
                 .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
             personal
                 .price_memory
@@ -274,6 +312,29 @@ impl GameSession {
 
     fn retail_candidate_signals(
         &self,
+        id: AccountId,
+        code: &StockId,
+        personal: &PlanPersonalState,
+        observation: &DecisionChainObservation,
+        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
+    ) -> Result<CandidateSignals, String> {
+        Self::retail_candidate_signals_on(
+            &self.read_view(),
+            &self.state.plans,
+            &self.state.retail_experience,
+            id,
+            code,
+            personal,
+            observation,
+            thirty_minute_market,
+        )
+    }
+
+    /// 读视图+写组再借用版本。
+    fn retail_candidate_signals_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
+        plans: &crate::plans::PlanBook,
+        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
         id: AccountId,
         code: &StockId,
         personal: &PlanPersonalState,
@@ -329,7 +390,7 @@ impl GameSession {
         let experience = if personal.belief.analysis().weights().experience_cost_bp() == 0 {
             SignalContribution::unavailable(SignalUnavailableReason::ZeroWeight)
         } else {
-            self.retail_cost_signal(id, code, observation, thirty_minute_market)?
+            Self::retail_cost_signal_on(view, experience, id, code, observation, thirty_minute_market)?
         };
         Ok(CandidateSignals {
             fundamental,
@@ -347,7 +408,26 @@ impl GameSession {
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
     ) -> Result<SignalContribution, String> {
-        let account = &self.state.accounts[&id];
+        Self::retail_cost_signal_on(
+            &self.read_view(),
+            &self.state.retail_experience,
+            id,
+            code,
+            observation,
+            thirty_minute_market,
+        )
+    }
+
+    /// 读视图+写组再借用版本。
+    fn retail_cost_signal_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
+        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
+        id: AccountId,
+        code: &StockId,
+        observation: &DecisionChainObservation,
+        thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
+    ) -> Result<SignalContribution, String> {
+        let account = &view.accounts[&id];
         let StrategyState::ZiNoise(retail) = account
             .strategy()
             .expect("retail strategy exists")
@@ -356,9 +436,7 @@ impl GameSession {
         else {
             return Err(format!("retail {id:?} has no retail execution strategy"));
         };
-        let experience = self
-            .state
-            .retail_experience
+        let account_experience = experience
             .get(&id)
             .ok_or_else(|| format!("retail {id:?} has no personal experience"))?;
         let inputs = account
@@ -376,7 +454,7 @@ impl GameSession {
                         qty: position.qty(),
                         cost_price: position.cost_price(),
                         last_price: stock.last_price,
-                        peak_price_since_entry: experience
+                        peak_price_since_entry: account_experience
                             .stocks
                             .get(stock_code)
                             .and_then(|stock| stock.peak_price_since_entry),
@@ -387,8 +465,8 @@ impl GameSession {
         let mut risk = build_account_risk_observation(
             account.cash(),
             &inputs,
-            experience.reference_equity,
-            experience.peak_equity,
+            account_experience.reference_equity,
+            account_experience.peak_equity,
         )
         .map_err(|error| error.to_string())?;
         risk.positions.retain(|stock, _| stock == code);
@@ -419,17 +497,17 @@ impl GameSession {
             price_paths: paths,
             thirty_minute_market: thirty_minute_market.clone(),
         };
-        let mut dated = experience.clone();
+        let mut dated = account_experience.clone();
         dated.consecutive_failed_buys = dated
             .failure_influence(&crate::experience::ExperienceMoment {
-                civil_date: self.civil_date(),
-                market_minute: self.current_market_minute(),
-                trading_day: u64::from(self.state.day),
+                civil_date: view.civil_date(),
+                market_minute: view.current_market_minute(),
+                trading_day: u64::from(view.day),
             })
             .map_err(|error| error.to_string())?;
         let mut rng = SplitMix64::new(derived_stream(
-            self.state.seed,
-            &format!("retail-cost-{}-{}", code.0, self.state.tick),
+            view.seed,
+            &format!("retail-cost-{}-{}", code.0, view.tick),
             id,
         ));
         let decision = crate::behavior::decide_retail_position_with_experience(
@@ -440,7 +518,7 @@ impl GameSession {
             &behavior,
             &risk,
             &dated,
-            self.current_market_minute(),
+            view.current_market_minute(),
             &mut rng,
         );
         let contribution = match decision.reason {
