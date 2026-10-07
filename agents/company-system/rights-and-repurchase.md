@@ -40,7 +40,14 @@
 | 配股 Session 全链路 | `session-wiring-red.log`（缺 API/字段编译红） | `rights-session-green.log`（7/7） |
 | 回购 Session 全链路 | 同上 | `repurchase-session.log`（4/4） |
 | Web 契约 | `web-full.log`（finance 字段缺失红） | `web-final.log` |
-| 基线对照 | `head-failures.txt`（main@78a35747 lib 257 失败清单） | `engine-lib-full.log`（同 257 失败、净增 33 通过）；Web 既有失败集与 main 一致 |
+| 基线对照 | `head-failures.txt`（main@78a35747 lib 257 失败清单） | `engine-lib-full.log`（同 257 失败、净增 33 通过） |
+
+> **失实更正（2026-10-07 修复轮，铁律三）**：本文件与 `current-handoff.md` 原记载
+> 「Web 既有失败集与 main 一致、本批零新增失败」**不实**。批次终点实测
+> `apps/web/src/save/corporate-actions-schema.test.ts` 为 **pass 2 / fail 18**
+> （`corporate_actions.rights_offerings` 等三个新必填数组未同步进该测试 fixture，
+> 除权组 `rights_event_ids` 与名册错误信息措辞亦未跟进），属本批引入的回归。
+> 证据：`fix-round-major2-red.log`。复核门禁发现后已在修复轮补齐（见下节）。
 
 ## 验证范围
 
@@ -58,10 +65,45 @@ Web 测试 shard 并行）。证据日志见上表目录。
 | 受影响组并发复跑（rights/repurchase/share_registry/ex_reference_price/corporate_actions/cash_dividend/company_mechanism/dividend_tax/company_simple 过滤） | 162/162 |
 | engine lib 全量 | main@78a35747 基线 257 失败逐项一致；本批 1472 通过（净增 33） |
 | `cargo check --workspace --all-targets` | 通过（含 desktop；web/dist 由本批构建产出） |
-| Web `scripts/run-web-tests.mjs` | main 基线既有失败集一致，本批零新增失败 |
+| Web `scripts/run-web-tests.mjs` | **失实，已更正**（见上方更正说明；修复轮后实测见下节） |
 | Web 生产构建（tsc -b + vite + release WASM 校验） | 通过 |
 | ts-rs typegen + `check-generated-types` | 通过 |
-| 三份存档 fixtures（release Engine producer 重生成） | restore/resave 深等与场景守卫全过 |
+| 三份存档 fixtures（release Engine producer 重生成） | restore/resave 深等与场景守卫全过（**company 切片投影未随 main 同步重投影**，修复轮更正，见下节） |
+
+## 修复轮（2026-10-07 门禁复核 findings）
+
+复核门禁七项发现逐条修复（TDD 红→绿，红日志先落）：
+
+| 发现 | 修复 | 红证据 | 绿证据 |
+| --- | --- | --- | --- |
+| major-1 Web exchange 枚举域错误（配股/回购/分红/送转 plan parser 用 `Shanghai/Shenzhen`，engine `CalendarExchange` serde 真值为 `sse/szse`） | 四类 plan parser 与公开公告分红 plan parser 全部对齐 `sse/szse`；新增 `CalendarExchange` 类型与 setup `StockExchange` 的显式映射勾稽；补 engine 真值正例测试（探针输出 `fix-round-exchange-probe.log`） | 同 major-2 红（旧 parser 拒绝 sse 值） | `corporate-actions-schema.test.ts` 24/24 |
+| major-2 Web 契约测试回归＋台账失实 | fixture 更新到 10 数组键集（含新 `rejected_rights_subscriptions`）、除权组 `rights_event_ids`、名册错误措辞；**本文件与 handoff 的失实段更正**（见上方更正说明） | `fix-round-major2-red.log`（pass 2 / fail 18） | 同上 24/24；全量对照见下 |
+| major-3 公开配售超额认购卡死日终 | 两层修复：受理侧按「剩余额度−已排队未结算量」显式拒绝（不截断不入队）；日终按队列序处理至额度耗尽，超出/无法入账条目出显式拒绝回执（新持久化 `rejected_rights_subscriptions`，恢复勾稽＋净认购唯一性互斥校验），陈旧排队（`submitted_on ≤ 当日`）一并重放 | `fix-round-major3-wiring-red.log`（编译红）、`fix-round-major3-behavior-red.log`（受理不拒绝）、`fix-round-major3-dayend-red.log`（日终卡死） | `fix-round-rights-session-green.log`（10/10） |
+| minor-4 除权锚分量谓词不一致 | 两侧统一到权威谓词 `company::rights_offering::forms_ex_rights_component`（整数截位比例>0）；语义：截位为零的微量认购对参考价无分量影响，事实由认购记录与结算回执承载 | `fix-round-dividend-capital-recon-red.log` 同用例首红 | 同上（`tiny_paid_rights_with_same_day_cash_dividend_reconciles_at_restore`） |
+| minor-5 同证券多回购方案成交双记 | 批准时拒绝同证券未完成方案（完成/取消后方可批准新方案） | （旧实现受理成功，见新负例用例） | `fix-round-repurchase-session-green.log`（5/5） |
+| note-6 ADR-0039 注记措辞 | 更正为「机制层 `price_per_share` 纯显式必填；默认市场价属 P 批偏好域后续接线」 | — | 文档更正 |
+| note-7 useSaveCommands 重复 setter | 去重 | — | tsc -b 通过 |
+
+修复轮额外发现并修复（边界用例暴露）：
+
+- **分红声明注册资本重构漏配股增量**：`company::simple::finance_validation` 重构
+  分红批准时点注册资本时只扣送转入账、漏扣配股结算增量，「先批准分红、后结算
+  配股」的局在结算后财务校验误判不一致。已按同一口径补扣（红
+  `fix-round-dividend-capital-recon-red.log`，绿见 tiny_paid 用例）。
+- **company 切片投影失同步**：M 批重生成 main 存档 fixture 时未同步重投影
+  `current-company-slice.json`（HEAD 实测两者不等，违反「切片 = main 的
+  company_system 精确投影」约定）。修复轮已重投影。
+
+修复轮验证（全部命令外部 deadline 10000ms、producer 长验收 300000ms）：
+
+| 验证 | 结果 |
+| --- | --- |
+| 受影响组复跑（13 组过滤：rights_offering/issuer_repurchase/share_registry/ex_reference_price/session::corporate_actions/cash_dividend/company_mechanism/dividend_tax/company::simple/mechanism_switch/company_simple/rights_session/repurchase_session） | 全绿（合计 257 项），`fix-round-affected-groups.log` |
+| `cargo check --workspace --all-targets` | 0 error |
+| Web `scripts/run-web-tests.mjs` 全量 | 失败 8 项全部在 main@78a35747 可复现（6 项 main 全量即失败；2 项〔利润表渲染、Tauri 更正命令〕在 main 单文件运行亦失败，属分片布局敏感的既有脆弱用例），本修复轮零新增失败；`fix-round-web-full.log`（main 基线对照见 `/tmp` 临时 worktree 运行记录，结论已并入本表） |
+| Web `tsc -b --force` | 通过 |
+| 三份存档 fixtures + company 切片（release Engine producer 重生成） | producer 自校验（restore/resave 深等、场景守卫）全过；main producer 为多核长任务（46 线程、约 96s），按长验收 300000ms deadline 执行 |
+| ts-rs typegen | `RejectedRightsSubscription.ts` 新增、`SessionCorporateActions.ts` 更新 |
 
 ## 独立复核门禁（大 A 语义）
 
