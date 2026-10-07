@@ -69,6 +69,7 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
   2. prepare 链改造（read_only_start/envelope_projection/decision_resources/continuous_matching_adapter 吃 &SessionReadView；prepare(session) 薄包装）。
   3. candidate_commit 尾部 join + stash + plan_tick 消费（设计见上）。
   4. 测试扩展、基准、独立复核。
+  - 助手定位（本棒已核）：current_market_minute=session.rs:1848、civil_date=session.rs:2420、market_price_path_observations=session/views.rs:127、capture_retail_analysis=session/decision_chain/retail_analysis.rs:9（决策链根部）——这四个是 queue 链仅剩的"GameSession 方法级"依赖，其余全是 state 字段直达。
 - 已知并行：同工作区有清理 agent 做小提交；提交一律显式 pathspec，index lock 冲突等几秒重试。
 
 ## 坑（本棒新踩/已知）
