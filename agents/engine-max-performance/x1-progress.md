@@ -60,7 +60,16 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 
 ## 当前状态
 
-- **棒次 2（本棒，增量 A 已落库，B 未开工）**：写集侦察完整化 + 骨架增强。提交：86f5a598（骨架+范例+2 测试）、2acc0984（写组补全+视图助手）。
+- **棒次 2（已完成）**：写集侦察完整化 + 叶子层全部 view/write 化。提交链：86f5a598（骨架+范例+2 测试）→ 2acc0984（写组 11 字段补全+phase/minute/date 视图助手）→ views/self_views 转换提交（build_market_view/market_price_path_observations/working_orders_for_accounts 自由函数化+薄委托）→ npc_split 扩展提交（公司域三 Arc+issuer_of_stock+npc_writes 窄构造）→ personal_state 提交（take_on/install_on 写组版）。每步 lib 1316/8 基线一致。
+- **棒次 3 入口（从最深的未转换依赖开始）**：
+  1. decision_chain.rs:74 `DecisionChainObservation::capture_for_roots(session, market)`（4500+ 行文件，先读 74 起的函数体确定其内部读集——RootReadContext::capture(roots.rs:29) 已是 owned 快照，可改吃 (view, &writes.plans) 构造）；
+  2. retail_analysis.rs:9 capture_retail_analysis → on(view, writes)（observe_retail_analysis 同文件随行；take/install 已有 _on 版本可直接用）；
+  3. execution/orders.rs:11 materialize_parent_order_intents → on(view, &mut writes.parent_orders, ...)（读 setup/markets 待核实）；execution/reconcile_plan.rs:25 plan_npc_working_order_reconciliation → on(view,...)；
+  4. decision_snapshot_capture.rs 全文件（capture/view+writes、experience 观察读 retail_experience 经 &*writes 再借用、build_self_view_for/build_behavior_market_checked/validate_market_view_inputs 全 view 化）；
+  5. npc_state_projection.rs project_npc_state_in_place(view, writes)（strategy 写走 writes.accounts、last_retail_decisions 走 writes、validate_parent_order_materialization 随行）；
+  6. npc_tick_preparation.rs queue_npc_for_next_tick → queue_npc_on(view, writes) + session 薄包装（candidate_commit.rs:65 调用点零改动）；
+  7. 全绿后进入阶段二（join/stash/plan_tick 消费/TDD/基准，见上文设计）。
+  - 已就绪的 view 助手：phase/current_market_minute/civil_date/issuer_of_stock/build_market_view_on/market_price_path_observations_on/working_orders_for_accounts_on/receive_private_intent_on/take_on/install_on。
 - **本棒新发现（下一棒必读）**：
   1. **写集实为 11 字段**（E7 清单只列 7）：新增 `plans`、`parent_orders`（materialize_parent_order_intents 写，execution/orders.rs:11）、`belief_participants`、`history_reads`（PlanPersonalState::take/install 移除重装，decision_chain/personal_state.rs:85/112）。prepare 链已 grep 验证不读这四者（decision_resources/envelope_projection/continuous_matching_adapter 零命中）。
   2. **SessionReadView 还需补**：`company_registry`、`library`（Arc 字段，廉价引用）——observe_retail_analysis 经 `self.state.issuer_of_stock`（registry+stocks 翻译）与 `self.state.library` 读公司域；operations 视 roots 调用面再定。
