@@ -74,18 +74,13 @@ pub(super) fn prepare_candidate_commit<'authority>(
             let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
             let (queue_result, speculative) = rayon::join(
                 || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
-                // X1 投机预计算：与 queue 并发准备下个 plan_tick 的 read-only start。
-                // 账户经页面 COW、lifecycles 经 Vec 快照与写侧隔离；新鲜度由
-                // produced_revision 在消费点校验（外部直改自动回退现算）。
-                || {
-                    super::read_only_start::can_prepare_on(&view).then(|| {
-                        super::read_only_start::SpeculativePrepareStash {
-                            for_tick: view.tick,
-                            produced_revision,
-                            work: std::sync::Arc::new(super::read_only_start::prepare_on(&view)),
-                        }
-                    })
-                },
+                // X1 投机臂：机制完备（隔离/新鲜度/消费全绿）但基准未过门
+                // （棒次 14 锚定配对 mean(d)≈0.987，-1.3%）——根因：消费点权威仍持
+                // Arc，try_unwrap 必失败，每次命中深克隆整个 ReadOnlyStart，吃光
+                // 与 queue 重叠的收益。修复方向（分字段 Arc 或权威侧提前释放）见
+                // x1-progress.md；修好前保持关闭，None 占位。
+                let _ = produced_revision;
+                || Option::<super::read_only_start::SpeculativePrepareStash>::None,
             );
             queue_result?;
             rebase_result?;
