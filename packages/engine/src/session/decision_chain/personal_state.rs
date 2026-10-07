@@ -83,19 +83,25 @@ pub(in crate::session) struct PlanPersonalState {
 
 impl PlanPersonalState {
     pub(in crate::session) fn take(session: &mut GameSession, account: AccountId) -> Self {
+        let (_, mut writes) = crate::session::pipeline::npc_split::npc_split(session);
+        Self::take_on(&mut writes, account)
+    }
+
+    /// 写组版本：queue 链转换目标形态，take 语义与 session 版逐行同源。
+    pub(in crate::session) fn take_on(
+        writes: &mut crate::session::pipeline::npc_split::NpcWriteFields<'_>,
+        account: AccountId,
+    ) -> Self {
         // attention 的缺失仍先报错；机构四成员具有经存档边界校验的同键不变量。
-        let attention = session
-            .state
+        let attention = writes
             .npc_attention
             .remove(&account)
             .unwrap_or_else(|| panic!("plan account {account:?} has no attention state"));
-        let participant = session
-            .state
+        let participant = writes
             .belief_participants
             .remove(&account)
             .unwrap_or_else(|| panic!("plan account {account:?} has no watchlist"));
-        let history_reads = session
-            .state
+        let history_reads = writes
             .history_reads
             .remove(&account)
             .unwrap_or_else(|| panic!("plan account {account:?} has no history-read ledger"));
@@ -110,21 +116,30 @@ impl PlanPersonalState {
     }
 
     pub(in crate::session) fn install(self, session: &mut GameSession, account: AccountId) {
+        let (_, mut writes) = crate::session::pipeline::npc_split::npc_split(session);
+        self.install_on(&mut writes, account);
+    }
+
+    /// 写组版本：install 语义与 session 版逐行同源。
+    pub(in crate::session) fn install_on(
+        self,
+        writes: &mut crate::session::pipeline::npc_split::NpcWriteFields<'_>,
+        account: AccountId,
+    ) {
         assert!(
-            session
-                .state
+            writes
                 .npc_attention
                 .insert(account, self.attention)
                 .is_none(),
             "plan account {account:?} attention state was installed twice"
         );
-        if let Some(mut previous) = session.state.belief_participants.remove(&account) {
+        if let Some(mut previous) = writes.belief_participants.remove(&account) {
             // 原路径在 watchlist 重复时已写入新 watchlist，随后立即 panic；其余成员不变。
             previous.watchlist = self.watchlist;
-            session.state.belief_participants.insert(account, previous);
+            writes.belief_participants.insert(account, previous);
             panic!("plan account {account:?} watchlist was installed twice");
         }
-        session.state.belief_participants.insert(
+        writes.belief_participants.insert(
             account,
             BeliefParticipantState::new(
                 self.watchlist,
@@ -134,8 +149,7 @@ impl PlanPersonalState {
             ),
         );
         assert!(
-            session
-                .state
+            writes
                 .history_reads
                 .insert(account, self.history_reads)
                 .is_none(),

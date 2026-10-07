@@ -43,6 +43,12 @@ pub(in crate::session) struct SessionReadView<'a> {
     pub(in crate::session) candle_book: &'a SessionCandleBook,
     pub(in crate::session) urgency_policy: &'a UrgencyPolicy,
     pub(in crate::session) civil_clock: &'a CivilClock,
+    /// 公司域只读（issuer 翻译与公开信息库；observe_retail_analysis 消费）。
+    pub(in crate::session) company_registry:
+        &'a std::sync::Arc<crate::company::CompanyRegistry>,
+    pub(in crate::session) operations:
+        &'a std::sync::Arc<crate::company::operations::CompanyOperations>,
+    pub(in crate::session) library: &'a std::sync::Arc<crate::information::PublicLibrary>,
     pub(in crate::session) tick: u64,
     pub(in crate::session) day: u32,
     /// 浅克隆快照；写侧对 strategy 的更新不会在此可见（页面 COW）。
@@ -66,6 +72,9 @@ impl GameSession {
             candle_book: &self.state.candle_book,
             urgency_policy: &self.state.urgency_policy,
             civil_clock: &self.state.civil_clock,
+            company_registry: &self.state.company_registry,
+            operations: &self.state.operations,
+            library: &self.state.library,
             tick: self.state.tick,
             day: self.state.day,
             accounts: self.state.accounts.clone(),
@@ -114,6 +123,9 @@ pub(in crate::session) fn npc_split(
         candle_book: &state.candle_book,
         urgency_policy: &state.urgency_policy,
         civil_clock: &state.civil_clock,
+        company_registry: &state.company_registry,
+        operations: &state.operations,
+        library: &state.library,
         tick: state.tick,
         day: state.day,
         accounts: state.accounts.clone(),
@@ -157,6 +169,16 @@ impl<'a> SessionReadView<'a> {
         self.civil_clock.current_date()
     }
 
+    /// 与 GameSession::issuer_of_stock 相同的数值 id → 发行人翻译。
+    pub(in crate::session) fn issuer_of_stock(
+        &self,
+        id: StockId,
+    ) -> Option<crate::company::CompanyId> {
+        let code = self.stocks.code(id)?;
+        self.company_registry
+            .issuer_of(&crate::account::StockCode(code.to_string()))
+    }
+
     /// 与 [`GameSession::current_market_minute`] 相同的分钟推导。
     pub(in crate::session) fn current_market_minute(&self) -> u64 {
         let day_start = u64::from(self.day)
@@ -176,6 +198,25 @@ impl<'a> SessionReadView<'a> {
         )
         .expect("validated session timing maps to market minutes");
         day_start + u64::from(completed)
+    }
+}
+
+/// 只取专写组（不需要读视图时的窄构造）。
+pub(in crate::session) fn npc_writes(session: &mut GameSession) -> NpcWriteFields<'_> {
+    let state = &mut session.state;
+    NpcWriteFields {
+        attention_scheduler: &mut state.attention_scheduler,
+        npc_attention: &mut state.npc_attention,
+        retail_experience: &mut state.retail_experience,
+        last_retail_decisions: &mut state.last_retail_decisions,
+        pending_npc: &mut state.pending_npc,
+        ingress_receipt_cursors: &mut state.ingress_receipt_cursors,
+        accounts: &mut state.accounts,
+        ingress: &mut session.ingress,
+        belief_participants: &mut state.belief_participants,
+        history_reads: &mut state.history_reads,
+        plans: &mut state.plans,
+        parent_orders: &mut state.parent_orders,
     }
 }
 
