@@ -61,10 +61,10 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 ## 当前状态
 
 - **棒次 2（已完成）**：写集侦察完整化 + 叶子层全部 view/write 化。提交链：86f5a598（骨架+范例+2 测试）→ 2acc0984（写组 11 字段补全+phase/minute/date 视图助手）→ views/self_views 转换提交（build_market_view/market_price_path_observations/working_orders_for_accounts 自由函数化+薄委托）→ npc_split 扩展提交（公司域三 Arc+issuer_of_stock+npc_writes 窄构造）→ personal_state 提交（take_on/install_on 写组版）。每步 lib 1316/8 基线一致。
-- **棒次 3 入口（从最深的未转换依赖开始）**：
-  1. decision_chain.rs:74 `DecisionChainObservation::capture_for_roots(session, market)`（4500+ 行文件，先读 74 起的函数体确定其内部读集——RootReadContext::capture(roots.rs:29) 已是 owned 快照，可改吃 (view, &writes.plans) 构造）；
-  2. retail_analysis.rs:9 capture_retail_analysis → on(view, writes)（observe_retail_analysis 同文件随行；take/install 已有 _on 版本可直接用）；
-  3. execution/orders.rs:11 materialize_parent_order_intents → on(view, &mut writes.parent_orders, ...)（读 setup/markets 待核实）；execution/reconcile_plan.rs:25 plan_npc_working_order_reconciliation → on(view,...)；
+- **棒次 3（已完成主体）**：decision_chain（capture_for_roots/build_technical/exposed_stocks _on 化，含 view.observation_civil_instant 助手新写）与 retail_analysis 四函数（capture/observe/candidate_signals/cost_signal 全 _on 化，experience 经 &*writes.retail_experience 再借用传入）——已提交，lib 1316/8 基线一致。
+- **棒次 4 入口（剩余环节，从叶子往上）**：
+  0. （已完成项 1、2——保留编号防引用错乱）
+  3. execution/orders.rs:11 materialize_parent_order_intents → on(view, &mut writes.parent_orders, ...)（读 setup+写 parent_orders，读集待核实）；execution/reconcile_plan.rs:25 plan_npc_working_order_reconciliation → on(view,...)；
   4. decision_snapshot_capture.rs 全文件（capture/view+writes、experience 观察读 retail_experience 经 &*writes 再借用、build_self_view_for/build_behavior_market_checked/validate_market_view_inputs 全 view 化）；
   5. npc_state_projection.rs project_npc_state_in_place(view, writes)（strategy 写走 writes.accounts、last_retail_decisions 走 writes、validate_parent_order_materialization 随行）；
   6. npc_tick_preparation.rs queue_npc_for_next_tick → queue_npc_on(view, writes) + session 薄包装（candidate_commit.rs:65 调用点零改动）；
