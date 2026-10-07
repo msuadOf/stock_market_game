@@ -19,6 +19,10 @@ export type CompanyCapabilities = {
   cash_settlement: boolean;
   unsupported_reason: string;
   par_value_per_share: CapabilityMoney;
+  /**
+   * 现行总股本（规范 u64 十进制字符串；与 `OwnerEntitlementDetail::rights_shares`
+   * 同口径：ts 类型与 serde 实际输出必须同时为字符串，缺一即 wire 断裂）。
+   */
   issued_shares: string;
   registered_capital: CapabilityAmount;
   distributable_profit: DistributableProfitSnapshot;

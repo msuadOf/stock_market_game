@@ -315,19 +315,25 @@ pub(crate) fn active_plan_views(
 }
 
 /// 各行为业务条件快照（固定五类顺序；blockers 为空 = 可评估前置条件满足）。
+/// `distributable` 为调用方已取得的同一查询结果（与能力面快照共享，一次装配
+/// 只查一次；F 修复轮 low-6）。
 fn action_readiness(
     company: &CompanyId,
     company_system: &CompanySystem,
     actions: &SessionCorporateActions,
     rights_enabled: bool,
     repurchase_enabled: bool,
+    distributable: &Result<
+        crate::company::DistributableProfit,
+        crate::company::CompanySystemError,
+    >,
 ) -> Vec<CorporateActionReadiness> {
     let legal_facts_bound = company_system
         .dividend_legal_facts(company)
         .map(|facts| facts.is_some())
         .unwrap_or(false);
-    let distributable_positive = company_system
-        .distributable_profit(company)
+    let distributable_positive = distributable
+        .as_ref()
         .map(|profit| profit.available_for_distribution.is_positive())
         .unwrap_or(false);
 
@@ -336,7 +342,7 @@ fn action_readiness(
     if !legal_facts_bound {
         cash_blockers.push("未绑定注册资本法定事实（define_dividend_legal_facts）".into());
     }
-    match company_system.distributable_profit(company) {
+    match distributable {
         Ok(profit) if profit.available_for_distribution.is_positive() => {}
         Ok(_) => cash_blockers.push("可分配利润为零或负，无可分配现金".into()),
         Err(error) => cash_blockers.push(format!("可分配利润快照不可用：{error}")),
@@ -376,20 +382,54 @@ fn action_readiness(
         rights_blockers.push("未绑定注册资本法定事实且无既有面值锚，无法推导每股面值".into());
     }
 
-    // 回购：新局开关 + 同证券唯一未完成方案（受理预检）。
+    // 回购：新局开关 + 同证券唯一未完成方案（受理预检）。唯一性口径与
+    // `approve_issuer_repurchase` 一致：只挡非终态（Approved/Announced/Executing）
+    // 方案；Completed（未注销）不阻塞新方案受理（F 修复轮建议-3：曾把
+    // Completed 也计入阻塞，与受理口径反向漂移——报「不满足」但实际可受理）。
     let mut repurchase_blockers = Vec::new();
     if !repurchase_enabled {
         repurchase_blockers.push("新局未启用发行人回购机制（issuer_repurchase_enabled=false）".into());
     } else if actions.issuer_repurchases.iter().any(|book| {
         book.plan().issuer == *company
-            && !matches!(book.status(), IssuerRepurchaseStatus::Cancelled)
+            && !matches!(
+                book.status(),
+                IssuerRepurchaseStatus::Completed | IssuerRepurchaseStatus::Cancelled
+            )
     }) {
         repurchase_blockers.push("同证券已存在未完成回购方案（唯一性预检）".into());
     }
 
-    // 拆股／缩股：无状态级前置条件（受理时的日期有序性、同除权日碰撞三层
-    // 预检与比例校验都依赖具体方案输入，静态快照无从评估，不冒充可判定）。
-    let split_blockers = Vec::new();
+    // 拆股／缩股：受理的静态前置——法定事实为硬前置（`approve_share_split`
+    // 无条件要求 `registered_capital_at_approval`），无既有面值锚时须能由
+    // 注册资本 ÷ 发行股数整除推导。日期有序性、同除权日碰撞三层预检与比例
+    // 校验依赖具体方案输入，静态快照无从评估，不在此冒充可判定（F 修复轮
+    // low-4：曾恒 ready，与受理依赖不一致）。
+    let mut split_blockers = Vec::new();
+    if !legal_facts_bound {
+        split_blockers.push(
+            "拆股／缩股受理需要先显式绑定公司注册资本法定事实（registered_capital_at_approval）"
+                .into(),
+        );
+    } else if company_system.current_par_value(company).ok().flatten().is_none() {
+        // 无既有面值锚：面值须由法定事实整除推导（对齐 rights blocker 口径）。
+        let capital_divisible = company_system
+            .dividend_legal_facts(company)
+            .ok()
+            .flatten()
+            .zip(company_system.issuers().get(company))
+            .and_then(|(facts, spec)| {
+                let capital = i128::from(facts.registered_capital.to_money().ok()?.cents());
+                let shares = i128::from(spec.issued_shares);
+                (shares > 0).then_some(capital % shares == 0)
+            })
+            .unwrap_or(false);
+        if !capital_divisible {
+            split_blockers.push(
+                "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实或既有面值锚"
+                    .into(),
+            );
+        }
+    }
 
     let build = |kind: CorporateActionKind, blockers: Vec<String>| CorporateActionReadiness {
         kind,
@@ -415,8 +455,19 @@ pub(crate) fn company_capabilities_view(
     repurchase_enabled: bool,
     today: CivilDate,
 ) -> Result<CompanyCapabilities, SessionCorporateActionsError> {
+    // 可分配利润一次装配只查一次：facts 快照与 readiness 判定共享同一结果
+    // （F 修复轮 low-6：此前 company_facts 一次、readiness 两次，共三次）。
+    let distributable = company_system.distributable_profit(company);
+    let action_readiness_snapshot = action_readiness(
+        company,
+        company_system,
+        actions,
+        rights_enabled,
+        repurchase_enabled,
+        &distributable,
+    );
     let facts = company_system
-        .company_facts(company)
+        .company_facts_with_distributable(company, distributable)
         .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
     let owner_views = owner_rights_views(actions, account, today)?;
     let owner_rights = owner_views
@@ -446,13 +497,7 @@ pub(crate) fn company_capabilities_view(
         registered_capital: facts.registered_capital,
         distributable_profit: facts.distributable_profit,
         active_plans: active_plan_views(actions, company),
-        action_readiness: action_readiness(
-            company,
-            company_system,
-            actions,
-            rights_enabled,
-            repurchase_enabled,
-        ),
+        action_readiness: action_readiness_snapshot,
         owner_rights,
     })
 }

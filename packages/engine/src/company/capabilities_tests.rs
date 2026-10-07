@@ -211,6 +211,59 @@ fn company_facts_unknown_company_is_invalid_input() {
     assert_eq!(error.classification(), CompanyErrorClass::InvalidInput);
 }
 
+/// F 修复轮 low-5：能力面的每股面值必须按**已入账**（`settled_on` 回填）的
+/// 重新计值口径（`outstanding_par_value`）报告，保证快照自洽
+/// （par × issued_shares 与 registered_capital 同口径）；声明链
+/// （`current_par_value`）含未生效重锚——已批准未入账的拆股会把面值提前
+/// 翻新，造成批未入账时 par×issued≠registered_capital（曾用声明链，反向漂移）。
+#[test]
+fn company_facts_par_value_uses_booked_outstanding_anchor_not_declared_chain() {
+    let mut system = create_system();
+    system
+        .define_dividend_legal_facts(&company(), amount(1_000_000), "股东会决议第 1 号".into())
+        .unwrap();
+    // 前置：无任何送转／拆股事实，两条面值链都无锚。
+    match system.company_facts(&company()).unwrap().par_value_per_share {
+        CapabilityMoney::Unavailable { .. } => {}
+        CapabilityMoney::Available { .. } => panic!("无面值事实时不得冒充可用"),
+    }
+    // 声明一起 1 拆 2（面值 1000 分 → 500 分；未入账 settled_on=None）。
+    system
+        .declare_share_split(
+            &company(),
+            crate::company::share_split::ShareSplitDeclaration {
+                event_id: "split-1".into(),
+                approval_reference: "board-split-1".into(),
+                direction: crate::company::share_split::ShareSplitDirection::Split,
+                approved_on: date("2030-02-01"),
+                ratio: 2,
+                par_value_before: crate::money::Money::from_cents(1_000),
+                par_value_after: crate::money::Money::from_cents(500),
+                registered_capital_at_approval: amount(1_000_000),
+            },
+        )
+        .unwrap();
+    // 声明链已重锚到 500 分（两条口径确实分叉的证据）。
+    assert_eq!(
+        system
+            .current_par_value(&company())
+            .unwrap()
+            .expect("声明链必须已有锚")
+            .cents(),
+        500
+    );
+    // 能力面：在册口径无已入账重锚 → 显式不可用（issued 仍 1000 股、注册资本
+    // 未变，报 500 分会造成 par×issued≠registered_capital）。
+    match system.company_facts(&company()).unwrap().par_value_per_share {
+        CapabilityMoney::Unavailable { reason } => {
+            assert!(!reason.trim().is_empty(), "不可用必须显式给原因");
+        }
+        CapabilityMoney::Available { cents } => {
+            panic!("批未入账时不得提前采用重锚面值：{cents} 分")
+        }
+    }
+}
+
 #[test]
 fn period_explanation_reads_existing_history_entry() {
     let system = create_system();

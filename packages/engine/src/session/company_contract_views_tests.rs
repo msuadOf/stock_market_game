@@ -17,9 +17,24 @@ use crate::orderbook::AccountId;
 use super::dividend_tax_mode_tests::{
     advance_until_dividend_paid, flat_dividend_fixture, flat_fixture_setup,
 };
+use super::issuer_repurchase_session_tests::{
+    complete_day as repurchase_complete_day, repurchase_plan,
+    session_with_registry as repurchase_session_with_registry,
+};
 use super::rights_offering_session_tests::{
     all_shareholders_plan, complete_day, session_with_registry,
 };
+use crate::company::issuer_repurchase::IssuerRepurchaseStatus;
+
+fn readiness_of<'a>(
+    caps: &'a crate::company::capabilities::CompanyCapabilities,
+    kind: CorporateActionKind,
+) -> &'a crate::company::capabilities::CorporateActionReadiness {
+    caps.action_readiness
+        .iter()
+        .find(|entry| entry.kind == kind)
+        .unwrap()
+}
 
 /// 推进到指定自然日的日终完成**之后**（含该日日结；结束后自然日为次日）。
 fn advance_through(session: &mut GameSession, date: CivilDate) {
@@ -133,6 +148,176 @@ fn capabilities_snapshot_carries_facts_active_plan_and_owner_rights() {
         DistributableProfitSnapshot::Unavailable { .. } => false,
     };
     assert_eq!(dividend.ready, distributable_positive);
+}
+
+/// F 修复轮 blocker-1 回归锁：`CompanyCapabilities` 的 u64 股数字段在真实
+/// serde wire 上必须是**规范十进制字符串**（web 严格 parser 只收字符串）。
+/// 本测试用真实 session 组装的能力面做序列化，并把 wire 与 web 侧往返 fixture
+/// （`apps/web/src/save/fixtures/company-capabilities-wire.json`）逐字段同步：
+/// fixture 漂移即红，防止 ts-rs 类型与 serde 实际输出再次分叉（wasm 导出与
+/// serde_json 走同一 `Serialize` 实现，锁此层即锁 wasm wire）。
+/// 重生成：`UPDATE_COMPANY_WIRE_FIXTURES=1 cargo test -p engine --lib capabilities_wire`。
+#[test]
+fn capabilities_wire_u64_fields_serialize_as_canonical_decimal_strings() {
+    let (mut session, stock, issuer) = session_with_registry(true);
+    let plan = all_shareholders_plan(&issuer, &stock);
+    let payment_start = plan.payment_start_on;
+    session.approve_rights_offering(plan).unwrap();
+    advance_through(&mut session, payment_start);
+    let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
+    let wire = serde_json::to_value(&caps).unwrap();
+    // issued_shares：u64 必须以字符串上 wire（曾只加 ts(type="string") 而缺
+    // serde(with=canonical_u64_decimal)，实际输出 JSON number，真机
+    // companyCapabilities 严格解析恒失败）。
+    let issued = wire["issued_shares"]
+        .as_str()
+        .unwrap_or_else(|| panic!("issued_shares 必须是字符串：{}", wire["issued_shares"]));
+    assert_eq!(issued, caps.issued_shares.to_string());
+    assert!(
+        issued == "0"
+            || (issued.starts_with(|head: char| ('1'..='9').contains(&head))
+                && issued.chars().all(|c| c.is_ascii_digit())),
+        "issued_shares 必须是规范非负十进制（无前导零）：{issued}"
+    );
+    // 本人具名权利摘要（Option<String>）同为字符串口径。
+    assert!(
+        wire["owner_rights"][0]["entitled_shares"].is_string(),
+        "entitled_shares 必须是字符串：{}",
+        wire["owner_rights"][0]["entitled_shares"]
+    );
+    // serde 两向往返等值：锁的是 serde 契约本身（wasm 导出走同一 Serialize）。
+    let round: crate::company::capabilities::CompanyCapabilities =
+        serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(round, caps);
+
+    // 与 web 往返 fixture 同步（engine 真实输出 ↔ web parser 输入的桥梁）。
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/web/src/save/fixtures/company-capabilities-wire.json");
+    if std::env::var("UPDATE_COMPANY_WIRE_FIXTURES").is_ok() {
+        std::fs::write(&fixture_path, serde_json::to_string_pretty(&wire).unwrap())
+            .expect("写入 company-capabilities-wire.json");
+        return;
+    }
+    let fixture_text = std::fs::read_to_string(&fixture_path).unwrap_or_else(|error| {
+        panic!("读取 web 往返 fixture 失败（先以 UPDATE_COMPANY_WIRE_FIXTURES=1 生成）：{error}")
+    });
+    let fixture: serde_json::Value =
+        serde_json::from_str(&fixture_text).expect("web 往返 fixture 必须是合法 JSON");
+    assert_eq!(
+        fixture, wire,
+        "engine 真实 wire 与 web 往返 fixture 不一致（契约漂移；以 UPDATE_COMPANY_WIRE_FIXTURES=1 重生成并核对 web 测试）"
+    );
+}
+
+/// F 修复轮建议-3（负路径）：存在未完成（非终态）回购方案时，readiness 必须
+/// 报「同证券唯一性」阻塞——与受理口径一致。
+#[test]
+fn repurchase_readiness_blocks_while_unfinished_plan_exists() {
+    let (mut session, stock, issuer, _account) = repurchase_session_with_registry(true);
+    session
+        .approve_issuer_repurchase(repurchase_plan(&issuer, &stock))
+        .unwrap();
+    let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
+    let readiness = readiness_of(&caps, CorporateActionKind::IssuerRepurchase);
+    assert!(!readiness.ready, "存在未完成回购方案时不得报满足");
+    assert!(
+        readiness
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("未完成回购方案")),
+        "唯一性预检必须在 blockers 中显式给出：{:?}",
+        readiness.blockers
+    );
+}
+
+/// F 修复轮建议-3（正向）：回购 **Completed（尚未注销）** 按受理口径
+/// （`approve_issuer_repurchase` 的唯一性预检只挡 `!Completed && !Cancelled`）
+/// 不阻塞新方案——readiness 不得反向漂移报「不满足」（曾把 Completed 也计入
+/// 阻塞，与受理口径不一致）。
+#[test]
+fn repurchase_readiness_allows_new_plan_when_existing_is_completed_not_cancelled() {
+    let (mut session, stock, issuer, _account) = repurchase_session_with_registry(true);
+    session
+        .approve_issuer_repurchase(repurchase_plan(&issuer, &stock))
+        .unwrap();
+    // 与 repurchase_completion 测试同流程推进：窗口内玩家卖单与发行人委托
+    // 撮合，过窗口截止并再日终一次 → Completed（未执行注销）。
+    while session.civil_date() < CivilDate::from_iso("2030-01-03").unwrap() {
+        if session.civil_clock().phase() != crate::session::CivilPhase::ClosedDay {
+            for _ in 0..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+    }
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            crate::strategy::Intent::PlaceLimit {
+                code: stock.clone(),
+                side: crate::orderbook::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    for _ in 0..session.state.setup.ticks_per_day {
+        session.step().unwrap();
+    }
+    session.end_civil_day().unwrap();
+    while session.civil_date() <= CivilDate::from_iso("2030-01-07").unwrap() {
+        repurchase_complete_day(&mut session);
+    }
+    repurchase_complete_day(&mut session);
+    assert_eq!(
+        session.state.corporate_actions.issuer_repurchases[0].status(),
+        &IssuerRepurchaseStatus::Completed,
+        "前置：回购必须已到 Completed（未注销）"
+    );
+    let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
+    let readiness = readiness_of(&caps, CorporateActionKind::IssuerRepurchase);
+    assert!(
+        readiness.ready,
+        "Completed（未注销）按受理口径不阻塞新方案，readiness 不得反向漂移：{:?}",
+        readiness.blockers
+    );
+}
+
+/// F 修复轮 low-4：拆股／缩股 readiness 曾恒 ready=true，与其受理依赖
+/// （`approve_share_split` 硬性要求法定事实；无面值锚时须整除推导）不一致。
+/// 对齐为法定事实/面值锚 blocker 判定。
+#[test]
+fn split_readiness_reports_legal_facts_and_par_anchor_blockers() {
+    // 未绑定法定事实：受理硬前置缺失，必须显式阻塞，不冒充可判定。
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    setup.start_date = CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
+    let split = readiness_of(&caps, CorporateActionKind::ShareSplit);
+    assert!(!split.ready, "未绑定法定事实时拆股 readiness 不得报满足");
+    assert!(
+        split.blockers.iter().any(|blocker| blocker.contains("法定事实")),
+        "法定事实阻塞必须在 blockers 中显式给出：{:?}",
+        split.blockers
+    );
+
+    // 法定事实已绑定且无既有面值锚时可整除推导（1 分/股 fixture）：无静态阻塞。
+    let (session, _stock, issuer) = session_with_registry(true);
+    let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
+    let split = readiness_of(&caps, CorporateActionKind::ShareSplit);
+    assert!(
+        split.ready,
+        "法定事实绑定且可整除推导面值时，拆股应无静态阻塞：{:?}",
+        split.blockers
+    );
 }
 
 #[test]

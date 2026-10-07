@@ -140,7 +140,10 @@ pub struct OwnerRightsSummaryView {
     pub payment_window: PaymentWindowState,
     /// 本人具名权利股数（无具名权利时 `None`；规范 u64 十进制字符串）。
     pub entitled_shares: Option<String>,
-    /// 公开配售剩余额度（方案无公开额度或已有具名权利时 `None`）。
+    /// 公开配售剩余额度（规范 u64 十进制字符串）：权证已派发且本人无具名
+    /// 权利且方案有公开额度时给出；`Some("0")` 表示额度已用尽（与
+    /// `OwnerRightsOfferingView::open_subscription_remaining_shares` 同口径），
+    /// 方案无公开额度或已有具名权利时 `None`。
     pub open_subscription_remaining: Option<String>,
 }
 
@@ -177,6 +180,9 @@ pub struct CompanyCapabilities {
     pub unsupported_reason: String,
     // —— 公司侧当前事实 ——
     pub par_value_per_share: CapabilityMoney,
+    /// 现行总股本（规范 u64 十进制字符串；与 `OwnerEntitlementDetail::rights_shares`
+    /// 同口径：ts 类型与 serde 实际输出必须同时为字符串，缺一即 wire 断裂）。
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     #[ts(type = "string")]
     pub issued_shares: u64,
     pub registered_capital: CapabilityAmount,

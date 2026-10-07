@@ -230,3 +230,26 @@ fn explicit_system_state_variant_maps_to_system_state() {
     let error = CompanySystemError::SystemState("恢复校验发现账簿与声明事实不一致".into());
     assert_eq!(error.classification(), CompanyErrorClass::SystemState);
 }
+
+/// SystemState 的**真实行为路径**（F 修复轮门禁补齐：此前 SystemState 仅一条
+/// 真实路径〔会计溢出〕加一条变体直构；台账「每类 ≥2 例行为路径」的表述与
+/// 实际不符）。不一致存档走 `validate_restored`：配置声明的公司在状态集合中
+/// 缺失（如被篡改的存档），恢复校验必须以 SystemState 显式报错。
+#[test]
+fn restored_state_with_missing_company_maps_to_system_state() {
+    let mut system = create_system();
+    let missing = match &mut system.implementation {
+        crate::company::system::CompanyImplementation::Simple(state) => {
+            let victim = state.config.companies[0].company.clone();
+            assert!(state.companies.remove(&victim).is_some(), "fixture 前置：公司状态存在");
+            victim
+        }
+    };
+    let _ = missing;
+    let error = system.validate_restored().unwrap_err();
+    assert!(
+        matches!(error, CompanySystemError::SystemState(ref message) if message.contains("不一致") || message.contains("缺失")),
+        "不一致存档必须落在 SystemState 变体：{error}"
+    );
+    assert_eq!(error.classification(), CompanyErrorClass::SystemState);
+}

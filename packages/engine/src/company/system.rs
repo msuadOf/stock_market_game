@@ -1100,6 +1100,17 @@ impl CompanySystem {
         &self,
         company: &CompanyId,
     ) -> Result<super::capabilities::CompanyFacts, CompanySystemError> {
+        self.company_facts_with_distributable(company, self.distributable_profit(company))
+    }
+
+    /// [`CompanySystem::company_facts`] 的单查询变体（F 修复轮 low-6）：能力面
+    /// 装配同时需要可分配利润快照（facts）与各行为条件判定（readiness），调用
+    /// 方查询一次后复用同一结果，避免同一快照在一次装配内重复推导。
+    pub(crate) fn company_facts_with_distributable(
+        &self,
+        company: &CompanyId,
+        distributable: Result<super::dividend::DistributableProfit, CompanySystemError>,
+    ) -> Result<super::capabilities::CompanyFacts, CompanySystemError> {
         use super::capabilities::{
             CapabilityAmount, CapabilityMoney, CompanyFacts, DistributableProfitSnapshot,
         };
@@ -1114,12 +1125,17 @@ impl CompanySystem {
                     company.0
                 ))
             })?;
-        let par_value_per_share = match finance.current_par_value()? {
+        // 面值按**已入账**（`settled_on` 回填）的重新计值口径解析：能力面是
+        // 「当前事实」快照，必须保证 par × issued_shares 与 registered_capital
+        // 同口径自洽；声明链（`current_par_value`）含未生效重锚，批未入账时
+        // 提前翻新面值会造成反向漂移（F 修复轮 low-5；口径依据见
+        // `SimpleFinanceState::outstanding_par_value` 注释与回购注销先例）。
+        let par_value_per_share = match finance.outstanding_par_value()? {
             Some(par) => CapabilityMoney::Available {
                 cents: par.cents().to_string(),
             },
             None => CapabilityMoney::Unavailable {
-                reason: "尚无送转／拆股绑定的每股面值事实，面值不可用".into(),
+                reason: "尚无已入账的送转／拆股面值事实，在册每股面值不可用".into(),
             },
         };
         let registered_capital = match finance.legal_facts() {
@@ -1135,17 +1151,17 @@ impl CompanySystem {
                 reason: "未绑定注册资本法定事实（define_dividend_legal_facts）".into(),
             },
         };
-        let distributable_profit = match finance.distributable_profit() {
+        let distributable_profit = match distributable {
             Ok(profit) => DistributableProfitSnapshot::Available {
                 accumulated_after_loss_yuan: profit.accumulated_after_loss.to_yuan_string(),
                 statutory_reserve_yuan: profit.statutory_reserve.to_yuan_string(),
                 available_for_distribution_yuan: profit.available_for_distribution.to_yuan_string(),
                 reserve_basis_year: profit.reserve_basis_year,
             },
-            Err(super::simple::SimpleFinanceError::DividendUnsupported(reason)) => {
-                DistributableProfitSnapshot::Unavailable { reason }
-            }
-            Err(other) => return Err(other.into()),
+            Err(CompanySystemError::Finance(
+                super::simple::SimpleFinanceError::DividendUnsupported(reason),
+            )) => DistributableProfitSnapshot::Unavailable { reason },
+            Err(other) => return Err(other),
         };
         Ok(CompanyFacts {
             revenue: true,

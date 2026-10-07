@@ -16,7 +16,10 @@ export type OwnerRightsSummaryView = {
    */
   entitled_shares: string | null;
   /**
-   * 公开配售剩余额度（方案无公开额度或已有具名权利时 `None`）。
+   * 公开配售剩余额度（规范 u64 十进制字符串）：权证已派发且本人无具名
+   * 权利且方案有公开额度时给出；`Some("0")` 表示额度已用尽（与
+   * `OwnerRightsOfferingView::open_subscription_remaining_shares` 同口径），
+   * 方案无公开额度或已有具名权利时 `None`。
    */
   open_subscription_remaining: string | null;
 };
