@@ -3,60 +3,66 @@
 use super::*;
 use rayon::prelude::*;
 
+use super::pipeline::npc_split::SessionReadView;
+
+/// working_orders_for_accounts 的读视图版本（与 GameSession 同名方法逐行同源）。
+pub(in crate::session) fn working_orders_for_accounts_on(
+    view: &SessionReadView,
+    owners: &BTreeSet<AccountId>,
+) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
+    let (mut continuous_stocks, mut auction_stocks) = rayon::join(
+        || {
+            view.markets
+                .par_iter()
+                .map(|(code, market)| (code.clone(), market.resting_orders_for_owners(owners)))
+                .collect::<Vec<_>>()
+        },
+        || {
+            view.auction_orders
+                .par_iter()
+                .map(|(code, orders)| {
+                    (
+                        code.clone(),
+                        orders
+                            .iter()
+                            .filter(|order| owners.contains(&order.owner))
+                            .cloned()
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        },
+    );
+    continuous_stocks.sort_by(|left, right| left.0.cmp(&right.0));
+    auction_stocks.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let mut continuous = ContinuousOrdersByAccount::new();
+    for (code, orders) in continuous_stocks {
+        for order in orders {
+            continuous
+                .entry(order.owner)
+                .or_default()
+                .push((code.clone(), order));
+        }
+    }
+    let mut auction = AuctionOrdersByAccount::new();
+    for (code, orders) in auction_stocks {
+        for order in orders {
+            auction
+                .entry(order.owner)
+                .or_default()
+                .push((code.clone(), order));
+        }
+    }
+    (continuous, auction)
+}
+
 impl GameSession {
     /// 按股票并行读取本轮观察账户的工作单，再归并为账户视图。
     pub(super) fn working_orders_for_accounts(
         &self,
         owners: &BTreeSet<AccountId>,
-    ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
-        let (mut continuous_stocks, mut auction_stocks) = rayon::join(
-            || {
-                self.state
-                    .markets
-                    .par_iter()
-                    .map(|(code, market)| (code.clone(), market.resting_orders_for_owners(owners)))
-                    .collect::<Vec<_>>()
-            },
-            || {
-                self.state
-                    .auction_orders
-                    .par_iter()
-                    .map(|(code, orders)| {
-                        (
-                            code.clone(),
-                            orders
-                                .iter()
-                                .filter(|order| owners.contains(&order.owner))
-                                .cloned()
-                                .collect::<Vec<_>>(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            },
-        );
-        continuous_stocks.sort_by(|left, right| left.0.cmp(&right.0));
-        auction_stocks.sort_by(|left, right| left.0.cmp(&right.0));
-
-        let mut continuous = ContinuousOrdersByAccount::new();
-        for (code, orders) in continuous_stocks {
-            for order in orders {
-                continuous
-                    .entry(order.owner)
-                    .or_default()
-                    .push((code.clone(), order));
-            }
-        }
-        let mut auction = AuctionOrdersByAccount::new();
-        for (code, orders) in auction_stocks {
-            for order in orders {
-                auction
-                    .entry(order.owner)
-                    .or_default()
-                    .push((code.clone(), order));
-            }
-        }
-        (continuous, auction)
-    }
+    ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) { working_orders_for_accounts_on(&self.read_view(), owners) }
 
     #[cfg(test)]
     pub(super) fn working_orders_by_account(
