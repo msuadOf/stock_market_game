@@ -92,7 +92,7 @@ pub(in crate::session) fn capture_decision_snapshot(
 }
 
 /// 读视图+写组版本（queue 链转换目标形态）。
-fn capture_decision_snapshot_on(
+pub(super) fn capture_decision_snapshot_on(
     view: &super::npc_split::SessionReadView<'_>,
     writes: &mut super::npc_split::NpcWriteFields<'_>,
 ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {

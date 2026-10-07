@@ -203,41 +203,58 @@ mod day_end_tests {
 pub(in crate::session) fn queue_npc_for_next_tick(
     session: &mut GameSession,
 ) -> Result<(), StepFatal> {
-    if session.state.pending_npc.is_some() {
+    let (view, mut writes) = super::npc_split::npc_split(session);
+    queue_npc_on(&view, &mut writes)
+}
+
+/// 读视图+写组版本（X1 投机并发的目标形态）。
+pub(in crate::session) fn queue_npc_on(
+    view: &super::npc_split::SessionReadView<'_>,
+    writes: &mut super::npc_split::NpcWriteFields<'_>,
+) -> Result<(), StepFatal> {
+    if writes.pending_npc.is_some() {
         return Err(invariant(
             "next-tick NPC queue still contains an unconsumed batch",
         ));
     }
-    if session
-        .state
+    if writes
         .attention_scheduler
         .next_scheduled_tick()
-        .is_none_or(|scheduled_tick| scheduled_tick > session.state.tick)
+        .is_none_or(|scheduled_tick| scheduled_tick > view.tick)
     {
-        session.state.pending_npc = Some(PendingNpcBatch {
-            observed_tick: session.state.tick,
+        *writes.pending_npc = Some(PendingNpcBatch {
+            observed_tick: view.tick,
             observed_accounts: Vec::new(),
             intents: Vec::new(),
             dependencies: Vec::new(),
         });
         return Ok(());
     }
-    let captured =
-        capture_decision_snapshot(session).map_err(|error| invariant(&error.to_string()))?;
-    let config = session.state.setup.config.clone();
+    let captured = super::decision_snapshot_capture::capture_decision_snapshot_on(view, writes)
+        .map_err(|error| invariant(&error.to_string()))?;
+    let config = view.setup.config.clone();
     let mut intents = Vec::new();
     let mut dependencies = Vec::new();
     let stream_error = stream_npc_decisions(captured.snapshot.clone(), &config, |mut result| {
-        let projection = project_npc_account(session, &captured, &mut result.output)
-            .map_err(|error| error.to_string())?;
+        let projection = super::npc_state_projection::project_npc_account_on(
+            view,
+            writes,
+            &captured,
+            &mut result.output,
+        )
+        .map_err(|error| error.to_string())?;
         let projected = projected_ordered_intents(&result.output, &projection)
             .map_err(|error| error.to_string())?;
         let offset = intents.len();
         for (owner, intent) in projected.intents {
             intents.push(
-                session
-                    .receive_private_intent(owner, intent)
-                    .map_err(|error| error.to_string())?,
+                super::npc_split::receive_private_intent_on(
+                    writes.ingress,
+                    writes.ingress_receipt_cursors,
+                    owner,
+                    intent,
+                )
+                .map_err(|error| error.to_string())?,
             );
         }
         dependencies.extend(
@@ -255,8 +272,8 @@ pub(in crate::session) fn queue_npc_for_next_tick(
         };
         return Err(invariant(&description));
     }
-    session.state.pending_npc = Some(PendingNpcBatch {
-        observed_tick: session.state.tick,
+    *writes.pending_npc = Some(PendingNpcBatch {
+        observed_tick: view.tick,
         observed_accounts: captured.snapshot.due_npc_ids().to_vec(),
         intents,
         dependencies,
