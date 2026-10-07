@@ -100,6 +100,24 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 - **复装前置（若重启 X1）**：先解决消费克隆——方案：①ReadOnlyStart 四字段各自 Arc（消费零克隆：hydration Arc<Result>、resources Arc<DecisionResourceSnapshot>、inputs Arc<Vec>、shards Arc<BTreeMap>），消费端 deref 或字段级 take；②或消费点先从权威 take 掉原份使 Arc 唯一（需要 plan_tick 拿到 &mut 权威——现状 &，需 PhaseInput 改造）。修好后重跑锚定配对再判。
 - 基准原始数据：.tmp/e-x1/pairing.log；两 binary：.tmp/production-probe-target（=X1 开）与需重建的基线。
 
+## 消费克隆消除：两方案取舍分析（棒次 14 补，复核期间完成；复核无阻塞后按此实装）
+
+**方案①分字段 Arc（推荐）**：ReadOnlyStart 四字段各自包 Arc（hydration/resources/stock_inputs/stock_shards）。
+- 改动面：read_only_start.rs 结构改造 + ~10 处消费点机械适配（mod.rs plan_tick 的四个解包处、read_only_start 测试、stash 构造）；inline prepare 同步加 4 次 Arc::new（ns 级）；SpeculativePrepareStash.work 直接存浅克隆 ReadOnlyStart（4×Arc bump），try_unwrap 整段删除。
+- 语义风险：**低**——Arc 对 Debug/PartialEq/错误传播位置全透明；无状态机分叉；三重校验不变。
+- 预估：消除"每命中一次的 ReadOnlyStart 深克隆"（resources 账户簿快照 + inputs + shards coordinator，量级数十至一二百 µs/tick），净收益回归"与 queue 重叠 ~0.7ms/tick − 生产侧成本"，预期落在探索波外推 +16% 的折扣区（+8~14%）。
+- 代价：类型签名波及面广但纯机械。
+
+**方案②权威侧提前释放**：plan_tick 克隆前从权威 take stash 原份使 Arc 唯一。
+- 改动面：集中 plan_tick 装配处；PhaseInput 或 authority 增加 take/归还接口。
+- 语义风险：**中**——plan 失败重试路径需手工把 stash 放回权威（漏放=丢一次投机仅损失性能，但放回时机错=下 tick 误失/误命中风险）；与"失败原子性"铁律的审查负担大；三重校验需在 take 后判定、失配原样放回，状态机分叉。
+- 预估：收益同①。
+
+**结论：选①**。②的失败路径手工归还是门禁敏感点且易错；①是纯类型变换。①实装后若基准仍 <2%，则转向结构性解释（4 worker 池容量不足以同时喂 queue 与 prepare），X1 届时按数据判死或转向"重叠窗口重估"。
+
+## 复核状态（棒次 14 末）
+- 主会话独立复核在途（重点：直改入口清单完备性/关臂干净度/基准自洽）。复核结论前不动生产代码；无阻塞后按方案①实装走完整门禁（TDD 复用两红测 + 命中计数 → 全量 → probe → 锚定配对 ≥5 对）。
+
 ## 阶段二设计决策（棒次 8 收棒时定稿待验）
 
 1. **stash 语义定稿**：放 CommittableSessionState 内（非 GameSession 顶层）——投机结果在 candidate N 的 commit 尾部产生，随 swap 自然成为权威状态一部分，下个 plan_tick 消费（take 置 None）；tick 失败重试时 stash 仍在权威上且仍有效（同 tick 重算语义不变）。save()/business_state_hash 走 SaveSlot 逐字段构造，stash 不入 SaveSlot 即自动排除。
