@@ -263,7 +263,7 @@ mod tests {
         game.state.npc_order_lifecycles[0].expires_market_minute = now;
         assert!(!can_prepare(&game));
         let before = game.business_state_hash().unwrap();
-        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
         assert_eq!(plan.expiry().releases.len(), 1);
         assert!(plan.precomputed_stock_inputs.is_none());
         assert_eq!(game.business_state_hash().unwrap(), before);
@@ -312,7 +312,7 @@ mod tests {
                 Ok(()) => DecisionResourceSnapshot::seal(&game).unwrap_err(),
             };
             let before = game.business_state_hash().unwrap();
-            let error = super::super::plan_tick(super::super::PhaseInput { session: &game })
+            let error = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None })
                 .err()
                 .expect("原首错必须从对应阶段返回");
             assert_eq!(error, expected);
@@ -351,7 +351,7 @@ mod tests {
         game.state.pending_npc = None;
         let before = game.business_state_hash().unwrap();
         let mut plan =
-            super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+            super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
         assert!(plan.precomputed_stock_inputs.as_ref().unwrap().is_err());
         let input_error = plan
             .precomputed_stock_inputs
@@ -384,7 +384,7 @@ mod tests {
         });
         let before = game.business_state_hash().unwrap();
         let mut plan =
-            super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+            super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
         let error =
             super::super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(
                 &mut plan,
@@ -407,7 +407,7 @@ mod tests {
                 .expect("fixture 必须同时触发 context 与 stock-input 错误");
         let before = game.business_state_hash().unwrap();
         let mut plan =
-            super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+            super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
         assert!(plan.precomputed_stock_inputs.as_ref().unwrap().is_err());
         let error =
             super::super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(
@@ -444,7 +444,7 @@ mod tests {
             speculative_misses(),
             inline_prepare_calls(),
         );
-        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
         assert_eq!(game.business_state_hash().unwrap(), before);
         assert!(
             speculative_hits() > hits,
@@ -480,7 +480,7 @@ mod tests {
             speculative_misses(),
             inline_prepare_calls(),
         );
-        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
         assert_eq!(game.business_state_hash().unwrap(), before);
         let _ = hits;
         assert!(speculative_misses() > misses, "失配 stash 计为 miss");
@@ -504,7 +504,7 @@ mod tests {
             expires_market_minute: now,
         });
         assert!(!can_prepare(&game));
-        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
         assert!(plan.precomputed_stock_inputs.is_none());
     }
 
@@ -541,7 +541,7 @@ mod tests {
             work: std::sync::Arc::new(prepare(&game)),
         });
         let before = game.business_state_hash().unwrap();
-        let error = super::super::plan_tick(super::super::PhaseInput { session: &game })
+        let error = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None })
             .err()
             .expect("stash 携带的 hydration 错误必须传播");
         assert_eq!(error, expected);
@@ -608,7 +608,7 @@ mod tests {
             });
             let before = game.business_state_hash().unwrap();
             let mut plan =
-                super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+                super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
             if !keep_precomputed {
                 plan.precomputed_stock_shards = None;
                 plan.precomputed_stock_inputs = None;

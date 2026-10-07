@@ -5,7 +5,7 @@ fn discarded_shadow_preserves_business_hash() {
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     assert!(plan.expiry_applied);
     assert!(plan.decision_resources.is_some());
     drop(plan);
@@ -51,7 +51,7 @@ fn shadow_capture_rehydrates_production_strategy_without_identity_drift() {
         .production_state()
         .unwrap();
 
-    let shadow = plan_tick(PhaseInput { session: &game }).unwrap();
+    let shadow = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert_eq!(shadow.strategy_state(crate::AccountId(1)).unwrap(), before);
 }

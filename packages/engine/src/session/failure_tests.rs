@@ -124,7 +124,7 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 
-    let fatal = match super::pipeline::plan_tick(super::pipeline::PhaseInput { session: &game }) {
+    let fatal = match super::pipeline::plan_tick(super::pipeline::PhaseInput { session: &game, speculative: None }) {
         Ok(_) => panic!("private plan must reject the overflowing allocation snapshot"),
         Err(fatal) => fatal,
     };

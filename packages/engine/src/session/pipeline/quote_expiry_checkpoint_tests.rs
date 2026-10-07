@@ -37,7 +37,7 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     let seq_before = game.seq();
     let cursor_before = game.state.next_receipt_base;
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let ledger = plan.envelope_ledger().unwrap();
 
     assert!(plan.expiry().releases.is_empty());

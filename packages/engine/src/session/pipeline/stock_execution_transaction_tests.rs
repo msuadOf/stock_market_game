@@ -39,7 +39,7 @@ fn account_validation_buy_operations_for_quantities(
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let batch = IntentCandidateBatch::new(
         quantities
             .iter()

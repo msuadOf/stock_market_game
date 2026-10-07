@@ -21,7 +21,7 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
             .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
             .unwrap();
     }
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let validation = StockValidation::new(
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
@@ -118,7 +118,7 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
     game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reservation);
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let validation = StockValidation::new(
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
@@ -388,7 +388,7 @@ fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
     let unknown = crate::StockId(9);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let context = AccountValidationContext::new([(
         known.clone(),
         StockValidation::new(
@@ -590,7 +590,7 @@ fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_bou
     let code = crate::StockId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let context = AccountValidationContext::new([(
         code.clone(),
         StockValidation::new(
@@ -649,7 +649,7 @@ fn driver(
     context: AccountValidationContext,
     next_order_id: u64,
 ) -> AccountValidatorDriver {
-    let plan = plan_tick(PhaseInput { session: game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: game, speculative: None }).unwrap();
     AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),

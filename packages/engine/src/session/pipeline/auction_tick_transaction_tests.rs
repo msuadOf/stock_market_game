@@ -436,7 +436,7 @@ fn commit_with_roots(authority: &mut GameSession, request: PlanExecutionRequest)
     super::npc_tick_preparation::queue_npc_for_next_tick(authority).unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut plan = plan_tick(PhaseInput { session: authority }).unwrap();
+    let mut plan = plan_tick(PhaseInput { session: authority, speculative: None }).unwrap();
     apply_tick_shadow_auction_transaction_with_roots_for_test(&mut plan, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
         .unwrap()
@@ -879,9 +879,7 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
     let ledger_before = authority.state.envelope_ledger.clone();
     let plans_before = serde_json::to_value(&authority.state.plans).unwrap();
     let parent_before = serde_json::to_value(&authority.state.parent_orders).unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let result = apply_tick_shadow_auction_transaction_with_roots_for_test(&mut plan, roots);

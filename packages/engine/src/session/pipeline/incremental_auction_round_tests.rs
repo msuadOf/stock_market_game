@@ -7,7 +7,7 @@ use super::*;
 use crate::{AccountId, Intent, OrderId, Side};
 
 fn prepare(session: &GameSession, intents: Vec<(AccountId, Intent)>) -> AccountValidationOutput {
-    let plan = plan_tick(PhaseInput { session }).unwrap();
+    let plan = plan_tick(PhaseInput { session, speculative: None }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()

@@ -277,9 +277,7 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
     let before_hash = authority.session_state_hash().unwrap();
     let before_save = serde_json::to_vec(&authority.save().unwrap()).unwrap();
 
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let mut candidate = plan.state.take_session().unwrap();
     let captured = capture_decision_snapshot(&mut candidate).unwrap();

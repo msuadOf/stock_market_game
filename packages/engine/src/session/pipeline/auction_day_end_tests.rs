@@ -1039,7 +1039,7 @@ fn prepare(
     session: &GameSession,
     intents: Vec<(AccountId, Intent)>,
 ) -> (IntentCandidateBatch, AccountValidationOutput) {
-    let plan = plan_tick(PhaseInput { session }).unwrap();
+    let plan = plan_tick(PhaseInput { session, speculative: None }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()

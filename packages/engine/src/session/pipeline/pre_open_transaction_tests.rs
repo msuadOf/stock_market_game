@@ -386,9 +386,7 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
     let next_order_before = authority.state.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output =
@@ -453,9 +451,7 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
         .unwrap()
         .production_state()
         .unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     plan.state
         .execute(|candidate| {

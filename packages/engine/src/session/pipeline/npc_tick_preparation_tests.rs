@@ -455,9 +455,7 @@ fn downstream_failure_discards_npc_decision_and_authority_state() {
         decision_probe.session_state_hash().unwrap(),
         authority_before
     );
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     plan.state
         .execute(|candidate| {
@@ -538,7 +536,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         .collect();
     old_ids.sort();
     assert_eq!(old_ids.len(), 2);
-    let resources = plan_tick(PhaseInput { session: &session })
+    let resources = plan_tick(PhaseInput { session: &session, speculative: None })
         .unwrap()
         .decision_resources()
         .unwrap()

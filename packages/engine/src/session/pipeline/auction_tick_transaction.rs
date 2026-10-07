@@ -87,7 +87,15 @@ pub(super) fn prepare_auction_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,
 ) -> Result<PreparedAuctionTick<'_>, AuctionTransactionError> {
-    let mut plan = plan_tick(PhaseInput { session: authority })?;
+    let speculative = authority.take_speculative_for_plan();
+    let stash_for_retry = speculative.clone();
+    let mut plan = match plan_tick(PhaseInput { session: authority, speculative }) {
+        Ok(plan) => plan,
+        Err(error) => {
+            authority.restore_speculative(stash_for_retry);
+            return Err(error.into());
+        }
+    };
     let _output = apply_tick_shadow_auction_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
     let commit = super::candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(

@@ -33,9 +33,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
         enqueue_crossing_buy(&mut authority, &code);
     }
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
@@ -342,9 +340,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     let (mut authority, code) = session_with_resting_sell(t1_enabled, LOT);
     enqueue_crossing_buy(&mut authority, &code);
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();

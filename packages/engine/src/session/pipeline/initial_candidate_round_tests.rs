@@ -13,7 +13,7 @@ fn fixture() -> (GameSession, AccountValidatorDriver, IntentCandidateBatch) {
         42,
     )
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &session }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &session, speculative: None }).unwrap();
     let validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -139,7 +139,7 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
 fn initial_order_id_overflow_does_not_leave_partial_account_validation_or_matching_work() {
     let (mut session, _, initial) = fixture();
     session.state.next_order_id = u64::MAX - 1;
-    let plan = plan_tick(PhaseInput { session: &session }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &session, speculative: None }).unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -198,7 +198,7 @@ fn auction_initial_round_batches_accounts_and_stocks_without_clearing_early() {
 }
 
 fn build_validator(session: &GameSession) -> AccountValidatorDriver {
-    let plan = plan_tick(PhaseInput { session }).unwrap();
+    let plan = plan_tick(PhaseInput { session, speculative: None }).unwrap();
     AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -558,9 +558,7 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
             authority.business_state_hash().unwrap(),
             authority.session_state_hash().unwrap(),
         );
-        let mut plan = plan_tick(PhaseInput {
-            session: &authority,
-        })
+        let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
         .unwrap();
         plan.state
             .execute(|candidate| {

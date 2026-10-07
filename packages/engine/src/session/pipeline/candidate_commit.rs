@@ -70,16 +70,22 @@ pub(super) fn prepare_candidate_commit<'authority>(
                 .state
                 .envelope_ledger
                 .rebase_private_for_tick_commit();
-            let _produced_revision = candidate.external_revision();
+            let produced_revision = candidate.external_revision();
             let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
             let (queue_result, speculative) = rayon::join(
                 || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
-                // X1 投机臂：机制完备（隔离/新鲜度/消费全绿）但基准未过门
-                // （棒次 14 锚定配对 mean(d)≈0.987，-1.3%）——根因：消费点权威仍持
-                // Arc，try_unwrap 必失败，每次命中深克隆整个 ReadOnlyStart，吃光
-                // 与 queue 重叠的收益。修复方向（分字段 Arc 或权威侧提前释放）见
-                // x1-progress.md；修好前保持关闭，None 占位。
-                || Option::<super::read_only_start::SpeculativePrepareStash>::None,
+                // X1 投机预计算（方案③复装）：与 queue 并发准备；单点移交使
+                // 消费侧 Arc 唯一、零深拷（棒次 15）。账户页面 COW / lifecycles
+                // Vec 快照隔离写侧；新鲜度由 produced_revision 三重校验兜底。
+                || {
+                    super::read_only_start::can_prepare_on(&view).then(|| {
+                        super::read_only_start::SpeculativePrepareStash {
+                            for_tick: view.tick,
+                            produced_revision,
+                            work: std::sync::Arc::new(super::read_only_start::prepare_on(&view)),
+                        }
+                    })
+                },
             );
             queue_result?;
             rebase_result?;

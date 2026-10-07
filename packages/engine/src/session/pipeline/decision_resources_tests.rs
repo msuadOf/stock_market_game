@@ -50,11 +50,9 @@ fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservatio
     let before_reservation = before_expiry.project_live_envelopes().unwrap()[0]
         .live()
         .cash;
-    let before_plan = plan_tick(PhaseInput {
-        session: &before_expiry,
-    })
+    let before_plan = plan_tick(PhaseInput { session: &before_expiry, speculative: None })
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert_eq!(before_reservation, reservation);
     assert_eq!(
@@ -95,11 +93,9 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
     let sellable_before = game.state.accounts[&account].sellable_qty(&code);
     let reserved = game.project_live_envelopes().unwrap()[0].live().shares;
     let before_expiry = decision_resources_fixture(crate::Side::Sell, false).0;
-    let before_plan = plan_tick(PhaseInput {
-        session: &before_expiry,
-    })
+    let before_plan = plan_tick(PhaseInput { session: &before_expiry, speculative: None })
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert_eq!(reserved, sellable_before);
     assert_eq!(
@@ -133,7 +129,7 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
 #[test]
 fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     let (buy_game, buy_account, buy_code) = decision_resources_fixture(crate::Side::Buy, false);
-    let buy_plan = plan_tick(PhaseInput { session: &buy_game }).unwrap();
+    let buy_plan = plan_tick(PhaseInput { session: &buy_game, speculative: None }).unwrap();
     assert!(
         buy_plan
             .decision_resources()
@@ -152,9 +148,7 @@ fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unkno
     );
 
     let (sell_game, sell_account, sell_code) = decision_resources_fixture(crate::Side::Sell, false);
-    let sell_plan = plan_tick(PhaseInput {
-        session: &sell_game,
-    })
+    let sell_plan = plan_tick(PhaseInput { session: &sell_game, speculative: None })
     .unwrap();
     assert_eq!(
         sell_plan
@@ -237,7 +231,7 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
         },
         &mut events,
     );
-    let baseline = plan_tick(PhaseInput { session: &game }).unwrap();
+    let baseline = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     game.state.pending_plan_events.push(
         crate::session::plan_execution::PendingPlanEvent::DayEnded {
             plan_id: crate::PlanId(1),
@@ -245,7 +239,7 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
         },
     );
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let allocation = plan.decision_resources().unwrap();
 
     assert_eq!(allocation.available_cash(seller).unwrap(), seller_cash);
@@ -327,7 +321,7 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         .unwrap();
     let before = game.business_state_hash().unwrap();
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     let resources = plan.decision_resources().unwrap();
 
     assert_eq!(resources.raw_cash(account).unwrap(), raw_cash);
@@ -398,7 +392,7 @@ fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
         .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let before = game.business_state_hash().unwrap();
 
-    let error = match plan_tick(PhaseInput { session: &game }) {
+    let error = match plan_tick(PhaseInput { session: &game, speculative: None }) {
         Ok(_) => panic!("资产溢出必须使 SealAllocationSnapshot 密封失败"),
         Err(error) => error,
     };

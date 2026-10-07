@@ -1678,6 +1678,27 @@ impl GameSession {
         self.state.markets.get_mut(code)
     }
 
+    /// X1 投机 stash 单点移交：plan_tick 前从权威取走（Arc 唯一化，消费零深拷）。
+    pub(in crate::session) fn take_speculative_for_plan(
+        &mut self,
+    ) -> Option<std::sync::Arc<pipeline::read_only_start_export::SpeculativePrepareStash>> {
+        self.state.speculative_prepare.take().map(std::sync::Arc::new)
+    }
+
+    /// plan 失败时把未消费的 stash 原样放回权威（失败原子性：重试语义不变）。
+    pub(in crate::session) fn restore_speculative(
+        &mut self,
+        stash: Option<std::sync::Arc<pipeline::read_only_start_export::SpeculativePrepareStash>>,
+    ) {
+        if let Some(stash) = stash {
+            let stash = match std::sync::Arc::try_unwrap(stash) {
+                Ok(inner) => inner,
+                Err(shared) => (*shared).clone(),
+            };
+            self.state.speculative_prepare = Some(stash);
+        }
+    }
+
     /// 直改入口：等价于 state.accounts.get_mut 并标记外部直改
     /// （测试夹具与存档恢复共用；X1 红线——直改必须经此标记）。
     pub(crate) fn fixture_account_mut(

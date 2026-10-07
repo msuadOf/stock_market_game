@@ -83,7 +83,7 @@ fn quote_expiry_is_a_real_phase_that_preserves_authority_before_commit() {
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert!(plan.expiry_applied);
     assert!(plan.decision_resources.is_some());
@@ -95,7 +95,7 @@ fn quote_expiry_releases_buy_resources_and_defers_authority_until_commit() {
     let (mut game, code, account, order_id) = expiring_npc_order(crate::Side::Buy);
     let before = game.business_state_hash().unwrap();
     let cash_before = game.state.accounts[&account].cash();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert_eq!(game.business_state_hash().unwrap(), before);
     assert_eq!(
@@ -158,7 +158,7 @@ fn quote_expiry_frame_keeps_the_cancellation_fact_with_a_unique_key() {
 fn quote_expiry_retail_cancellation_diagnostic_survives_commit() {
     let (mut game, code, account, order_id) = expiring_retail_order();
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     drop(plan);
     game.step().unwrap();
 
@@ -191,7 +191,7 @@ fn quote_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
         .unwrap();
     game.state.pending_player.push(received);
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     drop(plan);
     game.step().unwrap();
 
@@ -217,7 +217,7 @@ fn discarded_or_failed_quote_expiry_shadow_preserves_authoritative_retail_diagno
     let (mut game, _code, _account, _order_id) = expiring_retail_order();
     let before = game.last_retail_order_events().to_vec();
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     drop(plan);
     assert_eq!(game.last_retail_order_events(), before);
 
@@ -225,7 +225,7 @@ fn discarded_or_failed_quote_expiry_shadow_preserves_authoritative_retail_diagno
         description: "ExpiryShadow 散户诊断回滚".to_owned(),
         location: "quote_expiry_tests".to_owned(),
     };
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     game.inject_post_shadow_failure(fatal.clone());
     drop(plan);
     assert_eq!(game.step().unwrap_err(), fatal);
@@ -251,7 +251,7 @@ fn quote_expiry_leaves_auction_and_player_orders_unaffected() {
         &mut events,
     );
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert!(plan.expiry().releases.is_empty());
     assert_eq!(game.state.auction_orders[&code].len(), 1);
@@ -281,7 +281,7 @@ fn quote_expiry_rejects_a_second_application() {
 #[test]
 fn quote_expiry_releases_sell_shares_with_zero_cash() {
     let (game, _code, account, _order_id) = expiring_npc_order(crate::Side::Sell);
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert_eq!(plan.expiry().releases.len(), 1);
     assert_eq!(plan.expiry().releases[0].resources.cash, crate::Money::ZERO);
@@ -318,7 +318,7 @@ fn quote_expiry_assigns_deterministic_global_receipt_indices() {
         lifecycle.expires_market_minute = expiry_minute;
     }
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert_eq!(plan.expiry().releases.len(), 2);
     assert_eq!(plan.expiry().releases[0].receipt_index, 0);
@@ -354,7 +354,7 @@ fn quote_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
         lifecycle.expires_market_minute = expiry_minute;
     }
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
 
     assert_eq!(plan.expiry().releases.len(), 2);
     let first_release = plan
@@ -383,7 +383,7 @@ fn quote_expiry_post_shadow_failure_discards_order_receipt_and_event() {
         description: "ExpiryShadow 在 shadow 后失败".to_owned(),
         location: "quote_expiry_tests".to_owned(),
     };
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
     game.inject_post_shadow_failure(fatal.clone());
 
     drop(plan);

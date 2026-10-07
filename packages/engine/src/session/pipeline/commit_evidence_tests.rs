@@ -136,9 +136,7 @@ fn prepared_commit_exposes_the_applied_quote_expiry_receipt_without_reconstructi
 #[test]
 fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
     assert!(!plan.applied_receipts.is_empty());
@@ -163,9 +161,7 @@ fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
 #[test]
 fn ordinary_commit_rejects_receipt_journal_missing_applied_values() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
     plan.applied_receipts.clear();
@@ -186,9 +182,7 @@ fn ordinary_commit_rejects_receipt_journal_missing_applied_values() {
 #[test]
 fn prepared_commit_rejects_tampered_receipt_values_without_touching_authority() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
     let receipt = plan.applied_receipts.first_mut().unwrap();

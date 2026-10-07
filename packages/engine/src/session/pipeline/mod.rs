@@ -56,6 +56,10 @@ mod price_resolution;
 pub(in crate::session) mod quote_expiry;
 mod read_only_start;
 pub(in crate::session) use read_only_start::SpeculativePrepareStash;
+/// 供 session.rs 顶层方法引用的稳定路径别名。
+pub(in crate::session) mod read_only_start_export {
+    pub(in crate::session) use super::read_only_start::SpeculativePrepareStash;
+}
 mod ready_ingress;
 mod ready_stock_stream;
 mod receipt_aggregation;
@@ -199,6 +203,14 @@ mod transition_tests;
 /// Read-only authoritative input; prospective data belongs exclusively to the plan.
 pub struct PhaseInput<'a> {
     pub session: &'a GameSession,
+    /// X1 投机 stash 的权威移交份（step() 单点 take；直调测试留 None 走遗留路径）。
+    pub speculative: Option<std::sync::Arc<read_only_start::SpeculativePrepareStash>>,
+}
+
+impl<'a> PhaseInput<'a> {
+    pub fn of(session: &'a GameSession) -> Self {
+        Self { session, speculative: None }
+    }
 }
 
 /// Discardable local plan with an owned, authoritative prospective state.
@@ -289,7 +301,10 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     })?;
     crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
     let read_only = shadow.state.execute(|session| {
-        let stashed = session.state.speculative_prepare.take();
+        let stashed = input
+            .speculative
+            .clone()
+            .or_else(|| session.state.speculative_prepare.take().map(std::sync::Arc::new));
         Ok(match stashed {
             Some(stash)
                 if stash.for_tick == session.state.tick
@@ -297,8 +312,9 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
                     && read_only_start::can_prepare(session) =>
             {
                 read_only_start::count_speculative_hit();
-                // 权威仍持有一份 Arc 时 try_unwrap 失败，退化为克隆（远小于重算）。
-                let work = match std::sync::Arc::try_unwrap(stash.work) {
+                // 单点移交路径 Arc 唯一（try_unwrap 成功，零深拷）；
+                // 遗留测试路径 shadow 克隆共享权威份时退化为克隆。
+                let work = match std::sync::Arc::try_unwrap(std::sync::Arc::clone(&stash.work)) {
                     Ok(work) => work,
                     Err(shared) => (*shared).clone(),
                 };
@@ -342,7 +358,7 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
         .hydrate_or_validate_envelope_ledger()
         .expect("plan-root fixture must have a valid starting ledger");
     let phase = authority.phase();
-    let mut plan = plan_tick(PhaseInput { session: authority })
+    let mut plan = plan_tick(PhaseInput { session: authority, speculative: None })
         .expect("计划根 tick 的 ExpiryShadow/SealAllocationSnapshot");
     match phase {
         TradingPhase::Continuous => {

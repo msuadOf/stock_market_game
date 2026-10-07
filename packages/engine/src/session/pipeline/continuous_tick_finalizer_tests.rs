@@ -402,7 +402,7 @@ fn late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
         game.business_state_hash().unwrap(),
         game.session_state_hash().unwrap(),
     );
-    let mut plan = super::plan_tick(super::PhaseInput { session: &game }).unwrap();
+    let mut plan = super::plan_tick(super::PhaseInput { session: &game, speculative: None }).unwrap();
     let error =
         super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(&mut plan)
             .err()
@@ -475,7 +475,7 @@ fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
         let (mut game, code) = trade_session(4);
         game.update_active_daily_candle(&code, Money::from_cents(1_000), 100);
         let before = game.business_state_hash().unwrap();
-        let mut plan = super::plan_tick(super::PhaseInput { session: &game }).unwrap();
+        let mut plan = super::plan_tick(super::PhaseInput { session: &game, speculative: None }).unwrap();
         // Inject only into the private candidate: MAX volume/count are deliberately outside
         // the save protocol's JS-safe range; the authority must remain healthy on failure.
         plan.state

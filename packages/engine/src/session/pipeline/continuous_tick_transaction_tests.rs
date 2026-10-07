@@ -54,9 +54,7 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
     let next_order_id = authority.state.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output =
@@ -136,9 +134,7 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
         .iter()
         .any(|candidate| matches!(candidate.key(), IntentCandidateKey::PlanChain { .. })));
 
-    let mut tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let output =
         apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots(request))
@@ -225,9 +221,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
     authority.state.attention_scheduler.clear();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output =
@@ -291,9 +285,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     authority.state.attention_scheduler.clear();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request.clone());
-    let mut first_tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut first_tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut first_tick, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, first_tick)
@@ -317,9 +309,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     };
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut replacement = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut replacement = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output =
@@ -456,9 +446,7 @@ fn live_buy_plan_case(
     };
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
@@ -500,9 +488,7 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request.clone());
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output =
@@ -628,9 +614,7 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
     request.decision.action = QuoteAction::Cancel { order_id: old_id };
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request.clone());
-    let mut tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let canceled =
         apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
@@ -653,9 +637,7 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
     let next_order_id = authority.state.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let output =
         apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
@@ -687,9 +669,7 @@ fn plan_chain_cash_rejection_reaches_final_event_and_report() {
         .unwrap()
         .fixture_set_cash(Money::ZERO);
     let before_order_id = authority.state.next_order_id;
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
@@ -875,9 +855,7 @@ fn joint_player_batch_reaches_rebased_commit() {
         )
         .unwrap();
     let before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
 
     let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
@@ -943,9 +921,7 @@ fn joint_downstream_failure_discards_all_three_source_preparation() {
             },
         )
         .unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     plan.state
         .execute(|candidate| {
@@ -989,9 +965,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     let mut second = first.clone();
     second.plan_id = second_id;
     second.allocation.plan_id = second_id;
-    let mut initial = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut initial = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(first.clone());
@@ -1071,9 +1045,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     assert_eq!(round.facts.len(), 2);
 
     let before = authority.business_state_hash().unwrap();
-    let mut failed = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut failed = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(first);
@@ -1140,9 +1112,7 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
         request.allocation.code = code;
         requests.push(request);
     }
-    let mut initial = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut initial = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     for request in &requests {
@@ -1172,9 +1142,7 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
             qty: 100,
         };
     }
-    let mut replacement = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut replacement = plan_tick(PhaseInput { session: &authority, speculative: None })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     for request in &requests {
@@ -1365,9 +1333,7 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
     let mut candidate = player_only_session();
     let codes = candidate.state.markets.keys().cloned().collect::<Vec<_>>();
     assert_eq!(codes.len(), 2);
-    let plan = plan_tick(PhaseInput {
-        session: &candidate,
-    })
+    let plan = plan_tick(PhaseInput { session: &candidate, speculative: None })
     .unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
@@ -1693,9 +1659,7 @@ enum FactIdentityCorruption {
 fn execution_identity_fixture() -> (Vec<CandidateValidationOutcome>, ContinuousExecutionRound) {
     let candidate = player_only_session();
     let code = candidate.state.markets.keys().next().unwrap().clone();
-    let plan = plan_tick(PhaseInput {
-        session: &candidate,
-    })
+    let plan = plan_tick(PhaseInput { session: &candidate, speculative: None })
     .unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),

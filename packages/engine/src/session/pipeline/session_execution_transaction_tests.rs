@@ -10,7 +10,7 @@ fn accepted_buy_worker(
     buyer: AccountId,
 ) -> super::continuous_matching::ContinuousStockOutput {
     let code = game.state.markets.keys().next().unwrap().clone();
-    let plan = plan_tick(PhaseInput { session: game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: game, speculative: None }).unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         buyer,

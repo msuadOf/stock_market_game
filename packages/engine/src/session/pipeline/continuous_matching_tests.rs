@@ -1593,7 +1593,7 @@ fn validated_operations_in_session(
     intents: Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
-    let plan = plan_tick(PhaseInput { session: game }).unwrap();
+    let plan = plan_tick(PhaseInput { session: game, speculative: None }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
