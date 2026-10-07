@@ -38,9 +38,10 @@ impl<T> Drop for AppendOnlyHistory<T> {
     fn drop(&mut self) {
         let mut tail = self.tail.take();
         while let Some(chunk) = tail {
-            // Another history still owns this suffix. Its eventual owner will
-            // release the chain iteratively when the final reference goes away.
-            let Ok(mut owned) = Arc::try_unwrap(chunk) else {
+            // Arc::into_inner 原子地检查唯一所有权：两个并发最后 owner 竞争时
+            // 恰好一方得到 Some、另一方得到 None——不会像 try_unwrap 双 Err
+            // 那样让最后 Err 的 Arc 递归释放 previous 链（长历史 stack overflow）。
+            let Some(mut owned) = Arc::into_inner(chunk) else {
                 break;
             };
             tail = owned.previous.take();
@@ -262,5 +263,28 @@ mod tests {
         assert_eq!(candidate.len(), 327_680);
         assert_eq!(candidate.last(), Some(&327_679));
         drop(candidate);
+    }
+
+    /// 两个线程同时 drop 各自的最后 clone：Arc::into_inner 保证恰好一方
+    /// 得到 Some 并迭代断链，另一方得到 None 并退出——不会出现
+    /// try_unwrap 双 Err 后最后 Err 的 Arc 递归释放 previous 链的爆栈。
+    #[test]
+    fn concurrent_last_owner_drop_does_not_recursively_release_chunk_chain() {
+        use std::sync::{Arc, Barrier};
+        let mut history = AppendOnlyHistory::default();
+        // 327680 / 32 = 10240 chunks——足够深的链，递归释放会 stack overflow。
+        for value in 0..327_680_u32 {
+            history.push(value);
+        }
+        let clone = history.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let thread_barrier = barrier.clone();
+        let other = std::thread::spawn(move || {
+            thread_barrier.wait();
+            drop(clone);
+        });
+        barrier.wait();
+        drop(history);
+        other.join().expect("并发 drop 线程 panic");
     }
 }

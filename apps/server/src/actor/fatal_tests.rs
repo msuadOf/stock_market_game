@@ -664,6 +664,7 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
 /// 批级 checkpoint 析构必须移交专用线程，不得在 actor 线程同步析构
 /// （串行脊柱研究实测：同步析构 ~132µs/tick，全部是旧账户页的 jemalloc free）。
 /// 生产形态断言：零 tick 批（无提交移交干扰）下计数增量 ≥1，专证 checkpoint 交接。
+/// 计数修复后只在成功入队时递增——退化内联路径不产生假阳性。
 #[test]
 fn batch_checkpoint_drop_is_deferred_to_dedicated_thread() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
