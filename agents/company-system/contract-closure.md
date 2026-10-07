@@ -28,6 +28,7 @@
 | web 新增测试 | parser 16/16、panel SSR 4/4（10000ms case+命令门禁） | `web-parser-tests.log`、`web-panel-tests.log` |
 | workspace check | `cargo check --workspace --all-targets --exclude stock-market-game` exit 0 | `workspace-check.log` |
 | web 既有失败对照 | `wasm-worker-ownership.test.ts` 2 败在 pristine baseline 同样失败（环境性既有，非本批引入） | 终端复测记录 |
+| web 全量基线对照 | 本批全量（8 shard）与 pristine `dc311164` 全量失败集均受「首败即中止 sibling」影响而不稳定且互有出入；对全量中出现的全部嫌疑文件逐一单跑，两侧结果**逐文件逐项一致**（serde-normalize 6过/3败、wasm-save-protocol 1过/1败、report-correction-transports 1过/1败、wasm-worker-failure 12过/0败、worker-host 33过/0败、wasm-worker-ownership 0过/2败）——本批零新增失败 | `web-full-suite2.log` 与终端单跑记录 |
 
 时限纪律：普通测试 `run-with-deadline.mjs 10000`；编译/typegen/tsc 用 `run-long-validation.mjs 300000`；受影响组以多进程并发执行。
 
