@@ -60,6 +60,13 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 
 ## 当前状态
 
+- **棒次 2（本棒，增量 A 已落库，B 未开工）**：写集侦察完整化 + 骨架增强。提交：86f5a598（骨架+范例+2 测试）、2acc0984（写组补全+视图助手）。
+- **本棒新发现（下一棒必读）**：
+  1. **写集实为 11 字段**（E7 清单只列 7）：新增 `plans`、`parent_orders`（materialize_parent_order_intents 写，execution/orders.rs:11）、`belief_participants`、`history_reads`（PlanPersonalState::take/install 移除重装，decision_chain/personal_state.rs:85/112）。prepare 链已 grep 验证不读这四者（decision_resources/envelope_projection/continuous_matching_adapter 零命中）。
+  2. **SessionReadView 还需补**：`company_registry`、`library`（Arc 字段，廉价引用）——observe_retail_analysis 经 `self.state.issuer_of_stock`（registry+stocks 翻译）与 `self.state.library` 读公司域；operations 视 roots 调用面再定。
+  3. **既有先例可复用**：decision_chain/roots.rs:11 的 RootReadContext 已是"owned 快照式读上下文"（accounts/stocks/registry/operations/library/plans/日期分钟），DecisionChainObservation::capture_for_roots(session) 构造它——转换时可让 capture_for_roots 吃 &SessionReadView 从 view 构造 RootReadContext，避免两套快照逻辑并行。
+  4. 需要转 view 的 GameSession 方法完整清单（含文件:行）：views.rs:13 build_market_view、views.rs:127 market_price_path_observations、self_views.rs:8 working_orders_for_accounts、session.rs:2388 phase（已在 view 复刻）、session.rs:1848 current_market_minute（已复刻）、session.rs:2420 civil_date（已复刻）、decision_chain/retail_analysis.rs:9 capture_retail_analysis（含 observe_retail_analysis 同文件、roots.rs capture_for_roots）、execution/orders.rs:11 materialize_parent_order_intents、execution/reconcile_plan.rs:25 plan_npc_working_order_reconciliation、decision_snapshot_capture.rs:495 build_self_view_for、CapturedExperienceObservation::capture（decision_snapshot_capture.rs 内，读 retail_experience 经 writes 引用再借用）。
+  5. 转换顺序建议（每步全量 lib 对照 8 败不动）：views+self_views（leaf，方法保留薄包装）→ personal_state take/install_on(writes) → retail_analysis+roots（view 化）→ orders/reconcile → decision_snapshot_capture（view+writes）→ npc_state_projection → npc_tick_preparation 包装 → lib 全绿小步提交。
 - **棒次 1（已完成）**：设计定稿 + 阶段一第一切片。
   - 新增 `session/pipeline/npc_split.rs`：SessionReadView（accounts=浅克隆快照）+ NpcWriteFields + npc_split() + receive_private_intent_on 范例 + GameSession::read_view()；pipeline/mod.rs 注册。
   - 2 个新测试绿：①rayon::join 下写侧改 live accounts、读侧快照不变（页面 COW 隔离实证）②字段组版 receive 与方法版行为一致。
