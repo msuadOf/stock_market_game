@@ -49,6 +49,7 @@ pub(super) fn prepare_candidate_commit<'authority>(
 ) -> Result<PreparedCandidateCommit<'authority>, StepFatal> {
     authority.require_healthy()?;
     candidate.require_healthy()?;
+    let mut rebased_in_tail = false;
     if candidate.state.tick
         == authority
             .state
@@ -62,7 +63,22 @@ pub(super) fn prepare_candidate_commit<'authority>(
             .tick
             .is_multiple_of(candidate.state.setup.ticks_per_day)
         {
-            super::npc_tick_preparation::queue_npc_for_next_tick(&mut candidate)?;
+            // X1 重排：rebase 物理先行（探索波实证 Rayon1 逐字节等价，2084/2084），
+            // 其错误延后到 queue 错误之后传播，保持原首错序（queue 先于 rebase）。
+            rebased_in_tail = true;
+            let rebase_result = candidate
+                .state
+                .envelope_ledger
+                .rebase_private_for_tick_commit();
+            // X1 join 脚手架：投机分支暂为 None（prepare 链 view 化验收后接
+            // prepare_on）；单侧 join 与原串行语义等价，先行上线验证 npc_split 路径。
+            let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
+            let (queue_result, _speculative) = rayon::join(
+                || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
+                || Option::<std::sync::Arc<super::read_only_start::ReadOnlyStart>>::None,
+            );
+            queue_result?;
+            rebase_result?;
         }
     } else if candidate.state.tick != authority.state.tick {
         return Err(invariant(
@@ -71,12 +87,16 @@ pub(super) fn prepare_candidate_commit<'authority>(
     }
     validate_receipt_cursor(&candidate)?;
     let receipt_cursor = candidate.state.next_receipt_base;
-
-    candidate
-        .state
-        .envelope_ledger
-        .rebase_private_for_tick_commit()?;
-    validate_receipt_cursor(&candidate)?;
+    if !rebased_in_tail {
+        let rebase_result = candidate
+            .state
+            .envelope_ledger
+            .rebase_private_for_tick_commit();
+        validate_receipt_cursor(&candidate)?;
+        rebase_result?;
+    } else {
+        validate_receipt_cursor(&candidate)?;
+    }
     if candidate.state.next_receipt_base != receipt_cursor {
         return Err(invariant(
             "live-ledger rebase changed the global receipt cursor".to_owned(),
