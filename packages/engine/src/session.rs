@@ -24,6 +24,8 @@ mod dividend_tax_mode_tests;
 #[cfg(test)]
 mod issuer_repurchase_session_tests;
 #[cfg(test)]
+mod issuer_repurchase_transaction_probe_tests;
+#[cfg(test)]
 mod rights_offering_session_tests;
 #[cfg(test)]
 mod share_split_session_tests;
@@ -4051,6 +4053,8 @@ impl GameSession {
 
     /// 回购执行器：窗口内每个交易日的连续竞价阶段以真实委托进入既有订单簿。
     ///
+    /// 只在 tick shadow 内调用（freeze 之后，见 `pipeline::plan_tick`）：全部写入
+    /// （pending_player 回执、受理游标消耗、`last_order_day`）随候选提交或丢弃。
     /// 委托约束（63 号第 30 条）：申报价格不得为当日涨幅限制价格——取
     /// min(方案价格上限, 涨停价−1 个最小价位)；不得在集合竞价时段申报（仅
     /// Continuous 阶段执行）。数量按剩余额度（预留费用余量）、数量上限与
@@ -4175,10 +4179,12 @@ impl GameSession {
                     location: "GameSession::place_issuer_repurchase_orders".into(),
                 }
             })?;
+            // 回执走 receive_private_intent：绑定共享 ingress 时从 source 的单一
+            // 受理域分配 ordinal（ADR-0032），不与 source 已受理玩家输入撞
+            // stock ordinal；提交游标同步计入回购消耗。未绑定时退回本地游标，
+            // 与玩家 enqueue 同域。
             let received = self
-                .state
-                .ingress_receipt_cursors
-                .receive(repurchase_account, intent)
+                .receive_private_intent(repurchase_account, intent)
                 .map_err(|error| StepFatal::InvariantViolation {
                     description: format!("回购委托回执登记失败：{error}"),
                     location: "GameSession::place_issuer_repurchase_orders".into(),
@@ -4860,7 +4866,12 @@ impl GameSession {
                 .state
                 .accounts
                 .get(&account)
-                .is_none_or(|candidate| candidate.kind() == AccountKind::Player)
+                .is_none_or(|candidate| {
+                    candidate.kind() == AccountKind::Player
+                        // 发行人回购委托的挂单生命周期不走 NPC quote 撤单模型：
+                        // 与下方 panic 臂的声明意图一致，跳过登记而不是 panic。
+                        || candidate.kind() == AccountKind::IssuerRepurchase
+                })
             || self.is_active_parent_child(account, code, order.id)
         {
             return;

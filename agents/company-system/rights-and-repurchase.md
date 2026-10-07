@@ -165,3 +165,77 @@ test binary 避免 cargo 构建锁串行化）：
 本 diff 须由未实施本批的 subagent 按 CLAUDE.md 复核：语义依据、最小范围、
 边界测试与跨层语义漂移。本文件留待复核结论回填（复核记录建议另存
 `rights-and-repurchase-review.md`）。
+
+## 回购事务修复轮（2026-10-07 候选 v2，基线 main `619ec66e` + S1×S2 集成候选）
+
+独立 worktree `wf_10f2d092-94c-1` 执行；输入为已过独立复审的 S1×S2 集成候选补丁
+（SHA-256 `baa2e075…bea81`）与回购诊断探针测试补丁（SHA-256 `42c71556…b7cdd`），
+两 hash 本轮独立复验一致后应用。探针 7 用例先行确认 3 项缺陷红灯（4 红 3 绿对照），
+再逐项修复；证据日志 `.tmp/company-system/repurchase-fix/`（本 worktree）。
+
+### 三项复现缺陷与修复方案
+
+- **D1 失败原子性（ADR-0017 §4）**：`place_issuer_repurchase_orders` 原在
+  `execute_authoritative_tick` 之前对权威 self 调用——直推 `pending_player`、消耗
+  本地受理游标、提前写 `book.last_order_day`；随后 tick 失败（post-shadow 注入）
+  时这些写入残留，`business_state_hash` 漂移。**修复**：放置移入
+  `pipeline::plan_tick` 的 `shadow.state.execute`（`TickShadow::capture`＝clone＋
+  freeze 之后、事务内），失败候选连同三处写入一起丢弃；提交游标/回执/去重事实
+  只随 CommitTick 落地。外部共享 source 已受理事实与 poison 元数据不回滚
+  （探针 case1 口径）。
+- **D2 绑定 ingress 回执身份（ADR-0032 单一受理域）**：绑定共享 ingress 时回购
+  回执原走本地游标 `state.ingress_receipt_cursors.receive`，与 source 已受理玩家
+  输入撞同一 stock ordinal（真实 `step()` 以 `conflicting requests share a stock
+  receipt` StepFatal 毒化全部合法输入的 tick）；提交冻结又用 source 快照覆盖本地
+  游标，回购的 ordinal 消耗从权威游标消失。**修复**：回执改走
+  `receive_private_intent`（`source.receive_private`）并置于 shadow 内 freeze 之后
+  ——玩家先、回购后，回执不撞 ordinal，提交后权威游标＝2（计入两笔真实 receive
+  消耗）。纯玩家流绑定宿主的合法 tick 不再 StepFatal。`receive_private_intent`
+  既有 `pub(super)` 可见性即够，未改公共 API 面。
+- **D3 留挂单 panic**：回购委托部分成交留挂（合法场景）时
+  `register_npc_order_lifecycle_at_quote` 守卫只排除 `AccountKind::Player`，
+  `IssuerRepurchase` 直落 `npc_quote_lifetime_minutes_at_quote` 的
+  `panic!("player/issuer orders must not receive NPC quote lifecycles")`。**修复**：
+  守卫扩展为同时跳过 `AccountKind::IssuerRepurchase`（与 panic 臂声明意图一致）；
+  回购挂单生命周期不进 NPC quote 撤单模型。
+
+### 复审 low 与 info 处置
+
+- **Web 注销回执镜像（复审 low）**：`corporate-actions.ts` `parseDayReceipt` 的
+  `IssuerRepurchaseCancellation` 分支镜像引擎 `share_registry::validate_request`：
+  恰一条 `IssuerTreasury` 负向变动、净额严格为负（「无 acquisition」一腿由解析层
+  既有 `acquisition ⇔ 正向变动` 不变量覆盖）。原实现把注销当非交易过户要求净增
+  （引擎产生的真实注销回执必被误拒）。既有唯一用例的 `+1 Account` 分录改为真实
+  负净额形态（专户先经公开市场日结真实买入、注销核减＋FIFO 处置），并新增正负例
+  用例（两条分录／Account 持有人核减／正向「注销」均显式拒绝）。同步更正注释
+  「回购注销维持既有净增校验」的言过其实表述。
+- **info-1**：`current-handoff.md` S1×S2 行的「Web schema 28/28」更正为 29/29
+  （同一行「含正负例 29/29 绿」为准确计数，删旧数）。
+- **info-2**：`parseShareSplitEventPlanValue` 删除死代码
+  `ratio === "0" || ratio === "1"`（被下一行 `BigInt(ratio) < 2n` 完全覆盖）。
+
+### D2 受理顺序口径（ADR-0032）
+
+回购委托是宿主会话内部的确定性执行器输入，不是外部玩家输入；其回执身份与玩家/
+NPC/计划链共用同一 per-session receive 域——绑定共享 source 时经
+`receive_private` 分配（source 单一受理域），未绑定时退回本地游标（与玩家
+enqueue 同域）。真实资源争用（同股价格时间、同账户现金）按 ordinal 偏序裁决，
+不因来源类别获得优先级。
+
+### 验证记录（证据 `.tmp/company-system/repurchase-fix/`）
+
+| 项 | 结果 | 日志 |
+| --- | --- | --- |
+| 探针 7 用例（修复前） | 3 绿对照＋4 红（D1×1/D2×2/D3×1），断言未改 | `probe-red-baseline.txt` |
+| 探针 7 用例（修复后） | 7/7 绿 | `probe-green-after-fix.txt` |
+| engine lib 全量分片对照 | 基线 350 失败 vs 修复 346，差集恰为 4 个探针红转绿，零新增 | `full-lib-failures-{BASELINE,FIXED}.txt` |
+| 定向组 | issuer_repurchase_session 5/5、share_split 18、corporate_actions 14、company_mechanism 3、company::simple 93、Session Simple 36、rights_offering 26、dividend_tax_mode 8、simple_preferences_session 16 | `t-*.log` |
+| 既有基线失败保持 | session::failure 3、shared_ingress 2、local_admission 1（名单与基线逐一一致） | `t-session-failure.log` 等 |
+| Web | corporate-actions-schema 30/30（含新负净额正负例）、system 16/16、simple-finance 7/7 | 终端复测 |
+| tsc -b --force / oxlint | 0 错误 / 0 警告 | 终端复测 |
+| typegen | `export_bindings` 154/154；4 个生成文件与候选补丁后像逐字节一致（零漂移，存档契约不变） | `typegen-current/` 比对 |
+| `cargo check --workspace --all-targets --exclude stock-market-game` | exit 0（仅既有 warning） | `workspace-check.log` |
+
+UI 未实测：本轮全部为引擎事务语义与 Web 存档 parser 修复，无 UI 面改动，
+按任务口径不需要 UI 实测。存档契约无新字段/形状变化，三 fixture 无需重生成
+（typegen 逐字节一致佐证）。

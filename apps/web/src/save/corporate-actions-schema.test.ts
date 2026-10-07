@@ -563,23 +563,26 @@ test("税账与名册回执覆盖勾稽：按引擎同款 scope→事件 id 派�
 })
 
 test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户条目仍要求覆盖", () => {
-  // 与引擎 validate 同构的两个边界：IssuerRepurchaseCancellation 即使（异常地）
-  // 含 Account 分录也显式跳过不要求税账日结；公开市场回执中 change=0 的账户条目
-  // 仍算「涉及该账户变动」，须有对应事件 id 的日结事实。
+  // 与引擎 validate 同构的两个边界：IssuerRepurchaseCancellation 只核减
+  // IssuerTreasury（不含 Account 持有人分录），税账覆盖勾稽显式跳过；公开市场
+  // 回执中 change=0 的账户条目仍算「涉及该账户变动」，须有对应事件 id 的日结事实。
+  // 回购注销走真实形态：专户先经公开市场日结真实买入 1 股（回购成交过户），
+  // 注销回执恰一条 IssuerTreasury 负向变动＋对应 FIFO 处置、无 acquisition。
   const account = { Account: "0" }
   const marketLot = { id: "market-lot-1", qty: "2", acquired_on: "2030-01-04", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }
+  const treasuryLot = { id: "treasury-lot-1", qty: "1", acquired_on: "2030-01-04", source: { SecondaryMarket: { settlement: "repurchase-fill-1" } }, restriction: "Unrestricted" }
   const distributionLot = { id: "d1:account-0-lot", qty: "3", acquired_on: "2030-01-04", source: { CorporateAction: { event: "d1" } }, restriction: "Unrestricted" }
-  const cancellationLot = { id: "cancel:account-0-lot", qty: "1", acquired_on: "2030-01-04", source: { CorporateAction: { event: "cancel-1" } }, restriction: "Unrestricted" }
   const externalLot = { id: "ext-lot", qty: "12", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
   const marketReceipt = {
     request: {
       event_id: "session-market:600101:2030-01-04", day: "2030-01-04", scope: "PublicMarket",
       changes: [
         { holder: account, change: "2", acquisition: { lot_id: marketLot.id, source: marketLot.source, restriction: "Unrestricted" } },
-        { holder: { External: "holder-a" }, change: "-2", acquisition: null },
+        { holder: "IssuerTreasury", change: "1", acquisition: { lot_id: treasuryLot.id, source: treasuryLot.source, restriction: "Unrestricted" } },
+        { holder: { External: "holder-a" }, change: "-3", acquisition: null },
       ],
     },
-    disposals: [{ holder: { External: "holder-a" }, lot: { ...externalLot, qty: "2" }, disposed_on: "2030-01-04" }],
+    disposals: [{ holder: { External: "holder-a" }, lot: { ...externalLot, qty: "3" }, disposed_on: "2030-01-04" }],
   }
   const distributionReceipt = {
     request: {
@@ -591,9 +594,9 @@ test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户�
   const cancellationReceipt = {
     request: {
       event_id: "repurchase-cancellation:c1", day: "2030-01-04", scope: { IssuerRepurchaseCancellation: { basis: "cancellation-resolution-1" } },
-      changes: [{ holder: account, change: "1", acquisition: { lot_id: cancellationLot.id, source: cancellationLot.source, restriction: "Unrestricted" } }],
+      changes: [{ holder: "IssuerTreasury", change: "-1", acquisition: null }],
     },
-    disposals: [],
+    disposals: [{ holder: "IssuerTreasury", lot: treasuryLot, disposed_on: "2030-01-04" }],
   }
   const zeroChangeReceipt = {
     request: {
@@ -603,10 +606,10 @@ test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户�
     disposals: [],
   }
   const registry = {
-    ...validRegistry("16"), settled_on: "2030-01-05",
+    ...validRegistry("14"), settled_on: "2030-01-05",
     holdings: [
-      { holder: account, lots: [marketLot, distributionLot, cancellationLot] },
-      { holder: { External: "holder-a" }, lots: [{ ...externalLot, qty: "10" }] },
+      { holder: account, lots: [marketLot, distributionLot] },
+      { holder: { External: "holder-a" }, lots: [{ ...externalLot, qty: "9" }] },
     ],
     receipts: [marketReceipt, distributionReceipt, cancellationReceipt, zeroChangeReceipt], registrations: [],
   }
@@ -623,18 +626,81 @@ test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户�
     lots: [taxMarketLot, taxDistributionLot], dividends: [], collections: [], redenominations: [],
   }
   const actions = { registries: [registry], dividends: [], dividend_tax_books: [bookWithZeroDay], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], share_splits: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
-  // setup 初始 12 ＋ 送转 3 ＋ 回购注销 1 = 名册/发行人 16。
+  // setup 初始 12 ＋ 送转 3 − 回购注销 1 = 名册/发行人 14（账户 5＋外部 9）。
   const context: Context = {
-    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "16" } },
+    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "14" } },
     setup: { stocks: [{ code: "600101", total_shares: "12", exchange: "Shanghai", tick: "1" }] },
-    snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 6 } } } } },
+    snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 5 } } } } },
     currentDate: "2030-01-05",
   }
-  // 回购注销回执被显式跳过（税账没有 c1 派生日结仍通过）；零变动日已有覆盖。
+  // 真实形态回购注销回执被显式跳过（税账没有 c1 派生日结仍通过）；零变动日已有覆盖。
   assert.doesNotThrow(() => parseSessionCorporateActions(actions, context))
   // 拿掉零变动日的日结事实：change=0 的账户条目仍要求覆盖。
   const missingZeroDay = { ...bookWithZeroDay, operation_seq: 2, days: bookWithZeroDay.days.slice(0, 2) }
   assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [missingZeroDay] }, context), /送转×税账交互未入账/)
+})
+
+test("回购注销回执镜像引擎 validate_request：恰一条 IssuerTreasury 负向核减", () => {
+  // 引擎 share_registry::validate_request 的 cancellation 分支：恰一条专户
+  // 负向变动、持有人必须是 IssuerTreasury、无 acquisition（解析层「acquisition
+  // ⇔ 正向变动」不变量已覆盖）、净额严格为负。引擎不可能产生的形态在此显式
+  // 拒绝，防止伪造回执悄悄改写税基或股本勾稽。
+  const account = { Account: "0" }
+  const externalLot = { id: "ext-lot", qty: "12", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const treasuryLot = { id: "treasury-lot-1", qty: "1", acquired_on: "2030-01-03", source: { SecondaryMarket: { settlement: "repurchase-fill-1" } }, restriction: "Unrestricted" }
+  const baseRegistry = (cancellation: unknown, settledOn = "2030-01-03", issued = "11") => ({
+    ...validRegistry(issued), settled_on: settledOn,
+    holdings: [
+      { holder: account, lots: [{ id: "acct-lot", qty: "2", acquired_on: "2030-01-03", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }] },
+      { holder: { External: "holder-a" }, lots: [{ ...externalLot, qty: "9" }] },
+    ],
+    receipts: [
+      {
+        request: {
+          event_id: "session-market:600101:2030-01-03", day: "2030-01-03", scope: "PublicMarket",
+          changes: [
+            { holder: account, change: "2", acquisition: { lot_id: "acct-lot", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" } },
+            { holder: "IssuerTreasury", change: "1", acquisition: { lot_id: treasuryLot.id, source: treasuryLot.source, restriction: "Unrestricted" } },
+            { holder: { External: "holder-a" }, change: "-3", acquisition: null },
+          ],
+        },
+        disposals: [{ holder: { External: "holder-a" }, lot: { ...externalLot, qty: "3" }, disposed_on: "2030-01-03" }],
+      },
+      cancellation,
+    ], registrations: [],
+  })
+  const context: Context = {
+    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "11" } },
+    setup: { stocks: [{ code: "600101", total_shares: "12", exchange: "Shanghai", tick: "1" }] },
+    snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 2 } } } } },
+    currentDate: "2030-01-05",
+  }
+  const actions = (registry: unknown) => ({ registries: [registry], dividends: [], dividend_tax_books: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], share_splits: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] })
+  // 正例：恰一条 IssuerTreasury 负向变动＋对应 FIFO 处置（setup 12 − 注销 1 = 11；
+  // 注销回执与当日公开市场日结同日追加——同引擎 close_day 的 same-day 规则）。
+  const realForm = {
+    request: {
+      event_id: "repurchase-cancellation:c1", day: "2030-01-03", scope: { IssuerRepurchaseCancellation: { basis: "cancellation-resolution-1" } },
+      changes: [{ holder: "IssuerTreasury", change: "-1", acquisition: null }],
+    },
+    disposals: [{ holder: "IssuerTreasury", lot: treasuryLot, disposed_on: "2030-01-03" }],
+  }
+  assert.doesNotThrow(() => parseSessionCorporateActions(actions(baseRegistry(realForm)), context), "真实形态负净额注销回执必须通过")
+  // 负例 1：两条分录（引擎要求恰一条专户核减）。
+  const twoChanges = { ...realForm, request: { ...realForm.request, changes: [...realForm.request.changes, { holder: account, change: "0", acquisition: null }] } }
+  assert.throws(() => parseSessionCorporateActions(actions(baseRegistry(twoChanges)), context), /恰含一条专户核减分录/)
+  // 负例 2：核减落到 Account 持有人（旧 fixture 的 +1 Account 形态，引擎不可能产生）。
+  const accountHolderReduction = {
+    request: { ...realForm.request, changes: [{ holder: account, change: "-1", acquisition: null }] },
+    disposals: [{ holder: account, lot: { id: "acct-lot", qty: "1", acquired_on: "2030-01-03", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }, disposed_on: "2030-01-03" }],
+  }
+  assert.throws(() => parseSessionCorporateActions(actions(baseRegistry(accountHolderReduction)), context), /只能核减发行人库藏股持有人/)
+  // 负例 3：正向「注销」（净额非严格为负）。
+  const positiveCancellation = {
+    request: { ...realForm.request, changes: [{ holder: "IssuerTreasury", change: "1", acquisition: { lot_id: "treasury-lot-2", source: { SecondaryMarket: { settlement: "repurchase-fill-2" } }, restriction: "Unrestricted" } }] },
+    disposals: [],
+  }
+  assert.throws(() => parseSessionCorporateActions(actions(baseRegistry(positiveCancellation)), context), /必须为负向核减/)
 })
 
 test("税账覆盖勾稽与 replay 纳入 ShareReDenomination 重新计值回执", () => {

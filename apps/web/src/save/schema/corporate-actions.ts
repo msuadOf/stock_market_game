@@ -321,9 +321,21 @@ function parseDayReceipt(value: unknown, path: string) {
   let net = 0n
   // scope 专属规则与引擎 `share_registry::validate_request` 同构：非交易过户与
   // 重新计值的正向新增都必须来自公司行为来源；减持限制只属于非交易过户——
-  // 重新计值（缩股）合法产生负向变动与 FIFO 处置，回购注销维持既有净增校验。
+  // 重新计值（缩股）合法产生负向变动与 FIFO 处置；回购注销恰一条 IssuerTreasury
+  // 负向核减、无 acquisition、净额严格为负（引擎不可能产生其他形态）。
   const isNonTradingTransfer = typeof parsedScope === "object" && "NonTradingTransfer" in parsedScope
   const isRedenomination = typeof parsedScope === "object" && "ShareReDenomination" in parsedScope
+  const isCancellation = typeof parsedScope === "object" && "IssuerRepurchaseCancellation" in parsedScope
+  if (isCancellation) {
+    // 与引擎 validate_request 的 cancellation 分支同构：恰一条专户核减分录、
+    // 持有人必须是 IssuerTreasury、严格负向。「无 acquisition」一腿由解析层
+    // 既有不变量（acquisition ⇔ 正向变动）覆盖，负向分录带 acquisition 在
+    // changes 解析处已被「仅正向股份变动必须含收购事实」拒绝。
+    if (changes.length !== 1) throw new SaveSchemaError(`${path}.request.changes`, "回购注销必须恰含一条专户核减分录")
+    const [sole] = changes
+    if (sole.holder !== "IssuerTreasury") throw new SaveSchemaError(`${path}.request.changes[0].holder`, "回购注销只能核减发行人库藏股持有人")
+    if (BigInt(sole.change) >= 0n) throw new SaveSchemaError(`${path}.request.changes[0].change`, "回购注销分录必须为负向核减")
+  }
   const nonTradingAcquisition = typeof parsedScope === "object"
   for (const [index, change] of changes.entries()) {
     const holderKey = JSON.stringify(change.holder)
@@ -352,8 +364,10 @@ function parseDayReceipt(value: unknown, path: string) {
     const hasPositive = changes.some(change => BigInt(change.change) > 0n)
     const hasNegative = changes.some(change => BigInt(change.change) < 0n)
     if (hasPositive && hasNegative) throw new SaveSchemaError(`${path}.request.changes`, "重新计值变动必须同向：混正负属于持有人间转移")
-  } else if (nonTradingAcquisition) {
-    if (net <= 0n) throw new SaveSchemaError(`${path}.request.changes`, "非交易过户必须新增正数股份")
+  } else if (isCancellation) {
+    // 恰一条负向分录之上再核对净额口径：注销净减总股本（引擎 validate_request
+    // 同构；上方逐条断言已排除多分录、非专户、非负与带 acquisition 的形态）。
+    if (net >= 0n) throw new SaveSchemaError(`${path}.request.changes`, "回购注销净额必须严格为负")
   } else if (net !== 0n) throw new SaveSchemaError(`${path}.request.changes`, "公开市场股份变动必须守恒")
   if (disposals.some(item => !changes.some(change => JSON.stringify(change.holder) === JSON.stringify(item.holder) && BigInt(change.change) < 0n))) throw new SaveSchemaError(`${path}.disposals`, "处置事实没有对应净减持")
   return { request: { event_id, day, scope: parsedScope, changes }, disposals }
@@ -568,7 +582,6 @@ export function parseShareSplitEventPlanValue(value: unknown, path: string): Sha
   const exchange = oneOf(planValue.exchange, `${path}.exchange`, ["sse", "szse"] as const)
   const direction = oneOf(planValue.direction, `${path}.direction`, ["Split", "Consolidate"] as const)
   const ratio = decimal(planValue.ratio, `${path}.ratio`)
-  if (ratio === "0" || ratio === "1") throw new SaveSchemaError(`${path}.ratio`, "拆股／缩股比例必须为 ≥2 的整数")
   if (BigInt(ratio) < 2n) throw new SaveSchemaError(`${path}.ratio`, "拆股／缩股比例必须为 ≥2 的整数")
   const dates = ["approved_on", "announced_on", "registered_on", "ex_rights_on"] as const
   const parsedDates = Object.fromEntries(dates.map(key => [key, civilDate(planValue[key], `${path}.${key}`)])) as Record<typeof dates[number], string>

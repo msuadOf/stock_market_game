@@ -260,6 +260,13 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
             // 整个准备过程属于可丢弃 shadow，失败不能消耗权威随机流或注意力。
             queue_npc_for_next_tick(game)?;
         }
+        // 回购执行器在 shadow 内放置委托（freeze 之后）：窗口内连续竞价阶段以
+        // 真实委托进入既有订单簿（每日至多一单）。回执经 receive_private_intent
+        // 从共享 source 的同一受理域分配（ADR-0032），不与已受理玩家输入撞
+        // stock ordinal；放置写入（pending_player、受理游标消耗、last_order_day）
+        // 全部落在可丢弃候选上，失败 tick 不残留权威状态（ADR-0017 §4）。
+        // 外部共享 source 已受理事实不随候选丢弃回滚（ADR-0032 受理即事实）。
+        game.place_issuer_repurchase_orders()?;
         game.state.last_retail_decisions.clear();
         game.state.last_retail_order_events.clear();
         Ok(())

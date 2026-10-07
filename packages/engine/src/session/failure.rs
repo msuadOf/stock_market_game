@@ -74,11 +74,9 @@ impl GameSession {
             };
             return Err(self.poison_failed_step(fatal));
         }
-        // 回购执行器：窗口内连续竞价阶段以真实委托进入既有订单簿（每日至多一单）。
-        // 发行人回购账户不是策略主体，其委托由获批方案确定性产生。
-        if self.state.setup.issuer_repurchase_enabled {
-            self.place_issuer_repurchase_orders()?;
-        }
+        // 回购执行器不在权威入口放置委托：放置发生在 tick shadow 内
+        // （见 pipeline::plan_tick），失败候选连同 pending_player 回执、受理游标
+        // 消耗与 last_order_day 一起丢弃（ADR-0017 §4 失败原子性）。
         // 每个生产交易阶段均进入同一 Escrow 完整 tick 事务。
         // 只有完成不会失败的权威状态交换后才交付结果。
         let result = super::pipeline::execute_authoritative_tick(self, capture_commit_evidence);
