@@ -86,7 +86,7 @@ test("偏好编辑后改 seed 与重新生成预设不丢偏好（origin 透传�
     stock_distribution: { min_distributable_profit: "1000000", shares_per_existing_share_micros: 100000, max_cumulative_expansion_micros: 50000000, cycles_between_proposals: 4 },
   };
   const edited = changeCompanyPreferencesDraft(original, "C-600101", preferences);
-  const readPreferences = (draft: SeedDraft) => JSON.parse(draft.companySystem).config.companies.find((company: { company: string }) => company.company === "C-600101").preferences;
+  const readPreferences = (draft: { readonly companySystem: string }) => JSON.parse(draft.companySystem).config.companies.find((company: { company: string }) => company.company === "C-600101").preferences;
   assert.deepEqual(readPreferences(changeSeedDraft(DEFAULT_SETUP, edited, "42")), preferences, "改 seed 不重建本人配置，偏好原样保留");
   const regenerated = regenerateSeedDraft(DEFAULT_SETUP, edited, () => 9n);
   assert.deepEqual(readPreferences(regenerated), preferences, "重新生成预设沿草稿配置克隆，偏好不丢");
