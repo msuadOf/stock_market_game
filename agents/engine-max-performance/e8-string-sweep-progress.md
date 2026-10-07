@@ -294,8 +294,9 @@ H = 阶段一末（254c50b0，StockId 落地后）冻结 binary；C = 阶段二�
 
 ## 清尾棒终稿（2026-10-07 第二棒完成）
 
-- 提交：42ac1d9b（CompanyId 清尾主体）、42e4a9ae（探针 example 排版恢复——cargo fmt 只覆盖 apps/ 不覆盖 agents/，逐字节约束被 fmt 打破，恢复原字节）。
-- 生产修正（随 42ac1d9b）：member-tax 键格式/校验数值化同步（前批真实不一致）；DebtCreditor::Company 数值恒格式合法（命名空间隔离转类型级，测试语义改写）；CompanyCatalog/CompanyMeta 公开重导出；server 路径参数/游标数值化。
+- 提交：42ac1d9b（CompanyId 清尾主体）、42e4a9ae（探针 example 排版恢复——cargo fmt 只覆盖 apps/ 不覆盖 agents/，逐字节约束被 fmt 打破，恢复原字节）。批次统计更正：42ac1d9b 实为 **221 文件 +14447/−1325**（早期"约 184 文件"为在途估计），其中 37 个纯新增为外来残留——36 个已由 87f6f7d9 备份至 `.tmp/e8/foreign-committed/src-42ac/` 后移除；ValidationFault.ts 经逐一核对为本批真实 typegen 产物（8447ecd6 引入的 `#[ts(export)]` Rust 类型导出，main 无对应类型）保留。
+- 生产修正（随 42ac1d9b）：member-tax 键格式与 is_current_tax_key 同步数值化写方与校验方（原实现两侧均带长度前缀，无已提交的不一致窗口；早前"前批真实不一致"表述有误，已更正）；DebtCreditor::Company 数值恒格式合法（命名空间隔离转类型级，测试语义改写）；CompanyCatalog/CompanyMeta 公开重导出；server 路径参数/游标数值化。
+- 生产转换时点更正：CompanyId(u32) 生产侧转换实际随本提交 42ac1d9b 入库（父提交 spec.rs 仍为 `pub struct CompanyId(pub String)`）；前棒"核心已完成"章节记录的是在途工作区状态，并非先行落地入库。
 - 测试对照：lib 1314/8=基线逐一相同；集成全绿除基线既有失败（均经 3b75cde4 worktree 实证）：save_contract×5、weekend_report、civil_clock::closed_days_accrue、scenarios::civil_information_chain（weekend 另在 dde740c5 复证更早）。session 集成套件 9s 内跑不完（既有慢套件），按台账先例不作为本棒证据。
-- 基准（48-63 核、默认 worker=4、astart,(H,C)×5,aend）：锚漂 −3.78%（≤5% 放宽线）；d=C/H 均值 0.979、符号 2/5 不一致——与锚自身漂移同量级，判**中性/不可分辨**（本棒以测试夹具为主，符合预期，不宣称性能收益）。产物 e8t-*.json。
-- 遗留：IndustryId/CounterpartyId 已补登 inventory"显式遗留"节；外来文件备份 .tmp/e8/foreign-committed/（tests/ 7 文件 + src 3 文件）。
+- 基准（48-63 核、默认 worker=4、astart,(H,C)×5,aend）：锚漂 −3.78%（≤5% 放宽线）；H=[272.0–282.7]、C=[275.4–290.4]，**C/H 均值 1.022（区间 0.993–1.054）、两方向均 4/5 同号**——区间重叠且幅度小于锚漂，判**中性/不可分辨**（本棒以测试夹具为主，符合预期，不宣称性能收益）。产物 e8t-*.json。（早前记录的"d=C/H 均值 0.979、符号 2/5"为方向颠倒的错误口径，已更正。）
+- 遗留：IndustryId/CounterpartyId 已补登 inventory"显式遗留"节；外来文件备份 .tmp/e8/foreign-committed/（tests/ 7 文件 + src 3 文件 + src-42ac/ 36 文件，随 87f6f7d9 移除）。
