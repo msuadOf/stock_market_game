@@ -8,7 +8,7 @@ const config = {
   mode: "Simple",
   config: {
     environment: { initial_change_bp: 0, persistence_bp: 5000, noise: { monthly_bp: 100, quarterly_bp: 150, half_year_bp: 200, annual_bp: 300 } },
-    companies: [{ company: "C-600101", generation: { initial_revenue: "1000.00", initial_fixed_expense: "300.00", revenue_trend: { kind: "Fixed", annual_growth_bp: 100 }, demand_sensitivity_bp: 5000, revenue_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, fixed_expense_trend: { kind: "Fixed", annual_growth_bp: 0 }, fixed_expense_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, variable_expense: { rule: "RevenueRatio", ratio_bp: 12000, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } } }, finance: { opening_lines: [{ account: "1122", side: "Debit", amount: "1000.00" }, { account: "4001", side: "Credit", amount: "1000.00" }], tax_policy: { version: 1, vat: { output_rate_bp: 0, input_rate_bp: 0, deductible_share_bp: 10000 }, income_tax: { rate_bp: 2500, loss_carryforward_years: 5 } }, summary_rule: "ReceivableRevenuePayableExpenses" } }],
+    companies: [{ company: "C-600101", kind: "Industrial", generation: { initial_revenue: "1000.00", initial_fixed_expense: "300.00", revenue_trend: { kind: "Fixed", annual_growth_bp: 100 }, demand_sensitivity_bp: 5000, revenue_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, fixed_expense_trend: { kind: "Fixed", annual_growth_bp: 0 }, fixed_expense_noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 }, variable_expense: { rule: "RevenueRatio", ratio_bp: 12000, noise: { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 } } }, finance: { opening_lines: [{ account: "1122", side: "Debit", amount: "1000.00" }, { account: "4001", side: "Credit", amount: "1000.00" }], tax_policy: { version: 1, vat: { output_rate_bp: 0, input_rate_bp: 0, deductible_share_bp: 10000 }, income_tax: { rate_bp: 2500, loss_carryforward_years: 5 } }, summary_rule: "ReceivableRevenuePayableExpenses" }, preferences: { cash_dividend: null, stock_distribution: null } }],
     settlement_cycle: "Monthly", prehistory_periods: 24,
   },
 };
@@ -38,7 +38,7 @@ test("虚拟预设匹配发行人且只有账面期初，显式配置不因后�
   const preset = parseCompanySystemConfig(DEFAULT_SETUP.company_system);
   assert.deepEqual(preset.config.companies.map(company => company.company), DEFAULT_SETUP.stocks.map(stock => `C-${stock.code}`));
   for (const company of preset.config.companies) {
-    assert.deepEqual(company.finance.opening_lines.map(line => line.account), ["1122", "4001"]);
+    assert.deepEqual(company.finance.opening_lines.map(line => line.account), ["simple_receivable", "4001"]);
     assert.ok(BigInt(company.generation.initial_revenue.replace(".", "")) > 0n);
     assert.ok(BigInt(company.generation.initial_fixed_expense.replace(".", "")) > 0n);
     const stock = DEFAULT_SETUP.stocks.find(stock => `C-${stock.code}` === company.company)!;
