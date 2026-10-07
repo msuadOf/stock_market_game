@@ -91,6 +91,15 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
   - 子 agent 只编辑不构建；验收=本线 cargo check+全量 lib 1319/8。
 - 之后：`read_only_start.rs` 新增 `prepare_on(view)`（三 on 版组装，同名测试随行）→ candidate_commit 尾部（rebase 前置+rayon::join(queue_npc_on, prepare_on)→ 产出 stash.for_tick=candidate tick+1... 注意语义：prepare 读 candidate 终态、for_tick=candidate.state.tick+1？**待下棒核对**：探索波等价性是"prepare 于 rebase 完成处、为下个 plan_tick"，plan_tick 消费条件 stash.for_tick==session.tick，而 candidate 提交后权威 tick=candidate.tick，故 for_tick 应=candidate.tick+1 与消费时 tick 相符——实装时以探索波 spec_probe patch（.tmp/perf-expl/tick-overlap/）为准复核）→ 1/4/16 一致性 → probe → 锚定交错配对。
 
+## 棒次 14 终局：X1 全链实装→基准判定→诚实关臂
+
+- **方案 A 实装完成**（3efcda70）：revision 顶层计数（132 处直改入口迁移 mark-再改模式，含多行链式与存档恢复路径）、stash 记 produced_revision、消费三重校验（tick+revision+eligibility）——**两语义红测全部转绿**，投机臂全量套件上线后 1319/8 基线一致。
+- **锚定交错配对判定（未过门）**：A_start 303.99 / A_end 304.72（锚漂 +0.24% 会话有效）；H 均值 294.07 vs C 均值 290.15，五对 d=[0.931,0.983,0.987,1.020,1.016]，**mean(d)≈0.987（-1.3%）**，远低于 2% 门槛。
+- **收益被吃的机制（本棒定位）**：消费点权威 state 仍持有 stash 的 Arc → `Arc::try_unwrap` 恒失败 → **每次命中深克隆整个 ReadOnlyStart**（coordinator/账户簿级复制，正是 E9 量过的 367µs 级 churn），把与 queue 重叠省下的 ~0.7ms/tick 吃光并倒贴。
+- **处置（d86f5f92+语法修复）**：臂关闭回 None 占位；**保留全部机制**——npc_split 借用拆分（阶段一 100%）、stash 消费、revision 新鲜度红线（防御纵深价值独立成立，ADR 待补红线条目）。
+- **复装前置（若重启 X1）**：先解决消费克隆——方案：①ReadOnlyStart 四字段各自 Arc（消费零克隆：hydration Arc<Result>、resources Arc<DecisionResourceSnapshot>、inputs Arc<Vec>、shards Arc<BTreeMap>），消费端 deref 或字段级 take；②或消费点先从权威 take 掉原份使 Arc 唯一（需要 plan_tick 拿到 &mut 权威——现状 &，需 PhaseInput 改造）。修好后重跑锚定配对再判。
+- 基准原始数据：.tmp/e-x1/pairing.log；两 binary：.tmp/production-probe-target（=X1 开）与需重建的基线。
+
 ## 阶段二设计决策（棒次 8 收棒时定稿待验）
 
 1. **stash 语义定稿**：放 CommittableSessionState 内（非 GameSession 顶层）——投机结果在 candidate N 的 commit 尾部产生，随 swap 自然成为权威状态一部分，下个 plan_tick 消费（take 置 None）；tick 失败重试时 stash 仍在权威上且仍有效（同 tick 重算语义不变）。save()/business_state_hash 走 SaveSlot 逐字段构造，stash 不入 SaveSlot 即自动排除。
