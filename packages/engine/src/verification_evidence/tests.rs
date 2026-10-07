@@ -833,6 +833,8 @@ fn civil_protocol_session() -> ProtocolSession {
             flat_withholding_bp: Some(1000),
             rights_offering_enabled: false,
             issuer_repurchase_enabled: false,
+            par_value_per_share: crate::Money::from_cents(100),
+            auto_corporate_foundation: false,
         },
         42,
     )

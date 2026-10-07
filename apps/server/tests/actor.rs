@@ -124,6 +124,10 @@ fn sample_setup() -> SessionSetup {
         flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
+        // N2a 起为严格持久化必填字段：税无关最小 setup 保持面值产品默认
+        //（1 元/股）并关闭开局自动装配（显式装配语义不变）。
+        par_value_per_share: Money::from_cents(100),
+        auto_corporate_foundation: false,
     }
 }
 

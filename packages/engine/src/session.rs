@@ -34,6 +34,8 @@ mod exchange_calendar;
 mod exchange_calendar_tests;
 #[cfg(test)]
 mod simple_preferences_session_tests;
+#[cfg(test)]
+mod auto_registry_session_tests;
 pub use company_corrections::{
     CompanyReportCorrection, CompletedReportCorrection, ReportCorrectionEpoch,
     ReportCorrectionError, ReportCorrectionStatus,
@@ -1263,6 +1265,22 @@ pub struct SessionSetup {
     /// 调用被显式拒绝（错误指明本局未启用）。严格持久化字段：新档必填、
     /// 无 serde 默认，缺失该字段的旧档被显式拒绝；恢复后开关语义不变。
     pub issuer_repurchase_enabled: bool,
+    /// 每股面值（`Money` 分；2026-10-08 N2a 决策：默认 1 元/股 = 100 分，
+    /// 新局可编辑）。开局自动装配用它推定各 Simple 上市公司的注册资本
+    /// 法定事实：注册资本 = 面值 × 总股本（`define_dividend_legal_facts`
+    /// 既有路径，bind-once）。严格持久化字段：新档必填、无 serde 默认，
+    /// 缺失该字段的旧档被显式拒绝；默认值 100 分由 Web DEFAULT_SETUP 与
+    /// UI 草稿层提供，不设 serde 默认，杜绝旧档静默取默认的兼容路径。
+    pub par_value_per_share: Money,
+    /// 开局自动装配公司行为基础（2026-10-08 N2a 决策：开局自动建名册，
+    /// 产品默认开启）：`true` 时 `GameSession::new` 在初始筹码分配完成后
+    /// 为每家 Simple 上市公司自动装配——按分配结果构建全流通名册（无发行人
+    /// 自持股；未分配余量登记为具名外部股东）、按面值推定注册资本法定事实、
+    /// 并按三层税制模式自动开个人税账（仅 `AShareIndividual`）。`false` 保持
+    /// 显式装配入口（`configure_share_registry` / `define_dividend_legal_facts`
+    /// / `configure_cash_dividend_tax_book`），供测试与特殊场景精确控制。
+    /// 严格持久化字段：新档必填、无 serde 默认；恢复后装配语义不变。
+    pub auto_corporate_foundation: bool,
 }
 
 impl SessionSetup {
@@ -1389,6 +1407,26 @@ impl SessionSetup {
                 "dividend_tax_mode={:?} 要求 stamp_tax_rate={expected_stamp_rate}，实际为 {}",
                 self.dividend_tax_mode, self.config.stamp_tax_rate
             )));
+        }
+        // 面值参数域（2026-10-08 N2a 决策）：面值必须为正；开局自动装配按
+        // 「面值 × 总股本」推定注册资本法定事实，乘积必须可表示为 i128 分
+        // （AccountingAmount 的值域），否则在创建与恢复两端显式拒绝。
+        if self.par_value_per_share.cents() <= 0 {
+            return Err(SessionError::InvalidSetup(format!(
+                "par_value_per_share={} 分必须为正数（面值不得为零或负）",
+                self.par_value_per_share.cents()
+            )));
+        }
+        for stock in &self.stocks {
+            // AccountingAmount 的值域是完整 i128 分，只需排除乘法溢出。
+            i128::from(self.par_value_per_share.cents())
+                .checked_mul(i128::from(stock.total_shares))
+                .ok_or_else(|| {
+                    SessionError::InvalidSetup(format!(
+                        "股票 {} 的注册资本（面值 {} 分 × 总股本 {}）溢出 i128 分",
+                        stock.code.0, self.par_value_per_share.cents(), stock.total_shares
+                    ))
+                })?;
         }
         if (self.config.default_limit - 0.10).abs() > f64::EPSILON
             || (self.config.st_limit - 0.10).abs() > f64::EPSILON
@@ -1902,11 +1940,200 @@ impl GameSession {
             );
         }
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
+        // 开局自动装配公司行为基础（2026-10-08 N2a 决策，产品默认开启）：
+        // 名册 + 注册资本法定事实 + 按三层税制模式的个人税账。任一步失败
+        // 显式失败，不静默跳过（铁律二）。
+        if sess.state.setup.auto_corporate_foundation {
+            sess.assemble_corporate_foundation()?;
+        }
         sess.initialize_retail_experience()?;
         sess.reconcile_institutional_holdings()?;
         // 日界不提前生成日内请求，首个 tick 在隔离 shadow 上基于日结后的版本准备。
         // 因此休市日日结和交易日日结都能产生不含待处理请求的公共存档。
         Ok(sess)
+    }
+
+    /// 开局自动装配公司行为基础（N2a，2026-10-08 用户决策「开局自动建名册」）：
+    ///
+    /// 对每家 Simple 上市公司，在初始筹码分配（`seed_float`）完成后：
+    /// 1. 按分配结果（NPC 账户真实持仓 lot）构建**全流通名册**——无发行人
+    ///    自持股（Simple 无发行人真实账户，自持股语义留给 Simulation 分支）；
+    ///    未分配余量（总股本 − 流通盘）登记为单一具名外部股东（无游戏账户、
+    ///    不参与交易），发行股数守恒由 `configure_share_registry` 既有校验承担；
+    /// 2. 按 `par_value_per_share` 推定注册资本法定事实（注册资本 = 面值 ×
+    ///    总股本），走 `define_dividend_legal_facts` 既有 bind-once 路径；
+    /// 3. 税账按三层税制模式自动开账——`configure_share_registry` 既有逻辑：
+    ///    仅 `AShareIndividual` 为「个人」身份持有人自动开
+    ///    `IndividualPublicMarket` 税账；`FlatWithholding` / `Exempt` 不开。
+    ///
+    /// 全部复用既有状态机入口，不复制任何校验；任何失败原样上抛，整个
+    /// 新局创建失败，不留半装配状态。
+    fn assemble_corporate_foundation(&mut self) -> Result<(), SessionError> {
+        let par_cents = self.state.setup.par_value_per_share.cents();
+        // 名册结算日取开局自然日的**前一自然日**：`close_registries_through`
+        // 只推进 (settled_on, through] 区间，开局日自身的成交也要进入名册
+        // 日结；批次取得日同取该日（开局前的筹码分配，早于任何交易日）。
+        let settled_on = self.civil_date().prev().map_err(|error| {
+            SessionError::InvalidSetup(format!("开局自动装配无法回退自然日：{error}"))
+        })?;
+        // 先按股票建名册（同一候选事务内逐只推进；任一失败显式失败）。
+        for spec in self.state.setup.stocks.clone() {
+            let issuer = self
+                .state
+                .company_system
+                .issuers()
+                .issuer_of(&spec.code)
+                .cloned()
+                .ok_or_else(|| {
+                    SessionError::InvalidSetup(format!(
+                        "股票 {} 缺少发行人身份，无法开局自动装配股东名册",
+                        spec.code.0
+                    ))
+                })?;
+            let mut granted: u64 = 0;
+            let mut holdings = Vec::new();
+            let account_ids: Vec<AccountId> = self.state.accounts.keys().copied().collect();
+            for account in account_ids {
+                let qty = u64::from(
+                    self.state.accounts[&account]
+                        .positions()
+                        .get(&spec.code)
+                        .map(|position| position.qty())
+                        .unwrap_or(0),
+                );
+                if qty == 0 {
+                    continue;
+                }
+                granted = granted.checked_add(qty).ok_or_else(|| {
+                    SessionError::InvalidSetup(format!(
+                        "股票 {} 的初始筹码分配总量溢出 u64",
+                        spec.code.0
+                    ))
+                })?;
+                holdings.push(crate::company::share_registry::ShareHolding {
+                    holder: crate::company::share_registry::HolderId::Account(account),
+                    lots: vec![crate::company::share_registry::ShareLot {
+                        id: format!("initial:{}:{}", spec.code.0, account.0),
+                        qty,
+                        acquired_on: settled_on,
+                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                            evidence: format!(
+                                "session-auto:initial-allocation:{}",
+                                spec.code.0
+                            ),
+                        },
+                        restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+                    }],
+                });
+            }
+            let remainder = spec
+                .total_shares
+                .checked_sub(granted)
+                .ok_or_else(|| {
+                    SessionError::InvalidSetup(format!(
+                        "股票 {} 的初始筹码分配总量 {} 超过总股本 {}",
+                        spec.code.0, granted, spec.total_shares
+                    ))
+                })?;
+            if remainder > 0 {
+                // 全流通口径的未分配余量：登记为单一具名外部股东（非发行人
+                // 自持股）。外部股东无游戏账户、不参与交易、不代扣，其分红
+                // 走既有外部回执事实。
+                holdings.push(crate::company::share_registry::ShareHolding {
+                    holder: crate::company::share_registry::HolderId::External(format!(
+                        "session-auto:founding:{}",
+                        spec.code.0
+                    )),
+                    lots: vec![crate::company::share_registry::ShareLot {
+                        id: format!("initial:{}:founding", spec.code.0),
+                        qty: remainder,
+                        acquired_on: settled_on,
+                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                            evidence: format!(
+                                "session-auto:initial-allocation:{}:founding",
+                                spec.code.0
+                            ),
+                        },
+                        restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+                    }],
+                });
+            }
+            let registry = crate::company::share_registry::ShareRegistry::new(
+                spec.code.clone(),
+                issuer,
+                spec.total_shares,
+                settled_on,
+                holdings,
+            )
+            .map_err(|error| {
+                SessionError::InvalidSetup(format!(
+                    "股票 {} 开局自动名册装配失败：{error}",
+                    spec.code.0
+                ))
+            })?;
+            self.configure_share_registry(registry).map_err(|error| {
+                SessionError::InvalidSetup(format!(
+                    "股票 {} 开局自动名册装配失败：{error}",
+                    spec.code.0
+                ))
+            })?;
+        }
+        // 名册全部就位后，按面值推定各发行人的注册资本法定事实。
+        let issuers: Vec<crate::company::CompanyId> = self
+            .state
+            .company_system
+            .issuers()
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect();
+        for issuer in issuers {
+            let stock = self
+                .state
+                .company_system
+                .issuers()
+                .get(&issuer)
+                .and_then(|issuer| issuer.listed_stock.clone())
+                .ok_or_else(|| {
+                    SessionError::InvalidSetup(format!(
+                        "公司 {} 缺少上市证券，无法推定注册资本法定事实",
+                        issuer.0
+                    ))
+                })?;
+            let total_shares = self
+                .state
+                .setup
+                .stocks
+                .iter()
+                .find(|spec| spec.code == stock)
+                .map(|spec| spec.total_shares)
+                .ok_or_else(|| {
+                    SessionError::InvalidSetup(format!(
+                        "公司 {} 的上市证券 {} 不在 setup 股票清单内",
+                        issuer.0, stock.0
+                    ))
+                })?;
+            let registered_capital_cents =
+                i128::from(par_cents).checked_mul(i128::from(total_shares)).ok_or_else(|| {
+                    SessionError::InvalidSetup(format!(
+                        "公司 {} 的注册资本（面值 {} 分 × 总股本 {}）溢出",
+                        issuer.0, par_cents, total_shares
+                    ))
+                })?;
+            self.define_dividend_legal_facts(
+                &issuer,
+                crate::accounting::AccountingAmount::from_cents(registered_capital_cents),
+                format!(
+                    "session-auto:registered-capital:par-cents={par_cents}:shares={total_shares}"
+                ),
+            )
+            .map_err(|error| {
+                SessionError::InvalidSetup(format!(
+                    "公司 {} 开局自动注册资本法定事实装配失败：{error}",
+                    issuer.0
+                ))
+            })?;
+        }
+        Ok(())
     }
 
     fn account_equity(&self, id: AccountId) -> Result<Money, MoneyError> {
@@ -4593,6 +4820,30 @@ impl GameSession {
                 )
             })
             .collect();
+        // 后入股东自动开税账的资格集合（N2a，2026-10-08 决策）：仅
+        // AShareIndividual 模式传入「个人」身份账户全集（玩家与自然人散户
+        // NPC）；Flat/Exempt 模式传 None（Flat 付款日按名册代扣、Exempt 无税，
+        // 均不建个人税账）。集合按账户种类过滤，不按策略风格推断
+        // （`taxpayer_identity_of_kind` 权威映射）。
+        let late_holder_tax_accounts = if self.state.setup.dividend_tax_mode
+            == crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual
+        {
+            Some(
+                self.state
+                    .accounts
+                    .iter()
+                    .filter(|(_, account)| {
+                        matches!(
+                            corporate_actions::taxpayer_identity_of_kind(account.kind()),
+                            corporate_actions::TaxpayerIdentity::Personal
+                        )
+                    })
+                    .map(|(id, _)| *id)
+                    .collect::<BTreeSet<AccountId>>(),
+            )
+        } else {
+            None
+        };
         self.state
             .corporate_actions
             .close_registries_through(
@@ -4600,6 +4851,7 @@ impl GameSession {
                 &account_positions,
                 &self.state.personal_trade_confirmations,
                 self.issuer_repurchase_account_id(),
+                late_holder_tax_accounts.as_ref(),
             )
             .map_err(|error| SessionError::InvalidSave(format!("股东名册日终推进失败：{error}")))?;
         let correction_publications = self.apply_report_corrections_at_day_end(&report)?;
@@ -5735,6 +5987,8 @@ mod candle_open_tests {
             flat_withholding_bp: Some(1000),
             rights_offering_enabled: false,
             issuer_repurchase_enabled: false,
+            par_value_per_share: crate::Money::from_cents(100),
+            auto_corporate_foundation: false,
         }
     }
 
@@ -6047,6 +6301,8 @@ mod npc_working_quote_tests {
             flat_withholding_bp: Some(1000),
             rights_offering_enabled: false,
             issuer_repurchase_enabled: false,
+            par_value_per_share: crate::Money::from_cents(100),
+            auto_corporate_foundation: false,
         }
     }
 

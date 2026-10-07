@@ -1650,6 +1650,13 @@ impl SessionCorporateActions {
         Ok(())
     }
 
+    /// 日终推进股东名册。`late_holder_tax_accounts` 是「后入股东自动开税账」
+    /// 的资格集合（N2a，2026-10-08 决策）：仅 `AShareIndividual` 模式由 Session
+    /// 侧传入「个人」身份账户全集，其他模式传 `None`（不开账）。首次经二级
+    /// 市场净买入进入名册的账户按名册维护钩子同步开个人税账——这不是
+    /// 「事后配置」：新入册账户此前不在名册中、无历史回执，税账从零重建
+    /// FIFO 无事实丢失；入册前已持有期间的分红不追溯（该账户彼时不在
+    /// 登记快照中，本就无分红事实）。
     pub(crate) fn close_registries_through(
         &mut self,
         through: crate::calendar::CivilDate,
@@ -1659,7 +1666,13 @@ impl SessionCorporateActions {
             crate::experience::AppendOnlyHistory<super::PersonalTradeConfirmation>,
         >,
         issuer_repurchase_account: Option<AccountId>,
+        late_holder_tax_accounts: Option<&std::collections::BTreeSet<AccountId>>,
     ) -> Result<(), SessionCorporateActionsError> {
+        // 本日经真实净买入首次入册的 (证券, 账户, 入册日)（N2a 后入股东）：
+        // 名册推进循环结束后按资格集合同步开个人税账（见方法级注释的维护
+        // 钩子语义），再进入税账日结同步。
+        let mut late_entries: Vec<(StockCode, AccountId, crate::calendar::CivilDate)> =
+            Vec::new();
         for registry in &mut self.registries {
             if registry.settled_on() > through {
                 return Err(SessionCorporateActionsError::Invalid(
@@ -1766,6 +1779,7 @@ impl SessionCorporateActions {
                             "无既有名册的证券成交账户只能通过真实净买入进入股东登记".into(),
                         ));
                     }
+                    late_entries.push((registry.stock().clone(), account, day));
                     let source = receipt_ids
                         .iter()
                         .map(u64::to_string)
@@ -1845,7 +1859,80 @@ impl SessionCorporateActions {
                 }
             }
         }
+        // 名册维护钩子（N2a，2026-10-08 决策「后续新进股东入册时同步补开个人
+        // 税账」）：首次入册账户按资格开账；开账日取入册日的前一自然日（空
+        // opening lots），紧随其后的税账同步把入册日的取得事实作为首条日结
+        // 入账（税账首条日结必须紧邻开账日的次一自然日）。资格集合由 Session
+        // 侧按三层税制模式过滤（仅 AShareIndividual 传「个人」身份账户全集，
+        // Flat/Exempt 传 None 不开账）。
+        for (stock, account, entry_day) in late_entries {
+            if late_holder_tax_accounts.is_some_and(|eligible| eligible.contains(&account)) {
+                let opened_on = entry_day
+                    .prev()
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                self.register_late_holder_tax_book(account, stock, opened_on)?;
+            }
+        }
         self.sync_dividend_tax_days()?;
+        Ok(())
+    }
+
+    /// 后入股东的税账维护钩子（N2a）：为首次经二级市场净买入进入 `stock`
+    /// 名册的 `account` 开 `IndividualPublicMarket` 个人税账。
+    ///
+    /// 与装配期 `configure_cash_dividend_tax_book` 的差异：不检查「名册已有
+    /// 历史日结回执」守卫——该守卫防的是**事后**为早已持有者补账导致 FIFO
+    /// 历史不可重建；本钩子只服务**首次入册**账户（调用方保证：账户来自
+    /// `close_registries_through` 的日净额残差，即当日之前不在名册中、无任何
+    /// 历史回执），税账从零重建 FIFO 无事实丢失。开账日 `opened_on` 取入册日
+    /// 前一自然日且 opening lots 为空，入册日取得事实由紧随的
+    /// `sync_dividend_tax_days` 作为首条日结入账。入册前已持有期间的分红不
+    /// 追溯（该账户彼时不在登记快照中，本就无分红事实）。
+    fn register_late_holder_tax_book(
+        &mut self,
+        account: AccountId,
+        stock: StockCode,
+        opened_on: crate::calendar::CivilDate,
+    ) -> Result<(), SessionCorporateActionsError> {
+        let registry = self
+            .registries
+            .iter()
+            .find(|registry| registry.stock() == &stock)
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid(format!(
+                    "后入股东 {account:?} 开税账缺少 {stock:?} 的股东名册"
+                ))
+            })?;
+        if !registry
+            .holdings()
+            .iter()
+            .any(|holding| holding.holder == HolderId::Account(account))
+        {
+            return Err(SessionCorporateActionsError::Invalid(format!(
+                "后入股东 {account:?} 不在 {stock:?} 名册中，不能开个人税账"
+            )));
+        }
+        if self
+            .dividend_tax_books
+            .iter()
+            .any(|book| book.account() == account && book.stock() == &stock)
+        {
+            return Err(SessionCorporateActionsError::Invalid(format!(
+                "账户 {account:?} 在 {stock:?} 已有个人税账，后入股东开账不可重复"
+            )));
+        }
+        let book = crate::company::cash_dividend_tax::CashDividendTaxBook::new(
+            account,
+            stock,
+            crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
+            opened_on,
+            Vec::new(),
+        )
+        .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        self.dividend_tax_books.push(book);
+        self.dividend_tax_books.sort_by(|left, right| {
+            (left.account(), left.stock()).cmp(&(right.account(), right.stock()))
+        });
         Ok(())
     }
 
@@ -3295,7 +3382,7 @@ mod tests {
         };
         let accounts = BTreeMap::from([(AccountId(1), BTreeMap::from([(code, 6)]))]);
         actions
-            .close_registries_through(d(2026, 10, 5), &accounts, &BTreeMap::new(), None)
+            .close_registries_through(d(2026, 10, 5), &accounts, &BTreeMap::new(), None, None)
             .unwrap();
         assert_eq!(actions.registries[0].settled_on(), d(2026, 10, 5));
         assert_eq!(actions.registries[0].holdings().len(), 2);

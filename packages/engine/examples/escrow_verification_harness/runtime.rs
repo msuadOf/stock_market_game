@@ -572,6 +572,10 @@ fn frozen_setup() -> Result<SessionSetup, String> {
         flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
+        // N2a 起为严格持久化必填字段：escrow 验证 harness 保持显式装配语义
+        //（自动名册/法定事实关闭），面值取产品默认 1 元/股。
+        par_value_per_share: engine::Money::from_cents(100),
+        auto_corporate_foundation: false,
     };
     setup
         .validate()
