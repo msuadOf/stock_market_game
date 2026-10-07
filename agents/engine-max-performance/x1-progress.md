@@ -58,6 +58,17 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 - 基准：锚定交错配对 worker=4、<10% 占用核段、≥5 对、预登记规则；预期 ≥+10%（外推 +16%，E2/E3 历史折扣）。
 - 复核：全新二级只读 agent（fork 无派生权限时由主会话代办）。
 
+## 棒次 10 完成记录与待诊断清单（下一棒精确入口）
+
+- **已落地**：rebase 前置重排（Rayon1 等价实证）+ 单侧 join 生产路径（queue_npc_on 经 npc_split 全量套件验证）；prepare 链三文件 on(view) 化验收（分片+本棒修双引用/删零调用包装）；can_prepare_on/prepare_on 组装；**投机分支机制全通但默认关闭**（关闭态 1319/8 基线一致）。
+- **待诊断（开启投机臂后两测语义回归，关闭即绿）**：
+  1. `authoritative_tick_tests::npc_request_uses_available_cash_when_it_enters_the_next_tick`——期望 InsufficientCash 拒绝未发生（stash 路径下资源/现金视图偏松）。
+  2. `initial_candidate_round_tests::initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance`。
+  诊断法建议：复现该 fixture，开启投机臂，逐字段 diff stash 的 ReadOnlyStart vs 同 tick 内联 prepare 结果（hydration/resources/inputs/shards 四分支定位），再沿差异定位（怀疑点：adapter 或 seal 的 on 版读集与原版有差——分片新代码；或快照时序：prepare 读的是 rebase 后、queue 写前状态，若某分支隐式依赖 queue 写后状态则真等价前提被破坏，需回查探索波 spec_probe 的对比是否覆盖该维度）。
+  3. 我方 mismatch 测试的 hits 精确断言已按进程级计数器先例改差分。
+- **协调方第 3 点待办**：seal_on 的"只读 cash/positions"声明要落成真实 debug_assert/测试（写侧 restore_strategy 后 seal 输出必须不变）——加入下一棒首件事。
+- 复装投机臂：git 历史本提交父代的 candidate_commit.rs 中被替换为 None 的那臂代码即完整实现（can_prepare_on/prepare_on/for_tick=view.tick）。
+
 ## 棒次 9 完成记录
 
 - **stash 消费机制已落地**（15759c6e）：TDD 三件套绿（命中不内联/失配回退/错误原位传播），lib 1319/8 基线一致。要点：stash 无外层 Arc（derive Clone 即可）；计数器进程级按差分断言（先例）；权威 stash 在未提交 plan_tick 后保留（重试语义），随 commit_from 覆盖。
