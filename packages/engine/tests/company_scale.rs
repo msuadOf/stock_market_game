@@ -88,7 +88,8 @@ fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSet
         float_allocation: engine::FloatAllocation::class_percentages(0.45, 0.53, 0.02, engine::WithinKindDistribution::Random),
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+        flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
     }

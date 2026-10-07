@@ -23,6 +23,11 @@ fn split_setup() -> SessionSetup {
     setup.npcs.inst_count = 1;
     setup.ticks_per_day = 1;
     setup.start_date = CivilDate::from_iso("2030-01-02").unwrap();
+    // 本文件覆盖个人差别化税账（拆股续记／缩股核减等）：显式大 A 方式，
+    // 装配名册即自动为玩家开个人税账。
+    setup.dividend_tax_mode =
+        crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual;
+    setup.flat_withholding_bp = None;
     setup
 }
 
@@ -95,13 +100,7 @@ fn session_with_registry_setup(
     let registry = ShareRegistry::new(stock.clone(), issuer.clone(), total_shares, date, holdings)
         .unwrap();
     session.configure_share_registry(registry).unwrap();
-    session
-        .configure_cash_dividend_tax_book(
-            AccountId(0),
-            stock.clone(),
-            crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
-        )
-        .unwrap();
+    // AShareIndividual 模式下装配名册已自动为玩家开个人税账，不再显式配置。
     session
         .define_dividend_legal_facts(
             &issuer,
@@ -730,13 +729,7 @@ fn restricted_lots_are_consumed_by_consolidation_and_survivors_keep_acquisition_
     let registry =
         ShareRegistry::new(stock.clone(), issuer.clone(), total_shares, date, holdings).unwrap();
     session.configure_share_registry(registry).unwrap();
-    session
-        .configure_cash_dividend_tax_book(
-            AccountId(0),
-            stock.clone(),
-            crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
-        )
-        .unwrap();
+    // AShareIndividual 模式下装配名册已自动为玩家开个人税账，不再显式配置。
     session
         .define_dividend_legal_facts(
             &issuer,
