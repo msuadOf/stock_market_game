@@ -484,6 +484,158 @@ test("分红与送转 plan 的交易所按 setup 股票交易所映射勾稽", (
   assert.throws(() => parseSessionCorporateActions({ ...distributionActions, stock_distributions: [{ ...distribution, plan: { ...distribution.plan, exchange: "szse" } }] }, registryContext()), /交易所与证券不一致/)
 })
 
+test("税账与名册回执覆盖勾稽：按引擎同款 scope→事件 id 派生核对每个账户变动回执", () => {
+  // 与 engine `SessionCorporateActions::validate` 的「送转×税账交互未入账」勾稽同构：
+  // 公开市场日结 → `session-market:{stock}:{account}:{day}`；
+  // 非交易过户（送转到账）→ `{回执事件 id}:{account}`；回购注销只核减 IssuerTreasury，跳过。
+  const account = { Account: "0" }
+  const external = { External: "holder-a" }
+  const marketLot = { id: "market-lot-1", qty: "2", acquired_on: "2030-01-04", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }
+  const distributionLot = { id: "d1:account-0-lot", qty: "3", acquired_on: "2030-01-04", source: { CorporateAction: { event: "d1" } }, restriction: "Unrestricted" }
+  const externalLot = { id: "ext-lot", qty: "12", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const marketReceipt = {
+    request: {
+      event_id: "session-market:600101:2030-01-04", day: "2030-01-04", scope: "PublicMarket",
+      changes: [
+        { holder: account, change: "2", acquisition: { lot_id: marketLot.id, source: marketLot.source, restriction: "Unrestricted" } },
+        { holder: external, change: "-2", acquisition: null },
+      ],
+    },
+    disposals: [{ holder: external, lot: { ...externalLot, qty: "2" }, disposed_on: "2030-01-04" }],
+  }
+  const distributionReceipt = {
+    request: {
+      event_id: "stock-distribution:d1", day: "2030-01-04", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
+      changes: [{ holder: account, change: "3", acquisition: { lot_id: distributionLot.id, source: distributionLot.source, restriction: "Unrestricted" } }],
+    },
+    disposals: [],
+  }
+  const registry = {
+    ...validRegistry("15"), settled_on: "2030-01-04",
+    holdings: [
+      { holder: account, lots: [marketLot, distributionLot] },
+      { holder: external, lots: [{ ...externalLot, qty: "10" }] },
+    ],
+    receipts: [marketReceipt, distributionReceipt], registrations: [],
+  }
+  const taxMarketLot = { id: `tax:${marketLot.id}`, qty: "2", acquired_on: "2030-01-04", source: { SecondaryMarket: { settlement: "settle-1" } }, class: "PublicMarket" }
+  const taxDistributionLot = { id: `tax:${distributionLot.id}`, qty: "3", acquired_on: "2030-01-04", source: { CorporateAction: { event: "d1" } }, class: "PublicMarket" }
+  const fullCoverageBook = {
+    operation_seq: 2, account: "0", stock: "600101", profile: "IndividualPublicMarket",
+    opened_on: "2030-01-03", opening_lots: [], settled_on: "2030-01-04",
+    days: [
+      { operation_seq: 1, event_id: "session-market:600101:0:2030-01-04", day: "2030-01-04", net_change: "2", acquisition: taxMarketLot, dispositions: [] },
+      { operation_seq: 2, event_id: "stock-distribution:d1:0", day: "2030-01-04", net_change: "3", acquisition: taxDistributionLot, dispositions: [] },
+    ],
+    lots: [taxMarketLot, taxDistributionLot], dividends: [], collections: [],
+  }
+  const actions = { registries: [registry], dividends: [], dividend_tax_books: [fullCoverageBook], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
+  // setup 初始股数 12：公开市场日只在持有人间转移（发行数不变），送转非交易过户 +3 → 名册 15。
+  const context: Context = {
+    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "15" } },
+    setup: { stocks: [{ code: "600101", total_shares: "12", exchange: "Shanghai", tick: "1" }] },
+    snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 5 } } } } },
+    currentDate: "2030-01-05",
+  }
+  assert.doesNotThrow(() => parseSessionCorporateActions(actions, context), "公开市场与非交易过户回执都有对应税账日结时必须通过")
+  // 缺少非交易过户（送转到账）日结：税账自身仍自洽（replay/序列/连续性均合法），
+  // 只有覆盖勾稽能发现静默缺股。
+  const missingDistribution = {
+    ...fullCoverageBook, operation_seq: 1,
+    days: [fullCoverageBook.days[0]],
+    lots: [taxMarketLot],
+  }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [missingDistribution] }, context), /送转×税账交互未入账/)
+  // 缺少公开市场日结事实。
+  const missingMarket = {
+    ...fullCoverageBook, operation_seq: 1,
+    days: [{ ...fullCoverageBook.days[1]!, operation_seq: 1 }],
+    lots: [taxDistributionLot],
+  }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [missingMarket] }, context), /送转×税账交互未入账/)
+  // 事件 id 派生格式不匹配（缺少账户后缀）不算覆盖。
+  const wrongDerivation = {
+    ...fullCoverageBook,
+    days: [fullCoverageBook.days[0], { ...fullCoverageBook.days[1], event_id: "stock-distribution:d1" }],
+  }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [wrongDerivation] }, context), /送转×税账交互未入账/)
+})
+
+test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户条目仍要求覆盖", () => {
+  // 与引擎 validate 同构的两个边界：IssuerRepurchaseCancellation 即使（异常地）
+  // 含 Account 分录也显式跳过不要求税账日结；公开市场回执中 change=0 的账户条目
+  // 仍算「涉及该账户变动」，须有对应事件 id 的日结事实。
+  const account = { Account: "0" }
+  const marketLot = { id: "market-lot-1", qty: "2", acquired_on: "2030-01-04", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }
+  const distributionLot = { id: "d1:account-0-lot", qty: "3", acquired_on: "2030-01-04", source: { CorporateAction: { event: "d1" } }, restriction: "Unrestricted" }
+  const cancellationLot = { id: "cancel:account-0-lot", qty: "1", acquired_on: "2030-01-04", source: { CorporateAction: { event: "cancel-1" } }, restriction: "Unrestricted" }
+  const externalLot = { id: "ext-lot", qty: "12", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
+  const marketReceipt = {
+    request: {
+      event_id: "session-market:600101:2030-01-04", day: "2030-01-04", scope: "PublicMarket",
+      changes: [
+        { holder: account, change: "2", acquisition: { lot_id: marketLot.id, source: marketLot.source, restriction: "Unrestricted" } },
+        { holder: { External: "holder-a" }, change: "-2", acquisition: null },
+      ],
+    },
+    disposals: [{ holder: { External: "holder-a" }, lot: { ...externalLot, qty: "2" }, disposed_on: "2030-01-04" }],
+  }
+  const distributionReceipt = {
+    request: {
+      event_id: "stock-distribution:d1", day: "2030-01-04", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
+      changes: [{ holder: account, change: "3", acquisition: { lot_id: distributionLot.id, source: distributionLot.source, restriction: "Unrestricted" } }],
+    },
+    disposals: [],
+  }
+  const cancellationReceipt = {
+    request: {
+      event_id: "repurchase-cancellation:c1", day: "2030-01-04", scope: { IssuerRepurchaseCancellation: { basis: "cancellation-resolution-1" } },
+      changes: [{ holder: account, change: "1", acquisition: { lot_id: cancellationLot.id, source: cancellationLot.source, restriction: "Unrestricted" } }],
+    },
+    disposals: [],
+  }
+  const zeroChangeReceipt = {
+    request: {
+      event_id: "session-market:600101:2030-01-05", day: "2030-01-05", scope: "PublicMarket",
+      changes: [{ holder: account, change: "0", acquisition: null }],
+    },
+    disposals: [],
+  }
+  const registry = {
+    ...validRegistry("16"), settled_on: "2030-01-05",
+    holdings: [
+      { holder: account, lots: [marketLot, distributionLot, cancellationLot] },
+      { holder: { External: "holder-a" }, lots: [{ ...externalLot, qty: "10" }] },
+    ],
+    receipts: [marketReceipt, distributionReceipt, cancellationReceipt, zeroChangeReceipt], registrations: [],
+  }
+  const taxMarketLot = { id: "tax:market-lot-1", qty: "2", acquired_on: "2030-01-04", source: { SecondaryMarket: { settlement: "settle-1" } }, class: "PublicMarket" }
+  const taxDistributionLot = { id: "tax:d1:account-0-lot", qty: "3", acquired_on: "2030-01-04", source: { CorporateAction: { event: "d1" } }, class: "PublicMarket" }
+  const bookWithZeroDay = {
+    operation_seq: 3, account: "0", stock: "600101", profile: "IndividualPublicMarket",
+    opened_on: "2030-01-03", opening_lots: [], settled_on: "2030-01-05",
+    days: [
+      { operation_seq: 1, event_id: "session-market:600101:0:2030-01-04", day: "2030-01-04", net_change: "2", acquisition: taxMarketLot, dispositions: [] },
+      { operation_seq: 2, event_id: "stock-distribution:d1:0", day: "2030-01-04", net_change: "3", acquisition: taxDistributionLot, dispositions: [] },
+      { operation_seq: 3, event_id: "session-market:600101:0:2030-01-05", day: "2030-01-05", net_change: "0", acquisition: null, dispositions: [] },
+    ],
+    lots: [taxMarketLot, taxDistributionLot], dividends: [], collections: [],
+  }
+  const actions = { registries: [registry], dividends: [], dividend_tax_books: [bookWithZeroDay], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
+  // setup 初始 12 ＋ 送转 3 ＋ 回购注销 1 = 名册/发行人 16。
+  const context: Context = {
+    issuers: { "C-600101": { listed_stock: "600101", issued_shares: "16" } },
+    setup: { stocks: [{ code: "600101", total_shares: "12", exchange: "Shanghai", tick: "1" }] },
+    snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 6 } } } } },
+    currentDate: "2030-01-05",
+  }
+  // 回购注销回执被显式跳过（税账没有 c1 派生日结仍通过）；零变动日已有覆盖。
+  assert.doesNotThrow(() => parseSessionCorporateActions(actions, context))
+  // 拿掉零变动日的日结事实：change=0 的账户条目仍要求覆盖。
+  const missingZeroDay = { ...bookWithZeroDay, operation_seq: 2, days: bookWithZeroDay.days.slice(0, 2) }
+  assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [missingZeroDay] }, context), /送转×税账交互未入账/)
+})
+
 test("配股认购拒绝回执严格解析并勾稽事件存在与净认购唯一性", () => {
   const receipt = { event_id: "rights-event", account: "0", requested_shares: "41", submitted_on: "2030-01-07", rejected_on: "2030-01-07", reason: "公开配售剩余额度 40 股，申请 41 股超出额度" }
   const rightsBook = { plan: engineRightsPlan, status: "Approved", registration: null, entitlement: null, subscriptions: [], closed_on: null, settlement: null, credited_on: null }

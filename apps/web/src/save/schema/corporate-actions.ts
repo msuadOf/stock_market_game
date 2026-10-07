@@ -1070,6 +1070,36 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     const registry = registryByStock.get(taxBook.stock)
     if (registry === undefined || !registry.holdings.some(holding => typeof holding.holder === "object" && "Account" in holding.holder && holding.holder.Account === taxBook.account)) throw new SaveSchemaError(itemPath, "股息税账缺少对应股东名册持有人")
     if (taxBook.settled_on !== registry.settled_on) throw new SaveSchemaError(`${itemPath}.settled_on`, "股息税账结算日与股东名册不一致")
+    // 税账↔名册回执覆盖勾稽（与 engine `SessionCorporateActions::validate` 的
+    // 「送转×税账交互未入账」检查同构）：名册每个涉及该账户变动的日结回执都必须
+    // 已按 scope 派生的事件 id 进入税账日结。缺失说明同步被静默跳过或存档被篡改，
+    // 恢复时显式失败而不是让税基悄悄缺股。
+    for (const receipt of registry.receipts) {
+      const accountKey = JSON.stringify({ Account: taxBook.account })
+      if (!receipt.request.changes.some(change => JSON.stringify(change.holder) === accountKey)) continue
+      // 事件 id 按 scope 分列：公开市场日结沿用「证券+账户+自然日」；非交易过户
+      // （送转到账）以回执自身事件身份派生 `{event_id}:{account}`；回购注销只核减
+      // IssuerTreasury、不含 Account 持有人分录，与引擎侧一致显式跳过。
+      // 穷尽分支 + never 断言：未来给 MovementScope 新增变体时在此编译期强制
+      // 显式决策（同引擎 match），不允许 Web 侧静默跳过。
+      const scope = receipt.request.scope
+      if (scope === "PublicMarket") {
+        const expectedEventId = `session-market:${registry.stock}:${taxBook.account}:${receipt.request.day}`
+        if (!taxBook.days.some(day => day.event_id === expectedEventId)) {
+          throw new SaveSchemaError(itemPath, `账户 ${taxBook.account} 的股息税账缺少名册回执 ${receipt.request.event_id} 的日结事实：送转×税账交互未入账，拒绝静默缺股`)
+        }
+      } else if ("NonTradingTransfer" in scope) {
+        const expectedEventId = `${receipt.request.event_id}:${taxBook.account}`
+        if (!taxBook.days.some(day => day.event_id === expectedEventId)) {
+          throw new SaveSchemaError(itemPath, `账户 ${taxBook.account} 的股息税账缺少名册回执 ${receipt.request.event_id} 的日结事实：送转×税账交互未入账，拒绝静默缺股`)
+        }
+      } else if ("IssuerRepurchaseCancellation" in scope) {
+        continue
+      } else {
+        const exhaustive: never = scope
+        throw new SaveSchemaError(itemPath, `未知名册回执 scope 变体：${String(exhaustive)}`)
+      }
+    }
   }
   for (const [index, receipt] of account_gross_receipts.entries()) {
     const plan = dividends.find(dividend => dividend.plan.plan_id === receipt.plan_id)
