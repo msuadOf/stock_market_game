@@ -241,3 +241,5 @@ commit_from 整体 mem::replace + rayon::spawn(drop) 移出旧权威状态（367
 ## X1 终态（2026-10-07 收官）
 
 X1 跨 tick 投机预计算经十七棒完整落地并上线：阶段一借用解耦（npc_split 12 写字段视图体系）→ stash 消费（tick+revision+eligibility 三重校验）→ 真零拷（Clone 移出类型系统、PhaseInput 单点移交、shadow 不携带 stash）。终局基准 pairing5 五重判定全过（5/5 符号、mean(d)=+4.96%、区间分离、锚漂 -2.99% 有效），正式口径 ~310x。revision 外部直改红线（stash 读域六字段族）为独立成立的防御纵深。过程三度翻覆均有据：深拷路径两轮 -1.35% → 真零拷两轮 +2.7% → shadow 减负后 +5.0%。全部证据 .tmp/e-x1/（pairing1-5/full-lib-final/consistency/verify-build），设计、排雷与判据链见 x1-progress.md。
+
+2026-10-07 拍卖增量复用（残余影子缓存+死 ledger 守卫）两轮锚定配对后诚实撤回：两轮 mean +2.21%/+3.13% 但正号 4/5→3/5 未达协调方预登记的"≥4/5 正"线；H 臂散布 14% 淹没符号一致性（多 agent 并行诊断机况）。机制证据保留：P0 oracle prepare -84%、diag-split 门禁 411ms 不可动/可缓存段 732ms、Cut A 死构建守卫单刀 +1.7%（diag-cuta.json）。撤回后 lib 1319/8=基线逐字一致、probe 重绑 HEAD。实现结构与三个坑位（ledger 不可携带必须重建、X1 参数旁路传递、命中计数器并行测试互扰）全部在 auction-incremental-progress.md，安静机况或拍卖占比上升时可重启。
