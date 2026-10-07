@@ -225,7 +225,7 @@ rebase成功证明已经本地提交10f8d9ae。随后核对Cargo artifact确认�
 
 ## 追加：E7-X2 旧状态延后析构已撤回（2026-10-06）
 
-commit_from 整体 mem::replace + rayon::spawn(drop) 移出旧权威状态（367µs/tick）析构：TDD 红绿齐全、65 个定向测试绿，但锚定交错配对（threads=4、0-15 核占用 8%）mean +2.71% 且 pair3 为负、区间重叠，判定不过撤回。机制结论："移出 tick 线程"≠"移出关键路径"——worker=4 小池内 spawn 的析构与下一 tick 并行突发共用车道（与 P0-dirtykey"省的活在并行车道不挡路"互为镜像）。重试方向：专用析构线程（不进 rayon 池），且须与 X1 投机 prep 的池容量竞争一并设计。probe 已重建绑定 HEAD（34084792…）。详见 deferred-drop-findings.md。顺带登记 HEAD 既有 company_scenarios 集成测试编译失败（WithinKindDistribution 未定义，与本实验无关）。
+commit_from 整体 mem::replace + rayon::spawn(drop) 移出旧权威状态（367µs/tick）析构：TDD 红绿齐全、65 个定向测试绿，但锚定交错配对（threads=4、0-15 核占用 8%）mean +2.71% 且 pair3 为负、区间重叠，判定不过撤回。机制结论："移出 tick 线程"≠"移出关键路径"——worker=4 小池内 spawn 的析构与下一 tick 并行突发共用车道（与 P0-dirtykey"省的活在并行车道不挡路"互为镜像）。重试方向：专用析构线程（不进 rayon 池），且须与 X1 投机 prep 的池容量竞争一并设计。probe 已重建绑定 HEAD（34084792…）。详见 deferred-drop-thread-findings.md（E7-X2 撤回记录保留于 deferred-drop-findings.md）。顺带登记 HEAD 既有 company_scenarios 集成测试编译失败（WithinKindDistribution 未定义，与本实验无关）。
 
 ## 追加：E7-X1 跨 tick 投机预计算本周期不实现（2026-10-06）
 
@@ -244,4 +244,4 @@ X1 跨 tick 投机预计算经十七棒完整落地并上线：阶段一借用�
 
 2026-10-07 拍卖增量复用（残余影子缓存+死 ledger 守卫）两轮锚定配对后诚实撤回：两轮 mean +2.21%/+3.13% 但正号 4/5→3/5 未达协调方预登记的"≥4/5 正"线；H 臂散布 14% 淹没符号一致性（多 agent 并行诊断机况）。机制证据保留：P0 oracle prepare -84%、diag-split 门禁 411ms 不可动/可缓存段 732ms、Cut A 死构建守卫单刀 +1.7%（diag-cuta.json）。撤回后 lib 1319/8=基线逐字一致、probe 重绑 HEAD。实现结构与三个坑位（ledger 不可携带必须重建、X1 参数旁路传递、命中计数器并行测试互扰）全部在 auction-incremental-progress.md，安静机况或拍卖占比上升时可重启。
 
-2026-10-07 试验 C 移植落地：commit_from 旧权威状态析构移交池外专用 std::thread（deferred_drop.rs，36 非 Copy 字段 defer_swap、四分页容器退出池内 par drop；E7-X2 复活路径）。字段清单 43/43 逐字段核对+生产形态断言（每次提交移交 ≥30）；lib 1321/8=试验 C 基线逐字一致、server fatal12/interval6 绿；probe verify-build 过（candidate SHA f0522e32、H SHA 8a348041）。锚定交错配对（0-15 核/worker=4）：锚漂+1.01%，d=+2.22/+1.64/+4.65/−0.33/+10.19%，均值+3.67%、4/5 正、显著性险过（3.67%≥2SE 3.60%）、区间重叠 1.05 如实登记——判定过门落地。与诊断 +7.60% 的落差归因于环境差异（方向一致）。**遗留裁决：用户"位置性预留也算硬编码"新原则是否覆盖专用析构线程**（辩护：无钉扎无池内预留、平级 OS 调度=形态 b；备选 nice/SCHED_IDLE 或撤回），独立复核待安排。详见 deferred-drop-findings.md。
+2026-10-07 试验 C 移植落地：commit_from 旧权威状态析构移交池外专用 std::thread（deferred_drop.rs，36 非 Copy 字段 defer_swap、四分页容器退出池内 par drop；E7-X2 复活路径）。字段清单 43/43 逐字段核对+生产形态断言（每次提交移交 ≥30）；lib 1321/8=试验 C 基线逐字一致、server fatal12/interval6 绿；probe verify-build 过（candidate SHA f0522e32、H SHA 8a348041）。锚定交错配对（0-15 核/worker=4）：锚漂+1.01%，d=+2.22/+1.64/+4.65/−0.33/+10.19%，均值+3.67%、4/5 正、显著性险过（3.67%≥2SE 3.60%）、区间重叠 1.05 如实登记——判定过门落地。与诊断 +7.60% 的落差归因于环境差异（方向一致）。**遗留裁决：用户"位置性预留也算硬编码"新原则是否覆盖专用析构线程**（辩护：无钉扎无池内预留、平级 OS 调度=形态 b；备选 nice/SCHED_IDLE 或撤回），独立复核待安排。详见 deferred-drop-thread-findings.md（E7-X2 撤回记录保留于 deferred-drop-findings.md）。
