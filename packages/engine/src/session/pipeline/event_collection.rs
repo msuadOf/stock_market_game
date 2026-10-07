@@ -24,20 +24,22 @@ pub(super) struct CollectedEvents {
     pub(super) next_seq: u64,
 }
 
-/// Validates, canonically orders, and only then assigns external event sequences.
+/// Validates uniqueness and assigns external event sequences in arrival order.
 ///
 /// `next_seq` is the previously committed cursor, so the first emitted event receives
 /// `next_seq + 1`.  Because the cursor is passed by value and output is returned only on
 /// success, any validation or overflow failure leaks neither partial events nor a cursor
 /// change to the caller.
+///
+/// 跨实体事件不再按 StableKey 全局排序（用户已授权放宽：无关实体不要求固定次序）；
+/// key 唯一性由 BTreeSet 独立校验，seq 按实际到达顺序连续分配。
 pub(super) fn collect_events(
-    mut facts: Vec<OwnedEventFact>,
+    facts: Vec<OwnedEventFact>,
     next_seq: u64,
 ) -> Result<CollectedEvents, StepFatal> {
     for fact in &facts {
         validate_mapping(fact)?;
     }
-    facts.sort_by(|left, right| left.key.cmp(&right.key));
     validate_unique_keys(&facts)?;
 
     let mut cursor = next_seq;
@@ -69,8 +71,11 @@ fn validate_mapping(fact: &OwnedEventFact) -> Result<(), StepFatal> {
 }
 
 fn validate_unique_keys(facts: &[OwnedEventFact]) -> Result<(), StepFatal> {
-    if facts.windows(2).any(|pair| pair[0].key == pair[1].key) {
-        return Err(invariant("duplicate worker event stable key"));
+    let mut seen = std::collections::BTreeSet::new();
+    for fact in facts {
+        if !seen.insert(&fact.key) {
+            return Err(invariant("duplicate worker event stable key"));
+        }
     }
     Ok(())
 }

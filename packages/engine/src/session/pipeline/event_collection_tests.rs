@@ -36,23 +36,24 @@ fn fact(event: Event, ordinal: u64) -> OwnedEventFact {
 }
 
 #[test]
-fn collector_sorts_explicit_worker_keys_then_assigns_external_sequence() {
+fn collector_preserves_arrival_order_and_assigns_continuous_external_sequence() {
     let auction = auction_tick(900);
     let accepted = accepted(1);
+    // 输入顺序不排序，输出保持到达序；seq 按分配顺序连续递增
     let output = collect_events(vec![fact(accepted, 4), fact(auction, 9)], 40).unwrap();
 
     assert_eq!(output.next_seq, 42);
     assert!(matches!(
         output.events.as_slice(),
         [
-            Event::AuctionTick { seq: 41, .. },
-            Event::OrderAccepted { seq: 42, .. }
+            Event::OrderAccepted { seq: 41, .. },
+            Event::AuctionTick { seq: 42, .. }
         ]
     ));
     let published =
         crate::session::protocol::attach_facts_with_keys(&output.events, &output.keys).unwrap();
-    assert_eq!(published[0].key.local_event_index(), 9);
-    assert_eq!(published[1].key.local_event_index(), 4);
+    assert_eq!(published[0].key.local_event_index(), 4);
+    assert_eq!(published[1].key.local_event_index(), 9);
 }
 
 #[test]
