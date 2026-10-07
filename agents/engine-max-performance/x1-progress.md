@@ -61,10 +61,15 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 ## 棒次 10 完成记录与待诊断清单（下一棒精确入口）
 
 - **已落地**：rebase 前置重排（Rayon1 等价实证）+ 单侧 join 生产路径（queue_npc_on 经 npc_split 全量套件验证）；prepare 链三文件 on(view) 化验收（分片+本棒修双引用/删零调用包装）；can_prepare_on/prepare_on 组装；**投机分支机制全通但默认关闭**（关闭态 1319/8 基线一致）。
-- **待诊断（开启投机臂后两测语义回归，关闭即绿）**：
-  1. `authoritative_tick_tests::npc_request_uses_available_cash_when_it_enters_the_next_tick`——期望 InsufficientCash 拒绝未发生（stash 路径下资源/现金视图偏松）。
-  2. `initial_candidate_round_tests::initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptance`。
-  诊断法建议：复现该 fixture，开启投机臂，逐字段 diff stash 的 ReadOnlyStart vs 同 tick 内联 prepare 结果（hydration/resources/inputs/shards 四分支定位），再沿差异定位（怀疑点：adapter 或 seal 的 on 版读集与原版有差——分片新代码；或快照时序：prepare 读的是 rebase 后、queue 写前状态，若某分支隐式依赖 queue 写后状态则真等价前提被破坏，需回查探索波 spec_probe 的对比是否覆盖该维度）。
+- **待诊断（开启投机臂后两测语义回归，关闭即绿）——棒次 11 三步二分已完成，结论如下**：
+  1. **时序假设否证**：投机读推迟到 queue 完成后（串行变体）两测仍红——非"split 时点快照陈旧"。
+  2. **生产副作用否证**：保留 commit 尾部生产、禁用消费（消费臂条件置 false）→ 两测全绿——回归锁定在**消费路径**，生产动作无有害副作用。
+  3. **Debug 等价陷阱**：消费点逐字段 Debug 字符串比对（hydration/resources/stock_inputs/stock_shards）全部相等、消费确实发生（eprintln 追踪 tick 1 产生/tick 1 消费），测试仍红——**Debug 格式相等 ≠ 语义等价**（嫌疑：某结构自定义 Debug 略字段/浮点位/内部 OnceLock·缓存·Arc 身份在 Clone 后行为差）。
+  下一棒入口（按此序）：
+  a. 给 ReadOnlyStart 四字段补真 PartialEq（或逐子结构 PartialEq）替换 Debug 比对，消费点断言 stash==inline——预期这次会红并指出确切字段；
+  b. 若 a 仍绿，按分支喂入二分：只用 stash.hydration（其余内联）→ 加 resources → 加 inputs/shards，定位哪个字段的"消费"改变下游；
+  c. 检查消费路径 vs 内联路径在 plan_tick 中的执行位置差异（消费结果被放入与内联相同的 shadow 字段，但消费发生在 execute 闭包内 take 之后——比对两次运行的事件流首异 tick）。
+  诊断仪器代码见本棒会话（消费点 cfg(test) 比对块 + X1DBG eprintln），已随恢复关闭态一并移除，按上配方重建。
   3. 我方 mismatch 测试的 hits 精确断言已按进程级计数器先例改差分。
 - **协调方第 3 点待办**：seal_on 的"只读 cash/positions"声明要落成真实 debug_assert/测试（写侧 restore_strategy 后 seal 输出必须不变）——加入下一棒首件事。
 - 复装投机臂：git 历史本提交父代的 candidate_commit.rs 中被替换为 None 的那臂代码即完整实现（can_prepare_on/prepare_on/for_tick=view.tick）。
