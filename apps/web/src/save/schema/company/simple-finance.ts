@@ -234,7 +234,7 @@ function validateSimpleLedger(books: ReturnType<typeof parseBooks>, path: string
 
 export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财务状态") {
   const parsed = record(value, path);
-  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "share_splits", "rights_offerings", "issuer_repurchases", "legal_facts"], path);
+  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "share_splits", "rights_offerings", "issuer_repurchases", "legal_facts", "cash_book", "investment_book"], path);
   const kind = oneOf(parsed.kind, `${path}.kind`, ["Industrial", "Bank", "Insurance", "RealEstate"] as const);
   const company = string(parsed.company, `${path}.company`);
   if (company.trim().length === 0) throw new SaveSchemaError(`${path}.company`, "不能为空");
@@ -339,7 +339,37 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     return [start, end] as const;
   });
   if (through !== asOf) throw new SaveSchemaError(`${path}.recognized_periods`, "已确认期间必须覆盖开账后至当前财务日期");
-  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, share_splits, rights_offerings, issuer_repurchases, legal_facts: legalFacts };
+  // 账面展示字段（2026-10-08 用户决策）：严格必填（旧档缺字段显式拒绝），
+  // 并与权威账簿重算值勾稽——cash = 累计净利润 − 累计已付分红（可为负）、
+  // investment = 累计收入 × 配置比例（半偶舍入落分，收入非负故结果非负）。
+  const cashBook = simpleAmount(parsed.cash_book, `${path}.cash_book`);
+  const investmentBook = simpleAmount(parsed.investment_book, `${path}.investment_book`, true);
+  {
+    let netIncome = 0n;
+    for (const [code, definition] of Object.entries(books.chart.accounts)) {
+      if (definition.element !== "Revenue" && definition.element !== "Expense") continue;
+      netIncome = checkedLedgerSubtract(netIncome, ledgerBalances.get(code) ?? 0n, `${path}.cash_book`);
+    }
+    let paidDividends = 0n;
+    for (const plan of Object.values(dividends)) {
+      for (const payment of Object.values(plan.payments)) paidDividends += accountingMinorUnits(payment.amount);
+    }
+    if (checkedLedgerSubtract(netIncome, paidDividends, `${path}.cash_book`) !== accountingMinorUnits(cashBook)) throw new SaveSchemaError(`${path}.cash_book`, "账面展示现金必须等于累计净利润减累计已付分红");
+    const revenueMinor = -(ledgerBalances.get("simple_revenue") ?? 0n);
+    const scaled = revenueMinor * BigInt(config.book_display.investment_of_revenue_bp);
+    // BigInt 商向零截断；半偶舍入（与引擎 div_round_half_even 同口径）。
+    const quotient = scaled / 10000n;
+    const remainder = scaled % 10000n;
+    const magnitudeTwice = (remainder < 0n ? -remainder : remainder) * 2n;
+    const sign = scaled < 0n ? -1n : 1n;
+    const expectedInvestment = magnitudeTwice > 10000n
+      ? quotient + sign
+      : magnitudeTwice === 10000n && quotient % 2n !== 0n
+        ? quotient + sign
+        : quotient;
+    if (expectedInvestment !== accountingMinorUnits(investmentBook)) throw new SaveSchemaError(`${path}.investment_book`, "账面展示投资额必须等于累计收入乘配置比例（半偶舍入）");
+  }
+  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, share_splits, rights_offerings, issuer_repurchases, legal_facts: legalFacts, cash_book: cashBook, investment_book: investmentBook };
 }
 
 /// 配股账面事实（声明即冻结；结算回填 issued_shares/proceeds/capital_increase）。

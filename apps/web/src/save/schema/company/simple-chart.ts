@@ -43,6 +43,8 @@ const summary: readonly Definition[] = [
   ["simple_variable_expense", "Simple 汇总变动费用", "Expense"],
   ["simple_dividend_payable", "应付股利", "Liability"], ["simple_statutory_reserve", "法定公积金", "Equity"],
   ["simple_dividend_settlement_asset", "Simple 分红账面资产调整（非现金）", "Asset"],
+  ["simple_capital_reserve", "Simple 资本公积—股本溢价（账面）", "Equity"],
+  ["simple_issuer_funding_asset", "Simple 发行人募集资金账面调整（非现金）", "Asset"],
 ];
 
 export function simpleAccountChart(kind: CompanyKind): ChartOfAccounts {
