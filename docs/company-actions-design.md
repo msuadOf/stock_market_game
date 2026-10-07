@@ -101,3 +101,17 @@ Simple 以权威 Books 的年度税后利润及以前年度亏损计算额度；
 - 需成交的回购通过实际委托与成交执行，不伪造卖方；配股和增发认购使用投资者实际现金，不补认购资金。
 - 月末汇总不得覆盖已执行公司的现金、权益和股份事实；系统失败不得留下半笔跨主体结算。
 - 本文不宣称 API、三宿主或全部制度已经实现；实施清单和短测证据见[公司系统任务](../agents/company-system/implementation-checklist.md)。
+
+## 5. 共同契约公共查询合同（2026-10-08 F 批收口）
+
+面向消费者入口的最小公共查询合同（不照搬 Q14 §3 拟议函数名、不开放内部账簿；全部只读投影既有事实）：
+
+| 查询 | 入口 | 语义与单位 |
+| --- | --- | --- |
+| 公司能力面 | `CompanySystem::company_facts`（公司侧事实）+ `GameSession::company_capabilities`（完整视图） | 静态能力位 + 每股面值（分字符串）+ 现行总股本 + 注册资本/可分配利润快照（元字符串，与公开报表同口径）+ 未完成方案（阶段+关键日期）+ 各行为业务条件 + 本人权利摘要（owner 隔离） |
+| 期间变化解释 | `CompanySystem::period_change_explanation` | 按公司+结算周期末日复用既有 history；非周期末日/未结算/早于前史按四分类显式拒绝 |
+| 本人配股权益 | `GameSession::owner_rights_offerings` | 权证/公开配售剩余额度（与受理口径同构）/缴款窗口状态/排队与已结算认购；Settled 终态不出现 |
+| 简税代扣回执 | `GameSession::owner_flat_withholding_receipts` | 仅 FlatWithholding 模式；其他模式显式拒绝 |
+| 错误分类 | `CompanySystemError::classification` | 四分类附加面（非法输入/业务条件拒绝/未支持操作/系统状态错误），不替代具体错误信息 |
+
+不可用字段一律显式 reason，不填零（铁律三）；「业务条件满足」不承诺受理，受理仍执行完整制度校验。宿主接线（wasm 导出/worker/host/UI）与单位口径详见 [`trading-rules.md`](trading-rules.md)「公司共同契约公共查询面」节；Tauri／远程宿主留待后续批次。

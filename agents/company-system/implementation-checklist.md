@@ -44,7 +44,9 @@
   - 2026-10-07 对账：Simple 查询/恢复侧已按显式错误执行（严格 parser 拒绝缺字段、估值 `FundamentalUnavailable` 不填零）；作为两模式共同契约条目的形式化 → Simulation 分支，保持未勾。
 - [ ] 能力查询表达当前股份、方案及业务条件；不得把 simple 账面公司现金误作真实预算或分红付款条件。某次行为因共同条件被拒绝，不等同于 simple 不支持该能力。
   - 2026-10-07 对账：Simple 侧语义已由实现保证（分红按可分配利润而非展示现金拒绝、机制开关拒绝文案指明本局未启用而非模式不支持，证据见 [配股与回购台账](rights-and-repurchase.md) 与 `session::corporate_actions` 测试组）；两模式能力面等价对照 → Simulation 分支，保持未勾。
+  - 2026-10-08 F 批对账：能力面已升级为携带当前事实的结构化视图（面值/总股本/可分配利润快照/未完成方案阶段+关键日期/各行为业务条件+原因/本人权利摘要，不可用显式 reason 不填零；`company::capabilities` + `session::company_contract_views`，宿主接线见 [共同契约收口台账](contract-closure.md)）；「满足」不承诺受理的语义在类型文档与 trading-rules 同步登记。两模式对照部分仍留 Simulation 分支。
 - [ ] 短测：共同契约两模式对照、查询字段/单位一致、条件拒绝一致、错误分类、来源/披露元数据保真。→ Simulation 分支（两模式对照断言依赖第二实现）。
+  - 2026-10-08 F 批对账：单侧（Simple）已补齐——错误四分类映射（`company::error_classification_tests`，每类至少两例行为路径）、能力面快照断言（`company::capabilities_tests`）、解释/台账/本人额度（有/无权利、窗口外）与 Web 正负例（`session::company_contract_views_tests`、`company-contract-views.test.ts`、`company-contract-panel.test.ts`）；两模式对照断言仍留 Simulation 分支，保持未勾。
 
 ### 3. 实现 SimpleFundamentals 收入费用与汇总财务
 
