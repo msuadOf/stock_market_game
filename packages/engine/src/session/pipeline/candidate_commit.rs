@@ -70,7 +70,7 @@ pub(super) fn prepare_candidate_commit<'authority>(
                 .state
                 .envelope_ledger
                 .rebase_private_for_tick_commit();
-            let produced_revision = candidate.external_revision();
+            let _produced_revision = candidate.external_revision();
             let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
             let (queue_result, speculative) = rayon::join(
                 || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
@@ -79,7 +79,6 @@ pub(super) fn prepare_candidate_commit<'authority>(
                 // Arc，try_unwrap 必失败，每次命中深克隆整个 ReadOnlyStart，吃光
                 // 与 queue 重叠的收益。修复方向（分字段 Arc 或权威侧提前释放）见
                 // x1-progress.md；修好前保持关闭，None 占位。
-                let _ = produced_revision;
                 || Option::<super::read_only_start::SpeculativePrepareStash>::None,
             );
             queue_result?;
