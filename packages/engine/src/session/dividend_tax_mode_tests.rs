@@ -497,7 +497,7 @@ fn account_dividend_tax_status_rejects_unknown_account_explicitly() {
 /// 玩家(0)、散户(1)、机构(2) 与具名外部持有人入册，每股 `per_share_cents`
 /// 现金分红，2030-01-08 付款。返回（会话、玩家税前应得、散户税前应得、
 /// 机构税前应得、外部持有人税前应得）。
-fn flat_dividend_fixture(
+pub(crate) fn flat_dividend_fixture(
     setup: SessionSetup,
     per_share_cents: i64,
     holders: &[(AccountId, &'static str, u64)],
@@ -612,7 +612,7 @@ fn flat_dividend_fixture(
 }
 
 /// 推进到 2030-01-08 付款日日结完成（账户持有人到账即代扣）。
-fn advance_until_dividend_paid(session: &mut GameSession) {
+pub(crate) fn advance_until_dividend_paid(session: &mut GameSession) {
     let payable = CivilDate::from_iso("2030-01-08").unwrap();
     while session.civil_date() <= payable {
         if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
@@ -634,7 +634,7 @@ fn advance_until_dividend_paid(session: &mut GameSession) {
     );
 }
 
-fn flat_fixture_setup(rate_bp: u32) -> SessionSetup {
+pub(crate) fn flat_fixture_setup(rate_bp: u32) -> SessionSetup {
     let mut setup = tax_mode_setup_with_rate(CashDividendTaxMode::FlatWithholding, rate_bp);
     setup.npcs.inst_count = 1;
     setup.ticks_per_day = 1;

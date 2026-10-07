@@ -12,10 +12,13 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
+mod company_contract_views;
 mod company_corrections;
 mod company_groups;
 #[cfg(test)]
 mod company_mechanism_switch_tests;
+#[cfg(test)]
+mod company_contract_views_tests;
 #[cfg(test)]
 mod company_simple_session_tests;
 mod corporate_actions;
@@ -2611,6 +2614,94 @@ impl GameSession {
         self.state
             .corporate_actions
             .dividend_tax_outstanding_views()
+    }
+
+    /// 完整共同契约能力面（F 批收口）：公司当前事实 + 未完成方案 + 各行为
+    /// 业务条件 + 本人权利摘要（owner 隔离：`owner_rights` 只含查询账户的
+    /// 事实）。只读投影既有事实，不产生新状态；不可用字段显式给 reason。
+    pub fn company_capabilities(
+        &self,
+        company: &crate::company::CompanyId,
+        account: AccountId,
+    ) -> Result<crate::company::capabilities::CompanyCapabilities, SessionError> {
+        if !self.state.accounts.contains_key(&account) {
+            return Err(SessionError::InvalidSetup(format!(
+                "查询能力面的账户 {account:?} 不存在"
+            )));
+        }
+        company_contract_views::company_capabilities_view(
+            company,
+            account,
+            &self.state.company_system,
+            &self.state.corporate_actions,
+            self.state.setup.rights_offering_enabled,
+            self.state.setup.issuer_repurchase_enabled,
+            self.civil_date(),
+        )
+        .map_err(|error| SessionError::InvalidSetup(error.to_string()))
+    }
+
+    /// 账户维度的当前配股权证/额度/缴款窗口查询（F 批共同契约；复用
+    /// rights_offering books 与排队认购既有事实的只读投影，Settled 终态
+    /// 不再出现）。未知账户显式报错。
+    pub fn owner_rights_offerings(
+        &self,
+        account: AccountId,
+    ) -> Result<Vec<corporate_actions::OwnerRightsOfferingView>, SessionError> {
+        if !self.state.accounts.contains_key(&account) {
+            return Err(SessionError::InvalidSetup(format!(
+                "查询配股权益的账户 {account:?} 不存在"
+            )));
+        }
+        company_contract_views::owner_rights_views(
+            &self.state.corporate_actions,
+            account,
+            self.civil_date(),
+        )
+        .map_err(|error| SessionError::InvalidSetup(error.to_string()))
+    }
+
+    /// Flat（简税）模式的付款日代扣回执查询（owner 隔离；复用
+    /// `flat_withholding_receipts` 既有事实）。非 Flat 模式显式拒绝，
+    /// 不冒充空台账。
+    pub fn owner_flat_withholding_receipts(
+        &self,
+        account: AccountId,
+    ) -> Result<Vec<corporate_actions::FlatWithholdingReceipt>, SessionError> {
+        if self.state.setup.dividend_tax_mode
+            != crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding
+        {
+            return Err(SessionError::InvalidSetup(
+                "当前会话现金分红税务模式非 FlatWithholding（简税），无付款日代扣回执可查"
+                    .into(),
+            ));
+        }
+        if !self.state.accounts.contains_key(&account) {
+            return Err(SessionError::InvalidSetup(format!(
+                "查询简税代扣回执的账户 {account:?} 不存在"
+            )));
+        }
+        Ok(self
+            .state
+            .corporate_actions
+            .flat_withholding_receipts
+            .iter()
+            .filter(|receipt| receipt.account == account)
+            .cloned()
+            .collect())
+    }
+
+    /// 按公司+期间读取期间变化解释（委托 [`crate::company::CompanySystem::period_change_explanation`]；
+    /// 复用既有 history，只读不新建状态）。
+    pub fn company_period_explanation(
+        &self,
+        company: &crate::company::CompanyId,
+        period_end: crate::calendar::CivilDate,
+    ) -> Result<crate::company::simple::period::PeriodChangeExplanation, SessionError> {
+        self.state
+            .company_system
+            .period_change_explanation(company, period_end)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))
     }
 
     /// 显式绑定公司注册资本及其来源证据；不会从股本或账户持仓推断法定事实。
