@@ -13,8 +13,32 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
         .get("corporate_actions")
         .and_then(Value::as_object)
         .ok_or("Engine 保存结果缺少 corporate_actions 对象")?;
+    // N2a（2026-10-08）起开局自动装配：本场景零流通盘，名册恰好一个持有人
+    //（具名外部股东承接全部股本），发行股数守恒；无任何公司行为事实。
+    let registries = actions
+        .get("registries")
+        .and_then(Value::as_array)
+        .ok_or("休市档 corporate_actions.registries 必须是 Engine 生成的数组")?;
+    if registries.len() != 1 {
+        return Err(format!("休市档必须恰好一个自动装配名册，实际 {}", registries.len()).into());
+    }
+    let registry = &registries[0];
+    let holdings = registry
+        .get("holdings")
+        .and_then(Value::as_array)
+        .ok_or("休市档名册缺少 holdings")?;
+    if holdings.len() != 1 {
+        return Err(format!("零流通盘名册必须只有外部股东一个持有人，实际 {}", holdings.len()).into());
+    }
+    if !holdings[0]
+        .get("holder")
+        .and_then(|holder| holder.get("External"))
+        .and_then(Value::as_str)
+        .is_some_and(|name| name.starts_with("session-auto:founding:"))
+    {
+        return Err("零流通盘名册必须由具名外部股东承接全部股本".into());
+    }
     for field in [
-        "registries",
         "dividends",
         "stock_distributions",
         "share_splits",
@@ -75,11 +99,42 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
             .get("finance")
             .and_then(Value::as_object)
             .ok_or_else(|| format!("休市 Simple company {company} 缺少 finance"))?;
-        if !finance.get("legal_facts").is_some_and(Value::is_null)
-            || finance
-                .get("dividends")
-                .and_then(Value::as_object)
-                .is_none_or(|rows| !rows.is_empty())
+        // N2a（2026-10-08）起开局自动装配：legal_facts 必须携带面值推定的
+        // 注册资本（100 分 × 总股本 10,000,000 = 1,000,000,000 分）；公司行为
+        // 事实簿保持空。
+        let legal_facts = finance
+            .get("legal_facts")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                format!("休市 Simple company {company} 必须携带自动装配的注册资本法定事实")
+            })?;
+        let registered_cents = legal_facts
+            .get("registered_capital")
+            .and_then(Value::as_str)
+            .and_then(|value| {
+                // AccountingAmount 序列化为「元」两位小数字符串，换算回分比对。
+                let (whole, fraction) = value.split_once('.')?;
+                let whole = whole.parse::<i128>().ok()?;
+                let mut frac_cents = 0_i128;
+                for (index, ch) in fraction.chars().take(2).enumerate() {
+                    let digit = i128::from(ch.to_digit(10)?);
+                    frac_cents += digit * if index == 0 { 10 } else { 1 };
+                }
+                whole.checked_mul(100)?.checked_add(frac_cents)
+            })
+            .ok_or_else(|| {
+                format!("休市 Simple company {company} 的注册资本法定事实缺少数值")
+            })?;
+        if registered_cents != 100 * 10_000_000 {
+            return Err(format!(
+                "休市 Simple company {company} 注册资本 {registered_cents} 分必须等于面值 100 分 × 总股本"
+            )
+            .into());
+        }
+        if finance
+            .get("dividends")
+            .and_then(Value::as_object)
+            .is_none_or(|rows| !rows.is_empty())
             || finance
                 .get("stock_distributions")
                 .and_then(Value::as_object)
@@ -94,7 +149,7 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
                 .is_none_or(|rows| !rows.is_empty())
         {
             return Err(format!(
-                "休市 Simple company {company} 的 legal_facts 必须为 null 且 dividends、stock_distributions、rights_offerings 与 issuer_repurchases 必须为空对象"
+                "休市 Simple company {company} 的 dividends、stock_distributions、rights_offerings 与 issuer_repurchases 必须为空对象"
             )
             .into());
         }
@@ -152,6 +207,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("参数过多".into());
     }
 
+    // N2a（2026-10-08）起 fixture 携带温和默认偏好（与 Web DEFAULT_SETUP
+    // 同值）：现金分红启用、送转关闭。本场景（单休市日日结）不触发偏好评估。
+    let mut company_system = simple_company_fixture!(engine; ["600101"]);
+    if let engine::company::config::CompanySystemConfig::Simple(config) = &mut company_system {
+        config.companies[0].preferences = engine::company::simple::SimpleCompanyPreferences {
+            cash_dividend: Some(engine::company::simple::SimpleCashDividendPreference {
+                target_payout_bp: 3_000,
+                min_distributable_profit: Money::from_cents(100_000_000),
+                cycles_between_proposals: 1,
+            }),
+            stock_distribution: None,
+        };
+    }
     let setup = SessionSetup {
         stocks: vec![StockSpec {
             code: StockCode("600101".into()),
@@ -163,7 +231,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             total_shares: 10_000_000,
             float_shares: 0,
         }],
-        company_system: simple_company_fixture!(engine; ["600101"]),
+        company_system,
         npcs: NpcSetup {
             retail_count: 0,
             inst_count: 0,
@@ -214,6 +282,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
+        par_value_per_share: Money::from_cents(100),
+        auto_corporate_foundation: true,
     };
     setup.validate()?;
 
