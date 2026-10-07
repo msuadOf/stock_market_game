@@ -69,10 +69,13 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
   - `resources Debug eq = true / PartialEq = false / diff = [account:AccountId(1)]`——DecisionResourceSnapshot 的自定义 Debug 只打 account_count（空证明），真 PartialEq 在 account 1 的 cash/positions 上不等。
   - **根因类别：stash 无法感知 commit 尾部与下次 plan_tick 之间对账户的直接改动**——测试夹具（或任何宿主直改 state）在两步之间 fixture_set_cash，投机 stash 携带旧现金，消费侧 tick+eligibility 双校验检不出"值过期"，验证器拿到偏松现金 → InsufficientCash 拒单缺失。第二测（母单链接）同机理（parent_orders 直改差异）。
   - 排除项（棒次 11/12 实证）：非快照时序（串行写后投机仍红）、非生产副作用（只产不消即绿）、非 Arc/Weak 身份敏感结构本身（差异在值不在身份——PartialEq 比的是 cash/positions 值）。
-  **修复方向（下一棒二选一，走完整门禁）**：
-  A. **新鲜度校验**：state 加 `revision: u64`（或复用现成 seq？），任何权威直接改动路径（fixture_set_*、宿主 API、事务提交）自增；stash 记录生产时 revision，消费要求相等，否则回退现算。生产路径 commit→plan 之间 revision 不变 → 命中不受影响；测试直改 → 自动回退。改动小、语义清晰。
-  B. 生产语义契约化：声明"commit 与下个 plan 之间不得直改权威状态"并把两测的直改改为先 step 后改再 step——改变测试语义，需用户裁决（生产 server 侧确无直改，但契约要写进 ADR）。
-  推荐 A。实装后复装投机臂（并发版，代码在本提交历史）、跑全量 + 1/4/16 一致性 + probe + 锚定交错配对。
+  **裁决（协调方）：方案 A（revision 新鲜度校验）。棒次 13 设计细化（含两个已排雷陷阱）**：
+  - **陷阱 1（已排雷）**：revision 不能挂在 `AccountBook::get_mut` 等共享写入口——queue 的 strategy 写也走 get_mut，会把正常管线写标记成"外部改动"，每个有 NPC 决策的 tick 都回退，命中率崩溃。
+  - **陷阱 2（已排雷）**：revision 挂在 state 且随 commit_from 覆盖——tick 中段的权威直改会被 candidate 的旧值覆盖丢失；但语义上 tick 管线本就赢过直改（直改被提交丢弃），stash 描述 candidate 终态仍然正确——无需 max() 补救，天然自洽。
+  - **正解规格**：`revision: Cell<u64>` 挂 **GameSession 顶层**（不入 state 克隆链），提供 `mark_external_mutation()`；**审计并迁移全部直改入口**：cfg(test) 的 fixture 直改改为 `game.fixture_account_mut(id)`（返回 &mut Account 并自增 revision）或显式先 mark 再改；宿主/未来玩家注入 API 同样先 mark。直改必须 mark——写进 ADR 红线清单，独立复核重点核清单完备性。
+  - stash 增 `produced_revision`（生产时 candidate.revision）；消费条件追加 `stash.produced_revision == session.revision`；不等→整体回退现算。
+  - TDD：现有两红测即现成红灯（直改后 stash 拒绝消费）→ 绿；再加一红：无直改时 revision 不变、命中率不受损（计数器差分）。
+  - 之后：复装并发投机臂（历史 42338194 父代代码）→ 全量 1319/8 → 1/4/16 一致性 → probe+verify-build → 锚定交错配对 ≥5 对 → ≥2% 保留 → 报协调方独立复核 → 终稿。
   3. 我方 mismatch 测试的 hits 精确断言已按进程级计数器先例改差分。
 - **协调方第 3 点待办**：seal_on 的"只读 cash/positions"声明要落成真实 debug_assert/测试（写侧 restore_strategy 后 seal 输出必须不变）——加入下一棒首件事。
 - 复装投机臂：git 历史本提交父代的 candidate_commit.rs 中被替换为 None 的那臂代码即完整实现（can_prepare_on/prepare_on/for_tick=view.tick）。
