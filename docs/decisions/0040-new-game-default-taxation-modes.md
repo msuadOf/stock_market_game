@@ -33,10 +33,12 @@
 
 配套契约：
 
-- **严格持久化、无兼容**（用户 2026-10-07 无兼容原则）：模式与比例均为新档必填字段、
-  无 serde 默认；旧两变体枚举值（`IndividualPublicMarket`）已整体删除，携带旧值的档在
-  engine 与 Web 两端显式拒绝，不静默映射。简税比例是三态契约：仅 `FlatWithholding`
-  必填、其他模式显式拒绝携带（engine `SessionSetup::validate` 与 Web `parseSetup` 同构）。
+- **严格持久化、无兼容**（用户 2026-10-07 无兼容原则）：`dividend_tax_mode` 为新档
+  必填字段，无 serde 默认；旧两变体枚举值（`IndividualPublicMarket`）已整体删除，
+  携带旧值的档在 engine 与 Web 两端显式拒绝，不静默映射。`flat_withholding_bp` 是
+  三态契约：仅 `FlatWithholding` 必填合法数值；其他模式缺失或 `null` 表示不携带，
+  携带数值显式拒绝，序列化输出 `null`（engine `SessionSetup::validate` 与 Web
+  `parseSetup` 同构）。比例没有 serde 默认，不会为简税档静默补齐比例。
 - **印花税按模式门禁**：`FlatWithholding`／`AShareIndividual` 要求
   `stamp_tax_rate == 0.0005`（现行 A 股基线），`Exempt` 要求 `stamp_tax_rate == 0`。
   配对在 setup 校验的单一入口强制；费用管线（结算、名义费用、NPC 估算与恢复重放）
