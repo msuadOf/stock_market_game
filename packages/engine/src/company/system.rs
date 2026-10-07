@@ -8,6 +8,17 @@ use crate::calendar::CivilDate;
 pub enum CompanySystemError {
     #[error("公司系统输入非法：{0}")]
     Invalid(String),
+    /// 非法输入（四分类收口后的准确落点；display 与 `Invalid` 保持同形，
+    /// 「不改变行为只改分类面」）。存量调用点逐步迁移，未迁移的留在 `Invalid`。
+    #[error("公司系统输入非法：{0}")]
+    InvalidInput(String),
+    /// 业务条件拒绝（display 与 `Invalid` 保持同形，理由同上）。
+    #[error("公司系统输入非法：{0}")]
+    BusinessCondition(String),
+    /// 系统状态错误：恢复勾稽／不变量校验发现状态不一致（display 与 `Invalid`
+    /// 保持同形，理由同上）。
+    #[error("公司系统输入非法：{0}")]
+    SystemState(String),
     #[error("公司系统尚不支持：{0}")]
     Unsupported(String),
     #[error(transparent)]
@@ -16,6 +27,24 @@ pub enum CompanySystemError {
     Date(#[from] crate::calendar::CivilDateError),
     #[error(transparent)]
     Finance(#[from] super::simple::SimpleFinanceError),
+}
+
+impl CompanySystemError {
+    /// 公司域公共错误的四分类附加面（R4 最小公共合同）。分类不改变任何错误
+    /// 信息或控制流；映射依据见各变体注释与
+    /// `packages/engine/src/company/error_classification_tests.rs`。
+    pub fn classification(&self) -> super::error::CompanyErrorClass {
+        use super::error::CompanyErrorClass;
+        match self {
+            Self::Invalid(_) | Self::InvalidInput(_) | Self::Date(_) => {
+                CompanyErrorClass::InvalidInput
+            }
+            Self::BusinessCondition(_) => CompanyErrorClass::BusinessCondition,
+            Self::SystemState(_) | Self::Accounting(_) => CompanyErrorClass::SystemState,
+            Self::Unsupported(_) => CompanyErrorClass::UnsupportedOperation,
+            Self::Finance(source) => source.classification(),
+        }
+    }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -238,19 +267,19 @@ impl CompanySystem {
         for book in books {
             let plan = book.plan();
             if !seen_events.insert(plan.event_id.clone()) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "拆股／缩股事件 {} 重复出现账簿",
                     plan.event_id
                 )));
             }
             let issuer = self.issuers.get(&plan.issuer).ok_or_else(|| {
-                CompanySystemError::Invalid(format!(
+                CompanySystemError::SystemState(format!(
                     "拆股／缩股账簿引用未知发行人 {}",
                     plan.issuer.0
                 ))
             })?;
             if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "拆股／缩股事件 {} 的证券与发行人不匹配",
                     plan.event_id
                 )));
@@ -260,7 +289,7 @@ impl CompanySystem {
                 .into_iter()
                 .find(|fact| fact.event_id == plan.event_id)
                 .ok_or_else(|| {
-                    CompanySystemError::Invalid(format!(
+                    CompanySystemError::SystemState(format!(
                         "拆股／缩股事件 {} 缺少 Simple 声明事实",
                         plan.event_id
                     ))
@@ -270,7 +299,7 @@ impl CompanySystem {
                 || fact.direction != plan.direction
                 || fact.ratio != plan.ratio
             {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "拆股／缩股事件 {} 与 Simple 声明的日期、引用、方向或比例不一致",
                     plan.event_id
                 )));
@@ -279,7 +308,7 @@ impl CompanySystem {
                 (Some(book_date), Some(fact_date)) if book_date == fact_date => {}
                 (None, None) => {}
                 _ => {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "拆股／缩股事件 {} 的入账事实与 Simple 账面回填不一致",
                         plan.event_id
                     )));
@@ -297,7 +326,7 @@ impl CompanySystem {
             };
             for fact in finance.share_split_facts()? {
                 if !bound_events.contains(&fact.event_id) {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "公司 {} 存在未绑定账簿的拆股／缩股声明 {}",
                         company.0, fact.event_id
                     )));
@@ -317,7 +346,7 @@ impl CompanySystem {
         for book in books {
             let plan = book.plan();
             if !seen_events.insert(plan.event_id.clone()) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "送转事件 {} 重复出现账簿",
                     plan.event_id
                 )));
@@ -326,13 +355,13 @@ impl CompanySystem {
                 .issuers
                 .get(&plan.issuer)
                 .ok_or_else(|| {
-                    CompanySystemError::Invalid(format!(
+                    CompanySystemError::SystemState(format!(
                         "送转账簿引用未知发行人 {}",
                         plan.issuer.0
                     ))
                 })?;
             if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "送转事件 {} 的证券与发行人不匹配",
                     plan.event_id
                 )));
@@ -342,7 +371,7 @@ impl CompanySystem {
                 .into_iter()
                 .find(|fact| fact.event_id == plan.event_id)
                 .ok_or_else(|| {
-                    CompanySystemError::Invalid(format!(
+                    CompanySystemError::SystemState(format!(
                         "送转事件 {} 缺少 Simple 声明事实",
                         plan.event_id
                     ))
@@ -352,7 +381,7 @@ impl CompanySystem {
                 || fact.kind != plan.kind
                 || fact.new_shares != plan.approved_total_new_shares
             {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "送转事件 {} 与 Simple 声明的日期、引用、类别或股数不一致",
                     plan.event_id
                 )));
@@ -361,7 +390,7 @@ impl CompanySystem {
                 (Some(book_date), Some(fact_date)) if book_date == fact_date => {}
                 (None, None) => {}
                 _ => {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "送转事件 {} 的入账事实与 Simple 账面回填不一致",
                         plan.event_id
                     )));
@@ -385,7 +414,7 @@ impl CompanySystem {
         for (company, facts) in declared {
             for fact in facts {
                 if !bound_events.contains(&fact.event_id) {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "公司 {} 存在未绑定账簿的送转声明 {}",
                         company.0, fact.event_id
                     )));
@@ -514,16 +543,19 @@ impl CompanySystem {
         for book in books {
             let plan = book.plan();
             if !seen_events.insert(plan.event_id.clone()) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "回购方案 {} 重复出现账簿",
                     plan.event_id
                 )));
             }
             let issuer = self.issuers.get(&plan.issuer).ok_or_else(|| {
-                CompanySystemError::Invalid(format!("回购账簿引用未知发行人 {}", plan.issuer.0))
+                CompanySystemError::InvalidInput(format!(
+                    "回购账簿引用未知发行人 {}",
+                    plan.issuer.0
+                ))
             })?;
             if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "回购方案 {} 的证券与发行人不匹配",
                     plan.event_id
                 )));
@@ -533,7 +565,7 @@ impl CompanySystem {
                 .into_iter()
                 .find(|fact| fact.event_id == plan.event_id)
                 .ok_or_else(|| {
-                    CompanySystemError::Invalid(format!(
+                    CompanySystemError::SystemState(format!(
                         "回购方案 {} 缺少 Simple 声明事实",
                         plan.event_id
                     ))
@@ -543,7 +575,7 @@ impl CompanySystem {
                 || fact.synthetic_funding
                     != crate::accounting::AccountingAmount::from_money(plan.total_budget)
             {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "回购方案 {} 与 Simple 声明的日期、引用或额度不一致",
                     plan.event_id
                 )));
@@ -569,7 +601,7 @@ impl CompanySystem {
                             book.withdrawn_remainder().unwrap_or(crate::money::Money::ZERO),
                         ) => {}
                 _ => {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "回购方案 {} 的完成事实与 Simple 账面回填不一致",
                         plan.event_id
                     )));
@@ -579,14 +611,14 @@ impl CompanySystem {
                 (None, None) => {}
                 (Some(book_date), Some(fact_date)) if book_date == fact_date => {
                     if book.cancelled_shares() != fact.cancelled_shares {
-                        return Err(CompanySystemError::Invalid(format!(
+                        return Err(CompanySystemError::SystemState(format!(
                             "回购方案 {} 的注销股数与 Simple 账面回填不一致",
                             plan.event_id
                         )));
                     }
                 }
                 _ => {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "回购方案 {} 的注销事实与 Simple 账面回填不一致",
                         plan.event_id
                     )));
@@ -603,7 +635,7 @@ impl CompanySystem {
             };
             for fact in finance.issuer_repurchase_facts()? {
                 if !bound_events.contains(&fact.event_id) {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "公司 {} 存在未绑定账簿的回购声明 {}",
                         company.0, fact.event_id
                     )));
@@ -623,16 +655,19 @@ impl CompanySystem {
         for book in books {
             let plan = book.plan();
             if !seen_events.insert(plan.event_id.clone()) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "配股事件 {} 重复出现账簿",
                     plan.event_id
                 )));
             }
             let issuer = self.issuers.get(&plan.issuer).ok_or_else(|| {
-                CompanySystemError::Invalid(format!("配股账簿引用未知发行人 {}", plan.issuer.0))
+                CompanySystemError::InvalidInput(format!(
+                    "配股账簿引用未知发行人 {}",
+                    plan.issuer.0
+                ))
             })?;
             if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "配股事件 {} 的证券与发行人不匹配",
                     plan.event_id
                 )));
@@ -642,7 +677,7 @@ impl CompanySystem {
                 .into_iter()
                 .find(|fact| fact.event_id == plan.event_id)
                 .ok_or_else(|| {
-                    CompanySystemError::Invalid(format!(
+                    CompanySystemError::SystemState(format!(
                         "配股事件 {} 缺少 Simple 声明事实",
                         plan.event_id
                     ))
@@ -651,7 +686,7 @@ impl CompanySystem {
                 || fact.approval_reference != plan.approval_reference
                 || fact.price_per_share != plan.price_per_share
             {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "配股事件 {} 与 Simple 声明的日期、引用或价格不一致",
                     plan.event_id
                 )));
@@ -689,7 +724,7 @@ impl CompanySystem {
                     Some((fact_date, 0, _fact_proceeds, true)),
                 ) if book_date == fact_date => {}
                 _ => {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "配股事件 {} 的结算事实与 Simple 账面回填不一致",
                         plan.event_id
                     )));
@@ -708,7 +743,7 @@ impl CompanySystem {
             };
             for fact in finance.rights_offering_facts()? {
                 if !bound_events.contains(&fact.event_id) {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "公司 {} 存在未绑定账簿的配股声明 {}",
                         company.0, fact.event_id
                     )));
@@ -728,7 +763,7 @@ impl CompanySystem {
             .iter()
             .any(|book| self.issuers.get(&book.plan().issuer).is_none())
         {
-            return Err(CompanySystemError::Invalid(
+            return Err(CompanySystemError::InvalidInput(
                 "现金分红账簿引用未知发行人".into(),
             ));
         }
@@ -747,14 +782,14 @@ impl CompanySystem {
                 .map(|book| (book.plan().plan_id.as_str(), *book))
                 .collect::<BTreeMap<_, _>>();
             if by_plan.len() != issuer_books.len() {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "公司 {} 存在重复现金分红计划",
                     company.0
                 )));
             }
             for plan in plans {
                 let book = by_plan.get(plan.plan_id.as_str()).ok_or_else(|| {
-                    CompanySystemError::Invalid(format!(
+                    CompanySystemError::SystemState(format!(
                         "Simple 分红计划 {} 缺少对应现金分红账簿",
                         plan.plan_id
                     ))
@@ -776,7 +811,7 @@ impl CompanySystem {
                     || plan.registered_capital_source_evidence.trim().is_empty()
                     || cash_plan.issuer != *company
                 {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "现金分红计划 {} 与 Simple 批准金额、日期或法律事实来源不一致",
                         plan.plan_id
                     )));
@@ -787,7 +822,7 @@ impl CompanySystem {
                     .map(|payment| (payment.payment_id.as_str(), payment))
                     .collect::<BTreeMap<_, _>>();
                 if finance_payments.len() != plan.payments.len() {
-                    return Err(CompanySystemError::Invalid(format!(
+                    return Err(CompanySystemError::SystemState(format!(
                         "Simple 分红计划 {} 存在重复付款批次",
                         plan.plan_id
                     )));
@@ -807,7 +842,7 @@ impl CompanySystem {
                         if successful.cents() == 0 {
                             continue;
                         }
-                        return Err(CompanySystemError::Invalid(format!(
+                        return Err(CompanySystemError::SystemState(format!(
                             "成功现金到账批次 {} 缺少 Simple 付款凭证",
                             receipt.payment_id()
                         )));
@@ -816,7 +851,7 @@ impl CompanySystem {
                         || crate::accounting::AccountingAmount::from_money(successful)
                             != payment.amount
                     {
-                        return Err(CompanySystemError::Invalid(format!(
+                        return Err(CompanySystemError::SystemState(format!(
                             "付款批次 {} 的 Simple 账簿与持有人到账不一致",
                             receipt.payment_id()
                         )));
@@ -833,7 +868,7 @@ impl CompanySystem {
                         plan.plan_id.clone(),
                         payment.payment_id.clone(),
                     )) {
-                        return Err(CompanySystemError::Invalid(format!(
+                        return Err(CompanySystemError::SystemState(format!(
                             "Simple 付款批次 {} 缺少匹配的持有人到账回执",
                             payment.payment_id
                         )));
@@ -841,7 +876,7 @@ impl CompanySystem {
                 }
             }
             if by_plan.keys().any(|plan_id| !plan_ids.contains(*plan_id)) {
-                return Err(CompanySystemError::Invalid(format!(
+                return Err(CompanySystemError::SystemState(format!(
                     "公司 {} 存在未绑定 Simple 声明的现金分红计划",
                     company.0
                 )));
@@ -903,7 +938,7 @@ impl CompanySystem {
                 .iter()
                 .find(|config| &config.company == company)
                 .map(|config| config.preferences.clone())
-                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+                .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))),
         }
     }
     /// 如实记录一笔被制度拒绝的偏好提案；同键同因幂等，同键异因显式报错。
@@ -921,7 +956,7 @@ impl CompanySystem {
             let entry = state
                 .companies
                 .get_mut(company)
-                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0)))?;
+                .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0)))?;
             entry
                 .preference_ledger
                 .record_rejection(company, kind, evaluated_on, detail)
@@ -942,7 +977,7 @@ impl CompanySystem {
                 .companies
                 .get(company)
                 .map(|entry| entry.preference_ledger.last_rejection_on(company, kind))
-                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+                .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))),
         }
     }
     /// 该公司的偏好提案拒绝台账（只读；宿主/UI 呈现由后续批次接线）。
@@ -955,7 +990,7 @@ impl CompanySystem {
                 .companies
                 .get(company)
                 .map(|entry| entry.preference_ledger.rejections.as_slice())
-                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+                .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))),
         }
     }
     pub fn config(&self) -> CompanySystemConfig {
@@ -991,7 +1026,7 @@ impl CompanySystem {
                 .companies
                 .get(company)
                 .map(|company| &company.finance)
-                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+                .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))),
         }
     }
     pub(crate) fn finance_mut(
@@ -1004,7 +1039,7 @@ impl CompanySystem {
                 .companies
                 .get_mut(company)
                 .map(|company| &mut company.finance)
-                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+                .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))),
         }
     }
     pub(crate) fn closed_reports(

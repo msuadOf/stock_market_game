@@ -75,6 +75,31 @@ pub enum SimpleFinanceError {
     ShareSplitConflict(String),
 }
 
+impl SimpleFinanceError {
+    /// 四分类附加面（委托给 [`crate::company::CompanySystemError::classification`]）：
+    /// 状态机阶段拒绝与事实冲突属业务条件拒绝，显式「暂不支持」属未支持操作，
+    /// 底层会计／封账／报表／税务错误属系统状态错误，非法日期属非法输入。
+    pub fn classification(&self) -> crate::company::error::CompanyErrorClass {
+        use crate::company::error::CompanyErrorClass;
+        match self {
+            Self::Invalid(_) | Self::Date(_) => CompanyErrorClass::InvalidInput,
+            Self::DividendUnsupported(_) => CompanyErrorClass::UnsupportedOperation,
+            Self::DividendPlanConflict(_)
+            | Self::DividendLegalFactsConflict(_)
+            | Self::DividendInvalid(_)
+            | Self::StockDistributionInvalid(_)
+            | Self::StockDistributionConflict(_)
+            | Self::ShareSplitInvalid(_)
+            | Self::ShareSplitConflict(_) => CompanyErrorClass::BusinessCondition,
+            Self::Accounting(_)
+            | Self::Closing(_)
+            | Self::Report(_)
+            | Self::Policy(_)
+            | Self::Tax(_) => CompanyErrorClass::SystemState,
+        }
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DividendPlanState {
