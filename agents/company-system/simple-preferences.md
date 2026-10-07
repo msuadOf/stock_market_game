@@ -99,10 +99,13 @@ P 批门禁复核 findings 的修复记录（复核意见全文见主对话；�
   `docs/trading-rules.md` 同步改写）：
   1. 封顶改为按**实际日程推导的跌停敞口余量**：敞露交易日数 n = `(周期末, 登记日]`
      内的交易所交易日（本日程结构下恒为 1 或 2，公告日休市时 1——禁止固定 2 天），
-     封顶 = floor(锚收盘 × (1 − n×limit_bps/10000)) − 必留正参考价分子；余量耗尽
-     （n×limit ≥ 10000，现行板块限制下不可达，防御性拒绝）或封顶非正时如实记录拒绝。
-     数学依据：单日跌停价 = 昨收×(1−p) 四舍五入（偏上）且 ≥ 1 价位，n 日连续跌停后
-     收盘 ≥ 锚×(1−p)^n ≥ 锚×(1−np)（Bernoulli），线性下界向下取整只会更保守。
+     封顶 = 最坏登记日收盘下界 − 必留正参考价分子；封顶非正时如实记录拒绝。
+     ~~数学依据：单日跌停价 = 昨收×(1−p) 四舍五入（偏上）且 ≥ 1 价位，n 日连续跌停后
+     收盘 ≥ 锚×(1−p)^n ≥ 锚×(1−np)（Bernoulli），线性下界向下取整只会更保守。~~
+     **该闭式依据已在下一修复轮（见下「门禁复核修复轮 2」）被证伪并废除**：低价域
+     守卫（跌停幅度不足一个价位时强制至少一 tick 下移）使单日实际跌幅可超过 p，
+     闭式线性下界 floor(锚×(1−np)) 高于真实链，按其封顶会使最坏除息参考价非正。
+     本轮当时的实现（闭式下界）已被迭代链实现取代，此处保留原记述仅作历史。
   2. **同除息日合并口径**：既有方案（显式 + 自动）的 `gross_per_share` 求和后必须仍
      满足封顶；同除息日存在送转事件时分子须保留 `1 + ceil(ratio/10^6)` 分（合并除权
      参考 = 分子/(1+ratio) 银行家舍入到分，商 0 时舍入不保证 ≥1 分）。Session 侧
@@ -159,6 +162,68 @@ P 批门禁复核 findings 的修复记录（复核意见全文见主对话；�
 则归并错周期一日）。复核认定该口径只影响频率判定早晚一个周期、无正确性影响
 （提案间隔语义本就是「至少间隔 N 个完整周期」的保守近似），**维持不改**；同月内
 显式批准会抑制同周期自动评估的连带行为已在新 Session 用例中固定（见 B/C 用例注释）。
+
+## 门禁复核修复轮 2（2026-10-07，fix-round-2）
+
+上一轮（913bcc22）的封顶数学被复审以「独立复刻 `market::price_bound` 整数逻辑的
+暴力验证」证伪，本节登记反例、修复口径与红绿证据。
+
+### major：闭式线性下界在低价域失效（已修）
+
+- **缺陷确认**：`limit_down_margin_floor_cents` 旧实现取闭式线性下界
+  floor(锚 × (1 − n·p))，依托「单日跌停四舍五入偏上 ⇒ n 日收盘 ≥ 锚×(1−p)^n」。
+  但 `market::price_bound` 的下行守卫在**跌停幅度不足一个价位**（舍入结果未离开
+  昨收，等价于锚 × limit_bps ≤ 5000）时强制 `bound = 昨收 − 1 tick`，单日实际跌幅
+  超过 p，几何/线性下界全部失效。反例本体：4 分锚 @10% 板、n=2 连续一字跌停，真实
+  链 4→3→2，闭式给 floor(3.2)=3，封顶 3−1=2，最坏除息参考价 2−2=0 →
+  NonPositiveReferencePrice → 除息日日结 poison。触发域：10% 板锚 3–5 分、5% 板锚
+  3–10 分 × n=2（20% 板与 n=1 安全）。正常价域另有一致但方向相反的偏差：闭式偏保守
+  （如 1000 分锚 @10% n=2 闭式 800 < 真实链 810），封顶 unnecessarily 收紧。
+- **修复口径**（`market.rs` + `company/simple/preferences.rs` + `session.rs` 接线 +
+  `docs/trading-rules.md` 同步改写）：
+  1. `market.rs` 把 `price_bound` 的整数核心提取为 `pub(crate) fn price_bound_cents`
+     （round-half-up 到价位 + 最低一个价位 + 涨/跌幅度不足一个价位时强制至少移动一
+     tick 的守卫，`Market::price_bound` 改为调用它，行为零变化由 `market::` 组与
+     `tests/market` 集成组锁定）；另加 `Market::tick()` 只读访问器。
+  2. `limit_down_margin_floor_cents` 改为**从锚迭代该真实整数核心 n 步**取最小可能
+     收盘（新增 `tick_cents` 参数；迭代与引擎同源，无另行闭式近似，不保留快速
+     路径）。链每步恒 ≥1 价位，旧「n×limit ≥ 10000 余量耗尽 → None」概念废除；
+     None 仅剩非法输入/溢出的防御性拒绝。正常价域封顶从偏保守改为**精确**最小收盘
+     （1000 分锚 @10% n=2 封顶 799→809，最坏参考价恰 1 分）。
+  3. `SimpleCashDividendExposure` / `SimpleStockDistributionExposure` 增加 `tick`
+     字段，`session.rs` 行情锚接线同步传入，防止两侧价位取整口径漂移。
+  4. 测试侧独立复刻 `price_bound` 下行整数逻辑做交叉验证（不与实现共用代码）：
+     全域一致性用例覆盖低价守卫域穷举（锚 1..=2000）+ 各档守卫触发阈值邻域 +
+     大锚粗步进（至 100_000_00 分）× {500,1000,2000,3000,5000}bp × n∈{1,2}，
+     >2 万组逐一相等；定向矩阵用例覆盖 3/5/10 分锚 × 5%/10% 板 × n=1/2 全组合
+     并登记 7 个证伪组合（迭代链严格小于旧闭式值）。
+- **红→绿证据**（日志在 `.tmp/company-system/simple-preferences/`，命令均带
+  `run-with-deadline.mjs 10000` 外部 deadline；编译预热用 `cargo test --no-run`
+  单独执行，不占测试预算）：
+  - 红 A（行为红，913bcc22 实现 + 新测试）`fix2-red-session.log`：新增 Session 边界
+    用例 `auto_proposal_survives_low_price_double_limit_downs_where_linear_bound_was_falsified`
+    断言封顶 1 分、实际 2 分（反例本体）；既有连续跌停用例 799 ≠ 809、合并用例
+    299 ≠ 309 共 3 项行为红（11 passed / 3 failed）。
+  - 红 B（编译红）`fix2-red-unit-compile.log`：新签名（exposure `tick` 字段 +
+    `limit_down_margin_floor_cents` 第 4 参）17 个编译错误（E0061×11、E0560×6）。
+  - 绿：`fix2-green-session.log`（Session 偏好 14/14：13 既有 + 1 新增，低价域两日
+    一字跌停全链路参考价恰 1 分、日结到 Paid、无 poison）、`fix2-green-company-simple.log`
+    88/88（偏好单元 +2：全域交叉验证与触发域矩阵）、`fix2-green-session-simple-36.log`
+    36/36、`fix2-green-corporate-actions.log` 12/12、`fix2-green-dividend-tax.log`
+    8/8、`fix2-green-market-lib.log` 8/8、`fix2-green-market-integration.log` 15/15
+    （`price_bound` 重构行为锁）、`fix2-green-web-system.log`（Web `system.test.ts`
+    16/16）、`fix2-green-cargo-check.log`（workspace --exclude stock-market-game 通过）。
+  - 回归对比：完整 `engine --lib` 在本机当前负载下 10s 预算内跑不完（64 线程仍超），
+    按分片对比——`fix2-engine-lib-shard-nonsession.log`（--skip session::，575
+    passed / 13 failed）与 stash 基线失败集**逐名 diff 完全一致**（13 项均为既有
+    失败：accounting::reports 2、company::operations::day 3、verification_evidence 8）；
+    session 侧 `session::failure` 3 项失败经 stash 复跑确认为基线既有；session 全分片
+    因含分钟级既有用例无法入 10s 预算（尝试日志 `fix2-engine-lib-shard-session.log`
+    为 deadline 终止的未完成运行，不作为证据），以定向组全绿 + 本批改动面
+    （market/preferences/偏好接线）全覆盖代替。
+- **文档**：`docs/trading-rules.md`「公司行为偏好自动提案」封顶条目按迭代口径改写
+  （守卫语义如实描述 + 反例与触发域登记为已修复历史 + 「除息日当日再跌停安全」的
+  守卫措辞补全）；本台账上一轮的闭式「数学依据」标注废除并指向本节。
 
 ## 与 M 批的预期冲突面
 

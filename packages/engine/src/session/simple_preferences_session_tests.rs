@@ -69,7 +69,21 @@ fn session_with_registry(
     player_qty: u64,
     registered_capital_cents: i128,
 ) -> (GameSession, CompanyId, StockCode) {
-    let mut session = GameSession::new(preference_setup(preferences), 42).unwrap();
+    session_with_registry_setup(
+        preference_setup(preferences),
+        player_qty,
+        registered_capital_cents,
+    )
+}
+
+/// [`session_with_registry`] 的可定制 setup 变体：测试按需覆盖初始价等
+/// `SessionSetup` 字段后传入（其余装配与名册/法定事实注入完全一致）。
+fn session_with_registry_setup(
+    setup: SessionSetup,
+    player_qty: u64,
+    registered_capital_cents: i128,
+) -> (GameSession, CompanyId, StockCode) {
+    let mut session = GameSession::new(setup, 42).unwrap();
     let stock = session.state.setup.stocks[0].code.clone();
     let issuer = session
         .state
@@ -533,6 +547,31 @@ fn exposed_trading_days(
     count
 }
 
+/// 测试侧独立复刻：单日跌停价的整数推导（与实现不共用代码，依据已登记的
+/// 交易规则语义重写）——昨收 × (1−p) 按正数四舍五入取至最小价位；**跌停
+/// 幅度不足一个价位时（舍入结果 ≥ 昨收）强制至少下移一个价位**；最低不
+/// 低于一个价位（tick = 1 分）。
+fn independent_down_stop_cents(reference_cents: i64, limit_bps: u32) -> i64 {
+    let numerator = i128::from(reference_cents) * i128::from(10_000_u32 - limit_bps);
+    let rounded = i64::try_from((numerator + 5_000) / 10_000).unwrap();
+    let bound = rounded.max(1);
+    if bound >= reference_cents {
+        (reference_cents - 1).max(1)
+    } else {
+        bound
+    }
+}
+
+/// 测试侧独立复刻：从锚收盘连续 `days` 个交易日一字跌停后的最小可能收盘
+/// （封顶的权威口径；期望值一律由本函数推导，不与实现共用代码）。
+fn independent_limit_down_chain_floor_cents(anchor_cents: i64, limit_bps: u32, days: u32) -> i64 {
+    let mut current = anchor_cents;
+    for _ in 0..days {
+        current = independent_down_stop_cents(current, limit_bps);
+    }
+    current
+}
+
 /// 在当日盘中制造一笔按 `price` 的真实成交：机构账户挂一笔直接置入订单簿的
 /// 限价买单（复用既有税务用例的 fixture 手法，冻结 NPC 注意力避免策略干扰），
 /// 玩家卖出 `qty` 股，步进**一个** tick 并断言真实成交发生。当日剩余 tick 由
@@ -617,8 +656,9 @@ fn auto_proposal_at_cap_survives_consecutive_limit_downs_to_ex_date() {
     // 敞露交易日数 n 由日程推导（本日程：公告日 2030-02-01 为交易日 + 登记日）。
     let n = exposed_trading_days(&calendar, exchange, d("2030-01-31"), plan.registered_on);
     assert_eq!(n, 2, "公告→登记间应有 2 个敞露交易日");
-    // 封顶 = floor(锚 × (1 − n×涨跌幅)) − 1 分；10% 涨跌幅下 = 799 分。
-    let expected_cap = 1_000_i128 * (10_000 - i128::from(n) * 1_000) / 10_000 - 1;
+    // 封顶 = 迭代真实跌停链 n 步的最小可能收盘 − 1 分（10% 板：1000→900→810，
+    // 封顶 = 809）；期望值由测试侧独立复刻链推导，不与实现共用代码。
+    let expected_cap = i128::from(independent_limit_down_chain_floor_cents(1_000, 1_000, n)) - 1;
     assert_eq!(
         i128::from(plan.gross_per_share.cents()),
         expected_cap,
@@ -665,8 +705,9 @@ fn auto_proposal_at_cap_survives_consecutive_limit_downs_to_ex_date() {
         }
     }
     assert_eq!(session.civil_date(), plan.ex_dividend_on);
-    // 除息日首 tick 安装除息参考价：登记日收盘（两日连续跌停 810 分）− 每股
-    // 红利 799 分 = 11 分，仍为正；旧口径（999 分）在此 poison。
+    // 除息日首 tick 安装除息参考价：登记日收盘（两日连续一字跌停恰为迭代链
+    // 下界 810 分）− 每股红利 809 分 = 1 分，仍为正；迭代封顶与真实链一致，
+    // 最坏参考价恰好压到 1 分。旧口径（999 分）在此 poison。
     let first_step = session.step();
     assert!(
         first_step.is_ok(),
@@ -690,8 +731,124 @@ fn auto_proposal_at_cap_survives_consecutive_limit_downs_to_ex_date() {
         .last_cash_ex_reference()
         .expect("除息日必须安装除息参考价");
     assert_eq!(reference.ex_date, plan.ex_dividend_on);
-    assert_eq!(reference.reference_price, Money::from_cents(11));
+    assert_eq!(reference.reference_price, Money::from_cents(1));
     // 除息日 = 派发日：日结完成真实派发，状态机照常推进。
+    assert_eq!(
+        session.state.corporate_actions.dividends[0].status(),
+        &crate::company::cash_dividend::CashDividendStatus::Paid
+    );
+}
+
+#[test]
+fn auto_proposal_survives_low_price_double_limit_downs_where_linear_bound_was_falsified() {
+    // 门禁复核修复轮 2 边界用例（低价域证伪反例本体）：4 分锚 @10% 板时
+    // 锚×limit_bps = 4000 ≤ 5000，每日跌停幅度不足一个价位，跌停价守卫强制
+    // 整价位下移（4→3→2）。旧闭式线性下界 floor(4×0.8) = 3 会给出封顶 3−1 = 2，
+    // 两日连续一字跌停后除息参考价 2 − 2 = 0 → poison。迭代引擎真实跌停链的
+    // 封顶 = 2 − 1 = 1，最坏参考价恰为 1 分，日结照常、无 poison。
+    let mut setup = preference_setup(cash_preference(10_000, 1, 1));
+    setup.stocks[0].initial_price = Money::from_cents(4);
+    let (mut session, issuer, stock) = session_with_registry_setup(setup, 205, 10_000_000);
+    let exchange = crate::calendar::CalendarExchange::Sse;
+    let calendar = session.state.civil_clock.calendar().clone();
+    // 冻结唯一 NPC（机构）注意力：01-20 → 01-31 无任何成交，提案锚 = 初始价 4 分。
+    let institution = crate::orderbook::AccountId(1);
+    session
+        .state
+        .npc_attention
+        .get_mut(&institution)
+        .unwrap()
+        .next_attention_candidate_tick = u64::MAX;
+    session.state.attention_scheduler = [(u64::MAX, institution)].into_iter().collect();
+    advance_through_first_period_end(&mut session);
+    assert_eq!(session.state.corporate_actions.dividends.len(), 1);
+    let plan = session.state.corporate_actions.dividends[0].plan().clone();
+    assert_eq!(plan.approved_on, d("2030-02-01"));
+    let n = exposed_trading_days(&calendar, exchange, d("2030-01-31"), plan.registered_on);
+    assert_eq!(n, 2, "公告→登记间应有 2 个敞露交易日");
+    // 封顶 = 迭代真实跌停链（4→3→2）− 必留 1 分 = 1 分；旧闭式口径会给出 2 分
+    // 并使最坏参考价为 0。期望值由测试侧独立复刻链推导。
+    let expected_cap = i128::from(independent_limit_down_chain_floor_cents(4, 1_000, n)) - 1;
+    assert_eq!(expected_cap, 1, "4 分锚两日一字跌停链应为 4→3→2");
+    assert_eq!(
+        i128::from(plan.gross_per_share.cents()),
+        expected_cap,
+        "目标派息应被迭代跌停链余量封顶到 1 分"
+    );
+    assert!(rejections(&session, &issuer).is_empty());
+    // 公告→登记间逐个敞露交易日以真实成交打到跌停价（一字跌停）：首日两整手
+    // 200 股、登记日余额零股 5 股一次性卖出（沪市《交易规则（2026 年修订）》3.3.8）。
+    let mut remaining_sells = [200_u32, 5_u32].into_iter();
+    while session.civil_date() < plan.ex_dividend_on {
+        let today = session.civil_date();
+        let exposed = (today == plan.approved_on
+            && calendar.is_trading_day(exchange, today).unwrap())
+            || today == plan.registered_on;
+        let mut stepped = 0_u64;
+        let mut exposed_stop = None;
+        if exposed && session.state.civil_clock.phase() == CivilPhase::IntradayTrading {
+            let down_stop = session
+                .state
+                .markets
+                .get(&stock)
+                .unwrap()
+                .down_stop()
+                .unwrap();
+            let qty = remaining_sells.next().expect("敞露交易日数与卖出批次一致");
+            force_trade_at_price(&mut session, &stock, down_stop, qty);
+            exposed_stop = Some(down_stop);
+            stepped = 1;
+        }
+        if session.state.civil_clock.phase() == CivilPhase::IntradayTrading {
+            for _ in stepped..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+        if let Some(stop) = exposed_stop {
+            assert_eq!(
+                session.state.markets.get(&stock).unwrap().last_close(),
+                stop,
+                "敞露交易日收盘应恰好为当日跌停价（守卫强制整价位下移）"
+            );
+        }
+    }
+    assert_eq!(session.civil_date(), plan.ex_dividend_on);
+    // 登记日收盘 = 迭代链下界 2 分；除息日首 tick 安装参考价 2 − 1 = 1 分 ≥ 1 分。
+    assert_eq!(
+        session.state.markets.get(&stock).unwrap().last_close(),
+        Money::from_cents(2),
+        "两日一字跌停后登记日收盘应恰为迭代链下界 2 分"
+    );
+    let first_step = session.step();
+    assert!(
+        first_step.is_ok(),
+        "除息日首 tick 不得致命失败：{:?}",
+        first_step.err()
+    );
+    for _ in 1..session.state.setup.ticks_per_day {
+        session.step().unwrap();
+    }
+    session.end_civil_day().unwrap();
+    assert!(
+        session.poison_reason().is_none(),
+        "低价域两日一字跌停走到除息日不得 poison：{:?}",
+        session.poison_reason()
+    );
+    let reference = session
+        .state
+        .markets
+        .get(&stock)
+        .unwrap()
+        .last_cash_ex_reference()
+        .expect("除息日必须安装除息参考价");
+    assert_eq!(reference.ex_date, plan.ex_dividend_on);
+    assert!(
+        reference.reference_price >= Money::from_cents(1),
+        "最坏除息参考价必须 ≥1 分，实际 {:?}",
+        reference.reference_price
+    );
+    assert_eq!(reference.reference_price, Money::from_cents(1));
     assert_eq!(
         session.state.corporate_actions.dividends[0].status(),
         &crate::company::cash_dividend::CashDividendStatus::Paid
@@ -710,7 +867,9 @@ fn auto_proposal_rejected_when_same_ex_date_explicit_plan_exhausts_margin() {
     // 归并口径抑制本周期自动评估），除息日程与第二周期自动提案重合。
     advance_to(&mut session, d("2030-01-21"));
     let (registered_on, ex_on) = schedule_after_announcement(&calendar, exchange, d("2030-03-01"));
-    // 显式方案每股 799 分：恰好占满 floor(1000×(1−2×10%)) − 1 的封顶。
+    // 显式方案每股 809 分：恰好占满迭代跌停链封顶（1000→900→810 再留 1 分）。
+    let explicit_gross_cents = independent_limit_down_chain_floor_cents(1_000, 1_000, 2) - 1;
+    assert_eq!(explicit_gross_cents, 809);
     let explicit_plan = crate::company::cash_dividend::CashDividendPlan::new(
         "explicit-same-ex-date".into(),
         issuer.clone(),
@@ -722,7 +881,7 @@ fn auto_proposal_rejected_when_same_ex_date_explicit_plan_exhausts_margin() {
         registered_on,
         ex_on,
         ex_on,
-        Money::from_cents(799),
+        Money::from_cents(explicit_gross_cents),
         Money::from_cents(10_000_000),
         &calendar,
     )
@@ -732,7 +891,9 @@ fn auto_proposal_rejected_when_same_ex_date_explicit_plan_exhausts_margin() {
             DividendDeclaration {
                 plan_id: explicit_plan.plan_id.clone(),
                 approved_on: d("2030-01-21"),
-                total_gross: crate::accounting::AccountingAmount::from_cents(799 * 6),
+                total_gross: crate::accounting::AccountingAmount::from_cents(
+                    i128::from(explicit_gross_cents) * 6,
+                ),
                 registered_capital: crate::accounting::AccountingAmount::from_cents(10_000_000),
             },
             explicit_plan,
@@ -777,7 +938,7 @@ fn auto_proposal_rejected_when_same_ex_date_explicit_plan_exhausts_margin() {
 #[test]
 fn auto_proposal_merges_same_ex_date_explicit_gross_into_cap() {
     // 同除息日合并口径的正例：显式方案每股 500 分后，自动提案每股被压到
-    // floor(1000×(1−2×10%)) − 1 − 500 = 299 分；合并 gross 恰好回到封顶。
+    // 迭代跌停链封顶 809 − 500 = 309 分；合并 gross 恰好回到封顶。
     let (mut session, issuer, stock) =
         session_with_registry(cash_preference(10_000, 1, 1), 5, 10_000_000);
     let exchange = crate::calendar::CalendarExchange::Sse;
@@ -814,7 +975,7 @@ fn auto_proposal_merges_same_ex_date_explicit_gross_into_cap() {
         .unwrap();
     advance_to(&mut session, d("2030-03-01"));
     // 一月内的显式批准抑制第一周期自动评估；第二周期（02-28）自动提案被
-    // 压到 299 分并批准：显式 + 自动共两本。
+    // 压到 309 分并批准：显式 + 自动共两本。
     assert_eq!(session.state.corporate_actions.dividends.len(), 2);
     let auto_plan = session
         .state
@@ -825,10 +986,10 @@ fn auto_proposal_merges_same_ex_date_explicit_gross_into_cap() {
         .find(|plan| plan.plan_id == "simple-preference:C-600888:dividend:2030-02-28")
         .unwrap()
         .clone();
-    assert_eq!(auto_plan.gross_per_share, Money::from_cents(299));
+    assert_eq!(auto_plan.gross_per_share, Money::from_cents(309));
     assert_eq!(auto_plan.ex_dividend_on, ex_on);
     assert!(rejections(&session, &issuer).is_empty());
-    // 无跌停行情下合并参考价 = 1000 − 799 = 201 分，日程走完不 poison。
+    // 无跌停行情下合并参考价 = 1000 − 809 = 191 分，日程走完不 poison。
     advance_to(&mut session, ex_on.next().unwrap());
     assert!(session.poison_reason().is_none());
 }

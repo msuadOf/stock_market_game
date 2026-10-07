@@ -291,6 +291,8 @@ pub(crate) struct SimpleCashDividendExposure {
     pub last_close: Money,
     /// 该股适用涨跌幅限制（整数基点，如 10% = 1000）。
     pub limit_bps: u32,
+    /// 申报价格最小变动单位：跌停链迭代与引擎 `price_bound` 同一取整口径。
+    pub tick: Money,
     /// 同除息日既有现金分红方案（显式 + 自动）合计税前每股红利：同除息日的
     /// gross 在除息日按组合并计算参考价，必须一并计入封顶。
     pub same_ex_date_gross_per_share: Money,
@@ -314,10 +316,11 @@ pub(crate) struct SimpleCashDividendEvaluation<'a> {
     /// 名册非库藏股股数（与 `approve_cash_dividend` 同口径）。
     pub eligible_shares: u64,
     /// 行情敞口上下文。游戏化保护（非官方规则，登记于 `docs/trading-rules.md`）：
-    /// 每股派息按「实际日程推导的跌停敞口余量」封顶——锚收盘 ×
-    /// (1 − n×涨跌幅) − 必留正参考价分子，n 为公告→登记间敞露交易日数，
-    /// 防止偏好自动方案的除息参考价非正（参考价非正会使除息日日结致命失败，
-    /// 自动提案不得把局推向不可结算状态）。缺行情锚时无法约束上限，如实拒绝。
+    /// 每股派息按「实际日程推导的跌停敞口余量」封顶——从锚收盘迭代引擎真实
+    /// 跌停链 n 步（n 为公告→登记间敞露交易日数）得登记日最小可能收盘，再减
+    /// 必留正参考价分子，防止偏好自动方案的除息参考价非正（参考价非正会使
+    /// 除息日日结致命失败，自动提案不得把局推向不可结算状态）。缺行情锚时
+    /// 无法约束上限，如实拒绝。
     pub exposure: Option<SimpleCashDividendExposure>,
     /// 已显式绑定的注册资本法定事实；缺省时无法构造决议。
     pub registered_capital: Option<AccountingAmount>,
@@ -374,8 +377,8 @@ pub(crate) fn evaluate_cash_dividend_preference(
         i64::try_from(target_cents / i128::from(input.eligible_shares)).unwrap_or(0)
     };
     // 游戏化保护：先按方案日程推导（登记日, 除息日），再按敞露交易日数与
-    // 涨跌幅限制推导「公告→登记间连续跌停」后登记日收盘的可保证下界，
-    // 每股派息（连同同除息日既有方案的 gross 合并）封顶在该下界以内，
+    // 涨跌幅限制迭代「公告→登记间连续跌停」的真实链得到登记日收盘的最小
+    // 可能值，每股派息（连同同除息日既有方案的 gross 合并）封顶在该值以内，
     // 保证除息日参考价在最坏行情下仍严格为正。
     let announcement_on = input.approve_on;
     let registered_on =
@@ -420,14 +423,16 @@ pub(crate) fn evaluate_cash_dividend_preference(
         exposure.last_close.cents(),
         exposure.limit_bps,
         exposure_days,
+        exposure.tick.cents(),
     ) else {
         return SimpleCashDividendOutcome::Rejected {
             detail: format!(
-                "现金分红提案跌停敞口余量耗尽：收盘 {} 分在公告→登记间 {} 个交易日\
-                 （涨跌幅限制 {}bp）连续跌停后无正参考价余量",
+                "现金分红提案跌停链推导失败：收盘 {} 分（价位 {} 分、涨跌幅限制\
+                 {}bp、敞露 {} 个交易日）无法迭代出正的最小收盘",
                 exposure.last_close.cents(),
-                exposure_days,
-                exposure.limit_bps
+                exposure.tick.cents(),
+                exposure.limit_bps,
+                exposure_days
             ),
         };
     };
@@ -519,6 +524,8 @@ pub(crate) struct SimpleStockDistributionExposure {
     pub last_close: Money,
     /// 该股适用涨跌幅限制（整数基点）。
     pub limit_bps: u32,
+    /// 申报价格最小变动单位：跌停链迭代与引擎 `price_bound` 同一取整口径。
+    pub tick: Money,
     /// 同除权日既有现金分红方案（显式 + 自动，含本周期刚批准的自动现金提案）
     /// 合计税前每股红利：合并除权组的参考价 = (前收 − 该红利)/(1 + 变动比例)。
     pub same_ex_date_gross_per_share: Money,
@@ -662,14 +669,16 @@ pub(crate) fn evaluate_stock_distribution_preference(
         exposure.last_close.cents(),
         exposure.limit_bps,
         exposure_days,
+        exposure.tick.cents(),
     ) else {
         return SimpleStockDistributionOutcome::Rejected {
             detail: format!(
-                "送转提案跌停敞口余量耗尽：收盘 {} 分在公告→登记间 {} 个交易日\
-                 （涨跌幅限制 {}bp）连续跌停后无正参考价余量",
+                "送转提案跌停链推导失败：收盘 {} 分（价位 {} 分、涨跌幅限制 {}bp、\
+                 敞露 {} 个交易日）无法迭代出正的最小收盘",
                 exposure.last_close.cents(),
-                exposure_days,
-                exposure.limit_bps
+                exposure.tick.cents(),
+                exposure.limit_bps,
+                exposure_days
             ),
         };
     };
@@ -770,22 +779,42 @@ pub(crate) fn exposure_trading_days(
     Ok(count)
 }
 
-/// 连续 `n` 个交易日跌停后登记日收盘价的可保证下界（整数分，向下取整）。
+/// 连续 `n` 个交易日一字跌停后登记日收盘价的最小可能值（整数分）。
 ///
-/// 单日跌停价 = 昨收 × (1 − limit_bps/10000) 向最近价位四舍五入（向上方），
-/// 因此 n 日连续跌停后的收盘 ≥ 锚 × (1−p)^n；由 Bernoulli 不等式
-/// (1−p)^n ≥ 1−n·p，取线性下界再向下取整即得整数分保证下界。
-/// 余量耗尽（n × limit_bps ≥ 10000）时返回 `None`，由调用方如实拒绝。
+/// **权威推导 = 从锚收盘出发迭代引擎真实跌停链 `n` 步**：每步复用
+/// `market::price_bound_cents` 的整数核心（昨收 × (1−p) 正数四舍五入到
+/// 最小价位；**跌停幅度不足一个价位时强制至少下移一个价位**；最低不低于
+/// 一个价位），与 [`crate::market::Market`] 的 `down_stop` 完全同源，不存在
+/// 另行推导的闭式近似。
+///
+/// 历史教训（2026-10-07 修复轮 2，已修复）：旧实现的闭式线性下界
+/// floor(锚 × (1 − n·p)) 依托「四舍五入偏上 ⇒ 收盘 ≥ 锚×(1−p)^n ≥ 锚×(1−np)」
+/// 的推断，但该推断漏掉了低价域守卫——锚 × limit_bps ≤ 5000（跌停幅度不足
+/// 半个价位）时舍入结果不离开昨收，守卫强制整价位下移，单日实际跌幅超过 p
+/// （如 4 分锚 @10% 板两日实际 4→3→2，闭式却给 floor(3.2)=3），按闭式封顶
+/// 会使最坏除息参考价非正（反例：10% 板锚 3–5 分、5% 板锚 3–10 分 × n=2）。
+/// 复核以独立复刻 `price_bound` 整数逻辑的暴力验证证伪后改为本迭代实现，
+/// 不保留闭式快速路径；测试侧另有独立复刻实现做全域交叉验证。
+///
+/// 链每步恒 ≥ 一个价位，故锚为正时返回值恒 ≥ tick，不存在「余量耗尽」；
+/// `None` 仅表示输入非法（锚/价位非正、limit_bps > 10000）或推导溢出，
+/// 由调用方如实拒绝（铁律二）。
 pub(crate) fn limit_down_margin_floor_cents(
     last_close_cents: i64,
     limit_bps: u32,
     exposure_days: u32,
+    tick_cents: i64,
 ) -> Option<i128> {
-    let factor_bp = 10_000_i128 - i128::from(exposure_days) * i128::from(limit_bps);
-    if factor_bp <= 0 {
+    if last_close_cents <= 0 {
         return None;
     }
-    Some(i128::from(last_close_cents) * factor_bp / 10_000)
+    let down_ratio_bps = 10_000_u32.checked_sub(limit_bps)?;
+    let mut current_cents = last_close_cents;
+    for _ in 0..exposure_days {
+        current_cents =
+            crate::market::price_bound_cents(current_cents, down_ratio_bps, tick_cents, false)?;
+    }
+    Some(i128::from(current_cents))
 }
 
 /// 合并除权除息组要得到 ≥1 分的除权参考价，「前收盘 − 同日合计税前每股

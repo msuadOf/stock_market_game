@@ -2927,14 +2927,15 @@ impl GameSession {
                 ),
                 None => None,
             };
-            // 行情敞口上下文：提案锚收盘、涨跌幅限制，以及按本周期日程推导的
+            // 行情敞口上下文：提案锚收盘、涨跌幅限制与最小价位（跌停链迭代
+            // 与引擎 price_bound 同一取整口径），以及按本周期日程推导的
             // 除息/除权日上既有的同日方案（显式 + 自动）合并事实。日程推导失败
             // 时返回 None，由评估函数自行推导日程并以同一失败原因如实拒绝。
             let market_anchor = self
                 .state
                 .markets
                 .get(&stock)
-                .map(|market| (market.last_close(), market.limit_bps()));
+                .map(|market| (market.last_close(), market.limit_bps(), market.tick()));
             let same_ex_date =
                 self.same_ex_date_preference_context(&stock, exchange, approve_on)?;
             let (same_ex_gross, same_ex_ratio_micros, same_ex_stock_event) =
@@ -2960,10 +2961,11 @@ impl GameSession {
                     .dividend_legal_facts(&company)
                     .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
                     .map(|facts| facts.registered_capital);
-                let exposure = market_anchor.map(|(last_close, limit_bps)| {
+                let exposure = market_anchor.map(|(last_close, limit_bps, tick)| {
                     preference_api::SimpleCashDividendExposure {
                         last_close,
                         limit_bps,
+                        tick,
                         same_ex_date_gross_per_share: same_ex_gross,
                         same_ex_date_ratio_micros: same_ex_ratio_micros,
                     }
@@ -3051,10 +3053,11 @@ impl GameSession {
                     .same_ex_date_preference_context(&stock, exchange, approve_on)?
                     .map(|(gross, _ratio, _event)| gross)
                     .unwrap_or(Money::ZERO);
-                let exposure = market_anchor.map(|(last_close, limit_bps)| {
+                let exposure = market_anchor.map(|(last_close, limit_bps, tick)| {
                     preference_api::SimpleStockDistributionExposure {
                         last_close,
                         limit_bps,
+                        tick,
                         same_ex_date_gross_per_share: same_ex_cash_gross,
                         same_ex_date_stock_event: same_ex_stock_event,
                     }

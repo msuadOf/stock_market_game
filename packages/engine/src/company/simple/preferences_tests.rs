@@ -90,6 +90,7 @@ fn cash_exposure(last_close_cents: i64) -> SimpleCashDividendExposure {
     SimpleCashDividendExposure {
         last_close: Money::from_cents(last_close_cents),
         limit_bps: 1_000,
+        tick: Money::from_cents(1),
         same_ex_date_gross_per_share: Money::ZERO,
         same_ex_date_ratio_micros: None,
     }
@@ -249,9 +250,10 @@ fn cash_evaluation_rounds_down_per_share_total() {
 
 #[test]
 fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
-    // 游戏化保护：每股派息封顶 = floor(锚收盘 × (1 − n×涨跌幅)) − 必留正参考价
-    // 分子，n 为 (周期末, 登记日] 的交易日数（本日程公告日 2030-02-01 为交易
-    // 日，n=2）。锚 1120 分、10% 限制：floor(1120×0.8) − 1 = 895 分。
+    // 游戏化保护：每股派息封顶 = 迭代真实跌停链 n 步的最小可能收盘 − 必留
+    // 正参考价分子，n 为 (周期末, 登记日] 的交易日数（本日程公告日 2030-02-01
+    // 为交易日，n=2）。锚 1120 分、10% 限制：链 1120→1008→907，封顶 906 分
+    // （期望值由测试侧独立复刻链推导，不与实现共用代码）。
     let preference = cash_preference(10_000, 1, 1);
     let mut input = cash_input(
         &preference,
@@ -267,7 +269,11 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
         registered
     });
     assert_eq!(expected_days, 2, "公告日为交易日时敞露 2 个交易日");
-    let expected_cap = 1_120_i128 * (10_000 - i128::from(expected_days) * 1_000) / 10_000 - 1;
+    let expected_cap = i128::from(independent_limit_down_chain_floor_cents(
+        1_120,
+        1_000,
+        expected_days,
+    )) - 1;
     let SimpleCashDividendOutcome::Proposal { declaration, plan } =
         evaluate_cash_dividend_preference(&input)
     else {
@@ -296,7 +302,11 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     let expected_days =
         independent_exposed_days(CalendarExchange::Sse, d("2030-02-01"), registered);
     assert_eq!(expected_days, 1, "公告日休市时仅登记日 1 个敞露交易日");
-    let expected_cap = 1_120_i128 * (10_000 - i128::from(expected_days) * 1_000) / 10_000 - 1;
+    let expected_cap = i128::from(independent_limit_down_chain_floor_cents(
+        1_120,
+        1_000,
+        expected_days,
+    )) - 1;
     let SimpleCashDividendOutcome::Proposal { plan, .. } =
         evaluate_cash_dividend_preference(&input)
     else {
@@ -305,7 +315,7 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     assert_eq!(i128::from(plan.gross_per_share.cents()), expected_cap);
 
     // 同除息日既有方案 gross 合并计入：既有 500 分时本提案被封到
-    // floor(1120×0.8) − 1 − 500 = 395 分。
+    // 906 − 500 = 406 分。
     let mut input = cash_input(
         &preference,
         profit(10_000_000),
@@ -317,6 +327,7 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     input.exposure = Some(SimpleCashDividendExposure {
         last_close: Money::from_cents(1_120),
         limit_bps: 1_000,
+        tick: Money::from_cents(1),
         same_ex_date_gross_per_share: Money::from_cents(500),
         same_ex_date_ratio_micros: None,
     });
@@ -325,13 +336,14 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     else {
         panic!("应构造出现金分红提案");
     };
-    assert_eq!(plan.gross_per_share, Money::from_cents(395));
+    assert_eq!(plan.gross_per_share, Money::from_cents(406));
 
     // 既有 gross 占满封顶：每股不足一分，如实拒绝。
     input.exposure = Some(SimpleCashDividendExposure {
         last_close: Money::from_cents(1_120),
         limit_bps: 1_000,
-        same_ex_date_gross_per_share: Money::from_cents(895),
+        tick: Money::from_cents(1),
+        same_ex_date_gross_per_share: Money::from_cents(906),
         same_ex_date_ratio_micros: None,
     });
     match evaluate_cash_dividend_preference(&input) {
@@ -349,6 +361,7 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     input.exposure = Some(SimpleCashDividendExposure {
         last_close: Money::from_cents(1_120),
         limit_bps: 1_000,
+        tick: Money::from_cents(1),
         same_ex_date_gross_per_share: Money::ZERO,
         same_ex_date_ratio_micros: Some(1_000_000),
     });
@@ -357,7 +370,7 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
     else {
         panic!("应构造出现金分红提案");
     };
-    assert_eq!(plan.gross_per_share, Money::from_cents(894));
+    assert_eq!(plan.gross_per_share, Money::from_cents(905));
 
     // 缺行情锚：无法约束上限，如实记录拒绝。
     let mut input = input;
@@ -369,7 +382,7 @@ fn cash_evaluation_caps_per_share_by_schedule_limit_down_margin() {
 }
 
 #[test]
-fn limit_down_margin_helpers_match_schedule_and_reject_exhausted_margin() {
+fn limit_down_margin_helpers_match_schedule_and_defend_invalid_inputs() {
     // 敞口计数与日程一致：公告日为交易日 n=2；公告日休市 n=1。
     let registered_trading_announce =
         preference_registered_on(CalendarExchange::Sse, d("2030-02-01"));
@@ -394,17 +407,36 @@ fn limit_down_margin_helpers_match_schedule_and_reject_exhausted_margin() {
         .unwrap(),
         1
     );
-    // 线性下界：floor(1120 × (1 − 2×10%)) = 896；n=1 时 floor(1120×0.9) = 1008。
-    assert_eq!(limit_down_margin_floor_cents(1_120, 1_000, 2), Some(896));
-    assert_eq!(limit_down_margin_floor_cents(1_120, 1_000, 1), Some(1_008));
-    // 余量耗尽（n × limit ≥ 10000）返回 None，调用方如实拒绝。
-    assert_eq!(limit_down_margin_floor_cents(1_120, 5_000, 2), None);
+    // 迭代链下界（期望值由测试侧独立复刻链推导）：1120@10% 两日
+    // 1120→1008→907、一日 1008；50% 大跌幅两日 1120→560→280 仍为正——
+    // 迭代链每步恒 ≥1 价位，旧「n×limit ≥ 10000 余量耗尽」概念不复存在。
+    assert_eq!(
+        limit_down_margin_floor_cents(1_120, 1_000, 2, 1),
+        Some(i128::from(independent_limit_down_chain_floor_cents(
+            1_120, 1_000, 2
+        )))
+    );
+    assert_eq!(limit_down_margin_floor_cents(1_120, 1_000, 2, 1), Some(907));
+    assert_eq!(
+        limit_down_margin_floor_cents(1_120, 1_000, 1, 1),
+        Some(1_008)
+    );
+    assert_eq!(limit_down_margin_floor_cents(1_120, 5_000, 2, 1), Some(280));
+    // 非法输入防御（正常接线不会出现，出现即如实拒绝）：锚非正、涨跌幅
+    // > 10000bp、价位非正 → None。涨跌幅恰为 10000bp（引擎构造域之外）时
+    // 链在最低一个价位触底（price_bound 的 min tick 守卫），返回 Some(1)，
+    // 封顶随之非正、由调用方如实拒绝。
+    assert_eq!(limit_down_margin_floor_cents(0, 1_000, 2, 1), None);
+    assert_eq!(limit_down_margin_floor_cents(4, 10_001, 2, 1), None);
+    assert_eq!(limit_down_margin_floor_cents(4, 1_000, 2, 0), None);
+    assert_eq!(limit_down_margin_floor_cents(4, 10_000, 2, 1), Some(1));
     // 合并组分子下界：ratio=0 → 1；0 < ratio ≤ 1e6 → 2；2e6 < ratio ≤ 3e6 → 4。
     assert_eq!(combined_group_required_positive_cents(0), 1);
     assert_eq!(combined_group_required_positive_cents(1), 2);
     assert_eq!(combined_group_required_positive_cents(1_000_000), 2);
     assert_eq!(combined_group_required_positive_cents(2_000_001), 4);
-    // 组合出的极端敞口（n=2、50% 涨跌幅）下余量耗尽的评估拒绝。
+    // 低价域余量耗尽（迭代链下界 1 分 − 必留 1 分 = 0）的评估拒绝：
+    // 3 分锚 @5% 板两日一字跌停链 3→2→1，封顶非正，如实记录。
     let preference = cash_preference(10_000, 1, 1);
     let mut input = cash_input(
         &preference,
@@ -415,19 +447,125 @@ fn limit_down_margin_helpers_match_schedule_and_reject_exhausted_margin() {
         false,
     );
     input.exposure = Some(SimpleCashDividendExposure {
-        last_close: Money::from_cents(1_120),
-        limit_bps: 5_000,
+        last_close: Money::from_cents(3),
+        limit_bps: 500,
+        tick: Money::from_cents(1),
         same_ex_date_gross_per_share: Money::ZERO,
         same_ex_date_ratio_micros: None,
     });
     match evaluate_cash_dividend_preference(&input) {
         SimpleCashDividendOutcome::Rejected { detail } => {
             assert!(
-                detail.contains("余量耗尽"),
-                "拒绝原因应如实说明敞口：{detail}"
+                detail.contains("封顶非正"),
+                "拒绝原因应如实说明低价域余量耗尽：{detail}"
             );
         }
         other => panic!("应记录拒绝，实际 {other:?}"),
+    }
+}
+
+#[test]
+fn limit_down_chain_floor_matches_independent_replication_across_domain() {
+    // 交叉验证：实现的迭代链必须与测试侧独立复刻（依据规则语义重写、不与
+    // 实现共用代码）在全域一致——低价守卫域穷举 + 守卫触发阈值邻域 +
+    // 大锚粗步进（覆盖舍入边界），覆盖 5%/10%/20%/30%/50% 档 × n∈{1,2}。
+    let tiers = [500_u32, 1_000, 2_000, 3_000, 5_000];
+    let mut anchors: Vec<i64> = (1..=2_000).collect();
+    for &limit in &tiers {
+        let threshold = 5_000_i64 / i64::from(limit);
+        for anchor in (threshold - 8).max(1)..=(threshold + 8) {
+            anchors.push(anchor);
+        }
+    }
+    let mut coarse = 2_001_i64;
+    while coarse <= 100_000_00 {
+        anchors.push(coarse);
+        coarse += 65_521;
+    }
+    let mut checked = 0_u32;
+    for anchor in anchors {
+        for &limit in &tiers {
+            for days in [1_u32, 2] {
+                assert_eq!(
+                    limit_down_margin_floor_cents(anchor, limit, days, 1),
+                    Some(i128::from(independent_limit_down_chain_floor_cents(
+                        anchor, limit, days
+                    ))),
+                    "anchor={anchor} limit={limit} n={days} 迭代链与独立复刻不一致"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked > 20_000,
+        "交叉验证域应有代表性覆盖，实际 {checked} 组"
+    );
+}
+
+#[test]
+fn limit_down_chain_floor_covers_low_price_guard_trigger_boundaries() {
+    // 触发域边界定向用例（锚 × limit_bps ≤ 5000 时跌停幅度不足一个价位，
+    // 守卫强制整价位下移）：3/5/10 分锚 × 5%/10% 板 × n=1/2 全组合的
+    // 迭代链最小收盘。
+    let cases: &[(i64, u32, u32, i64)] = &[
+        (3, 500, 1, 2),
+        (3, 500, 2, 1),
+        (3, 1_000, 1, 2),
+        (3, 1_000, 2, 1),
+        (5, 500, 1, 4),
+        (5, 500, 2, 3),
+        (5, 1_000, 1, 4),
+        (5, 1_000, 2, 3),
+        (10, 500, 1, 9),
+        (10, 500, 2, 8),
+        (10, 1_000, 1, 9),
+        (10, 1_000, 2, 8),
+    ];
+    for &(anchor, limit, days, expected) in cases {
+        assert_eq!(
+            limit_down_margin_floor_cents(anchor, limit, days, 1),
+            Some(i128::from(expected)),
+            "anchor={anchor} limit={limit} n={days}"
+        );
+        assert_eq!(
+            independent_limit_down_chain_floor_cents(anchor, limit, days),
+            expected,
+            "独立复刻应与期望一致：anchor={anchor} limit={limit} n={days}"
+        );
+    }
+    // 证伪反例登记（2026-10-07 修复轮 2）：这些组合上旧闭式线性下界
+    // floor(锚×(1−np)) 严格大于真实链，按闭式封顶会使最坏除息参考价非正；
+    // 迭代链才是权威推导。closed_form 列为旧闭式口径给出的（错误）下界。
+    let falsified: &[(i64, u32, u32, i64)] = &[
+        (3, 500, 2, 2),
+        (3, 1_000, 2, 2),
+        (4, 500, 2, 3),
+        (4, 1_000, 2, 3),
+        (5, 500, 2, 4),
+        (5, 1_000, 2, 4),
+        (10, 500, 2, 9),
+    ];
+    for &(anchor, limit, days, closed_form) in falsified {
+        let chain = limit_down_margin_floor_cents(anchor, limit, days, 1).unwrap();
+        assert!(
+            chain < i128::from(closed_form),
+            "anchor={anchor} limit={limit} n={days}: 迭代链 {chain} 必须严格小于\
+             已证伪的闭式线性下界 {closed_form}"
+        );
+    }
+    // 4 分锚 @10% 板反例本体：链 4→3→2，封顶 2−1=1，最坏参考价 2−1=1 分。
+    assert_eq!(limit_down_margin_floor_cents(4, 1_000, 2, 1), Some(2));
+    // 封顶语义安全勾稽：触发域内每个组合，迭代链 −（迭代链 − 1）= 1 分
+    // 恰为最坏除息参考价下界。
+    for &(anchor, limit, days, expected) in cases {
+        if expected > 1 {
+            let cap = expected - 1;
+            assert!(
+                expected - cap >= 1,
+                "anchor={anchor} limit={limit} n={days}: 封顶后最坏参考价必须 ≥1 分"
+            );
+        }
     }
 }
 
@@ -525,9 +663,35 @@ fn stock_exposure() -> SimpleStockDistributionExposure {
     SimpleStockDistributionExposure {
         last_close: Money::from_cents(10_000),
         limit_bps: 1_000,
+        tick: Money::from_cents(1),
         same_ex_date_gross_per_share: Money::ZERO,
         same_ex_date_stock_event: false,
     }
+}
+
+/// 测试侧独立复刻：单日跌停价的整数推导（tick = 1 分；与实现不共用代码，
+/// 依据已登记的交易规则语义重写）——昨收 × (1−p) 按正数四舍五入取至最小
+/// 价位；**跌停幅度不足一个价位时（舍入结果 ≥ 昨收）强制至少下移一个价位**；
+/// 最低不低于一个价位。
+fn independent_down_stop_cents(reference_cents: i64, limit_bps: u32) -> i64 {
+    let numerator = i128::from(reference_cents) * i128::from(10_000_u32 - limit_bps);
+    let rounded = i64::try_from((numerator + 5_000) / 10_000).unwrap();
+    let bound = rounded.max(1);
+    if bound >= reference_cents {
+        (reference_cents - 1).max(1)
+    } else {
+        bound
+    }
+}
+
+/// 测试侧独立复刻：从锚收盘连续 `days` 个交易日一字跌停后的最小可能收盘
+/// （封顶的权威口径）。期望值一律由本函数推导，不与实现共用代码。
+fn independent_limit_down_chain_floor_cents(anchor_cents: i64, limit_bps: u32, days: u32) -> i64 {
+    let mut current = anchor_cents;
+    for _ in 0..days {
+        current = independent_down_stop_cents(current, limit_bps);
+    }
+    current
 }
 
 #[test]

@@ -45,6 +45,39 @@ pub enum MarketError {
     CashExReferenceConflict { code: StockCode, reason: String },
 }
 
+/// 涨跌停/价格笼子边界价的整数推导核心（单位：分）。
+///
+/// 语义与 [`Market`] 的 `price_bound` 完全一致，提取为共享函数供两处复用：
+/// （1）`Market::price_bound` 自身；（2）公司行为偏好封顶的跌停链迭代
+/// （`company::simple::preferences`，见 2026-10-07 修复轮 2：闭式线性下界在
+/// 低价域被证伪，跌停敞口余量必须按本核心逐日迭代推导）。
+/// 推导：`reference × ratio_bps / 10000` 按正数四舍五入（half-up）取至最小
+/// 价位；**涨/跌幅度不足一个价位（舍入结果未离开昨收）时强制至少移动一个
+/// 价位**；最低不低于一个价位。
+/// 返回 `None` 表示输入非法（reference/tick 非正）或推导溢出，由调用方
+/// 显式映射为既有错误（铁律二：不静默吞错）。
+pub(crate) fn price_bound_cents(
+    reference_cents: i64,
+    ratio_bps: u32,
+    tick_cents: i64,
+    upward: bool,
+) -> Option<i64> {
+    if reference_cents <= 0 || tick_cents <= 0 {
+        return None;
+    }
+    let denominator = i128::from(10_000_u32) * i128::from(tick_cents);
+    let numerator = i128::from(reference_cents) * i128::from(ratio_bps);
+    let rounded_ticks = (numerator + denominator / 2) / denominator;
+    let rounded_cents = i64::try_from(rounded_ticks.checked_mul(i128::from(tick_cents))?).ok()?;
+    let mut bound = rounded_cents.max(tick_cents);
+    if upward && bound <= reference_cents {
+        bound = reference_cents.checked_add(tick_cents)?;
+    } else if !upward && bound >= reference_cents {
+        bound = (reference_cents - tick_cents).max(tick_cents);
+    }
+    Some(bound)
+}
+
 /// 单只股票的市场状态。
 ///
 /// 包装 [`OrderBook`]，叠加涨跌停边界与最新价/昨收价记录。价格全程
@@ -250,23 +283,14 @@ impl Market {
                 value: reference,
             });
         }
-        let denominator = i128::from(10_000_u32) * i128::from(self.tick.cents());
-        let numerator = i128::from(reference.cents()) * i128::from(ratio_bps);
-        let rounded_ticks = (numerator + denominator / 2) / denominator;
-        let rounded_cents = rounded_ticks
-            .checked_mul(i128::from(self.tick.cents()))
-            .and_then(|value| i64::try_from(value).ok())
-            .ok_or_else(|| MoneyError::Overflow {
-                op: "positive_half_up_price_bound",
-                operand: format!("{} * {ratio_bps} / 10000", reference.cents()),
-            })?;
-        let mut bound = Money::from_cents(rounded_cents.max(self.tick.cents()));
-        if upward && bound <= reference {
-            bound = reference.add(self.tick)?;
-        } else if !upward && bound >= reference {
-            bound = reference.sub(self.tick)?.max(self.tick);
-        }
-        Ok(bound)
+        let bound_cents =
+            price_bound_cents(reference.cents(), ratio_bps, self.tick.cents(), upward).ok_or_else(
+                || MoneyError::Overflow {
+                    op: "positive_half_up_price_bound",
+                    operand: format!("{} * {ratio_bps} / 10000", reference.cents()),
+                },
+            )?;
+        Ok(Money::from_cents(bound_cents))
     }
 
     /// 最新成交价（只读）。
@@ -283,6 +307,12 @@ impl Market {
     /// 整数值；公司行为偏好提案的跌停余量封顶按该整数推导（只读）。
     pub const fn limit_bps(&self) -> u32 {
         self.limit_bps
+    }
+
+    /// 申报价格最小变动单位（只读）。公司行为偏好的跌停链迭代必须与
+    /// `price_bound` 使用同一价位取整，防止两侧整数口径漂移。
+    pub const fn tick(&self) -> Money {
+        self.tick
     }
 
     /// 在调用方确认该证券除息日首次开市前安装已核验的除息参考价。
