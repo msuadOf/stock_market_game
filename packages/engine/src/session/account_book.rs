@@ -127,17 +127,6 @@ impl AccountBook {
                 Ok(())
             })
     }
-    /// Install the committed account directory and release detached old pages
-    /// across the worker pool. Each group owns disjoint account pages.
-    pub(super) fn replace_and_drop_parallel(&mut self, replacement: Self) {
-        let old = std::mem::replace(self, replacement);
-        old.groups
-            .into_values()
-            .collect::<Vec<_>>()
-            .into_par_iter()
-            .for_each(drop);
-    }
-
     pub(super) fn clone_for_shadow(&self) -> Result<Self, StrategyStateError> {
         for group in self.groups.values() {
             for page in group.values() {
