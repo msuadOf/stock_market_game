@@ -1,26 +1,38 @@
-# E7-X2 旧状态延后析构实验（已撤回）
+# 试验 C 移植：提交交换析构移交池外专用线程（正式落地）
 
-## 假设与依据
+## 机制
 
-tick-overlap 探索诊断（.tmp/perf-expl/tick-overlap/）测得 `commit_tick_shadow`/`commit_from` 的"不可失败交换"367µs/tick（×3000=1.1s），主体是旧权威状态（20k 账户/簿页/字符串）在逐字段赋值时就地析构；旧值析构无副作用、与新状态无别名，可交 `rayon::spawn(drop)` 移出关键路径，外推 ~+9%。
+`commit_from` 的旧权威状态析构从 actor 关键路径移交到池外专用 std::thread（`session/deferred_drop.rs`：OnceLock 惰性线程 + mpsc；`defer_swap` = mem::replace + 旧值移交；发送失败退化内联析构）。43 字段中 7 个 Copy 直接赋值、36 个走 defer_swap（含 2 个 simulation-diagnostics cfg 字段）；四个分页容器原先的池内 par drop 一并改走专用线程（消除主线程等池 + 对下 tick 突发的扰动）。
 
-## 实现（已按 HEAD 原字节撤回）
+E7-X2（rayon::spawn 进池）失败教训的修正路径：本线程不进 rayon 池、不参与工作窃取竞争。
 
-- `commit_from` 改为 `std::mem::replace(self, shadow)` 整体换出 + `rayon::spawn(move || drop(old))`（cfg(test) 计数器证明析构确实发生在池线程）。语义等价：原实现所有字段均取 shadow 值，整体 replace 等价；无副作用 Drop（全库仅 executor_perturbation 的 ResetScope 有 Drop impl，不在提交状态内）；页 Arc 仅减引用计数，Weak 身份失效语义不变。
-- 删除两个失去调用方的死方法 `replace_and_drop_parallel`（account_paged_map.rs / account_book.rs；原实现是阻塞式 `into_par_iter().for_each(drop)`，仅覆盖 4 个字段）。
-- TDD：红灯（计数恒 0 超时断言）→ 绿灯；定向 committable_state 3 / hash_contract 14 / candidate_commit 5 / shadow 43 全绿。
+## 移植核对
 
-## 基准（锚定交错配对，0-15 核占用 8.0% <10% 门槛，threads=4 生产口径）
+- patch 基线 7d6558c8 → HEAD b518874e 零冲突（其间仅 docs 提交，生产源码一致）。
+- **字段清单逐字段核对**：`CommittableSessionState` 顶层 43 字段 = `commit_from` 解构 43 字段，1:1（核对存档 `.tmp/e-c-port/struct-fields.txt` / `destructured-fields.txt`）。
+- 生产形态断言（试验 A 教训）：测试断言真实 `step()` 提交路径每次移交 ≥30（36 非_copy 字段全覆盖），非"至少一次"弱断言。
 
-anchor 漂移 1.94% ≤5% 有效。6 对配对：+2.83/+5.38/−0.37/+0.99/+2.52/+4.91%，mean +2.71%、sd 2.21%，**pair3 为负、区间重叠**——同号一致与区间分离不满足，按预登记规则**判定不通过，撤回**。
+## 门禁
 
-数据文件：e7x2-*.json/err（agents/engine-max-performance/）；产物 .tmp/e7-x2/（candidate 源码、双臂 binary、构建 jsonl）。
+- 定向：deferred_drop 模块测试 1/1、commit 移交测试（含 ≥30 断言）1/1 绿。
+- 全量 lib：**1321 过 / 8 败**，失败名单与试验 C 基线（同补丁）逐字一致。
+- server 定向：fatal 12/12、interval 6/6。
+- probe：candidate 构建 verify-build 全过（binary SHA `f0522e324bee3b3070010d7cd053158208a4d20fcfecd0ae990f0c50bc6f8385`，source SHA `aff0e24f…` 与 example 逐字节一致）；H 臂为 HEAD 绑定既有 binary（SHA `8a348041…`，构建于补丁应用前）。
 
-## 机制结论
+## 正式锚定交错配对（worker=4、0-15 核[测前占用 0.3%]、3000 tick）
 
-外推 +9% 只兑现 +2.71% 均值且不稳定：**"移出 tick 线程" ≠ "移出关键路径"**——worker=4 的小池里，spawn 的析构任务与下一 tick 的并行突发共用同一 FIFO/窃取队列，析构挤占了并行车道（与 P0-dirtykey 证伪的"省的活在并行车道不挡路"互为镜像：本实验证明搬进并行车道的活也会挡路）。若后续重试，应改用**专用析构线程**（std::thread + channel，不进 rayon 池），尤其在与 X1 跨 tick 投机预计算组合时（投机 prep 同样占用 commit 尾部窗口的池容量）。
+| 跑 | speed_x |
+|---|---|
+| astart | 319.071 |
+| h1..h5 | 310.887 / 310.275 / 307.560 / 314.713 / 304.166 |
+| c1..c5 | 317.784 / 315.366 / 321.870 / 313.664 / 335.148 |
+| aend | 322.293 |
 
-## 遗留
+- 锚漂 **+1.01%**（≤5% ✓）
+- d=C/H = +2.22% / +1.64% / +4.65% / −0.33% / +10.19%；**均值 +3.67% ✓（≥2%）**；**4/5 正 ✓**；mean−1=3.67% ≥ 2SE=3.60%（险过，如实登记）；区间 C[313.7,335.1] vs H[304.2,314.7] 重叠 1.05（未全分离，如实登记——H 臂散布 3.3% 与 c5 高样本贡献）。
+- 与试验 C 诊断 +7.60% 的落差：诊断轮为独占 worktree/48-63 核环境，本轮 0-15 主线环境；方向一致、幅度差异在会话/环境波动带内。
 
-- probe 主 target 已重建绑定回 HEAD（SHA 34084792…，verify-build 通过）。
-- 顺带登记：HEAD 既有 `packages/engine/tests/company_scenarios` 编译失败（WithinKindDistribution 未定义，3 处），与本实验无关，未修复。
+## 待办与登记
+
+- **架构冲突待裁决（重要）**：用户 2026-10-07 新原则"位置性预留也算硬编码"——专用析构线程是否属"给任务单留泳道"需裁决。辩护要点：该线程为普通 OS 线程、无亲和性钉扎、无池内许可预留，与其他线程平级接受 OS 调度（用户原则的形态 b）；若裁决不允许，备选=改用 nice/SCHED_IDLE 优先级提示（原则明文允许）或撤回。
+- 独立复核待主会话安排（重点：字段清单完备性、专用线程生命周期、发送失败退化路径语义）。
