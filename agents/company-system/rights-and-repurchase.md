@@ -100,7 +100,7 @@ Web 测试 shard 并行）。证据日志见上表目录。
 | --- | --- |
 | 受影响组复跑（13 组过滤：rights_offering/issuer_repurchase/share_registry/ex_reference_price/session::corporate_actions/cash_dividend/company_mechanism/dividend_tax/company::simple/mechanism_switch/company_simple/rights_session/repurchase_session） | 全绿（合计 257 项），`fix-round-affected-groups.log` |
 | `cargo check --workspace --all-targets` | 0 error |
-| Web `scripts/run-web-tests.mjs` 全量 | 失败 8 项全部在 main@78a35747 可复现（6 项 main 全量即失败；2 项〔利润表渲染、Tauri 更正命令〕在 main 单文件运行亦失败，属分片布局敏感的既有脆弱用例），本修复轮零新增失败；`fix-round-web-full.log`（main 基线对照见 `/tmp` 临时 worktree 运行记录，结论已并入本表） |
+| Web `scripts/run-web-tests.mjs` 全量 | 失败 9 项全部在 main@78a35747 可复现（6 项 main 全量即失败；3 项〔利润表渲染、Tauri 更正命令、decimal account map〕在 main 单文件运行亦失败，属分片布局敏感的既有脆弱用例；另 Worker×3、WASM parser×3 归入 main 全量即失败类——按用例名去重共 9 个不同用例），本修复轮零新增失败；`fix-round-web-full.log`（main 基线对照见 `/tmp` 临时 worktree 运行记录，结论已并入本表） |
 | Web `tsc -b --force` | 通过 |
 | 三份存档 fixtures + company 切片（release Engine producer 重生成） | producer 自校验（restore/resave 深等、场景守卫）全过；main producer 为多核长任务（46 线程、约 96s），按长验收 300000ms deadline 执行 |
 | ts-rs typegen | `RejectedRightsSubscription.ts` 新增、`SessionCorporateActions.ts` 更新 |
