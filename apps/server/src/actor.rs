@@ -1243,6 +1243,10 @@ impl SessionActor {
             }
         }
         self.pacing.refresh_metrics(self.game.tick());
+        // 成功路径：批级回滚锚点已无用，析构移交池外专用线程——旧账户页的
+        // jemalloc free（实测 ~132µs/tick）不再占用 actor 关键路径；析构无任何
+        // 可观察副作用，失败原子性/首错序不受影响（错误路径仍走 rollback_cycle）。
+        engine::session::defer_destruction(checkpoint);
     }
 
     fn prepare_civil_updates(

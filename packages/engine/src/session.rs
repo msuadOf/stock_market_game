@@ -17,6 +17,9 @@ mod company_operations;
 mod continuous_cancellation;
 mod decision_chain;
 mod deferred_drop;
+pub use deferred_drop::defer as defer_destruction;
+#[doc(hidden)]
+pub use deferred_drop::host_deferred_count as deferred_destruction_count;
 use deferred_drop::defer_swap;
 mod disclosures;
 mod envelope_projection;

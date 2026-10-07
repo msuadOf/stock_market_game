@@ -32,7 +32,7 @@ fn sender() -> &'static Sender<Job> {
 
 /// 把值的析构移交给专用线程。发送失败（析构线程已退出）时闭包就地丢弃，
 /// 值在调用线程析构——语义等价，只是失去异步收益。
-pub(super) fn defer<T: Send + 'static>(value: T) {
+pub fn defer<T: Send + 'static>(value: T) {
     DEFERRED_COUNT.fetch_add(1, Ordering::Relaxed);
     let _ = sender().send(Box::new(move || drop(value)));
 }
@@ -46,6 +46,13 @@ pub(super) fn defer_swap<T: Send + 'static>(slot: &mut T, value: T) {
 /// 测试观测：累计移交的析构任务数。
 #[cfg(test)]
 pub(super) fn deferred_count() -> u64 {
+    DEFERRED_COUNT.load(Ordering::Relaxed)
+}
+
+/// 宿主侧（server/desktop/wasm 测试）观测：累计移交的析构任务数。
+/// 仅用于生产形态断言（证明真实批路径确有移交），生产代码不得依赖。
+#[doc(hidden)]
+pub fn host_deferred_count() -> u64 {
     DEFERRED_COUNT.load(Ordering::Relaxed)
 }
 

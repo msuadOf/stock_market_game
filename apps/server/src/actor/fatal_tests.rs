@@ -660,3 +660,40 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
     );
     assert!(value["cause"]["cause"]["cause"].is_null());
 }
+
+/// 批级 checkpoint 析构必须移交专用线程，不得在 actor 线程同步析构
+/// （串行脊柱研究实测：同步析构 ~132µs/tick，全部是旧账户页的 jemalloc free）。
+/// 生产形态断言：零 tick 批（无提交移交干扰）下计数增量 ≥1，专证 checkpoint 交接。
+#[test]
+fn batch_checkpoint_drop_is_deferred_to_dedicated_thread() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let mut game = ProtocolSession::new(setup, 7).unwrap();
+    let (_sender, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, _receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let mut actor = SessionActor {
+        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        injected_step_failure: None,
+        pacing: ServerPacing {
+            speed_meter: SpeedMeter::new(game.tick()),
+            tick_interval: Duration::from_millis(1),
+            base_ms: 1,
+            running: true,
+            fastest: true,
+            requested_speed: RequestedSpeed::Fastest,
+        },
+        game,
+        cmd_rx,
+        event_tx,
+        session_id: "graveyard".into(),
+        fastest_budget: Arc::new(Semaphore::new(1)),
+        public_revision: 0,
+        timeline_generation: 1,
+        pause_preferences: PausePreferences::default(),
+        fatal_failure: None,
+    };
+    let before = engine::session::deferred_destruction_count();
+    // 零 tick 批：循环体不执行，无任何 commit 移交；checkpoint 建后按成功路径收尾。
+    actor.run_protocol_batch(0);
+    let delta = engine::session::deferred_destruction_count() - before;
+    assert!(delta >= 1, "批级 checkpoint 未移交专用线程（增量 {delta}）");
+}
