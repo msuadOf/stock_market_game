@@ -1,4 +1,4 @@
-pub use super::finance_config::{SimpleFinanceConfig, SimpleSummaryRule};
+pub use super::finance_config::{SimpleBookDisplayConfig, SimpleFinanceConfig, SimpleSummaryRule};
 use crate::accounting::closing::{ClosingEngine, ClosingError};
 use crate::accounting::consolidation::{MemberId, ScopeId};
 use crate::accounting::reports::{IndustryPresentation, ReportError, ReportKind, ReportSet};
@@ -106,6 +106,20 @@ where
     serde::Deserialize::deserialize(deserializer)
 }
 
+/// Simple 账面展示字段快照（查询投影）。两字段均为**账面展示值**：
+/// cash_book = 累计净利润 − 累计已付分红（留存收益口径）、investment_book =
+/// 累计收入 × 配置比例；不代表真实公司资金，不参与任何资金结算
+///（2026-10-08 用户决策，账面/真实分离铁律）。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct SimpleBookDisplay {
+    #[ts(type = "string")]
+    pub cash_book: AccountingAmount,
+    #[ts(type = "string")]
+    pub investment_book: AccountingAmount,
+    pub investment_of_revenue_bp: i32,
+}
+
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimpleFinanceState {
@@ -134,10 +148,57 @@ pub struct SimpleFinanceState {
         std::collections::BTreeMap<String, crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact>,
     #[serde(deserialize_with = "deserialize_required_option")]
     legal_facts: RequiredOption<DividendLegalFacts>,
+    /// 账面展示现金（2026-10-08 用户决策）：累计净利润 − 累计已付分红（留存收益
+    /// 口径）。每结算周期末与分红付款后重算；仅为展示值，不代表真实资金，
+    /// 不参与任何资金结算。严格持久化字段，旧档缺失显式拒绝。
+    cash_book: AccountingAmount,
+    /// 账面展示投资额：累计收入 × 配置比例（`book_display` 半偶舍入落分）。
+    /// 同上仅为展示值；严格持久化字段。
+    investment_book: AccountingAmount,
 }
 impl SimpleFinanceState {
     pub fn legal_facts(&self) -> &Option<DividendLegalFacts> {
         &self.legal_facts.0
+    }
+
+    /// 账面展示现金：累计净利润 − 累计已付分红（留存收益口径）。
+    pub fn cash_book(&self) -> AccountingAmount {
+        self.cash_book
+    }
+
+    /// 账面展示投资额：累计收入 × 配置比例。
+    pub fn investment_book(&self) -> AccountingAmount {
+        self.investment_book
+    }
+
+    /// 账面展示字段查询快照（含配置比例；均为展示值，非真实资金）。
+    pub fn book_display(&self) -> SimpleBookDisplay {
+        SimpleBookDisplay {
+            cash_book: self.cash_book,
+            investment_book: self.investment_book,
+            investment_of_revenue_bp: self.config.book_display.investment_of_revenue_bp,
+        }
+    }
+
+    /// 从权威账簿与分红付款事实重算两个账面展示字段（不变量口径）。
+    fn refresh_book_display(&mut self) -> Result<(), SimpleFinanceError> {
+        let mut paid_dividends = AccountingAmount::ZERO;
+        for plan in self.dividends.values() {
+            for payment in plan.payments.values() {
+                paid_dividends = paid_dividends.add(payment.amount)?;
+            }
+        }
+        self.cash_book = self.books.ledger().net_income()?.sub(paid_dividends)?;
+        let cumulative_revenue = self
+            .books
+            .ledger()
+            .account_net_debit(&LedgerAccountId(
+                crate::accounting::reports::simple_summary::REVENUE.into(),
+            ))?
+            .neg()?;
+        self.investment_book = cumulative_revenue
+            .apply_basis_points(self.config.book_display.investment_of_revenue_bp)?;
+        Ok(())
     }
 
     pub fn apply_month(
@@ -185,6 +246,7 @@ impl SimpleFinanceState {
         candidate.recognized_periods.push((start, end));
         candidate.as_of = end;
         candidate.last_month = AccountingPeriod::of_date(end);
+        candidate.refresh_book_display()?;
         candidate.close_generated_period(start, end)?;
         candidate.validate()?;
         *self = candidate;
@@ -201,6 +263,9 @@ fn line(account: &str, side: PostingSide, amount: AccountingAmount) -> JournalLi
 #[cfg(test)]
 #[path = "finance_dividend_tests.rs"]
 mod dividend_tests;
+#[cfg(test)]
+#[path = "finance_books_integration_tests.rs"]
+mod books_integration_tests;
 #[cfg(test)]
 #[path = "finance_kind_tests.rs"]
 mod kind_tests;

@@ -76,6 +76,15 @@ impl SimpleFinanceState {
                 "注册资本必须是正数法定事实".into(),
             ));
         }
+        // 未入账送转已经批准并预留来源；免计提门槛按其全部入账后的注册资本
+        // 保守核定，避免先后批准后由自身增资重新触发计提，导致后续入账卡死。
+        let registered_capital = self
+            .stock_distributions
+            .values()
+            .filter(|fact| fact.credited_on.is_none())
+            .try_fold(registered_capital, |capital, fact| {
+                capital.add(fact.capital_increase)
+            })?;
         let retained_debit = self
             .books
             .ledger()
@@ -112,11 +121,17 @@ impl SimpleFinanceState {
             } else {
                 AccountingAmount::ZERO
             };
-            let already_reserved = self
+            let already_reserved_dividends = self
                 .dividends
                 .values()
                 .filter(|plan| plan.reserve_basis_year.0 == Some(year))
                 .try_fold(AccountingAmount::ZERO, |sum, plan| sum.add(plan.reserve))?;
+            let already_reserved_stock = self
+                .stock_distributions
+                .values()
+                .filter(|fact| fact.reserve_basis_year == Some(year))
+                .try_fold(AccountingAmount::ZERO, |sum, fact| sum.add(fact.statutory_reserve))?;
+            let already_reserved = already_reserved_dividends.add(already_reserved_stock)?;
             let remaining = target.sub(already_reserved)?;
             if remaining.is_positive() {
                 (remaining, Some(year))
@@ -124,7 +139,22 @@ impl SimpleFinanceState {
                 (AccountingAmount::ZERO, None)
             }
         };
-        let available = after_loss.sub(reserve_required)?;
+        let uncredited_bonus_reserved = self
+            .stock_distributions
+            .values()
+            .filter(|fact| {
+                fact.credited_on.is_none()
+                    && matches!(
+                        fact.kind,
+                        crate::company::stock_distribution::StockDistributionKind::BonusShares
+                    )
+            })
+            .try_fold(AccountingAmount::ZERO, |sum, fact| {
+                sum.add(fact.capital_increase)
+            })?;
+        let available = after_loss
+            .sub(reserve_required)?
+            .sub(uncredited_bonus_reserved)?;
         Ok(DistributableProfit {
             accumulated_after_loss: after_loss,
             statutory_reserve: reserve_required,
@@ -340,6 +370,8 @@ impl SimpleFinanceState {
                     amount,
                 },
             );
+        // 已付分红增加 → 账面展示现金按公式减少（仅展示值，不动真实资金）。
+        candidate.refresh_book_display()?;
         candidate.validate()?;
         *self = candidate;
         Ok(DividendPaymentReceipt {

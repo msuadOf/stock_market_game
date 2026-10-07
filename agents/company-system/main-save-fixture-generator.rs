@@ -191,6 +191,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 },
                             },
                             summary_rule: engine::company::simple::SimpleSummaryRule::ReceivableRevenuePayableExpenses,
+                            book_display: engine::company::simple::SimpleBookDisplayConfig::DEFAULT,
                         },
                         // 主档保持行为中性：未配置偏好（P 批严格持久化新字段）。
                         preferences: engine::company::simple::SimpleCompanyPreferences::none(),

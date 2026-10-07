@@ -8,9 +8,9 @@ import type { CashDividendPlan } from "../corporate-actions.ts"
 
 const reportKinds = ["Monthly", "Quarter", "HalfYear", "Annual"] as const
 const scheduledKinds = ["Annual", "Q1", "HalfYear", "Q3"] as const
-const assetLines = ["CashFunds", "Receivables", "SimpleDividendSettlementAdjustment", "InsuranceReceivables", "Inventory", "DevelopmentInventory", "FixedAssets", "LoansAndAdvances", "DeferredTaxAssets", "CurrentTaxAssets"] as const
+const assetLines = ["CashFunds", "Receivables", "SimpleDividendSettlementAdjustment", "SimpleIssuerFundingAdjustment", "InsuranceReceivables", "Inventory", "DevelopmentInventory", "FixedAssets", "LoansAndAdvances", "DeferredTaxAssets", "CurrentTaxAssets"] as const
 const liabilityLines = ["ShortTermBorrowings", "AccountsPayable", "ContractLiabilities", "TaxesPayable", "InterestPayable", "CustomerDeposits", "LongTermBorrowings", "InsuranceContractLiabilities", "DeferredTaxLiabilities"] as const
-const equityLines = ["PaidInCapital", "StatutoryReserve", "RetainedEarnings", "MinorityEquity"] as const
+const equityLines = ["PaidInCapital", "CapitalReserve", "StatutoryReserve", "RetainedEarnings", "MinorityEquity"] as const
 const balanceLines = [...assetLines, ...liabilityLines, ...equityLines] as const
 const incomeLines = ["OperatingRevenue", "OperatingCost", "SellingExpense", "AdministrativeExpense", "ResearchExpense", "ImpairmentLoss", "InterestIncome", "InterestExpense", "NetInterestIncome", "FeeAndCommissionIncome", "InsuranceRevenue", "InsuranceServiceExpense", "InsuranceServiceResult", "InsuranceFinanceExpense", "FinanceExpense", "IncomeTaxExpense"] as const
 

@@ -2,6 +2,10 @@ use super::*;
 impl SimpleFinanceState {
     pub fn validate(&self) -> Result<(), SimpleFinanceError> {
         self.config.tax_policy.validate()?;
+        self.config
+            .book_display
+            .validate()
+            .map_err(SimpleFinanceError::Invalid)?;
         if self.books.ledger().chart() != &super::kind::summary_chart(self.kind)? {
             return Err(SimpleFinanceError::Invalid(
                 "Simple CompanyKind 与汇总科目表不一致".into(),
@@ -72,38 +76,44 @@ impl SimpleFinanceState {
                 "已绑定的分红法律事实金额或来源说明非法".into(),
             ));
         }
+        // 批准在日内、资本行为入账在日终；分红、送转、配股、拆缩股共用
+        // 双向资本重构（增资扣回、减资加回），批准日当天入账也尚未反映在声明中。
+        let capital_increase_after = |approved_on: crate::calendar::CivilDate| {
+            let mut total = AccountingAmount::ZERO;
+            for other in self.stock_distributions.values().filter(|other| {
+                other.credited_on.is_some_and(|credited| credited >= approved_on)
+            }) {
+                total = total.add(other.capital_increase)?;
+            }
+            for other in self.rights_offerings.values().filter(|other| {
+                other.settled_on.is_some_and(|settled| settled >= approved_on)
+            }) {
+                let increase = other.capital_increase.ok_or_else(|| {
+                    SimpleFinanceError::StockDistributionInvalid(format!(
+                        "已结算配股 {} 缺少股本增加金额", other.event_id
+                    ))
+                })?;
+                total = total.add(increase)?;
+            }
+            for other in self.issuer_repurchases.values().filter(|other| {
+                other.cancelled_on.is_some_and(|cancelled| cancelled >= approved_on)
+            }) {
+                let reduction = other.capital_reduction.ok_or_else(|| {
+                    SimpleFinanceError::StockDistributionInvalid(format!(
+                        "已注销回购 {} 缺少股本核减金额", other.event_id
+                    ))
+                })?;
+                total = total.sub(reduction)?;
+            }
+            for other in self.share_splits.values().filter(|other| {
+                other.settled_on.is_some_and(|settled| settled >= approved_on)
+            }) {
+                total = total.sub(other.registered_capital_reduction)?;
+            }
+            Ok::<_, SimpleFinanceError>(total)
+        };
         for (plan_id, plan) in &self.dividends {
-            // 送转入账与配股结算都会按面值演进注册资本法定事实；分红声明冻结的是
-            // 其批准时点的注册资本。按「当前法定注册资本 − 批准日当天及之后才
-            // 入账的送转/配股股本增加」重构批准时点口径：批准发生在日内、入账
-            // 发生在日终，因此批准日当天的入账也尚未反映在声明口径中。
-            let mut later_stock_credits = AccountingAmount::ZERO;
-            for fact in self
-                .stock_distributions
-                .values()
-                .filter(|fact| {
-                    fact.credited_on
-                        .is_some_and(|credited| credited >= plan.declaration.approved_on)
-                })
-            {
-                later_stock_credits = later_stock_credits.add(fact.capital_increase)?;
-            }
-            // 配股结算（面值×实际新增股数）同样演进注册资本：漏扣会使「先批准
-            // 分红、后结算配股」的局在结算后的财务校验中误判声明注册资本不一致
-            //（修复轮边界用例发现；与送转同一重构口径）。
-            for fact in self
-                .rights_offerings
-                .values()
-                .filter(|fact| {
-                    fact.settled_on
-                        .is_some_and(|settled| settled >= plan.declaration.approved_on)
-                })
-            {
-                later_stock_credits = later_stock_credits.add(
-                    fact.capital_increase
-                        .unwrap_or_else(|| AccountingAmount::from_cents(0)),
-                )?;
-            }
+            let later_stock_credits = capital_increase_after(plan.declaration.approved_on)?;
             let capital_at_approval = self
                 .legal_facts
                 .0
@@ -232,61 +242,21 @@ impl SimpleFinanceState {
             unpaid_dividends = unpaid_dividends.add(plan.declaration.total_gross.sub(paid)?)?;
             reserved_amount = reserved_amount.add(plan.reserve)?;
         }
-        // 送转与配股声明的 registered_capital_at_approval 冻结各自批准时点口径，
-        // 按「当前法定注册资本 − 批准日当天及之后才入账的送转/配股股本增加」重构
-        // 核对；批准在日内、入账在日终，批准日当天的入账尚未反映在声明口径中。
-        let capital_increase_after = |approved_on: crate::calendar::CivilDate| {
-            let mut total = AccountingAmount::ZERO;
-            for other in self
-                .stock_distributions
-                .values()
-                .filter(|other| {
-                    other
-                        .credited_on
-                        .is_some_and(|credited| credited >= approved_on)
-                })
-            {
-                total = total.add(other.capital_increase)?;
-            }
-            for other in self
-                .rights_offerings
-                .values()
-                .filter(|other| {
-                    other
-                        .settled_on
-                        .is_some_and(|settled| settled >= approved_on)
-                })
-            {
-                total = total.add(other.capital_increase.unwrap_or(AccountingAmount::ZERO))?;
-            }
-            // 回购注销核减注册资本：从重构口径中扣除批准日之后的核减额。
-            for other in self
-                .issuer_repurchases
-                .values()
-                .filter(|other| {
-                    other
-                        .cancelled_on
-                        .is_some_and(|cancelled| cancelled >= approved_on)
-                })
-            {
-                total = total.sub(other.capital_reduction.unwrap_or(AccountingAmount::ZERO))?;
-            }
-            // 缩股核减注册资本（拆股注册资本不变，核减额为零）：同样从重构口径
-            // 中扣除批准日之后的核减额。
-            for other in self
-                .share_splits
-                .values()
-                .filter(|other| {
-                    other
-                        .settled_on
-                        .is_some_and(|settled| settled >= approved_on)
-                })
-            {
-                total = total.sub(other.registered_capital_reduction)?;
-            }
-            Ok::<_, SimpleFinanceError>(total)
-        };
         for (event_id, fact) in &self.stock_distributions {
+            if fact.statutory_reserve.is_negative()
+                || fact.statutory_reserve.is_positive() != fact.reserve_basis_year.is_some()
+                || (fact.credited_on.is_none() && fact.statutory_reserve != AccountingAmount::ZERO)
+                || (matches!(fact.kind, crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion)
+                    && fact.statutory_reserve != AccountingAmount::ZERO)
+                || fact.reserve_basis_year.is_some_and(|year| {
+                    year < self.opening_date.year() || year > self.as_of.year()
+                })
+            {
+                return Err(SimpleFinanceError::StockDistributionInvalid(format!(
+                    "送转声明 {event_id} 的法定公积金金额、计提状态或依据年度不一致"
+                )));
+            }
+            reserved_amount = reserved_amount.add(fact.statutory_reserve)?;
             let later_credits = capital_increase_after(fact.approved_on)?;
             let expected = self
                 .legal_facts
@@ -508,7 +478,13 @@ impl SimpleFinanceState {
                     )));
                 }
             }
-            if fact.cancelled_shares > 0 || fact.cancelled_on.is_some() {
+            // 回填字段 all-or-none：任一注销侧字段有值（含孤立核减额）都要求
+            // 完成回填 + 注销日期/股数/核减额齐全（修复轮独立复核发现的反向
+            // 孤立口径并入触发条件）。
+            if fact.cancelled_shares > 0
+                || fact.cancelled_on.is_some()
+                || fact.capital_reduction.is_some()
+            {
                 if fact.completed_on.is_none()
                     || fact.cancelled_on.is_none()
                     || fact.capital_reduction.is_none()
@@ -532,6 +508,8 @@ impl SimpleFinanceState {
                 "应付股利科目与未支付计划不一致".into(),
             ));
         }
+        self.validate_capital_action_entries()?;
+        self.validate_book_display()?;
         let reserve_account = self
             .books
             .ledger()
@@ -595,6 +573,160 @@ impl SimpleFinanceState {
             ));
         }
         self.validate_reports()?;
+        Ok(())
+    }
+
+    /// 公司行为汇总分录勾稽：从行为事实重构期望分录（BusinessKind + 日期 +
+    /// 借贷行），与权威账簿中该类分录做多重集匹配。行为分录是一次性事实，
+    /// 周期结算不得回退或重算覆盖——任何缺失、多余或内容漂移都在此显式拒绝。
+    fn validate_capital_action_entries(&self) -> Result<(), SimpleFinanceError> {
+        use crate::accounting::reports::simple_summary as accounts;
+        let mut expected: Vec<(BusinessKind, CivilDate, Vec<JournalLine>)> = Vec::new();
+        for fact in self.stock_distributions.values() {
+            let Some(credited_on) = fact.credited_on else {
+                continue;
+            };
+            let mut lines = match fact.kind {
+                crate::company::stock_distribution::StockDistributionKind::BonusShares => {
+                    let mut lines = vec![line(
+                        "4103", PostingSide::Debit, fact.capital_increase.add(fact.statutory_reserve)?,
+                    )];
+                    if fact.statutory_reserve.is_positive() {
+                        lines.push(line(accounts::STATUTORY_RESERVE, PostingSide::Credit, fact.statutory_reserve));
+                    }
+                    lines
+                }
+                crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion => {
+                    vec![line(accounts::CAPITAL_RESERVE, PostingSide::Debit, fact.capital_increase)]
+                }
+            };
+            lines.push(line("4001", PostingSide::Credit, fact.capital_increase));
+            expected.push((BusinessKind::CompanyStockDistributionCredit, credited_on, lines));
+        }
+        for fact in self.rights_offerings.values() {
+            let (Some(settled_on), Some(proceeds), Some(capital_increase)) =
+                (fact.settled_on, fact.proceeds, fact.capital_increase)
+            else {
+                continue;
+            };
+            if fact.issued_shares == 0 {
+                continue;
+            }
+            let premium = proceeds.sub(capital_increase)?;
+            let mut lines = vec![
+                line(accounts::ISSUER_FUNDING_ASSET, PostingSide::Debit, proceeds),
+                line("4001", PostingSide::Credit, capital_increase),
+            ];
+            if premium.is_positive() {
+                lines.push(line(
+                    accounts::CAPITAL_RESERVE,
+                    PostingSide::Credit,
+                    premium,
+                ));
+            }
+            expected.push((
+                BusinessKind::CompanyRightsOfferingSettlement,
+                settled_on,
+                lines,
+            ));
+        }
+        for fact in self.issuer_repurchases.values() {
+            let Some(cancelled_on) = fact.cancelled_on else {
+                continue;
+            };
+            let reduction = fact
+                .capital_reduction
+                .ok_or_else(|| {
+                    SimpleFinanceError::Invalid(format!(
+                        "回购声明 {} 已注销但缺少核减金额",
+                        fact.event_id
+                    ))
+                })?
+                .clone();
+            expected.push((
+                BusinessKind::CompanyRepurchaseCancellation,
+                cancelled_on,
+                vec![
+                    line("4001", PostingSide::Debit, reduction),
+                    line(accounts::CAPITAL_RESERVE, PostingSide::Credit, reduction),
+                ],
+            ));
+        }
+        for fact in self.share_splits.values() {
+            let Some(settled_on) = fact.settled_on else {
+                continue;
+            };
+            if fact.registered_capital_reduction == AccountingAmount::ZERO {
+                continue;
+            }
+            let reduction = fact.registered_capital_reduction;
+            expected.push((
+                BusinessKind::CompanyShareReDenomination,
+                settled_on,
+                vec![
+                    line("4001", PostingSide::Debit, reduction),
+                    line(accounts::CAPITAL_RESERVE, PostingSide::Credit, reduction),
+                ],
+            ));
+        }
+        let kinds = [
+            BusinessKind::CompanyStockDistributionCredit,
+            BusinessKind::CompanyRightsOfferingSettlement,
+            BusinessKind::CompanyRepurchaseCancellation,
+            BusinessKind::CompanyShareReDenomination,
+        ];
+        // 以计数映射匹配多重集：同内容事实按次数消费，不反复线性查找并删除 Vec。
+        let key = |kind: BusinessKind, date: CivilDate, lines: &[JournalLine]| {
+            (kind, date, lines.iter().map(|line| {
+                (line.account.clone(), line.side, line.amount)
+            }).collect::<Vec<_>>())
+        };
+        let mut counts = std::collections::BTreeMap::new();
+        for (kind, date, lines) in expected {
+            *counts.entry(key(kind, date, &lines)).or_insert(0_usize) += 1;
+        }
+        for entry in self.books.journal().entries() {
+            if !kinds.contains(&entry.kind) {
+                continue;
+            }
+            if entry.cash_flow != CashFlowClass::NonCash {
+                return Err(SimpleFinanceError::Invalid(format!(
+                    "公司行为分录（{:?}，{}，来源 {}）必须为 NonCash",
+                    entry.kind, entry.date, entry.source.value()
+                )));
+            }
+            let entry_key = key(entry.kind, entry.date, &entry.lines);
+            let count = counts.get_mut(&entry_key).ok_or_else(|| {
+                SimpleFinanceError::Invalid(format!(
+                    "公司行为分录（{:?}，{}，来源 {}）与已登记行为事实不一致或无法勾稽",
+                    entry.kind, entry.date, entry.source.value()
+                ))
+            })?;
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&entry_key);
+            }
+        }
+        if let Some(((kind, date, _), _)) = counts.first_key_value() {
+            return Err(SimpleFinanceError::Invalid(format!(
+                "已登记行为事实缺少对应汇总分录（{:?}，{}）——行为分录不得被周期结算回退",
+                kind, date
+            )));
+        }
+        Ok(())
+    }
+
+    /// 账面展示字段不变量：cash_book / investment_book 必须与权威账簿及分红
+    /// 付款事实的重算值一致（篡改或不一致的持久化状态显式拒绝）。
+    fn validate_book_display(&self) -> Result<(), SimpleFinanceError> {
+        let mut reference = self.clone();
+        reference.refresh_book_display()?;
+        if self.cash_book != reference.cash_book || self.investment_book != reference.investment_book
+        {
+            return Err(SimpleFinanceError::Invalid(
+                "账面展示现金或投资额与权威账簿重算值不一致".into(),
+            ));
+        }
         Ok(())
     }
 }

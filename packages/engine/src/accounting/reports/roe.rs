@@ -99,11 +99,21 @@ fn actual_equity_events(
         if !delta.is_positive() && !delta.is_negative() {
             continue;
         }
-        let kind = match entry.kind {
+        // Increase/Decrease 使用正的绝对金额；净权益变动为零的行为分录
+        //（送转、回购注销、缩股的权益内部结转）在上方 continue 跳过。
+        let (kind, amount) = match entry.kind {
             BusinessKind::CompanyDividendDeclaration if delta.is_negative() => {
-                EquityEventKind::Decrease
+                (EquityEventKind::Decrease, delta.neg()?)
             }
             BusinessKind::CompanyDividendDeclaration => {
+                return Ok(None)
+            }
+            // 配股／增发结算使归母权益增加（募集资金按面值+溢价计入权益），
+            // 属规则9口径的权益增加事项（按实际生效日加权）。
+            BusinessKind::CompanyRightsOfferingSettlement if delta.is_positive() => {
+                (EquityEventKind::Increase, delta)
+            }
+            BusinessKind::CompanyRightsOfferingSettlement => {
                 return Ok(None)
             }
             _ => return Ok(None),
@@ -114,7 +124,7 @@ fn actual_equity_events(
             attribution: DisclosureAttributionBasis::AttributableToOrdinaryShareholders,
             effective_on: entry.date,
             kind,
-            amount: delta.neg()?,
+            amount,
         });
     }
     Ok(Some(events))

@@ -11,9 +11,10 @@
 //!   其后的送转声明与后续拆股／缩股声明必须沿用该面值，直到下一次重新计值。
 //!   无拆股事实时沿用送转批次的 bind-once 面值口径。
 //!
-//! Simple 账面只冻结面值口径展示事实，不做借贷过账、不产生公司或投资者
-//! 现金；真实股份换算由 Session 侧的股东名册（`MovementScope::
-//! ShareReDenomination`）与账户结算完成。
+//! Simple 账面在声明时只冻结面值口径展示事实；缩股入账回填时按消灭面值过账
+//! 权益内部结转分录（借 4001／贷资本公积，N3 批起）、拆股入账不产生分录，
+//! 两者均不产生公司或投资者现金；真实股份换算由 Session 侧的股东名册
+//!（`MovementScope::ShareReDenomination`）与账户结算完成。
 
 use super::*;
 
@@ -52,6 +53,39 @@ impl SimpleFinanceState {
         } else {
             Err(SimpleFinanceError::StockDistributionInvalid(
                 "既有送转声明的每股面值不一致，无法确定后续送转沿用面值".into(),
+            ))
+        }
+    }
+
+    /// 在册股份的每股面值：按最近**已入账**（`settled_on` 已回填）的拆股／缩股
+    /// 重锚解析；已批准未入账的重新计值不改变在册股份面值。无已入账重新计值时
+    /// 沿用送转 bind-once 面值共识。回购注销等针对存量股份的核减必须用本口径，
+    /// 不得用 `current_par_value`（声明链口径，含未生效重锚——独立复核修复轮发现）。
+    pub fn outstanding_par_value(
+        &self,
+    ) -> Result<Option<crate::money::Money>, SimpleFinanceError> {
+        if let Some(latest_settled) = self
+            .share_splits
+            .values()
+            .filter(|fact| fact.settled_on.is_some())
+            .max_by(|left, right| {
+                (left.settled_on, &left.event_id).cmp(&(right.settled_on, &right.event_id))
+            })
+        {
+            return Ok(Some(latest_settled.par_value_after));
+        }
+        let mut pars = self
+            .stock_distributions
+            .values()
+            .map(|fact| fact.par_value_per_share);
+        let Some(first) = pars.next() else {
+            return Ok(None);
+        };
+        if pars.all(|par| par == first) {
+            Ok(Some(first))
+        } else {
+            Err(SimpleFinanceError::StockDistributionInvalid(
+                "既有送转声明的每股面值不一致，无法确定在册股份面值".into(),
             ))
         }
     }
@@ -250,6 +284,26 @@ impl SimpleFinanceState {
             .checked_mul(i128::from(old_equivalent_destroyed))
             .ok_or_else(|| SimpleFinanceError::ShareSplitInvalid("缩股核减金额溢出".into()))?;
         let mut candidate = self.clone();
+        // 缩股核减分录（拆股面值总额不变、不产生分录）：借 4001（消灭面值核减）、
+        // 贷资本公积（等额归集）；与回购注销同一简化口径（权益内部结转）。
+        if reduction_cents > 0 {
+            candidate.post_capital_action(
+                settled_on,
+                BusinessKind::CompanyShareReDenomination,
+                vec![
+                    line(
+                        "4001",
+                        PostingSide::Debit,
+                        AccountingAmount::from_cents(reduction_cents),
+                    ),
+                    line(
+                        crate::accounting::reports::simple_summary::CAPITAL_RESERVE,
+                        PostingSide::Credit,
+                        AccountingAmount::from_cents(reduction_cents),
+                    ),
+                ],
+            )?;
+        }
         let fact = candidate
             .share_splits
             .get_mut(event_id)

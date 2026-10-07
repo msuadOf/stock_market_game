@@ -14,11 +14,11 @@ type DividendPlan = { readonly declaration: DividendDeclaration; readonly declar
 type DividendPosting = { readonly account: string; readonly side: "Debit" | "Credit"; readonly amount: string };
 type DividendLegalFacts = { readonly registered_capital: string; readonly source_evidence: string };
 type StockDistributionKind = "BonusShares" | "CapitalReserveConversion";
-type StockDistributionFact = { readonly event_id: string; readonly approval_reference: string; readonly kind: StockDistributionKind; readonly approved_on: string; readonly new_shares: string; readonly par_value_per_share: string; readonly capital_increase: string; readonly registered_capital_at_approval: string; readonly credited_on: string | null };
+type StockDistributionFact = { readonly event_id: string; readonly approval_reference: string; readonly kind: StockDistributionKind; readonly approved_on: string; readonly new_shares: string; readonly par_value_per_share: string; readonly capital_increase: string; readonly registered_capital_at_approval: string; readonly credited_on: string | null; readonly statutory_reserve: string; readonly reserve_basis_year: number | null };
 
 function parseStockDistributionFact(value: unknown, path: string): StockDistributionFact {
   const parsed = record(value, path)
-  exact(parsed, ["event_id", "approval_reference", "kind", "approved_on", "new_shares", "par_value_per_share", "capital_increase", "registered_capital_at_approval", "credited_on"], path)
+  exact(parsed, ["event_id", "approval_reference", "kind", "approved_on", "new_shares", "par_value_per_share", "capital_increase", "registered_capital_at_approval", "credited_on", "statutory_reserve", "reserve_basis_year"], path)
   const event_id = string(parsed.event_id, `${path}.event_id`)
   const approval_reference = string(parsed.approval_reference, `${path}.approval_reference`)
   const approved_on = civilDate(parsed.approved_on, `${path}.approved_on`)
@@ -35,7 +35,13 @@ function parseStockDistributionFact(value: unknown, path: string): StockDistribu
   // `AccountingAmount` 元字符串换算为分），不再额外乘 100。
   if (accountingMinorUnits(capital_increase) !== BigInt(par) * BigInt(new_shares)) throw new SaveSchemaError(path, "送转股本增加金额必须等于每股面值乘以新增股数")
   if (credited_on !== null && credited_on < approved_on) throw new SaveSchemaError(`${path}.credited_on`, "送转入账日期不得早于批准日期")
-  return { event_id, approval_reference, kind, approved_on, new_shares, par_value_per_share: par, capital_increase, registered_capital_at_approval, credited_on }
+  const statutory_reserve = simpleAmount(parsed.statutory_reserve, `${path}.statutory_reserve`, true)
+  const reserve_basis_year = parsed.reserve_basis_year === null ? null : integer(parsed.reserve_basis_year, `${path}.reserve_basis_year`, 1900)
+  if (reserve_basis_year !== null && reserve_basis_year > 2199) throw new SaveSchemaError(`${path}.reserve_basis_year`, "必须为有效年度或 null")
+  const reserveMinor = accountingMinorUnits(statutory_reserve)
+  if ((reserveMinor > 0n) !== (reserve_basis_year !== null)) throw new SaveSchemaError(`${path}.reserve_basis_year`, "送股公积金提取额与依据年度必须同时存在或同时为空")
+  if ((credited_on === null || kind === "CapitalReserveConversion") && reserveMinor !== 0n) throw new SaveSchemaError(`${path}.statutory_reserve`, "未入账送股或资本公积转增不得携带法定公积金提取事实")
+  return { event_id, approval_reference, kind, approved_on, new_shares, par_value_per_share: par, capital_increase, registered_capital_at_approval, credited_on, statutory_reserve, reserve_basis_year }
 }
 export type RightsOfferingFinanceFact = { readonly event_id: string; readonly approval_reference: string; readonly approved_on: string; readonly price_per_share: string; readonly par_value_per_share: string; readonly registered_capital_at_approval: string; readonly settled_on: string | null; readonly issued_shares: string; readonly proceeds: string | null; readonly capital_increase: string | null }
 export type IssuerRepurchaseFinanceFact = { readonly event_id: string; readonly approval_reference: string; readonly approved_on: string; readonly synthetic_funding: string; readonly purpose: "ReduceCapital" | "EmployeeIncentive" | "ConvertibleConversion" | "ValueMaintenance"; readonly spent: string | null; readonly withdrawn_remainder: string | null; readonly completed_on: string | null; readonly cancelled_shares: string; readonly cancelled_on: string | null; readonly capital_reduction: string | null }
@@ -193,6 +199,68 @@ function validateDividendBooks(dividends: Readonly<Record<string, DividendPlan>>
   }
 }
 
+// 与 Rust validate_capital_action_entries 同构：行为事实与 Journal 使用计数多重集勾稽。
+// key 保留借贷行顺序，金额统一为分，允许金额字符串的等价表示，不重复消费事实。
+function validateCapitalActionBooks(
+  books: ReturnType<typeof parseBooks>,
+  stockDistributions: Readonly<Record<string, StockDistributionFact>>,
+  rightsOfferings: Readonly<Record<string, RightsOfferingFinanceFact>>,
+  issuerRepurchases: Readonly<Record<string, IssuerRepurchaseFinanceFact>>,
+  shareSplits: Readonly<Record<string, ShareSplitFinanceFact>>,
+  path: string,
+): void {
+  type ActionLine = { account: string; side: "Debit" | "Credit"; amount: bigint };
+  type Entry = ReturnType<typeof parseBooks>["journal"]["batches"][number][number];
+  const kinds = new Set<Entry["kind"]>(["CompanyStockDistributionCredit", "CompanyRightsOfferingSettlement", "CompanyRepurchaseCancellation", "CompanyShareReDenomination"]);
+  const expected = new Map<string, number>();
+  const key = (kind: Entry["kind"], date: string, lines: readonly ActionLine[]) => JSON.stringify([kind, date, lines.map(line => [line.account, line.side, line.amount.toString()])]);
+  const add = (kind: Entry["kind"], date: string, lines: readonly ActionLine[]) => {
+    const identity = key(kind, date, lines);
+    expected.set(identity, (expected.get(identity) ?? 0) + 1);
+  };
+  for (const fact of Object.values(stockDistributions)) {
+    if (fact.credited_on === null) continue;
+    const capital = accountingMinorUnits(fact.capital_increase);
+    const reserve = accountingMinorUnits(fact.statutory_reserve);
+    const lines: ActionLine[] = [{ account: fact.kind === "BonusShares" ? "4103" : "simple_capital_reserve", side: "Debit", amount: checkedLedgerAdd(capital, reserve, path) }];
+    if (reserve > 0n) lines.push({ account: "simple_statutory_reserve", side: "Credit", amount: reserve });
+    lines.push({ account: "4001", side: "Credit", amount: capital });
+    add("CompanyStockDistributionCredit", fact.credited_on, lines);
+  }
+  for (const fact of Object.values(rightsOfferings)) {
+    if (fact.settled_on === null || fact.issued_shares === "0") continue;
+    if (fact.proceeds === null || fact.capital_increase === null) throw new SaveSchemaError(`${path}.rights_offerings`, "已结算配股缺少募集资金或股本增加金额");
+    const proceeds = accountingMinorUnits(fact.proceeds), capital = accountingMinorUnits(fact.capital_increase);
+    const lines: ActionLine[] = [{ account: "simple_issuer_funding_asset", side: "Debit", amount: proceeds }, { account: "4001", side: "Credit", amount: capital }];
+    const premium = checkedLedgerSubtract(proceeds, capital, path);
+    if (premium > 0n) lines.push({ account: "simple_capital_reserve", side: "Credit", amount: premium });
+    add("CompanyRightsOfferingSettlement", fact.settled_on, lines);
+  }
+  for (const fact of Object.values(issuerRepurchases)) {
+    if (fact.cancelled_on === null) continue;
+    if (fact.capital_reduction === null) throw new SaveSchemaError(`${path}.issuer_repurchases`, "已注销回购缺少股本核减金额");
+    const reduction = accountingMinorUnits(fact.capital_reduction);
+    add("CompanyRepurchaseCancellation", fact.cancelled_on, [{ account: "4001", side: "Debit", amount: reduction }, { account: "simple_capital_reserve", side: "Credit", amount: reduction }]);
+  }
+  for (const fact of Object.values(shareSplits)) {
+    if (fact.settled_on === null) continue;
+    const reduction = accountingMinorUnits(fact.registered_capital_reduction);
+    if (reduction === 0n) continue;
+    add("CompanyShareReDenomination", fact.settled_on, [{ account: "4001", side: "Debit", amount: reduction }, { account: "simple_capital_reserve", side: "Credit", amount: reduction }]);
+  }
+  for (const entry of books.journal.batches.flat()) {
+    if (!kinds.has(entry.kind)) continue;
+    const identity = key(entry.kind, entry.date, entry.lines.map(line => ({ account: line.account, side: line.side, amount: accountingMinorUnits(line.amount) })));
+    const count = expected.get(identity);
+    // cash_flow 分支与 parseJournalEntry 的 NonCash 强检重复：parse 层已拒绝非
+    // NonCash，此处到达必为 NonCash，保留仅为与 Rust 恢复校验同构的防御性断言。
+    if (entry.cash_flow !== "NonCash" || count === undefined) throw new SaveSchemaError(`${path}.books.journal`, `公司行为分录（${entry.kind}，${entry.date}，来源 ${entry.source}）与已登记行为事实不一致或无法勾稽`);
+    if (count === 1) expected.delete(identity);
+    else expected.set(identity, count - 1);
+  }
+  if (expected.size !== 0) throw new SaveSchemaError(`${path}.books.journal`, "已登记公司行为事实缺少对应汇总分录，行为分录不得被周期结算回退");
+}
+
 function validateSimpleLedger(books: ReturnType<typeof parseBooks>, path: string): ReadonlyMap<string, bigint> {
   const balances = new Map<string, { debit: bigint; credit: bigint }>();
   for (const [batchIndex, batch] of books.journal.batches.entries()) {
@@ -234,7 +302,7 @@ function validateSimpleLedger(books: ReturnType<typeof parseBooks>, path: string
 
 export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财务状态") {
   const parsed = record(value, path);
-  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "share_splits", "rights_offerings", "issuer_repurchases", "legal_facts"], path);
+  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "share_splits", "rights_offerings", "issuer_repurchases", "legal_facts", "cash_book", "investment_book"], path);
   const kind = oneOf(parsed.kind, `${path}.kind`, ["Industrial", "Bank", "Insurance", "RealEstate"] as const);
   const company = string(parsed.company, `${path}.company`);
   if (company.trim().length === 0) throw new SaveSchemaError(`${path}.company`, "不能为空");
@@ -294,6 +362,8 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.event_id`, "送转事实键与事件身份不一致");
     if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.approved_on`, "送转批准日期不得早于公司开账日");
     if (registeredCapital === null || accountingMinorUnits(fact.registered_capital_at_approval) !== capitalAtApproval(fact.approved_on)) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.registered_capital_at_approval`, "送转声明的注册资本与公司绑定法定事实不一致");
+    if (fact.reserve_basis_year !== null && (fact.reserve_basis_year < Number(openingDate.slice(0, 4)) || fact.reserve_basis_year > Number(asOf.slice(0, 4)))) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.reserve_basis_year`, "公积金依据年度不得早于开账年度或晚于存档年度");
+    reserved = checkedLedgerAdd(reserved, accountingMinorUnits(fact.statutory_reserve), `${path}.stock_distributions.${eventId}.statutory_reserve`);
   }
   for (const [eventId, fact] of Object.entries(share_splits)) {
     if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.share_splits.${eventId}.event_id`, "拆股／缩股事实键与事件身份不一致");
@@ -310,9 +380,12 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.event_id`, "回购事实键与事件身份不一致");
     if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.approved_on`, "回购批准日期不得早于公司开账日");
     if (fact.completed_on !== null && (fact.spent === null || fact.withdrawn_remainder === null || fact.completed_on < fact.approved_on || accountingMinorUnits(fact.spent) + accountingMinorUnits(fact.withdrawn_remainder) !== accountingMinorUnits(fact.synthetic_funding))) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.completed_on`, "回购完成回填与获批额度不一致");
-    if ((fact.cancelled_shares !== "0" || fact.cancelled_on !== null) && (fact.completed_on === null || fact.cancelled_on === null || fact.cancelled_shares === "0" || fact.capital_reduction === null)) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.cancelled_on`, "回购注销回填字段不完整");
+    // 回填字段 all-or-none（与 Rust 恢复校验同构）：任一注销侧字段有值（含
+    // 孤立核减额——修复轮独立复核发现）都要求完成回填与注销字段齐全。
+    if ((fact.cancelled_shares !== "0" || fact.cancelled_on !== null || fact.capital_reduction !== null) && (fact.completed_on === null || fact.cancelled_on === null || fact.cancelled_shares === "0" || fact.capital_reduction === null)) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.cancelled_on`, "回购注销回填字段不完整");
   }
   validateDividendBooks(dividends, books, path);
+  validateCapitalActionBooks(books, stock_distributions, rights_offerings, issuer_repurchases, share_splits, path);
   const ledgerBalances = validateSimpleLedger(books, path);
   const latestJournalSource = books.journal.batches.flat().reduce((latest, entry) => Math.max(latest, entry.source), -1);
   if (latestJournalSource >= 0 && BigInt(nextId) <= BigInt(latestJournalSource)) throw new SaveSchemaError(`${path}.next_event_id`, "下一个财务事件来源不得重用已过账 Journal 来源");
@@ -339,7 +412,37 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     return [start, end] as const;
   });
   if (through !== asOf) throw new SaveSchemaError(`${path}.recognized_periods`, "已确认期间必须覆盖开账后至当前财务日期");
-  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, share_splits, rights_offerings, issuer_repurchases, legal_facts: legalFacts };
+  // 账面展示字段（2026-10-08 用户决策）：严格必填（旧档缺字段显式拒绝），
+  // 并与权威账簿重算值勾稽——cash = 累计净利润 − 累计已付分红（可为负）、
+  // investment = 累计收入 × 配置比例（半偶舍入落分，收入非负故结果非负）。
+  const cashBook = simpleAmount(parsed.cash_book, `${path}.cash_book`);
+  const investmentBook = simpleAmount(parsed.investment_book, `${path}.investment_book`, true);
+  {
+    let netIncome = 0n;
+    for (const [code, definition] of Object.entries(books.chart.accounts)) {
+      if (definition.element !== "Revenue" && definition.element !== "Expense") continue;
+      netIncome = checkedLedgerSubtract(netIncome, ledgerBalances.get(code) ?? 0n, `${path}.cash_book`);
+    }
+    let paidDividends = 0n;
+    for (const plan of Object.values(dividends)) {
+      for (const payment of Object.values(plan.payments)) paidDividends += accountingMinorUnits(payment.amount);
+    }
+    if (checkedLedgerSubtract(netIncome, paidDividends, `${path}.cash_book`) !== accountingMinorUnits(cashBook)) throw new SaveSchemaError(`${path}.cash_book`, "账面展示现金必须等于累计净利润减累计已付分红");
+    const revenueMinor = -(ledgerBalances.get("simple_revenue") ?? 0n);
+    const scaled = revenueMinor * BigInt(config.book_display.investment_of_revenue_bp);
+    // BigInt 商向零截断；半偶舍入（与引擎 div_round_half_even 同口径）。
+    const quotient = scaled / 10000n;
+    const remainder = scaled % 10000n;
+    const magnitudeTwice = (remainder < 0n ? -remainder : remainder) * 2n;
+    const sign = scaled < 0n ? -1n : 1n;
+    const expectedInvestment = magnitudeTwice > 10000n
+      ? quotient + sign
+      : magnitudeTwice === 10000n && quotient % 2n !== 0n
+        ? quotient + sign
+        : quotient;
+    if (expectedInvestment !== accountingMinorUnits(investmentBook)) throw new SaveSchemaError(`${path}.investment_book`, "账面展示投资额必须等于累计收入乘配置比例（半偶舍入）");
+  }
+  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, share_splits, rights_offerings, issuer_repurchases, legal_facts: legalFacts, cash_book: cashBook, investment_book: investmentBook };
 }
 
 /// 配股账面事实（声明即冻结；结算回填 issued_shares/proceeds/capital_increase）。

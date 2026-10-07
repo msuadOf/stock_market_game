@@ -129,8 +129,15 @@ impl SimpleFinanceState {
         Ok(false)
     }
 
-    /// 注销回填：按面值×股数核减注册资本。面值优先沿用送转/配股已绑定口径，
-    /// 否则由「当前法定注册资本 ÷ 当前已发行股数」整除推导（不可整除则显式拒绝）。
+    /// 注销回填：按面值×股数核减注册资本并过账汇总分录。面值读取
+    /// `current_par_value` 权威链，否则由「当前法定注册资本 ÷ 当前已发行股数」整除推导
+    ///（不可整除则显式拒绝）。
+    ///
+    /// 注销分录（简化口径，N3 批 2026-10-08，登记于 docs/company-accounting.md）：
+    /// 借 4001（股本按面值核减）、贷 simple_capital_reserve（核减额等额归集）。
+    /// 回购资金为 ADR-0038 合成来源、从未进入 Simple 账面权益，因此注销不按
+    /// 实际成交成本核减权益总额（权益总额不变）；真实 A 股按库存股成本注销并
+    /// 核减股本与资本公积/留存收益的口径登记为简化差异。
     pub fn record_issuer_repurchase_cancellation(
         &mut self,
         event_id: &str,
@@ -159,11 +166,10 @@ impl SimpleFinanceState {
                 "回购注销股数必须为正数且日期不早于批准日".into(),
             ));
         }
-        // 面值绑定：优先沿用送转/配股已绑定口径，否则由当前法定事实整除推导。
-        let par_cents = if let Some(first) = self.stock_distributions.values().next() {
-            i128::from(first.par_value_per_share.cents())
-        } else if let Some(first) = self.rights_offerings.values().next() {
-            i128::from(first.par_value_per_share.cents())
+        // 在册股份面值按最近已入账重新计值解析（outstanding_par_value）；
+        // 已批准未入账的拆股/缩股不改变在册面值，历史送转冻结面值亦非权威。
+        let par_cents = if let Some(current) = self.outstanding_par_value()? {
+            i128::from(current.cents())
         } else {
             let legal = self.legal_facts.0.as_ref().ok_or_else(|| {
                 SimpleFinanceError::StockDistributionInvalid(
@@ -187,6 +193,19 @@ impl SimpleFinanceState {
                 })?,
         );
         let mut candidate = self.clone();
+        // 注销分录：借 4001（面值核减）、贷资本公积（等额归集）；权益内部结转。
+        candidate.post_capital_action(
+            cancelled_on,
+            BusinessKind::CompanyRepurchaseCancellation,
+            vec![
+                line("4001", PostingSide::Debit, reduction),
+                line(
+                    crate::accounting::reports::simple_summary::CAPITAL_RESERVE,
+                    PostingSide::Credit,
+                    reduction,
+                ),
+            ],
+        )?;
         let fact = candidate
             .issuer_repurchases
             .get_mut(event_id)

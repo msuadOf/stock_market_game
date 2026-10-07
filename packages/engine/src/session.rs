@@ -2769,8 +2769,9 @@ impl GameSession {
     /// 演进（见 `SimpleFinanceState::record_stock_distribution_credit`）。首次送转
     /// 声明的面值由「已绑定注册资本法定事实 ÷ 名册当前已发行股数」整除推导并就此
     /// 固定；同一发行人后续送转必须沿用同一面值，不得用增大后的发行股数反推缩小
-    /// 面值。送股（股票股利）额外受可分配利润上限约束（Simple 账面只做面值展示
-    /// 登记，不做借贷过账，不产生投资者现金）。
+    /// 面值。送股（股票股利）额外受可分配利润上限约束并预留未入账占用额；真实
+    /// 入账回填时过账权益内部结转分录并计提法定公积金（N3 批起进 `Books`），
+    /// 不产生投资者现金。
     pub fn approve_stock_distribution(
         &mut self,
         plan: crate::company::stock_distribution::StockDistributionEventPlan,

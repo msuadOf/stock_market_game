@@ -11,7 +11,8 @@ macro_rules! simple_company_fixture {
                 AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig,
                 PeriodVariableExpenseRule, SettlementCycle,
             },
-            SimpleCompanyConfig, SimpleConfig, SimpleEnvironmentConfig, SimpleFinanceConfig,
+            SimpleBookDisplayConfig, SimpleCompanyConfig, SimpleConfig, SimpleEnvironmentConfig,
+            SimpleFinanceConfig,
             SimpleSummaryRule,
         };
         use fixture_engine::accounting::{
@@ -91,6 +92,7 @@ macro_rules! simple_company_fixture {
                         },
                     },
                     summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
+                    book_display: SimpleBookDisplayConfig::DEFAULT,
                 },
                 preferences: fixture_engine::company::simple::SimpleCompanyPreferences::none(),
             }).collect(),

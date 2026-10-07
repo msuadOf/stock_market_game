@@ -78,6 +78,8 @@ function simpleCompany(code: string, revenueGrowth: number, fixedExpenseGrowth: 
       opening_lines: [{ account: "simple_receivable", side: "Debit" as const, amount: initial.initial_equity }, { account: "4001", side: "Credit" as const, amount: initial.initial_equity }],
       tax_policy: { version: 1, vat: { output_rate_bp: 1300, input_rate_bp: 1300, deductible_share_bp: 10000 }, income_tax: { rate_bp: 2500, loss_carryforward_years: 5 } },
       summary_rule: "ReceivableRevenuePayableExpenses" as const,
+      // 账面展示参数（2026-10-08 用户决策默认 30%；均为展示值，不建模真实资金流）。
+      book_display: { investment_of_revenue_bp: 3000 },
     },
     // 默认新局不配置任何公司行为偏好（ADR-0037：未配置=不自动产生方案，
     // 安全默认；偏好配置 UI 入口归后续批次）。

@@ -764,6 +764,18 @@ pub struct StockDistributionFinanceFact {
     pub capital_increase: AccountingAmount,
     pub registered_capital_at_approval: AccountingAmount,
     pub credited_on: Option<CivilDate>,
+    /// 实际送股入账时提取的法定公积金；未入账或资本公积转增必须为零。
+    pub statutory_reserve: AccountingAmount,
+    /// 提取所依据的完整自然年度；与现金分红共用年度计提，严格必填可空。
+    #[serde(deserialize_with = "required_nullable_reserve_year")]
+    pub reserve_basis_year: Option<i32>,
+}
+
+fn required_nullable_reserve_year<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<i32>::deserialize(deserializer)
 }
 
 fn required_nullable_registration<'de, D>(

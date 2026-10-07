@@ -86,6 +86,7 @@ fn config() -> SimpleConfig {
                     },
                 },
                 summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
+                book_display: SimpleBookDisplayConfig::DEFAULT,
             },
             preferences: super::preferences::SimpleCompanyPreferences::none(),
         }],

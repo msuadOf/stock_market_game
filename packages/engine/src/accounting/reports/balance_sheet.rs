@@ -25,6 +25,7 @@ pub enum BsLine {
     CashFunds,
     Receivables,
     SimpleDividendSettlementAdjustment,
+    SimpleIssuerFundingAdjustment,
     InsuranceReceivables,
     Inventory,
     DevelopmentInventory,
@@ -42,6 +43,7 @@ pub enum BsLine {
     InsuranceContractLiabilities,
     DeferredTaxLiabilities,
     PaidInCapital,
+    CapitalReserve,
     StatutoryReserve,
     RetainedEarnings,
     MinorityEquity,
@@ -53,6 +55,7 @@ impl BsLine {
         BsLine::CashFunds,
         BsLine::Receivables,
         BsLine::SimpleDividendSettlementAdjustment,
+        BsLine::SimpleIssuerFundingAdjustment,
         BsLine::InsuranceReceivables,
         BsLine::Inventory,
         BsLine::DevelopmentInventory,
@@ -70,6 +73,7 @@ impl BsLine {
         BsLine::InsuranceContractLiabilities,
         BsLine::DeferredTaxLiabilities,
         BsLine::PaidInCapital,
+        BsLine::CapitalReserve,
         BsLine::StatutoryReserve,
         BsLine::RetainedEarnings,
         BsLine::MinorityEquity,
@@ -90,6 +94,7 @@ impl BsLine {
                 | InsuranceContractLiabilities
                 | DeferredTaxLiabilities
                 | PaidInCapital
+                | CapitalReserve
                 | StatutoryReserve
                 | RetainedEarnings
                 | MinorityEquity
@@ -104,6 +109,7 @@ impl BsLine {
             CashFunds
                 | Receivables
                 | SimpleDividendSettlementAdjustment
+                | SimpleIssuerFundingAdjustment
                 | InsuranceReceivables
                 | Inventory
                 | DevelopmentInventory
@@ -118,7 +124,11 @@ impl BsLine {
     pub fn is_equity(&self) -> bool {
         matches!(
             self,
-            BsLine::PaidInCapital | BsLine::StatutoryReserve | BsLine::RetainedEarnings | BsLine::MinorityEquity
+            BsLine::PaidInCapital
+                | BsLine::CapitalReserve
+                | BsLine::StatutoryReserve
+                | BsLine::RetainedEarnings
+                | BsLine::MinorityEquity
         )
     }
 
@@ -250,6 +260,11 @@ pub(crate) fn generate(
 }
 
 /// 上年年末比较项行。
+///
+/// 权益区行统一由 [`EquityPresentation::from_prior`] 的追加段提供（实收资本、
+/// 资本公积、法定公积金、未分配利润、少数股东权益），主循环跳过全部权益行——
+/// 否则法定公积金等行会被主循环与追加段各列一次（2026-10-08 N3 批修复的
+/// 既有重复列示）。
 fn prior_lines(
     prior: &BTreeMap<LedgerAccountId, AccountingAmount>,
     classification: &ReportClassification,
@@ -258,10 +273,7 @@ fn prior_lines(
 ) -> Result<Vec<(BsLine, AccountingAmount)>, ReportError> {
     let mut lines = Vec::new();
     for line in BsLine::ALL {
-        if !has_line(classification, *line, prior)
-            || line.is_derived()
-            || *line == BsLine::PaidInCapital
-        {
+        if !has_line(classification, *line, prior) || line.is_equity() {
             continue;
         }
         lines.push((*line, signed_sum(prior, classification, *line)?));
@@ -275,6 +287,10 @@ fn prior_lines(
 /// 本次列报的权益行值；比较期路径不额外计算原先未校验的总额。
 struct EquityPresentation {
     paid_in: AccountingAmount,
+    capital_reserve: AccountingAmount,
+    /// 科目表是否实际归类了资本公积科目（仅 Simple 账套；四行业基础科目表无
+    /// 该科目时不列零值行，既有列报不变）。
+    show_capital_reserve: bool,
     statutory_reserve: AccountingAmount,
     retained: AccountingAmount,
     minority: Option<AccountingAmount>,
@@ -288,6 +304,10 @@ impl EquityPresentation {
         let facts = windows.consolidation.as_ref();
         // 实收资本：合并口径 = Σ成员 − 非根成员贡献（根成员 4001）。
         let mut paid_in = signed_sum(&windows.closing, classification, BsLine::PaidInCapital)?;
+        let capital_reserve =
+            signed_sum(&windows.closing, classification, BsLine::CapitalReserve)?;
+        let show_capital_reserve =
+            has_line(classification, BsLine::CapitalReserve, &windows.closing);
         let statutory_reserve = signed_sum(&windows.closing, classification, BsLine::StatutoryReserve)?;
         if let Some(facts) = facts {
             for (code, credit) in &facts.non_root_equity {
@@ -300,7 +320,11 @@ impl EquityPresentation {
             }
         }
         let retained = match facts {
-            Some(facts) => facts.equity_to_parent.sub(paid_in)?.sub(statutory_reserve)?,
+            Some(facts) => facts
+                .equity_to_parent
+                .sub(paid_in)?
+                .sub(capital_reserve)?
+                .sub(statutory_reserve)?,
             None => net_income_of(&windows.closing, &windows.defs)?.add(signed_sum(
                 &windows.closing,
                 classification,
@@ -310,6 +334,8 @@ impl EquityPresentation {
         let minority = facts.map(|facts| facts.minority_equity);
         Ok(Self {
             paid_in,
+            capital_reserve,
+            show_capital_reserve,
             statutory_reserve,
             retained,
             minority,
@@ -322,28 +348,33 @@ impl EquityPresentation {
         windows: &StatementWindows,
         facts: Option<&super::consolidated_window::ConsolidationFacts>,
     ) -> Result<Option<Self>, ReportError> {
-        let (paid_in, statutory_reserve, retained, minority) = match facts {
+        let show_capital_reserve = has_line(classification, BsLine::CapitalReserve, prior);
+        let (paid_in, capital_reserve, statutory_reserve, retained, minority) = match facts {
             None => {
                 let paid_in = signed_sum(prior, classification, BsLine::PaidInCapital)?;
+                let capital_reserve = signed_sum(prior, classification, BsLine::CapitalReserve)?;
                 let statutory_reserve = signed_sum(prior, classification, BsLine::StatutoryReserve)?;
                 let retained = net_income_of(prior, &windows.defs)?.add(signed_sum(
                     prior,
                     classification,
                     BsLine::RetainedEarnings,
                 )?)?;
-                (paid_in, statutory_reserve, retained, None)
+                (paid_in, capital_reserve, statutory_reserve, retained, None)
             }
             Some(facts) => match &facts.prior_split {
                 None => return Ok(None),
                 Some(split) => {
+                    let capital_reserve = signed_sum(prior, classification, BsLine::CapitalReserve)?;
                     let statutory_reserve = signed_sum(prior, classification, BsLine::StatutoryReserve)?;
-                    (split.root_capital, statutory_reserve,
-                        split.parent.sub(split.root_capital)?.sub(statutory_reserve)?, Some(split.minority))
+                    (split.root_capital, capital_reserve, statutory_reserve,
+                        split.parent.sub(split.root_capital)?.sub(capital_reserve)?.sub(statutory_reserve)?, Some(split.minority))
                 }
             },
         };
         Ok(Some(Self {
             paid_in,
+            capital_reserve,
+            show_capital_reserve,
             statutory_reserve,
             retained,
             minority,
@@ -351,11 +382,12 @@ impl EquityPresentation {
     }
 
     fn lines(&self) -> Vec<(BsLine, AccountingAmount)> {
-        let mut lines = vec![
-            (BsLine::PaidInCapital, self.paid_in),
-            (BsLine::StatutoryReserve, self.statutory_reserve),
-            (BsLine::RetainedEarnings, self.retained),
-        ];
+        let mut lines = vec![(BsLine::PaidInCapital, self.paid_in)];
+        if self.show_capital_reserve {
+            lines.push((BsLine::CapitalReserve, self.capital_reserve));
+        }
+        lines.push((BsLine::StatutoryReserve, self.statutory_reserve));
+        lines.push((BsLine::RetainedEarnings, self.retained));
         if let Some(minority) = self.minority {
             lines.push((BsLine::MinorityEquity, minority));
         }
@@ -363,7 +395,11 @@ impl EquityPresentation {
     }
 
     fn total_equity(&self) -> Result<AccountingAmount, ReportError> {
-        let mut total = self.paid_in.add(self.statutory_reserve)?.add(self.retained)?;
+        let mut total = self
+            .paid_in
+            .add(self.capital_reserve)?
+            .add(self.statutory_reserve)?
+            .add(self.retained)?;
         if let Some(minority) = self.minority {
             total = total.add(minority)?;
         }

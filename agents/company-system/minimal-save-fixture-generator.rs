@@ -8,8 +8,8 @@ use engine::company::simple::period::{
     PeriodVariableExpenseRule, SettlementCycle,
 };
 use engine::company::simple::{
-    SimpleCompanyConfig, SimpleCompanyPreferences, SimpleConfig, SimpleEnvironmentConfig,
-    SimpleFinanceConfig, SimpleSummaryRule,
+    SimpleBookDisplayConfig, SimpleCompanyConfig, SimpleCompanyPreferences, SimpleConfig,
+    SimpleEnvironmentConfig, SimpleFinanceConfig, SimpleSummaryRule,
 };
 use engine::company::{CompanyId, CompanyKind};
 use engine::session::protocol::ProtocolSession;
@@ -95,6 +95,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         },
                     },
                     summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
+                    book_display: SimpleBookDisplayConfig::DEFAULT,
                 },
                 // P 批严格持久化新字段：fixture 保持未配置偏好的行为中性默认。
                 preferences: SimpleCompanyPreferences::none(),

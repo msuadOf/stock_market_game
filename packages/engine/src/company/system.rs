@@ -129,7 +129,17 @@ impl CompanySystem {
         Ok(self.finance(company)?.stock_distribution_facts()?)
     }
 
-    /// 冻结 Simple 账面送转展示事实；不做借贷过账、不产生现金。
+    /// 账面展示字段查询（2026-10-08 用户决策）：现金=累计净利润−累计已付分红、
+    /// 投资额=累计收入×配置比例；均为**账面展示值**，不代表真实公司资金。
+    pub fn simple_book_display(
+        &self,
+        company: &CompanyId,
+    ) -> Result<super::simple::finance::SimpleBookDisplay, CompanySystemError> {
+        Ok(self.finance(company)?.book_display())
+    }
+
+    /// 冻结 Simple 账面送转声明事实；真实入账回填时过账权益内部结转分录并
+    /// 计提法定公积金（N3 批起进 `Books`），全程不产生现金。
     pub fn declare_stock_distribution(
         &mut self,
         company: &CompanyId,
@@ -173,7 +183,8 @@ impl CompanySystem {
         Ok(self.finance(company)?.current_par_value()?)
     }
 
-    /// 冻结 Simple 账面拆股／缩股展示事实；不做借贷过账、不产生现金。
+    /// 冻结 Simple 账面拆股／缩股声明事实；缩股真实入账回填时按消灭面值过账
+    /// 核减分录（拆股面值总额不变、无分录），全程不产生现金。
     pub fn declare_share_split(
         &mut self,
         company: &CompanyId,
