@@ -1,6 +1,6 @@
 use super::{
-    CompanyId, CompanySpec, api::*, capabilities::CompanyCapabilities, config::CompanySystemConfig,
-    identity::IssuerRegistry, simple::SimpleFundamentals,
+    CompanyId, CompanySpec, api::*, config::CompanySystemConfig, identity::IssuerRegistry,
+    simple::SimpleFundamentals,
 };
 use crate::calendar::CivilDate;
 
@@ -1093,12 +1093,61 @@ impl CompanySystem {
             Ok(CompanyReportAvailability::PeriodNotRepresented)
         }
     }
-    pub fn capabilities(
+    /// 公司侧当前事实（共同契约能力面的公司部分；方案/条件/本人权利由
+    /// session 层补充组装成完整 `CompanyCapabilities`）。不可用的字段显式给
+    /// reason，不填零（铁律三）。
+    pub fn company_facts(
         &self,
         company: &CompanyId,
-    ) -> Result<CompanyCapabilities, CompanySystemError> {
-        self.finance(company)?;
-        Ok(CompanyCapabilities {
+    ) -> Result<super::capabilities::CompanyFacts, CompanySystemError> {
+        use super::capabilities::{
+            CapabilityAmount, CapabilityMoney, CompanyFacts, DistributableProfitSnapshot,
+        };
+        let finance = self.finance(company)?;
+        let issued_shares = self
+            .issuers
+            .get(company)
+            .map(|spec| spec.issued_shares)
+            .ok_or_else(|| {
+                CompanySystemError::SystemState(format!(
+                    "发行人登记表缺失公司 {}，与财务状态不一致",
+                    company.0
+                ))
+            })?;
+        let par_value_per_share = match finance.current_par_value()? {
+            Some(par) => CapabilityMoney::Available {
+                cents: par.cents().to_string(),
+            },
+            None => CapabilityMoney::Unavailable {
+                reason: "尚无送转／拆股绑定的每股面值事实，面值不可用".into(),
+            },
+        };
+        let registered_capital = match finance.legal_facts() {
+            Some(facts) if facts.registered_capital.is_positive() => {
+                CapabilityAmount::Available {
+                    amount_yuan: facts.registered_capital.to_yuan_string(),
+                }
+            }
+            Some(_) => CapabilityAmount::Unavailable {
+                reason: "注册资本法定事实为非正数，不可用".into(),
+            },
+            None => CapabilityAmount::Unavailable {
+                reason: "未绑定注册资本法定事实（define_dividend_legal_facts）".into(),
+            },
+        };
+        let distributable_profit = match finance.distributable_profit() {
+            Ok(profit) => DistributableProfitSnapshot::Available {
+                accumulated_after_loss_yuan: profit.accumulated_after_loss.to_yuan_string(),
+                statutory_reserve_yuan: profit.statutory_reserve.to_yuan_string(),
+                available_for_distribution_yuan: profit.available_for_distribution.to_yuan_string(),
+                reserve_basis_year: profit.reserve_basis_year,
+            },
+            Err(super::simple::SimpleFinanceError::DividendUnsupported(reason)) => {
+                DistributableProfitSnapshot::Unavailable { reason }
+            }
+            Err(other) => return Err(other.into()),
+        };
+        Ok(CompanyFacts {
             revenue: true,
             net_income: true,
             equity: true,
@@ -1108,7 +1157,62 @@ impl CompanySystem {
             unsupported_reason:
                 "汇总财务已接通；共同股本行为的实际投资者结算仍待接线，不能按模式缺资金拒绝或冒称已支持"
                     .into(),
+            par_value_per_share,
+            issued_shares,
+            registered_capital,
+            distributable_profit,
         })
+    }
+
+    /// 按公司+期间读取期间变化解释（复用既有内部 history 的 explanation 数据，
+    /// 只读、不新建状态；上层读取入口见 Q14 §3 `query_explanation` 最小落点）。
+    pub fn period_change_explanation(
+        &self,
+        company: &CompanyId,
+        period_end: CivilDate,
+    ) -> Result<super::simple::period::PeriodChangeExplanation, CompanySystemError> {
+        let state = match &self.implementation {
+            CompanyImplementation::Simple(state) => state,
+        };
+        if !state.companies.contains_key(company) {
+            return Err(CompanySystemError::InvalidInput(format!(
+                "未知公司 {}",
+                company.0
+            )));
+        }
+        let (_, cycle_end) = state.config.settlement_cycle.containing(period_end)?;
+        if cycle_end != period_end {
+            return Err(CompanySystemError::InvalidInput(format!(
+                "{period_end} 不是结算周期末日，无法定位期间解释"
+            )));
+        }
+        let advanced = state.advanced_through;
+        let (current_start, current_end) = state.config.settlement_cycle.containing(advanced)?;
+        let latest_settled = if advanced == current_end {
+            current_end
+        } else {
+            current_start.prev()?
+        };
+        if period_end > latest_settled {
+            return Err(CompanySystemError::BusinessCondition(format!(
+                "期间 {period_end} 尚未结算，暂无解释材料（最近已结算期间末日 {latest_settled}）"
+            )));
+        }
+        if period_end < state.history_start {
+            return Err(CompanySystemError::BusinessCondition(format!(
+                "期间 {period_end} 早于开局前史起点 {}，无解释材料",
+                state.history_start
+            )));
+        }
+        if let Some(entry) = state.history.iter().find(|entry| {
+            &entry.company == company && entry.period_end == period_end
+        }) {
+            return Ok(entry.explanation.clone());
+        }
+        Err(CompanySystemError::SystemState(format!(
+            "公司 {} 的期间 {period_end} 在已结算范围内但历史缺失解释",
+            company.0
+        )))
     }
     pub fn submit_command(&mut self, command: CompanyCommand) -> Result<(), CompanySystemError> {
         let result = match &mut self.implementation {

@@ -52,6 +52,8 @@ pub use cash_dividend_tax::{CashDividendTaxBook, CashDividendTaxMode, DividendTa
 pub mod cash_dividend;
 pub mod ex_reference_price;
 #[cfg(test)]
+mod capabilities_tests;
+#[cfg(test)]
 mod dividend_contract_tests;
 #[cfg(test)]
 mod error_classification_tests;
