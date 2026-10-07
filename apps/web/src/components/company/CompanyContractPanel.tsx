@@ -82,33 +82,50 @@ export function contractParValueText(capabilities: CompanyCapabilities): string 
   return `不可用：${fact.Unavailable.reason}`;
 }
 
+/**
+ * `useQueried` 的重查触发键：**闭包身份不参与**（F 修复轮必修-2）。调用方
+ * （含本面板）每渲染都可能为查询新建闭包；把闭包放进 effect 依赖会造成
+ * 「查询完成 → setState 重渲染 → 新闭包身份 → effect 再触发」的无限请求
+ * 循环与闪烁。触发只由「是否支持查询」与刷新键决定；查询本体经 ref 在
+ * 触发时取最新值（渲染阶段先更新 ref，effect 随后执行，语义与旧版一致）。
+ */
+export function contractQueryTrigger(enabled: boolean, refreshKey: string): string {
+  return `${enabled ? "supported" : "unsupported"}:${refreshKey}`;
+}
+
 function useQueried<T>(query: (() => Promise<T>) | undefined, refreshKey: string): readonly [T | null, string | null, boolean, () => void] {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const sequence = useRef(0);
+  const queryRef = useRef(query);
+  queryRef.current = query;
   const refresh = useRef(() => {});
   refresh.current = () => {
-    if (query === undefined) return;
-    const current = ++sequence.current;
+    const current = queryRef.current;
+    if (current === undefined) return;
+    const ticket = ++sequence.current;
     setData(null);
     setError(null);
     setLoading(true);
-    query().then(
+    current().then(
       (result) => {
-        if (sequence.current === current) { setData(result); setLoading(false); }
+        if (sequence.current === ticket) { setData(result); setLoading(false); }
       },
       (failure) => {
-        if (sequence.current === current) {
+        if (sequence.current === ticket) {
           setError(failure instanceof Error ? failure.message : String(failure));
           setLoading(false);
         }
       },
     );
   };
+  // 触发键先提成具名变量（oxlint exhaustive-deps 要求依赖数组可静态检查）；
+  // 语义等价：支持位或刷新键变化才重新查询，闭包身份不参与。
+  const trigger = contractQueryTrigger(query !== undefined, refreshKey);
   useEffect(() => {
     refresh.current();
-  }, [query, refreshKey]);
+  }, [trigger]);
   return [data, error, loading, () => refresh.current()] as const;
 }
 

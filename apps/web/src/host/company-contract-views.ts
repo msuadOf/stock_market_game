@@ -25,16 +25,21 @@ function requireVariant(value: unknown, path: string, variants: readonly string[
   return { key: keys[0], body: record(wrapper[keys[0]], `${path}.${keys[0]}`) };
 }
 
+/** 不可用分支公共形状（三个金额事实同构）：显式非空 reason，不填零（铁律）。 */
+function unavailableReason(body: JsonRecord, path: string): { Unavailable: { reason: string } } {
+  exact(body, ["reason"], `${path}.Unavailable`);
+  const reason = string(body.reason, `${path}.Unavailable.reason`);
+  if (!reason.trim()) throw new Error(`${path}.Unavailable.reason 不可用原因必须非空`);
+  return { Unavailable: { reason } };
+}
+
 function parseCapabilityAmount(value: unknown, path: string): CompanyCapabilities["registered_capital"] {
   const { key, body } = requireVariant(value, path, ["Available", "Unavailable"]);
   if (key === "Available") {
     exact(body, ["amount_yuan"], `${path}.Available`);
     return { Available: { amount_yuan: accountingAmount(body.amount_yuan, `${path}.Available.amount_yuan`) } };
   }
-  exact(body, ["reason"], `${path}.Unavailable`);
-  const reason = string(body.reason, `${path}.Unavailable.reason`);
-  if (!reason.trim()) throw new Error(`${path}.Unavailable.reason 不可用原因必须非空`);
-  return { Unavailable: { reason } };
+  return unavailableReason(body, path);
 }
 
 function parseCapabilityMoney(value: unknown, path: string): CompanyCapabilities["par_value_per_share"] {
@@ -43,10 +48,7 @@ function parseCapabilityMoney(value: unknown, path: string): CompanyCapabilities
     exact(body, ["cents"], `${path}.Available`);
     return { Available: { cents: decimal(body.cents, `${path}.Available.cents`) } };
   }
-  exact(body, ["reason"], `${path}.Unavailable`);
-  const reason = string(body.reason, `${path}.Unavailable.reason`);
-  if (!reason.trim()) throw new Error(`${path}.Unavailable.reason 不可用原因必须非空`);
-  return { Unavailable: { reason } };
+  return unavailableReason(body, path);
 }
 
 function parseDistributableProfitSnapshot(value: unknown, path: string): CompanyCapabilities["distributable_profit"] {
@@ -62,10 +64,7 @@ function parseDistributableProfitSnapshot(value: unknown, path: string): Company
       },
     };
   }
-  exact(body, ["reason"], `${path}.Unavailable`);
-  const reason = string(body.reason, `${path}.Unavailable.reason`);
-  if (!reason.trim()) throw new Error(`${path}.Unavailable.reason 不可用原因必须非空`);
-  return { Unavailable: { reason } };
+  return unavailableReason(body, path);
 }
 
 /** 公司能力面（owner 隔离：owner_rights 只含查询账户本人的事实）。 */

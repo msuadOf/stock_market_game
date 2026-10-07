@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import {
   parseCompanyCapabilities,
@@ -91,6 +92,31 @@ describe("parseCompanyCapabilities", () => {
 
   test("拒绝非规范十进制股本字符串", () => {
     assert.throws(() => parseCompanyCapabilities({ ...CAPABILITIES, issued_shares: 10_000_000 }), /issued_shares/);
+  });
+
+  // F 修复轮 blocker-1 回归锁：fixture 由 engine 真实 serde 序列化产出
+  // （`capabilities_wire_u64_fields_serialize_as_canonical_decimal_strings`
+  // 以 UPDATE_COMPANY_WIRE_FIXTURES=1 重生成并逐字段校验同步），本测试把
+  // engine 真实 wire 喂给严格 parser——手写 fixture 曾掩盖「ts 类型为 string
+  // 而 serde 实际输出 number」的断裂，真机 companyCapabilities 恒解析失败。
+  test("engine 真实序列化 wire 经严格 parser 完整往返（u64 股数为规范字符串）", () => {
+    const wire: unknown = JSON.parse(
+      readFileSync(new URL("../save/fixtures/company-capabilities-wire.json", import.meta.url), "utf8"),
+    ) as unknown;
+    const view = parseCompanyCapabilities(wire);
+    assert.equal(typeof (wire as { issued_shares: unknown }).issued_shares, "string");
+    assert.match(view.issued_shares, /^(0|[1-9]\d*)$/);
+    assert.equal(view.issued_shares, (wire as { issued_shares: string }).issued_shares);
+    // 金额与权利摘要按 engine 实际口径原样保留（不填零、不转 number）。
+    const wireRegistered = (wire as { registered_capital: { Available?: { amount_yuan: string } } }).registered_capital;
+    if (!("Available" in view.registered_capital) || wireRegistered.Available === undefined) {
+      throw new Error("fixture 的注册资本应为可用（Available）");
+    }
+    assert.equal(view.registered_capital.Available.amount_yuan, wireRegistered.Available.amount_yuan);
+    assert.equal(view.owner_rights[0]?.entitled_shares, (wire as { owner_rights: Array<{ entitled_shares: string | null }> }).owner_rights[0]?.entitled_shares);
+    // 五类 readiness 逐类保留 engine 判定（含显式 blockers 原文）。
+    assert.equal(view.action_readiness.length, 5);
+    assert.equal(view.action_readiness[3]?.blockers.length, (wire as { action_readiness: Array<{ blockers: string[] }> }).action_readiness[3]?.blockers.length);
   });
 });
 
