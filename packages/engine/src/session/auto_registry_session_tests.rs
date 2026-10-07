@@ -644,6 +644,108 @@ fn late_holder_ashare_entry_opens_tax_book_and_next_dividend_registers_gross() {
     );
 }
 
+/// 边界（独立复核补齐）：入册日恰为分红**股权登记日**的当日买入。日终管线
+/// 先推进名册（`close_registries_through`）再冻结登记快照
+/// （`process_dividends_on_day_end`），登记日当日经二级市场净买入首次入册的
+/// 账户按「登记日收盘持有即享有」纳入快照；后入税账 opened_on = 登记日−1、
+/// 首条日结（取得日=登记日）紧邻开账日次日，与分红 registered_on=登记日同日
+/// 自洽，持有期自登记日起算。
+#[test]
+fn late_holder_buying_on_registration_day_is_included_in_snapshot_same_day() {
+    let mut session = GameSession::new(
+        auto_foundation_setup_with_mild_preferences(CashDividendTaxMode::AShareIndividual, 100),
+        42,
+    )
+    .unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    // 推进到首个结算周期末日次日（评估/批准/公告日），产生自动分红方案。
+    advance_to(&mut session, d("2030-02-01"));
+    let plan = session.state.corporate_actions.dividends[0].plan().clone();
+    // 测试侧独立推导权益登记日：公告日后首个交易日且不与公告日同日
+    //（逐自然日查日历，不与实现共用推导）。
+    let calendar = session.state.civil_clock.calendar();
+    let mut registration_day = plan.announced_on;
+    loop {
+        registration_day = registration_day.next().unwrap();
+        if calendar
+            .is_trading_day(crate::calendar::CalendarExchange::Sse, registration_day)
+            .unwrap()
+        {
+            break;
+        }
+    }
+    assert_ne!(
+        registration_day,
+        plan.announced_on,
+        "登记日不与公告日同日（typed 公告通道约束）"
+    );
+    // 登记日当日（开市后）真实买入并完成当日日结：名册先入册、快照后冻结。
+    advance_to(&mut session, registration_day);
+    assert_eq!(
+        session.civil_date(),
+        registration_day,
+        "fixture 必须停在登记日当日盘中"
+    );
+    player_buys_100_shares_today(&mut session);
+    finish_day_after_steps(&mut session, 1);
+    // 同日入册 → 纳入登记快照（登记日收盘持有即享有）。
+    let snapshot = session.state.corporate_actions.dividends[0]
+        .registration()
+        .expect("登记日日结后必须已有登记快照");
+    assert_eq!(snapshot.registered_on(), registration_day);
+    assert!(
+        snapshot
+            .holdings()
+            .iter()
+            .any(|holding| holding.holder == HolderId::Account(AccountId(0))),
+        "登记日当日买入首次入册的玩家必须进入当日登记快照"
+    );
+    // 后入税账同日开账并登记分红：取得日=登记日，registered_on=登记日。
+    let book = session
+        .state
+        .corporate_actions
+        .dividend_tax_books
+        .iter()
+        .find(|book| book.account() == AccountId(0) && book.stock() == &stock)
+        .expect("登记日当日首次入册必须同步开个人税账");
+    assert_eq!(book.lots().len(), 1);
+    assert_eq!(book.lots()[0].qty, 100);
+    assert_eq!(book.lots()[0].acquired_on, registration_day);
+    let book_json = serde_json::to_value(book).unwrap();
+    let registered_dividend = book_json
+        .get("dividends")
+        .and_then(|dividends| dividends.as_array())
+        .expect("税账序列化契约含 dividends 字段");
+    assert_eq!(
+        registered_dividend.len(),
+        1,
+        "登记日入册的税账必须登记当日冻结的分红"
+    );
+    let expected_registered_on = serde_json::to_value(registration_day)
+        .unwrap()
+        .as_str()
+        .map(str::to_string);
+    assert_eq!(
+        registered_dividend[0].get("registered_on").and_then(|day| day.as_str()),
+        expected_registered_on.as_deref(),
+        "分红税基登记日必须等于入册日（持有期自该日起算）"
+    );
+    // 推进到派发日次日：玩家按快照 100 股税前全额到账（≤1 年付款日不代扣）。
+    let cash_before_payment = session.account(AccountId(0)).unwrap().cash();
+    advance_to(&mut session, plan.payable_on.next().unwrap());
+    assert_eq!(
+        session.state.corporate_actions.dividends[0].status(),
+        &crate::company::cash_dividend::CashDividendStatus::Paid
+    );
+    assert_eq!(
+        session.account(AccountId(0)).unwrap().cash(),
+        cash_before_payment
+            .add(Money::from_cents(plan.gross_per_share.cents() * 100))
+            .unwrap(),
+        "登记日当日入册的玩家按快照持股税前全额到账"
+    );
+}
+
 #[test]
 fn late_holder_flat_mode_gets_payment_day_withholding_without_tax_book() {
     let mut session = GameSession::new(

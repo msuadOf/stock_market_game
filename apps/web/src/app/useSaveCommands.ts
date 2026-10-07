@@ -335,6 +335,11 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         rights_offering_enabled: rightsOfferingEnabledDraft,
         issuer_repurchase_enabled: issuerRepurchaseEnabledDraft,
         par_value_per_share: parValuePerShareDraft,
+        // 开局自动装配随新局显式回产品默认开（独立复核 minor-3 修复）：
+        // {...activeSetup} 展开会把读入档的 auto=false 静默带进新局——该开关
+        // 无 UI 草稿层，跨局粘滞不可见；新局创建界面无关闭入口，统一回 true。
+        // 读档仍按档内值恢复（restore 路不经此组装）。
+        auto_corporate_foundation: true,
       };
       const host = hostRef.current;
       if (host?.capabilities.persistence === "remote") {

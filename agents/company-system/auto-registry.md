@@ -76,6 +76,30 @@
 - `cargo check --workspace --all-targets --exclude stock-market-game` 通过；
   `cargo check -p web-wasm` 通过。
 
+## 独立复核修复轮（2026-10-08，fix-round）
+
+非作者 subagent 审完整 diff（dc311164..09fceaae，8 angles）：无 major、
+minor 3、note 3。三项 minor 均已修复并复测：
+
+1. **缺「入册日 == 股权登记日」边界用例**（minor-1）：新增
+   `late_holder_buying_on_registration_day_is_included_in_snapshot_same_day`
+   ——测试侧独立推导登记日（逐自然日查日历），登记日当日真实买入入册，
+   断言纳入当日登记快照（登记日收盘持有即享有）、税账取得日=登记日、
+   `registered_on`==登记日（持有期自该日起算）且付款税前全额到账；模块
+   13/13 绿。复核确认代码顺序本就正确（名册推进先于快照冻结），用例锁
+   定该组合不回归。
+2. **ParValueInput 逐击键提交半截值**（minor-2）：改为**失焦（或回车）
+   提交合法值**，非法文本永不写草稿并提示「未提交的编辑：失焦后写入」；
+   新增 `ParValueInput.test.ts`（SSR 渲染默认草稿/失焦提示＋元↔分换算
+   正负例）2/2 绿。
+3. **auto 开关跨局静默粘滞**（minor-3）：`useSaveCommands` 新局组装显式
+   `auto_corporate_foundation: true`（新局创建界面无关闭入口，统一回产品
+   默认开；读档恢复不经此路径，档内值语义不变）。
+
+note 3 项（溢出双检防御、日终资格集合重建量、25 处机械补字段）经复核
+认定可接受/必需，不改。修复轮验证：engine 模块 13/13、Web 相关 67/67、
+tsc 0 错、oxlint 0 警告。
+
 ## 已知边界与遗留
 
 - **名册日结回执线性增长**：每个交易日每名册为全体持有人落一条日结回执（含零
