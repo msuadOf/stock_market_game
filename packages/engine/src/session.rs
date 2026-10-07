@@ -1514,6 +1514,8 @@ struct CommittableSessionState {
     seq: u64,
     /// 冻结日历与双时钟 自然日经营时钟：与 tick/交易日计数分离的权威自然日推进。
     civil_clock: CivilClock,
+    /// X1 投机预计算暂存（不进存档/hash；candidate 尾部产出、随提交流转、plan_tick 消费）。
+    speculative_prepare: Option<pipeline::SpeculativePrepareStash>,
 }
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
@@ -1812,6 +1814,7 @@ impl GameSession {
                 day: 0,
                 seq: 0,
                 civil_clock,
+                speculative_prepare: None,
             },
         };
         sess.populate_npcs(AccountKind::Retail)?;
@@ -4615,6 +4618,7 @@ impl CommittableSessionState {
             day,
             seq,
             civil_clock,
+            speculative_prepare,
         } = self;
         let accounts =
             accounts
@@ -4668,6 +4672,7 @@ impl CommittableSessionState {
             day: *day,
             seq: *seq,
             civil_clock: civil_clock.clone(),
+            speculative_prepare: speculative_prepare.clone(),
         })
     }
 
@@ -4716,6 +4721,7 @@ impl CommittableSessionState {
             day,
             seq,
             civil_clock,
+            speculative_prepare,
             urgency_policy,
         } = shadow;
         self.urgency_policy = urgency_policy;
@@ -4764,6 +4770,7 @@ impl CommittableSessionState {
         self.day = day;
         self.seq = seq;
         self.civil_clock = civil_clock;
+        self.speculative_prepare = speculative_prepare;
     }
 }
 

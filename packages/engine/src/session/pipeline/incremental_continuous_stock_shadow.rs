@@ -65,7 +65,7 @@ pub(in crate::session::pipeline) struct ContinuousClosingPrice {
     pub(in crate::session::pipeline) asks: Vec<(Money, u64)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
     phase: Option<TradingPhase>,
     stocks: BTreeMap<StockId, IncrementalContinuousStockShadow>,

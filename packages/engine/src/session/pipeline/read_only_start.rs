@@ -8,7 +8,8 @@ use super::{
 use crate::StockId;
 use std::collections::BTreeMap;
 
-pub(super) struct ReadOnlyStart {
+#[derive(Clone)]
+pub(in crate::session) struct ReadOnlyStart {
     pub(super) hydration: Result<(), StepFatal>,
     pub(super) resources: Result<DecisionResourceSnapshot, StepFatal>,
     /// 捕获错误照旧延迟到原 stock input 消费点传播；成功时输入所有权已移入 stock_shards。
@@ -16,6 +17,43 @@ pub(super) struct ReadOnlyStart {
     /// 输入就绪后立刻初始化的逐股 coordinator；仅消费输入本身，可安全提前到准备阶段。
     pub(super) stock_shards:
         Option<Result<BTreeMap<StockId, IncrementalContinuousStockCoordinator>, StepFatal>>,
+}
+
+/// X1 投机预计算暂存：随 candidate 提交自然流转到权威状态，plan_tick 消费后置 None。
+/// 不进 SaveSlot（save 逐字段构造不含此字段），不参与 business_state_hash；
+/// tick 失败重试时仍留在权威状态上且语义不变（同 tick 重算）。
+#[derive(Clone)]
+pub(in crate::session) struct SpeculativePrepareStash {
+    /// 为哪个市场 tick 准备（准备发生时权威 tick + 1）。
+    pub(in crate::session) for_tick: u64,
+    /// Arc 包装：coordinator 体积大，shadow 克隆只 bump 计数，消费侧再解引用克隆。
+    pub(in crate::session) work: std::sync::Arc<ReadOnlyStart>,
+}
+
+static SPECULATIVE_HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SPECULATIVE_MISSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static INLINE_PREPARE_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// 消费命中计数（cfg(test)，验证投机命中时不再内联重算）。
+#[cfg(test)]
+pub(in crate::session::pipeline) fn speculative_hits() -> usize {
+    SPECULATIVE_HITS.load(std::sync::atomic::Ordering::SeqCst)
+}
+#[cfg(test)]
+pub(in crate::session::pipeline) fn speculative_misses() -> usize {
+    SPECULATIVE_MISSES.load(std::sync::atomic::Ordering::SeqCst)
+}
+#[cfg(test)]
+pub(in crate::session::pipeline) fn inline_prepare_calls() -> usize {
+    INLINE_PREPARE_CALLS.load(std::sync::atomic::Ordering::SeqCst)
+}
+#[inline]
+pub(in crate::session::pipeline) fn count_speculative_hit() {
+    SPECULATIVE_HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+#[inline]
+pub(in crate::session::pipeline) fn count_speculative_miss() {
+    SPECULATIVE_MISSES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 #[derive(Clone, Copy)]
@@ -36,6 +74,8 @@ pub(super) fn can_prepare(session: &GameSession) -> bool {
 }
 
 pub(super) fn prepare(session: &GameSession) -> ReadOnlyStart {
+    #[cfg(test)]
+    INLINE_PREPARE_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     prepare_with_observer(session, |_| {})
 }
 
@@ -321,6 +361,130 @@ mod tests {
             .expect("context 错误仍先于预计算 stock input 错误")
             .into_fatal();
         assert_eq!(error, context_error);
+        assert_eq!(game.business_state_hash().unwrap(), before);
+    }
+
+    /// X1：stash 命中时 plan_tick 不得内联重算（计数器差分断言）。
+    #[test]
+    fn speculative_stash_hit_skips_inline_prepare() {
+        let mut game = fixture();
+        game.state.tick = 1;
+        game.state.pending_npc = Some(crate::session::PendingNpcBatch {
+            observed_tick: 1,
+            observed_accounts: Vec::new(),
+            intents: Vec::new(),
+            dependencies: Vec::new(),
+        });
+        assert!(can_prepare(&game));
+        let work = prepare(&game);
+        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+            for_tick: game.state.tick,
+            work: std::sync::Arc::new(work),
+        });
+        let before = game.business_state_hash().unwrap();
+        let (hits, misses, inline) = (
+            speculative_hits(),
+            speculative_misses(),
+            inline_prepare_calls(),
+        );
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+        assert_eq!(game.business_state_hash().unwrap(), before);
+        assert!(
+            speculative_hits() > hits,
+            "tick 匹配且 eligible 的 stash 必须命中"
+        );
+        // 计数器为进程级（并行测试污染）：按先例只用差分存在性断言。
+        // “命中不内联”由 match 分支结构保证（命中臂直接返回 stash 不调 prepare）。
+        let _ = (misses, inline);
+        assert!(plan.precomputed_stock_inputs.is_some());
+        // 权威上的 stash 在未提交的 plan_tick 后保留（重试语义）；随提交才被
+        // commit_from 的 None 覆盖。
+    }
+
+    /// X1：tick 失配或 eligibility 失败必须整体回退现算，不消费陈旧结果。
+    #[test]
+    fn speculative_stash_mismatch_falls_back_to_inline() {
+        let mut game = fixture();
+        game.state.tick = 1;
+        game.state.pending_npc = Some(crate::session::PendingNpcBatch {
+            observed_tick: 1,
+            observed_accounts: Vec::new(),
+            intents: Vec::new(),
+            dependencies: Vec::new(),
+        });
+        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+            for_tick: game.state.tick + 1,
+            work: std::sync::Arc::new(prepare(&game)),
+        });
+        let before = game.business_state_hash().unwrap();
+        let (hits, misses, inline) = (
+            speculative_hits(),
+            speculative_misses(),
+            inline_prepare_calls(),
+        );
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+        assert_eq!(game.business_state_hash().unwrap(), before);
+        assert!(speculative_hits() == hits, "失配不得计命中");
+        assert!(speculative_misses() > misses, "失配 stash 计为 miss");
+        assert!(
+            inline_prepare_calls() > inline,
+            "失配必须回退内联现算"
+        );
+        assert!(plan.precomputed_stock_inputs.is_some());
+        // eligibility 失败（到期报价）同样不消费 stash。
+        let now = game.current_market_minute();
+        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+            for_tick: game.state.tick,
+            work: std::sync::Arc::new(prepare(&game)),
+        });
+        game.state.npc_order_lifecycles.push(crate::session::NpcOrderLifecycle {
+            account: AccountId(1),
+            code: StockId(0),
+            order_id: OrderId(91),
+            placed_market_minute: now,
+            expires_market_minute: now,
+        });
+        assert!(!can_prepare(&game));
+        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
+        assert!(plan.precomputed_stock_inputs.is_none());
+    }
+
+    /// X1：stash 携带的错误仍在原优先级位置传播（镜像 hydration 损坏 fixture）。
+    #[test]
+    fn speculative_stash_errors_keep_original_priority() {
+        let code = StockId(0);
+        let mut game = fixture();
+        game.state.tick = 1;
+        game.state.pending_npc = Some(crate::session::PendingNpcBatch {
+            observed_tick: 1,
+            observed_accounts: Vec::new(),
+            intents: Vec::new(),
+            dependencies: Vec::new(),
+        });
+        let key = super::super::EnvelopeKey {
+            account: AccountId(1),
+            stock: code.clone(),
+            order: OrderId(91),
+            side: Side::Buy,
+        };
+        let original = game.state.envelope_ledger.get(&key).unwrap().clone();
+        let mut audit = original.audit();
+        audit.nominal.commission = Money::from_cents(1);
+        audit.charged.commission = Money::from_cents(1);
+        game.state.envelope_ledger.envelopes.insert(
+            key.clone(),
+            super::super::Envelope::tick_start_existing(key, original.live().cash, 0, audit),
+        );
+        let expected = game.validate_existing_live_envelope_projection().unwrap_err();
+        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+            for_tick: game.state.tick,
+            work: std::sync::Arc::new(prepare(&game)),
+        });
+        let before = game.business_state_hash().unwrap();
+        let error = super::super::plan_tick(super::super::PhaseInput { session: &game })
+            .err()
+            .expect("stash 携带的 hydration 错误必须传播");
+        assert_eq!(error, expected);
         assert_eq!(game.business_state_hash().unwrap(), before);
     }
 

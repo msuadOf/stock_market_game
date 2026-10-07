@@ -55,6 +55,7 @@ mod pre_open_transaction;
 mod price_resolution;
 pub(in crate::session) mod quote_expiry;
 mod read_only_start;
+pub(in crate::session) use read_only_start::SpeculativePrepareStash;
 mod ready_ingress;
 mod ready_stock_stream;
 mod receipt_aggregation;
@@ -288,7 +289,27 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     })?;
     crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
     let read_only = shadow.state.execute(|session| {
-        Ok(read_only_start::can_prepare(session).then(|| read_only_start::prepare(session)))
+        let stashed = session.state.speculative_prepare.take();
+        Ok(match stashed {
+            Some(stash)
+                if stash.for_tick == session.state.tick
+                    && read_only_start::can_prepare(session) =>
+            {
+                read_only_start::count_speculative_hit();
+                // 权威仍持有一份 Arc 时 try_unwrap 失败，退化为克隆（远小于重算）。
+                let work = match std::sync::Arc::try_unwrap(stash.work) {
+                    Ok(work) => work,
+                    Err(shared) => (*shared).clone(),
+                };
+                Some(work)
+            }
+            staged => {
+                if staged.is_some() {
+                    read_only_start::count_speculative_miss();
+                }
+                read_only_start::can_prepare(session).then(|| read_only_start::prepare(session))
+            }
+        })
     })?;
     if let Some(prepared) = read_only {
         prepared.hydration?;

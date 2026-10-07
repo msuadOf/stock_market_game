@@ -83,7 +83,8 @@ impl GameSession {
             day: _,
             seq: _,
             civil_clock: _,
-        } = state;
+                speculative_prepare: _,
+} = state;
         let mut hash = StateHash(0xcbf29ce484222325);
         hash.field(&self.state.setup)?;
         hash.field(&self.state.seed)?;
