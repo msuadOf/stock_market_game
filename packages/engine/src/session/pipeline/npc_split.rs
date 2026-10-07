@@ -14,13 +14,15 @@ use crate::{
 use std::collections::{BTreeMap, VecDeque};
 
 use super::EnvelopeLedger;
+use crate::experience::PersonalHistoryReadLedger;
 use crate::session::candles::SessionCandleBook;
-use crate::plans::UrgencyPolicy;
+use crate::plans::{PlanBook, UrgencyPolicy};
 use crate::session::attention::NpcAttentionScheduler;
 use crate::session::shared_ingress::IngressBinding;
+use crate::session::decision_chain::personal_state::BeliefParticipantState;
 use crate::session::{
     AccountBook, AccountPagedMap, CivilClock, IngressReceiptCursors, NpcOrderLifecycle,
-    RetailDecisionTrace,
+    ParentOrderPlan, RetailDecisionTrace,
 };
 
 /// 共享只读域：NPC 排队与投机准备都不写（除 accounts 的 strategy 子域，见模块文档）。
@@ -83,6 +85,14 @@ pub(in crate::session) struct NpcWriteFields<'a> {
     pub(in crate::session) accounts: &'a mut AccountBook,
     /// GameSession 顶层 ingress 绑定（receive_private_intent 的外部半边）。
     pub(in crate::session) ingress: &'a mut Option<IngressBinding>,
+    /// 决策链个人状态 take/install 的另两份存储（npc_attention 已在上方）。
+    pub(in crate::session) belief_participants: &'a mut AccountPagedMap<BeliefParticipantState>,
+    pub(in crate::session) history_reads: &'a mut AccountPagedMap<PersonalHistoryReadLedger>,
+    /// 个人计划记忆（capture_retail_analysis 的 PlanPersonalState take/install）。
+    pub(in crate::session) plans: &'a mut PlanBook,
+    /// 机构母单物化（materialize_parent_order_intents）。
+    pub(in crate::session) parent_orders:
+        &'a mut BTreeMap<crate::AccountId, BTreeMap<StockId, ParentOrderPlan>>,
 }
 
 /// 不相交字段借用拆分。返回的两组可同时安全使用；`accounts` 读写两侧各持一份
@@ -117,8 +127,56 @@ pub(in crate::session) fn npc_split(
         ingress_receipt_cursors: &mut state.ingress_receipt_cursors,
         accounts: &mut state.accounts,
         ingress: &mut session.ingress,
+        belief_participants: &mut state.belief_participants,
+        history_reads: &mut state.history_reads,
+        plans: &mut state.plans,
+        parent_orders: &mut state.parent_orders,
     };
     (read, write)
+}
+
+impl<'a> SessionReadView<'a> {
+    /// 与 [`GameSession::phase`] 相同的相位推导（tick+setup 纯函数）。
+    pub(in crate::session) fn phase(&self) -> crate::TradingPhase {
+        let day_tick = self.tick % self.setup.ticks_per_day;
+        let auction_entry_ticks = self.setup.auction_ticks - self.setup.auction_ticks / 3;
+        let closing_auction_start_tick =
+            self.setup.ticks_per_day - self.setup.closing_auction_ticks;
+        if day_tick < auction_entry_ticks {
+            crate::TradingPhase::CallAuction
+        } else if day_tick < self.setup.auction_ticks {
+            crate::TradingPhase::PreOpen
+        } else if day_tick >= closing_auction_start_tick {
+            crate::TradingPhase::ClosingAuction
+        } else {
+            crate::TradingPhase::Continuous
+        }
+    }
+
+    pub(in crate::session) fn civil_date(&self) -> crate::calendar::CivilDate {
+        self.civil_clock.current_date()
+    }
+
+    /// 与 [`GameSession::current_market_minute`] 相同的分钟推导。
+    pub(in crate::session) fn current_market_minute(&self) -> u64 {
+        let day_start = u64::from(self.day)
+            .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
+            .expect("u32 session day times 240 fits u64");
+        let day_tick = self.tick % self.setup.ticks_per_day;
+        let continuous_ticks_per_day = self
+            .setup
+            .ticks_per_day
+            .saturating_sub(self.setup.auction_ticks)
+            .saturating_sub(self.setup.closing_auction_ticks);
+        let completed = crate::observation::completed_market_minute_count(
+            day_tick
+                .saturating_sub(self.setup.auction_ticks)
+                .min(continuous_ticks_per_day),
+            continuous_ticks_per_day,
+        )
+        .expect("validated session timing maps to market minutes");
+        day_start + u64::from(completed)
+    }
 }
 
 /// receive_private_intent 的字段组版本（模式范例）：行为与
