@@ -72,7 +72,7 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
   **裁决（协调方）：方案 A（revision 新鲜度校验）。棒次 13 设计细化（含两个已排雷陷阱）**：
   - **陷阱 1（已排雷）**：revision 不能挂在 `AccountBook::get_mut` 等共享写入口——queue 的 strategy 写也走 get_mut，会把正常管线写标记成"外部改动"，每个有 NPC 决策的 tick 都回退，命中率崩溃。
   - **陷阱 2（已排雷）**：revision 挂在 state 且随 commit_from 覆盖——tick 中段的权威直改会被 candidate 的旧值覆盖丢失；但语义上 tick 管线本就赢过直改（直改被提交丢弃），stash 描述 candidate 终态仍然正确——无需 max() 补救，天然自洽。
-  - **正解规格**：`revision: Cell<u64>` 挂 **GameSession 顶层**（不入 state 克隆链），提供 `mark_external_mutation()`；**审计并迁移全部直改入口**：cfg(test) 的 fixture 直改改为 `game.fixture_account_mut(id)`（返回 &mut Account 并自增 revision）或显式先 mark 再改；宿主/未来玩家注入 API 同样先 mark。直改必须 mark——写进 ADR 红线清单，独立复核重点核清单完备性。
+  - **正解规格**：`revision: AtomicU64` 挂 **GameSession 顶层**（不入 state 克隆链），提供 `mark_external_mutation()`；**红线精确化（棒次 15，复核建议）**：mark 义务仅限**stash 读域的直改**——accounts / markets / setup / npc_order_lifecycles / envelope_ledger / price_history（含 candle_book/market_minute_closes 同族历史）；无关域（如纯诊断字段）直改不要求 mark。已迁入口：fixture_account_mut（accounts）、fixture_market_mut（markets）、存档恢复路径；宿主/未来玩家注入 API 同样先 mark。
   - stash 增 `produced_revision`（生产时 candidate.revision）；消费条件追加 `stash.produced_revision == session.revision`；不等→整体回退现算。
   - TDD：现有两红测即现成红灯（直改后 stash 拒绝消费）→ 绿；再加一红：无直改时 revision 不变、命中率不受损（计数器差分）。
   - 之后：复装并发投机臂（历史 42338194 父代代码）→ 全量 1319/8 → 1/4/16 一致性 → probe+verify-build → 锚定交错配对 ≥5 对 → ≥2% 保留 → 报协调方独立复核 → 终稿。
@@ -94,7 +94,7 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 ## 棒次 14 终局：X1 全链实装→基准判定→诚实关臂
 
 - **方案 A 实装完成**（3efcda70）：revision 顶层计数（132 处直改入口迁移 mark-再改模式，含多行链式与存档恢复路径）、stash 记 produced_revision、消费三重校验（tick+revision+eligibility）——**两语义红测全部转绿**，投机臂全量套件上线后 1319/8 基线一致。
-- **锚定交错配对判定（未过门）**：A_start 303.99 / A_end 304.72（锚漂 +0.24% 会话有效）；H 均值 294.07 vs C 均值 290.15，五对 d=[0.931,0.983,0.987,1.020,1.016]，**mean(d)≈0.987（-1.3%）**，远低于 2% 门槛。
+- **锚定交错配对判定（未过门）**：A_start 303.99 / A_end 304.72（锚漂 +0.24% 会话有效）；H 均值 294.055 vs C 均值 290.170，五对 d=[0.931,0.983,0.987,1.020,1.016]，**mean(d)≈0.987（-1.3%）**，远低于 2% 门槛。
 - **收益被吃的机制（本棒定位）**：消费点权威 state 仍持有 stash 的 Arc → `Arc::try_unwrap` 恒失败 → **每次命中深克隆整个 ReadOnlyStart**（coordinator/账户簿级复制，正是 E9 量过的 367µs 级 churn），把与 queue 重叠省下的 ~0.7ms/tick 吃光并倒贴。
 - **处置（d86f5f92+语法修复）**：臂关闭回 None 占位；**保留全部机制**——npc_split 借用拆分（阶段一 100%）、stash 消费、revision 新鲜度红线（防御纵深价值独立成立，ADR 待补红线条目）。
 - **复装前置（若重启 X1）**：先解决消费克隆——方案：①ReadOnlyStart 四字段各自 Arc（消费零克隆：hydration Arc<Result>、resources Arc<DecisionResourceSnapshot>、inputs Arc<Vec>、shards Arc<BTreeMap>），消费端 deref 或字段级 take；②或消费点先从权威 take 掉原份使 Arc 唯一（需要 plan_tick 拿到 &mut 权威——现状 &，需 PhaseInput 改造）。修好后重跑锚定配对再判。
@@ -102,7 +102,11 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 
 ## 消费克隆消除：两方案取舍分析（棒次 14 补，复核期间完成；复核无阻塞后按此实装）
 
-**方案①分字段 Arc（推荐）**：ReadOnlyStart 四字段各自包 Arc（hydration/resources/stock_inputs/stock_shards）。
+**方案①分字段 Arc——棒次 15 修正：单独不成立**。复核后复查克隆成本构成：resources 的 AccountBook/LiveReservations 克隆本是 Arc 浅拷（页面共享），inputs/hydration 亦廉；**贵的只有 shards（coordinator 深拷整簿）**。而只要权威仍持 stash 副本，任何分字段 Arc 的 try_unwrap 都恒失败——①不解决唯一所有权。
+
+**修正后的最小正解（方案③，实装中）**：step() 入口单点 take——step() 拥有 &mut self，在 plan_tick 前取走 stash（Option<Arc>）经 PhaseInput 传入；消费点先消费该份（此时 Arc 唯一，try_unwrap 成功→零深拷），失败路径一行放回权威（单一归还点，非散射状态机）；直接调 plan_tick 的测试走遗留 state.stash 路径（take 自 shadow 克隆，try_unwrap 失败退化为克隆——测试语义不变）。clone_for_shadow 保持原样。
+
+原方案①记录（留档备查）：ReadOnlyStart 四字段各自包 Arc（hydration/resources/stock_inputs/stock_shards）。
 - 改动面：read_only_start.rs 结构改造 + ~10 处消费点机械适配（mod.rs plan_tick 的四个解包处、read_only_start 测试、stash 构造）；inline prepare 同步加 4 次 Arc::new（ns 级）；SpeculativePrepareStash.work 直接存浅克隆 ReadOnlyStart（4×Arc bump），try_unwrap 整段删除。
 - 语义风险：**低**——Arc 对 Debug/PartialEq/错误传播位置全透明；无状态机分叉；三重校验不变。
 - 预估：消除"每命中一次的 ReadOnlyStart 深克隆"（resources 账户簿快照 + inputs + shards coordinator，量级数十至一二百 µs/tick），净收益回归"与 queue 重叠 ~0.7ms/tick − 生产侧成本"，预期落在探索波外推 +16% 的折扣区（+8~14%）。

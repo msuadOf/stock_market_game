@@ -973,7 +973,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
             .unwrap();
         let order_id = OrderId(10_000 + u64::try_from(index).unwrap());
         makers.push(add_resting(
-            game.state.markets.get_mut(code).unwrap(),
+            game.fixture_market_mut(code).unwrap(),
             code,
             account,
             order_id,

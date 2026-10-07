@@ -1668,6 +1668,16 @@ impl GameSession {
         self.revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// 测试夹具对 markets（stash 读域）的直改入口：标记外部直改后返回可变市场。
+    #[cfg(test)]
+    pub(crate) fn fixture_market_mut(
+        &mut self,
+        code: &crate::StockId,
+    ) -> Option<&mut crate::Market> {
+        self.mark_external_mutation();
+        self.state.markets.get_mut(code)
+    }
+
     /// 直改入口：等价于 state.accounts.get_mut 并标记外部直改
     /// （测试夹具与存档恢复共用；X1 红线——直改必须经此标记）。
     pub(crate) fn fixture_account_mut(

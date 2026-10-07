@@ -74,7 +74,7 @@ fn day_end_transition_rejects_each_live_order_family_before_mutating_candidate()
                 .unwrap();
             if family == 2 {
                 session.hydrate_or_validate_envelope_ledger().unwrap();
-                session.state.markets.get_mut(&code).unwrap().end_of_day();
+                session.fixture_market_mut(&code).unwrap().end_of_day();
             }
         } else {
             session.state.auction_orders.insert(
