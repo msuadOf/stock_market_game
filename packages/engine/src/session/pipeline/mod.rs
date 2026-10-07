@@ -49,6 +49,7 @@ mod local_admission;
 mod npc_decisions;
 mod npc_state_projection;
 mod npc_tick_preparation;
+mod npc_split;
 mod phase;
 mod pre_open_transaction;
 mod price_resolution;
