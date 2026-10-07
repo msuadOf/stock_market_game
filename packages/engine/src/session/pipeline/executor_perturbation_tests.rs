@@ -20,9 +20,7 @@ fn fixture(auction: bool) -> GameSession {
     // DecisionShadow/AccountValidation 路径，不替换生产 dispatcher。
     for account in [AccountId(1), AccountId(2)] {
         for code in &codes {
-            game.state
-                .accounts
-                .get_mut(&account)
+            game.fixture_account_mut(&account)
                 .unwrap()
                 .grant_position(code.clone(), 1_000, Money::from_cents(1_000_000))
                 .unwrap();

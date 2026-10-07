@@ -571,7 +571,7 @@ mod tests {
                 .unwrap()
                 .clone();
             let config = session.state.setup.config.clone();
-            let account = session.state.accounts.get_mut(&id).unwrap();
+            let account = session.fixture_account_mut(&id).unwrap();
             account
                 .grant_position(code.clone(), 300, Money::from_cents(1_000))
                 .unwrap();

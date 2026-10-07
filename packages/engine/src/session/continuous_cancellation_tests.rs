@@ -6,9 +6,7 @@ fn session_with_resting_npc_order() -> (GameSession, StockId, AccountId, OrderId
     let account = AccountId(1);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 7).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
     let mut events = Vec::new();

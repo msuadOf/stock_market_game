@@ -51,9 +51,7 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
         .unwrap();
     complete_opening_auction(&mut session);
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, account);

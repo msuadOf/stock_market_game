@@ -14,9 +14,7 @@ fn npc_session() -> (GameSession, AccountId, StockId) {
         .stock_id(&session.state.setup.stocks[0].code.0)
         .unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let tick = session.state.tick;
@@ -41,9 +39,7 @@ fn restore_attention_profile(session: &mut GameSession, npc: AccountId) {
         .unwrap();
     state.set_base_observation_probability(probability);
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .set_strategy(state.into_strategy().unwrap());
 }
@@ -84,9 +80,7 @@ fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling()
 fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
     let (mut session, npc, code) = npc_session();
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
@@ -160,9 +154,7 @@ fn npc_parent_child_uses_parent_horizon_instead_of_quote_lifecycle() {
     let (mut session, request) = fixture();
     let account = AccountId(1);
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_kind(AccountKind::Inst);
     let (mut validator, mut stock_execution) = seal(&mut session);
@@ -187,9 +179,7 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
-        .state
-        .accounts
-        .get_mut(&player)
+        .fixture_account_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
@@ -247,9 +237,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
-        .state
-        .accounts
-        .get_mut(&player)
+        .fixture_account_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
@@ -332,9 +320,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
-        .state
-        .accounts
-        .get_mut(&player)
+        .fixture_account_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();

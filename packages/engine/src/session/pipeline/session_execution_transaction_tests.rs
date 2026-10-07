@@ -113,9 +113,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
     let buyer_before = participant.clone();
     let other_before = game.state.belief_participants[&other].clone();
     let other_account_before = game.state.accounts[&other].clone();
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(1_000))
         .unwrap();

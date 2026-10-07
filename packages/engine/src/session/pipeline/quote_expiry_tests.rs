@@ -14,9 +14,7 @@ fn expiring_npc_order(
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     game.state.attention_scheduler.clear();
     if side == crate::Side::Sell {
-        game.state
-            .accounts
-            .get_mut(&account)
+        game.fixture_account_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
             .unwrap();

@@ -16,9 +16,7 @@ fn due_retail(seed: u64, order_size: u32) -> (GameSession, AccountId) {
     strategy
         .set_base_observation_probability(session.state.npc_attention[&account].base_probability);
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(strategy.into_strategy().unwrap());
     let tick = session.state.tick;
@@ -344,9 +342,7 @@ fn next_tick_account_validation_rechecks_npc_orders_against_current_cash() {
             )
     }));
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_cash(Money::ZERO);
 
@@ -409,9 +405,7 @@ fn npc_account_validation_quantity_rejection_reaches_one_final_event() {
     super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
     // 7% 的试买目标足以提出 200 万股，由下一 tick 的 AccountValidation 执行单笔数量规则。
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_cash(Money::from_cents(30_000_000_000));
     session.state.pending_npc = None;
@@ -488,9 +482,7 @@ fn downstream_failure_discards_npc_decision_and_authority_state() {
 fn intent_candidates_failure_discards_the_whole_tick_candidate() {
     let (mut authority, npc) = due_retail(8, 100);
     authority
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_strategy(None);
     let before = authority.business_state_hash().unwrap();
@@ -512,16 +504,12 @@ fn intent_candidates_failure_discards_the_whole_tick_candidate() {
 fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() {
     let (mut session, npc) = due_retail(41, 100);
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_cash(Money::from_cents(10_000_000));
     // Seed two pre-existing quotes without reconciling the first one.
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_kind(crate::AccountKind::Player);
     let code = session
@@ -540,9 +528,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         );
     }
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_kind(crate::AccountKind::Retail);
     let mut old_ids: Vec<_> = session.state.markets[&code]
@@ -686,9 +672,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
     );
     let reserved = session.reserved_cash_for_account(npc).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_cash(reserved);
     let prepared = prepare_npc_decisions(&mut session, None).unwrap();
@@ -726,9 +710,7 @@ fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
     );
     let old_id = session.state.npc_order_lifecycles[0].order_id;
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
     session.state.pending_npc = None;
@@ -757,9 +739,7 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
         .unwrap();
     for npc in [AccountId(2), AccountId(1)] {
         session
-            .state
-            .accounts
-            .get_mut(&npc)
+            .fixture_account_mut(&npc)
             .unwrap()
             .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
         session.seed_order_for_test(

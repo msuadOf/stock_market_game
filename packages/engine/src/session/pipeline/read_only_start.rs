@@ -26,6 +26,8 @@ pub(in crate::session) struct ReadOnlyStart {
 pub(in crate::session) struct SpeculativePrepareStash {
     /// 为哪个市场 tick 准备（准备发生时权威 tick + 1）。
     pub(in crate::session) for_tick: u64,
+    /// 生产时刻的外部直改计数；消费要求相等，否则值过期整体回退现算。
+    pub(in crate::session) produced_revision: u64,
     /// Arc 包装：coordinator 体积大，shadow 克隆只 bump 计数，消费侧再解引用克隆。
     pub(in crate::session) work: std::sync::Arc<ReadOnlyStart>,
 }
@@ -278,9 +280,7 @@ mod tests {
         let code = StockId(0);
         for corrupt_hydration in [true, false] {
             let mut game = fixture();
-            game.state
-                .accounts
-                .get_mut(&AccountId(1))
+            game.fixture_account_mut(&AccountId(1))
                 .unwrap()
                 .fixture_set_cash(Money::ZERO);
             if corrupt_hydration {
@@ -435,6 +435,7 @@ mod tests {
         let work = prepare(&game);
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick,
+            produced_revision: game.external_revision(),
             work: std::sync::Arc::new(work),
         });
         let before = game.business_state_hash().unwrap();
@@ -470,6 +471,7 @@ mod tests {
         });
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick + 1,
+            produced_revision: game.external_revision(),
             work: std::sync::Arc::new(prepare(&game)),
         });
         let before = game.business_state_hash().unwrap();
@@ -491,6 +493,7 @@ mod tests {
         let now = game.current_market_minute();
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick,
+            produced_revision: game.external_revision(),
             work: std::sync::Arc::new(prepare(&game)),
         });
         game.state.npc_order_lifecycles.push(crate::session::NpcOrderLifecycle {
@@ -534,6 +537,7 @@ mod tests {
         let expected = game.validate_existing_live_envelope_projection().unwrap_err();
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick,
+            produced_revision: game.external_revision(),
             work: std::sync::Arc::new(prepare(&game)),
         });
         let before = game.business_state_hash().unwrap();

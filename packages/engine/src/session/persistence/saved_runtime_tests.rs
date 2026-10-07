@@ -308,9 +308,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
     };
     let filled_value = Money::from_cents(50_001);
     session
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
@@ -379,9 +377,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
     };
     let filled_value = Money::from_cents(100);
     session
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
@@ -449,9 +445,7 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
         side: Side::Sell,
     };
     session
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 2, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
@@ -795,9 +789,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     assert_eq!(transition.charged_after.transfer_fee, Money::from_cents(1));
 
     source
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .unwrap()
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .unwrap();
@@ -904,9 +896,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     let code = StockId(0);
     let mut session = GameSession::new(setup, 42).expect("runtime_state fixture 必须有效");
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .expect("player must exist")
         .grant_position(code.clone(), 200, Money::from_cents(1))
         .expect("fixture holding must be valid");
@@ -1005,9 +995,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
     let code = StockId(0);
     let mut session = GameSession::new(setup, 43).expect("runtime_state fixture 必须有效");
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .expect("player must exist")
         .grant_position(code.clone(), 1_300, Money::from_cents(1))
         .expect("fixture holding must be valid");
@@ -1090,9 +1078,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     let code = StockId(0);
     let mut session = GameSession::new(setup, 44).expect("runtime_state fixture 必须有效");
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .expect("player must exist")
         .grant_position(code.clone(), 1_300, Money::from_cents(1))
         .expect("fixture holding must be valid");

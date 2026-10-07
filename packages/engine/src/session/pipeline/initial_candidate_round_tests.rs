@@ -285,9 +285,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     setup.push_execution(request);
     commit_injected_plan_roots_for_test(&mut session, setup);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();
@@ -353,9 +351,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
     let (mut session, _, _) = fixture();
     let code = session.state.markets.keys().next().unwrap().clone();
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(99_000))
         .unwrap();
@@ -447,9 +443,7 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
     )
     .unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .fixture_set_cash(required);
     let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();

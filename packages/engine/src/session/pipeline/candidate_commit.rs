@@ -70,17 +70,22 @@ pub(super) fn prepare_candidate_commit<'authority>(
                 .state
                 .envelope_ledger
                 .rebase_private_for_tick_commit();
-            // X1 join 脚手架：投机分支暂为 None（prepare 链 view 化验收后接
-            // prepare_on）；单侧 join 与原串行语义等价，先行上线验证 npc_split 路径。
+            let produced_revision = candidate.external_revision();
             let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
             let (queue_result, speculative) = rayon::join(
                 || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
-                // X1 投机分支：机制齐备但默认关闭——开启后
-                // npc_request_uses_available_cash_when_it_enters_the_next_tick 与
-                // initial_batch_full_fill_completes_linked_parent 两测回归（语义差异
-                // 待诊断，见 x1-progress.md 下一棒入口）；修复后把本臂换回
-                // can_prepare_on/prepare_on 实装（代码见 git 历史 c. 本提交父代）。
-                || Option::<super::read_only_start::SpeculativePrepareStash>::None,
+                // X1 投机预计算：与 queue 并发准备下个 plan_tick 的 read-only start。
+                // 账户经页面 COW、lifecycles 经 Vec 快照与写侧隔离；新鲜度由
+                // produced_revision 在消费点校验（外部直改自动回退现算）。
+                || {
+                    super::read_only_start::can_prepare_on(&view).then(|| {
+                        super::read_only_start::SpeculativePrepareStash {
+                            for_tick: view.tick,
+                            produced_revision,
+                            work: std::sync::Arc::new(super::read_only_start::prepare_on(&view)),
+                        }
+                    })
+                },
             );
             queue_result?;
             rebase_result?;

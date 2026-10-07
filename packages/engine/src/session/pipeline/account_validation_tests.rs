@@ -66,9 +66,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
         (exact.sub(crate::Money::from_cents(1)).unwrap(), false),
     ] {
         let mut game = GameSession::new(setup.clone(), 42).unwrap();
-        game.state
-            .accounts
-            .get_mut(&crate::AccountId(0))
+        game.fixture_account_mut(&crate::AccountId(0))
             .unwrap()
             .fixture_set_cash(cash);
         let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -114,9 +112,7 @@ fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_witho
     let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
     let before = game.business_state_hash().unwrap();
@@ -397,9 +393,7 @@ fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_e
     let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();
@@ -518,18 +512,14 @@ fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_t
     let unknown = crate::StockId(9);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(crate::Money::ZERO);
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(main.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();
-    let holder = game.state.accounts.get_mut(&account).unwrap();
+    let holder = game.fixture_account_mut(&account).unwrap();
     let position = holder.position(&main).unwrap();
     let locked = crate::Position::from_restored_parts(
         position.qty(),
@@ -653,9 +643,7 @@ fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_orde
         crate::Money::ZERO,
     )
     .unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reservation);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -744,9 +732,7 @@ fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_boar
     let chinext = crate::StockId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(crate::Money::from_cents(10_000_000_000));
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -875,9 +861,7 @@ fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_b
     let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();

@@ -1694,9 +1694,7 @@ mod chain_restructure_tests {
         )
         .unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(reserve);
         let market = session.build_market_view();
@@ -1817,9 +1815,7 @@ mod chain_restructure_tests {
         let code = codes[0].clone();
         let price = session.state.markets[&code].last_price();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, price)
             .unwrap();
@@ -2292,9 +2288,7 @@ mod chain_restructure_tests {
             .unwrap();
         let restored_cash = session.state.accounts[&account].cash().add(peak).unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(restored_cash);
         assert!(matches!(
@@ -2446,16 +2440,14 @@ mod chain_restructure_tests {
         let code = session.stock_id("000812").unwrap();
         let style = crate::strategy::InstitutionStyle::ActiveTrader;
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(Box::new(
                 crate::strategy::BeliefInstitutionStrategy::new(0.05, 100)
                     .unwrap()
                     .with_institution_style(style),
             ))));
-        let owner = session.state.accounts.get_mut(&account).unwrap();
+        let owner = session.fixture_account_mut(&account).unwrap();
         owner.fixture_set_cash(Money::from_cents(10_000_000));
         owner.fixture_insert_position(
             code.clone(),
@@ -2703,24 +2695,18 @@ mod chain_restructure_tests {
         let sell_code = session.stock_id("000814").unwrap();
         let peak = Money::from_cents(1_000_000);
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_insert_position(
                 sell_code.clone(),
                 crate::Position::from_restored_parts(100, 0, 100, 0),
             );
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(peak.sub(Money::from_cents(100)).unwrap());
         session
-            .state
-            .accounts
-            .get_mut(&other)
+            .fixture_account_mut(&other)
             .unwrap()
             .fixture_set_cash(peak);
         let policy = crate::strategy::InstitutionExperiencePolicy::new(
@@ -2749,9 +2735,7 @@ mod chain_restructure_tests {
         let sell = open_account_latch_plan(&mut session, account, sell_code, Side::Sell);
         let unrelated = open_account_latch_plan(&mut session, other, next_code, Side::Buy);
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(Money::from_cents(700_000 - 100));
         observe_account_root_for_latch(&mut session, account);
@@ -2767,9 +2751,7 @@ mod chain_restructure_tests {
             )
             .unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(Money::from_cents(800_000 - 100));
         observe_account_root_for_latch(&mut session, account);
@@ -2808,9 +2790,7 @@ mod chain_restructure_tests {
             crate::plans::QuoteReason::PauseRequested
         );
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(peak.sub(Money::from_cents(100)).unwrap());
         assert_eq!(
@@ -2952,9 +2932,7 @@ mod chain_restructure_tests {
                 .sub(session.state.accounts[&account].cash())
                 .unwrap();
             session
-                .state
-                .accounts
-                .get_mut(&account)
+                .fixture_account_mut(&account)
                 .unwrap()
                 .fixture_set_cash(
                     Money::from_cents(peak.cents() * 4 / 5)
@@ -2969,9 +2947,7 @@ mod chain_restructure_tests {
                 }
             );
             session
-                .state
-                .accounts
-                .get_mut(&account)
+                .fixture_account_mut(&account)
                 .unwrap()
                 .fixture_set_cash(peak.sub(positions_value).unwrap());
             set_urgency_minutes(&mut session, true);
@@ -3000,21 +2976,15 @@ mod chain_restructure_tests {
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_clear_positions();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(Money::from_cents(60_000));
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(Box::new(
                 crate::strategy::BeliefInstitutionStrategy::new(0.05, 1000).unwrap(),
@@ -3076,9 +3046,7 @@ mod chain_restructure_tests {
         let child = session.state.parent_orders[&account][&code].clone();
         let frozen = session.reserved_cash_for_account(account).unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(frozen);
         session
@@ -3154,21 +3122,15 @@ mod chain_restructure_tests {
         let cash =
             buy_order_reservation(&session.state.setup.config, price, 100, Money::ZERO).unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_clear_positions();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(cash);
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(Box::new(
                 crate::strategy::BeliefInstitutionStrategy::new(0.05, order_size)
@@ -3209,9 +3171,7 @@ mod chain_restructure_tests {
         );
         assert_eq!(request.allocation.allocated_cash, cash);
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(cash.sub(Money::from_cents(1)).unwrap());
         let mut cursor = session
@@ -3699,7 +3659,7 @@ mod chain_restructure_tests {
                 session.state.setup.config.price_cage_enabled = cage_enabled;
                 let owner = AccountId(1);
                 let code = session.stock_id("000812").unwrap();
-                let account = session.state.accounts.get_mut(&owner).unwrap();
+                let account = session.fixture_account_mut(&owner).unwrap();
                 account.fixture_set_cash(Money::from_cents(1_000_000));
                 account.fixture_clear_positions();
                 if side == Side::Sell {
@@ -3775,9 +3735,7 @@ mod chain_restructure_tests {
             .record_review(plan_id, 0, Money::from_cents(285), 0)
             .unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(Box::new(
                 crate::strategy::BeliefInstitutionStrategy::new(0.05, 100)
@@ -3802,9 +3760,7 @@ mod chain_restructure_tests {
             .unwrap()
             .is_empty());
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(Box::new(
                 crate::strategy::BeliefInstitutionStrategy::new(0.05, 100)
@@ -3828,9 +3784,7 @@ mod chain_restructure_tests {
         let code = session.stock_id("000812").unwrap();
         let style = crate::strategy::InstitutionStyle::ActiveTrader;
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(Box::new(
                 crate::strategy::BeliefInstitutionStrategy::new(0.05, 100)
@@ -3838,15 +3792,11 @@ mod chain_restructure_tests {
                     .with_institution_style(style),
             ))));
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(Money::from_cents(10_000_000));
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_remove_position(&code);
         let profile = crate::strategy::StrategyProfile::Institution(style);
@@ -3942,18 +3892,14 @@ mod chain_restructure_tests {
         let owner = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&owner)
+            .fixture_account_mut(&owner)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(Box::new(
                 crate::strategy::BeliefInstitutionStrategy::new(0.05, 99)
                     .expect("strategy permits an explicit sub-board-lot size"),
             ))));
         let owner_account = session
-            .state
-            .accounts
-            .get_mut(&owner)
+            .fixture_account_mut(&owner)
             .expect("fixture owner must exist");
         owner_account.fixture_set_cash(Money::from_cents(1_000_000));
         owner_account.fixture_clear_positions();
@@ -4096,9 +4042,7 @@ mod chain_restructure_tests {
         let view = session.build_market_view();
         for cash_cents in [400, 0] {
             session
-                .state
-                .accounts
-                .get_mut(&owner)
+                .fixture_account_mut(&owner)
                 .unwrap()
                 .fixture_set_cash(Money::from_cents(cash_cents));
 
@@ -4128,9 +4072,7 @@ mod chain_restructure_tests {
         // protected quote, so the test exercises the actual submit route rather than a wait.
         session.state.setup.auction_ticks = 10;
         let owner_account = session
-            .state
-            .accounts
-            .get_mut(&owner)
+            .fixture_account_mut(&owner)
             .expect("fixture owner must exist");
         owner_account.fixture_set_cash(Money::from_cents(1_000_000));
         // `probe_session` assigns the institution a deterministic random float position.
@@ -4461,9 +4403,7 @@ mod chain_restructure_tests {
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .expect("institution account exists")
             .fixture_remove_position(&code);
         let held = session.state.accounts[&account]
@@ -4562,9 +4502,7 @@ mod chain_restructure_tests {
         let expected_equities =
             [AccountId(1), AccountId(2)].map(|id| forward.account_equity(id).unwrap());
         forward
-            .state
-            .accounts
-            .get_mut(&AccountId(1))
+            .fixture_account_mut(&AccountId(1))
             .unwrap()
             .fixture_set_cash(Money::from_cents(1));
         let observe = |session: &mut GameSession, ids: [AccountId; 2]| {
@@ -5190,9 +5128,7 @@ mod chain_restructure_tests {
         let code = session.stock_id("000812").unwrap();
         session.state.setup.auction_ticks = 10;
         session
-            .state
-            .accounts
-            .get_mut(&owner)
+            .fixture_account_mut(&owner)
             .unwrap()
             .fixture_insert_position(
                 code.clone(),

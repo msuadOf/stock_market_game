@@ -129,9 +129,7 @@ fn symbolic_sell_replaces_equal_fixed_quote_without_consuming_raw_intent() {
     let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();
@@ -196,9 +194,7 @@ fn reconciliation_plan_links_replace_without_consuming_residual_target() {
 fn reconciliation_plan_cancels_cross_side_without_consuming_opposite_target() {
     let (mut session, account, code, order_id) = resting_buy();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();

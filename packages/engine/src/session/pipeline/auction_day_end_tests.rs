@@ -196,9 +196,7 @@ fn opening_completion_preserves_partial_remainder_fifo_when_order_ids_are_revers
     let mut session = opening_session(599);
     let code = only_code(&session);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
@@ -257,9 +255,7 @@ fn opening_completion_applies_same_tick_accept_and_fill_to_linked_plan() {
     let mut session = opening_session(599);
     let code = only_code(&session);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
@@ -573,9 +569,7 @@ fn closing_boundary_canonicalizes_sealed_auction_and_day_end_receipts() {
     let mut session = closing_session(99);
     let code = only_code(&session);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
@@ -720,9 +714,7 @@ fn closing_partial_fill_reaches_linked_plan_before_day_end_cleanup() {
     let mut session = closing_session(99);
     let code = only_code(&session);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
@@ -776,9 +768,7 @@ fn closing_partial_fill_is_applied_to_the_session_plan_before_checked_day_end() 
     let mut session = closing_session(99);
     let code = only_code(&session);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
@@ -849,9 +839,7 @@ fn closing_partial_fill_and_release_preserve_retail_order_lifecycle() {
     let mut session = retail_closing_session(99);
     let code = only_code(&session);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();

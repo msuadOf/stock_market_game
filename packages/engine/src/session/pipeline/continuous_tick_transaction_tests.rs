@@ -378,9 +378,7 @@ fn live_buy_plan_case(
     let code = StockId(0);
     let seller = AccountId(0);
     authority
-        .state
-        .accounts
-        .get_mut(&seller)
+        .fixture_account_mut(&seller)
         .unwrap()
         .grant_position(code.clone(), seller_holding, Money::from_cents(1_000))
         .unwrap();
@@ -477,9 +475,7 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     let code = request.allocation.code.clone();
     let plan_id = request.plan_id;
     authority
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
@@ -687,9 +683,7 @@ fn plan_chain_cash_rejection_reaches_final_event_and_report() {
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
     authority
-        .state
-        .accounts
-        .get_mut(&owner)
+        .fixture_account_mut(&owner)
         .unwrap()
         .fixture_set_cash(Money::ZERO);
     let before_order_id = authority.state.next_order_id;
@@ -1459,9 +1453,7 @@ fn retail_cancel_is_projected_once_and_preserves_quote_expiry_diagnostic_order()
     let mut authority = GameSession::new(setup, 42).unwrap();
     let retail = AccountId(1);
     authority
-        .state
-        .accounts
-        .get_mut(&retail)
+        .fixture_account_mut(&retail)
         .unwrap()
         .fixture_set_strategy(None);
     let code = authority.state.markets.keys().next().unwrap().clone();

@@ -102,7 +102,7 @@ fn day_end_transition_overflow_keeps_original_candidate_partial_progress() {
     session.state.day = u32::MAX;
     session.state.setup.t1_enabled = true;
     let code = session.state.markets.keys().next().unwrap().clone();
-    let account = session.state.accounts.get_mut(&AccountId(0)).unwrap();
+    let account = session.fixture_account_mut(&AccountId(0)).unwrap();
     account
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
@@ -300,9 +300,7 @@ fn day_end_transition_plan_failure_precedes_day_overflow_and_leaves_authority_un
     authority.state.setup.t1_enabled = true;
     let code = authority.state.markets.keys().next().unwrap().clone();
     authority
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_insert_position(
             code.clone(),

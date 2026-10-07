@@ -289,9 +289,7 @@ fn adapter_preserves_stock_queue_order_and_rejects_nonserializable_ids() {
 fn reverse_order_ids_keep_stock_arrival_priority_after_save_restore() {
     let mut game = opening_game();
     let code = StockId(0);
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();

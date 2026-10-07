@@ -166,9 +166,7 @@ fn execute(
 fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
     let code = StockId(0);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .fixture_set_kind(AccountKind::Player);
     let mut events = Vec::new();
@@ -342,9 +340,7 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         qty: 100,
     };
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_insert_position(
             code.clone(),
@@ -421,9 +417,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     let code = request.allocation.code.clone();
     let ids = working_orders(&mut session, &[901, 902]);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_insert_position(
             code.clone(),
@@ -544,9 +538,7 @@ fn adaptive_cancel_release_never_refills_account_validation_cash_for_the_followu
     working_orders(&mut session, &[901, 902]);
     let cash = session.reserved_cash_for_account(AccountId(1)).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .fixture_set_cash(cash);
     let (mut validator, mut stock_execution) = seal(&mut session);
@@ -604,9 +596,7 @@ fn fill_case(resting_sell_qty: u32) {
         qty: 100,
     };
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), resting_sell_qty, Money::from_cents(1_000))
         .unwrap();
@@ -941,9 +931,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
     .unwrap();
     let owner = AccountId(1);
     session
-        .state
-        .accounts
-        .get_mut(&owner)
+        .fixture_account_mut(&owner)
         .unwrap()
         .fixture_set_cash(Money::from_cents(10_000_000));
     let codes = [StockId(0), StockId(1)];
@@ -1133,9 +1121,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
     let (mut session, _) = fixture();
     let code = StockId(0);
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .grant_position(code.clone(), 50, Money::from_cents(1_000))
         .unwrap();
@@ -1207,9 +1193,7 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
             .into_strategy()
             .unwrap();
         session
-            .state
-            .accounts
-            .get_mut(&id)
+            .fixture_account_mut(&id)
             .unwrap()
             .fixture_set_strategy(Some(crate::account::StoredStrategy::production(strategy)));
         *session
@@ -1221,15 +1205,11 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
             .belief()
             .clone();
         session
-            .state
-            .accounts
-            .get_mut(&id)
+            .fixture_account_mut(&id)
             .unwrap()
             .fixture_set_cash(template.state.accounts[&AccountId(1)].cash());
         session
-            .state
-            .accounts
-            .get_mut(&id)
+            .fixture_account_mut(&id)
             .unwrap()
             .fixture_set_positions(template.state.accounts[&AccountId(1)].positions().clone());
         crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, id, 0);

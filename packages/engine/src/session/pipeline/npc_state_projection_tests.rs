@@ -13,9 +13,7 @@ fn due_retail(seed: u64) -> (GameSession, AccountId) {
     let account = AccountId(1);
     let mut shadow = GameSession::new(npc_working_quote_tests::retail_quote_setup(), seed).unwrap();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let tick = shadow.state.tick;
@@ -201,9 +199,7 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
     let mut shadow = GameSession::new(setup, 10).unwrap();
     for account in [AccountId(1), AccountId(2)] {
         shadow
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .set_strategy(Box::new(
                 ZiNoiseStrategy::new(if account == AccountId(1) { 0.0 } else { 1.0 }, 100, 0.5)
@@ -272,9 +268,7 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
     let mut authority = GameSession::new(setup, 19).unwrap();
     for account in [AccountId(1), AccountId(2)] {
         authority
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
         let tick = authority.state.tick;
@@ -319,15 +313,11 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
     use_buy_imbalance_analysis(&mut shadow, account);
     // 当前散户试买目标为资产的 7%；明确给足资金，让策略确实请求完整 900 股。
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(Money::from_cents(20_000_000));
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
@@ -394,9 +384,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     )
     .unwrap();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reserved);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
@@ -502,9 +490,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
     setup.npcs.inst_count = 0;
     let mut shadow = GameSession::new(setup, 43).unwrap();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
     let codes = shadow.state.markets.keys().cloned().collect::<Vec<_>>();

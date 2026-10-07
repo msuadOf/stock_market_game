@@ -7,9 +7,7 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     let player = crate::AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(2), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&npc)
+    game.fixture_account_mut(&npc)
         .unwrap()
         .fixture_set_strategy(None);
     let mut events = Vec::new();

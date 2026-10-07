@@ -305,9 +305,7 @@ fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockId) {
     let mut game = session(ticks_per_day, 0);
     let code = game.state.markets.keys().next().unwrap().clone();
     // Existing player inventory avoids adding an account absent from the save setup.
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 400, Money::from_cents(1_000))
         .unwrap();
@@ -526,9 +524,7 @@ fn partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quanti
 fn partial_fill_then_day_end(maker: Side, taker: Side) {
     let mut game = session(2, 0);
     let code = game.state.markets.keys().next().unwrap().clone();
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 200, Money::from_cents(1_000))
         .unwrap();

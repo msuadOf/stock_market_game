@@ -395,9 +395,7 @@ mod tests {
     fn production_step_cash_winner_follows_cross_source_receive_order() {
         for player_first in [true, false] {
             let mut game = game();
-            game.state
-                .accounts
-                .get_mut(&AccountId(0))
+            game.fixture_account_mut(&AccountId(0))
                 .unwrap()
                 .fixture_set_cash(Money::from_cents(100_000));
             let source = game.shared_ingress();

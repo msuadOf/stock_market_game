@@ -46,9 +46,7 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
         .stock_id(&authority.state.setup.stocks[0].code.0)
         .unwrap();
     authority
-        .state
-        .accounts
-        .get_mut(&retail)
+        .fixture_account_mut(&retail)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let mut setup_events = Vec::new();
@@ -135,9 +133,7 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
     )
     .unwrap();
     authority
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_set_cash(one_order_cash);
     for _ in 0..2 {
@@ -216,9 +212,7 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
     )
     .unwrap();
     authority
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_set_cash(one_order_cash);
     authority
@@ -399,9 +393,7 @@ fn opening_completion_fixture(
         })
         .unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), seller_qty, Money::from_cents(900))
         .unwrap();

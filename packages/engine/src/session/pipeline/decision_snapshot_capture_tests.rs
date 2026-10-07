@@ -210,9 +210,7 @@ fn accepted_retail_observation_dates_a_fixture_buy_and_decays_only_its_influence
         trading_day: u64::from(shadow.state.day),
     };
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_insert_position(
             code.clone(),
@@ -364,9 +362,7 @@ fn capture_reports_retail_experience_overflow() {
         .expect("retail fixture has a market");
     let last = shadow.state.markets[&code].last_price();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, last)
         .unwrap();
@@ -399,9 +395,7 @@ fn capture_reports_retail_experience_overflow() {
 fn capture_reports_a_due_npc_without_a_strategy() {
     let (_, mut shadow, account) = due_retail_shadow(29);
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
     let error = capture_decision_snapshot(&mut shadow).unwrap_err();
@@ -428,9 +422,7 @@ fn capture_reports_missing_due_attention_without_panic() {
 fn capture_reports_risk_view_failure() {
     let (_, mut shadow, account) = due_retail_shadow(37);
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(Money::from_cents(-1));
     let error = capture_decision_snapshot(&mut shadow).unwrap_err();
@@ -528,7 +520,7 @@ fn capture_held_retail_positions_share_equity_peaks_and_t1_with_experience() {
     let mut experience = crate::RetailExperienceState::without_equity_reference();
     for (index, qty, locked, peak) in [(0, 100, 40, 2_000), (1, 200, 150, 1_500)] {
         let price = source.state.markets[&codes[index]].last_price();
-        let entry = source.state.accounts.get_mut(&account).unwrap();
+        let entry = source.fixture_account_mut(&account).unwrap();
         entry
             .grant_position(codes[index].clone(), qty, price)
             .unwrap();
@@ -612,9 +604,7 @@ fn capture_non_retail_experience_keeps_self_positions_without_retail_risk() {
     let code = shadow.state.markets.keys().next().unwrap().clone();
     let price = shadow.state.markets[&code].last_price();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, price)
         .unwrap();
@@ -644,9 +634,7 @@ fn capture_missing_position_market_does_not_update_the_source_session() {
     // 数值身份后无字符串可断言：目录外哨兵取 StockId(9)。
     let code = crate::StockId(9);
     source
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(1_000))
         .unwrap();
@@ -668,7 +656,7 @@ fn capture_missing_position_market_does_not_update_the_source_session() {
 fn capture_equity_overflow_does_not_install_observed_experience() {
     let (mut source, _, account) = due_retail_shadow(67);
     let code = source.state.markets.keys().next().unwrap().clone();
-    let entry = source.state.accounts.get_mut(&account).unwrap();
+    let entry = source.fixture_account_mut(&account).unwrap();
     entry
         .grant_position(code, 100, Money::from_cents(1_000))
         .unwrap();
@@ -691,7 +679,7 @@ fn capture_equity_overflow_does_not_install_observed_experience() {
 fn capture_self_view_money_error_precedes_risk_and_missing_strategy() {
     let (_, mut shadow, account) = due_retail_shadow(71);
     let code = shadow.state.markets.keys().next().unwrap().clone();
-    let entry = shadow.state.accounts.get_mut(&account).unwrap();
+    let entry = shadow.fixture_account_mut(&account).unwrap();
     entry.fixture_set_cash(Money::from_cents(i64::MIN));
     entry.fixture_set_strategy(None);
     shadow
@@ -721,7 +709,7 @@ fn capture_self_view_money_error_precedes_risk_and_missing_strategy() {
 #[test]
 fn capture_risk_error_precedes_missing_strategy() {
     let (_, mut shadow, account) = due_retail_shadow(73);
-    let entry = shadow.state.accounts.get_mut(&account).unwrap();
+    let entry = shadow.fixture_account_mut(&account).unwrap();
     entry.fixture_set_cash(Money::from_cents(-1));
     entry.fixture_set_strategy(None);
     let error = capture_decision_snapshot(&mut shadow).unwrap_err();

@@ -293,6 +293,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         Ok(match stashed {
             Some(stash)
                 if stash.for_tick == session.state.tick
+                    && stash.produced_revision == session.external_revision()
                     && read_only_start::can_prepare(session) =>
             {
                 read_only_start::count_speculative_hit();

@@ -70,9 +70,7 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
     let mut events = Vec::new();
     session.seed_order_for_test(account, buy(&code, 900), &mut events);
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();

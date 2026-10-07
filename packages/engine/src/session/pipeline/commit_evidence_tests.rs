@@ -343,9 +343,7 @@ fn expiring_buy_session() -> (GameSession, StockId, AccountId, OrderId) {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 51).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
     let mut events = Vec::new();
@@ -375,15 +373,11 @@ fn mixed_quote_expiry_and_sealed_receipt_session() -> GameSession {
     let strategy_source =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 51).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&seller)
+        .fixture_account_mut(&seller)
         .unwrap()
         .fixture_set_strategy(strategy_source.state.accounts[&seller].strategy().cloned());
     session
-        .state
-        .accounts
-        .get_mut(&seller)
+        .fixture_account_mut(&seller)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();

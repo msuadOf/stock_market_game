@@ -29,9 +29,7 @@ fn skeleton_failure_preserves_business_and_poison_context() {
 #[test]
 fn public_step_rejects_and_poisons_a_missing_npc_strategy() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&AccountId(1))
+    game.fixture_account_mut(&AccountId(1))
         .unwrap()
         .fixture_set_strategy(None);
     let business = game.business_state_hash().unwrap();
@@ -52,9 +50,7 @@ fn public_step_rejects_and_poisons_a_missing_npc_strategy() {
 #[test]
 fn injected_failure_runs_before_missing_npc_strategy_validation() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&AccountId(1))
+    game.fixture_account_mut(&AccountId(1))
         .unwrap()
         .fixture_set_strategy(None);
     let injected = StepFatal::InvariantViolation {
@@ -85,7 +81,7 @@ fn business_hash_detects_pending_facts_counters_and_strategy_state() {
         });
     assert_ne!(game.business_state_hash().unwrap(), before);
     game.state.pending_plan_events.clear();
-    let account = game.state.accounts.get_mut(&AccountId(1)).unwrap();
+    let account = game.fixture_account_mut(&AccountId(1)).unwrap();
     account.set_strategy(Box::new(
         crate::MomentumStrategy::new(5, 0.04, 100).unwrap(),
     ));
@@ -113,14 +109,10 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
     let code = StockId(0);
     let account = AccountId(1);
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 2, Money::from_cents(1))
         .unwrap();

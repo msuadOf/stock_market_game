@@ -37,7 +37,8 @@ impl GameSession {
                 injected_failure: _,
             #[cfg(test)]
                 post_shadow_failure: _,
-        } = self;
+                revision: _,
+} = self;
         let super::CommittableSessionState {
             setup: _,
             stocks: _,

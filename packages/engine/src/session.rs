@@ -1443,6 +1443,10 @@ impl SessionSetup {
 /// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
     ingress: Option<shared_ingress::IngressBinding>,
+    /// 外部直改计数（X1 新鲜度校验）：任何绕过 tick 管线、在 commit 与下个
+    /// plan_tick 之间改权威状态的行为必须自增；投机 stash 消费要求相等。
+    /// 不入 state 克隆链——shadow 克隆取值快照，commit 不回写。
+    revision: std::sync::atomic::AtomicU64,
     poison: Option<StepFatal>,
     fresh_initial_allocation: bool,
     #[cfg(test)]
@@ -1652,6 +1656,29 @@ fn retained_behavior_daily_closes_history(history: &DailyCandleHistory) -> Vec<C
         .collect()
 }
 
+
+impl GameSession {
+    /// 外部直改计数当前值（X1 新鲜度校验）。
+    pub(crate) fn external_revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 标记一次绕过 tick 管线的权威直改（X1 红线：直改必须先 mark）。
+    pub(crate) fn mark_external_mutation(&self) {
+        self.revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// 直改入口：等价于 state.accounts.get_mut 并标记外部直改
+    /// （测试夹具与存档恢复共用；X1 红线——直改必须经此标记）。
+    pub(crate) fn fixture_account_mut(
+        &mut self,
+        id: &crate::AccountId,
+    ) -> Option<&mut crate::Account> {
+        self.mark_external_mutation();
+        self.state.accounts.get_mut(id)
+    }
+}
+
 impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
         Ok(Self {
@@ -1662,6 +1689,9 @@ impl GameSession {
                 .transpose()
                 .map_err(shared_ingress::ingress_fatal)?,
             poison: None,
+            revision: std::sync::atomic::AtomicU64::new(
+                self.revision.load(std::sync::atomic::Ordering::Relaxed),
+            ),
             fresh_initial_allocation: self.fresh_initial_allocation,
             #[cfg(test)]
             injected_failure: None,
@@ -1761,6 +1791,7 @@ impl GameSession {
         disclosures.install(&mut civil_clock);
         let mut sess = GameSession {
             ingress: None,
+            revision: std::sync::atomic::AtomicU64::new(0),
             poison: None,
             fresh_initial_allocation: true,
             #[cfg(test)]
@@ -3172,9 +3203,7 @@ impl GameSession {
         // 恢复账户状态（cash + positions 精确值）
         for (id, snap_acc) in &save.snapshot.accounts {
             let acc = sess
-                .state
-                .accounts
-                .get_mut(id)
+                .fixture_account_mut(id)
                 .expect("validated save account set exactly matches setup");
             acc.restore_balances(
                 snap_acc.cash,
@@ -4530,7 +4559,7 @@ mod npc_working_quote_tests {
         let account = AccountId(1);
         let mut session = GameSession::new(retail_quote_setup(), 121).unwrap();
         let config = session.state.setup.config.clone();
-        let holder = session.state.accounts.get_mut(&account).unwrap();
+        let holder = session.fixture_account_mut(&account).unwrap();
         holder
             .grant_position(code.clone(), 1_000, Money::from_cents(1_000))
             .unwrap();

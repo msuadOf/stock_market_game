@@ -956,9 +956,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
         trading_day: u64::from(game.day()),
     };
     for (index, code) in codes.iter().enumerate() {
-        game.state
-            .accounts
-            .get_mut(&account)
+        game.fixture_account_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, Money::from_cents(1_000))
             .unwrap();
@@ -1214,9 +1212,7 @@ fn validated_sell_operations(code: &StockId) -> (Vec<ValidatedOperation>, GameCo
     let account = AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 200, Money::from_cents(1_000))
         .unwrap();

@@ -16,9 +16,7 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
         .map(|stock| game.stock_id(&stock.code.0).expect("配置股票必须已入目录"))
         .collect::<Vec<_>>();
     for code in &codes {
-        game.state
-            .accounts
-            .get_mut(&account)
+        game.fixture_account_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
             .unwrap();
@@ -117,9 +115,7 @@ fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slo
         crate::Money::ZERO,
     )
     .unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reservation);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -175,9 +171,7 @@ fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or
     let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();

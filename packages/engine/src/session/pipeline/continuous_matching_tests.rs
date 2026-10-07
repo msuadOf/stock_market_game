@@ -616,9 +616,7 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
     let code = StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(1000))
         .unwrap();

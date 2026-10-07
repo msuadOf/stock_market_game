@@ -128,9 +128,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
     let player = AccountId(0);
     for account in [first, second] {
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(Money::from_cents(1_000_000));
     }
@@ -229,9 +227,7 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
         .unwrap();
         let account = AccountId(1);
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
         super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, account);
@@ -273,9 +269,7 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
         assert!(session.state.accounts[&account].cash() >= required_cash);
         let expected_qty = *qty;
         session
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .fixture_set_cash(if has_exact_cash {
                 required_cash

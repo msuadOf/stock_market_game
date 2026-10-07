@@ -233,9 +233,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
         &mut Vec::new(),
     );
     session
-        .state
-        .accounts
-        .get_mut(&owner)
+        .fixture_account_mut(&owner)
         .unwrap()
         .fixture_set_cash(Money::from_cents(7));
     let observed = observation.observe(&mut session, |session| {
@@ -255,9 +253,7 @@ fn adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands() {
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let code = request.allocation.code.clone();
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(1))
+        .fixture_account_mut(&AccountId(1))
         .unwrap()
         .fixture_set_kind(AccountKind::Player);
     for price in [901, 902] {
@@ -388,15 +384,11 @@ fn lifecycle_uses_fixed_account_resources_and_current_plan_after_outcome() {
     )]);
     let mut observation = FrozenPlanChainObservation::capture(&session).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(Money::ZERO);
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_clear_positions();
     assert!(session
