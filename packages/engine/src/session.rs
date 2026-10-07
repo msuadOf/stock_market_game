@@ -16,6 +16,8 @@ mod company_groups;
 mod company_operations;
 mod continuous_cancellation;
 mod decision_chain;
+mod deferred_drop;
+use deferred_drop::defer_swap;
 mod disclosures;
 mod envelope_projection;
 mod execution;
@@ -4772,53 +4774,55 @@ impl CommittableSessionState {
             speculative_prepare,
             urgency_policy,
         } = shadow;
+        // 专用析构线程（E7 复活路径）：旧权威值的析构整体移交池外线程，
+        // actor 只做字段交接。四个分页容器原先走 rayon 池内 par drop，
+        // 池外移交后也不再产生池交互。Copy 字段仍直接赋值。
         self.urgency_policy = urgency_policy;
-        self.setup = setup;
-        self.stocks = stocks;
-        self.rng = rng;
+        defer_swap(&mut self.setup, setup);
+        defer_swap(&mut self.stocks, stocks);
+        defer_swap(&mut self.rng, rng);
         self.seed = seed;
-        self.markets = markets;
-        self.accounts.replace_and_drop_parallel(accounts);
-        self.history_reads.replace_and_drop_parallel(history_reads);
-        self.price_history = price_history;
-        self.market_minute_closes = market_minute_closes;
-        self.candle_book = candle_book;
-        self.auction_orders = auction_orders;
-        self.pending_player = pending_player;
-        self.pending_npc = pending_npc;
-        self.ingress_receipt_cursors = ingress_receipt_cursors;
-        self.npc_attention.replace_and_drop_parallel(npc_attention);
-        self.retail_experience
-            .replace_and_drop_parallel(retail_experience);
-        self.parent_orders = parent_orders;
-        self.pending_plan_events = pending_plan_events;
-        self.npc_order_lifecycles = npc_order_lifecycles;
-        self.last_retail_decisions = last_retail_decisions;
-        self.last_retail_order_events = last_retail_order_events;
+        defer_swap(&mut self.markets, markets);
+        defer_swap(&mut self.accounts, accounts);
+        defer_swap(&mut self.history_reads, history_reads);
+        defer_swap(&mut self.price_history, price_history);
+        defer_swap(&mut self.market_minute_closes, market_minute_closes);
+        defer_swap(&mut self.candle_book, candle_book);
+        defer_swap(&mut self.auction_orders, auction_orders);
+        defer_swap(&mut self.pending_player, pending_player);
+        defer_swap(&mut self.pending_npc, pending_npc);
+        defer_swap(&mut self.ingress_receipt_cursors, ingress_receipt_cursors);
+        defer_swap(&mut self.npc_attention, npc_attention);
+        defer_swap(&mut self.retail_experience, retail_experience);
+        defer_swap(&mut self.parent_orders, parent_orders);
+        defer_swap(&mut self.pending_plan_events, pending_plan_events);
+        defer_swap(&mut self.npc_order_lifecycles, npc_order_lifecycles);
+        defer_swap(&mut self.last_retail_decisions, last_retail_decisions);
+        defer_swap(&mut self.last_retail_order_events, last_retail_order_events);
         #[cfg(feature = "simulation-diagnostics")]
         {
-            self.npc_decision_traces = npc_decision_traces;
-            self.causal = causal;
+            defer_swap(&mut self.npc_decision_traces, npc_decision_traces);
+            defer_swap(&mut self.causal, causal);
         }
-        self.attention_scheduler = attention_scheduler;
-        self.company_registry = company_registry;
-        self.operations = operations;
-        self.groups = groups;
-        self.closing = closing;
-        self.library = library;
-        self.ops_wiring = ops_wiring;
-        self.disclosures = disclosures;
-        self.plans = plans;
-        self.belief_participants = belief_participants;
-        self.envelope_ledger = envelope_ledger;
-        self.retail_projection_seen = retail_projection_seen;
+        defer_swap(&mut self.attention_scheduler, attention_scheduler);
+        defer_swap(&mut self.company_registry, company_registry);
+        defer_swap(&mut self.operations, operations);
+        defer_swap(&mut self.groups, groups);
+        defer_swap(&mut self.closing, closing);
+        defer_swap(&mut self.library, library);
+        defer_swap(&mut self.ops_wiring, ops_wiring);
+        defer_swap(&mut self.disclosures, disclosures);
+        defer_swap(&mut self.plans, plans);
+        defer_swap(&mut self.belief_participants, belief_participants);
+        defer_swap(&mut self.envelope_ledger, envelope_ledger);
+        defer_swap(&mut self.retail_projection_seen, retail_projection_seen);
         self.next_receipt_base = next_receipt_base;
         self.next_order_id = next_order_id;
         self.tick = tick;
         self.day = day;
         self.seq = seq;
-        self.civil_clock = civil_clock;
-        self.speculative_prepare = speculative_prepare;
+        defer_swap(&mut self.civil_clock, civil_clock);
+        defer_swap(&mut self.speculative_prepare, speculative_prepare);
     }
 }
 
@@ -4831,6 +4835,26 @@ mod committable_state_tests {
             description: description.to_owned(),
             location: "committable_state_tests".to_owned(),
         }
+    }
+
+    #[test]
+    fn commit_defers_old_state_destruction_to_dedicated_thread() {
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 719).unwrap();
+        session.step().unwrap();
+        let before = deferred_drop::deferred_count();
+        session.step().unwrap();
+        assert!(
+            deferred_drop::deferred_count() > before,
+            "commit_from 未把旧权威状态移交专用析构线程"
+        );
+        // 生产形态断言（试验 A 教训）：真实 step 提交路径上全部非 Copy 字段
+        // （36 个）都必须走 defer_swap，而不是只有个别字段被移交。
+        assert!(
+            deferred_drop::deferred_count() - before >= 30,
+            "生产 commit 路径的移交数量不足（期望 ≥30/次提交，实际 {}）",
+            deferred_drop::deferred_count() - before
+        );
     }
 
     #[test]
