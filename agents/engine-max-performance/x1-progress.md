@@ -70,7 +70,7 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
      - orders.rs 其余读：setup.config.lot_size、self.phase()（view 已有）、tick。
   4. execution/reconcile_plan.rs:25 plan_npc_working_order_reconciliation → on(view,...)：读集仅 tick/setup（:63-64 已核），其余参数传入；177 行小文件，可先转。
   4. decision_snapshot_capture.rs 全文件（capture/view+writes、experience 观察读 retail_experience 经 &*writes 再借用、build_self_view_for/build_behavior_market_checked/validate_market_view_inputs 全 view 化）；
-  5. npc_state_projection.rs project_npc_state_in_place(view, writes)（strategy 写走 writes.accounts、last_retail_decisions 走 writes、validate_parent_order_materialization 随行）；
+  5. npc_state_projection.rs project_npc_state_in_place(view, writes)——**映射已全部备好（棒次 7 侦察）**：tick/phase→view；accounts.get→view、get_mut().restore_strategy→writes.accounts、末尾 accounts[&].positions()→view；last_retail_decisions.push→writes；retail_experience.get_mut 与 mutate_existing_parallel→writes（闭包内 accounts 改 &view.accounts）；validate_parent_order_materialization→(view, parent_orders 引用, account, desired, market_minute)（读 setup+parent_orders，后者经 &*writes 再借用）；materialize_parent_order_intents 与 plan_npc_working_order_reconciliation 调 execution on 版（子 agent 转换中，落地前 projection 无法编译收口）；
   6. npc_tick_preparation.rs queue_npc_for_next_tick → queue_npc_on(view, writes) + session 薄包装（candidate_commit.rs:65 调用点零改动）；
   7. 全绿后进入阶段二（join/stash/plan_tick 消费/TDD/基准，见上文设计）。
   - 已就绪的 view 助手：phase/current_market_minute/civil_date/issuer_of_stock/build_market_view_on/market_price_path_observations_on/working_orders_for_accounts_on/receive_private_intent_on/take_on/install_on。
