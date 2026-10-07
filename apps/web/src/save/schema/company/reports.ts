@@ -162,7 +162,7 @@ export function parsePublicationOrigin(value: unknown, path: string): Publicatio
 function parseCashDividendAnnouncement(value: unknown, company: string, occurredOn: string, path: string): AnnouncementContent {
   const content = record(value, path)
   exact(content, ["kind", "value"], path)
-  const tag = oneOf(content.kind, `${path}.kind`, ["Shock", "CashDividend", "RightsOffering", "IssuerRepurchase"] as const)
+  const tag = oneOf(content.kind, `${path}.kind`, ["Shock", "CashDividend"] as const)
   const body = content.value
   if (tag === "Shock") {
     const event = record(body, `${path}.value`)
@@ -233,7 +233,13 @@ function parseAnnouncement(value: unknown, path: string): Announcement {
   exact(item, ["id", "company", "occurred_on", "published_at", "content"], path)
   const company = string(item.company, `${path}.company`)
   const occurred_on = civilDate(item.occurred_on, `${path}.occurred_on`)
-  return { id: integer(item.id, `${path}.id`, 0), company, occurred_on, published_at: instant(item.published_at, `${path}.published_at`), content: parseCashDividendAnnouncement(item.content, company, occurred_on, `${path}.content`) }
+  const contentKind = typeof item.content === "object" && item.content !== null
+    ? (item.content as Record<string, unknown>).kind
+    : undefined
+  const content = contentKind === "RightsOffering" || contentKind === "IssuerRepurchase"
+    ? parseCompanyActionAnnouncement(item.content, company, occurred_on, `${path}.content`)
+    : parseCashDividendAnnouncement(item.content, company, occurred_on, `${path}.content`)
+  return { id: integer(item.id, `${path}.id`, 0), company, occurred_on, published_at: instant(item.published_at, `${path}.published_at`), content }
 }
 
 function parsePublishedReport(value: unknown, path: string): PublishedReport {

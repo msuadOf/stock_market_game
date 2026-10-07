@@ -958,6 +958,17 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     if (fact.kind === "Account" && !accountPaymentFactKeys.has(key)) throw new SaveSchemaError(`${path}.account_gross_receipts`, "缺少已到账账户回执")
     if (fact.kind === "External" && !externalPaymentFactKeys.has(key)) throw new SaveSchemaError(`${path}.external_receipts`, "缺少已支付 External 持有人回执")
   }
+  // 认购排队与回购账簿的引用勾稽：排队必须指向存在的配股事件（正负例由
+  // parseSessionCorporateActions 的严格字段校验与 engine 恢复校验共同承担）。
+  const rightsEventIds = new Set(rights_offerings.map(book => book.plan.event_id))
+  for (const [index, queued] of rights_subscription_queue.entries()) {
+    if (!rightsEventIds.has(queued.event_id)) throw new SaveSchemaError(`${path}.rights_subscription_queue[${index}].event_id`, "认购排队引用不存在的配股事件")
+  }
+  for (const [index, book] of issuer_repurchases.entries()) {
+    const registry = registryByStock.get(book.plan.stock)
+    if (registry === undefined || registry.issuer !== book.plan.issuer) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].plan`, "回购方案没有匹配的发行人股东名册")
+    if (book.plan.approved_on > context.currentDate) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].plan.approved_on`, "回购批准日期晚于存档日")
+  }
   const groupKeys = new Set<string>()
   for (const [index, group] of applied_ex_reference_groups.entries()) {
     const key = `${group.date}\0${group.stock}`
