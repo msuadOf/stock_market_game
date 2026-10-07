@@ -204,7 +204,7 @@ mod transition_tests;
 pub struct PhaseInput<'a> {
     pub session: &'a GameSession,
     /// X1 投机 stash 的权威移交份（step() 单点 take；直调测试留 None 走遗留路径）。
-    pub speculative: Option<std::sync::Arc<read_only_start::SpeculativePrepareStash>>,
+    pub speculative: Option<read_only_start::SpeculativePrepareStash>,
 }
 
 impl<'a> PhaseInput<'a> {
@@ -300,11 +300,9 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         Ok(())
     })?;
     crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
+    let handed = input.speculative;
     let read_only = shadow.state.execute(|session| {
-        let stashed = input
-            .speculative
-            .clone()
-            .or_else(|| session.state.speculative_prepare.take().map(std::sync::Arc::new));
+        let stashed = handed.or_else(|| session.state.speculative_prepare.take());
         Ok(match stashed {
             Some(stash)
                 if stash.for_tick == session.state.tick
@@ -312,12 +310,8 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
                     && read_only_start::can_prepare(session) =>
             {
                 read_only_start::count_speculative_hit();
-                // 单点移交路径 Arc 唯一（try_unwrap 成功，零深拷）；
-                // 遗留测试路径 shadow 克隆共享权威份时退化为克隆。
-                let work = match std::sync::Arc::try_unwrap(std::sync::Arc::clone(&stash.work)) {
-                    Ok(work) => work,
-                    Err(shared) => (*shared).clone(),
-                };
+                // 终审修正：纯移动语义（无 Arc/try_unwrap），命中路径结构性零深拷。
+                let work = stash.work;
                 Some(work)
             }
             staged => {

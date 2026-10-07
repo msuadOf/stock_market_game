@@ -28,8 +28,8 @@ pub(in crate::session) struct SpeculativePrepareStash {
     pub(in crate::session) for_tick: u64,
     /// 生产时刻的外部直改计数；消费要求相等，否则值过期整体回退现算。
     pub(in crate::session) produced_revision: u64,
-    /// Arc 包装：coordinator 体积大，shadow 克隆只 bump 计数，消费侧再解引用克隆。
-    pub(in crate::session) work: std::sync::Arc<ReadOnlyStart>,
+    /// 纯值（终审修正：去 Arc——单点移交后消费为移动语义，无 try_unwrap/克隆路径）。
+    pub(in crate::session) work: ReadOnlyStart,
 }
 
 static SPECULATIVE_HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -436,7 +436,7 @@ mod tests {
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick,
             produced_revision: game.external_revision(),
-            work: std::sync::Arc::new(work),
+            work: work,
         });
         let before = game.business_state_hash().unwrap();
         let (hits, misses, inline) = (
@@ -472,7 +472,7 @@ mod tests {
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick + 1,
             produced_revision: game.external_revision(),
-            work: std::sync::Arc::new(prepare(&game)),
+            work: prepare(&game),
         });
         let before = game.business_state_hash().unwrap();
         let (hits, misses, inline) = (
@@ -494,7 +494,7 @@ mod tests {
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick,
             produced_revision: game.external_revision(),
-            work: std::sync::Arc::new(prepare(&game)),
+            work: prepare(&game),
         });
         game.state.npc_order_lifecycles.push(crate::session::NpcOrderLifecycle {
             account: AccountId(1),
@@ -538,7 +538,7 @@ mod tests {
         game.state.speculative_prepare = Some(SpeculativePrepareStash {
             for_tick: game.state.tick,
             produced_revision: game.external_revision(),
-            work: std::sync::Arc::new(prepare(&game)),
+            work: prepare(&game),
         });
         let before = game.business_state_hash().unwrap();
         let error = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None })
