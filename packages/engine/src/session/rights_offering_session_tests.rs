@@ -196,6 +196,121 @@ fn strategy_based_plan_is_rejected_at_approval() {
     );
 }
 
+/// 与 [`all_shareholders_plan`] 同除权日（2030-01-14）的送转事件：登记日取
+/// 配股除权日前一交易日，使送转除权日与配股除权日同日。
+fn same_ex_date_stock_plan(
+    issuer: &CompanyId,
+    stock: &StockCode,
+    ex_rights_on: CivilDate,
+) -> crate::company::stock_distribution::StockDistributionEventPlan {
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let registered_on = calendar
+        .previous_trading_day(crate::calendar::CalendarExchange::Sse, ex_rights_on)
+        .unwrap();
+    crate::company::stock_distribution::StockDistributionEventPlan {
+        event_id: "stock-same-ex-collision".into(),
+        approval_reference: "stock collision fixture".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        kind: crate::company::stock_distribution::StockDistributionKind::BonusShares,
+        approved_on: CivilDate::from_iso("2030-01-02").unwrap(),
+        announced_on: CivilDate::from_iso("2030-01-02").unwrap(),
+        registered_on,
+        ex_rights_on,
+        shares_per_existing_share_micros: 100_000,
+        approved_total_new_shares: 400_000,
+    }
+}
+
+#[test]
+fn stock_distribution_rejected_when_same_ex_date_rights_offering_exists() {
+    // 配股先声明、送转后声明且同除权日：approve_stock_distribution 受理时显式
+    // 拒绝（配股×送转同日合并除权口径未核实），不得推迟到除权日日结才以
+    // StepFatal 暴露；账簿保持不变。
+    let (mut session, stock, issuer) = session_with_registry(true);
+    let rights = all_shareholders_plan(&issuer, &stock);
+    let ex_on = rights.ex_rights_on;
+    session.approve_rights_offering(rights).unwrap();
+    let collision = same_ex_date_stock_plan(&issuer, &stock, ex_on);
+    let error = session
+        .approve_stock_distribution(collision)
+        .expect_err("同除权日已有配股事件时送转受理必须显式拒绝");
+    assert!(
+        error.to_string().contains("同除权日") && error.to_string().contains("配股"),
+        "送转受理拒绝必须指明同除权日配股碰撞：{error}"
+    );
+    assert_eq!(
+        session.state.corporate_actions.stock_distributions.len(),
+        0,
+        "被拒送转不得入账簿"
+    );
+    assert_eq!(
+        session.state.corporate_actions.rights_offerings.len(),
+        1,
+        "既有配股账簿不受被拒送转影响"
+    );
+}
+
+#[test]
+fn rights_plan_rejected_when_same_ex_date_stock_event_exists() {
+    // 送转先声明、配股后声明且同除权日：approve_rights_offering 受理时显式
+    // 拒绝（与 approve_stock_distribution 的碰撞预检对称，不把碰撞推迟到
+    // 除权日日结才以 StepFatal 暴露）；账簿保持不变。
+    let (mut session, stock, issuer) = session_with_registry(true);
+    let stock_first =
+        same_ex_date_stock_plan(&issuer, &stock, CivilDate::from_iso("2030-01-14").unwrap());
+    let ex_on = stock_first.ex_rights_on;
+    session.approve_stock_distribution(stock_first).unwrap();
+    let rights = all_shareholders_plan(&issuer, &stock);
+    assert_eq!(
+        rights.ex_rights_on, ex_on,
+        "配股除权日必须与既有送转事件除权日重合"
+    );
+    let error = session
+        .approve_rights_offering(rights)
+        .expect_err("同除权日已有送转事件时配股受理必须显式拒绝");
+    assert!(
+        error.to_string().contains("同除权日") && error.to_string().contains("送转"),
+        "配股受理拒绝必须指明同除权日送转碰撞：{error}"
+    );
+    assert_eq!(
+        session.state.corporate_actions.rights_offerings.len(),
+        0,
+        "被拒配股不得入账簿"
+    );
+    assert_eq!(
+        session.state.corporate_actions.stock_distributions.len(),
+        1,
+        "既有送转账簿不受被拒配股影响"
+    );
+}
+
+#[test]
+fn second_rights_plan_rejected_when_same_ex_date_rights_exists() {
+    // 同一发行人同证券同除权日的第二起配股（不同 event_id）：受理时显式
+    // 拒绝（同日多起配股的合并除权口径未核实）；账簿保持不变。
+    let (mut session, stock, issuer) = session_with_registry(true);
+    let first = all_shareholders_plan(&issuer, &stock);
+    let ex_on = first.ex_rights_on;
+    session.approve_rights_offering(first).unwrap();
+    let mut second = all_shareholders_plan(&issuer, &stock);
+    second.event_id = "rights-second-same-ex".into();
+    assert_eq!(second.ex_rights_on, ex_on);
+    let error = session
+        .approve_rights_offering(second)
+        .expect_err("同除权日已存在配股事件时第二起配股受理必须显式拒绝");
+    assert!(
+        error.to_string().contains("同除权日") && error.to_string().contains("配股"),
+        "第二起配股受理拒绝必须指明同除权日配股碰撞：{error}"
+    );
+    assert_eq!(
+        session.state.corporate_actions.rights_offerings.len(),
+        1,
+        "仅第一起配股在账簿"
+    );
+}
+
 #[test]
 fn rights_full_chain_announces_entitles_charges_settles_credits_and_restores() {
     let (mut session, stock, issuer) = session_with_registry(true);

@@ -1044,6 +1044,80 @@ fn auto_stock_proposal_rejected_when_same_ex_date_explicit_event_exists() {
 }
 
 #[test]
+fn auto_stock_proposal_rejected_when_same_ex_date_rights_offering_exists() {
+    // 同除权日既存在配股事件时，自动送转提案被拒：配股×送转同日的合并除权
+    // 口径未核实，除权日日结会显式失败（prepare_ex_references_for_current_date
+    // 的 StepFatal），自动提案不得叠加；拒绝如实记入偏好台账且日结不 poison。
+    let mut setup = preference_setup(stock_preference(1, 100_000, 1_000_000_000, 1));
+    setup.rights_offering_enabled = true;
+    let (mut session, issuer, stock) = session_with_registry_setup(setup, 205, 10_000_000);
+    let exchange = crate::calendar::CalendarExchange::Sse;
+    let calendar = session.state.civil_clock.calendar().clone();
+    // 显式配股方案上一周期批准：R=2030-03-01、缴款期 1 个交易日、除权日
+    // 2030-03-05，与第二周期自动送转提案推导的除权日重合（测试侧独立推导
+    // 对拍，避免与实现共用同一推导而循环自证）。
+    advance_to(&mut session, d("2030-01-21"));
+    let (_registered_on, ex_on) = schedule_after_announcement(&calendar, exchange, d("2030-03-01"));
+    let mut rights_plan = crate::company::rights_offering::RightsOfferingEventPlan {
+        event_id: "rights-same-ex-collision".into(),
+        approval_reference: "rights collision fixture".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange,
+        approved_on: d("2030-01-21"),
+        announced_on: d("2030-01-21"),
+        registered_on: d("2030-03-01"),
+        payment_start_on: d("2030-03-01"),
+        payment_deadline_on: d("2030-03-01"),
+        ex_rights_on: d("2030-03-01"),
+        settlement_on: d("2030-03-01"),
+        listing_on: d("2030-03-01"),
+        price_per_share: Money::from_cents(10),
+        mode: crate::company::rights_offering::RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy:
+            crate::company::rights_offering::RightsSubscriptionStrategy::FullByDefault,
+    };
+    rights_plan.derive_schedule(&calendar, exchange, 1).unwrap();
+    assert_eq!(
+        rights_plan.ex_rights_on, ex_on,
+        "配股除权日必须与第二周期自动送转提案除权日重合"
+    );
+    session.approve_rights_offering(rights_plan).unwrap();
+    advance_to(&mut session, d("2030-03-01"));
+    // 第一周期自动送转（除权日 2030-02-05）不受影响；第二周期提案与配股同
+    // 除权日必须被拒：不新增第二本送转账簿，且现存账簿除权日不与配股重合。
+    assert_eq!(
+        session.state.corporate_actions.stock_distributions.len(),
+        1,
+        "同除权日已有配股事件时不得再叠加自动送转"
+    );
+    assert_ne!(
+        session.state.corporate_actions.stock_distributions[0]
+            .plan()
+            .ex_rights_on,
+        ex_on,
+        "被拒提案不得入账"
+    );
+    let rows = rejections(&session, &issuer);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].kind,
+        SimplePreferenceProposalKind::StockDistribution
+    );
+    assert!(
+        rows[0].detail.contains("同除权日") && rows[0].detail.contains("配股"),
+        "拒绝原因应指向同除权日配股叠加：{}",
+        rows[0].detail
+    );
+    // 日程走完除权日不 poison：无人认购的配股不构成除权分量，被拒的自动
+    // 送转也不入账簿，除权日无碰撞组。
+    advance_to(&mut session, ex_on.next().unwrap());
+    assert!(session.poison_reason().is_none());
+}
+
+#[test]
 fn preference_configuration_validates_through_setup() {
     let mut setup = preference_setup(cash_preference(0, 1, 1));
     assert!(setup.validate().is_err(), "0bp 派息比例必须在装配期被拒绝");

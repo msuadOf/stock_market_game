@@ -2729,6 +2729,27 @@ impl GameSession {
                     .into(),
             ));
         }
+        // 同一发行人同证券同除权日已受理配股事件时同样直接拒绝：配股×送转
+        // 同日的合并除权口径未核实，除权日日结会以 StepFatal 显式失败，不能
+        // 推迟到 R+1 首 tick 的除权准备才暴露（与 approve_rights_offering 的
+        // 碰撞预检对称）。
+        if self
+            .state
+            .corporate_actions
+            .rights_offerings
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "同一发行人同证券同除权日已存在配股事件；配股×送转同日的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
+        }
         let registry = self
             .state
             .corporate_actions
@@ -2978,8 +2999,8 @@ impl GameSession {
                 .map(|market| (market.last_close(), market.limit_bps(), market.tick()));
             let same_ex_date =
                 self.same_ex_date_preference_context(&stock, exchange, approve_on)?;
-            let (same_ex_gross, same_ex_ratio_micros, same_ex_stock_event) =
-                same_ex_date.unwrap_or((Money::ZERO, None, false));
+            let (same_ex_gross, same_ex_ratio_micros, same_ex_stock_event, same_ex_rights_event) =
+                same_ex_date.unwrap_or((Money::ZERO, None, false, false));
             if let Some(cash_preference) = preference.cash_dividend.clone() {
                 let facts = dividend_facts
                     .as_ref()
@@ -3091,7 +3112,7 @@ impl GameSession {
                 // 并被计入（显式 + 自动合并口径）。
                 let same_ex_cash_gross = self
                     .same_ex_date_preference_context(&stock, exchange, approve_on)?
-                    .map(|(gross, _ratio, _event)| gross)
+                    .map(|(gross, _ratio, _stock_event, _rights_event)| gross)
                     .unwrap_or(Money::ZERO);
                 let exposure = market_anchor.map(|(last_close, limit_bps, tick)| {
                     preference_api::SimpleStockDistributionExposure {
@@ -3100,6 +3121,7 @@ impl GameSession {
                         tick,
                         same_ex_date_gross_per_share: same_ex_cash_gross,
                         same_ex_date_stock_event: same_ex_stock_event,
+                        same_ex_date_rights_event: same_ex_rights_event,
                     }
                 });
                 // 现金分红批准会核减可分配利润，送转评估必须读取最新账面。
@@ -3256,6 +3278,44 @@ impl GameSession {
             .any(|existing| existing.plan().event_id == plan.event_id)
         {
             return Err(SessionError::InvalidSetup("配股事件 id 已存在".into()));
+        }
+        // 同一发行人同证券同除权日的既有事件预检：同日多起配股、或配股与送转
+        // 同日的合并除权口径未在官方材料核实，受理时直接拒绝，不推迟到除权日
+        // 日结才以 StepFatal 暴露（与 approve_stock_distribution 的碰撞预检
+        // 对称）。
+        if self
+            .state
+            .corporate_actions
+            .stock_distributions
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionError::InvalidSetup(
+                "同一发行人同证券同除权日已存在送转事件；配股×送转同日的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
+        }
+        if self
+            .state
+            .corporate_actions
+            .rights_offerings
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionError::InvalidSetup(
+                "同一发行人同证券同除权日已存在配股事件；同日多起配股的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
         }
         let registry = self
             .state
@@ -3894,14 +3954,14 @@ impl GameSession {
 
     /// 按本周期自动提案日程推导的除息/除权日上，既有同日方案（显式 + 自动）
     /// 的合并事实：(同日现金分红合计税前每股红利, 同日送转事件比例, 是否已
-    /// 存在同日送转事件)。日程推导失败返回 `None`（评估函数会以同一失败原因
-    /// 如实拒绝，不静默）。
+    /// 存在同日送转事件, 是否已存在同日配股事件)。日程推导失败返回 `None`
+    /// （评估函数会以同一失败原因如实拒绝，不静默）。
     fn same_ex_date_preference_context(
         &self,
         stock: &crate::account::StockCode,
         exchange: crate::calendar::CalendarExchange,
         approve_on: crate::calendar::CivilDate,
-    ) -> Result<Option<(Money, Option<u64>, bool)>, SessionCorporateActionsError> {
+    ) -> Result<Option<(Money, Option<u64>, bool, bool)>, SessionCorporateActionsError> {
         use crate::company::simple::preferences as preference_api;
         let Some((_registered_on, ex_on)) = preference_api::preference_ex_dates(
             self.state.civil_clock.calendar(),
@@ -3914,6 +3974,7 @@ impl GameSession {
         let mut cash_gross = Money::ZERO;
         let mut stock_ratio_micros = None;
         let mut stock_event_exists = false;
+        let mut rights_event_exists = false;
         for book in &self.state.corporate_actions.dividends {
             let plan = book.plan();
             if plan.stock == *stock && plan.ex_dividend_on == ex_on {
@@ -3929,7 +3990,21 @@ impl GameSession {
                 stock_ratio_micros = Some(plan.shares_per_existing_share_micros);
             }
         }
-        Ok(Some((cash_gross, stock_ratio_micros, stock_event_exists)))
+        // 同除权日配股事件：配股×送转同日的合并除权口径未核实（除权日日结会
+        // 以 StepFatal 显式失败），自动送转提案同样不得叠加；受理时的实际认
+        // 购比例尚未确定，配股比例不并入送转比例分量，仅以事件存在性守卫。
+        for book in &self.state.corporate_actions.rights_offerings {
+            let plan = book.plan();
+            if plan.stock == *stock && plan.ex_rights_on == ex_on {
+                rights_event_exists = true;
+            }
+        }
+        Ok(Some((
+            cash_gross,
+            stock_ratio_micros,
+            stock_event_exists,
+            rights_event_exists,
+        )))
     }
 
     /// 该公司该类别最近一次提案（接受或被拒）所属结算周期末日。

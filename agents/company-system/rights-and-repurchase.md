@@ -115,6 +115,51 @@ fixture 已在 major-2 修复轮补齐，这两处遗漏），在 M 批终点 ba
 补齐两键并复验（单文件 7/7、污染配对 12/12、同布局全量枚举零新增失败），证据见
 `.tmp/company-system/m-integration/`。
 
+## 最终交叉修复轮（2026-10-07 M 批集成复核 findings）
+
+M 批并入 main（57892cca + 79daac4e）后的集成复核 findings 逐条修复（TDD 红→绿，红日志先落，
+全部命令外部 deadline：普通 10000ms、编译/长验收 300000ms；证据日志均在
+`.tmp/company-system/m-integration/final-fix-*.log`）：
+
+| 发现 | 修复 | 红 | 绿 |
+| --- | --- | --- | --- |
+| major 送转×配股除权日碰撞毒化：`same_ex_date_preference_context` 只扫 dividends+stock_distributions（对配股失明）、`approve_rights_offering` 无同除权日碰撞预检（与 `approve_stock_distribution` 不对称）、`prepare_ex_references_for_current_date` 对配股×送转同日 StepFatal——两方案已持久化后恢复重放必然复现 | 三层对称修复：(a) `same_ex_date_preference_context` 增扫 `rights_offerings`（返回值加第 4 元 `rights_event_exists`），`SimpleStockDistributionExposure` 增 `same_ex_date_rights_event`，`evaluate_stock_distribution_preference` 增拒绝分支（受理时实际认购比例未定，按事件存在性保守守卫，拒绝如实记入偏好台账）；(b) `approve_rights_offering` 受理时预检同发行人同证券同 `ex_rights_on` 的 stock_distributions 与 rights_offerings；(c) `approve_stock_distribution` 受理时预检 rights_offerings | `final-fix-red.log`（4 用例全红：自动路径 left=2/right=1 送转叠加入账；三个显式路径 expect_err 得到 Ok） | `final-fix-green.log`（4/4） |
+| minor-1 主档 fixture 机制空态守卫数组缺第 11 个字段 | `main-save-fixture-generator.rs` 守卫清单补 `rejected_rights_subscriptions`（置于 `rights_subscription_queue` 后，对齐 struct 字段序） | —（守卫清单遗漏，无既有用例） | `final-fix-gen-main-build-check.log` 编译通过 + `final-fix-gen-main-run-check.log` producer 探针运行通过（输出仅落 `.tmp` 探针路径，**未触碰** checked-in fixture；探针含 `rejected_rights_subscriptions: []`，见 `final-fix-gen-main-probe.json`） |
+| minor-2 `docs/trading-rules.md` 送转除权段过时括注「配股未实现，配股价格分量恒为零」 | 改为指向「配股／增发实际执行」节现行口径（配股价×实际认购比例分量已实现）；同步把该节与偏好自动提案节的「同日碰撞在受理时即拒绝」措辞对齐本批新预检，并更正一处既有的过时表述（「两起显式送转同除权日在除权日日结显式失败」——受理时拒绝自上一修复轮已存在，本批扩到配股碰撞） | —（文档） | 文档 diff |
+| note-1 主档 fixture 运行间非确定性（同 seed 两次运行 OHLC 不同；closed-day/minimal 可字节复现） | 不在本批修：登记独立排查主题 `m-integration/main-fixture-nondeterminism-backlog.md`（现象、复现方式、疑似方向：并行撮合顺序/容器迭代序/多线程 RNG 分流） | — | — |
+| note-2 `typegen-check.log` 为提交前中间态（exit 1） | 复跑终态覆盖：export_bindings 153/153 + `check-generated-types` 勾稽通过（本批无 TS 契约变更，生成物零 diff） | — | `typegen-check.log`（终态） |
+
+新增边界用例（先红后绿，`final-fix-red.log` / `final-fix-green.log`）：
+
+- `simple_preferences_session_tests::auto_stock_proposal_rejected_when_same_ex_date_rights_offering_exists`
+  ——自动路径：显式配股（R=2030-03-01、缴款 1 日、除权 2030-03-05）与第二周期自动送转提案
+  推导除权日重合，断言不叠加第二本送转账簿、拒绝台账记因含「同除权日」「配股」、走完除权日
+  不 poison；
+- `rights_offering_session_tests::stock_distribution_rejected_when_same_ex_date_rights_offering_exists`
+  ——显式配股先声明、送转后声明：断言受理拒绝、错误信息与账簿不变；
+- `rights_offering_session_tests::rights_plan_rejected_when_same_ex_date_stock_event_exists`
+  ——显式送转先声明、配股后声明：断言受理拒绝（对齐 approve_stock_distribution 先例）、账簿不变；
+- `rights_offering_session_tests::second_rights_plan_rejected_when_same_ex_date_rights_exists`
+  ——同日第二起配股（不同 event_id）：断言受理拒绝、账簿不变。
+
+受影响组并发复跑（六组同时运行，各 10000ms deadline，libtest 多核并行；直接调用已编译
+test binary 避免 cargo 构建锁串行化）：
+
+| 组 | 结果 | 日志 |
+| --- | --- | --- |
+| `session::simple_preferences_session_tests`（偏好，14→15） | 15/15 | `final-fix-eng-simple_preferences_session_tests.log` |
+| `session::rights_offering_session_tests`（配股，10→13） | 13/13 | `final-fix-eng-rights_offering_session_tests.log` |
+| `session::issuer_repurchase_session_tests`（回购） | 5/5 | `final-fix-eng-issuer_repurchase_session_tests.log` |
+| `session::corporate_actions` | 14/14 | `final-fix-eng-corporate_actions.log` |
+| `company_mechanism` | 3/3 | `final-fix-eng-company_mechanism.log` |
+| `company::simple::preferences`（struct 加字段波及） | 19/19 | `final-fix-eng-simple-preferences.log` |
+| Web `corporate-actions-schema.test.ts` | 24/24 | `final-fix-web-corporate-actions-schema.log` |
+| `cargo check -p engine` | 0 error（仅 main 既有 warning） | `final-fix-check-engine.log` |
+
+语义依据：同日多起配股、配股×送转的合并除权口径（比例相加还是复合）未在沪深官方材料
+核实——与既有「同日多起送转显式拒绝」同一先例口径（沪 4.3.1/深 4.4.1 摘录只给出单一
+事件公式）；现金×配股同日仍按配股公式（自带红利项）合并，不受本批影响。
+
 ## 独立复核门禁（大 A 语义）
 
 本 diff 须由未实施本批的 subagent 按 CLAUDE.md 复核：语义依据、最小范围、

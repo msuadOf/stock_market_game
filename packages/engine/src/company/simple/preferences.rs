@@ -532,6 +532,10 @@ pub(crate) struct SimpleStockDistributionExposure {
     /// 同除权日已存在送转事件：两起送转事件的合并除权口径未核实，除权日日结
     /// 会显式失败（`prepare_ex_references_for_current_date`），自动提案不得叠加。
     pub same_ex_date_stock_event: bool,
+    /// 同除权日已存在配股事件：配股×送转同日的合并除权口径未核实，除权日
+    /// 日结会显式失败（`prepare_ex_references_for_current_date`），自动提案
+    /// 不得叠加（受理时配股实际认购比例未定，按事件存在性保守守卫）。
+    pub same_ex_date_rights_event: bool,
 }
 
 /// 送转偏好评估输入。
@@ -615,7 +619,7 @@ pub(crate) fn evaluate_stock_distribution_preference(
         }
     };
     // 游戏化保护：自动送转不得把局推向除权日不可结算状态。同除权日既有送转
-    // 事件的合并除权口径未核实（叠加会在除权日显式失败）；与同除权日现金红利
+    // 或配股事件的合并除权口径未核实（叠加会在除权日显式失败）；与同除权日现金红利
     // 合并成组时，最坏行情（公告→登记连续跌停）下的合并参考价必须仍 ≥1 分。
     let announcement_on = input.approve_on;
     let registered_on =
@@ -647,6 +651,15 @@ pub(crate) fn evaluate_stock_distribution_preference(
         return SimpleStockDistributionOutcome::Rejected {
             detail: format!(
                 "同除权日 {} 已存在送转事件，两起送转的合并除权口径未核实，\
+                 自动提案不叠加",
+                ex_rights_on
+            ),
+        };
+    }
+    if exposure.same_ex_date_rights_event {
+        return SimpleStockDistributionOutcome::Rejected {
+            detail: format!(
+                "同除权日 {} 已存在配股事件，配股×送转同日的合并除权口径未核实，\
                  自动提案不叠加",
                 ex_rights_on
             ),

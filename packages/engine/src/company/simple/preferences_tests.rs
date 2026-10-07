@@ -666,6 +666,7 @@ fn stock_exposure() -> SimpleStockDistributionExposure {
         tick: Money::from_cents(1),
         same_ex_date_gross_per_share: Money::ZERO,
         same_ex_date_stock_event: false,
+        same_ex_date_rights_event: false,
     }
 }
 

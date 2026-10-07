@@ -48,6 +48,7 @@ fn validate_main_save(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "stock_distributions",
         "rights_offerings",
         "rights_subscription_queue",
+        "rejected_rights_subscriptions",
         "issuer_repurchases",
         "account_gross_receipts",
         "external_receipts",
