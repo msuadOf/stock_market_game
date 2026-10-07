@@ -100,6 +100,14 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 - **复装前置（若重启 X1）**：先解决消费克隆——方案：①ReadOnlyStart 四字段各自 Arc（消费零克隆：hydration Arc<Result>、resources Arc<DecisionResourceSnapshot>、inputs Arc<Vec>、shards Arc<BTreeMap>），消费端 deref 或字段级 take；②或消费点先从权威 take 掉原份使 Arc 唯一（需要 plan_tick 拿到 &mut 权威——现状 &，需 PhaseInput 改造）。修好后重跑锚定配对再判。
 - 基准原始数据：.tmp/e-x1/pairing.log；两 binary：.tmp/production-probe-target（=X1 开）与需重建的基线。
 
+## X1 终稿（棒次 15，预埋终止判据生效）
+
+- **判定：投机臂终局关闭。** 方案③（单点移交零深拷）完整实装——PhaseInput 移交份（102 处构造迁移）、三生产 transaction 单点 take/失败归还、消费 try_unwrap 命中零深拷——全部语义测试绿、lib 基线一致（1319/8）。
+- **两轮锚定配对一致证伪收益**：棒次 14 mean(d)≈0.987（-1.3%）、棒次 15 mean(d)≈0.986（-1.4%，锚漂 -4.35% 边缘有效会话）。零深拷修复未改变结果 ⇒ **瓶颈不是消费克隆，是重叠本身未兑现**：4-worker 池同时喂 queue 与 prepare 的内部并行突发时相互争抢（与热路径画像"worker 自旋税/脉冲过细"结论闭环）——join 的 wall ≈ 两臂之和而非最大值。
+- **保留资产（全部落库）**：①阶段一借用解耦（npc_split 12 写字段视图体系，X1 之外的性能工作永久受益）；②revision 外部直改红线体系（防御纵深，独立成立）；③stash 移交/消费/新鲜度全机制（关闭态，重启即用）；④两份基准数据（.tmp/e-x1/pairing.log、pairing2.log）。
+- **重启条件（任一满足再开）**：a. worker 池扩容或脉冲粗化（H2 池交互合并假说）先落地，join 双臂能真并行；b. 负载形态变化（更多股票/NPC 使 prepare 与 queue 双双变肥、相对争抢下降）；c. 专用分离池（queue 与 prepare 各自池化）被证明可行。
+- **语法失误两枚已修**（b8448ab2、本棒补）——闭包内 let 占位连续踩两次，已记入坑清单。
+
 ## 消费克隆消除：两方案取舍分析（棒次 14 补，复核期间完成；复核无阻塞后按此实装）
 
 **方案①分字段 Arc——棒次 15 修正：单独不成立**。复核后复查克隆成本构成：resources 的 AccountBook/LiveReservations 克隆本是 Arc 浅拷（页面共享），inputs/hydration 亦廉；**贵的只有 shards（coordinator 深拷整簿）**。而只要权威仍持 stash 副本，任何分字段 Arc 的 try_unwrap 都恒失败——①不解决唯一所有权。
