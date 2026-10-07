@@ -43,6 +43,8 @@ type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
   readonly personal_trade_history?: (handle: number, query: unknown) => unknown;
   readonly owner_dividend_tax_status?: (handle: number) => unknown;
   readonly owner_dividend_tax_outstanding_views?: (handle: number) => unknown;
+  readonly owner_rejected_rights_subscriptions?: (handle: number) => readonly unknown[];
+  readonly company_preference_rejections?: (handle: number, company: string) => readonly unknown[];
   readonly market_history?: (handle: number, query: unknown) => unknown;
   readonly current_minute_history?: (handle: number, query: unknown) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
@@ -517,6 +519,25 @@ ctx.addEventListener("message", (event) => {
           const queryOutstanding = (wasm as WasmTransportExtensions).owner_dividend_tax_outstanding_views;
           if (queryOutstanding === undefined) throw new Error("当前 WASM bindings 不支持股息税未清税额查询，请重建 bindings");
           ctx.postMessage({ type: "dividendTaxOutstanding", requestId: message.requestId, generation: requestedGeneration, views: queryOutstanding(session) });
+          return;
+        }
+        case "rightsRejections": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("配股认购拒绝回执请求 ID 无效");
+          const [session, wasm] = slot.requireHandle();
+          const queryRejected = (wasm as WasmTransportExtensions).owner_rejected_rights_subscriptions;
+          if (queryRejected === undefined) throw new Error("当前 WASM bindings 不支持配股认购拒绝回执查询，请重建 bindings");
+          ctx.postMessage({ type: "rightsRejections", requestId: message.requestId, generation: requestedGeneration, receipts: queryRejected(session) });
+          return;
+        }
+        case "preferenceRejections": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("偏好台账请求 ID 无效");
+          if (typeof message.company !== "string" || message.company.trim().length === 0 || message.company.length > 64) throw new Error("偏好台账公司身份必须是非空且不超过 64 字符的字符串");
+          const [session, wasm] = slot.requireHandle();
+          const queryLedger = (wasm as WasmTransportExtensions).company_preference_rejections;
+          if (queryLedger === undefined) throw new Error("当前 WASM bindings 不支持偏好拒绝台账查询，请重建 bindings");
+          ctx.postMessage({ type: "preferenceRejections", requestId: message.requestId, generation: requestedGeneration, rejections: queryLedger(session, message.company) });
           return;
         }
         case "drop": {

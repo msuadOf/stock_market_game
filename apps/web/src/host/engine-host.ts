@@ -26,7 +26,8 @@ import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "
 export type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse };
 import type { AccountDividendTaxStatusView } from "../types/generated/AccountDividendTaxStatusView";
 import type { DividendTaxOutstandingView } from "../types/generated/DividendTaxOutstandingView";
-export type { AccountDividendTaxStatusView, DividendTaxOutstandingView };
+import type { CompanyPreferenceRejectionView, RejectedRightsSubscriptionView } from "./corporate-action-views.ts";
+export type { AccountDividendTaxStatusView, DividendTaxOutstandingView, CompanyPreferenceRejectionView, RejectedRightsSubscriptionView };
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -149,4 +150,8 @@ export interface EngineHost {
   dividendTaxStatus?(): Promise<AccountDividendTaxStatusView>;
   /** 仅支持本地 WASM 宿主：本人股息税未清税额视图（owner 隔离）。缺失表示该宿主明确不支持。 */
   dividendTaxOutstanding?(): Promise<readonly DividendTaxOutstandingView[]>;
+  /** 仅支持本地 WASM 宿主：本人配股认购拒绝回执查询（owner 隔离）。缺失表示该宿主明确不支持，UI 须显式提示。 */
+  rejectedRightsSubscriptions?(): Promise<readonly RejectedRightsSubscriptionView[]>;
+  /** 仅支持本地 WASM 宿主：公司行为偏好提案拒绝台账查询（ADR-0037）。缺失表示该宿主明确不支持，UI 须显式提示。 */
+  companyPreferenceRejections?(company: string): Promise<readonly CompanyPreferenceRejectionView[]>;
 }

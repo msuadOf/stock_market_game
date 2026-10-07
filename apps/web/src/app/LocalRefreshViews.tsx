@@ -247,12 +247,14 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContex
   const onReadingChange = (changes: Partial<CompanyReading>) => {
     if (companyId !== null) store.dispatch(updateCompanyReading({ generation: companyState.generation, companyId, changes }));
   };
-  const { queryPublicReportAvailability, queryDividendTaxStatus, queryDividendTaxOutstanding } = useMarketRuntimeActions();
+  const { queryPublicReportAvailability, queryDividendTaxStatus, queryDividendTaxOutstanding, queryRejectedRightsSubscriptions, queryCompanyPreferenceRejections } = useMarketRuntimeActions();
   const onDividendTaxQuery = useCallback(async () => ({
     status: await queryDividendTaxStatus(),
     outstanding: await queryDividendTaxOutstanding(),
   }), [queryDividendTaxStatus, queryDividendTaxOutstanding]);
-  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onReadingChange={onReadingChange} onQuery={props.onCompanyQuery} onAvailabilityQuery={queryPublicReportAvailability} onAdvanceCivilDay={props.onAdvanceCivilDay} reportCorrectionControl={props.reportCorrectionControl} timelineGeneration={props.timelineGeneration} onDividendTaxQuery={onDividendTaxQuery} />;
+  const onRightsRejectionQuery = useCallback(() => queryRejectedRightsSubscriptions(), [queryRejectedRightsSubscriptions]);
+  const onPreferenceRejectionsQuery = useCallback((companyId: string) => queryCompanyPreferenceRejections(companyId), [queryCompanyPreferenceRejections]);
+  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onReadingChange={onReadingChange} onQuery={props.onCompanyQuery} onAvailabilityQuery={queryPublicReportAvailability} onAdvanceCivilDay={props.onAdvanceCivilDay} reportCorrectionControl={props.reportCorrectionControl} timelineGeneration={props.timelineGeneration} onDividendTaxQuery={onDividendTaxQuery} onRightsRejectionQuery={onRightsRejectionQuery} onPreferenceRejectionsQuery={onPreferenceRejectionsQuery} />;
 }
 
 export function ConnectedMobileDetail(props: MobileDetailProps) {

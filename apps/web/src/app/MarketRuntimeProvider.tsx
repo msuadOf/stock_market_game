@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
-import type { AccountDividendTaxStatusView, DividendTaxOutstandingView, PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "../host/engine-host.ts";
+import type { AccountDividendTaxStatusView, CompanyPreferenceRejectionView, DividendTaxOutstandingView, PersonalTradeHistoryRequest, PersonalTradeHistoryPage, RejectedRightsSubscriptionView } from "../host/engine-host.ts";
 import type { PublicReportAvailability, PublicReportAvailabilityQuery } from "../types/engine.ts";
 import type { MarketHistoryRequest, MarketHistoryPage } from "../host/market-history.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
@@ -44,6 +44,8 @@ interface MarketRuntimeActions {
   queryPublicReportAvailability: (query: PublicReportAvailabilityQuery) => Promise<PublicReportAvailability>;
   queryDividendTaxStatus: () => Promise<AccountDividendTaxStatusView>;
   queryDividendTaxOutstanding: () => Promise<readonly DividendTaxOutstandingView[]>;
+  queryRejectedRightsSubscriptions: () => Promise<readonly RejectedRightsSubscriptionView[]>;
+  queryCompanyPreferenceRejections: (company: string) => Promise<readonly CompanyPreferenceRejectionView[]>;
   calculateIntradayAverage: (input: IntradayAverageInput) => Promise<IntradayAverageResult | null>;
   calculateIntradayAverageCurve: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
 }
@@ -152,6 +154,28 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("股息税未清税额响应属于已切换的宿主或市场");
     return result;
   }, [hostRef]);
+  const queryRejectedRightsSubscriptions = useCallback(async () => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询配股认购拒绝回执");
+    if (host.rejectedRightsSubscriptions === undefined) throw new Error("当前宿主不支持配股认购拒绝回执查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.rejectedRightsSubscriptions();
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("配股认购拒绝回执响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
+  const queryCompanyPreferenceRejections = useCallback(async (company: string) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询偏好拒绝台账");
+    if (host.companyPreferenceRejections === undefined) throw new Error("当前宿主不支持偏好拒绝台账查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.companyPreferenceRejections(company);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("偏好拒绝台账响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
   const calculateIntradayAverageCurve = useCallback(async (input: IntradayAverageCurveInput) => {
     const host = hostRef.current;
     if (host === null) throw new Error("游戏宿主尚未就绪，不能计算分时均价曲线");
@@ -176,6 +200,8 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryPublicReportAvailability,
     queryDividendTaxStatus,
     queryDividendTaxOutstanding,
+    queryRejectedRightsSubscriptions,
+    queryCompanyPreferenceRejections,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   }), [
@@ -196,6 +222,8 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryPublicReportAvailability,
     queryDividendTaxStatus,
     queryDividendTaxOutstanding,
+    queryRejectedRightsSubscriptions,
+    queryCompanyPreferenceRejections,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   ]);

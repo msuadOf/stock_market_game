@@ -19,7 +19,8 @@ import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/spee
 import { browserWasmEnvironment, initialStartupTarget, resolveStartupTarget, type StartupMode, type StartupTarget } from "./host/startup-policy";
 import { DEFAULT_SETUP, DEFAULT_SEED } from "./config/defaults";
 import { createNewSessionSeed } from "./config/session-seed.ts";
-import { changeSeedDraft, changeSettlementCycleDraft, createSeedDraft, parseSessionSeed, regenerateSeedDraft, type SeedDraft, type DraftSettlementCycle } from "./config/seed-draft.ts";
+import { changeCompanyPreferencesDraft, changeSeedDraft, changeSettlementCycleDraft, createSeedDraft, parseSessionSeed, regenerateSeedDraft, type SeedDraft, type DraftSettlementCycle } from "./config/seed-draft.ts";
+import type { SimpleCompanyPreferences } from "./types/generated/SimpleCompanyPreferences.ts";
 import { parseCompanySystemConfig } from "./save/schema/company/system-config.ts";
 import { SessionControlCommands } from "./app/session-control-commands.ts";
 import { buildErrorFeedback } from "./app/error-details.ts";
@@ -204,6 +205,12 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const changeCompanySettlementCycle = (cycle: DraftSettlementCycle) => {
     try { setCompanyDraft(changeSettlementCycleDraft(activeSetup, companyDraft, cycle)); }
     catch (failure) { setNotice(`更新结算周期失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
+  };
+  const changeCompanyPreferences = (company: string, preferences: SimpleCompanyPreferences) => {
+    // 与结算周期处理同模式：在 setState updater 之外先计算，异常才能被本处
+    // try/catch 捕获并显式提示（updater 在渲染期执行，抛错会绕过这里炸组件树）。
+    try { setCompanyDraft(changeCompanyPreferencesDraft(companyDraft, company, preferences)); }
+    catch (failure) { setNotice(`更新公司偏好失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
   };
   const [floatAllocationDraft, setFloatAllocationDraft] = useState(sessionSetup.float_allocation);
   const [dividendTaxModeDraft, setDividendTaxModeDraft] = useState(sessionSetup.dividend_tax_mode);
@@ -833,7 +840,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <MechanismSwitchesInput rightsOfferingEnabled={rightsOfferingEnabledDraft} issuerRepurchaseEnabled={issuerRepurchaseEnabledDraft} onRightsOfferingChange={setRightsOfferingEnabledDraft} onIssuerRepurchaseChange={setIssuerRepurchaseEnabledDraft} />
             <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
             <ReportFrequencyInput value={reportFrequencyDraft} onChange={setReportFrequencyDraft} />
-            <CompanySystemInput value={companySystemDraft} onChange={(companySystem) => setCompanyDraft(draft => ({ ...draft, companySystem, origin: "custom" }))} seed={companyDraft.seed} origin={companyDraft.origin} onSeedChange={changeCompanySeed} onRegenerate={regenerateCompanyDraft} onSettlementCycleChange={changeCompanySettlementCycle} />
+            <CompanySystemInput value={companySystemDraft} onChange={(companySystem) => setCompanyDraft(draft => ({ ...draft, companySystem, origin: "custom" }))} seed={companyDraft.seed} origin={companyDraft.origin} onSeedChange={changeCompanySeed} onRegenerate={regenerateCompanyDraft} onSettlementCycleChange={changeCompanySettlementCycle} onPreferencesChange={changeCompanyPreferences} />
             <InitialAllocationSummary allocation={initialAllocation} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
           </fieldset>
@@ -924,7 +931,16 @@ function App() {
     }} onSettlementCycleChange={(cycle) => {
       try { setSessionCreationState({ setup: sessionSetup, draft: changeSettlementCycleDraft(sessionSetup, sessionCreation.draft!, cycle) }); setSeedPreviewError(null); }
       catch (failure) { setSeedPreviewError(`更新结算周期失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
-    }} onRegenerate={regenerateStartupPreview} />;
+    }} onRegenerate={regenerateStartupPreview} onPreferencesChange={(company, preferences) => {
+      if (sessionCreation.draft === null) return;
+      // 同上：先在 updater 外计算，异常走 seedPreviewError 显式通道。
+      try {
+        const draft = changeCompanyPreferencesDraft(sessionCreation.draft, company, preferences);
+        setSessionCreationState(current => ({ ...current, draft }));
+        setSeedPreviewError(null);
+      }
+      catch (failure) { setSeedPreviewError(`更新公司偏好失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
+    }} />;
   const returnToStartup = useCallback(async (stopSession: () => Promise<void>) => {
     if (returningToStartupRef.current) return;
     returningToStartupRef.current = true;

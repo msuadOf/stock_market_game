@@ -26,7 +26,8 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
 /// 前端 host 适配器负责把 Map 规整为普通对象（Object.fromEntries）供 React/RTK 消费。
-fn to_js<T: Serialize>(v: &T) -> Result<JsValue, JsValue> {
+/// `?Sized` 允许直接序列化切片引用（如偏好台账 `&[SimplePreferenceRejection]`）。
+fn to_js<T: Serialize + ?Sized>(v: &T) -> Result<JsValue, JsValue> {
     v.serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
         .map_err(|error| JsValue::from_str(&error.to_string()))
 }
@@ -747,6 +748,45 @@ pub fn configure_dividend_tax_book(
                 profile,
             )
             .map_err(|error| JsValue::from_str(&error.to_string()))
+    })
+}
+
+/// 查询本机玩家（固定 AccountId(0)）的配股认购拒绝回执（M 批公开配售超额认购
+/// 极端竞态兜底的持久化留痕）；只读过滤既有事实，不产生新事实。
+#[wasm_bindgen]
+pub fn owner_rejected_rights_subscriptions(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let owner = AccountId(0);
+        let rejected: Vec<_> = session
+            .game()
+            .corporate_actions()
+            .rejected_rights_subscriptions
+            .iter()
+            .filter(|receipt| receipt.account == owner)
+            .cloned()
+            .collect();
+        to_js(&rejected)
+    })
+}
+
+/// 查询某公司行为偏好自动提案的拒绝台账（ADR-0037）。只读读取最近一次已完成
+/// 自然日日终存档中的公司系统状态（偏好台账只在日结候选事务内变更）；首个日终
+/// 完成前显式报错，不静默返回空台账冒充「无拒绝」。
+#[wasm_bindgen]
+pub fn company_preference_rejections(handle: u32, company: String) -> Result<JsValue, JsValue> {
+    // 与 TS 侧（wasm-worker/worker-host）同口径：按 UTF-16 码元计数上限 64，
+    // 避免多字节身份在三层的长度单位不一致。
+    if company.trim().is_empty() || company.encode_utf16().count() > 64 {
+        return Err(JsValue::from_str("偏好台账公司身份必须是非空且不超过 64 字符的字符串"));
+    }
+    with_session(handle, |session| {
+        let slot: SaveSlot = session.save().map_err(session_error_to_js)?;
+        let company_id = engine::company::CompanyId(company);
+        let rejections = slot
+            .company_system
+            .preference_rejections(&company_id)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        to_js(rejections)
     })
 }
 

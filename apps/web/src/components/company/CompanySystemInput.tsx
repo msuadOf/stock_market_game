@@ -1,7 +1,9 @@
 import { parseCompanySystemConfig } from "../../save/schema/company/system-config.ts";
+import { CompanyPreferencesInput, type CompanyPreferencesCompany } from "./CompanyPreferencesInput.tsx";
+import type { SimpleCompanyPreferences } from "../../types/generated/SimpleCompanyPreferences.ts";
 import type { SettlementCycle } from "../../types/generated/SettlementCycle";
 
-export function CompanySystemInput({ value, onChange, seed, origin, onSeedChange, onRegenerate, onSettlementCycleChange }: {
+export function CompanySystemInput({ value, onChange, seed, origin, onSeedChange, onRegenerate, onSettlementCycleChange, onPreferencesChange }: {
   readonly value: string;
   readonly onChange: (value: string) => void;
   readonly seed: string;
@@ -9,10 +11,17 @@ export function CompanySystemInput({ value, onChange, seed, origin, onSeedChange
   readonly onSeedChange: (seed: string) => void;
   readonly onRegenerate: () => void;
   readonly onSettlementCycleChange: (cycle: SettlementCycle) => void;
+  /** 偏好编辑入口（可选：远程创建等宿主未接线时省略，面板显式说明由 JSON 编辑）。 */
+  readonly onPreferencesChange?: (company: string, preferences: SimpleCompanyPreferences) => void;
 }) {
   let error: string | null = null;
   let cycle: SettlementCycle | null = null;
-  try { cycle = parseCompanySystemConfig(JSON.parse(value)).config.settlement_cycle; }
+  let companies: readonly CompanyPreferencesCompany[] | null = null;
+  try {
+    const config = parseCompanySystemConfig(JSON.parse(value));
+    cycle = config.config.settlement_cycle;
+    companies = config.config.companies;
+  }
   catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
   const seedValid = /^(0|[1-9]\d*)$/.test(seed) && BigInt(seed) <= (1n << 64n) - 1n;
   return <fieldset aria-label="公司基本面系统设置">
@@ -31,6 +40,9 @@ export function CompanySystemInput({ value, onChange, seed, origin, onSeedChange
     <p>当前配置来源：{origin === "preset" ? "虚拟预设" : "本人编辑"}。创建使用已展示的 seed，不重新抽取；本人编辑的 JSON 不会因 seed 改动被自动覆盖。</p>
     <button type="button" onClick={onRegenerate}>保留合法参数，重新生成 seed 与初值</button>
     <p>JSON 尚未完成时请先修正后再生成；不会自动丢弃本人编辑或用默认值掩盖无效配置。</p>
+    {onPreferencesChange !== undefined
+      ? <CompanyPreferencesInput companies={companies} onApply={onPreferencesChange} />
+      : <fieldset className="company-preferences-input" aria-label="公司行为偏好"><legend>公司行为偏好（自动提案）</legend><p className="company-state">当前创建入口未接入偏好编辑；偏好仍可在下方 JSON 的 companies[].preferences 中显式配置（未配置=不自动产生方案）。</p></fieldset>}
     {!seedValid && <p role="alert">seed 必须为 0 至 u64::MAX 的规范十进制整数字符串。</p>}
     <details>
       <summary>编辑公司基本面参数</summary>
@@ -40,6 +52,7 @@ export function CompanySystemInput({ value, onChange, seed, origin, onSeedChange
         <div><dt>变化率</dt><dd>所有 *_bp 字段使用整数基点，100 bp = 1%；收入与开支分别变化，利润不得独立抽取或覆盖。</dd></div>
         <div><dt>环境</dt><dd>initial_change_bp 为初始年化需求变化；persistence_bp 为上期变化保留比例；noise 按月、季度、半年、年分别配置有界扰动。环境只进入营收趋势，不直接设置利润或成交价格。</dd></div>
         <div><dt>每家公司</dt><dd>company 需与当前发行人身份逐一匹配；营收、固定开支和变动开支参数均须明确配置。参数与财务期初不一致时拒绝，不自动补平。</dd></div>
+        <div><dt>偏好</dt><dd>companies[].preferences 为公司行为偏好（ADR-0037）：cash_dividend／stock_distribution 未配置（null）即不自动产生该类方案；数值域由严格 parser 校验，非法值显式拒绝。</dd></div>
         <div><dt>日期</dt><dd>settlement_cycle 选择基本面结算周期；prehistory_periods 表示同长度虚拟前史期间数量。初始营收和开支属于完整所选期间，不能把月金额当年度金额。报告公开日期独立使用财报公开频率设置；较长结算下未形成的更短报告窗口明确不可用，不平均摊造。虚拟前史不产生证券成交。</dd></div>
         <div><dt>趋势与扰动</dt><dd>revenue_trend／fixed_expense_trend 是年化基点，Persistent 使用自然月持续时间；期间内趋势变化按实际持续时间复合。各 noise 的 monthly_bp／quarterly_bp／half_year_bp／annual_bp 独立，不声称真实市场波动率换算。</dd></div>
       </dl>

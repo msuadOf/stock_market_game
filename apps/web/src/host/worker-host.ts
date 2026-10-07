@@ -33,6 +33,7 @@ import { normalizeConfirmationCursor, normalizeIntradayAverageCurveInput, normal
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage } from "./personal-trade-history.ts";
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./engine-host.ts";
 import { parseAccountDividendTaxStatusView, parseDividendTaxOutstandingViews } from "./dividend-tax.ts";
+import { parseCompanyPreferenceRejections, parseRejectedRightsSubscriptions } from "./corporate-action-views.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, type MarketHistoryRequest, type MarketHistoryPage } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, type CurrentMinuteHistoryRequest, type CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 
@@ -648,6 +649,21 @@ export function createWorkerHost(
           const response = await requests.request({ type: "dividendTaxOutstanding", requestId: requests.nextRequestId(), generation: requestedGeneration }, "dividendTaxOutstanding");
           if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("股息税未清税额查询属于已过期 generation");
           return parseDividendTaxOutstandingViews(response.views);
+        },
+        async rejectedRightsSubscriptions() {
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "rightsRejections", requestId: requests.nextRequestId(), generation: requestedGeneration }, "rightsRejections");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("配股认购拒绝回执查询属于已过期 generation");
+          return parseRejectedRightsSubscriptions(response.receipts);
+        },
+        async companyPreferenceRejections(company) {
+          if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("偏好台账公司身份必须是非空且不超过 64 字符的字符串");
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "preferenceRejections", requestId: requests.nextRequestId(), generation: requestedGeneration, company }, "preferenceRejections");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("偏好拒绝台账查询属于已过期 generation");
+          return parseCompanyPreferenceRejections(response.rejections);
         },
       };
     }

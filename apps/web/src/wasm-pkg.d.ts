@@ -30,6 +30,8 @@ declare module "*wasm-pkg/web_wasm.js" {
   export function owner_dividend_tax_status(handle: number): AccountDividendTaxStatusView;
   export function owner_dividend_tax_outstanding_views(handle: number): DividendTaxOutstandingView[];
   export function configure_dividend_tax_book(handle: number, account: string, stock: string, profile: DividendTaxProfile): void;
+  export function owner_rejected_rights_subscriptions(handle: number): unknown[];
+  export function company_preference_rejections(handle: number, company: string): unknown[];
   export function public_report_page(handle: number, query: PublicReportQuery): PublicReportPage;
   export function public_report_by_id(handle: number, id: string): PublicReportSummary;
   export function query_stock_history(handle: number, code: import("./types/generated/StockCode").StockCode): HistoricalStockData;

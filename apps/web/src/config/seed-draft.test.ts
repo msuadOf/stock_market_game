@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_SETUP } from "./defaults.ts";
-import { changeSeedDraft, changeSettlementCycleDraft, createSeedDraft, parseSessionSeed, regenerateSeedDraft } from "./seed-draft.ts";
+import { changeCompanyPreferencesDraft, changeSeedDraft, changeSettlementCycleDraft, createSeedDraft, parseSessionSeed, regenerateSeedDraft } from "./seed-draft.ts";
 import { createCompanyInitialPreset } from "./company-initial-preset.ts";
 import { settlementMonths } from "../save/schema/company/period-generation.ts";
 
@@ -56,4 +56,56 @@ test("只有明确重新生成抽取新 seed，熵失败不产生半份草稿", 
   assert.deepEqual(regenerated, createSeedDraft(DEFAULT_SETUP, 9n));
   assert.throws(() => regenerateSeedDraft(DEFAULT_SETUP, original, () => { throw new Error("crypto 熵获取被拒绝"); }), /crypto 熵获取被拒绝/);
   assert.equal(original.seed, "1");
+});
+
+test("公司偏好编辑直接写入配置 JSON，不重建预设、不覆盖其他公司", { timeout: 10000 }, () => {
+  const original = createSeedDraft(DEFAULT_SETUP, 7n);
+  const before = JSON.parse(original.companySystem);
+  const preferences = {
+    cash_dividend: { target_payout_bp: 3000, min_distributable_profit: "50000000", cycles_between_proposals: 2 },
+    stock_distribution: null,
+  };
+  const changed = changeCompanyPreferencesDraft(original, "C-600101", preferences);
+  assert.equal(changed.seed, original.seed, "偏好编辑不得改动 seed");
+  assert.equal(changed.origin, "custom", "偏好编辑标记本人配置，不被后续 seed/周期操作覆盖");
+  const after = JSON.parse(changed.companySystem);
+  assert.deepEqual(after.config.companies.find((company: { company: string }) => company.company === "C-600101").preferences, preferences);
+  const other = after.config.companies.find((company: { company: string }) => company.company !== "C-600101");
+  const otherBefore = before.config.companies.find((company: { company: string }) => company.company === other.company);
+  assert.deepEqual(other.preferences, otherBefore.preferences, "其他公司的偏好保持不变");
+  assert.equal(after.config.companies.find((company: { company: string }) => company.company === "C-600101").generation.initial_revenue, before.config.companies.find((company: { company: string }) => company.company === "C-600101").generation.initial_revenue, "偏好编辑不得重建期初金额");
+  // 清空偏好：未配置=不自动产生方案。
+  const cleared = changeCompanyPreferencesDraft(changed, "C-600101", { cash_dividend: null, stock_distribution: null });
+  assert.deepEqual(JSON.parse(cleared.companySystem).config.companies.find((company: { company: string }) => company.company === "C-600101").preferences, { cash_dividend: null, stock_distribution: null });
+});
+
+test("偏好编辑后改 seed 与重新生成预设不丢偏好（origin 透传）", { timeout: 10000 }, () => {
+  const original = createSeedDraft(DEFAULT_SETUP, 1n);
+  const preferences = {
+    cash_dividend: null,
+    stock_distribution: { min_distributable_profit: "1000000", shares_per_existing_share_micros: 100000, max_cumulative_expansion_micros: 50000000, cycles_between_proposals: 4 },
+  };
+  const edited = changeCompanyPreferencesDraft(original, "C-600101", preferences);
+  const readPreferences = (draft: SeedDraft) => JSON.parse(draft.companySystem).config.companies.find((company: { company: string }) => company.company === "C-600101").preferences;
+  assert.deepEqual(readPreferences(changeSeedDraft(DEFAULT_SETUP, edited, "42")), preferences, "改 seed 不重建本人配置，偏好原样保留");
+  const regenerated = regenerateSeedDraft(DEFAULT_SETUP, edited, () => 9n);
+  assert.deepEqual(readPreferences(regenerated), preferences, "重新生成预设沿草稿配置克隆，偏好不丢");
+  assert.equal(regenerated.origin, "preset");
+});
+
+test("公司偏好编辑对未知公司与非法数值显式拒绝且不改草稿", { timeout: 10000 }, () => {
+  const original = createSeedDraft(DEFAULT_SETUP, 1n);
+  assert.throws(() => changeCompanyPreferencesDraft(original, "C-unknown", { cash_dividend: null, stock_distribution: null }), /不在当前配置中/);
+  assert.throws(() => changeCompanyPreferencesDraft(original, "C-600101", {
+    cash_dividend: { target_payout_bp: 0, min_distributable_profit: "50000000", cycles_between_proposals: 1 },
+    stock_distribution: null,
+  }), /target_payout_bp/);
+  assert.throws(() => changeCompanyPreferencesDraft(original, "C-600101", {
+    cash_dividend: null,
+    stock_distribution: { min_distributable_profit: "0", shares_per_existing_share_micros: 100000, max_cumulative_expansion_micros: 1000000, cycles_between_proposals: 1 },
+  }), /min_distributable_profit/);
+  assert.throws(() => changeCompanyPreferencesDraft({ ...original, companySystem: "not-json" }, "C-600101", { cash_dividend: null, stock_distribution: null }), /JSON|公司系统/);
+  const before = structuredClone(original);
+  try { changeCompanyPreferencesDraft(original, "C-unknown", { cash_dividend: null, stock_distribution: null }); } catch { /* 已验证显式抛错 */ }
+  assert.deepEqual(original, before, "失败的编辑不留下半份草稿");
 });
