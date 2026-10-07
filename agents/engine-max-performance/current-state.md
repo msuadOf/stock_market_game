@@ -1,5 +1,10 @@
 # 当前状态与继续入口（2026-10-06）
 
+## 追加：批级 checkpoint 析构移交（graveyard，2026-10-07）
+
+- 成功路径的批级 checkpoint 析构移交池外专用线程（复用 71dd7825 deferred_drop 基建），错误路径 rollback_cycle 不变。TDD 零 tick 批生产形态断言红→绿；engine 1321/8 与 C 移植基线逐字一致、server 35/0。
+- 正式锚定交错（32-47 核占用 0.9%、worker=4、3000 tick）mean(d)=**+4.96%**、4/5 正、显著性过（4.96≥2SE 4.42）、锚漂 −1.44% 合格；区间未分离如实登记，按 ≥2%/≥4/5/显著性口径落地。正式口径 ~321x→~337x（推算）。完整数据与边界登记见 graveyard-thread-findings.md；独立复核待安排。
+
 ## 当前目标与用户约束
 
 - 工作区 `.worktree/engine-max-performance`，分支 `fix/engine-max-performance`。主工作区他人未提交内容未动。
