@@ -148,9 +148,12 @@ export const DEFAULT_SETUP: SessionSetup = {
   },
   start_date: "2030-01-01",
   simulation_policy_id: "a-share-simulation",
-  // 新局默认税务模式：大 A 个人差别化（2026-10-06 产品决策）；
-  // 新局创建界面可显式改为不扣税。
-  dividend_tax_mode: "IndividualPublicMarket",
+  // 新局默认税务模式：简税（FlatWithholding，2026-10-08 三层产品决策），
+  // 分红付款日按比例直接代扣、无持股期档位、机构不另算；新局创建界面可
+  // 显式改为大 A 个人差别化或不扣税。默认比例 10%（1000bp）由本默认层提供，
+  // 非 serde 默认；不扣税模式另需 stamp_tax_rate=0（引擎 setup 校验强制配对）。
+  dividend_tax_mode: "FlatWithholding",
+  flat_withholding_bp: 1000,
   // 公司行为机制开关（2026-10-07 产品决策，ADR-0038/0039）：两个独立开关，
   // 默认关闭；仅对新游戏生效，随存档严格固化。
   rights_offering_enabled: false,

@@ -3,9 +3,9 @@ import type { DividendTaxOutstandingView } from "../types/generated/DividendTaxO
 import { parseDividendTaxOutstandingView } from "../save/schema/corporate-actions.ts";
 import { array, oneOf, record, string, exact } from "../save/schema/primitives.ts";
 
-const TAX_MODES = ["IndividualPublicMarket", "Exempt"] as const;
+const TAX_MODES = ["FlatWithholding", "AShareIndividual", "Exempt"] as const;
 const IDENTITIES = ["Personal", "NonIndividualPending"] as const;
-const STOCK_TAX_STATUSES = ["IndividualPublicMarket", "TreatmentNotConfigured"] as const;
+const STOCK_TAX_STATUSES = ["FlatWithholding", "IndividualPublicMarket", "TreatmentNotConfigured"] as const;
 
 /** 宿主股息税状态查询的严格 parser：只接受 Engine 导出的当前契约形状。 */
 export function parseAccountDividendTaxStatusView(value: unknown, path = "dividend_tax_status"): AccountDividendTaxStatusView {

@@ -214,6 +214,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   };
   const [floatAllocationDraft, setFloatAllocationDraft] = useState(sessionSetup.float_allocation);
   const [dividendTaxModeDraft, setDividendTaxModeDraft] = useState(sessionSetup.dividend_tax_mode);
+  const [flatWithholdingBpDraft, setFlatWithholdingBpDraft] = useState(sessionSetup.flat_withholding_bp ?? 1000);
   const [rightsOfferingEnabledDraft, setRightsOfferingEnabledDraft] = useState(sessionSetup.rights_offering_enabled);
   const [issuerRepurchaseEnabledDraft, setIssuerRepurchaseEnabledDraft] = useState(sessionSetup.issuer_repurchase_enabled);
   const [initialAllocation, setInitialAllocation] = useState<InitialAllocation | null>(null);
@@ -515,9 +516,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     browserLocal: startupTarget.kind === "wasm",
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
-    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft, seedDraft: companyDraft.seed, setSeedDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
+    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, flatWithholdingBpDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft, seedDraft: companyDraft.seed, setSeedDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
     resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionCreation,
-    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
+    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setFlatWithholdingBpDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
   const { recoverFromFile, noticeSavePolicy: handleSave, load: loadMarketArchive, selectFile: handleSaveFile,
     loadFile: loadMarketFile, newGame: resetMarket } = saveCommands;
@@ -836,7 +837,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <h4>新游戏</h4>
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
-            <TaxModeInput value={dividendTaxModeDraft} onChange={setDividendTaxModeDraft} />
+            <TaxModeInput value={dividendTaxModeDraft} onChange={setDividendTaxModeDraft} flatWithholdingBp={flatWithholdingBpDraft} onFlatWithholdingBpChange={setFlatWithholdingBpDraft} />
             <MechanismSwitchesInput rightsOfferingEnabled={rightsOfferingEnabledDraft} issuerRepurchaseEnabled={issuerRepurchaseEnabledDraft} onRightsOfferingChange={setRightsOfferingEnabledDraft} onIssuerRepurchaseChange={setIssuerRepurchaseEnabledDraft} />
             <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
             <ReportFrequencyInput value={reportFrequencyDraft} onChange={setReportFrequencyDraft} />

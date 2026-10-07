@@ -25,7 +25,7 @@ export type HolderPaymentOutcome = { readonly Paid: { readonly holder: HolderId;
 export type CashDividendPaymentReceipt = { readonly payment_id: string; readonly paid_on: string; readonly within_six_month_deadline: boolean; readonly outcomes: readonly HolderPaymentOutcome[] }
 export type CashDividendStatus = "Approved" | "Announced" | "Registered" | "Payable" | "PartiallyPaid" | "Paid"
 export type CashDividendBook = { readonly plan: CashDividendPlan; readonly status: CashDividendStatus; readonly registration: RegistrationSnapshot | null; readonly entitlements: readonly CashDividendEntitlement[]; readonly paid: readonly (readonly [HolderId, string])[]; readonly failures: readonly (readonly [HolderId, string])[]; readonly payments: readonly CashDividendPaymentReceipt[] }
-export type DividendTaxStatus = "IndividualPublicMarket" | "TreatmentNotConfigured"
+export type DividendTaxStatus = "FlatWithholding" | "IndividualPublicMarket" | "TreatmentNotConfigured"
 export type TaxAcquisitionSource = { readonly InitialAllocation: { readonly evidence: string } } | { readonly SecondaryMarket: { readonly settlement: string } } | { readonly CorporateAction: { readonly event: string } }
 export type TaxShareClass = "PublicMarket" | { readonly StatutoryRestricted: { readonly release_on: string; readonly basis: "FinanceTax2009167" | "FinanceTax201070"; readonly qualification_evidence: string } }
 export type DividendTaxLot = { readonly id: string; readonly qty: string; readonly acquired_on: string; readonly source: TaxAcquisitionSource; readonly class: TaxShareClass }
@@ -39,6 +39,7 @@ export type DividendTaxProfile = "IndividualPublicMarket" | "ResidentEnterprise"
 export type CashDividendTaxBook = { readonly operation_seq: number; readonly account: string; readonly stock: string; readonly profile: DividendTaxProfile; readonly opened_on: string; readonly opening_lots: readonly DividendTaxLot[]; readonly settled_on: string; readonly lots: readonly DividendTaxLot[]; readonly days: readonly TaxDayReceipt[]; readonly dividends: readonly RegisteredTaxDividend[]; readonly collections: readonly TaxCollectionReceipt[]; readonly redenominations: readonly TaxRedenominationReceipt[] }
 export type AccountDividendGrossReceipt = { readonly payment_id: string; readonly plan_id: string; readonly account: string; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
 export type ExternalDividendReceipt = { readonly payment_id: string; readonly plan_id: string; readonly holder: { readonly External: string }; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
+export type FlatWithholdingReceipt = { readonly payment_id: string; readonly plan_id: string; readonly account: string; readonly paid_on: string; readonly gross: string; readonly rate_bp: number; readonly withheld: string }
 export type DividendTaxOutstandingCause = "Cleared" | "InsufficientAvailableCash"
 export type DividendTaxOutstandingView = { readonly account: string; readonly stock: string; readonly outstanding: ExactDividendTaxAmount; readonly needs_funds: boolean; readonly cause: DividendTaxOutstandingCause }
 
@@ -92,12 +93,12 @@ export type IssuerRepurchasePlan = { readonly event_id: string; readonly approva
 export type RepurchaseFillRecord = { readonly stock: string; readonly day: string; readonly shares: string; readonly gross: string; readonly fees: string }
 export type IssuerRepurchaseStatus = "Approved" | "Announced" | "Executing" | "Completed" | "Cancelled"
 export type IssuerRepurchaseBook = { readonly plan: IssuerRepurchasePlan; readonly status: IssuerRepurchaseStatus; readonly fills: readonly RepurchaseFillRecord[]; readonly completed_on: string | null; readonly withdrawn_remainder: string | null; readonly cancelled_on: string | null; readonly cancelled_shares: string; readonly last_order_day: string | null }
-export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly stock_distributions: readonly StockDistributionBook[]; readonly share_splits: readonly ShareSplitBook[]; readonly rights_offerings: readonly RightsOfferingBook[]; readonly rights_subscription_queue: readonly QueuedRightsSubscription[]; readonly rejected_rights_subscriptions: readonly RejectedRightsSubscription[]; readonly issuer_repurchases: readonly IssuerRepurchaseBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_reference_groups: readonly AppliedExReferenceGroup[] }
+export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly flat_withholding_receipts: readonly FlatWithholdingReceipt[]; readonly stock_distributions: readonly StockDistributionBook[]; readonly share_splits: readonly ShareSplitBook[]; readonly rights_offerings: readonly RightsOfferingBook[]; readonly rights_subscription_queue: readonly QueuedRightsSubscription[]; readonly rejected_rights_subscriptions: readonly RejectedRightsSubscription[]; readonly issuer_repurchases: readonly IssuerRepurchaseBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_reference_groups: readonly AppliedExReferenceGroup[] }
 export type AppliedExReferenceGroup = { readonly date: string; readonly stock: string; readonly cash_plan_ids: readonly string[]; readonly stock_event_ids: readonly string[]; readonly rights_event_ids: readonly string[]; readonly split_event_ids: readonly string[]; readonly reference: import("./company/ex-reference-price.ts").ExReferencePrice }
 
 export type Context = {
   readonly issuers: Readonly<Record<string, { readonly listed_stock: string | null; readonly issued_shares: string }>>
-  readonly setup: { readonly stocks: readonly { readonly code: string; readonly total_shares: string; readonly exchange: "Shanghai" | "Shenzhen"; readonly tick: string }[] }
+  readonly setup: { readonly stocks: readonly { readonly code: string; readonly total_shares: string; readonly exchange: "Shanghai" | "Shenzhen"; readonly tick: string }[]; readonly dividend_tax_mode: "FlatWithholding" | "AShareIndividual" | "Exempt"; readonly flat_withholding_bp: number | null }
   readonly snapshot: { readonly markets: Readonly<Record<string, { readonly last_cash_ex_reference: { readonly ex_date: string; readonly reference_price: string } | null }>>; readonly accounts: Readonly<Record<string, { readonly positions: Readonly<Record<string, { readonly qty: number }>> }>> }
   readonly currentDate: string
 }
@@ -991,10 +992,21 @@ function parsePayment(value: unknown, path: string): CashDividendPaymentReceipt 
 
 export function parseSessionCorporateActions(value: unknown, context: Context, path = "corporate_actions") {
   const root = record(value, path)
-  exact(root, ["registries", "dividends", "dividend_tax_books", "stock_distributions", "share_splits", "rights_offerings", "rights_subscription_queue", "rejected_rights_subscriptions", "issuer_repurchases", "account_gross_receipts", "external_receipts", "applied_ex_reference_groups"], path)
+  exact(root, ["registries", "dividends", "dividend_tax_books", "flat_withholding_receipts", "stock_distributions", "share_splits", "rights_offerings", "rights_subscription_queue", "rejected_rights_subscriptions", "issuer_repurchases", "account_gross_receipts", "external_receipts", "applied_ex_reference_groups"], path)
   const registries = array(root.registries, `${path}.registries`).map((item, index) => parseRegistry(item, `${path}.registries[${index}]`))
   const dividends = array(root.dividends, `${path}.dividends`).map((item, index) => parseDividend(item, `${path}.dividends[${index}]`))
   const dividend_tax_books = array(root.dividend_tax_books, `${path}.dividend_tax_books`).map((item, index) => parseTaxBook(item, `${path}.dividend_tax_books[${index}]`))
+  // 简税（FlatWithholding）模式的付款日代扣回执：与 engine `FlatWithholdingReceipt`
+  // 共享同一序列化形态；模式门禁与金额勾稽在下方按 setup 三态契约执行。
+  const flat_withholding_receipts: FlatWithholdingReceipt[] = array(root.flat_withholding_receipts, `${path}.flat_withholding_receipts`).map((item, index) => {
+    const itemPath = `${path}.flat_withholding_receipts[${index}]`, receipt = record(item, itemPath)
+    exact(receipt, ["payment_id", "plan_id", "account", "paid_on", "gross", "rate_bp", "withheld"], itemPath)
+    const payment_id = string(receipt.payment_id, `${itemPath}.payment_id`), plan_id = string(receipt.plan_id, `${itemPath}.plan_id`), account = accountId(receipt.account, `${itemPath}.account`)
+    const paid_on = civilDate(receipt.paid_on, `${itemPath}.paid_on`), gross = money(receipt.gross, `${itemPath}.gross`), withheld = money(receipt.withheld, `${itemPath}.withheld`)
+    const rate_bp = integer(receipt.rate_bp, `${itemPath}.rate_bp`, 0)
+    if (!payment_id.trim() || !plan_id.trim() || BigInt(gross) <= 0n || BigInt(withheld) < 0n) throw new SaveSchemaError(itemPath, "简税代扣回执身份或金额非法")
+    return { payment_id, plan_id, account, paid_on, gross, rate_bp, withheld }
+  })
   const stock_distributions = array(root.stock_distributions, `${path}.stock_distributions`).map((item, index) => parseStockDistributionBook(item, `${path}.stock_distributions[${index}]`))
   const share_splits = array(root.share_splits, `${path}.share_splits`).map((item, index) => parseShareSplitBook(item, `${path}.share_splits[${index}]`))
   const rights_offerings = array(root.rights_offerings, `${path}.rights_offerings`).map((item, index) => parseRightsOfferingBook(item, `${path}.rights_offerings[${index}]`))
@@ -1024,7 +1036,7 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     const itemPath = `${path}.account_gross_receipts[${index}]`, receipt = record(item, itemPath)
     exact(receipt, ["payment_id", "plan_id", "account", "paid_on", "gross", "tax_status"], itemPath)
     const payment_id = string(receipt.payment_id, `${itemPath}.payment_id`), plan_id = string(receipt.plan_id, `${itemPath}.plan_id`), account = accountId(receipt.account, `${itemPath}.account`), paid_on = civilDate(receipt.paid_on, `${itemPath}.paid_on`), gross = money(receipt.gross, `${itemPath}.gross`)
-    const tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["IndividualPublicMarket", "TreatmentNotConfigured"] as const)
+    const tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["FlatWithholding", "IndividualPublicMarket", "TreatmentNotConfigured"] as const)
     if (!payment_id.trim() || !plan_id.trim() || BigInt(gross) <= 0n) throw new SaveSchemaError(itemPath, "账户到账身份或金额非法")
     if (paid_on > context.currentDate) throw new SaveSchemaError(`${itemPath}.paid_on`, "实际到账日期晚于存档日")
     if (!Object.hasOwn(context.snapshot.accounts, account)) throw new SaveSchemaError(`${itemPath}.account`, "到账账户不存在")
@@ -1035,7 +1047,7 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     exact(receipt, ["payment_id", "plan_id", "holder", "paid_on", "gross", "tax_status"], itemPath)
     const holder = parseHolder(receipt.holder, `${itemPath}.holder`)
     if (holder.kind !== "External") throw new SaveSchemaError(`${itemPath}.holder`, "外部付款回执必须属于 External 持有人")
-    const payment_id = string(receipt.payment_id, `${itemPath}.payment_id`), plan_id = string(receipt.plan_id, `${itemPath}.plan_id`), paid_on = civilDate(receipt.paid_on, `${itemPath}.paid_on`), gross = money(receipt.gross, `${itemPath}.gross`), tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["IndividualPublicMarket", "TreatmentNotConfigured"] as const)
+    const payment_id = string(receipt.payment_id, `${itemPath}.payment_id`), plan_id = string(receipt.plan_id, `${itemPath}.plan_id`), paid_on = civilDate(receipt.paid_on, `${itemPath}.paid_on`), gross = money(receipt.gross, `${itemPath}.gross`), tax_status = oneOf(receipt.tax_status, `${itemPath}.tax_status`, ["FlatWithholding", "IndividualPublicMarket", "TreatmentNotConfigured"] as const)
     if (!payment_id.trim() || !plan_id.trim() || BigInt(gross) <= 0n) throw new SaveSchemaError(itemPath, "外部收款身份或金额非法")
     if (paid_on > context.currentDate) throw new SaveSchemaError(`${itemPath}.paid_on`, "实际到账日期晚于存档日")
     return { payment_id, plan_id, holder: { External: holder.id }, paid_on, gross, tax_status }
@@ -1299,12 +1311,47 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
       }
     }
   }
+  // 简税代扣勾稽（与 engine `SessionCorporateActions::validate` 同构）：非 Flat
+  // 模式不得携带任何代扣回执；Flat 模式下每位账户持有人到账恰有一条金额一致的
+  // 代扣回执，代扣额可按 setup 比例 half-up 复算（0 ≤ withheld ≤ gross）。
+  if (context.setup.dividend_tax_mode !== "FlatWithholding") {
+    if (flat_withholding_receipts.length > 0) throw new SaveSchemaError(`${path}.flat_withholding_receipts`, "非 FlatWithholding 模式不得携带简税代扣回执")
+  } else {
+    const rate_bp = context.setup.flat_withholding_bp
+    if (rate_bp === null) throw new SaveSchemaError(`${path}.flat_withholding_receipts`, "FlatWithholding 模式的 setup 缺少简税比例")
+    if (dividend_tax_books.length > 0) throw new SaveSchemaError(`${path}.dividend_tax_books`, "FlatWithholding（简税）模式不得配置个人差别化税账")
+    const seenFlatKeys = new Set<string>()
+    for (const [index, receipt] of flat_withholding_receipts.entries()) {
+      const itemPath = `${path}.flat_withholding_receipts[${index}]`
+      const key = `${receipt.payment_id}\0${receipt.plan_id}\0${receipt.account}`
+      if (!seenFlatKeys.has(key)) seenFlatKeys.add(key)
+      else throw new SaveSchemaError(itemPath, "简税代扣回执身份重复")
+      if (receipt.rate_bp !== rate_bp) throw new SaveSchemaError(`${itemPath}.rate_bp`, "简税代扣比例与 setup 配置不一致")
+      if (receipt.paid_on > context.currentDate) throw new SaveSchemaError(`${itemPath}.paid_on`, "简税代扣日期晚于存档日")
+      if (!Object.hasOwn(context.snapshot.accounts, receipt.account)) throw new SaveSchemaError(`${itemPath}.account`, "简税代扣账户不存在")
+      const grossCents = BigInt(receipt.gross), withheldCents = BigInt(receipt.withheld)
+      // half-up 到分：(|gross × rate + 5000| / 10000)，与 engine flat_withholding_cents 一致。
+      const expectedWithheld = (grossCents * BigInt(rate_bp) + 5000n) / 10000n
+      if (withheldCents !== expectedWithheld || withheldCents > grossCents) throw new SaveSchemaError(`${itemPath}.withheld`, `简税代扣金额与比例复算不一致：应扣 ${expectedWithheld} 分，实扣 ${withheldCents} 分`)
+      const matchingGross = account_gross_receipts.filter(gross => gross.payment_id === receipt.payment_id && gross.plan_id === receipt.plan_id && gross.account === receipt.account)
+      if (matchingGross.length !== 1 || matchingGross[0]!.paid_on !== receipt.paid_on || matchingGross[0]!.gross !== receipt.gross || matchingGross[0]!.tax_status !== "FlatWithholding") {
+        throw new SaveSchemaError(itemPath, "简税代扣回执缺少金额一致的 FlatWithholding 分红到账回执")
+      }
+    }
+    for (const gross of account_gross_receipts) {
+      if (!flat_withholding_receipts.some(receipt => receipt.payment_id === gross.payment_id && receipt.plan_id === gross.plan_id && receipt.account === gross.account)) {
+        throw new SaveSchemaError(`${path}.account_gross_receipts`, "FlatWithholding 模式的每位账户持有人分红到账都必须有简税代扣回执")
+      }
+    }
+  }
   for (const [index, receipt] of account_gross_receipts.entries()) {
     const plan = dividends.find(dividend => dividend.plan.plan_id === receipt.plan_id)
-    const expectedStatus = plan !== undefined && configuredTaxAccounts.has(`${receipt.account}\0${plan.plan.stock}`) ? "IndividualPublicMarket" : "TreatmentNotConfigured"
+    const expectedStatus = context.setup.dividend_tax_mode === "FlatWithholding"
+      ? "FlatWithholding"
+      : plan !== undefined && configuredTaxAccounts.has(`${receipt.account}\0${plan.plan.stock}`) ? "IndividualPublicMarket" : "TreatmentNotConfigured"
     if (receipt.tax_status !== expectedStatus) throw new SaveSchemaError(`${path}.account_gross_receipts[${index}].tax_status`, "账户分红税身份与股息税账配置不一致")
   }
-  return { registries: registries.map(({ holderShares: _shares, ...registry }) => registry), dividends, dividend_tax_books, stock_distributions, share_splits, rights_offerings, rights_subscription_queue, rejected_rights_subscriptions, issuer_repurchases, account_gross_receipts, external_receipts, applied_ex_reference_groups }
+  return { registries: registries.map(({ holderShares: _shares, ...registry }) => registry), dividends, dividend_tax_books, flat_withholding_receipts, stock_distributions, share_splits, rights_offerings, rights_subscription_queue, rejected_rights_subscriptions, issuer_repurchases, account_gross_receipts, external_receipts, applied_ex_reference_groups }
 }
 
 function holderWire(holder: ReturnType<typeof parseHolder>): HolderId {

@@ -4,11 +4,11 @@ import { parseAccountDividendTaxStatusView, parseDividendTaxOutstandingViews } f
 
 test("股息税状态视图接受当前契约形状并保留模式与身份分类", () => {
   const view = parseAccountDividendTaxStatusView({
-    mode: "IndividualPublicMarket",
+    mode: "AShareIndividual",
     identity: "Personal",
     stocks: [{ stock: "600101", status: "IndividualPublicMarket" }, { stock: "000812", status: "TreatmentNotConfigured" }],
   });
-  assert.equal(view.mode, "IndividualPublicMarket");
+  assert.equal(view.mode, "AShareIndividual");
   assert.equal(view.identity, "Personal");
   assert.deepEqual(view.stocks, [
     { stock: "600101", status: "IndividualPublicMarket" },

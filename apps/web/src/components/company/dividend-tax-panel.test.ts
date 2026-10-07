@@ -27,7 +27,7 @@ after(async () => {
 });
 
 const STATUS = {
-  mode: "IndividualPublicMarket" as const,
+  mode: "AShareIndividual" as const,
   identity: "Personal" as const,
   stocks: [{ stock: "600101", status: "IndividualPublicMarket" as const }],
 };
@@ -42,6 +42,10 @@ test("各证券税账状态按模式区分口径", () => {
   assert.equal(stockStatusLabel(STATUS, "300260"), "无股东名册");
   assert.equal(stockStatusLabel({ ...STATUS, mode: "Exempt", stocks: [{ stock: "600101", status: "TreatmentNotConfigured" }] }, "600101"), "不扣税模式");
   assert.equal(stockStatusLabel({ ...STATUS, stocks: [{ stock: "600101", status: "TreatmentNotConfigured" }] }, "600101"), "未配置个人税账（不产生个人税事实）");
+  assert.equal(
+    stockStatusLabel({ ...STATUS, mode: "FlatWithholding", stocks: [{ stock: "600101", status: "FlatWithholding" }] }, "600101"),
+    "简税代扣（付款日按开局比例直接扣）",
+  );
 });
 
 test("宿主不支持查询时显式提示而非静默隐藏", () => {
