@@ -8,7 +8,7 @@ use super::{
 use crate::StockId;
 use std::collections::BTreeMap;
 
-#[derive(Clone)]
+/// 终审修正：真删 Clone——深拷对 ReadOnlyStart 编译不可能（零拷由类型系统保证）。
 pub(in crate::session) struct ReadOnlyStart {
     pub(super) hydration: Result<(), StepFatal>,
     pub(super) resources: Result<DecisionResourceSnapshot, StepFatal>,
@@ -22,7 +22,7 @@ pub(in crate::session) struct ReadOnlyStart {
 /// X1 投机预计算暂存：随 candidate 提交自然流转到权威状态，plan_tick 消费后置 None。
 /// 不进 SaveSlot（save 逐字段构造不含此字段），不参与 business_state_hash；
 /// tick 失败重试时仍留在权威状态上且语义不变（同 tick 重算）。
-#[derive(Clone)]
+/// shadow 不携带（clone_for_shadow 置 None），全链移动语义——不 Clone。
 pub(in crate::session) struct SpeculativePrepareStash {
     /// 为哪个市场 tick 准备（准备发生时权威 tick + 1）。
     pub(in crate::session) for_tick: u64,
@@ -54,7 +54,7 @@ pub(in crate::session::pipeline) fn count_speculative_hit() {
     SPECULATIVE_HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 #[inline]
-pub(in crate::session::pipeline) fn count_speculative_miss() {
+pub(in crate::session::pipeline) fn count_speculative_miss_if_any() {
     SPECULATIVE_MISSES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -433,18 +433,22 @@ mod tests {
         });
         assert!(can_prepare(&game));
         let work = prepare(&game);
-        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+        let stash = SpeculativePrepareStash {
             for_tick: game.state.tick,
             produced_revision: game.external_revision(),
             work: work,
-        });
+        };
         let before = game.business_state_hash().unwrap();
         let (hits, misses, inline) = (
             speculative_hits(),
             speculative_misses(),
             inline_prepare_calls(),
         );
-        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput {
+            session: &game,
+            speculative: Some(stash),
+        })
+        .unwrap();
         assert_eq!(game.business_state_hash().unwrap(), before);
         assert!(
             speculative_hits() > hits,
@@ -469,18 +473,22 @@ mod tests {
             intents: Vec::new(),
             dependencies: Vec::new(),
         });
-        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+        let stash = SpeculativePrepareStash {
             for_tick: game.state.tick + 1,
             produced_revision: game.external_revision(),
             work: prepare(&game),
-        });
+        };
         let before = game.business_state_hash().unwrap();
         let (hits, misses, inline) = (
             speculative_hits(),
             speculative_misses(),
             inline_prepare_calls(),
         );
-        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput {
+            session: &game,
+            speculative: Some(stash),
+        })
+        .unwrap();
         assert_eq!(game.business_state_hash().unwrap(), before);
         let _ = hits;
         assert!(speculative_misses() > misses, "失配 stash 计为 miss");
@@ -491,11 +499,11 @@ mod tests {
         assert!(plan.precomputed_stock_inputs.is_some());
         // eligibility 失败（到期报价）同样不消费 stash。
         let now = game.current_market_minute();
-        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+        let stale = SpeculativePrepareStash {
             for_tick: game.state.tick,
             produced_revision: game.external_revision(),
             work: prepare(&game),
-        });
+        };
         game.state.npc_order_lifecycles.push(crate::session::NpcOrderLifecycle {
             account: AccountId(1),
             code: StockId(0),
@@ -504,7 +512,11 @@ mod tests {
             expires_market_minute: now,
         });
         assert!(!can_prepare(&game));
-        let plan = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None }).unwrap();
+        let plan = super::super::plan_tick(super::super::PhaseInput {
+            session: &game,
+            speculative: Some(stale),
+        })
+        .unwrap();
         assert!(plan.precomputed_stock_inputs.is_none());
     }
 
@@ -535,14 +547,17 @@ mod tests {
             super::super::Envelope::tick_start_existing(key, original.live().cash, 0, audit),
         );
         let expected = game.validate_existing_live_envelope_projection().unwrap_err();
-        game.state.speculative_prepare = Some(SpeculativePrepareStash {
+        let stash = SpeculativePrepareStash {
             for_tick: game.state.tick,
             produced_revision: game.external_revision(),
             work: prepare(&game),
-        });
+        };
         let before = game.business_state_hash().unwrap();
-        let error = super::super::plan_tick(super::super::PhaseInput { session: &game, speculative: None })
-            .err()
+        let error = super::super::plan_tick(super::super::PhaseInput {
+            session: &game,
+            speculative: Some(stash),
+        })
+        .err()
             .expect("stash 携带的 hydration 错误必须传播");
         assert_eq!(error, expected);
         assert_eq!(game.business_state_hash().unwrap(), before);

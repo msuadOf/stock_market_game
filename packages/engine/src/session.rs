@@ -4666,7 +4666,7 @@ impl CommittableSessionState {
             day,
             seq,
             civil_clock,
-            speculative_prepare,
+            speculative_prepare: _stash_not_carried_into_shadow,
         } = self;
         let accounts =
             accounts
@@ -4720,7 +4720,7 @@ impl CommittableSessionState {
             day: *day,
             seq: *seq,
             civil_clock: civil_clock.clone(),
-            speculative_prepare: speculative_prepare.clone(),
+            speculative_prepare: None,
         })
     }
 

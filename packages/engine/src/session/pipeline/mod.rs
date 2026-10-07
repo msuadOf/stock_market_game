@@ -302,7 +302,8 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
     let handed = input.speculative;
     let read_only = shadow.state.execute(|session| {
-        let stashed = handed.or_else(|| session.state.speculative_prepare.take());
+        // 终审修正后 stash 只经 PhaseInput 移交（shadow 不携带，遗留分支已删）。
+        let stashed = handed;
         Ok(match stashed {
             Some(stash)
                 if stash.for_tick == session.state.tick
@@ -314,10 +315,8 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
                 let work = stash.work;
                 Some(work)
             }
-            staged => {
-                if staged.is_some() {
-                    read_only_start::count_speculative_miss();
-                }
+            _ => {
+                read_only_start::count_speculative_miss_if_any();
                 read_only_start::can_prepare(session).then(|| read_only_start::prepare(session))
             }
         })
