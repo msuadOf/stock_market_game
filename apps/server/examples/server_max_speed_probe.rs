@@ -59,16 +59,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let metrics = handles.speed_metrics().await?;
         handles.set_running(false).await?;
         handles.shutdown().await?;
-        println!(
-            "{}",
-            serde_json::json!({
-                "path": "production_server_actor_fastest", "ticks": committed,
-                "rayon_threads": threads, "tokio_threads": 2,
-                "wall_s": wall_s, "speed_x": committed as f64 / wall_s,
-                "initialization_s": initialization_s, "events": events,
-                "batches": batches, "civil_updates": civil_updates, "metrics": metrics,
-            })
-        );
+        println!("{}", serde_json::json!({
+            "path": "production_server_actor_fastest", "ticks": committed,
+            "rayon_threads": threads, "tokio_threads": 2,
+            "wall_s": wall_s, "speed_x": committed as f64 / wall_s,
+            "initialization_s": initialization_s, "events": events,
+            "batches": batches, "civil_updates": civil_updates, "metrics": metrics,
+        }));
         Ok::<_, Box<dyn std::error::Error>>(())
     })
 }
