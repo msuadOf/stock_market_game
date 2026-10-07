@@ -44,6 +44,7 @@ pub(super) fn fixture() -> SimpleFinanceState {
                 },
             },
             summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
+            book_display: SimpleBookDisplayConfig::DEFAULT,
         },
         date(1, 1).prev().unwrap(),
     )

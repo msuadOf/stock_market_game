@@ -119,7 +119,7 @@ fn simple_model_with_cycle(prehistory_periods: u16, settlement_cycle: crate::com
     use crate::company::{CompanyKind, CompanySpec, IndustryId, CompanySystem};
     use crate::company::config::CompanySystemConfig;
     use crate::company::simple::{SimpleConfig, SimpleCompanyConfig, SimpleEnvironmentConfig};
-    use crate::company::simple::finance::{SimpleFinanceConfig, SimpleSummaryRule};
+    use crate::company::simple::finance::{SimpleBookDisplayConfig, SimpleFinanceConfig, SimpleSummaryRule};
     use crate::company::simple::period::{AnnualTrendConfig, PeriodGenerationParameters, PeriodNoiseConfig, PeriodVariableExpenseRule, SettlementCycle};
     let noise = PeriodNoiseConfig { monthly_bp: 0, quarterly_bp: 0, half_year_bp: 0, annual_bp: 0 };
     let company = CompanyId("empty-simple".into());
@@ -147,6 +147,7 @@ fn simple_model_with_cycle(prehistory_periods: u16, settlement_cycle: crate::com
                 ],
                 tax_policy: TaxPolicy { version: 1, vat: VatPolicy { output_rate_bp: 0, input_rate_bp: 0, deductible_share_bp: 10000 }, income_tax: IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 } },
                 summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
+                book_display: SimpleBookDisplayConfig::DEFAULT,
             },
             preferences: crate::company::simple::SimpleCompanyPreferences::none(),
         }],

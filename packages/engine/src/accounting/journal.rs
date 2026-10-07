@@ -62,6 +62,18 @@ pub enum BusinessKind {
     SimplePeriodSummary,
     CompanyDividendDeclaration,
     CompanyDividendPayment,
+    /// 送转真实入账（权益内部结转：送股借 4103／转增借资本公积，贷 4001；
+    /// 非现金，N3 批 2026-10-08）。
+    CompanyStockDistributionCredit,
+    /// 配股／增发结算（募集资金挂非现金资产调整，面值贷 4001、溢价贷资本公积；
+    /// 非现金，N3 批 2026-10-08）。
+    CompanyRightsOfferingSettlement,
+    /// 回购注销（按面值核减 4001 并等额归集资本公积；简化口径见
+    /// docs/company-accounting.md，非现金，N3 批 2026-10-08）。
+    CompanyRepurchaseCancellation,
+    /// 缩股重新计值入账（按消灭面值核减 4001 并等额归集资本公积；拆股
+    /// 面值总额不变、不产生分录，非现金，N3 批 2026-10-08）。
+    CompanyShareReDenomination,
     /// 期初余额凭证（显式平衡的开业账套）。
     OpeningBalance,
     /// 取得借款（现金入，负债增）。

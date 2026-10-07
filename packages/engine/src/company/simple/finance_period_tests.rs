@@ -183,6 +183,7 @@ fn report_roe_marks_nonpositive_average_equity_unavailable() {
                 },
             },
             summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
+            book_display: SimpleBookDisplayConfig::DEFAULT,
         },
         date(1, 1).prev().unwrap(),
     )

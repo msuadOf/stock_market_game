@@ -340,6 +340,8 @@ impl SimpleFinanceState {
                     amount,
                 },
             );
+        // 已付分红增加 → 账面展示现金按公式减少（仅展示值，不动真实资金）。
+        candidate.refresh_book_display()?;
         candidate.validate()?;
         *self = candidate;
         Ok(DividendPaymentReceipt {

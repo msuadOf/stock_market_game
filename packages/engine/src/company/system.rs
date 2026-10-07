@@ -129,6 +129,15 @@ impl CompanySystem {
         Ok(self.finance(company)?.stock_distribution_facts()?)
     }
 
+    /// 账面展示字段查询（2026-10-08 用户决策）：现金=累计净利润−累计已付分红、
+    /// 投资额=累计收入×配置比例；均为**账面展示值**，不代表真实公司资金。
+    pub fn simple_book_display(
+        &self,
+        company: &CompanyId,
+    ) -> Result<super::simple::finance::SimpleBookDisplay, CompanySystemError> {
+        Ok(self.finance(company)?.book_display())
+    }
+
     /// 冻结 Simple 账面送转展示事实；不做借贷过账、不产生现金。
     pub fn declare_stock_distribution(
         &mut self,

@@ -1,10 +1,11 @@
-//! Simple 账面配股／增发募集登记（2026-10-07 M 批）。
+//! Simple 账面配股／增发募集登记与汇总分录（M 批 2026-10-07；N3 批起过账）。
 //!
 //! 发行人是配股／增发的资金接收方，但 Simple 不追踪真实公司资金链
 //! （ADR-0035/0039）：投资者侧真实现金由 Session 在缴款期日终划扣；
-//! 发行人侧只冻结「声明即冻结、结算后回填」的账面事实。面值口径与送转一致
-//! ——每股面值恒定、注册资本按 面值×新增股数 演进；发行价超出面值的溢价
-//! 不建模资本公积科目（登记边界，见 docs/trading-rules.md）。
+//! 发行人侧冻结「声明即冻结、结算后回填」的账面事实，并在结算回填时过账
+//! 汇总分录：募集资金挂 `simple_issuer_funding_asset`（非现金资产调整，
+//! 不代表真实公司资金），面值贷 `4001`、发行价超出面值的溢价贷
+//! `simple_capital_reserve`（资本公积—股本溢价）。
 
 use super::*;
 
@@ -94,11 +95,13 @@ impl SimpleFinanceState {
         Ok(false)
     }
 
-    /// 结算回填：实际认购股数与募集资金；同一事件只允许回填一次。
+    /// 结算回填：实际认购股数与募集资金，并过账汇总分录；同一事件只允许回填一次。
     ///
     /// 注册资本按 面值×实际新增股数 演进（`source_evidence` 不变；显式 bind-once
     /// 入口仍拒绝直接改写注册资本）。发行失败（`issued_shares == 0` 且
-    /// `proceeds == 0`）不演进注册资本。
+    /// `proceeds == 0`）不演进注册资本、不产生分录。成功结算分录：
+    /// 借 非现金募集资金资产 adjustments = 认购价×股数，贷 4001 = 面值×股数，
+    /// 贷 资本公积 = 溢价（认购价−面值）×股数；权益与资产同步上升。
     pub fn record_rights_offering_settlement(
         &mut self,
         event_id: &str,
@@ -146,6 +149,31 @@ impl SimpleFinanceState {
             ));
         }
         let mut candidate = self.clone();
+        if issued_shares > 0 {
+            // 汇总分录：面值贷 4001、溢价贷资本公积，募集资金借非现金资产调整。
+            // 发行价等于面值时溢价为零，不落零金额行（凭证金额必须为正）。
+            let premium = proceeds.sub(capital_increase)?;
+            let mut lines = vec![
+                line(
+                    crate::accounting::reports::simple_summary::ISSUER_FUNDING_ASSET,
+                    PostingSide::Debit,
+                    proceeds,
+                ),
+                line("4001", PostingSide::Credit, capital_increase),
+            ];
+            if premium.is_positive() {
+                lines.push(line(
+                    crate::accounting::reports::simple_summary::CAPITAL_RESERVE,
+                    PostingSide::Credit,
+                    premium,
+                ));
+            }
+            candidate.post_capital_action(
+                settled_on,
+                BusinessKind::CompanyRightsOfferingSettlement,
+                lines,
+            )?;
+        }
         let fact = candidate
             .rights_offerings
             .get_mut(event_id)

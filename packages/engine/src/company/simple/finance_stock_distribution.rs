@@ -1,11 +1,12 @@
-//! Simple 账面送转展示登记。
+//! Simple 账面送转登记与汇总分录（N3 批 2026-10-08 起过账进 `Books`）。
 //!
-//! 本批 Simple 账面未建模资本公积科目与来源类别，因此送转在这里只冻结面值口径的
-//! 展示事实（`StockDistributionFinanceFact`），不做借贷过账、不产生公司现金或
-//! 投资者现金；真实股份入账由 Session 侧的股东名册与账户结算完成。现实语义为
-//! 每股面值恒定、送转入账后注册资本按 面值×新增股数 演进：入账回填时同步演进
-//! 注册资本法定事实（历史由各事实的 `registered_capital_at_approval` 冻结保留），
-//! 发行股数事实由 `IssuerRegistry` 在真实入账时更新。
+//! 送转在真实入账回填时按已定口径做权益内部结转分录：送股（股票股利）借
+//! `4103`（来自可分配利润）、转增借 `simple_capital_reserve`（转增来源），贷
+//! `4001`（股本按面值增加）。分录不产生公司现金或投资者现金；真实股份入账由
+//! Session 侧的股东名册与账户结算完成。现实语义为每股面值恒定、送转入账后
+//! 注册资本按 面值×新增股数 演进：入账回填时同步演进注册资本法定事实（历史由
+//! 各事实的 `registered_capital_at_approval` 冻结保留），发行股数事实由
+//! `IssuerRegistry` 在真实入账时更新。
 
 use super::*;
 
@@ -85,9 +86,24 @@ impl SimpleFinanceState {
                 }
             }
             crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion => {
-                // 资本公积转增的余额与来源类别未在 Simple 账面建模（无资本公积科目，
-                // 也未建模法定公积金 25% 留存下限的适用差异）；本批不做账面前置校验，
-                // 该边界在 docs/trading-rules.md 显式登记。
+                // 转增来源为资本公积科目：面值总额不得超过当前资本公积贷方余额
+                //（N3 批起账面已建模该科目；法定公积金 25% 留存下限适用于盈余公积
+                // 转增，本模型未建盈余公积转增通道，登记于 docs/trading-rules.md）。
+                // 多个未入账转增声明合计超余额在入账回填时按同一校验显式拒绝。
+                let reserve = self
+                    .books
+                    .ledger()
+                    .account_net_debit(&LedgerAccountId(
+                        crate::accounting::reports::simple_summary::CAPITAL_RESERVE.into(),
+                    ))?
+                    .neg()?;
+                if declaration.capital_increase > reserve {
+                    return Err(SimpleFinanceError::StockDistributionInvalid(format!(
+                        "转增面值总额 {} 超过资本公积科目贷方余额 {}",
+                        declaration.capital_increase.to_yuan_string(),
+                        reserve.to_yuan_string()
+                    )));
+                }
             }
         }
         let mut candidate = self.clone();
@@ -110,7 +126,7 @@ impl SimpleFinanceState {
         Ok(false)
     }
 
-    /// 真实新股入账后回填账面事实；同一事件只允许回填一次。
+    /// 真实新股入账后回填账面事实并过账权益内部结转分录；同一事件只允许回填一次。
     ///
     /// 现实语义为每股面值恒定、送转后注册资本按面值增加：入账时把注册资本法定
     /// 事实演进为「当前注册资本 + 面值×新增股数」（即声明的 `capital_increase`），
@@ -145,6 +161,43 @@ impl SimpleFinanceState {
         }
         let capital_increase = fact.capital_increase;
         let mut candidate = self.clone();
+        // 汇总分录：送股借 4103（可分配利润减少）、转增借资本公积（来源减少），
+        // 贷 4001（股本按面值增加）；权益总额不变，资产负债表自然勾稽。
+        let source_line = match fact.kind {
+            crate::company::stock_distribution::StockDistributionKind::BonusShares => {
+                line("4103", PostingSide::Debit, capital_increase)
+            }
+            crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion => {
+                // 入账前再次核对转增来源余额（声明与入账之间余额可能已变动）。
+                let reserve = candidate
+                    .books
+                    .ledger()
+                    .account_net_debit(&LedgerAccountId(
+                        crate::accounting::reports::simple_summary::CAPITAL_RESERVE.into(),
+                    ))?
+                    .neg()?;
+                if capital_increase > reserve {
+                    return Err(SimpleFinanceError::StockDistributionInvalid(format!(
+                        "转增面值总额 {} 超过资本公积科目当前贷方余额 {}",
+                        capital_increase.to_yuan_string(),
+                        reserve.to_yuan_string()
+                    )));
+                }
+                line(
+                    crate::accounting::reports::simple_summary::CAPITAL_RESERVE,
+                    PostingSide::Debit,
+                    capital_increase,
+                )
+            }
+        };
+        candidate.post_capital_action(
+            credited_on,
+            BusinessKind::CompanyStockDistributionCredit,
+            vec![
+                source_line,
+                line("4001", PostingSide::Credit, capital_increase),
+            ],
+        )?;
         let fact = candidate
             .stock_distributions
             .get_mut(event_id)

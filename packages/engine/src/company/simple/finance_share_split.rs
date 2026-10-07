@@ -250,6 +250,26 @@ impl SimpleFinanceState {
             .checked_mul(i128::from(old_equivalent_destroyed))
             .ok_or_else(|| SimpleFinanceError::ShareSplitInvalid("缩股核减金额溢出".into()))?;
         let mut candidate = self.clone();
+        // 缩股核减分录（拆股面值总额不变、不产生分录）：借 4001（消灭面值核减）、
+        // 贷资本公积（等额归集）；与回购注销同一简化口径（权益内部结转）。
+        if reduction_cents > 0 {
+            candidate.post_capital_action(
+                settled_on,
+                BusinessKind::CompanyShareReDenomination,
+                vec![
+                    line(
+                        "4001",
+                        PostingSide::Debit,
+                        AccountingAmount::from_cents(reduction_cents),
+                    ),
+                    line(
+                        crate::accounting::reports::simple_summary::CAPITAL_RESERVE,
+                        PostingSide::Credit,
+                        AccountingAmount::from_cents(reduction_cents),
+                    ),
+                ],
+            )?;
+        }
         let fact = candidate
             .share_splits
             .get_mut(event_id)

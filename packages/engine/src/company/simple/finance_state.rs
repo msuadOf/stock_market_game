@@ -7,6 +7,10 @@ impl SimpleFinanceState {
         as_of: CivilDate,
     ) -> Result<Self, SimpleFinanceError> {
         config.tax_policy.validate()?;
+        config
+            .book_display
+            .validate()
+            .map_err(SimpleFinanceError::Invalid)?;
         if company.0.trim().is_empty() || as_of.next()?.month() == as_of.month() {
             return Err(SimpleFinanceError::Invalid(
                 "公司身份与开账月末日期必须明确".into(),
@@ -39,7 +43,7 @@ impl SimpleFinanceState {
             lines: config.opening_lines.clone(),
         }])?;
         let income_tax_position = IncomeTaxPosition::new(&books)?;
-        let state = Self {
+        let mut state = Self {
             company,
             kind,
             config: config.clone(),
@@ -57,7 +61,10 @@ impl SimpleFinanceState {
             rights_offerings: std::collections::BTreeMap::new(),
             issuer_repurchases: std::collections::BTreeMap::new(),
             legal_facts: RequiredOption(None),
+            cash_book: AccountingAmount::ZERO,
+            investment_book: AccountingAmount::ZERO,
         };
+        state.refresh_book_display()?;
         state.validate()?;
         Ok(state)
     }

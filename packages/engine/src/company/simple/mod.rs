@@ -7,7 +7,10 @@ pub mod period;
 pub mod preferences;
 mod state;
 pub use config::{SimpleCompanyConfig, SimpleConfig, SimpleEnvironmentConfig};
-pub use finance::{SimpleFinanceConfig, SimpleFinanceError, SimpleFinanceState, SimpleSummaryRule};
+pub use finance::{
+    SimpleBookDisplay, SimpleBookDisplayConfig, SimpleFinanceConfig, SimpleFinanceError,
+    SimpleFinanceState, SimpleSummaryRule,
+};
 pub use preferences::{
     SimpleCashDividendPreference, SimpleCompanyPreferences, SimplePreferenceLedger,
     SimplePreferenceProposalKind, SimplePreferenceRejection, SimpleStockDistributionPreference,

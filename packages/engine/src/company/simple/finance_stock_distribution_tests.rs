@@ -178,11 +178,24 @@ fn bonus_share_cap_uses_registered_capital_evolved_by_prior_credit() {
             .is_err(),
         "送股面值总额不得超过按演进后注册资本核定的可分配利润"
     );
-    // 不超过演进后上限（24_300）的送股仍可受理。
+    // 送转入账已借记 4103（N3 批起行为分录进 Books），未分配利润随之减少：
+    // 可分配上限 = 27_000 − 送转 3_000 − 公积金 2_700 = 21_300，24_000 超限被拒。
+    assert!(
+        state
+            .declare_stock_distribution(one_cent_par_declaration(
+                "dist-oversized-after-posting",
+                24_000,
+                13_000,
+                in_2031(1, 3),
+            ))
+            .is_err(),
+        "送股面值总额不得超过扣减已入账送转后的可分配利润"
+    );
+    // 不超过扣减后上限（21_300）的送股仍可受理。
     state
         .declare_stock_distribution(one_cent_par_declaration(
             "dist-2",
-            24_000,
+            21_000,
             13_000,
             in_2031(1, 3),
         ))

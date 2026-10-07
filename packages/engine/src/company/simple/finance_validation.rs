@@ -2,6 +2,10 @@ use super::*;
 impl SimpleFinanceState {
     pub fn validate(&self) -> Result<(), SimpleFinanceError> {
         self.config.tax_policy.validate()?;
+        self.config
+            .book_display
+            .validate()
+            .map_err(SimpleFinanceError::Invalid)?;
         if self.books.ledger().chart() != &super::kind::summary_chart(self.kind)? {
             return Err(SimpleFinanceError::Invalid(
                 "Simple CompanyKind 与汇总科目表不一致".into(),
@@ -532,6 +536,8 @@ impl SimpleFinanceState {
                 "应付股利科目与未支付计划不一致".into(),
             ));
         }
+        self.validate_capital_action_entries()?;
+        self.validate_book_display()?;
         let reserve_account = self
             .books
             .ledger()
@@ -595,6 +601,151 @@ impl SimpleFinanceState {
             ));
         }
         self.validate_reports()?;
+        Ok(())
+    }
+
+    /// 公司行为汇总分录勾稽：从行为事实重构期望分录（BusinessKind + 日期 +
+    /// 借贷行），与权威账簿中该类分录做多重集匹配。行为分录是一次性事实，
+    /// 周期结算不得回退或重算覆盖——任何缺失、多余或内容漂移都在此显式拒绝。
+    fn validate_capital_action_entries(&self) -> Result<(), SimpleFinanceError> {
+        use crate::accounting::reports::simple_summary as accounts;
+        let mut expected: Vec<(BusinessKind, CivilDate, Vec<JournalLine>)> = Vec::new();
+        for fact in self.stock_distributions.values() {
+            let Some(credited_on) = fact.credited_on else {
+                continue;
+            };
+            let source = match fact.kind {
+                crate::company::stock_distribution::StockDistributionKind::BonusShares => {
+                    line("4103", PostingSide::Debit, fact.capital_increase)
+                }
+                crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion => {
+                    line(
+                        accounts::CAPITAL_RESERVE,
+                        PostingSide::Debit,
+                        fact.capital_increase,
+                    )
+                }
+            };
+            expected.push((
+                BusinessKind::CompanyStockDistributionCredit,
+                credited_on,
+                vec![
+                    source,
+                    line("4001", PostingSide::Credit, fact.capital_increase),
+                ],
+            ));
+        }
+        for fact in self.rights_offerings.values() {
+            let (Some(settled_on), Some(proceeds), Some(capital_increase)) =
+                (fact.settled_on, fact.proceeds, fact.capital_increase)
+            else {
+                continue;
+            };
+            if fact.issued_shares == 0 {
+                continue;
+            }
+            let premium = proceeds.sub(capital_increase)?;
+            let mut lines = vec![
+                line(accounts::ISSUER_FUNDING_ASSET, PostingSide::Debit, proceeds),
+                line("4001", PostingSide::Credit, capital_increase),
+            ];
+            if premium.is_positive() {
+                lines.push(line(
+                    accounts::CAPITAL_RESERVE,
+                    PostingSide::Credit,
+                    premium,
+                ));
+            }
+            expected.push((
+                BusinessKind::CompanyRightsOfferingSettlement,
+                settled_on,
+                lines,
+            ));
+        }
+        for fact in self.issuer_repurchases.values() {
+            let Some(cancelled_on) = fact.cancelled_on else {
+                continue;
+            };
+            let reduction = fact
+                .capital_reduction
+                .ok_or_else(|| {
+                    SimpleFinanceError::Invalid(format!(
+                        "回购声明 {} 已注销但缺少核减金额",
+                        fact.event_id
+                    ))
+                })?
+                .clone();
+            expected.push((
+                BusinessKind::CompanyRepurchaseCancellation,
+                cancelled_on,
+                vec![
+                    line("4001", PostingSide::Debit, reduction),
+                    line(accounts::CAPITAL_RESERVE, PostingSide::Credit, reduction),
+                ],
+            ));
+        }
+        for fact in self.share_splits.values() {
+            let Some(settled_on) = fact.settled_on else {
+                continue;
+            };
+            if fact.registered_capital_reduction == AccountingAmount::ZERO {
+                continue;
+            }
+            let reduction = fact.registered_capital_reduction;
+            expected.push((
+                BusinessKind::CompanyShareReDenomination,
+                settled_on,
+                vec![
+                    line("4001", PostingSide::Debit, reduction),
+                    line(accounts::CAPITAL_RESERVE, PostingSide::Credit, reduction),
+                ],
+            ));
+        }
+        let kinds = [
+            BusinessKind::CompanyStockDistributionCredit,
+            BusinessKind::CompanyRightsOfferingSettlement,
+            BusinessKind::CompanyRepurchaseCancellation,
+            BusinessKind::CompanyShareReDenomination,
+        ];
+        for entry in self.books.journal().entries() {
+            if !kinds.contains(&entry.kind) {
+                continue;
+            }
+            let index = expected
+                .iter()
+                .position(|(kind, date, lines)| {
+                    *kind == entry.kind && *date == entry.date && *lines == entry.lines
+                })
+                .ok_or_else(|| {
+                    SimpleFinanceError::Invalid(format!(
+                        "公司行为分录（{:?}，{}，来源 {}）与已登记行为事实不一致或无法勾稽",
+                        entry.kind,
+                        entry.date,
+                        entry.source.value()
+                    ))
+                })?;
+            expected.remove(index);
+        }
+        if let Some((kind, date, _)) = expected.first() {
+            return Err(SimpleFinanceError::Invalid(format!(
+                "已登记行为事实缺少对应汇总分录（{:?}，{}）——行为分录不得被周期结算回退",
+                kind, date
+            )));
+        }
+        Ok(())
+    }
+
+    /// 账面展示字段不变量：cash_book / investment_book 必须与权威账簿及分红
+    /// 付款事实的重算值一致（篡改或不一致的持久化状态显式拒绝）。
+    fn validate_book_display(&self) -> Result<(), SimpleFinanceError> {
+        let mut reference = self.clone();
+        reference.refresh_book_display()?;
+        if self.cash_book != reference.cash_book || self.investment_book != reference.investment_book
+        {
+            return Err(SimpleFinanceError::Invalid(
+                "账面展示现金或投资额与权威账簿重算值不一致".into(),
+            ));
+        }
         Ok(())
     }
 }

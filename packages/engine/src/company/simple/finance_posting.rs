@@ -1,6 +1,41 @@
 use super::*;
 use std::collections::BTreeMap;
 impl SimpleFinanceState {
+    /// 公司行为汇总分录入口（N3 批 2026-10-08）：行为财务事实过账进权威
+    /// `Books`，下期报表自然反映。分录是一次性事实：
+    /// - 日期必须晚于最后结算日（`as_of`），禁止向已封账期间回写——已登记
+    ///   报告按原窗口冻结，行为分录落在封账期间会破坏「报告与权威账簿
+    ///   一致」不变量，因此在过账前显式拒绝；
+    /// - 全部为 `NonCash`（Simple 不追踪真实公司资金链，账面/真实分离）；
+    /// - 消费并推进 `next_event_id`，与既有摘要/分红分录共享同一来源序列。
+    pub(super) fn post_capital_action(
+        &mut self,
+        date: CivilDate,
+        kind: BusinessKind,
+        lines: Vec<JournalLine>,
+    ) -> Result<(), SimpleFinanceError> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        if date <= self.as_of {
+            return Err(SimpleFinanceError::Invalid(
+                "公司行为分录日期必须晚于最后结算日，不得向已封账期间回写".into(),
+            ));
+        }
+        let next = self
+            .next_event_id
+            .checked_add(1)
+            .ok_or_else(|| SimpleFinanceError::Invalid("行为事件序号耗尽".into()))?;
+        self.books.post_batch(vec![JournalEntry {
+            source: BusinessEventId::new(self.next_event_id),
+            date,
+            kind,
+            cash_flow: CashFlowClass::NonCash,
+            lines,
+        }])?;
+        self.next_event_id = next;
+        Ok(())
+    }
     pub(super) fn post_summary(
         &mut self,
         date: CivilDate,
