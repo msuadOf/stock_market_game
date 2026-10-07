@@ -65,11 +65,14 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
   1. **时序假设否证**：投机读推迟到 queue 完成后（串行变体）两测仍红——非"split 时点快照陈旧"。
   2. **生产副作用否证**：保留 commit 尾部生产、禁用消费（消费臂条件置 false）→ 两测全绿——回归锁定在**消费路径**，生产动作无有害副作用。
   3. **Debug 等价陷阱**：消费点逐字段 Debug 字符串比对（hydration/resources/stock_inputs/stock_shards）全部相等、消费确实发生（eprintln 追踪 tick 1 产生/tick 1 消费），测试仍红——**Debug 格式相等 ≠ 语义等价**（嫌疑：某结构自定义 Debug 略字段/浮点位/内部 OnceLock·缓存·Arc 身份在 Clone 后行为差）。
-  下一棒入口（按此序）：
-  a. 给 ReadOnlyStart 四字段补真 PartialEq（或逐子结构 PartialEq）替换 Debug 比对，消费点断言 stash==inline——预期这次会红并指出确切字段；
-  b. 若 a 仍绿，按分支喂入二分：只用 stash.hydration（其余内联）→ 加 resources → 加 inputs/shards，定位哪个字段的"消费"改变下游；
-  c. 检查消费路径 vs 内联路径在 plan_tick 中的执行位置差异（消费结果被放入与内联相同的 shadow 字段，但消费发生在 execute 闭包内 take 之后——比对两次运行的事件流首异 tick）。
-  诊断仪器代码见本棒会话（消费点 cfg(test) 比对块 + X1DBG eprintln），已随恢复关闭态一并移除，按上配方重建。
+  **棒次 12 根因已钉死（消费点探针实跑数据）**：
+  - `resources Debug eq = true / PartialEq = false / diff = [account:AccountId(1)]`——DecisionResourceSnapshot 的自定义 Debug 只打 account_count（空证明），真 PartialEq 在 account 1 的 cash/positions 上不等。
+  - **根因类别：stash 无法感知 commit 尾部与下次 plan_tick 之间对账户的直接改动**——测试夹具（或任何宿主直改 state）在两步之间 fixture_set_cash，投机 stash 携带旧现金，消费侧 tick+eligibility 双校验检不出"值过期"，验证器拿到偏松现金 → InsufficientCash 拒单缺失。第二测（母单链接）同机理（parent_orders 直改差异）。
+  - 排除项（棒次 11/12 实证）：非快照时序（串行写后投机仍红）、非生产副作用（只产不消即绿）、非 Arc/Weak 身份敏感结构本身（差异在值不在身份——PartialEq 比的是 cash/positions 值）。
+  **修复方向（下一棒二选一，走完整门禁）**：
+  A. **新鲜度校验**：state 加 `revision: u64`（或复用现成 seq？），任何权威直接改动路径（fixture_set_*、宿主 API、事务提交）自增；stash 记录生产时 revision，消费要求相等，否则回退现算。生产路径 commit→plan 之间 revision 不变 → 命中不受影响；测试直改 → 自动回退。改动小、语义清晰。
+  B. 生产语义契约化：声明"commit 与下个 plan 之间不得直改权威状态"并把两测的直改改为先 step 后改再 step——改变测试语义，需用户裁决（生产 server 侧确无直改，但契约要写进 ADR）。
+  推荐 A。实装后复装投机臂（并发版，代码在本提交历史）、跑全量 + 1/4/16 一致性 + probe + 锚定交错配对。
   3. 我方 mismatch 测试的 hits 精确断言已按进程级计数器先例改差分。
 - **协调方第 3 点待办**：seal_on 的"只读 cash/positions"声明要落成真实 debug_assert/测试（写侧 restore_strategy 后 seal 输出必须不变）——加入下一棒首件事。
 - 复装投机臂：git 历史本提交父代的 candidate_commit.rs 中被替换为 None 的那臂代码即完整实现（can_prepare_on/prepare_on/for_tick=view.tick）。
