@@ -3,6 +3,7 @@ import { parseMonthlyReportSchedule } from "../report-frequency.ts"
 import type { MonthlyReportSchedule } from "../../../types/generated/MonthlyReportSchedule"
 import { parseShockKind, type ActiveShock } from "./policies/shock.ts"
 import { amount, instant, period, type CivilInstantValue, type DecimalAmount } from "./value.ts"
+import { parseIssuerRepurchasePlanValue, parseRightsOfferingEventPlanValue } from "../corporate-actions.ts"
 import type { CashDividendPlan } from "../corporate-actions.ts"
 
 const reportKinds = ["Monthly", "Quarter", "HalfYear", "Annual"] as const
@@ -31,7 +32,7 @@ export type ReportSet = { readonly scope: Scope; readonly period: string; readon
 type ScheduledKind = (typeof scheduledKinds)[number] | { readonly Monthly: { readonly month: number } }
 export type PublicationOrigin = { readonly SeededPrehistory: { readonly fiscal_year: number; readonly kind: ScheduledKind; readonly offset_days: number } } | { readonly ScheduledDisclosure: { readonly fiscal_year: number; readonly kind: ScheduledKind; readonly offset_days: number } } | { readonly MonthlyDisclosure: { readonly schedule: MonthlyReportSchedule; readonly delay_days: number; readonly seeded: boolean } } | "Correction"
 export type PublishedReport = { readonly source: "SimpleGenerated" | "SimulationAccounting"; readonly id: number; readonly company: string; readonly policy: { readonly chart_version: number }; readonly approved_at: CivilInstantValue; readonly published_at: CivilInstantValue; readonly origin: PublicationOrigin; readonly supersedes: number | null; readonly reports: ReportSet }
-export type AnnouncementContent = { readonly Shock: ActiveShock } | { readonly CashDividend: { readonly plan: CashDividendPlan; readonly total_gross: string } }
+export type AnnouncementContent = { readonly Shock: ActiveShock } | { readonly CashDividend: { readonly plan: CashDividendPlan; readonly total_gross: string } } | { readonly RightsOffering: { readonly plan: import("../corporate-actions.ts").RightsOfferingEventPlan } } | { readonly IssuerRepurchase: { readonly plan: import("../corporate-actions.ts").IssuerRepurchasePlan } }
 export type Announcement = { readonly id: number; readonly company: string; readonly occurred_on: string; readonly published_at: CivilInstantValue; readonly content: AnnouncementContent }
 export type PublicLibrary = { readonly next_seq: number; readonly reports: readonly PublishedReport[]; readonly announcements: readonly Announcement[] }
 
@@ -161,7 +162,7 @@ export function parsePublicationOrigin(value: unknown, path: string): Publicatio
 function parseCashDividendAnnouncement(value: unknown, company: string, occurredOn: string, path: string): AnnouncementContent {
   const content = record(value, path)
   exact(content, ["kind", "value"], path)
-  const tag = oneOf(content.kind, `${path}.kind`, ["Shock", "CashDividend"] as const)
+  const tag = oneOf(content.kind, `${path}.kind`, ["Shock", "CashDividend", "RightsOffering", "IssuerRepurchase"] as const)
   const body = content.value
   if (tag === "Shock") {
     const event = record(body, `${path}.value`)
@@ -200,6 +201,31 @@ function parseCashDividendAnnouncement(value: unknown, company: string, occurred
   if (issuer !== company) throw new SaveSchemaError(`${planPath}.issuer`, "必须与公告公司一致")
   const plan: CashDividendPlan = { plan_id: planId, issuer, stock, exchange, formula, approved_on, announced_on, registered_on, ex_dividend_on, payable_on, gross_per_share, distributable_amount }
   return { CashDividend: { plan, total_gross } }
+}
+
+/// 配股／增发与回购方案公告：披露事实只含方案条款（engine `RightsOfferingAnnouncement`
+/// / `IssuerRepurchaseAnnouncement` 的序列化形态），认购与结算结果由后续事实承载。
+/// 方案细节字段按 corporate-actions 的权威 parser 校验；此处校验发行人与发生日归属。
+function parseCompanyActionAnnouncement(
+  value: unknown,
+  company: string,
+  occurredOn: string,
+  path: string,
+): AnnouncementContent {
+  const content = record(value, path)
+  exact(content, ["kind", "value"], path)
+  const tag = oneOf(content.kind, `${path}.kind`, ["RightsOffering", "IssuerRepurchase"] as const)
+  const body = record(content.value, `${path}.value`)
+  if (tag === "RightsOffering") {
+    exact(body, ["plan"], `${path}.value`)
+    const plan = parseRightsOfferingEventPlanValue(body.plan, `${path}.value.plan`)
+    if (plan.issuer !== company || plan.announced_on !== occurredOn) throw new SaveSchemaError(`${path}.value.plan`, "配股公告发行人或发生日不一致")
+    return { RightsOffering: { plan } }
+  }
+  exact(body, ["plan"], `${path}.value`)
+  const plan = parseIssuerRepurchasePlanValue(body.plan, `${path}.value.plan`)
+  if (plan.issuer !== company || plan.announced_on !== occurredOn) throw new SaveSchemaError(`${path}.value.plan`, "回购公告发行人或发生日不一致")
+  return { IssuerRepurchase: { plan } }
 }
 
 function parseAnnouncement(value: unknown, path: string): Announcement {
