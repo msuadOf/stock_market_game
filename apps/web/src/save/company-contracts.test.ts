@@ -70,7 +70,7 @@ test("公开 Shock 公告使用内容联合类型并保留 PaymentFailure 单日
 })
 
 test("已批准现金分红公告严格保留方案与核准总额并校验身份、日期和金额", { timeout: 10_000 }, () => {
-  const plan = { plan_id: "DIV-1", issuer: "C-1", stock: "600101", exchange: "Shanghai", formula: "StandardCashOnly", approved_on: "2030-01-01", announced_on: "2030-01-02", registered_on: "2030-01-02", ex_dividend_on: "2030-01-03", payable_on: "2030-01-03", gross_per_share: "10", distributable_amount: "1000" }
+  const plan = { plan_id: "DIV-1", issuer: "C-1", stock: "600101", exchange: "sse", formula: "StandardCashOnly", approved_on: "2030-01-01", announced_on: "2030-01-02", registered_on: "2030-01-02", ex_dividend_on: "2030-01-03", payable_on: "2030-01-03", gross_per_share: "10", distributable_amount: "1000" }
   const announcement = { id: 0, company: "C-1", occurred_on: "2030-01-02", published_at: { date: "2030-01-03", second_of_day: 0 }, content: { kind: "CashDividend", value: { plan, total_gross: "100" } } }
   const library = { next_seq: 1, reports: [], announcements: [announcement] }
   assert.deepEqual(parsePublicLibrary(library).announcements[0]?.content, { CashDividend: announcement.content.value })

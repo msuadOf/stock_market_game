@@ -184,7 +184,7 @@ function parseCashDividendAnnouncement(value: unknown, company: string, occurred
   const issuer = string(planValue.issuer, `${planPath}.issuer`)
   const stock = string(planValue.stock, `${planPath}.stock`)
   if (!planId.trim() || !issuer.trim() || !stock.trim()) throw new SaveSchemaError(planPath, "方案、发行人及证券身份不得为空")
-  const exchange = oneOf(planValue.exchange, `${planPath}.exchange`, ["Shanghai", "Shenzhen"] as const)
+  const exchange = oneOf(planValue.exchange, `${planPath}.exchange`, ["sse", "szse"] as const)
   const formula = oneOf(planValue.formula, `${planPath}.formula`, ["StandardCashOnly", "ExchangeApprovedAdjustment"] as const)
   const approved_on = civilDate(planValue.approved_on, `${planPath}.approved_on`)
   const announced_on = civilDate(planValue.announced_on, `${planPath}.announced_on`)

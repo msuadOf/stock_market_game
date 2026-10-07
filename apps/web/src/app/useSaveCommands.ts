@@ -157,8 +157,6 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setDividendTaxModeDraft(slot.setup.dividend_tax_mode);
         setRightsOfferingEnabledDraft(slot.setup.rights_offering_enabled);
         setIssuerRepurchaseEnabledDraft(slot.setup.issuer_repurchase_enabled);
-        setRightsOfferingEnabledDraft(slot.setup.rights_offering_enabled);
-        setIssuerRepurchaseEnabledDraft(slot.setup.issuer_repurchase_enabled);
         ports.setSeedDraft(slot.seed);
         setInitialAllocation(null);
         restored = true;
