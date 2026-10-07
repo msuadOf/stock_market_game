@@ -790,6 +790,66 @@ pub fn company_preference_rejections(handle: u32, company: String) -> Result<JsV
     })
 }
 
+/// 查询某公司的完整共同契约能力面（F 批收口）：公司当前事实 + 未完成方案 +
+/// 各行为业务条件 + 本人（固定 AccountId(0)）权利摘要。owner 隔离，只读投影。
+#[wasm_bindgen]
+pub fn company_capabilities(handle: u32, company: String) -> Result<JsValue, JsValue> {
+    if company.trim().is_empty() || company.encode_utf16().count() > 64 {
+        return Err(JsValue::from_str("能力面公司身份必须是非空且不超过 64 字符的字符串"));
+    }
+    with_session(handle, |session| {
+        let view = session
+            .company_capabilities(&engine::company::CompanyId(company), AccountId(0))
+            .map_err(session_error_to_js)?;
+        to_js(&view)
+    })
+}
+
+/// 按公司+期间读取期间变化解释（复用既有 history；period_end 为 ISO YYYY-MM-DD
+/// 且必须是结算周期末日，否则显式拒绝）。
+#[wasm_bindgen]
+pub fn company_period_explanation(
+    handle: u32,
+    company: String,
+    period_end: String,
+) -> Result<JsValue, JsValue> {
+    if company.trim().is_empty() || company.encode_utf16().count() > 64 {
+        return Err(JsValue::from_str("解释查询公司身份必须是非空且不超过 64 字符的字符串"));
+    }
+    let period_end = engine::calendar::CivilDate::from_iso(&period_end)
+        .map_err(|error| JsValue::from_str(&format!("解释查询期间末日无效：{error}")))?;
+    with_session(handle, |session| {
+        let explanation = session
+            .company_period_explanation(&engine::company::CompanyId(company), period_end)
+            .map_err(session_error_to_js)?;
+        to_js(&explanation)
+    })
+}
+
+/// 查询本机玩家（固定 AccountId(0)）的未完成配股权证/额度/缴款窗口视图；
+/// 只读投影既有 books/queue 事实，Settled 终态不出现。
+#[wasm_bindgen]
+pub fn owner_rights_offerings(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let views = session
+            .owner_rights_offerings(AccountId(0))
+            .map_err(session_error_to_js)?;
+        to_js(&views)
+    })
+}
+
+/// 查询本机玩家（固定 AccountId(0)）的简税（FlatWithholding）付款日代扣回执；
+/// 非 Flat 模式由 engine 显式拒绝，不冒充空台账。
+#[wasm_bindgen]
+pub fn owner_flat_withholding_receipts(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let receipts = session
+            .owner_flat_withholding_receipts(AccountId(0))
+            .map_err(session_error_to_js)?;
+        to_js(&receipts)
+    })
+}
+
 #[wasm_bindgen]
 pub fn personal_trade_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
     let request: engine::session::PersonalTradeHistoryRequest = serde_wasm_bindgen::from_value(query)?;

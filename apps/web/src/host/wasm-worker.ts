@@ -45,6 +45,10 @@ type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
   readonly owner_dividend_tax_outstanding_views?: (handle: number) => unknown;
   readonly owner_rejected_rights_subscriptions?: (handle: number) => readonly unknown[];
   readonly company_preference_rejections?: (handle: number, company: string) => readonly unknown[];
+  readonly company_capabilities?: (handle: number, company: string) => unknown;
+  readonly company_period_explanation?: (handle: number, company: string, periodEnd: string) => unknown;
+  readonly owner_rights_offerings?: (handle: number) => readonly unknown[];
+  readonly owner_flat_withholding_receipts?: (handle: number) => readonly unknown[];
   readonly market_history?: (handle: number, query: unknown) => unknown;
   readonly current_minute_history?: (handle: number, query: unknown) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
@@ -538,6 +542,45 @@ ctx.addEventListener("message", (event) => {
           const queryLedger = (wasm as WasmTransportExtensions).company_preference_rejections;
           if (queryLedger === undefined) throw new Error("当前 WASM bindings 不支持偏好拒绝台账查询，请重建 bindings");
           ctx.postMessage({ type: "preferenceRejections", requestId: message.requestId, generation: requestedGeneration, rejections: queryLedger(session, message.company) });
+          return;
+        }
+        case "companyCapabilities": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("能力面请求 ID 无效");
+          if (typeof message.company !== "string" || message.company.trim().length === 0 || message.company.length > 64) throw new Error("能力面公司身份必须是非空且不超过 64 字符的字符串");
+          const [session, wasm] = slot.requireHandle();
+          const queryCapabilities = (wasm as WasmTransportExtensions).company_capabilities;
+          if (queryCapabilities === undefined) throw new Error("当前 WASM bindings 不支持公司能力面查询，请重建 bindings");
+          ctx.postMessage({ type: "companyCapabilities", requestId: message.requestId, generation: requestedGeneration, capabilities: queryCapabilities(session, message.company) });
+          return;
+        }
+        case "periodExplanation": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("期间解释请求 ID 无效");
+          if (typeof message.company !== "string" || message.company.trim().length === 0 || message.company.length > 64) throw new Error("期间解释公司身份必须是非空且不超过 64 字符的字符串");
+          if (typeof message.periodEnd !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(message.periodEnd)) throw new Error("期间解释 periodEnd 必须是 ISO YYYY-MM-DD");
+          const [session, wasm] = slot.requireHandle();
+          const queryExplanation = (wasm as WasmTransportExtensions).company_period_explanation;
+          if (queryExplanation === undefined) throw new Error("当前 WASM bindings 不支持期间解释查询，请重建 bindings");
+          ctx.postMessage({ type: "periodExplanation", requestId: message.requestId, generation: requestedGeneration, explanation: queryExplanation(session, message.company, message.periodEnd) });
+          return;
+        }
+        case "ownerRightsOfferings": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("配股权益请求 ID 无效");
+          const [session, wasm] = slot.requireHandle();
+          const queryRights = (wasm as WasmTransportExtensions).owner_rights_offerings;
+          if (queryRights === undefined) throw new Error("当前 WASM bindings 不支持本人配股权益查询，请重建 bindings");
+          ctx.postMessage({ type: "ownerRightsOfferings", requestId: message.requestId, generation: requestedGeneration, offerings: queryRights(session) });
+          return;
+        }
+        case "flatWithholdingReceipts": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("简税回执请求 ID 无效");
+          const [session, wasm] = slot.requireHandle();
+          const queryReceipts = (wasm as WasmTransportExtensions).owner_flat_withholding_receipts;
+          if (queryReceipts === undefined) throw new Error("当前 WASM bindings 不支持简税代扣回执查询，请重建 bindings");
+          ctx.postMessage({ type: "flatWithholdingReceipts", requestId: message.requestId, generation: requestedGeneration, receipts: queryReceipts(session) });
           return;
         }
         case "drop": {

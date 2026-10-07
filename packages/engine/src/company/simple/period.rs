@@ -105,8 +105,9 @@ pub struct PeriodGenerationParameters {
     pub variable_expense: PeriodVariableExpenseRule,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub struct AnnualTrendState {
     pub annual_growth_bp: i32,
     pub remaining_months: u16,
@@ -123,15 +124,18 @@ pub struct PeriodGenerationState {
     pub variable_expense_trend: Option<AnnualTrendState>,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub struct TrendSegment {
     pub annual_growth_bp: i32,
     pub months: u8,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+/// 期间变化解释（F 批共同契约的解释查询 wire 类型；复用既有 history 数据）。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub struct PeriodChangeExplanation {
     pub previous: PeriodAmounts,
     pub cycle: SettlementCycle,
@@ -143,9 +147,12 @@ pub struct PeriodChangeExplanation {
     pub revenue_noise_bp: i32,
     pub fixed_expense_noise_bp: i32,
     pub variable_expense_noise_bp: i32,
+    /// 元字符串；无复业事实时为 null（显式区分「无」与缺失）。
     #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
+    #[ts(optional = false, type = "string | null")]
     pub restart_revenue: Option<AccountingAmount>,
     #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
+    #[ts(optional = false, type = "string | null")]
     pub restart_source: Option<String>,
 }
 

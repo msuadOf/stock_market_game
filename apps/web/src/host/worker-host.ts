@@ -34,6 +34,12 @@ import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./engine-host.ts";
 import { parseAccountDividendTaxStatusView, parseDividendTaxOutstandingViews } from "./dividend-tax.ts";
 import { parseCompanyPreferenceRejections, parseRejectedRightsSubscriptions } from "./corporate-action-views.ts";
+import {
+  parseCompanyCapabilities,
+  parseFlatWithholdingReceipts,
+  parseOwnerRightsOfferings,
+  parsePeriodChangeExplanation,
+} from "./company-contract-views.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, type MarketHistoryRequest, type MarketHistoryPage } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, type CurrentMinuteHistoryRequest, type CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 
@@ -664,6 +670,37 @@ export function createWorkerHost(
           const response = await requests.request({ type: "preferenceRejections", requestId: requests.nextRequestId(), generation: requestedGeneration, company }, "preferenceRejections");
           if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("偏好拒绝台账查询属于已过期 generation");
           return parseCompanyPreferenceRejections(response.rejections);
+        },
+        async companyCapabilities(company) {
+          if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("能力面公司身份必须是非空且不超过 64 字符的字符串");
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "companyCapabilities", requestId: requests.nextRequestId(), generation: requestedGeneration, company }, "companyCapabilities");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("公司能力面查询属于已过期 generation");
+          return parseCompanyCapabilities(response.capabilities);
+        },
+        async companyPeriodExplanation(company, periodEnd) {
+          if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("期间解释公司身份必须是非空且不超过 64 字符的字符串");
+          if (typeof periodEnd !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) throw new Error("期间解释 periodEnd 必须是 ISO YYYY-MM-DD");
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "periodExplanation", requestId: requests.nextRequestId(), generation: requestedGeneration, company, periodEnd }, "periodExplanation");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("期间解释查询属于已过期 generation");
+          return parsePeriodChangeExplanation(response.explanation);
+        },
+        async ownerRightsOfferings() {
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "ownerRightsOfferings", requestId: requests.nextRequestId(), generation: requestedGeneration }, "ownerRightsOfferings");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("本人配股权益查询属于已过期 generation");
+          return parseOwnerRightsOfferings(response.offerings);
+        },
+        async ownerFlatWithholdingReceipts() {
+          const requestedGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requests.request({ type: "flatWithholdingReceipts", requestId: requests.nextRequestId(), generation: requestedGeneration }, "flatWithholdingReceipts");
+          if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("简税代扣回执查询属于已过期 generation");
+          return parseFlatWithholdingReceipts(response.receipts);
         },
       };
     }
