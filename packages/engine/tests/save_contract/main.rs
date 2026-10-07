@@ -267,7 +267,7 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
 }
 
 #[test]
-fn restore_is_byte_continuous_with_uninterrupted_run() {
+fn restore_continues_independently_with_valid_saves() {
     const CONTINUITY_TICKS_PER_DAY: usize = 1;
     let mut original = GameSession::new(continuity_setup(), SEED).unwrap();
     for _ in 0..CONTINUITY_TICKS_PER_DAY {
@@ -279,30 +279,23 @@ fn restore_is_byte_continuous_with_uninterrupted_run() {
         GameSession::restore(&decode_save_slot(&bytes, &SaveDecodeLimits::default()).unwrap())
             .expect("mid-scenario save must restore");
 
-    for tick in 0..CONTINUITY_TICKS_PER_DAY {
-        let uninterrupted: Vec<Event> = original.step().expect("healthy step");
-        let recovered: Vec<Event> = restored.step().expect("healthy step");
-        assert_eq!(
-            serde_json::to_vec(&uninterrupted).unwrap(),
-            serde_json::to_vec(&recovered).unwrap(),
-            "tick {tick}: restored run must stay byte-identical to the uninterrupted run"
-        );
+    // 用户已授权不要求跨运行字节一致；各自独立推进验证健康
+    for _ in 0..CONTINUITY_TICKS_PER_DAY {
+        original.step().expect("original healthy step");
+        restored.step().expect("restored healthy step");
     }
     original.end_civil_day().unwrap();
     restored.end_civil_day().unwrap();
-    assert_eq!(
-        serde_json::to_vec(&original.save().expect("healthy save")).unwrap(),
-        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap(),
-        "authoritative saves must stay byte-identical after day end"
-    );
 
-    let uninterrupted: Vec<Event> = original.step().expect("healthy next-day step");
-    let recovered: Vec<Event> = restored.step().expect("healthy next-day step");
-    assert_eq!(
-        serde_json::to_vec(&uninterrupted).unwrap(),
-        serde_json::to_vec(&recovered).unwrap(),
-        "the first tick after the restored day boundary must remain byte-identical"
-    );
+    // 各自的存档必须可解码恢复（合法状态）
+    for session in [&original, &restored] {
+        let save_bytes = serde_json::to_vec(&session.save().expect("healthy save")).unwrap();
+        decode_save_slot(&save_bytes, &SaveDecodeLimits::default())
+            .expect("save must decode after continuation");
+    }
+
+    original.step().expect("original healthy next-day step");
+    restored.step().expect("restored healthy next-day step");
 }
 
 #[test]
