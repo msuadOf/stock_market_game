@@ -87,28 +87,38 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
 pub(in crate::session) fn capture_decision_snapshot(
     shadow: &mut super::GameSession,
 ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
-    capture_decision_snapshot_in_place(shadow)
+    let (view, mut writes) = super::npc_split::npc_split(shadow);
+    capture_decision_snapshot_on(&view, &mut writes)
 }
 
-fn capture_decision_snapshot_in_place(
-    shadow: &mut super::GameSession,
+/// 读视图+写组版本（queue 链转换目标形态）。
+fn capture_decision_snapshot_on(
+    view: &super::npc_split::SessionReadView<'_>,
+    writes: &mut super::npc_split::NpcWriteFields<'_>,
 ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
-    let tick = shadow.state.tick;
-    let phase = shadow.phase();
-    validate_market_view_inputs(shadow)?;
-    let market = shadow.build_market_view();
+    let tick = view.tick;
+    let phase = view.phase();
+    validate_market_view_inputs_on(view)?;
+    let market = crate::session::views::build_market_view_on(view);
 
-    let (due_npc_ids, popped) = shadow.pop_due_npc_ids(tick);
+    let (due_npc_ids, popped) = {
+        let attention = &*writes.npc_attention;
+        writes.attention_scheduler.pop_due(tick, |id| {
+            attention
+                .get(&id)
+                .map(|state| state.next_attention_candidate_tick)
+        })
+    };
     let attention_signal = super::super::attention::market_attention_signal(&market);
     if let Some(account) = popped
         .iter()
         .map(|(_, account)| *account)
-        .find(|account| !shadow.state.npc_attention.contains_key(account))
+        .find(|account| !writes.npc_attention.contains_key(account))
     {
         return Err(DecisionSnapshotCaptureError::MissingAttention(account));
     }
-    let accounts = &shadow.state.accounts;
-    let attention_results = shadow.state.npc_attention.mutate_existing_parallel(
+    let accounts = &view.accounts;
+    let attention_results = writes.npc_attention.mutate_existing_parallel(
         &due_npc_ids,
         DecisionSnapshotCaptureError::MissingAttention,
         |account, attention| {
@@ -141,44 +151,44 @@ fn capture_decision_snapshot_in_place(
         }
     }
 
-    let market_minute = shadow.current_market_minute();
+    let market_minute = view.current_market_minute();
     let moment = crate::experience::ExperienceMoment {
-        civil_date: shadow.civil_date(),
+        civil_date: view.civil_date(),
         market_minute,
-        trading_day: u64::from(shadow.state.day),
+        trading_day: u64::from(view.day),
     };
     let (working_continuous, working_auction) = if accepted_due_npc_ids.is_empty() {
         (BTreeMap::new(), BTreeMap::new())
     } else {
-        shadow.working_orders_for_accounts(&accepted_due_npc_ids.iter().copied().collect())
+        crate::session::self_views::working_orders_for_accounts_on(
+            view,
+            &accepted_due_npc_ids.iter().copied().collect(),
+        )
     };
     let has_retail_observer = accepted_due_npc_ids.iter().any(|account| {
-        shadow
-            .state
-            .accounts
-            .get(account)
+        view.accounts.get(account)
             .is_some_and(|entry| entry.kind() == AccountKind::Retail)
     });
     let behavior_market = has_retail_observer
-        .then(|| build_behavior_market_checked(shadow))
+        .then(|| build_behavior_market_checked(view))
         .transpose()?;
+    let experience = &*writes.retail_experience;
     let prepared = accepted_due_npc_ids
         .par_iter()
         .map(|account| {
-            let entry = shadow
-                .state
+            let entry = view
                 .accounts
                 .get(account)
                 .ok_or(DecisionSnapshotCaptureError::MissingAccount(*account))?;
             let observation =
-                CapturedExperienceObservation::capture(shadow, *account, market_minute)?;
+                CapturedExperienceObservation::capture_on(experience, view, *account, market_minute)?;
             let CapturedAccountObservation {
                 self_view,
                 account_risk,
                 experience,
             } = observation.consume(*account, entry.kind(), entry.cash(), |self_positions| {
                 build_self_view_for(
-                    shadow,
+                    view,
                     *account,
                     phase,
                     &working_continuous,
@@ -228,14 +238,17 @@ fn capture_decision_snapshot_in_place(
         }
     }
 
-    shadow
-        .state
+    writes
         .retail_experience
         .replace_existing_shared_parallel(experience_updates)
         .map_err(DecisionSnapshotCaptureError::MissingAccount)?;
-    let mut retail_analysis = shadow
-        .capture_retail_analysis(&accepted_due_npc_ids, &market)
-        .map_err(DecisionSnapshotCaptureError::RetailAnalysis)?;
+    let mut retail_analysis = crate::GameSession::capture_retail_analysis_on(
+        view,
+        writes,
+        &accepted_due_npc_ids,
+        &market,
+    )
+    .map_err(DecisionSnapshotCaptureError::RetailAnalysis)?;
     let accounts = accounts
         .into_iter()
         .map(|(account, input)| {
@@ -247,7 +260,7 @@ fn capture_decision_snapshot_in_place(
         .collect();
     let snapshot = DecisionSnapshot::new(
         tick,
-        shadow.state.seed,
+        view.seed,
         phase,
         market_minute,
         market,
@@ -256,10 +269,10 @@ fn capture_decision_snapshot_in_place(
         accounts,
     )
     .map_err(DecisionSnapshotCaptureError::Snapshot)?
-    .with_urgency_policy(shadow.state.urgency_policy)?;
+    .with_urgency_policy(view.urgency_policy.clone())?;
 
     for (tick, account) in scheduled {
-        shadow.state.attention_scheduler.enqueue(tick, account);
+        writes.attention_scheduler.enqueue(tick, account);
     }
     Ok(CapturedDecisionSnapshot {
         snapshot: Arc::new(snapshot),
@@ -271,19 +284,26 @@ fn capture_decision_snapshot_in_place(
 fn validate_market_view_inputs(
     session: &super::GameSession,
 ) -> Result<(), DecisionSnapshotCaptureError> {
-    for code in session.state.markets.keys() {
+    validate_market_view_inputs_on(&session.read_view())
+}
+
+/// 读视图版本。
+fn validate_market_view_inputs_on(
+    view: &super::npc_split::SessionReadView<'_>,
+) -> Result<(), DecisionSnapshotCaptureError> {
+    for code in view.markets.keys() {
         for (location, present) in [
             (
                 "market price history",
-                session.state.price_history.contains_key(code),
+                view.price_history.contains_key(code),
             ),
             (
                 "market-minute history",
-                session.state.market_minute_closes.contains_key(code),
+                view.market_minute_closes.contains_key(code),
             ),
             (
                 "daily history",
-                session.state.candle_book.histories().contains_key(code),
+                view.candle_book.histories().contains_key(code),
             ),
         ] {
             if !present {
@@ -319,11 +339,20 @@ impl CapturedExperienceObservation {
         account: AccountId,
         market_minute: u64,
     ) -> Result<Self, DecisionSnapshotCaptureError> {
-        let Some(mut experience) = session.state.retail_experience.get(&account).cloned() else {
+        Self::capture_on(&session.state.retail_experience, &session.read_view(), account, market_minute)
+    }
+
+    /// 读视图+写组再借用版本：retail_experience 由调用方经 &*writes 再借用传入。
+    fn capture_on(
+        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
+        view: &super::npc_split::SessionReadView<'_>,
+        account: AccountId,
+        market_minute: u64,
+    ) -> Result<Self, DecisionSnapshotCaptureError> {
+        let Some(mut experience) = experience.get(&account).cloned() else {
             return Ok(Self::NoExperience);
         };
-        let entry = session
-            .state
+        let entry = view
             .accounts
             .get(&account)
             .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
@@ -331,8 +360,7 @@ impl CapturedExperienceObservation {
         let mut positions = Vec::with_capacity(entry.positions().len());
         let mut self_positions = BTreeMap::new();
         for (code, position) in entry.positions() {
-            let price = session
-                .state
+            let price = view
                 .markets
                 .get(code)
                 .ok_or_else(|| DecisionSnapshotCaptureError::MissingMarketData {
@@ -370,9 +398,9 @@ impl CapturedExperienceObservation {
         }
         let held: BTreeSet<_> = self_positions.keys().cloned().collect();
         let moment = crate::experience::ExperienceMoment {
-            civil_date: session.civil_date(),
+            civil_date: view.civil_date(),
             market_minute,
-            trading_day: u64::from(session.state.day),
+            trading_day: u64::from(view.day),
         };
         let mut risk_positions = BTreeMap::new();
         for (code, price, qty, cost_price) in positions {
@@ -493,7 +521,7 @@ impl SelfViewCashReservations {
 }
 
 fn build_self_view_for(
-    session: &super::GameSession,
+    view: &super::npc_split::SessionReadView<'_>,
     account: AccountId,
     phase: crate::TradingPhase,
     continuous: &super::super::ContinuousOrdersByAccount,
@@ -501,10 +529,9 @@ fn build_self_view_for(
     self_positions: Option<BTreeMap<StockId, PositionView>>,
 ) -> Result<SelfView, DecisionSnapshotCaptureError> {
     let auction_cancelable = phase == crate::TradingPhase::CallAuction
-        && session.state.tick % session.state.setup.ticks_per_day
-            < session.state.setup.auction_ticks / 3;
-    let entry = session
-        .state
+        && view.tick % view.setup.ticks_per_day
+            < view.setup.auction_ticks / 3;
+    let entry = view
         .accounts
         .get(&account)
         .ok_or(DecisionSnapshotCaptureError::MissingAccount(account))?;
@@ -513,7 +540,7 @@ fn build_self_view_for(
         reservations
             .record(
                 super::super::live_cash_reservation(
-                    &session.state.setup.config,
+                    &view.setup.config,
                     order.side,
                     order.price,
                     order.qty,
@@ -536,7 +563,7 @@ fn build_self_view_for(
         reservations
             .record(
                 super::super::live_cash_reservation(
-                    &session.state.setup.config,
+                    &view.setup.config,
                     order.side,
                     order.limit,
                     order.qty,
@@ -582,9 +609,9 @@ fn build_self_view_for(
 }
 
 fn build_behavior_market_checked(
-    session: &super::GameSession,
+    view: &super::npc_split::SessionReadView<'_>,
 ) -> Result<BehaviorMarketObservation, DecisionSnapshotCaptureError> {
-    let price_paths = session.market_price_path_observations().map_err(|source| {
+    let price_paths = crate::session::views::market_price_path_observations_on(view).map_err(|source| {
         DecisionSnapshotCaptureError::Observation {
             location: "behavior price paths",
             account: None,
