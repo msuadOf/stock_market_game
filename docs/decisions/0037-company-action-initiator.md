@@ -37,3 +37,19 @@
 - [ADR-0038](0038-simple-issuer-synthetic-settlement-funds.md)：回购结算资金来源。
 - [ADR-0039](0039-rights-placement-split-scope-and-toggle.md)：配股／增发／拆股范围与新局开关。
 - [Q12](../open-questions.md)：资金进出总边界。
+
+## 实现批次用户决策注记（2026-10-07）
+
+用户在 P 批（simple 偏好系统）开工时进一步拍板（原文要点）：「偏好系统（这个是决策，
+是策略，是指导机制的东西）是 company/simple 和 company/simulation 这两种不同的模型内部
+的东西，simple 做个最简单的就可以了，要求简单性能占用少」。
+
+据此落实的实现口径（见 `docs/trading-rules.md`「公司行为偏好自动提案」与
+[台账](../../agents/company-system/simple-preferences.md)）：
+
+- 偏好类型与评估逻辑落在 `packages/engine/src/company/simple/preferences.rs`（模型内部），
+  不进入 `company/` 共同层或 session；共同层只暴露最小接口（按公司取偏好、结算完成判定、
+  记录/读取拒绝台账）。
+- simple 只实现最简可用：现金分红与送转两个偏好项，轻量整数/定点比较、只在结算周期末日
+  评估、无每 tick 开销；配股/增发/回购只留类型扩展位。simulation 的偏好体系由其独立分支
+  另行设计，不受本实现约束。

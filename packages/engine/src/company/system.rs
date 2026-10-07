@@ -417,6 +417,83 @@ impl CompanySystem {
             CompanyImplementation::Simple(state) => state.advanced_through,
         }
     }
+    /// 该日期推进是否恰为一个结算周期的完成（周期末日结算）。偏好提案只在
+    /// 这种日期的日结候选事务内评估（ADR-0037），本方法即共同层的最小评估钩子。
+    pub fn settlement_completed_on(&self, date: CivilDate) -> Result<bool, CompanySystemError> {
+        match &self.implementation {
+            CompanyImplementation::Simple(state) => {
+                Ok(state.config.settlement_cycle.containing(date)?.1 == date)
+            }
+        }
+    }
+    /// 按公司读取 Simple 行为偏好（ADR-0037；模型内部配置，共同层只透出读取）。
+    /// 未配置的公司返回空偏好（两项皆 `None`，不自动产生方案）。
+    pub fn simple_preferences(
+        &self,
+        company: &CompanyId,
+    ) -> Result<super::simple::preferences::SimpleCompanyPreferences, CompanySystemError> {
+        match &self.implementation {
+            CompanyImplementation::Simple(state) => state
+                .config
+                .companies
+                .iter()
+                .find(|config| &config.company == company)
+                .map(|config| config.preferences.clone())
+                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+        }
+    }
+    /// 如实记录一笔被制度拒绝的偏好提案；同键同因幂等，同键异因显式报错。
+    pub fn record_preference_rejection(
+        &mut self,
+        company: &CompanyId,
+        kind: super::simple::preferences::SimplePreferenceProposalKind,
+        evaluated_on: CivilDate,
+        detail: String,
+    ) -> Result<(), CompanySystemError> {
+        let result = (|| {
+            let state = match &mut self.implementation {
+                CompanyImplementation::Simple(state) => state,
+            };
+            let entry = state
+                .companies
+                .get_mut(company)
+                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0)))?;
+            entry
+                .preference_ledger
+                .record_rejection(company, kind, evaluated_on, detail)
+        })();
+        if result.is_ok() {
+            self.hash_cache = CompanySystemHashCache::default();
+        }
+        result
+    }
+    /// 该公司该类别最近一次偏好提案被拒的评估日（台账的最小只读投影）。
+    pub fn last_preference_rejection_on(
+        &self,
+        company: &CompanyId,
+        kind: super::simple::preferences::SimplePreferenceProposalKind,
+    ) -> Result<Option<CivilDate>, CompanySystemError> {
+        match &self.implementation {
+            CompanyImplementation::Simple(state) => state
+                .companies
+                .get(company)
+                .map(|entry| entry.preference_ledger.last_rejection_on(company, kind))
+                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+        }
+    }
+    /// 该公司的偏好提案拒绝台账（只读；宿主/UI 呈现由后续批次接线）。
+    pub fn preference_rejections(
+        &self,
+        company: &CompanyId,
+    ) -> Result<&[super::simple::preferences::SimplePreferenceRejection], CompanySystemError> {
+        match &self.implementation {
+            CompanyImplementation::Simple(state) => state
+                .companies
+                .get(company)
+                .map(|entry| entry.preference_ledger.rejections.as_slice())
+                .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0))),
+        }
+    }
     pub fn config(&self) -> CompanySystemConfig {
         match &self.implementation {
             CompanyImplementation::Simple(state) => {

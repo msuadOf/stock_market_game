@@ -1,4 +1,4 @@
-import { array, decimal, exact, record, string, SaveSchemaError } from "../primitives.ts";
+import { array, decimal, exact, oneOf, record, string, SaveSchemaError } from "../primitives.ts";
 import { parseCompanySpec } from "./accounting/spec.ts";
 import { parseCompanySystemConfig } from "./system-config.ts";
 import { parsePeriodAmounts, parsePeriodChangeExplanation, parsePeriodGenerationState, settlementMonths } from "./period-generation.ts";
@@ -15,6 +15,33 @@ function rng(value: unknown, path: string) {
   const state = decimal(parsed.state, `${path}.state`);
   if (!/^(0|[1-9]\d*)$/.test(state)) throw new SaveSchemaError(`${path}.state`, "必须为规范 u64 字符串");
   return { state };
+}
+
+/**
+ * 偏好提案拒绝台账（ADR-0037）：严格持久化字段，缺失显式拒绝；键唯一、
+ * 日期不得晚于已推进日，与 engine `SimplePreferenceLedger::validate` 一致。
+ */
+function parseSimplePreferenceLedger(value: unknown, path: string, companyId: string, advancedThrough: string) {
+  const parsed = record(value, path);
+  exact(parsed, ["rejections"], path);
+  const seen = new Set<string>();
+  const rejections = array(parsed.rejections, `${path}.rejections`).map((entry, index) => {
+    const rowPath = `${path}.rejections[${index}]`;
+    const row = record(entry, rowPath);
+    exact(row, ["company", "evaluated_on", "kind", "detail"], rowPath);
+    const company = string(row.company, `${rowPath}.company`);
+    const evaluatedOn = civilDate(row.evaluated_on, `${rowPath}.evaluated_on`);
+    const kind = oneOf(row.kind, `${rowPath}.kind`, ["CashDividend", "StockDistribution"] as const);
+    const detail = string(row.detail, `${rowPath}.detail`);
+    if (company !== companyId) throw new SaveSchemaError(`${rowPath}.company`, "拒绝台账公司身份与所属公司状态不一致");
+    if (evaluatedOn > advancedThrough) throw new SaveSchemaError(`${rowPath}.evaluated_on`, "拒绝台账评估日期晚于公司系统已推进日");
+    if (detail.trim().length === 0) throw new SaveSchemaError(`${rowPath}.detail`, "拒绝原因必须非空");
+    const key = `${kind}:${evaluatedOn}`;
+    if (seen.has(key)) throw new SaveSchemaError(rowPath, "拒绝台账含重复 (类别, 评估日) 键");
+    seen.add(key);
+    return { company, evaluated_on: evaluatedOn, kind, detail };
+  });
+  return { rejections };
 }
 
 function cyclePeriod(date: string, months: number): readonly [string, string] {
@@ -68,7 +95,7 @@ export function parseCompanySystemState(value: unknown, path = "company_system")
   if (ids.length !== Object.keys(issuers).length || ids.some(id => !Object.hasOwn(issuers, id))) throw new SaveSchemaError(`${statePath}.config.companies`, "配置必须与发行人一一对应");
   const companies = Object.fromEntries(Object.entries(entries).map(([id, entry]) => {
     const companyPath = `${statePath}.companies.${id}`;
-    const company = record(entry, companyPath); exact(company, ["generation", "finance", "pending_restart"], companyPath);
+    const company = record(entry, companyPath); exact(company, ["generation", "finance", "pending_restart", "preference_ledger"], companyPath);
     const generation = parsePeriodGenerationState(company.generation, `${companyPath}.generation`);
     const finance = parseSimpleFinanceState(company.finance, `${companyPath}.finance`);
     if (finance.opening_date !== nextDate(historyStart, -1)) throw new SaveSchemaError(`${companyPath}.finance.opening_date`, "财务开账日期必须为前史开始前一天");
@@ -85,7 +112,8 @@ export function parseCompanySystemState(value: unknown, path = "company_system")
       if (amount === "0.00" || source.trim().length === 0 || generation.amounts.revenue !== "0.00") throw new SaveSchemaError(`${companyPath}.pending_restart`, "仅零收入公司可待执行具有正金额与来源的复业");
       pendingRestart = [amount, source];
     }
-    return [id, { generation, finance, pending_restart: pendingRestart }];
+    const preferenceLedger = parseSimplePreferenceLedger(company.preference_ledger, `${companyPath}.preference_ledger`, id, advancedThrough);
+    return [id, { generation, finance, pending_restart: pendingRestart, preference_ledger: preferenceLedger }];
   }));
   const history = array(state.history, `${statePath}.history`).map((entry, index) => {
     const entryPath = `${statePath}.history[${index}]`;
