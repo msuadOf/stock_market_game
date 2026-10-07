@@ -66,7 +66,7 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
   0. （已完成项 1、2——保留编号防引用错乱）
   3. execution/orders.rs:11 materialize_parent_order_intents → on(view, &mut writes.parent_orders, ...)。**棒次 4 侦察发现（必须先处理）**：
      - **已解决（棒次 5 首笔）**：npc_order_lifecycles 已改 owned Vec 克隆快照并列入写组第 12 字段，拆分测试含并发 push 隔离断言（提交见 git log，lib 基线一致）。
-     - orders.rs:94/165 `self.append_parent_child_or_working_intent(...)` 写集未审计（可能触及 pending_plan_events——潜在第 12 写字段）；orders.rs:251 remaining_qty 读集未审计。
+     - **已审计（棒次 6）**：`append_parent_child_or_working_intent`（orders.rs:184）体内 self.state 仅触 setup（无 pending_plan_events 写，非第 13 写字段）；`remove_npc_order_lifecycle`（session.rs:2936）仅写 npc_order_lifecycles（已在写组）。**写组定格 12 字段**。remaining_qty 为 Order 内部读（orders.rs:251 作用于订单条目，非 session）。
      - orders.rs 其余读：setup.config.lot_size、self.phase()（view 已有）、tick。
   4. execution/reconcile_plan.rs:25 plan_npc_working_order_reconciliation → on(view,...)：读集仅 tick/setup（:63-64 已核），其余参数传入；177 行小文件，可先转。
   4. decision_snapshot_capture.rs 全文件（capture/view+writes、experience 观察读 retail_experience 经 &*writes 再借用、build_self_view_for/build_behavior_market_checked/validate_market_view_inputs 全 view 化）；
