@@ -73,10 +73,10 @@ impl SimpleFinanceState {
             ));
         }
         for (plan_id, plan) in &self.dividends {
-            // 送转入账会按面值演进注册资本法定事实；分红声明冻结的是其批准时点的
-            // 注册资本。按「当前法定注册资本 − 批准日当天及之后才入账的送转股本
-            // 增加」重构批准时点口径：批准发生在日内、送转入账发生在日终，因此
-            // 批准日当天的入账也尚未反映在声明口径中。
+            // 送转入账与配股结算都会按面值演进注册资本法定事实；分红声明冻结的是
+            // 其批准时点的注册资本。按「当前法定注册资本 − 批准日当天及之后才
+            // 入账的送转/配股股本增加」重构批准时点口径：批准发生在日内、入账
+            // 发生在日终，因此批准日当天的入账也尚未反映在声明口径中。
             let mut later_stock_credits = AccountingAmount::ZERO;
             for fact in self
                 .stock_distributions
@@ -87,6 +87,22 @@ impl SimpleFinanceState {
                 })
             {
                 later_stock_credits = later_stock_credits.add(fact.capital_increase)?;
+            }
+            // 配股结算（面值×实际新增股数）同样演进注册资本：漏扣会使「先批准
+            // 分红、后结算配股」的局在结算后的财务校验中误判声明注册资本不一致
+            //（修复轮边界用例发现；与送转同一重构口径）。
+            for fact in self
+                .rights_offerings
+                .values()
+                .filter(|fact| {
+                    fact.settled_on
+                        .is_some_and(|settled| settled >= plan.declaration.approved_on)
+                })
+            {
+                later_stock_credits = later_stock_credits.add(
+                    fact.capital_increase
+                        .unwrap_or_else(|| AccountingAmount::from_cents(0)),
+                )?;
             }
             let capital_at_approval = self
                 .legal_facts

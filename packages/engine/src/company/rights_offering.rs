@@ -654,6 +654,20 @@ pub fn rights_tie_break_seed(event_id: &str) -> u64 {
     value ^ (value >> 31)
 }
 
+/// 除权除息组的配股分量谓词：实际认购折算的整数截位配股比例（百万分之一股）
+/// 是否为正。
+///
+/// 这是首 tick 除权准备（`session::failure`）与恢复勾稽
+/// （`session::corporate_actions`）的**同一**权威谓词，两侧不得各自表述：
+/// `0 < paid < issued_before / 1e6` 的微量认购截位比例为零，对参考价无分量
+/// 影响（远低于最小价位单位），不构成组分量；其实际认购与结算事实仍由认购
+/// 记录和结算回执完整承载，不因不入组而丢失。
+pub fn forms_ex_rights_component(paid_shares: u64, issued_shares_before: u64) -> bool {
+    paid_shares > 0
+        && issued_shares_before > 0
+        && u128::from(paid_shares) * 1_000_000 / u128::from(issued_shares_before) > 0
+}
+
 /// 配股认购申请来源。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

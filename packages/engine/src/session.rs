@@ -3106,10 +3106,63 @@ impl GameSession {
                     "认购股数超过持有权利（不超权利认购）".into(),
                 ));
             }
-        } else if entitlement.open_subscription_shares == 0 {
-            return Err(SessionError::InvalidSetup(
-                "该账户无配股权利且方案无公开配售额度".into(),
-            ));
+        } else {
+            if entitlement.open_subscription_shares == 0 {
+                return Err(SessionError::InvalidSetup(
+                    "该账户无配股权利且方案无公开配售额度".into(),
+                ));
+            }
+            // 公开配售：按「剩余公开额度 − 已排队未结算量」受理，超额显式拒绝
+            // （不静默、不截断、不入队）——否则日终 record_subscription 的额度
+            // 校验会令整个日终失败且回滚后队列仍在，一次超额提交即永久卡死。
+            let settled_open_used: u64 = self
+                .state
+                .corporate_actions
+                .rights_offerings
+                .iter()
+                .find(|existing| existing.plan().event_id == event_id)
+                .map(|existing| {
+                    existing
+                        .subscriptions()
+                        .iter()
+                        .filter(|record| {
+                            !entitlement
+                                .entitlements
+                                .iter()
+                                .any(|entry| entry.holder == record.holder)
+                        })
+                        .map(|record| record.requested_shares)
+                        .try_fold(0_u64, |sum, requested| sum.checked_add(requested))
+                })
+                .unwrap_or(Some(0))
+                .ok_or_else(|| SessionError::InvalidSetup("公开配售已入账认购合计溢出".into()))?;
+            let queued_open_used: u64 = self
+                .state
+                .corporate_actions
+                .rights_subscription_queue
+                .iter()
+                .filter(|queued| {
+                    queued.event_id == event_id
+                        && !entitlement.entitlements.iter().any(|entry| {
+                            entry.holder
+                                == crate::company::share_registry::HolderId::Account(queued.account)
+                        })
+                })
+                .map(|queued| queued.requested_shares)
+                .try_fold(0_u64, |sum, requested| sum.checked_add(requested))
+                .ok_or_else(|| SessionError::InvalidSetup("公开配售排队认购合计溢出".into()))?;
+            let remaining = entitlement
+                .open_subscription_shares
+                .checked_sub(settled_open_used)
+                .and_then(|value| value.checked_sub(queued_open_used))
+                .ok_or_else(|| {
+                    SessionError::InvalidSetup("公开配售额度与已受理认购不一致".into())
+                })?;
+            if shares > remaining {
+                return Err(SessionError::InvalidSetup(format!(
+                    "公开配售剩余额度 {remaining} 股，本次申请 {shares} 股超出剩余额度；超额部分显式拒绝，不截断不入队，请调减后重试"
+                )));
+            }
         }
         if self
             .state
@@ -3179,6 +3232,27 @@ impl GameSession {
             .any(|existing| existing.plan().event_id == plan.event_id)
         {
             return Err(SessionError::InvalidSetup("回购方案 id 已存在".into()));
+        }
+        // 同一证券同时只能有一个未完成回购方案：日终成交回执按证券聚合、不区分
+        // 方案，第二个未完成方案会把同一笔真实成交记入多本账簿，完成勾稽必然
+        // 失真（完成或取消后才可批准同证券新方案）。
+        if self
+            .state
+            .corporate_actions
+            .issuer_repurchases
+            .iter()
+            .any(|existing| {
+                existing.plan().stock == plan.stock
+                    && !matches!(
+                        existing.status(),
+                        crate::company::issuer_repurchase::IssuerRepurchaseStatus::Completed
+                            | crate::company::issuer_repurchase::IssuerRepurchaseStatus::Cancelled
+                    )
+            })
+        {
+            return Err(SessionError::InvalidSetup(
+                "该证券已有未完成的回购方案；同一证券同时只能有一个未完成方案，完成或取消后才能批准新方案".into(),
+            ));
         }
         let repurchase_account = self.issuer_repurchase_account_id().ok_or_else(|| {
             SessionError::InvalidSetup("回购专用账户缺失（开关开启时应确定性创建）".into())

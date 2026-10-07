@@ -24,6 +24,9 @@ pub struct SessionCorporateActions {
     /// 盘中显式认购排队（玩家／宿主当日提交，日终划扣后转入账簿）。
     #[ts(type = "import(\"../../save/schema/corporate-actions\").QueuedRightsSubscription[]")]
     pub rights_subscription_queue: Vec<QueuedRightsSubscription>,
+    /// 日终公开配售超额认购的显式拒绝回执（受理侧额度校验之后的极端竞态兜底）。
+    #[ts(type = "import(\"../../save/schema/corporate-actions\").RejectedRightsSubscription[]")]
+    pub rejected_rights_subscriptions: Vec<RejectedRightsSubscription>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").IssuerRepurchaseBook[]")]
     pub issuer_repurchases: Vec<crate::company::issuer_repurchase::IssuerRepurchaseBook>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").AccountDividendGrossReceipt[]")]
@@ -46,6 +49,26 @@ pub struct QueuedRightsSubscription {
     #[ts(type = "string")]
     pub requested_shares: u64,
     pub submitted_on: crate::calendar::CivilDate,
+}
+
+/// 日终对排队认购的显式拒绝回执：受理侧已按剩余公开额度校验，本回执只兜底
+/// 恢复后队列与额度不一致等极端竞态——按队列序处理至额度耗尽，超出部分显式
+/// 拒绝、留痕并从队列移除，日终不因单条排队失败而整日失败（幂等、可恢复）。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct RejectedRightsSubscription {
+    pub event_id: String,
+    #[ts(type = "string")]
+    pub account: AccountId,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    #[ts(type = "string")]
+    pub requested_shares: u64,
+    pub submitted_on: crate::calendar::CivilDate,
+    /// 拒绝发生的日终日期（≥ 提交日）。
+    pub rejected_on: crate::calendar::CivilDate,
+    /// 拒绝原因（非空；当前唯一成因是公开配售剩余额度耗尽）。
+    pub reason: String,
 }
 
 /// 已应用到行情前收锚的除权除息组：同一证券同一除权日只产生一个参考价，
@@ -802,16 +825,64 @@ impl SessionCorporateActions {
                             })?;
                     }
                 }
-                // 当日排队的显式认购：现金复核后划扣（不足部分放弃并如实记录）。
+                // 排队的显式认购（含此前日终失败回滚遗留的陈旧条目）：按入队
+                // 顺序处理，现金复核后划扣（不足部分放弃并如实记录）。极端
+                // 竞态（如恢复后队列与额度不一致）下，超额度或无法入账的条目
+                // 出显式拒绝回执并从队列移除，不令整个日终失败（幂等、留痕）。
+                let entitlement_receipt = self.rights_offerings[index]
+                    .entitlement()
+                    .cloned()
+                    .ok_or_else(|| {
+                        SessionCorporateActionsError::Invalid("配股认购处理缺少权证回执".into())
+                    })?;
                 let queue: Vec<QueuedRightsSubscription> = self
                     .rights_subscription_queue
                     .iter()
                     .filter(|queued| {
-                        queued.event_id == plan.event_id && queued.submitted_on == day
+                        queued.event_id == plan.event_id && queued.submitted_on <= day
                     })
                     .cloned()
                     .collect();
+                // 公开配售剩余额度 = 公开额度 − 已入账认购（无具名权利持有人）。
+                let mut open_remaining = entitlement_receipt.open_subscription_shares;
+                for record in self.rights_offerings[index].subscriptions() {
+                    if !entitlement_receipt
+                        .entitlements
+                        .iter()
+                        .any(|entry| entry.holder == record.holder)
+                    {
+                        open_remaining = open_remaining.checked_sub(record.requested_shares).ok_or_else(|| {
+                            SessionCorporateActionsError::Invalid(
+                                "配股已入账认购超出公开配售额度".into(),
+                            )
+                        })?;
+                    }
+                }
                 for queued in queue {
+                    let holder = HolderId::Account(queued.account);
+                    let open_path = !entitlement_receipt
+                        .entitlements
+                        .iter()
+                        .any(|entry| entry.holder == holder);
+                    if open_path && queued.requested_shares > open_remaining {
+                        self.rejected_rights_subscriptions
+                            .push(RejectedRightsSubscription {
+                                event_id: queued.event_id.clone(),
+                                account: queued.account,
+                                requested_shares: queued.requested_shares,
+                                submitted_on: queued.submitted_on,
+                                rejected_on: day,
+                                reason: format!(
+                                    "公开配售剩余额度 {open_remaining} 股，申请 {} 股超出额度，按队列序显式拒绝",
+                                    queued.requested_shares
+                                ),
+                            });
+                        self.rights_subscription_queue.retain(|existing| {
+                            !(existing.event_id == queued.event_id
+                                && existing.account == queued.account)
+                        });
+                        continue;
+                    }
                     let price = plan.price_per_share;
                     let cash = accounts
                         .get(&queued.account)
@@ -830,6 +901,34 @@ impl SessionCorporateActions {
                             SessionCorporateActionsError::Invalid("配股缴款金额溢出".into())
                         })?,
                     );
+                    // 先入账后划扣：入账被拒时未发生任何现金变动，显式拒绝
+                    // 留痕并移除，不令整个日终失败。
+                    let record = crate::company::rights_offering::RightsSubscriptionRecord {
+                        holder,
+                        requested_shares: queued.requested_shares,
+                        price_per_share: price,
+                        submitted_on: queued.submitted_on,
+                        origin: crate::company::rights_offering::SubscriptionOrigin::Explicit,
+                        paid_shares: paid,
+                        paid_amount,
+                        waived_shares: queued.requested_shares - paid,
+                    };
+                    if let Err(error) = self.rights_offerings[index].record_subscription(record) {
+                        self.rejected_rights_subscriptions
+                            .push(RejectedRightsSubscription {
+                                event_id: queued.event_id.clone(),
+                                account: queued.account,
+                                requested_shares: queued.requested_shares,
+                                submitted_on: queued.submitted_on,
+                                rejected_on: day,
+                                reason: format!("配股认购入账校验失败：{error}"),
+                            });
+                        self.rights_subscription_queue.retain(|existing| {
+                            !(existing.event_id == queued.event_id
+                                && existing.account == queued.account)
+                        });
+                        continue;
+                    }
                     if paid > 0 {
                         accounts
                             .get_mut(&queued.account)
@@ -844,24 +943,12 @@ impl SessionCorporateActions {
                                 SessionCorporateActionsError::Invalid(error.to_string())
                             })?;
                     }
-                    self.rights_offerings[index]
-                        .record_subscription(
-                            crate::company::rights_offering::RightsSubscriptionRecord {
-                                holder: HolderId::Account(queued.account),
-                                requested_shares: queued.requested_shares,
-                                price_per_share: price,
-                                submitted_on: day,
-                                origin: crate::company::rights_offering::SubscriptionOrigin::Explicit,
-                                paid_shares: paid,
-                                paid_amount,
-                                waived_shares: queued.requested_shares - paid,
-                            },
-                        )
-                        .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                    if open_path {
+                        open_remaining -= queued.requested_shares;
+                    }
                     self.rights_subscription_queue.retain(|existing| {
                         !(existing.event_id == queued.event_id
-                            && existing.account == queued.account
-                            && existing.submitted_on == queued.submitted_on)
+                            && existing.account == queued.account)
                     });
                 }
             }
@@ -1854,6 +1941,42 @@ impl SessionCorporateActions {
                 ));
             }
         }
+        // 拒绝回执勾稽：身份非空、账户与事件存在、日期有序、原因非空；
+        // 同一 (event, account) 只能有一条回执，且不得同时存在已入账认购
+        // （净认购唯一性：一个持有人要么入账、要么被拒，不能两者皆是）。
+        let mut rejected_keys = BTreeSet::new();
+        for receipt in &self.rejected_rights_subscriptions {
+            if receipt.event_id.trim().is_empty()
+                || receipt.requested_shares == 0
+                || receipt.reason.trim().is_empty()
+                || receipt.rejected_on < receipt.submitted_on
+                || !accounts.contains_key(&receipt.account)
+                || !self
+                    .rights_offerings
+                    .iter()
+                    .any(|book| book.plan().event_id == receipt.event_id)
+                || !rejected_keys.insert((receipt.event_id.clone(), receipt.account))
+            {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "配股认购拒绝回执事实非法".into(),
+                ));
+            }
+            let subscribed = self
+                .rights_offerings
+                .iter()
+                .find(|book| book.plan().event_id == receipt.event_id)
+                .map(|book| {
+                    book.subscriptions()
+                        .iter()
+                        .any(|record| record.holder == HolderId::Account(receipt.account))
+                })
+                .unwrap_or(false);
+            if subscribed {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "配股认购拒绝回执与已入账认购并存".into(),
+                ));
+            }
+        }
         company_system
             .validate_rights_offering_books(&self.rights_offerings)
             .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
@@ -1958,13 +2081,18 @@ impl SessionCorporateActions {
                     book.plan().stock == group.stock
                         && book.plan().ex_rights_on == group.date
                         && book.registration().is_some()
-                        // 实际认购为零的事件不产生除权锚（与首 tick 准备一致）。
-                        && book
-                            .subscriptions()
-                            .iter()
-                            .map(|record| record.paid_shares)
-                            .sum::<u64>()
-                            > 0
+                        // 除权组分量谓词与首 tick 准备一致：实际认购为零、或
+                        // 整数截位比例为零的微量认购都不构成组分量
+                        // （forms_ex_rights_component 为两侧共同权威实现）。
+                        && crate::company::rights_offering::forms_ex_rights_component(
+                            book.subscriptions()
+                                .iter()
+                                .map(|record| record.paid_shares)
+                                .sum::<u64>(),
+                            book.entitlement()
+                                .map(|receipt| receipt.issued_shares_before)
+                                .unwrap_or(0),
+                        )
                 })
                 .map(|book| book.plan().event_id.clone())
                 .collect();
@@ -2614,6 +2742,7 @@ mod tests {
             stock_distributions: vec![],
             rights_offerings: vec![],
             rights_subscription_queue: vec![],
+            rejected_rights_subscriptions: vec![],
             issuer_repurchases: vec![],
             applied_ex_reference_groups: vec![],
         };

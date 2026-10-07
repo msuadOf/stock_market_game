@@ -202,7 +202,9 @@ impl GameSession {
                     description: format!("配股事件 {} 的实际比例溢出", plan.event_id),
                     location: "GameSession::prepare_ex_references_for_current_date".into(),
                 })?;
-            if ratio == 0 {
+            // 整数截位比例为零的微量认购不构成除权组分量：与恢复勾稽共用同一
+            // 权威谓词（`forms_ex_rights_component`），两侧不得各自表述。
+            if !crate::company::rights_offering::forms_ex_rights_component(paid, issued_before) {
                 continue;
             }
             let entry = combined.entry(plan.stock.clone()).or_default();

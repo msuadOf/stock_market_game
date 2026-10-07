@@ -134,6 +134,35 @@ fn disabled_repurchase_switch_rejects_approval_explicitly() {
     );
 }
 
+/// 同一证券同时只能有一个未完成回购方案：第二个未完成方案会使同一笔真实成交
+/// 被记入多本账簿（按证券聚合日终回执不区分方案），完成勾稽必然失真——批准时
+/// 显式拒绝，完成或取消后才可批准新方案。
+#[test]
+fn second_unfinished_plan_for_same_stock_is_rejected_at_approval() {
+    let (mut session, stock, issuer, _account) = session_with_registry(true);
+    session
+        .approve_issuer_repurchase(repurchase_plan(&issuer, &stock))
+        .unwrap();
+    let mut second = repurchase_plan(&issuer, &stock);
+    second.event_id = "repurchase-2030-b".into();
+    let error = session.approve_issuer_repurchase(second).unwrap_err();
+    assert!(
+        error.to_string().contains("未完成"),
+        "同证券第二个未完成回购方案必须显式拒绝：{error}"
+    );
+    assert_eq!(
+        session
+            .state
+            .corporate_actions
+            .issuer_repurchases
+            .iter()
+            .filter(|book| book.plan().stock == stock)
+            .count(),
+        1,
+        "被拒绝的方案不得入账"
+    );
+}
+
 #[test]
 fn repurchase_funds_account_places_real_order_and_seller_is_paid() {
     let (mut session, stock, issuer, repurchase_account) = session_with_registry(true);

@@ -447,6 +447,330 @@ fn failed_offering_refunds_paid_cash_atomically_at_settlement() {
     let _ = stock;
 }
 
+/// 公开配售专用最小方案：定向对象只有一笔公开配售额度（无具名权利）。
+fn open_public_only_plan(
+    issuer: &CompanyId,
+    stock: &StockCode,
+    open_shares: u64,
+) -> RightsOfferingEventPlan {
+    let mut plan = all_shareholders_plan(issuer, stock);
+    plan.mode = RightsOfferingMode::DirectedPlacement {
+        targets: vec![DirectedPlacementTarget::OpenPublicSubscription {
+            shares: open_shares,
+        }],
+    };
+    plan
+}
+
+#[test]
+fn open_public_subscription_is_capped_by_remaining_headroom_at_acceptance() {
+    let (mut session, stock, issuer) = session_with_registry(true);
+    let plan = open_public_only_plan(&issuer, &stock, 100);
+    session.approve_rights_offering(plan.clone()).unwrap();
+    while session.civil_date() < plan.payment_start_on {
+        complete_day(&mut session);
+    }
+    // 玩家（无具名权利）按公开额度认购 60 股，剩余 40 股。
+    session
+        .subscribe_rights_offering("rights-2030", AccountId(0), 60)
+        .unwrap();
+    // 41 > 剩余 40：必须显式拒绝、不入队、不截断。
+    let error = session
+        .subscribe_rights_offering("rights-2030", AccountId(1), 41)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("剩余"),
+        "超剩余额度认购必须在受理时显式拒绝并说明剩余额度：{error}"
+    );
+    let queued: Vec<_> = session
+        .state
+        .corporate_actions
+        .rights_subscription_queue
+        .iter()
+        .filter(|queued| queued.event_id == "rights-2030")
+        .collect();
+    assert_eq!(queued.len(), 1, "被拒绝的认购不得入队");
+    assert_eq!(queued[0].account, AccountId(0));
+    assert_eq!(queued[0].requested_shares, 60);
+    // 剩余额度内（40 股）的认购仍可受理。
+    session
+        .subscribe_rights_offering("rights-2030", AccountId(1), 40)
+        .unwrap();
+}
+
+#[test]
+fn open_public_oversubscribed_queue_is_rejected_with_receipt_at_day_end() {
+    let (mut session, stock, issuer) = session_with_registry(true);
+    let plan = open_public_only_plan(&issuer, &stock, 100);
+    let settlement_on = plan.settlement_on;
+    session.approve_rights_offering(plan.clone()).unwrap();
+    while session.civil_date() < plan.payment_start_on {
+        complete_day(&mut session);
+    }
+    let player_cash_before = cash_of(&session, AccountId(0));
+    session
+        .subscribe_rights_offering("rights-2030", AccountId(0), 60)
+        .unwrap();
+    // 模拟恢复后队列与额度不一致的极端竞态：直接注入一笔超额度排队
+    // （60 + 41 > 100），日终不得因它整日失败。
+    session
+        .state
+        .corporate_actions
+        .rights_subscription_queue
+        .push(crate::session::corporate_actions::QueuedRightsSubscription {
+            event_id: "rights-2030".into(),
+            account: AccountId(1),
+            requested_shares: 41,
+            submitted_on: session.civil_date(),
+        });
+    complete_day(&mut session);
+    let book = session
+        .state
+        .corporate_actions
+        .rights_offerings
+        .iter()
+        .find(|book| book.plan().event_id == "rights-2030")
+        .unwrap();
+    // 额度内成交：玩家 60 股足额划扣；超额者不产生认购记录。
+    let player_subscription = book
+        .subscriptions()
+        .iter()
+        .find(|record| record.holder == HolderId::Account(AccountId(0)))
+        .unwrap();
+    assert_eq!(player_subscription.paid_shares, 60);
+    assert_eq!(cash_of(&session, AccountId(0)), player_cash_before - 600);
+    assert!(
+        !book
+            .subscriptions()
+            .iter()
+            .any(|record| record.holder == HolderId::Account(AccountId(1))),
+        "超额认购不得进入账簿"
+    );
+    // 超额者显式失败回执：留痕、说明原因、从队列移除。
+    let rejections = &session
+        .state
+        .corporate_actions
+        .rejected_rights_subscriptions;
+    assert_eq!(rejections.len(), 1, "超额认购必须留下显式拒绝回执");
+    assert_eq!(rejections[0].event_id, "rights-2030");
+    assert_eq!(rejections[0].account, AccountId(1));
+    assert_eq!(rejections[0].requested_shares, 41);
+    assert!(
+        rejections[0].reason.contains("额度"),
+        "拒绝回执必须说明额度原因：{}",
+        rejections[0].reason
+    );
+    assert!(
+        session
+            .state
+            .corporate_actions
+            .rights_subscription_queue
+            .iter()
+            .all(|queued| queued.event_id != "rights-2030"),
+        "已处理的排队（含被拒）必须移除，避免日终反复失败"
+    );
+    // 推进到结算：总额度内成交 60 股，发行成功。
+    while session.civil_date() <= settlement_on {
+        complete_day(&mut session);
+    }
+    let book = session
+        .state
+        .corporate_actions
+        .rights_offerings
+        .iter()
+        .find(|book| book.plan().event_id == "rights-2030")
+        .unwrap();
+    assert_eq!(book.settlement().unwrap().total_paid_shares, 60);
+    assert_eq!(position_of(&session, AccountId(0), &stock), 3_000_060);
+    // restore 深等（含拒绝回执）并重放幂等。
+    let save = session.save().unwrap();
+    let restored = GameSession::restore(&save).unwrap();
+    assert_eq!(
+        serde_json::to_value(&session.state.corporate_actions.rejected_rights_subscriptions)
+            .unwrap(),
+        serde_json::to_value(&restored.state.corporate_actions.rejected_rights_subscriptions)
+            .unwrap(),
+        "拒绝回执恢复深等"
+    );
+    assert_eq!(
+        serde_json::to_value(&session.state.corporate_actions.rights_offerings).unwrap(),
+        serde_json::to_value(&restored.state.corporate_actions.rights_offerings).unwrap(),
+        "配股账簿恢复深等"
+    );
+}
+
+/// 微量认购×同日现金分红的除权勾稽边界 fixture：小持仓名册（玩家 5 股 +
+/// 机构 1 股 + Treasury 其余，总股本 10,000,000）、Simple 预历史利润足以授权
+/// 现金分红（每股 1 分 × 6 股）、玩家已开个人税账、法定注册资本 = 总股本×1 分
+/// （面值 1 分，配股价 10 分高于面值）。
+fn session_with_tiny_rights_and_cash_dividend() -> (GameSession, StockCode, CompanyId) {
+    let mut setup = rights_setup();
+    if let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system
+    {
+        config.prehistory_periods = 24;
+        config.settlement_cycle = crate::company::simple::period::SettlementCycle::Monthly;
+    }
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let total_shares = session.state.setup.stocks[0].total_shares;
+    let date = CivilDate::from_iso("2030-01-02").unwrap();
+    for (account, qty) in [(AccountId(0), 5_u64), (AccountId(1), 1_u64)] {
+        session
+            .state
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .fixture_insert_position(
+                stock.clone(),
+                Position::from_restored_parts(qty.try_into().unwrap(), 0, 1_000, 0),
+            );
+    }
+    let holdings = vec![
+        ShareHolding {
+            holder: HolderId::Account(AccountId(0)),
+            lots: vec![fixture_lot("player-lot", 5, date)],
+        },
+        ShareHolding {
+            holder: HolderId::Account(AccountId(1)),
+            lots: vec![fixture_lot("institution-lot", 1, date)],
+        },
+        ShareHolding {
+            holder: HolderId::IssuerTreasury,
+            lots: vec![fixture_lot("treasury-lot", total_shares - 6, date)],
+        },
+    ];
+    let registry = ShareRegistry::new(stock.clone(), issuer.clone(), total_shares, date, holdings)
+        .unwrap();
+    session.configure_share_registry(registry).unwrap();
+    session
+        .configure_cash_dividend_tax_book(
+            AccountId(0),
+            stock.clone(),
+            crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
+        )
+        .unwrap();
+    session
+        .define_dividend_legal_facts(
+            &issuer,
+            AccountingAmount::from_cents(i128::from(total_shares)),
+            "tiny rights test legal fact".into(),
+        )
+        .unwrap();
+    (session, stock, issuer)
+}
+
+/// 除权锚分量谓词一致性边界：实际认购 1 股 < 配股前股本 10,000,000 的百万分之
+/// 一，整数截位比例为 0；同日另有已登记现金分红时，首 tick 准备按纯现金组
+/// 建锚，恢复勾稽必须使用同一谓词，不得按 `paid > 0` 期待配股组分量。
+#[test]
+fn tiny_paid_rights_with_same_day_cash_dividend_reconciles_at_restore() {
+    let (mut session, stock, issuer) = session_with_tiny_rights_and_cash_dividend();
+    // 配股日程先行推导（定向玩家 1 股：paid=1 → 整数截位比例 0），现金分红的
+    // 登记日取配股除权日的前一交易日，使两者同日除权除息。
+    let mut plan = all_shareholders_plan(&issuer, &stock);
+    plan.mode = RightsOfferingMode::DirectedPlacement {
+        targets: vec![DirectedPlacementTarget::NamedHolder {
+            holder: HolderId::Account(AccountId(0)),
+            shares: 1,
+            lock_until: None,
+        }],
+    };
+    let calendar = session.state.civil_clock.calendar().clone();
+    let ex_date = plan.ex_rights_on;
+    let dividend_registered_on = calendar
+        .previous_trading_day(crate::calendar::CalendarExchange::Sse, ex_date)
+        .unwrap();
+    let dividend_payable_on = calendar
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, ex_date)
+        .unwrap();
+    // 现金分红：R = 除权日前一交易日登记、与配股同日除息、次一交易日派息。
+    let eligible_gross_cents = 6_i64;
+    let dividend = crate::company::cash_dividend::CashDividendPlan::new(
+        "cash-2030".into(),
+        issuer.clone(),
+        stock.clone(),
+        crate::calendar::CalendarExchange::Sse,
+        crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+        CivilDate::from_iso("2030-01-02").unwrap(),
+        CivilDate::from_iso("2030-01-03").unwrap(),
+        dividend_registered_on,
+        ex_date,
+        dividend_payable_on,
+        crate::money::Money::from_cents(1),
+        crate::money::Money::from_cents(eligible_gross_cents),
+        session.state.civil_clock.calendar(),
+    )
+    .unwrap();
+    session
+        .approve_cash_dividend(
+            crate::company::DividendDeclaration {
+                plan_id: dividend.plan_id.clone(),
+                approved_on: dividend.approved_on,
+                total_gross: AccountingAmount::from_cents(i128::from(eligible_gross_cents)),
+                registered_capital: AccountingAmount::from_cents(i128::from(
+                    session.state.setup.stocks[0].total_shares,
+                )),
+            },
+            dividend,
+        )
+        .unwrap();
+    // 配股：定向玩家 1 股，批准并推进到缴款期认购 1 股。
+    let settlement_on = plan.settlement_on;
+    session.approve_rights_offering(plan.clone()).unwrap();
+    while session.civil_date() < plan.payment_start_on {
+        complete_day(&mut session);
+    }
+    session
+        .subscribe_rights_offering("rights-2030", AccountId(0), 1)
+        .unwrap();
+    while session.civil_date() <= settlement_on {
+        complete_day(&mut session);
+    }
+    let book = session
+        .state
+        .corporate_actions
+        .rights_offerings
+        .iter()
+        .find(|book| book.plan().event_id == "rights-2030")
+        .unwrap();
+    assert_eq!(
+        book.subscriptions()
+            .iter()
+            .map(|record| record.paid_shares)
+            .sum::<u64>(),
+        1
+    );
+    assert!(book.credited_on().is_some(), "微量认购仍须完成入账");
+    // 除权除息组：纯现金分量（截位为零的配股不构成组分量）。
+    let group = session
+        .state
+        .corporate_actions
+        .applied_ex_reference_groups
+        .iter()
+        .find(|group| group.stock == stock && group.date == plan.ex_rights_on)
+        .unwrap();
+    assert_eq!(group.cash_plan_ids, vec!["cash-2030".to_string()]);
+    assert!(
+        group.rights_event_ids.is_empty(),
+        "整数截位比例为零的配股不产生除权组分量"
+    );
+    // 恢复勾稽必须与首 tick 准备同谓词（红：旧勾稽按 paid>0 期待组分量）。
+    let save = session.save().unwrap();
+    let restored = GameSession::restore(&save).unwrap();
+    assert_eq!(
+        position_of(&restored, AccountId(0), &stock),
+        5 + 1,
+        "微量配股认购恢复后仍真实入账"
+    );
+}
+
 #[test]
 fn directed_placement_allows_named_targets_outside_registry_and_open_headroom() {
     let (mut session, stock, issuer) = session_with_registry(true);
