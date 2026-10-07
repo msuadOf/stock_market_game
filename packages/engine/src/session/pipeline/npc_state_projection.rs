@@ -4,6 +4,7 @@
 //! candidate composer 在投影后为每个账户分配连续局部序号，
 //! 保留 reconciliation 在 residual 之前的顺序，不重用 raw strategy 身份。
 
+use std::collections::BTreeMap;
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
 use super::npc_decisions::{NpcDecisionSourceOutput, NpcStrategyUpdate};
 use super::IntentCandidateKey;
@@ -170,11 +171,22 @@ pub(in crate::session) fn project_npc_account(
     captured: &CapturedDecisionSnapshot,
     source: &mut NpcDecisionSourceOutput,
 ) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
+    let (view, mut writes) = super::npc_split::npc_split(shadow);
+    project_npc_account_on(&view, &mut writes, captured, source)
+}
+
+/// 读视图+写组版本（queue 链转换目标形态）。
+pub(in crate::session) fn project_npc_account_on(
+    view: &super::npc_split::SessionReadView<'_>,
+    writes: &mut super::npc_split::NpcWriteFields<'_>,
+    captured: &CapturedDecisionSnapshot,
+    source: &mut NpcDecisionSourceOutput,
+) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
     let snapshot = &captured.snapshot;
-    if shadow.state.tick != snapshot.tick() || shadow.phase() != snapshot.phase() {
+    if view.tick != snapshot.tick() || view.phase() != snapshot.phase() {
         return Err(NpcDecisionProjectionError::ClockMismatch {
-            shadow_tick: shadow.state.tick,
-            shadow_phase: shadow.phase(),
+            shadow_tick: view.tick,
+            shadow_phase: view.phase(),
             snapshot_tick: snapshot.tick(),
             snapshot_phase: snapshot.phase(),
         });
@@ -189,11 +201,23 @@ pub(in crate::session) fn project_npc_account(
     {
         return Err(NpcDecisionProjectionError::AccountOrderMismatch);
     }
-    project_npc_state_in_place(shadow, captured, source, true)
+    project_npc_state_in_place_on(view, writes, captured, source, true)
 }
 
 fn project_npc_state_in_place(
     shadow: &mut GameSession,
+    captured: &CapturedDecisionSnapshot,
+    source: &mut NpcDecisionSourceOutput,
+    project_single_account: bool,
+) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
+    let (view, mut writes) = super::npc_split::npc_split(shadow);
+    project_npc_state_in_place_on(&view, &mut writes, captured, source, project_single_account)
+}
+
+/// 读视图+写组版本。
+fn project_npc_state_in_place_on(
+    view: &super::npc_split::SessionReadView<'_>,
+    writes: &mut super::npc_split::NpcWriteFields<'_>,
     captured: &CapturedDecisionSnapshot,
     source: &mut NpcDecisionSourceOutput,
     project_single_account: bool,
@@ -213,10 +237,7 @@ fn project_npc_state_in_place(
         let sealed = snapshot
             .account(account)
             .map_err(|_| NpcDecisionProjectionError::MissingAccount(account))?;
-        let entry = shadow
-            .state
-            .accounts
-            .get(&account)
+        let entry = view.accounts.get(&account)
             .ok_or(NpcDecisionProjectionError::MissingAccount(account))?;
         let account_kind = entry.kind();
         if account_kind != sealed.kind() {
@@ -228,8 +249,7 @@ fn project_npc_state_in_place(
         {
             NpcStrategyUpdate::Unchanged => {}
             NpcStrategyUpdate::Replace(next_strategy) => {
-                shadow
-                    .state
+                writes
                     .accounts
                     .get_mut(&account)
                     .expect("the account was checked above")
@@ -238,8 +258,7 @@ fn project_npc_state_in_place(
         }
         if account_kind == AccountKind::Retail {
             if let Some(position_decision) = account_output.position_decision() {
-                shadow
-                    .state
+                writes
                     .last_retail_decisions
                     .push(RetailDecisionTrace {
                         account,
@@ -272,9 +291,22 @@ fn project_npc_state_in_place(
                 .unwrap_or(&[]),
         };
         if account_output.uses_parent_order_execution() && account_kind == AccountKind::Inst {
-            validate_parent_order_materialization(shadow, account, &desired, market_minute)?;
-            desired =
-                shadow.materialize_parent_order_intents(account, desired, market_minute, working);
+            validate_parent_order_materialization_on(
+                view,
+                writes.parent_orders,
+                account,
+                &desired,
+                market_minute,
+            )?;
+            desired = crate::GameSession::materialize_parent_order_intents_on(
+                    view,
+                    writes.parent_orders,
+                    writes.npc_order_lifecycles,
+                    account,
+                    desired,
+                    market_minute,
+                    working,
+                );
         }
         if account_output.updates_working_quotes() {
             let scope = if account_kind == AccountKind::Retail {
@@ -282,7 +314,13 @@ fn project_npc_state_in_place(
             } else {
                 ReconcileScope::AllWorkingOrders
             };
-            let plan = shadow.plan_npc_working_order_reconciliation(desired, phase, scope, working);
+            let plan = crate::GameSession::plan_npc_working_order_reconciliation_on(
+                view,
+                desired,
+                phase,
+                scope,
+                working,
+            );
             for decision in &plan.decisions {
                 let WorkingOrderDecision::Keep { order_id } = decision else {
                     continue;
@@ -315,13 +353,12 @@ fn project_npc_state_in_place(
     }
     if project_single_account {
         for (account, reviewed) in retail_reviews {
-            let held: BTreeSet<_> = shadow.state.accounts[&account]
+            let held: BTreeSet<_> = view.accounts[&account]
                 .positions()
                 .keys()
                 .cloned()
                 .collect();
-            let experience = shadow
-                .state
+            let experience = writes
                 .retail_experience
                 .get_mut(&account)
                 .ok_or(NpcDecisionProjectionError::MissingRetailExperience(account))?;
@@ -338,8 +375,8 @@ fn project_npc_state_in_place(
         let reviews = retail_reviews
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>();
-        let accounts = &shadow.state.accounts;
-        shadow.state.retail_experience.mutate_existing_parallel(
+        let accounts = &view.accounts;
+        writes.retail_experience.mutate_existing_parallel(
             &review_ids,
             NpcDecisionProjectionError::MissingRetailExperience,
             |account, experience| {
@@ -413,21 +450,33 @@ fn validate_parent_order_materialization(
     desired: &[Intent],
     market_minute: u64,
 ) -> Result<(), NpcDecisionProjectionError> {
+    validate_parent_order_materialization_on(
+        &session.read_view(),
+        &session.state.parent_orders,
+        account,
+        desired,
+        market_minute,
+    )
+}
+
+/// 读视图+写组再借用版本。
+fn validate_parent_order_materialization_on(
+    view: &super::npc_split::SessionReadView<'_>,
+    parent_orders: &BTreeMap<AccountId, BTreeMap<StockId, crate::session::ParentOrderPlan>>,
+    account: AccountId,
+    desired: &[Intent],
+    market_minute: u64,
+) -> Result<(), NpcDecisionProjectionError> {
     if desired
         .iter()
-        .any(|intent| matches!(intent, Intent::PlaceLimit { qty, .. } if *qty > 0 && qty.is_multiple_of(session.state.setup.config.lot_size)))
+        .any(|intent| matches!(intent, Intent::PlaceLimit { qty, .. } if *qty > 0 && qty.is_multiple_of(view.setup.config.lot_size)))
         && market_minute
             .checked_add(crate::session::PARENT_ORDER_HORIZON_MINUTES)
             .is_none()
     {
         return Err(NpcDecisionProjectionError::ParentOrderHorizonOverflow(account));
     }
-    for (code, plan) in session
-        .state
-        .parent_orders
-        .get(&account)
-        .into_iter()
-        .flatten()
+    for (code, plan) in parent_orders.get(&account).into_iter().flatten()
     {
         if plan.code() != code {
             return Err(NpcDecisionProjectionError::InvalidParentOrder {
