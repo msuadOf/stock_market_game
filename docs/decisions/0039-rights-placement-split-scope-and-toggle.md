@@ -41,3 +41,15 @@
 - [ADR-0037](0037-company-action-initiator.md)：定向意向的偏好发起路径。
 - [ADR-0040](0040-new-game-default-taxation-modes.md)：共用新局选项面。
 - [股东结算设计](../company-actions-design.md)、[实施清单](../../agents/company-system/implementation-checklist.md)。
+
+## 2026-10-07 决策注记（M 批实施日）
+
+用户产品决策（2026-10-07）：配股／增发新局开关（`rights_offering_enabled`）
+**默认关闭**；面向全体股东的配股／增发时 **NPC 股东默认足额认购**（本人真实
+现金，不足部分放弃并如实记录弃配）；可选按策略决定认购——**默认策略就是足额
+认购**，其他策略（如真实策略判断）标记为 TODO：engine 侧 `StrategyBased`
+枚举值受理时显式拒绝（不静默降级），前端配置选择时也标注 TODO。本批据此实现：
+策略选择器 `RightsSubscriptionStrategy::FullByDefault` 唯一可用；缴款期日终
+NPC 按现金可负担部分划扣、弃配部分留痕。定向模式（NamedHolder 三类去向＋
+公开配售额度）与价格默认市场价、接口可改价一并接通；协商定价（折价 5%）仍只
+留参数扩展位。
