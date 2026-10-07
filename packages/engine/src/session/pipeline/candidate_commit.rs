@@ -70,22 +70,16 @@ pub(super) fn prepare_candidate_commit<'authority>(
                 .state
                 .envelope_ledger
                 .rebase_private_for_tick_commit();
-            let produced_revision = candidate.external_revision();
+            let _produced_revision = candidate.external_revision();
             let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
             let (queue_result, speculative) = rayon::join(
                 || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
-                // X1 投机预计算（方案③复装）：与 queue 并发准备；单点移交使
-                // 消费侧 Arc 唯一、零深拷（棒次 15）。账户页面 COW / lifecycles
-                // Vec 快照隔离写侧；新鲜度由 produced_revision 三重校验兜底。
-                || {
-                    super::read_only_start::can_prepare_on(&view).then(|| {
-                        super::read_only_start::SpeculativePrepareStash {
-                            for_tick: view.tick,
-                            produced_revision,
-                            work: std::sync::Arc::new(super::read_only_start::prepare_on(&view)),
-                        }
-                    })
-                },
+                // X1 投机臂终局关闭（预埋终止判据生效）：方案③零深拷消费已实现、
+                // 全部语义测试绿，但锚定配对两轮（棒次 14/15）mean(d)≈0.987/0.986
+                // 持续 −1.3~1.4%——重叠本身未兑现（4-worker 池喂不动 join 双臂的
+                // 内部并行突发，与热路径画像"脉冲过细"结论一致）。机制与移交/消费/
+                // revision 基建全部保留，重启条件见 x1-progress.md 终稿。
+                || Option::<super::read_only_start::SpeculativePrepareStash>::None,
             );
             queue_result?;
             rebase_result?;
