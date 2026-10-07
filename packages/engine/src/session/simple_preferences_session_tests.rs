@@ -24,6 +24,11 @@ fn d(value: &str) -> CivilDate {
 
 fn preference_setup(preferences: SimpleCompanyPreferences) -> SessionSetup {
     let mut setup = npc_working_quote_tests::quote_setup(0);
+    // 本组覆盖偏好自动提案链路，与税务正交：保持既有的「不产生个人税事实」
+    // 语义（2026-10-08 起不扣税模式同时免除卖出印花税，本组无卖出断言）。
+    setup.dividend_tax_mode = crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt;
+    setup.flat_withholding_bp = None;
+    setup.config.stamp_tax_rate = 0.0;
     setup.start_date = d("2030-01-20");
     // 缩短每个交易日的 tick 数：本组只验证跨自然日的公司行为链路，
     // 无需完整 100 tick 行情日（单 case 10 秒纪律）。
@@ -221,7 +226,7 @@ fn cash_preference_auto_proposes_after_settlement_and_pays_full_chain() {
         player_cash_before
             .add(Money::from_cents(plan.gross_per_share.cents() * 6_000_000))
             .unwrap(),
-        "玩家按登记持股 6,000,000 股真实税前到账（Exempt 模式不扣税）"
+        "玩家按登记持股 6,000,000 股真实税前到账（不扣税模式不产生个人税事实）"
     );
     let receipts: Vec<_> = session
         .state

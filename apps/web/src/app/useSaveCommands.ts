@@ -19,6 +19,7 @@ import type { ReportFrequencyDraft } from "../components/ReportFrequencyInput.ts
 import { parseReportFrequency } from "../save/schema/report-frequency.ts";
 import { parseSessionSeed } from "../config/seed-draft.ts";
 import { parseCompanySystemConfig } from "../save/schema/company/system-config.ts";
+import { DEFAULT_SETUP } from "../config/defaults.ts";
 
 export interface SaveCommandPorts {
   browserLocal: boolean;
@@ -40,6 +41,7 @@ export interface SaveCommandPorts {
   reportFrequencyDraft: ReportFrequencyDraft;
   companySystemDraft: string;
   dividendTaxModeDraft: SessionSetup["dividend_tax_mode"];
+  flatWithholdingBpDraft: number;
   rightsOfferingEnabledDraft: boolean;
   issuerRepurchaseEnabledDraft: boolean;
   seedDraft: string;
@@ -62,6 +64,7 @@ export interface SaveCommandPorts {
   setReportFrequencyDraft(frequency: SessionSetup["report_frequency"]): void;
   setCompanySystemDraft(config: string): void;
   setDividendTaxModeDraft(mode: SessionSetup["dividend_tax_mode"]): void;
+  setFlatWithholdingBpDraft(rateBp: number): void;
   setRightsOfferingEnabledDraft(enabled: boolean): void;
   setIssuerRepurchaseEnabledDraft(enabled: boolean): void;
   setInitialAllocation(allocation: InitialAllocation | null): void;
@@ -76,10 +79,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
   const {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
-    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft,
+    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, flatWithholdingBpDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft,
     loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionCreation, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setFlatWithholdingBpDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
   } = ports;
   // 存档/读档
@@ -155,6 +158,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setReportFrequencyDraft(slot.setup.report_frequency);
         setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
         setDividendTaxModeDraft(slot.setup.dividend_tax_mode);
+        setFlatWithholdingBpDraft(slot.setup.flat_withholding_bp ?? 1000);
         setRightsOfferingEnabledDraft(slot.setup.rights_offering_enabled);
         setIssuerRepurchaseEnabledDraft(slot.setup.issuer_repurchase_enabled);
         ports.setSeedDraft(slot.seed);
@@ -247,6 +251,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setReportFrequencyDraft(slot.setup.report_frequency);
         setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
         setDividendTaxModeDraft(slot.setup.dividend_tax_mode);
+        setFlatWithholdingBpDraft(slot.setup.flat_withholding_bp ?? 1000);
         ports.setSeedDraft(slot.seed);
         setInitialAllocation(null);
         restored = true;
@@ -311,11 +316,18 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     try {
       const nextSetup = {
         ...setupWithStartDate(activeSetup, result.value),
-        config: { ...activeSetup.config, price_cage_enabled: priceCageEnabledDraft },
+        config: {
+          ...activeSetup.config,
+          price_cage_enabled: priceCageEnabledDraft,
+          // 印花税按模式门禁（2026-10-08 决策）：不扣税模式连印花税也免；
+          // 其余模式保持正式 A 股基线（引擎 setup 校验强制该配对）。
+          stamp_tax_rate: dividendTaxModeDraft === "Exempt" ? 0 : DEFAULT_SETUP.config.stamp_tax_rate,
+        },
         float_allocation: floatAllocationDraft,
         report_frequency: reportFrequency,
         company_system: companySystem,
         dividend_tax_mode: dividendTaxModeDraft,
+        flat_withholding_bp: dividendTaxModeDraft === "FlatWithholding" ? flatWithholdingBpDraft : null,
         rights_offering_enabled: rightsOfferingEnabledDraft,
         issuer_repurchase_enabled: issuerRepurchaseEnabledDraft,
       };

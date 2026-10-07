@@ -54,7 +54,8 @@ pub fn setup() -> SessionSetup {
         float_allocation: FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+        flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
     }

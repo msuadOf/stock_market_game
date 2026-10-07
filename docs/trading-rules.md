@@ -48,7 +48,8 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
   依次使用对手一档、本方一档、最新成交价/前收。
 - **可选游戏简化（2026-09-27）：** 新游戏配置 `price_cage_enabled` 可关闭连续竞价
   价格笼子，默认开启；关闭后仍执行涨跌幅和其他申报规则。该选择随当前存档保存。
-- 买卖双方收取交易过户费 0.01‰；卖出方另收 0.5‰ 印花税；券商佣金率和最低佣金可配置。
+- 买卖双方收取交易过户费 0.01‰；卖出方另收 0.5‰ 印花税（`Exempt` 不扣税模式按
+  2026-10-08 决策免征，见「开局税务模式」节的模式配对门禁）；券商佣金率和最低佣金可配置。
 - **游戏简化：** 统一市价意图按涨跌停价作保护并逐档立即成交，未成交余量不进入订单簿。
   尚未细分沪深市价申报类型及其最优五档、余量转限价等差异。
 - 全部未成交委托共享账户资源占用预算：买单占用成交额及费用；卖单仅占用可卖股份，不占用
@@ -214,34 +215,61 @@ NPC 请求在上一 tick 的已提交状态上形成，下一 tick 受理；玩�
 - **装配期限制**：税账（`configure_cash_dividend_tax_book`）只能在名册尚无历史日结回执
   且无已登记分红时配置；事后配置无法重建 FIFO 税事实并会令日终永久失败，因此显式拒绝。
 
-### 开局税务模式与默认税籍（2026-10-06 产品决策登记）
+### 开局税务模式与默认税籍（2026-10-08 三层产品决策登记）
 
-本节登记新局税务模式选项（`SessionSetup.dividend_tax_mode`）与默认税籍语义，属
-2026-10-06 用户产品决策：「新局默认用户交易都扣税，还可以选择用大A的方式扣税
-（个人扣税、机构/企业另外算……企业部分先留下抽象层接口），还可以配置为不扣税。
-此外，分红要扣税」。
+本节登记新局税务模式选项（`SessionSetup.dividend_tax_mode` + `flat_withholding_bp`）
+与默认税籍语义，属 2026-10-06 用户产品决策与 2026-10-08 三层修订（ADR-0040）：
+「简税默认+大A可选（按原话三层）」「简税比例 10%（推荐）——分红到账时直接扣，
+无持股期档位；开局参数可编辑，机构不另算」「不扣税：连印花税也免（佣金/过户费照付）」。
 
-- **模式与持久化**：默认 `IndividualPublicMarket`（大 A 个人差别化），可选 `Exempt`
-  （不扣税）。字段为严格持久化契约——新档必填、无 serde 兼容默认，缺失该字段的旧档
-  在 engine 反序列化与 Web `parseSetup` 两端均被显式拒绝（错误指明
-  `dividend_tax_mode`）；恢复后装配期自动配置与计税语义不变。
-- **默认模式的装配期自动开账**：配置完整股东名册（`GameSession::configure_share_registry`）
-  成功后，引擎在同一候选副本上为每个「个人」身份的账户持有人走既有
-  `configure_cash_dividend_tax_book` 自动配置 `IndividualPublicMarket` 税账；名册或
-  税账任一步失败都不留半配置状态。个人身份分类的权威映射是
-  `taxpayer_identity_of_kind`：玩家（Player）与自然人散户 NPC（Retail）属个人；
-  机构（Inst）与游资（Hot）NPC 属非个人。
+- **三层模式与持久化**：默认 `FlatWithholding`（简税），可选 `AShareIndividual`
+  （大 A 个人差别化）与 `Exempt`（不扣税）。两个字段均为严格持久化契约——新档必填、
+  无 serde 兼容默认；旧两变体枚举值（`IndividualPublicMarket`）已按无兼容原则整体
+  删除，携带旧值的档在 engine 反序列化与 Web `parseSetup` 两端显式拒绝，不静默映射；
+  恢复后装配期自动配置与计税语义不变。
+- **简税比例三态契约**：`flat_withholding_bp` 仅 `FlatWithholding` 模式必填（合法域
+  0..=10000bp，即最高全额代扣——超过会破坏原子代扣不变量，显式拒绝）；其他模式
+  显式拒绝携带（序列化形态为 `null`）。默认值 1000bp（10%）由 Web `DEFAULT_SETUP`
+  与 UI 草稿层提供，不设 serde 默认，杜绝旧档静默取默认的兼容路径。
+- **简税（`FlatWithholding`）语义（游戏化简化登记）**：分红付款日对名册每位**账户**
+  持有人（玩家、散户 NPC、机构 NPC——机构不另算，同样代扣）按 比例 × 税前应得
+  直接代扣；代扣额按持有人四舍五入（half-up）到分（例：每股 7 分 × 3 股 × 5000bp
+  = 10.5 分 → 扣 11 分）。**无持股期档位、无税账 FIFO、卖出不补税**。代扣与到账
+  同事务原子执行（先贷记税前应得、立即扣收），代扣额 ≤ 税前应得 ≤ 到账后现金，
+  故**不存在余额不足的部分收缴与追缴情形**，也不产生未清税额事实——这是简税相对
+  个人差别化口径的实现口径（更简模型，如实登记）。**不创建、不持久化任何
+  `CashDividendTaxBook`**（简税档 `dividend_tax_books` 恒为空数组）；代扣事实以
+  `FlatWithholdingReceipt`（payment_id/plan_id/account/paid_on/gross/rate_bp/withheld，
+  严格持久化）逐笔记档，恢复勾稽校验每位账户持有人到账恰有一条金额一致回执、
+  代扣额可按比例复算，Web 严格 parser 同构。简税模式下显式配置个人差别化税账
+  （`configure_dividend_tax_book`）被显式拒绝——代扣已覆盖全部持有人，叠加会对
+  同一笔分红双重计税。**边界**：外部具名持有人（`HolderId::External`）无游戏账户，
+  不代扣、不产生个人税事实（与 AShare 模式同一边界，登记为引擎边界而非税法口径）。
+- **大 A 方式（`AShareIndividual`）的装配期自动开账**：配置完整股东名册
+  （`GameSession::configure_share_registry`）成功后，引擎在同一候选副本上为每个
+  「个人」身份的账户持有人走既有 `configure_cash_dividend_tax_book` 自动配置
+  `IndividualPublicMarket` 税账；名册或税账任一步失败都不留半配置状态。计税语义
+  即上节登记的个人差别化完整口径（三档/FIFO/转让补缴/部分收缴追缴），不变。
+  个人身份分类的权威映射是 `taxpayer_identity_of_kind`：玩家（Player）与自然人
+  散户 NPC（Retail）属个人；机构（Inst）与游资（Hot）NPC 属非个人。
 - **机构/游资边界**：非个人身份保持 `TreatmentNotConfigured`，不产生个人税事实；
   企业/机构计税未实现（显式登记「企业/机构税未实现」，查询视图以
-  `TaxpayerIdentity::NonIndividualPending` 呈现）。
-- **不扣税模式**：引擎装配期不为任何身份自动配置税账（新局默认局 fixture 中
-  `dividend_tax_books` 保持空数组）；宿主显式装配期命令 `configure_dividend_tax_book`
-  仍是既有入口，开局后被拒是正确行为（装配期守卫），错误完整上抛不静默降级。
-  `Exempt` 仅豁免个人现金股息税：交易环节过户费、印花税与佣金口径在两种模式下
-  一致不变（按用户原意核对后登记的口径）。
+  `TaxpayerIdentity::NonIndividualPending` 呈现）。简税模式下机构持有人不落入
+  `TreatmentNotConfigured`——其分红同样被代扣（机构不另算），状态视图以
+  `DividendTaxStatus::FlatWithholding` 呈现。
+- **不扣税模式（`Exempt`）与印花税门禁**：引擎装配期不为任何身份自动配置税账
+  （新局档 `dividend_tax_books` 保持空数组）；宿主显式装配期命令
+  `configure_dividend_tax_book` 仍是既有入口，开局后被拒是正确行为（装配期守卫），
+  错误完整上抛不静默降级。**`Exempt` 同时免征交易环节卖出印花税（2026-10-08
+  决策），佣金与过户费照付**；实现为 setup 校验的模式配对——`Exempt` 要求
+  `stamp_tax_rate == 0`，`FlatWithholding`／`AShareIndividual` 要求
+  `stamp_tax_rate == 0.0005`（现行 A 股基线）——该配对在 `SessionSetup::validate`
+  单一入口强制，费用管线（结算、名义费用、NPC 估算与恢复重放）全部经 `GameConfig`
+  传播，不存在绕过配对的第二条计费路径。违反配对的 setup 在创建与恢复两端显式拒绝。
 - **装配期后进入的股东**：经二级市场净买入在日后进入股东登记的账户不自动补开
-  个人税账（受既有装配期守卫约束），其分红保持 `TreatmentNotConfigured`。这是当前
-  引擎边界，不是税法口径。
+  个人税账（受既有装配期守卫约束）。AShare 模式下其分红保持
+  `TreatmentNotConfigured`；简税模式下装配期后进入的账户持有人同样在付款日被
+  代扣（代扣不依赖税账，按名册到账事实执行）。这是当前引擎边界，不是税法口径。
 - **企业/机构税抽象层留白**：`DividendTaxProfile` 已含 `ResidentEnterprise` /
   `SecuritiesFund` / `NonResident` 显式变体；`TaxpayerIdentity::NonIndividualPending`
   是非个人身份的统一扩展位。实现其计税前不得把非个人身份映射为任何已实现身份
@@ -249,9 +277,9 @@ NPC 请求在上一 tick 的已提交状态上形成，下一 tick 受理；玩�
 - **查询与 UI 入口**：`GameSession::account_dividend_tax_status(account)` 只读返回
   模式、身份分类与每个已登记证券的税账状态（未知账户显式报错）；本地 WASM 宿主以
   owner 隔离导出 `owner_dividend_tax_status` / `owner_dividend_tax_outstanding_views` /
-  `configure_dividend_tax_book`。新局创建界面（TaxModeInput，默认勾选大 A 方式）与
-  公司行为面板（DividendTaxPanel）已接线；Tauri/远程宿主的税务状态查询留待后续批次，
-  不支持时 UI 显式提示。
+  `configure_dividend_tax_book`。新局创建界面（TaxModeInput，默认勾选简税并附比例
+  输入，非法比例不写草稿）与公司行为面板（DividendTaxPanel）已接线；Tauri/远程
+  宿主的税务状态查询留待后续批次，不支持时 UI 显式提示。
 
 ## 送转（股票股利与资本公积转增）实际登记（2026-10-06）
 

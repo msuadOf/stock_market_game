@@ -1395,6 +1395,7 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
         &save.company_system,
         save.civil_clock.current_date,
         issuer_repurchase_account_for_validate,
+        save.setup.flat_withholding_bp,
     )
         .map_err(|error| SessionError::InvalidSave(format!("公司行为状态非法：{error}")))?;
     let expected = save.civil_clock.current_date.prev().map_err(|error| SessionError::InvalidSave(error.to_string()))?;

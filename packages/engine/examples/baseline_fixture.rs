@@ -214,7 +214,8 @@ fn matrix_setup() -> SessionSetup {
         // 冻结日历与双时钟的默认开局日期（Web DEFAULT_SETUP 不发送该字段时的 serde 缺省值）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+        flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
     }
@@ -283,7 +284,8 @@ fn compressed_setup() -> SessionSetup {
         // 冻结日历与双时钟的默认开局日期（与 matrix 场景一致的基准语义）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+        flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
     }

@@ -55,6 +55,8 @@ fn validate_main_save(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "external_receipts",
         "applied_ex_reference_groups",
         "dividend_tax_books",
+        // 三层税制（2026-10-08）：简税默认；本场景无分红，不得产生任何代扣回执。
+        "flat_withholding_receipts",
     ] {
         if actions
             .get(field)
@@ -233,7 +235,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         report_frequency: engine::information::ReportFrequency::Quarterly,
         start_date: CivilDate::from_iso("2030-01-07")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket,
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+        flat_withholding_bp: Some(1000),
         // 主档保持机制关闭（M 批严格持久化新开关，默认 false）。
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,

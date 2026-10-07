@@ -14,23 +14,62 @@ pub enum DividendTaxProfile {
     NonResident,
 }
 
-/// 新局现金分红税务模式（开局产品选项，2026-10-06 决策登记）。
+/// 新局现金分红税务模式（开局产品选项，2026-10-08 三层决策登记）。
 ///
-/// - 默认 [`CashDividendTaxMode::IndividualPublicMarket`]：大 A 个人差别化口径，
-///   装配期配置股东名册时为每个「个人」身份账户（玩家与自然人散户 NPC）自动配置
-///   `IndividualPublicMarket` 税账；机构/游资等非个人身份保持 `TreatmentNotConfigured`
-///   （企业/机构计税未实现，见 `TaxpayerIdentity` 的显式扩展位）。
-/// - 可选 [`CashDividendTaxMode::Exempt`]：不扣税，引擎装配期不为任何身份配置税账
-///   （宿主仍可用显式装配期命令配置，既有入口语义不变）。
+/// - 默认 [`CashDividendTaxMode::FlatWithholding`]（简税）：分红付款日对名册每位
+///   账户持有人按 `SessionSetup::flat_withholding_bp` 比例对税前应得直接代扣；
+///   无持股期档位、无税账 FIFO、机构持有人同样代扣（机构不另算），卖出不补税。
+///   不创建、不持久化任何 `CashDividendTaxBook`。
+/// - [`CashDividendTaxMode::AShareIndividual`]（大 A 方式）：现行个人公开市场
+///   差别化口径的全部行为——装配期配置股东名册时为每个「个人」身份账户（玩家与
+///   自然人散户 NPC）自动配置 `IndividualPublicMarket` 税账，按三档税率、FIFO
+///   持股期限、转让时扣收与部分收缴追缴运行；机构/游资等非个人身份保持
+///   `TreatmentNotConfigured`（企业/机构计税未实现，见 `TaxpayerIdentity` 的扩展位）。
+/// - [`CashDividendTaxMode::Exempt`]（不扣税）：不产生个人股息税事实，且交易环节
+///   卖出印花税免征（`SessionSetup` 校验强制该模式 `stamp_tax_rate == 0`，
+///   佣金与过户费照付）；引擎装配期不为任何身份配置税账（宿主仍可用显式装配期
+///   命令配置，既有入口语义不变）。
 ///
 /// 该模式作为严格持久化状态随 `SessionSetup` 进存档契约：新档必填、无 serde 默认，
-/// 缺失该字段的旧档在反序列化时被显式拒绝，恢复后语义不变。
+/// 缺失该字段的旧档在反序列化时被显式拒绝；旧两变体枚举值（`IndividualPublicMarket`）
+/// 已按无兼容原则整体删除，携带旧值的档显式拒绝，不静默映射。恢复后语义不变。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub enum CashDividendTaxMode {
-    IndividualPublicMarket,
+    FlatWithholding,
+    AShareIndividual,
     Exempt,
+}
+
+/// 简税比例（basis points）的合法上限：100%（10000bp）。超过全额代扣会破坏
+/// 「代扣额 ≤ 税前应得 ≤ 到账后现金」的原子代扣不变量，故显式拒绝。
+pub const MAX_FLAT_WITHHOLDING_BP: u32 = 10_000;
+
+/// Flat 模式下按持有人税前应得计算代扣额：四舍五入（half-up）到整数分，
+/// 与个人差别化口径的「每笔分红合计应纳税额四舍五入到分」实现口径一致。
+/// 防御性拒绝负数税前应得：小幅负值经 `+5000` 的 half-up 偏移会被截断成 0，
+/// 必须在入口显式报错而不是静默返回零代扣。
+pub fn flat_withholding_cents(
+    gross_cents: i64,
+    rate_bp: u32,
+) -> Result<i64, DividendTaxError> {
+    if gross_cents < 0 {
+        return Err(invalid(
+            "flat withholding requires a nonnegative gross entitlement",
+        ));
+    }
+    let scaled = i128::from(gross_cents)
+        .checked_mul(i128::from(rate_bp))
+        .and_then(|value| value.checked_add(5_000))
+        .ok_or_else(|| overflow("flat withholding multiplication"))?;
+    let cents = scaled / 10_000;
+    if cents > i128::from(gross_cents) {
+        return Err(invalid(
+            "flat withholding must stay within the nonnegative gross entitlement",
+        ));
+    }
+    i64::try_from(cents).map_err(|_| overflow("flat withholding cents"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -23,6 +23,8 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "applied_ex_reference_groups",
         // 新局默认税务模式为大 A 个人差别化；未配置股东名册时不得产生任何税账。
         "dividend_tax_books",
+        // 三层税制（2026-10-08）：简税默认；本场景无分红，不得产生任何代扣回执。
+        "flat_withholding_receipts",
         // M 批新契约字段：休市新局无配股/回购事实，必须是 Engine 生成的空数组。
         "rights_offerings",
         "rights_subscription_queue",
@@ -208,7 +210,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         report_frequency: engine::information::ReportFrequency::Quarterly,
         start_date: CivilDate::from_iso("2026-01-01")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket,
+        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+        flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
     };

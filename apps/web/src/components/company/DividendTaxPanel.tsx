@@ -16,8 +16,9 @@ interface DividendTaxPanelProps {
 }
 
 const TAX_MODE_LABELS: Record<AccountDividendTaxStatusView["mode"], string> = {
-  IndividualPublicMarket: "大 A 方式（个人差别化计税）",
-  Exempt: "不扣税（游戏简化）",
+  FlatWithholding: "简税（分红到账时按比例直接代扣）",
+  AShareIndividual: "大 A 方式（个人差别化计税）",
+  Exempt: "不扣税（连印花税也免）",
 };
 
 const IDENTITY_LABELS: Record<AccountDividendTaxStatusView["identity"], string> = {
@@ -36,6 +37,7 @@ export function outstandingText(view: DividendTaxOutstandingView): string {
 export function stockStatusLabel(status: AccountDividendTaxStatusView, stock: string): string {
   const row = status.stocks.find((item) => item.stock === stock);
   if (row === undefined) return "无股东名册";
+  if (row.status === "FlatWithholding") return "简税代扣（付款日按开局比例直接扣）";
   if (row.status === "IndividualPublicMarket") return "个人差别化税账已配置";
   return status.mode === "Exempt" ? "不扣税模式" : "未配置个人税账（不产生个人税事实）";
 }

@@ -14,16 +14,27 @@ function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unk
   return save
 }
 
-test("新局税务模式必须显式保存且只接受大A个人差别化或不扣税", () => {
+test("新局税务模式必须显式保存且三变体三态契约成立", () => {
   const slot = structuredClone(currentSaveFixture());
-  assert.equal(parseSaveSlot(slot).setup.dividend_tax_mode, "IndividualPublicMarket");
+  assert.equal(parseSaveSlot(slot).setup.dividend_tax_mode, "FlatWithholding");
+  assert.equal(parseSaveSlot(slot).setup.flat_withholding_bp, 1000);
   const setup = slot.setup as unknown as Record<string, unknown>;
   setup.dividend_tax_mode = "Exempt";
+  setup.flat_withholding_bp = null;
   assert.equal(parseSaveSlot(slot).setup.dividend_tax_mode, "Exempt");
+  setup.dividend_tax_mode = "AShareIndividual";
+  assert.equal(parseSaveSlot(slot).setup.dividend_tax_mode, "AShareIndividual");
+  setup.flat_withholding_bp = 1000;
+  assert.throws(() => parseSaveSlot(slot), /仅 FlatWithholding 模式可携带/);
+  setup.flat_withholding_bp = null;
+  setup.dividend_tax_mode = "FlatWithholding";
+  assert.throws(() => parseSaveSlot(slot), /FlatWithholding 模式必须携带简税比例/);
   delete setup.dividend_tax_mode;
   assert.throws(() => parseSaveSlot(slot), /dividend_tax_mode/);
   setup.dividend_tax_mode = "NoTax";
   assert.throws(() => parseSaveSlot(slot), /dividend_tax_mode/);
+  setup.dividend_tax_mode = "IndividualPublicMarket";
+  assert.throws(() => parseSaveSlot(slot), /dividend_tax_mode/, "旧两变体枚举值必须被拒绝，不静默映射");
 });
 
 test("财报频率必须显式保存且只接受月度或季度", () => {

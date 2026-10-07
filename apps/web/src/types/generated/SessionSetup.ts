@@ -48,12 +48,21 @@ export type SessionSetup = {
    */
   simulation_policy_id: string;
   /**
-   * 新局现金分红税务模式（2026-10-06 产品决策）：默认大 A 个人差别化
-   * （装配期自动为个人身份账户配置 `IndividualPublicMarket` 税账），
-   * 可选不扣税。严格持久化字段：新档必填、无 serde 默认，缺失该字段的
-   * 旧档被显式拒绝；恢复后自动配置与计税语义不变。
+   * 新局现金分红税务模式（2026-10-08 三层产品决策）：默认简税比例代扣
+   * （`FlatWithholding`，装配期不建任何税账，付款日按比例代扣），可选大 A
+   * 个人差别化（`AShareIndividual`，自动开账/FIFO/三档/转让补缴/追缴）与
+   * 不扣税（`Exempt`，无个人股息税事实且卖出印花税免征）。严格持久化字段：
+   * 新档必填、无 serde 默认，缺失该字段的旧档被显式拒绝；旧两变体枚举值
+   * 已整体删除，携带旧值的档显式拒绝；恢复后自动配置与计税语义不变。
    */
   dividend_tax_mode: CashDividendTaxMode;
+  /**
+   * 简税比例（basis points，1000bp = 10%）。严格三态契约：仅
+   * `FlatWithholding` 模式必填（合法域 0..=10000bp，即最高全额代扣）；
+   * 其他模式显式拒绝携带（序列化形态为 `null`，携带数值即拒绝）。
+   * 默认值 1000bp 由 DEFAULT_SETUP / UI 草稿层提供，不设 serde 默认。
+   */
+  flat_withholding_bp: number | null;
   /**
    * 新局「配股／增发」机制开关（2026-10-07 产品决策，ADR-0039）：
    * 关闭（UI 默认）时配股／增发机制不触发，显式 API 调用被显式拒绝

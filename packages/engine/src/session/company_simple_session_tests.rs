@@ -3,6 +3,11 @@ use super::*;
 fn simple_setup() -> SessionSetup {
     let mut setup = npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // 本文件覆盖个人差别化税管线：显式使用大 A 方式（AShareIndividual），
+    // 装配名册即为个人身份持有人自动开个人税账。
+    setup.dividend_tax_mode =
+        crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual;
+    setup.flat_withholding_bp = None;
     if let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system {
         config.prehistory_periods = 12;
     }
@@ -144,13 +149,8 @@ fn session_with_approved_cash_dividend_and_player_lots(
         u32::try_from(player_qty).unwrap(),
         "fixture must keep the dividend lot sellable on payment date"
     );
-    session
-        .configure_cash_dividend_tax_book(
-            AccountId(0),
-            stock.clone(),
-            crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
-        )
-        .unwrap();
+    // AShareIndividual 模式下装配名册已自动为玩家（个人身份）开个人税账，
+    // 不再显式配置（显式配置会以重复身份被拒绝）。
     let eligible_gross_cents = 10_i64 * i64::try_from(player_qty + 2).unwrap();
     let plan = CashDividendPlan::new(
         "announcement-test".into(),
@@ -380,13 +380,7 @@ fn repeated_session_ticks_on_cash_ex_date_do_not_subtract_dividend_twice() {
     )
     .unwrap();
     session.configure_share_registry(registry.clone()).unwrap();
-    session
-        .configure_cash_dividend_tax_book(
-            AccountId(0),
-            stock.clone(),
-            crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
-        )
-        .unwrap();
+    // AShareIndividual 模式下装配名册已自动为玩家开个人税账，不再显式配置。
     let calendar = session.state.civil_clock.calendar().clone();
     let initial_cash = session.account(AccountId(0)).unwrap().cash();
     for (plan_id, cents) in [("ex-a", 1), ("ex-b", 2)] {
@@ -518,7 +512,7 @@ fn repeated_session_ticks_on_cash_ex_date_do_not_subtract_dividend_twice() {
         })
         .collect();
     assert!(
-        matches!(corrupt_actions.validate(&positions, &restored.state.company_system, restored.civil_date(), None), Err(crate::session::SessionCorporateActionsError::Invalid(message)) if message.contains("到账日期晚于"))
+        matches!(corrupt_actions.validate(&positions, &restored.state.company_system, restored.civil_date(), None, None), Err(crate::session::SessionCorporateActionsError::Invalid(message)) if message.contains("到账日期晚于"))
     );
     let saved = restored.save().unwrap();
     let mut paid_restore = GameSession::restore(&saved).unwrap();
@@ -1985,7 +1979,7 @@ fn validate_rejects_nontrading_receipt_without_credited_stock_distribution_book(
     let rejection = session
         .state
         .corporate_actions
-        .validate(&positions, &session.state.company_system, day, None)
+        .validate(&positions, &session.state.company_system, day, None, None)
         .unwrap_err();
     assert!(
         rejection.to_string().contains("非交易过户回执"),
@@ -2007,6 +2001,7 @@ fn validate_fails_when_registered_book_missed_ex_rights_credit_date() {
             &positions,
             &session.state.company_system,
             crate::CivilDate::from_iso("2030-01-08").unwrap(),
+            None,
             None,
         )
         .unwrap_err();
@@ -2059,9 +2054,10 @@ fn session_with_distribution_tax_interaction(
     let mut setup = simple_setup();
     setup.ticks_per_day = ticks_per_day;
     setup.npcs.inst_count = 1;
-    // 默认大 A 个人差别化：装配名册即自动为玩家开个人税账。
+    // 大 A 个人差别化：装配名册即自动为玩家开个人税账（simple_setup 已置模式）。
     setup.dividend_tax_mode =
-        crate::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket;
+        crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual;
+    setup.flat_withholding_bp = None;
     setup.start_date = crate::CivilDate::from_iso(plan_dates.0).unwrap();
     if let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system {
         config.prehistory_periods = 24;
@@ -2707,6 +2703,7 @@ fn validate_rejects_registry_receipt_missing_from_dividend_tax_book() {
             &positions,
             &session.state.company_system,
             crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            None,
             None,
         )
         .unwrap_err();

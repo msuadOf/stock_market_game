@@ -5,6 +5,12 @@ export type SessionCorporateActions = {
   dividends: import("../../save/schema/corporate-actions").CashDividendBook[];
   dividend_tax_books:
     import("../../save/schema/corporate-actions").CashDividendTaxBook[];
+  /**
+   * 简税（FlatWithholding）模式的付款日代扣回执；严格持久化，旧档缺失该字段
+   * 显式拒绝。非 Flat 模式恒为空（validate 按模式门禁勾稽）。
+   */
+  flat_withholding_receipts:
+    import("../../save/schema/corporate-actions").FlatWithholdingReceipt[];
   stock_distributions:
     import("../../save/schema/corporate-actions").StockDistributionBook[];
   /**

@@ -1241,11 +1241,18 @@ pub struct SessionSetup {
     /// 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
     /// 与任何“最新默认”比对或迁移——身份不匹配的档由宿主层拒绝。
     pub simulation_policy_id: String,
-    /// 新局现金分红税务模式（2026-10-06 产品决策）：默认大 A 个人差别化
-    /// （装配期自动为个人身份账户配置 `IndividualPublicMarket` 税账），
-    /// 可选不扣税。严格持久化字段：新档必填、无 serde 默认，缺失该字段的
-    /// 旧档被显式拒绝；恢复后自动配置与计税语义不变。
+    /// 新局现金分红税务模式（2026-10-08 三层产品决策）：默认简税比例代扣
+    /// （`FlatWithholding`，装配期不建任何税账，付款日按比例代扣），可选大 A
+    /// 个人差别化（`AShareIndividual`，自动开账/FIFO/三档/转让补缴/追缴）与
+    /// 不扣税（`Exempt`，无个人股息税事实且卖出印花税免征）。严格持久化字段：
+    /// 新档必填、无 serde 默认，缺失该字段的旧档被显式拒绝；旧两变体枚举值
+    /// 已整体删除，携带旧值的档显式拒绝；恢复后自动配置与计税语义不变。
     pub dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode,
+    /// 简税比例（basis points，1000bp = 10%）。严格三态契约：仅
+    /// `FlatWithholding` 模式必填（合法域 0..=10000bp，即最高全额代扣）；
+    /// 其他模式显式拒绝携带（序列化形态为 `null`，携带数值即拒绝）。
+    /// 默认值 1000bp 由 DEFAULT_SETUP / UI 草稿层提供，不设 serde 默认。
+    pub flat_withholding_bp: Option<u32>,
     /// 新局「配股／增发」机制开关（2026-10-07 产品决策，ADR-0039）：
     /// 关闭（UI 默认）时配股／增发机制不触发，显式 API 调用被显式拒绝
     /// （错误指明本局未启用）。严格持久化字段：新档必填、无 serde 默认，
@@ -1325,15 +1332,62 @@ impl SessionSetup {
             ));
         }
         self.config.validate()?;
+        // 三层税制（2026-10-08 决策）的简税比例三态契约：仅 Flat 模式必填、
+        // 其他模式显式拒绝携带；比例域 0..=10000bp（最高全额代扣，超过会破坏
+        // 原子代扣不变量）。默认值 1000bp 由 DEFAULT_SETUP / UI 草稿层提供，
+        // 不设 serde 默认，杜绝旧档静默取默认的兼容路径。
+        match (
+            self.dividend_tax_mode,
+            self.flat_withholding_bp,
+        ) {
+            (
+                crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+                None,
+            ) => {
+                return Err(SessionError::InvalidSetup(
+                    "FlatWithholding 模式必须携带 flat_withholding_bp（简税比例，bp）"
+                        .to_string(),
+                ));
+            }
+            (
+                crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+                Some(rate_bp),
+            ) => {
+                if rate_bp > crate::company::cash_dividend_tax::MAX_FLAT_WITHHOLDING_BP {
+                    return Err(SessionError::InvalidSetup(format!(
+                        "flat_withholding_bp={rate_bp} 超出合法域 0..={}bp（最高全额代扣）",
+                        crate::company::cash_dividend_tax::MAX_FLAT_WITHHOLDING_BP
+                    )));
+                }
+            }
+            (_, Some(_)) => {
+                return Err(SessionError::InvalidSetup(format!(
+                    "flat_withholding_bp 仅 FlatWithholding 模式可携带，模式 {:?} 不得携带",
+                    self.dividend_tax_mode
+                )));
+            }
+            _ => {}
+        }
         if !self.t1_enabled {
             return Err(SessionError::InvalidSetup(
                 "formal A-share sessions require T+1 settlement".to_string(),
             ));
         }
-        if (self.config.stamp_tax_rate - 0.0005).abs() > f64::EPSILON {
+        // 印花税按税务模式门禁（2026-10-08 决策）：不扣税模式连印花税也免，
+        // 佣金与过户费照付。该配对在 setup 校验的单一入口强制，费用管线
+        // （结算、名义费用、NPC 估算与恢复重放）全部经 GameConfig 传播，
+        // 不存在绕过配对的第二条计费路径。
+        let expected_stamp_rate = if self.dividend_tax_mode
+            == crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt
+        {
+            0.0
+        } else {
+            0.0005
+        };
+        if (self.config.stamp_tax_rate - expected_stamp_rate).abs() > f64::EPSILON {
             return Err(SessionError::InvalidSetup(format!(
-                "formal A-share sessions require sell stamp_tax_rate=0.0005, got {}",
-                self.config.stamp_tax_rate
+                "dividend_tax_mode={:?} 要求 stamp_tax_rate={expected_stamp_rate}，实际为 {}",
+                self.dividend_tax_mode, self.config.stamp_tax_rate
             )));
         }
         if (self.config.default_limit - 0.10).abs() > f64::EPSILON
@@ -2439,7 +2493,7 @@ impl GameSession {
             self.state.company_system.issuers(),
         )?;
         if self.state.setup.dividend_tax_mode
-            == crate::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket
+            == crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual
         {
             let stock = registry.stock().clone();
             let personal_accounts: Vec<AccountId> = registry
@@ -2502,12 +2556,17 @@ impl GameSession {
                 .map(
                     |registry| corporate_actions::AccountStockDividendTaxStatus {
                         stock: registry.stock().clone(),
-                        status: if self.state.corporate_actions.dividend_tax_books.iter().any(
-                            |book| book.account() == account && book.stock() == registry.stock(),
-                        ) {
-                            corporate_actions::DividendTaxStatus::IndividualPublicMarket
-                        } else {
-                            corporate_actions::DividendTaxStatus::TreatmentNotConfigured
+                        status: match self.state.setup.dividend_tax_mode {
+                            crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding => {
+                                corporate_actions::DividendTaxStatus::FlatWithholding
+                            }
+                            _ if self.state.corporate_actions.dividend_tax_books.iter().any(
+                                |book| book.account() == account && book.stock() == registry.stock(),
+                            ) =>
+                            {
+                                corporate_actions::DividendTaxStatus::IndividualPublicMarket
+                            }
+                            _ => corporate_actions::DividendTaxStatus::TreatmentNotConfigured,
                         },
                     },
                 )
@@ -2522,12 +2581,22 @@ impl GameSession {
     /// 显式配置账户在指定证券下的现金分红税务身份；调用方不得由账户类型或策略风格推断。
     /// 仅限会话装配期调用：名册已有历史日结回执或已登记分红时会拒绝，
     /// 因为事后配置无法重建 FIFO 税事实并会令后续日终永久失败。
+    /// `FlatWithholding` 模式显式拒绝：简税模式的代扣已覆盖全部持有人，
+    /// 叠加个人差别化税账会对同一笔分红双重计税。
     pub fn configure_cash_dividend_tax_book(
         &mut self,
         account: AccountId,
         stock: crate::account::StockCode,
         profile: crate::company::cash_dividend_tax::DividendTaxProfile,
     ) -> Result<(), SessionCorporateActionsError> {
+        if self.state.setup.dividend_tax_mode
+            == crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "FlatWithholding（简税）模式不支持显式配置个人差别化税账：代扣已覆盖全部持有人，叠加会对同一笔分红双重计税"
+                    .into(),
+            ));
+        }
         self.state
             .corporate_actions
             .configure_cash_dividend_tax_book(account, stock, profile)
@@ -4542,6 +4611,9 @@ impl GameSession {
                 &issuers,
                 std::sync::Arc::make_mut(&mut self.state.company_system),
                 &mut self.state.accounts,
+                // 简税代扣上下文：Some(rate) ⇔ FlatWithholding 模式（由 SessionSetup
+                // 三态校验保证），付款日按比例对每位账户持有人原子代扣。
+                self.state.setup.flat_withholding_bp,
             )
             .map_err(|error| SessionError::InvalidSave(format!("现金分红日终结算失败：{error}")))?;
         self.state
@@ -4608,6 +4680,7 @@ impl GameSession {
                 &self.state.company_system,
                 report.settled_date,
                 repurchase_account_for_validate,
+                self.state.setup.flat_withholding_bp,
             )
             .map_err(|error| {
                 SessionError::InvalidSave(format!("日终公司行为与Simple账务勾稽失败：{error}"))
@@ -5657,7 +5730,8 @@ mod candle_open_tests {
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
-            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+            flat_withholding_bp: Some(1000),
             rights_offering_enabled: false,
             issuer_repurchase_enabled: false,
         }
@@ -5968,7 +6042,8 @@ mod npc_working_quote_tests {
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
-            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+            flat_withholding_bp: Some(1000),
             rights_offering_enabled: false,
             issuer_repurchase_enabled: false,
         }

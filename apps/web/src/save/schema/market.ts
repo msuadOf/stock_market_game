@@ -58,9 +58,34 @@ function floatAllocation(value: unknown, path: string): FloatAllocation {
   return { between_kinds: betweenKinds, within_kind: withinKind }
 }
 
+/** 三层税制的简税比例三态契约：仅 Flat 模式必填整数 bp（0..=10000），
+ * 其他模式必须为 null（携带数值即拒绝，与引擎 setup 校验同构）。 */
+function parseFlatWithholdingBp(value: unknown, path: string, mode: SessionSetup["dividend_tax_mode"]): number | null {
+  if (mode === "FlatWithholding") {
+    if (value === null || value === undefined) {
+      throw new SaveSchemaError(`${path}.flat_withholding_bp`, "FlatWithholding 模式必须携带简税比例（bp）")
+    }
+    const rate = integer(value, `${path}.flat_withholding_bp`, 0)
+    if (rate > 10000) {
+      throw new SaveSchemaError(`${path}.flat_withholding_bp`, `简税比例 ${rate}bp 超出合法域 0..=10000bp（最高全额代扣）`)
+    }
+    return rate
+  }
+  if (value !== null && value !== undefined) {
+    throw new SaveSchemaError(`${path}.flat_withholding_bp`, `flat_withholding_bp 仅 FlatWithholding 模式可携带，模式 ${mode} 不得携带`)
+  }
+  return null
+}
+
 export function parseSetup(value: unknown, path: string): SessionSetup {
   const parsed = record(value, path)
+  // 简税比例键与引擎 serde Option 语义对齐：缺失 ⇔ null（非 Flat 模式等价不携带；
+  // Flat 模式缺失即显式拒绝）。先取出再过 exact，保持「无未知键」校验不变。
+  const flatWithholdingBpRaw = Object.hasOwn(parsed, "flat_withholding_bp") ? (parsed as Record<string, unknown>).flat_withholding_bp : undefined
+  delete (parsed as Record<string, unknown>).flat_withholding_bp
   exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "report_frequency", "company_system", "start_date", "simulation_policy_id", "dividend_tax_mode", "rights_offering_enabled", "issuer_repurchase_enabled"], path)
+  const dividendTaxMode = oneOf(parsed.dividend_tax_mode, `${path}.dividend_tax_mode`, ["FlatWithholding", "AShareIndividual", "Exempt"] as const)
+  const flatWithholdingBp = parseFlatWithholdingBp(flatWithholdingBpRaw, path, dividendTaxMode)
   const npcs = record(parsed.npcs, `${path}.npcs`)
   exact(npcs, ["retail_count", "inst_count", "hot_count", "retail_cash_median"], `${path}.npcs`)
   const config = record(parsed.config, `${path}.config`)
@@ -80,7 +105,7 @@ export function parseSetup(value: unknown, path: string): SessionSetup {
     npcs: { retail_count: integer(npcs.retail_count, `${path}.npcs.retail_count`, 0), inst_count: integer(npcs.inst_count, `${path}.npcs.inst_count`, 0), hot_count: integer(npcs.hot_count, `${path}.npcs.hot_count`, 0), retail_cash_median: money(npcs.retail_cash_median, `${path}.npcs.retail_cash_median`) },
     config: { commission_rate: finite(config.commission_rate, `${path}.config.commission_rate`), commission_min: money(config.commission_min, `${path}.config.commission_min`), stamp_tax_rate: finite(config.stamp_tax_rate, `${path}.config.stamp_tax_rate`), default_limit: finite(config.default_limit, `${path}.config.default_limit`), st_limit: finite(config.st_limit, `${path}.config.st_limit`), price_cage_enabled: boolean(config.price_cage_enabled, `${path}.config.price_cage_enabled`), lot_size: integer(config.lot_size, `${path}.config.lot_size`, 1), starting_cash: money(config.starting_cash, `${path}.config.starting_cash`) },
     strategy_params: { retail: { arrival_rate: finite(retail.arrival_rate, `${path}.strategy_params.retail.arrival_rate`), order_size_mean: integer(retail.order_size_mean, `${path}.strategy_params.retail.order_size_mean`, 0), chase_prob: finite(retail.chase_prob, `${path}.strategy_params.retail.chase_prob`) }, inst: { margin: finite(inst.margin, `${path}.strategy_params.inst.margin`), order_size: integer(inst.order_size, `${path}.strategy_params.inst.order_size`, 1) }, hot: { lookback: integer(hot.lookback, `${path}.strategy_params.hot.lookback`, 2), trend_threshold: finite(hot.trend_threshold, `${path}.strategy_params.hot.trend_threshold`), order_size: integer(hot.order_size, `${path}.strategy_params.hot.order_size`, 1) } },
-    ticks_per_day: integer(parsed.ticks_per_day, `${path}.ticks_per_day`, 1), auction_ticks: integer(parsed.auction_ticks, `${path}.auction_ticks`, 0), closing_auction_ticks: integer(parsed.closing_auction_ticks, `${path}.closing_auction_ticks`, 0), history_len: integer(parsed.history_len, `${path}.history_len`, 0), t1_enabled: boolean(parsed.t1_enabled, `${path}.t1_enabled`), float_allocation: floatAllocation(parsed.float_allocation, `${path}.float_allocation`), start_date: civilDate(parsed.start_date, `${path}.start_date`), simulation_policy_id: string(parsed.simulation_policy_id, `${path}.simulation_policy_id`), dividend_tax_mode: oneOf(parsed.dividend_tax_mode, `${path}.dividend_tax_mode`, ["IndividualPublicMarket", "Exempt"] as const), rights_offering_enabled: boolean(parsed.rights_offering_enabled, `${path}.rights_offering_enabled`), issuer_repurchase_enabled: boolean(parsed.issuer_repurchase_enabled, `${path}.issuer_repurchase_enabled`),
+    ticks_per_day: integer(parsed.ticks_per_day, `${path}.ticks_per_day`, 1), auction_ticks: integer(parsed.auction_ticks, `${path}.auction_ticks`, 0), closing_auction_ticks: integer(parsed.closing_auction_ticks, `${path}.closing_auction_ticks`, 0), history_len: integer(parsed.history_len, `${path}.history_len`, 0), t1_enabled: boolean(parsed.t1_enabled, `${path}.t1_enabled`), float_allocation: floatAllocation(parsed.float_allocation, `${path}.float_allocation`), start_date: civilDate(parsed.start_date, `${path}.start_date`), simulation_policy_id: string(parsed.simulation_policy_id, `${path}.simulation_policy_id`), dividend_tax_mode: dividendTaxMode, flat_withholding_bp: flatWithholdingBp, rights_offering_enabled: boolean(parsed.rights_offering_enabled, `${path}.rights_offering_enabled`), issuer_repurchase_enabled: boolean(parsed.issuer_repurchase_enabled, `${path}.issuer_repurchase_enabled`),
   }
 }
 
