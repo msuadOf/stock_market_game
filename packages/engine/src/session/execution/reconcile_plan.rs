@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::session::pipeline::npc_split::SessionReadView;
+
 #[derive(Clone, Debug)]
 pub(in crate::session) struct ReconciliationPlan {
     pub(in crate::session) decisions: Vec<WorkingOrderDecision>,
@@ -24,6 +26,24 @@ pub(in crate::session) enum WorkingOrderDecision {
 impl GameSession {
     pub(in crate::session) fn plan_npc_working_order_reconciliation(
         &self,
+        desired: Vec<Intent>,
+        phase: TradingPhase,
+        scope: ReconcileScope,
+        working: WorkingOrderSlices<'_>,
+    ) -> ReconciliationPlan {
+        Self::plan_npc_working_order_reconciliation_on(
+            &self.read_view(),
+            desired,
+            phase,
+            scope,
+            working,
+        )
+    }
+
+    /// 读视图版本（queue 链转换目标形态）：会话读集仅 tick/setup（竞价不可撤销
+    /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
+    pub(in crate::session) fn plan_npc_working_order_reconciliation_on(
+        view: &SessionReadView<'_>,
         mut desired: Vec<Intent>,
         phase: TradingPhase,
         scope: ReconcileScope,
@@ -60,8 +80,8 @@ impl GameSession {
                 }
             }
             TradingPhase::CallAuction => {
-                let cancelable = self.state.tick % self.state.setup.ticks_per_day
-                    < self.state.setup.auction_ticks / 3;
+                let cancelable =
+                    view.tick % view.setup.ticks_per_day < view.setup.auction_ticks / 3;
                 for (code, order) in working.auction {
                     if !in_scope(code) {
                         continue;
@@ -76,8 +96,7 @@ impl GameSession {
                             code: code.clone(),
                         });
                     } else {
-                        let market = self
-                            .state
+                        let market = view
                             .markets
                             .get(code)
                             .expect("working auction stock exists");

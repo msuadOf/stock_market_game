@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::session::pipeline::npc_split::SessionReadView;
+
 impl GameSession {
     /// 把机构的方向性限价目标转化为一个可恢复的母单及其至多一张子单。
     ///
@@ -15,7 +17,33 @@ impl GameSession {
         market_minute: u64,
         working: WorkingOrderSlices<'_>,
     ) -> Vec<Intent> {
-        let lot_size = self.state.setup.config.lot_size;
+        let (view, mut writes) = crate::session::pipeline::npc_split::npc_split(self);
+        Self::materialize_parent_order_intents_on(
+            &view,
+            &mut writes.parent_orders,
+            &mut writes.npc_order_lifecycles,
+            account,
+            intents,
+            market_minute,
+            working,
+        )
+    }
+
+    /// 读视图+专写字段版本（queue 链转换目标形态）。
+    ///
+    /// 写集仅两处：`parent_orders`（母单计划的登记/修订/移除）与
+    /// `npc_order_lifecycles`（认领旧子单时把它从 NPC 撤单寿命簿移除）；
+    /// 读集仅 `setup.config.lot_size` 与 `view.phase()`，其余依赖全部经参数传入。
+    pub(in crate::session) fn materialize_parent_order_intents_on(
+        view: &SessionReadView<'_>,
+        parent_orders: &mut BTreeMap<AccountId, BTreeMap<StockId, ParentOrderPlan>>,
+        npc_order_lifecycles: &mut Vec<NpcOrderLifecycle>,
+        account: AccountId,
+        intents: Vec<Intent>,
+        market_minute: u64,
+        working: WorkingOrderSlices<'_>,
+    ) -> Vec<Intent> {
+        let lot_size = view.setup.config.lot_size;
         let mut requested: BTreeMap<StockId, (Side, Money, u32)> = BTreeMap::new();
         let mut dynamic_codes = BTreeSet::new();
         let mut passthrough = Vec::new();
@@ -47,9 +75,7 @@ impl GameSession {
             }
         }
 
-        let existing_codes: Vec<StockId> = self
-            .state
-            .parent_orders
+        let existing_codes: Vec<StockId> = parent_orders
             .get(&account)
             .map(|plans| plans.keys().cloned().collect())
             .unwrap_or_default();
@@ -65,9 +91,7 @@ impl GameSession {
             };
             let mut remove = false;
             {
-                let plan = self
-                    .state
-                    .parent_orders
+                let plan = parent_orders
                     .get_mut(&account)
                     .and_then(|plans| plans.get_mut(&code))
                     .expect("parent-order code was collected from its owning map");
@@ -84,14 +108,15 @@ impl GameSession {
                 }
             }
             if remove {
-                self.state
-                    .parent_orders
+                parent_orders
                     .get_mut(&account)
                     .expect("parent-order owner was collected from its map")
                     .remove(&code);
                 continue;
             }
-            self.append_parent_child_or_working_intent(
+            Self::append_parent_child_or_working_intent_on(
+                view,
+                parent_orders,
                 account,
                 &code,
                 market_minute,
@@ -143,7 +168,7 @@ impl GameSession {
             let expires_market_minute = market_minute
                 .checked_add(PARENT_ORDER_HORIZON_MINUTES)
                 .expect("market minute plus fixed parent-order horizon fits u64");
-            self.state.parent_orders.entry(account).or_default().insert(
+            parent_orders.entry(account).or_default().insert(
                 code.clone(),
                 ParentOrderPlan::from_facts(
                     code.clone(),
@@ -159,10 +184,17 @@ impl GameSession {
             );
             if let Some((order_id, _)) = active_child {
                 // 被母单认领的旧连续报价保留排队优先级，但从普通 NPC 撤单寿命中移出；
-                // 此后只由母单执行状态决定它何时修订或撤销。
-                self.remove_npc_order_lifecycle(account, &code, order_id);
+                // 此后只由母单执行状态决定它何时修订或撤销。以下与
+                // GameSession::remove_npc_order_lifecycle（session.rs）是同一操作，
+                // 直接落在写组字段上。
+                crate::session::pipeline::quote_expiry::NpcOrderLifecycleBook::new(
+                    npc_order_lifecycles,
+                )
+                .remove(account, &code, order_id);
             }
-            self.append_parent_child_or_working_intent(
+            Self::append_parent_child_or_working_intent_on(
+                view,
+                parent_orders,
                 account,
                 &code,
                 market_minute,
@@ -170,13 +202,8 @@ impl GameSession {
                 &mut desired,
             );
         }
-        if self
-            .state
-            .parent_orders
-            .get(&account)
-            .is_some_and(BTreeMap::is_empty)
-        {
-            self.state.parent_orders.remove(&account);
+        if parent_orders.get(&account).is_some_and(BTreeMap::is_empty) {
+            parent_orders.remove(&account);
         }
         desired
     }
@@ -189,16 +216,36 @@ impl GameSession {
         working: WorkingOrderSlices<'_>,
         desired: &mut Vec<Intent>,
     ) {
-        let plan = self
-            .state
-            .parent_orders
+        Self::append_parent_child_or_working_intent_on(
+            &self.read_view(),
+            &self.state.parent_orders,
+            account,
+            code,
+            market_minute,
+            working,
+            desired,
+        )
+    }
+
+    /// 读视图版本（append 核心）：会话读取仅触 parent_orders（共享只读借用）、
+    /// `view.phase()` 与 `setup.config.lot_size`。
+    pub(in crate::session) fn append_parent_child_or_working_intent_on(
+        view: &SessionReadView<'_>,
+        parent_orders: &BTreeMap<AccountId, BTreeMap<StockId, ParentOrderPlan>>,
+        account: AccountId,
+        code: &StockId,
+        market_minute: u64,
+        working: WorkingOrderSlices<'_>,
+        desired: &mut Vec<Intent>,
+    ) {
+        let plan = parent_orders
             .get(&account)
             .and_then(|plans| plans.get(code))
             .expect("parent-order execution requires an active plan");
         if let Some(intent) = plan.desired_child_intent(
             market_minute,
-            self.phase(),
-            self.state.setup.config.lot_size,
+            view.phase(),
+            view.setup.config.lot_size,
             working,
         ) {
             desired.push(intent);
