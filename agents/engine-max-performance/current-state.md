@@ -234,3 +234,5 @@ commit_from 整体 mem::replace + rayon::spawn(drop) 移出旧权威状态（367
 ## 追加：E8 股票数值身份落地（2026-10-07）
 
 用户决策（ADR 0041）：引擎核心以 StockId(u32) 为股票唯一身份，字符串只留边界。本批落地股票项并全量验证：c79f051c（引擎 230 文件）+ c6cd8761（harness）+ 7720a62d（三宿主 wire + ts_rs 再生成）。正式锚定交错配对（worker=4 默认口径，H=dde740c5 冻结 binary，锚漂 1.87%，6/6 全胜，区间完全分离 232-242 vs 286-300）**mean +22.73%，正式口径 ~236x→~290x**——主线迄今最大单笔。测试全部与基线逐一对照无新增失败（company_* 两例为基线编译破损掩盖的既有失败；desktop generate_context! 为既有环境问题）。清点与配方见 string-free-inventory.md / e8-string-sweep-progress.md / stockid-sweep-findings.md。清单未竟：B 结构化错误（数字错误码 wire 契约已定）、C CompanyId/venue/frozen/光标、其余 A 表行。
+
+2026-10-07 E9 临时容器 churn 判据周期：脊柱 churn ~19.5% wall（gdb 1811 采样，actor 清醒时间 54% 为 clone/drop/释放机械）判据通过；但最大子方案"惰性 checkpoint"被语义证伪——step_frame 的 checkpoint 承担"提交后协议外层失败时整体退回已提交 tick"的回滚职责（frame.validate 失败路径），不能lazy；callgrind 的 SaveSlot 33% 归因修正为日边界成本（day_end_save），不入日内账。剩余路径汇入 #18 借用解耦（一次解锁 X1 +16% 与克隆重叠隐藏 ~10%）与"纯日内段逐字段质量画像→Arc/COW 逐字段"（LiveReservations 先例 +9~11%）。无生产改动、无基准、无复核需求。详见 e9-churn-findings.md。
