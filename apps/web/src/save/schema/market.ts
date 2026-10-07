@@ -77,13 +77,24 @@ function parseFlatWithholdingBp(value: unknown, path: string, mode: SessionSetup
   return null
 }
 
+/** 面值参数域（与引擎 SessionSetup::validate 同构）：规范分字符串且必须为
+ * 正数（面值不得为零或负）；缺省值 100 分（1 元/股）由 DEFAULT_SETUP 与
+ * UI 草稿层提供，不设解析默认，杜绝旧档静默取默认的兼容路径。 */
+function parseParValuePerShare(value: unknown, path: string): string {
+  const cents = money(value, path)
+  if (BigInt(cents) <= 0n) {
+    throw new SaveSchemaError(path, `面值 ${cents} 分必须为正数（面值不得为零或负）`)
+  }
+  return cents
+}
+
 export function parseSetup(value: unknown, path: string): SessionSetup {
   const parsed = record(value, path)
   // 简税比例键与引擎 serde Option 语义对齐：缺失 ⇔ null（非 Flat 模式等价不携带；
   // Flat 模式缺失即显式拒绝）。先取出再过 exact，保持「无未知键」校验不变。
   const flatWithholdingBpRaw = Object.hasOwn(parsed, "flat_withholding_bp") ? (parsed as Record<string, unknown>).flat_withholding_bp : undefined
   delete (parsed as Record<string, unknown>).flat_withholding_bp
-  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "report_frequency", "company_system", "start_date", "simulation_policy_id", "dividend_tax_mode", "rights_offering_enabled", "issuer_repurchase_enabled"], path)
+  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "report_frequency", "company_system", "start_date", "simulation_policy_id", "dividend_tax_mode", "rights_offering_enabled", "issuer_repurchase_enabled", "par_value_per_share", "auto_corporate_foundation"], path)
   const dividendTaxMode = oneOf(parsed.dividend_tax_mode, `${path}.dividend_tax_mode`, ["FlatWithholding", "AShareIndividual", "Exempt"] as const)
   const flatWithholdingBp = parseFlatWithholdingBp(flatWithholdingBpRaw, path, dividendTaxMode)
   const npcs = record(parsed.npcs, `${path}.npcs`)
@@ -106,6 +117,8 @@ export function parseSetup(value: unknown, path: string): SessionSetup {
     config: { commission_rate: finite(config.commission_rate, `${path}.config.commission_rate`), commission_min: money(config.commission_min, `${path}.config.commission_min`), stamp_tax_rate: finite(config.stamp_tax_rate, `${path}.config.stamp_tax_rate`), default_limit: finite(config.default_limit, `${path}.config.default_limit`), st_limit: finite(config.st_limit, `${path}.config.st_limit`), price_cage_enabled: boolean(config.price_cage_enabled, `${path}.config.price_cage_enabled`), lot_size: integer(config.lot_size, `${path}.config.lot_size`, 1), starting_cash: money(config.starting_cash, `${path}.config.starting_cash`) },
     strategy_params: { retail: { arrival_rate: finite(retail.arrival_rate, `${path}.strategy_params.retail.arrival_rate`), order_size_mean: integer(retail.order_size_mean, `${path}.strategy_params.retail.order_size_mean`, 0), chase_prob: finite(retail.chase_prob, `${path}.strategy_params.retail.chase_prob`) }, inst: { margin: finite(inst.margin, `${path}.strategy_params.inst.margin`), order_size: integer(inst.order_size, `${path}.strategy_params.inst.order_size`, 1) }, hot: { lookback: integer(hot.lookback, `${path}.strategy_params.hot.lookback`, 2), trend_threshold: finite(hot.trend_threshold, `${path}.strategy_params.hot.trend_threshold`), order_size: integer(hot.order_size, `${path}.strategy_params.hot.order_size`, 1) } },
     ticks_per_day: integer(parsed.ticks_per_day, `${path}.ticks_per_day`, 1), auction_ticks: integer(parsed.auction_ticks, `${path}.auction_ticks`, 0), closing_auction_ticks: integer(parsed.closing_auction_ticks, `${path}.closing_auction_ticks`, 0), history_len: integer(parsed.history_len, `${path}.history_len`, 0), t1_enabled: boolean(parsed.t1_enabled, `${path}.t1_enabled`), float_allocation: floatAllocation(parsed.float_allocation, `${path}.float_allocation`), start_date: civilDate(parsed.start_date, `${path}.start_date`), simulation_policy_id: string(parsed.simulation_policy_id, `${path}.simulation_policy_id`), dividend_tax_mode: dividendTaxMode, flat_withholding_bp: flatWithholdingBp, rights_offering_enabled: boolean(parsed.rights_offering_enabled, `${path}.rights_offering_enabled`), issuer_repurchase_enabled: boolean(parsed.issuer_repurchase_enabled, `${path}.issuer_repurchase_enabled`),
+    par_value_per_share: parseParValuePerShare(parsed.par_value_per_share, `${path}.par_value_per_share`),
+    auto_corporate_foundation: boolean(parsed.auto_corporate_foundation, `${path}.auto_corporate_foundation`),
   }
 }
 

@@ -29,6 +29,7 @@ import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { ReportFrequencyInput, type ReportFrequencyDraft } from "./components/ReportFrequencyInput.tsx";
 import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
 import { TaxModeInput } from "./components/TaxModeInput.tsx";
+import { ParValueInput } from "./components/ParValueInput.tsx";
 import { MechanismSwitchesInput } from "./components/MechanismSwitchesInput.tsx";
 import { CompanySystemInput } from "./components/company/CompanySystemInput.tsx";
 import { InitialAllocationSummary } from "./components/InitialAllocationSummary.tsx";
@@ -217,6 +218,8 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const [flatWithholdingBpDraft, setFlatWithholdingBpDraft] = useState(sessionSetup.flat_withholding_bp ?? 1000);
   const [rightsOfferingEnabledDraft, setRightsOfferingEnabledDraft] = useState(sessionSetup.rights_offering_enabled);
   const [issuerRepurchaseEnabledDraft, setIssuerRepurchaseEnabledDraft] = useState(sessionSetup.issuer_repurchase_enabled);
+  // 每股面值草稿（规范分字符串，默认 100 分 = 1 元/股；2026-10-08 N2a 决策）。
+  const [parValuePerShareDraft, setParValuePerShareDraft] = useState(sessionSetup.par_value_per_share);
   const [initialAllocation, setInitialAllocation] = useState<InitialAllocation | null>(null);
   const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
@@ -516,9 +519,9 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     browserLocal: startupTarget.kind === "wasm",
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
-    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, flatWithholdingBpDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft, seedDraft: companyDraft.seed, setSeedDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
+    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, flatWithholdingBpDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft, parValuePerShareDraft, seedDraft: companyDraft.seed, setSeedDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
     resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionCreation,
-    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setFlatWithholdingBpDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
+    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setFlatWithholdingBpDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setParValuePerShareDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
   const { recoverFromFile, noticeSavePolicy: handleSave, load: loadMarketArchive, selectFile: handleSaveFile,
     loadFile: loadMarketFile, newGame: resetMarket } = saveCommands;
@@ -839,6 +842,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
             <TaxModeInput value={dividendTaxModeDraft} onChange={setDividendTaxModeDraft} flatWithholdingBp={flatWithholdingBpDraft} onFlatWithholdingBpChange={setFlatWithholdingBpDraft} />
             <MechanismSwitchesInput rightsOfferingEnabled={rightsOfferingEnabledDraft} issuerRepurchaseEnabled={issuerRepurchaseEnabledDraft} onRightsOfferingChange={setRightsOfferingEnabledDraft} onIssuerRepurchaseChange={setIssuerRepurchaseEnabledDraft} />
+            <ParValueInput value={parValuePerShareDraft} onChange={setParValuePerShareDraft} />
             <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
             <ReportFrequencyInput value={reportFrequencyDraft} onChange={setReportFrequencyDraft} />
             <CompanySystemInput value={companySystemDraft} onChange={(companySystem) => setCompanyDraft(draft => ({ ...draft, companySystem, origin: "custom" }))} seed={companyDraft.seed} origin={companyDraft.origin} onSeedChange={changeCompanySeed} onRegenerate={regenerateCompanyDraft} onSettlementCycleChange={changeCompanySettlementCycle} onPreferencesChange={changeCompanyPreferences} />

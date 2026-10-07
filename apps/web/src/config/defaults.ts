@@ -81,9 +81,15 @@ function simpleCompany(code: string, revenueGrowth: number, fixedExpenseGrowth: 
       // 账面展示参数（2026-10-08 用户决策默认 30%；均为展示值，不建模真实资金流）。
       book_display: { investment_of_revenue_bp: 3000 },
     },
-    // 默认新局不配置任何公司行为偏好（ADR-0037：未配置=不自动产生方案，
-    // 安全默认；偏好配置 UI 入口归后续批次）。
-    preferences: { cash_dividend: null, stock_distribution: null },
+    // 温和默认偏好（2026-10-08 N2a 用户决策「新局温和默认偏好——每家公司自带
+    // 一套温和默认偏好（盈利达标+可分配利润达阈值就分红）」，游戏化虚拟参数、
+    // 非行业事实）：现金分红启用（目标派息比例 30%、最小可分配利润门槛 100 万元、
+    // 每结算周期评估一次），与 CompanyPreferencesInput 勾选时的预设同值；
+    // 送转默认关闭。用户可在新局偏好编辑入口整体关闭或改值。
+    preferences: {
+      cash_dividend: { target_payout_bp: 3000, min_distributable_profit: "100000000", cycles_between_proposals: 1 },
+      stock_distribution: null,
+    },
   };
 }
 
@@ -160,6 +166,15 @@ export const DEFAULT_SETUP: SessionSetup = {
   // 默认关闭；仅对新游戏生效，随存档严格固化。
   rights_offering_enabled: false,
   issuer_repurchase_enabled: false,
+  // 每股面值（2026-10-08 N2a 用户决策：默认 1 元/股 = 100 分，新局可编辑）：
+  // 开局自动装配按「面值 × 总股本」推定各公司注册资本法定事实。默认值由
+  // 本默认层提供，不设 serde 默认；旧档缺失该字段在 engine 与本端 parseSetup
+  // 双侧显式拒绝（无兼容原则）。
+  par_value_per_share: "100",
+  // 开局自动装配公司行为基础（2026-10-08 N2a 用户决策「开局自动建名册」）：
+  // 新局创建时自动建全流通名册 + 面值推定的注册资本法定事实 + 按税务模式
+  // 开个人税账（仅大 A 个人差别化模式）；产品默认开启，随存档严格固化。
+  auto_corporate_foundation: true,
   company_system: {
     mode: "Simple",
     config: {
