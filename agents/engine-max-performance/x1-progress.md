@@ -65,7 +65,7 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 - **棒次 4 入口（剩余环节，从叶子往上）**：
   0. （已完成项 1、2——保留编号防引用错乱）
   3. execution/orders.rs:11 materialize_parent_order_intents → on(view, &mut writes.parent_orders, ...)。**棒次 4 侦察发现（必须先处理）**：
-     - orders.rs:163 `self.remove_npc_order_lifecycle(...)` 写 `npc_order_lifecycles`——该字段目前在读视图里（can_prepare 迭代它），**与 prepare 并发读写冲突**。两个解法择一：①view 的 npc_order_lifecycles 改 owned Vec 克隆快照（同 accounts 模式，峰值 ~3.4k 行 × 小结构，克隆 ~µs 级）；②join 前串行判定 eligibility 并随 stash 固化，prepare 内部不再读 lifecycles（需先核实 adapter/inputs 分支是否也读）。推荐 ①，与 accounts 模式一致。
+     - **已解决（棒次 5 首笔）**：npc_order_lifecycles 已改 owned Vec 克隆快照并列入写组第 12 字段，拆分测试含并发 push 隔离断言（提交见 git log，lib 基线一致）。
      - orders.rs:94/165 `self.append_parent_child_or_working_intent(...)` 写集未审计（可能触及 pending_plan_events——潜在第 12 写字段）；orders.rs:251 remaining_qty 读集未审计。
      - orders.rs 其余读：setup.config.lot_size、self.phase()（view 已有）、tick。
   4. execution/reconcile_plan.rs:25 plan_npc_working_order_reconciliation → on(view,...)：读集仅 tick/setup（:63-64 已核），其余参数传入；177 行小文件，可先转。
