@@ -130,24 +130,36 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     fn many_rapid_defers_do_not_block_or_panic() {
         use std::sync::Arc;
-        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         let dropped = Arc::new(AtomicUsize::new(0));
         // 超过队列容量的快速连续 defer：部分入队、部分退化内联，都不应阻塞。
-        for _ in 0..QUEUE_CAPACITY * 4 {
-            let d = dropped.clone();
-            defer(d);
+        // 每个值的 Drop 递增 dropped 计数，验证不丢不漏。
+        struct CountingDrop {
+            counter: Arc<AtomicUsize>,
         }
-        // 等专用线程消费已入队部分（轮询而非 sleep）。
+        impl Drop for CountingDrop {
+            fn drop(&mut self) {
+                self.counter.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let total = QUEUE_CAPACITY * 4;
+        for _ in 0..total {
+            defer(CountingDrop {
+                counter: dropped.clone(),
+            });
+        }
+        // 等全部值被析构（线程消费 + 内联退化合计 = total）。
         let mut spins = 0;
-        while dropped.load(Ordering::SeqCst) < QUEUE_CAPACITY && spins < 10_000_000 {
+        while dropped.load(Ordering::SeqCst) < total && spins < 10_000_000 {
             spins += 1;
             std::hint::spin_loop();
         }
-        // 至少有些值被处理了（不管是在线程还是内联）。
-        assert!(
-            dropped.load(Ordering::SeqCst) > 0 || true,
-            "defer 不应阻塞；已处理的值计数 {}",
-            dropped.load(Ordering::SeqCst)
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            total,
+            "defer 不应阻塞或丢值；已析构 {}/{}",
+            dropped.load(Ordering::SeqCst),
+            total
         );
     }
 }
