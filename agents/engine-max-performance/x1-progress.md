@@ -58,6 +58,14 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 - 基准：锚定交错配对 worker=4、<10% 占用核段、≥5 对、预登记规则；预期 ≥+10%（外推 +16%，E2/E3 历史折扣）。
 - 复核：全新二级只读 agent（fork 无派生权限时由主会话代办）。
 
+## 阶段二设计决策（棒次 8 收棒时定稿待验）
+
+1. **stash 语义定稿**：放 CommittableSessionState 内（非 GameSession 顶层）——投机结果在 candidate N 的 commit 尾部产生，随 swap 自然成为权威状态一部分，下个 plan_tick 消费（take 置 None）；tick 失败重试时 stash 仍在权威上且仍有效（同 tick 重算语义不变）。save()/business_state_hash 走 SaveSlot 逐字段构造，stash 不入 SaveSlot 即自动排除。
+2. **待验证风险**：ReadOnlyStart 内含 shards（IncrementalContinuousStockCoordinator）——clone_for_tick_shadow 每 tick 克隆 state，若 coordinator 非 Clone 则 stash 不可直接存；解法备选：①stash 包 Arc，clone 只 bump；消费端 try_unwrap/或字段级拆包。下一步先查 coordinator/ContinuousStockInput 的 derive。
+3. **消费点**：mod.rs plan_tick 的 `shadow.state.execute` 内 read_only_start::prepare 调用处（:291）——命中条件 stash.for_tick == session.state.tick && can_prepare；cfg(test) 计数器沿 FROM_POST_EXPIRY_CALLS 先例（read_only_start.rs 内）。
+4. **生产点**：candidate_commit.rs prepare_candidate_commit——rebase 提前到 queue_npc 前（错误延后传播，Rayon1 等价已证）→ npc_split 后 rayon::join(queue_npc_on, eligibility 时 prepare_on(view))。prepare_on 需先做 prepare 链 view 化（envelope_projection 321 行/decision_resources 321 行/adapter 247 行——读集已在早期 grep 验证与写组零交集）。
+5. **TDD 顺序**：命中计数器/失配回退/错误优先级 fixture 三测先行（stash 可由 cfg(test) 直塞，不需生产点先在）→ prepare 链 view 化 → join 实装 → 1/4/16 一致性（单线程对照）→ probe → 锚定交错配对。
+
 ## 当前状态
 
 - **棒次 2（已完成）**：写集侦察完整化 + 叶子层全部 view/write 化。提交链：86f5a598（骨架+范例+2 测试）→ 2acc0984（写组 11 字段补全+phase/minute/date 视图助手）→ views/self_views 转换提交（build_market_view/market_price_path_observations/working_orders_for_accounts 自由函数化+薄委托）→ npc_split 扩展提交（公司域三 Arc+issuer_of_stock+npc_writes 窄构造）→ personal_state 提交（take_on/install_on 写组版）。每步 lib 1316/8 基线一致。
