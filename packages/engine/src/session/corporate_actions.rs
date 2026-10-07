@@ -421,44 +421,40 @@ impl SessionCorporateActions {
                                 // （含机构，机构不另算）按比例对税前应得原子代扣——
                                 // 刚贷记税前应得，代扣额 ≤ 税前应得 ≤ 到账后现金，
                                 // 扣收必然成功；失败即不变量破坏，显式上抛不静默。
-                                let (tax_status, withheld) = if let Some(rate_bp) =
-                                    flat_withholding_bp
-                                {
-                                    let cents = crate::company::cash_dividend_tax::flat_withholding_cents(
-                                        entitlement.gross.cents(),
-                                        rate_bp,
-                                    )
-                                    .map_err(|error| {
-                                        SessionCorporateActionsError::Invalid(error.to_string())
-                                    })?;
-                                    let withheld = crate::money::Money::from_cents(cents);
-                                    account_state
-                                        .debit_cash(withheld)
+                                let tax_status = match flat_withholding_bp {
+                                    Some(rate_bp) => {
+                                        let cents = crate::company::cash_dividend_tax::flat_withholding_cents(
+                                            entitlement.gross.cents(),
+                                            rate_bp,
+                                        )
                                         .map_err(|error| {
-                                            SessionCorporateActionsError::Invalid(format!(
-                                                "简税代扣破坏原子不变量（代扣额 {withheld:?} 应不超到账后现金）：{error}"
-                                            ))
+                                            SessionCorporateActionsError::Invalid(error.to_string())
                                         })?;
-                                    (DividendTaxStatus::FlatWithholding, withheld)
-                                } else if self.dividend_tax_books.iter().any(|book| {
-                                    book.account() == *account && book.stock() == &plan.stock
-                                }) {
-                                    (DividendTaxStatus::IndividualPublicMarket, crate::money::Money::ZERO)
-                                } else {
-                                    (DividendTaxStatus::TreatmentNotConfigured, crate::money::Money::ZERO)
+                                        let withheld = crate::money::Money::from_cents(cents);
+                                        account_state
+                                            .debit_cash(withheld)
+                                            .map_err(|error| {
+                                                SessionCorporateActionsError::Invalid(format!(
+                                                    "简税代扣破坏原子不变量（代扣额 {withheld:?} 应不超到账后现金）：{error}"
+                                                ))
+                                            })?;
+                                        self.flat_withholding_receipts
+                                            .push(FlatWithholdingReceipt {
+                                                payment_id: payment_id.clone(),
+                                                plan_id: plan.plan_id.clone(),
+                                                account: *account,
+                                                paid_on: day,
+                                                gross: entitlement.gross,
+                                                rate_bp: u64::from(rate_bp),
+                                                withheld,
+                                            });
+                                        DividendTaxStatus::FlatWithholding
+                                    }
+                                    None if self.dividend_tax_books.iter().any(|book| {
+                                        book.account() == *account && book.stock() == &plan.stock
+                                    }) => DividendTaxStatus::IndividualPublicMarket,
+                                    None => DividendTaxStatus::TreatmentNotConfigured,
                                 };
-                                if let Some(rate_bp) = flat_withholding_bp {
-                                    self.flat_withholding_receipts
-                                        .push(FlatWithholdingReceipt {
-                                            payment_id: payment_id.clone(),
-                                            plan_id: plan.plan_id.clone(),
-                                            account: *account,
-                                            paid_on: day,
-                                            gross: entitlement.gross,
-                                            rate_bp: u64::from(rate_bp),
-                                            withheld,
-                                        });
-                                }
                                 self.account_gross_receipts
                                     .push(AccountDividendGrossReceipt {
                                         payment_id: payment_id.clone(),
@@ -1992,6 +1988,13 @@ impl SessionCorporateActions {
                 }
             }
             Some(rate_bp) => {
+                // 防御深度：比例域与 setup 校验对称（正常路径由 SessionSetup::validate
+                // 保证 ≤10000bp；此处显式复验，杜绝绕过 setup 的调用面）。
+                if rate_bp > crate::company::cash_dividend_tax::MAX_FLAT_WITHHOLDING_BP {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "FlatWithholding 模式的简税比例超出合法域 0..=10000bp".into(),
+                    ));
+                }
                 if !self.dividend_tax_books.is_empty() {
                     return Err(SessionCorporateActionsError::Invalid(
                         "FlatWithholding（简税）模式不得配置个人差别化税账".into(),

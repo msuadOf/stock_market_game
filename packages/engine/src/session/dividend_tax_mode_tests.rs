@@ -813,6 +813,92 @@ fn flat_mode_round_trips_through_save_and_restores_identical_semantics() {
     );
 }
 
+/// 引擎侧篡改负例：被改写的代扣回执、比例不一致、孤儿回执与非 Flat 模式携带
+/// 回执都必须在恢复勾稽（`SessionCorporateActions::validate`）被显式拒绝
+/// （Web 严格 parser 已有同构五向负例）。
+#[test]
+fn flat_withholding_receipts_tampering_is_rejected_at_validation() {
+    let holders = vec![
+        (AccountId(0), "player-lot", 5_u64),
+        (AccountId(2), "institution-lot", 3),
+    ];
+    let (mut session, _p, _r, _i, _e) = flat_dividend_fixture(flat_fixture_setup(1000), 10, &holders);
+    advance_until_dividend_paid(&mut session);
+    let positions = session
+        .state
+        .accounts
+        .iter()
+        .map(|(id, account)| {
+            (
+                *id,
+                account
+                    .positions()
+                    .iter()
+                    .map(|(code, position)| (code.clone(), u64::from(position.qty())))
+                    .collect(),
+            )
+        })
+        .collect();
+    let day = session.civil_date();
+
+    let validate = |actions: &super::corporate_actions::SessionCorporateActions,
+                    bp: Option<u32>| {
+        actions
+            .validate(&positions, &session.state.company_system, day, None, bp)
+            .map_err(|error| error.to_string())
+    };
+    // 基线：未篡改的回执通过。
+    validate(&session.state.corporate_actions, Some(1000)).unwrap();
+
+    // 篡改一：代扣金额与比例复算不一致。
+    let mut tampered = session.state.corporate_actions.clone();
+    tampered.flat_withholding_receipts[0].withheld = Money::from_cents(4);
+    assert!(
+        validate(&tampered, Some(1000))
+            .unwrap_err()
+            .contains("比例复算不一致"),
+        "代扣金额篡改必须被显式拒绝"
+    );
+
+    // 篡改二：回执比例与 setup 比例不一致。
+    let mut tampered = session.state.corporate_actions.clone();
+    tampered.flat_withholding_receipts[0].rate_bp = 2000;
+    assert!(
+        validate(&tampered, Some(1000))
+            .unwrap_err()
+            .contains("比例"),
+        "回执比例与 setup 不一致必须被显式拒绝"
+    );
+
+    // 篡改三：孤儿回执（删除到账回执后缺少配对）。
+    let mut tampered = session.state.corporate_actions.clone();
+    tampered.account_gross_receipts.clear();
+    assert!(
+        validate(&tampered, Some(1000))
+            .unwrap_err()
+            .contains("FlatWithholding 分红到账回执"),
+        "孤儿代扣回执必须被显式拒绝"
+    );
+
+    // 篡改四：Flat 回执出现在非 Flat 模式的勾稽上下文。
+    assert!(
+        validate(&session.state.corporate_actions, None)
+            .unwrap_err()
+            .contains("不得携带简税代扣回执"),
+        "非 Flat 模式携带代扣回执必须被显式拒绝"
+    );
+
+    // 篡改五：到账回执缺失代扣回执（部分持有人未被代扣）。
+    let mut tampered = session.state.corporate_actions.clone();
+    tampered.flat_withholding_receipts.truncate(1);
+    assert!(
+        validate(&tampered, Some(1000))
+            .unwrap_err()
+            .contains("都必须有简税代扣回执"),
+        "缺失持有人代扣回执必须被显式拒绝"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 印花税三模式差异（真实卖出成交断言）
 // ---------------------------------------------------------------------------

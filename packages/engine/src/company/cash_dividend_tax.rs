@@ -48,16 +48,23 @@ pub const MAX_FLAT_WITHHOLDING_BP: u32 = 10_000;
 
 /// Flat 模式下按持有人税前应得计算代扣额：四舍五入（half-up）到整数分，
 /// 与个人差别化口径的「每笔分红合计应纳税额四舍五入到分」实现口径一致。
+/// 防御性拒绝负数税前应得：小幅负值经 `+5000` 的 half-up 偏移会被截断成 0，
+/// 必须在入口显式报错而不是静默返回零代扣。
 pub fn flat_withholding_cents(
     gross_cents: i64,
     rate_bp: u32,
 ) -> Result<i64, DividendTaxError> {
+    if gross_cents < 0 {
+        return Err(invalid(
+            "flat withholding requires a nonnegative gross entitlement",
+        ));
+    }
     let scaled = i128::from(gross_cents)
         .checked_mul(i128::from(rate_bp))
         .and_then(|value| value.checked_add(5_000))
         .ok_or_else(|| overflow("flat withholding multiplication"))?;
     let cents = scaled / 10_000;
-    if cents < 0 || cents > i128::from(gross_cents.max(0)) {
+    if cents > i128::from(gross_cents) {
         return Err(invalid(
             "flat withholding must stay within the nonnegative gross entitlement",
         ));
