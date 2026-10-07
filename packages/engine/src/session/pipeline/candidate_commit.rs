@@ -73,12 +73,19 @@ pub(super) fn prepare_candidate_commit<'authority>(
             // X1 join 脚手架：投机分支暂为 None（prepare 链 view 化验收后接
             // prepare_on）；单侧 join 与原串行语义等价，先行上线验证 npc_split 路径。
             let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
-            let (queue_result, _speculative) = rayon::join(
+            let (queue_result, speculative) = rayon::join(
                 || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
-                || Option::<std::sync::Arc<super::read_only_start::ReadOnlyStart>>::None,
+                // X1 投机分支：机制齐备但默认关闭——开启后
+                // npc_request_uses_available_cash_when_it_enters_the_next_tick 与
+                // initial_batch_full_fill_completes_linked_parent 两测回归（语义差异
+                // 待诊断，见 x1-progress.md 下一棒入口）；修复后把本臂换回
+                // can_prepare_on/prepare_on 实装（代码见 git 历史 c. 本提交父代）。
+                || Option::<super::read_only_start::SpeculativePrepareStash>::None,
             );
             queue_result?;
             rebase_result?;
+            // 失败路径 candidate 整体丢弃；成功路径把投机结果随 candidate 提交流转。
+            candidate.state.speculative_prepare = speculative;
         }
     } else if candidate.state.tick != authority.state.tick {
         return Err(invariant(

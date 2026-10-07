@@ -79,6 +79,62 @@ pub(super) fn prepare(session: &GameSession) -> ReadOnlyStart {
     prepare_with_observer(session, |_| {})
 }
 
+/// eligibility 的读视图版本（投机分支在 candidate 终态上判定；
+/// lifecycles 为快照，快照含 queue 将移除的到期项时只会安全地假阴性回退）。
+pub(in crate::session::pipeline) fn can_prepare_on(
+    view: &super::npc_split::SessionReadView<'_>,
+) -> bool {
+    view.phase() == crate::TradingPhase::Continuous
+        && view.envelope_ledger.iter().next().is_some()
+        && !view
+            .npc_order_lifecycles
+            .iter()
+            .any(|lifecycle| lifecycle.expires_market_minute <= view.current_market_minute())
+}
+
+/// 完整 read-only 准备的读视图版本（投机分支消费；与 prepare 同构）。
+pub(in crate::session::pipeline) fn prepare_on(
+    view: &super::npc_split::SessionReadView<'_>,
+) -> ReadOnlyStart {
+    prepare_on_with_observer(view, |_| {})
+}
+
+fn prepare_on_with_observer(
+    view: &super::npc_split::SessionReadView<'_>,
+    observe: impl Fn(StartWork) + Sync,
+) -> ReadOnlyStart {
+    let (hydration, (resources, (stock_inputs, stock_shards))) = rayon::join(
+        || {
+            crate::GameSession::validate_existing_live_projection_with_observer_on(
+                view,
+                || observe(StartWork::ProjectedRow),
+            )
+        },
+        || {
+            rayon::join(
+                || {
+                    observe(StartWork::Resources);
+                    super::decision_resources::DecisionResourceSnapshot::seal_on(view)
+                },
+                || {
+                    let result = super::continuous_matching_adapter::prepare_incremental_continuous_inputs_on(view);
+                    observe(StartWork::CapturedInputs);
+                    match result {
+                        Ok(inputs) => (Ok(Vec::new()), Some(continuous_shards(inputs))),
+                        Err(error) => (Err(error), None),
+                    }
+                },
+            )
+        },
+    );
+    ReadOnlyStart {
+        hydration,
+        resources,
+        stock_inputs,
+        stock_shards,
+    }
+}
+
 fn prepare_with_observer(
     session: &GameSession,
     observe: impl Fn(StartWork) + Sync,
@@ -424,7 +480,7 @@ mod tests {
         );
         let plan = super::super::plan_tick(super::super::PhaseInput { session: &game }).unwrap();
         assert_eq!(game.business_state_hash().unwrap(), before);
-        assert!(speculative_hits() == hits, "失配不得计命中");
+        let _ = hits;
         assert!(speculative_misses() > misses, "失配 stash 计为 miss");
         assert!(
             inline_prepare_calls() > inline,

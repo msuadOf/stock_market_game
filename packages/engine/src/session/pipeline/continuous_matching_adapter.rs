@@ -1,11 +1,11 @@
 use super::{
     continuous_matching::{ContinuousEnvelopeSnapshot, ContinuousStockInput},
-    EnvelopeKey, EnvelopeOrigin, StepFatal,
+    npc_split::SessionReadView, EnvelopeKey, EnvelopeOrigin, StepFatal,
 };
 use crate::{GameSession, Market, Order, StockId, TradingPhase};
 use rayon::prelude::*;
 
-/// 结构性测试计数器：记录 prepare_stock_input 内 BTreeSet 增量插入查重的次数。
+/// 结构性测试计数器：记录 prepare_stock_input_on 内 BTreeSet 增量插入查重的次数。
 /// 融合排序方案落地后该路径应消失，计数保持 0。
 #[cfg(test)]
 pub(super) static IDENTITY_SET_INSERTS: std::sync::atomic::AtomicU64 =
@@ -16,23 +16,37 @@ pub(super) static IDENTITY_SET_INSERTS: std::sync::atomic::AtomicU64 =
 pub(super) fn prepare_incremental_continuous_inputs(
     session: &GameSession,
 ) -> Result<Vec<ContinuousStockInput>, StepFatal> {
-    prepare_inputs_with_observer(session, || {})
+    prepare_incremental_continuous_inputs_on(&session.read_view())
+}
+
+/// 读视图版本（prepare 链投机路径共用）。
+pub(super) fn prepare_incremental_continuous_inputs_on(
+    view: &SessionReadView<'_>,
+) -> Result<Vec<ContinuousStockInput>, StepFatal> {
+    prepare_inputs_with_observer_on(view, || {})
 }
 
 pub(super) fn prepare_inputs_with_observer(
     session: &GameSession,
     observe_row: impl Fn() + Sync,
 ) -> Result<Vec<ContinuousStockInput>, StepFatal> {
+    prepare_inputs_with_observer_on(&session.read_view(), observe_row)
+}
+
+/// 读视图版本（读集：phase 经 view 推导，auction_orders/markets/envelope_ledger）。
+pub(super) fn prepare_inputs_with_observer_on(
+    view: &SessionReadView<'_>,
+    observe_row: impl Fn() + Sync,
+) -> Result<Vec<ContinuousStockInput>, StepFatal> {
     if !matches!(
-        session.phase(),
+        view.phase(),
         TradingPhase::Continuous | TradingPhase::PreOpen
     ) {
         return Err(invariant(
             "continuous-book stock inputs require Continuous or PreOpen phase",
         ));
     }
-    if session
-        .state
+    if view
         .auction_orders
         .values()
         .any(|orders| !orders.is_empty())
@@ -42,14 +56,13 @@ pub(super) fn prepare_inputs_with_observer(
         ));
     }
 
-    let mut prepared = session
-        .state
+    let mut prepared = view
         .markets
         .par_iter()
         .map(|(code, market)| {
             (
                 code.clone(),
-                prepare_stock_input(session, code, market, &observe_row),
+                prepare_stock_input_on(view, code, market, &observe_row),
             )
         })
         .collect::<Vec<_>>();
@@ -64,8 +77,8 @@ pub(super) fn prepare_inputs_with_observer(
             .ok_or_else(|| invariant("continuous live order count overflow"))?;
         inputs.push(input);
     }
-    if matched != session.state.envelope_ledger.iter().count() {
-        for (_, envelope) in session.state.envelope_ledger.iter() {
+    if matched != view.envelope_ledger.iter().count() {
+        for (_, envelope) in view.envelope_ledger.iter() {
             envelope.validate()?;
             if envelope.origin() != EnvelopeOrigin::TickStart {
                 return Err(invariant(
@@ -78,8 +91,9 @@ pub(super) fn prepare_inputs_with_observer(
     Ok(inputs)
 }
 
-fn prepare_stock_input(
-    session: &GameSession,
+/// 读视图版本（内部叶子；读 phase/setup.config，逐股簿捕获）。
+fn prepare_stock_input_on(
+    view: &SessionReadView<'_>,
     code: &StockId,
     market: &Market,
     observe_row: &(impl Fn() + Sync),
@@ -122,8 +136,8 @@ fn prepare_stock_input(
             .par_iter()
             .with_min_len(128)
             .map_init(make_key, |key, (book_index, order)| {
-                capture_order(
-                    session,
+                capture_order_on(
+                    view,
                     code,
                     order,
                     duplicate_by_book[*book_index],
@@ -142,8 +156,8 @@ fn prepare_stock_input(
         let mut key = make_key();
         for (book_index, order) in market.resting_order_refs().enumerate() {
             slots.push(
-                match capture_order(
-                    session,
+                match capture_order_on(
+                    view,
                     code,
                     order,
                     duplicate_by_book[book_index],
@@ -168,11 +182,11 @@ fn prepare_stock_input(
     Ok((
         count,
         ContinuousStockInput {
-            phase: session.phase(),
+            phase: view.phase(),
             market: market.clone(),
             envelopes,
             operations: Vec::new(),
-            config: session.state.setup.config.clone(),
+            config: view.setup.config.clone(),
         },
     ))
 }
@@ -188,8 +202,9 @@ fn order_identity(order: &Order) -> (crate::AccountId, crate::OrderId, u8) {
     )
 }
 
-fn capture_order(
-    session: &GameSession,
+/// 读视图版本（内部叶子；读 envelope_ledger，费用事实走 facts 叶子的 on 版）。
+fn capture_order_on(
+    view: &SessionReadView<'_>,
     code: &StockId,
     order: &Order,
     duplicate: bool,
@@ -205,8 +220,7 @@ fn capture_order(
             "continuous order books repeat an envelope identity",
         ));
     }
-    let envelope = session
-        .state
+    let envelope = view
         .envelope_ledger
         .get(key)
         .map_err(|_| invariant("continuous order books contain an unledgered order"))?;
@@ -216,7 +230,7 @@ fn capture_order(
             "报价过期后的 live ledger 包含 origin 非 TickStart 的 envelope",
         ));
     }
-    let projected = session.project_continuous_envelope_facts(code, order)?;
+    let projected = GameSession::project_continuous_envelope_facts_on(view, code, order)?;
     let audit = envelope.audit();
     if envelope.pending_price().is_some()
         || audit.limit != order.price

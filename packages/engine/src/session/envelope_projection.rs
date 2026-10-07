@@ -64,37 +64,55 @@ impl GameSession {
         &self,
         observe_projected_row: impl Fn() + Sync,
     ) -> Result<(), StepFatal> {
+        Self::validate_existing_live_projection_with_observer_on(
+            &self.read_view(),
+            observe_projected_row,
+        )
+    }
+
+    /// 读视图版本（prepare 链投机路径共用；读集：markets/auction_orders/
+    /// envelope_ledger，费用叶子只读 setup.config）。
+    pub(in crate::session) fn validate_existing_live_projection_with_observer_on(
+        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
+        observe_projected_row: impl Fn() + Sync,
+    ) -> Result<(), StepFatal> {
         let mut projected = Vec::new();
-        for (code, market) in &self.state.markets {
+        for (code, market) in view.markets {
             // 保留旧投影的到达序，多个计算错误仍报告相同的首错。
             let mut orders = market.resting_order_refs().collect::<Vec<_>>();
             orders.sort_by_key(|order| order.seq);
             for order in orders {
-                projected.push(self.project_borrowed_envelope(LiveOrderProjection {
-                    code,
-                    owner: order.owner,
-                    id: order.id,
-                    side: order.side,
-                    limit: order.price,
-                    qty: order.qty,
-                    filled_qty: order.filled_qty,
-                    filled_value: order.filled_value,
-                })?);
+                projected.push(Self::project_borrowed_envelope_on(
+                    view,
+                    LiveOrderProjection {
+                        code,
+                        owner: order.owner,
+                        id: order.id,
+                        side: order.side,
+                        limit: order.price,
+                        qty: order.qty,
+                        filled_qty: order.filled_qty,
+                        filled_value: order.filled_value,
+                    },
+                )?);
                 observe_projected_row();
             }
         }
-        for (code, orders) in &self.state.auction_orders {
+        for (code, orders) in view.auction_orders {
             for order in orders {
-                projected.push(self.project_borrowed_envelope(LiveOrderProjection {
-                    code,
-                    owner: order.owner,
-                    id: OrderId(order.order_id),
-                    side: order.side,
-                    limit: order.limit,
-                    qty: order.qty,
-                    filled_qty: 0,
-                    filled_value: Money::ZERO,
-                })?);
+                projected.push(Self::project_borrowed_envelope_on(
+                    view,
+                    LiveOrderProjection {
+                        code,
+                        owner: order.owner,
+                        id: OrderId(order.order_id),
+                        side: order.side,
+                        limit: order.limit,
+                        qty: order.qty,
+                        filled_qty: 0,
+                        filled_value: Money::ZERO,
+                    },
+                )?);
             }
         }
         projected.sort_by(|left, right| left.identity().cmp(&right.identity()));
@@ -112,7 +130,7 @@ impl GameSession {
         };
         for projection in &mut projected {
             projection.copy_key_into(&mut key);
-            let Ok(authoritative) = self.state.envelope_ledger.get(&key) else {
+            let Ok(authoritative) = view.envelope_ledger.get(&key) else {
                 // 缺失身份继续进入完整比较门禁，保留既有错误选择顺序。
                 continue;
             };
@@ -125,8 +143,7 @@ impl GameSession {
             validate_hydrated_charged_audit(projection.side, audit)?;
             projection.audit.charged = audit.charged;
         }
-        self.state
-            .envelope_ledger
+        view.envelope_ledger
             .validate_borrowed_tick_start_projection(&projected)
     }
 
@@ -147,21 +164,25 @@ impl GameSession {
         })
     }
 
-    pub(in crate::session) fn project_continuous_envelope_facts<'a>(
-        &self,
+    /// 读视图版本（continuous_matching_adapter 的 capture_order 消费）。
+    pub(in crate::session) fn project_continuous_envelope_facts_on<'a>(
+        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
         code: &'a StockId,
         order: &Order,
     ) -> Result<pipeline::BorrowedTickStartEnvelope<'a>, StepFatal> {
-        self.project_borrowed_envelope(LiveOrderProjection {
-            code,
-            owner: order.owner,
-            id: order.id,
-            side: order.side,
-            limit: order.price,
-            qty: order.qty,
-            filled_qty: order.filled_qty,
-            filled_value: order.filled_value,
-        })
+        Self::project_borrowed_envelope_on(
+            view,
+            LiveOrderProjection {
+                code,
+                owner: order.owner,
+                id: order.id,
+                side: order.side,
+                limit: order.price,
+                qty: order.qty,
+                filled_qty: order.filled_qty,
+                filled_value: order.filled_value,
+            },
+        )
     }
 
     fn project_auction_envelope(
@@ -205,10 +226,18 @@ impl GameSession {
         &self,
         order: LiveOrderProjection<'a>,
     ) -> Result<pipeline::BorrowedTickStartEnvelope<'a>, StepFatal> {
+        Self::project_borrowed_envelope_on(&self.read_view(), order)
+    }
+
+    /// 读视图版本（validate 与 facts 两条链共用的费用叶子，仅读 setup.config）。
+    fn project_borrowed_envelope_on<'a>(
+        view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
+        order: LiveOrderProjection<'a>,
+    ) -> Result<pipeline::BorrowedTickStartEnvelope<'a>, StepFatal> {
         // ADR-0017 #9：卖方费用从成交所得实收，cash 预留恒为零。
         let cash = match order.side {
             Side::Buy => buy_order_reservation(
-                &self.state.setup.config,
+                &view.setup.config,
                 order.limit,
                 order.qty,
                 order.filled_value,
@@ -221,7 +250,7 @@ impl GameSession {
             Side::Sell => order.qty,
         };
         let nominal =
-            cumulative_nominal_fees(&self.state.setup.config, order.side, order.filled_value)?;
+            cumulative_nominal_fees(&view.setup.config, order.side, order.filled_value)?;
         // Buy 实收等于 nominal；Sell 的逐腿封顶历史由权威 ledger 提供。
         let charged = if order.side == Side::Buy {
             nominal

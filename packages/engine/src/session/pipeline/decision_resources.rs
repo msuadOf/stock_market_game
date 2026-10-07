@@ -1,4 +1,5 @@
 use super::{GameSession, StepFatal, TickShadowPlan};
+use super::npc_split::SessionReadView;
 use crate::session::account_book::AccountBook;
 use crate::{AccountId, Money, StockId};
 use std::collections::BTreeMap;
@@ -87,19 +88,23 @@ pub(super) fn plan_allocation(shadow: &mut TickShadowPlan) -> Result<(), StepFat
 
 impl DecisionResourceSnapshot {
     pub(super) fn seal(session: &GameSession) -> Result<Self, StepFatal> {
-        let configured_stocks = session
-            .state
+        Self::seal_on(&session.read_view())
+    }
+
+    /// 读视图版本（prepare 链投机路径共用；读集：setup/stocks/markets/
+    /// envelope_ledger，validate_resources 走 view.accounts 浅克隆快照——
+    /// 只读 cash/positions 等账务事实，与直读 live 语义一致）。
+    pub(super) fn seal_on(view: &SessionReadView<'_>) -> Result<Self, StepFatal> {
+        let configured_stocks = view
             .setup
             .stocks
             .iter()
             .map(|stock| {
-                let id = session
-                    .state
+                let id = view
                     .stocks
                     .id(&stock.code.0)
                     .expect("配置股票必须已入目录");
-                let price = session
-                    .state
+                let price = view
                     .markets
                     .get(&id)
                     .ok_or_else(|| invariant("configured stock has no market"))?
@@ -108,9 +113,9 @@ impl DecisionResourceSnapshot {
             })
             .collect::<Result<BTreeMap<_, _>, StepFatal>>()?;
 
-        let reservations = session.state.envelope_ledger.live_reservations()?;
+        let reservations = view.envelope_ledger.live_reservations()?;
 
-        session.state.accounts.validate_resources(
+        view.accounts.validate_resources(
             &configured_stocks,
             &reservations,
             |account_id, account| {
@@ -166,7 +171,7 @@ impl DecisionResourceSnapshot {
         )?;
         if reservations
             .iter()
-            .any(|row| !session.state.accounts.contains_key(&row.account))
+            .any(|row| !view.accounts.contains_key(&row.account))
         {
             return Err(allocation_invariant(
                 "envelope ledger references an unknown account",
@@ -183,7 +188,7 @@ impl DecisionResourceSnapshot {
             ));
         }
         Ok(Self {
-            accounts: session.state.accounts.clone(),
+            accounts: view.accounts.clone(),
             configured_stocks,
             reservations,
         })
