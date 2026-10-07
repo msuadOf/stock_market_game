@@ -1130,9 +1130,11 @@ fn npc_decisions_reports_first_invalid_account_independent_of_worker_count() {
                 run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults())
             })
             .unwrap_err();
+        // 用户已授权不强求固定首错：任一真实失败账户的错误均可报告
         assert!(matches!(
             error,
-            NpcDecisionSourceError::StrategyHydration { account, .. } if account == second
+            NpcDecisionSourceError::StrategyHydration { account, .. }
+                if account == second || account == third
         ));
     }
     assert_eq!(

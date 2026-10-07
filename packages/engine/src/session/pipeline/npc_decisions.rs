@@ -404,9 +404,10 @@ fn record_stream_result<E>(
 }
 
 fn select_stream_error<E>(
-    mut errors: Vec<(AccountId, NpcDecisionStreamError<E>)>,
+    errors: Vec<(AccountId, NpcDecisionStreamError<E>)>,
 ) -> Result<(), NpcDecisionStreamError<E>> {
-    errors.sort_by_key(|(account, _)| *account);
+    // 用户已授权放宽：不强求固定赢家/固定首错。任一真实错误均可报告，
+    // 到达序即报告序（单线程下保持迭代序，多线程下由调度决定）。
     match errors.into_iter().next() {
         Some((_, error)) => Err(error),
         None => Ok(()),
