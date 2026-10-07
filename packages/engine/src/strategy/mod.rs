@@ -143,11 +143,7 @@ pub enum Intent {
     },
     /// 市价意图：以当日涨跌停价作保护，逐档即时成交，未成交余量撤销。
     /// 当前统一处理沪深市场，具体市价申报类型的差异见 docs/trading-rules.md 的游戏简化。
-    PlaceMarket {
-        code: StockId,
-        side: Side,
-        qty: u32,
-    },
+    PlaceMarket { code: StockId, side: Side, qty: u32 },
     /// 撤单。
     Cancel { code: StockId, id: OrderId },
 }

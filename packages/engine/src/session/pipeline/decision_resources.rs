@@ -241,11 +241,7 @@ impl DecisionResourceSnapshot {
         Ok(self.position(account, stock)?.available_sell_qty)
     }
 
-    pub fn reserved_sell_qty(
-        &self,
-        account: AccountId,
-        stock: &StockId,
-    ) -> Result<u32, StepFatal> {
+    pub fn reserved_sell_qty(&self, account: AccountId, stock: &StockId) -> Result<u32, StepFatal> {
         self.sellable_before_reservation(account, stock)?
             .checked_sub(self.available_sell_qty(account, stock)?)
             .ok_or_else(|| invariant("available sell quantity exceeds sellable quantity"))

@@ -406,12 +406,7 @@ mod tests {
     use crate::session::pipeline::IntentCandidateKey;
     use crate::{Money, OrderId};
 
-    fn quote_request(
-        index: u64,
-        account: u64,
-        stock: StockId,
-        cancel: bool,
-    ) -> IntentCandidate {
+    fn quote_request(index: u64, account: u64, stock: StockId, cancel: bool) -> IntentCandidate {
         let code = stock;
         let intent = if cancel {
             Intent::Cancel {
@@ -662,7 +657,12 @@ mod tests {
             .with_ingress_order(index, index)
         };
         let (plan, conflicts) = ReadyAdmissionPlan::prepare(
-            vec![buy, sell(1), quote_request(2, 1, StockId(2), false), sell(3)],
+            vec![
+                buy,
+                sell(1),
+                quote_request(2, 1, StockId(2), false),
+                sell(3),
+            ],
             &mut AccountReceipts::default(),
             false,
         )

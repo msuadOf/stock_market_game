@@ -23,7 +23,8 @@ use engine::session::protocol::{EngineUpdate, PausePreferences, ProtocolSession,
 use engine::{
     calendar::CivilDate,
     company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
-    session::HistoricalStockData, AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode,
+    session::HistoricalStockData,
+    AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -82,10 +83,12 @@ fn diagnostic_generation_response(
 ) -> Result<GenerationResponse<engine::NpcDecisionDiagnostics>, SessionError> {
     if requested_generation != current_generation {
         // 1310：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
-        return Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-            1310,
-            vec![requested_generation, current_generation],
-        )));
+        return Err(SessionError::InvalidSave(
+            engine::error::ValidationFault::new(
+                1310,
+                vec![requested_generation, current_generation],
+            ),
+        ));
     }
     Ok(GenerationResponse {
         generation: requested_generation.to_string(),
@@ -1039,10 +1042,12 @@ impl<R: Runtime> SessionActor<R> {
                 let result = if generation != self.generation {
                     self.generation_response(
                         generation,
-                        Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-                            1310,
-                            vec![generation, self.generation],
-                        ))),
+                        Err(SessionError::InvalidSave(
+                            engine::error::ValidationFault::new(
+                                1310,
+                                vec![generation, self.generation],
+                            ),
+                        )),
                     )
                 } else {
                     let queried = self.game.query_stock_history(AccountId(0), &code);
@@ -1056,10 +1061,12 @@ impl<R: Runtime> SessionActor<R> {
             }
             SessionCommand::QueryBaseline { generation, reply } => {
                 let result = if generation != self.generation {
-                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-                        1310,
-                        vec![generation, self.generation],
-                    )))
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::new(
+                            1310,
+                            vec![generation, self.generation],
+                        ),
+                    ))
                 } else {
                     self.game.prepare_public_baseline();
                     Ok(RestoreResult {
@@ -1205,10 +1212,9 @@ impl<R: Runtime> SessionActor<R> {
     fn apply_speed(&mut self, speed: f64) -> Result<(), SessionError> {
         if !self.pacing.apply_speed(speed, self.game.tick()) {
             // 1311：speed 档位非法；ctx[0]=speed 位模式（f64）。
-            return Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-                1311,
-                vec![speed.to_bits()],
-            )));
+            return Err(SessionError::InvalidSave(
+                engine::error::ValidationFault::new(1311, vec![speed.to_bits()]),
+            ));
         }
         if !self.pacing.is_fastest() {
             self.last_fixed_publish = Instant::now();
@@ -1223,10 +1229,9 @@ impl<R: Runtime> SessionActor<R> {
     ) -> Result<GenerationResponse<T>, SessionError> {
         if generation != self.generation {
             // 1310：世代过期。
-            return Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-                1310,
-                vec![generation, self.generation],
-            )));
+            return Err(SessionError::InvalidSave(
+                engine::error::ValidationFault::new(1310, vec![generation, self.generation]),
+            ));
         }
         value.map(|value| GenerationResponse {
             generation: generation.to_string(),
@@ -1447,7 +1452,10 @@ mod tests {
     async fn initial_allocation_queries_actual_npc_holdings_before_start() {
         let app = tauri::test::mock_app();
         let manager = SessionManager::default();
-        let session_id = manager.new_session(diagnostic_setup(), 7, app.handle().clone()).await.unwrap();
+        let session_id = manager
+            .new_session(diagnostic_setup(), 7, app.handle().clone())
+            .await
+            .unwrap();
         let handles = manager.lookup(&session_id).await.unwrap();
         assert!(handles.initial_allocation(0).await.is_err());
         let allocation = handles.initial_allocation(1).await.unwrap();
@@ -1455,7 +1463,10 @@ mod tests {
         assert_eq!(allocation.value.stocks[0].categories[1].shares, 100_000);
         assert_eq!(allocation.value.stocks[0].categories[1].zero_holders, 0);
         assert_eq!(allocation.value.stocks[0].unallocated_shares, 0);
-        assert_eq!(handles.initial_allocation(1).await.unwrap().value, allocation.value);
+        assert_eq!(
+            handles.initial_allocation(1).await.unwrap().value,
+            allocation.value
+        );
         handles.shutdown().await.unwrap();
         manager.remove(&session_id).await.unwrap();
     }

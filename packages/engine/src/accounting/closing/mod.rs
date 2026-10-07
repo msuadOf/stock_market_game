@@ -273,14 +273,9 @@ impl ClosingEngine {
         request: CorrectionRequest,
     ) -> Result<ReportHandle, ClosingError> {
         let reason = request.reason.clone();
-        match self.correct_with_publication(
-            books,
-            id,
-            industry,
-            target,
-            request,
-            |_| Ok::<(), std::convert::Infallible>(()),
-        ) {
+        match self.correct_with_publication(books, id, industry, target, request, |_| {
+            Ok::<(), std::convert::Infallible>(())
+        }) {
             Ok((handle, ())) => Ok(handle),
             Err(CorrectionTransactionError::Closing(error)) => {
                 Err(correction_failure(reason, error))
@@ -532,10 +527,10 @@ mod tests {
                 ],
             }])
             .unwrap();
-        let member = |id: &str, parent: Option<&str>, held| GroupMember {
+        let member = |id: u32, parent: Option<u32>, held| GroupMember {
             spec: MemberSpec {
-                id: MemberId(id.into()),
-                group_parent: parent.map(|id| MemberId(id.into())),
+                id: MemberId(id),
+                group_parent: parent.map(MemberId),
                 issued_shares: 100,
                 parent_held_shares: held,
             },
@@ -546,8 +541,8 @@ mod tests {
             kind: ReportKind::Monthly,
             source: ReportSource::Consolidated {
                 request: ConsolidationRequest {
-                    root: MemberId("root".into()),
-                    members: vec![member("root", None, 0), member("sub", Some("root"), 80)],
+                    root: MemberId(0),
+                    members: vec![member(0, None, 0), member(1, Some(0), 80)],
                     intercompany_balances: vec![],
                     intercompany_sales: vec![],
                 },
@@ -613,7 +608,7 @@ mod tests {
             period: AccountingPeriod::from_iso("2030-01").unwrap(),
             kind: ReportKind::Monthly,
             source: ReportSource::Standalone {
-                id: MemberId("single".into()),
+                id: MemberId(0),
                 books: &books,
                 industry: IndustryPresentation::Industrial,
             },
@@ -640,8 +635,8 @@ mod tests {
 
     #[test]
     fn restatement_rows_preserve_overwrite_empty_and_scope_semantics() {
-        let first = ScopeId::Standalone(MemberId("a".into()));
-        let second = ScopeId::Standalone(MemberId("b".into()));
+        let first = ScopeId::Standalone(MemberId(0));
+        let second = ScopeId::Standalone(MemberId(1));
         let old = AccountingPeriod::from_ymd(2030, 1).unwrap();
         let new = AccountingPeriod::from_ymd(2030, 2).unwrap();
         let source = BusinessEventId::new(1);
@@ -658,7 +653,7 @@ mod tests {
             vec![(first, vec![(source, old)]), (second, vec![(source, old)])]
         );
         let duplicate_sources = RestatementRegister::from_rows(vec![(
-            ScopeId::Standalone(MemberId("c".into())),
+            ScopeId::Standalone(MemberId(2)),
             vec![(source, old), (source, new)],
         )]);
         assert_eq!(duplicate_sources.save_rows()[0].1, vec![(source, new)]);

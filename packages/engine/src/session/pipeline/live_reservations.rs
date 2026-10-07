@@ -314,20 +314,12 @@ mod tests {
             "完整 account 范围仍按 canonical 顺序投影"
         );
         assert_eq!(
-            projected
-                .get(AccountId(0))
-                .unwrap()
-                .sell
-                .get(&StockId(0)),
+            projected.get(AccountId(0)).unwrap().sell.get(&StockId(0)),
             Some(&0),
             "Buy shares=0 仍须保留 StockId 条目"
         );
         assert_eq!(
-            projected
-                .get(AccountId(0))
-                .unwrap()
-                .sell
-                .get(&StockId(1)),
+            projected.get(AccountId(0)).unwrap().sell.get(&StockId(1)),
             Some(&11),
             "同一 StockId 的多笔委托股份应 checked 汇总"
         );

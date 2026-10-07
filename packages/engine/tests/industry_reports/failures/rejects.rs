@@ -46,7 +46,7 @@ fn unclassified_account_rejects_publication() {
     let books = Books::new(AccountChart::generic_account_chart());
     let err = generate_report_set(original_request(
         ReportSource::Standalone {
-            id: MemberId("C-X".to_string()),
+            id: MemberId(0),
             books: &books,
             industry: IndustryPresentation::Bank,
         },
@@ -80,7 +80,7 @@ fn duplicate_classification_rejects() {
 fn notes_cross_foot_mismatch_rejects() {
     let books = industrial_fixture();
     let mut set = generate_report_set(original_request(
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
         ReportKind::Monthly,
         "2030-06",
     ))
@@ -115,7 +115,7 @@ fn unbalanced_trial_balance_rejects_publication() {
 fn fabricated_comparative_rejects_but_unavailable_publishes() {
     let books = industrial_fixture();
     let set = generate_report_set(original_request(
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
         ReportKind::Monthly,
         "2030-06",
     ))
@@ -144,14 +144,14 @@ fn fabricated_comparative_rejects_but_unavailable_publishes() {
 fn invalid_report_kind_rejects() {
     let books = industrial_fixture();
     let err = generate_report_set(original_request(
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
         ReportKind::HalfYear,
         "2030-03",
     ))
     .expect_err("half-year report at March must be rejected");
     assert!(matches!(err, ReportError::InvalidReportKind { .. }));
     let err = generate_report_set(original_request(
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
         ReportKind::Annual,
         "2030-06",
     ))
@@ -164,7 +164,7 @@ fn invalid_report_kind_rejects() {
 fn correction_guards_reject() {
     let mut books = industrial_fixture();
     let mut closing = ClosingEngine::new();
-    let id = MemberId("C-IND".to_string());
+    let id = MemberId(0);
     let industry = IndustryPresentation::Industrial;
     // 只封 2030-01..06（后续月份仍开放）。
     for m in 1..=6u8 {

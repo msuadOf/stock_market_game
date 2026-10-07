@@ -937,9 +937,7 @@ fn expected_event_identity(event: &Event) -> (u8, EntityTag, EventSourceIndex) {
 fn event_key_entity(entity: &EntityTag) -> Result<String, EvidenceError> {
     match entity {
         EntityTag::Session => Ok("Session".to_owned()),
-        EntityTag::Stock(code) => {
-            Ok(format!("Stock:{}", code.0))
-        }
+        EntityTag::Stock(code) => Ok(format!("Stock:{}", code.0)),
         EntityTag::Account(account) => Ok(format!("Account:{}", account.0)),
     }
 }
@@ -973,9 +971,7 @@ fn event_entity(event: &Event) -> Result<String, EvidenceError> {
         Event::Trade { code, .. }
         | Event::AuctionTick { code, .. }
         | Event::AuctionCompleted { code, .. }
-        | Event::PriceTick { code, .. } => {
-            Ok(format!("Stock:{}", code.0))
-        }
+        | Event::PriceTick { code, .. } => Ok(format!("Stock:{}", code.0)),
         Event::IntentRejected { account, .. }
         | Event::SettlementError { account, .. }
         | Event::OrderCanceled { account, .. }
@@ -1326,9 +1322,7 @@ fn project_candle_map(
 ) -> Result<Value, EvidenceError> {
     candles
         .iter()
-        .map(|(code, candle)| {
-            Ok((code.to_string(), project_candle(candle)?))
-        })
+        .map(|(code, candle)| Ok((code.to_string(), project_candle(candle)?)))
         .collect::<Result<serde_json::Map<_, _>, EvidenceError>>()
         .map(Value::Object)
 }
@@ -1402,7 +1396,6 @@ fn trading_phase(phase: crate::TradingPhase) -> &'static str {
         crate::TradingPhase::Continuous => "Continuous",
     }
 }
-
 
 pub trait Sha256Provider {
     fn digest_hex(&self, bytes: &[u8]) -> String;

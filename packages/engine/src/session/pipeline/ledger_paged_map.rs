@@ -102,8 +102,11 @@ impl<V> LedgerPagedMap<V> {
     }
 
     pub(super) fn pages(&self) -> impl Iterator<Item = (u64, &Arc<Page<V>>)> {
-        self.groups.iter().flat_map(|(group, pages)| pages.iter()
-            .map(move |(page, rows)| ((group << GROUP_SHIFT) | page, rows)))
+        self.groups.iter().flat_map(|(group, pages)| {
+            pages
+                .iter()
+                .map(move |(page, rows)| ((group << GROUP_SHIFT) | page, rows))
+        })
     }
 
     pub(super) fn iter(&self) -> impl DoubleEndedIterator<Item = (&EnvelopeKey, &V)> {
@@ -311,20 +314,41 @@ mod tests {
             expected.values().copied().collect::<Vec<_>>()
         );
         assert_eq!(
-            serde_json::to_vec(&rows.iter()
-                .filter(|(key, _)| key.account.0 <= (1_u64 << 53) - 1).collect::<Vec<_>>()).unwrap(),
-            serde_json::to_vec(&expected.iter()
-                .filter(|(key, _)| key.account.0 <= (1_u64 << 53) - 1).collect::<Vec<_>>()).unwrap(),
+            serde_json::to_vec(
+                &rows
+                    .iter()
+                    .filter(|(key, _)| key.account.0 <= (1_u64 << 53) - 1)
+                    .collect::<Vec<_>>()
+            )
+            .unwrap(),
+            serde_json::to_vec(
+                &expected
+                    .iter()
+                    .filter(|(key, _)| key.account.0 <= (1_u64 << 53) - 1)
+                    .collect::<Vec<_>>()
+            )
+            .unwrap(),
         );
         // Rust 顺序测试保留 u64::MAX；JSON entry 投影必须显式拒绝 JS 不安全整数。
-        for entries in [rows.iter().collect::<Vec<_>>(), expected.iter().collect::<Vec<_>>()] {
-            assert!(serde_json::to_vec(&entries).unwrap_err().to_string()
+        for entries in [
+            rows.iter().collect::<Vec<_>>(),
+            expected.iter().collect::<Vec<_>>(),
+        ] {
+            assert!(serde_json::to_vec(&entries)
+                .unwrap_err()
+                .to_string()
                 .contains("exceeds JavaScript's safe integer range"));
         }
         // EnvelopeKey 是 struct，JSON map 不支持该 key；hash 使用上面的有序 entry 数组。
         // 明确核对错误契约，不能把两个 Err 相等冒充成功序列化的证据。
-        assert_eq!(serde_json::to_vec(&rows).unwrap_err().to_string(), "key must be a string");
-        assert_eq!(serde_json::to_vec(&expected).unwrap_err().to_string(), "key must be a string");
+        assert_eq!(
+            serde_json::to_vec(&rows).unwrap_err().to_string(),
+            "key must be a string"
+        );
+        assert_eq!(
+            serde_json::to_vec(&expected).unwrap_err().to_string(),
+            "key must be a string"
+        );
         assert_eq!(
             rows.into_iter().collect::<Vec<_>>(),
             expected.into_iter().collect::<Vec<_>>()

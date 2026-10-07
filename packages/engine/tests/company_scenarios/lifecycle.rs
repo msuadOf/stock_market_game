@@ -51,6 +51,9 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
 #[ignore = "long validation: same authoritative session must span year close through scheduled annual disclosure"]
 fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     // Given: one year-end session with the full company operations and disclosure state.
+    let company = crate::scenario_catalog()
+        .id("C-600101")
+        .expect("默认目录含发行人");
     let base = focused_disclosure_session("2030-12-31");
     let mut controlled = base.save().expect("healthy save");
     controlled.plans = Default::default();
@@ -63,7 +66,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
 
     // When: the trading session and accounting/disclosure day end run through GameSession.
     run_focused_trading_day(&mut year_end);
-    let scope = ScopeId::Standalone(MemberId("C-600101".into()));
+    let scope = ScopeId::Standalone(MemberId(company.0));
     let annual_period = AccountingPeriod::from_ymd(2030, 12).unwrap();
     let closing_before = year_end
         .save()
@@ -100,7 +103,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     );
     let annual_published = |game: &GameSession| {
         game.query_public_reports(&engine::company::PublicReportQuery {
-            company_id: "C-600101".into(),
+            company_id: company.0,
             cursor: None,
             page_size: Some(100),
         })
@@ -133,7 +136,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     assert_eq!(save.disclosures.published_through(), Some(published));
     let annual = save
         .public_library
-        .reports_for_company(&engine::company::CompanyId("C-600101".into()), published)
+        .reports_for_company(&company, published)
         .into_iter()
         .rfind(|item| {
             item.reports.kind == engine::accounting::reports::ReportKind::Annual

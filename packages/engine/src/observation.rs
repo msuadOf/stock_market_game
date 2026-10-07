@@ -340,9 +340,7 @@ pub fn build_equal_weight_market_observation(
         observed += 1;
         sum += value;
         if !sum.is_finite() {
-            return Err(ObservationError::MarketReturnSumNonFinite {
-                code: *code,
-            });
+            return Err(ObservationError::MarketReturnSumNonFinite { code: *code });
         }
         if *value > 0.0 {
             advances += 1;
@@ -501,14 +499,9 @@ fn validate_reference_equity(
     }
 }
 
-fn validate_position(
-    code: &StockId,
-    position: &RiskPositionInput,
-) -> Result<(), ObservationError> {
+fn validate_position(code: &StockId, position: &RiskPositionInput) -> Result<(), ObservationError> {
     if position.qty == 0 {
-        return Err(ObservationError::ZeroPositionQuantity {
-            code: *code,
-        });
+        return Err(ObservationError::ZeroPositionQuantity { code: *code });
     }
     validate_positive_price("position last price", position.last_price)?;
     if let Some(peak) = position.peak_price_since_entry {

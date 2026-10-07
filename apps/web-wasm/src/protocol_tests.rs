@@ -15,14 +15,30 @@ fn registry_token_producer_and_session_share_receipts_across_threads() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let mut registry = SessionRegistry::default();
     let token = registry.create(setup, 71).unwrap();
-    let initial = registry.with_session(token, |session| session.game().save()).unwrap().unwrap();
-    let account_baseline = initial.ingress_receipt_cursors.next_account_ordinal.get(&AccountId(0)).copied().unwrap_or(0);
+    let initial = registry
+        .with_session(token, |session| session.game().save())
+        .unwrap()
+        .unwrap();
+    let account_baseline = initial
+        .ingress_receipt_cursors
+        .next_account_ordinal
+        .get(&AccountId(0))
+        .copied()
+        .unwrap_or(0);
     let stock_code = engine::StockId(0);
-    let stock_baseline = initial.ingress_receipt_cursors.next_stock_ordinal.get(&stock_code).copied().unwrap_or(0);
+    let stock_baseline = initial
+        .ingress_receipt_cursors
+        .next_stock_ordinal
+        .get(&stock_code)
+        .copied()
+        .unwrap_or(0);
     let producer = ingress_operation(|services| Ok(services[&token].clone())).unwrap();
     std::thread::scope(|scope| {
-        scope.spawn(|| producer.enqueue_player_intent(AccountId(0), ingress_cancel(11)))
-            .join().unwrap().unwrap();
+        scope
+            .spawn(|| producer.enqueue_player_intent(AccountId(0), ingress_cancel(11)))
+            .join()
+            .unwrap()
+            .unwrap();
     });
     registry.with_session(token, |session| {
         session.enqueue_player_intent(AccountId(0), ingress_cancel(12)).unwrap();
@@ -47,18 +63,34 @@ fn removed_registry_token_closes_existing_capability_without_allocating_receipts
     let mut registry = SessionRegistry::default();
     let token = registry.create(setup.clone(), 72).unwrap();
     let producer = ingress_operation(|services| Ok(services[&token].clone())).unwrap();
-    producer.enqueue_player_intent(AccountId(0), ingress_cancel(21)).unwrap();
-    let checkpoint = registry.with_session(token, |session| session.checkpoint()).unwrap().unwrap();
+    producer
+        .enqueue_player_intent(AccountId(0), ingress_cancel(21))
+        .unwrap();
+    let checkpoint = registry
+        .with_session(token, |session| session.checkpoint())
+        .unwrap()
+        .unwrap();
     let mut observer = ProtocolSession::new(setup.clone(), 73).unwrap();
     observer.rollback(checkpoint);
     let before = observer.game().save().unwrap();
     registry.remove(token).unwrap();
     assert!(registry.with_session(token, |_| ()).is_err());
-    assert!(ingress_operation(|services| Ok(services.contains_key(&token))).is_ok_and(|present| !present));
-    assert!(producer.enqueue_player_intent(AccountId(0), ingress_cancel(22)).is_err());
+    assert!(
+        ingress_operation(|services| Ok(services.contains_key(&token)))
+            .is_ok_and(|present| !present)
+    );
+    assert!(producer
+        .enqueue_player_intent(AccountId(0), ingress_cancel(22))
+        .is_err());
     let after = observer.game().save().unwrap();
-    assert_eq!(serde_json::to_value(&before.pending_player).unwrap(), serde_json::to_value(&after.pending_player).unwrap());
-    assert_eq!(serde_json::to_value(&before.ingress_receipt_cursors).unwrap(), serde_json::to_value(&after.ingress_receipt_cursors).unwrap());
+    assert_eq!(
+        serde_json::to_value(&before.pending_player).unwrap(),
+        serde_json::to_value(&after.pending_player).unwrap()
+    );
+    assert_eq!(
+        serde_json::to_value(&before.ingress_receipt_cursors).unwrap(),
+        serde_json::to_value(&after.ingress_receipt_cursors).unwrap()
+    );
     let replacement = registry.create(setup, 74).unwrap();
     assert!(replacement > token);
     assert!(!ingress_operation(|services| Ok(services.contains_key(&token))).unwrap());
@@ -71,10 +103,20 @@ fn independent_session_tokens_do_not_share_payloads_or_receipt_cursors() {
     let mut registry = SessionRegistry::default();
     let first = registry.create(setup.clone(), 75).unwrap();
     let second = registry.create(setup, 76).unwrap();
-    let producers = ingress_operation(|services| Ok((services[&first].clone(), services[&second].clone()))).unwrap();
+    let producers =
+        ingress_operation(|services| Ok((services[&first].clone(), services[&second].clone())))
+            .unwrap();
     std::thread::scope(|scope| {
-        let first_task = scope.spawn(|| producers.0.enqueue_player_intent(AccountId(0), ingress_cancel(31)));
-        let second_task = scope.spawn(|| producers.1.enqueue_player_intent(AccountId(0), ingress_cancel(41)));
+        let first_task = scope.spawn(|| {
+            producers
+                .0
+                .enqueue_player_intent(AccountId(0), ingress_cancel(31))
+        });
+        let second_task = scope.spawn(|| {
+            producers
+                .1
+                .enqueue_player_intent(AccountId(0), ingress_cancel(41))
+        });
         first_task.join().unwrap().unwrap();
         second_task.join().unwrap().unwrap();
     });
@@ -99,12 +141,16 @@ fn removing_another_registry_token_does_not_close_its_owner_ingress() {
     let producer = ingress_operation(|services| Ok(services[&token].clone())).unwrap();
     other.remove(token).unwrap();
     assert!(ingress_operation(|services| Ok(services.contains_key(&token))).unwrap());
-    producer.enqueue_player_intent(AccountId(0), ingress_cancel(51)).unwrap();
-    owner.with_session(token, |session| {
-        let saved = session.game().save().unwrap();
-        assert_eq!(saved.pending_player.len(), 1);
-        assert_eq!(saved.pending_player[0].account_ordinal, 0);
-    }).unwrap();
+    producer
+        .enqueue_player_intent(AccountId(0), ingress_cancel(51))
+        .unwrap();
+    owner
+        .with_session(token, |session| {
+            let saved = session.game().save().unwrap();
+            assert_eq!(saved.pending_player.len(), 1);
+            assert_eq!(saved.pending_player[0].account_ordinal, 0);
+        })
+        .unwrap();
     owner.remove(token).unwrap();
 }
 

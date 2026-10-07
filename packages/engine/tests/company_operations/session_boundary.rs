@@ -42,6 +42,7 @@ pub(super) fn session_with_company(
             company_operations: Some(CompanyOperationsConfig {
                 seed,
                 shock_params,
+                catalog: catalog_for([&company]),
                 companies: vec![company],
             }),
             groups: Vec::new(),
@@ -167,7 +168,7 @@ fn session_year_end_failure_rolls_back_tax_and_depreciation_before_retry() {
     let saved = session.save().unwrap();
     let books = saved
         .company_operations
-        .industrial_books(&CompanyId("C-IND-A".into()))
+        .industrial_books(&CompanyId(0))
         .unwrap();
     assert_eq!(
         books

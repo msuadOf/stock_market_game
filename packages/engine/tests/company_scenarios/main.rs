@@ -98,7 +98,12 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
         closing_auction_ticks: 1,
         history_len: 10,
         t1_enabled: true,
-        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
+        float_allocation: FloatAllocation::class_percentages(
+            0.4,
+            0.5,
+            0.1,
+            WithinKindDistribution::Random,
+        ),
         start_date: engine::CivilDate::from_iso(start_date).expect("fixture civil date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
     }
@@ -107,6 +112,16 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
 /// Disclosure-focused scenarios still use the real company, information and
 /// belief pipelines, but do not need five issuers or six market ticks on every
 /// trading day while advancing through a civil reporting window.
+/// 场景会话使用引擎默认公司集合；此处提供默认目录（代码序分配 id）供断言查询。
+pub(crate) fn scenario_catalog() -> engine::company::CompanyCatalog {
+    let as_of = engine::calendar::CivilDate::from_iso("2027-12-31").expect("开局前一日");
+    let configs = engine::company::default_companies(as_of).expect("默认公司集合");
+    engine::company::CompanyRegistry::new(configs)
+        .expect("默认公司注册表")
+        .catalog()
+        .clone()
+}
+
 pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     let mut focused = setup(start_date);
     focused.stocks.retain(|stock| stock.code.0 == "600101");
@@ -120,7 +135,8 @@ pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     focused.auction_ticks = 0;
     focused.closing_auction_ticks = 0;
     focused.history_len = 1;
-    focused.float_allocation = FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
+    focused.float_allocation =
+        FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
     GameSession::new(focused, SEED).expect("focused disclosure fixture must assemble")
 }
 
@@ -132,7 +148,9 @@ pub(crate) fn run_focused_trading_day(session: &mut GameSession) {
 
 fn representative_setup(start_date: &str) -> SessionSetup {
     let mut representative = setup(start_date);
-    representative.stocks.retain(|stock| stock.code.0 == "600101");
+    representative
+        .stocks
+        .retain(|stock| stock.code.0 == "600101");
     representative
 }
 

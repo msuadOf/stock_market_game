@@ -19,11 +19,13 @@ fn library_at_start() -> (engine::information::PublicLibrary, CivilInstant) {
 #[test]
 fn paginates_published_reports_by_stable_id_without_private_state() {
     let (library, as_of) = library_at_start();
-    let company_id = CompanyId(fixture::INDUSTRIAL_ID.to_string());
+    let company_id = fixture::fixture_catalog()
+        .id(fixture::INDUSTRIAL_ID)
+        .expect("目录含工商夹具公司");
     let first = library
         .query_public_reports(
             &PublicReportQuery {
-                company_id: company_id.0.clone(),
+                company_id: company_id.0,
                 cursor: None,
                 page_size: Some(2),
             },
@@ -44,7 +46,7 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
         first.next_cursor.as_deref(),
         Some(first.reports[1].id.as_str())
     );
-    assert_eq!(first.reports[0].company_id, fixture::INDUSTRIAL_ID);
+    assert_eq!(first.reports[0].company_id, company_id.0);
     assert!(
         first.reports[0].period.len() == 10
             && first.reports[0]
@@ -73,7 +75,10 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
         .query_public_reports(
             &PublicReportQuery {
                 company_id: company_id.0,
-                cursor: first.next_cursor,
+                cursor: first
+                    .next_cursor
+                    .as_deref()
+                    .and_then(|id| id.parse::<u32>().ok()),
                 page_size: Some(2),
             },
             as_of,
@@ -153,6 +158,9 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
 #[test]
 fn report_lookup_preserves_old_versions_and_rejects_unpublished_or_bad_requests() {
     let (library, as_of) = library_at_start();
+    let company_id = fixture::fixture_catalog()
+        .id(fixture::INDUSTRIAL_ID)
+        .expect("目录含工商夹具公司");
     let first_id = library.publication_ids()[0];
     let report = library
         .public_report_by_id(first_id.value().to_string(), as_of)
@@ -168,7 +176,7 @@ fn report_lookup_preserves_old_versions_and_rejects_unpublished_or_bad_requests(
         assert!(library
             .query_public_reports(
                 &PublicReportQuery {
-                    company_id: fixture::INDUSTRIAL_ID.to_string(),
+                    company_id: company_id.0,
                     cursor: None,
                     page_size,
                 },
@@ -179,8 +187,9 @@ fn report_lookup_preserves_old_versions_and_rejects_unpublished_or_bad_requests(
     assert!(library
         .query_public_reports(
             &PublicReportQuery {
-                company_id: fixture::INDUSTRIAL_ID.to_string(),
-                cursor: Some("not-a-report-id".to_string()),
+                company_id: company_id.0,
+                // 任意不存在于库中的报告 id 都必须被游标校验拒绝。
+                cursor: Some(u32::MAX),
                 page_size: None,
             },
             as_of,
@@ -192,7 +201,7 @@ fn report_lookup_preserves_old_versions_and_rejects_unpublished_or_bad_requests(
     let unlisted = library
         .query_public_reports(
             &PublicReportQuery {
-                company_id: "C-UNLISTED-TEST".to_string(),
+                company_id: u32::MAX,
                 cursor: None,
                 page_size: None,
             },
@@ -209,7 +218,14 @@ fn session_queries_use_its_current_civil_date() {
     let session = engine::GameSession::new(setup, 11).expect("session assembles");
     let page = session
         .query_public_reports(&PublicReportQuery {
-            company_id: "C-600101".to_string(),
+            company_id: session
+                .save()
+                .unwrap()
+                .company_operations
+                .catalog()
+                .id("C-600101")
+                .unwrap()
+                .0,
             cursor: None,
             page_size: None,
         })

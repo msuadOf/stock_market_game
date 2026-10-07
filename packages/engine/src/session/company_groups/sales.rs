@@ -168,7 +168,10 @@ pub(super) fn derive_sales(
             .filter(|identity| identity.account.0 == "1122")
         {
             let entry = entries[&identity.event];
-            let buyer_id = CompanyId(identity.counterparty.0.clone());
+            let Some(buyer_id) = ops.catalog().id(&identity.counterparty.0) else {
+                // 对手方代码不是公司代码 => 非内部交易，跳过（与旧字符串构造不命中语义等价）。
+                continue;
+            };
             if entry.kind != BusinessKind::CreditSale
                 || entry.period() > cutoff
                 || !ids.contains(&buyer_id)
@@ -197,7 +200,8 @@ pub(super) fn derive_sales(
                 .trade_counterparty_events()
                 .iter()
                 .filter(|purchase| {
-                    purchase.account.0 == "2202" && purchase.counterparty.0 == seller_id.0
+                    purchase.account.0 == "2202"
+                        && ops.catalog().code(*seller_id) == Some(purchase.counterparty.0.as_str())
                 })
             {
                 let buyer_entry = buyer_entries[&purchase.event];

@@ -15,8 +15,8 @@ mod exchange_days;
 mod failures;
 mod fixture_binding;
 mod frozen;
-mod gregorian;
 mod future_representation;
+mod gregorian;
 
 use engine::calendar::{CalendarPolicy, CivilDate, OfficialCoverageEntry, TradingCalendar};
 

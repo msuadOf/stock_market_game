@@ -476,12 +476,8 @@ fn grant_position_sets_cost_basis() {
         engine::AccountKind::Retail,
         Money::from_cents(1_000_000),
     );
-    a.grant_position(
-        engine::StockId(0),
-        1000,
-        Money::from_cents(1000),
-    )
-    .unwrap();
+    a.grant_position(engine::StockId(0), 1000, Money::from_cents(1000))
+        .unwrap();
     let p = a.positions().get(&engine::StockId(0)).unwrap();
     assert_eq!(p.qty(), 1000);
     assert_eq!(p.invested_cents(), 1_000_000); // 1000 × 1000

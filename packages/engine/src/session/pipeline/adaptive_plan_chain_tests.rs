@@ -855,10 +855,7 @@ fn run_independent_stock_round(
     let (_, template) = fixture();
     let mut roots = PlanChainOperationBatch::empty();
     let mut plan_ids = Vec::new();
-    for (account, code) in [
-        (AccountId(1), StockId(0)),
-        (second_account, StockId(1)),
-    ] {
+    for (account, code) in [(AccountId(1), StockId(0)), (second_account, StockId(1))] {
         let plan_id = session
             .state
             .plans

@@ -180,7 +180,7 @@ impl GameSession {
                     let mut corrections = Vec::new();
                     let mut defaults = Vec::new();
                     for publication in
-                        crate::information::discovery_candidates(&self.state.library, company, now)
+                        crate::information::discovery_candidates(&self.state.library, &company, now)
                     {
                         if information.observed_at_of(publication).is_some() {
                             continue;
@@ -190,13 +190,10 @@ impl GameSession {
                             .map_err(|_error| {
                                 // fault1200: NPC 公告送达（信息获取登记）失败。
                                 // ctx[0] = 账户 id；槽1 待 C 批数值化（原文本为内层 AcquisitionError 文本）。
-                                SessionError::InvalidSave(ValidationFault::new(
-                                    1200,
-                                    vec![id.0, 0],
-                                ))
+                                SessionError::InvalidSave(ValidationFault::new(1200, vec![id.0, 0]))
                             })?;
                         match information
-                            .records_for_company(company)
+                            .records_for_company(&company)
                             .iter()
                             .find(|record| record.id == publication)
                             .expect("刚登记的本人材料存在")
@@ -236,18 +233,18 @@ impl GameSession {
                     let spec = self
                         .state
                         .operations
-                        .company(company)
+                        .company(&company)
                         .expect("发行人经营配置存在")
                         .spec();
                     let inputs = BeliefInputs {
                         ctx: &ctx,
-                        company: company.clone(),
+                        company,
                         kind: spec.kind,
                         total_issued_shares: spec.issued_shares,
                         as_of_trading_day: u64::from(self.state.day),
                     };
                     if new_reports {
-                        let report = crate::strategy::preferred_own_report(&ctx, company)
+                        let report = crate::strategy::preferred_own_report(&ctx, &company)
                             .map_err(|_error| {
                                 // fault1202: NPC 无本人已获知的定期报告可选（公告重估取材失败）。
                                 // 槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
@@ -282,11 +279,9 @@ impl GameSession {
                     for cause in defaults {
                         if belief.entry(code).is_some() {
                             // fault1205: NPC 违约公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
-                            belief
-                                .apply_cause(code, cause, &inputs)
-                                .map_err(|_error| {
-                                    SessionError::InvalidSave(ValidationFault::new(1205, vec![0]))
-                                })?;
+                            belief.apply_cause(code, cause, &inputs).map_err(|_error| {
+                                SessionError::InvalidSave(ValidationFault::new(1205, vec![0]))
+                            })?;
                         }
                     }
                 }
@@ -333,7 +328,7 @@ impl GameSession {
                         };
                         facts.push(crate::diagnostics::causal::CausalFactKind::Acquisition {
                             account: id,
-                            company: company.clone(),
+                            company,
                             publication: u64::from(record.id.value()),
                             published,
                             acquired: now,
@@ -652,7 +647,7 @@ mod tests {
         ] {
             let id = library
                 .publish_announcement(AnnouncementRequest {
-                    company: crate::company::CompanyId("C-1".into()),
+                    company: crate::company::CompanyId(0),
                     occurred_on: date,
                     published_at: now,
                     event: AnnouncedEvent {
@@ -847,13 +842,13 @@ mod tests {
         let older = session
             .state
             .library
-            .reports_for_company(company, now)
+            .reports_for_company(&company, now)
             .into_iter()
             .min_by_key(|report| crate::strategy::own_known_report_priority(report))
             .unwrap()
             .id;
         let mut information = NpcInformationState::new(id);
-        for report in session.state.library.reports_for_company(company, now) {
+        for report in session.state.library.reports_for_company(&company, now) {
             information
                 .record_acquisition(id, &session.state.library, report.id, now)
                 .unwrap();
@@ -861,10 +856,10 @@ mod tests {
         let market = session.build_market_view();
         let ctx =
             NpcObservationContext::new(id, &information, &session.state.library, &market).unwrap();
-        let spec = session.state.operations.company(company).unwrap().spec();
+        let spec = session.state.operations.company(&company).unwrap().spec();
         let mut inputs = BeliefInputs {
             ctx: &ctx,
-            company: company.clone(),
+            company,
             kind: spec.kind,
             total_issued_shares: spec.issued_shares,
             as_of_trading_day: 0,
@@ -874,7 +869,7 @@ mod tests {
             belief.apply_cause(&code, BeliefCause::Correction { report: older }, &inputs),
             Err(crate::strategy::BeliefError::NoBeliefEntry)
         ));
-        inputs.company = crate::company::CompanyId("foreign-company".into());
+        inputs.company = crate::company::CompanyId(company.0 + 1); // 与发行人互异的外来公司
         assert!(matches!(
             belief.apply_cause(&code, BeliefCause::Correction { report: older }, &inputs),
             Err(crate::strategy::BeliefError::MaterialNotForCompany { .. })

@@ -130,6 +130,7 @@ pub struct CompanyOperations {
     #[serde(with = "crate::session::u64_decimal")]
     pub(crate) seed: u64,
     pub(crate) shock_params: ShockParams,
+    pub(crate) catalog: crate::company::spec::CompanyCatalog,
     pub(crate) scheduler: OperatingScheduler,
     pub(crate) market_rng: OperatingRng,
     pub(crate) industry_rngs: BTreeMap<IndustryId, OperatingRng>,
@@ -172,6 +173,7 @@ impl CompanyOperations {
         let CompanyOperationsConfig {
             seed,
             shock_params,
+            catalog,
             companies: company_configs,
         } = config;
         let stream = |stream_kind: RngStream, stable_id: &str| {
@@ -196,8 +198,12 @@ impl CompanyOperations {
             industry_rngs
                 .entry(spec.industry.clone())
                 .or_insert_with(|| stream(RngStream::IndustryShock, &spec.industry.0));
-            let rng = stream(RngStream::CompanyOperating, &spec.id.0);
-            let id = spec.id.clone();
+            let rng = stream(RngStream::CompanyOperating, &spec.code);
+            let id = catalog
+                .id(&spec.code)
+                .ok_or_else(|| OperationsError::InvalidConfig {
+                    detail: format!("company code missing from catalog: {}", spec.code),
+                })?;
             companies.insert(
                 id,
                 OperatingCompany {
@@ -216,6 +222,7 @@ impl CompanyOperations {
             scheduler: OperatingScheduler::new(),
             market_rng: stream(RngStream::MarketShock, "market"),
             industry_rngs,
+            catalog,
             companies,
             next_expected: Some(first_day),
             history: None,
@@ -265,7 +272,7 @@ impl CompanyOperations {
                 return Err(OperationsError::InvalidPaymentHistory {
                     detail: format!(
                         "payment failure cannot be active economic shock for {:?}",
-                        company.spec.id
+                        company.spec.code
                     ),
                 });
             }
@@ -275,6 +282,11 @@ impl CompanyOperations {
 
     pub fn company(&self, id: &CompanyId) -> Option<&OperatingCompany> {
         self.companies.get(id)
+    }
+
+    /// 公司目录（数值 id ↔ 代码翻译层；公司间交易对手代码 → id 判定用）。
+    pub fn catalog(&self) -> &crate::company::spec::CompanyCatalog {
+        &self.catalog
     }
 
     /// 可变公司访问（会话装配与执行封账接缝：`close_month`/`close_year` 需要

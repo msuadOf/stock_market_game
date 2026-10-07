@@ -20,7 +20,7 @@ impl RootReadContext {
     pub(in crate::session) fn issuer_of_stock(
         &self,
         id: StockId,
-    ) -> Option<&crate::company::CompanyId> {
+    ) -> Option<crate::company::CompanyId> {
         let code = self.stocks.code(id)?;
         self.company_registry
             .issuer_of(&crate::account::StockCode(code.to_string()))
@@ -364,7 +364,7 @@ impl InstitutionDecisionRoot {
         let mut credit_defaults = Vec::new();
         let mut corrections = Vec::new();
         for code in &candidates {
-            let Some(company_id) = context.issuer_of_stock(*code).cloned() else {
+            let Some(company_id) = context.issuer_of_stock(*code) else {
                 continue;
             };
             for publication_id in discovery_candidates(&context.library, &company_id, now) {
@@ -469,7 +469,7 @@ impl InstitutionDecisionRoot {
         let issuer_inputs: Vec<(StockId, BeliefInputs<'_, MarketView>)> = candidates
             .iter()
             .filter_map(|code| {
-                let company = context.issuer_of_stock(*code).cloned()?;
+                let company = context.issuer_of_stock(*code)?;
                 let spec = context
                     .operations
                     .company(&company)

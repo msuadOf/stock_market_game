@@ -97,7 +97,7 @@ pub fn events() -> Vec<Event> {
         Event::CompanyDisclosurePublished {
             seq: 7,
             publication_id: PublicationId::new(17),
-            company: CompanyId("company-distinct-from-stock".into()),
+            company: CompanyId(0),
             published_at: CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
             kind: CompanyDisclosureKind::Announcement,
         },

@@ -422,7 +422,8 @@ pub enum SessionCommand {
     StockHistory {
         generation: u64,
         code: engine::StockId,
-        reply: oneshot::Sender<Result<(u64, engine::session::HistoricalStockData), SendCommandError>>,
+        reply:
+            oneshot::Sender<Result<(u64, engine::session::HistoricalStockData), SendCommandError>>,
     },
     InitialAllocation {
         generation: u64,
@@ -1400,7 +1401,8 @@ impl SessionActor {
                         self.timeline_generation
                     )))
                 } else {
-                    self.game.initial_allocation()
+                    self.game
+                        .initial_allocation()
                         .map(|data| (self.timeline_generation, data))
                         .map_err(|error| SendCommandError::Rejected(error.to_string()))
                 };
@@ -1432,10 +1434,12 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation != self.timeline_generation {
-                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-                        1290,
-                        vec![generation, self.timeline_generation],
-                    )))
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::new(
+                            1290,
+                            vec![generation, self.timeline_generation],
+                        ),
+                    ))
                 } else if let Some(error) = self.fatal_rejection() {
                     Err(error)
                 } else if let Some(key) = candidate.as_ref() {
@@ -1465,9 +1469,7 @@ impl SessionActor {
                         .write()
                         .map_err(|_| {
                             // 1293：ingress 生命周期锁中毒（防御式显式暴露）。
-                            SessionError::ResourceLimit(
-                                engine::error::ValidationFault::bare(1293),
-                            )
+                            SessionError::ResourceLimit(engine::error::ValidationFault::bare(1293))
                         })
                         .and_then(|mut ingress| {
                             ingress.1.close()?;
@@ -1500,10 +1502,12 @@ impl SessionActor {
                     self.game.end_civil_day_update()
                 } else {
                     // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
-                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-                        1290,
-                        vec![generation, self.timeline_generation],
-                    )))
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::new(
+                            1290,
+                            vec![generation, self.timeline_generation],
+                        ),
+                    ))
                 };
                 if let Ok(report) = &result {
                     self.public_revision = self.public_revision.saturating_add(1);
@@ -1539,10 +1543,12 @@ impl SessionActor {
                     })
                 } else {
                     // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
-                    Err(SessionError::InvalidSave(engine::error::ValidationFault::new(
-                        1290,
-                        vec![generation, self.timeline_generation],
-                    )))
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::new(
+                            1290,
+                            vec![generation, self.timeline_generation],
+                        ),
+                    ))
                 };
                 if let Ok(events) = &result {
                     self.broadcast_update(events.clone());

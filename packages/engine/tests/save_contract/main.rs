@@ -9,7 +9,8 @@ use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     decode_save_slot, Event, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec, WithinKindDistribution, SIMULATION_POLICY_ID,
+    SecurityCategory, SessionSetup, StockExchange, StockSpec, WithinKindDistribution,
+    SIMULATION_POLICY_ID,
 };
 
 mod bank_policy;
@@ -77,7 +78,12 @@ fn contract_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 10,
         t1_enabled: true,
-        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
+        float_allocation: FloatAllocation::class_percentages(
+            0.4,
+            0.5,
+            0.1,
+            WithinKindDistribution::Random,
+        ),
         start_date: engine::CivilDate::from_iso("2030-01-07").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
     }

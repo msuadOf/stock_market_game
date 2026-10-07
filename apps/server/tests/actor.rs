@@ -471,12 +471,15 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
 
     // 玩家 AccountId(0) 存在 → 入队 Ok（当前单玩家模式固定 player 0）。
     handles
-        .enqueue(1, Intent::PlaceLimit {
-            code: engine::StockId(0),
-            side: Side::Buy,
-            price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
-            qty: 100,
-        })
+        .enqueue(
+            1,
+            Intent::PlaceLimit {
+                code: engine::StockId(0),
+                side: Side::Buy,
+                price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
+                qty: 100,
+            },
+        )
         .await
         .expect("玩家意图应入队成功");
 }
@@ -491,7 +494,12 @@ fn active_market_setup() -> SessionSetup {
     setup.strategy_params.retail.arrival_rate = 1.0;
     setup.stocks[0].float_shares = 100_000;
     setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
-    setup.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        1.0,
+        0.0,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
     setup
 }
 

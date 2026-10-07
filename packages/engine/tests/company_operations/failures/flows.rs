@@ -22,6 +22,7 @@ fn broke_ops() -> CompanyOperations {
         CompanyOperationsConfig {
             seed: 5,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
             companies: vec![industrial_broke(d("2029-12-31"))],
         },
         d(START),
@@ -30,7 +31,7 @@ fn broke_ops() -> CompanyOperations {
 }
 
 fn broke_id() -> CompanyId {
-    CompanyId("C-IND-BROKE".to_string())
+    CompanyId(0)
 }
 
 fn cash(ops: &CompanyOperations) -> AccountingAmount {
@@ -84,13 +85,14 @@ fn real_estate_interruption_suspends_development_spend() {
     let config = |seed| CompanyOperationsConfig {
         seed,
         shock_params: quiet_params(),
+        catalog: engine::company::CompanyCatalog::from_codes(&["C-RE"]).unwrap(),
         companies: vec![real_estate_c(d("2029-12-31"))],
     };
     let mut baseline = CompanyOperations::new(config(2), start).expect("baseline");
     let mut halted = CompanyOperations::new(config(2), start).expect("halted");
     halted
         .apply_company_shock(
-            &CompanyId("C-RE".to_string()),
+            &CompanyId(0), // 单地产公司目录位 0
             ActiveShock {
                 kind: ShockKind::ProductionInterruption,
                 amplitude_bp: 0,
@@ -123,7 +125,7 @@ fn real_estate_interruption_suspends_development_spend() {
 }
 
 fn re_id() -> CompanyId {
-    CompanyId("C-RE".to_string())
+    CompanyId(0) // 单地产公司目录位 0
 }
 
 /// 交付失败：项目未完工前合同到期交付 → 类型化拒绝（DeliveryBeforeCompletion），
@@ -135,6 +137,7 @@ fn delivery_before_completion_is_typed_rejection() {
         CompanyOperationsConfig {
             seed: 4,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-RE"]).unwrap(),
             companies: vec![real_estate_c(d("2029-12-31"))],
         },
         start,
@@ -198,6 +201,7 @@ fn zero_day_duration_is_rejected_without_mutating_config() {
     let mut config = CompanyOperationsConfig {
         seed: 5,
         shock_params: quiet_params(),
+        catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
         companies: vec![industrial_broke(d("2029-12-31"))],
     };
     let original = config.clone();

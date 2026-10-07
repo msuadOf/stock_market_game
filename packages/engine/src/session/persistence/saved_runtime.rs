@@ -199,7 +199,10 @@ pub fn validate_runtime_state(
     }
     if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID {
         // fault2201：simulation_policy_id 与引擎政策不符；ctx[0] 待 C 批数值化（原文本 "{:?}" 策略 id）。
-        return Err(SessionError::InvalidSave(ValidationFault::new(2201, vec![0])));
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2201,
+            vec![0],
+        )));
     }
 
     let ledger = state.build_ledger(session)?;
@@ -324,7 +327,11 @@ fn validate_receipt_identity_domain(
         // fault2214：回执订单 id 越界；ctx[0]=回执 index，ctx[1]=订单 id，ctx[2]=next_order_id 上界。
         return Err(SessionError::InvalidSave(ValidationFault::new(
             2214,
-            vec![identity.index, envelope.order.0, session.state.next_order_id],
+            vec![
+                identity.index,
+                envelope.order.0,
+                session.state.next_order_id,
+            ],
         )));
     }
     Ok(())

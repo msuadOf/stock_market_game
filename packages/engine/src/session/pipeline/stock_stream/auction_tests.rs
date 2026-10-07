@@ -4,7 +4,7 @@ use crate::session::pipeline::stock_auction::{
     AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
 };
 use crate::session::pipeline::{Envelope, EnvelopeAudit, EnvelopeKey, FeeComponents, ReceiptKind};
-use crate::{AccountId, Event, GameConfig, Market, Money, OrderId, Side, StockId, StockExchange};
+use crate::{AccountId, Event, GameConfig, Market, Money, OrderId, Side, StockExchange, StockId};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -57,11 +57,7 @@ fn independent_stock_auction_finishes_overlap_and_clear_each_book_once() {
     assert!(finished.detached_event_facts.is_empty());
     assert!(finished.detached_lifecycle_facts.is_empty());
     for (code, worker) in &finished.workers {
-        let buy_id = if code.0 == 1 {
-            OrderId(1)
-        } else {
-            OrderId(3)
-        };
+        let buy_id = if code.0 == 1 { OrderId(1) } else { OrderId(3) };
         assert_eq!(worker.clearing_price, Some(Money::from_cents(1_000)));
         assert_eq!(worker.matches.len(), 1);
         let matched = &worker.matches[0];
@@ -176,10 +172,7 @@ fn auction_finish_keeps_first_stock_error_when_second_stock_finishes_first() {
         .err()
         .unwrap();
     assert_eq!(error, errors[0]);
-    assert_eq!(
-        *completion.0.lock().unwrap(),
-        [second_id, first_id]
-    );
+    assert_eq!(*completion.0.lock().unwrap(), [second_id, first_id]);
 }
 
 struct FinishReturned {

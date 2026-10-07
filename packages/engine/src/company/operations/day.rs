@@ -193,6 +193,7 @@ impl<'a> OperatingDayRun<'a> {
         } = &mut self.operations;
         for (id, company) in companies {
             advance_flow_day(
+                *id,
                 company,
                 date,
                 newly.get(id).map(Vec::as_slice).unwrap_or(&[]),
@@ -312,6 +313,7 @@ impl IndustryPairView<'_> {
 }
 
 fn advance_flow_day(
+    id: CompanyId,
     company: &mut OperatingCompany,
     date: CivilDate,
     newly: &[ActiveShock],
@@ -322,7 +324,7 @@ fn advance_flow_day(
     let aggregates = company.economy.aggregates();
     IndustryPairView::at_existing_guard(&mut company.books, &company.params, &company.spec)?
         .advance_day(FlowDayContext {
-            company: company.spec.id.clone(),
+            company: id,
             date,
             aggregates,
             newly,
@@ -413,9 +415,10 @@ mod tests {
         CompanyOperationsConfig {
             seed: 7,
             shock_params,
+            catalog: crate::company::spec::CompanyCatalog::from_codes(&["C"]).expect("单公司目录"),
             companies: vec![OperatingCompanyConfig {
                 spec: CompanySpec {
-                    id: CompanyId("C".to_string()),
+                    code: 'C'.to_string(),
                     name: "虚构公司".to_string(),
                     industry: IndustryId("IND".to_string()),
                     kind: CompanyKind::Industrial,
@@ -491,10 +494,7 @@ mod tests {
     #[test]
     fn restored_pair_mismatch_keeps_prior_expiry_sampling_and_due_consumption() {
         let mut ops = CompanyOperations::new(fixture(), start()).expect("装配");
-        let company = ops
-            .companies
-            .get_mut(&CompanyId("C".to_string()))
-            .expect("公司");
+        let company = ops.companies.get_mut(&CompanyId(0)).expect("公司");
         company.params = insurance_params();
         company.economy.activate(ActiveShock {
             kind: ShockKind::ProductionInterruption,
@@ -557,12 +557,14 @@ mod tests {
     fn shock_records_follow_market_then_sorted_industries_then_sorted_companies() {
         let mut config = fixture();
         let mut other = config.companies[0].clone();
-        config.companies[0].spec.id = CompanyId("Z".to_string());
+        config.companies[0].spec.code = "C-Z".to_string();
         config.companies[0].spec.industry = IndustryId("Z-IND".to_string());
-        other.spec.id = CompanyId("A".to_string());
+        other.spec.code = "C-A".to_string();
         other.spec.industry = IndustryId("A-IND".to_string());
-        // 故意按反序装配，保护输出依据领域 id 的稳定顺序。
+        // 故意按反序装配（代码序在后的先入列），保护输出依据目录 id 的稳定顺序。
         config.companies.push(other);
+        config.catalog =
+            crate::company::spec::CompanyCatalog::from_codes(&["C-A", "C-Z"]).expect("双公司目录");
         config.shock_params.market_candidate_bp = 10_000;
         config.shock_params.industry_candidate_bp = 10_000;
         config.shock_params.company_candidate_bp = 10_000;
@@ -613,9 +615,12 @@ mod tests {
             report
                 .activated
                 .iter()
-                .map(|record| record.company.as_ref().map(|id| id.0.as_str()))
+                .map(|record| record
+                    .company
+                    .as_ref()
+                    .and_then(|id| ops.catalog().code(*id)))
                 .collect::<Vec<_>>(),
-            vec![None, Some("A"), Some("Z"), Some("A"), Some("Z")],
+            vec![None, Some("C-A"), Some("C-Z"), Some("C-A"), Some("C-Z")],
         );
         assert_eq!(ops.market_rng, expected_rngs.market_rng);
         assert_eq!(ops.industry_rngs, expected_rngs.industry_rngs);
@@ -665,7 +670,7 @@ mod tests {
             key: "MAT:C:FIXTURE".to_string(),
             due_date: start(),
             action: ScheduledAction::ContractMaturity {
-                company: CompanyId("C".to_string()),
+                company: CompanyId(0),
                 reference: format!("AR:{}", sale.receivable.0),
             },
         })
@@ -674,7 +679,7 @@ mod tests {
     }
 
     fn cash(ops: &CompanyOperations) -> AccountingAmount {
-        ops.industrial_books(&CompanyId("C".to_string()))
+        ops.industrial_books(&CompanyId(0))
             .expect("工商账套")
             .books()
             .ledger()

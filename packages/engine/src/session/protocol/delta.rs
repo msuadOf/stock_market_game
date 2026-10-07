@@ -111,10 +111,7 @@ fn validate_order(order: &PlayerWorkingOrder) -> Result<(), ProtocolError> {
         Side::Buy => super::player_orders::FrozenAsset::Cash,
         Side::Sell => super::player_orders::FrozenAsset::Shares,
     };
-    if order.price.cents() <= 0
-        || order.remaining_qty == 0
-        || order.frozen != frozen
-    {
+    if order.price.cents() <= 0 || order.remaining_qty == 0 || order.frozen != frozen {
         return Err(ProtocolError::RuntimeDeltaMismatch);
     }
     Ok(())

@@ -78,9 +78,7 @@ fn buy_from_zero_over_an_active_entry_is_rejected() {
         .unwrap_err();
     assert_eq!(
         err,
-        ExperienceError::ActiveEntryAlreadyExists {
-            code: code
-        }
+        ExperienceError::ActiveEntryAlreadyExists { code: code }
     );
     assert!(
         state.feedback.stocks.contains_key(&code),
@@ -104,12 +102,7 @@ fn exit_without_an_active_entry_is_rejected() {
             moment(0, 10),
         )
         .unwrap_err();
-    assert_eq!(
-        err,
-        ExperienceError::NoActiveEntry {
-            code: code
-        }
-    );
+    assert_eq!(err, ExperienceError::NoActiveEntry { code: code });
     assert!(state.feedback.exit_records.is_empty());
 }
 
@@ -121,12 +114,7 @@ fn observation_without_an_active_entry_is_rejected() {
     let err = state
         .observe_position_dated(&code, price(940), moment(0, 10))
         .unwrap_err();
-    assert_eq!(
-        err,
-        ExperienceError::NoActiveEntry {
-            code: code
-        }
-    );
+    assert_eq!(err, ExperienceError::NoActiveEntry { code: code });
     assert!(state.feedback.failure_events.is_empty());
     assert_eq!(state.consecutive_failed_buys, 0);
 
@@ -135,9 +123,7 @@ fn observation_without_an_active_entry_is_rejected() {
         state
             .is_long_stuck(&code, price(1_000), &moment(0, 11))
             .unwrap_err(),
-        ExperienceError::NoActiveEntry {
-            code: code
-        }
+        ExperienceError::NoActiveEntry { code: code }
     );
 }
 

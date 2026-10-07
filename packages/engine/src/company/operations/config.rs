@@ -135,7 +135,7 @@ impl<'a> IndustryPairView<'a> {
 
     fn mismatch(spec: &CompanySpec, params: &FlowParams) -> OperationsError {
         OperationsError::KindFlowMismatch {
-            company: spec.id.clone(),
+            company: spec.code.clone(),
             kind: spec.kind,
             flow: params.variant_name(),
         }
@@ -177,7 +177,7 @@ impl FlowParams {
             .iter()
             .find_map(|&(parameter, days)| {
                 (days < 1).then_some(OperationsError::InvalidDuration {
-                    company: company.id.clone(),
+                    company: company.code.clone(),
                     parameter,
                     days,
                 })
@@ -201,5 +201,6 @@ pub struct CompanyOperationsConfig {
     /// 共享——经营与信息披露）。
     pub seed: u64,
     pub shock_params: ShockParams,
+    pub catalog: crate::company::spec::CompanyCatalog,
     pub companies: Vec<OperatingCompanyConfig>,
 }

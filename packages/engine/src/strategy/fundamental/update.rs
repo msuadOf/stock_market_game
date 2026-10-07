@@ -543,8 +543,8 @@ mod material_priority_tests {
                 ],
             }])
             .unwrap();
-        let root = MemberId("company".into());
-        let subsidiary = MemberId("subsidiary".into());
+        let root = MemberId(0);
+        let subsidiary = MemberId(1);
         let subsidiary_books = books.clone();
         let source = if consolidated {
             ReportSource::Consolidated {
@@ -607,7 +607,7 @@ mod material_priority_tests {
             crate::information::scheduled_instant(ScheduledReportKind::Annual, year, 0).unwrap();
         PublishedReport {
             id: PublicationId::new(if kind == ReportKind::Annual { 0 } else { 1000 }),
-            company: CompanyId("company".into()),
+            company: CompanyId(0),
             policy: AccountingPolicyRef { chart_version: 2 },
             approved_at: CivilInstant::from_hms(published_at.date(), 8, 0, 0).unwrap(),
             published_at,
@@ -708,7 +708,7 @@ mod material_priority_tests {
             .unwrap();
         let context = NpcObservationContext::new(owner, &information, &library, &()).unwrap();
         assert_eq!(
-            preferred_own_report(&context, &CompanyId("company".into())).unwrap(),
+            preferred_own_report(&context, &CompanyId(0)).unwrap(),
             Some(ids[0])
         );
         information
@@ -716,7 +716,7 @@ mod material_priority_tests {
             .unwrap();
         let context = NpcObservationContext::new(owner, &information, &library, &()).unwrap();
         assert_eq!(
-            preferred_own_report(&context, &CompanyId("company".into())).unwrap(),
+            preferred_own_report(&context, &CompanyId(0)).unwrap(),
             Some(ids[1])
         );
     }

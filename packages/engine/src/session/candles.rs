@@ -222,9 +222,7 @@ pub(super) fn generate_preset_daily_candles(
         .iter()
         .map(|stock| {
             // 边界代码 → 数值 id；RNG 种子仍按代码字符串派生，保持既有价格路径不变。
-            let id = catalog
-                .id(&stock.code.0)
-                .expect("配置股票必须已入目录");
+            let id = catalog.id(&stock.code.0).expect("配置股票必须已入目录");
             let dates = preset_candle_dates(&calendar, setup.start_date, stock.exchange)?;
             let mut rng =
                 SplitMix64::new(seed ^ stock_code_hash(&stock.code) ^ 0xD1A1_C4AD_1E50_0360);

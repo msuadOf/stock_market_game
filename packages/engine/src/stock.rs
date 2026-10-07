@@ -236,12 +236,13 @@ mod tests {
     /// 重复代码显式报错，不静默去重（铁律二）。
     #[test]
     fn duplicate_codes_are_rejected() {
-        let error = StockCatalog::from_metas(vec![
-            StockMeta::new("600888"),
-            StockMeta::new("600888"),
-        ])
-        .expect_err("重复代码必须报错");
-        assert_eq!(error, StockCatalogError::DuplicateCode("600888".to_string()));
+        let error =
+            StockCatalog::from_metas(vec![StockMeta::new("600888"), StockMeta::new("600888")])
+                .expect_err("重复代码必须报错");
+        assert_eq!(
+            error,
+            StockCatalogError::DuplicateCode("600888".to_string())
+        );
     }
 
     /// 边界翻译往返一致；未知代码返回 None 由调用方显式拒绝。

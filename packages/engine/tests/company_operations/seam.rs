@@ -50,7 +50,8 @@ fn scheduler_wires_into_civil_clock_due_queue_over_closed_weekend() {
         .run_day_end(&saturday, &mut clock, &mut ops)
         .expect("company day runs");
     assert_eq!(day_report.date, start);
-    let a = CompanyId("C-IND-A".to_string());
+    // four_company 目录代码序：C-IND-A = 1。
+    let a = CompanyId(1);
     let entries_saturday = ops
         .company(&a)
         .expect("A present")

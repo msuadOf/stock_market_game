@@ -71,7 +71,7 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
     let minority_ni = spec
         .ni_to_parent_cents
         .map(|parent| spec.ni_total_cents - parent);
-    let member = MemberId(COMPANY.to_string());
+    let member = MemberId(0);
     let scope = if spec.consolidated {
         ScopeId::Consolidated(member)
     } else {
@@ -81,7 +81,7 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
     let net_change = spec.operating_cf_cents + spec.investing_cf_cents + spec.financing_cf_cents;
     PublishedReport {
         id: PublicationId::new(901),
-        company: CompanyId(COMPANY.to_string()),
+        company: CompanyId(0),
         policy: AccountingPolicyRef { chart_version: 2 },
         approved_at: CivilInstant::from_hms(d(spec.published_on), 8, 0, 0).expect("approval"),
         published_at,

@@ -14,6 +14,7 @@ fn maturity_redeems_bank_deposit_principal_and_interest() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         start,
@@ -21,7 +22,7 @@ fn maturity_redeems_bank_deposit_principal_and_interest() {
     .unwrap();
     ops.advance_civil_day(start).unwrap();
     ops.advance_civil_day(start.next().unwrap()).unwrap();
-    let books = ops.bank_books(&CompanyId("C-BANK".into())).unwrap();
+    let books = ops.bank_books(&CompanyId(0)).unwrap();
     let deposit = books
         .deposit(&engine::company::ContractId("DEP-1".into()))
         .unwrap();
@@ -52,6 +53,7 @@ fn preexisting_bank_deposit_is_scheduled_and_redeemed_on_first_operating_day() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -59,7 +61,7 @@ fn preexisting_bank_deposit_is_scheduled_and_redeemed_on_first_operating_day() {
     .unwrap();
     assert!(ops.scheduler().pending().iter().any(|due| due.due_date == date && matches!(&due.action, engine::company::operations::ScheduledAction::ContractMaturity { reference, .. } if reference == "DEP:EXISTING-DEPOSIT")));
     ops.advance_civil_day(date).unwrap();
-    let books = ops.bank_books(&CompanyId("C-BANK".into())).unwrap();
+    let books = ops.bank_books(&CompanyId(0)).unwrap();
     let deposit = books.deposit(&contract).unwrap();
     assert!(deposit.principal().is_zero());
     assert!(deposit.accrued_payable().is_zero());
@@ -81,6 +83,7 @@ fn commercial_debt_maturity_pays_real_principal_and_accrued_interest() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-A"]).unwrap(),
             companies: vec![industrial_a(date.prev().unwrap())],
         },
         date,
@@ -88,7 +91,7 @@ fn commercial_debt_maturity_pays_real_principal_and_accrued_interest() {
     .unwrap();
     let report = ops.advance_civil_day(date).unwrap();
     assert!(report.payment_failures.is_empty());
-    let books = ops.industrial_books(&CompanyId("C-IND-A".into())).unwrap();
+    let books = ops.industrial_books(&CompanyId(0)).unwrap();
     let loan = books.loans().next().unwrap().1;
     assert!(loan.outstanding().is_zero());
     assert!(loan.accrued_unpaid().is_zero());
@@ -111,6 +114,7 @@ fn unpaid_commercial_debt_is_retained_and_retried_without_cash_injection() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -122,7 +126,7 @@ fn unpaid_commercial_debt_is_retained_and_retried_without_cash_injection() {
             .what
             .contains("overdue commercial debt principal")
             && failure.amount == amt(200_000)));
-        let books = ops.industrial_books(&CompanyId("C-IND-A".into())).unwrap();
+        let books = ops.industrial_books(&CompanyId(0)).unwrap();
         assert_eq!(books.loans().next().unwrap().1.outstanding(), amt(200_000));
         assert!(!books.books().ledger().cash_total().unwrap().is_negative());
     }
@@ -191,6 +195,7 @@ fn project_borrowing_maturity_has_real_operating_payment_caller() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -199,7 +204,7 @@ fn project_borrowing_maturity_has_real_operating_payment_caller() {
     ops.advance_civil_day(date).unwrap();
     ops.advance_civil_day(date.next().unwrap()).unwrap();
     let loan = ops
-        .real_estate_books(&CompanyId("C-RE".into()))
+        .real_estate_books(&CompanyId(0))
         .unwrap()
         .loan(&contract)
         .unwrap();

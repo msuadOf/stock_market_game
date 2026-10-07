@@ -62,13 +62,13 @@ fn company(id: &str, parent: Option<&str>) -> OperatingCompanyConfig {
     .unwrap();
     OperatingCompanyConfig {
         spec: CompanySpec {
-            id: CompanyId(id.into()),
-            name: id.into(),
+            code: id.to_string(),
+            name: id.to_string(),
             industry: IndustryId("industrial".into()),
             kind: CompanyKind::Industrial,
             listed_stock: None,
             issued_shares: 100,
-            group_parent: parent.map(|parent| CompanyId(parent.into())),
+            group_parent: parent.map(|parent| parent.to_string()),
         },
         books: IndustryBooks::Industrial(books),
         flow: FlowParams::Industrial(IndustrialFlowParams {
@@ -186,15 +186,17 @@ fn historical_group_balances_survive_real_trade_settlement_and_restore() {
         CompanyOperationsConfig {
             seed: 17,
             shock_params: shocks,
+            catalog: crate::company::CompanyCatalog::from_codes(&["root", "sub"]).unwrap(),
             companies: vec![root, sub],
         },
         date("2030-05-01"),
     )
     .unwrap();
+    // 目录代码序：root=0、sub=1；持股方必须是子公司。
     let group = GroupStructure {
-        root: CompanyId("root".into()),
+        root: CompanyId(0),
         holdings: vec![GroupHolding {
-            company: CompanyId("sub".into()),
+            company: CompanyId(1),
             parent_held_shares: 80,
         }],
     };
@@ -237,7 +239,7 @@ fn historical_group_balances_survive_real_trade_settlement_and_restore() {
         Err(crate::accounting::reports::ReportError::ConsolidatedRestatementUnsupported)
     ));
     ensure_group_report(&group, &ops, &mut closing, period, ReportKind::Monthly).unwrap();
-    let scope = ScopeId::Consolidated(MemberId("root".into()));
+    let scope = ScopeId::Consolidated(MemberId(0));
     let report = closing
         .version(&scope, period, ReportKind::Monthly, 1)
         .unwrap();
@@ -283,7 +285,8 @@ fn historical_group_balances_survive_real_trade_settlement_and_restore() {
             .unwrap()
     );
     let mut corrupted = serde_json::to_value(&ops).unwrap();
-    let sources = corrupted["companies"]["sub"]["books"]["Industrial"]["inventory_source_events"]
+    // 子公司按目录 id 序为 1，公司 map 序列化键即其数值文本。
+    let sources = corrupted["companies"]["1"]["books"]["Industrial"]["inventory_source_events"]
         .as_array_mut()
         .unwrap();
     sources.retain(|source| source["event"] != serde_json::json!(3));

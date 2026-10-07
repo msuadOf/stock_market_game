@@ -147,13 +147,13 @@ impl DecisionChainObservation {
             let fresh = session
                 .state
                 .library
-                .reports_for_company(company, now)
+                .reports_for_company(&company, now)
                 .iter()
                 .any(|report| report.published_at.date() >= threshold)
                 || session
                     .state
                     .library
-                    .announcements_for_company(company, now)
+                    .announcements_for_company(&company, now)
                     .iter()
                     .any(|announcement| announcement.published_at.date() >= threshold);
             if fresh {
@@ -682,7 +682,7 @@ impl GameSession {
                     .belief_participants
                     .get(&account)
                     .map(|participant| participant.information())
-                    .map(|known| known.records_for_company(company).len())
+                    .map(|known| known.records_for_company(&company).len())
             })
             .unwrap_or(0);
         (
@@ -735,7 +735,7 @@ impl GameSession {
                             .belief_participants
                             .get(&account)
                             .map(|participant| participant.information())
-                            .map(|state| state.records_for_company(company).len())
+                            .map(|state| state.records_for_company(&company).len())
                     })
                     .unwrap_or(0);
                 known > plan.review().last_review_acquired_count as usize
@@ -1935,11 +1935,7 @@ mod chain_restructure_tests {
             .entry(&faded)
             .unwrap()
             .clone();
-        let company = session
-            .state
-            .issuer_of_stock(faded)
-            .unwrap()
-            .clone();
+        let company = session.state.issuer_of_stock(faded).unwrap().clone();
         let date = session.civil_date().prev().unwrap();
         let expires_on = session.civil_date();
         let publication = std::sync::Arc::make_mut(&mut session.state.library)
@@ -2535,14 +2531,12 @@ mod chain_restructure_tests {
             .belief_participants
             .get_mut(&account)
             .expect("institution belief exists")
-            .belief_mut() = crate::strategy::BeliefBook::new(
-            account,
-            cognition.clone(),
-            analysis,
-            &mut rng,
-        );
+            .belief_mut() =
+            crate::strategy::BeliefBook::new(account, cognition.clone(), analysis, &mut rng);
         assert_eq!(
-            session.state.belief_participants[&account].belief().profile(),
+            session.state.belief_participants[&account]
+                .belief()
+                .profile(),
             &cognition
         );
         observe_account_root_for_latch(&mut session, account);
@@ -4337,8 +4331,9 @@ mod chain_restructure_tests {
     #[test]
     fn generation_preserves_pending_plan_facts_when_a_child_fill_is_waiting() {
         let mut session = seeded_buy_plan_with_child();
-        let parent =
-            session.state.parent_orders[&AccountId(1)][&session.stock_id("000812").unwrap()].clone();
+        let parent = session.state.parent_orders[&AccountId(1)]
+            [&session.stock_id("000812").unwrap()]
+            .clone();
         session
             .state
             .pending_plan_events
@@ -4657,7 +4652,9 @@ mod chain_restructure_tests {
         let plans = session.plans_debug();
         assert!(
             plans.iter().any(|(account, code, direction, ..)| {
-                account == &AccountId(1) && *code == session.stock_id("000812").unwrap() && direction == &Side::Buy
+                account == &AccountId(1)
+                    && *code == session.stock_id("000812").unwrap()
+                    && direction == &Side::Buy
             }),
             "seed scenario must produce the institution buy plan: {plans:?}"
         );

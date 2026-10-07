@@ -47,7 +47,7 @@ impl DebtCreditor {
 
     fn validate(&self) -> Result<(), CustomerFinanceError> {
         match self {
-            Self::Company(company) => validate_id(&company.0, "creditor company"),
+            Self::Company(_company) => Ok(()),
             Self::External(name) => validate_id(name, "external creditor"),
         }
     }
@@ -832,7 +832,7 @@ fn validate_endpoint_pair(
                 });
             }
             CashEndpoint::External(id) => validate_id(id, "external endpoint")?,
-            CashEndpoint::Company(id) => validate_id(&id.0, "company endpoint")?,
+            CashEndpoint::Company(_id) => {}
             CashEndpoint::Customer(_) => {}
         }
     }
@@ -992,9 +992,9 @@ mod tests {
     #[test]
     fn shared_customer_cash_pays_each_bound_company_in_original_due_order() {
         let customer = id("shared-customer");
-        let first_creditor = DebtCreditor::Company(CompanyId("first-company".to_string()));
-        let second_creditor = DebtCreditor::Company(CompanyId("second-company".to_string()));
-        let third_creditor = DebtCreditor::Company(CompanyId("third-company".to_string()));
+        let first_creditor = DebtCreditor::Company(CompanyId(2));
+        let second_creditor = DebtCreditor::Company(CompanyId(4));
+        let third_creditor = DebtCreditor::Company(CompanyId(5));
         let mut book = CustomerFinanceBook::new();
         book.register_customer(customer.clone(), amount(150))
             .expect("客户只有一份有限现金");
@@ -1081,7 +1081,7 @@ mod tests {
     #[test]
     fn written_off_recovery_pays_bound_creditor_without_changing_ordinary_balance() {
         let customer = id("customer-a");
-        let creditor = DebtCreditor::Company(CompanyId("creditor-company".to_string()));
+        let creditor = DebtCreditor::Company(CompanyId(1));
         let mut book = CustomerFinanceBook::new();
         book.register_customer(customer.clone(), amount(100))
             .expect("客户独立现金");
@@ -1162,7 +1162,7 @@ mod tests {
     }
 
     #[test]
-    fn debt_creditor_is_required_and_cannot_use_customer_namespace() {
+    fn debt_creditor_is_required_and_customer_namespace_stays_separate() {
         assert!(serde_json::from_str::<DebtCreditor>("{\"Customer\":\"customer-a\"}").is_err());
         let (book, _) = debt_book(100);
         let mut missing = serde_json::to_value(book).expect("真实账簿");
@@ -1175,10 +1175,9 @@ mod tests {
         let customer = id("customer-a");
         book.register_customer(customer.clone(), amount(100))
             .expect("客户");
-        for invalid in [
-            DebtCreditor::Company(CompanyId(" ".to_string())),
-            DebtCreditor::External("".to_string()),
-        ] {
+        // 数值公司 id 恒为合法格式（旧的字符串格式校验随 id 数值化消失）；
+        // 债权人必填与“客户字符串命名空间不可被公司占用”由类型分离保证。
+        for invalid in [DebtCreditor::External("".to_string())] {
             let before = book.clone();
             assert!(book
                 .register_debt(
@@ -1198,7 +1197,7 @@ mod tests {
             date("2030-01-01"),
             date("2030-01-02"),
             amount(100),
-            DebtCreditor::Company(CompanyId(customer.0.clone())),
+            DebtCreditor::Company(CompanyId(0)), // 数值债权人；与客户字符串命名空间类型级隔离
         )
         .expect("客户id与公司id不混同");
     }
@@ -1208,8 +1207,7 @@ mod tests {
         let original = recovered_book();
         original.validate().expect("合法核销回收事实");
         let mut redirected = original.clone();
-        redirected.cash_flows[0].destination =
-            CashEndpoint::Company(CompanyId("other-company".to_string()));
+        redirected.cash_flows[0].destination = CashEndpoint::Company(CompanyId(3));
         assert!(
             redirected.validate().is_err(),
             "回收流水收款人必须匹配债务债权人"

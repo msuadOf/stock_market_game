@@ -664,13 +664,8 @@ mod tests {
     fn parallel_stock_initialization_reports_the_first_stock_error() {
         let input = |code: StockId| ContinuousStockInput {
             phase: TradingPhase::Continuous,
-            market: Market::new(
-                code,
-                Money::from_cents(1_000),
-                0.10,
-                Money::from_cents(1),
-            )
-            .unwrap(),
+            market: Market::new(code, Money::from_cents(1_000), 0.10, Money::from_cents(1))
+                .unwrap(),
             envelopes: Vec::new(),
             operations: Vec::new(),
             config: GameConfig::proposed_defaults(),

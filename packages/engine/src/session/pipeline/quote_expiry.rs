@@ -306,16 +306,8 @@ mod ownership_tests {
                 .collect::<Vec<_>>(),
             vec![crate::AccountId(1), crate::AccountId(2)]
         );
-        book.remove(
-            crate::AccountId(1),
-            &crate::StockId(0),
-            crate::OrderId(1),
-        );
-        book.remove(
-            crate::AccountId(99),
-            &crate::StockId(0),
-            crate::OrderId(1),
-        );
+        book.remove(crate::AccountId(1), &crate::StockId(0), crate::OrderId(1));
+        book.remove(crate::AccountId(99), &crate::StockId(0), crate::OrderId(1));
         assert_eq!(
             book.due_at(6)
                 .map(|entry| entry.account)

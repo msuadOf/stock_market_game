@@ -323,8 +323,10 @@ pub(crate) fn real_estate_fixture() -> Books {
 
 // —— 合并集团夹具（工业母公司 + 工业子公司 80%）——
 
-pub(crate) const GROUP_ROOT: &str = "C-GROUP-P";
-pub(crate) const GROUP_SUB: &str = "C-GROUP-S";
+pub(crate) const GROUP_ROOT: u32 = 0;
+const GROUP_ROOT_CODE: &str = "C-GROUP-P";
+pub(crate) const GROUP_SUB: u32 = 1;
+const GROUP_SUB_CODE: &str = "C-GROUP-S";
 
 /// 母公司账套：开局/外购存货/对外销售/内部赊销（均 2030-03）。
 pub(crate) fn group_parent_books() -> Books {
@@ -423,11 +425,11 @@ pub(crate) fn group_sub_books() -> Books {
 /// 构造合并请求（内部往来 1,000 元 + 内部销售：转移价 1,000/成本 600/未售 500）。
 pub(crate) fn group_request<'a>(parent: &'a Books, sub: &'a Books) -> ConsolidationRequest<'a> {
     ConsolidationRequest {
-        root: MemberId(GROUP_ROOT.to_string()),
+        root: MemberId(GROUP_ROOT),
         members: vec![
             GroupMember {
                 spec: MemberSpec {
-                    id: MemberId(GROUP_ROOT.to_string()),
+                    id: MemberId(GROUP_ROOT),
                     group_parent: None,
                     issued_shares: 100_000,
                     parent_held_shares: 0,
@@ -436,8 +438,8 @@ pub(crate) fn group_request<'a>(parent: &'a Books, sub: &'a Books) -> Consolidat
             },
             GroupMember {
                 spec: MemberSpec {
-                    id: MemberId(GROUP_SUB.to_string()),
-                    group_parent: Some(MemberId(GROUP_ROOT.to_string())),
+                    id: MemberId(GROUP_SUB),
+                    group_parent: Some(MemberId(GROUP_ROOT)),
                     issued_shares: 10_000,
                     parent_held_shares: 8_000,
                 },
@@ -448,21 +450,21 @@ pub(crate) fn group_request<'a>(parent: &'a Books, sub: &'a Books) -> Consolidat
             // 资产侧（母公司应收）+ 负债侧（子公司应付）各申报一次——
             // 往来抵销的镜像申报形态。
             IntercompanyBalance {
-                member: MemberId(GROUP_ROOT.to_string()),
-                counterparty: MemberId(GROUP_SUB.to_string()),
+                member: MemberId(GROUP_ROOT),
+                counterparty: MemberId(GROUP_SUB),
                 account: LedgerAccountId("1122".to_string()),
                 amount: yuan(1_000),
             },
             IntercompanyBalance {
-                member: MemberId(GROUP_SUB.to_string()),
-                counterparty: MemberId(GROUP_ROOT.to_string()),
+                member: MemberId(GROUP_SUB),
+                counterparty: MemberId(GROUP_ROOT),
                 account: LedgerAccountId("2202".to_string()),
                 amount: yuan(1_000),
             },
         ],
         intercompany_sales: vec![IntercompanySale {
-            seller: MemberId(GROUP_ROOT.to_string()),
-            buyer: MemberId(GROUP_SUB.to_string()),
+            seller: MemberId(GROUP_ROOT),
+            buyer: MemberId(GROUP_SUB),
             revenue_account: LedgerAccountId("6001".to_string()),
             cost_account: LedgerAccountId("6401".to_string()),
             inventory_account: LedgerAccountId("1405".to_string()),
@@ -475,12 +477,12 @@ pub(crate) fn group_request<'a>(parent: &'a Books, sub: &'a Books) -> Consolidat
 
 /// 报表单体来源的行业标签快捷面。
 pub(crate) fn standalone<'a>(
-    id: &str,
+    id: u32,
     books: &'a Books,
     industry: IndustryPresentation,
 ) -> engine::accounting::reports::ReportSource<'a> {
     engine::accounting::reports::ReportSource::Standalone {
-        id: MemberId(id.to_string()),
+        id: MemberId(id),
         books,
         industry,
     }

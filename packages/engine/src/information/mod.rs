@@ -89,8 +89,11 @@ pub enum InformationError {
     /// 游标不是当前公司的一条已公开报告 id，或不是十进制 id。
     #[error("invalid public report cursor {cursor:?} for company {company}")]
     /// 公开报告游标非法；cursor=已解析的 PublicationId 数值（解析失败时 0），
-    /// company=公司字符串身份（待 CompanyId 数值化后改数值）。
-    InvalidPublicReportCursor { cursor: u32, company: String },
+    /// company=公司数值身份（查询上下文；无公司上下文时用 u32::MAX 占位）。
+    InvalidPublicReportCursor {
+        cursor: u32,
+        company: crate::company::CompanyId,
+    },
 
     /// 结账登记簿不存在该版本（期间未结账/序号越界 = 未定稿，不可公开）。
     #[error("no finalized version for {scope:?} {period} {kind:?} sequence {sequence}")]

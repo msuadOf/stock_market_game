@@ -18,13 +18,8 @@ fn price_limits_use_positive_half_up_rounding_and_at_least_one_tick() {
     assert_eq!(main.down_stop().unwrap(), Money::from_cents(14));
 
     // 2 × 105% 和 2 × 95% 都会舍入回 2；规则要求至少上下移动一个最小价位。
-    let low_price_narrow_limit = Market::new(
-        StockId(0),
-        Money::from_cents(2),
-        0.05,
-        Money::from_cents(1),
-    )
-    .unwrap();
+    let low_price_narrow_limit =
+        Market::new(StockId(0), Money::from_cents(2), 0.05, Money::from_cents(1)).unwrap();
     assert_eq!(
         low_price_narrow_limit.up_stop().unwrap(),
         Money::from_cents(3)

@@ -13,10 +13,7 @@ fn account_validation_independent_share_reservations_of_one_account_use_two_work
         .setup
         .stocks
         .iter()
-        .map(|stock| {
-            game.stock_id(&stock.code.0)
-                .expect("配置股票必须已入目录")
-        })
+        .map(|stock| game.stock_id(&stock.code.0).expect("配置股票必须已入目录"))
         .collect::<Vec<_>>();
     for code in &codes {
         game.state

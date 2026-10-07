@@ -16,28 +16,28 @@ pub enum CompanyError {
     #[error("invalid company spec: {detail}")]
     SpecInvalid { detail: String },
 
-    /// 公司 id 重复。
-    #[error("duplicate company id {company:?}")]
-    DuplicateCompanyId { company: CompanyId },
+    /// 公司代码重复（代码是字符串身份，配置层校验）。
+    #[error("duplicate company code {company_code:?}")]
+    DuplicateCompanyId { company_code: String },
 
     /// 两家公司映射同一发行股票。
-    #[error("duplicate issuer stock {stock:?}: company {company:?} after {first:?}")]
+    #[error("duplicate issuer stock {stock:?}: company {company_code:?} after {first_code:?}")]
     DuplicateIssuerStock {
         stock: StockCode,
-        company: CompanyId,
-        first: CompanyId,
+        company_code: String,
+        first_code: String,
     },
 
     /// 集团母公司不在注册表内。
-    #[error("company {company:?} references unknown group parent {parent:?}")]
+    #[error("company {company_code:?} references unknown group parent {parent_code:?}")]
     UnknownGroupParent {
-        company: CompanyId,
-        parent: CompanyId,
+        company_code: String,
+        parent_code: String,
     },
 
     /// 固定集团关系成环。
-    #[error("group parent chain cycles at company {company:?}")]
-    GroupCycle { company: CompanyId },
+    #[error("group parent chain cycles at company {company_code:?}")]
+    GroupCycle { company_code: String },
 
     /// 上市公司映射的股票不在清单内。
     #[error("company {company:?} maps unknown issuer stock {stock:?}")]

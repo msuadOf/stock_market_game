@@ -169,8 +169,8 @@ mod tests {
 
     #[test]
     fn validated_sale_keeps_account_error_first_and_half_even_zero_lines() {
-        let root = MemberId("root".into());
-        let sub = MemberId("sub".into());
+        let root = MemberId(0);
+        let sub = MemberId(1);
         let group = ValidatedGroup {
             root: root.clone(),
             subsidiaries: vec![SubsidiaryOwnership {

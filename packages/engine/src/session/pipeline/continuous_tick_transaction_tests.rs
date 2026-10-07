@@ -416,7 +416,7 @@ fn live_buy_plan_case(
     let issuer = authority.state.issuer_of_stock(code).unwrap();
     let acquired_count = authority.state.belief_participants[&AccountId(1)]
         .information()
-        .records_for_company(issuer)
+        .records_for_company(&issuer)
         .len();
     authority
         .state

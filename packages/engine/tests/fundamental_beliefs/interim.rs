@@ -44,7 +44,7 @@ fn own_known_interim_supplements_growth_without_replacing_annual_earnings() {
                 ),
             ])
             .unwrap();
-        let member = MemberId(COMPANY.to_owned());
+        let member = MemberId(0);
         let mut closing = ClosingEngine::new();
         closing
             .snapshot_interim(
@@ -55,7 +55,7 @@ fn own_known_interim_supplements_growth_without_replacing_annual_earnings() {
                 ReportKind::HalfYear,
             )
             .unwrap();
-        let offset = stable_company_offset(OPS_SEED, &scenario.company);
+        let offset = stable_company_offset(OPS_SEED, crate::COMPANY);
         let published_at = scheduled_instant(ScheduledReportKind::HalfYear, 2031, offset).unwrap();
         let interim = scenario
             .library
@@ -129,7 +129,7 @@ fn own_known_interim_supplements_growth_without_replacing_annual_earnings() {
             .unwrap()
             .clone();
         group.id = group_id;
-        group.reports.scope = ScopeId::Consolidated(MemberId(COMPANY.to_owned()));
+        group.reports.scope = ScopeId::Consolidated(MemberId(0));
         group.reports.income.net_income_to_parent =
             Some(group.reports.income.cumulative.net_income);
         group.reports.income.minority_net_income = Some(AccountingAmount::ZERO);

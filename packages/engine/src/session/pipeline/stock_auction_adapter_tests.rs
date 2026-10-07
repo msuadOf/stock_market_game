@@ -5,7 +5,7 @@ use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
 use crate::orderbook::js_safe_u64;
 use crate::{
-    AccountId, GameSession, Intent, Money, Order, OrderId, Side, StockId, StockExchange,
+    AccountId, GameSession, Intent, Money, Order, OrderId, Side, StockExchange, StockId,
     TradingPhase,
 };
 

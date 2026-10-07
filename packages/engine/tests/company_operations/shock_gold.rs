@@ -26,11 +26,11 @@ fn run_days(ops: &mut CompanyOperations, start: CivilDate, days: i64) {
 }
 
 fn ind_a() -> CompanyId {
-    CompanyId("C-IND-A".to_string())
+    CompanyId(1)
 }
 
 fn bank_id() -> CompanyId {
-    CompanyId("C-BANK".to_string())
+    CompanyId(0)
 }
 
 /// 同一市场需求扩张（+3000bp，10 个自然日）作用于全部公司：
@@ -102,7 +102,7 @@ fn common_market_shock_diverges_operating_responses() {
 }
 
 fn c_ins() -> CompanyId {
-    CompanyId("C-INS".to_string())
+    CompanyId(3)
 }
 
 /// 行业成本冲击只作用于被标签行业：化工 B 采购变贵，家电 A 账套不变。
@@ -133,7 +133,8 @@ fn industry_cost_shock_only_touches_tagged_industry() {
     run_days(&mut baseline, start, 10);
     run_days(&mut shocked, start, 10);
 
-    let b = CompanyId("C-IND-B".to_string());
+    // two_industrial 目录代码序：C-IND-B = 1。
+    let b = CompanyId(1);
     // B：采购单价 ¥2.0 → ¥2.2（+1000bp），10 日补货 4 件/日——进项税额
     // （222102，按当批货款直算、与移动加权平均无关）恰多 1,040 分；
     // 原料科目（移动加权平均耦合）净额高于基线。
@@ -158,9 +159,10 @@ fn industry_cost_shock_only_touches_tagged_industry() {
         shock_raw > base_raw,
         "pricier replenishment raises raw cost basis"
     );
-    // A：行业标签不匹配 → 账套逐字节不变。
+    // A：行业标签不匹配 → 账套逐字节不变（two_industrial 目录 C-IND-A = 0）。
+    let a = CompanyId(0);
     assert_eq!(
-        shocked.industrial_books(&ind_a()).expect("A present"),
-        baseline.industrial_books(&ind_a()).expect("A present")
+        shocked.industrial_books(&a).expect("A present"),
+        baseline.industrial_books(&a).expect("A present")
     );
 }

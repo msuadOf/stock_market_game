@@ -233,7 +233,9 @@ fn price_memory_rejects_public_read_of_never_observed_stock() {
         memory
             .record_public_history_read(&code("600101"), 100, &mut reads)
             .unwrap_err(),
-        PriceMemoryError::UnobservedStock { code: code("600101") }
+        PriceMemoryError::UnobservedStock {
+            code: code("600101")
+        }
     );
     // 拒绝不改变状态。
     assert_eq!(memory.stock_count(), 0);

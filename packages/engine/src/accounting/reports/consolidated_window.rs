@@ -56,12 +56,7 @@ pub(crate) fn report_account_keys(
     let mut keys = crate::accounting::consolidation::account_keys(members);
     for ((member, code), key) in &mut keys {
         if code.0 == super::industrial::codes::CIT_PAYABLE {
-            *key = LedgerAccountId(format!(
-                "member-tax:{}:{}:{}",
-                member.0.len(),
-                member.0,
-                code.0
-            ));
+            *key = LedgerAccountId(format!("member-tax:{}:{}", member.0, code.0));
         }
     }
     keys
@@ -74,13 +69,10 @@ pub(crate) fn is_current_tax_key(code: &LedgerAccountId) -> bool {
     let Some(encoded) = code.0.strip_prefix("member-tax:") else {
         return false;
     };
-    let Some((length, member_and_code)) = encoded.split_once(':') else {
+    let Some((member, rest)) = encoded.split_once(':') else {
         return false;
     };
-    let Ok(length) = length.parse::<usize>() else {
-        return false;
-    };
-    member_and_code.get(length..) == Some(":222104")
+    member.parse::<u32>().is_ok() && rest == "222104"
 }
 
 /// 合并窗口（纯函数：只读成员账套 + 申报）。
@@ -494,11 +486,11 @@ mod tests {
     use crate::calendar::CivilDate;
 
     #[test]
-    fn tax_member_keys_preserve_unicode_and_delimiter_identity() {
+    fn tax_member_keys_preserve_numeric_identity_and_delimiter_safety() {
         let root = Books::new(crate::company::industrial::industrial_account_chart());
         let sub = Books::new(crate::company::industrial::industrial_account_chart());
-        let root_id = MemberId("母:222104".into());
-        let sub_id = MemberId("母:222104:222104".into());
+        let root_id = MemberId(0);
+        let sub_id = MemberId(1);
         let keys = report_account_keys(&BTreeMap::from([
             (root_id.clone(), &root),
             (sub_id.clone(), &sub),
@@ -511,13 +503,19 @@ mod tests {
         assert!(is_current_tax_key(sub_key));
         assert!(is_current_tax_key(&tax));
         for invalid in [
-            "member-tax:1:母:222104",
-            "member-tax:4:a:222104",
+            "member-tax:X:222104",
+            "member-tax:1",
+            "member-tax:1:222105",
+            "member-tax::222104",
             "1122",
             "v2:222104",
         ] {
             assert!(!is_current_tax_key(&LedgerAccountId(invalid.into())));
         }
+        // 数值成员无分隔符歧义，但位数不同的成员键必须互异（1 与 11）。
+        let key_1 = LedgerAccountId(format!("member-tax:{}:222104", 1));
+        let key_11 = LedgerAccountId(format!("member-tax:{}:222104", 11));
+        assert_ne!(key_1, key_11);
     }
 
     fn books(capital: i128, date: &str) -> Books {
@@ -551,21 +549,21 @@ mod tests {
             let root = books(8, date);
             let first = books(10, date);
             let second = books(20, date);
-            let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+            let member = |id: u32, parent: Option<u32>, held, books| GroupMember {
                 spec: MemberSpec {
-                    id: MemberId(id.into()),
-                    group_parent: parent.map(|id| MemberId(id.into())),
+                    id: MemberId(id),
+                    group_parent: parent.map(MemberId),
                     issued_shares: 100,
                     parent_held_shares: held,
                 },
                 books,
             };
             let request = ConsolidationRequest {
-                root: MemberId("root".into()),
+                root: MemberId(0),
                 members: vec![
-                    member("second", Some("root"), 80, &second),
-                    member("root", None, 0, &root),
-                    member("first", Some("root"), 60, &first),
+                    member(2, Some(0), 80, &second),
+                    member(0, None, 0, &root),
+                    member(1, Some(0), 60, &first),
                 ],
                 intercompany_balances: vec![],
                 intercompany_sales: vec![],

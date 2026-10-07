@@ -8,7 +8,7 @@ export type PublicReportSummary = {
    * PublicationId 使用不透明十进制字符串，且是分页排序的唯一 key。
    */
   id: string;
-  company_id: string;
+  company_id: number;
   period: string;
   kind: PublicReportKind;
   version_sequence: string;

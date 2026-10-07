@@ -63,11 +63,7 @@ fn seed_active_plans(
             .create(PlanOpen {
                 account: *account,
                 code: game
-                    .stock_id(
-                        &save.setup.stocks[index % save.setup.stocks.len()]
-                            .code
-                            .0,
-                    )
+                    .stock_id(&save.setup.stocks[index % save.setup.stocks.len()].code.0)
                     .expect("计划股票必须已入目录"),
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(10_000),

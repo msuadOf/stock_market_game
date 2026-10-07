@@ -71,8 +71,10 @@ fn earliest_start_prehistory_is_legal_and_restorable() {
 
     // 开局未来才公布的报告不得提前纳入：1999 年报（2000-03 排期）、2000 Q1。
     for company_id in [INDUSTRIAL_ID, BANK_ID] {
-        let company = CompanyId(company_id.to_string());
-        let offset = stable_company_offset(11, &company);
+        let company = crate::fixture::fixture_catalog()
+            .id(company_id)
+            .expect("目录含夹具公司");
+        let offset = stable_company_offset(11, company_id);
         let annual_1999 = scheduled_instant(ScheduledReportKind::Annual, 1999, offset)
             .expect("annual 1999 schedule");
         assert!(

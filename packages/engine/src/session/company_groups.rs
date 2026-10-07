@@ -72,8 +72,12 @@ fn request<'a>(
         let spec = company.spec();
         members.push(GroupMember {
             spec: MemberSpec {
-                id: MemberId(id.0.clone()),
-                group_parent: spec.group_parent.as_ref().map(|id| MemberId(id.0.clone())),
+                id: MemberId(id.0),
+                group_parent: spec
+                    .group_parent
+                    .as_ref()
+                    .and_then(|code| ops.catalog().id(code))
+                    .map(|id| MemberId(id.0)),
                 issued_shares: spec.issued_shares,
                 parent_held_shares: holdings.get(id).copied().unwrap_or(0),
             },
@@ -109,7 +113,10 @@ fn request<'a>(
                     if bound.is_some_and(|bound| entry.period() > bound) {
                         continue;
                     }
-                    let counterparty = CompanyId(identity.counterparty.0.clone());
+                    let Some(counterparty) = ops.catalog().id(&identity.counterparty.0) else {
+                        // 非公司对手方代码：与旧构造不命中语义等价，跳过。
+                        continue;
+                    };
                     if counterparty != *id
                         && (counterparty == group.root || holdings.contains_key(&counterparty))
                     {
@@ -153,19 +160,23 @@ fn request<'a>(
             }
         }
     }
-    for company in ops.companies.values() {
-        if company.spec().group_parent.as_ref() == Some(&group.root)
-            && !holdings.contains_key(&company.spec().id)
+    for (company_id, company) in &ops.companies {
+        if company
+            .spec()
+            .group_parent
+            .as_ref()
+            .and_then(|code| ops.catalog().id(code))
+            == Some(group.root)
+            && !holdings.contains_key(company_id)
         {
             return Err(invalid(format!(
                 "group {} missing subsidiary holding {}",
-                group.root.0,
-                company.spec().id.0
+                group.root.0, company_id.0
             )));
         }
     }
     Ok(ConsolidationRequest {
-        root: MemberId(group.root.0.clone()),
+        root: MemberId(group.root.0),
         members,
         intercompany_balances: balances,
         intercompany_sales: sales::derive_sales(group, ops, bound)?,
@@ -193,13 +204,11 @@ pub(crate) fn validate_groups(
         }
         consolidate(request).map_err(|error| invalid(error.to_string()))?;
     }
-    for company in ops.companies.values() {
-        if company.spec().group_parent.is_some()
-            && !included.contains(&MemberId(company.spec().id.0.clone()))
-        {
+    for (company_id, company) in &ops.companies {
+        if company.spec().group_parent.is_some() && !included.contains(&MemberId(company_id.0)) {
             return Err(invalid(format!(
                 "subsidiary {} has no configured group",
-                company.spec().id.0
+                company_id.0
             )));
         }
     }
@@ -264,7 +273,14 @@ pub(crate) fn seed_groups(
     let start_instant = CivilInstant::new(start, 0)?;
     let mut due = Vec::new();
     for group in groups {
-        let offset = crate::information::stable_company_offset(prehistory.ops.seed, &group.root);
+        let offset = crate::information::stable_company_offset(
+            prehistory.ops.seed,
+            prehistory
+                .ops
+                .catalog()
+                .code(group.root)
+                .expect("集团 root 必须能在目录内翻译出代码"),
+        );
         for fiscal_year in start.year() - 2..=start.year() {
             for kind in ScheduledReportKind::ALL {
                 let instant = crate::information::scheduled_instant(kind, fiscal_year, offset)?;
@@ -295,7 +311,7 @@ pub(crate) fn seed_groups(
         prehistory.library.publish_closed(
             &prehistory.closing,
             PublicationRequest {
-                company: root_id.clone(),
+                company: root_id,
                 scope: ScopeId::Consolidated(MemberId(root_id.0)),
                 period,
                 kind: kind.report_kind(),
@@ -336,8 +352,8 @@ pub(crate) fn publish_group_scheduled(
     library.publish_closed(
         closing,
         PublicationRequest {
-            company: group.root.clone(),
-            scope: ScopeId::Consolidated(MemberId(group.root.0.clone())),
+            company: group.root,
+            scope: ScopeId::Consolidated(MemberId(group.root.0)),
             period,
             kind: kind.report_kind(),
             sequence: 1,

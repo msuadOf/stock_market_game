@@ -184,7 +184,12 @@ impl TestOrderSaveFixture {
         &mut self.save
     }
 
-    fn add_position(&mut self, owner: AccountId, code: engine::StockId, position: engine::PositionSnap) {
+    fn add_position(
+        &mut self,
+        owner: AccountId,
+        code: engine::StockId,
+        position: engine::PositionSnap,
+    ) {
         self.save
             .snapshot
             .accounts
@@ -1061,9 +1066,7 @@ fn current_save_json_requires_explicit_stock_fields() {
         let error = serde_json::from_value::<engine::SaveSlot>(injected).unwrap_err();
         assert!(error.to_string().contains(field));
     }
-    let market = current["snapshot"]["markets"]["0"]
-        .as_object()
-        .unwrap();
+    let market = current["snapshot"]["markets"]["0"].as_object().unwrap();
     for derived in ["best_bid", "best_ask", "bids", "asks"] {
         assert!(
             !market.contains_key(derived),
@@ -1186,11 +1189,8 @@ fn javascript_number_boundaries_reject_unsafe_u64_values() {
     assert!(serde_json::to_value(&save).is_err());
 
     let mut snapshot = GameSession::new(sample_setup(), 42).unwrap().snapshot();
-    snapshot
-        .markets
-        .get_mut(&sid())
-        .unwrap()
-        .bids = vec![(Money::from_cents(1_000), 9_007_199_254_740_992)];
+    snapshot.markets.get_mut(&sid()).unwrap().bids =
+        vec![(Money::from_cents(1_000), 9_007_199_254_740_992)];
     assert!(serde_json::to_value(&snapshot).is_err());
 }
 
@@ -1222,11 +1222,7 @@ fn restore_rejects_missing_deterministic_state() {
     let mut advanced = GameSession::new(continuous_setup, 42).unwrap();
     advanced.step().expect("healthy step");
     let mut truncated = advanced.save().expect("healthy save");
-    truncated
-        .price_history
-        .get_mut(&sid())
-        .unwrap()
-        .pop();
+    truncated.price_history.get_mut(&sid()).unwrap().pop();
     // 数值断言替代原文本断言 "price history"（fault2010：价格历史长度或价格非法）。
     assert!(matches!(
         GameSession::restore(&truncated),
@@ -1443,8 +1439,7 @@ fn assert_tick_accounting(
     trade_totals: &mut TradeTotals,
 ) {
     use engine::session::pipeline::ReceiptKind;
-    let mut emitted =
-        std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
+    let mut emitted = std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
     for event in events {
         match event {
             Event::Trade {
@@ -1464,10 +1459,8 @@ fn assert_tick_accounting(
             _ => {}
         }
     }
-    let mut buy_fills =
-        std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
-    let mut sell_fills =
-        std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
+    let mut buy_fills = std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
+    let mut sell_fills = std::collections::BTreeMap::<engine::StockId, (u64, i128)>::new();
     let mut charged_cents = 0i128;
     for receipt in receipts
         .iter()
@@ -2119,11 +2112,7 @@ fn restore_rejects_inconsistent_authoritative_daily_trade_statistics() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     session.step().expect("healthy step");
     let mut save = session.save().expect("healthy save");
-    let candle = save
-        .snapshot
-        .active_daily_candles
-        .get_mut(&sid())
-        .unwrap();
+    let candle = save.snapshot.active_daily_candles.get_mut(&sid()).unwrap();
     candle.volume = 100;
     candle.trade_stats = Some(engine::DailyTradeStats::default());
 
@@ -2139,11 +2128,7 @@ fn restore_rejects_daily_turnover_above_the_ohlc_volume_bound() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     session.step().expect("healthy step");
     let mut save = session.save().expect("healthy save");
-    let candle = save
-        .snapshot
-        .active_daily_candles
-        .get_mut(&sid())
-        .unwrap();
+    let candle = save.snapshot.active_daily_candles.get_mut(&sid()).unwrap();
     candle.volume = 100;
     candle.trade_stats = Some(engine::DailyTradeStats {
         turnover_cents: 100_001,
@@ -2162,11 +2147,7 @@ fn restore_rejects_missing_daily_statistics_for_positive_volume() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     session.step().expect("healthy step");
     let mut save = session.save().expect("healthy save");
-    let candle = save
-        .snapshot
-        .active_daily_candles
-        .get_mut(&sid())
-        .unwrap();
+    let candle = save.snapshot.active_daily_candles.get_mut(&sid()).unwrap();
     candle.volume = 100;
     candle.trade_stats = None;
 
@@ -2182,11 +2163,7 @@ fn restore_rejects_daily_statistics_below_a_minimum_that_exceeds_u64() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     session.step().expect("healthy step");
     let mut save = session.save().expect("healthy save");
-    let candle = save
-        .snapshot
-        .active_daily_candles
-        .get_mut(&sid())
-        .unwrap();
+    let candle = save.snapshot.active_daily_candles.get_mut(&sid()).unwrap();
     candle.open = Money::from_cents(i64::MAX);
     candle.high = Money::from_cents(i64::MAX);
     candle.low = Money::from_cents(i64::MAX);
@@ -2209,11 +2186,7 @@ fn restore_accepts_a_wide_ohlc_upper_bound_without_u64_multiplication_overflow()
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     session.step().expect("healthy step");
     let mut save = session.save().expect("healthy save");
-    let candle = save
-        .snapshot
-        .active_daily_candles
-        .get_mut(&sid())
-        .unwrap();
+    let candle = save.snapshot.active_daily_candles.get_mut(&sid()).unwrap();
     candle.high = Money::from_cents(i64::MAX);
     candle.volume = 3;
     candle.trade_stats = Some(engine::DailyTradeStats {
@@ -2447,13 +2420,7 @@ fn enqueue_player_intent_executes_in_step() {
     .unwrap();
     s.step().expect("healthy step");
     // 玩家挂买单 → best_bid 出现
-    assert!(s
-        .snapshot()
-        .markets
-        .get(&sid())
-        .unwrap()
-        .best_bid
-        .is_some());
+    assert!(s.snapshot().markets.get(&sid()).unwrap().best_bid.is_some());
 }
 
 #[test]
@@ -3199,7 +3166,10 @@ fn all_stocks_produce_trades_multistock() {
         sess.enqueue_player_intent(
             AccountId(0),
             Intent::PlaceMarket {
-                code: sid_of(&["600101", "002156", "300260", "600610", "000812"], code_value),
+                code: sid_of(
+                    &["600101", "002156", "300260", "600610", "000812"],
+                    code_value,
+                ),
                 side: Side::Buy,
                 qty: 100,
             },
@@ -3215,21 +3185,11 @@ fn all_stocks_produce_trades_multistock() {
             _ => None,
         })
         .collect();
-    let all_ids: std::collections::HashSet<engine::StockId> = [
-        "600101",
-        "002156",
-        "300260",
-        "600610",
-        "000812",
-    ]
-    .into_iter()
-    .map(|code| {
-        sid_of(
-            &["600101", "002156", "300260", "600610", "000812"],
-            code,
-        )
-    })
-    .collect();
+    let all_ids: std::collections::HashSet<engine::StockId> =
+        ["600101", "002156", "300260", "600610", "000812"]
+            .into_iter()
+            .map(|code| sid_of(&["600101", "002156", "300260", "600610", "000812"], code))
+            .collect();
     assert_eq!(
         traded, all_ids,
         "未全部成交（traded={:?}）——回归到「只有一只股票有成交」的 bug",
@@ -4352,9 +4312,7 @@ fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
     let mut missing = saved.clone();
     missing.book_next_sequences.clear();
     let mut unknown = saved.clone();
-    unknown
-        .book_next_sequences
-        .insert(engine::StockId(99), 0);
+    unknown.book_next_sequences.insert(engine::StockId(99), 0);
     for save in [missing, unknown] {
         // 数值断言替代原文本断言 "book sequence market set"
         // （fault2004：簿序号市场集合与 setup 不完全一致）。
@@ -4404,7 +4362,10 @@ fn book_cursors_are_required_decimal_u64_values_in_the_save_contract() {
     for cursor in [0, 9_007_199_254_740_992, u64::MAX] {
         save.book_next_sequences.insert(code.clone(), cursor);
         let json = serde_json::to_value(&save).unwrap();
-        assert_eq!(json["book_next_sequences"][code.0.to_string()], cursor.to_string());
+        assert_eq!(
+            json["book_next_sequences"][code.0.to_string()],
+            cursor.to_string()
+        );
         let decoded: engine::SaveSlot = serde_json::from_value(json.clone()).unwrap();
         let restored = GameSession::restore(&decoded).unwrap().save().unwrap();
         assert_eq!(serde_json::to_value(restored).unwrap(), json);

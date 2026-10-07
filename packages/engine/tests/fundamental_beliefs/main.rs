@@ -173,9 +173,9 @@ impl FundamentalBeliefCase {
 }
 
 pub(crate) fn scenario() -> Scenario {
-    let company = CompanyId(COMPANY.to_string());
-    let member = MemberId(COMPANY.to_string());
-    let offset = stable_company_offset(OPS_SEED, &company);
+    let company = CompanyId(0);
+    let member = MemberId(0);
+    let offset = stable_company_offset(OPS_SEED, COMPANY);
 
     let mut books = Books::new(industrial_account_chart());
     let revenues = [100_000i128, 80_000, 180_000, 198_000];

@@ -7,7 +7,7 @@ use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, JournalRank, ReceiptKind,
     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec,
 };
-use crate::{AccountId, GameConfig, Market, Money, OrderId, Side, StockId, StockExchange};
+use crate::{AccountId, GameConfig, Market, Money, OrderId, Side, StockExchange, StockId};
 
 #[test]
 fn opening_cancel_reports_committed_full_fill_to_the_owner() {

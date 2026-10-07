@@ -688,9 +688,7 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
     assert!(!accounts[&AccountId(1)].positions().contains_key(&stock()));
     assert_eq!(experience[&AccountId(1)].stocks.len(), 8);
     assert!(experience[&AccountId(1)].stocks.contains_key(&stock()));
-    assert!(!experience[&AccountId(1)]
-        .stocks
-        .contains_key(&StockId(1)));
+    assert!(!experience[&AccountId(1)].stocks.contains_key(&StockId(1)));
 }
 
 #[test]

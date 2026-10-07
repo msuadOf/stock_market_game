@@ -17,7 +17,7 @@ use crate::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
     let amount = AccountingAmount::from_cents;
     let date = |value| CivilDate::from_iso(value).unwrap();
-    let company_id = CompanyId("RESTORE-INS".into());
+    let company_id = CompanyId(0);
     let stock = StockCode("600101".into());
     let policyholder = CounterpartyId("POL".into());
     let mut shocks = ShockParams::current_default_parameters();
@@ -65,9 +65,10 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
             company_operations: Some(CompanyOperationsConfig {
                 seed: 1,
                 shock_params: shocks,
+                catalog: crate::company::spec::CompanyCatalog::from_codes(&["C-600101"]).unwrap(),
                 companies: vec![OperatingCompanyConfig {
                     spec: CompanySpec {
-                        id: company_id.clone(),
+                        code: "C-600101".to_string(),
                         name: "测试保险公司".into(),
                         industry: IndustryId("insurance".into()),
                         kind: CompanyKind::Insurance,

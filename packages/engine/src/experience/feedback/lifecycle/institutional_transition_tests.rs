@@ -69,9 +69,7 @@ fn institutional_observation_preserves_guards_threshold_and_personal_facts() {
                 moment(11),
                 800
             ),
-            Err(ExperienceError::NoActiveEntry {
-                code
-            })
+            Err(ExperienceError::NoActiveEntry { code })
         );
         assert_eq!(incomplete, untouched);
     }
@@ -218,9 +216,7 @@ fn institutional_initialization_and_fee_failures_preserve_original_guard_order()
             Money::from_cents(1000),
             None,
             moment(11),
-            ExperienceError::ActiveEntryAlreadyExists {
-                code,
-            },
+            ExperienceError::ActiveEntryAlreadyExists { code },
         ),
     ] {
         let mut rejected = state.clone();
@@ -319,9 +315,7 @@ fn dated_writers_keep_distinct_map_key_sets_and_original_acceptance() {
             Some(3),
             moment(13)
         ),
-        Err(ExperienceError::NoActiveEntry {
-            code
-        })
+        Err(ExperienceError::NoActiveEntry { code })
     );
     assert_eq!(retail, before);
     assert_eq!(

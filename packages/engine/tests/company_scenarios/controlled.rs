@@ -8,12 +8,17 @@ use engine::{AccountId, StockId};
 fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32) {
     // 聚焦夹具只保留 "600101" 一只股票，目录 rank 恒为 0。
     let stock = StockId(0);
-    let company = CompanyId("C-600101".into());
     // The company domain has its own seed stream. Read the actual disclosure
     // offset from published history instead of deriving it from the game seed.
     let schedule_source = focused_disclosure_session("2031-01-01")
         .save()
         .expect("healthy schedule source");
+    // 发行人 id 必须取自会话自身目录（聚焦会话公司集合与全量默认目录序不同）。
+    let company = schedule_source
+        .company_operations
+        .catalog()
+        .id("C-600101")
+        .expect("会话目录含发行人");
     let offset = schedule_source
         .public_library
         .reports_for_company(

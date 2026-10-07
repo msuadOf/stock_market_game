@@ -86,11 +86,11 @@ impl ScheduledReportKind {
 /// FNV-1a(流标签 + 公司 id) 与 seed 混合后过一次 SplitMix64 终结器
 /// （`company::rng::OperatingRng::derive` 同算法孪生；此处无状态、
 /// 每次调用重 derive，从不推进、从不重采样）。
-pub fn stable_company_offset(seed: u64, company: &CompanyId) -> u8 {
+pub fn stable_company_offset(seed: u64, company_code: &str) -> u8 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in b"publication-schedule-offset"
         .iter()
-        .chain(company.0.as_bytes())
+        .chain(company_code.as_bytes())
     {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);

@@ -4,7 +4,7 @@ use super::{
     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
 };
 use crate::{
-    AccountId, GameConfig, Market, Money, MoneyError, OrderId, Side, StockId, StockExchange,
+    AccountId, GameConfig, Market, Money, MoneyError, OrderId, Side, StockExchange, StockId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 

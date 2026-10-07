@@ -12,6 +12,8 @@ use thiserror::Error;
 pub enum OperationsError {
     #[error("invalid company payment history: {detail}")]
     InvalidPaymentHistory { detail: String },
+    #[error("invalid company operations config: {detail}")]
+    InvalidConfig { detail: String },
     #[error(transparent)]
     Industrial(#[from] crate::company::industrial::IndustrialError),
     #[error(transparent)]
@@ -41,7 +43,7 @@ pub enum OperationsError {
     /// 公司会计类型与经营流参数不匹配（装配错误）。
     #[error("company {company:?} kind {kind:?} does not match flow variant {flow:?}")]
     KindFlowMismatch {
-        company: crate::company::spec::CompanyId,
+        company: String,
         kind: crate::company::spec::CompanyKind,
         flow: &'static str,
     },
@@ -89,7 +91,7 @@ pub enum OperationsError {
         "company {company:?} has invalid {parameter} duration {days}; expected at least 1 day"
     )]
     InvalidDuration {
-        company: crate::company::spec::CompanyId,
+        company: String,
         parameter: &'static str,
         days: i64,
     },

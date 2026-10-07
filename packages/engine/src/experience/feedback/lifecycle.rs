@@ -24,9 +24,7 @@ impl RetailExperienceState {
         }
         self.feedback.ensure_moment_forward(moment)?;
         if !self.feedback.stocks.contains_key(code) || !self.stocks.contains_key(code) {
-            return Err(ExperienceError::NoActiveEntry {
-                code: *code,
-            });
+            return Err(ExperienceError::NoActiveEntry { code: *code });
         }
 
         let stock = self.stocks.get(code);
@@ -103,19 +101,13 @@ impl RetailExperienceState {
         let has_epoch = self.feedback.stocks.contains_key(code);
         match side {
             Side::Buy if before_qty == 0 && has_epoch => {
-                return Err(ExperienceError::ActiveEntryAlreadyExists {
-                    code: *code,
-                });
+                return Err(ExperienceError::ActiveEntryAlreadyExists { code: *code });
             }
             Side::Buy if before_qty > 0 && !has_epoch => {
-                return Err(ExperienceError::NoActiveEntry {
-                    code: *code,
-                });
+                return Err(ExperienceError::NoActiveEntry { code: *code });
             }
             Side::Sell if !has_epoch => {
-                return Err(ExperienceError::NoActiveEntry {
-                    code: *code,
-                });
+                return Err(ExperienceError::NoActiveEntry { code: *code });
             }
             _ => {}
         }
@@ -195,9 +187,7 @@ impl RetailExperienceState {
         }
         self.feedback.ensure_moment_forward(moment)?;
         if self.feedback.stocks.contains_key(code) {
-            return Err(ExperienceError::ActiveEntryAlreadyExists {
-                code: *code,
-            });
+            return Err(ExperienceError::ActiveEntryAlreadyExists { code: *code });
         }
         let epoch = PositionExperienceTransition::from_maps(
             &mut self.stocks,
@@ -248,21 +238,15 @@ impl RetailExperienceState {
         match side {
             Side::Buy if before_qty == 0 && has_epoch => {
                 // 上一段持仓从未清仓却又从零建仓：退出生命周期已丢失。
-                return Err(ExperienceError::ActiveEntryAlreadyExists {
-                    code: *code,
-                });
+                return Err(ExperienceError::ActiveEntryAlreadyExists { code: *code });
             }
             Side::Buy if before_qty > 0 && !has_epoch => {
                 // 加仓没有入场生命周期：入场事件已丢失。
-                return Err(ExperienceError::NoActiveEntry {
-                    code: *code,
-                });
+                return Err(ExperienceError::NoActiveEntry { code: *code });
             }
             Side::Sell if !has_epoch => {
                 // 减仓/清仓没有入场生命周期：入场事件已丢失。
-                return Err(ExperienceError::NoActiveEntry {
-                    code: *code,
-                });
+                return Err(ExperienceError::NoActiveEntry { code: *code });
             }
             _ => {}
         }
@@ -341,9 +325,7 @@ impl RetailExperienceState {
         require_positive("observed position price", price)?;
         self.feedback.ensure_moment_forward(moment)?;
         if !self.feedback.stocks.contains_key(code) {
-            return Err(ExperienceError::NoActiveEntry {
-                code: *code,
-            });
+            return Err(ExperienceError::NoActiveEntry { code: *code });
         }
         let stock = self.stocks.get(code);
         // 镜像 legacy 不利判定：成交后本人观察价 ≤ 买入价 95%。

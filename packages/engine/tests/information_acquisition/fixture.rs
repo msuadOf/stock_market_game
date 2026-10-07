@@ -146,9 +146,10 @@ pub(crate) struct Scenario {
 impl Scenario {
     /// 组装场景（确定性：同 seed 同公司 ⇒ 同偏移 ⇒ 同公布时点/id 序列）。
     pub(crate) fn new() -> Self {
-        let company = CompanyId(COMPANY.to_string());
-        let member = MemberId(COMPANY.to_string());
-        let offset = stable_company_offset(OPS_SEED, &company);
+        // 单公司独立夹具：目录位 0。
+        let company = CompanyId(0);
+        let member = MemberId(0);
+        let offset = stable_company_offset(OPS_SEED, COMPANY);
         let annual_instant = scheduled_instant(ScheduledReportKind::Annual, 2030, offset)
             .expect("annual 2030 schedule legal");
         let correction_instant = scheduled_instant(ScheduledReportKind::Q1, 2031, offset)

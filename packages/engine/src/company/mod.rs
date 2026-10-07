@@ -38,9 +38,8 @@ pub use counterparty::{
 };
 pub use customer_finance::{
     CashEndpoint, CompanyClaimIdentity, CompanyClaimSource, CustomerCashFlow, CustomerDebt,
-    CustomerFinanceBook, CustomerFinanceError,
-    CustomerFinanceEventId, CustomerFinanceState, DebtCreditor, DebtId, DebtPayment, DebtWriteOff,
-    WriteOffEvidence,
+    CustomerFinanceBook, CustomerFinanceError, CustomerFinanceEventId, CustomerFinanceState,
+    DebtCreditor, DebtId, DebtPayment, DebtWriteOff, WriteOffEvidence,
 };
 pub use defaults::default_companies;
 pub use error::CompanyError;
@@ -79,7 +78,7 @@ pub use scheduler::{
     OperatingScheduler, ScheduledAction, ScheduledDue, ScheduledDueId, SchedulerError,
     SchedulerRequest,
 };
-pub use spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
+pub use spec::{CompanyCatalog, CompanyId, CompanyKind, CompanyMeta, CompanySpec, IndustryId};
 
 use std::collections::BTreeMap;
 
@@ -100,6 +99,7 @@ pub struct CompanyConfig {
 /// 现金在账套（accounting 域）而非交易账户；具体行业子账由各行业账套持有。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Company {
+    id: CompanyId,
     spec: CompanySpec,
     books: Books,
     counterparties: CounterpartyLedger,
@@ -112,7 +112,7 @@ impl Company {
     /// 由配置构造：过账开局凭证（经 [`Books::post_batch`] 验证路径——不平衡/
     /// 未知科目/负现金 ⇒ `CompanyError::OpeningPost`，无半构造公司）并登记
     /// 外部对手方。
-    pub fn new(config: CompanyConfig) -> Result<Self, CompanyError> {
+    pub fn new(id: CompanyId, config: CompanyConfig) -> Result<Self, CompanyError> {
         let CompanyConfig {
             spec,
             opening,
@@ -120,13 +120,12 @@ impl Company {
             budget,
         } = config;
         spec.validate()?;
-        let company_id = spec.id.clone();
         let voucher = opening.to_voucher();
         let mut books = Books::new(opening.chart);
         books
             .post_batch(vec![voucher])
             .map_err(|source| CompanyError::OpeningPost {
-                company: company_id,
+                company: id,
                 source,
             })?;
         let mut ledger = CounterpartyLedger::new();
@@ -134,6 +133,7 @@ impl Company {
             ledger.register(counterparty)?;
         }
         Ok(Self {
+            id,
             spec,
             books,
             counterparties: ledger,
@@ -159,7 +159,7 @@ impl Company {
                 .outstanding_borrowings(&contract.counterparty)?;
             let Some(credit_limit) = self.budget.credit_line(&contract.counterparty) else {
                 return Err(CompanyError::NoCreditLine {
-                    company: self.spec.id.clone(),
+                    company: self.id,
                     lender: contract.counterparty,
                     requested,
                 });
@@ -167,7 +167,7 @@ impl Company {
             let projected = outstanding.add(requested)?;
             if projected > credit_limit {
                 return Err(CompanyError::DebtBeyondCreditLine {
-                    company: self.spec.id.clone(),
+                    company: self.id,
                     lender: contract.counterparty,
                     credit_limit,
                     outstanding,
@@ -176,6 +176,11 @@ impl Company {
             }
         }
         self.contracts.register(contract)
+    }
+
+    /// 公司数值 id（核心标识；字符串代码见 `spec().code` 与注册表目录）。
+    pub fn id(&self) -> CompanyId {
+        self.id
     }
 
     pub fn spec(&self) -> &CompanySpec {
@@ -207,19 +212,44 @@ impl Company {
 /// 公司注册表：规格集合校验 + 逐公司装配。任一失败 ⇒ 整体不产生（无部分状态）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyRegistry {
+    catalog: CompanyCatalog,
     companies: BTreeMap<CompanyId, Company>,
 }
 
 impl CompanyRegistry {
+    /// 由配置装配注册表：先按规格代码升序构造目录（分配数值 id），再逐公司
+    /// 装配。任一失败 ⇒ 整体不产生（无部分状态）。id 分配序 = 代码字典序，
+    /// BTreeMap 迭代序与展示序保持一致。
     pub fn new(configs: Vec<CompanyConfig>) -> Result<Self, CompanyError> {
         let specs: Vec<CompanySpec> = configs.iter().map(|config| config.spec.clone()).collect();
         CompanySpec::validate_set(&specs)?;
+        let metas = specs
+            .iter()
+            .map(|spec| CompanyMeta {
+                code: spec.code.clone(),
+                name: spec.name.clone(),
+            })
+            .collect();
+        let catalog =
+            CompanyCatalog::from_metas(metas).map_err(|err| CompanyError::SpecInvalid {
+                detail: err.to_string(),
+            })?;
         let mut companies = BTreeMap::new();
         for config in configs {
-            let company = Company::new(config)?;
-            companies.insert(company.spec.id.clone(), company);
+            let id = catalog
+                .id(&config.spec.code)
+                .ok_or_else(|| CompanyError::SpecInvalid {
+                    detail: format!("company code missing from catalog: {}", config.spec.code),
+                })?;
+            let company = Company::new(id, config)?;
+            companies.insert(id, company);
         }
-        Ok(Self { companies })
+        Ok(Self { catalog, companies })
+    }
+
+    /// 公司目录（数值 id ↔ 字符串代码/公司名 翻译层）。
+    pub fn catalog(&self) -> &CompanyCatalog {
+        &self.catalog
     }
 
     /// 发行人映射精确校验：上市公司映射的股票必须在清单内且股本精确相等；
@@ -259,11 +289,11 @@ impl CompanyRegistry {
     }
 
     /// 股票的发行人公司 id（未映射 = None）。
-    pub fn issuer_of(&self, stock: &StockCode) -> Option<&CompanyId> {
+    pub fn issuer_of(&self, stock: &StockCode) -> Option<CompanyId> {
         self.companies
             .values()
             .find(|company| company.spec.listed_stock.as_ref() == Some(stock))
-            .map(|company| &company.spec.id)
+            .map(|company| company.id)
     }
 
     pub fn get(&self, id: &CompanyId) -> Option<&Company> {

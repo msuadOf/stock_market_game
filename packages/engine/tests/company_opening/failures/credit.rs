@@ -20,7 +20,7 @@ fn new_debt_without_credit_line_rejected() {
     };
     let mut registry =
         engine::company::CompanyRegistry::new(vec![config]).expect("company constructs");
-    let company_id = CompanyId("T-NO-CREDIT".to_string());
+    let company_id = CompanyId(0); // 单公司注册表目录位 0
     let before = registry.get(&company_id).expect("company").clone();
 
     match registry
@@ -53,7 +53,7 @@ fn new_debt_without_credit_line_rejected() {
 #[test]
 fn new_debt_beyond_credit_line_rejected() {
     let mut registry = credited_registry(1_000_000);
-    let company_id = CompanyId("T-CREDIT".to_string());
+    let company_id = CompanyId(0); // 单公司注册表目录位 0
 
     // 60 万占用授信；再借 50 万 → 超出 100 万上限。
     registry
@@ -109,7 +109,7 @@ fn new_debt_beyond_credit_line_rejected() {
 #[test]
 fn contract_guards_reject_invalid_shapes() {
     let mut registry = credited_registry(1_000_000);
-    let company_id = CompanyId("T-CREDIT".to_string());
+    let company_id = CompanyId(0); // 单公司注册表目录位 0
 
     // 未知对手方。
     match registry

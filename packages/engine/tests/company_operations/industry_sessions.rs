@@ -8,11 +8,12 @@ use engine::session::{CompanyDisclosureKind, Event};
 
 fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params: ShockParams) {
     let date = d("2030-01-05");
-    let id = company.spec.id.clone();
+    let code = company.spec.code.clone();
     let kind = company.spec.kind;
     let mut session = session_with_company(date, company, seed, params);
     let report = session.end_civil_day().unwrap();
     let saved = session.save().unwrap();
+    let id = saved.company_operations.catalog().id(&code).unwrap();
     let active = saved
         .company_operations
         .company(&id)
@@ -67,13 +68,14 @@ fn real_bank_session_publishes_nonempty_applicable_credit_material_not_productio
                 CompanyOperationsConfig {
                     seed: *seed,
                     shock_params: params.clone(),
+                    catalog: catalog_for([&company]),
                     companies: vec![company.clone()],
                 },
                 date,
             )
             .unwrap();
             ops.advance_civil_day(date).unwrap();
-            !ops.company(&company.spec.id)
+            !ops.company(&ops.catalog().id(&company.spec.code).unwrap())
                 .unwrap()
                 .economy()
                 .active()

@@ -37,7 +37,9 @@ fn public_history_read_is_recorded_without_overwriting_personal_anchors() {
     memory.observe_price(&stock, price(1200), 200).unwrap();
     memory.observe_price(&stock, price(800), 300).unwrap();
 
-    memory.record_public_history_read(&stock, 400, &mut reads).unwrap();
+    memory
+        .record_public_history_read(&stock, 400, &mut reads)
+        .unwrap();
 
     let entry = memory.stock(&stock).unwrap();
     assert_eq!(reads.stocks[&stock].last_read_market_minute, 400);
@@ -50,7 +52,9 @@ fn public_history_read_is_recorded_without_overwriting_personal_anchors() {
     // 读取也构成一次真实接触，参与最近接触时间排序。
     assert_eq!(entry.last_touched_minute, 400);
 
-    memory.record_public_history_read(&stock, 500, &mut reads).unwrap();
+    memory
+        .record_public_history_read(&stock, 500, &mut reads)
+        .unwrap();
     assert_eq!(reads.stocks[&stock].read_count, 2);
 }
 
@@ -135,7 +139,9 @@ fn price_memory_serde_round_trip_preserves_state() {
     let stock = code("600101");
     memory.observe_price(&stock, price(1000), 120).unwrap();
     memory.observe_price(&stock, price(1300), 240).unwrap();
-    memory.record_public_history_read(&stock, 300, &mut reads).unwrap();
+    memory
+        .record_public_history_read(&stock, 300, &mut reads)
+        .unwrap();
 
     let serialized = serde_json::to_string(&memory).unwrap();
     let restored: PersonalPriceMemory = serde_json::from_str(&serialized).unwrap();

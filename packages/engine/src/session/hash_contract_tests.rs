@@ -316,7 +316,7 @@ fn public_library_mixed_digest_clone_mutations_are_isolated_and_serde_stable() {
     let mut cloned = authority.clone();
     let occurred_on = CivilDate::from_iso("2030-04-20").unwrap();
     let request = |amplitude_bp| crate::information::AnnouncementRequest {
-        company: crate::company::CompanyId("digest-fixture".to_owned()),
+        company: crate::company::CompanyId(0),
         occurred_on,
         published_at: crate::calendar::CivilInstant::from_hms(occurred_on, 18, 0, 0).unwrap(),
         event: crate::information::AnnouncedEvent {

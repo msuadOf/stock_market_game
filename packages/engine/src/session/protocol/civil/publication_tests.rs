@@ -5,7 +5,7 @@ use crate::session::{CompanyDisclosureKind, Event, GameSession};
 fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
     let session = GameSession::new(setup(), 41).unwrap();
     let mut save = session.save().unwrap();
-    let company = CompanyId("C-600101".into());
+    let company = CompanyId(0);
     let date = save.civil_clock.current_date;
     save.company_operations
         .apply_company_shock(

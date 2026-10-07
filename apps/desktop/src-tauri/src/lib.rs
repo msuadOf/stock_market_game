@@ -144,7 +144,10 @@ async fn query_stock_history(
     code: engine::StockId,
 ) -> Result<actor::GenerationResponse<engine::session::HistoricalStockData>, String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.query_stock_history(parse_generation(generation)?, code).await.map_err(map_send_error)
+    handles
+        .query_stock_history(parse_generation(generation)?, code)
+        .await
+        .map_err(map_send_error)
 }
 
 #[tauri::command]
@@ -154,7 +157,10 @@ async fn initial_allocation(
     generation: String,
 ) -> Result<actor::GenerationResponse<engine::session::InitialAllocation>, String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.initial_allocation(parse_generation(generation)?).await.map_err(map_send_error)
+    handles
+        .initial_allocation(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
 }
 
 /// 取不含历史日 K 的轻量运行快照（跨日 UI 同步）。

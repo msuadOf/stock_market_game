@@ -97,7 +97,7 @@ fn duplicate_member_is_rejected() {
     assert_eq!(
         err,
         ConsolidationError::DuplicateMember {
-            member: MemberId("DUP-A".to_string()),
+            member: crate::member_id("DUP-A"),
         }
     );
 }
@@ -117,7 +117,7 @@ fn control_ownership_mismatch_is_rejected() {
     assert_eq!(
         err,
         ConsolidationError::ControlOwnershipMismatch {
-            member: MemberId("OWN-SUB".to_string()),
+            member: crate::member_id("OWN-SUB"),
             ownership_bp: 5000,
         }
     );
@@ -211,7 +211,7 @@ fn period_coverage_mismatch_is_rejected() {
         ConsolidationError::PeriodCoverageMismatch {
             member, expected, ..
         } => {
-            assert_eq!(member, MemberId("PER-SUB".to_string()));
+            assert_eq!(member, crate::member_id("PER-SUB"));
             assert_eq!(expected.len(), 2);
         }
         other => panic!("expected PeriodCoverageMismatch, got {other:?}"),
@@ -268,7 +268,7 @@ fn root_with_holding_is_rejected() {
     assert_eq!(
         err,
         ConsolidationError::RootWithHolding {
-            root: MemberId("RWH-ROOT".to_string()),
+            root: crate::member_id("RWH-ROOT"),
             parent_held_shares: 5,
         }
     );
@@ -294,7 +294,7 @@ fn no_subsidiary_returns_typed_not_applicable() {
     assert_eq!(
         err,
         ConsolidationError::NotApplicable {
-            company: MemberId("SOLO".to_string()),
+            company: crate::member_id("SOLO"),
         }
     );
 }

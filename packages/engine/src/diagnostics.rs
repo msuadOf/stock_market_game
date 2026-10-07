@@ -85,11 +85,7 @@ pub enum BaselineError {
         daily_turnover_cents: u64,
     },
     #[error("seed {seed} 的股票 {code:?} 第 {day} 日缺少权威成交统计")]
-    MissingDailyTradeStats {
-        seed: u64,
-        code: StockId,
-        day: u32,
-    },
+    MissingDailyTradeStats { seed: u64, code: StockId, day: u32 },
     #[error("seed {seed} 的股票 {code:?} 在盘前静默阶段出现了成交")]
     TradeDuringPreOpen { seed: u64, code: StockId },
     #[error("seed {seed} 的诊断计数器 {counter} 溢出")]
@@ -615,9 +611,7 @@ impl SeedDiagnostics {
             .iter()
             .map(|stock| {
                 (
-                    catalog
-                        .id(&stock.code.0)
-                        .expect("配置股票必须已入目录"),
+                    catalog.id(&stock.code.0).expect("配置股票必须已入目录"),
                     StockRunDiagnostics {
                         candles: Vec::with_capacity(trading_days as usize),
                         trade_event_volume: 0,
@@ -1576,10 +1570,7 @@ fn summarize_ensemble(
     setup: &SessionSetup,
     runs: &[PriceVolumeRunReport],
     seed_count: u32,
-) -> (
-    BTreeMap<StockId, StockEnsembleReport>,
-    Vec<ExtremeSeedCase>,
-) {
+) -> (BTreeMap<StockId, StockEnsembleReport>, Vec<ExtremeSeedCase>) {
     let catalog = setup
         .stock_catalog()
         .map_err(|_| BaselineError::MissingDailyCandles {
@@ -1593,9 +1584,7 @@ fn summarize_ensemble(
     let mut stocks = BTreeMap::new();
     let mut extreme_cases = Vec::with_capacity(setup.stocks.len() * 3);
     for stock in &setup.stocks {
-        let id = catalog
-            .id(&stock.code.0)
-            .expect("配置股票必须已入目录");
+        let id = catalog.id(&stock.code.0).expect("配置股票必须已入目录");
         let samples: Vec<_> = runs
             .iter()
             .map(|run| (run.seed, &run.stocks[&id]))

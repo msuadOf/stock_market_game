@@ -1,5 +1,5 @@
 use super::{CivilUpdate, TickBatch, TickFrame};
-use crate::error::{ValidationFault, ymd_context};
+use crate::error::{ymd_context, ValidationFault};
 use crate::experience::AppendOnlyHistory;
 use crate::session::{GameSession, SessionError, SessionSetup, StepFatal};
 use std::cell::RefCell;
@@ -198,7 +198,13 @@ impl ProtocolSession {
     }
 
     pub fn shared_ingress(&self) -> crate::SharedSessionIngress {
-        self.state.game.ingress.as_ref().expect("ProtocolSession initializes shared ingress").source.clone()
+        self.state
+            .game
+            .ingress
+            .as_ref()
+            .expect("ProtocolSession initializes shared ingress")
+            .source
+            .clone()
     }
 
     pub fn save(&self) -> Result<crate::SaveSlot, SessionError> {
@@ -318,8 +324,12 @@ impl ProtocolSession {
         let checkpoint = self.checkpoint()?;
         // Only civil publication needs the full day's transport array. Tick and
         // outer host checkpoints retain shared immutable history chunks.
-        let intraday = self.state.intraday.iter()
-            .map(|frame| frame.as_ref().clone()).collect::<Vec<_>>();
+        let intraday = self
+            .state
+            .intraday
+            .iter()
+            .map(|frame| frame.as_ref().clone())
+            .collect::<Vec<_>>();
         let result = self
             .state
             .game
@@ -601,9 +611,18 @@ mod rollback_tests {
             session.step_frame().unwrap();
         }
         assert!(session.civil_day_ready().unwrap());
-        session.shared_ingress().enqueue_player_intent(crate::AccountId(0), crate::Intent::PlaceLimit {
-            code: code.clone(), side: crate::Side::Buy, price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
-        }).unwrap();
+        session
+            .shared_ingress()
+            .enqueue_player_intent(
+                crate::AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: crate::Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
         session.end_civil_day_update().unwrap();
         let archived = session.save().unwrap();
         assert!(archived.pending_player.is_empty());
@@ -624,7 +643,10 @@ mod rollback_tests {
         setup.npcs.inst_count = 0;
         let code = crate::StockId(0);
         let intent = || crate::Intent::PlaceLimit {
-            code: code.clone(), side: crate::Side::Buy, price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
+            code: code.clone(),
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
+            qty: 100,
         };
         let mut session = ProtocolSession::new(setup, 83).unwrap();
         let retained = session.step_frame().unwrap();
@@ -633,7 +655,14 @@ mod rollback_tests {
         let before = session.business_state_hash().unwrap();
         let player = intent();
         std::thread::scope(|scope| {
-            scope.spawn(|| original.enqueue_player_intent(crate::AccountId(0), player).unwrap()).join().unwrap();
+            scope
+                .spawn(|| {
+                    original
+                        .enqueue_player_intent(crate::AccountId(0), player)
+                        .unwrap()
+                })
+                .join()
+                .unwrap();
         });
         session.malformed_frame = true;
         assert!(session.step_frame().is_err());
@@ -641,26 +670,68 @@ mod rollback_tests {
         assert_eq!(session.business_state_hash().unwrap(), before);
         let npc_intent = intent();
         let mut failed_private = session.state.game.clone_for_tick_shadow().unwrap();
-        let discarded = failed_private.receive_private_intent(crate::AccountId(0), npc_intent).unwrap();
-        failed_private.state.pending_npc = Some(crate::PendingNpcBatch { observed_tick: failed_private.tick(), observed_accounts: Vec::new(), intents: vec![discarded], dependencies: Vec::new() });
+        let discarded = failed_private
+            .receive_private_intent(crate::AccountId(0), npc_intent)
+            .unwrap();
+        failed_private.state.pending_npc = Some(crate::PendingNpcBatch {
+            observed_tick: failed_private.tick(),
+            observed_accounts: Vec::new(),
+            intents: vec![discarded],
+            dependencies: Vec::new(),
+        });
         drop(failed_private);
         original.close().unwrap();
         let original_save = session.game().save().unwrap();
         assert_eq!(original_save.pending_player.len(), 1);
         assert_eq!(original_save.pending_player[0].account_ordinal, 0);
-        assert_eq!(original_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)], 2);
+        assert_eq!(
+            original_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)],
+            2
+        );
         let mut branch = session.fork_for_verification().unwrap();
-        assert_eq!(serde_json::to_value(branch.game().save().unwrap()).unwrap(), serde_json::to_value(&original_save).unwrap());
-        branch.shared_ingress().enqueue_player_intent(crate::AccountId(0), intent()).unwrap();
+        assert_eq!(
+            serde_json::to_value(branch.game().save().unwrap()).unwrap(),
+            serde_json::to_value(&original_save).unwrap()
+        );
+        branch
+            .shared_ingress()
+            .enqueue_player_intent(crate::AccountId(0), intent())
+            .unwrap();
         let branch_save = branch.game().save().unwrap();
-        assert_eq!(branch_save.pending_player.iter().map(|receipt| receipt.account_ordinal).collect::<Vec<_>>(), vec![0, 2]);
-        assert_eq!(branch_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)], 3);
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), serde_json::to_value(original_save).unwrap());
-        assert!(original.enqueue_player_intent(crate::AccountId(0), intent()).is_err());
+        assert_eq!(
+            branch_save
+                .pending_player
+                .iter()
+                .map(|receipt| receipt.account_ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        assert_eq!(
+            branch_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)],
+            3
+        );
+        assert_eq!(
+            serde_json::to_value(session.game().save().unwrap()).unwrap(),
+            serde_json::to_value(original_save).unwrap()
+        );
+        assert!(original
+            .enqueue_player_intent(crate::AccountId(0), intent())
+            .is_err());
         let accepted = branch.step_frame().unwrap();
         assert_eq!(accepted.events.iter().filter(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))).count(), 2);
-        assert_eq!(serde_json::to_value(branch.state.intraday.iter().next().unwrap()).unwrap(), serde_json::to_value(retained).unwrap());
-        assert!(branch.game().save().unwrap().pending_npc.as_ref().unwrap().intents.is_empty());
+        assert_eq!(
+            serde_json::to_value(branch.state.intraday.iter().next().unwrap()).unwrap(),
+            serde_json::to_value(retained).unwrap()
+        );
+        assert!(branch
+            .game()
+            .save()
+            .unwrap()
+            .pending_npc
+            .as_ref()
+            .unwrap()
+            .intents
+            .is_empty());
     }
 
     #[test]
@@ -912,7 +983,10 @@ mod rollback_tests {
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id, 81);
         assert_eq!(orders[0].remaining_qty, 100);
-        assert_eq!(orders[0].venue, crate::session::protocol::player_orders::OrderVenue::Auction);
+        assert_eq!(
+            orders[0].venue,
+            crate::session::protocol::player_orders::OrderVenue::Auction
+        );
     }
 
     #[test]
@@ -1230,12 +1304,18 @@ mod rollback_tests {
         let checkpoint = session.checkpoint().unwrap();
         let before = serde_json::to_value(&checkpoint.state.intraday).unwrap();
         session.step_frame().unwrap();
-        assert!(std::ptr::eq(
-            &session.state.intraday[32].timeseries_payload,
-            &checkpoint.state.intraday[32].timeseries_payload,
-        ), "宿主批次回滚点不得让未满 chunk 中的已提交 TickFrame 深复制");
+        assert!(
+            std::ptr::eq(
+                &session.state.intraday[32].timeseries_payload,
+                &checkpoint.state.intraday[32].timeseries_payload,
+            ),
+            "宿主批次回滚点不得让未满 chunk 中的已提交 TickFrame 深复制"
+        );
         session.rollback(checkpoint);
-        assert_eq!(serde_json::to_value(&session.state.intraday).unwrap(), before);
+        assert_eq!(
+            serde_json::to_value(&session.state.intraday).unwrap(),
+            before
+        );
         assert_eq!(session.tick(), 33);
         assert_eq!(session.step_frame().unwrap().tick, 34);
     }

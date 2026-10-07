@@ -45,12 +45,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     for _ in 0..steps {
         handles
-            .enqueue(1, Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: engine::LimitPrice::Fixed(price),
-                qty: 100,
-            })
+            .enqueue(
+                1,
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: engine::LimitPrice::Fixed(price),
+                    qty: 100,
+                },
+            )
             .await?;
         handles.step(1).await?;
     }

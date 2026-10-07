@@ -23,7 +23,9 @@ fn money_error_variants_construct_and_display() {
     let precision_parse_error = MoneyError::ParseFailed {
         reason: engine::money::ParseFailReason::TooManyDecimals,
     };
-    assert!(precision_parse_error.to_string().contains("TooManyDecimals"));
+    assert!(precision_parse_error
+        .to_string()
+        .contains("TooManyDecimals"));
 
     let addition_overflow_error = MoneyError::Overflow {
         op: engine::money::MoneyOp::CashAdd,
@@ -90,7 +92,13 @@ fn money_mul_shares_exact() -> Result<(), MoneyError> {
 fn money_add_overflow_returns_err() {
     let maxed = Money::from_cents(i64::MAX);
     let err = maxed.add(Money::from_cents(1)).unwrap_err();
-    assert!(matches!(err, MoneyError::Overflow { op: engine::money::MoneyOp::CashAdd, .. }));
+    assert!(matches!(
+        err,
+        MoneyError::Overflow {
+            op: engine::money::MoneyOp::CashAdd,
+            ..
+        }
+    ));
 }
 
 #[test]

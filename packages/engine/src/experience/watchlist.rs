@@ -205,9 +205,7 @@ mod protection_tests {
         let mut list = PersonalWatchlist::new();
         let mut memory = super::super::PersonalPriceMemory::default();
         let mut reads = super::super::PersonalHistoryReadLedger::default();
-        let codes: Vec<_> = (0..10)
-            .map(|index| StockId(index))
-            .collect();
+        let codes: Vec<_> = (0..10).map(|index| StockId(index)).collect();
         for (index, code) in codes.iter().enumerate() {
             let minute = index as u64 + 1;
             list.record_attention(code, minute, minute).unwrap();

@@ -101,7 +101,7 @@ fn request(key: &str, due_date: &str) -> SchedulerRequest {
         key: key.into(),
         due_date: date(due_date),
         action: ScheduledAction::InterestAccrual {
-            company: CompanyId("C-1".into()),
+            company: CompanyId(0),
         },
     }
 }

@@ -64,7 +64,7 @@ fn setup(kinds: &[CompanyKind], grouped: bool) -> SessionSetup {
     setup.npcs.hot_count = 0;
     setup.ticks_per_day = 2;
     let as_of = CivilDate::from_iso("2027-12-31").unwrap();
-    let mut configs = Vec::new();
+    let mut configs: Vec<engine::company::operations::OperatingCompanyConfig> = Vec::new();
     let mut stocks = Vec::new();
     for (index, kind) in kinds.iter().enumerate() {
         let mut company = match kind {
@@ -83,19 +83,21 @@ fn setup(kinds: &[CompanyKind], grouped: bool) -> SessionSetup {
         stock.float_shares = 0;
         company.spec.listed_stock = Some(stock.code.clone());
         if grouped && index != 0 {
-            company.spec.group_parent = Some(CompanyId("C-IND-A".into()));
+            company.spec.group_parent = Some(configs[0].spec.code.clone());
         }
         stocks.push(stock);
         configs.push(company);
     }
+    let catalog = operating_fixture::catalog_for(&configs);
     if grouped {
+        let root = catalog.id(&configs[0].spec.code).unwrap();
         setup.groups = vec![GroupStructure {
-            root: configs[0].spec.id.clone(),
+            root,
             holdings: configs
                 .iter()
                 .skip(1)
                 .map(|company| GroupHolding {
-                    company: company.spec.id.clone(),
+                    company: catalog.id(&company.spec.code).unwrap(),
                     parent_held_shares: company.spec.issued_shares * 8 / 10,
                 })
                 .collect(),
@@ -105,6 +107,7 @@ fn setup(kinds: &[CompanyKind], grouped: bool) -> SessionSetup {
     setup.company_operations = Some(CompanyOperationsConfig {
         seed: 17,
         shock_params: operating_fixture::quiet_params(),
+        catalog,
         companies: configs,
     });
     setup
@@ -150,7 +153,12 @@ fn four_custom_industries_close_real_books_and_publish_queryable_reports() {
     let save = session.save().unwrap();
     export_save("four-industries.json", &save);
     let period = AccountingPeriod::from_iso("2030-03").unwrap();
-    for company_id in ["C-IND-A", "C-BANK", "C-INS", "C-RE"].map(|id| CompanyId(id.into())) {
+    for code in ["C-IND-A", "C-BANK", "C-INS", "C-RE"] {
+        let company_id = save
+            .company_operations
+            .catalog()
+            .id(code)
+            .expect("目录含清单公司");
         let company = save.company_operations.company(&company_id).unwrap();
         assert_eq!(
             company.books().books().journal().period_status(period),
@@ -159,7 +167,7 @@ fn four_custom_industries_close_real_books_and_publish_queryable_reports() {
         assert_eq!(
             save.closing_registry
                 .versions(
-                    &ScopeId::Standalone(MemberId(company_id.0.clone())),
+                    &ScopeId::Standalone(MemberId(company_id.0)),
                     period,
                     ReportKind::Monthly
                 )
@@ -168,7 +176,7 @@ fn four_custom_industries_close_real_books_and_publish_queryable_reports() {
         );
         let public = session
             .query_public_reports(&PublicReportQuery {
-                company_id: company_id.0.clone(),
+                company_id: company_id.0,
                 cursor: None,
                 page_size: Some(100),
             })
@@ -192,7 +200,9 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     end_day(&mut session);
     let march = AccountingPeriod::from_iso("2030-03").unwrap();
     let save = session.save().unwrap();
-    let scope = ScopeId::Consolidated(MemberId("C-IND-A".into()));
+    let scope = ScopeId::Consolidated(MemberId(
+        save.company_operations.catalog().id("C-IND-A").unwrap().0,
+    ));
     let closed = save
         .closing_registry
         .version(&scope, march, ReportKind::Quarter, 1)
@@ -200,7 +210,7 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     closed.validate().unwrap();
     assert!(session
         .query_public_reports(&PublicReportQuery {
-            company_id: "C-IND-A".into(),
+            company_id: save.company_operations.catalog().id("C-IND-A").unwrap().0,
             cursor: None,
             page_size: Some(100)
         })
@@ -211,7 +221,7 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     let publish = engine::information::scheduled_instant(
         engine::information::ScheduledReportKind::Q1,
         2030,
-        engine::information::stable_company_offset(17, &CompanyId("C-IND-A".into())),
+        engine::information::stable_company_offset(17, "C-IND-A"),
     )
     .unwrap()
     .date();
@@ -221,7 +231,7 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     }
     let page = session
         .query_public_reports(&PublicReportQuery {
-            company_id: "C-IND-A".into(),
+            company_id: save.company_operations.catalog().id("C-IND-A").unwrap().0,
             cursor: None,
             page_size: Some(100),
         })
@@ -256,7 +266,7 @@ fn mixed_group_closes_then_publishes_distinct_consolidated_public_report() {
     assert_eq!(
         restored
             .query_public_reports(&PublicReportQuery {
-                company_id: "C-IND-A".into(),
+                company_id: save.company_operations.catalog().id("C-IND-A").unwrap().0,
                 cursor: None,
                 page_size: Some(100)
             })
@@ -285,18 +295,20 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     flow.daily_admin_expense = AccountingAmount::from_cents(1);
     flow.bad_debt_base_bp = 0;
     let mut child = config.companies[0].clone();
-    child.spec.id = CompanyId("C-IND-SUB".into());
-    child.spec.group_parent = Some(CompanyId("C-IND-A".into()));
+    child.spec.code = "C-IND-SUB".to_string();
+    child.spec.group_parent = Some("C-IND-A".to_string());
     let mut stock = setup.stocks[0].clone();
     stock.code = StockCode("600109".into());
     child.spec.listed_stock = Some(stock.code.clone());
     setup.stocks.push(stock);
     config.companies.push(child);
+    config.catalog = operating_fixture::catalog_for(&config.companies);
+    let catalog = config.catalog.clone();
     setup.company_operations = Some(config);
     setup.groups = vec![GroupStructure {
-        root: CompanyId("C-IND-A".into()),
+        root: catalog.id("C-IND-A").unwrap(),
         holdings: vec![GroupHolding {
-            company: CompanyId("C-IND-SUB".into()),
+            company: catalog.id("C-IND-SUB").unwrap(),
             parent_held_shares: 80000,
         }],
     }];
@@ -304,7 +316,7 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     let save = session.save().unwrap();
     let mut root = save
         .company_operations
-        .company(&CompanyId("C-IND-A".into()))
+        .company(&save.company_operations.catalog().id("C-IND-A").unwrap())
         .unwrap()
         .books()
         .as_industrial()
@@ -312,7 +324,7 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
         .clone();
     let mut child = save
         .company_operations
-        .company(&CompanyId("C-IND-SUB".into()))
+        .company(&save.company_operations.catalog().id("C-IND-A").unwrap())
         .unwrap()
         .books()
         .as_industrial()
@@ -363,16 +375,24 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
         )
         .unwrap();
     let mut edited = serde_json::to_value(save).unwrap();
-    edited["company_operations"]["companies"]["C-IND-A"]["books"] =
+    // 公司 map 键为数值 id 文本（目录序：C-IND-A=0、C-IND-SUB=1）。
+    edited["company_operations"]["companies"]["0"]["books"] =
         serde_json::to_value(IndustryBooks::Industrial(root)).unwrap();
-    edited["company_operations"]["companies"]["C-IND-SUB"]["books"] =
+    edited["company_operations"]["companies"]["1"]["books"] =
         serde_json::to_value(IndustryBooks::Industrial(child)).unwrap();
     let edited: engine::SaveSlot = serde_json::from_value(edited).unwrap();
     let mut session = GameSession::restore(&edited).unwrap();
     end_day(&mut session);
     let closed_save = session.save().unwrap();
     let period = AccountingPeriod::from_iso("2030-03").unwrap();
-    let scope = ScopeId::Consolidated(MemberId("C-IND-A".into()));
+    let scope = ScopeId::Consolidated(MemberId(
+        closed_save
+            .company_operations
+            .catalog()
+            .id("C-IND-A")
+            .unwrap()
+            .0,
+    ));
     let group = closed_save
         .closing_registry
         .version(&scope, period, ReportKind::Quarter, 1)
@@ -380,12 +400,13 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     group.validate().unwrap();
     let mut standalone_income = AccountingAmount::ZERO;
     for id in ["C-IND-A", "C-IND-SUB"] {
+        let company_id = closed_save.company_operations.catalog().id(id).unwrap().0;
         standalone_income = standalone_income
             .add(
                 closed_save
                     .closing_registry
                     .version(
-                        &ScopeId::Standalone(MemberId(id.into())),
+                        &ScopeId::Standalone(MemberId(company_id)),
                         period,
                         ReportKind::Monthly,
                         1,
@@ -416,7 +437,7 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     let publish = engine::information::scheduled_instant(
         engine::information::ScheduledReportKind::Q1,
         2030,
-        engine::information::stable_company_offset(17, &CompanyId("C-IND-A".into())),
+        engine::information::stable_company_offset(17, "C-IND-A"),
     )
     .unwrap()
     .date();
@@ -426,7 +447,12 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     }
     let page = session
         .query_public_reports(&PublicReportQuery {
-            company_id: "C-IND-A".into(),
+            company_id: closed_save
+                .company_operations
+                .catalog()
+                .id("C-IND-A")
+                .unwrap()
+                .0,
             cursor: None,
             page_size: Some(100),
         })
@@ -451,7 +477,12 @@ fn real_internal_sale_facts_in_editable_save_close_and_publish_through_session()
     end_day(&mut restored);
     assert!(restored
         .query_public_reports(&PublicReportQuery {
-            company_id: "C-IND-A".into(),
+            company_id: final_save
+                .company_operations
+                .catalog()
+                .id("C-IND-A")
+                .unwrap()
+                .0,
             cursor: None,
             page_size: Some(100)
         })

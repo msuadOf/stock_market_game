@@ -474,7 +474,7 @@ mod tests {
     fn announcement(amplitude_bp: i32) -> AnnouncementRequest {
         let occurred_on = CivilDate::from_iso("2030-04-20").unwrap();
         AnnouncementRequest {
-            company: CompanyId("digest-fixture".to_owned()),
+            company: CompanyId(0),
             occurred_on,
             published_at: CivilInstant::from_hms(occurred_on, 18, 0, 0).unwrap(),
             event: AnnouncedEvent {

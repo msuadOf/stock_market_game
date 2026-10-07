@@ -16,16 +16,14 @@ fn month_end_depreciates_real_operating_assets() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
     )
     .unwrap();
     ops.advance_civil_day(date).unwrap();
-    let assets = ops
-        .industrial_books(&CompanyId("C-IND-A".into()))
-        .unwrap()
-        .assets();
+    let assets = ops.industrial_books(&CompanyId(0)).unwrap().assets();
     assert_eq!(
         assets
             .get(&engine::accounting::FixedAssetCode("FA-1".into()))
@@ -48,16 +46,14 @@ fn year_end_accrues_and_pays_income_tax_exactly_once_in_production() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
     )
     .unwrap();
     ops.advance_civil_day(date).unwrap();
-    let books = ops
-        .industrial_books(&CompanyId("C-IND-B".into()))
-        .unwrap()
-        .books();
+    let books = ops.industrial_books(&CompanyId(0)).unwrap().books();
     assert!(books
         .ledger()
         .account_net_debit(&engine::accounting::LedgerAccountId("222104".into()))
@@ -102,6 +98,7 @@ fn unpaid_tax_survives_year_rollover_without_repeated_accrual() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -121,10 +118,7 @@ fn unpaid_tax_survives_year_rollover_without_repeated_accrual() {
     assert!(next.payment_failures.iter().any(|failure| failure.what
         == "overdue income tax payment"
         && failure.amount == failed_tax));
-    let books = restored
-        .industrial_books(&CompanyId("C-IND-B".into()))
-        .unwrap()
-        .books();
+    let books = restored.industrial_books(&CompanyId(0)).unwrap().books();
     assert_eq!(
         books
             .journal()

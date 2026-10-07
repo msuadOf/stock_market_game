@@ -5,9 +5,7 @@ use crate::plans::{
 };
 use crate::session::pipeline::account_validation_context::build_account_validation_context;
 use crate::session::{ParentOrderPlan, RetailOrderDiagnosticEvent};
-use crate::{
-    AccountId, Event, Intent, Money, Order, OrderId, PlanId, Side, StockId, TradingPhase,
-};
+use crate::{AccountId, Event, Intent, Money, Order, OrderId, PlanId, Side, StockId, TradingPhase};
 
 #[test]
 fn nonfinal_opening_tick_drains_limit_order_before_one_indicative_tail() {

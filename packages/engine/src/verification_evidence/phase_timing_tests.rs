@@ -10,8 +10,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             FloatAllocation, NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec,
             SIMULATION_POLICY_ID,
         },
-        GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StockId,
-        StrategyParams,
+        GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StockId, StrategyParams,
     };
 
     crate::GameSession::new(

@@ -121,7 +121,11 @@ pub fn assemble_seeded_prehistory(
     let start_instant = CivilInstant::new(game_start, 0)?;
     let mut due: Vec<(CivilInstant, CompanyId, ScheduledReportKind, i32)> = Vec::new();
     for id in ops.companies.keys() {
-        let offset = stable_company_offset(seed, id);
+        let code = ops
+            .catalog()
+            .code(*id)
+            .expect("公司 id 必须能在目录内翻译出代码");
+        let offset = stable_company_offset(seed, code);
         for fiscal_year in history_start.year()..=game_start.year() {
             for kind in ScheduledReportKind::ALL {
                 let instant = scheduled_instant(kind, fiscal_year, offset)?;
@@ -134,7 +138,12 @@ pub fn assemble_seeded_prehistory(
     due.sort();
     let mut last_published = None;
     for (instant, company_id, kind, fiscal_year) in due {
-        let offset = stable_company_offset(seed, &company_id);
+        let offset = stable_company_offset(
+            seed,
+            ops.catalog()
+                .code(company_id)
+                .expect("公司 id 必须能在目录内翻译出代码"),
+        );
         let member = MemberId(company_id.0.clone());
         let (books, industry) = {
             let company = ops.company(&company_id).expect("collected from ops");

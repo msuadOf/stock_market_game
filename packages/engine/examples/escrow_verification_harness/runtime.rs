@@ -6,8 +6,8 @@ use engine::{
     session::protocol::{ProtocolSession, TickFrame},
     verification_evidence::{RuntimeUpdateRef, UpdateProjection},
     AccountId, CivilDate, Event, FloatAllocation, GameConfig, HotParams, InstParams, Intent, Money,
-    NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockId,
-    StockExchange, StockSpec, StrategyParams, SIMULATION_POLICY_ID,
+    NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockExchange, StockId,
+    StockSpec, StrategyParams, SIMULATION_POLICY_ID,
 };
 use serde::Serialize;
 use serde_json::Value;

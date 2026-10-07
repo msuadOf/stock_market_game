@@ -566,16 +566,19 @@ pub fn ingress_enqueue(token: u32, intent: JsValue) -> Result<(), JsValue> {
                 vec![u64::from(token)],
             ))
         })
-    }).map_err(session_error_to_js)?;
-    service.enqueue_player_intent(AccountId(0), intent).map_err(session_error_to_js)
+    })
+    .map_err(session_error_to_js)?;
+    service
+        .enqueue_player_intent(AccountId(0), intent)
+        .map_err(session_error_to_js)
 }
 
 /// 销毁会话（释放内存）。
 #[wasm_bindgen]
 pub fn drop_session(handle: u32) -> Result<(), JsValue> {
-    REGISTRY.with(|r| {
-        r.borrow_mut().remove(handle)
-    }).map_err(session_error_to_js)
+    REGISTRY
+        .with(|r| r.borrow_mut().remove(handle))
+        .map_err(session_error_to_js)
 }
 
 /// 返回最近完成自然日的存档候选；首个日终完成前返回错误。

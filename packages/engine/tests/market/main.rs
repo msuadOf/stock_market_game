@@ -1,9 +1,9 @@
 //! engine market 模块集成测试（TDD 红绿循环）。
 //! 验证 Market 的涨跌停、价格笼子与撮合语义；成交价由实际撮合产生。
 //! 涨跌停与价格笼子用例在 `price_limits.rs` 中验证（`--test market` 不变）。
-use engine::StockId;
 use engine::market::{Market, MarketError};
 use engine::Money;
+use engine::StockId;
 
 mod price_limits;
 
@@ -61,13 +61,7 @@ fn market_new_rejects_invalid() {
     )
     .is_err());
     // initial_price ≤ 0
-    assert!(Market::new(
-        StockId(0),
-        Money::ZERO,
-        0.10,
-        Money::from_cents(1)
-    )
-    .is_err());
+    assert!(Market::new(StockId(0), Money::ZERO, 0.10, Money::from_cents(1)).is_err());
 }
 
 use engine::orderbook::{AccountId, Order, OrderId, Side};

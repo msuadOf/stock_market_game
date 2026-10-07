@@ -252,21 +252,17 @@ fn equal_weight_market_observation_reports_breadth_and_missing_coverage() {
     assert_close(market.decline_fraction.unwrap(), 1.0 / 3.0);
     assert_close(market.unchanged_fraction.unwrap(), 1.0 / 3.0);
 
-    let unavailable = build_equal_weight_market_observation(&BTreeMap::from([(
-        StockId(0),
-        None,
-    )]))
-    .unwrap();
+    let unavailable =
+        build_equal_weight_market_observation(&BTreeMap::from([(StockId(0), None)])).unwrap();
     assert_eq!(unavailable.observed_stock_count, 0);
     assert!(unavailable.equal_weight_return.is_none());
 }
 
 #[test]
 fn equal_weight_market_observation_rejects_non_finite_inputs_and_sum() {
-    assert!(build_equal_weight_market_observation(&BTreeMap::from([(
-        StockId(0),
-        Some(f64::NAN),
-    )]))
+    assert!(build_equal_weight_market_observation(&BTreeMap::from([
+        (StockId(0), Some(f64::NAN),)
+    ]))
     .is_err());
     assert!(build_equal_weight_market_observation(&BTreeMap::from([
         (StockId(0), Some(f64::MAX)),

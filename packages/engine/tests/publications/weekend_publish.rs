@@ -107,8 +107,10 @@ impl WeekendScenario {
 /// 断言公布本身零市场副作用（事件 seq / day / tick / 快照全部不变）。
 #[test]
 fn weekend_report_publishes_without_trade() {
-    let company = CompanyId(INDUSTRIAL_ID.to_string());
-    let offset = stable_company_offset(OPS_SEED, &company);
+    let company = crate::fixture::fixture_catalog()
+        .id(INDUSTRIAL_ID)
+        .expect("目录含工商夹具公司");
+    let offset = stable_company_offset(OPS_SEED, INDUSTRIAL_ID);
     let mut scenario = WeekendScenario::new(offset);
     let year = scenario.year;
     let q1_instant = scheduled_instant(ScheduledReportKind::Q1, year, offset).expect("instant");
@@ -253,8 +255,10 @@ fn weekend_report_publishes_without_trade() {
 /// 派发不追加（恰好一次）。
 #[test]
 fn interim_announcement_publishes_at_next_disclosure_phase() {
-    let company = CompanyId(INDUSTRIAL_ID.to_string());
-    let offset = stable_company_offset(OPS_SEED, &company);
+    let company = crate::fixture::fixture_catalog()
+        .id(INDUSTRIAL_ID)
+        .expect("目录含工商夹具公司");
+    let offset = stable_company_offset(OPS_SEED, INDUSTRIAL_ID);
     let mut scenario = WeekendScenario::new(offset);
     let year = scenario.year;
     let saturday = scheduled_instant(ScheduledReportKind::Q1, year, offset)

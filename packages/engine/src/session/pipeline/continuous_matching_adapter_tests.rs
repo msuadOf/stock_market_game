@@ -431,7 +431,7 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
         let mut source =
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
         // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
-    let code = StockId(0);
+        let code = StockId(0);
         for index in 0..count {
             source
                 .state

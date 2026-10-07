@@ -17,6 +17,7 @@ fn bank_save() -> serde_json::Value {
     setup.company_operations = Some(CompanyOperationsConfig {
         seed: super::SEED,
         shock_params: operating_fixture::quiet_params(),
+        catalog: operating_fixture::catalog_for(std::slice::from_ref(&company)),
         companies: vec![company],
     });
     let mut session = GameSession::new(setup, super::SEED).unwrap();

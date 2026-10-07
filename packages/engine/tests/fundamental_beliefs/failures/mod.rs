@@ -6,7 +6,6 @@ mod guards;
 use crate::scenario;
 use crate::{assumptions_rng, hour_after, market, ISSUED_SHARES};
 use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
-use engine::StockId;
 use engine::company::CompanyKind;
 use engine::information::AcquisitionError;
 use engine::orderbook::AccountId;
@@ -14,6 +13,7 @@ use engine::strategy::{
     AnalysisProfile, AnalysisWeights, BeliefCause, BeliefError, FundamentalMethod, RetailStyle,
     StrategyProfile,
 };
+use engine::StockId;
 
 pub(crate) fn stock_code() -> StockId {
     StockId(0)

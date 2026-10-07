@@ -142,7 +142,13 @@ impl DisclosureDispatch {
 
         // 2) 定期披露（窗口内的排期；公司 id 序 ⇒ PublicationId 确定）。
         for (id, company) in &ctx.ops.companies {
-            let offset = stable_company_offset(ctx.ops.seed, id);
+            let offset = stable_company_offset(
+                ctx.ops.seed,
+                ctx.ops
+                    .catalog()
+                    .code(*id)
+                    .expect("公司 id 必须能在目录内翻译出代码"),
+            );
             for fiscal_year in [settled.year() - 1, settled.year()] {
                 for kind in ScheduledReportKind::ALL {
                     let instant = scheduled_instant(kind, fiscal_year, offset)?;

@@ -18,11 +18,11 @@ use super::error::ConsolidationError;
 #[derive(
     Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
 )]
-pub struct MemberId(pub String);
+pub struct MemberId(pub u32);
 
 impl std::fmt::Display for MemberId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        write!(f, "{}", self.0)
     }
 }
 

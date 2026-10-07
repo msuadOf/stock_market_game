@@ -35,6 +35,7 @@ fn newly_recognized_insurance_claim_is_payable_not_contractual_overdue() {
         CompanyOperationsConfig {
             seed: 17,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -59,6 +60,7 @@ fn failed_payments_are_authoritative_and_survive_restore() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
             companies: vec![industrial_broke(date.prev().unwrap())],
         },
         date,
@@ -81,6 +83,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
             companies: vec![industrial_broke(date.prev().unwrap())],
         },
         date,
@@ -161,6 +164,7 @@ fn insolvent_bank_keeps_due_deposit_and_retries_without_rescue() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -174,7 +178,7 @@ fn insolvent_bank_keeps_due_deposit_and_retries_without_rescue() {
             .iter()
             .any(|failure| failure.what == "overdue deposit principal:DEP-1"
                 && failure.amount == yuan(1_000)));
-        let books = ops.bank_books(&CompanyId("C-BANK".into())).unwrap();
+        let books = ops.bank_books(&CompanyId(0)).unwrap();
         assert_eq!(
             books
                 .deposit(&ContractId("DEP-1".into()))
@@ -193,6 +197,7 @@ fn payment_history_rejects_invalid_amount_or_unknown_company() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
             companies: vec![industrial_broke(date.prev().unwrap())],
         },
         date,
@@ -200,10 +205,13 @@ fn payment_history_rejects_invalid_amount_or_unknown_company() {
     .unwrap();
     ops.advance_civil_day(date).unwrap();
     ops.validate_payment_history().unwrap();
-    for (field, invalid) in [("amount", "0"), ("company", "UNKNOWN"), ("what", "")] {
+    for (field, invalid) in [
+        ("amount", serde_json::json!("0")),
+        ("company", serde_json::json!(u32::MAX)),
+        ("what", serde_json::json!("")),
+    ] {
         let mut value = serde_json::to_value(&ops).unwrap();
-        value["payment_failures"][date.to_iso()][0][field] =
-            serde_json::Value::String(invalid.into());
+        value["payment_failures"][date.to_iso()][0][field] = invalid;
         let restored: CompanyOperations = serde_json::from_value(value).unwrap();
         assert!(restored.validate_payment_history().is_err());
     }
@@ -225,7 +233,7 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
     let mut library = PublicLibrary::new();
     library
         .publish_announcement(AnnouncementRequest {
-            company: CompanyId("C-IND-A".into()),
+            company: CompanyId(0),
             occurred_on: date,
             published_at: engine::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
             event: AnnouncedEvent {

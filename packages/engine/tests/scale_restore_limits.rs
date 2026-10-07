@@ -93,7 +93,11 @@ fn restore_rejects_tampered_report_reference_without_mutating_the_source_session
         .keys()
         .next()
         .expect("institution information state exists");
-    let company = engine::company::CompanyId("C-600101".to_string());
+    let company = save
+        .company_operations
+        .catalog()
+        .id("C-600101")
+        .expect("默认目录含 C-600101");
     let report = *save
         .public_library
         .reports_for_company(
@@ -182,14 +186,15 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
     let companies = (0..COMPANY_COUNT)
         .map(|index| {
             let mut company = template.clone();
-            company.spec.id = engine::company::CompanyId(format!("collection-{index:03}"));
+            company.spec.code = format!("collection-{index:03}");
             company
         })
-        .collect();
+        .collect::<Vec<_>>();
     save.company_operations = engine::company::CompanyOperations::new(
         engine::company::CompanyOperationsConfig {
             seed: 39,
             shock_params: company_fixtures::quiet_params(),
+            catalog: company_fixtures::catalog_for(&companies),
             companies,
         },
         start,
@@ -212,9 +217,7 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
 #[test]
 fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
     let mut session = GameSession::new(setup(1), 39).expect("fixture constructs");
-    let code = session
-        .stock_id("600101")
-        .expect("夹具股票必须在目录中");
+    let code = session.stock_id("600101").expect("夹具股票必须在目录中");
     for _ in 0..2 {
         session
             .enqueue_player_intent(

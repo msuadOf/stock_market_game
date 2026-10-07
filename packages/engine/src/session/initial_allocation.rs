@@ -112,7 +112,10 @@ impl GameSession {
                 && categories.iter().any(|category| category.account_count > 0)
             {
                 // fault1106: 存在 NPC 但初始流通盘未完整分配。槽0 待 C 批数值化（原文本为代码串 "{}"，spec.code.0）。
-                return Err(SessionError::InvalidSave(ValidationFault::new(1106, vec![0])));
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    1106,
+                    vec![0],
+                )));
             }
             stocks.push(InitialStockAllocation {
                 code: self

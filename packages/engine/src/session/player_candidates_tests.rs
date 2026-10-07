@@ -267,7 +267,8 @@ fn receipt_and_cursor_wire_values_reject_noncanonical_decimal_strings() {
     }
     for value in ["01", "+1"] {
         let mut malformed = encoded.clone();
-        malformed["ingress_receipt_cursors"]["next_stock_ordinal"][code.0.to_string()] = value.into();
+        malformed["ingress_receipt_cursors"]["next_stock_ordinal"][code.0.to_string()] =
+            value.into();
         assert!(serde_json::from_value::<crate::session::SaveSlot>(malformed).is_err());
     }
 }

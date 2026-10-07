@@ -6,8 +6,8 @@ use std::{env, process};
 use engine::calendar::CalendarExchange;
 use engine::{
     run_price_volume_baseline, CivilDate, FloatAllocation, GameConfig, GameSession, HotParams,
-    InstParams, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockId,
-    StockExchange, StockSpec, StrategyParams, TradingCalendar,
+    InstParams, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockExchange,
+    StockId, StockSpec, StrategyParams, TradingCalendar,
 };
 
 const SOURCE: &str = "current_session_setup";

@@ -15,11 +15,11 @@ fn amount(cents: i128) -> AccountingAmount {
 
 #[test]
 fn standalone_current_tax_assets_keep_deferred_assets_and_each_comparison_direction_separate() {
-    use crate::accounting::BusinessEventId;
     use crate::accounting::reports::{
         generate_report_set, BsLine, Comparative, IndustryPresentation, ReportKind, ReportRequest,
         ReportSource, ReportVersion, VersionKind,
     };
+    use crate::accounting::BusinessEventId;
     for opening_tax in [100_i128, -100] {
         let mut books = crate::accounting::Books::new(industrial_account_chart());
         books
@@ -92,7 +92,7 @@ fn standalone_current_tax_assets_keep_deferred_assets_and_each_comparison_direct
             period: crate::accounting::AccountingPeriod::from_ymd(2030, 12).unwrap(),
             kind: ReportKind::Annual,
             source: ReportSource::Standalone {
-                id: crate::accounting::consolidation::MemberId("TAX-PRESENTATION".into()),
+                id: crate::accounting::consolidation::MemberId(0),
                 books: &books,
                 industry: IndustryPresentation::Industrial,
             },
@@ -139,7 +139,6 @@ fn standalone_current_tax_assets_keep_deferred_assets_and_each_comparison_direct
         assert_eq!(books.ledger().cash_total().unwrap(), cash);
     }
 }
-
 
 #[test]
 fn audit_credit_arithmetic_error_is_not_reported_as_missing_credit() {

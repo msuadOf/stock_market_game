@@ -27,7 +27,7 @@ pub(super) struct IngressBinding {
 
 impl SharedSessionIngress {
     fn lock(&self) -> Result<MutexGuard<'_, IngressState>, SessionError> {
-        self.inner.lock().map_err(|error| {
+        self.inner.lock().map_err(|_error| {
             // 1250：ingress 元数据锁中毒（防御式显式暴露）。
             SessionError::ResourceLimit(crate::error::ValidationFault::bare(1250))
         })
@@ -41,7 +41,9 @@ impl SharedSessionIngress {
         let mut state = self.lock()?;
         if state.closed {
             // 1251：ingress 世代已关闭。
-            return Err(SessionError::ResourceLimit(crate::error::ValidationFault::bare(1251)));
+            return Err(SessionError::ResourceLimit(
+                crate::error::ValidationFault::bare(1251),
+            ));
         }
         match state.accounts.get(&account) {
             None => return Err(SessionError::UnknownPlayer(account)),
@@ -72,7 +74,9 @@ impl SharedSessionIngress {
         let mut state = self.lock()?;
         if state.closed {
             // 1251：ingress 世代已关闭。
-            return Err(SessionError::ResourceLimit(crate::error::ValidationFault::bare(1251)));
+            return Err(SessionError::ResourceLimit(
+                crate::error::ValidationFault::bare(1251),
+            ));
         }
         state.receipts.receive(account, intent)
     }
@@ -220,7 +224,9 @@ mod tests {
     fn buy(game: &GameSession, stock: usize) -> Intent {
         let spec_code = game.state.setup.stocks[stock].code.0.clone();
         Intent::PlaceLimit {
-            code: game.stock_id(&spec_code).expect("setup stock must be in catalog"),
+            code: game
+                .stock_id(&spec_code)
+                .expect("setup stock must be in catalog"),
             side: Side::Buy,
             price: LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
@@ -423,7 +429,10 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            let winner_spec_code = game.state.setup.stocks[usize::from(!player_first)].code.0.clone();
+            let winner_spec_code = game.state.setup.stocks[usize::from(!player_first)]
+                .code
+                .0
+                .clone();
             let winner = game
                 .stock_id(&winner_spec_code)
                 .expect("setup stock must be in catalog");

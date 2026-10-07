@@ -177,7 +177,7 @@ fn correction_link_rejected_on_mismatch() {
     other_closing
         .snapshot_interim(
             &books,
-            &MemberId(OTHER.to_string()),
+            &MemberId(1),
             IndustryPresentation::Industrial,
             AccountingPeriod::from_ymd(2030, 3).expect("q1 period"),
             ReportKind::Quarter,
@@ -188,8 +188,8 @@ fn correction_link_rejected_on_mismatch() {
         .publish_closed(
             &other_closing,
             PublicationRequest {
-                company: CompanyId(OTHER.to_string()),
-                scope: ScopeId::Standalone(MemberId(OTHER.to_string())),
+                company: CompanyId(1),
+                scope: ScopeId::Standalone(MemberId(1)),
                 period: AccountingPeriod::from_ymd(2030, 3).expect("q1 period"),
                 kind: ReportKind::Quarter,
                 sequence: 1,
@@ -214,7 +214,7 @@ fn correction_link_rejected_on_mismatch() {
     ));
     // 范围与公司不一致：scope 的 MemberId 必须镜像公司 id。
     let mut req = base.publication_request(AccountingPeriod::from_ymd(2030, 3).expect("q1"));
-    req.company = CompanyId(OTHER.to_string());
+    req.company = CompanyId(1);
     assert!(matches!(
         base.library.publish_closed(&base.closing, req).unwrap_err(),
         InformationError::ScopeCompanyMismatch { .. }

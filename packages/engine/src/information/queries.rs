@@ -35,18 +35,8 @@ impl PublicLibrary {
                 max: MAX_PUBLIC_REPORT_PAGE_SIZE,
             });
         }
-        let company = CompanyId(query.company_id.clone());
-        let cursor = query
-            .cursor
-            .as_deref()
-            .map(|raw| {
-                raw.parse::<u32>()
-                    .map_err(|_| InformationError::InvalidPublicReportCursor {
-                        cursor: 0,
-                        company: query.company_id.clone(),
-                    })
-            })
-            .transpose()?;
+        let company = CompanyId(query.company_id);
+        let cursor = query.cursor;
         if let Some(cursor) = cursor {
             let id = PublicationId::new(cursor);
             let valid = self
@@ -54,10 +44,7 @@ impl PublicLibrary {
                 .get(&id)
                 .is_some_and(|report| report.company == company && report.published_at <= as_of);
             if !valid {
-                return Err(InformationError::InvalidPublicReportCursor {
-                    cursor,
-                    company: query.company_id.clone(),
-                });
+                return Err(InformationError::InvalidPublicReportCursor { cursor, company });
             }
         }
         let mut reports = self
@@ -91,7 +78,7 @@ impl PublicLibrary {
             .parse::<u32>()
             .map_err(|_| InformationError::InvalidPublicReportCursor {
                 cursor: 0,
-                company: "report lookup".to_string(),
+                company: crate::company::CompanyId(u32::MAX),
             })?;
         self.report(PublicationId::new(value), as_of)
             .map(PublicReportSummary::from)

@@ -332,7 +332,7 @@ mod tests {
         vec![WorksheetEntry {
             reason: WorksheetReason::IntercompanySale,
             lines: vec![WorksheetLine {
-                member: MemberId("m".into()),
+                member: MemberId(0),
                 account: LedgerAccountId("1405".into()),
                 side,
                 amount: AccountingAmount::from_cents(cents),

@@ -126,7 +126,9 @@ pub(super) fn queue_empty_npc_at_day_end(session: &mut GameSession) -> Result<()
         || u64::from(session.state.day) * u64::from(session.state.setup.ticks_per_day)
             != session.state.tick
     {
-        return Err(invariant("empty day-end NPC batch requires a completed trading-day boundary"));
+        return Err(invariant(
+            "empty day-end NPC batch requires a completed trading-day boundary",
+        ));
     }
     session.state.pending_npc = Some(PendingNpcBatch {
         observed_tick: session.state.tick,
@@ -144,12 +146,16 @@ mod day_end_tests {
         let mut session = crate::GameSession::new(
             crate::session::npc_working_quote_tests::retail_quote_setup(),
             2,
-        ).unwrap();
+        )
+        .unwrap();
         super::queue_npc_for_next_tick(&mut session).unwrap();
         let before = serde_json::to_value(session.save().unwrap()).unwrap();
         assert!(matches!(super::queue_empty_npc_at_day_end(&mut session),
             Err(super::StepFatal::InvariantViolation {description,..}) if description.contains("unconsumed batch")));
-        assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+        assert_eq!(
+            serde_json::to_value(session.save().unwrap()).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -157,11 +163,15 @@ mod day_end_tests {
         let mut session = crate::GameSession::new(
             crate::session::npc_working_quote_tests::retail_quote_setup(),
             2,
-        ).unwrap();
+        )
+        .unwrap();
         session.state.pending_npc = None;
         let before = serde_json::to_value(session.save().unwrap()).unwrap();
         assert!(super::queue_empty_npc_at_day_end(&mut session).is_err());
-        assert_eq!(serde_json::to_value(session.save().unwrap()).unwrap(), before);
+        assert_eq!(
+            serde_json::to_value(session.save().unwrap()).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -169,15 +179,21 @@ mod day_end_tests {
         let mut session = crate::GameSession::new(
             crate::session::npc_working_quote_tests::retail_quote_setup(),
             2,
-        ).unwrap();
+        )
+        .unwrap();
         session.state.pending_npc = None;
         session.state.day = u32::MAX;
-        session.state.tick = u64::from(session.state.day) * u64::from(session.state.setup.ticks_per_day);
+        session.state.tick =
+            u64::from(session.state.day) * u64::from(session.state.setup.ticks_per_day);
         assert!(session.state.tick > u64::from(u32::MAX));
         super::queue_empty_npc_at_day_end(&mut session).unwrap();
         let batch = session.state.pending_npc.as_ref().unwrap();
         assert_eq!(batch.observed_tick, session.state.tick);
-        assert!(batch.observed_accounts.is_empty() && batch.intents.is_empty() && batch.dependencies.is_empty());
+        assert!(
+            batch.observed_accounts.is_empty()
+                && batch.intents.is_empty()
+                && batch.dependencies.is_empty()
+        );
     }
 }
 

@@ -61,12 +61,8 @@ fn is_amount(set: &engine::accounting::reports::ReportSet, line: IncomeLine) -> 
 #[test]
 fn bank_june_gold() {
     let books = bank_fixture();
-    let set = generate_report_set(request(standalone(
-        "C-BANK",
-        &books,
-        IndustryPresentation::Bank,
-    )))
-    .expect("bank report must generate");
+    let set = generate_report_set(request(standalone(0, &books, IndustryPresentation::Bank)))
+        .expect("bank report must generate");
     set.validate().expect("bank set must cross-foot");
 
     // 累计（1–6 月）：利息收入 60 / 支出 15 / 净 45 / 手续费 40 ⇒ 净利 85。
@@ -131,7 +127,7 @@ fn bank_june_gold() {
 fn insurance_june_gold() {
     let books = insurance_fixture();
     let set = generate_report_set(request(standalone(
-        "C-INS",
+        0,
         &books,
         IndustryPresentation::Insurance,
     )))
@@ -175,7 +171,7 @@ fn insurance_june_gold() {
 fn real_estate_june_gold() {
     let books = real_estate_fixture();
     let set = generate_report_set(request(standalone(
-        "C-RE",
+        0,
         &books,
         IndustryPresentation::RealEstate,
     )))

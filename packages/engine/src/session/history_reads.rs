@@ -40,7 +40,9 @@ impl GameSession {
             .ok_or(SessionError::UnknownHistoryAccount(account))?
             .record(code, market_minute)
             // 1260：个人历史读记录失败（数值原因由下层枚举承载，此处统一码）。
-            .map_err(|_| SessionError::InvalidHistoryRead(crate::error::ValidationFault::bare(1260)))?;
+            .map_err(|_| {
+                SessionError::InvalidHistoryRead(crate::error::ValidationFault::bare(1260))
+            })?;
         Ok(result)
     }
 }
@@ -52,11 +54,7 @@ mod tests {
     use super::*;
 
     fn session() -> GameSession {
-        GameSession::new(
-            super::super::npc_working_quote_tests::quote_setup(0),
-            41,
-        )
-        .unwrap()
+        GameSession::new(super::super::npc_working_quote_tests::quote_setup(0), 41).unwrap()
     }
 
     #[test]
@@ -69,8 +67,14 @@ mod tests {
 
         assert_eq!(result.code, code);
         assert_eq!(result.daily_candles, before.daily_candles[&result.code]);
-        assert_eq!(result.active_daily_candle, before.active_daily_candles.get(&result.code).cloned());
-        assert_eq!(game.state.history_reads[&AccountId(0)].stocks[&result.code].read_count, 1);
+        assert_eq!(
+            result.active_daily_candle,
+            before.active_daily_candles.get(&result.code).cloned()
+        );
+        assert_eq!(
+            game.state.history_reads[&AccountId(0)].stocks[&result.code].read_count,
+            1
+        );
         assert!(game.state.history_reads[&AccountId(1)].stocks.is_empty());
         assert_eq!(
             serde_json::to_value(game.snapshot()).unwrap(),
@@ -112,7 +116,10 @@ mod tests {
 
         game.query_stock_history(AccountId(0), &code).unwrap();
 
-        assert_eq!(serde_json::to_value(game.snapshot()).unwrap(), snapshot_before);
+        assert_eq!(
+            serde_json::to_value(game.snapshot()).unwrap(),
+            snapshot_before
+        );
         assert_eq!(
             game.state
                 .belief_participants

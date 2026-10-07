@@ -4,6 +4,9 @@
 //! 持久 AccountValidation validator 与逐股 StockProcessing shadow。
 //! operation stream 排空后，ReceiptAggregation/Projection 恰好运行一次。
 
+use super::continuous_matching::IncrementalContinuousStockCoordinator;
+#[cfg(test)]
+use super::AccountValidationOutput;
 use super::{
     account_validation_context::build_account_validation_context,
     candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
@@ -26,9 +29,6 @@ use super::{
     AccountValidatorDriver, CandidateValidationOutcome, EnvelopeReceipt, IntentCandidateBatch,
     PhaseInput, StepFatal, TickShadowPlan,
 };
-use super::continuous_matching::IncrementalContinuousStockCoordinator;
-#[cfg(test)]
-use super::AccountValidationOutput;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
 use crate::session::PlanExecutionReport;

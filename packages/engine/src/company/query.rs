@@ -18,8 +18,8 @@ pub const MAX_PUBLIC_REPORT_PAGE_SIZE: u16 = 100;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct PublicReportQuery {
-    pub company_id: String,
-    pub cursor: Option<String>,
+    pub company_id: u32,
+    pub cursor: Option<u32>,
     pub page_size: Option<u16>,
 }
 
@@ -35,7 +35,7 @@ pub struct PublicReportPage {
 pub struct PublicReportSummary {
     /// PublicationId 使用不透明十进制字符串，且是分页排序的唯一 key。
     pub id: String,
-    pub company_id: String,
+    pub company_id: u32,
     pub period: String,
     pub kind: PublicReportKind,
     pub version_sequence: String,
@@ -106,8 +106,8 @@ pub struct PublicReportFinancials {
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub enum PublicReportScope {
-    Standalone { entity_id: String },
-    Consolidated { root_entity_id: String },
+    Standalone { entity_id: u32 },
+    Consolidated { root_entity_id: u32 },
 }
 
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
@@ -354,10 +354,10 @@ impl From<&ReportSet> for PublicReportFinancials {
         Self {
             scope: match &reports.scope {
                 ScopeId::Standalone(member) => PublicReportScope::Standalone {
-                    entity_id: member.0.clone(),
+                    entity_id: member.0,
                 },
                 ScopeId::Consolidated(root) => PublicReportScope::Consolidated {
-                    root_entity_id: root.0.clone(),
+                    root_entity_id: root.0,
                 },
             },
             window_start: format!(
@@ -488,7 +488,7 @@ impl From<&PublishedReport> for PublicReportSummary {
         };
         Self {
             id: report.id.value().to_string(),
-            company_id: report.company.0.clone(),
+            company_id: report.company.0,
             period: period_end_date(reports.period)
                 .expect("a published report always has a valid period end")
                 .to_iso(),

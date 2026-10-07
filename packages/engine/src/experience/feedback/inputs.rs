@@ -30,13 +30,11 @@ impl RetailExperienceState {
     ) -> Result<bool, ExperienceError> {
         require_positive("long-stuck cost", cost)?;
         self.feedback.ensure_as_of_reached(as_of)?;
-        let epoch =
-            self.feedback
-                .stocks
-                .get(code)
-                .ok_or_else(|| ExperienceError::NoActiveEntry {
-                    code: *code,
-                })?;
+        let epoch = self
+            .feedback
+            .stocks
+            .get(code)
+            .ok_or_else(|| ExperienceError::NoActiveEntry { code: *code })?;
         let held_days = as_of.trading_day - epoch.entry_moment.trading_day;
         Ok(held_days >= LONG_STUCK_TRADING_DAYS
             && epoch

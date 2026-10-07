@@ -388,10 +388,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
-        sell.insert(
-            AccountId(0),
-            BTreeMap::from([(StockId(0), 100)]),
-        );
+        sell.insert(AccountId(0), BTreeMap::from([(StockId(0), 100)]));
         shadow
             .validate_resources(
                 &prices,

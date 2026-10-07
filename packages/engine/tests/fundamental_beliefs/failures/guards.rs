@@ -14,7 +14,7 @@ use engine::strategy::{
 };
 
 pub(super) fn company() -> CompanyId {
-    CompanyId(COMPANY.to_string())
+    CompanyId(0)
 }
 
 pub(super) fn as_after_publication() -> CivilInstant {
@@ -171,7 +171,7 @@ fn unsupported_report_kind_and_company_mismatch() {
     );
 
     let annual = hand_report(HandReportSpec::default());
-    let other = CompanyId("C-OTHER".to_string());
+    let other = CompanyId(1); // 与夹具主公司互异
     assert_eq!(
         extract_annual_facts(&annual, &other, as_after_publication()),
         Err(ValuationUnavailable::CompanyMismatch {

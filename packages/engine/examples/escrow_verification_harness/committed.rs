@@ -543,8 +543,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
             })
             .collect();
         assert!(
-            stock_ids.iter().any(|(id, _)| id.0 == 0)
-                && stock_ids.iter().any(|(id, _)| id.0 == 1),
+            stock_ids.iter().any(|(id, _)| id.0 == 0) && stock_ids.iter().any(|(id, _)| id.0 == 1),
             "harness 双股必须解析到不同目录 id，防单股退化回归"
         );
         for (id, price) in stock_ids {

@@ -56,10 +56,7 @@ fn completed_root_enters_idle_stock_before_unrelated_stock_finishes() {
     let notifications = StockStreamNotifications::new();
     let root_completed = notifications.sender.clone();
     let shards = BTreeMap::from([
-        (
-            StockId(0),
-            WaitingShard::Independent { started: a_started },
-        ),
+        (StockId(0), WaitingShard::Independent { started: a_started }),
         (
             StockId(1),
             WaitingShard::Unrelated {

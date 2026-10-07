@@ -145,7 +145,11 @@ impl CompanyOperations {
             })
             .collect();
         for (id, company) in &mut self.companies {
-            company.rng = OperatingRng::derive(self.seed, RngStream::CompanyOperating, &id.0);
+            let code = self
+                .catalog
+                .code(*id)
+                .expect("公司 id 必须能在目录内翻译出代码");
+            company.rng = OperatingRng::derive(self.seed, RngStream::CompanyOperating, code);
         }
         self.history = Some(HistoryMeta { generated_through });
     }

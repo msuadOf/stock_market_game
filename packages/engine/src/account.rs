@@ -139,11 +139,7 @@ impl Account {
     }
 
     /// 仅在 save slot 完整校验后恢复账务事实；不重复校验以改变原首错顺序。
-    pub(crate) fn restore_balances(
-        &mut self,
-        cash: Money,
-        positions: BTreeMap<StockId, Position>,
-    ) {
+    pub(crate) fn restore_balances(&mut self, cash: Money, positions: BTreeMap<StockId, Position>) {
         let state = Arc::make_mut(&mut self.state);
         state.cash = cash;
         state.positions = positions;
@@ -573,11 +569,7 @@ impl Account {
     }
 
     /// 持仓市值 = 现价 × 总持仓(qty)。无持仓返回 None。
-    pub fn market_value(
-        &self,
-        code: &StockId,
-        price: Money,
-    ) -> Result<Option<Money>, MoneyError> {
+    pub fn market_value(&self, code: &StockId, price: Money) -> Result<Option<Money>, MoneyError> {
         self.state
             .positions
             .get(code)

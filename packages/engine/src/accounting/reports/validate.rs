@@ -284,7 +284,7 @@ mod prior_year_coverage_tests {
     #[test]
     fn january_opening_without_december_entries_still_has_real_prior_year_end_balance() {
         let mut books = books("2030-01-15");
-        let member = MemberId("PARTIAL-FIRST-YEAR".into());
+        let member = MemberId(0);
         let mut closing = crate::accounting::closing::ClosingEngine::new();
         let (_, handle) = closing
             .close_year(&mut books, &member, IndustryPresentation::Industrial, 2031)
@@ -314,7 +314,7 @@ mod prior_year_coverage_tests {
             period,
             kind: ReportKind::Annual,
             source: ReportSource::Standalone {
-                id: MemberId("REAL-CONTINUOUS-BOOKS".into()),
+                id: MemberId(0),
                 books: &books,
                 industry: IndustryPresentation::Industrial,
             },

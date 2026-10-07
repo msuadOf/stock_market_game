@@ -394,7 +394,7 @@ mod tests {
 
     fn facts() -> ConsolidationFacts {
         ConsolidationFacts {
-            root: MemberId("root".into()),
+            root: MemberId(0),
             minority_equity: cents(5),
             equity_to_parent: cents(30),
             minority_ni: cents(0),

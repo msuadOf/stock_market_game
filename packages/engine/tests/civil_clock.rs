@@ -635,7 +635,10 @@ fn closed_civil_day_emits_one_date_advance_without_market_events() {
                 kind,
                 ..
             } => {
-                assert_eq!(company.0, "C-600101");
+                assert_eq!(
+                    saved.company_operations.catalog().code(*company),
+                    Some("C-600101")
+                );
                 assert_eq!(*published_at, report.disclosure_instant);
                 match kind {
                     engine::session::CompanyDisclosureKind::Announcement => {

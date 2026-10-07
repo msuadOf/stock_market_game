@@ -14,7 +14,7 @@ use engine::information::{AccountingPolicyRef, PublicationId, PublicationOrigin,
 fn public_json(reports: ReportSet, chart_version: u32) -> serde_json::Value {
     let published = PublishedReport {
         id: PublicationId::new(7),
-        company: CompanyId("C-PUBLIC-GOLD".to_string()),
+        company: CompanyId(0), // 单公司公开金样夹具
         policy: AccountingPolicyRef { chart_version },
         approved_at: CivilInstant::from_hms(fixture::d("2031-03-20"), 8, 0, 0).expect("approval"),
         published_at: CivilInstant::from_hms(fixture::d("2031-03-20"), 18, 0, 0)
@@ -74,9 +74,8 @@ fn public_financials_project_all_four_industry_gold_reports() {
             "5000.00",
         ),
     ] {
-        let reports =
-            generate_report_set(request(fixture::standalone("C-GOLD", &books, industry), 6))
-                .expect("industry golden report");
+        let reports = generate_report_set(request(fixture::standalone(0, &books, industry), 6))
+            .expect("industry golden report");
         reports.validate().expect("gold cross-foot");
         let expected_cash = reports.cash_flow.opening_cash.to_yuan_string();
         let expected_equity = reports.equity.opening_parent.to_yuan_string();
@@ -89,7 +88,7 @@ fn public_financials_project_all_four_industry_gold_reports() {
         );
         assert_eq!(
             financials["scope"],
-            serde_json::json!({"Standalone": {"entity_id": "C-GOLD"}})
+            serde_json::json!({"Standalone": {"entity_id": 0}})
         );
         assert_eq!(financials["window_start"], "2030-06-01");
         assert_eq!(financials["window_end"], "2030-06-30");
@@ -173,7 +172,7 @@ fn public_financials_preserve_consolidation_and_minority_gold() {
 fn public_prior_year_balance_totals_are_exact_published_sums() {
     let books = fixture::industrial_fixture();
     let reports = generate_report_set(request(
-        fixture::standalone("C-GOLD", &books, IndustryPresentation::Industrial),
+        fixture::standalone(0, &books, IndustryPresentation::Industrial),
         6,
     ))
     .expect("industrial comparative gold");
@@ -213,7 +212,7 @@ fn public_prior_year_balance_totals_are_exact_published_sums() {
 fn prior_year_producer_standalone_capital_is_not_duplicated() {
     let books = fixture::industrial_fixture();
     let reports = generate_report_set(request(
-        fixture::standalone("C-GOLD", &books, IndustryPresentation::Industrial),
+        fixture::standalone(0, &books, IndustryPresentation::Industrial),
         6,
     ))
     .expect("standalone producer gold");

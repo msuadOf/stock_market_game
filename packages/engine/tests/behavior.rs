@@ -249,12 +249,7 @@ fn strategy() -> StrategyData {
 fn a_retailer_can_add_to_an_eighty_percent_position() {
     let code = StockId(0);
     let mut scenario = BehaviorScenario::from_paths(
-        (101..106).map(|suffix| {
-            (
-                StockId((suffix - 101) as u32),
-                path(Some(0.03), Some(0.03)),
-            )
-        }),
+        (101..106).map(|suffix| (StockId((suffix - 101) as u32), path(Some(0.03), Some(0.03)))),
         0.0,
     );
     scenario.set_market_breadth(5, 5, Some(0.03));
@@ -287,12 +282,8 @@ fn unrelated_market_stocks_do_not_change_a_retailers_target() {
 
     for stock_count in [1, 2, 5] {
         let mut scenario = BehaviorScenario::from_paths(
-            (101..101 + stock_count).map(|suffix| {
-                (
-                    StockId((suffix - 101) as u32),
-                    path(Some(0.03), Some(0.03)),
-                )
-            }),
+            (101..101 + stock_count)
+                .map(|suffix| (StockId((suffix - 101) as u32), path(Some(0.03), Some(0.03)))),
             0.0,
         );
         scenario.set_market_breadth(stock_count as usize, stock_count as usize, Some(0.03));

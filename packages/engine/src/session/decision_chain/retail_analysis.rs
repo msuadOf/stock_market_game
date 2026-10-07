@@ -118,10 +118,10 @@ impl GameSession {
             if !checks_information {
                 continue;
             }
-            for report in discovery_candidates(&self.state.library, company, observation.now) {
+            for report in discovery_candidates(&self.state.library, &company, observation.now) {
                 if personal
                     .information
-                    .records_for_company(company)
+                    .records_for_company(&company)
                     .iter()
                     .any(|record| record.id == report)
                 {
@@ -178,7 +178,7 @@ impl GameSession {
             let spec = self
                 .state
                 .operations
-                .company(company)
+                .company(&company)
                 .ok_or_else(|| {
                     invariant(format!("retail issuer {company:?} has no operating books"))
                 })?

@@ -27,14 +27,14 @@ fn period(iso: &str) -> AccountingPeriod {
 }
 
 fn member() -> MemberId {
-    MemberId("C-LIFE".to_string())
+    MemberId(0)
 }
 
 fn original_request<'a>(iso: &str, kind: ReportKind, books: &'a Books) -> ReportRequest<'a> {
     ReportRequest {
         period: period(iso),
         kind,
-        source: standalone("C-LIFE", books, IndustryPresentation::Industrial),
+        source: standalone(0, books, IndustryPresentation::Industrial),
         version: ReportVersion {
             sequence: 1,
             supersedes: None,

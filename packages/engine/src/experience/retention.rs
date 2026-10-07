@@ -44,9 +44,7 @@ mod tests {
 
     #[test]
     fn selection_caps_only_unprotected_contacts_and_breaks_ties_by_code() {
-        let contacts: Vec<_> = (0..12)
-            .map(|index| (StockId(index), 7))
-            .collect();
+        let contacts: Vec<_> = (0..12).map(|index| (StockId(index), 7)).collect();
         let protected = contacts[..3].iter().map(|(code, _)| code.clone()).collect();
         let kept = RetentionCandidates::from_contacts(
             contacts.iter().map(|(code, minute)| (code, *minute)),

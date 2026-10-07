@@ -29,9 +29,9 @@ fn assert_no_json_numbers(value: &Value) {
                 let safe = number
                     .as_u64()
                     .is_some_and(|value| value <= 9_007_199_254_740_991)
-                    || number.as_i64().is_some_and(|value| {
-                        value.unsigned_abs() <= 9_007_199_254_740_991
-                    });
+                    || number
+                        .as_i64()
+                        .is_some_and(|value| value.unsigned_abs() <= 9_007_199_254_740_991);
                 if !safe {
                     panic!("integer leaked as a JSON number at {path}: {number}");
                 }
@@ -543,11 +543,7 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
     ));
 
     let mut overflow = account_snap();
-    overflow
-        .positions
-        .get_mut(&StockId(0))
-        .unwrap()
-        .t1_locked = 101;
+    overflow.positions.get_mut(&StockId(0)).unwrap().t1_locked = 101;
     assert!(matches!(
         project_conservation_snapshot(
             "t1-overflow",
@@ -588,7 +584,7 @@ fn announcement_event(seq: u64, publication_id: u32) -> Event {
     Event::CompanyDisclosurePublished {
         seq,
         publication_id: PublicationId::new(publication_id),
-        company: CompanyId("company".to_owned()),
+        company: CompanyId(0),
         published_at: CivilInstant::new(CivilDate::from_iso("2030-01-05").unwrap(), 0).unwrap(),
         kind: CompanyDisclosureKind::Announcement,
     }
@@ -867,7 +863,7 @@ fn real_civil_update_projects_validated_session_lifecycle_shared_ordinals() {
         Event::CompanyDisclosurePublished {
             seq: disclosure_seq,
             publication_id,
-            company: CompanyId("company".to_owned()),
+            company: CompanyId(0),
             published_at: CivilInstant::new(update.boundary.next_date, 86_399).unwrap(),
             kind: CompanyDisclosureKind::Report {
                 report_revision: u32::MAX,
@@ -957,7 +953,7 @@ fn civil_after_tick(duplicate_disclosure: bool) -> CivilUpdate {
     let disclosure_event = Event::CompanyDisclosurePublished {
         seq: if duplicate_disclosure { 6 } else { 5 },
         publication_id: PublicationId::new(u32::MAX),
-        company: CompanyId("company".to_owned()),
+        company: CompanyId(0),
         published_at: CivilInstant::new(update.boundary.next_date, 86_399).unwrap(),
         kind: CompanyDisclosureKind::Report {
             report_revision: u32::MAX,
@@ -1258,7 +1254,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
         Event::CompanyDisclosurePublished {
             seq: u64::MAX,
             publication_id: PublicationId::new(u32::MAX),
-            company: CompanyId("company".to_owned()),
+            company: CompanyId(0),
             published_at: instant,
             kind: CompanyDisclosureKind::Report {
                 report_revision: u32::MAX,

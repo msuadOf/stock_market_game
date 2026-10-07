@@ -173,9 +173,7 @@ impl PersonalPriceMemory {
         let entry = self
             .stocks
             .get_mut(code)
-            .ok_or_else(|| PriceMemoryError::UnobservedStock {
-                code: *code,
-            })?;
+            .ok_or_else(|| PriceMemoryError::UnobservedStock { code: *code })?;
         entry.record_public_history_read(code, market_minute, reads)
     }
 
@@ -207,7 +205,9 @@ mod protection_tests {
         let code = StockId(0);
         let mut memory = PersonalPriceMemory::default();
         let mut reads = PersonalHistoryReadLedger::default();
-        assert!(memory.record_public_history_read(&code, 1, &mut reads).is_err());
+        assert!(memory
+            .record_public_history_read(&code, 1, &mut reads)
+            .is_err());
         assert!(memory.stocks.is_empty());
         memory
             .observe_price(&code, Money::from_cents(100), 2)

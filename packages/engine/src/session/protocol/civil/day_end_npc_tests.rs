@@ -55,7 +55,8 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
                     "日界不能消费下一交易日的 due attention 或 RNG"
                 );
                 assert_eq!(
-                    serde_json::to_value(session.game().save().unwrap().ingress_receipt_cursors).unwrap(),
+                    serde_json::to_value(session.game().save().unwrap().ingress_receipt_cursors)
+                        .unwrap(),
                     serde_json::to_value(receipt_cursors_before).unwrap(),
                     "日界不能为下一交易日分配 NPC 入队 receipt"
                 );
@@ -67,7 +68,10 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
         session.end_civil_day_update().unwrap();
         let daily = session.save().unwrap();
         assert_eq!(daily.snapshot.tick, day * 4);
-        assert!(daily.pending_npc.is_none(), "日终必须推迟下一批 NPC 观察与请求");
+        assert!(
+            daily.pending_npc.is_none(),
+            "日终必须推迟下一批 NPC 观察与请求"
+        );
         ProtocolSession::restore(&daily).expect("每个已完成交易日日终候选都必须可恢复");
     }
     assert!(npc_accepted > 0, "真实活跃 NPC 必须产生已受理事实");
@@ -75,7 +79,10 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
     assert_eq!(saved.snapshot.tick, 8);
     let mut restored = ProtocolSession::restore(&saved)
         .expect("真实活跃 NPC 的公共日终候选必须可恢复，不得新生成跨日待受理输入");
-    assert!(saved.pending_npc.is_none(), "日终档不保留跨日 NPC 待处理批次");
+    assert!(
+        saved.pending_npc.is_none(),
+        "日终档不保留跨日 NPC 待处理批次"
+    );
     assert_eq!(
         serde_json::to_value(restored.save().unwrap()).unwrap(),
         serde_json::to_value(&saved).unwrap()

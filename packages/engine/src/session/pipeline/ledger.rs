@@ -159,9 +159,12 @@ impl EnvelopeLedger {
         })
     }
 
-    pub(in crate::session) fn live_reservations(&self) -> Result<super::LiveReservations, StepFatal> {
-        let mut cache = self.reservation_cache.lock().map_err(|error|
-            ledger_validation::invariant(&format!("ledger 预留投影缓存锁失败：{error}")))?;
+    pub(in crate::session) fn live_reservations(
+        &self,
+    ) -> Result<super::LiveReservations, StepFatal> {
+        let mut cache = self.reservation_cache.lock().map_err(|error| {
+            ledger_validation::invariant(&format!("ledger 预留投影缓存锁失败：{error}"))
+        })?;
         cache.project(&self.envelopes)
     }
 

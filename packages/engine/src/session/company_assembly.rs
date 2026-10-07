@@ -100,6 +100,7 @@ pub(super) fn assemble_companies(
     let operations_config = CompanyOperationsConfig {
         seed: seed ^ COMPANY_SEED_TAG,
         shock_params,
+        catalog: registry.catalog().clone(),
         companies: operating_configs,
     };
     let prehistory =
@@ -173,10 +174,11 @@ fn assemble_custom_companies(
         )
         .map_err(company_error("custom issuer mapping"))?;
     scale_shock_params(&mut config.shock_params, event_multiplier_bp)?;
-    let mut prehistory = assemble_seeded_prehistory(config, setup.start_date).map_err(|_error| {
-        // fault1155: 自定义公司经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
-        SessionError::InvalidSetup(ValidationFault::new(1155, vec![0]))
-    })?;
+    let mut prehistory =
+        assemble_seeded_prehistory(config, setup.start_date).map_err(|_error| {
+            // fault1155: 自定义公司经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1155, vec![0]))
+        })?;
     super::company_groups::seed_groups(&setup.groups, &mut prehistory, setup.start_date).map_err(
         |_error| {
             // fault1156: 自定义公司分组前史播种失败。槽0 待 C 批数值化（原文本为内层播种错误文本）。
@@ -433,9 +435,9 @@ fn assemble_listed_company(
     figures: OpeningFigures,
     as_of: CivilDate,
 ) -> Result<ListedCompanyConfigs, SessionError> {
-    let company_id = CompanyId(format!("C-{}", stock.code.0));
+    let company_code = format!("C-{}", stock.code.0);
     let spec = CompanySpec {
-        id: company_id.clone(),
+        code: company_code.clone(),
         name: format!("虚构上市公司{}", stock.code.0),
         industry: IndustryId("listed-industrial".to_string()),
         kind: CompanyKind::Industrial,
@@ -559,10 +561,11 @@ mod tests {
         )
         .expect("合法小股本公司的开局资金配置必须精确平账");
         let registry = CompanyRegistry::new(vec![listed.registry]).unwrap();
-        let registry_books = registry
-            .get(&CompanyId(format!("C-{}", stock.code.0)))
-            .unwrap()
-            .books();
+        let company_id = registry
+            .catalog()
+            .id(&format!("C-{}", stock.code.0))
+            .expect("发行人代码必须在目录内");
+        let registry_books = registry.get(&company_id).unwrap().books();
         let operating_books = listed.operating.books.books();
         for books in [registry_books, operating_books] {
             let trial = books.ledger().trial_balance().unwrap();
@@ -693,9 +696,11 @@ mod tests {
             assert_eq!(figures.fixed_assets, capital + debt - cash);
             let listed = assemble_listed_company(&stock, figures, as_of).unwrap();
             let registry = CompanyRegistry::new(vec![listed.registry]).unwrap();
-            let company = registry
-                .get(&CompanyId(format!("C-{}", stock.code.0)))
-                .unwrap();
+            let company_id = registry
+                .catalog()
+                .id(&format!("C-{}", stock.code.0))
+                .expect("发行人代码必须在目录内");
+            let company = registry.get(&company_id).unwrap();
             for books in [company.books(), listed.operating.books.books()] {
                 let trial = books.ledger().trial_balance().unwrap();
                 assert_eq!(trial.total_debits, yuan(capital + debt));

@@ -125,9 +125,7 @@ fn scheduled_publication_event_is_lossless_public_and_precedes_civil_advance() {
         .expect("preceding announcement must resolve in the immutable public library");
     assert_eq!(&announcement.company, announcement_company);
     assert_eq!(announcement.published_at, *announcement_instant);
-    assert!(events
-        .windows(2)
-        .all(|pair| pair[0].seq() < pair[1].seq()));
+    assert!(events.windows(2).all(|pair| pair[0].seq() < pair[1].seq()));
     let advance_index = events
         .iter()
         .position(|event| matches!(event, Event::CivilDateAdvanced { .. }))
@@ -209,7 +207,7 @@ fn announcement_event_follows_successful_immutable_library_insertion() {
     // Given: a closed civil day whose company operating state contains an active public shock.
     let session = GameSession::new(setup("2030-01-01"), 41).expect("fixture session is valid");
     let mut save = session.save().expect("healthy save");
-    let company = CompanyId("C-600101".to_string());
+    let company = CompanyId(0);
     let date = save.civil_clock.current_date;
     save.company_operations
         .apply_company_shock(

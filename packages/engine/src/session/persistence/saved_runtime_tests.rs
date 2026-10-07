@@ -484,10 +484,9 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
 /// 断言解压/解码层拒绝为指定数字错误码（数值断言替代原文本 contains 助手）。
 fn assert_invalid_save(error: SessionError, code: u16) {
     match error {
-        SessionError::InvalidSave(fault) => assert!(
-            fault.code == code,
-            "expected fault {code} in {fault:?}"
-        ),
+        SessionError::InvalidSave(fault) => {
+            assert!(fault.code == code, "expected fault {code} in {fault:?}")
+        }
         other => panic!("corrupt persisted input must be InvalidSave, got {other}"),
     }
 }
@@ -1166,10 +1165,7 @@ fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(-1);
 
     // fault2225：费用审计含负分量（数值断言替代原文本 "negative component"）。
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        2225,
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2225);
 }
 
 #[test]
@@ -1180,10 +1176,7 @@ fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(2);
 
     // fault2228：信封累计收费审计不一致（数值断言替代原文本 "inconsistent cumulative charged fee audit"）。
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        2228,
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2228);
 }
 
 #[test]
@@ -1206,10 +1199,7 @@ fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal(
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.commission = Money::from_cents(101);
 
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        2228,
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2228);
 }
 
 #[test]
@@ -1219,10 +1209,7 @@ fn receipt_gap_is_rejected_as_corrupt_save() {
     state.next_receipt_base = 1;
 
     // fault2202：散户投影回执前缀重建失败（数值断言替代原文本 "receipt prefix"）。
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        2202,
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2202);
 }
 
 #[test]
@@ -1289,10 +1276,7 @@ fn duplicate_live_envelope_key_is_rejected_as_noncanonical() {
     state.live_envelopes.push(state.live_envelopes[0].clone());
 
     // fault2217：活跃信封非规范键严格序（数值断言替代原文本 "strict canonical key order"）。
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        2217,
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2217);
 }
 
 #[test]
@@ -1319,10 +1303,7 @@ fn poisoned_marker_and_unknown_runtime_fields_fail_closed() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.poisoned = true;
     // fault2200：runtime_state 显式拒绝 poisoned 会话状态（数值断言替代原文本 "poisoned"）。
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        2200,
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2200);
 
     let mut encoded = serde_json::to_value(capture_runtime_state(&session).unwrap()).unwrap();
     encoded
@@ -1480,10 +1461,7 @@ fn strategy_state_identity_tampering_is_rejected() {
     );
 
     // fault2208：策略状态改变确定性策略身份（数值断言替代原文本 "deterministic strategy identity"）。
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        2208,
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2208);
 }
 
 #[test]
