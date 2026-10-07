@@ -554,24 +554,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "222101": {
-                    "name": "应交税费—应交增值税（销项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
-                  "222102": {
-                    "name": "应交税费—应交增值税（进项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": true
-                  },
-                  "222104": {
-                    "name": "应交税费—应交所得税",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "2231": {
                     "name": "应付利息",
                     "element": "Liability",
@@ -632,12 +614,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "660201": {
-                    "name": "管理费用—研发费用",
-                    "element": "Expense",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "6603": {
                     "name": "财务费用",
                     "element": "Expense",
@@ -652,6 +628,30 @@
                   },
                   "6801": {
                     "name": "所得税费用",
+                    "element": "Expense",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222101": {
+                    "name": "应交税费—应交增值税（销项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222102": {
+                    "name": "应交税费—应交增值税（进项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": true
+                  },
+                  "222104": {
+                    "name": "应交税费—应交所得税",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "660201": {
+                    "name": "管理费用—研发费用",
                     "element": "Expense",
                     "is_cash": false,
                     "is_contra": false
@@ -19500,6 +19500,8 @@
             ],
             "dividends": {},
             "stock_distributions": {},
+            "rights_offerings": {},
+            "issuer_repurchases": {},
             "legal_facts": null
           },
           "pending_restart": null,
@@ -19639,24 +19641,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "222101": {
-                    "name": "应交税费—应交增值税（销项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
-                  "222102": {
-                    "name": "应交税费—应交增值税（进项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": true
-                  },
-                  "222104": {
-                    "name": "应交税费—应交所得税",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "2231": {
                     "name": "应付利息",
                     "element": "Liability",
@@ -19717,12 +19701,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "660201": {
-                    "name": "管理费用—研发费用",
-                    "element": "Expense",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "6603": {
                     "name": "财务费用",
                     "element": "Expense",
@@ -19737,6 +19715,30 @@
                   },
                   "6801": {
                     "name": "所得税费用",
+                    "element": "Expense",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222101": {
+                    "name": "应交税费—应交增值税（销项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222102": {
+                    "name": "应交税费—应交增值税（进项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": true
+                  },
+                  "222104": {
+                    "name": "应交税费—应交所得税",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "660201": {
+                    "name": "管理费用—研发费用",
                     "element": "Expense",
                     "is_cash": false,
                     "is_contra": false
@@ -38585,6 +38587,8 @@
             ],
             "dividends": {},
             "stock_distributions": {},
+            "rights_offerings": {},
+            "issuer_repurchases": {},
             "legal_facts": null
           },
           "pending_restart": null,
@@ -38724,24 +38728,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "222101": {
-                    "name": "应交税费—应交增值税（销项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
-                  "222102": {
-                    "name": "应交税费—应交增值税（进项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": true
-                  },
-                  "222104": {
-                    "name": "应交税费—应交所得税",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "2231": {
                     "name": "应付利息",
                     "element": "Liability",
@@ -38802,12 +38788,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "660201": {
-                    "name": "管理费用—研发费用",
-                    "element": "Expense",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "6603": {
                     "name": "财务费用",
                     "element": "Expense",
@@ -38822,6 +38802,30 @@
                   },
                   "6801": {
                     "name": "所得税费用",
+                    "element": "Expense",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222101": {
+                    "name": "应交税费—应交增值税（销项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222102": {
+                    "name": "应交税费—应交增值税（进项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": true
+                  },
+                  "222104": {
+                    "name": "应交税费—应交所得税",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "660201": {
+                    "name": "管理费用—研发费用",
                     "element": "Expense",
                     "is_cash": false,
                     "is_contra": false
@@ -57670,6 +57674,8 @@
             ],
             "dividends": {},
             "stock_distributions": {},
+            "rights_offerings": {},
+            "issuer_repurchases": {},
             "legal_facts": null
           },
           "pending_restart": null,
@@ -57809,24 +57815,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "222101": {
-                    "name": "应交税费—应交增值税（销项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
-                  "222102": {
-                    "name": "应交税费—应交增值税（进项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": true
-                  },
-                  "222104": {
-                    "name": "应交税费—应交所得税",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "2231": {
                     "name": "应付利息",
                     "element": "Liability",
@@ -57887,12 +57875,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "660201": {
-                    "name": "管理费用—研发费用",
-                    "element": "Expense",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "6603": {
                     "name": "财务费用",
                     "element": "Expense",
@@ -57907,6 +57889,30 @@
                   },
                   "6801": {
                     "name": "所得税费用",
+                    "element": "Expense",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222101": {
+                    "name": "应交税费—应交增值税（销项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222102": {
+                    "name": "应交税费—应交增值税（进项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": true
+                  },
+                  "222104": {
+                    "name": "应交税费—应交所得税",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "660201": {
+                    "name": "管理费用—研发费用",
                     "element": "Expense",
                     "is_cash": false,
                     "is_contra": false
@@ -76755,6 +76761,8 @@
             ],
             "dividends": {},
             "stock_distributions": {},
+            "rights_offerings": {},
+            "issuer_repurchases": {},
             "legal_facts": null
           },
           "pending_restart": null,
@@ -76894,24 +76902,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "222101": {
-                    "name": "应交税费—应交增值税（销项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
-                  "222102": {
-                    "name": "应交税费—应交增值税（进项税额）",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": true
-                  },
-                  "222104": {
-                    "name": "应交税费—应交所得税",
-                    "element": "Liability",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "2231": {
                     "name": "应付利息",
                     "element": "Liability",
@@ -76972,12 +76962,6 @@
                     "is_cash": false,
                     "is_contra": false
                   },
-                  "660201": {
-                    "name": "管理费用—研发费用",
-                    "element": "Expense",
-                    "is_cash": false,
-                    "is_contra": false
-                  },
                   "6603": {
                     "name": "财务费用",
                     "element": "Expense",
@@ -76992,6 +76976,30 @@
                   },
                   "6801": {
                     "name": "所得税费用",
+                    "element": "Expense",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222101": {
+                    "name": "应交税费—应交增值税（销项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "222102": {
+                    "name": "应交税费—应交增值税（进项税额）",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": true
+                  },
+                  "222104": {
+                    "name": "应交税费—应交所得税",
+                    "element": "Liability",
+                    "is_cash": false,
+                    "is_contra": false
+                  },
+                  "660201": {
+                    "name": "管理费用—研发费用",
                     "element": "Expense",
                     "is_cash": false,
                     "is_contra": false
@@ -95840,6 +95848,8 @@
             ],
             "dividends": {},
             "stock_distributions": {},
+            "rights_offerings": {},
+            "issuer_repurchases": {},
             "legal_facts": null
           },
           "pending_restart": null,

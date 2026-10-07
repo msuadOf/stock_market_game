@@ -43,6 +43,31 @@ pub enum StockDistributionExRightsFormula {
     },
 }
 
+/// 配股除权公式按上市地交易所分列参数化（与送转公式同一分列纪律）：
+///
+/// - 沪市《交易规则（2026 年修订）》4.3.1：`[(前收盘价格−现金红利)+配股价格×流通股份变动比例]/(1+流通股份变动比例)`。
+/// - 深市《交易规则（2026 年修订）》4.4.1：`[(前收盘价−现金红利)+配股价格×股份变动比例]/(1+股份变动比例)`。
+///
+/// 变动比例为**实际配股比例**（按认购结果确定的实际新增股份 ÷ 配股前股份，
+/// 百万分之一股整数单位）；公式自带现金红利项，允许与同日现金分红合并。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub enum RightsOfferingExRightsFormula {
+    /// 沪市口径：流通股份变动比例；只能用于 `CalendarExchange::Sse` 证券。
+    ShanghaiCirculatingRightsChange {
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        ratio_micros: u64,
+    },
+    /// 深市口径：股份变动比例；只能用于 `CalendarExchange::Szse` 证券。
+    ShenzhenRightsShareChange {
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        ratio_micros: u64,
+    },
+}
+
 #[derive(Debug, Error)]
 pub enum ExReferencePriceError {
     #[error("查询现金分红除息日历失败：{0}")]
@@ -71,6 +96,15 @@ pub enum ExReferencePriceError {
     },
     #[error("送转除权比例必须为正数（百万分之一股整数单位）")]
     InvalidShareChangeRatio,
+    #[error("配股除权比例必须为正数（百万分之一股整数单位）")]
+    InvalidRightsChangeRatio,
+    #[error("配股除权公式与交易所不匹配：{formula:?} 不能用于 {exchange:?} 证券")]
+    RightsFormulaExchangeMismatch {
+        formula: RightsOfferingExRightsFormula,
+        exchange: CalendarExchange,
+    },
+    #[error("配股除权配股价格必须为正数，实际为 {price:?}")]
+    InvalidRightsPrice { price: Money },
 }
 
 /// 计算未发生交易所批准特殊调整时的纯现金除息参考价。
@@ -210,6 +244,124 @@ pub fn stock_distribution_ex_rights_reference_price(
         });
     }
 
+    Ok(ExReferencePrice {
+        ex_date,
+        reference_price,
+    })
+}
+
+/// 计算配股（向原股东配售新股）的标准除权参考价。
+///
+/// 公式：`[(前收盘价 − 现金红利) + 配股价格 × 实际配股比例] / (1 + 实际配股比例)`，
+/// 比例按上市地分列（沪"流通股份变动比例"/深"股份变动比例"），公式变体与交易所
+/// 不匹配时显式拒绝。除权日为**缴款截止日 L 的次一交易日**（配股实际比例在 L 日
+/// 缴款截止后才确定；官方指南未明文配股除权日，按市场实践口径实现并登记待证，
+/// 见 docs/trading-rules.md）。与送转公式不同，分子含配股价格分量，可与同日现金
+/// 红利合并；同日另发生送转的合并口径未核实，由调用方显式拒绝。
+///
+/// 除法结果按最小变动价位取整数分，使用与 `Money` 既有一致的银行家舍入
+/// （half-to-even）；沪深条文未写明分位舍入方向，登记为游戏简化。
+pub fn rights_offering_ex_rights_reference_price(
+    calendar: &TradingCalendar,
+    exchange: CalendarExchange,
+    formula: RightsOfferingExRightsFormula,
+    payment_deadline: CivilDate,
+    previous_close: Money,
+    cash_dividend_per_share: Money,
+    rights_price_per_share: Money,
+) -> Result<ExReferencePrice, ExReferencePriceError> {
+    let ratio_micros = match formula {
+        RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange { ratio_micros } => {
+            if exchange != CalendarExchange::Sse {
+                return Err(ExReferencePriceError::RightsFormulaExchangeMismatch {
+                    formula,
+                    exchange,
+                });
+            }
+            ratio_micros
+        }
+        RightsOfferingExRightsFormula::ShenzhenRightsShareChange { ratio_micros } => {
+            if exchange != CalendarExchange::Szse {
+                return Err(ExReferencePriceError::RightsFormulaExchangeMismatch {
+                    formula,
+                    exchange,
+                });
+            }
+            ratio_micros
+        }
+    };
+    if ratio_micros == 0 {
+        return Err(ExReferencePriceError::InvalidRightsChangeRatio);
+    }
+    if previous_close <= Money::ZERO {
+        return Err(ExReferencePriceError::InvalidPreviousClose {
+            price: previous_close,
+        });
+    }
+    if cash_dividend_per_share < Money::ZERO {
+        return Err(ExReferencePriceError::InvalidCashDividend {
+            amount: cash_dividend_per_share,
+        });
+    }
+    if rights_price_per_share <= Money::ZERO {
+        return Err(ExReferencePriceError::InvalidRightsPrice {
+            price: rights_price_per_share,
+        });
+    }
+    if !calendar.is_trading_day(exchange, payment_deadline)? {
+        return Err(ExReferencePriceError::InvalidRegistrationDate {
+            exchange,
+            date: payment_deadline,
+        });
+    }
+    let ex_date = calendar.next_trading_day(exchange, payment_deadline)?;
+    // 分子（按百万分之一缩放）：(前收 − 红利) × 1e6 + 配股价 × 比例。
+    let base_cents = i128::from(previous_close.cents()) - i128::from(cash_dividend_per_share.cents());
+    if base_cents <= 0 {
+        return Err(ExReferencePriceError::NonPositiveExRightsNumerator {
+            cents: base_cents,
+        });
+    }
+    let numerator_scaled = i128::from(base_cents)
+        .checked_mul(1_000_000)
+        .and_then(|scaled| {
+            scaled.checked_add(
+                i128::from(rights_price_per_share.cents()) * i128::from(ratio_micros),
+            )
+        })
+        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+            cents: base_cents,
+        })?;
+    if numerator_scaled <= 0 {
+        return Err(ExReferencePriceError::NonPositiveExRightsNumerator {
+            cents: numerator_scaled,
+        });
+    }
+    let denominator = 1_000_000_i128 + i128::from(ratio_micros);
+    let quotient = numerator_scaled / denominator;
+    let remainder = numerator_scaled % denominator;
+    let doubled_remainder = remainder
+        .checked_mul(2)
+        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+            cents: numerator_scaled,
+        })?;
+    let reference_cents = match doubled_remainder.cmp(&denominator) {
+        std::cmp::Ordering::Less => quotient,
+        std::cmp::Ordering::Greater => quotient + 1,
+        // half-to-even（银行家舍入）
+        std::cmp::Ordering::Equal if quotient % 2 == 0 => quotient,
+        std::cmp::Ordering::Equal => quotient + 1,
+    };
+    let reference_cents = i64::try_from(reference_cents).map_err(|_| MoneyError::Overflow {
+        op: "rights_ex_rights_reference_cents",
+        operand: reference_cents.to_string(),
+    })?;
+    let reference_price = Money::from_cents(reference_cents);
+    if reference_price <= Money::ZERO {
+        return Err(ExReferencePriceError::NonPositiveReferencePrice {
+            price: reference_price,
+        });
+    }
     Ok(ExReferencePrice {
         ex_date,
         reference_price,

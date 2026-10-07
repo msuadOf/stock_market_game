@@ -25,6 +25,10 @@ mod kind;
 mod posting;
 #[path = "finance_report_validation.rs"]
 mod report_validation;
+#[path = "finance_rights_offering.rs"]
+mod rights_offering;
+#[path = "finance_issuer_repurchase.rs"]
+mod issuer_repurchase;
 #[path = "finance_state.rs"]
 mod state;
 #[path = "finance_stock_distribution.rs"]
@@ -114,6 +118,12 @@ pub struct SimpleFinanceState {
     dividends: std::collections::BTreeMap<String, DividendPlanState>,
     stock_distributions:
         std::collections::BTreeMap<String, StockDistributionFinanceFact>,
+    rights_offerings: std::collections::BTreeMap<
+        String,
+        crate::company::rights_offering::RightsOfferingFinanceFact,
+    >,
+    issuer_repurchases:
+        std::collections::BTreeMap<String, crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact>,
     #[serde(deserialize_with = "deserialize_required_option")]
     legal_facts: RequiredOption<DividendLegalFacts>,
 }

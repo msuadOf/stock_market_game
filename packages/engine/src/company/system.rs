@@ -254,6 +254,321 @@ impl CompanySystem {
         Ok(self.finance(company)?.dividend_payment_facts(plan_id))
     }
 
+    pub fn rights_offering_facts(
+        &self,
+        company: &CompanyId,
+    ) -> Result<Vec<super::rights_offering::RightsOfferingFinanceFact>, CompanySystemError>
+    {
+        Ok(self.finance(company)?.rights_offering_facts()?)
+    }
+
+    /// 冻结 Simple 账面配股／增发声明事实；不产生公司或投资者现金。
+    pub fn declare_rights_offering(
+        &mut self,
+        company: &CompanyId,
+        declaration: super::rights_offering::RightsOfferingDeclaration,
+    ) -> Result<bool, CompanySystemError> {
+        let already_declared = self
+            .finance_mut(company)?
+            .declare_rights_offering(declaration)?;
+        Ok(already_declared)
+    }
+
+    /// 结算回填账面事实并同步发行人已发行股数（成功路径）。
+    pub fn record_rights_offering_settlement(
+        &mut self,
+        company: &CompanyId,
+        event_id: &str,
+        settled_on: CivilDate,
+        issued_shares: u64,
+        proceeds: crate::accounting::AccountingAmount,
+    ) -> Result<bool, CompanySystemError> {
+        let already_settled = self.finance_mut(company)?.record_rights_offering_settlement(
+            event_id,
+            settled_on,
+            issued_shares,
+            proceeds,
+        )?;
+        if !already_settled && issued_shares > 0 {
+            self.issuers.record_share_issuance(company, issued_shares)?;
+        }
+        Ok(already_settled)
+    }
+
+    pub fn issuer_repurchase_facts(
+        &self,
+        company: &CompanyId,
+    ) -> Result<Vec<super::issuer_repurchase::IssuerRepurchaseFinanceFact>, CompanySystemError>
+    {
+        Ok(self.finance(company)?.issuer_repurchase_facts()?)
+    }
+
+    /// 冻结回购方案的账面合成资金来源事实（ADR-0038）。
+    pub fn declare_issuer_repurchase(
+        &mut self,
+        company: &CompanyId,
+        fact: super::issuer_repurchase::IssuerRepurchaseFinanceFact,
+    ) -> Result<bool, CompanySystemError> {
+        let already = self
+            .finance_mut(company)?
+            .declare_issuer_repurchase(fact)?;
+        Ok(already)
+    }
+
+    /// 回购计划完成回填（实际支出与回收差额）。
+    pub fn record_issuer_repurchase_completion(
+        &mut self,
+        company: &CompanyId,
+        event_id: &str,
+        completed_on: CivilDate,
+        spent: crate::accounting::AccountingAmount,
+        withdrawn_remainder: crate::accounting::AccountingAmount,
+    ) -> Result<bool, CompanySystemError> {
+        let already = self.finance_mut(company)?.record_issuer_repurchase_completion(
+            event_id,
+            completed_on,
+            spent,
+            withdrawn_remainder,
+        )?;
+        Ok(already)
+    }
+
+    /// 回购注销回填：核减注册资本并同步发行人已发行股数。
+    pub fn record_issuer_repurchase_cancellation(
+        &mut self,
+        company: &CompanyId,
+        event_id: &str,
+        cancelled_on: CivilDate,
+        cancelled_shares: u64,
+        issued_shares_before: u64,
+    ) -> Result<bool, CompanySystemError> {
+        let already = self.finance_mut(company)?.record_issuer_repurchase_cancellation(
+            event_id,
+            cancelled_on,
+            cancelled_shares,
+            issued_shares_before,
+        )?;
+        if !already {
+            self.issuers
+                .record_share_cancellation(company, cancelled_shares)?;
+        }
+        Ok(already)
+    }
+
+    /// 校验 Session 回购账簿与 Simple 账面事实的跨域对应。
+    pub fn validate_issuer_repurchase_books(
+        &self,
+        books: &[super::issuer_repurchase::IssuerRepurchaseBook],
+    ) -> Result<(), CompanySystemError> {
+        use std::collections::BTreeSet;
+        let mut seen_events = BTreeSet::new();
+        for book in books {
+            let plan = book.plan();
+            if !seen_events.insert(plan.event_id.clone()) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "回购方案 {} 重复出现账簿",
+                    plan.event_id
+                )));
+            }
+            let issuer = self.issuers.get(&plan.issuer).ok_or_else(|| {
+                CompanySystemError::Invalid(format!("回购账簿引用未知发行人 {}", plan.issuer.0))
+            })?;
+            if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "回购方案 {} 的证券与发行人不匹配",
+                    plan.event_id
+                )));
+            }
+            let fact = self
+                .issuer_repurchase_facts(&plan.issuer)?
+                .into_iter()
+                .find(|fact| fact.event_id == plan.event_id)
+                .ok_or_else(|| {
+                    CompanySystemError::Invalid(format!(
+                        "回购方案 {} 缺少 Simple 声明事实",
+                        plan.event_id
+                    ))
+                })?;
+            if fact.approved_on != plan.approved_on
+                || fact.approval_reference != plan.approval_reference
+                || fact.synthetic_funding
+                    != crate::accounting::AccountingAmount::from_money(plan.total_budget)
+            {
+                return Err(CompanySystemError::Invalid(format!(
+                    "回购方案 {} 与 Simple 声明的日期、引用或额度不一致",
+                    plan.event_id
+                )));
+            }
+            match (book.completed_on(), fact.completed_on, fact.spent, fact.withdrawn_remainder)
+            {
+                (None, None, None, None) => {}
+                (
+                    Some(book_date),
+                    Some(fact_date),
+                    Some(spent),
+                    Some(withdrawn),
+                ) if book_date == fact_date
+                    && spent
+                        == crate::accounting::AccountingAmount::from_money(
+                            book.total_spent()
+                                .map_err(|error| {
+                                    CompanySystemError::Invalid(error.to_string())
+                                })?,
+                        )
+                    && withdrawn
+                        == crate::accounting::AccountingAmount::from_money(
+                            book.withdrawn_remainder().unwrap_or(crate::money::Money::ZERO),
+                        ) => {}
+                _ => {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "回购方案 {} 的完成事实与 Simple 账面回填不一致",
+                        plan.event_id
+                    )));
+                }
+            }
+            match (book.cancelled_on(), fact.cancelled_on) {
+                (None, None) => {}
+                (Some(book_date), Some(fact_date)) if book_date == fact_date => {
+                    if book.cancelled_shares() != fact.cancelled_shares {
+                        return Err(CompanySystemError::Invalid(format!(
+                            "回购方案 {} 的注销股数与 Simple 账面回填不一致",
+                            plan.event_id
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "回购方案 {} 的注销事实与 Simple 账面回填不一致",
+                        plan.event_id
+                    )));
+                }
+            }
+        }
+        let mut bound_events = BTreeSet::new();
+        for book in books {
+            bound_events.insert(book.plan().event_id.clone());
+        }
+        for (company, _) in self.issuers.iter() {
+            let Ok(finance) = self.finance(company) else {
+                continue;
+            };
+            for fact in finance.issuer_repurchase_facts()? {
+                if !bound_events.contains(&fact.event_id) {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "公司 {} 存在未绑定账簿的回购声明 {}",
+                        company.0, fact.event_id
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 校验 Session 配股／增发账簿与 Simple 账面事实的跨域对应。
+    pub fn validate_rights_offering_books(
+        &self,
+        books: &[super::rights_offering::RightsOfferingBook],
+    ) -> Result<(), CompanySystemError> {
+        use std::collections::BTreeSet;
+        let mut seen_events = BTreeSet::new();
+        for book in books {
+            let plan = book.plan();
+            if !seen_events.insert(plan.event_id.clone()) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "配股事件 {} 重复出现账簿",
+                    plan.event_id
+                )));
+            }
+            let issuer = self.issuers.get(&plan.issuer).ok_or_else(|| {
+                CompanySystemError::Invalid(format!("配股账簿引用未知发行人 {}", plan.issuer.0))
+            })?;
+            if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "配股事件 {} 的证券与发行人不匹配",
+                    plan.event_id
+                )));
+            }
+            let fact = self
+                .rights_offering_facts(&plan.issuer)?
+                .into_iter()
+                .find(|fact| fact.event_id == plan.event_id)
+                .ok_or_else(|| {
+                    CompanySystemError::Invalid(format!(
+                        "配股事件 {} 缺少 Simple 声明事实",
+                        plan.event_id
+                    ))
+                })?;
+            if fact.approved_on != plan.approved_on
+                || fact.approval_reference != plan.approval_reference
+                || fact.price_per_share != plan.price_per_share
+            {
+                return Err(CompanySystemError::Invalid(format!(
+                    "配股事件 {} 与 Simple 声明的日期、引用或价格不一致",
+                    plan.event_id
+                )));
+            }
+            let book_settled = book.settlement().map(|settlement| {
+                (
+                    settlement.settlement_on,
+                    settlement.total_paid_shares,
+                    settlement.total_paid_amount,
+                    settlement.failed,
+                )
+            });
+            let fact_settled = fact.settled_on.map(|settled_on| {
+                (
+                    settled_on,
+                    fact.issued_shares,
+                    fact
+                        .proceeds
+                        .unwrap_or(crate::accounting::AccountingAmount::from_cents(0)),
+                    fact.issued_shares == 0,
+                )
+            });
+            match (book_settled, fact_settled) {
+                (None, None) => {}
+                (Some((book_date, book_shares, book_amount, failed)), Some((fact_date, fact_shares, fact_proceeds, fact_failed)))
+                    if book_date == fact_date
+                        && book_shares == fact_shares
+                        && !failed
+                        && !fact_failed
+                        && crate::accounting::AccountingAmount::from_money(book_amount)
+                            == fact_proceeds => {}
+                // 失败路径：账簿保留「已缴款后全额退款」事实，账面按零发行登记。
+                (
+                    Some((book_date, _book_shares, _book_amount, true)),
+                    Some((fact_date, 0, _fact_proceeds, true)),
+                ) if book_date == fact_date => {}
+                _ => {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "配股事件 {} 的结算事实与 Simple 账面回填不一致",
+                        plan.event_id
+                    )));
+                }
+            }
+        }
+        let mut bound_events = BTreeSet::new();
+        for book in books {
+            bound_events.insert(book.plan().event_id.clone());
+        }
+        for (company, _) in self.issuers.iter() {
+            // 仅对「该公司确无 finance 状态」的合法缺省走过滤；读取配股事实的
+            // 其他错误显式传播，不静默吞掉。
+            let Ok(finance) = self.finance(company) else {
+                continue;
+            };
+            for fact in finance.rights_offering_facts()? {
+                if !bound_events.contains(&fact.event_id) {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "公司 {} 存在未绑定账簿的配股声明 {}",
+                        company.0, fact.event_id
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn validate_cash_dividend_books(
         &self,
         books: &[super::cash_dividend::CashDividendBook],

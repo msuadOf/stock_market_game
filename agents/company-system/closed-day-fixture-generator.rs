@@ -22,6 +22,10 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "applied_ex_reference_groups",
         // 新局默认税务模式为大 A 个人差别化；未配置股东名册时不得产生任何税账。
         "dividend_tax_books",
+        // M 批新契约字段：休市新局无配股/回购事实，必须是 Engine 生成的空数组。
+        "rights_offerings",
+        "rights_subscription_queue",
+        "issuer_repurchases",
     ] {
         if actions
             .get(field)
@@ -77,9 +81,17 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
                 .get("stock_distributions")
                 .and_then(Value::as_object)
                 .is_none_or(|rows| !rows.is_empty())
+            || finance
+                .get("rights_offerings")
+                .and_then(Value::as_object)
+                .is_none_or(|rows| !rows.is_empty())
+            || finance
+                .get("issuer_repurchases")
+                .and_then(Value::as_object)
+                .is_none_or(|rows| !rows.is_empty())
         {
             return Err(format!(
-                "休市 Simple company {company} 的 legal_facts 必须为 null 且 dividends 与 stock_distributions 必须为空对象"
+                "休市 Simple company {company} 的 legal_facts 必须为 null 且 dividends、stock_distributions、rights_offerings 与 issuer_repurchases 必须为空对象"
             )
             .into());
         }
@@ -196,6 +208,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         start_date: CivilDate::from_iso("2026-01-01")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
     };
     setup.validate()?;
 

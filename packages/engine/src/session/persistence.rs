@@ -1262,7 +1262,6 @@ pub(super) fn issuer_increase_matches_non_trading_issuance(
             || spec.kind != setup_spec.kind
             || spec.listed_stock != setup_spec.listed_stock
             || spec.group_parent != setup_spec.group_parent
-            || spec.issued_shares < setup_spec.issued_shares
         {
             return Ok(false);
         }
@@ -1278,7 +1277,9 @@ pub(super) fn issuer_increase_matches_non_trading_issuance(
             .iter()
             .find(|registry| registry.stock() == stock)
             .map(|registry| {
-                let mut total = 0_u64;
+                // 净额 = 非交易过户增发 − 回购注销核减（i128 承载方向，最终必须落在
+                // 正的 u64 发行股数域）。
+                let mut total = 0_i128;
                 for receipt in registry.receipts() {
                     if !matches!(
                         receipt.request.scope,
@@ -1287,12 +1288,26 @@ pub(super) fn issuer_increase_matches_non_trading_issuance(
                         continue;
                     }
                     for change in &receipt.request.changes {
-                        let quantity = u64::try_from(change.change).map_err(|_| {
-                            SessionError::InvalidSave("非交易过户增发数量超出 u64".into())
-                        })?;
-                        total = total.checked_add(quantity).ok_or_else(|| {
-                            SessionError::InvalidSave("非交易过户增发数量合计溢出".into())
-                        })?;
+                        total = total
+                            .checked_add(i128::from(change.change))
+                            .ok_or_else(|| {
+                                SessionError::InvalidSave("非交易过户增发数量合计溢出".into())
+                            })?;
+                    }
+                }
+                for receipt in registry.receipts() {
+                    if !matches!(
+                        receipt.request.scope,
+                        crate::company::share_registry::MovementScope::IssuerRepurchaseCancellation { .. }
+                    ) {
+                        continue;
+                    }
+                    for change in &receipt.request.changes {
+                        total = total
+                            .checked_add(i128::from(change.change))
+                            .ok_or_else(|| {
+                                SessionError::InvalidSave("回购注销核减数量合计溢出".into())
+                            })?;
                     }
                 }
                 Ok(total)
@@ -1300,12 +1315,12 @@ pub(super) fn issuer_increase_matches_non_trading_issuance(
             .transpose()
             .map_err(|error: SessionError| error)?
             .unwrap_or(0);
-        if spec.issued_shares
-            != setup_spec
-                .issued_shares
-                .checked_add(issuance)
-                .ok_or_else(|| SessionError::InvalidSave("发行人股数与增发合计溢出".into()))?
-        {
+        let expected = i128::from(setup_spec.issued_shares)
+            .checked_add(i128::from(issuance))
+            .ok_or_else(|| SessionError::InvalidSave("发行人股数与增发合计溢出".into()))?;
+        if expected <= 0 || spec.issued_shares != u64::try_from(expected).map_err(|_| {
+            SessionError::InvalidSave("发行人股数净额超出 u64".into())
+        })? {
             return Ok(false);
         }
     }
@@ -1345,7 +1360,24 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     let account_positions = save.snapshot.accounts.iter().map(|(id, account)| {
         (*id, account.positions.iter().map(|(code, position)| (code.clone(), u64::from(position.qty))).collect())
     }).collect();
-    save.corporate_actions.validate(&account_positions, &save.company_system, save.civil_clock.current_date)
+    let issuer_repurchase_account_for_validate = save
+        .setup
+        .issuer_repurchase_enabled
+        .then(|| {
+            AccountId(
+                u64::from(save.setup.npcs.retail_count)
+                    + u64::from(save.setup.npcs.inst_count)
+                    + u64::from(save.setup.npcs.hot_count)
+                    + 1,
+            )
+        })
+        .filter(|id| save.snapshot.accounts.contains_key(id));
+    save.corporate_actions.validate(
+        &account_positions,
+        &save.company_system,
+        save.civil_clock.current_date,
+        issuer_repurchase_account_for_validate,
+    )
         .map_err(|error| SessionError::InvalidSave(format!("公司行为状态非法：{error}")))?;
     let expected = save.civil_clock.current_date.prev().map_err(|error| SessionError::InvalidSave(error.to_string()))?;
     if save.company_system.advanced_through() != expected {

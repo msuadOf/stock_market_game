@@ -54,6 +54,8 @@ fn trading_session() -> GameSession {
         start_date: d("2030-01-01"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
     };
     GameSession::new(setup, 42).expect("compact default-stock session must be valid")
 }

@@ -78,6 +78,16 @@ impl GameSession {
                         }
                         continue;
                     }
+                    AccountKind::IssuerRepurchase => {
+                        // 回购专用账户零现金起步、不参与初始流通盘分配。
+                        if quantity != 0 {
+                            return Err(SessionError::InvalidSave(format!(
+                                "{} 回购专用账户初始持股非零",
+                                spec.code.0
+                            )));
+                        }
+                        continue;
+                    }
                 };
                 category.account_count = category
                     .account_count

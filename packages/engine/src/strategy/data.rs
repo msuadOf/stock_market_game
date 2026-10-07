@@ -134,6 +134,6 @@ pub fn decide_data(
         AccountKind::Retail => decide_retail(strategy, market, own, rng, config),
         AccountKind::Inst => decide_inst(strategy, market, own, config),
         AccountKind::Hot => decide_hot(strategy, market, own, config),
-        AccountKind::Player => Vec::new(),
+        AccountKind::Player | AccountKind::IssuerRepurchase => Vec::new(),
     }
 }

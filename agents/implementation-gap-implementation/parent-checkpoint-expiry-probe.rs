@@ -39,6 +39,8 @@ fn setup() -> SessionSetup {
         start_date: CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.into(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
     }
 }
 

@@ -190,6 +190,23 @@ pub struct Announcement {
 pub enum AnnouncementContent {
     Shock(AnnouncedEvent),
     CashDividend(CashDividendAnnouncement),
+    RightsOffering(RightsOfferingAnnouncement),
+    IssuerRepurchase(IssuerRepurchaseAnnouncement),
+}
+
+/// 已批准配股／增发方案公告（面向全体股东配股或定向增发；披露事实只含方案
+/// 条款，认购与结算结果由后续事实承载）。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RightsOfferingAnnouncement {
+    pub plan: crate::company::rights_offering::RightsOfferingEventPlan,
+}
+
+/// 已批准发行人回购方案公告。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssuerRepurchaseAnnouncement {
+    pub plan: crate::company::issuer_repurchase::IssuerRepurchasePlan,
 }
 
 /// 已批准现金分红方案公告；实际总额与授权上限分别保留。

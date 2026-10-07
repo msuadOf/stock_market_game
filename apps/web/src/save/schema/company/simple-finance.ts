@@ -37,6 +37,8 @@ function parseStockDistributionFact(value: unknown, path: string): StockDistribu
   if (credited_on !== null && credited_on < approved_on) throw new SaveSchemaError(`${path}.credited_on`, "送转入账日期不得早于批准日期")
   return { event_id, approval_reference, kind, approved_on, new_shares, par_value_per_share: par, capital_increase, registered_capital_at_approval, credited_on }
 }
+export type RightsOfferingFinanceFact = { readonly event_id: string; readonly approval_reference: string; readonly approved_on: string; readonly price_per_share: string; readonly par_value_per_share: string; readonly registered_capital_at_approval: string; readonly settled_on: string | null; readonly issued_shares: string; readonly proceeds: string | null; readonly capital_increase: string | null }
+export type IssuerRepurchaseFinanceFact = { readonly event_id: string; readonly approval_reference: string; readonly approved_on: string; readonly synthetic_funding: string; readonly purpose: "ReduceCapital" | "EmployeeIncentive" | "ConvertibleConversion" | "ValueMaintenance"; readonly spent: string | null; readonly withdrawn_remainder: string | null; readonly completed_on: string | null; readonly cancelled_shares: string; readonly cancelled_on: string | null; readonly capital_reduction: string | null }
 const I128_MAX = (1n << 127n) - 1n;
 const I128_MIN = -(1n << 127n);
 
@@ -185,7 +187,7 @@ function validateSimpleLedger(books: ReturnType<typeof parseBooks>, path: string
 
 export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财务状态") {
   const parsed = record(value, path);
-  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "legal_facts"], path);
+  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "rights_offerings", "issuer_repurchases", "legal_facts"], path);
   const kind = oneOf(parsed.kind, `${path}.kind`, ["Industrial", "Bank", "Insurance", "RealEstate"] as const);
   const company = string(parsed.company, `${path}.company`);
   if (company.trim().length === 0) throw new SaveSchemaError(`${path}.company`, "不能为空");
@@ -203,6 +205,8 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
   const legalFacts = parseDividendLegalFacts(parsed.legal_facts, `${path}.legal_facts`);
   const registeredCapital = legalFacts?.registered_capital ?? null;
   const stock_distributions = map(parsed.stock_distributions, `${path}.stock_distributions`, stringKey, parseStockDistributionFact);
+  const rights_offerings = map(parsed.rights_offerings, `${path}.rights_offerings`, stringKey, parseRightsOfferingFinanceFact);
+  const issuer_repurchases = map(parsed.issuer_repurchases, `${path}.issuer_repurchases`, stringKey, parseIssuerRepurchaseFinanceFact);
   // 送转入账按 面值×新增股数 演进注册资本法定事实；分红与送转声明冻结的是各自
   // 批准时点的注册资本。按「当前法定注册资本 − 批准日当天及之后才入账的送转股本
   // 增加」重构批准时点口径：批准发生在日内、送转入账发生在日终，批准日当天的
@@ -213,6 +217,12 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     let capital = registeredCapitalMinor;
     for (const fact of Object.values(stock_distributions)) {
       if (fact.credited_on !== null && fact.credited_on >= approvedOn) capital -= accountingMinorUnits(fact.capital_increase);
+    }
+    for (const fact of Object.values(rights_offerings)) {
+      if (fact.settled_on !== null && fact.settled_on >= approvedOn) capital -= accountingMinorUnits(fact.capital_increase ?? "0.00");
+    }
+    for (const fact of Object.values(issuer_repurchases)) {
+      if (fact.cancelled_on !== null && fact.cancelled_on >= approvedOn) capital += accountingMinorUnits(fact.capital_reduction ?? "0.00");
     }
     return capital;
   };
@@ -232,6 +242,18 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.event_id`, "送转事实键与事件身份不一致");
     if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.approved_on`, "送转批准日期不得早于公司开账日");
     if (registeredCapital === null || accountingMinorUnits(fact.registered_capital_at_approval) !== capitalAtApproval(fact.approved_on)) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.registered_capital_at_approval`, "送转声明的注册资本与公司绑定法定事实不一致");
+  }
+  for (const [eventId, fact] of Object.entries(rights_offerings)) {
+    if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.rights_offerings.${eventId}.event_id`, "配股事实键与事件身份不一致");
+    if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.rights_offerings.${eventId}.approved_on`, "配股批准日期不得早于公司开账日");
+    if (registeredCapital === null || accountingMinorUnits(fact.registered_capital_at_approval) !== capitalAtApproval(fact.approved_on)) throw new SaveSchemaError(`${path}.rights_offerings.${eventId}.registered_capital_at_approval`, "配股声明的注册资本与公司绑定法定事实不一致");
+    if (fact.settled_on !== null && fact.settled_on < fact.approved_on) throw new SaveSchemaError(`${path}.rights_offerings.${eventId}.settled_on`, "配股结算日期不得早于批准日期");
+  }
+  for (const [eventId, fact] of Object.entries(issuer_repurchases)) {
+    if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.event_id`, "回购事实键与事件身份不一致");
+    if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.approved_on`, "回购批准日期不得早于公司开账日");
+    if (fact.completed_on !== null && (fact.spent === null || fact.withdrawn_remainder === null || fact.completed_on < fact.approved_on || accountingMinorUnits(fact.spent) + accountingMinorUnits(fact.withdrawn_remainder) !== accountingMinorUnits(fact.synthetic_funding))) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.completed_on`, "回购完成回填与获批额度不一致");
+    if ((fact.cancelled_shares !== "0" || fact.cancelled_on !== null) && (fact.completed_on === null || fact.cancelled_on === null || fact.cancelled_shares === "0" || fact.capital_reduction === null)) throw new SaveSchemaError(`${path}.issuer_repurchases.${eventId}.cancelled_on`, "回购注销回填字段不完整");
   }
   validateDividendBooks(dividends, books, path);
   const ledgerBalances = validateSimpleLedger(books, path);
@@ -260,5 +282,52 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     return [start, end] as const;
   });
   if (through !== asOf) throw new SaveSchemaError(`${path}.recognized_periods`, "已确认期间必须覆盖开账后至当前财务日期");
-  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, legal_facts: legalFacts };
+  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, rights_offerings, issuer_repurchases, legal_facts: legalFacts };
+}
+
+/// 配股账面事实（声明即冻结；结算回填 issued_shares/proceeds/capital_increase）。
+function parseRightsOfferingFinanceFact(value: unknown, path: string): RightsOfferingFinanceFact {
+  const parsed = record(value, path)
+  exact(parsed, ["event_id", "approval_reference", "approved_on", "price_per_share", "par_value_per_share", "registered_capital_at_approval", "settled_on", "issued_shares", "proceeds", "capital_increase"], path)
+  const event_id = string(parsed.event_id, `${path}.event_id`)
+  const approval_reference = string(parsed.approval_reference, `${path}.approval_reference`)
+  const approved_on = civilDate(parsed.approved_on, `${path}.approved_on`)
+  const settled_on = parsed.settled_on === null ? null : civilDate(parsed.settled_on, `${path}.settled_on`)
+  if (!event_id.trim() || !approval_reference.trim()) throw new SaveSchemaError(path, "配股事实身份与批准引用不能为空")
+  const price = string(parsed.price_per_share, `${path}.price_per_share`)
+  const par = string(parsed.par_value_per_share, `${path}.par_value_per_share`)
+  if (!/^[1-9]\d*$/.test(price) || !/^[1-9]\d*$/.test(par) || BigInt(price) < BigInt(par)) throw new SaveSchemaError(path, "配股发行价必须为不低于面值的正整数分")
+  const registered_capital_at_approval = simpleAmount(parsed.registered_capital_at_approval, `${path}.registered_capital_at_approval`, true)
+  const issued_shares = string(parsed.issued_shares, `${path}.issued_shares`)
+  if (!/^(0|[1-9]\d*)$/.test(issued_shares)) throw new SaveSchemaError(`${path}.issued_shares`, "配股认购股数必须为规范 u64 十进制字符串")
+  const proceeds = parsed.proceeds === null ? null : simpleAmount(parsed.proceeds, `${path}.proceeds`, true)
+  const capital_increase = parsed.capital_increase === null ? null : simpleAmount(parsed.capital_increase, `${path}.capital_increase`, true)
+  if (settled_on !== null) {
+    if (proceeds === null || capital_increase === null) throw new SaveSchemaError(path, "配股结算回填字段不完整")
+    if (accountingMinorUnits(proceeds) !== BigInt(price) * BigInt(issued_shares)) throw new SaveSchemaError(path, "配股募集资金必须等于发行价乘以认购股数")
+    if (accountingMinorUnits(capital_increase) !== BigInt(par) * BigInt(issued_shares)) throw new SaveSchemaError(path, "配股股本增加必须等于面值乘以认购股数")
+  } else if (proceeds !== null || capital_increase !== null || issued_shares !== "0") {
+    throw new SaveSchemaError(path, "未结算的配股事实不得携带回填字段或非零股数")
+  }
+  return { event_id, approval_reference, approved_on, price_per_share: price, par_value_per_share: par, registered_capital_at_approval, settled_on, issued_shares, proceeds, capital_increase }
+}
+
+/// 回购账面事实（合成资金来源；完成/注销回填）。
+function parseIssuerRepurchaseFinanceFact(value: unknown, path: string): IssuerRepurchaseFinanceFact {
+  const parsed = record(value, path)
+  exact(parsed, ["event_id", "approval_reference", "approved_on", "synthetic_funding", "purpose", "spent", "withdrawn_remainder", "completed_on", "cancelled_shares", "cancelled_on", "capital_reduction"], path)
+  const event_id = string(parsed.event_id, `${path}.event_id`)
+  const approval_reference = string(parsed.approval_reference, `${path}.approval_reference`)
+  const approved_on = civilDate(parsed.approved_on, `${path}.approved_on`)
+  const completed_on = parsed.completed_on === null ? null : civilDate(parsed.completed_on, `${path}.completed_on`)
+  const cancelled_on = parsed.cancelled_on === null ? null : civilDate(parsed.cancelled_on, `${path}.cancelled_on`)
+  if (!event_id.trim() || !approval_reference.trim()) throw new SaveSchemaError(path, "回购事实身份与批准引用不能为空")
+  const purpose = oneOf(parsed.purpose, `${path}.purpose`, ["ReduceCapital", "EmployeeIncentive", "ConvertibleConversion", "ValueMaintenance"] as const)
+  const synthetic_funding = simpleAmount(parsed.synthetic_funding, `${path}.synthetic_funding`, true)
+  const spent = parsed.spent === null ? null : simpleAmount(parsed.spent, `${path}.spent`, true)
+  const withdrawn_remainder = parsed.withdrawn_remainder === null ? null : simpleAmount(parsed.withdrawn_remainder, `${path}.withdrawn_remainder`, true)
+  const cancelled_shares = string(parsed.cancelled_shares, `${path}.cancelled_shares`)
+  if (!/^(0|[1-9]\d*)$/.test(cancelled_shares)) throw new SaveSchemaError(`${path}.cancelled_shares`, "回购注销股数必须为规范 u64 十进制字符串")
+  const capital_reduction = parsed.capital_reduction === null ? null : simpleAmount(parsed.capital_reduction, `${path}.capital_reduction`, true)
+  return { event_id, approval_reference, approved_on, synthetic_funding, purpose, spent, withdrawn_remainder, completed_on, cancelled_shares, cancelled_on, capital_reduction }
 }

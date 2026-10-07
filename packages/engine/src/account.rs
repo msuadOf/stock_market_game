@@ -42,6 +42,10 @@ pub enum AccountKind {
     Hot,
     /// 玩家（真人，strategy=None）。
     Player,
+    /// 发行人回购专用账户（ADR-0038）：真实交易账户，但不是玩家也不是 NPC
+    /// 策略主体——委托由回购方案执行器产生；其名册身份是 IssuerTreasury
+    /// （专户股份失权，不参与分红/送转/配售）。
+    IssuerRepurchase,
 }
 
 /// 账户操作失败。绝不静默吞掉（铁律二），错误携带上下文。
@@ -174,6 +178,44 @@ impl Account {
                     },
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// 回购注销核减：只减少持仓数量（须为可卖股份，即 T+1 已解锁），不动现金与
+    /// invested/recovered 累计。注销股份离开投资者可交易域，由公司股本核减承接。
+    pub(crate) fn write_down_position_shares(
+        &mut self,
+        code: StockCode,
+        qty: u64,
+    ) -> Result<(), AccountError> {
+        let removed = u32::try_from(qty).map_err(|_| AccountError::InvalidShareCredit {
+            code: code.clone(),
+            qty,
+        })?;
+        if removed == 0 {
+            return Err(AccountError::InvalidShareCredit { code, qty });
+        }
+        let state = Arc::make_mut(&mut self.state);
+        let position = state
+            .positions
+            .get_mut(&code)
+            .ok_or(AccountError::InsufficientShares {
+                code: code.clone(),
+                needed: removed,
+                have: 0,
+            })?;
+        let sellable = position.qty - position.t1_locked;
+        if removed > sellable {
+            return Err(AccountError::InsufficientShares {
+                code,
+                needed: removed,
+                have: sellable,
+            });
+        }
+        position.qty -= removed;
+        if position.qty == 0 {
+            state.positions.remove(&code);
         }
         Ok(())
     }

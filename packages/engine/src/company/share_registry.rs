@@ -126,6 +126,10 @@ pub struct ShareDayRequest {
 pub enum MovementScope {
     PublicMarket,
     NonTradingTransfer { basis: String },
+    /// 发行人回购注销：从回购专户（IssuerTreasury）核减已回购股份并同额减少
+    /// 已发行股数（《公司法》第 162 条／证监会回购规则第 17 条）。只允许对
+    /// IssuerTreasury 的单一负向净变动；注销不除权（无官方除权条文，登记口径）。
+    IssuerRepurchaseCancellation { basis: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -345,10 +349,14 @@ impl ShareRegistry {
                 return Err(error("share lot identity reused"));
             }
         }
-        // 非交易过户（公司行为送转入账）允许与当日公开市场日结共用同一自然日：
-        // 公开市场日结先落账并推进 settled_on，送转新股在同一 settled_on 上追加。
+        // 非交易过户（公司行为送转入账／回购注销）允许与当日公开市场日结共用同一
+        // 自然日：公开市场日结先落账并推进 settled_on，公司行为在同一 settled_on 上追加。
         let same_day_non_trading = request.day == self.settled_on
-            && matches!(request.scope, MovementScope::NonTradingTransfer { .. });
+            && matches!(
+                request.scope,
+                MovementScope::NonTradingTransfer { .. }
+                    | MovementScope::IssuerRepurchaseCancellation { .. }
+            );
         if !same_day_non_trading && request.day.days_since(self.settled_on) != 1 {
             return Err(error("day settlement must follow the previous natural day"));
         }
@@ -441,11 +449,28 @@ impl ShareRegistry {
             }
         }
         let receipt = ShareDayReceipt { request, disposals };
-        if matches!(receipt.request.scope, MovementScope::NonTradingTransfer { .. }) {
-            candidate.issued_shares = candidate
-                .issued_shares
-                .checked_add(issued_new_shares)
-                .ok_or_else(|| error("issued share increase overflow"))?;
+        match &receipt.request.scope {
+            MovementScope::NonTradingTransfer { .. } => {
+                candidate.issued_shares = candidate
+                    .issued_shares
+                    .checked_add(issued_new_shares)
+                    .ok_or_else(|| error("issued share increase overflow"))?;
+            }
+            MovementScope::IssuerRepurchaseCancellation { .. } => {
+                let net: i128 = receipt
+                    .request
+                    .changes
+                    .iter()
+                    .map(|change| change.change)
+                    .sum();
+                let cancelled = u64::try_from(net.unsigned_abs())
+                    .map_err(|_| error("issuer repurchase cancellation total underflow"))?;
+                candidate.issued_shares = candidate
+                    .issued_shares
+                    .checked_sub(cancelled)
+                    .ok_or_else(|| error("issuer repurchase cancellation underflows issued shares"))?;
+            }
+            MovementScope::PublicMarket => {}
         }
         if !same_day_non_trading {
             candidate.settled_on = receipt.request.day;
@@ -529,6 +554,11 @@ impl ShareRegistry {
                         receipt.request.day.days_since(previous) == 1
                     }
                     MovementScope::NonTradingTransfer { .. } => receipt.request.day == previous,
+                    // 回购注销是独立的公司行为事件：允许与上一回执同日或其后任意
+                    // 自然日（注销日期由方案决定，不与公开市场日结逐日绑定）。
+                    MovementScope::IssuerRepurchaseCancellation { .. } => {
+                        receipt.request.day >= previous
+                    }
                 };
                 if !consecutive {
                     return Err(error("settlement receipt dates are not consecutive"));
@@ -603,23 +633,30 @@ impl ShareRegistry {
                     "registration settled receipt count exceeds the stored settlement history",
                 ));
             }
-            let mut issued_after_registration = 0_u64;
+            let mut issued_after_registration = 0_i128;
             for receipt in self.receipts.iter().skip(settled_receipts) {
-                if !matches!(receipt.request.scope, MovementScope::NonTradingTransfer { .. }) {
-                    continue;
-                }
-                for change in &receipt.request.changes {
-                    let issuance = u64::try_from(change.change)
-                        .map_err(|_| error("non-trading issuance exceeds u64"))?;
-                    issued_after_registration = issued_after_registration
-                        .checked_add(issuance)
-                        .ok_or_else(|| error("issued share replay overflow"))?;
+                match receipt.request.scope {
+                    MovementScope::PublicMarket => continue,
+                    MovementScope::NonTradingTransfer { .. } => {
+                        for change in &receipt.request.changes {
+                            issued_after_registration = issued_after_registration
+                                .checked_add(i128::from(change.change))
+                                .ok_or_else(|| error("issued share replay overflow"))?;
+                        }
+                    }
+                    MovementScope::IssuerRepurchaseCancellation { .. } => {
+                        for change in &receipt.request.changes {
+                            issued_after_registration = issued_after_registration
+                                .checked_add(i128::from(change.change))
+                                .ok_or_else(|| error("issued share replay overflow"))?;
+                        }
+                    }
                 }
             }
-            let issued_at_registration = self
-                .issued_shares
-                .checked_sub(issued_after_registration)
-                .ok_or_else(|| error("issued share replay underflow"))?;
+            let issued_at_registration = u64::try_from(
+                i128::from(self.issued_shares) - issued_after_registration,
+            )
+            .map_err(|_| error("issued share replay underflow"))?;
             if snapshot.event_id.trim().is_empty()
                 || !registration_ids.insert(&snapshot.event_id)
                 || snapshot.stock != self.stock
@@ -765,12 +802,38 @@ fn validate_holdings(
 
 fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError> {
     let non_trading = matches!(request.scope, MovementScope::NonTradingTransfer { .. });
-    if non_trading
-        && matches!(&request.scope, MovementScope::NonTradingTransfer { basis } if basis.trim().is_empty())
-    {
+    if matches!(
+        &request.scope,
+        MovementScope::NonTradingTransfer { basis }
+            if basis.trim().is_empty()
+    ) || matches!(
+        &request.scope,
+        MovementScope::IssuerRepurchaseCancellation { basis }
+            if basis.trim().is_empty()
+    ) {
         return Err(error(
             "non-trading transfer requires a nonempty legal basis reference",
         ));
+    }
+    let is_cancellation =
+        matches!(request.scope, MovementScope::IssuerRepurchaseCancellation { .. });
+    if is_cancellation {
+        if request.changes.len() != 1 {
+            return Err(error(
+                "issuer repurchase cancellation must carry exactly one treasury reduction",
+            ));
+        }
+        let change = &request.changes[0];
+        if change.holder != HolderId::IssuerTreasury || change.change >= 0 {
+            return Err(error(
+                "issuer repurchase cancellation must reduce the issuer treasury holder only",
+            ));
+        }
+        if change.acquisition.is_some() {
+            return Err(error(
+                "cancellation cannot create acquisition lots",
+            ));
+        }
     }
     if request.event_id.trim().is_empty() {
         return Err(error("empty daily settlement identity"));
@@ -834,6 +897,12 @@ fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError>
         if total <= 0 {
             return Err(error(
                 "non-trading transfer must issue a positive number of new shares",
+            ));
+        }
+    } else if is_cancellation {
+        if total >= 0 {
+            return Err(error(
+                "issuer repurchase cancellation must strictly reduce issued shares",
             ));
         }
     } else if total != 0 {

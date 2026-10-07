@@ -58,6 +58,8 @@ fn session_on(date: &str) -> ProtocolSession {
             start_date: CivilDate::from_iso(date).unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.into(),
             dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            rights_offering_enabled: false,
+            issuer_repurchase_enabled: false,
         },
         42,
     )

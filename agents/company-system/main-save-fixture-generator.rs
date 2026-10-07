@@ -5,6 +5,8 @@
 // 公司数/公司行为空事实，并验证 ProtocolSession::restore 后重新保存深度相等。
 // 本批（P 批公司行为偏好）起 setup 各公司必须显式携带 preferences 字段；
 // fixture 保持「未配置偏好」的行为中性默认（不自动产生方案）。
+// M 批（配股／增发与回购机制）起新局必须显式携带双开关（默认 false），
+// 守卫同时验证 corporate_actions 机制账簿为空（本场景无配股/回购）。
 
 use engine::session::protocol::ProtocolSession;
 use engine::{
@@ -44,6 +46,9 @@ fn validate_main_save(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "registries",
         "dividends",
         "stock_distributions",
+        "rights_offerings",
+        "rights_subscription_queue",
+        "issuer_repurchases",
         "account_gross_receipts",
         "external_receipts",
         "applied_ex_reference_groups",
@@ -227,6 +232,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         start_date: CivilDate::from_iso("2030-01-07")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::IndividualPublicMarket,
+        // 主档保持机制关闭（M 批严格持久化新开关，默认 false）。
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
     };
     setup.validate()?;
 

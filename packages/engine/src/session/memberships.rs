@@ -130,10 +130,14 @@ impl MarketMembershipState {
                 "初始账户0缺少经济成员关系".into(),
             ));
         }
-        let expected: BTreeSet<_> = accounts
+        let mut expected: BTreeSet<_> = accounts
             .into_iter()
             .chain((1..=npc_count).map(AccountId))
             .collect();
+        if save.setup.issuer_repurchase_enabled {
+            // 发行人回购专用账户：开关开启时确定性创建于 NPC 序列之后。
+            expected.insert(AccountId(npc_count.saturating_add(1)));
+        }
         if expected != save.snapshot.accounts.keys().copied().collect() {
             return Err(SessionError::InvalidSave(
                 "账户集合必须恰好为NPC与市场成员账户".into(),

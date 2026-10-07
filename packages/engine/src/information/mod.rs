@@ -44,6 +44,7 @@ pub use publication::{
     APPROVAL_HOUR, AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementContent,
     AnnouncementRequest, CashDividendAnnouncement, DISCLOSURE_PHASE_SECOND, PublicationId,
     PublicationOrigin, PublicationRequest, PublicationSource, PublishedReport,
+    RightsOfferingAnnouncement, IssuerRepurchaseAnnouncement,
 };
 mod monthly_schedule;
 pub use monthly_schedule::{MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule};

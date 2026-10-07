@@ -151,6 +151,10 @@ export const DEFAULT_SETUP: SessionSetup = {
   // 新局默认税务模式：大 A 个人差别化（2026-10-06 产品决策）；
   // 新局创建界面可显式改为不扣税。
   dividend_tax_mode: "IndividualPublicMarket",
+  // 公司行为机制开关（2026-10-07 产品决策，ADR-0038/0039）：两个独立开关，
+  // 默认关闭；仅对新游戏生效，随存档严格固化。
+  rights_offering_enabled: false,
+  issuer_repurchase_enabled: false,
   company_system: {
     mode: "Simple",
     config: {

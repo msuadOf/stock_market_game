@@ -48,6 +48,31 @@ impl IssuerRegistry {
             .ok_or_else(|| CompanySystemError::Invalid("已发行股数溢出".into()))?;
         Ok(())
     }
+    /// 记录一次回购注销带来的已发行股数减少（守恒：不得减至非正数）。
+    ///
+    /// 调用方必须已按事件身份幂等去重；本登记表不追踪事件身份。
+    pub fn record_share_cancellation(
+        &mut self,
+        company: &CompanyId,
+        cancelled: u64,
+    ) -> Result<(), CompanySystemError> {
+        if cancelled == 0 {
+            return Err(CompanySystemError::Invalid(
+                "回购注销股数必须为正数".into(),
+            ));
+        }
+        let spec = self
+            .0
+            .get_mut(company)
+            .ok_or_else(|| CompanySystemError::Invalid(format!("未知公司 {}", company.0)))?;
+        if spec.issued_shares <= cancelled {
+            return Err(CompanySystemError::Invalid(
+                "回购注销后已发行股数必须保持正数".into(),
+            ));
+        }
+        spec.issued_shares -= cancelled;
+        Ok(())
+    }
     pub fn iter(&self) -> impl Iterator<Item = (&CompanyId, &CompanySpec)> {
         self.0.iter()
     }

@@ -53,6 +53,8 @@ impl SimpleFinanceState {
             recognized_periods: Vec::new(),
             dividends: std::collections::BTreeMap::new(),
             stock_distributions: std::collections::BTreeMap::new(),
+            rights_offerings: std::collections::BTreeMap::new(),
+            issuer_repurchases: std::collections::BTreeMap::new(),
             legal_facts: RequiredOption(None),
         };
         state.validate()?;
