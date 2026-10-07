@@ -314,8 +314,10 @@ impl NpcAttentionScheduler {
                 due.push(id);
             }
         }
-        due.sort_unstable();
-        due.dedup();
+        // 用户已授权放宽：到期 NPC 不要求按 ID 排序，只要求每账户恰一次。
+        // HashSet 去重替代 sort+dedup，保留"每账户恰一次"性质。
+        let mut seen = std::collections::HashSet::new();
+        due.retain(|id| seen.insert(*id));
         (due, popped)
     }
 }

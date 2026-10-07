@@ -630,12 +630,14 @@ impl GameSession {
                 "计划链的 SealAllocationSnapshot 观察时钟与 tick 不一致".to_owned(),
             ));
         }
+        // 用户已授权放宽：计划链根账户不要求按 ID 排序，只要求唯一不重复。
+        let mut seen = std::collections::HashSet::new();
         if accepted_due_npc_ids
-            .windows(2)
-            .any(|pair| pair[0] >= pair[1])
+            .iter()
+            .any(|account| !seen.insert(*account))
         {
             return Err(invariant(
-                "plan-chain root accounts are not canonical and unique".to_owned(),
+                "plan-chain root accounts are not unique".to_owned(),
             ));
         }
         for id in accepted_due_npc_ids {

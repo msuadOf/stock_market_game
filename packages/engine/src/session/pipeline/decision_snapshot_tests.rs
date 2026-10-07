@@ -98,12 +98,14 @@ fn decision_snapshot_owns_immutable_inputs_in_canonical_account_order() {
 }
 
 #[test]
-fn decision_snapshot_rejects_noncanonical_or_missing_due_accounts() {
+fn decision_snapshot_rejects_duplicate_or_missing_due_accounts() {
     let first = AccountId(1);
     let second = AccountId(2);
     let mut accounts = BTreeMap::new();
     accounts.insert(first, account_input());
 
+    // 用户已授权放宽：到期账户不要求按 ID 排序，[2,1] 是合法的到达序。
+    // 但 account 2 不在 accounts map 中 → MissingAccount
     assert!(matches!(
         DecisionSnapshot::new(
             7,
@@ -113,6 +115,20 @@ fn decision_snapshot_rejects_noncanonical_or_missing_due_accounts() {
             market(7, 11),
             None,
             vec![second, first],
+            accounts.clone(),
+        ),
+        Err(DecisionSnapshotError::MissingAccount(id)) if id == second
+    ));
+    // 重复账户仍被拒绝（每账户恰一次是正确性约束，不是排序要求）
+    assert!(matches!(
+        DecisionSnapshot::new(
+            7,
+            42,
+            crate::TradingPhase::Continuous,
+            11,
+            market(7, 11),
+            None,
+            vec![first, first],
             accounts.clone(),
         ),
         Err(DecisionSnapshotError::NonCanonicalDueAccounts)

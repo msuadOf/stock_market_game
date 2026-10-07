@@ -194,10 +194,7 @@ pub(in crate::session) fn project_npc_account_on(
     if source.accounts().len() != 1
         || source.account_outputs().len() != 1
         || source.accounts()[0] != source.account_outputs()[0].account()
-        || snapshot
-            .due_npc_ids()
-            .binary_search(&source.accounts()[0])
-            .is_err()
+        || !snapshot.due_npc_ids().contains(&source.accounts()[0])
     {
         return Err(NpcDecisionProjectionError::AccountOrderMismatch);
     }

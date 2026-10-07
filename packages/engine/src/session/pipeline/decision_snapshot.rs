@@ -166,7 +166,9 @@ impl DecisionSnapshot {
                 market_view_minute: market.market_minute,
             });
         }
-        if due_npc_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        // 用户已授权放宽：到期账户不要求按 ID 排序，只要求唯一不重复。
+        let mut seen = std::collections::HashSet::new();
+        if due_npc_ids.iter().any(|account| !seen.insert(*account)) {
             return Err(DecisionSnapshotError::NonCanonicalDueAccounts);
         }
         if let Some(missing) = due_npc_ids
