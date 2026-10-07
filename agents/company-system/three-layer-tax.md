@@ -105,6 +105,15 @@
   `flat_withholding_receipts:[]`，restore/resave 深等过；三 fixture + company 切片
   已安装并被 web 消费组验证。
 
+## 独立复核与修复轮
+
+非作者 subagent（code-review）对完整 diff（5bdf0953..86560edf）静态独立复核：
+结论 pass，2 minor + 3 note，无 blocker/major；三问（大 A 语义/必要性与最小范围/
+跨层一致性）均通过。五项发现已全部修复并提交（594875d4）：负数 gross 防御、
+比例输入受控化+显式失同步提示、重复分支合并、validate 比例域复验、引擎侧
+篡改五向负例；修复后受影响组复跑全绿（dividend_tax_mode_tests 20/20）。
+复核者未运行测试（声明静态审查），动态证据以本台账验证节为准。
+
 ## 未完成边界与遗留
 
 - Tauri/远程宿主的税务状态查询与配置入口（既有遗留，非本批范围）。
