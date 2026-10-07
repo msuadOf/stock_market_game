@@ -37,7 +37,9 @@ pub(in crate::session) struct SessionReadView<'a> {
     pub(in crate::session) markets: &'a BTreeMap<StockId, crate::Market>,
     pub(in crate::session) auction_orders: &'a BTreeMap<StockId, Vec<crate::AuctionOrderSnap>>,
     pub(in crate::session) envelope_ledger: &'a EnvelopeLedger,
-    pub(in crate::session) npc_order_lifecycles: &'a [NpcOrderLifecycle],
+    /// owned 克隆快照：queue 侧 remove_npc_order_lifecycle 会写此字段（orders.rs:163），
+    /// prepare 侧读快照与写侧天然隔离（同 accounts 模式）。
+    pub(in crate::session) npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     pub(in crate::session) price_history: &'a BTreeMap<StockId, VecDeque<crate::Money>>,
     pub(in crate::session) market_minute_closes: &'a BTreeMap<StockId, Vec<MarketMinuteClose>>,
     pub(in crate::session) candle_book: &'a SessionCandleBook,
@@ -66,7 +68,7 @@ impl GameSession {
             markets: &self.state.markets,
             auction_orders: &self.state.auction_orders,
             envelope_ledger: &self.state.envelope_ledger,
-            npc_order_lifecycles: &self.state.npc_order_lifecycles,
+            npc_order_lifecycles: self.state.npc_order_lifecycles.clone(),
             price_history: &self.state.price_history,
             market_minute_closes: &self.state.market_minute_closes,
             candle_book: &self.state.candle_book,
@@ -102,6 +104,8 @@ pub(in crate::session) struct NpcWriteFields<'a> {
     /// 机构母单物化（materialize_parent_order_intents）。
     pub(in crate::session) parent_orders:
         &'a mut BTreeMap<crate::AccountId, BTreeMap<StockId, ParentOrderPlan>>,
+    /// 母单成交后续发时移除对应生命周期（orders.rs:163，第 12 写字段）。
+    pub(in crate::session) npc_order_lifecycles: &'a mut Vec<NpcOrderLifecycle>,
 }
 
 /// 不相交字段借用拆分。返回的两组可同时安全使用；`accounts` 读写两侧各持一份
@@ -117,7 +121,7 @@ pub(in crate::session) fn npc_split(
         markets: &state.markets,
         auction_orders: &state.auction_orders,
         envelope_ledger: &state.envelope_ledger,
-        npc_order_lifecycles: &state.npc_order_lifecycles,
+        npc_order_lifecycles: state.npc_order_lifecycles.clone(),
         price_history: &state.price_history,
         market_minute_closes: &state.market_minute_closes,
         candle_book: &state.candle_book,
@@ -143,6 +147,7 @@ pub(in crate::session) fn npc_split(
         history_reads: &mut state.history_reads,
         plans: &mut state.plans,
         parent_orders: &mut state.parent_orders,
+        npc_order_lifecycles: &mut state.npc_order_lifecycles,
     };
     (read, write)
 }
@@ -248,6 +253,7 @@ pub(in crate::session) fn npc_writes(session: &mut GameSession) -> NpcWriteField
         history_reads: &mut state.history_reads,
         plans: &mut state.plans,
         parent_orders: &mut state.parent_orders,
+        npc_order_lifecycles: &mut state.npc_order_lifecycles,
     }
 }
 
@@ -312,6 +318,23 @@ mod tests {
         // 写侧在 live map 上生效，读侧快照保持拆分时刻的值。
         assert_eq!(live_cash.0.cents(), cash_before.cents() + 100);
         assert_eq!(live_cash.1, cash_before);
+        // lifecycles 快照与写侧隔离：join 内 push 不进读侧。
+        let lifecycles_before = view.npc_order_lifecycles.len();
+        let (pushed, seen) = rayon::join(
+            || {
+                writes.npc_order_lifecycles.push(crate::session::NpcOrderLifecycle {
+                    account: account,
+                    code: StockId(0),
+                    order_id: crate::OrderId(999),
+                    placed_market_minute: 0,
+                    expires_market_minute: 1,
+                });
+                writes.npc_order_lifecycles.len()
+            },
+            || view.npc_order_lifecycles.len(),
+        );
+        assert_eq!(pushed, lifecycles_before + 1);
+        assert_eq!(seen, lifecycles_before);
         // 读视图的其余字段与拆分时刻一致（抽样）。
         assert_eq!(view.tick, tick_before);
         assert_eq!(view.seed, seed_before);
