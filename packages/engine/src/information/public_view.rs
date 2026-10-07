@@ -99,6 +99,20 @@ fn validate_announcement_content(
             }
             Ok(())
         }
+        AnnouncementContent::ShareSplit(plan) => {
+            plan.validate()
+                .map_err(|error| InformationError::InconsistentLibrary {
+                    detail: format!("invalid share split announcement: {error}"),
+                })?;
+            if &plan.issuer != company || plan.announced_on != occurred_on {
+                return Err(InformationError::InconsistentLibrary {
+                    detail: format!(
+                        "share split announcement does not match issuer/date on {occurred_on}"
+                    ),
+                });
+            }
+            Ok(())
+        }
     }
 }
 

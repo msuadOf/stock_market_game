@@ -116,7 +116,8 @@ fn failed_operating_payment_is_published_once_at_day_end() {
                 engine::information::AnnouncementContent::Shock(event) => event.kind.clone(),
                 engine::information::AnnouncementContent::CashDividend(_)
                 | engine::information::AnnouncementContent::RightsOffering(_)
-                | engine::information::AnnouncementContent::IssuerRepurchase(_) =>
+                | engine::information::AnnouncementContent::IssuerRepurchase(_)
+                | engine::information::AnnouncementContent::ShareSplit(_) =>
                     panic!("payment failure must be a shock announcement"),
             },
             engine::company::ShockKind::PaymentFailure {

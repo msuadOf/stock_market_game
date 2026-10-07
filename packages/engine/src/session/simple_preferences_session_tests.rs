@@ -1118,6 +1118,79 @@ fn auto_stock_proposal_rejected_when_same_ex_date_rights_offering_exists() {
 }
 
 #[test]
+fn auto_stock_proposal_rejected_when_same_ex_date_split_event_exists() {
+    // 同除权日既存在拆股／缩股事件时，自动送转提案被拒：重新计值×送转同日
+    // 的合并除权口径未核实，除权日日结会显式失败，自动提案不得叠加；拒绝
+    // 如实记入偏好台账且日结不 poison。
+    let (mut session, issuer, stock) = session_with_registry(
+        stock_preference(1, 100_000, 1_000_000_000, 1),
+        205,
+        10_000_000,
+    );
+    let exchange = crate::calendar::CalendarExchange::Sse;
+    let calendar = session.state.civil_clock.calendar().clone();
+    // 显式缩股方案上一周期批准：R=2030-03-04、除权日 2030-03-05，与第二周期
+    // 自动送转提案推导的除权日重合（测试侧独立推导对拍，避免与实现共用同一
+    // 推导而循环自证）。面值权威：注册资本 10,000,000 分 ÷ 10,000,000 股 =
+    // 1 分；2 并 1 → 新面值 2 分（整除放大成立）。
+    advance_to(&mut session, d("2030-01-21"));
+    let (registered_on, ex_on) = schedule_after_announcement(&calendar, exchange, d("2030-03-01"));
+    let split_plan = crate::company::share_split::ShareSplitEventPlan {
+        event_id: "split-same-ex-collision".into(),
+        approval_reference: "split collision fixture".into(),
+        issuer: issuer.clone(),
+        stock: stock.clone(),
+        exchange,
+        direction: crate::company::share_split::ShareSplitDirection::Consolidate,
+        ratio: 2,
+        approved_on: d("2030-01-21"),
+        announced_on: d("2030-03-01"),
+        registered_on,
+        ex_rights_on: ex_on,
+    };
+    session.approve_share_split(split_plan).unwrap();
+    advance_to(&mut session, d("2030-03-01"));
+    // 第一周期自动送转（除权日 2030-02-05）不受影响；第二周期提案与缩股同
+    // 除权日必须被拒：不新增第二本送转账簿，且现存账簿除权日不与缩股重合。
+    assert_eq!(
+        session.state.corporate_actions.stock_distributions.len(),
+        1,
+        "同除权日已有拆股／缩股事件时不得再叠加自动送转"
+    );
+    assert_ne!(
+        session.state.corporate_actions.stock_distributions[0]
+            .plan()
+            .ex_rights_on,
+        ex_on,
+        "被拒提案不得入账"
+    );
+    let rows = rejections(&session, &issuer);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].kind,
+        SimplePreferenceProposalKind::StockDistribution
+    );
+    assert!(
+        rows[0].detail.contains("同除权日") && rows[0].detail.contains("拆股／缩股"),
+        "拒绝原因应指向同除权日拆股／缩股叠加：{}",
+        rows[0].detail
+    );
+    // 日程走完除权日不 poison：缩股正常入账（重新计值独立成立），被拒的
+    // 自动送转不入账簿，除权日无碰撞组。
+    advance_to(&mut session, ex_on.next().unwrap());
+    assert!(session.poison_reason().is_none());
+    assert_eq!(
+        session.state.corporate_actions.share_splits.len(),
+        1,
+        "显式缩股按自身日程正常入账"
+    );
+    assert_eq!(
+        session.state.corporate_actions.share_splits[0].settled_on(),
+        Some(ex_on)
+    );
+}
+
+#[test]
 fn preference_configuration_validates_through_setup() {
     let mut setup = preference_setup(cash_preference(0, 1, 1));
     assert!(setup.validate().is_err(), "0bp 派息比例必须在装配期被拒绝");

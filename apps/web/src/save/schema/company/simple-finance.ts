@@ -39,6 +39,53 @@ function parseStockDistributionFact(value: unknown, path: string): StockDistribu
 }
 export type RightsOfferingFinanceFact = { readonly event_id: string; readonly approval_reference: string; readonly approved_on: string; readonly price_per_share: string; readonly par_value_per_share: string; readonly registered_capital_at_approval: string; readonly settled_on: string | null; readonly issued_shares: string; readonly proceeds: string | null; readonly capital_increase: string | null }
 export type IssuerRepurchaseFinanceFact = { readonly event_id: string; readonly approval_reference: string; readonly approved_on: string; readonly synthetic_funding: string; readonly purpose: "ReduceCapital" | "EmployeeIncentive" | "ConvertibleConversion" | "ValueMaintenance"; readonly spent: string | null; readonly withdrawn_remainder: string | null; readonly completed_on: string | null; readonly cancelled_shares: string; readonly cancelled_on: string | null; readonly capital_reduction: string | null }
+export type ShareSplitFinanceFact = { readonly event_id: string; readonly approval_reference: string; readonly direction: "Split" | "Consolidate"; readonly approved_on: string; readonly ratio: string; readonly par_value_before: string; readonly par_value_after: string; readonly registered_capital_at_approval: string; readonly issued_shares_before: string; readonly issued_shares_after: string; readonly destroyed_shares: string; readonly registered_capital_reduction: string; readonly settled_on: string | null }
+
+/// 拆股／缩股账面事实（声明即冻结；入账回填 issued_shares/destroyed_shares/
+/// registered_capital_reduction/settled_on）。拆股面值按整数比例整除缩小、
+/// 注册资本不变；缩股面值按整数比例放大、注册资本按旧股口径消灭面值核减。
+function parseShareSplitFinanceFact(value: unknown, path: string): ShareSplitFinanceFact {
+  const parsed = record(value, path)
+  exact(parsed, ["event_id", "approval_reference", "direction", "approved_on", "ratio", "par_value_before", "par_value_after", "registered_capital_at_approval", "issued_shares_before", "issued_shares_after", "destroyed_shares", "registered_capital_reduction", "settled_on"], path)
+  const event_id = string(parsed.event_id, `${path}.event_id`)
+  const approval_reference = string(parsed.approval_reference, `${path}.approval_reference`)
+  const approved_on = civilDate(parsed.approved_on, `${path}.approved_on`)
+  const direction = oneOf(parsed.direction, `${path}.direction`, ["Split", "Consolidate"] as const)
+  const ratio = string(parsed.ratio, `${path}.ratio`)
+  if (!/^[2-9]\d*$/.test(ratio)) throw new SaveSchemaError(`${path}.ratio`, "拆股／缩股比例必须为 ≥2 的整数")
+  if (!event_id.trim() || !approval_reference.trim()) throw new SaveSchemaError(path, "拆股／缩股事件身份与批准引用不能为空")
+  const par_before = string(parsed.par_value_before, `${path}.par_value_before`)
+  const par_after = string(parsed.par_value_after, `${path}.par_value_after`)
+  if (!/^[1-9]\d*$/.test(par_before) || !/^[1-9]\d*$/.test(par_after)) throw new SaveSchemaError(path, "拆股／缩股面值必须为正整数分")
+  if (direction === "Split") {
+    if (BigInt(par_before) % BigInt(ratio) !== 0n || BigInt(par_after) !== BigInt(par_before) / BigInt(ratio)) throw new SaveSchemaError(path, "拆股面值必须按整数比例整除缩小")
+  } else if (BigInt(par_after) !== BigInt(par_before) * BigInt(ratio)) {
+    throw new SaveSchemaError(path, "缩股面值必须按整数比例放大")
+  }
+  const registered_capital_at_approval = simpleAmount(parsed.registered_capital_at_approval, `${path}.registered_capital_at_approval`, true)
+  const issued_shares_before = string(parsed.issued_shares_before, `${path}.issued_shares_before`)
+  const issued_shares_after = string(parsed.issued_shares_after, `${path}.issued_shares_after`)
+  const destroyed_shares = string(parsed.destroyed_shares, `${path}.destroyed_shares`)
+  const registered_capital_reduction = simpleAmount(parsed.registered_capital_reduction, `${path}.registered_capital_reduction`, true)
+  const settled_on = parsed.settled_on === null ? null : civilDate(parsed.settled_on, `${path}.settled_on`)
+  if (settled_on === null) {
+    if (issued_shares_before !== "0" || issued_shares_after !== "0" || destroyed_shares !== "0" || registered_capital_reduction !== "0.00") throw new SaveSchemaError(path, "拆股／缩股入账回填字段不完整")
+  } else {
+    if (settled_on < approved_on) throw new SaveSchemaError(`${path}.settled_on`, "拆股／缩股入账日期不得早于批准日期")
+    if (!/^\d+$/.test(issued_shares_before) || !/^\d+$/.test(issued_shares_after) || !/^\d+$/.test(destroyed_shares)) throw new SaveSchemaError(path, "拆股／缩股入账股数必须为规范 u64 十进制字符串")
+    const before = BigInt(issued_shares_before), after = BigInt(issued_shares_after)
+    const destroyed = BigInt(destroyed_shares)
+    if (before === 0n || after === 0n) throw new SaveSchemaError(path, "拆股／缩股入账前后总股数必须为正")
+    if (direction === "Split") {
+      if (after !== before * BigInt(ratio) || destroyed !== 0n || registered_capital_reduction !== "0.00") throw new SaveSchemaError(path, "拆股换算必须精确放大且不核减注册资本")
+    } else {
+      if (after > before || destroyed !== before - after) throw new SaveSchemaError(path, "缩股换算不得放大总股数且消灭股数必须等于差额")
+      const oldEquivalent = before - BigInt(ratio) * after
+      if (accountingMinorUnits(registered_capital_reduction) !== BigInt(par_before) * oldEquivalent) throw new SaveSchemaError(path, "缩股核减金额必须等于旧股口径消灭面值")
+    }
+  }
+  return { event_id, approval_reference, direction, approved_on, ratio, par_value_before: par_before, par_value_after: par_after, registered_capital_at_approval, issued_shares_before, issued_shares_after, destroyed_shares, registered_capital_reduction, settled_on }
+}
 const I128_MAX = (1n << 127n) - 1n;
 const I128_MIN = -(1n << 127n);
 
@@ -187,7 +234,7 @@ function validateSimpleLedger(books: ReturnType<typeof parseBooks>, path: string
 
 export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财务状态") {
   const parsed = record(value, path);
-  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "rights_offerings", "issuer_repurchases", "legal_facts"], path);
+  exact(parsed, ["company", "kind", "config", "books", "closing", "opening_date", "as_of", "last_month", "next_event_id", "income_tax_position", "recognized_periods", "dividends", "stock_distributions", "share_splits", "rights_offerings", "issuer_repurchases", "legal_facts"], path);
   const kind = oneOf(parsed.kind, `${path}.kind`, ["Industrial", "Bank", "Insurance", "RealEstate"] as const);
   const company = string(parsed.company, `${path}.company`);
   if (company.trim().length === 0) throw new SaveSchemaError(`${path}.company`, "不能为空");
@@ -205,6 +252,7 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
   const legalFacts = parseDividendLegalFacts(parsed.legal_facts, `${path}.legal_facts`);
   const registeredCapital = legalFacts?.registered_capital ?? null;
   const stock_distributions = map(parsed.stock_distributions, `${path}.stock_distributions`, stringKey, parseStockDistributionFact);
+  const share_splits = map(parsed.share_splits, `${path}.share_splits`, stringKey, parseShareSplitFinanceFact);
   const rights_offerings = map(parsed.rights_offerings, `${path}.rights_offerings`, stringKey, parseRightsOfferingFinanceFact);
   const issuer_repurchases = map(parsed.issuer_repurchases, `${path}.issuer_repurchases`, stringKey, parseIssuerRepurchaseFinanceFact);
   // 送转入账按 面值×新增股数 演进注册资本法定事实；分红与送转声明冻结的是各自
@@ -224,6 +272,10 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     for (const fact of Object.values(issuer_repurchases)) {
       if (fact.cancelled_on !== null && fact.cancelled_on >= approvedOn) capital += accountingMinorUnits(fact.capital_reduction ?? "0.00");
     }
+    // 缩股核减注册资本：从重构口径中加回批准日之后的核减额（拆股核减为零）。
+    for (const fact of Object.values(share_splits)) {
+      if (fact.settled_on !== null && fact.settled_on >= approvedOn) capital += accountingMinorUnits(fact.registered_capital_reduction);
+    }
     return capital;
   };
   let reserved = 0n;
@@ -242,6 +294,11 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.event_id`, "送转事实键与事件身份不一致");
     if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.approved_on`, "送转批准日期不得早于公司开账日");
     if (registeredCapital === null || accountingMinorUnits(fact.registered_capital_at_approval) !== capitalAtApproval(fact.approved_on)) throw new SaveSchemaError(`${path}.stock_distributions.${eventId}.registered_capital_at_approval`, "送转声明的注册资本与公司绑定法定事实不一致");
+  }
+  for (const [eventId, fact] of Object.entries(share_splits)) {
+    if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.share_splits.${eventId}.event_id`, "拆股／缩股事实键与事件身份不一致");
+    if (fact.approved_on <= openingDate) throw new SaveSchemaError(`${path}.share_splits.${eventId}.approved_on`, "拆股／缩股批准日期不得早于公司开账日");
+    if (registeredCapital === null || accountingMinorUnits(fact.registered_capital_at_approval) !== capitalAtApproval(fact.approved_on)) throw new SaveSchemaError(`${path}.share_splits.${eventId}.registered_capital_at_approval`, "拆股／缩股声明的注册资本与公司绑定法定事实不一致");
   }
   for (const [eventId, fact] of Object.entries(rights_offerings)) {
     if (eventId !== fact.event_id) throw new SaveSchemaError(`${path}.rights_offerings.${eventId}.event_id`, "配股事实键与事件身份不一致");
@@ -282,7 +339,7 @@ export function parseSimpleFinanceState(value: unknown, path = "Simple 汇总财
     return [start, end] as const;
   });
   if (through !== asOf) throw new SaveSchemaError(`${path}.recognized_periods`, "已确认期间必须覆盖开账后至当前财务日期");
-  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, rights_offerings, issuer_repurchases, legal_facts: legalFacts };
+  return { company, kind, config, books, closing: parseClosingRegistry(parsed.closing, `${path}.closing`), opening_date: openingDate, as_of: asOf, last_month: lastMonth, next_event_id: nextId, income_tax_position: incomeTaxPosition, recognized_periods: recognizedPeriods, dividends, stock_distributions, share_splits, rights_offerings, issuer_repurchases, legal_facts: legalFacts };
 }
 
 /// 配股账面事实（声明即冻结；结算回填 issued_shares/proceeds/capital_increase）。

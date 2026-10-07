@@ -62,6 +62,7 @@ pub(super) struct SimpleDayEndDisclosureCtx<'a> {
         &'a [crate::company::rights_offering::RightsOfferingBook],
     pub issuer_repurchases:
         &'a [crate::company::issuer_repurchase::IssuerRepurchaseBook],
+    pub share_splits: &'a [crate::company::share_split::ShareSplitBook],
     pub library: &'a mut PublicLibrary,
 }
 
@@ -179,6 +180,21 @@ impl DisclosureDispatch {
                             plan: book.plan().clone(),
                         },
                     ),
+                })?;
+                announcements_published.push(id);
+            }
+        }
+        // 拆股／缩股方案公告：复用同一公告通道（同日 18:00 相位、恰好一次）。
+        for book in ctx.share_splits {
+            if book.status()
+                == &crate::company::share_split::ShareSplitStatus::Announced
+                && book.plan().announced_on == ctx.report.settled_date
+            {
+                let id = ctx.library.publish_announcement(AnnouncementRequest {
+                    company: book.plan().issuer.clone(),
+                    occurred_on: ctx.report.settled_date,
+                    published_at: ctx.report.disclosure_instant,
+                    content: AnnouncementContent::ShareSplit(book.plan().clone()),
                 })?;
                 announcements_published.push(id);
             }

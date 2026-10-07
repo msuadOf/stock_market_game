@@ -192,6 +192,7 @@ pub enum AnnouncementContent {
     CashDividend(CashDividendAnnouncement),
     RightsOffering(RightsOfferingAnnouncement),
     IssuerRepurchase(IssuerRepurchaseAnnouncement),
+    ShareSplit(crate::company::share_split::ShareSplitEventPlan),
 }
 
 /// 已批准配股／增发方案公告（面向全体股东配股或定向增发；披露事实只含方案

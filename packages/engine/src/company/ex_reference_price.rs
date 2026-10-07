@@ -68,6 +68,146 @@ pub enum RightsOfferingExRightsFormula {
     },
 }
 
+/// 拆股／缩股除权公式按上市地交易所分列参数化（与送转／配股同一分列纪律）。
+///
+/// 依据沪市《交易规则（2026 年修订）》4.3.1—4.3.3（公式条文 4.3.2；深市对应
+/// 规则 4.4.1—4.4.3，措辞为"股份变动比例"）：
+/// `[(前收盘价格−现金红利)+配股价格×变动比例]/(1+变动比例)`。
+/// 拆股／缩股无现金对价与配股价分量，公式化简为 `(前收盘价格−现金红利) ÷
+/// (numerator/denominator)`——`numerator/denominator` 是**新股／旧股**换算
+/// 比例：拆股 `numerator > denominator`（1 拆 N）、缩股 `numerator <
+/// denominator`（N 并 1）。比例用精确有理数（而非百万分之一股微数）承载：
+/// 缩股比例 1/N 在微数单位下不可整除（如 1/3），有理数避免二次舍入。官方
+/// 条文未例示负比例代入；按股改缩股市场实践口径登记为解读级依据，见
+/// docs/trading-rules.md「拆股／缩股」节。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub enum ShareSplitExRightsFormula {
+    /// 沪市口径：流通股份变动比例；只能用于 `CalendarExchange::Sse` 证券。
+    ShanghaiCirculatingShareChange {
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        numerator: u64,
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        denominator: u64,
+    },
+    /// 深市口径：股份变动比例；只能用于 `CalendarExchange::Szse` 证券。
+    ShenzhenShareChange {
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        numerator: u64,
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        denominator: u64,
+    },
+}
+
+/// 计算拆股（1 拆 N）／缩股（N 并 1）与可选同日现金红利合并的除权参考价。
+///
+/// 公式化简与舍入口径见 [`ShareSplitExRightsFormula`] 文档；除权日为权益登记日
+/// 次一交易日（与新股换算入账 R+1 为同一交易日，按送转先例口径）。除法结果按
+/// 最小变动价位取整数分，使用银行家舍入（half-to-even，游戏简化登记项）。
+pub fn share_split_ex_rights_reference_price(
+    calendar: &TradingCalendar,
+    exchange: CalendarExchange,
+    formula: ShareSplitExRightsFormula,
+    registration_date: CivilDate,
+    previous_close: Money,
+    cash_dividend_per_share: Money,
+) -> Result<ExReferencePrice, ExReferencePriceError> {
+    let (numerator, denominator) = match formula {
+        ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+            numerator,
+            denominator,
+        } => {
+            if exchange != CalendarExchange::Sse {
+                return Err(ExReferencePriceError::SplitFormulaExchangeMismatch {
+                    formula,
+                    exchange,
+                });
+            }
+            (numerator, denominator)
+        }
+        ShareSplitExRightsFormula::ShenzhenShareChange {
+            numerator,
+            denominator,
+        } => {
+            if exchange != CalendarExchange::Szse {
+                return Err(ExReferencePriceError::SplitFormulaExchangeMismatch {
+                    formula,
+                    exchange,
+                });
+            }
+            (numerator, denominator)
+        }
+    };
+    if numerator == 0 || denominator == 0 || numerator == denominator {
+        return Err(ExReferencePriceError::InvalidSplitShareChangeRatio);
+    }
+    if previous_close <= Money::ZERO {
+        return Err(ExReferencePriceError::InvalidPreviousClose {
+            price: previous_close,
+        });
+    }
+    if cash_dividend_per_share < Money::ZERO {
+        return Err(ExReferencePriceError::InvalidCashDividend {
+            amount: cash_dividend_per_share,
+        });
+    }
+    if !calendar.is_trading_day(exchange, registration_date)? {
+        return Err(ExReferencePriceError::InvalidRegistrationDate {
+            exchange,
+            date: registration_date,
+        });
+    }
+    let ex_date = calendar.next_trading_day(exchange, registration_date)?;
+    let numerator_cents =
+        i128::from(previous_close.cents()) - i128::from(cash_dividend_per_share.cents());
+    if numerator_cents <= 0 {
+        return Err(ExReferencePriceError::NonPositiveExRightsNumerator {
+            cents: numerator_cents,
+        });
+    }
+    // 参考价 = (前收 − 红利) ÷ (新股/旧股) = (前收 − 红利) × denominator /
+    // numerator，银行家舍入到分。
+    let scaled = numerator_cents
+        .checked_mul(i128::from(denominator))
+        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+            cents: numerator_cents,
+        })?;
+    let divisor = i128::from(numerator);
+    let quotient = scaled / divisor;
+    let remainder = scaled % divisor;
+    let doubled_remainder = remainder
+        .checked_mul(2)
+        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator {
+            cents: numerator_cents,
+        })?;
+    let reference_cents = match doubled_remainder.cmp(&divisor) {
+        std::cmp::Ordering::Less => quotient,
+        std::cmp::Ordering::Greater => quotient + 1,
+        // half-to-even（银行家舍入）
+        std::cmp::Ordering::Equal if quotient % 2 == 0 => quotient,
+        std::cmp::Ordering::Equal => quotient + 1,
+    };
+    let reference_cents = i64::try_from(reference_cents).map_err(|_| MoneyError::Overflow {
+        op: "share_split_ex_rights_reference_cents",
+        operand: reference_cents.to_string(),
+    })?;
+    let reference_price = Money::from_cents(reference_cents);
+    if reference_price <= Money::ZERO {
+        return Err(ExReferencePriceError::NonPositiveReferencePrice {
+            price: reference_price,
+        });
+    }
+    Ok(ExReferencePrice {
+        ex_date,
+        reference_price,
+    })
+}
+
 #[derive(Debug, Error)]
 pub enum ExReferencePriceError {
     #[error("查询现金分红除息日历失败：{0}")]
@@ -105,6 +245,13 @@ pub enum ExReferencePriceError {
     },
     #[error("配股除权配股价格必须为正数，实际为 {price:?}")]
     InvalidRightsPrice { price: Money },
+    #[error("拆股／缩股除权公式与交易所不匹配：{formula:?} 不能用于 {exchange:?} 证券")]
+    SplitFormulaExchangeMismatch {
+        formula: ShareSplitExRightsFormula,
+        exchange: CalendarExchange,
+    },
+    #[error("拆股／缩股换算比例必须为非一正有理数（numerator/denominator ≠ 1）")]
+    InvalidSplitShareChangeRatio,
 }
 
 /// 计算未发生交易所批准特殊调整时的纯现金除息参考价。

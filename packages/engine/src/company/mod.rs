@@ -44,6 +44,7 @@ pub mod scheduler;
 mod spec;
 pub mod share_registry;
 pub mod stock_distribution;
+pub mod share_split;
 pub mod rights_offering;
 pub mod issuer_repurchase;
 pub mod cash_dividend_tax;

@@ -17,6 +17,7 @@ fn validate_new_save_state(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "registries",
         "dividends",
         "stock_distributions",
+        "share_splits",
         "account_gross_receipts",
         "external_receipts",
         "applied_ex_reference_groups",

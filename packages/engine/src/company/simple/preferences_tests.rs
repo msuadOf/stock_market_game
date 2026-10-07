@@ -667,6 +667,7 @@ fn stock_exposure() -> SimpleStockDistributionExposure {
         same_ex_date_gross_per_share: Money::ZERO,
         same_ex_date_stock_event: false,
         same_ex_date_rights_event: false,
+        same_ex_date_split_event: false,
     }
 }
 
@@ -841,6 +842,42 @@ fn stock_evaluation_rejects_same_ex_date_event_and_insufficient_combined_margin(
         evaluate_stock_distribution_preference(&input),
         SimpleStockDistributionOutcome::Rejected { .. }
     ));
+}
+
+#[test]
+fn stock_evaluation_rejects_same_ex_date_split_event() {
+    // 同除权日已存在拆股／缩股事件（same_ex_date_split_event=true）：重新计值
+    // ×送转同日的合并除权口径未核实，自动提案必须拒绝并指明拆股／缩股。
+    let preference = stock_preference(1, 100_000, 1_000_000_000, 1);
+    let input = SimpleStockDistributionEvaluation {
+        preference: &preference,
+        company: fixture_ids().0,
+        stock: fixture_ids().1,
+        exchange: CalendarExchange::Sse,
+        period_end: d("2030-01-31"),
+        approve_on: d("2030-02-01"),
+        calendar: trading_calendar(),
+        distributable: profit(1_000_000_00),
+        eligible_shares: 10_000,
+        initial_issued_shares: 12_000,
+        cumulative_distributed_shares: 0,
+        exposure: Some(SimpleStockDistributionExposure {
+            same_ex_date_split_event: true,
+            ..stock_exposure()
+        }),
+        last_proposal_period_end: None,
+        cycle_months: 1,
+        suppress_duplicate: false,
+    };
+    match evaluate_stock_distribution_preference(&input) {
+        SimpleStockDistributionOutcome::Rejected { detail } => {
+            assert!(
+                detail.contains("同除权日") && detail.contains("拆股／缩股"),
+                "拒绝原因应指向同除权日拆股／缩股叠加：{detail}"
+            );
+        }
+        other => panic!("应记录拒绝，实际 {other:?}"),
+    }
 }
 
 #[test]

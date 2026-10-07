@@ -266,6 +266,26 @@ pub struct TaxCollectionReceipt {
     pub needs_funds: bool,
 }
 
+/// 拆股／缩股的税账净核减回执（缩股方向专用）。
+///
+/// 缩股是股份重新计值，不是转让：核减按 FIFO 减少 lot 数量并留痕核减片段，
+/// 但**不进入应税处置口径**（`assessed_cents_through` 只统计公开市场处置）；
+/// 持股期限的取得日由存活 lot 原样延续（无官方明文，登记为游戏实现口径）。
+/// 拆股方向的新增股份走既有 `record_net_day` 同日正向续记（取得日 = R+1，
+/// 与送转同一保守口径）。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaxRedenominationReceipt {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
+    pub(crate) operation_seq: u64,
+    pub(crate) event_id: String,
+    pub(crate) day: CivilDate,
+    #[serde(with = "crate::company::share_registry::canonical_i128_decimal")]
+    pub(crate) net_change: i128,
+    /// FIFO 核减的 lot 片段（事实留痕；限售类 lot 允许被核减——不是处置）。
+    pub(crate) removed: Vec<TaxDisposition>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "TaxBookState")]
 pub struct CashDividendTaxBook {
@@ -281,6 +301,7 @@ pub struct CashDividendTaxBook {
     days: Vec<TaxDayReceipt>,
     dividends: Vec<RegisteredTaxDividend>,
     collections: Vec<TaxCollectionReceipt>,
+    redenominations: Vec<TaxRedenominationReceipt>,
 }
 
 #[derive(Deserialize)]
@@ -297,6 +318,7 @@ struct TaxBookState {
     days: Vec<TaxDayReceipt>,
     dividends: Vec<RegisteredTaxDividend>,
     collections: Vec<TaxCollectionReceipt>,
+    redenominations: Vec<TaxRedenominationReceipt>,
 }
 
 impl TryFrom<TaxBookState> for CashDividendTaxBook {
@@ -314,6 +336,7 @@ impl TryFrom<TaxBookState> for CashDividendTaxBook {
             days: state.days,
             dividends: state.dividends,
             collections: state.collections,
+            redenominations: state.redenominations,
         };
         book.validate()?;
         Ok(book)
@@ -340,6 +363,7 @@ impl CashDividendTaxBook {
             days: vec![],
             dividends: vec![],
             collections: vec![],
+            redenominations: vec![],
         };
         book.validate()?;
         Ok(book)
@@ -445,6 +469,53 @@ impl CashDividendTaxBook {
             net_change,
             acquisition,
             dispositions,
+        });
+        candidate.settled_on = day;
+        candidate.validate()?;
+        *self = candidate;
+        Ok(())
+    }
+    /// 拆股／缩股的税账净核减（缩股方向）：FIFO 减少 lot 数量并留痕，不进入
+    /// 应税处置口径。同日续记（公开市场日结之后追加）或次一自然日均可；
+    /// 同一事件身份幂等、不同事实显式冲突。
+    pub fn record_redenomination_reduction(
+        &mut self,
+        event_id: String,
+        day: CivilDate,
+        removed_qty: u64,
+    ) -> Result<(), DividendTaxError> {
+        if let Some(existing) = self
+            .redenominations
+            .iter()
+            .find(|receipt| receipt.event_id == event_id)
+        {
+            if existing.day == day && existing.net_change == -i128::from(removed_qty) {
+                return Ok(());
+            }
+            return Err(invalid(
+                "redenomination identity reused with different facts",
+            ));
+        }
+        if event_id.trim().is_empty() || removed_qty == 0 {
+            return Err(invalid(
+                "redenomination requires identity and a positive share reduction",
+            ));
+        }
+        let day_gap = day.days_since(self.settled_on);
+        if day_gap != 0 && day_gap != 1 {
+            return Err(invalid(
+                "redenomination must follow the previous completed natural day or continue it",
+            ));
+        }
+        let mut candidate = self.clone();
+        let removed = apply_redenomination_reduction(&mut candidate.lots, day, removed_qty)?;
+        let operation_seq = candidate.advance_operation()?;
+        candidate.redenominations.push(TaxRedenominationReceipt {
+            operation_seq,
+            event_id,
+            day,
+            net_change: -i128::from(removed_qty),
+            removed,
         });
         candidate.settled_on = day;
         candidate.validate()?;
@@ -575,6 +646,16 @@ impl CashDividendTaxBook {
     pub fn collections(&self) -> &[TaxCollectionReceipt] {
         &self.collections
     }
+    /// 拆股／缩股核减回执按事件身份查询（与日结回执同一幂等判定入口）。
+    pub(crate) fn redenomination_by_event(
+        &self,
+        event_id: &str,
+    ) -> Option<&TaxRedenominationReceipt> {
+        self.redenominations
+            .iter()
+            .find(|receipt| receipt.event_id == event_id)
+    }
+
     pub(crate) fn receipt_by_event(&self, event_id: &str) -> Option<&TaxDayReceipt> {
         self.days
             .iter()
@@ -706,6 +787,9 @@ impl CashDividendTaxBook {
         for collection in &self.collections {
             operations.push((collection.operation_seq, collection.day));
         }
+        for reduction in &self.redenominations {
+            operations.push((reduction.operation_seq, reduction.day));
+        }
         operations.sort_unstable_by_key(|(sequence, _)| *sequence);
         let mut previous_fact_day = self.opened_on;
         for (index, (sequence, day)) in operations.iter().enumerate() {
@@ -755,6 +839,27 @@ impl CashDividendTaxBook {
                 )?;
                 if dispositions != day.dispositions {
                     return Err(invalid("tax disposal identities, metadata or FIFO quantities contradict held facts"));
+                }
+            }
+            if let Some(reduction) = self
+                .redenominations
+                .iter()
+                .find(|receipt| receipt.operation_seq == *sequence)
+            {
+                let removed =
+                    apply_redenomination_reduction(&mut replayed, reduction.day, {
+                        u64::try_from(
+                            reduction
+                                .net_change
+                                .checked_neg()
+                                .ok_or_else(|| overflow("negative redenomination shares"))?,
+                        )
+                        .map_err(|_| invalid("redenomination reduction exceeds u64"))?
+                    })?;
+                if removed != reduction.removed {
+                    return Err(invalid(
+                        "redenomination removed fragments contradict FIFO replay",
+                    ));
                 }
             }
             if let Some(dividend) = self
@@ -832,7 +937,50 @@ impl CashDividendTaxBook {
                 return Err(invalid("tax dispositions do not match day net reduction"));
             }
         }
-        if previous_day != self.settled_on {
+        // 拆股／缩股核减回执：身份唯一、净负、片段合计与净额一致、FIFO 顺序；
+        // 限售片段允许出现（不是处置）。日期次序由上方合并操作序的全局
+        // 非递减校验承载（核减可插在历史中段，恢复重放按操作序进行）。
+        let mut redenomination_ids = BTreeSet::new();
+        for reduction in &self.redenominations {
+            if reduction.event_id.trim().is_empty()
+                || !redenomination_ids.insert(&reduction.event_id)
+                || reduction.net_change >= 0
+                || reduction.day > self.settled_on
+            {
+                return Err(invalid(
+                    "invalid tax re-denomination receipt identity, sign, or date",
+                ));
+            }
+            let mut removed_ids = BTreeSet::new();
+            let mut total = 0i128;
+            let mut last_acquired = None;
+            for removed in &reduction.removed {
+                validate_lot(&removed.lot, reduction.day)?;
+                if removed.disposed_on != reduction.day
+                    || !removed_ids.insert(&removed.lot.id)
+                    || last_acquired.is_some_and(|previous| previous > removed.lot.acquired_on)
+                {
+                    return Err(invalid("invalid tax re-denomination removal facts"));
+                }
+                last_acquired = Some(removed.lot.acquired_on);
+                total = total
+                    .checked_add(i128::from(removed.lot.qty))
+                    .ok_or_else(|| overflow("tax re-denomination quantity"))?;
+            }
+            let expected = reduction
+                .net_change
+                .checked_neg()
+                .ok_or_else(|| overflow("negative redenomination shares"))?;
+            if total != expected {
+                return Err(invalid(
+                    "tax re-denomination removals do not match the net reduction",
+                ));
+            }
+        }
+        // 收尾日须等于最后一条事实（日结或重新计值核减）的日期。
+        let tail_day = previous_day
+            .max(self.redenominations.last().map(|receipt| receipt.day).unwrap_or(previous_day));
+        if tail_day != self.settled_on {
             return Err(invalid("tax settled day does not match receipt tail"));
         }
         let mut dividend_ids = BTreeSet::new();
@@ -1022,6 +1170,39 @@ fn total_quantity(lots: &[DividendTaxLot]) -> Result<u64, DividendTaxError> {
             .checked_add(lot.qty)
             .ok_or_else(|| overflow("tax lot share sum"))
     })
+}
+
+/// 缩股核减的 FIFO 消耗：从最旧 lot 开始消耗（限售类允许被核减——重新计值
+/// 不是处置），返回核减片段；数量不足显式失败。
+fn apply_redenomination_reduction(
+    lots: &mut Vec<DividendTaxLot>,
+    day: CivilDate,
+    removed_qty: u64,
+) -> Result<Vec<TaxDisposition>, DividendTaxError> {
+    let mut remaining = removed_qty;
+    let mut removed = Vec::new();
+    for lot in lots.iter_mut() {
+        if remaining == 0 {
+            break;
+        }
+        let consumed = remaining.min(lot.qty);
+        let mut reduced = lot.clone();
+        reduced.qty = consumed;
+        removed.push(TaxDisposition {
+            lot: reduced,
+            disposed_on: day,
+        });
+        lot.qty -= consumed;
+        remaining -= consumed;
+    }
+    if remaining != 0 {
+        return Err(invalid(
+            "insufficient tax lots for share re-denomination reduction",
+        ));
+    }
+    lots.retain(|lot| lot.qty != 0);
+    validate_lots(lots, day)?;
+    Ok(removed)
 }
 
 fn apply_net_change(

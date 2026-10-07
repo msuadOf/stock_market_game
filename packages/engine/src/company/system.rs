@@ -158,6 +158,144 @@ impl CompanySystem {
         Ok(already_credited)
     }
 
+    pub fn share_split_facts(
+        &self,
+        company: &CompanyId,
+    ) -> Result<Vec<super::share_split::ShareSplitFinanceFact>, CompanySystemError> {
+        Ok(self.finance(company)?.share_split_facts()?)
+    }
+
+    /// 当前每股面值权威（拆股／缩股重锚链；无重新计值事实时沿用送转 bind-once）。
+    pub fn current_par_value(
+        &self,
+        company: &CompanyId,
+    ) -> Result<Option<crate::money::Money>, CompanySystemError> {
+        Ok(self.finance(company)?.current_par_value()?)
+    }
+
+    /// 冻结 Simple 账面拆股／缩股展示事实；不做借贷过账、不产生现金。
+    pub fn declare_share_split(
+        &mut self,
+        company: &CompanyId,
+        declaration: super::share_split::ShareSplitDeclaration,
+    ) -> Result<bool, CompanySystemError> {
+        let already_declared = self.finance_mut(company)?.declare_share_split(declaration)?;
+        Ok(already_declared)
+    }
+
+    /// 真实换算入账后回填账面事实、演进注册资本并同步发行人已发行股数。
+    ///
+    /// 拆股按增量调 `record_share_issuance`；缩股按消灭股数（可为零：整除缩股
+    /// 无碎股消灭）调 `record_share_cancellation`；两者在同一候选上变更。
+    pub fn record_share_split_credit(
+        &mut self,
+        company: &CompanyId,
+        event_id: &str,
+        settled_on: CivilDate,
+        issued_shares_before: u64,
+        issued_shares_after: u64,
+    ) -> Result<bool, CompanySystemError> {
+        let already_credited = self.finance_mut(company)?.record_share_split_credit(
+            event_id,
+            settled_on,
+            issued_shares_before,
+            issued_shares_after,
+        )?;
+        if !already_credited {
+            if issued_shares_after > issued_shares_before {
+                self.issuers.record_share_issuance(
+                    company,
+                    issued_shares_after - issued_shares_before,
+                )?;
+            } else if issued_shares_after < issued_shares_before {
+                self.issuers.record_share_cancellation(
+                    company,
+                    issued_shares_before - issued_shares_after,
+                )?;
+            }
+        }
+        Ok(already_credited)
+    }
+
+    /// 校验 Session 拆股／缩股账簿与 Simple 账面事实的跨域对应。
+    pub fn validate_share_split_books(
+        &self,
+        books: &[super::share_split::ShareSplitBook],
+    ) -> Result<(), CompanySystemError> {
+        use std::collections::BTreeSet;
+        let mut seen_events = BTreeSet::new();
+        for book in books {
+            let plan = book.plan();
+            if !seen_events.insert(plan.event_id.clone()) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "拆股／缩股事件 {} 重复出现账簿",
+                    plan.event_id
+                )));
+            }
+            let issuer = self.issuers.get(&plan.issuer).ok_or_else(|| {
+                CompanySystemError::Invalid(format!(
+                    "拆股／缩股账簿引用未知发行人 {}",
+                    plan.issuer.0
+                ))
+            })?;
+            if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+                return Err(CompanySystemError::Invalid(format!(
+                    "拆股／缩股事件 {} 的证券与发行人不匹配",
+                    plan.event_id
+                )));
+            }
+            let fact = self
+                .share_split_facts(&plan.issuer)?
+                .into_iter()
+                .find(|fact| fact.event_id == plan.event_id)
+                .ok_or_else(|| {
+                    CompanySystemError::Invalid(format!(
+                        "拆股／缩股事件 {} 缺少 Simple 声明事实",
+                        plan.event_id
+                    ))
+                })?;
+            if fact.approved_on != plan.approved_on
+                || fact.approval_reference != plan.approval_reference
+                || fact.direction != plan.direction
+                || fact.ratio != plan.ratio
+            {
+                return Err(CompanySystemError::Invalid(format!(
+                    "拆股／缩股事件 {} 与 Simple 声明的日期、引用、方向或比例不一致",
+                    plan.event_id
+                )));
+            }
+            match (book.settled_on(), fact.settled_on) {
+                (Some(book_date), Some(fact_date)) if book_date == fact_date => {}
+                (None, None) => {}
+                _ => {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "拆股／缩股事件 {} 的入账事实与 Simple 账面回填不一致",
+                        plan.event_id
+                    )));
+                }
+            }
+        }
+        // 反向勾稽：每份账面拆股／缩股声明必须绑定账簿。
+        let mut bound_events = BTreeSet::new();
+        for book in books {
+            bound_events.insert(book.plan().event_id.clone());
+        }
+        for (company, _) in self.issuers.iter() {
+            let Ok(finance) = self.finance(company) else {
+                continue;
+            };
+            for fact in finance.share_split_facts()? {
+                if !bound_events.contains(&fact.event_id) {
+                    return Err(CompanySystemError::Invalid(format!(
+                        "公司 {} 存在未绑定账簿的拆股／缩股声明 {}",
+                        company.0, fact.event_id
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// 校验 Session 送转账簿与 Simple 账面事实的跨域对应。
     pub fn validate_stock_distribution_books(
         &self,

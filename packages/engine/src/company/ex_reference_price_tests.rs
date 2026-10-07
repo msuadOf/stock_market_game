@@ -1,6 +1,7 @@
 use super::{
-    cash_dividend_ex_reference_price, stock_distribution_ex_rights_reference_price,
-    CashDividendFormula, ExReferencePriceError, StockDistributionExRightsFormula,
+    cash_dividend_ex_reference_price, share_split_ex_rights_reference_price,
+    stock_distribution_ex_rights_reference_price, CashDividendFormula, ExReferencePriceError,
+    ShareSplitExRightsFormula, StockDistributionExRightsFormula,
 };
 use crate::calendar::{
     CalendarExchange, CalendarPolicy, CivilDate, OfficialCoverageEntry, TradingCalendar,
@@ -465,4 +466,127 @@ fn rights_formula_rounds_half_to_even_at_the_cent() {
     )
     .unwrap();
     assert_eq!(exact.reference_price, Money::from_cents(1_001));
+}
+
+// ---------- 拆股／缩股除权公式 ----------
+
+#[test]
+fn split_divides_previous_close_by_integer_ratio() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    // 1 拆 10：参考价 = 前收 / 10（沪 4.3.2 公式代入变动比例 9）。
+    let result = share_split_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+            numerator: 10,
+            denominator: 1,
+        },
+        date("2030-06-03"),
+        Money::from_cents(10_000),
+        Money::from_cents(0),
+    )
+    .unwrap();
+    assert_eq!(result.ex_date, date("2030-06-04"));
+    assert_eq!(result.reference_price, Money::from_cents(1_000));
+}
+
+#[test]
+fn consolidation_multiplies_previous_price_and_merges_same_day_cash_dividend() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    // 10 并 1：参考价 = (前收 − 红利) × 10。
+    let result = share_split_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Szse,
+        ShareSplitExRightsFormula::ShenzhenShareChange {
+            numerator: 1,
+            denominator: 10,
+        },
+        date("2030-06-03"),
+        Money::from_cents(3_000),
+        Money::from_cents(50),
+    )
+    .unwrap();
+    assert_eq!(result.ex_date, date("2030-06-04"));
+    assert_eq!(result.reference_price, Money::from_cents(29_500));
+}
+
+#[test]
+fn split_rounds_half_to_even_on_non_divisible_cents() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    // 1 拆 2（新股/旧股 = 2/1）：1001 分 ÷ 2 = 500.5 → 银行家舍入到 500（偶数）；
+    // 1003 ÷ 2 = 501.5 → 502。
+    let half_down = share_split_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+            numerator: 2,
+            denominator: 1,
+        },
+        date("2030-06-03"),
+        Money::from_cents(1_001),
+        Money::from_cents(0),
+    )
+    .unwrap();
+    assert_eq!(half_down.reference_price, Money::from_cents(500));
+    let half_up = share_split_ex_rights_reference_price(
+        &calendar,
+        CalendarExchange::Sse,
+        ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+            numerator: 2,
+            denominator: 1,
+        },
+        date("2030-06-03"),
+        Money::from_cents(1_003),
+        Money::from_cents(0),
+    )
+    .unwrap();
+    assert_eq!(half_up.reference_price, Money::from_cents(502));
+}
+
+#[test]
+fn split_formula_rejects_exchange_mismatch_identity_ratio_and_bad_inputs() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    assert!(matches!(
+        share_split_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Szse,
+            ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+                numerator: 2,
+                denominator: 1,
+            },
+            date("2030-06-03"),
+            Money::from_cents(1_000),
+            Money::from_cents(0),
+        ),
+        Err(ExReferencePriceError::SplitFormulaExchangeMismatch { .. })
+    ));
+    assert!(matches!(
+        share_split_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+                numerator: 1,
+                denominator: 1,
+            },
+            date("2030-06-03"),
+            Money::from_cents(1_000),
+            Money::from_cents(0),
+        ),
+        Err(ExReferencePriceError::InvalidSplitShareChangeRatio)
+    ));
+    // 非正分子（前收 − 红利）拒绝。
+    assert!(matches!(
+        share_split_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+                numerator: 2,
+                denominator: 1,
+            },
+            date("2030-06-03"),
+            Money::from_cents(100),
+            Money::from_cents(100),
+        ),
+        Err(ExReferencePriceError::NonPositiveExRightsNumerator { .. })
+    ));
 }

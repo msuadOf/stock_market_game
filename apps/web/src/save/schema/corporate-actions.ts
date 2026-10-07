@@ -9,7 +9,7 @@ export type IssuerRepurchaseAccountFacts = { readonly account_reference: string;
 export type RegistrationSnapshot = { readonly event_id: string; readonly stock: string; readonly issuer: string; readonly registered_on: string; readonly issued_shares: string; readonly settled_receipts: string; readonly issuer_repurchase_account: IssuerRepurchaseAccountFacts | null; readonly holdings: readonly ShareHolding[] }
 export type ShareRegistry = { readonly stock: string; readonly issuer: string; readonly issued_shares: string; readonly issuer_repurchase_account: IssuerRepurchaseAccountFacts | null; readonly settled_on: string; readonly holdings: readonly ShareHolding[]; readonly receipts: readonly ShareDayReceipt[]; readonly registrations: readonly RegistrationSnapshot[] }
 export type ShareDayReceipt = { readonly request: ShareDayRequest; readonly disposals: readonly DisposedLot[] }
-export type MovementScope = "PublicMarket" | { readonly NonTradingTransfer: { readonly basis: string } } | { readonly IssuerRepurchaseCancellation: { readonly basis: string } }
+export type MovementScope = "PublicMarket" | { readonly NonTradingTransfer: { readonly basis: string } } | { readonly IssuerRepurchaseCancellation: { readonly basis: string } } | { readonly ShareReDenomination: { readonly basis: string } }
 export type ShareDayRequest = { readonly event_id: string; readonly day: string; readonly scope: MovementScope; readonly changes: readonly DayNetChange[] }
 export type DayNetChange = { readonly holder: HolderId; readonly change: string; readonly acquisition: NetAcquisition | null }
 export type NetAcquisition = { readonly lot_id: string; readonly source: AcquisitionSource; readonly restriction: ShareRestriction }
@@ -34,8 +34,9 @@ export type TaxDayReceipt = { readonly operation_seq: number; readonly event_id:
 export type DividendCashReceipt = { readonly operation_seq: number; readonly payment_id: string; readonly paid_on: string; readonly received_gross: string; readonly evidence: string }
 export type RegisteredTaxDividend = { readonly operation_seq: number; readonly event_id: string; readonly registered_on: string; readonly per_share: ExactDividendTaxAmount; readonly lots: readonly DividendTaxLot[]; readonly payments: readonly DividendCashReceipt[] }
 export type TaxCollectionReceipt = { readonly operation_seq: number; readonly event_id: string; readonly day: string; readonly available_cash: string; readonly collected: string; readonly remaining_cash: string; readonly outstanding: ExactDividendTaxAmount; readonly needs_funds: boolean }
+export type TaxRedenominationReceipt = { readonly operation_seq: number; readonly event_id: string; readonly day: string; readonly net_change: string; readonly removed: readonly { readonly lot: DividendTaxLot; readonly disposed_on: string }[] }
 export type DividendTaxProfile = "IndividualPublicMarket" | "ResidentEnterprise" | "SecuritiesFund" | "NonResident"
-export type CashDividendTaxBook = { readonly operation_seq: number; readonly account: string; readonly stock: string; readonly profile: DividendTaxProfile; readonly opened_on: string; readonly opening_lots: readonly DividendTaxLot[]; readonly settled_on: string; readonly lots: readonly DividendTaxLot[]; readonly days: readonly TaxDayReceipt[]; readonly dividends: readonly RegisteredTaxDividend[]; readonly collections: readonly TaxCollectionReceipt[] }
+export type CashDividendTaxBook = { readonly operation_seq: number; readonly account: string; readonly stock: string; readonly profile: DividendTaxProfile; readonly opened_on: string; readonly opening_lots: readonly DividendTaxLot[]; readonly settled_on: string; readonly lots: readonly DividendTaxLot[]; readonly days: readonly TaxDayReceipt[]; readonly dividends: readonly RegisteredTaxDividend[]; readonly collections: readonly TaxCollectionReceipt[]; readonly redenominations: readonly TaxRedenominationReceipt[] }
 export type AccountDividendGrossReceipt = { readonly payment_id: string; readonly plan_id: string; readonly account: string; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
 export type ExternalDividendReceipt = { readonly payment_id: string; readonly plan_id: string; readonly holder: { readonly External: string }; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
 export type DividendTaxOutstandingCause = "Cleared" | "InsufficientAvailableCash"
@@ -66,6 +67,12 @@ export type StockDistributionReceipt = { readonly event_id: string; readonly app
 export type StockDistributionEventPlan = { readonly event_id: string; readonly approval_reference: string; readonly issuer: string; readonly stock: string; readonly exchange: CalendarExchange; readonly kind: StockDistributionKind; readonly approved_on: string; readonly announced_on: string; readonly registered_on: string; readonly ex_rights_on: string; readonly shares_per_existing_share_micros: string; readonly approved_total_new_shares: string }
 export type StockDistributionStatus = "Approved" | "Announced" | "Registered" | "Credited"
 export type StockDistributionBook = { readonly plan: StockDistributionEventPlan; readonly status: StockDistributionStatus; readonly registration: RegistrationSnapshot | null; readonly receipt: StockDistributionReceipt | null; readonly credited_on: string | null }
+export type ShareSplitDirection = "Split" | "Consolidate"
+export type HolderSplitOutcome = { readonly holder: HolderId; readonly original_shares: string; readonly new_shares: string; readonly fractional_numerator: string; readonly tie_break_award: string; readonly original_lots: readonly ShareLot[] }
+export type ShareSplitReceipt = { readonly event_id: string; readonly approval_reference: string; readonly registration_event_id: string; readonly stock: string; readonly issuer: string; readonly registered_on: string; readonly direction: ShareSplitDirection; readonly ratio: string; readonly issued_shares_before: string; readonly issued_shares_after: string; readonly tie_break_seed: string; readonly holders: readonly HolderSplitOutcome[] }
+export type ShareSplitEventPlan = { readonly event_id: string; readonly approval_reference: string; readonly issuer: string; readonly stock: string; readonly exchange: CalendarExchange; readonly direction: ShareSplitDirection; readonly ratio: string; readonly approved_on: string; readonly announced_on: string; readonly registered_on: string; readonly ex_rights_on: string }
+export type ShareSplitStatus = "Approved" | "Announced" | "Registered" | "Settled"
+export type ShareSplitBook = { readonly plan: ShareSplitEventPlan; readonly status: ShareSplitStatus; readonly registration: RegistrationSnapshot | null; readonly receipt: ShareSplitReceipt | null; readonly settled_on: string | null }
 export type RightsSubscriptionStrategy = "FullByDefault" | "StrategyBased"
 export type DirectedPlacementTarget = { readonly NamedHolder: { readonly holder: HolderId; readonly shares: string; readonly lock_until: string | null } } | { readonly OpenPublicSubscription: { readonly shares: string } }
 export type RightsOfferingMode = { readonly RightsToAllShareholders: { readonly shares_per_existing_share_micros: string } } | { readonly DirectedPlacement: { readonly targets: readonly DirectedPlacementTarget[] } }
@@ -85,8 +92,8 @@ export type IssuerRepurchasePlan = { readonly event_id: string; readonly approva
 export type RepurchaseFillRecord = { readonly stock: string; readonly day: string; readonly shares: string; readonly gross: string; readonly fees: string }
 export type IssuerRepurchaseStatus = "Approved" | "Announced" | "Executing" | "Completed" | "Cancelled"
 export type IssuerRepurchaseBook = { readonly plan: IssuerRepurchasePlan; readonly status: IssuerRepurchaseStatus; readonly fills: readonly RepurchaseFillRecord[]; readonly completed_on: string | null; readonly withdrawn_remainder: string | null; readonly cancelled_on: string | null; readonly cancelled_shares: string; readonly last_order_day: string | null }
-export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly stock_distributions: readonly StockDistributionBook[]; readonly rights_offerings: readonly RightsOfferingBook[]; readonly rights_subscription_queue: readonly QueuedRightsSubscription[]; readonly rejected_rights_subscriptions: readonly RejectedRightsSubscription[]; readonly issuer_repurchases: readonly IssuerRepurchaseBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_reference_groups: readonly AppliedExReferenceGroup[] }
-export type AppliedExReferenceGroup = { readonly date: string; readonly stock: string; readonly cash_plan_ids: readonly string[]; readonly stock_event_ids: readonly string[]; readonly rights_event_ids: readonly string[]; readonly reference: import("./company/ex-reference-price.ts").ExReferencePrice }
+export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly stock_distributions: readonly StockDistributionBook[]; readonly share_splits: readonly ShareSplitBook[]; readonly rights_offerings: readonly RightsOfferingBook[]; readonly rights_subscription_queue: readonly QueuedRightsSubscription[]; readonly rejected_rights_subscriptions: readonly RejectedRightsSubscription[]; readonly issuer_repurchases: readonly IssuerRepurchaseBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_reference_groups: readonly AppliedExReferenceGroup[] }
+export type AppliedExReferenceGroup = { readonly date: string; readonly stock: string; readonly cash_plan_ids: readonly string[]; readonly stock_event_ids: readonly string[]; readonly rights_event_ids: readonly string[]; readonly split_event_ids: readonly string[]; readonly reference: import("./company/ex-reference-price.ts").ExReferencePrice }
 
 export type Context = {
   readonly issuers: Readonly<Record<string, { readonly listed_stock: string | null; readonly issued_shares: string }>>
@@ -275,6 +282,12 @@ function parseDayReceipt(value: unknown, path: string) {
     const basis = string(detail.basis, `${path}.request.scope.IssuerRepurchaseCancellation.basis`)
     if (!basis.trim()) throw new SaveSchemaError(`${path}.request.scope.IssuerRepurchaseCancellation.basis`, "回购注销法律依据不能为空")
     parsedScope = { IssuerRepurchaseCancellation: { basis } }
+  } else if (typeof scope === "object" && scope !== null && !Array.isArray(scope) && Object.keys(scope).length === 1 && Object.hasOwn(scope, "ShareReDenomination")) {
+    const detail = record((scope as Record<string, unknown>).ShareReDenomination, `${path}.request.scope.ShareReDenomination`)
+    exact(detail, ["basis"], `${path}.request.scope.ShareReDenomination`)
+    const basis = string(detail.basis, `${path}.request.scope.ShareReDenomination.basis`)
+    if (!basis.trim()) throw new SaveSchemaError(`${path}.request.scope.ShareReDenomination.basis`, "拆股／缩股法律依据不能为空")
+    parsedScope = { ShareReDenomination: { basis } }
   } else throw new SaveSchemaError(`${path}.request.scope`, "包含无效 MovementScope 变体")
   const changes: DayNetChange[] = array(request.changes, `${path}.request.changes`).map((item, index) => {
     const changePath = `${path}.request.changes[${index}]`
@@ -306,7 +319,12 @@ function parseDayReceipt(value: unknown, path: string) {
   })
   const changedHolders = new Set<string>()
   let net = 0n
-  const nonTrading = typeof parsedScope === "object"
+  // scope 专属规则与引擎 `share_registry::validate_request` 同构：非交易过户与
+  // 重新计值的正向新增都必须来自公司行为来源；减持限制只属于非交易过户——
+  // 重新计值（缩股）合法产生负向变动与 FIFO 处置，回购注销维持既有净增校验。
+  const isNonTradingTransfer = typeof parsedScope === "object" && "NonTradingTransfer" in parsedScope
+  const isRedenomination = typeof parsedScope === "object" && "ShareReDenomination" in parsedScope
+  const nonTradingAcquisition = typeof parsedScope === "object"
   for (const [index, change] of changes.entries()) {
     const holderKey = JSON.stringify(change.holder)
     if (changedHolders.has(holderKey)) throw new SaveSchemaError(`${path}.request.changes[${index}].holder`, "日结请求重复包含持有人")
@@ -314,18 +332,27 @@ function parseDayReceipt(value: unknown, path: string) {
     net += BigInt(change.change)
     if (net < I128_MIN || net > I128_MAX) throw new SaveSchemaError(`${path}.request.changes`, "日变动数量合计超出 i128")
     if (BigInt(change.change) > U64_MAX || BigInt(change.change) < -U64_MAX) throw new SaveSchemaError(`${path}.request.changes[${index}].change`, "日变动绝对值超出 u64")
-    if (nonTrading && BigInt(change.change) < 0n) throw new SaveSchemaError(`${path}.request.changes[${index}].change`, "非交易过户不得减持持有人股份")
+    if (isNonTradingTransfer && BigInt(change.change) < 0n) throw new SaveSchemaError(`${path}.request.changes[${index}].change`, "非交易过户不得减持持有人股份")
     const disposed = disposals.filter(item => JSON.stringify(item.holder) === holderKey).reduce((sum, item) => sum + BigInt(item.lot.qty), 0n)
     const expected = BigInt(change.change) < 0n ? -BigInt(change.change) : 0n
     if (disposed !== expected) throw new SaveSchemaError(`${path}.disposals`, "处置数量与持有人净减持不一致")
     if (BigInt(change.change) > 0n) {
       const acquisition = change.acquisition as { readonly source: AcquisitionSource; readonly restriction: ShareRestriction }
-      if (nonTrading) {
+      if (nonTradingAcquisition) {
         if (Object.keys(acquisition.source)[0] !== "CorporateAction") throw new SaveSchemaError(`${path}.request.changes[${index}].acquisition`, "非交易过户新增股份必须来自公司行为来源")
       } else if (Object.keys(acquisition.source)[0] !== "SecondaryMarket" || acquisition.restriction !== "Unrestricted") throw new SaveSchemaError(`${path}.request.changes[${index}].acquisition`, "公开市场买入必须为 SecondaryMarket 且股份无限制")
     }
   }
-  if (nonTrading) {
+  if (isNonTradingTransfer) {
+    if (net <= 0n) throw new SaveSchemaError(`${path}.request.changes`, "非交易过户必须新增正数股份")
+  } else if (isRedenomination) {
+    // 拆股／缩股必须净放大或净缩小总股本，且全体持有人同向；混正负是持有人间
+    // 转移，不是重新计值（与引擎修复轮新增的同号校验一致）。
+    if (net === 0n) throw new SaveSchemaError(`${path}.request.changes`, "重新计值必须净放大或净缩小总股本")
+    const hasPositive = changes.some(change => BigInt(change.change) > 0n)
+    const hasNegative = changes.some(change => BigInt(change.change) < 0n)
+    if (hasPositive && hasNegative) throw new SaveSchemaError(`${path}.request.changes`, "重新计值变动必须同向：混正负属于持有人间转移")
+  } else if (nonTradingAcquisition) {
     if (net <= 0n) throw new SaveSchemaError(`${path}.request.changes`, "非交易过户必须新增正数股份")
   } else if (net !== 0n) throw new SaveSchemaError(`${path}.request.changes`, "公开市场股份变动必须守恒")
   if (disposals.some(item => !changes.some(change => JSON.stringify(change.holder) === JSON.stringify(item.holder) && BigInt(change.change) < 0n))) throw new SaveSchemaError(`${path}.disposals`, "处置事实没有对应净减持")
@@ -531,6 +558,79 @@ function parseStockDistributionBook(value: unknown, path: string): StockDistribu
   return { plan: { event_id, approval_reference, issuer, stock, exchange, kind, ...parsedDates, shares_per_existing_share_micros, approved_total_new_shares }, status, registration, receipt, credited_on }
 }
 
+/// 拆股／缩股方案条款的权威解析（账簿 plan 与公开公告共用；engine
+/// `ShareSplitEventPlan` 的序列化形态）。
+export function parseShareSplitEventPlanValue(value: unknown, path: string): ShareSplitEventPlan {
+  const planValue = record(value, path)
+  exact(planValue, ["event_id", "approval_reference", "issuer", "stock", "exchange", "direction", "ratio", "approved_on", "announced_on", "registered_on", "ex_rights_on"], path)
+  const event_id = string(planValue.event_id, `${path}.event_id`), approval_reference = string(planValue.approval_reference, `${path}.approval_reference`), issuer = string(planValue.issuer, `${path}.issuer`), stock = string(planValue.stock, `${path}.stock`)
+  if (!event_id.trim() || !approval_reference.trim() || !issuer.trim() || !stock.trim()) throw new SaveSchemaError(path, "拆股／缩股方案身份不能为空")
+  const exchange = oneOf(planValue.exchange, `${path}.exchange`, ["sse", "szse"] as const)
+  const direction = oneOf(planValue.direction, `${path}.direction`, ["Split", "Consolidate"] as const)
+  const ratio = decimal(planValue.ratio, `${path}.ratio`)
+  if (ratio === "0" || ratio === "1") throw new SaveSchemaError(`${path}.ratio`, "拆股／缩股比例必须为 ≥2 的整数")
+  if (BigInt(ratio) < 2n) throw new SaveSchemaError(`${path}.ratio`, "拆股／缩股比例必须为 ≥2 的整数")
+  const dates = ["approved_on", "announced_on", "registered_on", "ex_rights_on"] as const
+  const parsedDates = Object.fromEntries(dates.map(key => [key, civilDate(planValue[key], `${path}.${key}`)])) as Record<typeof dates[number], string>
+  if (!(parsedDates.approved_on <= parsedDates.announced_on && parsedDates.announced_on <= parsedDates.registered_on && parsedDates.registered_on < parsedDates.ex_rights_on)) throw new SaveSchemaError(path, "拆股／缩股方案日期顺序非法")
+  return { event_id, approval_reference, issuer, stock, exchange, direction, ratio, ...parsedDates }
+}
+
+function parseShareSplitBook(value: unknown, path: string): ShareSplitBook {
+  const book = record(value, path)
+  exact(book, ["plan", "status", "registration", "receipt", "settled_on"], path)
+  const plan = parseShareSplitEventPlanValue(book.plan, `${path}.plan`)
+  const status = oneOf(book.status, `${path}.status`, ["Approved", "Announced", "Registered", "Settled"] as const)
+  const registration = book.registration === null ? null : parseSnapshot(book.registration, `${path}.registration`)
+  const receiptValue = book.receipt === null ? null : record(book.receipt, `${path}.receipt`)
+  if ((registration === null) !== (receiptValue === null)) throw new SaveSchemaError(`${path}.receipt`, "登记快照与换算回执必须同时存在或同时为空")
+  let receipt: ShareSplitReceipt | null = null
+  if (receiptValue !== null) {
+    exact(receiptValue, ["event_id", "approval_reference", "registration_event_id", "stock", "issuer", "registered_on", "direction", "ratio", "issued_shares_before", "issued_shares_after", "tie_break_seed", "holders"], `${path}.receipt`)
+    const holders = array(receiptValue.holders, `${path}.receipt.holders`).map((item, index) => {
+      const holderPath = `${path}.receipt.holders[${index}]`, holder = record(item, holderPath)
+      exact(holder, ["holder", "original_shares", "new_shares", "fractional_numerator", "tie_break_award", "original_lots"], holderPath)
+      const original_lots = array(holder.original_lots, `${holderPath}.original_lots`).map((lot, lotIndex) => parseLot(lot, `${holderPath}.original_lots[${lotIndex}]`))
+      const original_shares = positiveU64(holder.original_shares, `${holderPath}.original_shares`)
+      const new_shares = decimal(holder.new_shares, `${holderPath}.new_shares`)
+      const fractional_numerator = decimal(holder.fractional_numerator, `${holderPath}.fractional_numerator`)
+      const tie_break_award = decimal(holder.tie_break_award, `${holderPath}.tie_break_award`)
+      if (BigInt(new_shares) === 0n && BigInt(original_shares) > 0n && BigInt(fractional_numerator) === 0n && BigInt(tie_break_award) === 0n) throw new SaveSchemaError(holderPath, "缩股归零换算必须携带碎股分子或整股奖励")
+      return { holder: holderValue(parseHolder(holder.holder, `${holderPath}.holder`)), original_shares, new_shares, fractional_numerator, tie_break_award, original_lots }
+    })
+    receipt = {
+      event_id: string(receiptValue.event_id, `${path}.receipt.event_id`),
+      approval_reference: string(receiptValue.approval_reference, `${path}.receipt.approval_reference`),
+      registration_event_id: string(receiptValue.registration_event_id, `${path}.receipt.registration_event_id`),
+      stock: string(receiptValue.stock, `${path}.receipt.stock`),
+      issuer: string(receiptValue.issuer, `${path}.receipt.issuer`),
+      registered_on: civilDate(receiptValue.registered_on, `${path}.receipt.registered_on`),
+      direction: oneOf(receiptValue.direction, `${path}.receipt.direction`, ["Split", "Consolidate"] as const),
+      ratio: decimal(receiptValue.ratio, `${path}.receipt.ratio`),
+      issued_shares_before: positiveU64(receiptValue.issued_shares_before, `${path}.receipt.issued_shares_before`),
+      issued_shares_after: positiveU64(receiptValue.issued_shares_after, `${path}.receipt.issued_shares_after`),
+      tie_break_seed: decimal(receiptValue.tie_break_seed, `${path}.receipt.tie_break_seed`),
+      holders,
+    }
+    const originalTotal = holders.reduce((sum, holder) => sum + BigInt(holder.original_shares), 0n)
+    const afterTotal = holders.reduce((sum, holder) => sum + BigInt(holder.new_shares), 0n)
+    if (originalTotal !== BigInt(receipt.issued_shares_before) || afterTotal !== BigInt(receipt.issued_shares_after)) throw new SaveSchemaError(`${path}.receipt.holders`, "换算回执持有人合计与前后总股数不一致")
+    if (receipt.event_id !== plan.event_id || receipt.approval_reference !== plan.approval_reference || receipt.stock !== plan.stock || receipt.issuer !== plan.issuer || receipt.direction !== plan.direction || receipt.ratio !== plan.ratio) throw new SaveSchemaError(`${path}.receipt`, "换算回执与拆股／缩股方案不一致")
+    if (plan.direction === "Split") {
+      if (afterTotal !== originalTotal * BigInt(plan.ratio)) throw new SaveSchemaError(`${path}.receipt.holders`, "拆股换算必须精确放大整数倍")
+      if (holders.some(holder => BigInt(holder.fractional_numerator) !== 0n || BigInt(holder.tie_break_award) !== 0n)) throw new SaveSchemaError(`${path}.receipt.holders`, "拆股不产生碎股分子或整股奖励")
+    } else if (afterTotal > originalTotal) {
+      throw new SaveSchemaError(`${path}.receipt.holders`, "缩股换算不得放大总股数")
+    }
+  }
+  const settled_on = book.settled_on === null ? null : civilDate(book.settled_on, `${path}.settled_on`)
+  if ((status === "Registered" || status === "Settled") !== (registration !== null)) throw new SaveSchemaError(`${path}.status`, "拆股／缩股状态与冻结登记不一致")
+  if (registration !== null && (registration.event_id !== plan.event_id || registration.stock !== plan.stock || registration.issuer !== plan.issuer || registration.registered_on !== plan.registered_on)) throw new SaveSchemaError(`${path}.registration`, "登记快照与拆股／缩股方案不一致")
+  if (settled_on !== null && (status !== "Settled" || settled_on !== plan.ex_rights_on)) throw new SaveSchemaError(`${path}.settled_on`, "入账事实必须为 Settled 状态且等于 R+1 日期")
+  if (registration === null && receipt === null && settled_on === null && !["Approved", "Announced"].includes(status)) throw new SaveSchemaError(`${path}.status`, "登记前不得出现入账事实")
+  return { plan, status, registration, receipt, settled_on }
+}
+
 function parseTaxClass(value: unknown, path: string): TaxShareClass {
   if (value === "PublicMarket") return value
   const tagged = record(value, path)
@@ -580,7 +680,7 @@ function parseExactAmount(value: unknown, path: string): ExactDividendTaxAmount 
 
 function parseTaxBook(value: unknown, path: string): CashDividendTaxBook {
   const book = record(value, path)
-  exact(book, ["operation_seq", "account", "stock", "profile", "opened_on", "opening_lots", "settled_on", "lots", "days", "dividends", "collections"], path)
+  exact(book, ["operation_seq", "account", "stock", "profile", "opened_on", "opening_lots", "settled_on", "lots", "days", "dividends", "collections", "redenominations"], path)
   const profile = oneOf(book.profile, `${path}.profile`, ["IndividualPublicMarket", "ResidentEnterprise", "SecuritiesFund", "NonResident"] as const)
   if (profile !== "IndividualPublicMarket") throw new SaveSchemaError(`${path}.profile`, "当前仅实现个人公开市场现金分红税")
   const account = accountId(book.account, `${path}.account`)
@@ -653,7 +753,23 @@ function parseTaxBook(value: unknown, path: string): CashDividendTaxBook {
   })
   const opening_lots = array(book.opening_lots, `${path}.opening_lots`).map((lot, index) => parseTaxLot(lot, `${path}.opening_lots[${index}]`))
   const lots = array(book.lots, `${path}.lots`).map((lot, index) => parseTaxLot(lot, `${path}.lots[${index}]`))
-  const parsed: CashDividendTaxBook = { operation_seq: integer(book.operation_seq, `${path}.operation_seq`, 0), account, stock, profile, opened_on, opening_lots, settled_on, lots, days, dividends, collections }
+  const redenominations: TaxRedenominationReceipt[] = array(book.redenominations, `${path}.redenominations`).map((item, index) => {
+    const reductionPath = `${path}.redenominations[${index}]`, receipt = record(item, reductionPath)
+    exact(receipt, ["operation_seq", "event_id", "day", "net_change", "removed"], reductionPath)
+    const event_id = string(receipt.event_id, `${reductionPath}.event_id`)
+    if (event_id.trim() === "") throw new SaveSchemaError(`${reductionPath}.event_id`, "税账重新计值事件身份不能为空")
+    const net_change = signedI128(receipt.net_change, `${reductionPath}.net_change`)
+    if (BigInt(net_change) >= 0n) throw new SaveSchemaError(`${reductionPath}.net_change`, "税账重新计值核减必须为净负")
+    const removed = array(receipt.removed, `${reductionPath}.removed`).map((entry, entryIndex) => {
+      const removalPath = `${reductionPath}.removed[${entryIndex}]`, removal = record(entry, removalPath)
+      exact(removal, ["lot", "disposed_on"], removalPath)
+      return { lot: parseTaxLot(removal.lot, `${removalPath}.lot`), disposed_on: civilDate(removal.disposed_on, `${removalPath}.disposed_on`) }
+    })
+    const total = removed.reduce((sum, entry) => sum + BigInt(entry.lot.qty), 0n)
+    if (total !== -BigInt(net_change)) throw new SaveSchemaError(`${reductionPath}.removed`, "税账重新计值核减片段合计与净额不一致")
+    return { operation_seq: integer(receipt.operation_seq, `${reductionPath}.operation_seq`, 1), event_id, day: civilDate(receipt.day, `${reductionPath}.day`), net_change, removed }
+  })
+  const parsed: CashDividendTaxBook = { operation_seq: integer(book.operation_seq, `${path}.operation_seq`, 0), account, stock, profile, opened_on, opening_lots, settled_on, lots, days, dividends, collections, redenominations }
   validateTaxBookReplay(parsed, path)
   return parsed
 }
@@ -666,6 +782,7 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
       ...dividend.payments.map(payment => ({ operation_seq: payment.operation_seq, path: "dividends payments", day: payment.paid_on })),
     ]),
     ...book.collections.map(receipt => ({ operation_seq: receipt.operation_seq, path: "collections", day: receipt.day })),
+    ...book.redenominations.map(receipt => ({ operation_seq: receipt.operation_seq, path: "redenominations", day: receipt.day })),
   ].sort((left, right) => left.operation_seq - right.operation_seq)
   if (book.operation_seq !== operations.length) throw new SaveSchemaError(`${path}.operation_seq`, "税账操作序列与事实数量不一致")
   let previousDay = book.opened_on
@@ -676,7 +793,7 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
   }
   const eventIds = new Set<string>()
   const paymentIds = new Set<string>()
-  for (const fact of [...book.days, ...book.dividends, ...book.collections]) {
+  for (const fact of [...book.days, ...book.dividends, ...book.collections, ...book.redenominations]) {
     if (eventIds.has(fact.event_id)) throw new SaveSchemaError(path, "税账事件身份重复")
     eventIds.add(fact.event_id)
   }
@@ -712,14 +829,34 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
     dayCursor = day.day
   }
   const replayed = book.opening_lots.map(lot => ({ ...lot }))
-  for (const day of book.days) {
-    if (day.acquisition !== null) replayed.push({ ...day.acquisition })
-    for (const disposition of day.dispositions) {
-      const index = replayed.findIndex(lot => lot.id === disposition.lot.id)
-      if (index === -1 || BigInt(replayed[index]!.qty) < BigInt(disposition.lot.qty)) throw new SaveSchemaError(path, "税账处置引用不存在的批次或数量")
-      const remaining = BigInt(replayed[index]!.qty) - BigInt(disposition.lot.qty)
-      if (remaining === 0n) replayed.splice(index, 1)
-      else replayed[index] = { ...replayed[index]!, qty: remaining.toString() }
+  // 与引擎 validate 同构：按 operation_seq 交织回放日结与重新计值核减——缩股的
+  // FIFO 核减片段会真实减少 lot 数量（非应税、不进处置口径），不应用核减就无法
+  // 重构缩股后的当前批次。
+  const sequenceOf = (fact: { kind: "day"; day: typeof book.days[number] } | { kind: "redenomination"; receipt: TaxRedenominationReceipt }): number =>
+    fact.kind === "day" ? fact.day.operation_seq : fact.receipt.operation_seq
+  const sequencedFacts: ({ kind: "day"; day: typeof book.days[number] } | { kind: "redenomination"; receipt: TaxRedenominationReceipt })[] = [
+    ...book.days.map((day): { kind: "day"; day: typeof book.days[number] } => ({ kind: "day", day })),
+    ...book.redenominations.map((receipt): { kind: "redenomination"; receipt: TaxRedenominationReceipt } => ({ kind: "redenomination", receipt })),
+  ].sort((left, right) => sequenceOf(left) - sequenceOf(right))
+  for (const fact of sequencedFacts) {
+    if (fact.kind === "day") {
+      const day = fact.day
+      if (day.acquisition !== null) replayed.push({ ...day.acquisition })
+      for (const disposition of day.dispositions) {
+        const index = replayed.findIndex(lot => lot.id === disposition.lot.id)
+        if (index === -1 || BigInt(replayed[index]!.qty) < BigInt(disposition.lot.qty)) throw new SaveSchemaError(path, "税账处置引用不存在的批次或数量")
+        const remaining = BigInt(replayed[index]!.qty) - BigInt(disposition.lot.qty)
+        if (remaining === 0n) replayed.splice(index, 1)
+        else replayed[index] = { ...replayed[index]!, qty: remaining.toString() }
+      }
+    } else {
+      for (const entry of fact.receipt.removed) {
+        const index = replayed.findIndex(lot => lot.id === entry.lot.id)
+        if (index === -1 || BigInt(replayed[index]!.qty) < BigInt(entry.lot.qty)) throw new SaveSchemaError(path, "税账重新计值核减引用不存在的批次或数量")
+        const remaining = BigInt(replayed[index]!.qty) - BigInt(entry.lot.qty)
+        if (remaining === 0n) replayed.splice(index, 1)
+        else replayed[index] = { ...replayed[index]!, qty: remaining.toString() }
+      }
     }
   }
   if (JSON.stringify(replayed) !== JSON.stringify(book.lots)) throw new SaveSchemaError(`${path}.lots`, "税账当前批次与开账批次及日结 replay 不一致")
@@ -841,11 +978,12 @@ function parsePayment(value: unknown, path: string): CashDividendPaymentReceipt 
 
 export function parseSessionCorporateActions(value: unknown, context: Context, path = "corporate_actions") {
   const root = record(value, path)
-  exact(root, ["registries", "dividends", "dividend_tax_books", "stock_distributions", "rights_offerings", "rights_subscription_queue", "rejected_rights_subscriptions", "issuer_repurchases", "account_gross_receipts", "external_receipts", "applied_ex_reference_groups"], path)
+  exact(root, ["registries", "dividends", "dividend_tax_books", "stock_distributions", "share_splits", "rights_offerings", "rights_subscription_queue", "rejected_rights_subscriptions", "issuer_repurchases", "account_gross_receipts", "external_receipts", "applied_ex_reference_groups"], path)
   const registries = array(root.registries, `${path}.registries`).map((item, index) => parseRegistry(item, `${path}.registries[${index}]`))
   const dividends = array(root.dividends, `${path}.dividends`).map((item, index) => parseDividend(item, `${path}.dividends[${index}]`))
   const dividend_tax_books = array(root.dividend_tax_books, `${path}.dividend_tax_books`).map((item, index) => parseTaxBook(item, `${path}.dividend_tax_books[${index}]`))
   const stock_distributions = array(root.stock_distributions, `${path}.stock_distributions`).map((item, index) => parseStockDistributionBook(item, `${path}.stock_distributions[${index}]`))
+  const share_splits = array(root.share_splits, `${path}.share_splits`).map((item, index) => parseShareSplitBook(item, `${path}.share_splits[${index}]`))
   const rights_offerings = array(root.rights_offerings, `${path}.rights_offerings`).map((item, index) => parseRightsOfferingBook(item, `${path}.rights_offerings[${index}]`))
   const rights_subscription_queue: QueuedRightsSubscription[] = array(root.rights_subscription_queue, `${path}.rights_subscription_queue`).map((item, index) => {
     const itemPath = `${path}.rights_subscription_queue[${index}]`, entry = record(item, itemPath)
@@ -891,16 +1029,17 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
   })
   const applied_ex_reference_groups: AppliedExReferenceGroup[] = array(root.applied_ex_reference_groups, `${path}.applied_ex_reference_groups`).map((item, index) => {
     const itemPath = `${path}.applied_ex_reference_groups[${index}]`, group = record(item, itemPath)
-    exact(group, ["date", "stock", "cash_plan_ids", "stock_event_ids", "rights_event_ids", "reference"], itemPath)
+    exact(group, ["date", "stock", "cash_plan_ids", "stock_event_ids", "rights_event_ids", "split_event_ids", "reference"], itemPath)
     const date = civilDate(group.date, `${itemPath}.date`), stock = string(group.stock, `${itemPath}.stock`)
     const cash_plan_ids = array(group.cash_plan_ids, `${itemPath}.cash_plan_ids`).map((id, planIndex) => string(id, `${itemPath}.cash_plan_ids[${planIndex}]`))
     const stock_event_ids = array(group.stock_event_ids, `${itemPath}.stock_event_ids`).map((id, eventIndex) => string(id, `${itemPath}.stock_event_ids[${eventIndex}]`))
     const rights_event_ids = array(group.rights_event_ids, `${itemPath}.rights_event_ids`).map((id, eventIndex) => string(id, `${itemPath}.rights_event_ids[${eventIndex}]`))
+    const split_event_ids = array(group.split_event_ids, `${itemPath}.split_event_ids`).map((id, eventIndex) => string(id, `${itemPath}.split_event_ids[${eventIndex}]`))
     const reference = record(group.reference, `${itemPath}.reference`)
     exact(reference, ["ex_date", "reference_price"], `${itemPath}.reference`)
     const ex_date = civilDate(reference.ex_date, `${itemPath}.reference.ex_date`), reference_price = money(reference.reference_price, `${itemPath}.reference.reference_price`)
-    if (date > context.currentDate || ex_date !== date || !stock.trim() || BigInt(reference_price) <= 0n || (cash_plan_ids.length === 0 && stock_event_ids.length === 0 && rights_event_ids.length === 0) || new Set(cash_plan_ids).size !== cash_plan_ids.length || new Set(stock_event_ids).size !== stock_event_ids.length || new Set(rights_event_ids).size !== rights_event_ids.length) throw new SaveSchemaError(itemPath, "已应用除权除息组事实非法")
-    return { date, stock, cash_plan_ids, stock_event_ids, rights_event_ids, reference: { ex_date, reference_price } }
+    if (date > context.currentDate || ex_date !== date || !stock.trim() || BigInt(reference_price) <= 0n || (cash_plan_ids.length === 0 && stock_event_ids.length === 0 && rights_event_ids.length === 0 && split_event_ids.length === 0) || new Set(cash_plan_ids).size !== cash_plan_ids.length || new Set(stock_event_ids).size !== stock_event_ids.length || new Set(rights_event_ids).size !== rights_event_ids.length || new Set(split_event_ids).size !== split_event_ids.length) throw new SaveSchemaError(itemPath, "已应用除权除息组事实非法")
+    return { date, stock, cash_plan_ids, stock_event_ids, rights_event_ids, split_event_ids, reference: { ex_date, reference_price } }
   })
   const registryByStock = new Map<string, ReturnType<typeof parseRegistry>>()
   const planIds = new Set<string>()
@@ -1018,7 +1157,8 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     if (anchor?.ex_date === group.date && anchor.reference_price !== group.reference.reference_price) throw new SaveSchemaError(`${path}.applied_ex_reference_groups[${index}].reference`, "已应用除权除息组与 MarketSnap 锚点不一致")
     const expectedPlanIds = dividends.filter(dividend => dividend.plan.ex_dividend_on === group.date && dividend.plan.stock === group.stock && dividend.registration !== null).map(dividend => dividend.plan.plan_id).sort()
     const expectedEventIds = stock_distributions.filter(book => book.plan.ex_rights_on === group.date && book.plan.stock === group.stock && book.registration !== null).map(book => book.plan.event_id).sort()
-    if (JSON.stringify(expectedPlanIds) !== JSON.stringify([...group.cash_plan_ids].sort()) || JSON.stringify(expectedEventIds) !== JSON.stringify([...group.stock_event_ids].sort())) throw new SaveSchemaError(`${path}.applied_ex_reference_groups[${index}]`, "已应用除权除息组与登记分红方案或送转事件不一致")
+    const expectedSplitIds = share_splits.filter(book => book.plan.ex_rights_on === group.date && book.plan.stock === group.stock && book.registration !== null).map(book => book.plan.event_id).sort()
+    if (JSON.stringify(expectedPlanIds) !== JSON.stringify([...group.cash_plan_ids].sort()) || JSON.stringify(expectedEventIds) !== JSON.stringify([...group.stock_event_ids].sort()) || JSON.stringify(expectedSplitIds) !== JSON.stringify([...group.split_event_ids].sort())) throw new SaveSchemaError(`${path}.applied_ex_reference_groups[${index}]`, "已应用除权除息组与登记分红方案、送转或拆股／缩股事件不一致")
   }
   const latestGroupByStock = new Map<string, AppliedExReferenceGroup>()
   for (const group of applied_ex_reference_groups) {
@@ -1058,6 +1198,43 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
       if (issued !== BigInt(distribution.plan.approved_total_new_shares)) throw new SaveSchemaError(itemPath, "送转入账股数与非交易过户增发合计不一致")
     }
   }
+  // 拆股／缩股账簿勾稽：身份唯一、名册匹配、交易所一致、冻结快照与名册登记
+  // 事实一致、入账回执（ShareReDenomination）的日期与净额与换算回执一致；
+  // 反向：名册中每条重新计值回执必须映射到已入账账簿。
+  const splitEventIds = new Set<string>()
+  for (const [index, split] of share_splits.entries()) {
+    const itemPath = `${path}.share_splits[${index}]`
+    if (splitEventIds.has(split.plan.event_id)) throw new SaveSchemaError(`${itemPath}.plan.event_id`, "拆股／缩股事件身份重复")
+    splitEventIds.add(split.plan.event_id)
+    const registry = registryByStock.get(split.plan.stock)
+    if (registry === undefined || registry.issuer !== split.plan.issuer) throw new SaveSchemaError(`${itemPath}.plan`, "拆股／缩股方案没有匹配的发行人股东名册")
+    const setupStock = context.setup.stocks.find(stock => stock.code === split.plan.stock)
+    if (setupStock === undefined || calendarExchangeOfSetup(setupStock.exchange) !== split.plan.exchange) throw new SaveSchemaError(`${itemPath}.plan.exchange`, "拆股／缩股方案交易所与证券不一致")
+    if (split.plan.approved_on > context.currentDate) throw new SaveSchemaError(`${itemPath}.plan.approved_on`, "拆股／缩股批准日期晚于存档日")
+    if (split.registration !== null) {
+      const savedSnapshot = registry.registrations.find(snapshot => snapshot.event_id === split.plan.event_id)
+      if (savedSnapshot === undefined || JSON.stringify(savedSnapshot) !== JSON.stringify(split.registration)) throw new SaveSchemaError(`${itemPath}.registration`, "拆股／缩股冻结快照与股东名册对应登记事实不一致")
+    }
+    if (split.settled_on !== null) {
+      const expectedEvent = `share-split:${split.plan.event_id}`
+      const receipt = registry.receipts.find(receipt => receipt.request.event_id === expectedEvent)
+      if (receipt === undefined) throw new SaveSchemaError(itemPath, "拆股／缩股入账缺少重新计值回执")
+      const scope = receipt.request.scope
+      if (receipt.request.day !== split.settled_on || typeof scope !== "object" || !Object.hasOwn(scope, "ShareReDenomination")) throw new SaveSchemaError(itemPath, "拆股／缩股入账与重新计值回执日期或范围不一致")
+      let net = 0n
+      for (const change of receipt.request.changes) net += BigInt(change.change)
+      const expectedNet = BigInt(split.receipt?.issued_shares_after ?? "0") - BigInt(split.receipt?.issued_shares_before ?? "0")
+      if (net !== expectedNet) throw new SaveSchemaError(itemPath, "重新计值回执净额与换算回执前后总股数不一致")
+    }
+  }
+  for (const registry of registryByStock.values()) {
+    for (const receipt of registry.receipts) {
+      const scope = receipt.request.scope
+      if (typeof scope !== "object" || !Object.hasOwn(scope, "ShareReDenomination")) continue
+      const split = share_splits.find(split => `share-split:${split.plan.event_id}` === receipt.request.event_id)
+      if (split === undefined || split.settled_on === null || split.settled_on !== receipt.request.day) throw new SaveSchemaError(`${path}.share_splits`, "名册存在无对应已入账账簿的重新计值回执")
+    }
+  }
   const taxBookKeys = new Set<string>()
   const configuredTaxAccounts = new Set<string>()
   for (const [index, taxBook] of dividend_tax_books.entries()) {
@@ -1093,6 +1270,14 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
         if (!taxBook.days.some(day => day.event_id === expectedEventId)) {
           throw new SaveSchemaError(itemPath, `账户 ${taxBook.account} 的股息税账缺少名册回执 ${receipt.request.event_id} 的日结事实：送转×税账交互未入账，拒绝静默缺股`)
         }
+      } else if ("ShareReDenomination" in scope) {
+        // 拆股／缩股重新计值：与引擎分支同构以 `{event_id}:{account}` 派生；拆股
+        // 正向增量走日结续记、缩股核减走 redenominations 回执（非应税、不进处置
+        // 口径），二者任一即构成覆盖，缺失仍显式拒绝。
+        const expectedEventId = `${receipt.request.event_id}:${taxBook.account}`
+        if (!taxBook.days.some(day => day.event_id === expectedEventId) && !taxBook.redenominations.some(reduction => reduction.event_id === expectedEventId)) {
+          throw new SaveSchemaError(itemPath, `账户 ${taxBook.account} 的股息税账缺少名册回执 ${receipt.request.event_id} 的重新计值事实：拆股／缩股×税账交互未入账，拒绝静默缺股`)
+        }
       } else if ("IssuerRepurchaseCancellation" in scope) {
         continue
       } else {
@@ -1106,7 +1291,7 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     const expectedStatus = plan !== undefined && configuredTaxAccounts.has(`${receipt.account}\0${plan.plan.stock}`) ? "IndividualPublicMarket" : "TreatmentNotConfigured"
     if (receipt.tax_status !== expectedStatus) throw new SaveSchemaError(`${path}.account_gross_receipts[${index}].tax_status`, "账户分红税身份与股息税账配置不一致")
   }
-  return { registries: registries.map(({ holderShares: _shares, ...registry }) => registry), dividends, dividend_tax_books, stock_distributions, rights_offerings, rights_subscription_queue, rejected_rights_subscriptions, issuer_repurchases, account_gross_receipts, external_receipts, applied_ex_reference_groups }
+  return { registries: registries.map(({ holderShares: _shares, ...registry }) => registry), dividends, dividend_tax_books, stock_distributions, share_splits, rights_offerings, rights_subscription_queue, rejected_rights_subscriptions, issuer_repurchases, account_gross_receipts, external_receipts, applied_ex_reference_groups }
 }
 
 function holderWire(holder: ReturnType<typeof parseHolder>): HolderId {

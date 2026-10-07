@@ -7,6 +7,10 @@ export type SessionCorporateActions = {
     import("../../save/schema/corporate-actions").CashDividendTaxBook[];
   stock_distributions:
     import("../../save/schema/corporate-actions").StockDistributionBook[];
+  /**
+   * 拆股／缩股（股份重新计值）事件账簿；严格持久化，旧档缺失该字段显式拒绝。
+   */
+  share_splits: import("../../save/schema/corporate-actions").ShareSplitBook[];
   rights_offerings:
     import("../../save/schema/corporate-actions").RightsOfferingBook[];
   /**

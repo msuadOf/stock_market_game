@@ -102,6 +102,9 @@ impl GameSession {
             rights_event_ids: Vec<String>,
             rights_price_per_share: Option<crate::money::Money>,
             rights_ratio_micros: u64,
+            split_event_ids: Vec<String>,
+            split_numerator: Option<u64>,
+            split_denominator: Option<u64>,
         }
         let mut combined = std::collections::BTreeMap::<crate::account::StockCode, CombinedExEvent>::new();
         for book in &self.state.corporate_actions.dividends {
@@ -231,6 +234,41 @@ impl GameSession {
             entry.rights_ratio_micros = ratio;
             entry.rights_event_ids.push(plan.event_id.clone());
         }
+        for book in &self.state.corporate_actions.share_splits {
+            let plan = book.plan();
+            if plan.ex_rights_on != date || book.registration().is_none() {
+                continue;
+            }
+            let entry = combined.entry(plan.stock.clone()).or_default();
+            if entry.exchange.is_some_and(|known| known != plan.exchange)
+                || entry.registered_on.is_some_and(|known| known != plan.registered_on)
+            {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!("证券 {} 的同日除权除息事件交易所或登记日不一致", plan.stock.0),
+                    location: "GameSession::prepare_ex_references_for_current_date".into(),
+                });
+            }
+            // 同日多起重新计值、或拆股／缩股×送转、×配股同日的合并除权口径
+            // 未在官方材料核实：显式拒绝（受理预检的前移兜底）。
+            if !entry.split_event_ids.is_empty()
+                || !entry.stock_event_ids.is_empty()
+                || !entry.rights_event_ids.is_empty()
+            {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!(
+                        "证券 {} 的同日拆股／缩股与送转／配股合并除权口径未核实，显式拒绝",
+                        plan.stock.0
+                    ),
+                    location: "GameSession::prepare_ex_references_for_current_date".into(),
+                });
+            }
+            entry.exchange = Some(plan.exchange);
+            entry.registered_on = Some(plan.registered_on);
+            let (numerator, denominator) = plan.new_shares_per_old_share();
+            entry.split_numerator = Some(numerator);
+            entry.split_denominator = Some(denominator);
+            entry.split_event_ids.push(plan.event_id.clone());
+        }
         if combined.is_empty() {
             return Ok(());
         }
@@ -248,6 +286,8 @@ impl GameSession {
             let registered_on = event.registered_on.unwrap_or(date);
             event.cash_plan_ids.sort();
             event.stock_event_ids.sort();
+            event.rights_event_ids.sort();
+            event.split_event_ids.sort();
             let market = candidate_markets.get_mut(&stock).ok_or_else(|| StepFatal::InvariantViolation {
                 description: format!("除权除息计划引用未知证券 {}", stock.0),
                 location: "GameSession::prepare_ex_references_for_current_date".into(),
@@ -256,6 +296,7 @@ impl GameSession {
                 if group.cash_plan_ids != event.cash_plan_ids
                     || group.stock_event_ids != event.stock_event_ids
                     || group.rights_event_ids != event.rights_event_ids
+                    || group.split_event_ids != event.split_event_ids
                     || market.last_cash_ex_reference() != Some(group.reference)
                 {
                     return Err(StepFatal::InvariantViolation {
@@ -300,6 +341,33 @@ impl GameSession {
                     event.gross_per_share,
                     rights_price,
                 )
+            } else if event.split_numerator.is_some() {
+                // 拆股／缩股除权：登记日 R 的次一交易日；公式为 (前收 − 红利) ×
+                // denominator ÷ numerator（有理数比例，可与同日现金红利合并）。
+                let numerator = event
+                    .split_numerator
+                    .expect("split numerator presence was checked above");
+                let denominator = event
+                    .split_denominator
+                    .expect("split denominator presence was checked above");
+                let formula = match exchange {
+                    crate::calendar::CalendarExchange::Sse => crate::company::ex_reference_price::ShareSplitExRightsFormula::ShanghaiCirculatingShareChange {
+                        numerator,
+                        denominator,
+                    },
+                    crate::calendar::CalendarExchange::Szse => crate::company::ex_reference_price::ShareSplitExRightsFormula::ShenzhenShareChange {
+                        numerator,
+                        denominator,
+                    },
+                };
+                crate::company::ex_reference_price::share_split_ex_rights_reference_price(
+                    &calendar,
+                    exchange,
+                    formula,
+                    registered_on,
+                    market.last_close(),
+                    event.gross_per_share,
+                )
             } else if event.ratio_micros == 0 {
                 crate::company::ex_reference_price::cash_dividend_ex_reference_price(
                     &calendar,
@@ -340,6 +408,7 @@ impl GameSession {
                 cash_plan_ids: event.cash_plan_ids,
                 stock_event_ids: event.stock_event_ids,
                 rights_event_ids: event.rights_event_ids,
+                split_event_ids: event.split_event_ids,
                 reference,
             });
         }

@@ -25,6 +25,8 @@ mod dividend_tax_mode_tests;
 mod issuer_repurchase_session_tests;
 #[cfg(test)]
 mod rights_offering_session_tests;
+#[cfg(test)]
+mod share_split_session_tests;
 mod exchange_calendar;
 #[cfg(test)]
 mod exchange_calendar_tests;
@@ -2750,6 +2752,25 @@ impl GameSession {
                     .into(),
             ));
         }
+        // 拆股／缩股×送转同除权日的合并除权口径同样未核实：受理时显式拒绝
+        // （与 approve_share_split 的碰撞预检对称）。
+        if self
+            .state
+            .corporate_actions
+            .share_splits
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "同一发行人同证券同除权日已存在拆股／缩股事件；拆股／缩股×送转同日的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
+        }
         let registry = self
             .state
             .corporate_actions
@@ -2787,21 +2808,18 @@ impl GameSession {
         let prior_facts = candidate_system
             .stock_distribution_facts(&plan.issuer)
             .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        let par_cents = match prior_facts.first() {
-            Some(first) => {
-                // 已有送转声明：面值在首次声明时固定，后续送转必须沿用同一面值。
-                if prior_facts
-                    .iter()
-                    .any(|fact| fact.par_value_per_share != first.par_value_per_share)
-                {
-                    return Err(SessionCorporateActionsError::Invalid(
-                        "既有送转声明的每股面值不一致，无法确定后续送转沿用面值".into(),
-                    ));
-                }
-                i128::from(first.par_value_per_share.cents())
+        let par_cents = match candidate_system
+            .current_par_value(&plan.issuer)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+        {
+            Some(par) => {
+                // 面值权威：最近一次拆股／缩股重锚后的面值，或既有送转声明的
+                // bind-once 面值（拆股后的送转沿用重锚面值，送转本身不改变面值）。
+                let _ = &prior_facts;
+                i128::from(par.cents())
             }
             None => {
-                // 首次送转声明：由注册资本法定事实与当前发行股数整除推导面值。
+                // 首次声明：由注册资本法定事实与当前发行股数整除推导面值。
                 let issued_shares = registry.issued_shares();
                 let registered_capital_cents = legal_facts
                     .registered_capital
@@ -2863,6 +2881,216 @@ impl GameSession {
         self.state
             .corporate_actions
             .stock_distributions
+            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
+        Ok(())
+    }
+
+    /// 以 SimpleFinanceState 的面值权威链受理拆股／缩股方案（显式计划入口）。
+    ///
+    /// 面值口径：拆股面值按整数比例整除缩小、注册资本不变；缩股面值按整数比例
+    /// 放大、注册资本在真实换算入账后按「旧股口径消灭面值：
+    /// par_before×(S_before−ratio×S_after)」核减。当前面值权威
+    /// 由 `current_par_value` 给出（最近一次拆股／缩股重锚；否则沿用送转 bind-once
+    /// 面值；再否则由注册资本法定事实 ÷ 当前发行股数整除推导）。A 股无拆股常规
+    /// 通道与先例，本机制按标准股份拆细语义登记为游戏实现口径（ADR-0039 决策 3
+    /// 核验结论；依据分级见 docs/trading-rules.md「拆股／缩股」节）。
+    pub fn approve_share_split(
+        &mut self,
+        plan: crate::company::share_split::ShareSplitEventPlan,
+    ) -> Result<(), SessionCorporateActionsError> {
+        use crate::company::share_split::{ShareSplitDirection, ShareSplitError};
+        plan.validate()
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
+            return Err(SessionCorporateActionsError::Invalid(
+                "拆股／缩股方案的批准日期或公告日期与当前会话日期不一致".into(),
+            ));
+        }
+        if self
+            .state
+            .corporate_actions
+            .share_splits
+            .iter()
+            .any(|existing| existing.plan().event_id == plan.event_id)
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "拆股／缩股事件 id 已存在".into(),
+            ));
+        }
+        // 同除权日碰撞三层预检（对齐 0a38e52e 送转×配股先例）：拆股／缩股与
+        // 送转、配股或另一起拆股／缩股同日的合并除权口径均未在官方材料核实，
+        // 受理时直接拒绝，不推迟到除权日日结。
+        let collides = |existing: &crate::company::share_split::ShareSplitEventPlan| {
+            existing.issuer == plan.issuer
+                && existing.stock == plan.stock
+                && existing.ex_rights_on == plan.ex_rights_on
+        };
+        if self
+            .state
+            .corporate_actions
+            .stock_distributions
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "同一发行人同证券同除权日已存在送转事件；送转×拆股／缩股同日的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
+        }
+        if self
+            .state
+            .corporate_actions
+            .rights_offerings
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "同一发行人同证券同除权日已存在配股事件；配股×拆股／缩股同日的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
+        }
+        if self
+            .state
+            .corporate_actions
+            .share_splits
+            .iter()
+            .any(|existing| collides(existing.plan()))
+        {
+            return Err(SessionCorporateActionsError::Invalid(
+                "同一发行人同证券同除权日已存在拆股／缩股事件；同日多起重新计值的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
+        }
+        let registry = self
+            .state
+            .corporate_actions
+            .registries
+            .iter()
+            .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid(
+                    "拆股／缩股需要已显式配置的完整股东名册".into(),
+                )
+            })?;
+        if registry.settled_on() > self.civil_date() {
+            return Err(SessionCorporateActionsError::Invalid(
+                "股东名册日期晚于当前会话日期".into(),
+            ));
+        }
+        plan.validate_calendar(self.state.civil_clock.calendar())
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        let mut candidate_system = self.state.company_system.as_ref().clone();
+        let issuer = candidate_system
+            .issuers()
+            .get(&plan.issuer)
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid("拆股／缩股计划发行人不存在".into())
+            })?;
+        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
+            return Err(SessionCorporateActionsError::Invalid(
+                "拆股／缩股计划证券与发行人不匹配".into(),
+            ));
+        }
+        let legal_facts = candidate_system
+            .dividend_legal_facts(&plan.issuer)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+            .ok_or_else(|| {
+                SessionCorporateActionsError::Invalid(
+                    "拆股／缩股面值推导需要先显式绑定公司注册资本法定事实".into(),
+                )
+            })?;
+        // 面值权威：拆股／缩股重锚链 → 送转 bind-once → 法定事实整除推导。
+        let par_cents = match candidate_system
+            .current_par_value(&plan.issuer)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+        {
+            Some(par) => i128::from(par.cents()),
+            None => {
+                let issued_shares = registry.issued_shares();
+                let capital_cents =
+                    i128::from(legal_facts.registered_capital.to_money().map_err(|error| {
+                        SessionCorporateActionsError::Invalid(error.to_string())
+                    })?.cents());
+                if capital_cents % i128::from(issued_shares) != 0 {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
+                    ));
+                }
+                capital_cents / i128::from(issued_shares)
+            }
+        };
+        let par_value_before = crate::money::Money::from_cents(
+            i64::try_from(par_cents).map_err(|_| {
+                SessionCorporateActionsError::Invalid("每股面值溢出".into())
+            })?,
+        );
+        if par_value_before <= crate::money::Money::ZERO {
+            return Err(SessionCorporateActionsError::Invalid(
+                "推导出的每股面值必须为正数".into(),
+            ));
+        }
+        let par_value_after = match plan.direction {
+            ShareSplitDirection::Split => {
+                if par_cents % i128::from(plan.ratio) != 0 {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "拆股面值 {} 分不能按 1 拆 {} 整除缩小；面值最小单位为分",
+                        par_cents, plan.ratio
+                    )));
+                }
+                crate::money::Money::from_cents(
+                    i64::try_from(par_cents / i128::from(plan.ratio)).map_err(|_| {
+                        SessionCorporateActionsError::Invalid("拆股面值溢出".into())
+                    })?,
+                )
+            }
+            ShareSplitDirection::Consolidate => crate::money::Money::from_cents(
+                i64::try_from(
+                    par_cents
+                        .checked_mul(i128::from(plan.ratio))
+                        .ok_or_else(|| {
+                            SessionCorporateActionsError::Invalid("缩股面值溢出".into())
+                        })?,
+                )
+                .map_err(|_| SessionCorporateActionsError::Invalid("缩股面值溢出".into()))?,
+            ),
+        };
+        let declaration = crate::company::share_split::ShareSplitDeclaration {
+            event_id: plan.event_id.clone(),
+            approval_reference: plan.approval_reference.clone(),
+            direction: plan.direction.clone(),
+            approved_on: plan.approved_on,
+            ratio: plan.ratio,
+            par_value_before,
+            par_value_after,
+            registered_capital_at_approval: legal_facts.registered_capital,
+        };
+        candidate_system
+            .declare_share_split(&plan.issuer, declaration)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        let book = crate::company::share_split::ShareSplitBook::new(plan)
+            .map_err(|error| {
+                SessionCorporateActionsError::Invalid(match error {
+                    ShareSplitError::InvalidPlan { detail } => {
+                        format!("拆股／缩股方案非法：{detail}")
+                    }
+                    other => other.to_string(),
+                })
+            })?;
+        self.state.company_system = std::sync::Arc::new(candidate_system);
+        self.state.corporate_actions.share_splits.push(book);
+        self.state
+            .corporate_actions
+            .share_splits
             .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
         Ok(())
     }
@@ -2999,8 +3227,8 @@ impl GameSession {
                 .map(|market| (market.last_close(), market.limit_bps(), market.tick()));
             let same_ex_date =
                 self.same_ex_date_preference_context(&stock, exchange, approve_on)?;
-            let (same_ex_gross, same_ex_ratio_micros, same_ex_stock_event, same_ex_rights_event) =
-                same_ex_date.unwrap_or((Money::ZERO, None, false, false));
+            let (same_ex_gross, same_ex_ratio_micros, same_ex_stock_event, same_ex_rights_event, same_ex_split_event) =
+                same_ex_date.unwrap_or((Money::ZERO, None, false, false, false));
             if let Some(cash_preference) = preference.cash_dividend.clone() {
                 let facts = dividend_facts
                     .as_ref()
@@ -3112,7 +3340,7 @@ impl GameSession {
                 // 并被计入（显式 + 自动合并口径）。
                 let same_ex_cash_gross = self
                     .same_ex_date_preference_context(&stock, exchange, approve_on)?
-                    .map(|(gross, _ratio, _stock_event, _rights_event)| gross)
+                    .map(|(gross, _ratio, _stock_event, _rights_event, _split_event)| gross)
                     .unwrap_or(Money::ZERO);
                 let exposure = market_anchor.map(|(last_close, limit_bps, tick)| {
                     preference_api::SimpleStockDistributionExposure {
@@ -3122,6 +3350,7 @@ impl GameSession {
                         same_ex_date_gross_per_share: same_ex_cash_gross,
                         same_ex_date_stock_event: same_ex_stock_event,
                         same_ex_date_rights_event: same_ex_rights_event,
+                        same_ex_date_split_event: same_ex_split_event,
                     }
                 });
                 // 现金分红批准会核减可分配利润，送转评估必须读取最新账面。
@@ -3314,6 +3543,24 @@ impl GameSession {
         {
             return Err(SessionError::InvalidSetup(
                 "同一发行人同证券同除权日已存在配股事件；同日多起配股的合并除权口径未核实，受理时显式拒绝"
+                    .into(),
+            ));
+        }
+        // 拆股／缩股×配股同除权日的合并除权口径同样未核实：受理时显式拒绝。
+        if self
+            .state
+            .corporate_actions
+            .share_splits
+            .iter()
+            .any(|existing| {
+                let existing = existing.plan();
+                existing.issuer == plan.issuer
+                    && existing.stock == plan.stock
+                    && existing.ex_rights_on == plan.ex_rights_on
+            })
+        {
+            return Err(SessionError::InvalidSetup(
+                "同一发行人同证券同除权日已存在拆股／缩股事件；拆股／缩股×配股同日的合并除权口径未核实，受理时显式拒绝"
                     .into(),
             ));
         }
@@ -3954,14 +4201,14 @@ impl GameSession {
 
     /// 按本周期自动提案日程推导的除息/除权日上，既有同日方案（显式 + 自动）
     /// 的合并事实：(同日现金分红合计税前每股红利, 同日送转事件比例, 是否已
-    /// 存在同日送转事件, 是否已存在同日配股事件)。日程推导失败返回 `None`
-    /// （评估函数会以同一失败原因如实拒绝，不静默）。
+    /// 存在同日送转事件, 是否已存在同日配股事件, 是否已存在同日拆股／缩股事件)。
+    /// 日程推导失败返回 `None`（评估函数会以同一失败原因如实拒绝，不静默）。
     fn same_ex_date_preference_context(
         &self,
         stock: &crate::account::StockCode,
         exchange: crate::calendar::CalendarExchange,
         approve_on: crate::calendar::CivilDate,
-    ) -> Result<Option<(Money, Option<u64>, bool, bool)>, SessionCorporateActionsError> {
+    ) -> Result<Option<(Money, Option<u64>, bool, bool, bool)>, SessionCorporateActionsError> {
         use crate::company::simple::preferences as preference_api;
         let Some((_registered_on, ex_on)) = preference_api::preference_ex_dates(
             self.state.civil_clock.calendar(),
@@ -3975,6 +4222,7 @@ impl GameSession {
         let mut stock_ratio_micros = None;
         let mut stock_event_exists = false;
         let mut rights_event_exists = false;
+        let mut split_event_exists = false;
         for book in &self.state.corporate_actions.dividends {
             let plan = book.plan();
             if plan.stock == *stock && plan.ex_dividend_on == ex_on {
@@ -3999,11 +4247,20 @@ impl GameSession {
                 rights_event_exists = true;
             }
         }
+        // 同除权日拆股／缩股事件：重新计值×送转同日的合并除权口径同样未核实，
+        // 自动送转提案按事件存在性保守守卫。
+        for book in &self.state.corporate_actions.share_splits {
+            let plan = book.plan();
+            if plan.stock == *stock && plan.ex_rights_on == ex_on {
+                split_event_exists = true;
+            }
+        }
         Ok(Some((
             cash_gross,
             stock_ratio_micros,
             stock_event_exists,
             rights_event_exists,
+            split_event_exists,
         )))
     }
 
@@ -4292,6 +4549,15 @@ impl GameSession {
             .map_err(|error| SessionError::InvalidSave(format!("送转日终结算失败：{error}")))?;
         self.state
             .corporate_actions
+            .process_share_splits_on_day_end(
+                report.settled_date,
+                self.state.civil_clock.calendar(),
+                std::sync::Arc::make_mut(&mut self.state.company_system),
+                &mut self.state.accounts,
+            )
+            .map_err(|error| SessionError::InvalidSave(format!("拆股／缩股日终结算失败：{error}")))?;
+        self.state
+            .corporate_actions
             .process_rights_offerings_on_day_end(
                 report.settled_date,
                 self.state.civil_clock.calendar(),
@@ -4365,6 +4631,7 @@ impl GameSession {
                 dividends: &self.state.corporate_actions.dividends,
                 rights_offerings: &self.state.corporate_actions.rights_offerings,
                 issuer_repurchases: &self.state.corporate_actions.issuer_repurchases,
+                share_splits: &self.state.corporate_actions.share_splits,
                 library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;

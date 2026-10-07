@@ -28,9 +28,13 @@ pub(crate) const BASIS_POINT_DENOMINATOR: i128 = 10_000;
 
 /// 每公司行为偏好配置。严格持久化字段：无 serde 默认，旧档缺失显式拒绝。
 ///
-/// 类型扩展位：配股（rights）、增发（offering）、回购（buyback）的偏好项由
-/// 对应机制批次落地时在此结构追加字段（如 `pub rights: Option<...>`）；本批
-/// 显式不实现其机制，也不预留无语义的占位类型，避免伪造未实现机制的配置面。
+/// 类型扩展位：配股（rights）、增发（offering）、回购（buyback）、拆股／缩股
+/// （share split / consolidation）的偏好项由对应机制批次落地时在此结构追加
+/// 字段（如 `pub rights: Option<...>`）；本批显式不实现其机制，也不预留无语义
+/// 的占位类型，避免伪造未实现机制的配置面。拆股／缩股机制已由 S1 批（2026-10）
+/// 落地为显式 API（`GameSession::approve_share_split`），但其偏好自动提案不在
+/// 本批范围（现实中无常规提案通道，A 股无拆股先例；见 docs/trading-rules.md
+/// 「拆股／缩股」节），此处仅保留扩展位。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
@@ -536,6 +540,10 @@ pub(crate) struct SimpleStockDistributionExposure {
     /// 日结会显式失败（`prepare_ex_references_for_current_date`），自动提案
     /// 不得叠加（受理时配股实际认购比例未定，按事件存在性保守守卫）。
     pub same_ex_date_rights_event: bool,
+    /// 同除权日已存在拆股／缩股事件：重新计值×送转同日的合并除权口径同样
+    /// 未核实，自动提案按事件存在性保守守卫（拆股／缩股偏好项本批仅留结构
+    /// 扩展位，不自动提案）。
+    pub same_ex_date_split_event: bool,
 }
 
 /// 送转偏好评估输入。
@@ -660,6 +668,15 @@ pub(crate) fn evaluate_stock_distribution_preference(
         return SimpleStockDistributionOutcome::Rejected {
             detail: format!(
                 "同除权日 {} 已存在配股事件，配股×送转同日的合并除权口径未核实，\
+                 自动提案不叠加",
+                ex_rights_on
+            ),
+        };
+    }
+    if exposure.same_ex_date_split_event {
+        return SimpleStockDistributionOutcome::Rejected {
+            detail: format!(
+                "同除权日 {} 已存在拆股／缩股事件，重新计值×送转同日的合并除权口径未核实，\
                  自动提案不叠加",
                 ex_rights_on
             ),

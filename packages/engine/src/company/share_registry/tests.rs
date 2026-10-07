@@ -768,3 +768,265 @@ fn explicitly_released_physical_lot_is_transferable_and_receipt_cannot_forge_unl
         serde_json::json!("2031-01-01");
     assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
 }
+
+// ---------- 拆股／缩股（ShareReDenomination）----------
+
+fn redenomination(event_id: &str, day_text: &str, changes: Vec<DayNetChange>) -> ShareDayRequest {
+    ShareDayRequest {
+        event_id: event_id.into(),
+        day: day(day_text),
+        scope: MovementScope::ShareReDenomination {
+            basis: "shareholders-resolution-redenomination".into(),
+        },
+        changes,
+    }
+}
+
+fn split_change(holder: HolderId, delta: i128, lot_id: &str) -> DayNetChange {
+    DayNetChange {
+        holder,
+        change: delta,
+        acquisition: Some(NetAcquisition {
+            lot_id: lot_id.into(),
+            source: AcquisitionSource::CorporateAction {
+                event: "split-1".into(),
+            },
+            restriction: ShareRestriction::Unrestricted,
+        }),
+    }
+}
+
+#[test]
+fn share_redenomination_split_grows_issued_shares_and_appends_new_lots() {
+    let mut registry = registry();
+    // 拆股 1 拆 2：账户 1 原 50 股（30+20）→ +50；外部持有人 40 → +40；专户 10 → +10。
+    let request = redenomination(
+        "split-1",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 50, "split-a1"),
+            split_change(HolderId::External("nonfloat-owner".into()), 40, "split-ext"),
+            split_change(HolderId::IssuerTreasury, 10, "split-treasury"),
+        ],
+    );
+    let receipt = registry.close_day(request).unwrap();
+    assert!(receipt.disposals.is_empty());
+    assert_eq!(registry.issued_shares(), 200);
+    let account_one = registry
+        .holdings()
+        .iter()
+        .find(|holding| holding.holder == account(1))
+        .unwrap();
+    assert_eq!(account_one.lots.len(), 3);
+    assert_eq!(account_one.lots.last().unwrap().id, "split-a1");
+    assert_eq!(account_one.lots.last().unwrap().qty, 50);
+    assert_eq!(account_one.lots.last().unwrap().acquired_on, day("2030-01-02"));
+    // serde 往返 + 恢复校验保留该回执。
+    let restored: ShareRegistry =
+        serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
+}
+
+#[test]
+fn share_redenomination_consolidation_consumes_restricted_lots_and_shrinks_issued() {
+    let original = registry();
+    let mut holdings = original.holdings().to_vec();
+    // 账户 1 的两笔 lot 全部限售且未解禁：缩股仍必须消耗它们（重新计值不是转让）。
+    for lot in holdings[0].lots.iter_mut() {
+        lot.restriction = ShareRestriction::Restricted {
+            reason: "ipo-lock".into(),
+            release_on: day("2031-06-01"),
+        };
+    }
+    let mut registry = ShareRegistry::new(
+        original.stock().clone(),
+        original.issuer().clone(),
+        100,
+        original.settled_on(),
+        holdings,
+    )
+    .unwrap();
+    // 缩股 2 并 1（手工构造目标）：账户 1 50→25（−25）；外部 40→20（−20）；专户 10→5（−5）。
+    let request = redenomination(
+        "consolidation-1",
+        "2030-01-02",
+        vec![
+            DayNetChange {
+                holder: account(1),
+                change: -25,
+                acquisition: None,
+            },
+            DayNetChange {
+                holder: HolderId::External("nonfloat-owner".into()),
+                change: -20,
+                acquisition: None,
+            },
+            DayNetChange {
+                holder: HolderId::IssuerTreasury,
+                change: -5,
+                acquisition: None,
+            },
+        ],
+    );
+    let receipt = registry.close_day(request).unwrap();
+    assert_eq!(registry.issued_shares(), 50);
+    // 消耗从最旧 lot 开始（FIFO）：账户 1 的 old(30) 被消耗 25 后余 5，
+    // 未消耗的 lot 保留原 id 与取得日（取得日延续）。
+    let account_one = registry
+        .holdings()
+        .iter()
+        .find(|holding| holding.holder == account(1))
+        .unwrap();
+    assert_eq!(account_one.lots.len(), 2);
+    assert_eq!(account_one.lots[0].id, "old");
+    assert_eq!(account_one.lots[0].qty, 5);
+    assert_eq!(account_one.lots[0].acquired_on, day("2028-01-01"));
+    assert_eq!(account_one.lots[1].id, "new");
+    assert_eq!(account_one.lots[1].qty, 20);
+    // 三个持有人各有一条负向净变动：账户 1（old 25）、外部（external 20）、
+    // 专户（treasury 5）各产生一条 lot 片段。
+    assert_eq!(receipt.disposals.len(), 3);
+    assert_eq!(receipt.disposals[0].holder, account(1));
+    assert_eq!(receipt.disposals[0].lot.id, "old");
+    assert_eq!(receipt.disposals[0].lot.qty, 25);
+    // 恢复校验接受本 scope 的未解禁限售消耗（同回执在 PublicMarket 下会被拒）。
+    let restored: ShareRegistry =
+        serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
+    let mut as_public = receipt.request.clone();
+    as_public.scope = MovementScope::PublicMarket;
+    let mut tampered = registry.clone();
+    tampered.receipts.push(ShareDayReceipt {
+        request: as_public,
+        disposals: receipt.disposals.clone(),
+    });
+    assert!(
+        serde_json::from_str::<ShareRegistry>(&serde_json::to_string(&tampered).unwrap()).is_err()
+    );
+}
+
+#[test]
+fn share_redenomination_validates_scope_specific_rules() {
+    let before = registry();
+    let mut registry = before.clone();
+    // 净变动为零（既不拆也不缩）显式拒绝。
+    let zero_total = redenomination(
+        "zero-1",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 30, "z1"),
+            DayNetChange {
+                holder: account(2),
+                change: -30,
+                acquisition: None,
+            },
+        ],
+    );
+    assert!(registry.close_day(zero_total).is_err());
+    // 混正负净变动拒绝：重新计值对全体持有人同向（拆股全增、缩股全减），混号
+    // 意味着在持有人之间转移股份。取净额为负（−20）的混号组合：账面勾稽
+    // （issued 按 |net| 核减）恰好自洽，只有同号校验能识破伪装成缩股的转移。
+    let mixed_signs = redenomination(
+        "mixed-1",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 10, "m1"),
+            DayNetChange {
+                holder: HolderId::External("nonfloat-owner".into()),
+                change: -30,
+                acquisition: None,
+            },
+        ],
+    );
+    let error = registry
+        .close_day(mixed_signs)
+        .expect_err("混正负净变动的重新计值必须被拒绝");
+    assert!(
+        error.to_string().contains("one direction"),
+        "拒绝必须指明重新计值须同向：{error}"
+    );
+    assert_eq!(registry, before);
+    // 同一持有人两条净变动拒绝（必须单一净额）。
+    let duplicate = redenomination(
+        "dup-1",
+        "2030-01-02",
+        vec![split_change(account(1), 10, "d1"), split_change(account(1), 5, "d2")],
+    );
+    assert!(registry.close_day(duplicate).is_err());
+    // 空 basis 拒绝。
+    let mut empty_basis =
+        redenomination("b-1", "2030-01-02", vec![split_change(account(1), 10, "b1")]);
+    empty_basis.scope = MovementScope::ShareReDenomination { basis: "  ".into() };
+    assert!(registry.close_day(empty_basis).is_err());
+    // 正向变动的取得来源必须是公司行为（与 NonTradingTransfer 同纪律）。
+    let mut secondary =
+        redenomination("s-1", "2030-01-02", vec![split_change(account(1), 10, "s1")]);
+    if let Some(acquisition) = secondary.changes[0].acquisition.as_mut() {
+        acquisition.source = AcquisitionSource::SecondaryMarket {
+            settlement: "fake".into(),
+        };
+    }
+    assert!(registry.close_day(secondary).is_err());
+    // 负向变动不得携带取得事实。
+    let negative_with_acquisition = redenomination(
+        "n-1",
+        "2030-01-02",
+        vec![DayNetChange {
+            holder: account(1),
+            change: -5,
+            acquisition: Some(NetAcquisition {
+                lot_id: "n1".into(),
+                source: AcquisitionSource::CorporateAction { event: "e".into() },
+                restriction: ShareRestriction::Unrestricted,
+            }),
+        }],
+    );
+    assert!(registry.close_day(negative_with_acquisition).is_err());
+    // 缩股超出持有数量拒绝（守恒）。
+    let overdraw = redenomination(
+        "o-1",
+        "2030-01-02",
+        vec![DayNetChange {
+            holder: account(1),
+            change: -500,
+            acquisition: None,
+        }],
+    );
+    let result = registry.close_day(overdraw);
+    assert!(matches!(
+        result,
+        Err(ShareRegistryError::InsufficientTransferableShares { .. })
+    ));
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn share_redenomination_can_append_on_the_settled_day_and_replays_in_registrations() {
+    let mut registry = registry();
+    // 先做公开市场日结推进 settled_on 到 2030-01-02。
+    registry.close_day(transfer(5)).unwrap();
+    // 同日追加拆股重新计值（公开市场先落账、公司行为同日追加）。
+    let request = redenomination(
+        "split-same-day",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 45, "ss1"),
+            split_change(HolderId::External("nonfloat-owner".into()), 40, "ss2"),
+            split_change(HolderId::IssuerTreasury, 10, "ss3"),
+        ],
+    );
+    registry.close_day(request).unwrap();
+    // 公开市场 100 股守恒后，1 拆 2：账户 1 现持 45（卖掉 5）→ +45，
+    // 外部 40 → +40，专户 10 → +10；合计 100 + 95 = 195。
+    assert_eq!(registry.issued_shares(), 195);
+    // 登记快照在追加后冻结：新快照股数为追加后的当前股数。
+    registry
+        .register("after-split".into(), day("2030-01-02"))
+        .unwrap();
+    let snapshot = registry.registration("after-split").unwrap();
+    assert_eq!(snapshot.issued_shares(), 195);
+    // 恢复（serde 往返）完整保留全部事实。
+    let restored: ShareRegistry =
+        serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
+}

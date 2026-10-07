@@ -681,3 +681,79 @@ fn same_day_continuation_rejects_nonpositive_net_and_first_day_equals_opening() 
         "跳日日结必须拒绝：{rejection}"
     );
 }
+
+// ---------- 拆股／缩股税账路径 ----------
+
+#[test]
+fn redenomination_reduction_reduces_fifo_lots_without_taxable_disposition() {
+    let mut book = book();
+    book.register_dividend(
+        "cash".into(),
+        date("2030-01-01"),
+        ExactDividendTaxAmount::new(100, 1).unwrap(),
+    )
+    .unwrap();
+    // 公开市场日结先落账（推进 settled_on），同日缩股核减 8 股：FIFO 从最旧
+    // lot 开始消耗（old 10 → 2），不产生应税处置。
+    book.record_net_day("market".into(), date("2030-01-02"), 0, None)
+        .unwrap();
+    book.record_redenomination_reduction("split:consolidation-1".into(), date("2030-01-02"), 8)
+        .unwrap();
+    assert_eq!(book.lots().len(), 2);
+    assert_eq!(book.lots()[0].id, "old");
+    assert_eq!(book.lots()[0].qty, 2);
+    assert_eq!(book.lots()[1].qty, 10);
+    // 缩股核减不触发补税：税额保持为零（同日无卖出处置）。
+    book.record_payment(
+        "cash",
+        "paid".into(),
+        date("2030-01-02"),
+        Money::from_cents(2000),
+        "actual-cash-receipt".into(),
+    )
+    .unwrap();
+    assert_eq!(
+        book.outstanding().unwrap(),
+        ExactDividendTaxAmount::new(0, 1).unwrap(),
+        "缩股核减不是转让，不得对应纳税所得"
+    );
+    // 幂等：同一事件身份重复提交不重复核减。
+    book.record_redenomination_reduction("split:consolidation-1".into(), date("2030-01-02"), 8)
+        .unwrap();
+    assert_eq!(book.lots()[0].qty, 2);
+    // 恢复（serde 往返 + 重放校验）保留核减事实。
+    let restored: CashDividendTaxBook =
+        serde_json::from_str(&serde_json::to_string(&book).unwrap()).unwrap();
+    assert_eq!(restored, book);
+}
+
+#[test]
+fn redenomination_reduction_validates_boundaries() {
+    let mut book = book();
+    // 超出持有数量拒绝。
+    assert!(
+        book.record_redenomination_reduction("c1".into(), date("2030-01-02"), 21)
+            .is_err()
+    );
+    // 跳日拒绝（须同日续记或次一自然日）。
+    assert!(
+        book.record_redenomination_reduction("c2".into(), date("2030-01-05"), 1)
+            .is_err()
+    );
+    // 零数量拒绝。
+    assert!(
+        book.record_redenomination_reduction("c3".into(), date("2030-01-02"), 0)
+            .is_err()
+    );
+    book.record_redenomination_reduction("c4".into(), date("2030-01-02"), 10)
+        .unwrap();
+    // 事件身份复用但数量不同 → 冲突。
+    assert!(
+        book.record_redenomination_reduction("c4".into(), date("2030-01-02"), 1)
+            .is_err()
+    );
+    // 篡改核减数量在恢复校验中被拒。
+    let mut tampered = serde_json::to_value(&book).unwrap();
+    tampered["redenominations"][0]["net_change"] = serde_json::json!("-9");
+    assert!(serde_json::from_value::<CashDividendTaxBook>(tampered).is_err());
+}

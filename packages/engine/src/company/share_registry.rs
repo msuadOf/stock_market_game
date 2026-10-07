@@ -130,6 +130,12 @@ pub enum MovementScope {
     /// 已发行股数（《公司法》第 162 条／证监会回购规则第 17 条）。只允许对
     /// IssuerTreasury 的单一负向净变动；注销不除权（无官方除权条文，登记口径）。
     IssuerRepurchaseCancellation { basis: String },
+    /// 拆股／缩股（股份重新计值）：全体持有人的股数按整数比例换算、每股面值
+    /// 反向调整，总股本按净额放大（拆股）或缩小（缩股）。与 NonTradingTransfer
+    /// 的语义差异：允许负向净变动（缩股核减），且核减消耗允许越过未解禁限售
+    /// lot（重新计值不是转让，限售属性由存活 lot 与换算回执承载）；回购专户
+    /// 与其他持有人同规则换算（不是权益分派，专户不失权）。
+    ShareReDenomination { basis: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -349,13 +355,15 @@ impl ShareRegistry {
                 return Err(error("share lot identity reused"));
             }
         }
-        // 非交易过户（公司行为送转入账／回购注销）允许与当日公开市场日结共用同一
-        // 自然日：公开市场日结先落账并推进 settled_on，公司行为在同一 settled_on 上追加。
+        // 非交易过户（公司行为送转入账／回购注销／拆股缩股重新计值）允许与当日
+        // 公开市场日结共用同一自然日：公开市场日结先落账并推进 settled_on，公司
+        // 行为在同一 settled_on 上追加。
         let same_day_non_trading = request.day == self.settled_on
             && matches!(
                 request.scope,
                 MovementScope::NonTradingTransfer { .. }
                     | MovementScope::IssuerRepurchaseCancellation { .. }
+                    | MovementScope::ShareReDenomination { .. }
             );
         if !same_day_non_trading && request.day.days_since(self.settled_on) != 1 {
             return Err(error("day settlement must follow the previous natural day"));
@@ -363,6 +371,10 @@ impl ShareRegistry {
         let mut candidate = self.clone();
         let mut disposals = Vec::new();
         let mut issued_new_shares = 0_u64;
+        let redenomination_scope = matches!(
+            request.scope,
+            MovementScope::ShareReDenomination { .. }
+        );
         for change in &request.changes {
             if change.change < 0 {
                 let quantity = u64::try_from(
@@ -382,8 +394,10 @@ impl ShareRegistry {
                     if remaining == 0 {
                         break;
                     }
+                    // 未解禁限售 lot 不可被公开市场处置；拆股／缩股的重新计值
+                    // 不是转让，允许消耗限售 lot（限售属性由存活 lot 继续承载）。
                     if let ShareRestriction::Restricted { release_on, .. } = &lot.restriction {
-                        if request.day < *release_on {
+                        if request.day < *release_on && !redenomination_scope {
                             continue;
                         }
                     }
@@ -416,7 +430,11 @@ impl ShareRegistry {
                 if candidate.has_lot_id(&acquisition.lot_id) {
                     return Err(error("share lot identity reused"));
                 }
-                if matches!(request.scope, MovementScope::NonTradingTransfer { .. }) {
+                if matches!(
+                    request.scope,
+                    MovementScope::NonTradingTransfer { .. }
+                        | MovementScope::ShareReDenomination { .. }
+                ) {
                     issued_new_shares = issued_new_shares.checked_add(quantity).ok_or_else(
                         || error("non-trading transfer issuance total overflow"),
                     )?;
@@ -469,6 +487,27 @@ impl ShareRegistry {
                     .issued_shares
                     .checked_sub(cancelled)
                     .ok_or_else(|| error("issuer repurchase cancellation underflows issued shares"))?;
+            }
+            MovementScope::ShareReDenomination { .. } => {
+                // 拆股净放大、缩股净缩小；validate_request 已保证净额非零。
+                let net: i128 = receipt
+                    .request
+                    .changes
+                    .iter()
+                    .map(|change| change.change)
+                    .sum();
+                candidate.issued_shares = if net > 0 {
+                    candidate.issued_shares.checked_add(issued_new_shares).ok_or_else(
+                        || error("share re-denomination increase overflow"),
+                    )?
+                } else {
+                    let reduced = u64::try_from(net.unsigned_abs())
+                        .map_err(|_| error("share re-denomination reduction overflow"))?;
+                    candidate
+                        .issued_shares
+                        .checked_sub(reduced)
+                        .ok_or_else(|| error("share re-denomination underflows issued shares"))?
+                };
             }
             MovementScope::PublicMarket => {}
         }
@@ -553,7 +592,10 @@ impl ShareRegistry {
                     MovementScope::PublicMarket => {
                         receipt.request.day.days_since(previous) == 1
                     }
-                    MovementScope::NonTradingTransfer { .. } => receipt.request.day == previous,
+                    MovementScope::NonTradingTransfer { .. }
+                    | MovementScope::ShareReDenomination { .. } => {
+                        receipt.request.day == previous
+                    }
                     // 回购注销是独立的公司行为事件：允许与上一回执同日或其后任意
                     // 自然日（注销日期由方案决定，不与公开市场日结逐日绑定）。
                     MovementScope::IssuerRepurchaseCancellation { .. } => {
@@ -601,7 +643,10 @@ impl ShareRegistry {
                         "a physical lot is disposed more than once in one day",
                     ));
                 }
+                // 未解禁限售 lot 只有公开市场处置才禁止；拆股／缩股的重新计值
+                // 允许消耗限售 lot（scope 已在 close_day 核验）。
                 if matches!(&disposed.lot.restriction, ShareRestriction::Restricted { release_on, .. } if *release_on > disposed.disposed_on)
+                    && matches!(receipt.request.scope, MovementScope::PublicMarket)
                 {
                     return Err(error(
                         "public transfer receipt contains an unreleased physical lot",
@@ -637,14 +682,9 @@ impl ShareRegistry {
             for receipt in self.receipts.iter().skip(settled_receipts) {
                 match receipt.request.scope {
                     MovementScope::PublicMarket => continue,
-                    MovementScope::NonTradingTransfer { .. } => {
-                        for change in &receipt.request.changes {
-                            issued_after_registration = issued_after_registration
-                                .checked_add(i128::from(change.change))
-                                .ok_or_else(|| error("issued share replay overflow"))?;
-                        }
-                    }
-                    MovementScope::IssuerRepurchaseCancellation { .. } => {
+                    MovementScope::NonTradingTransfer { .. }
+                    | MovementScope::IssuerRepurchaseCancellation { .. }
+                    | MovementScope::ShareReDenomination { .. } => {
                         for change in &receipt.request.changes {
                             issued_after_registration = issued_after_registration
                                 .checked_add(i128::from(change.change))
@@ -801,7 +841,10 @@ fn validate_holdings(
 }
 
 fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError> {
-    let non_trading = matches!(request.scope, MovementScope::NonTradingTransfer { .. });
+    let non_trading = matches!(
+        request.scope,
+        MovementScope::NonTradingTransfer { .. } | MovementScope::ShareReDenomination { .. }
+    );
     if matches!(
         &request.scope,
         MovementScope::NonTradingTransfer { basis }
@@ -810,6 +853,10 @@ fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError>
         &request.scope,
         MovementScope::IssuerRepurchaseCancellation { basis }
             if basis.trim().is_empty()
+    ) || matches!(
+        &request.scope,
+        MovementScope::ShareReDenomination { basis }
+            if basis.trim().is_empty()
     ) {
         return Err(error(
             "non-trading transfer requires a nonempty legal basis reference",
@@ -817,6 +864,8 @@ fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError>
     }
     let is_cancellation =
         matches!(request.scope, MovementScope::IssuerRepurchaseCancellation { .. });
+    let is_redenomination =
+        matches!(request.scope, MovementScope::ShareReDenomination { .. });
     if is_cancellation {
         if request.changes.len() != 1 {
             return Err(error(
@@ -887,16 +936,34 @@ fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError>
                 "non-positive net change cannot create an acquisition lot",
             ));
         }
-        if non_trading && change.change < 0 {
+        if matches!(request.scope, MovementScope::NonTradingTransfer { .. })
+            && change.change < 0
+        {
             return Err(error(
                 "non-trading transfer cannot reduce a holder; disposals belong to the public market scope",
             ));
         }
     }
-    if non_trading {
+    if matches!(request.scope, MovementScope::NonTradingTransfer { .. }) {
         if total <= 0 {
             return Err(error(
                 "non-trading transfer must issue a positive number of new shares",
+            ));
+        }
+    } else if is_redenomination {
+        // 拆股／缩股必须净放大或净缩小总股本；净零变动没有重新计值事实。
+        if total == 0 {
+            return Err(error(
+                "share re-denomination must strictly change issued shares",
+            ));
+        }
+        // 重新计值对全体持有人方向一致（拆股全净增、缩股全净减）；混正负意味着
+        // 在持有人之间转移股份，净额为负时账面勾稽仍自洽，须在请求校验层识破。
+        let has_positive = request.changes.iter().any(|change| change.change > 0);
+        let has_negative = request.changes.iter().any(|change| change.change < 0);
+        if has_positive && has_negative {
+            return Err(error(
+                "share re-denomination changes must share one direction; mixed signs are a transfer, not re-denomination",
             ));
         }
     } else if is_cancellation {

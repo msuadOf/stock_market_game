@@ -3,7 +3,7 @@ import { parseMonthlyReportSchedule } from "../report-frequency.ts"
 import type { MonthlyReportSchedule } from "../../../types/generated/MonthlyReportSchedule"
 import { parseShockKind, type ActiveShock } from "./policies/shock.ts"
 import { amount, instant, period, type CivilInstantValue, type DecimalAmount } from "./value.ts"
-import { parseIssuerRepurchasePlanValue, parseRightsOfferingEventPlanValue } from "../corporate-actions.ts"
+import { parseIssuerRepurchasePlanValue, parseRightsOfferingEventPlanValue, parseShareSplitEventPlanValue } from "../corporate-actions.ts"
 import type { CashDividendPlan } from "../corporate-actions.ts"
 
 const reportKinds = ["Monthly", "Quarter", "HalfYear", "Annual"] as const
@@ -32,7 +32,7 @@ export type ReportSet = { readonly scope: Scope; readonly period: string; readon
 type ScheduledKind = (typeof scheduledKinds)[number] | { readonly Monthly: { readonly month: number } }
 export type PublicationOrigin = { readonly SeededPrehistory: { readonly fiscal_year: number; readonly kind: ScheduledKind; readonly offset_days: number } } | { readonly ScheduledDisclosure: { readonly fiscal_year: number; readonly kind: ScheduledKind; readonly offset_days: number } } | { readonly MonthlyDisclosure: { readonly schedule: MonthlyReportSchedule; readonly delay_days: number; readonly seeded: boolean } } | "Correction"
 export type PublishedReport = { readonly source: "SimpleGenerated" | "SimulationAccounting"; readonly id: number; readonly company: string; readonly policy: { readonly chart_version: number }; readonly approved_at: CivilInstantValue; readonly published_at: CivilInstantValue; readonly origin: PublicationOrigin; readonly supersedes: number | null; readonly reports: ReportSet }
-export type AnnouncementContent = { readonly Shock: ActiveShock } | { readonly CashDividend: { readonly plan: CashDividendPlan; readonly total_gross: string } } | { readonly RightsOffering: { readonly plan: import("../corporate-actions.ts").RightsOfferingEventPlan } } | { readonly IssuerRepurchase: { readonly plan: import("../corporate-actions.ts").IssuerRepurchasePlan } }
+export type AnnouncementContent = { readonly Shock: ActiveShock } | { readonly CashDividend: { readonly plan: CashDividendPlan; readonly total_gross: string } } | { readonly RightsOffering: { readonly plan: import("../corporate-actions.ts").RightsOfferingEventPlan } } | { readonly IssuerRepurchase: { readonly plan: import("../corporate-actions.ts").IssuerRepurchasePlan } } | { readonly ShareSplit: import("../corporate-actions.ts").ShareSplitEventPlan }
 export type Announcement = { readonly id: number; readonly company: string; readonly occurred_on: string; readonly published_at: CivilInstantValue; readonly content: AnnouncementContent }
 export type PublicLibrary = { readonly next_seq: number; readonly reports: readonly PublishedReport[]; readonly announcements: readonly Announcement[] }
 
@@ -214,13 +214,21 @@ function parseCompanyActionAnnouncement(
 ): AnnouncementContent {
   const content = record(value, path)
   exact(content, ["kind", "value"], path)
-  const tag = oneOf(content.kind, `${path}.kind`, ["RightsOffering", "IssuerRepurchase"] as const)
+  const tag = oneOf(content.kind, `${path}.kind`, ["RightsOffering", "IssuerRepurchase", "ShareSplit"] as const)
   const body = record(content.value, `${path}.value`)
   if (tag === "RightsOffering") {
     exact(body, ["plan"], `${path}.value`)
     const plan = parseRightsOfferingEventPlanValue(body.plan, `${path}.value.plan`)
     if (plan.issuer !== company || plan.announced_on !== occurredOn) throw new SaveSchemaError(`${path}.value.plan`, "配股公告发行人或发生日不一致")
     return { RightsOffering: { plan } }
+  }
+  if (tag === "ShareSplit") {
+    // 拆股／缩股方案公告：与引擎 `AnnouncementContent::ShareSplit` 同构——
+    // 枚举负载是方案本体（无 { plan } 包装，区别于配股/回购的结构体包装）；
+    // 发行人、证券与公告日必须与公告头一致（引擎 public_view 同款校验）。
+    const plan = parseShareSplitEventPlanValue(body, `${path}.value`)
+    if (plan.issuer !== company || plan.announced_on !== occurredOn) throw new SaveSchemaError(`${path}.value`, "拆股／缩股公告发行人或发生日不一致")
+    return { ShareSplit: plan }
   }
   exact(body, ["plan"], `${path}.value`)
   const plan = parseIssuerRepurchasePlanValue(body.plan, `${path}.value.plan`)
@@ -236,7 +244,7 @@ function parseAnnouncement(value: unknown, path: string): Announcement {
   const contentKind = typeof item.content === "object" && item.content !== null
     ? (item.content as Record<string, unknown>).kind
     : undefined
-  const content = contentKind === "RightsOffering" || contentKind === "IssuerRepurchase"
+  const content = contentKind === "RightsOffering" || contentKind === "IssuerRepurchase" || contentKind === "ShareSplit"
     ? parseCompanyActionAnnouncement(item.content, company, occurred_on, `${path}.content`)
     : parseCashDividendAnnouncement(item.content, company, occurred_on, `${path}.content`)
   return { id: integer(item.id, `${path}.id`, 0), company, occurred_on, published_at: instant(item.published_at, `${path}.published_at`), content }

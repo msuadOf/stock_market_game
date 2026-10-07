@@ -1310,6 +1310,24 @@ pub(super) fn issuer_increase_matches_non_trading_issuance(
                             })?;
                     }
                 }
+                // 拆股／缩股重新计值：按回执净额回放（拆股为正、缩股为负）。
+                for receipt in registry.receipts() {
+                    if !matches!(
+                        receipt.request.scope,
+                        crate::company::share_registry::MovementScope::ShareReDenomination {
+                            ..
+                        }
+                    ) {
+                        continue;
+                    }
+                    for change in &receipt.request.changes {
+                        total = total
+                            .checked_add(i128::from(change.change))
+                            .ok_or_else(|| {
+                                SessionError::InvalidSave("拆股／缩股净额合计溢出".into())
+                            })?;
+                    }
+                }
                 Ok(total)
             })
             .transpose()

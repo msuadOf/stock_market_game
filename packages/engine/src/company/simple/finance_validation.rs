@@ -271,6 +271,19 @@ impl SimpleFinanceState {
             {
                 total = total.sub(other.capital_reduction.unwrap_or(AccountingAmount::ZERO))?;
             }
+            // 缩股核减注册资本（拆股注册资本不变，核减额为零）：同样从重构口径
+            // 中扣除批准日之后的核减额。
+            for other in self
+                .share_splits
+                .values()
+                .filter(|other| {
+                    other
+                        .settled_on
+                        .is_some_and(|settled| settled >= approved_on)
+                })
+            {
+                total = total.sub(other.registered_capital_reduction)?;
+            }
             Ok::<_, SimpleFinanceError>(total)
         };
         for (event_id, fact) in &self.stock_distributions {
@@ -351,6 +364,119 @@ impl SimpleFinanceState {
             {
                 return Err(SimpleFinanceError::StockDistributionInvalid(format!(
                     "配股声明 {event_id} 的结算回填字段不完整"
+                )));
+            }
+        }
+        // 拆股／缩股声明：身份、比例、面值换算与批准时点注册资本重构核对；
+        // 入账回填后核减额必须等于旧股口径消灭面值：
+        // par_before×(S_before−ratio×S_after)。
+        for (event_id, fact) in &self.share_splits {
+            if fact.event_id.trim().is_empty()
+                || fact.approval_reference.trim().is_empty()
+                || fact.ratio < 2
+            {
+                return Err(SimpleFinanceError::ShareSplitInvalid(format!(
+                    "拆股／缩股声明 {event_id} 的身份或比例非法"
+                )));
+            }
+            let before_cents = fact.par_value_before.cents();
+            let after_cents = fact.par_value_after.cents();
+            match fact.direction {
+                crate::company::share_split::ShareSplitDirection::Split => {
+                    if before_cents % (fact.ratio as i64) != 0
+                        || after_cents != before_cents / (fact.ratio as i64)
+                    {
+                        return Err(SimpleFinanceError::ShareSplitInvalid(format!(
+                            "拆股声明 {event_id} 的面值换算不满足整数比例缩小"
+                        )));
+                    }
+                }
+                crate::company::share_split::ShareSplitDirection::Consolidate => {
+                    if after_cents != before_cents.checked_mul(fact.ratio as i64).ok_or_else(
+                        || {
+                            SimpleFinanceError::ShareSplitInvalid(format!(
+                                "缩股声明 {event_id} 的面值换算溢出"
+                            ))
+                        },
+                    )? {
+                        return Err(SimpleFinanceError::ShareSplitInvalid(format!(
+                            "缩股声明 {event_id} 的面值换算不满足整数比例放大"
+                        )));
+                    }
+                }
+            }
+            let later_changes = capital_increase_after(fact.approved_on)?;
+            let expected = self
+                .legal_facts
+                .0
+                .as_ref()
+                .ok_or_else(|| {
+                    SimpleFinanceError::ShareSplitInvalid(
+                        "存在拆股／缩股声明但缺少注册资本法定事实".into(),
+                    )
+                })?
+                .registered_capital
+                .sub(later_changes)?;
+            if fact.registered_capital_at_approval != expected {
+                return Err(SimpleFinanceError::ShareSplitInvalid(format!(
+                    "拆股／缩股声明 {event_id} 的批准时点注册资本与法定事实演进历史不一致"
+                )));
+            }
+            if let Some(settled_on) = fact.settled_on {
+                let destroyed = match fact.direction {
+                    crate::company::share_split::ShareSplitDirection::Split => 0,
+                    crate::company::share_split::ShareSplitDirection::Consolidate => fact
+                        .issued_shares_before
+                        .checked_sub(fact.issued_shares_after)
+                        .ok_or_else(|| {
+                            SimpleFinanceError::ShareSplitInvalid(format!(
+                                "拆股／缩股声明 {event_id} 的消灭股数下溢"
+                            ))
+                        })?,
+                };
+                // 核减额按旧股口径消灭面值：par_before × (S_before − ratio×S_after)。
+                let old_equivalent_destroyed = match fact.direction {
+                    crate::company::share_split::ShareSplitDirection::Split => 0,
+                    crate::company::share_split::ShareSplitDirection::Consolidate => fact
+                        .issued_shares_before
+                        .checked_sub(
+                            fact.ratio
+                                .checked_mul(fact.issued_shares_after)
+                                .ok_or_else(|| {
+                                    SimpleFinanceError::ShareSplitInvalid(format!(
+                                        "拆股／缩股声明 {event_id} 的换算等价量溢出"
+                                    ))
+                                })?,
+                        )
+                        .ok_or_else(|| {
+                            SimpleFinanceError::ShareSplitInvalid(format!(
+                                "拆股／缩股声明 {event_id} 的换算等价量下溢"
+                            ))
+                        })?,
+                };
+                let expected_reduction = i128::from(fact.par_value_before.cents())
+                    .checked_mul(i128::from(old_equivalent_destroyed))
+                    .ok_or_else(|| {
+                        SimpleFinanceError::ShareSplitInvalid(format!(
+                            "拆股／缩股声明 {event_id} 的核减金额溢出"
+                        ))
+                    })?;
+                if destroyed != fact.destroyed_shares
+                    || settled_on < fact.approved_on
+                    || fact.registered_capital_reduction
+                        != AccountingAmount::from_cents(expected_reduction)
+                {
+                    return Err(SimpleFinanceError::ShareSplitInvalid(format!(
+                        "拆股／缩股声明 {event_id} 的入账回填与面值核减口径不一致"
+                    )));
+                }
+            } else if fact.issued_shares_before != 0
+                || fact.issued_shares_after != 0
+                || fact.destroyed_shares != 0
+                || fact.registered_capital_reduction != AccountingAmount::ZERO
+            {
+                return Err(SimpleFinanceError::ShareSplitInvalid(format!(
+                    "拆股／缩股声明 {event_id} 的入账回填字段不完整"
                 )));
             }
         }

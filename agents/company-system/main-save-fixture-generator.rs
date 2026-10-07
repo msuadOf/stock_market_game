@@ -46,6 +46,7 @@ fn validate_main_save(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "registries",
         "dividends",
         "stock_distributions",
+        "share_splits",
         "rights_offerings",
         "rights_subscription_queue",
         "rejected_rights_subscriptions",

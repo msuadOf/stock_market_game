@@ -5,9 +5,13 @@ import type { SimpleStockDistributionPreference } from "./SimpleStockDistributio
 /**
  * 每公司行为偏好配置。严格持久化字段：无 serde 默认，旧档缺失显式拒绝。
  *
- * 类型扩展位：配股（rights）、增发（offering）、回购（buyback）的偏好项由
- * 对应机制批次落地时在此结构追加字段（如 `pub rights: Option<...>`）；本批
- * 显式不实现其机制，也不预留无语义的占位类型，避免伪造未实现机制的配置面。
+ * 类型扩展位：配股（rights）、增发（offering）、回购（buyback）、拆股／缩股
+ * （share split / consolidation）的偏好项由对应机制批次落地时在此结构追加
+ * 字段（如 `pub rights: Option<...>`）；本批显式不实现其机制，也不预留无语义
+ * 的占位类型，避免伪造未实现机制的配置面。拆股／缩股机制已由 S1 批（2026-10）
+ * 落地为显式 API（`GameSession::approve_share_split`），但其偏好自动提案不在
+ * 本批范围（现实中无常规提案通道，A 股无拆股先例；见 docs/trading-rules.md
+ * 「拆股／缩股」节），此处仅保留扩展位。
  */
 export type SimpleCompanyPreferences = {
   /**

@@ -36,6 +36,8 @@ mod stock_distribution;
 #[cfg(test)]
 #[path = "finance_stock_distribution_tests.rs"]
 mod stock_distribution_tests;
+#[path = "finance_share_split.rs"]
+mod share_split;
 #[path = "finance_validation.rs"]
 mod validation;
 
@@ -67,6 +69,10 @@ pub enum SimpleFinanceError {
     StockDistributionInvalid(String),
     #[error("Simple 送转事件标识已被不同内容占用：{0}")]
     StockDistributionConflict(String),
+    #[error("Simple 拆股／缩股状态非法：{0}")]
+    ShareSplitInvalid(String),
+    #[error("Simple 拆股／缩股事件标识已被不同内容占用：{0}")]
+    ShareSplitConflict(String),
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
@@ -118,6 +124,8 @@ pub struct SimpleFinanceState {
     dividends: std::collections::BTreeMap<String, DividendPlanState>,
     stock_distributions:
         std::collections::BTreeMap<String, StockDistributionFinanceFact>,
+    share_splits:
+        std::collections::BTreeMap<String, crate::company::share_split::ShareSplitFinanceFact>,
     rights_offerings: std::collections::BTreeMap<
         String,
         crate::company::rights_offering::RightsOfferingFinanceFact,

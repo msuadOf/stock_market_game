@@ -220,6 +220,56 @@ impl Account {
         Ok(())
     }
 
+    /// 拆股／缩股（股份重新计值）后的持仓同步：把 `code` 持仓从 `original`
+    /// 换算到 `new_shares`（缩股核减），T+1 锁定数量按换算比例等比缩小
+    /// （重新计值不是转让，不要求可卖股份）；不动现金与 invested/recovered。
+    pub(crate) fn apply_share_redenomination(
+        &mut self,
+        code: StockCode,
+        original: u64,
+        new_shares: u64,
+    ) -> Result<(), AccountError> {
+        let new_qty = u32::try_from(new_shares).map_err(|_| AccountError::InvalidShareCredit {
+            code: code.clone(),
+            qty: new_shares,
+        })?;
+        if new_shares >= original || original == 0 {
+            return Err(AccountError::InvalidShareCredit {
+                code,
+                qty: new_shares,
+            });
+        }
+        let state = Arc::make_mut(&mut self.state);
+        let position = state
+            .positions
+            .get_mut(&code)
+            .ok_or(AccountError::InsufficientShares {
+                code: code.clone(),
+                needed: u32::try_from(original - new_shares).map_err(|_| {
+                    AccountError::InvalidShareCredit {
+                        code: code.clone(),
+                        qty: new_shares,
+                    }
+                })?,
+                have: 0,
+            })?;
+        if u64::from(position.qty) != original {
+            return Err(AccountError::InvalidShareCredit {
+                code,
+                qty: new_shares,
+            });
+        }
+        let scaled_locked =
+            u32::try_from((u64::from(position.t1_locked) * u64::from(new_qty)) / original)
+                .unwrap_or(0);
+        position.t1_locked = scaled_locked.min(new_qty);
+        position.qty = new_qty;
+        if position.qty == 0 {
+            state.positions.remove(&code);
+        }
+        Ok(())
+    }
+
     pub(crate) fn debit_cash(&mut self, amount: Money) -> Result<(), AccountError> {
         if amount < Money::ZERO {
             return Err(AccountError::InvalidCashCredit { amount });

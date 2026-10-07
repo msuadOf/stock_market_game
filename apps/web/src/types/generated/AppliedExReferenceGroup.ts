@@ -5,7 +5,8 @@ import type { StockCode } from "./StockCode";
 
 /**
  * 已应用到行情前收锚的除权除息组：同一证券同一除权日只产生一个参考价，
- * 组合事实同时列出参与合计的现金分红计划、送转事件与配股事件。
+ * 组合事实同时列出参与合计的现金分红计划、送转事件、配股事件与拆股／缩股
+ * 事件。
  */
 export type AppliedExReferenceGroup = {
   date: CivilDate;
@@ -13,5 +14,9 @@ export type AppliedExReferenceGroup = {
   cash_plan_ids: Array<string>;
   stock_event_ids: Array<string>;
   rights_event_ids: Array<string>;
+  /**
+   * 参与合计的拆股／缩股事件（严格持久化：旧档缺失该字段显式拒绝）。
+   */
+  split_event_ids: Array<string>;
   reference: ExReferencePrice;
 };

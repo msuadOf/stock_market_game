@@ -19,6 +19,9 @@ pub struct SessionCorporateActions {
     pub dividend_tax_books: Vec<crate::company::cash_dividend_tax::CashDividendTaxBook>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").StockDistributionBook[]")]
     pub stock_distributions: Vec<StockDistributionBook>,
+    /// 拆股／缩股（股份重新计值）事件账簿；严格持久化，旧档缺失该字段显式拒绝。
+    #[ts(type = "import(\"../../save/schema/corporate-actions\").ShareSplitBook[]")]
+    pub share_splits: Vec<crate::company::share_split::ShareSplitBook>,
     #[ts(type = "import(\"../../save/schema/corporate-actions\").RightsOfferingBook[]")]
     pub rights_offerings: Vec<crate::company::rights_offering::RightsOfferingBook>,
     /// 盘中显式认购排队（玩家／宿主当日提交，日终划扣后转入账簿）。
@@ -72,7 +75,8 @@ pub struct RejectedRightsSubscription {
 }
 
 /// 已应用到行情前收锚的除权除息组：同一证券同一除权日只产生一个参考价，
-/// 组合事实同时列出参与合计的现金分红计划、送转事件与配股事件。
+/// 组合事实同时列出参与合计的现金分红计划、送转事件、配股事件与拆股／缩股
+/// 事件。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
@@ -82,6 +86,8 @@ pub struct AppliedExReferenceGroup {
     pub cash_plan_ids: Vec<String>,
     pub stock_event_ids: Vec<String>,
     pub rights_event_ids: Vec<String>,
+    /// 参与合计的拆股／缩股事件（严格持久化：旧档缺失该字段显式拒绝）。
+    pub split_event_ids: Vec<String>,
     pub reference: crate::company::ex_reference_price::ExReferencePrice,
 }
 
@@ -670,6 +676,256 @@ impl SessionCorporateActions {
                 .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
             self.stock_distributions[index]
                 .mark_credited(day)
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// 拆股／缩股事件日结：公告 → R 日冻结快照换算 → R+1 按 `MovementScope::
+    /// ShareReDenomination` 重新计值入账（换算新增 lot 或 FIFO 核减）、账户持仓
+    /// 同步、税账同日续记／核减、Simple 账面回填。
+    ///
+    /// 事件幂等：重复执行同一日结不重复换算或入账；任何失败向外返回错误，由日终
+    /// 候选事务整体回滚，不留下部分状态。
+    pub(crate) fn process_share_splits_on_day_end(
+        &mut self,
+        day: crate::calendar::CivilDate,
+        calendar: &crate::calendar::TradingCalendar,
+        company_system: &mut crate::company::CompanySystem,
+        accounts: &mut super::account_book::AccountBook,
+    ) -> Result<(), SessionCorporateActionsError> {
+        use crate::company::share_split::{holder_inherited_restriction, ShareSplitStatus};
+        for index in 0..self.share_splits.len() {
+            let plan = self.share_splits[index].plan().clone();
+            if self.share_splits[index].status() == &ShareSplitStatus::Approved {
+                if day > plan.announced_on {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "拆股／缩股事件 {} 错过公告日",
+                        plan.event_id
+                    )));
+                }
+                if day == plan.announced_on {
+                    self.share_splits[index]
+                        .announce(day)
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?;
+                }
+            }
+            // 已过换算日仍停留在 Registered 的账簿属于错过入账：显式失败。
+            if self.share_splits[index].status() == &ShareSplitStatus::Registered
+                && day > plan.ex_rights_on
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "拆股／缩股事件 {} 错过换算入账日",
+                    plan.event_id
+                )));
+            }
+            if day == plan.registered_on {
+                if self.share_splits[index].status() != &ShareSplitStatus::Announced {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "拆股／缩股事件 {} 登记日前未完成公告",
+                        plan.event_id
+                    )));
+                }
+                let registry_index = self
+                    .registries
+                    .iter()
+                    .position(|registry| {
+                        registry.stock() == &plan.stock && registry.issuer() == &plan.issuer
+                    })
+                    .ok_or_else(|| {
+                        SessionCorporateActionsError::Invalid(
+                            "拆股／缩股登记日缺少匹配股东名册".into(),
+                        )
+                    })?;
+                let snapshot = self.registries[registry_index]
+                    .register(plan.event_id.clone(), day)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+                    .clone();
+                self.share_splits[index]
+                    .register(snapshot, calendar)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                company_system
+                    .share_split_facts(&plan.issuer)
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+                    .into_iter()
+                    .find(|fact| fact.event_id == plan.event_id)
+                    .ok_or_else(|| {
+                        SessionCorporateActionsError::Invalid(
+                            "拆股／缩股登记缺少 Simple 声明事实".into(),
+                        )
+                    })?;
+            } else if day > plan.registered_on
+                && self.share_splits[index].registration().is_none()
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "拆股／缩股事件 {} 错过登记日",
+                    plan.event_id
+                )));
+            }
+            if day != plan.ex_rights_on
+                || self.share_splits[index].status() != &ShareSplitStatus::Registered
+            {
+                continue;
+            }
+            let receipt = self.share_splits[index]
+                .receipt()
+                .cloned()
+                .ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid("拆股／缩股入账缺少冻结换算回执".into())
+                })?;
+            // 构造重新计值净变动：正向新增 lot（取得日 = R+1、继承限售）或
+            // 负向 FIFO 核减（不是处置，取得日由存活 lot 延续）。
+            let mut changes = Vec::new();
+            let mut account_deltas = Vec::new();
+            for outcome in &receipt.holders {
+                let original = outcome.original_shares;
+                let new_shares = outcome.new_shares;
+                if new_shares == original {
+                    continue;
+                }
+                let restriction = if new_shares > original {
+                    holder_inherited_restriction(outcome, day).map_err(|error| {
+                        SessionCorporateActionsError::Invalid(error.to_string())
+                    })?
+                } else {
+                    ShareRestriction::Unrestricted
+                };
+                if new_shares > original {
+                    changes.push(DayNetChange {
+                        holder: outcome.holder.clone(),
+                        change: i128::try_from(new_shares - original).map_err(|_| {
+                            SessionCorporateActionsError::Invalid(
+                                "拆股入账股数超出日结范围".into(),
+                            )
+                        })?,
+                        acquisition: Some(NetAcquisition {
+                            lot_id: format!(
+                                "share-split:{}:{}",
+                                plan.event_id,
+                                holder_key(&outcome.holder)
+                            ),
+                            source: AcquisitionSource::CorporateAction {
+                                event: plan.event_id.clone(),
+                            },
+                            restriction: restriction.clone(),
+                        }),
+                    });
+                } else {
+                    changes.push(DayNetChange {
+                        holder: outcome.holder.clone(),
+                        change: -(i128::try_from(original - new_shares).map_err(|_| {
+                            SessionCorporateActionsError::Invalid(
+                                "缩股核减股数超出日结范围".into(),
+                            )
+                        })?),
+                        acquisition: None,
+                    });
+                }
+                if let HolderId::Account(account) = &outcome.holder {
+                    account_deltas.push((*account, original, new_shares, restriction));
+                }
+            }
+            let registry_index = self
+                .registries
+                .iter()
+                .position(|registry| {
+                    registry.stock() == &plan.stock && registry.issuer() == &plan.issuer
+                })
+                .ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid("拆股／缩股入账缺少匹配股东名册".into())
+                })?;
+            self.registries[registry_index]
+                .close_day(ShareDayRequest {
+                    event_id: format!("share-split:{}", plan.event_id),
+                    day,
+                    scope: MovementScope::ShareReDenomination {
+                        basis: plan.approval_reference.clone(),
+                    },
+                    changes,
+                })
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            for (account, original, new_shares, _) in &account_deltas {
+                let account_state = accounts.get_mut(account).ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid(format!(
+                        "拆股／缩股股东账户 {account:?} 不存在"
+                    ))
+                })?;
+                if new_shares > original {
+                    account_state
+                        .credit_position_shares(plan.stock.clone(), new_shares - original)
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?;
+                } else {
+                    account_state
+                        .apply_share_redenomination(plan.stock.clone(), *original, *new_shares)
+                        .map_err(|error| {
+                            SessionCorporateActionsError::Invalid(error.to_string())
+                        })?;
+                }
+            }
+            // 税账同日续记／核减：拆股增量按「取得日 = R+1」同日正向续记（与送转
+            // 同一口径，85号保守解释）；缩股核减走非应税重新计值核减。
+            for (account, original, new_shares, restriction) in &account_deltas {
+                let Some(book) = self
+                    .dividend_tax_books
+                    .iter_mut()
+                    .find(|book| book.account() == *account && book.stock() == &plan.stock)
+                else {
+                    continue;
+                };
+                let receipt_event_id = format!("share-split:{}", plan.event_id);
+                let tax_event_id = nontrading_tax_day_event_id(&receipt_event_id, *account);
+                if new_shares > original {
+                    let acquisition = crate::company::cash_dividend_tax::DividendTaxLot {
+                        id: format!(
+                            "tax:share-split:{}:{}",
+                            plan.event_id,
+                            holder_key(&HolderId::Account(*account))
+                        ),
+                        qty: new_shares - original,
+                        acquired_on: day,
+                        source: crate::company::cash_dividend_tax::convert_tax_source(
+                            &AcquisitionSource::CorporateAction {
+                                event: plan.event_id.clone(),
+                            },
+                        ),
+                        class: crate::company::cash_dividend_tax::convert_tax_class(restriction),
+                    };
+                    book.record_net_day(
+                        tax_event_id,
+                        day,
+                        i128::try_from(new_shares - original)
+                            .map_err(|_| SessionCorporateActionsError::Invalid("拆股税账增量溢出".into()))?,
+                        Some(acquisition),
+                    )
+                    .map_err(|error| {
+                        SessionCorporateActionsError::Invalid(error.to_string())
+                    })?;
+                } else {
+                    book.record_redenomination_reduction(
+                        tax_event_id,
+                        day,
+                        original - new_shares,
+                    )
+                    .map_err(|error| {
+                        SessionCorporateActionsError::Invalid(error.to_string())
+                    })?;
+                }
+            }
+            company_system
+                .record_share_split_credit(
+                    &plan.issuer,
+                    &plan.event_id,
+                    day,
+                    receipt.issued_shares_before,
+                    receipt.issued_shares_after,
+                )
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            self.share_splits[index]
+                .mark_settled(day)
                 .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
         }
         Ok(())
@@ -1557,7 +1813,8 @@ impl SessionCorporateActions {
                         receipt_stock.0, account.0, receipt.request.day
                     ),
                     MovementScope::NonTradingTransfer { .. }
-                    | MovementScope::IssuerRepurchaseCancellation { .. } => {
+                    | MovementScope::IssuerRepurchaseCancellation { .. }
+                    | MovementScope::ShareReDenomination { .. } => {
                         // 回购注销只核减 IssuerTreasury，无 Account 持有人分录；
                         // 此处事件 id 派生与送转共用，实际不会命中任何税账。
                         nontrading_tax_day_event_id(&receipt.request.event_id, account)
@@ -1567,8 +1824,11 @@ impl SessionCorporateActions {
                     .dividend_tax_books
                     .iter()
                     .find(|book| book.account() == account && book.stock() == receipt_stock)
-                    .and_then(|book| book.receipt_by_event(&event_id))
-                    .is_some();
+                    .map(|book| {
+                        book.receipt_by_event(&event_id).is_some()
+                            || book.redenomination_by_event(&event_id).is_some()
+                    })
+                    .unwrap_or(false);
                 if existing_day {
                     continue;
                 }
@@ -1606,8 +1866,28 @@ impl SessionCorporateActions {
                             "账户 {account:?} 缺少 {receipt_stock:?} 的股息税账"
                         ))
                     })?;
-                book.record_net_day(event_id, receipt.request.day, change.change, acquisition)
-                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                if matches!(
+                    receipt.request.scope,
+                    MovementScope::ShareReDenomination { .. }
+                ) && change.change < 0
+                {
+                    // 缩股核减：FIFO 减少税基 lot，但不产生应税处置（重新计值
+                    // 不是转让）；取得日由存活 lot 延续。
+                    let removed = u64::try_from(change.change.unsigned_abs()).map_err(|_| {
+                        SessionCorporateActionsError::Invalid("缩股核减数量超出 u64".into())
+                    })?;
+                    book.record_redenomination_reduction(
+                        event_id,
+                        receipt.request.day,
+                        removed,
+                    )
+                    .map_err(|error| {
+                        SessionCorporateActionsError::Invalid(error.to_string())
+                    })?;
+                } else {
+                    book.record_net_day(event_id, receipt.request.day, change.change, acquisition)
+                        .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                }
             }
         }
         Ok(())
@@ -1677,11 +1957,24 @@ impl SessionCorporateActions {
                     MovementScope::NonTradingTransfer { .. } => {
                         nontrading_tax_day_event_id(&receipt.request.event_id, account)
                     }
+                    // 拆股正向增量走日结续记；缩股负向核减走重新计值回执。
+                    MovementScope::ShareReDenomination { .. } => {
+                        nontrading_tax_day_event_id(&receipt.request.event_id, account)
+                    }
                     // 回购注销只核减 IssuerTreasury；该回执不含任何 Account 持有人
                     // 变动，不会进入任何税账的期望集（上面的 continue 已过滤）。
                     MovementScope::IssuerRepurchaseCancellation { .. } => continue,
                 };
-                if tax_book.receipt_by_event(&expected_event_id).is_none() {
+                let has_tax_fact = match &receipt.request.scope {
+                    MovementScope::ShareReDenomination { .. } => {
+                        tax_book.receipt_by_event(&expected_event_id).is_some()
+                            || tax_book
+                                .redenomination_by_event(&expected_event_id)
+                                .is_some()
+                    }
+                    _ => tax_book.receipt_by_event(&expected_event_id).is_some(),
+                };
+                if !has_tax_fact {
                     return Err(SessionCorporateActionsError::Invalid(format!(
                         "账户 {account:?} 的股息税账缺少名册回执 {} 的日结事实：\
                          送转×税账交互未入账，拒绝静默缺股",
@@ -1866,6 +2159,82 @@ impl SessionCorporateActions {
                 }
             }
         }
+        // 拆股／缩股账簿校验 + 与名册重新计值回执的双向勾稽。
+        let mut settled_split_books = BTreeMap::new();
+        for book in &self.share_splits {
+            book.validate()
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+            if book.plan().approved_on > current_date {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "拆股／缩股批准日期晚于当前会话日期".into(),
+                ));
+            }
+            // 恢复校验对称防护：已过换算日的 Registered 账簿属于错过入账。
+            if book.status()
+                == &crate::company::share_split::ShareSplitStatus::Registered
+                && current_date > book.plan().ex_rights_on
+            {
+                return Err(SessionCorporateActionsError::Invalid(format!(
+                    "拆股／缩股事件 {} 错过换算入账日",
+                    book.plan().event_id
+                )));
+            }
+            if !self.registries.iter().any(|registry| {
+                registry.stock() == &book.plan().stock && registry.issuer() == &book.plan().issuer
+            }) {
+                return Err(SessionCorporateActionsError::Invalid(
+                    "拆股／缩股账簿缺少匹配的完整股东名册".into(),
+                ));
+            }
+            if let Some(settled_on) = book.settled_on() {
+                let Some(receipt) = book.receipt() else {
+                    return Err(SessionCorporateActionsError::Invalid(
+                        "已入账拆股／缩股账簿缺少冻结换算回执".into(),
+                    ));
+                };
+                settled_split_books.insert(
+                    format!("share-split:{}", book.plan().event_id),
+                    (
+                        settled_on,
+                        receipt.issued_shares_after as i128
+                            - receipt.issued_shares_before as i128,
+                    ),
+                );
+            }
+        }
+        for registry in &self.registries {
+            for receipt in registry.receipts() {
+                if !matches!(
+                    receipt.request.scope,
+                    MovementScope::ShareReDenomination { .. }
+                ) {
+                    continue;
+                }
+                let Some(&(settled_on, net_change)) =
+                    settled_split_books.get(&receipt.request.event_id)
+                else {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "名册存在无对应已入账拆股／缩股账簿的重新计值回执 {}",
+                        receipt.request.event_id
+                    )));
+                };
+                let receipt_net: i128 = receipt
+                    .request
+                    .changes
+                    .iter()
+                    .map(|change| change.change)
+                    .sum();
+                if receipt.request.day != settled_on || receipt_net != net_change {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "重新计值回执 {} 的日期或净额与拆股／缩股账簿不一致",
+                        receipt.request.event_id
+                    )));
+                }
+            }
+        }
+        company_system
+            .validate_share_split_books(&self.share_splits)
+            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
         company_system
             .validate_stock_distribution_books(&self.stock_distributions)
             .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
@@ -2042,7 +2411,8 @@ impl SessionCorporateActions {
                 || !group_keys.insert((group.date, group.stock.clone()))
                 || (group.cash_plan_ids.is_empty()
                     && group.stock_event_ids.is_empty()
-                    && group.rights_event_ids.is_empty())
+                    && group.rights_event_ids.is_empty()
+                    && group.split_event_ids.is_empty())
             {
                 return Err(SessionCorporateActionsError::Invalid(
                     "已应用除权除息组事实非法或重复".into(),
@@ -2099,15 +2469,30 @@ impl SessionCorporateActions {
             expected_rights.sort();
             let mut actual_rights = group.rights_event_ids.clone();
             actual_rights.sort();
+            let mut expected_splits: Vec<_> = self
+                .share_splits
+                .iter()
+                .filter(|book| {
+                    book.plan().stock == group.stock
+                        && book.plan().ex_rights_on == group.date
+                        && book.registration().is_some()
+                })
+                .map(|book| book.plan().event_id.clone())
+                .collect();
+            expected_splits.sort();
+            let mut actual_splits = group.split_event_ids.clone();
+            actual_splits.sort();
             if expected_cash != actual_cash
                 || actual_cash.windows(2).any(|pair| pair[0] == pair[1])
                 || expected_stock != actual_stock
                 || actual_stock.windows(2).any(|pair| pair[0] == pair[1])
                 || expected_rights != actual_rights
                 || actual_rights.windows(2).any(|pair| pair[0] == pair[1])
+                || expected_splits != actual_splits
+                || actual_splits.windows(2).any(|pair| pair[0] == pair[1])
             {
                 return Err(SessionCorporateActionsError::Invalid(
-                    "已应用除权除息组与登记分红方案、送转或配股事件不一致".into(),
+                    "已应用除权除息组与登记分红方案、送转、配股或拆股／缩股事件不一致".into(),
                 ));
             }
         }
@@ -2740,6 +3125,7 @@ mod tests {
             external_receipts: vec![],
             dividend_tax_books: vec![],
             stock_distributions: vec![],
+            share_splits: vec![],
             rights_offerings: vec![],
             rights_subscription_queue: vec![],
             rejected_rights_subscriptions: vec![],
