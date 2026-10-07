@@ -283,3 +283,11 @@ H = 阶段一末（254c50b0，StockId 落地后）冻结 binary；C = 阶段二�
 3. 全量测试与基线逐一对照（基线失败名单不变）；跑通后核对风险 1。
 4. 锚定交错配对基准（预期中性）。
 5. ADR 0041 补 CompanyId/MemberId/光标章节；inventory A 表 CompanyId 行完成、补登 IndustryId/CounterpartyId 行；独立复核；分笔提交（引擎核心一笔、宿主/web 跟进一笔）。
+
+## 清尾棒接续存档（2026-10-07 第二棒）
+
+- 外来残留：identities.rs（漏删）+ 6 个磁盘残留已备份至 .tmp/e8/foreign-committed/tests/ 后移除，提交 bce93dc2。
+- 测试清零：engine --all-targets 0 错误（~224→0，历经 t6-t21 清单迭代；生产侧修复含 MemberId/CompanyId 全部夹具数值化、spec.id→spec.code、catalog 补齐、CompanyCatalog 公开重导出、PublicReportQuery cursor 保持 u32=PublicationId 数值、next_cursor 仍为十进制文本——测试侧往返 parse）。
+- workspace：server routes 三处路径/参数数值化（Path<u32>、cursor Option<u32>）后 0 错误；desktop generate_context! proc-macro 崩溃为 HEAD 既有环境问题（前棒 worktree 对照已证，本 diff 不含 desktop）。
+- 关键配方（新增）：fixtures.rs 的 catalog_for 改为 IntoIterator<Item=&OperatingCompanyConfig>（数组/单元素引用通吃）；夹具成员名→数值 id 的集中映射（consolidation main.rs member_id、determinism.rs cid）；单公司独立夹具一律 CompanyId(0)；真实会话断言一律经 save.company_operations.catalog() 查询（风险 1 遵守）。
+- 下一步：全量测试对照 → 提交（CompanyId 批次）→ 基准 → 独立复核 → 终稿。
