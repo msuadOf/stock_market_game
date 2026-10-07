@@ -56,11 +56,11 @@ export function ParValueInput({ value, onChange }: ParValueInputProps) {
             if (event.key === "Enter") commitOnBlur();
           }}
           aria-label="每股面值（元）"
-          aria-invalid={invalid || parsed === value ? undefined : true}
+          aria-invalid={invalid ? true : undefined}
         />
         元/股（{value} 分，默认 1 元；失焦生效）
         {invalid && <small role="alert">当前面值输入无效（须为正数且最多两位小数），草稿保持 {centsToYuanText(value)} 元。</small>}
-        {!invalid && parsed !== value && <small>未提交的编辑：失焦后写入草稿（将变为 {parsed} 分）。</small>}
+        {!invalid && parsed !== value && <small>（未提交的编辑：失焦后写入草稿，将变为 {parsed} 分。）</small>}
       </label>
       <small>新局创建时按「面值 × 总股本」推定各公司注册资本；开局后随存档固化，不可修改。</small>
     </fieldset>
