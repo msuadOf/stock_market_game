@@ -17,7 +17,7 @@
 | 项 | 现状 | 目标 | 状态 |
 |---|---|---|---|
 | 股票 StockCode(pub String) | 全引擎 ~1222 处引用 | `StockId(u32)` + `StockCatalog` 目录翻译（id 序=代码序） | **进行中**（已全量改名，编译修正中） |
-| 公司 CompanyId(pub String) | company/* 全子系统以字符串 id 关联 | `CompanyId(u32)` 数值化，公司名进目录/元数据 | 未开始 |
+| 公司 CompanyId(pub String) | company/* 全子系统以字符串 id 关联 | `CompanyId(u32)` 数值化，公司名进目录/元数据 | **已完成**（42ac1d9b 清尾：CompanyCatalog 公开重导出、测试夹具全量对齐） |
 | 证据投影 EnvelopeKeyProjection { account_id: String, stock_code: String, order_id: String, side: &'static str } | verification_evidence | 全部数值/枚举字段 | 未开始 |
 | 拍卖/连续订单归属 venue: String / frozen: String | player_orders（值域 "auction"/"cash"/"shares"） | enum OrderVenue / FrozenAsset | 未开始 |
 | E3 排序元组局部 u8 股票序数 | continuous_matching_adapter | 统一用全局 StockId | 随 A 项归零 |
@@ -56,6 +56,12 @@
   键位一律数值。例外理由：数值化内容无意义且破坏内容完整性。
 - **配置加载**：StockSpec.code 等输入侧文本（边界→id 翻译入口）。
 - **诊断输出**：cfg(feature = "simulation-diagnostics") 门控的调试文本。
+
+## 显式遗留（不静默）
+
+- **IndustryId(pub String)**（行业标签，fixtures 用 "home-appliances" 等）：跨 company/information/shock 子系统，量大且独立成批，未随 CompanyId 批数值化；登记为下一批候选。
+- **CounterpartyId(pub String)**（对手方命名空间）：外部对手方本就是字符串名（"EXT-CUST" 等），与"内部公司对手方经目录翻译"的类型隔离并存；是否数值化待设计定夺。
+- **LedgerAccountId / InventoryItemCode / FixedAssetCode 等会计内容码**：登记为内容码（生成/配置产生、需逐字节保留），非标识符，保留 String（见上文例外）。
 
 ## 执行顺序
 

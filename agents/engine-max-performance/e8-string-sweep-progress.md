@@ -291,3 +291,11 @@ H = 阶段一末（254c50b0，StockId 落地后）冻结 binary；C = 阶段二�
 - workspace：server routes 三处路径/参数数值化（Path<u32>、cursor Option<u32>）后 0 错误；desktop generate_context! proc-macro 崩溃为 HEAD 既有环境问题（前棒 worktree 对照已证，本 diff 不含 desktop）。
 - 关键配方（新增）：fixtures.rs 的 catalog_for 改为 IntoIterator<Item=&OperatingCompanyConfig>（数组/单元素引用通吃）；夹具成员名→数值 id 的集中映射（consolidation main.rs member_id、determinism.rs cid）；单公司独立夹具一律 CompanyId(0)；真实会话断言一律经 save.company_operations.catalog() 查询（风险 1 遵守）。
 - 下一步：全量测试对照 → 提交（CompanyId 批次）→ 基准 → 独立复核 → 终稿。
+
+## 清尾棒终稿（2026-10-07 第二棒完成）
+
+- 提交：42ac1d9b（CompanyId 清尾主体）、42e4a9ae（探针 example 排版恢复——cargo fmt 只覆盖 apps/ 不覆盖 agents/，逐字节约束被 fmt 打破，恢复原字节）。
+- 生产修正（随 42ac1d9b）：member-tax 键格式/校验数值化同步（前批真实不一致）；DebtCreditor::Company 数值恒格式合法（命名空间隔离转类型级，测试语义改写）；CompanyCatalog/CompanyMeta 公开重导出；server 路径参数/游标数值化。
+- 测试对照：lib 1314/8=基线逐一相同；集成全绿除基线既有失败（均经 3b75cde4 worktree 实证）：save_contract×5、weekend_report、civil_clock::closed_days_accrue、scenarios::civil_information_chain（weekend 另在 dde740c5 复证更早）。session 集成套件 9s 内跑不完（既有慢套件），按台账先例不作为本棒证据。
+- 基准（48-63 核、默认 worker=4、astart,(H,C)×5,aend）：锚漂 −3.78%（≤5% 放宽线）；d=C/H 均值 0.979、符号 2/5 不一致——与锚自身漂移同量级，判**中性/不可分辨**（本棒以测试夹具为主，符合预期，不宣称性能收益）。产物 e8t-*.json。
+- 遗留：IndustryId/CounterpartyId 已补登 inventory"显式遗留"节；外来文件备份 .tmp/e8/foreign-committed/（tests/ 7 文件 + src 3 文件）。
