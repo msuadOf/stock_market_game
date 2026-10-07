@@ -103,7 +103,7 @@ test("Simple 分红计划 wire 要保留完整决议、公积年度与付款批�
 });
 
 test("送转入账演进注册资本后，事实按批准时点口径核对而不是当前法定事实", { timeout: 10000 }, () => {
-  const base = { company: "C-600101", kind: "Industrial", config, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "1", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: {}, legal_facts: { registered_capital: "1000.03", source_evidence: "章程及登记材料" } };
+  const base = { company: "C-600101", kind: "Industrial", config, books, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "1", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: {}, rights_offerings: {}, issuer_repurchases: {}, legal_facts: { registered_capital: "1000.03", source_evidence: "章程及登记材料" } };
   const credited = { event_id: "dist-1", approval_reference: "股东大会决议", kind: "BonusShares", approved_on: "2030-02-01", new_shares: "3", par_value_per_share: "1", capital_increase: "0.03", registered_capital_at_approval: "1000.00", credited_on: "2030-02-10" };
   const value = { ...base, stock_distributions: { "dist-1": credited } };
   // 送转入账按 面值×新增股数 演进注册资本（1000.00 → 1000.03）；事实冻结批准时点注册资本。
@@ -121,7 +121,7 @@ test("送转入账演进注册资本后，既有分红声明按其批准时点�
   ]], closed: [] };
   const dividendBooks = { ...books, chart: simpleAccountChart("Industrial"), journal };
   const credited = { event_id: "dist-1", approval_reference: "股东大会决议", kind: "BonusShares", approved_on: "2030-02-01", new_shares: "3", par_value_per_share: "1", capital_increase: "0.03", registered_capital_at_approval: "1000.00", credited_on: "2030-02-10" };
-  const value = { company: "C-600101", kind: "Industrial", config, books: dividendBooks, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "4", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: { "dividend-plan-1": plan }, stock_distributions: { "dist-1": credited }, legal_facts: { registered_capital: "1000.03", source_evidence: "章程及登记材料" } };
+  const value = { company: "C-600101", kind: "Industrial", config, books: dividendBooks, closing: { versions: [], restatements: [] }, opening_date: "2029-12-31", as_of: "2030-01-31", last_month: "2030-01", next_event_id: "4", income_tax_position: position, recognized_periods: [["2030-01-01", "2030-01-31"]], dividends: { "dividend-plan-1": plan }, stock_distributions: { "dist-1": credited }, rights_offerings: {}, issuer_repurchases: {}, legal_facts: { registered_capital: "1000.03", source_evidence: "章程及登记材料" } };
   // 分红声明（2030-02-01）早于送转入账（2030-02-10）：按批准时点 1000.00 核对。
   assert.deepEqual(parseSimpleFinanceState(value), value);
   // 对不上任何历史时点注册资本的分红声明仍被拒。

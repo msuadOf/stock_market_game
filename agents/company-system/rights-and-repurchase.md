@@ -105,6 +105,16 @@ Web 测试 shard 并行）。证据日志见上表目录。
 | 三份存档 fixtures + company 切片（release Engine producer 重生成） | producer 自校验（restore/resave 深等、场景守卫）全过；main producer 为多核长任务（46 线程、约 96s），按长验收 300000ms deadline 执行 |
 | ts-rs typegen | `RejectedRightsSubscription.ts` 新增、`SessionCorporateActions.ts` 更新 |
 
+### 集成合并更正（2026-10-07）
+
+上表「Web 全量失败 9 项、零新增」的结论**失实**：`apps/web/src/save/schema/company/simple-finance.test.ts`
+中两个送转注册资本用例（「事实按批准时点口径核对」「既有分红声明按其批准时点注册资本核对」）的内联
+fixture 漏补 M 批新增的 `rights_offerings: {}` / `issuer_repurchases: {}` 必填键（同文件其余三处
+fixture 已在 major-2 修复轮补齐，这两处遗漏），在 M 批终点 bac1146f 单文件运行即失败（5 pass / 2 fail），
+全量布局因首个失败分片中止而未暴露。P×M 集成合并时经 main@abdb0bf0 基线逐用例对照发现，已按同一口径
+补齐两键并复验（单文件 7/7、污染配对 12/12、同布局全量枚举零新增失败），证据见
+`.tmp/company-system/m-integration/`。
+
 ## 独立复核门禁（大 A 语义）
 
 本 diff 须由未实施本批的 subagent 按 CLAUDE.md 复核：语义依据、最小范围、
