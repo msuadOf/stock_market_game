@@ -58,6 +58,17 @@ queue_npc 链路（capture_decision_snapshot → stream_npc_decisions 回调 →
 - 基准：锚定交错配对 worker=4、<10% 占用核段、≥5 对、预登记规则；预期 ≥+10%（外推 +16%，E2/E3 历史折扣）。
 - 复核：全新二级只读 agent（fork 无派生权限时由主会话代办）。
 
+## 棒次 9 完成记录
+
+- **stash 消费机制已落地**（15759c6e）：TDD 三件套绿（命中不内联/失配回退/错误原位传播），lib 1319/8 基线一致。要点：stash 无外层 Arc（derive Clone 即可）；计数器进程级按差分断言（先例）；权威 stash 在未提交 plan_tick 后保留（重试语义），随 commit_from 覆盖。
+- **prepare 链分片规格（供协调方派只编辑子 agent，配方=execution 分片先例）**：
+  - 文件 1 `session/envelope_projection.rs`（321 行）：`validate_existing_live_projection_with_observer` 及其内部 `project_borrowed_envelope` 等子调用 → `_on(view)` + 原方法薄委托（`&self.read_view()`）。读集已核：markets/auction_orders/envelope_ledger/accounts。
+  - 文件 2 `pipeline/decision_resources.rs`（321 行）：`DecisionResourceSnapshot::seal` → `seal_on(view)`。读集：setup/stocks/markets/envelope_ledger/accounts（validate_resources 走 view.accounts 快照）。
+  - 文件 3 `pipeline/continuous_matching_adapter.rs`（247 行）：`prepare_incremental_continuous_inputs`（含 prepare_inputs_with_observer）→ `_on(view)`。读 session.phase() 用 view.phase()。
+  - 范例提交引用：352e9157（retail_analysis 同款机械转换+多行 self.state 处理）、88d6af7c（capture 主体）。注意：多行拆分的 `self\n.state\n.X` 需正则处理；experience 类写组读经 `&*writes` 再借用。
+  - 子 agent 只编辑不构建；验收=本线 cargo check+全量 lib 1319/8。
+- 之后：`read_only_start.rs` 新增 `prepare_on(view)`（三 on 版组装，同名测试随行）→ candidate_commit 尾部（rebase 前置+rayon::join(queue_npc_on, prepare_on)→ 产出 stash.for_tick=candidate tick+1... 注意语义：prepare 读 candidate 终态、for_tick=candidate.state.tick+1？**待下棒核对**：探索波等价性是"prepare 于 rebase 完成处、为下个 plan_tick"，plan_tick 消费条件 stash.for_tick==session.tick，而 candidate 提交后权威 tick=candidate.tick，故 for_tick 应=candidate.tick+1 与消费时 tick 相符——实装时以探索波 spec_probe patch（.tmp/perf-expl/tick-overlap/）为准复核）→ 1/4/16 一致性 → probe → 锚定交错配对。
+
 ## 阶段二设计决策（棒次 8 收棒时定稿待验）
 
 1. **stash 语义定稿**：放 CommittableSessionState 内（非 GameSession 顶层）——投机结果在 candidate N 的 commit 尾部产生，随 swap 自然成为权威状态一部分，下个 plan_tick 消费（take 置 None）；tick 失败重试时 stash 仍在权威上且仍有效（同 tick 重算语义不变）。save()/business_state_hash 走 SaveSlot 逐字段构造，stash 不入 SaveSlot 即自动排除。
