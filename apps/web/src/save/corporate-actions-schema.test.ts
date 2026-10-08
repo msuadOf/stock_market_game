@@ -901,6 +901,31 @@ test("公开公告库接受拆股／缩股方案公告并拒绝发行人或公�
   assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, content: { kind: "ShareSplit", value: { ...plan, ratio: "1" } } }] }), /比例必须为/)
 })
 
+test("公开公告库接受送转方案公告并拒绝发行人或公告日错配", async () => {
+  // 与引擎 `AnnouncementContent::StockDistribution` 同构：枚举负载是方案本体
+  // （无 { plan } 包装，与拆股先例一致），发行人与公告发生日必须与公告头一致
+  // （engine public_view 同款校验）。
+  const { parsePublicLibrary } = await import("./schema/company/reports.ts")
+  const instant = { date: "2030-01-04", second_of_day: 64800 }
+  const plan = { event_id: "distribution-1", approval_reference: "board-1", issuer: "C-600101", stock: "600101", exchange: "sse", kind: "BonusShares", approved_on: "2030-01-03", announced_on: "2030-01-04", registered_on: "2030-01-07", ex_rights_on: "2030-01-08", shares_per_existing_share_micros: "250000", approved_total_new_shares: "2" }
+  const announcement = { id: 1, company: "C-600101", occurred_on: "2030-01-04", published_at: instant, content: { kind: "StockDistribution", value: plan } }
+  const library = { next_seq: 2, reports: [], announcements: [announcement] }
+  const parsed = parsePublicLibrary(library)
+  const content = parsed.announcements[0]?.content
+  assert.ok(content !== undefined && "StockDistribution" in content, "解析结果必须是 StockDistribution 变体")
+  assert.equal(content.StockDistribution.event_id, "distribution-1")
+  assert.equal(content.StockDistribution.kind, "BonusShares")
+  assert.equal(content.StockDistribution.approved_total_new_shares, "2")
+  // 发行人错配拒绝。
+  assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, company: "C-other" }] }), /送转公告发行人或发生日不一致/)
+  // 公告日错配拒绝。
+  assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, occurred_on: "2030-01-05" }] }), /送转公告发行人或发生日不一致/)
+  // 送转比例非法（零）拒绝。
+  assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, content: { kind: "StockDistribution", value: { ...plan, shares_per_existing_share_micros: "0" } } }] }), /送转比例与获批新增股数必须为正/)
+  // 日期顺序非法拒绝。
+  assert.throws(() => parsePublicLibrary({ ...library, announcements: [{ ...announcement, content: { kind: "StockDistribution", value: { ...plan, registered_on: "2030-01-09" } } }] }), /送转方案日期顺序非法/)
+})
+
 
 test("配股认购拒绝回执严格解析并勾稽事件存在与净认购唯一性", () => {
   const receipt = { event_id: "rights-event", account: "0", requested_shares: "41", submitted_on: "2030-01-07", rejected_on: "2030-01-07", reason: "公开配售剩余额度 40 股，申请 41 股超出额度" }

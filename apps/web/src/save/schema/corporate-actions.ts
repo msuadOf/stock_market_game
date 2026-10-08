@@ -510,21 +510,30 @@ function parseTaxSource(value: unknown, path: string): TaxAcquisitionSource {
   return parseSource(value, path)
 }
 
+/// 送转（股票股利与资本公积转增）方案条款的权威解析（账簿 plan 与公开公告共用；
+/// engine `StockDistributionEventPlan` 的序列化形态，拆股先例同构）。
+export function parseStockDistributionEventPlanValue(value: unknown, path: string): StockDistributionEventPlan {
+  const planValue = record(value, path)
+  exact(planValue, ["event_id", "approval_reference", "issuer", "stock", "exchange", "kind", "approved_on", "announced_on", "registered_on", "ex_rights_on", "shares_per_existing_share_micros", "approved_total_new_shares"], path)
+  const event_id = string(planValue.event_id, `${path}.event_id`), approval_reference = string(planValue.approval_reference, `${path}.approval_reference`), issuer = string(planValue.issuer, `${path}.issuer`), stock = string(planValue.stock, `${path}.stock`)
+  if (!event_id.trim() || !approval_reference.trim() || !issuer.trim() || !stock.trim()) throw new SaveSchemaError(path, "送转方案身份不能为空")
+  const exchange = oneOf(planValue.exchange, `${path}.exchange`, ["sse", "szse"] as const)
+  const kind = oneOf(planValue.kind, `${path}.kind`, ["BonusShares", "CapitalReserveConversion"] as const)
+  const dates = ["approved_on", "announced_on", "registered_on", "ex_rights_on"] as const
+  const parsedDates = Object.fromEntries(dates.map(key => [key, civilDate(planValue[key], `${path}.${key}`)])) as Record<typeof dates[number], string>
+  if (!(parsedDates.approved_on <= parsedDates.announced_on && parsedDates.announced_on <= parsedDates.registered_on && parsedDates.registered_on < parsedDates.ex_rights_on)) throw new SaveSchemaError(path, "送转方案日期顺序非法")
+  const shares_per_existing_share_micros = decimal(planValue.shares_per_existing_share_micros, `${path}.shares_per_existing_share_micros`)
+  const approved_total_new_shares = decimal(planValue.approved_total_new_shares, `${path}.approved_total_new_shares`)
+  if (shares_per_existing_share_micros === "0" || approved_total_new_shares === "0") throw new SaveSchemaError(path, "送转比例与获批新增股数必须为正")
+  return { event_id, approval_reference, issuer, stock, exchange, kind, ...parsedDates, shares_per_existing_share_micros, approved_total_new_shares }
+}
+
 function parseStockDistributionBook(value: unknown, path: string): StockDistributionBook {
   const book = record(value, path)
   exact(book, ["plan", "status", "registration", "receipt", "credited_on"], path)
-  const planValue = record(book.plan, `${path}.plan`)
-  exact(planValue, ["event_id", "approval_reference", "issuer", "stock", "exchange", "kind", "approved_on", "announced_on", "registered_on", "ex_rights_on", "shares_per_existing_share_micros", "approved_total_new_shares"], `${path}.plan`)
-  const event_id = string(planValue.event_id, `${path}.plan.event_id`), approval_reference = string(planValue.approval_reference, `${path}.plan.approval_reference`), issuer = string(planValue.issuer, `${path}.plan.issuer`), stock = string(planValue.stock, `${path}.plan.stock`)
-  if (!event_id.trim() || !approval_reference.trim() || !issuer.trim() || !stock.trim()) throw new SaveSchemaError(`${path}.plan`, "送转方案身份不能为空")
-  const exchange = oneOf(planValue.exchange, `${path}.plan.exchange`, ["sse", "szse"] as const)
-  const kind = oneOf(planValue.kind, `${path}.plan.kind`, ["BonusShares", "CapitalReserveConversion"] as const)
-  const dates = ["approved_on", "announced_on", "registered_on", "ex_rights_on"] as const
-  const parsedDates = Object.fromEntries(dates.map(key => [key, civilDate(planValue[key], `${path}.plan.${key}`)])) as Record<typeof dates[number], string>
-  if (!(parsedDates.approved_on <= parsedDates.announced_on && parsedDates.announced_on <= parsedDates.registered_on && parsedDates.registered_on < parsedDates.ex_rights_on)) throw new SaveSchemaError(`${path}.plan`, "送转方案日期顺序非法")
-  const shares_per_existing_share_micros = decimal(planValue.shares_per_existing_share_micros, `${path}.plan.shares_per_existing_share_micros`)
-  const approved_total_new_shares = decimal(planValue.approved_total_new_shares, `${path}.plan.approved_total_new_shares`)
-  if (shares_per_existing_share_micros === "0" || approved_total_new_shares === "0") throw new SaveSchemaError(`${path}.plan`, "送转比例与获批新增股数必须为正")
+  const { event_id, approval_reference, issuer, stock, exchange, kind, ...parsedDates } = parseStockDistributionEventPlanValue(book.plan, `${path}.plan`)
+  const shares_per_existing_share_micros = parsedDates.shares_per_existing_share_micros
+  const approved_total_new_shares = parsedDates.approved_total_new_shares
   const status = oneOf(book.status, `${path}.status`, ["Approved", "Announced", "Registered", "Credited"] as const)
   const registration = book.registration === null ? null : parseSnapshot(book.registration, `${path}.registration`)
   const receiptValue = book.receipt === null ? null : record(book.receipt, `${path}.receipt`)
