@@ -531,9 +531,12 @@ export function parseStockDistributionEventPlanValue(value: unknown, path: strin
 function parseStockDistributionBook(value: unknown, path: string): StockDistributionBook {
   const book = record(value, path)
   exact(book, ["plan", "status", "registration", "receipt", "credited_on"], path)
-  const { event_id, approval_reference, issuer, stock, exchange, kind, ...parsedDates } = parseStockDistributionEventPlanValue(book.plan, `${path}.plan`)
-  const shares_per_existing_share_micros = parsedDates.shares_per_existing_share_micros
-  const approved_total_new_shares = parsedDates.approved_total_new_shares
+  // 方案字段全部显式解构，rest 只剩四个日期字段（复核 note-3：不再把含
+  // 股数字段的 rest 命名成 parsedDates）。
+  const {
+    event_id, approval_reference, issuer, stock, exchange, kind,
+    shares_per_existing_share_micros, approved_total_new_shares, ...parsedDates
+  } = parseStockDistributionEventPlanValue(book.plan, `${path}.plan`)
   const status = oneOf(book.status, `${path}.status`, ["Approved", "Announced", "Registered", "Credited"] as const)
   const registration = book.registration === null ? null : parseSnapshot(book.registration, `${path}.registration`)
   const receiptValue = book.receipt === null ? null : record(book.receipt, `${path}.receipt`)

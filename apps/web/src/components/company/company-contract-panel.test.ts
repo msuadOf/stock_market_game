@@ -13,6 +13,7 @@ let contractQueryTrigger: typeof import("./CompanyContractPanel.tsx").contractQu
 let rightsSubscriptionCandidates: typeof import("./CompanyContractPanel.tsx").rightsSubscriptionCandidates;
 let rightsSubscriptionMaxShares: typeof import("./CompanyContractPanel.tsx").rightsSubscriptionMaxShares;
 let rightsSubscriptionInputValid: typeof import("./CompanyContractPanel.tsx").rightsSubscriptionInputValid;
+let selectSubscriptionCandidate: typeof import("./CompanyContractPanel.tsx").selectSubscriptionCandidate;
 
 before(async () => {
   vite = await createServer({ configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
@@ -25,6 +26,7 @@ before(async () => {
   rightsSubscriptionCandidates = panel.rightsSubscriptionCandidates;
   rightsSubscriptionMaxShares = panel.rightsSubscriptionMaxShares;
   rightsSubscriptionInputValid = panel.rightsSubscriptionInputValid;
+  selectSubscriptionCandidate = panel.selectSubscriptionCandidate;
 });
 
 after(async () => { if (vite) await vite.close(); });
@@ -148,8 +150,23 @@ test("认购候选只含缴款期内且本人未提交认购的方案", () => {
     rightsView({ event_id: "queued", queued_subscription: { requested_shares: "10", submitted_on: "2030-01-08" } }),
     rightsView({ event_id: "settled", settled_subscription: { requested_shares: "50", paid_shares: "30", paid_amount: "15000", waived_shares: "20" } }),
     rightsView({ event_id: "no-right-no-quota" }),
+    // 复核 minor-2：公开配售剩余额度为 "0"（额度已用尽）不得作为候选。
+    rightsView({ event_id: "exhausted-openquota", open_subscription_remaining_shares: "0" }),
   ];
   assert.deepEqual(rightsSubscriptionCandidates(views).map((view) => view.event_id), ["open-entitled", "open-openquota"]);
+});
+
+test("显式选择的认购事件退出候选后不得静默回落到其他事件（复核 minor-1）", () => {
+  const first = rightsView({ event_id: "event-a", owner_entitlement: { rights_shares: "50", lock_until: null } });
+  const second = rightsView({ event_id: "event-b", owner_entitlement: { rights_shares: "30", lock_until: null } });
+  // 无显式选择时默认取首个候选。
+  assert.equal(selectSubscriptionCandidate([first, second], "")?.event_id, "event-a");
+  assert.equal(selectSubscriptionCandidate([first, second], "event-b")?.event_id, "event-b");
+  // 显式选择的事件已不在候选（如刚提交成功后刷新退出候选）：必须返回
+  // undefined 交回「重新选择」状态，不得回落到 event-a——否则旧股数会被
+  // 静默提交到另一个事件。
+  assert.equal(selectSubscriptionCandidate([first], "event-b"), undefined);
+  assert.equal(selectSubscriptionCandidate([], "event-b"), undefined);
 });
 
 test("认购上限优先具名权利，其次公开配售剩余额度", () => {

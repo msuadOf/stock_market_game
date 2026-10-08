@@ -111,5 +111,20 @@ NPC 本人获知均不通（拆股 `ShareSplit` 公告已由 S1 接通，本批�
 
 ## 独立复核门禁（大 A 语义）
 
-已请求未实施本批的 subagent 独立审查完整 diff（语义依据、最小范围、边界测试与跨层
-语义漂移）；复核结论与处置回填于本节。
+已由未实施本批的 subagent（code-review）独立审查完整 diff（基线 `2aeb9c69` 对五提交
+逐块复核）。**第一轮结论：无 major；minor×2、note×4；三个点名疑点（wasm 受理回执
+唯一性 / disclosures 循环幂等与顺序 / web parser 与 serde 形状同构）全部核实闭合；
+三问门禁（大 A 语义／最小范围／遗漏边界）前两项通过。**
+
+处置（红→绿，证据 `review-fix-{red,green,schema,tsc,oxlint}.log`）：
+
+| 发现 | 修复 | 红证据 | 绿证据 |
+| --- | --- | --- | --- |
+| minor-1 认购成功后表单残留：选中事件退出候选时 `?? candidates[0]` 静默回落到其他事件，旧股数可被提交到另一事件 | 新增纯函数 `selectSubscriptionCandidate`（显式选择存在时不回落，返回 undefined 交回「重新选择」状态）；成功回调清空 `subscriptionEventId`/`subscriptionShares`；select 增「请选择」空位 | `review-fix-red.log`（缺导出红） | `review-fix-green.log`（panel 12/12，含回落负例） |
+| minor-2 公开配售剩余额度 `"0"`（额度已用尽）被当作候选，max=0 致恒禁用且报「1 到 0 之间」误导文案 | `rightsSubscriptionCandidates` 过滤 `open_subscription_remaining_shares !== "0"`（具名权利分支不受影响，parser 已保证为正） | 同上（候选用例红） | 同上 |
+| note-3 `parseStockDistributionBook` rest 命名 `parsedDates` 实含股数字段、return 重复设键 | 方案字段全部显式解构，rest 只剩四个日期字段 | —（机械重构，schema 32/32 回归） | `review-fix-schema.log` |
+| note-6 未跟踪 `bindings/` 构建产物 | 核实 `/bindings/` 已在 `.gitignore`（第 124 行），未被提交 | — | `git status` clean |
+
+note-4（wasm 允许 shares="0" 进 engine 兜底、worker 层更严的不对称）与 note-5
+（worker-host 层不复验格式）按复核意见登记为无害现状，不改动。修复后 tsc -b --force
+0 错误、oxlint 触碰文件 0 警告；已再次提交复核确认。

@@ -97,13 +97,30 @@ export function contractQueryTrigger(enabled: boolean, refreshKey: string): stri
 }
 
 /** 认购候选：缴款期内（Open）且本人既未排队也未结算认购、且存在可认购
- *  额度（具名权利或公开配售剩余额度）的方案；engine 侧同名条件仍是权威。 */
+ *  额度（具名权利或公开配售剩余额度——剩余为 "0" 即额度已用尽，不作为
+ *  候选，engine 侧同名条件仍是权威）。 */
 export function rightsSubscriptionCandidates(rights: readonly OwnerRightsOfferingView[]): readonly OwnerRightsOfferingView[] {
   return rights.filter((view) =>
     view.payment_window === "Open"
     && view.queued_subscription === null
     && view.settled_subscription === null
-    && (view.owner_entitlement !== null || view.open_subscription_remaining_shares !== null));
+    && (view.owner_entitlement !== null
+      || (view.open_subscription_remaining_shares !== null
+        && view.open_subscription_remaining_shares !== "0")));
+}
+
+/** 当前选中的认购事件：未显式选择（""）时默认取首个候选；显式选择的事件
+ *  已退出候选（如刚提交成功后刷新退出）时返回 `undefined` 交回「重新选择」
+ *  状态——**不得静默回落到其他事件**，否则上一事件的股数会被提交到另一
+ *  事件（复核 minor-1）。 */
+export function selectSubscriptionCandidate(
+  candidates: readonly OwnerRightsOfferingView[],
+  requestedEventId: string,
+): OwnerRightsOfferingView | undefined {
+  if (requestedEventId !== "") {
+    return candidates.find((view) => view.event_id === requestedEventId);
+  }
+  return candidates[0];
 }
 
 /** 认购上限：优先具名权利股数，其次公开配售剩余额度；两者皆无 = null
@@ -215,7 +232,7 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
   };
 
   const subscriptionCandidates = rights === null ? [] : rightsSubscriptionCandidates(rights);
-  const selectedSubscription = subscriptionCandidates.find((view) => view.event_id === subscriptionEventId) ?? subscriptionCandidates[0];
+  const selectedSubscription = selectSubscriptionCandidate(subscriptionCandidates, subscriptionEventId);
   const subscriptionMax = selectedSubscription === undefined ? null : rightsSubscriptionMaxShares(selectedSubscription);
   const subscriptionInputValid = selectedSubscription !== undefined
     && subscriptionMax !== null
@@ -234,7 +251,11 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
         if (subscriptionSequence.current !== current) return;
         setSubscriptionReceipt(receipt);
         setSubscriptionSubmitting(false);
-        // 受理成功后刷新权益表：认购进度列即刻反映排队认购事实。
+        // 受理成功后刷新权益表（认购进度列即刻反映排队认购事实），并清空
+        // 表单：已提交事件即将退出候选，保留旧选择/旧股数会在候选变化后
+        // 静默指向另一事件（复核 minor-1），必须回到显式重新选择状态。
+        setSubscriptionEventId("");
+        setSubscriptionShares("");
         refreshRights();
       },
       (failure) => {
@@ -346,6 +367,7 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
                         <>
                           <label className="company-picker"><span>配股事件</span>
                             <select aria-label="认购配股事件" value={selectedSubscription?.event_id ?? ""} onChange={(event) => { setSubscriptionEventId(event.currentTarget.value); setSubscriptionReceipt(null); setSubscriptionError(null); }}>
+                              <option value="">请选择配股事件</option>
                               {subscriptionCandidates.map((view) => <option key={view.event_id} value={view.event_id}>{view.event_id} · {view.stock} · 认购价 {view.price_per_share} 分</option>)}
                             </select>
                           </label>
