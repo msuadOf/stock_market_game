@@ -899,6 +899,63 @@ pub fn owner_flat_withholding_receipts(handle: u32) -> Result<JsValue, JsValue> 
     })
 }
 
+/// 玩家公司行为提案（N2b；owner 固定本机玩家 AccountId(0)）。业务结果
+/// （受理／制度拒绝／无持仓拒绝三类显式）以 `PlayerProposalOutcome` 返回，
+/// **不抛错**；仅传输层错误（参数反序列化失败）抛错给宿主显式展示。
+#[wasm_bindgen]
+pub fn propose_company_action(handle: u32, proposal: JsValue) -> Result<JsValue, JsValue> {
+    let proposal: engine::session::player_proposals::PlayerCompanyProposal =
+        serde_wasm_bindgen::from_value(proposal)
+            .map_err(|error| JsValue::from_str(&format!("玩家提案参数无效：{error}")))?;
+    with_session(handle, |session| {
+        let outcome: engine::session::player_proposals::PlayerProposalOutcome = session
+            .propose_company_action(AccountId(0), proposal)
+            .into();
+        to_js(&outcome)
+    })
+}
+
+/// 局内编辑某公司的 simple 行为偏好（N2b「偏好局内编辑即时生效、下周期评估」；
+/// owner 固定本机玩家）。任意时刻可改，下一结算周期末日评估生效；同周期已
+/// 产生的提案不回滚。失败完整上抛，不静默降级。
+#[wasm_bindgen]
+pub fn set_simple_preferences(
+    handle: u32,
+    company: String,
+    preferences: JsValue,
+) -> Result<(), JsValue> {
+    if company.trim().is_empty() || company.encode_utf16().count() > 64 {
+        return Err(JsValue::from_str(
+            "偏好编辑公司身份必须是非空且不超过 64 字符的字符串",
+        ));
+    }
+    let preferences: engine::company::simple::preferences::SimpleCompanyPreferences =
+        serde_wasm_bindgen::from_value(preferences)
+            .map_err(|error| JsValue::from_str(&format!("偏好参数无效：{error}")))?;
+    with_session(handle, |session| {
+        session
+            .set_simple_preferences(&engine::company::CompanyId(company), preferences)
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    })
+}
+
+/// 查询某公司当前的 simple 行为偏好（局内偏好编辑入口的初值；只读）。
+#[wasm_bindgen]
+pub fn company_simple_preferences(handle: u32, company: String) -> Result<JsValue, JsValue> {
+    if company.trim().is_empty() || company.encode_utf16().count() > 64 {
+        return Err(JsValue::from_str(
+            "偏好查询公司身份必须是非空且不超过 64 字符的字符串",
+        ));
+    }
+    with_session(handle, |session| {
+        let preferences = session
+            .game()
+            .company_simple_preferences(&engine::company::CompanyId(company))
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        to_js(&preferences)
+    })
+}
+
 #[wasm_bindgen]
 pub fn personal_trade_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
     let request: engine::session::PersonalTradeHistoryRequest = serde_wasm_bindgen::from_value(query)?;

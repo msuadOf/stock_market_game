@@ -31,7 +31,10 @@ import type { OwnerRightsOfferingView } from "../types/generated/OwnerRightsOffe
 import type { PeriodChangeExplanation } from "../types/generated/PeriodChangeExplanation";
 import type { CompanyPreferenceRejectionView, QueuedRightsSubscriptionView, RejectedRightsSubscriptionView } from "./corporate-action-views.ts";
 import type { FlatWithholdingReceiptView } from "./company-contract-views.ts";
+import type { PlayerProposalResultView, PlayerProposalWire } from "./player-proposals.ts";
+import type { SimpleCompanyPreferences } from "../types/generated/SimpleCompanyPreferences.ts";
 export type { AccountDividendTaxStatusView, DividendTaxOutstandingView, CompanyPreferenceRejectionView, QueuedRightsSubscriptionView, RejectedRightsSubscriptionView, FlatWithholdingReceiptView, CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation };
+export type { PlayerProposalResultView, PlayerProposalWire };
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -171,4 +174,10 @@ export interface EngineHost {
   ownerRightsOfferings?(): Promise<readonly OwnerRightsOfferingView[]>;
   /** 仅支持本地 WASM 宿主：简税（FlatWithholding）代扣回执查询（owner 隔离）。缺失表示该宿主明确不支持。 */
   ownerFlatWithholdingReceipts?(): Promise<readonly FlatWithholdingReceiptView[]>;
+  /** 仅支持本地 WASM 宿主：玩家公司行为提案（N2b；owner 固定本机玩家，三类结果显式）。缺失表示该宿主明确不支持，UI 显式提示。 */
+  proposeCompanyAction?(proposal: PlayerProposalWire): Promise<PlayerProposalResultView>;
+  /** 仅支持本地 WASM 宿主：局内编辑某公司的 simple 行为偏好（下一结算周期评估生效）。缺失表示该宿主明确不支持。 */
+  setSimplePreferences?(company: string, preferences: SimpleCompanyPreferences): Promise<void>;
+  /** 仅支持本地 WASM 宿主：查询某公司当前 simple 行为偏好（局内编辑入口初值）。缺失表示该宿主明确不支持。 */
+  companySimplePreferences?(company: string): Promise<SimpleCompanyPreferences>;
 }

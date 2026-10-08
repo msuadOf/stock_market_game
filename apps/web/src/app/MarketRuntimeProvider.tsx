@@ -11,7 +11,8 @@ import {
   type SetStateAction,
 } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
-import type { AccountDividendTaxStatusView, CompanyCapabilities, CompanyPreferenceRejectionView, DividendTaxOutstandingView, FlatWithholdingReceiptView, OwnerRightsOfferingView, PeriodChangeExplanation, PersonalTradeHistoryRequest, PersonalTradeHistoryPage, QueuedRightsSubscriptionView, RejectedRightsSubscriptionView } from "../host/engine-host.ts";
+import type { AccountDividendTaxStatusView, CompanyCapabilities, CompanyPreferenceRejectionView, DividendTaxOutstandingView, FlatWithholdingReceiptView, OwnerRightsOfferingView, PeriodChangeExplanation, PersonalTradeHistoryRequest, PersonalTradeHistoryPage, PlayerProposalResultView, PlayerProposalWire, QueuedRightsSubscriptionView, RejectedRightsSubscriptionView } from "../host/engine-host.ts";
+import type { SimpleCompanyPreferences } from "../types/generated/SimpleCompanyPreferences.ts";
 import type { PublicReportAvailability, PublicReportAvailabilityQuery } from "../types/engine.ts";
 import type { MarketHistoryRequest, MarketHistoryPage } from "../host/market-history.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
@@ -52,6 +53,9 @@ interface MarketRuntimeActions {
   queryOwnerFlatWithholdingReceipts: () => Promise<readonly FlatWithholdingReceiptView[]>;
   /** 本人配股认购提交（owner 隔离；写命令）。受理回执/拒绝按调用方展示。 */
   submitRightsSubscription: (eventId: string, shares: string) => Promise<QueuedRightsSubscriptionView>;
+  submitPlayerProposal: (proposal: PlayerProposalWire) => Promise<PlayerProposalResultView>;
+  updateSimplePreferences: (company: string, preferences: SimpleCompanyPreferences) => Promise<void>;
+  querySimplePreferences: (company: string) => Promise<SimpleCompanyPreferences>;
   calculateIntradayAverage: (input: IntradayAverageInput) => Promise<IntradayAverageResult | null>;
   calculateIntradayAverageCurve: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
 }
@@ -239,6 +243,38 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("配股认购响应属于已切换的宿主或市场");
     return result;
   }, [hostRef]);
+  const submitPlayerProposal = useCallback(async (proposal: PlayerProposalWire) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能提交玩家提案");
+    if (host.proposeCompanyAction === undefined) throw new Error("当前宿主不支持玩家提案");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.proposeCompanyAction(proposal);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("玩家提案响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
+  const updateSimplePreferences = useCallback(async (company: string, preferences: SimpleCompanyPreferences) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能编辑公司行为偏好");
+    if (host.setSimplePreferences === undefined) throw new Error("当前宿主不支持偏好局内编辑");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    await host.setSimplePreferences(company, preferences);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("偏好编辑响应属于已切换的宿主或市场");
+  }, [hostRef]);
+  const querySimplePreferences = useCallback(async (company: string) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询公司行为偏好");
+    if (host.companySimplePreferences === undefined) throw new Error("当前宿主不支持偏好查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.companySimplePreferences(company);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("偏好查询响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
   const calculateIntradayAverageCurve = useCallback(async (input: IntradayAverageCurveInput) => {
     const host = hostRef.current;
     if (host === null) throw new Error("游戏宿主尚未就绪，不能计算分时均价曲线");
@@ -270,6 +306,9 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryOwnerRightsOfferings,
     queryOwnerFlatWithholdingReceipts,
     submitRightsSubscription,
+    submitPlayerProposal,
+    updateSimplePreferences,
+    querySimplePreferences,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   }), [
@@ -297,6 +336,9 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryOwnerRightsOfferings,
     queryOwnerFlatWithholdingReceipts,
     submitRightsSubscription,
+    submitPlayerProposal,
+    updateSimplePreferences,
+    querySimplePreferences,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   ]);

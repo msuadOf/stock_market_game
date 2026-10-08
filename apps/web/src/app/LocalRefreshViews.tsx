@@ -26,7 +26,8 @@ import type { MobileChartPeriod, MobileInfoTab } from "../mobile/mobile-ui-state
 import { selectCanControl, selectPlayerAccount, selectPlayerAccountId, setIndicatorDataSource, store, type RootState } from "../store/store.ts";
 import { selectCompany, updateCompanyReading, type CompanyReading } from "../store/company-slice.ts";
 import type { DeliveryMode } from "../host/engine-host.ts";
-import type { PersonalTradeConfirmation } from "../host/engine-host.ts";
+import type { PersonalTradeConfirmation, PlayerProposalWire } from "../host/engine-host.ts";
+import type { SimpleCompanyPreferences } from "../types/generated/SimpleCompanyPreferences.ts";
 import { colorClass, formatSharesAsLots, formatCentsAmount, yuan } from "../utils/format.ts";
 import { useTradingTimeline } from "../components/TradingTimelineContext.tsx";
 import { useMarketRuntimeActions, useMarketRuntimeData, useMarketRuntimeSelection } from "./MarketRuntimeProvider.tsx";
@@ -247,7 +248,7 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContex
   const onReadingChange = (changes: Partial<CompanyReading>) => {
     if (companyId !== null) store.dispatch(updateCompanyReading({ generation: companyState.generation, companyId, changes }));
   };
-  const { queryPublicReportAvailability, queryDividendTaxStatus, queryDividendTaxOutstanding, queryRejectedRightsSubscriptions, queryCompanyPreferenceRejections, queryCompanyCapabilities, queryCompanyPeriodExplanation, queryOwnerRightsOfferings, queryOwnerFlatWithholdingReceipts, submitRightsSubscription } = useMarketRuntimeActions();
+  const { queryPublicReportAvailability, queryDividendTaxStatus, queryDividendTaxOutstanding, queryRejectedRightsSubscriptions, queryCompanyPreferenceRejections, queryCompanyCapabilities, queryCompanyPeriodExplanation, queryOwnerRightsOfferings, queryOwnerFlatWithholdingReceipts, submitRightsSubscription, submitPlayerProposal, updateSimplePreferences, querySimplePreferences } = useMarketRuntimeActions();
   const onDividendTaxQuery = useCallback(async () => ({
     status: await queryDividendTaxStatus(),
     outstanding: await queryDividendTaxOutstanding(),
@@ -259,7 +260,10 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContex
   const onRightsSubscription = useCallback((eventId: string, shares: string) => submitRightsSubscription(eventId, shares), [submitRightsSubscription]);
   const onExplanationQuery = useCallback((companyId: string, periodEnd: string) => queryCompanyPeriodExplanation(companyId, periodEnd), [queryCompanyPeriodExplanation]);
   const onFlatReceiptsQuery = useCallback(() => queryOwnerFlatWithholdingReceipts(), [queryOwnerFlatWithholdingReceipts]);
-  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onReadingChange={onReadingChange} onQuery={props.onCompanyQuery} onAvailabilityQuery={queryPublicReportAvailability} onAdvanceCivilDay={props.onAdvanceCivilDay} reportCorrectionControl={props.reportCorrectionControl} timelineGeneration={props.timelineGeneration} onDividendTaxQuery={onDividendTaxQuery} onRightsRejectionQuery={onRightsRejectionQuery} onPreferenceRejectionsQuery={onPreferenceRejectionsQuery} onCapabilitiesQuery={onCapabilitiesQuery} onOwnerRightsQuery={onOwnerRightsQuery} onRightsSubscription={onRightsSubscription} onExplanationQuery={onExplanationQuery} onFlatReceiptsQuery={onFlatReceiptsQuery} />;
+  const onProposalSubmit = useCallback((proposal: PlayerProposalWire) => submitPlayerProposal(proposal), [submitPlayerProposal]);
+  const onPreferencesUpdate = useCallback((company: string, preferences: SimpleCompanyPreferences) => updateSimplePreferences(company, preferences), [updateSimplePreferences]);
+  const onPreferencesQuery = useCallback((company: string) => querySimplePreferences(company), [querySimplePreferences]);
+  return <CompanyPanel allowCompanySelection={!props.stockContext} companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onReadingChange={onReadingChange} onQuery={props.onCompanyQuery} onAvailabilityQuery={queryPublicReportAvailability} onAdvanceCivilDay={props.onAdvanceCivilDay} reportCorrectionControl={props.reportCorrectionControl} timelineGeneration={props.timelineGeneration} onDividendTaxQuery={onDividendTaxQuery} onRightsRejectionQuery={onRightsRejectionQuery} onPreferenceRejectionsQuery={onPreferenceRejectionsQuery} onCapabilitiesQuery={onCapabilitiesQuery} onOwnerRightsQuery={onOwnerRightsQuery} onRightsSubscription={onRightsSubscription} onExplanationQuery={onExplanationQuery} onFlatReceiptsQuery={onFlatReceiptsQuery} onProposalSubmit={onProposalSubmit} onPreferencesUpdate={onPreferencesUpdate} onPreferencesQuery={onPreferencesQuery} />;
 }
 
 export function ConnectedMobileDetail(props: MobileDetailProps) {

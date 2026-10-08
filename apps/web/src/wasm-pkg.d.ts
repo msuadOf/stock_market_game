@@ -37,6 +37,9 @@ declare module "*wasm-pkg/web_wasm.js" {
   export function company_period_explanation(handle: number, company: string, periodEnd: string): unknown;
   export function owner_rights_offerings(handle: number): unknown[];
   export function owner_flat_withholding_receipts(handle: number): unknown[];
+  export function propose_company_action(handle: number, proposal: unknown): unknown;
+  export function set_simple_preferences(handle: number, company: string, preferences: unknown): void;
+  export function company_simple_preferences(handle: number, company: string): unknown;
   export function public_report_page(handle: number, query: PublicReportQuery): PublicReportPage;
   export function public_report_by_id(handle: number, id: string): PublicReportSummary;
   export function query_stock_history(handle: number, code: import("./types/generated/StockCode").StockCode): HistoricalStockData;

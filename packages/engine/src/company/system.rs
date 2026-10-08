@@ -941,6 +941,36 @@ impl CompanySystem {
                 .ok_or_else(|| CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))),
         }
     }
+    /// 局内编辑 Simple 行为偏好（N2b，2026-10-08 用户决策「偏好局内编辑即时
+    /// 生效、下周期评估」）：先完整域校验（与 `validate_for_issuers` 同一规则），
+    /// 再写入候选状态；hash 缓存随任何成功写入失效。修改后同周期内已产生的
+    /// 提案是已受理事实，不回滚；下一次结算周期末日评估按新偏好执行。
+    pub fn set_simple_preferences(
+        &mut self,
+        company: &CompanyId,
+        preferences: super::simple::preferences::SimpleCompanyPreferences,
+    ) -> Result<(), CompanySystemError> {
+        preferences.validate()?;
+        let result = (|| {
+            let state = match &mut self.implementation {
+                CompanyImplementation::Simple(state) => state,
+            };
+            let entry = state
+                .config
+                .companies
+                .iter_mut()
+                .find(|config| &config.company == company)
+                .ok_or_else(|| {
+                    CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))
+                })?;
+            entry.preferences = preferences;
+            Ok(())
+        })();
+        if result.is_ok() {
+            self.hash_cache = CompanySystemHashCache::default();
+        }
+        result
+    }
     /// 如实记录一笔被制度拒绝的偏好提案；同键同因幂等，同键异因显式报错。
     pub fn record_preference_rejection(
         &mut self,

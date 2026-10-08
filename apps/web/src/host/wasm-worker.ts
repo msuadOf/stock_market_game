@@ -51,6 +51,9 @@ type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
   readonly company_period_explanation?: (handle: number, company: string, periodEnd: string) => unknown;
   readonly owner_rights_offerings?: (handle: number) => readonly unknown[];
   readonly owner_flat_withholding_receipts?: (handle: number) => readonly unknown[];
+  readonly propose_company_action?: (handle: number, proposal: unknown) => unknown;
+  readonly set_simple_preferences?: (handle: number, company: string, preferences: unknown) => void;
+  readonly company_simple_preferences?: (handle: number, company: string) => unknown;
   readonly market_history?: (handle: number, query: unknown) => unknown;
   readonly current_minute_history?: (handle: number, query: unknown) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
@@ -600,6 +603,40 @@ ctx.addEventListener("message", (event) => {
           const queryReceipts = (wasm as WasmTransportExtensions).owner_flat_withholding_receipts;
           if (queryReceipts === undefined) throw new Error("当前 WASM bindings 不支持简税代扣回执查询，请重建 bindings");
           ctx.postMessage({ type: "flatWithholdingReceipts", requestId: message.requestId, generation: requestedGeneration, receipts: queryReceipts(session) });
+          return;
+        }
+        case "proposeCompanyAction": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("玩家提案请求 ID 无效");
+          if (message.proposal === null || typeof message.proposal !== "object" || Array.isArray(message.proposal)) throw new Error("玩家提案必须是对象");
+          const [session, wasm] = slot.requireHandle();
+          const propose = (wasm as WasmTransportExtensions).propose_company_action;
+          if (propose === undefined) throw new Error("当前 WASM bindings 不支持玩家提案，请重建 bindings");
+          // 业务结果（受理/制度拒绝/无持仓拒绝）由 engine 以显式结果对象返回，
+          // 这里原样透传给 host 侧严格 parser；仅传输层错误走 catch 流程。
+          ctx.postMessage({ type: "proposalOutcome", requestId: message.requestId, generation: requestedGeneration, outcome: propose(session, message.proposal) });
+          return;
+        }
+        case "setSimplePreferences": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("偏好编辑请求 ID 无效");
+          if (typeof message.company !== "string" || message.company.trim().length === 0 || message.company.length > 64) throw new Error("偏好编辑公司身份必须是非空且不超过 64 字符的字符串");
+          if (message.preferences === null || typeof message.preferences !== "object" || Array.isArray(message.preferences)) throw new Error("偏好编辑参数必须是对象");
+          const [session, wasm] = slot.requireHandle();
+          const setPreferences = (wasm as WasmTransportExtensions).set_simple_preferences;
+          if (setPreferences === undefined) throw new Error("当前 WASM bindings 不支持偏好局内编辑，请重建 bindings");
+          setPreferences(session, message.company, message.preferences);
+          ctx.postMessage({ type: "preferencesSet", requestId: message.requestId, generation: requestedGeneration });
+          return;
+        }
+        case "companySimplePreferences": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("偏好查询请求 ID 无效");
+          if (typeof message.company !== "string" || message.company.trim().length === 0 || message.company.length > 64) throw new Error("偏好查询公司身份必须是非空且不超过 64 字符的字符串");
+          const [session, wasm] = slot.requireHandle();
+          const queryPreferences = (wasm as WasmTransportExtensions).company_simple_preferences;
+          if (queryPreferences === undefined) throw new Error("当前 WASM bindings 不支持偏好查询，请重建 bindings");
+          ctx.postMessage({ type: "companySimplePreferences", requestId: message.requestId, generation: requestedGeneration, preferences: queryPreferences(session, message.company) });
           return;
         }
         case "drop": {
