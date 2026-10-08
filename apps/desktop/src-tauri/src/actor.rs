@@ -1749,11 +1749,15 @@ mod tests {
             t1_enabled: true,
             report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
-            start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+            // 市场 tick fixture 从交易日开局，并显式满足简税与印花税配对契约。
+            start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
-            dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+            flat_withholding_bp: Some(1000),
             rights_offering_enabled: false,
             issuer_repurchase_enabled: false,
+            par_value_per_share: Money::from_cents(100),
+            auto_corporate_foundation: false,
         }
     }
 

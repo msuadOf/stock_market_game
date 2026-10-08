@@ -22,8 +22,9 @@ test("Tauri更正真实host命令携带generation，严格解析且换档拒绝�
     calls.push({ command, args });
     if (command === "create_session") return { sessionId: "session-1", setup: DEFAULT_SETUP, seed: "1", resumed: false };
     if (command === "host_capabilities") return capabilities;
-    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1" };
-    if (command === "restore_session") return { snapshot, generation: "2", timeline_id: "timeline-2" };
+    // 当前基线/换档响应必须携带权威自然日，不由 host 用 setup 起始日补造。
+    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-02" };
+    if (command === "restore_session") return { snapshot, generation: "2", timeline_id: "timeline-2", civil_date: "2030-01-03" };
     if (command === "query_report_corrections") return defer ? new Promise((resolve) => { complete = resolve; }) : { generation: "1", value: { pending: [request], completed: {} } };
     if (command === "submit_report_correction" || command === "cancel_report_correction") return { generation: "1", value: null };
     return null;

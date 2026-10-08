@@ -64,7 +64,11 @@ fn sample_setup() -> SessionSetup {
             hot_count: 1,
             retail_cash_median: Money::from_cents(10_000_000),
         },
-        config: engine::GameConfig::proposed_defaults(),
+        // 固定测试现金预算，不把产品默认现金的变化当成快照／费用行为变化。
+        config: engine::GameConfig {
+            starting_cash: Money::from_cents(10_000_000),
+            ..engine::GameConfig::proposed_defaults()
+        },
         strategy_params: engine::StrategyParams {
             retail: engine::RetailParams {
                 arrival_rate: 0.5,
@@ -88,7 +92,8 @@ fn sample_setup() -> SessionSetup {
         t1_enabled: true,
         report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::random(),
-        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        // 交易 fixture 显式从交易日开始；默认元旦休市由 civil_clock 用例另测。
+        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
         flat_withholding_bp: Some(1000),
@@ -252,6 +257,59 @@ impl TestOrderSaveFixture {
     }
 
     fn restore(mut self) -> Result<GameSession, engine::SessionError> {
+        let active_codes = self.save.resting_orders.iter()
+            .filter(|(_, orders)| !orders.is_empty()).map(|(code, _)| code.clone())
+            .chain(self.save.auction_orders.iter()
+                .filter(|(_, orders)| !orders.is_empty()).map(|(code, _)| code.clone()))
+            .collect::<std::collections::BTreeSet<_>>();
+        if !active_codes.is_empty() && (self.save.snapshot.tick == 0
+            || active_codes.iter().any(|code| !self.save.snapshot.markets[code].day_market_activity))
+        {
+            // 持仓注入后才真实申撤单建立活动事实；低现金场景用已有股份，所有游标保留。
+            let mut prefix = self.save.clone();
+            for orders in prefix.resting_orders.values_mut() {
+                orders.clear();
+            }
+            prefix.auction_orders.clear();
+            prefix.runtime_state.live_envelopes.clear();
+            let mut session = GameSession::restore(&prefix)?;
+            for (offset, code) in active_codes.iter().enumerate() {
+                let available = prefix.snapshot.accounts[&AccountId(0)].positions.get(code)
+                    .map_or(0, |position| position.qty - position.t1_locked);
+                let (side, price) = if available >= 100 {
+                    (Side::Sell, LimitPrice::Highest)
+                } else {
+                    (Side::Buy, LimitPrice::Lowest)
+                };
+                session.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
+                    code: code.clone(), side, price, qty: 100,
+                }).expect("fixture 首 tick 的合法申报必须入队");
+                session.enqueue_player_intent(AccountId(0), Intent::Cancel {
+                    code: code.clone(),
+                    id: engine::OrderId(prefix.next_order_id + offset as u64),
+                }).expect("fixture 首 tick 的撤单必须入队");
+            }
+            let events = session.step().expect("日内订单 fixture 的首个市场 tick 必须成功");
+            assert!(events.iter().all(|event| !matches!(event, Event::Trade { .. })));
+            let mut primed = session.save().expect("首个市场 tick 必须可存档");
+            assert!(primed.resting_orders.values().all(Vec::is_empty));
+            assert!(primed.auction_orders.values().all(Vec::is_empty));
+            assert_eq!(primed.next_order_id, prefix.next_order_id + active_codes.len() as u64);
+            for (owner, account) in &primed.snapshot.accounts {
+                assert_eq!(account.cash, prefix.snapshot.accounts[owner].cash);
+                assert_eq!(serde_json::to_value(&account.positions).unwrap(),
+                    serde_json::to_value(&prefix.snapshot.accounts[owner].positions).unwrap());
+            }
+            // 冻结资产只从实时 snapshot 验证，不给最小 SaveAccountSnap 补派生字段。
+            for account in session.snapshot().accounts.values() {
+                assert_eq!(account.reserved_cash, Money::ZERO);
+                assert!(account.reserved_sell_qty.values().all(|qty| *qty == 0));
+            }
+            assert!(active_codes.iter().all(|code| primed.snapshot.markets[code].day_market_activity));
+            primed.resting_orders = self.save.resting_orders;
+            primed.auction_orders = self.save.auction_orders;
+            self.save = primed;
+        }
         let save = &mut self.save;
         fn fees(
             config: &engine::GameConfig,
@@ -450,9 +508,12 @@ fn order_save_fixture_restores_envelopes_cursors_and_reservations() {
     );
     let saved = restored.save().expect("restored fixture saves");
     assert_eq!(saved.runtime_state.live_envelopes.len(), 2);
+    assert_eq!(saved.next_order_id, 4, "真实前缀消耗 ID 3，不能回退并复用它");
+    assert!(saved.runtime_state.next_receipt_base > 0);
+    GameSession::restore(&saved).expect("真实前缀回执、受理游标与订单事实必须完整勾稽");
     assert_eq!(
-        saved.book_next_sequences[&code], 42,
-        "同步不能回退已撤单留下的 cursor"
+        saved.book_next_sequences[&code], 43,
+        "真实前缀申撤单消耗原 cursor 42，同步不能回退该事实"
     );
     assert_eq!(
         saved.resting_orders[&code]
@@ -1627,7 +1688,8 @@ fn full_day_accounting_rejects_a_missing_day_boundary() {
     let (mut session, _, _, _) = full_day_accounting_fixture();
     let ticks_per_day = sample_setup().ticks_per_day;
     let mut final_events = Vec::new();
-    for _ in 1..ticks_per_day {
+    // 日内委托 fixture 的真实前缀已消费 tick，只推进至本日最后一个真实 tick。
+    for _ in session.tick()..ticks_per_day {
         final_events = session.step().unwrap();
     }
     assert!(final_events
@@ -4042,12 +4104,20 @@ fn save_restore_preserves_pending_player_intents() {
     )));
 }
 
+// 多日市场 fixture 遵守双时钟：真实会话结束才日结，休市日不增加市场 tick。
+fn step_fixture_across_civil_days(session: &mut GameSession) -> Vec<Event> {
+    while session.day() == session.civil_clock().completed_trading_sessions_expected().unwrap() {
+        session.end_civil_day().expect("fixture 自然日日结必须成功");
+    }
+    session.step().expect("healthy step")
+}
+
 #[test]
 fn save_restore_preserves_state() {
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
     // 跑几步产生状态
     for _ in 0..20 {
-        s.step().expect("healthy step");
+        step_fixture_across_civil_days(&mut s);
     }
     let saved = s.save().expect("healthy save");
     // 验证存档有状态
@@ -4489,7 +4559,7 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
     setup.npcs.hot_count = 0;
     let mut original = GameSession::new(setup, 0xA01_5A01).unwrap();
     for _ in 0..25 {
-        original.step().expect("healthy step");
+        step_fixture_across_civil_days(&mut original);
     }
     let saved = original.save().expect("healthy save");
     assert_eq!(saved.npc_attention.len(), 5);
@@ -4499,8 +4569,8 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
     // 逐字节连续（事件流 + 权威存档），不再按过渡契约弱化。
     for _ in 0..40 {
         assert_eq!(
-            serde_json::to_value(original.step().expect("healthy step")).unwrap(),
-            serde_json::to_value(restored.step().expect("healthy step")).unwrap(),
+            serde_json::to_value(step_fixture_across_civil_days(&mut original)).unwrap(),
+            serde_json::to_value(step_fixture_across_civil_days(&mut restored)).unwrap(),
             "restore must rebuild ordinal-4 ActiveTrader with the same strategy parameters"
         );
         assert_eq!(
@@ -4518,7 +4588,7 @@ fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
     // 事件/存档字节等价）。
     let mut original = GameSession::new(sample_setup(), 42).unwrap();
     for _ in 0..20 {
-        original.step().expect("healthy step");
+        step_fixture_across_civil_days(&mut original);
         if !original.last_retail_decisions().is_empty() {
             break;
         }
@@ -4536,8 +4606,8 @@ fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
     );
     for _ in 0..12 {
         assert_eq!(
-            serde_json::to_value(original.step().expect("healthy step")).unwrap(),
-            serde_json::to_value(restored.step().expect("healthy step")).unwrap()
+            serde_json::to_value(step_fixture_across_civil_days(&mut original)).unwrap(),
+            serde_json::to_value(step_fixture_across_civil_days(&mut restored)).unwrap()
         );
         assert_eq!(
             serde_json::to_value(original.save().expect("healthy save")).unwrap(),

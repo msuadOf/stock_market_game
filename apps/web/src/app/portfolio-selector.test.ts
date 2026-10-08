@@ -18,7 +18,7 @@ test("审计G67：baseline拒绝没有行情的持仓引用，估值不能当零
   const invalid = snapshot({});
   assert.throws(() => parseProtocolSnapshot(invalid), /600101.*行情|行情.*600101/);
   assert.throws(() => selectPortfolioInput(stateWithSnapshot(invalid)), /600101.*行情|行情.*600101/);
-  const valid = parseProtocolSnapshot(snapshot({ "600101": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] } }));
+  const valid = parseProtocolSnapshot(snapshot({ "600101": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [], cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null } }));
   assert.equal(selectPortfolioInput(stateWithSnapshot(valid)).heldPrices["600101"], "1001");
 });
 
@@ -28,7 +28,7 @@ test("审计G67：非玩家和零股持仓引用同样校验，继承属性不�
     const foreign = { ...invalid, accounts: { "7": { ...invalid.accounts["0"], positions: { "600101": { ...invalid.accounts["0"].positions["600101"], qty: quantity } } } } };
     assert.throws(() => parseProtocolSnapshot(foreign), error => error instanceof ProtocolError && error.where === "Snapshot.accounts.7.positions.600101");
   }
-  const invalid = snapshot(Object.create({ "600101": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] } }));
+  const invalid = snapshot(Object.create({ "600101": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [], cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null } }));
   assert.throws(() => parseProtocolSnapshot(invalid), /600101.*行情|行情.*600101/);
   assert.throws(() => selectPortfolioInput(stateWithSnapshot(invalid)), /600101.*行情|行情.*600101/);
 });

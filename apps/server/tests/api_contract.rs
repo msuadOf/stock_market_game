@@ -11,6 +11,8 @@
 //! 复用 engine 既有 serde 类型（server 是 Rust，engine 作 rlib 依赖，无 TS）。
 //! 这里直接构造一个合法 SessionSetup JSON（与 engine/tests/session.rs 的 sample_setup 等价）。
 
+include!("../../../packages/engine/test-support/simple_company.rs");
+
 use axum::body::to_bytes;
 use axum::http::{Request, StatusCode};
 use engine::account::StockCode;
@@ -52,11 +54,17 @@ fn sample_setup_json() -> Value {
         "history_len": 5,
         "start_date": "2030-01-02",
         "report_frequency": "Quarterly",
-        "company_operations": null,
-        "groups": [],
+        // ADR-0035 当前契约：Simple 共同入口，不携已删除的经营影子字段。
+        "company_system": simple_company_fixture!(engine; ["600101"]),
         "t1_enabled": true,
         "float_allocation": { "between_kinds": "Random", "within_kind": "Random" },
-        "simulation_policy_id": engine::SIMULATION_POLICY_ID
+        "simulation_policy_id": engine::SIMULATION_POLICY_ID,
+        "dividend_tax_mode": "FlatWithholding",
+        "flat_withholding_bp": 1000,
+        "rights_offering_enabled": false,
+        "issuer_repurchase_enabled": false,
+        "par_value_per_share": "100",
+        "auto_corporate_foundation": false
     })
 }
 

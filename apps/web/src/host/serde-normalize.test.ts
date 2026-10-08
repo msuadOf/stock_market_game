@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { publicReportGold } from "../components/company/public-report-fixture.ts";
+import { readFileSync } from "node:fs";
 import {
   normalizePublicReportById,
   normalizePublicReportPage,
@@ -8,41 +8,12 @@ import {
   prepareSaveForWasm,
 } from "./serde-normalize.ts";
 
-const financials = publicReportGold().financials;
-Object.assign(financials, { version_kind: "Original", version_supersedes: null });
-Object.assign(financials.balance_sheet, { total_assets: "9007199254740993.01", total_liabilities: "0.00", total_equity: "9007199254740993.01", closing_cash: "1.00" });
-Object.assign(financials.income.quarter, { net_income: "1.00" });
-Object.assign(financials.income.cumulative, { net_income: "1.00", income_tax: "0.00" });
-Object.assign(financials.cash_flow, { operating: "1.00", investing: "0.00", financing: "0.00", net_change: "1.00" });
-
-const publicReport = {
-  source: "SimulationAccounting",
-  id: "9007199254740993",
-  company_id: "C-600101",
-  period: "2030-03-31",
-  kind: "Quarter",
-  version_sequence: "9007199254740993",
-  supersedes: null,
-  approved_date: "2030-04-01",
-  approved_second_of_day: 64_800,
-  published_date: "2030-04-02",
-  published_second_of_day: 64_800,
-  financials,
-  accounting: {
-    total_assets: "9007199254740993.01",
-    total_liabilities: "0.00",
-    total_equity: "9007199254740993.01",
-    closing_cash: "1.00",
-    quarter_net_income: "1.00",
-    net_income: "1.00",
-    income_tax: "0.00",
-    operating_cash_flow: "1.00",
-    investing_cash_flow: "0.00",
-    financing_cash_flow: "0.00",
-    net_cash_change: "1.00",
-    prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" } },
-  },
-};
+// 真实 Engine 开账生成完整报告，只扩大 ID／版本字符串以验证无损边界。
+const engineReport = normalizePublicReportById(JSON.parse(readFileSync(
+  new URL("../save/fixtures/public-report-wire.json", import.meta.url), "utf8",
+)));
+assert.ok(engineReport, "正规 Engine 报告 fixture 必须存在且满足当前公共 DTO 契约");
+const publicReport = { ...engineReport, id: "9007199254740993", version_sequence: "9007199254740993" };
 
 test("WASM save normalization preserves nested Rust maps as JSON objects", () => {
   const raw = new Map<unknown, unknown>([

@@ -13,8 +13,9 @@ test("Tauri槽位修改必须携带当前generation，换代后拒绝旧响应",
   let delayed = false;
   mockIPC((command, args) => {
     if (command === "create_session") return { sessionId: "archive-session", setup: DEFAULT_SETUP, seed: "1", resumed: false };
-    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "archive-timeline" };
-    if (command === "restore_session") return { snapshot, generation: "2", timeline_id: "archive-next" };
+    // 当前基线/换档响应显式携带自然日；generation 晚响应拒绝断言保持不变。
+    if (command === "engine_baseline") return { snapshot, generation: "1", timeline_id: "archive-timeline", civil_date: "2030-01-02" };
+    if (command === "restore_session") return { snapshot, generation: "2", timeline_id: "archive-next", civil_date: "2030-01-03" };
     if (command === "host_capabilities") return { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true };
     if (command.startsWith("archive_")) {
       requests.push({ command, args: args as Record<string, unknown> });

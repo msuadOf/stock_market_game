@@ -6467,7 +6467,8 @@ mod npc_working_quote_tests {
             t1_enabled: true,
             report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
-            start_date: default_civil_start_date(),
+            // 委托与市场 tick fixture 必须在交易日；政策默认元旦休市，不改产品默认。
+            start_date: crate::CivilDate::from_ymd(2030, 1, 2).unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
             dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
             flat_withholding_bp: Some(1000),

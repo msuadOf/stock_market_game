@@ -165,6 +165,8 @@ fn tick_shadow_commit_preserves_retail_projection_cursor() {
 
 fn zero_revenue_game() -> GameSession {
     let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    // 本组测试公司命令及自然日日结，不要求元旦产生市场 tick。
+    setup.start_date = crate::CivilDate::from_ymd(2030, 1, 1).unwrap();
     let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system
     else {
         panic!("测试明确选择 Simple");

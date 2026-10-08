@@ -117,7 +117,8 @@ fn sample_setup() -> SessionSetup {
         t1_enabled: true,
         report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::random(),
-        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        // actor 委托与成交 fixture 从交易日开局；restore_setup 仍显式使用周末。
+        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         // 税无关的最小合法 setup：简税默认（无分红即无代扣；印花税基线不变）。
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,

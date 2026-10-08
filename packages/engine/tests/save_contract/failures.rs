@@ -78,9 +78,7 @@ macro_rules! missing_field_tests {
 missing_field_tests! {
     missing_runtime_state_field_is_rejected => "runtime_state",
     missing_company_system_is_rejected => "company_system",
-    missing_closing_registry_is_rejected => "closing_registry",
     missing_public_library_is_rejected => "public_library",
-    missing_ops_wiring_is_rejected => "ops_wiring",
     missing_disclosures_is_rejected => "disclosures",
     missing_plans_is_rejected => "plans",
     missing_information_states_is_rejected => "information_states",
@@ -89,6 +87,25 @@ missing_field_tests! {
     missing_price_memories_is_rejected => "price_memories",
     missing_pending_plan_events_is_rejected => "pending_plan_events",
     missing_civil_clock_is_rejected => "civil_clock",
+}
+
+// CompanySystem 已拥有封账与接线；旧顶层字段由严格当前 schema 拒绝，不做补齐兼容。
+fn assert_legacy_company_field_is_rejected(field: &str) {
+    let mut legacy = seasoned_fixture().clone_save_value();
+    assert!(legacy.get(field).is_none(), "当前存档不得带有旧字段 {field}");
+    legacy.as_object_mut().unwrap().insert(field.into(), Value::Null);
+    let error = expect_rejection(&legacy);
+    assert!(matches!(error, SessionError::InvalidSave(_)), "{error:?}");
+}
+
+#[test]
+fn legacy_closing_registry_is_rejected() {
+    assert_legacy_company_field_is_rejected("closing_registry");
+}
+
+#[test]
+fn legacy_ops_wiring_is_rejected() {
+    assert_legacy_company_field_is_rejected("ops_wiring");
 }
 
 #[test]
@@ -292,9 +309,10 @@ fn tampered_calendar_policy_is_rejected() {
     assert!(
         matches!(
             error,
-            SessionError::CivilClock(engine::session::CivilClockError::Calendar(
-                engine::calendar::CalendarError::DigestMismatch { .. }
-            ))
+            // CompanySystem 恢复会先验证同一政策；错误直接来自 Calendar，但守卫未放宽。
+            SessionError::Calendar(
+                engine::calendar::CalendarError::DigestMismatch { field: "simulated_fallback", .. }
+            )
         ),
         "a calendar policy whose facts digest fails recomputation must be a typed digest rejection: {error:?}"
     );

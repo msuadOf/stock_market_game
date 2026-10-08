@@ -473,12 +473,19 @@ mod tests {
             sheet.equity_lines,
             vec![
                 (BsLine::PaidInCapital, cents(10)),
+                // 法定公积金是独立权益行，零余额也列示；非 Simple 科目表不列资本公积。
+                (BsLine::StatutoryReserve, cents(0)),
                 (BsLine::RetainedEarnings, cents(-7))
             ]
         );
         assert_eq!(sheet.total_equity, cents(3));
         let prior = prior_lines(&windows.closing, &classification, &windows, None).unwrap();
         assert!(prior.contains(&(BsLine::RetainedEarnings, cents(-7))));
+        assert_eq!(
+            prior.iter().filter(|(line, _)| *line == BsLine::StatutoryReserve).count(),
+            1,
+            "比较项的权益行只由 EquityPresentation 列示一次"
+        );
     }
 
     #[test]
@@ -498,6 +505,7 @@ mod tests {
             sheet.equity_lines,
             vec![
                 (BsLine::PaidInCapital, cents(10)),
+                (BsLine::StatutoryReserve, cents(0)),
                 (BsLine::RetainedEarnings, cents(20)),
                 (BsLine::MinorityEquity, cents(5))
             ]

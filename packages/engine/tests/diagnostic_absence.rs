@@ -51,7 +51,8 @@ fn setup() -> SessionSetup {
         t1_enabled: true,
         report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
-        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        // release 查询与市场 tick 的对照要求首日开市，不改变政策默认元旦休市。
+        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
         flat_withholding_bp: Some(1000),

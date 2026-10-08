@@ -30,7 +30,7 @@ test("Worker实际分配query绑定requestId/generation，refresh后旧响应失
   try {
     const creating = createWorkerHost(setup, 17n);
     const worker = AllocationWorker.current;
-    worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0) });
+    worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
     host = await creating;
     const current = host.initialAllocation();
     const request = worker.sent.at(-1)!;
@@ -41,7 +41,7 @@ test("Worker实际分配query绑定requestId/generation，refresh后旧响应失
     const previous = worker.sent.at(-1)!;
     const rejected = assert.rejects(stale, /已过期会话 generation/);
     const refreshed = host.refreshBaseline();
-    worker.emit({ type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot: snapshot(0, 0) });
+    worker.emit({ type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
     await refreshed;
     worker.emit({ type: "initialAllocation", requestId: previous.requestId, generation: 1, data: allocation });
     await rejected;
@@ -60,7 +60,7 @@ test("Tauri实际分配query使用会话身份，refresh后拒绝旧响应", { t
   mockIPC((command, args) => {
     if (command === "create_session") return { sessionId: "allocation-session", setup: DEFAULT_SETUP, seed: "1", resumed: false };
     if (command === "host_capabilities") return { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true };
-    if (command === "engine_baseline") return { snapshot: snapshot(0, 0), generation: "1", timeline_id: "allocation-session" };
+    if (command === "engine_baseline") return { snapshot: snapshot(0, 0), generation: "1", timeline_id: "allocation-session", civil_date: "2030-01-02" };
     if (command === "initial_allocation") {
       assert.deepEqual(args, { sessionId: "allocation-session", generation: "1" });
       if (++requestCount === 1) return { generation: "1", value: allocation };
