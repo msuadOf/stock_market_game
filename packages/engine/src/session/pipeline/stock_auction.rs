@@ -94,15 +94,18 @@ pub(super) struct AuctionOperationOutput {
 pub(super) struct StockAuctionState {
     stock: StockId,
     orders: Vec<AuctionOrder>,
+    /// 已入队订单 id 索引：O(1) 查重替代 place() 的 O(N) 线性扫描。
+    queued_order_ids: std::collections::HashSet<u64>,
     next_arrival_seq: u64,
     filled_market: Option<Market>,
 }
 
 impl StockAuctionState {
-    pub(super) const fn new(stock: StockId) -> Self {
+    pub(super) fn new(stock: StockId) -> Self {
         Self {
             stock,
             orders: Vec::new(),
+            queued_order_ids: std::collections::HashSet::new(),
             next_arrival_seq: 0,
             filled_market: None,
         }
@@ -134,11 +137,7 @@ impl StockAuctionState {
     fn place(&mut self, mut order: AuctionOrder) -> Result<AuctionOperationOutput, StepFatal> {
         validate_order(&self.stock, &order)?;
         let key = order.envelope.key().clone();
-        if self
-            .orders
-            .iter()
-            .any(|queued| queued.envelope.key().order == key.order)
-        {
+        if !self.queued_order_ids.insert(key.order.0) {
             return Err(state_invariant("duplicate auction order id"));
         }
         let next = self
@@ -206,6 +205,7 @@ impl StockAuctionState {
             ));
         }
         let order = self.orders.remove(index);
+        self.queued_order_ids.remove(&order_id.0);
         let key = order.envelope.key().clone();
         let audit = order.envelope.audit();
         let receipt = release_receipt(&order, ReceiptSource::SealedIntent(sealed_index), 0)?;
