@@ -296,6 +296,28 @@ impl ProtocolSession {
         self.state.game.report_correction_epoch()
     }
 
+    /// 玩家公司行为提案（N2b；owner 由宿主层固定本机玩家）。委托
+    /// [`GameSession::propose_company_action`]，语义见该方法文档。
+    pub fn propose_company_action(
+        &mut self,
+        account: crate::AccountId,
+        proposal: crate::session::player_proposals::PlayerCompanyProposal,
+    ) -> Result<
+        crate::session::player_proposals::PlayerProposalReceipt,
+        crate::session::player_proposals::PlayerProposalError,
+    > {
+        self.state.game.propose_company_action(account, proposal)
+    }
+
+    /// 偏好局内编辑（N2b）。委托 [`GameSession::set_simple_preferences`]。
+    pub fn set_simple_preferences(
+        &mut self,
+        company: &crate::company::CompanyId,
+        preferences: crate::company::simple::preferences::SimpleCompanyPreferences,
+    ) -> Result<(), crate::session::SessionCorporateActionsError> {
+        self.state.game.set_simple_preferences(company, preferences)
+    }
+
     pub fn report_corrections(&self) -> Result<crate::session::ReportCorrectionStatus, SessionError> {
         self.state.game.report_corrections()
     }

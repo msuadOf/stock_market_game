@@ -14,8 +14,9 @@ use crate::account::StockCode;
 
 const RATIO_DENOMINATOR: u64 = 1_000_000;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub enum StockDistributionKind {
     BonusShares,
     CapitalReserveConversion,

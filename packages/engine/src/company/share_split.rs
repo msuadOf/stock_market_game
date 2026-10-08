@@ -32,8 +32,9 @@ use super::CompanyId;
 use crate::account::StockCode;
 use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub enum ShareSplitDirection {
     /// 拆股（股份拆细）：每 1 股换 `ratio` 股，面值除以 `ratio`。
     Split,

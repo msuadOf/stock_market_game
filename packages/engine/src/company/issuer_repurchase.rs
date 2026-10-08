@@ -33,8 +33,9 @@ use crate::money::Money;
 
 /// 回购法定用途（63 号第 2 条四类）。用途决定法定期限与注销义务；本模块不硬编码
 /// 期限，由方案窗口参数承载。
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub enum RepurchasePurpose {
     /// 减少注册资本（注销式回购）。
     ReduceCapital,

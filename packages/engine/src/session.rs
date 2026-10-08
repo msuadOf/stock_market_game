@@ -39,6 +39,9 @@ mod exchange_calendar_tests;
 mod simple_preferences_session_tests;
 #[cfg(test)]
 mod auto_registry_session_tests;
+pub mod player_proposals;
+#[cfg(test)]
+mod player_proposal_session_tests;
 pub use company_corrections::{
     CompanyReportCorrection, CompletedReportCorrection, ReportCorrectionEpoch,
     ReportCorrectionError, ReportCorrectionStatus,
