@@ -20,7 +20,9 @@ import { DividendTaxPanel, type DividendTaxQueryResult } from "./DividendTaxPane
 import { RightsSubscriptionRejectionPanel } from "./RightsSubscriptionRejectionPanel.tsx";
 import { PreferenceRejectionsPanel } from "./PreferenceRejectionsPanel.tsx";
 import { CompanyContractPanel } from "./CompanyContractPanel.tsx";
-import type { CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation, FlatWithholdingReceiptView } from "../../host/engine-host.ts";
+import { InGamePreferencesPanel, PlayerProposalPanel } from "./PlayerProposalPanel.tsx";
+import type { CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation, FlatWithholdingReceiptView, PlayerProposalResultView, PlayerProposalWire } from "../../host/engine-host.ts";
+import type { SimpleCompanyPreferences } from "../../types/generated/SimpleCompanyPreferences.ts";
 import type { CompanyPreferenceRejectionView, RejectedRightsSubscriptionView } from "../../host/corporate-action-views.ts";
 import { isIsoMonthEnd, reportAvailabilityReason } from "./report-availability.ts";
 import "./company.css";
@@ -51,6 +53,12 @@ interface CompanyPanelProps {
   readonly onExplanationQuery?: ((companyId: string, periodEnd: string) => Promise<PeriodChangeExplanation>) | undefined;
   /** 简税代扣回执查询（owner 隔离）；undefined 表示宿主明确不支持。 */
   readonly onFlatReceiptsQuery?: (() => Promise<readonly FlatWithholdingReceiptView[]>) | undefined;
+  /** 玩家提案提交（N2b；owner 隔离，三类结果显式）；undefined 表示宿主明确不支持。 */
+  readonly onProposalSubmit?: ((proposal: PlayerProposalWire) => Promise<PlayerProposalResultView>) | undefined;
+  /** 偏好局内编辑（N2b；下一结算周期评估生效）；undefined 表示宿主明确不支持。 */
+  readonly onPreferencesUpdate?: ((company: string, preferences: SimpleCompanyPreferences) => Promise<void>) | undefined;
+  /** 当前公司偏好查询（局内编辑初值）；undefined 表示宿主明确不支持。 */
+  readonly onPreferencesQuery?: ((company: string) => Promise<SimpleCompanyPreferences>) | undefined;
 }
 
 function CompanyIdentity({ company }: { readonly company: PublicCompany }) {
@@ -66,7 +74,7 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
   buttons[(next + ids.length) % ids.length]?.focus();
 }
 
-export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration, onDividendTaxQuery, onRightsRejectionQuery, onPreferenceRejectionsQuery, onCapabilitiesQuery, onOwnerRightsQuery, onExplanationQuery, onFlatReceiptsQuery }: CompanyPanelProps) {
+export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration, onDividendTaxQuery, onRightsRejectionQuery, onPreferenceRejectionsQuery, onCapabilitiesQuery, onOwnerRightsQuery, onExplanationQuery, onFlatReceiptsQuery, onProposalSubmit, onPreferencesUpdate, onPreferencesQuery }: CompanyPanelProps) {
   const company = companyId === null ? undefined : publicCompanyById(companyId);
   const cache = companyId === null ? undefined : companyState.companies[companyId];
   const rootPage = cache?.pages.root;
@@ -181,6 +189,22 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
           onFlatReceiptsQuery={onFlatReceiptsQuery}
           refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`}
         />
+      )}
+      {companyId !== null && (
+        <>
+          <PlayerProposalPanel
+            companyId={companyId}
+            onProposalSubmit={onProposalSubmit}
+            onCapabilitiesQuery={onCapabilitiesQuery}
+            refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`}
+          />
+          <InGamePreferencesPanel
+            companyId={companyId}
+            onPreferencesUpdate={onPreferencesUpdate}
+            onPreferencesQuery={onPreferencesQuery}
+            refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`}
+          />
+        </>
       )}
       {state.kind === "idle" && <p className="company-state">正在请求已公开报告…</p>}
       {state.kind === "loading" && <p className="company-state" aria-live="polite">正在加载已公开报告…</p>}

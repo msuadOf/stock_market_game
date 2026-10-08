@@ -40,6 +40,7 @@ import {
   parseOwnerRightsOfferings,
   parsePeriodChangeExplanation,
 } from "./company-contract-views.ts";
+import { parsePlayerProposalOutcome, parseSimplePreferencesValue } from "./player-proposals.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, type MarketHistoryRequest, type MarketHistoryPage } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, type CurrentMinuteHistoryRequest, type CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 
@@ -701,6 +702,25 @@ export function createWorkerHost(
           const response = await requests.request({ type: "flatWithholdingReceipts", requestId: requests.nextRequestId(), generation: requestedGeneration }, "flatWithholdingReceipts");
           if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("简税代扣回执查询属于已过期 generation");
           return parseFlatWithholdingReceipts(response.receipts);
+        },
+        async proposeCompanyAction(proposal) {
+          const requestedGeneration = currentGeneration;
+          const response = await requests.request({ type: "proposeCompanyAction", requestId: requests.nextRequestId(), generation: requestedGeneration, proposal }, "proposalOutcome");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("玩家提案响应属于已过期 generation");
+          return parsePlayerProposalOutcome(response.outcome);
+        },
+        async setSimplePreferences(company, preferences) {
+          if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("偏好编辑公司身份必须是非空且不超过 64 字符的字符串");
+          const requestedGeneration = currentGeneration;
+          await requests.request({ type: "setSimplePreferences", requestId: requests.nextRequestId(), generation: requestedGeneration, company, preferences }, "preferencesSet");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("偏好编辑响应属于已过期 generation");
+        },
+        async companySimplePreferences(company) {
+          if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("偏好查询公司身份必须是非空且不超过 64 字符的字符串");
+          const requestedGeneration = currentGeneration;
+          const response = await requests.request({ type: "companySimplePreferences", requestId: requests.nextRequestId(), generation: requestedGeneration, company }, "companySimplePreferences");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("偏好查询响应属于已过期 generation");
+          return parseSimplePreferencesValue(response.preferences);
         },
       };
     }
