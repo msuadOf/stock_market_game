@@ -85,6 +85,7 @@ NPC 本人获知均不通（拆股 `ShareSplit` 公告已由 S1 接通，本批�
 | --- | --- | --- |
 | engine 受影响 18 组并发（company_simple_session 37、rights 14、share_split 8、corporate_actions 19、simple_preferences 16、notices 11、cash_dividend 35、cash_dividend_tax/dividend_tax 41、stock_distribution 13、share_registry 28、ex_reference_price 24、rights_offering 11、issuer_repurchase 3、company_mechanism 3、company::simple 122、information::source_tests 10、share_split 模块 6） | 全绿 | `groups/*.log`、`groups-all.txt` |
 | `session::persistence`（31 过/13 败） | 13 败与 pristine HEAD 基线**逐项一致**（本 worktree 还原 diff 后复跑对照，失败集合 diff 为空） | `groups/sessionpersistence{,-BASELINE}.log` |
+| 追加公告消费面组：`information::` 18/18、`session::intraday_disclosures` 1/1 全绿；`session::hash_contract_tests`（10 过/1 败）与 `session::decision_chain`（71 过/10 败）失败测试名与 panic 位置与 pristine HEAD 基线**逐项一致**（仅线程 pid 不同），零新增 | 一致 | `groups/session{hash_contract_tests,decision_chain}{,-BASELINE2}.log` |
 | `company_operations` 集成测试（52 过/2 败：income_tax 有效期、payment_risks 无效金额） | 2 败与 pristine HEAD 基线逐项一致，零新增 | `company-operations-test{,-BASELINE}.log` |
 | Web 全量 `run-web-tests.mjs`（8 shard 并发） | 7 个失败（Worker×3、WASM parser×3、decimal account map ×1）与 pristine HEAD 全量基线**逐项一致**；另 Tauri 更正命令用例在本批全量出现 1 次失败，但该用例在 pristine HEAD **单文件运行同样失败**（S2 批已登记的既有脆弱用例，分片布局敏感），非本批新增 | `web-full.log`、`web-full-BASELINE.log`、`tauri-transport-{mine,baseline}.log` |
 | ts-rs typegen + `check-generated-types` | 176 项导出（与 F 批基线同数，无新 ts-rs 类型）、生成物零漂移 | `typegen.log`、`typegen-check.log` |
