@@ -893,3 +893,552 @@ fn treasury_shares_are_excluded_from_dividend_entitlements() {
     // 此处只断言专户持仓真实存在且小于总股本。
     assert!(registry.issued_shares() > entitled);
 }
+
+fn normal_repurchase_session(
+    with_external: bool,
+) -> (GameSession, StockCode, CompanyId, AccountId) {
+    let mut setup = repurchase_setup(true);
+    setup.auto_corporate_foundation = true;
+    setup.npcs.retail_count = 1;
+    setup.stocks[0].float_shares = if with_external { 8_000_000 } else { 10_000_000 };
+    setup.dividend_tax_mode =
+        crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual;
+    setup.flat_withholding_bp = None;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let stock = session.state.setup.stocks[0].code.clone();
+    let issuer = session
+        .state
+        .company_system
+        .issuers()
+        .issuer_of(&stock)
+        .unwrap()
+        .clone();
+    let seller = AccountId(1);
+    assert!(
+        session
+            .account(seller)
+            .unwrap()
+            .positions()
+            .get(&stock)
+            .unwrap()
+            .qty()
+            >= 100
+    );
+    assert!(session.state.corporate_actions.registries[0]
+        .holdings()
+        .iter()
+        .all(|holding| holding.holder != HolderId::IssuerTreasury));
+    // 固定对手盘，避免 NPC 策略自行卖出干扰真实撮合断言。
+    session.state.attention_scheduler = [(u64::MAX, seller)].into_iter().collect();
+    session
+        .state
+        .npc_attention
+        .get_mut(&seller)
+        .unwrap()
+        .next_attention_candidate_tick = u64::MAX;
+    (session, stock, issuer, seller)
+}
+
+fn normal_repurchase_window(with_external: bool) -> (GameSession, StockCode, CompanyId, AccountId) {
+    let (mut session, stock, issuer, seller) = normal_repurchase_session(with_external);
+    session
+        .approve_issuer_repurchase(repurchase_plan(&issuer, &stock))
+        .unwrap();
+    complete_day(&mut session);
+    assert_eq!(
+        session.civil_date(),
+        CivilDate::from_iso("2030-01-03").unwrap()
+    );
+    (session, stock, issuer, seller)
+}
+
+fn trade_repurchase_from_holder(session: &mut GameSession, stock: &StockCode, seller: AccountId) {
+    let cash_before = session.account(seller).unwrap().cash();
+    let qty_before = session
+        .account(seller)
+        .unwrap()
+        .positions()
+        .get(stock)
+        .unwrap()
+        .qty();
+    let id = session.state.next_order_id;
+    session
+        .state
+        .markets
+        .get_mut(stock)
+        .unwrap()
+        .place(crate::Order {
+            id: crate::OrderId(id),
+            side: Side::Sell,
+            price: Money::from_cents(1_000),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: seller,
+            seq: id,
+        })
+        .unwrap();
+    session.state.next_order_id += 1;
+    session.hydrate_or_validate_envelope_ledger().unwrap();
+    let mut traded = false;
+    for _ in 0..session.state.setup.ticks_per_day {
+        traded |= session
+            .step()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, crate::Event::Trade { .. }));
+    }
+    assert!(traded, "必须真实撮合而非伪造成交");
+    assert!(
+        session.account(seller).unwrap().cash() > cash_before,
+        "真实卖方必须收款"
+    );
+    assert_eq!(
+        session
+            .account(seller)
+            .unwrap()
+            .positions()
+            .get(stock)
+            .unwrap()
+            .qty(),
+        qty_before - 100
+    );
+    let account = session.issuer_repurchase_account_id().unwrap();
+    assert_eq!(
+        session
+            .account(account)
+            .unwrap()
+            .positions()
+            .get(stock)
+            .unwrap()
+            .qty(),
+        100
+    );
+    let seller_fills: Vec<_> = session.state.personal_trade_confirmations[&seller]
+        .iter()
+        .filter(|row| row.civil_date == session.civil_date())
+        .collect();
+    let issuer_fills: Vec<_> = session.state.personal_trade_confirmations[&account]
+        .iter()
+        .filter(|row| row.civil_date == session.civil_date())
+        .collect();
+    let seller_net: i64 = seller_fills
+        .iter()
+        .map(|row| row.gross.cents() - row.actual_fees.total().unwrap().cents())
+        .sum();
+    let issuer_cost: i64 = issuer_fills
+        .iter()
+        .map(|row| row.gross.cents() + row.actual_fees.total().unwrap().cents())
+        .sum();
+    assert_eq!(
+        session.account(seller).unwrap().cash().cents(),
+        cash_before.cents() + seller_net
+    );
+    assert_eq!(
+        session.account(account).unwrap().cash().cents(),
+        5_000_000 - issuer_cost
+    );
+}
+
+fn external_holdings(session: &GameSession) -> Vec<ShareHolding> {
+    session.state.corporate_actions.registries[0]
+        .holdings()
+        .iter()
+        .filter(|holding| matches!(holding.holder, HolderId::External(_)))
+        .cloned()
+        .collect()
+}
+
+fn assert_registry_conserves_issued(session: &GameSession, issuer: &CompanyId) {
+    let registry = &session.state.corporate_actions.registries[0];
+    let total: u64 = registry
+        .holdings()
+        .iter()
+        .flat_map(|holding| &holding.lots)
+        .map(|lot| lot.qty)
+        .sum();
+    assert_eq!(total, registry.issued_shares());
+    assert_eq!(
+        total,
+        session
+            .state
+            .company_system
+            .issuers()
+            .get(issuer)
+            .unwrap()
+            .issued_shares
+    );
+}
+
+#[test]
+fn first_repurchase_creates_treasury_from_real_confirmations() {
+    let (mut session, stock, issuer, seller) = normal_repurchase_window(false);
+    let day = session.civil_date();
+    let historical_receipts = session.state.corporate_actions.registries[0]
+        .receipts()
+        .to_vec();
+    let facts = session.state.corporate_actions.registries[0]
+        .issuer_repurchase_account()
+        .unwrap()
+        .clone();
+    trade_repurchase_from_holder(&mut session, &stock, seller);
+    let account = session.issuer_repurchase_account_id().unwrap();
+    let confirmations = session.state.personal_trade_confirmations.clone();
+    let source = confirmations[&account]
+        .iter()
+        .filter(|row| row.civil_date == day)
+        .map(|row| row.receipt_id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    session
+        .end_civil_day()
+        .expect("正常新局首次真实回购必须建立 Treasury");
+    assert_eq!(treasury_shares_of(&session, &stock), 100);
+    let registry = &session.state.corporate_actions.registries[0];
+    let treasury = registry
+        .holdings()
+        .iter()
+        .find(|holding| holding.holder == HolderId::IssuerTreasury)
+        .unwrap();
+    assert_eq!(treasury.lots.len(), 1);
+    assert_eq!(treasury.lots[0].acquired_on, day);
+    assert_eq!(
+        treasury.lots[0].source,
+        AcquisitionSource::SecondaryMarket { settlement: source }
+    );
+    assert_eq!(registry.issuer_repurchase_account(), Some(&facts));
+    assert_eq!(
+        &registry.receipts()[..historical_receipts.len()],
+        historical_receipts.as_slice()
+    );
+    assert_eq!(
+        session.state.personal_trade_confirmations, confirmations,
+        "日结不改历史成交回执"
+    );
+    assert!(!session
+        .state
+        .corporate_actions
+        .dividend_tax_books
+        .iter()
+        .any(|book| book.account() == account));
+    assert_registry_conserves_issued(&session, &issuer);
+}
+
+#[test]
+fn external_holder_does_not_absorb_first_repurchase() {
+    let (mut session, stock, issuer, seller) = normal_repurchase_window(true);
+    let external = external_holdings(&session);
+    trade_repurchase_from_holder(&mut session, &stock, seller);
+    session.end_civil_day().unwrap();
+    assert_eq!(
+        external_holdings(&session),
+        external,
+        "External 不得吸收回购净买入"
+    );
+    assert_eq!(treasury_shares_of(&session, &stock), 100);
+    assert_registry_conserves_issued(&session, &issuer);
+}
+
+#[test]
+fn first_repurchase_restores_and_auto_cancels_once_with_capital_reduction() {
+    let (mut session, stock, issuer, seller) = normal_repurchase_window(true);
+    let issued_before = session
+        .state
+        .company_system
+        .issuers()
+        .get(&issuer)
+        .unwrap()
+        .issued_shares;
+    let capital_before = session
+        .state
+        .company_system
+        .dividend_legal_facts(&issuer)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let external = external_holdings(&session);
+    trade_repurchase_from_holder(&mut session, &stock, seller);
+    session.end_civil_day().unwrap();
+    let account = session.issuer_repurchase_account_id().unwrap();
+    assert_eq!(session.account(account).unwrap().cash(), Money::ZERO);
+    assert_eq!(
+        *session.state.corporate_actions.issuer_repurchases[0].status(),
+        crate::company::issuer_repurchase::IssuerRepurchaseStatus::Completed
+    );
+    let saved = session.save().unwrap();
+    for _ in 0..2 {
+        session = GameSession::restore(&saved).unwrap();
+        assert_eq!(treasury_shares_of(&session, &stock), 100);
+        assert_eq!(
+            serde_json::to_value(session.save().unwrap()).unwrap(),
+            serde_json::to_value(&saved).unwrap()
+        );
+    }
+    complete_day(&mut session);
+    let cancelled_on = session.state.corporate_actions.issuer_repurchases[0].cancelled_on();
+    for _ in 0..2 {
+        session = GameSession::restore(&session.save().unwrap()).unwrap();
+        complete_day(&mut session);
+        assert_eq!(
+            *session.state.corporate_actions.issuer_repurchases[0].status(),
+            crate::company::issuer_repurchase::IssuerRepurchaseStatus::Cancelled
+        );
+        assert_eq!(
+            session.state.corporate_actions.issuer_repurchases[0].cancelled_on(),
+            cancelled_on
+        );
+        assert_eq!(
+            session.state.corporate_actions.issuer_repurchases[0].cancelled_shares(),
+            100
+        );
+        assert_eq!(
+            session
+                .state
+                .company_system
+                .issuers()
+                .get(&issuer)
+                .unwrap()
+                .issued_shares,
+            issued_before - 100
+        );
+        assert_eq!(
+            session
+                .state
+                .company_system
+                .dividend_legal_facts(&issuer)
+                .unwrap()
+                .unwrap()
+                .registered_capital,
+            capital_before
+                .sub(AccountingAmount::from_cents(10_000))
+                .unwrap()
+        );
+        assert_eq!(treasury_shares_of(&session, &stock), 0);
+        assert_eq!(external_holdings(&session), external);
+        assert_eq!(session.account(account).unwrap().cash(), Money::ZERO);
+        assert!(session
+            .account(account)
+            .unwrap()
+            .positions()
+            .get(&stock)
+            .is_none());
+        assert_registry_conserves_issued(&session, &issuer);
+    }
+}
+
+#[test]
+fn existing_treasury_and_external_receive_only_their_own_changes() {
+    let (mut session, stock, issuer, _account) = session_with_registry(true);
+    let opening = &session.state.corporate_actions.registries[0];
+    let mut holdings = opening.holdings().to_vec();
+    holdings
+        .iter_mut()
+        .find(|holding| holding.holder == HolderId::IssuerTreasury)
+        .unwrap()
+        .lots[0]
+        .qty -= 1_000;
+    // External 刻意排在 Treasury 前，验证归属不依赖名册顺序。
+    holdings.insert(
+        0,
+        ShareHolding {
+            holder: HolderId::External("named-holder".into()),
+            lots: vec![fixture_lot("external-lot", 1_000, opening.settled_on())],
+        },
+    );
+    let registry = ShareRegistry::new(
+        stock.clone(),
+        issuer.clone(),
+        opening.issued_shares(),
+        opening.settled_on(),
+        holdings,
+    )
+    .unwrap();
+    session.state.corporate_actions.registries[0] = registry;
+    session
+        .approve_issuer_repurchase(repurchase_plan(&issuer, &stock))
+        .unwrap();
+    complete_day(&mut session);
+    let external = external_holdings(&session);
+    let treasury_before = treasury_shares_of(&session, &stock);
+    trade_repurchase_from_holder(&mut session, &stock, AccountId(0));
+    session.end_civil_day().unwrap();
+    assert_eq!(external_holdings(&session), external);
+    assert_eq!(treasury_shares_of(&session, &stock), treasury_before + 100);
+    let treasury_changes: Vec<_> = session.state.corporate_actions.registries[0]
+        .receipts()
+        .last()
+        .unwrap()
+        .request
+        .changes
+        .iter()
+        .filter(|change| change.holder == HolderId::IssuerTreasury)
+        .collect();
+    assert_eq!(treasury_changes.len(), 1, "回购净变动只能落账一次");
+    assert_eq!(treasury_changes[0].change, 100);
+    complete_day(&mut session);
+    assert_eq!(treasury_shares_of(&session, &stock), treasury_before);
+    assert_eq!(external_holdings(&session), external);
+    assert_registry_conserves_issued(&session, &issuer);
+}
+
+#[test]
+fn zero_fill_never_creates_a_treasury_holder() {
+    let (mut session, stock, issuer, _seller) = normal_repurchase_session(true);
+    let issued = session
+        .state
+        .company_system
+        .issuers()
+        .get(&issuer)
+        .unwrap()
+        .issued_shares;
+    let capital = session
+        .state
+        .company_system
+        .dividend_legal_facts(&issuer)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut plan = repurchase_plan(&issuer, &stock);
+    plan.window_deadline_on = plan.window_start_on;
+    session.approve_issuer_repurchase(plan).unwrap();
+    while session.civil_date() <= CivilDate::from_iso("2030-01-05").unwrap() {
+        complete_day(&mut session);
+    }
+    let book = &session.state.corporate_actions.issuer_repurchases[0];
+    assert_eq!(
+        *book.status(),
+        crate::company::issuer_repurchase::IssuerRepurchaseStatus::Completed
+    );
+    assert_eq!(book.total_filled_shares(), 0);
+    assert_eq!(book.cancelled_on(), None);
+    assert!(session.state.corporate_actions.registries[0]
+        .holdings()
+        .iter()
+        .all(|holding| holding.holder != HolderId::IssuerTreasury));
+    assert_eq!(
+        session
+            .state
+            .company_system
+            .issuers()
+            .get(&issuer)
+            .unwrap()
+            .issued_shares,
+        issued
+    );
+    assert_eq!(
+        session
+            .state
+            .company_system
+            .dividend_legal_facts(&issuer)
+            .unwrap()
+            .unwrap()
+            .registered_capital,
+        capital
+    );
+    assert_eq!(
+        session
+            .account(session.issuer_repurchase_account_id().unwrap())
+            .unwrap()
+            .cash(),
+        Money::ZERO
+    );
+    assert_registry_conserves_issued(&session, &issuer);
+}
+
+fn assert_negative_repurchase_net_rejected(existing_treasury: bool) {
+    let (mut session, stock, issuer, seller) = if existing_treasury {
+        let (mut session, stock, issuer, _) = session_with_registry(true);
+        session
+            .approve_issuer_repurchase(repurchase_plan(&issuer, &stock))
+            .unwrap();
+        complete_day(&mut session);
+        (session, stock, issuer, AccountId(0))
+    } else {
+        normal_repurchase_window(true)
+    };
+    trade_repurchase_from_holder(&mut session, &stock, seller);
+    let account = session.issuer_repurchase_account_id().unwrap();
+    let mut input = session.state.personal_trade_confirmations.clone();
+    let mut illegal_sale = input[&account].last().unwrap().clone();
+    illegal_sale.receipt_id += 1;
+    illegal_sale.side = Side::Sell;
+    illegal_sale.quantity_shares *= 2;
+    // 只污染调用输入，不重写真实成交历史。
+    input.get_mut(&account).unwrap().push(illegal_sale);
+    let positions = session
+        .state
+        .accounts
+        .iter()
+        .map(|(id, state)| {
+            (
+                *id,
+                state
+                    .positions()
+                    .iter()
+                    .map(|(code, p)| (code.clone(), u64::from(p.qty())))
+                    .collect(),
+            )
+        })
+        .collect();
+    let day = session.civil_date();
+    let error = session
+        .state
+        .corporate_actions
+        .close_registries_through(day, &positions, &input, Some(account), None)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("回购账户当日净变动不能为负"),
+        "必须明确拒绝非法回购净卖出：{error}"
+    );
+    assert_registry_conserves_issued(&session, &issuer);
+}
+
+#[test]
+fn missing_treasury_rejects_negative_repurchase_net() {
+    assert_negative_repurchase_net_rejected(false);
+}
+
+#[test]
+fn existing_treasury_rejects_negative_repurchase_net() {
+    assert_negative_repurchase_net_rejected(true);
+}
+
+#[test]
+fn failed_day_end_rolls_back_first_treasury_and_can_retry() {
+    let (mut session, stock, issuer, seller) = normal_repurchase_window(true);
+    trade_repurchase_from_holder(&mut session, &stock, seller);
+    let account = session.issuer_repurchase_account_id().unwrap();
+    // 在名册推进之后触发资金勾稽失败，验证整日日结回滚。
+    session
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .credit_cash(Money::from_cents(1))
+        .unwrap();
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let error = session.end_civil_day().unwrap_err();
+    assert!(
+        error.to_string().contains("与计划未用额度"),
+        "应在名册落账后的完成结算失败：{error}"
+    );
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+    assert!(session.state.corporate_actions.registries[0]
+        .holdings()
+        .iter()
+        .all(|holding| holding.holder != HolderId::IssuerTreasury));
+    session
+        .state
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .debit_cash(Money::from_cents(1))
+        .unwrap();
+    session.end_civil_day().unwrap();
+    assert_eq!(treasury_shares_of(&session, &stock), 100);
+    assert_registry_conserves_issued(&session, &issuer);
+}

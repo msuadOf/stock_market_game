@@ -1771,48 +1771,34 @@ impl SessionCorporateActions {
                         entry.1.push(row.receipt_id);
                     }
                 }
+                // 回购账户与普通股东分账，归属不能取决于名册顺序或 Treasury 是否已入册。
+                let (treasury_change, treasury_receipts) = issuer_repurchase_account
+                    .and_then(|account| net_by_account.remove(&account))
+                    .unwrap_or_default();
+                if treasury_change < 0 {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "回购账户当日净变动不能为负：证券 {}，日期 {day}，净股数 {treasury_change}",
+                        registry.stock().0
+                    )));
+                }
                 let mut changes = Vec::new();
+                let mut treasury_registered = false;
                 for holding in registry.holdings() {
-                    let HolderId::Account(account) = &holding.holder else {
-                        // IssuerTreasury（回购专户）：吸收发行人回购账户当日公开市场
-                        // 净买入（回购买入即过户专户，63 号第 13 条）。
-                        let treasury_net = issuer_repurchase_account
-                            .and_then(|account| net_by_account.remove(&account))
-                            .map(|(change, receipt_ids)| {
-                                let source = receipt_ids
-                                    .iter()
-                                    .map(u64::to_string)
-                                    .collect::<Vec<_>>()
-                                    .join(",");
-                                (change, source)
-                            });
-                        match treasury_net {
-                            Some((change, source)) if change > 0 => {
-                                changes.push(DayNetChange {
-                                    holder: holding.holder.clone(),
-                                    change,
-                                    acquisition: Some(NetAcquisition {
-                                        lot_id: format!(
-                                            "market:{}:issuer-treasury:{}",
-                                            registry.stock().0,
-                                            day
-                                        ),
-                                        source: AcquisitionSource::SecondaryMarket { settlement: source },
-                                        restriction: ShareRestriction::Unrestricted,
-                                    }),
-                                });
-                            }
-                            _ => {
-                                changes.push(DayNetChange {
-                                    holder: holding.holder.clone(),
-                                    change: 0,
-                                    acquisition: None,
-                                });
-                            }
+                    let account = match &holding.holder {
+                        HolderId::Account(account) => *account,
+                        HolderId::IssuerTreasury => {
+                            treasury_registered = true;
+                            continue;
                         }
-                        continue;
+                        HolderId::External(_) => {
+                            changes.push(DayNetChange {
+                                holder: holding.holder.clone(),
+                                change: 0,
+                                acquisition: None,
+                            });
+                            continue;
+                        }
                     };
-                    let account = *account;
                     let (change, receipt_ids) = net_by_account.remove(&account).unwrap_or_default();
                     let acquisition = if change > 0 {
                         let source = receipt_ids
@@ -1834,14 +1820,30 @@ impl SessionCorporateActions {
                         acquisition,
                     });
                 }
+                if treasury_change > 0 || treasury_registered {
+                    // 首次净买入沿用 close_day 的新持有人路径；零成交不虚构零股专户。
+                    let acquisition = if treasury_change > 0 {
+                        Some(NetAcquisition {
+                            lot_id: format!("market:{}:issuer-treasury:{}", registry.stock().0, day),
+                            source: AcquisitionSource::SecondaryMarket {
+                                settlement: treasury_receipts
+                                    .iter()
+                                    .map(u64::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(","),
+                            },
+                            restriction: ShareRestriction::Unrestricted,
+                        })
+                    } else {
+                        None
+                    };
+                    changes.push(DayNetChange {
+                        holder: HolderId::IssuerTreasury,
+                        change: treasury_change,
+                        acquisition,
+                    });
+                }
                 for (account, (change, receipt_ids)) in net_by_account {
-                    if Some(account) == issuer_repurchase_account {
-                        // 回购账户的净变动必须落入 IssuerTreasury 持有人；名册缺少
-                        // Treasury 持有人而回购账户有成交属于配置错误，显式失败。
-                        return Err(SessionCorporateActionsError::Invalid(
-                            "股东名册缺少 IssuerTreasury 持有人承接回购账户成交".into(),
-                        ));
-                    }
                     if change <= 0 || !accounts.contains_key(&account) {
                         return Err(SessionCorporateActionsError::Invalid(
                             "无既有名册的证券成交账户只能通过真实净买入进入股东登记".into(),
