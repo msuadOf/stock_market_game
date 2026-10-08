@@ -700,6 +700,7 @@ impl GameSession {
     /// 配股／增发两类提案的共用构造：登记日 = 公告日后首个交易日（不与公告日
     /// 同日），缴款期日程由 `derive_schedule` 按既有口径推导，随后直接调用
     /// `approve_rights_offering`。
+    #[allow(clippy::too_many_arguments)]
     fn propose_rights_style(
         &mut self,
         kind: PlayerProposalKind,
