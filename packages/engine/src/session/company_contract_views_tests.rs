@@ -23,6 +23,7 @@ use super::issuer_repurchase_session_tests::{
 };
 use super::rights_offering_session_tests::{
     all_shareholders_plan, complete_day, session_with_registry,
+    session_with_registry_capital,
 };
 use crate::company::issuer_repurchase::IssuerRepurchaseStatus;
 
@@ -316,6 +317,23 @@ fn split_readiness_reports_legal_facts_and_par_anchor_blockers() {
     assert!(
         split.ready,
         "法定事实绑定且可整除推导面值时，拆股应无静态阻塞：{:?}",
+        split.blockers
+    );
+
+    // 法定事实绑定但注册资本与发行股数不能整除：整除推导 blocker 显式给出。
+    let (session, _stock, issuer) = session_with_registry_capital(true, 1);
+    let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
+    let split = readiness_of(&caps, CorporateActionKind::ShareSplit);
+    assert!(
+        !split.ready,
+        "注册资本不能整除推导面值时，拆股 readiness 不得报满足"
+    );
+    assert!(
+        split
+            .blockers
+            .iter()
+            .any(|blocker| blocker.contains("不能整除")),
+        "整除阻塞必须在 blockers 中显式给出：{:?}",
         split.blockers
     );
 }

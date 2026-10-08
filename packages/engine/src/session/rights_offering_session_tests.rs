@@ -49,6 +49,16 @@ fn fixture_lot(id: &str, qty: u64, acquired_on: CivilDate) -> ShareLot {
 /// （总股本 10,000,000）；玩家已开个人税账。面值 1 分（注册资本 = 总股本×1 分），
 /// 配股价 10 分/股（高于面值）。
 pub(crate) fn session_with_registry(rights_enabled: bool) -> (GameSession, StockCode, CompanyId) {
+    session_with_registry_capital(rights_enabled, 0)
+}
+
+/// [`session_with_registry`] 的注册资本变体：注册资本 = 总股本 × 1 分 +
+/// `extra_cents`（非零 `extra_cents` 构造与发行股数不能整除的法定事实，
+/// 供 readiness 整除分支负例使用）。
+pub(crate) fn session_with_registry_capital(
+    rights_enabled: bool,
+    extra_cents: i128,
+) -> (GameSession, StockCode, CompanyId) {
     let mut setup = rights_setup();
     setup.rights_offering_enabled = rights_enabled;
     let mut session = GameSession::new(setup, 42).unwrap();
@@ -98,7 +108,7 @@ pub(crate) fn session_with_registry(rights_enabled: bool) -> (GameSession, Stock
     session
         .define_dividend_legal_facts(
             &issuer,
-            AccountingAmount::from_cents(i128::from(total_shares)),
+            AccountingAmount::from_cents(i128::from(total_shares) + extra_cents),
             "rights test legal fact".into(),
         )
         .unwrap();
