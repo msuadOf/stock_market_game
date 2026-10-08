@@ -18,6 +18,10 @@
 //!   注销；其他用途合计持有不超过已发行股份 10%、三年内转让、未转让则注销。
 //!   回购注销不除权：交易所除权公式只覆盖股份增加情形，注销无除权条文，市场
 //!   实践不除权（登记为待证口径，无官方明文）。
+//! - 处置策略（H 批 2026-10-08 用户决策「目前暂时回购默认注销，其他方案先
+//!   不做，可以留一个空的接口」）：完成判定后的首个日终自动注销全部已回购
+//!   股份；库存股持有、转让等路径显式不做，`RepurchaseCompletionPolicy`
+//!   枚举留扩展位。
 //! - 资金（ADR-0038）：获批计划额度内合成发行人结算资金（专款语义），经真实
 //!   委托与成交买入；卖方投资者真实收到资金（投资者资金池注入）。计划额度与
 //!   实际成交差额无官方规则——本游戏口径：未用差额在计划完成时显式回收，
@@ -47,6 +51,21 @@ pub enum RepurchasePurpose {
     ValueMaintenance,
 }
 
+/// 回购完成后的股份处置策略（H 批 2026-10-08 用户决策：「目前暂时回购默认
+/// 注销，其他方案先不做，可以留一个空的接口」）。
+///
+/// 当前**唯一变体** = 完成判定后的首个日终自动注销全部已回购股份（复用既有
+/// 手动注销路径）；库存股持有、转让等其他处置路径按用户决策显式不做——枚举
+/// 只留类型与序列化扩展位，新增变体时必须同步 Session 日终自动处置逻辑与
+/// Web 存档 parser 域（`corporate-actions.ts`），不得静默落空。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub enum RepurchaseCompletionPolicy {
+    /// 完成判定（预算／数量用尽或窗口截止）后的首个日终自动注销。
+    CancelOnCompletion,
+}
+
 /// 回购方案：额度、价格上限与执行窗口（期限参数化：一般 12 个月／维护价值
 /// 3 个月由调用方按用途显式给出，不硬编码）。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -72,6 +91,8 @@ pub struct IssuerRepurchasePlan {
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     pub max_shares: u64,
     pub purpose: RepurchasePurpose,
+    /// 完成后的股份处置策略（H 批默认注销；扩展位，当前唯一变体）。
+    pub completion_policy: RepurchaseCompletionPolicy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -179,14 +200,17 @@ pub enum IssuerRepurchaseStatus {
     Approved,
     Announced,
     Executing,
-    /// 窗口结束或额度／数量用尽：未用合成资金已回收。
+    /// 窗口结束或额度／数量用尽：未用合成资金已回收。H 批起为**短暂过渡态**：
+    /// 默认注销策略下，完成判定后的首个日终自动注销（`Cancelled`）；零成交
+    /// 方案无股份可核减时保持本终态。
     Completed,
-    /// Completed 且注销执行完成（减资用途）。
+    /// Completed 且注销执行完成（默认注销策略自动或显式 API 手动执行）。
     Cancelled,
 }
 
 /// 回购执行状态机：显式方案 → 公告 → 窗口内真实委托成交 → 计划完成（回收未用
-/// 合成资金）→ 注销（减资用途）。真实现金、账户与订单由 Session 侧执行。
+/// 合成资金）→ 注销（H 批默认策略：完成后的首个日终自动执行）。真实现金、
+/// 账户与订单由 Session 侧执行。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "IssuerRepurchaseBookState")]
 #[serde(deny_unknown_fields)]

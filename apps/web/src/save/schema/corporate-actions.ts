@@ -89,7 +89,12 @@ export type RightsOfferingBook = { readonly plan: RightsOfferingEventPlan; reado
 export type QueuedRightsSubscription = { readonly event_id: string; readonly account: string; readonly requested_shares: string; readonly submitted_on: string }
 export type RejectedRightsSubscription = { readonly event_id: string; readonly account: string; readonly requested_shares: string; readonly submitted_on: string; readonly rejected_on: string; readonly reason: string }
 export type RepurchasePurpose = "ReduceCapital" | "EmployeeIncentive" | "ConvertibleConversion" | "ValueMaintenance"
-export type IssuerRepurchasePlan = { readonly event_id: string; readonly approval_reference: string; readonly issuer: string; readonly stock: string; readonly exchange: CalendarExchange; readonly approved_on: string; readonly announced_on: string; readonly window_start_on: string; readonly window_deadline_on: string; readonly price_cap_per_share: string; readonly total_budget: string; readonly max_shares: string; readonly purpose: RepurchasePurpose }
+/// 回购完成后的股份处置策略（H 批 2026-10-08 用户决策「目前暂时回购默认注销，
+/// 其他方案先不做，可以留一个空的接口」）：当前唯一变体 = 完成判定后的首个
+/// 日终自动注销；与 engine `RepurchaseCompletionPolicy` 枚举域严格一致，
+/// engine 新增变体时本域必须同步（无兼容旧档，缺字段/未知变体均显式拒绝）。
+export type RepurchaseCompletionPolicy = "CancelOnCompletion"
+export type IssuerRepurchasePlan = { readonly event_id: string; readonly approval_reference: string; readonly issuer: string; readonly stock: string; readonly exchange: CalendarExchange; readonly approved_on: string; readonly announced_on: string; readonly window_start_on: string; readonly window_deadline_on: string; readonly price_cap_per_share: string; readonly total_budget: string; readonly max_shares: string; readonly purpose: RepurchasePurpose; readonly completion_policy: RepurchaseCompletionPolicy }
 export type RepurchaseFillRecord = { readonly stock: string; readonly day: string; readonly shares: string; readonly gross: string; readonly fees: string }
 export type IssuerRepurchaseStatus = "Approved" | "Announced" | "Executing" | "Completed" | "Cancelled"
 export type IssuerRepurchaseBook = { readonly plan: IssuerRepurchasePlan; readonly status: IssuerRepurchaseStatus; readonly fills: readonly RepurchaseFillRecord[]; readonly completed_on: string | null; readonly withdrawn_remainder: string | null; readonly cancelled_on: string | null; readonly cancelled_shares: string; readonly last_order_day: string | null }
@@ -1434,7 +1439,7 @@ export function parseRightsOfferingEventPlanValue(value: unknown, path: string):
 
 export function parseIssuerRepurchasePlanValue(value: unknown, path: string): IssuerRepurchasePlan {
   const plan = record(value, path)
-  exact(plan, ["event_id", "approval_reference", "issuer", "stock", "exchange", "approved_on", "announced_on", "window_start_on", "window_deadline_on", "price_cap_per_share", "total_budget", "max_shares", "purpose"], path)
+  exact(plan, ["event_id", "approval_reference", "issuer", "stock", "exchange", "approved_on", "announced_on", "window_start_on", "window_deadline_on", "price_cap_per_share", "total_budget", "max_shares", "purpose", "completion_policy"], path)
   const event_id = string(plan.event_id, `${path}.event_id`), approval_reference = string(plan.approval_reference, `${path}.approval_reference`)
   const issuer = string(plan.issuer, `${path}.issuer`), stock = string(plan.stock, `${path}.stock`)
   const exchange = oneOf(plan.exchange, `${path}.exchange`, ["sse", "szse"] as const)
@@ -1443,9 +1448,10 @@ export function parseIssuerRepurchasePlanValue(value: unknown, path: string): Is
   const price_cap_per_share = money(plan.price_cap_per_share, `${path}.price_cap_per_share`), total_budget = money(plan.total_budget, `${path}.total_budget`)
   const max_shares = decimal(plan.max_shares, `${path}.max_shares`)
   const purpose = oneOf(plan.purpose, `${path}.purpose`, ["ReduceCapital", "EmployeeIncentive", "ConvertibleConversion", "ValueMaintenance"] as const)
+  const completion_policy = oneOf(plan.completion_policy, `${path}.completion_policy`, ["CancelOnCompletion"] as const)
   if (!event_id.trim() || !approval_reference.trim() || !issuer.trim() || !stock.trim() || BigInt(price_cap_per_share) <= 0n || BigInt(total_budget) <= 0n || BigInt(max_shares) <= 0n) throw new SaveSchemaError(path, "回购方案身份、价格或额度非法")
   if (!(approved_on <= announced_on && announced_on <= window_start_on && window_start_on <= window_deadline_on)) throw new SaveSchemaError(path, "回购日程日期顺序非法")
-  return { event_id, approval_reference, issuer, stock, exchange, approved_on, announced_on, window_start_on, window_deadline_on, price_cap_per_share, total_budget, max_shares, purpose }
+  return { event_id, approval_reference, issuer, stock, exchange, approved_on, announced_on, window_start_on, window_deadline_on, price_cap_per_share, total_budget, max_shares, purpose, completion_policy }
 }
 
 function parseRightsOfferingBook(value: unknown, path: string): RightsOfferingBook {

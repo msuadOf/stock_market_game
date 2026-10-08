@@ -4246,7 +4246,8 @@ impl GameSession {
         }
         // 同一证券同时只能有一个未完成回购方案：日终成交回执按证券聚合、不区分
         // 方案，第二个未完成方案会把同一笔真实成交记入多本账簿，完成勾稽必然
-        // 失真（完成或取消后才可批准同证券新方案）。
+        // 失真（完成或取消后才可批准同证券新方案；H 批起完成方案于完成判定后
+        // 的首个日终自动注销——「完成并自动注销后可提新方案」）。
         if self
             .state
             .corporate_actions
@@ -4262,7 +4263,7 @@ impl GameSession {
             })
         {
             return Err(SessionError::InvalidSetup(
-                "该证券已有未完成的回购方案；同一证券同时只能有一个未完成方案，完成或取消后才能批准新方案".into(),
+                "该证券已有未完成的回购方案；同一证券同时只能有一个未完成方案，既有方案完成后的首个日终自动注销（默认注销策略），之后才能批准新方案".into(),
             ));
         }
         let repurchase_account = self.issuer_repurchase_account_id().ok_or_else(|| {
@@ -4296,19 +4297,28 @@ impl GameSession {
                 "非减资用途回购数量上限超过已发行股份 10%（证监会回购规则第 17 条）".into(),
             ));
         }
-        // 建立回购专户事实（bind-once）：已存在则幂等沿用；在候选副本上执行，
-        // 后续任何失败都不留部分状态。
+        // 建立回购专户事实（bind-once，H 批口径）：专户事实描述**账户存在性**
+        // （同一局内回购专用账户只创建一次），首次批准绑定，此后不随方案重复
+        // 绑定——否则第二方案因 `source_evidence`/`established_on` 必然不同而被
+        // 「immutable once set」拒绝，自动注销后新方案将永远无法受理。
+        // `established_on` 取名册最近结算日（`settled_on`）：日内恒不晚于结算日，
+        // 局中任意日（含多个日终之后）均可受理玩家提案（与「持仓即可」语义
+        // 一致）；名册结算日恰有登记快照（分红/配股登记）时该绑定被既有
+        // 「不得跨登记快照回溯」守卫显式拒绝，属结构性事实冲突而非静默回溯。
+        // 在候选副本上执行，后续任何失败都不留部分状态。
         let account_reference = format!("issuer-repurchase-account-{}", repurchase_account.0);
         let mut candidate_registry = self.state.corporate_actions.registries[registry_index].clone();
-        candidate_registry
-            .set_issuer_repurchase_account(crate::company::share_registry::IssuerRepurchaseAccountFacts {
-                account_reference,
-                source_evidence: plan.event_id.clone(),
-                established_on: plan.approved_on,
-            })
-            .map_err(|error| {
-                SessionError::InvalidSetup(format!("回购专户事实非法：{error}"))
-            })?;
+        if candidate_registry.issuer_repurchase_account().is_none() {
+            candidate_registry
+                .set_issuer_repurchase_account(crate::company::share_registry::IssuerRepurchaseAccountFacts {
+                    account_reference,
+                    source_evidence: plan.event_id.clone(),
+                    established_on: candidate_registry.settled_on(),
+                })
+                .map_err(|error| {
+                    SessionError::InvalidSetup(format!("回购专户事实非法：{error}"))
+                })?;
+        }
         candidate_system
             .declare_issuer_repurchase(
                 &plan.issuer,
@@ -4439,6 +4449,66 @@ impl GameSession {
         self.state.corporate_actions.issuer_repurchases[index]
             .record_cancellation(on, shares)
             .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        Ok(())
+    }
+
+    /// 完成即默认注销（H 批 2026-10-08 用户决策「目前暂时回购默认注销」）：
+    /// 到达 `Completed` 的方案（完成判定于**更早**的日终——`completed_on < day`，
+    /// 完成判定当日本身不注销）在本次日终自动执行注销，**复用既有手动注销路径**
+    /// `execute_issuer_repurchase_cancellation`（候选事务、名册/账户/账面核减、
+    /// 面值核减注册资本、不除权），不复制任何核减逻辑。「Completed 未注销」
+    /// 因此只是完成日终到次日终之间的短暂过渡态。
+    ///
+    /// 显式登记的边界：
+    /// - **在途委托竞态**：完成判定当日仍有回购账户的在途未成交委托残留时，
+    ///   该日不自动注销（Completed 保留），下一日终重试。正常时序下市场日终
+    ///   已清空订单簿（`Market::end_of_day` 清 book），该守卫防御的是日终
+    ///   时序错位，不是常规路径。
+    /// - **零成交**：注销以正股数为前提（`record_cancellation` 拒绝 0 股），
+    ///   零成交方案无股份可核减，保持 `Completed` 终态，不阻塞新方案。
+    /// - 处置策略由方案的 `completion_policy` 决定（当前唯一变体
+    ///   `CancelOnCompletion`；新增变体时必须在此同步处置逻辑）。
+    fn auto_cancel_completed_repurchases(
+        &mut self,
+        day: crate::calendar::CivilDate,
+    ) -> Result<(), SessionError> {
+        let Some(repurchase_account) = self.issuer_repurchase_account_id() else {
+            return Ok(());
+        };
+        let owners = std::collections::BTreeSet::from([repurchase_account]);
+        let mut pending: Vec<(String, u64)> = Vec::new();
+        for book in &self.state.corporate_actions.issuer_repurchases {
+            if *book.status()
+                != crate::company::issuer_repurchase::IssuerRepurchaseStatus::Completed
+                || book
+                    .completed_on()
+                    .is_none_or(|completed_on| completed_on >= day)
+            {
+                continue;
+            }
+            match book.plan().completion_policy {
+                crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion => {}
+            }
+            let shares = book.total_filled_shares();
+            if shares == 0 {
+                // 零成交：无股份可核减，保持 Completed 终态（不阻塞新方案）。
+                continue;
+            }
+            // 在途委托竞态守卫：回购账户在该证券订单簿仍有未成交委托 → 该日
+            // 不自动注销，下一日终重试。
+            if self
+                .state
+                .markets
+                .get(&book.plan().stock)
+                .is_some_and(|market| !market.resting_orders_for_owners(&owners).is_empty())
+            {
+                continue;
+            }
+            pending.push((book.plan().event_id.clone(), shares));
+        }
+        for (event_id, shares) in pending {
+            self.execute_issuer_repurchase_cancellation(&event_id, shares, day)?;
+        }
         Ok(())
     }
 
@@ -5005,6 +5075,13 @@ impl GameSession {
                 Some(std::sync::Arc::make_mut(&mut self.state.company_system)),
             )
             .map_err(|error| SessionError::InvalidSave(format!("发行人回购日终结算失败：{error}")))?;
+        // 完成即默认注销（H 批 2026-10-08 用户决策）：完成判定（上一日终或更早）
+        // 的方案在本次日终自动注销。放在回购日终结算之后、跨域勾稽之前，注销
+        // 引起的账户/名册/账面核减纳入同一次日终校验。
+        self.auto_cancel_completed_repurchases(report.settled_date)
+            .map_err(|error| {
+                SessionError::InvalidSave(format!("发行人回购自动注销失败：{error}"))
+            })?;
         let account_positions = self
             .state
             .accounts

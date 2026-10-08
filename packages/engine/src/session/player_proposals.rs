@@ -634,6 +634,10 @@ impl GameSession {
                     total_budget,
                     max_shares,
                     purpose,
+                    // H 批用户决策「目前暂时回购默认注销」：处置策略不开放为玩家
+                    // 参数，引擎固定默认变体。
+                    completion_policy:
+                        crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion,
                 };
                 if let Err(error) = self.approve_issuer_repurchase(plan) {
                     // 分类依据当前开关状态（非错误文本启发式）：开关关闭 → 未支持
