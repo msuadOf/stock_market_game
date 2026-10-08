@@ -44,6 +44,7 @@ export interface SaveCommandPorts {
   flatWithholdingBpDraft: number;
   rightsOfferingEnabledDraft: boolean;
   issuerRepurchaseEnabledDraft: boolean;
+  parValuePerShareDraft: string;
   seedDraft: string;
   loadFromFile(beforeRead?: () => Promise<void>): Promise<StrictSaveEnvelope | null>;
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
@@ -67,6 +68,7 @@ export interface SaveCommandPorts {
   setFlatWithholdingBpDraft(rateBp: number): void;
   setRightsOfferingEnabledDraft(enabled: boolean): void;
   setIssuerRepurchaseEnabledDraft(enabled: boolean): void;
+  setParValuePerShareDraft(cents: string): void;
   setInitialAllocation(allocation: InitialAllocation | null): void;
   setStartDateError(error: string | null): void;
   setSpeedMetricsPollingGeneration(generation: number): void;
@@ -79,10 +81,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
   const {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
-    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, flatWithholdingBpDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft,
+    speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, flatWithholdingBpDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft, parValuePerShareDraft,
     loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionCreation, setActiveSetup, setStartDateDraft,
-    setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setFlatWithholdingBpDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
+    setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setFlatWithholdingBpDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setParValuePerShareDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
   } = ports;
   // 存档/读档
@@ -159,6 +161,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
         setDividendTaxModeDraft(slot.setup.dividend_tax_mode);
         setFlatWithholdingBpDraft(slot.setup.flat_withholding_bp ?? 1000);
+        setParValuePerShareDraft(slot.setup.par_value_per_share);
         setRightsOfferingEnabledDraft(slot.setup.rights_offering_enabled);
         setIssuerRepurchaseEnabledDraft(slot.setup.issuer_repurchase_enabled);
         ports.setSeedDraft(slot.seed);
@@ -252,6 +255,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         setCompanySystemDraft(JSON.stringify(slot.setup.company_system, null, 2));
         setDividendTaxModeDraft(slot.setup.dividend_tax_mode);
         setFlatWithholdingBpDraft(slot.setup.flat_withholding_bp ?? 1000);
+        setParValuePerShareDraft(slot.setup.par_value_per_share);
         ports.setSeedDraft(slot.seed);
         setInitialAllocation(null);
         restored = true;
@@ -330,6 +334,12 @@ export function createSaveCommands(ports: SaveCommandPorts) {
         flat_withholding_bp: dividendTaxModeDraft === "FlatWithholding" ? flatWithholdingBpDraft : null,
         rights_offering_enabled: rightsOfferingEnabledDraft,
         issuer_repurchase_enabled: issuerRepurchaseEnabledDraft,
+        par_value_per_share: parValuePerShareDraft,
+        // 开局自动装配随新局显式回产品默认开（独立复核 minor-3 修复）：
+        // {...activeSetup} 展开会把读入档的 auto=false 静默带进新局——该开关
+        // 无 UI 草稿层，跨局粘滞不可见；新局创建界面无关闭入口，统一回 true。
+        // 读档仍按档内值恢复（restore 路不经此组装）。
+        auto_corporate_foundation: true,
       };
       const host = hostRef.current;
       if (host?.capabilities.persistence === "remote") {

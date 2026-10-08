@@ -24,6 +24,10 @@ test("当前存档账户键与本人金融 owner 无损支持完整 u64", { time
   save.market_memberships = { members: { owner: { account_id: "0", admission_funding: { external_cash: "0" } }, remote: { account_id: maximum, admission_funding: { external_cash: "1000" } } } }
   save.snapshot = { ...(save.snapshot as object), accounts: { "0": { cash: "0", positions: {} }, "1": { cash: "0", positions: {} }, [maximum]: { cash: "1000", positions: {} } } }
   save.history_reads = { "0": { stocks: {} }, "1": { stocks: {} }, [maximum]: { stocks: {} } }
+  // 本测试改写账户键并清空持仓而专注账户键编码不变量；N2a 起 fixture 携带
+  // 开局自动名册，持仓勾稽会因清空持仓误拒——名册与目标不变量正交，显式
+  // 移除后再断言。
+  ;(save.corporate_actions as Record<string, unknown>).registries = []
   save.pending_player = [{ owner: maximum, intent: { PlaceMarket: { code: "600101", side: "Buy", qty: 100 } }, account_ordinal: "0", stock_ordinal: "0" }]
   assert.equal(parseSaveSlot(save).pending_player[0]?.owner, maximum)
   for (const invalid of [0, "01", "-1", "18446744073709551616"]) {

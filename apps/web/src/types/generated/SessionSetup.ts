@@ -3,6 +3,7 @@ import type { CashDividendTaxMode } from "./CashDividendTaxMode";
 import type { CivilDate } from "./CivilDate";
 import type { FloatAllocation } from "./FloatAllocation";
 import type { GameConfig } from "./GameConfig";
+import type { Money } from "./Money";
 import type { NpcSetup } from "./NpcSetup";
 import type { ReportFrequency } from "./ReportFrequency";
 import type { StockSpec } from "./StockSpec";
@@ -77,4 +78,24 @@ export type SessionSetup = {
    * 无 serde 默认，缺失该字段的旧档被显式拒绝；恢复后开关语义不变。
    */
   issuer_repurchase_enabled: boolean;
+  /**
+   * 每股面值（`Money` 分；2026-10-08 N2a 决策：默认 1 元/股 = 100 分，
+   * 新局可编辑）。开局自动装配用它推定各 Simple 上市公司的注册资本
+   * 法定事实：注册资本 = 面值 × 总股本（`define_dividend_legal_facts`
+   * 既有路径，bind-once）。严格持久化字段：新档必填、无 serde 默认，
+   * 缺失该字段的旧档被显式拒绝；默认值 100 分由 Web DEFAULT_SETUP 与
+   * UI 草稿层提供，不设 serde 默认，杜绝旧档静默取默认的兼容路径。
+   */
+  par_value_per_share: Money;
+  /**
+   * 开局自动装配公司行为基础（2026-10-08 N2a 决策：开局自动建名册，
+   * 产品默认开启）：`true` 时 `GameSession::new` 在初始筹码分配完成后
+   * 为每家 Simple 上市公司自动装配——按分配结果构建全流通名册（无发行人
+   * 自持股；未分配余量登记为具名外部股东）、按面值推定注册资本法定事实、
+   * 并按三层税制模式自动开个人税账（仅 `AShareIndividual`）。`false` 保持
+   * 显式装配入口（`configure_share_registry` / `define_dividend_legal_facts`
+   * / `configure_cash_dividend_tax_book`），供测试与特殊场景精确控制。
+   * 严格持久化字段：新档必填、无 serde 默认；恢复后装配语义不变。
+   */
+  auto_corporate_foundation: boolean;
 };

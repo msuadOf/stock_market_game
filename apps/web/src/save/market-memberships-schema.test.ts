@@ -11,6 +11,11 @@ function sharedSave(): Record<string, unknown> {
   save.market_memberships = { members: { " local owner ": membership("0"), remote: membership(maximum), spaced: membership("42") } }
   save.snapshot = { ...(save.snapshot as object), accounts: Object.fromEntries(["0", "1", "42", maximum].map((id) => [id, { cash: "1", positions: {} }])) }
   save.history_reads = Object.fromEntries(["0", "1", "42", maximum].map((id) => [id, { stocks: {} }]))
+  // 本测试改写账户集合（清空持仓）而专注成员资格不变量；N2a 起 fixture 携带
+  // 开局自动名册，账户持仓勾稽会因清空持仓误拒——名册与目标不变量正交，
+  // 显式移除后再断言。
+  const actions = save.corporate_actions as Record<string, unknown>
+  actions.registries = []
   return save
 }
 

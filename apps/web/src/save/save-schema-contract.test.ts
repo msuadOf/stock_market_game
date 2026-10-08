@@ -93,16 +93,21 @@ test("存档流通盘设置完整保存类间与类内方式，并拒绝旧 shap
 })
 
 test("存档 Money 保留完整 i64 分值并拒绝旧 number 编码", { timeout: 10_000 }, () => {
+  // 本测试改写账户现金并清空持仓而专注金额编码不变量；N2a 起 fixture 携带
+  // 开局自动名册，持仓勾稽会因清空持仓误拒——名册与目标不变量正交，显式
+  // 移除后再断言。
   for (const cash of ["0", "9007199254740993", "9223372036854775807"]) {
     const save = currentSaveFixture()
     const snapshot = save.snapshot as Record<string, unknown>
     snapshot.accounts = { "0": { cash, positions: {} }, "1": { cash: "0", positions: {} } }
+    ;(save.corporate_actions as Record<string, unknown>).registries = []
     assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
   }
   for (const cash of [0, 1000000000000, "00", "+1", "-0", "1.0", "-1", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"]) {
     const save = currentSaveFixture()
     const snapshot = save.snapshot as Record<string, unknown>
     snapshot.accounts = { "0": { cash, positions: {} }, "1": { cash: "0", positions: {} } }
+    ;(save.corporate_actions as Record<string, unknown>).registries = []
     assert.throws(() => parseSaveSlot(save), /snapshot\.accounts\.0\.cash/)
   }
 })

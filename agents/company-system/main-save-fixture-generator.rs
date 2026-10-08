@@ -37,13 +37,83 @@ fn stock(
     }
 }
 
+/// 温和默认偏好（N2a，2026-10-08 用户决策；与 Web DEFAULT_SETUP 同值）：
+/// 现金分红启用（30% 派息、100 万元门槛、每结算周期），送转关闭。
+fn mild_default_preferences() -> engine::company::simple::SimpleCompanyPreferences {
+    engine::company::simple::SimpleCompanyPreferences {
+        cash_dividend: Some(engine::company::simple::SimpleCashDividendPreference {
+            target_payout_bp: 3_000,
+            min_distributable_profit: Money::from_cents(100_000_000),
+            cycles_between_proposals: 1,
+        }),
+        stock_distribution: None,
+    }
+}
+
 fn validate_main_save(encoded: &Value) -> Result<(), Box<dyn Error>> {
     let actions = encoded
         .get("corporate_actions")
         .and_then(Value::as_object)
         .ok_or("Engine 保存结果缺少 corporate_actions 对象")?;
+    // N2a（2026-10-08）起开局自动装配：主档必须恰好携带五只证券的自动名册
+    //（发行股数守恒 + 具名外部股东承接未分配余量 + 面值推定的注册资本法定
+    // 事实见下方 company_system 断言）。本场景（两交易日、无结算周期末日）
+    // 不触发任何分红/送转/税账/代扣。
+    let registries = actions
+        .get("registries")
+        .and_then(Value::as_array)
+        .ok_or("主档 corporate_actions.registries 必须是 Engine 生成的数组")?;
+    if registries.len() != 5 {
+        return Err(format!("主档必须包含五只证券的自动装配名册，实际 {}", registries.len()).into());
+    }
+    for registry in registries {
+        let stock = registry
+            .get("stock")
+            .and_then(Value::as_str)
+            .ok_or("主档名册缺少 stock")?;
+        let issued = registry
+            .get("issued_shares")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or("主档名册缺少 issued_shares")?;
+        let mut holdings_total = 0_u64;
+        let mut has_founding_external = false;
+        for holding in registry
+            .get("holdings")
+            .and_then(Value::as_array)
+            .ok_or("主档名册缺少 holdings")?
+        {
+            let holder = holding
+                .get("holder")
+                .ok_or("主档名册持有行缺少 holder")?;
+            for lot in holding
+                .get("lots")
+                .and_then(Value::as_array)
+                .ok_or("主档名册持有行缺少 lots")?
+            {
+                holdings_total += lot
+                    .get("qty")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .ok_or("主档名册 lot 缺少 qty")?;
+            }
+            if let Some(external) = holder.get("External").and_then(Value::as_str) {
+                if external.starts_with("session-auto:founding:") {
+                    has_founding_external = true;
+                }
+            }
+            if holder.get("IssuerTreasury").is_some() {
+                return Err(format!("主档 {stock} 名册不得出现发行人自持股（全流通口径）").into());
+            }
+        }
+        if holdings_total != issued || issued == 0 {
+            return Err(format!("主档 {stock} 名册发行股数守恒失败：{holdings_total} != {issued}").into());
+        }
+        if !has_founding_external {
+            return Err(format!("主档 {stock} 名册缺少承接未分配余量的具名外部股东").into());
+        }
+    }
     for field in [
-        "registries",
         "dividends",
         "stock_distributions",
         "share_splits",
@@ -54,6 +124,7 @@ fn validate_main_save(encoded: &Value) -> Result<(), Box<dyn Error>> {
         "account_gross_receipts",
         "external_receipts",
         "applied_ex_reference_groups",
+        // 简税默认（三层税制）：不建任何个人税账。
         "dividend_tax_books",
         // 三层税制（2026-10-08）：简税默认；本场景无分红，不得产生任何代扣回执。
         "flat_withholding_receipts",
@@ -101,14 +172,56 @@ fn validate_main_save(encoded: &Value) -> Result<(), Box<dyn Error>> {
                     .flatten()
             })
             .ok_or(format!("主档 config 缺少公司 {company} 的偏好配置"))?;
-        if !config_preferences
+        // N2a 温和默认偏好：现金分红启用（3000bp / 100000000 分 / 1 周期）、
+        // 送转关闭（null）。
+        let cash = config_preferences
             .get("cash_dividend")
-            .is_some_and(Value::is_null)
-            || !config_preferences
-                .get("stock_distribution")
-                .is_some_and(Value::is_null)
+            .ok_or(format!("主档公司 {company} 缺少现金分红偏好字段"))?;
+        if cash.get("target_payout_bp").and_then(Value::as_u64) != Some(3_000)
+            || cash.get("min_distributable_profit").and_then(Value::as_str) != Some("100000000")
+            || cash.get("cycles_between_proposals").and_then(Value::as_u64) != Some(1)
         {
-            return Err(format!("主档公司 {company} 的偏好配置必须为未配置（两项皆 null）").into());
+            return Err(format!("主档公司 {company} 的现金分红偏好必须为温和默认值（3000bp/100000000 分/1 周期）").into());
+        }
+        if !config_preferences
+            .get("stock_distribution")
+            .is_some_and(Value::is_null)
+        {
+            return Err(format!("主档公司 {company} 的送转偏好必须为关闭（null）").into());
+        }
+        // 开局自动装配的注册资本法定事实：面值 100 分 × 总股本（bind-once）。
+        // AccountingAmount 序列化为「元」两位小数字符串，换算回分比对。
+        let legal = entry
+            .get("finance")
+            .and_then(|finance| finance.get("legal_facts"))
+            .ok_or(format!("主档公司 {company} 缺少注册资本法定事实"))?;
+        let registered_cents = legal
+            .get("registered_capital")
+            .and_then(|value| value.as_str())
+            .and_then(|value| {
+                let (whole, fraction) = value.split_once('.')?;
+                let whole = whole.parse::<i128>().ok()?;
+                let mut frac_cents = 0_i128;
+                for (index, ch) in fraction.chars().take(2).enumerate() {
+                    let digit = i128::from(ch.to_digit(10)?);
+                    frac_cents += digit * if index == 0 { 10 } else { 1 };
+                }
+                whole.checked_mul(100)?.checked_add(frac_cents)
+            })
+            .ok_or(format!("主档公司 {company} 的注册资本法定事实缺少数值"))?;
+        let issued = encoded
+            .get("company_system")
+            .and_then(|system| system.get("issuers"))
+            .and_then(|issuers| issuers.get(company))
+            .and_then(|issuer| issuer.get("issued_shares"))
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<i128>().ok())
+            .ok_or(format!("主档发行人 {company} 缺少 issued_shares"))?;
+        if registered_cents != 100 * issued {
+            return Err(format!(
+                "主档公司 {company} 注册资本 {registered_cents} 分必须等于面值 100 分 × 总股本 {issued}"
+            )
+            .into());
         }
     }
     Ok(())
@@ -193,8 +306,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                             summary_rule: engine::company::simple::SimpleSummaryRule::ReceivableRevenuePayableExpenses,
                             book_display: engine::company::simple::SimpleBookDisplayConfig::DEFAULT,
                         },
-                        // 主档保持行为中性：未配置偏好（P 批严格持久化新字段）。
-                        preferences: engine::company::simple::SimpleCompanyPreferences::none(),
+                        // N2a（2026-10-08）起 fixture 携带温和默认偏好（与 Web
+                        // DEFAULT_SETUP 同值的游戏化虚拟参数）：现金分红启用、
+                        // 送转关闭。本场景（两交易日、未到结算周期末日）不触发
+                        // 偏好评估，台账保持空。
+                        preferences: mild_default_preferences(),
                     })
                     .collect(),
                 prehistory_periods: 24,
@@ -241,6 +357,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         // 主档保持机制关闭（M 批严格持久化新开关，默认 false）。
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
+        par_value_per_share: Money::from_cents(100),
+        auto_corporate_foundation: true,
     };
     setup.validate()?;
 

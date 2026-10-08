@@ -8,8 +8,9 @@ use engine::company::simple::period::{
     PeriodVariableExpenseRule, SettlementCycle,
 };
 use engine::company::simple::{
-    SimpleBookDisplayConfig, SimpleCompanyConfig, SimpleCompanyPreferences, SimpleConfig,
-    SimpleEnvironmentConfig, SimpleFinanceConfig, SimpleSummaryRule,
+    SimpleBookDisplayConfig, SimpleCashDividendPreference, SimpleCompanyConfig,
+    SimpleCompanyPreferences, SimpleConfig, SimpleEnvironmentConfig, SimpleFinanceConfig,
+    SimpleSummaryRule,
 };
 use engine::company::{CompanyId, CompanyKind};
 use engine::session::protocol::ProtocolSession;
@@ -97,8 +98,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     summary_rule: SimpleSummaryRule::ReceivableRevenuePayableExpenses,
                     book_display: SimpleBookDisplayConfig::DEFAULT,
                 },
-                // P 批严格持久化新字段：fixture 保持未配置偏好的行为中性默认。
-                preferences: SimpleCompanyPreferences::none(),
+                // N2a（2026-10-08）起 fixture 携带温和默认偏好（与 Web
+                // DEFAULT_SETUP 同值）：现金分红启用、送转关闭。本场景
+                //（单休市日日结）不触发偏好评估。
+                preferences: SimpleCompanyPreferences {
+                    cash_dividend: Some(SimpleCashDividendPreference {
+                        target_payout_bp: 3_000,
+                        min_distributable_profit: Money::from_cents(100_000_000),
+                        cycles_between_proposals: 1,
+                    }),
+                    stock_distribution: None,
+                },
             }],
             prehistory_periods: 24,
             settlement_cycle: SettlementCycle::Monthly,
@@ -153,6 +163,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         flat_withholding_bp: Some(1000),
         rights_offering_enabled: false,
         issuer_repurchase_enabled: false,
+        par_value_per_share: Money::from_cents(100),
+        auto_corporate_foundation: true,
     };
     setup.validate()?;
     let mut session = ProtocolSession::new(setup, 42)?;
