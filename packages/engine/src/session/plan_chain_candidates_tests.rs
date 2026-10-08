@@ -3,7 +3,13 @@ use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
 use crate::plans::{AllocationGrant, PlanOpen, PlanOpinion, PlanTarget, Urgency};
 
 pub(super) fn execution_fixture() -> (GameSession, PlanExecutionRequest) {
-    let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 47).unwrap();
+    execution_fixture_on(crate::CivilDate::from_ymd(2030, 1, 2).unwrap())
+}
+
+pub(super) fn execution_fixture_on(start_date: crate::CivilDate) -> (GameSession, PlanExecutionRequest) {
+    let mut setup = npc_working_quote_tests::quote_setup(0);
+    setup.start_date = start_date;
+    let mut session = GameSession::new(setup, 47).unwrap();
     let code = StockCode("600888".to_owned());
     let plan_id = session
         .state

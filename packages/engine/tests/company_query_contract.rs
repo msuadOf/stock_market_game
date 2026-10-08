@@ -118,6 +118,7 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
             "period",
             "published_date",
             "published_second_of_day",
+            "source",
             "supersedes",
             "version_sequence",
         ],
@@ -139,6 +140,8 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
             "operating_cash_flow",
             "prior_year_net_income",
             "quarter_net_income",
+            // 实际报告窗口净利与当季／累计列显式分开，不能以完整键集的旧形状漏掉该字段。
+            "report_period_net_income",
             "total_assets",
             "total_equity",
             "total_liabilities",

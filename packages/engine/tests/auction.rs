@@ -56,7 +56,8 @@ impl AuctionFixture {
             t1_enabled: true,
             report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
-            start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+            // 集合竞价 fixture 要求首日开市，不能用政策默认的元旦休市日。
+            start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
             dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
             flat_withholding_bp: Some(1000),
@@ -121,7 +122,8 @@ impl AuctionFixture {
             t1_enabled: true,
             report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
-            start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+            // 集合竞价 fixture 要求首日开市，不能用政策默认的元旦休市日。
+            start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
             dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
             flat_withholding_bp: Some(1000),
@@ -163,7 +165,31 @@ impl AuctionFixture {
         previous_close: i64,
     ) -> engine::SaveSlot {
         let code = self.setup.stocks[0].code.clone();
-        let mut save = self.start_session().save().expect("healthy save");
+        // 扩展 3 个开盘 tick 并先运行 2 个真实申报 tick，保持原剩余申报窗口。
+        let mut setup = self.setup.clone();
+        setup.auction_ticks += 3;
+        let mut initial = GameSession::new(setup, self.seed)
+            .expect("auction fixture must be valid").save().expect("healthy initial save");
+        initial.next_order_id = 100;
+        assert!(orders.iter().all(|order| order.order_id < initial.next_order_id));
+        let mut source = GameSession::restore(&initial).expect("合法前缀 fixture 必须恢复");
+        source.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: engine::LimitPrice::Lowest,
+            qty: 100,
+        }).expect("首 tick 的合法竞价买单必须入队");
+        source.enqueue_player_intent(AccountId(0), Intent::Cancel {
+            code: code.clone(),
+            id: engine::OrderId(initial.next_order_id),
+        }).expect("首 tick 的竞价撤单必须入队");
+        for _ in 0..2 {
+            let events = source.step().expect("auction prefix must succeed");
+            assert!(events.iter().all(|event| !matches!(event, Event::Trade { .. })));
+        }
+        let mut save = source.save().expect("healthy intraday save");
+        assert!(save.auction_orders.values().all(Vec::is_empty));
+        assert!(save.snapshot.markets[&code].day_market_activity);
         let market = save
             .snapshot
             .markets
@@ -172,7 +198,6 @@ impl AuctionFixture {
         market.last_close = Money::from_cents(previous_close);
         market.last_price = Money::from_cents(previous_close);
         save.auction_orders.insert(code, orders);
-        save.next_order_id = 100;
         let mut envelopes = Vec::new();
         for (stock, orders) in &save.auction_orders {
             for order in orders {
@@ -250,7 +275,7 @@ fn auction_fixture_preserves_exchange_identity_and_order_envelope_keys() {
             },
         ]
     );
-    assert_eq!(save.next_order_id, 100);
+    assert_eq!(save.next_order_id, 101);
 }
 
 #[test]
@@ -652,6 +677,7 @@ fn auction_only_trades_once_on_its_last_tick() {
         10_000,
     );
 
+    let completion_tick = session.tick() + 2;
     let first = session.step().expect("healthy step");
     assert!(first
         .iter()
@@ -671,9 +697,9 @@ fn auction_only_trades_once_on_its_last_tick() {
         Event::AuctionCompleted {
             clearing_price: Some(price),
             matched_volume: 200,
-            tick: 2,
+            tick,
             ..
-        } if *price == Money::from_cents(10_150)
+        } if *price == Money::from_cents(10_150) && *tick == completion_tick
     )));
     let indicative_price = second.iter().find_map(|event| match event {
         Event::AuctionTick {
@@ -686,6 +712,10 @@ fn auction_only_trades_once_on_its_last_tick() {
         _ => None,
     });
     assert_eq!(indicative_price, clearing_price);
+    // 日内 fixture 的空前缀扩展同时增加一个盘前 tick，盘前不得再次成交。
+    assert_eq!(session.snapshot().phase, TradingPhase::PreOpen);
+    let preopen = session.step().expect("healthy preopen step");
+    assert!(preopen.iter().all(|event| !matches!(event, Event::Trade { .. })));
     assert_eq!(session.snapshot().phase, TradingPhase::Continuous);
 }
 
@@ -1165,6 +1195,7 @@ fn unmatched_auction_limit_order_enters_the_continuous_book() {
     let code = StockCode("600000".to_string());
     let mut session = AuctionFixture::quiet(3, 99)
         .restore_with_orders(vec![order(0, Side::Buy, 9_900, 100, 1)], 10_000);
+    let completion_tick = session.tick() + 2;
 
     session.step().expect("healthy step");
     let completed = session.step().expect("healthy step");
@@ -1174,9 +1205,9 @@ fn unmatched_auction_limit_order_enters_the_continuous_book() {
         Event::AuctionCompleted {
             clearing_price: None,
             matched_volume: 0,
-            tick: 2,
+            tick,
             ..
-        }
+        } if *tick == completion_tick
     )));
     assert_eq!(session.snapshot().phase, TradingPhase::PreOpen);
     assert_eq!(

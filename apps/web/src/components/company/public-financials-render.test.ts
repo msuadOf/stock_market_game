@@ -39,10 +39,12 @@ test("Simple 来源与仿真来源共用完整四表附注，不以模式隐藏�
   }
 });
 
-test("利润表渲染当季、累计、比较列，缺历史有原因不填零", () => {
+// 共同报告支持月/季/半年/年，首列是实际报告窗口，不应把所有报告都称为当季。
+test("利润表渲染报告窗口、累计、比较列，缺历史有原因不填零", () => {
   const statement = reportStatementRows(publicReportGold().financials)[1]!;
   const html = renderToStaticMarkup(createElement(table.FinancialStatementTable, { statement, exactAmountsVisible: true }));
-  assert.match(html, /当季/);
+  assert.match(html, /报告窗口/);
+  assert.doesNotMatch(html, /当季/);
   assert.match(html, /年初至今累计/);
   assert.match(html, /上年同期/);
   assert.match(html, /无上年历史/);

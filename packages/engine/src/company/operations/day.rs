@@ -489,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_pair_mismatch_keeps_prior_expiry_sampling_and_due_consumption() {
+    fn restore_rejects_pair_mismatch_while_runtime_guard_keeps_prior_due_consumption() {
         let mut ops = CompanyOperations::new(fixture(), start()).expect("装配");
         let company = ops
             .companies
@@ -505,7 +505,9 @@ mod tests {
         ops.shock_params.market_candidate_bp = 10_000;
         let before_rng = ops.market_rng.clone();
         let json = serde_json::to_vec(&ops).expect("存档序列化");
-        let mut ops: CompanyOperations = serde_json::from_slice(&json).expect("错配存档仍接受");
+        // 当前恢复契约拒绝 kind/flow 错配；日推进的防御仍用内存故障注入验证。
+        let error = serde_json::from_slice::<CompanyOperations>(&json).unwrap_err();
+        assert!(error.to_string().contains("does not match flow variant"));
         assert!(matches!(
             ops.advance_civil_day(start()),
             Err(OperationsError::KindFlowMismatch {
@@ -533,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_spec_kind_is_not_an_extra_daily_pair_guard() {
+    fn restore_rejects_spec_kind_mismatch_before_the_daily_books_flow_guard() {
         let mut config = fixture();
         config.companies[0].spec.kind = CompanyKind::Insurance;
         assert!(matches!(
@@ -543,7 +545,9 @@ mod tests {
         let mut ops = CompanyOperations::new(fixture(), start()).expect("装配");
         ops.companies.values_mut().next().expect("公司").spec.kind = CompanyKind::Insurance;
         let json = serde_json::to_vec(&ops).expect("序列化");
-        let mut ops: CompanyOperations = serde_json::from_slice(&json).expect("既有存档接受集合");
+        // restore 已校验 spec.kind，不能把旧接受集合写成当前存档合同。
+        let error = serde_json::from_slice::<CompanyOperations>(&json).unwrap_err();
+        assert!(error.to_string().contains("does not match flow variant"));
         let report = ops
             .advance_civil_day(start())
             .expect("day 仅检查 books/params 配对");
@@ -702,6 +706,11 @@ mod tests {
     #[test]
     fn flow_error_retains_prior_maturity_and_does_not_queue_next_interest() {
         let mut ops = with_receivable(0);
+        // 零费用已表示不发生收付；用真正非法的负费用注入保留流程中途失败的覆盖。
+        let FlowParams::Industrial(params) = &mut ops.companies.values_mut().next().unwrap().params else {
+            panic!("工商参数")
+        };
+        params.daily_admin_expense = amount(-1);
         assert!(matches!(
             ops.advance_civil_day(start()),
             Err(OperationsError::Industrial(

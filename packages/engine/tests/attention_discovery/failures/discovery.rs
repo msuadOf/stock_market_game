@@ -75,7 +75,8 @@ fn discovery_setup() -> SessionSetup {
         t1_enabled: true,
         report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
-        start_date: CivilDate::from_iso("2030-01-01").unwrap(),
+        // 本 fixture 校验市场订单，不以元旦休市冒充有交易的开局。
+        start_date: CivilDate::from_iso("2030-01-02").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
         dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
         flat_withholding_bp: Some(1000),
@@ -91,6 +92,10 @@ fn session_bytes() -> Vec<u8> {
     let mut session = GameSession::new(discovery_setup(), 42).expect("session builds");
     let mut events = Vec::new();
     for _ in 0..150 {
+        // 市场会话结束后补自然日日结；周末只推进自然日，不增加市场 tick。
+        while session.day() == session.civil_clock().completed_trading_sessions_expected().unwrap() {
+            session.end_civil_day().expect("自然日日结必须成功");
+        }
         events.extend(session.step().expect("healthy step"));
     }
     let mut bytes = serde_json::to_vec(&events).expect("events serialize");

@@ -2,6 +2,8 @@ use super::*;
 
 fn simple_setup() -> SessionSetup {
     let mut setup = npc_working_quote_tests::quote_setup(0);
+    // 公司自然日日结组保留元旦休市开局；交易行为用例在各自 fixture 显式选交易日。
+    setup.start_date = crate::CivilDate::from_ymd(2030, 1, 1).unwrap();
     setup.npcs.inst_count = 0;
     // 本文件覆盖个人差别化税管线：显式使用大 A 方式（AShareIndividual），
     // 装配名册即为个人身份持有人自动开个人税账。

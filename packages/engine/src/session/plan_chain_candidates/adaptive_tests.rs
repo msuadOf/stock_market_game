@@ -387,7 +387,10 @@ fn stock_route_wrong_generation_does_not_consume_pending_route() {
 
 #[test]
 fn lifecycle_uses_fixed_account_resources_and_current_plan_after_outcome() {
-    let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
+    // 本用例只需自然日推进后冻结资源，不运行市场事务；保留元旦休市场景。
+    let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture_on(
+        crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+    );
     session.end_civil_day().unwrap();
     let account = AccountId(1);
     let code = request.allocation.code;

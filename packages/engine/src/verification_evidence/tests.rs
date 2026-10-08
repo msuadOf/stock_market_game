@@ -1169,7 +1169,8 @@ fn event_projection_rejects_gapped_stock_indices_and_adr_key_tampering() {
     };
     for (field, forged_value) in [
         ("phase_rank", serde_json::json!(5)),
-        ("entity", serde_json::json!({ "Account": 2 })),
+        // AccountId 的 wire 是十进制字符串；先通过解码才能触达身份勾稽负例。
+        ("entity", serde_json::json!({ "Account": "2" })),
         ("source", serde_json::json!("QuoteExpiry")),
     ] {
         let mut tampered = frame(vec![event.clone()]);

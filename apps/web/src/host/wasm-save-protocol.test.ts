@@ -13,9 +13,10 @@ test("Given a WASM save Map, when crossing the host save boundary, then its mark
   assert.match(encoded, /last_price/);
 });
 
-test("Given a persisted decimal account map, when rehydrated for WASM, then numeric Map keys are restored", () => {
+// AccountId 的当前 Rust serde wire 是规范十进制字符串，不能重新转为 Number 丢失精度。
+test("Given a persisted decimal account map, when rehydrated for WASM, then decimal-string Map keys are preserved", () => {
   const prepared = prepareSaveForWasm({
-    snapshot: { accounts: { "0": {} } },
+    snapshot: { accounts: { "0": {}, "9007199254740993": {} } },
     npc_attention: {},
     retail_experience: {},
     parent_orders: {},
@@ -31,7 +32,7 @@ test("Given a persisted decimal account map, when rehydrated for WASM, then nume
     watchlists: {},
     price_memories: {},
     plans: { plans: {} },
-  }) as { readonly snapshot: { readonly accounts: Map<number, unknown> } }
+  }) as { readonly snapshot: { readonly accounts: Map<string, unknown> } }
 
-  assert.deepEqual([...prepared.snapshot.accounts.keys()], [0])
+  assert.deepEqual([...prepared.snapshot.accounts.keys()], ["0", "9007199254740993"])
 });

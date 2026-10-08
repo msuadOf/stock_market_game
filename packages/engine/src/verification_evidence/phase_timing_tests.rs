@@ -56,7 +56,8 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             t1_enabled: true,
             report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
-            start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+            // 测量市场 tick 的 fixture 从交易日开局，元旦仍按日历休市。
+            start_date: crate::CivilDate::from_ymd(2030, 1, 2).unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
             dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
             flat_withholding_bp: Some(1000),

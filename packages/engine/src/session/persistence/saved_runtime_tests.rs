@@ -133,7 +133,7 @@ fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
 
     let mut wrong_owner = serde_json::to_value(&resaved).expect("save serializes");
     let institution_key = institution.0.to_string();
-    wrong_owner["belief_books"][institution_key]["npc"] = serde_json::json!(retail.0);
+    wrong_owner["belief_books"][institution_key]["npc"] = serde_json::to_value(retail).unwrap();
     let wrong_owner: SaveSlot = serde_json::from_value(wrong_owner).expect("typed edited save");
     assert!(matches!(
         GameSession::restore(&wrong_owner),
@@ -163,6 +163,7 @@ fn saved_fee_components(fees: FeeComponents) -> SavedFeeComponents {
 #[test]
 fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
     let mut session = session_with_runtime_state();
+    prepare_live_order_fixture(&mut session);
     let code = session.state.setup.stocks[0].code.clone();
     let institution = AccountId(1);
     let mut events = Vec::new();
@@ -235,7 +236,15 @@ fn gross_capped_fee_session() -> GameSession {
     GameSession::new(setup, 42).expect("gross-capped runtime_state fixture 必须有效")
 }
 
+// 首个真实市场 tick 建立日内时钟，后续 Market::place 建立活动事实，不手补保存标记。
+fn prepare_live_order_fixture(session: &mut GameSession) {
+    if session.tick() == 0 {
+        session.step().expect("日内委托 fixture 的首个交易 tick 必须成功");
+    }
+}
+
 fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
+    prepare_live_order_fixture(session);
     let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
@@ -294,6 +303,7 @@ fn install_receipt_prefix(session: &mut GameSession, envelope: EnvelopeKey) {
 }
 
 fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
+    prepare_live_order_fixture(session);
     let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
@@ -365,6 +375,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
+    prepare_live_order_fixture(session);
     let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
@@ -436,6 +447,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
+    prepare_live_order_fixture(session);
     let code = session.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),
@@ -656,10 +668,16 @@ fn runtime_envelope_rejects_injected_derived_fields() {
         "filled_value",
         "nominal",
     ] {
-        let mut encoded = serde_json::json!({
-            "key": { "account": 1, "stock": "600888", "order": 1, "side": "Sell" },
-            "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" }
-        });
+        // 用当前 typed codec 构造合法 key，防止旧数字／字符串 fixture 先于派生字段守卫失败。
+        let mut encoded = serde_json::to_value(SavedLiveEnvelope {
+            key: SavedEnvelopeKey {
+                account: AccountId(1),
+                stock: StockCode("600888".into()),
+                order: OrderId(1),
+                side: Side::Sell,
+            },
+            charged: SavedFeeComponents::default(),
+        }).unwrap();
         serde_json::from_value::<SavedLiveEnvelope>(encoded.clone())
             .expect("完整当前 envelope 在注入派生字段前应可解码");
         encoded[field] = serde_json::json!(0);
@@ -750,6 +768,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     setup.config.commission_min = Money::ZERO;
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let mut source = GameSession::new(setup, 43).expect("fee-history fixture must be valid");
+    prepare_live_order_fixture(&mut source);
     let code = source.state.setup.stocks[0].code.clone();
     let key = EnvelopeKey {
         account: AccountId(1),

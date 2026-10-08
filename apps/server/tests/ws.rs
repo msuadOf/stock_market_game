@@ -5,6 +5,8 @@
 //! - 随后持续收到 Event[] JSON（各带 seq）；
 //! - 缺 token / 未知 session → 握手失败（HTTP 错误状态，非 101）。
 
+include!("../../../packages/engine/test-support/simple_company.rs");
+
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -46,11 +48,17 @@ fn sample_setup_json() -> serde_json::Value {
         "history_len": 5,
         "start_date": "2030-01-02",
         "report_frequency": "Quarterly",
-        "company_operations": null,
-        "groups": [],
+        // ADR-0035 当前契约：Simple 共同入口，不携已删除的经营影子字段。
+        "company_system": simple_company_fixture!(engine; ["600101"]),
         "t1_enabled": true,
         "float_allocation": { "between_kinds": "Random", "within_kind": "Random" },
-        "simulation_policy_id": engine::SIMULATION_POLICY_ID
+        "simulation_policy_id": engine::SIMULATION_POLICY_ID,
+        "dividend_tax_mode": "FlatWithholding",
+        "flat_withholding_bp": 1000,
+        "rights_offering_enabled": false,
+        "issuer_repurchase_enabled": false,
+        "par_value_per_share": "100",
+        "auto_corporate_foundation": false
     })
 }
 

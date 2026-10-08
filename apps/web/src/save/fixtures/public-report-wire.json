@@ -1,0 +1,420 @@
+{
+  "id": "0",
+  "company_id": "C-600101",
+  "source": "SimpleGenerated",
+  "period": "2028-03-31",
+  "kind": "Quarter",
+  "version_sequence": "1",
+  "supersedes": null,
+  "approved_date": "2028-04-21",
+  "approved_second_of_day": 28800,
+  "published_date": "2028-04-21",
+  "published_second_of_day": 64800,
+  "accounting": {
+    "total_assets": "9007199254740993.01",
+    "total_liabilities": "0.00",
+    "total_equity": "9007199254740993.01",
+    "closing_cash": "0.00",
+    "report_period_net_income": "0.00",
+    "quarter_net_income": "0.00",
+    "net_income": "0.00",
+    "income_tax": "0.00",
+    "operating_cash_flow": "0.00",
+    "investing_cash_flow": "0.00",
+    "financing_cash_flow": "0.00",
+    "net_cash_change": "0.00",
+    "prior_year_net_income": {
+      "Unavailable": {
+        "reason": "NoPriorYearHistory"
+      }
+    }
+  },
+  "financials": {
+    "scope": {
+      "Standalone": {
+        "entity_id": "C-600101"
+      }
+    },
+    "window_start": "2028-01-01",
+    "window_end": "2028-03-31",
+    "version_kind": "Original",
+    "version_supersedes": null,
+    "balance_sheet": {
+      "asset_lines": [
+        {
+          "subject": "货币资金",
+          "amount": "0.00"
+        },
+        {
+          "subject": "应收账款",
+          "amount": "9007199254740993.01"
+        },
+        {
+          "subject": "Simple 分红账面资产调整（非现金）",
+          "amount": "0.00"
+        },
+        {
+          "subject": "Simple 发行人募集资金账面调整（非现金）",
+          "amount": "0.00"
+        },
+        {
+          "subject": "存货",
+          "amount": "0.00"
+        },
+        {
+          "subject": "固定资产",
+          "amount": "0.00"
+        },
+        {
+          "subject": "递延所得税资产",
+          "amount": "0.00"
+        }
+      ],
+      "total_assets": "9007199254740993.01",
+      "liability_lines": [
+        {
+          "subject": "短期借款",
+          "amount": "0.00"
+        },
+        {
+          "subject": "应付账款",
+          "amount": "0.00"
+        },
+        {
+          "subject": "应交税费",
+          "amount": "0.00"
+        },
+        {
+          "subject": "应付利息",
+          "amount": "0.00"
+        },
+        {
+          "subject": "长期借款",
+          "amount": "0.00"
+        },
+        {
+          "subject": "递延所得税负债",
+          "amount": "0.00"
+        }
+      ],
+      "total_liabilities": "0.00",
+      "equity_lines": [
+        {
+          "subject": "实收资本",
+          "amount": "9007199254740993.01"
+        },
+        {
+          "subject": "资本公积",
+          "amount": "0.00"
+        },
+        {
+          "subject": "法定公积金",
+          "amount": "0.00"
+        },
+        {
+          "subject": "未分配利润",
+          "amount": "0.00"
+        }
+      ],
+      "total_equity": "9007199254740993.01",
+      "equity_to_parent": "9007199254740993.01",
+      "liabilities_and_equity": "9007199254740993.01",
+      "closing_cash": "0.00",
+      "prior_year_end": {
+        "Available": {
+          "lines": [
+            {
+              "subject": "货币资金",
+              "amount": "0.00"
+            },
+            {
+              "subject": "应收账款",
+              "amount": "9007199254740993.01"
+            },
+            {
+              "subject": "Simple 分红账面资产调整（非现金）",
+              "amount": "0.00"
+            },
+            {
+              "subject": "Simple 发行人募集资金账面调整（非现金）",
+              "amount": "0.00"
+            },
+            {
+              "subject": "存货",
+              "amount": "0.00"
+            },
+            {
+              "subject": "固定资产",
+              "amount": "0.00"
+            },
+            {
+              "subject": "递延所得税资产",
+              "amount": "0.00"
+            },
+            {
+              "subject": "短期借款",
+              "amount": "0.00"
+            },
+            {
+              "subject": "应付账款",
+              "amount": "0.00"
+            },
+            {
+              "subject": "应交税费",
+              "amount": "0.00"
+            },
+            {
+              "subject": "应付利息",
+              "amount": "0.00"
+            },
+            {
+              "subject": "长期借款",
+              "amount": "0.00"
+            },
+            {
+              "subject": "递延所得税负债",
+              "amount": "0.00"
+            },
+            {
+              "subject": "实收资本",
+              "amount": "9007199254740993.01"
+            },
+            {
+              "subject": "资本公积",
+              "amount": "0.00"
+            },
+            {
+              "subject": "法定公积金",
+              "amount": "0.00"
+            },
+            {
+              "subject": "未分配利润",
+              "amount": "0.00"
+            }
+          ],
+          "total_assets": "9007199254740993.01",
+          "total_liabilities": "0.00",
+          "total_equity": "9007199254740993.01",
+          "equity_to_parent": "9007199254740993.01",
+          "liabilities_and_equity": "9007199254740993.01"
+        }
+      }
+    },
+    "income": {
+      "report_period": {
+        "operating": [
+          {
+            "subject": "营业收入",
+            "amount": "0.00"
+          },
+          {
+            "subject": "营业成本",
+            "amount": "0.00"
+          },
+          {
+            "subject": "销售费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "管理费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "研发费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "减值损失",
+            "amount": "0.00"
+          }
+        ],
+        "operating_subtotal": "0.00",
+        "investing": [],
+        "investing_subtotal": "0.00",
+        "financing": [
+          {
+            "subject": "财务费用",
+            "amount": "0.00"
+          }
+        ],
+        "financing_subtotal": "0.00",
+        "discontinued": [],
+        "discontinued_subtotal": "0.00",
+        "income_tax": "0.00",
+        "net_income": "0.00"
+      },
+      "quarter": {
+        "operating": [
+          {
+            "subject": "营业收入",
+            "amount": "0.00"
+          },
+          {
+            "subject": "营业成本",
+            "amount": "0.00"
+          },
+          {
+            "subject": "销售费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "管理费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "研发费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "减值损失",
+            "amount": "0.00"
+          }
+        ],
+        "operating_subtotal": "0.00",
+        "investing": [],
+        "investing_subtotal": "0.00",
+        "financing": [
+          {
+            "subject": "财务费用",
+            "amount": "0.00"
+          }
+        ],
+        "financing_subtotal": "0.00",
+        "discontinued": [],
+        "discontinued_subtotal": "0.00",
+        "income_tax": "0.00",
+        "net_income": "0.00"
+      },
+      "cumulative": {
+        "operating": [
+          {
+            "subject": "营业收入",
+            "amount": "0.00"
+          },
+          {
+            "subject": "营业成本",
+            "amount": "0.00"
+          },
+          {
+            "subject": "销售费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "管理费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "研发费用",
+            "amount": "0.00"
+          },
+          {
+            "subject": "减值损失",
+            "amount": "0.00"
+          }
+        ],
+        "operating_subtotal": "0.00",
+        "investing": [],
+        "investing_subtotal": "0.00",
+        "financing": [
+          {
+            "subject": "财务费用",
+            "amount": "0.00"
+          }
+        ],
+        "financing_subtotal": "0.00",
+        "discontinued": [],
+        "discontinued_subtotal": "0.00",
+        "income_tax": "0.00",
+        "net_income": "0.00"
+      },
+      "prior_year": {
+        "Unavailable": {
+          "reason": "NoPriorYearHistory"
+        }
+      },
+      "minority_net_income": null,
+      "net_income_to_parent": null,
+      "report_period_net_income_to_parent": null
+    },
+    "cash_flow": {
+      "operating": "0.00",
+      "investing": "0.00",
+      "financing": "0.00",
+      "net_change": "0.00",
+      "opening_cash": "0.00",
+      "closing_cash": "0.00",
+      "indirect": [
+        {
+          "subject": "净利润",
+          "amount": "0.00"
+        },
+        {
+          "subject": "投资活动现金流量净额",
+          "amount": "0.00"
+        },
+        {
+          "subject": "筹资活动现金流量净额",
+          "amount": "0.00"
+        }
+      ]
+    },
+    "equity": {
+      "opening_parent": "9007199254740993.01",
+      "net_income": "0.00",
+      "other_comprehensive": "0.00",
+      "capital_contributions": "0.00",
+      "distributions": "0.00",
+      "closing_parent": "9007199254740993.01",
+      "opening_minority": null,
+      "minority_net_income": null,
+      "closing_minority": null
+    },
+    "notes": {
+      "items": [
+        {
+          "code": "1122",
+          "name": "应收账款",
+          "target": {
+            "BalanceSheet": "应收账款"
+          },
+          "opening": "9007199254740993.01",
+          "movement": "0.00",
+          "ytd_movement": "0.00",
+          "closing": "9007199254740993.01"
+        },
+        {
+          "code": "4001",
+          "name": "实收资本",
+          "target": {
+            "BalanceSheet": "实收资本"
+          },
+          "opening": "-9007199254740993.01",
+          "movement": "0.00",
+          "ytd_movement": "0.00",
+          "closing": "-9007199254740993.01"
+        }
+      ],
+      "consolidation_split_items": []
+    },
+    "roe": {
+      "basis": "AttributableToOrdinaryShareholders",
+      "ordinary_roe": {
+        "Available": {
+          "numerator": "0",
+          "denominator": "1"
+        }
+      },
+      "adjusted_roe": {
+        "Unavailable": {
+          "reason": "MissingNonRecurringIncomeFacts"
+        }
+      },
+      "weighted_average_parent_equity_cents": {
+        "Available": {
+          "numerator": "5404319552844595806",
+          "denominator": "6"
+        }
+      }
+    }
+  }
+}

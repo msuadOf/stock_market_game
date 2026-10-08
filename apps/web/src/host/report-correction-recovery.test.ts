@@ -58,7 +58,7 @@ for (const failure of [
     try {
       const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const worker = FailureWorker.instances.at(-1)!;
-      worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0) });
+      worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
       host = await creating;
       worker.emit({ type: "failure", generation: 1, where: "session.dayEnd", ...failure });
       assert.equal(worker.terminations, 1);
@@ -87,7 +87,7 @@ test("Worker财报更正日终拒绝保留健康查询、取消和恢复能力�
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = FakeWorker.instances[0]!;
-    worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0) });
+    worker.emit({ type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
     host = await creating;
     const failures: unknown[] = [];
     const starting = host.start(() => true, (failure) => failures.push(failure));

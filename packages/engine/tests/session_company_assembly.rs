@@ -66,10 +66,11 @@ fn four_explicit_financial_kinds_close_and_publish_real_simple_reports() {
     setup.stocks = stocks;
 
     let mut session = GameSession::new(setup, 41).unwrap();
-    for _ in 0..2 {
-        session.step().unwrap();
-    }
+    // 2030-03-31 为周日：四行业结账由自然日日结驱动，不伪造市场 tick。
+    assert_eq!(session.civil_clock().phase(), engine::session::CivilPhase::ClosedDay);
+    let tick_before = session.tick();
     session.end_civil_day().unwrap();
+    assert_eq!(session.tick(), tick_before);
     let save = session.save().unwrap();
     let period = AccountingPeriod::from_iso("2030-03").unwrap();
     for (index, kind) in kinds.into_iter().enumerate() {
@@ -104,6 +105,10 @@ fn four_explicit_financial_kinds_close_and_publish_real_simple_reports() {
     }
     let mut restored = GameSession::restore(&save).unwrap();
     assert_eq!(restored.civil_date(), session.civil_date());
+    // 次日 2030-04-01 开市，完成 fixture 的 2 个真实市场 tick 后才允许日结。
+    for _ in 0..2 {
+        restored.step().unwrap();
+    }
     restored.end_civil_day().unwrap();
     assert_eq!(restored.civil_date(), session.civil_date().next().unwrap());
 }

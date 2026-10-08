@@ -425,7 +425,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
         "内存投影完整保存原始卖方真实成交和实际费用"
     );
     let restored_error = GameSession::restore(&saved).err().expect("非法fixture必须显式拒绝恢复");
-    assert!(matches!(restored_error, crate::SessionError::InvalidSave(ref reason) if reason.contains(if t1_enabled { "snapshot account set does not exactly match setup" } else { "formal A-share sessions require T+1 settlement" })), "低层fixture额外安装的第二Player不属于setup，不能冒充合法公共会话；合法恢复由真实Protocol用例验证：{restored_error}");
+    assert!(matches!(restored_error, crate::SessionError::InvalidSave(ref reason) if reason.contains(if t1_enabled { "账户集合必须恰好为NPC与市场成员账户" } else { "formal A-share sessions require T+1 settlement" })), "低层fixture额外安装的第二Player不属于setup，不能冒充合法公共会话；合法恢复由真实Protocol用例验证：{restored_error}");
     assert!(authority.state.pending_player.is_empty());
     assert_eq!(authority.state.next_order_id, 3);
     assert_eq!(authority.seq(), 2);
@@ -437,7 +437,11 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
 
     let buyer = &authority.state.accounts[&PLAYER];
     let buyer_position = &buyer.positions()[&code];
-    assert_eq!(buyer.cash(), Money::from_cents(9_899_499));
+    // 精确费用与成交金额不变；余额以实际 fixture 起始现金扣减，不能写死旧产品默认。
+    assert_eq!(
+        buyer.cash(),
+        authority.state.setup.config.starting_cash.sub(Money::from_cents(100_501)).unwrap()
+    );
     assert_eq!(buyer_position.qty(), LOT);
     assert_eq!(buyer_position.t1_locked(), expected_locked);
     assert_eq!(buyer_position.invested_cents(), 100_000);

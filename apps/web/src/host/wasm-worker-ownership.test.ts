@@ -66,9 +66,12 @@ async function createFixture(
   const id = ++fixtureId;
   register(registerHooks({
     resolve(specifier, context, nextResolve) {
-      const resolved = nextResolve(specifier, context);
-      if (resolved.url.endsWith("/wasm-pkg/web_wasm.js")) return { ...resolved, url: `${resolved.url}?owner-test=${id}` };
-      return resolved;
+      // mock bindings 在文件解析之前接管，不依赖被忽略的实际 WASM 构建产物。
+      if (specifier.endsWith("/wasm-pkg/web_wasm.js")) {
+        const url = new URL(specifier, context.parentURL).href;
+        return { shortCircuit: true, url: `${url}?owner-test=${id}` };
+      }
+      return nextResolve(specifier, context);
     },
     load(url, context, nextLoad) {
       if (url.includes("/wasm-pkg/web_wasm.js?owner-test=")) {

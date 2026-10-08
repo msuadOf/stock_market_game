@@ -216,8 +216,9 @@ fn payment_history_rejects_invalid_amount_or_unknown_company() {
         let mut value = serde_json::to_value(&ops).unwrap();
         value["payment_failures"][date.to_iso()][0][field] =
             serde_json::Value::String(invalid.into());
-        let restored: CompanyOperations = serde_json::from_value(value).unwrap();
-        assert!(restored.validate_payment_history().is_err());
+        // 当前 Deserialize 已执行付款历史校验，坏事实必须在获得 runtime 状态前拒绝。
+        let error = serde_json::from_value::<CompanyOperations>(value).unwrap_err();
+        assert!(error.to_string().contains("invalid company payment history"), "{error}");
     }
     let mut future = serde_json::to_value(&ops).unwrap();
     let failures = future["payment_failures"]
@@ -226,8 +227,8 @@ fn payment_history_rejects_invalid_amount_or_unknown_company() {
         .remove(&date.to_iso())
         .unwrap();
     future["payment_failures"][date.next().unwrap().to_iso()] = failures;
-    let restored: CompanyOperations = serde_json::from_value(future).unwrap();
-    assert!(restored.validate_payment_history().is_err());
+    let error = serde_json::from_value::<CompanyOperations>(future).unwrap_err();
+    assert!(error.to_string().contains("invalid company payment history"), "{error}");
 }
 
 #[test]

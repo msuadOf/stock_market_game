@@ -8,8 +8,9 @@ describe("Tauri host startup contract", () => {
     const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
     const timelineSource = readFileSync(new URL("./tauri-timeline-state.ts", import.meta.url), "utf8");
 
-    assert.match(appSource, /return createTauriHost\(setup, seed\)/);
-    assert.match(appSource, /const host = await createHost\(setup, seed, startupTarget\)/);
+    // 启动槽恢复参数已进入同一异步创建链；仍须 await 后才配置宿主，不删顺序门禁。
+    assert.match(appSource, /return createTauriHost\(setup, seed, \{ resumeArchive \}\)/);
+    assert.match(appSource, /const host = await createHost\(setup, seed, startupTarget, resumeArchive\)/);
     assert.match(hostSource, /export async function createTauriHost/);
     assert.match(hostSource, /await invoke<unknown>\("engine_baseline", \{ sessionId, generation: timeline\.currentGeneration\(\) \}\)/);
     assert.match(hostSource, /timeline\.installInitialBaseline\(initialBaseline\)/);
@@ -62,7 +63,8 @@ describe("Tauri host startup contract", () => {
   it("pauses a host that finishes initialization after the page became hidden", () => {
     const appSource = readFileSync(new URL("../app/useSessionHostLifecycle.ts", import.meta.url), "utf8");
     const startIndex = appSource.indexOf("await host.start(");
-    const hiddenStopIndex = appSource.indexOf("if (isDocumentHidden()) await host.stop();", startIndex);
+    // 后台暂停仅适用于本地宿主；远程页面隐藏不能暂停共享市场，Tauri 仍必须暂停。
+    const hiddenStopIndex = appSource.indexOf("if (host.capabilities.persistence !== \"remote\" && isDocumentHidden()) await host.stop();", startIndex);
 
     assert.notEqual(startIndex, -1);
     assert.notEqual(hiddenStopIndex, -1);

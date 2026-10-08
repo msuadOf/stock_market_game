@@ -29,7 +29,8 @@ function runtime(strategyStates: unknown) {
   return {
     poisoned: false, next_receipt_base: "0", live_envelopes: [],
     retail_projection_seen: [], strategy_states: strategyStates,
-    personal_trade_confirmations: {},
+    // 当前 runtime 必须显式携带分钟历史；本策略 fixture 未发生任何行情采样。
+    active_minute_history: {}, personal_trade_confirmations: {},
   }
 }
 
