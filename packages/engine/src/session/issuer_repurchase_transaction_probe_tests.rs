@@ -127,6 +127,8 @@ fn probe_plan(issuer: &CompanyId, stock: &StockCode) -> IssuerRepurchasePlan {
         total_budget: Money::from_cents(5_000_000),
         max_shares: 100,
         purpose: RepurchasePurpose::ReduceCapital,
+        completion_policy:
+            crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion,
     }
 }
 

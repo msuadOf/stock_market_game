@@ -282,7 +282,8 @@ pub(crate) fn active_plan_views(
             IssuerRepurchaseStatus::Approved => ActivePlanStage::Approved,
             IssuerRepurchaseStatus::Announced => ActivePlanStage::Announced,
             IssuerRepurchaseStatus::Executing => ActivePlanStage::Executing,
-            // Completed 未注销仍是持有中的未完成方案（注销后才终态）。
+            // Completed 为 H 批默认注销策略下的短暂过渡态（完成判定后的首个
+            // 日终自动注销；零成交方案无股可核减、保持本终态）。
             IssuerRepurchaseStatus::Completed => ActivePlanStage::Completed,
             IssuerRepurchaseStatus::Cancelled => unreachable!("Cancelled 已在上方过滤"),
         };
@@ -384,8 +385,10 @@ fn action_readiness(
 
     // 回购：新局开关 + 同证券唯一未完成方案（受理预检）。唯一性口径与
     // `approve_issuer_repurchase` 一致：只挡非终态（Approved/Announced/Executing）
-    // 方案；Completed（未注销）不阻塞新方案受理（F 修复轮建议-3：曾把
-    // Completed 也计入阻塞，与受理口径反向漂移——报「不满足」但实际可受理）。
+    // 方案；Completed 不阻塞新方案受理（F 修复轮建议-3：曾把 Completed 也计入
+    // 阻塞，与受理口径反向漂移——报「不满足」但实际可受理）。H 批起完成方案
+    // 于完成判定后的首个日终自动注销（默认注销策略），Completed 只是过渡态；
+    // 零成交方案无股份可核减、保持 Completed 终态，同样不阻塞。
     let mut repurchase_blockers = Vec::new();
     if !repurchase_enabled {
         repurchase_blockers.push("新局未启用发行人回购机制（issuer_repurchase_enabled=false）".into());
@@ -396,7 +399,9 @@ fn action_readiness(
                 IssuerRepurchaseStatus::Completed | IssuerRepurchaseStatus::Cancelled
             )
     }) {
-        repurchase_blockers.push("同证券已存在未完成回购方案（唯一性预检）".into());
+        repurchase_blockers.push(
+            "同证券已存在未完成回购方案（唯一性预检；既有方案完成后的首个日终自动注销，之后可提新方案）".into(),
+        );
     }
 
     // 拆股／缩股：受理的静态前置——法定事实为硬前置（`approve_share_split`

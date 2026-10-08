@@ -2,8 +2,8 @@
 //! （ADR-0038，2026-10-07 M 批）。
 
 use super::{
-    IssuerRepurchaseBook, IssuerRepurchaseError, IssuerRepurchasePlan, RepurchaseFillRecord,
-    RepurchasePurpose,
+    IssuerRepurchaseBook, IssuerRepurchaseError, IssuerRepurchasePlan, RepurchaseCompletionPolicy,
+    RepurchaseFillRecord, RepurchasePurpose,
 };
 use crate::company::CompanyId;
 use crate::{account::StockCode, calendar::CivilDate, money::Money};
@@ -27,6 +27,7 @@ fn plan() -> IssuerRepurchasePlan {
         total_budget: Money::from_cents(3_000_000),
         max_shares: 2_500,
         purpose: RepurchasePurpose::ReduceCapital,
+        completion_policy: RepurchaseCompletionPolicy::CancelOnCompletion,
     }
 }
 

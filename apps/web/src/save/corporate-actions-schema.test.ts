@@ -484,7 +484,7 @@ test("税账日结允许同日正向公司行为续记且拒绝同日非正向�
 
 const engineRightsPlan = { event_id: "rights-event", approval_reference: "board-rights", issuer: "C-600101", stock: "600101", exchange: "sse", approved_on: "2030-01-02", announced_on: "2030-01-03", registered_on: "2030-01-06", payment_start_on: "2030-01-07", payment_deadline_on: "2030-01-08", ex_rights_on: "2030-01-09", settlement_on: "2030-01-10", listing_on: "2030-01-10", price_per_share: "10", mode: { RightsToAllShareholders: { shares_per_existing_share_micros: "500000" } }, npc_subscription_strategy: "FullByDefault" }
 
-const engineRepurchasePlan = { event_id: "repurchase-event", approval_reference: "board-repurchase", issuer: "C-600101", stock: "600101", exchange: "sse", approved_on: "2030-01-02", announced_on: "2030-01-02", window_start_on: "2030-01-03", window_deadline_on: "2030-01-07", price_cap_per_share: "1100", total_budget: "5000000", max_shares: "100", purpose: "ReduceCapital" }
+const engineRepurchasePlan = { event_id: "repurchase-event", approval_reference: "board-repurchase", issuer: "C-600101", stock: "600101", exchange: "sse", approved_on: "2030-01-02", announced_on: "2030-01-02", window_start_on: "2030-01-03", window_deadline_on: "2030-01-07", price_cap_per_share: "1100", total_budget: "5000000", max_shares: "100", purpose: "ReduceCapital", completion_policy: "CancelOnCompletion" }
 
 test("配股 plan 的交易所枚举域与 engine 真实序列化值一致", async () => {
   const { parseRightsOfferingEventPlanValue } = await import("./schema/corporate-actions.ts")
@@ -499,6 +499,14 @@ test("回购 plan 的交易所枚举域与 engine 真实序列化值一致", asy
   assert.equal(parseIssuerRepurchasePlanValue(engineRepurchasePlan, "plan").exchange, "sse")
   assert.throws(() => parseIssuerRepurchasePlanValue({ ...engineRepurchasePlan, exchange: "Shanghai" }, "plan"), /exchange.*枚举/)
   assert.throws(() => parseIssuerRepurchasePlanValue({ ...engineRepurchasePlan, exchange: "Shenzhen" }, "plan"), /exchange.*枚举/)
+})
+
+test("回购 plan 的处置策略域与 engine 枚举一致：缺字段/未知变体显式拒绝", async () => {
+  const { parseIssuerRepurchasePlanValue } = await import("./schema/corporate-actions.ts")
+  assert.equal(parseIssuerRepurchasePlanValue(engineRepurchasePlan, "plan").completion_policy, "CancelOnCompletion")
+  assert.throws(() => parseIssuerRepurchasePlanValue({ ...engineRepurchasePlan, completion_policy: "HoldAsTreasury" }, "plan"), /completion_policy.*枚举/)
+  const { completion_policy: _omitted, ...withoutPolicy } = engineRepurchasePlan
+  assert.throws(() => parseIssuerRepurchasePlanValue(withoutPolicy, "plan"), /completion_policy/)
 })
 
 test("分红与送转 plan 的交易所按 setup 股票交易所映射勾稽", () => {

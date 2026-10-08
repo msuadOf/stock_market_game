@@ -231,18 +231,20 @@ fn repurchase_readiness_blocks_while_unfinished_plan_exists() {
     );
 }
 
-/// F 修复轮建议-3（正向）：回购 **Completed（尚未注销）** 按受理口径
-/// （`approve_issuer_repurchase` 的唯一性预检只挡 `!Completed && !Cancelled`）
-/// 不阻塞新方案——readiness 不得反向漂移报「不满足」（曾把 Completed 也计入
-/// 阻塞，与受理口径不一致）。
+/// F 修复轮建议-3（正向，H 批口径更新）：回购 **Completed（尚未注销）** 按
+/// 受理口径（`approve_issuer_repurchase` 的唯一性预检只挡 `!Completed &&
+/// !Cancelled`）不阻塞新方案——readiness 不得反向漂移报「不满足」（曾把
+/// Completed 也计入阻塞，与受理口径不一致）。H 批起 Completed 为短暂过渡态
+/// （数量用尽当日日终完成、次日终自动注销），过渡窗口内（次日终之前）查询
+/// readiness 必须仍为满足；自动注销后的 Cancelled 同样不阻塞。
 #[test]
 fn repurchase_readiness_allows_new_plan_when_existing_is_completed_not_cancelled() {
     let (mut session, stock, issuer, _account) = repurchase_session_with_registry(true);
     session
         .approve_issuer_repurchase(repurchase_plan(&issuer, &stock))
         .unwrap();
-    // 与 repurchase_completion 测试同流程推进：窗口内玩家卖单与发行人委托
-    // 撮合，过窗口截止并再日终一次 → Completed（未执行注销）。
+    // 与 repurchase_completion 测试同流程推进：窗口首日玩家卖单与发行人委托
+    // 撮合满额（= max_shares → 数量用尽）→ 当日日终 Completed（短暂过渡态）。
     while session.civil_date() < CivilDate::from_iso("2030-01-03").unwrap() {
         if session.civil_clock().phase() != crate::session::CivilPhase::ClosedDay {
             for _ in 0..session.state.setup.ticks_per_day {
@@ -266,20 +268,30 @@ fn repurchase_readiness_allows_new_plan_when_existing_is_completed_not_cancelled
         session.step().unwrap();
     }
     session.end_civil_day().unwrap();
-    while session.civil_date() <= CivilDate::from_iso("2030-01-07").unwrap() {
-        repurchase_complete_day(&mut session);
-    }
-    repurchase_complete_day(&mut session);
     assert_eq!(
         session.state.corporate_actions.issuer_repurchases[0].status(),
         &IssuerRepurchaseStatus::Completed,
-        "前置：回购必须已到 Completed（未注销）"
+        "前置：回购必须已到 Completed（过渡态）"
     );
     let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
     let readiness = readiness_of(&caps, CorporateActionKind::IssuerRepurchase);
     assert!(
         readiness.ready,
-        "Completed（未注销）按受理口径不阻塞新方案，readiness 不得反向漂移：{:?}",
+        "Completed（过渡态）按受理口径不阻塞新方案，readiness 不得反向漂移：{:?}",
+        readiness.blockers
+    );
+    // 次日终自动注销后（Cancelled 终态）同样不阻塞。
+    repurchase_complete_day(&mut session);
+    assert_eq!(
+        session.state.corporate_actions.issuer_repurchases[0].status(),
+        &IssuerRepurchaseStatus::Cancelled,
+        "H 批：完成后的次日终自动注销"
+    );
+    let caps = session.company_capabilities(&issuer, AccountId(0)).unwrap();
+    let readiness = readiness_of(&caps, CorporateActionKind::IssuerRepurchase);
+    assert!(
+        readiness.ready,
+        "Cancelled 终态不阻塞新方案：{:?}",
         readiness.blockers
     );
 }
