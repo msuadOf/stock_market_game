@@ -9,6 +9,7 @@ import { currentSaveFixture } from "../save/current-save-fixture.ts";
 import { requestWorkerPersonalTradeHistory } from "./worker-host.ts";
 import { requestWorkerMarketHistory } from "./worker-host.ts";
 import { requestWorkerCurrentMinuteHistory } from "./worker-host.ts";
+import { WasmSessionSlot } from "./wasm-session-slot.ts";
 
 class FakeWorker implements WorkerRequestPort {
   readonly listeners = new Set<(event: MessageEvent) => void>();
@@ -256,6 +257,119 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
     }
   });
 }
+
+test("F2 保会话 fallback 形状经真实 notifyFailure 分流：REPORT_CORRECTION_REJECTED+recoverable 不销毁会话", { timeout: 10000 }, async () => {
+  // 诊断降级不能把可恢复拒绝变成销毁会话的 fatal failure。
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class RecoverableFailureWorker extends EventTarget {
+    static current: RecoverableFailureWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    terminations = 0;
+    constructor() { super(); RecoverableFailureWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminations++; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: RecoverableFailureWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = RecoverableFailureWorker.current;
+    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    host = await creating;
+    const failures: unknown[] = [];
+    const starting = host.start(() => true, (failure) => failures.push(failure));
+    worker.emit({ type: "started", requestId: worker.sent.at(-1)!.requestId, generation: 1 });
+    await starting;
+    const preserved = {
+      code: "REPORT_CORRECTION_REJECTED", where: "engine::report_corrections",
+      message: "现金不足，无法受理财报更正", recoverable: true,
+      recoveryActions: ["核对现金余额后重新提交"],
+      cause: {
+        code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.submitReportCorrection",
+        message: "发送结构化错误详情失败：function uncloneableCause() {} could not be cloned.",
+        cause: { code: "REPORT_CORRECTION_REJECTED", message: "现金不足，无法受理财报更正", where: "engine::report_corrections" },
+      },
+    };
+    worker.emit({ type: "failure", generation: 1, ...preserved });
+    assert.equal(worker.terminations, 0, "可恢复拒绝不得销毁会话");
+    assert.equal(failures.length, 1);
+    assert.deepEqual(failures[0], preserved);
+    const query = host.queryReportCorrections();
+    worker.emit({ type: "reportCorrections", requestId: worker.sent.at(-1)!.requestId, generation: 1, value: { pending: [], completed: {} } });
+    assert.deepEqual(await query, { pending: [], completed: {} });
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("真实 Worker failure 投影经 structuredClone 与 notifyFailure 保会话：自有 map/every、空洞及第二读 getter", { timeout: 10000 }, async (context) => {
+  const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const originalSelf = Object.getOwnPropertyDescriptor(globalThis, "self");
+  class RecoveryWorker extends EventTarget {
+    static current: RecoveryWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    terminations = 0;
+    constructor() { super(); RecoveryWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminations++; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: RecoveryWorker });
+  Object.defineProperty(globalThis, "self", {
+    configurable: true,
+    value: { postMessage: (message: unknown) => RecoveryWorker.current.emit(structuredClone(message)), addEventListener() {} },
+  });
+  context.mock.method(WasmSessionSlot.prototype, "readGeneration", () => 1);
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const { postFailure } = await import("./wasm-worker.ts");
+    for (const scenario of ["map", "every", "sparse", "changing", "custom-success", "custom-fallback", "custom-invalid"] as const) {
+      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+      const worker = RecoveryWorker.current;
+      worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
+      host = await creating;
+      const failures: unknown[] = [];
+      const starting = host.start(() => true, (failure) => { failures.push(failure); });
+      worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
+      await starting;
+      let reads = 0, mapCalls = 0;
+      const actions = ["核对现金余额后重新提交"];
+      if (scenario === "sparse") actions.length = 2;
+      else if (scenario === "changing") Object.defineProperty(actions, "0", { enumerable: true, get() { return ++reads === 1 ? "核对现金余额后重新提交" : 17; } });
+      else if (scenario.startsWith("custom-")) {
+        if (scenario === "custom-invalid") Object.defineProperty(actions, "0", { value: 17 });
+        Object.assign(actions, { map() { mapCalls++; return Object.assign(["核对现金余额后重新提交"], { map: 17 }); } });
+      } else Object.assign(actions, { [scenario]: 17, extra: "不应穿过 Worker 边界" });
+      postFailure("wasm-worker.submitReportCorrection", {
+        code: "REPORT_CORRECTION_REJECTED", message: "更正被拒绝", recoverable: true,
+        cause: scenario === "custom-success" || scenario === "custom-invalid" ? { receipt: "可克隆详情" } : function uncloneableCause() {}, recoveryActions: actions,
+      });
+      assert.equal(worker.terminations, 0, scenario);
+      assert.equal(failures.length, 1, scenario);
+      const reported = failures[0] as Record<string, unknown>;
+      assert.equal(reported.code, "REPORT_CORRECTION_REJECTED", scenario);
+      assert.equal(reported.recoverable, true, scenario);
+      if (["map", "every", "custom-success", "custom-fallback"].includes(scenario)) assert.deepEqual(reported.recoveryActions, ["核对现金余额后重新提交"], scenario);
+      else assert.equal(reported.recoveryActions, undefined, scenario);
+      if (scenario === "changing") assert.equal(reads, 2);
+      assert.equal(mapCalls, 0, scenario);
+      const query = host.queryReportCorrections();
+      worker.emit({ type: "reportCorrections", requestId: worker.sent.at(-1)!.requestId, generation: 1, value: { pending: [], completed: {} } });
+      assert.deepEqual(await query, { pending: [], completed: {} }, scenario);
+      await host.dispose();
+      host = undefined;
+    }
+  } finally {
+    await host?.dispose();
+    if (originalWorker === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", originalWorker);
+    if (originalSelf === undefined) delete (globalThis as { self?: unknown }).self;
+    else Object.defineProperty(globalThis, "self", originalSelf);
+  }
+});
 
 test("审计G53：Worker恢复必须推进generation，不能接受相同或更小代", async () => {
   for (const nextGeneration of [1, 2, 3]) {
