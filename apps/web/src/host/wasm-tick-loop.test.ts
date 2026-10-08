@@ -8,6 +8,7 @@ async function fixture(autoAcknowledge = true) {
   let nextTimer = 0;
   let steps = 0;
   let failure: unknown = null;
+  let postFailure: unknown = null;
   let update: unknown = tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1));
   const timers = new Map<number, { callback: () => void; delay: number }>();
   const posted: unknown[] = [];
@@ -22,11 +23,14 @@ async function fixture(autoAcknowledge = true) {
     schedule: (callback: () => void, delay: number) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
     cancel: (id: number) => { timers.delete(id); },
     post: (message: unknown) => {
+      if (postFailure !== null) throw postFailure;
       posted.push(message);
       const delivery = message as { type: string; generation: number; deliveryId: number };
       if (autoAcknowledge && ["protocol", "protocolBatch"].includes(delivery.type)) loop.acknowledge(delivery.generation, delivery.deliveryId);
     },
-    failure: (where: string, error: unknown) => { failed.push({ where, error }); },
+    failure: (where: string, error: unknown, stopped?: { readonly ok: boolean; readonly error?: unknown }) => {
+      failed.push({ where, error, ...(stopped?.ok === false ? { stopError: stopped.error } : {}) });
+    },
   });
   const next = () => {
     const entry = timers.entries().next().value;
@@ -34,7 +38,7 @@ async function fixture(autoAcknowledge = true) {
     timers.delete(entry[0]);
     return entry[1];
   };
-  return { loop, posted, failed, timers, next, clock: (value: number) => { now = value; }, steps: () => steps, update: (value: unknown) => { update = value; }, fail: (value: unknown) => { failure = value; } };
+  return { loop, posted, failed, timers, next, clock: (value: number) => { now = value; }, steps: () => steps, update: (value: unknown) => { update = value; }, fail: (value: unknown) => { failure = value; }, failPost: (value: unknown) => { postFailure = value; } };
 }
 
 test("WasmTickLoop start/stop 幂等且停止后旧 timer 回调不推进市场", async () => {
@@ -210,6 +214,47 @@ test("WasmTickLoop 基线控制与 stop 先交付不足16ms尾批次，不能让
   assert.equal(fixtureState.posted.length, 1);
   fixtureState.loop.stop();
   assert.equal(fixtureState.posted.length, 1);
+});
+
+test("WasmTickLoop 正常 stop 自己交付已提交尾帧再停 timer", { timeout: 10000 }, async () => {
+  const f = await fixture(false);
+  f.loop.start();
+  const update = tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1));
+  f.loop.publish(update, false);
+  assert.deepEqual(f.posted, []);
+  f.loop.stop();
+  assert.deepEqual(f.posted, [{ type: "protocol", generation: 3, deliveryId: 1, update, civilDate: null, revision: null }]);
+  assert.equal(f.loop.isRunning(), false);
+  assert.equal(f.timers.size, 0);
+});
+
+test("WasmTickLoop stop 尾帧交付失败仍清 timer 与 running，失败显式上抛", { timeout: 10000 }, async () => {
+  const f = await fixture(false);
+  f.loop.start();
+  const oldTimer = f.timers.values().next().value!;
+  f.loop.publish(tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)), false);
+  const sendError = new Error("pending frame port dead");
+  f.failPost(sendError);
+  assert.throws(() => f.loop.stop(), (error) => error === sendError);
+  assert.equal(f.loop.isRunning(), false);
+  assert.equal(f.loop.readSpeedMetrics().running, false);
+  assert.equal(f.timers.size, 0);
+  oldTimer.callback();
+  assert.equal(f.steps(), 0);
+});
+
+test("WasmTickLoop stepOnce 原始异常不被 stop 的死端口异常覆盖，两者共同进入报告", { timeout: 10000 }, async () => {
+  const f = await fixture(false);
+  f.loop.start();
+  f.loop.publish(tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)), false);
+  const original = { code: "STEP_FATAL", message: "原始撮合失败", cause: { receipt: "original" } };
+  const sendError = new Error("pending frame port dead");
+  f.fail(original);
+  f.failPost(sendError);
+  assert.equal(f.loop.stepOnce(false), false);
+  assert.equal(f.loop.isRunning(), false);
+  assert.equal(f.timers.size, 0);
+  assert.deepEqual(f.failed, [{ where: "wasm-worker.step", error: original, stopError: sendError }]);
 });
 
 test("WasmTickLoop 临近 tick 时按剩余 interval 唤醒，barrier frame 不安排新 timer", async () => {

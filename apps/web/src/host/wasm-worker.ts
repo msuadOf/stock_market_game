@@ -2,10 +2,11 @@ import { parseSaveSlot } from "../save/save-schema.ts";
 import { parseTurnoverCents } from "../utils/turnover.ts";
 import { normalizePublicReportAvailability, normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
-import { WasmTickLoop } from "./wasm-tick-loop.ts";
-import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
+import { WasmTickLoop, type WasmLoopStopResult } from "./wasm-tick-loop.ts";
+import { classifyWasmFailure, describeWasmFailure, type WasmFailureClassification } from "./wasm-failure.ts";
 import { resolveThreadCount } from "./thread-count.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
+import { ProtocolError } from "./protocol/types.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
 import type { HostFailure } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
@@ -81,17 +82,69 @@ const loop = new WasmTickLoop({
   schedule: (callback, delay) => setTimeout(callback, delay),
   cancel: (timer) => clearTimeout(timer),
   post: (message) => ctx.postMessage(message),
-  failure: postFailure,
+  failure: (where, error, stopped) => postFailureDetails(where, withStopFailure(workerFailureDetails(error, where, classifyWasmFailure(error)), stopped)),
 });
 
 type WorkerFailureDetails = HostFailure;
 
-function structuredHostFailure(error: unknown, where: string): WorkerFailureDetails | null {
-  const classified = classifyWasmFailure(error);
+// 成功克隆的 undefined 与克隆失败必须区分，才能保留显式非法字段。
+type CloneOutcome = { readonly ok: true; readonly value: unknown } | { readonly ok: false };
+function cloneSafeSnapshot(value: unknown): CloneOutcome {
+  try {
+    return { ok: true, value: structuredClone(value) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// 校验实际快照并重建纯元素数组，避免 getter 变值、空洞或自有方法污染主线程 parser。
+type RecoveryActionsSnapshot = { readonly ok: true; readonly actions: readonly string[] } | { readonly ok: false; readonly error: unknown };
+function cloneSafeRecoveryActions(value: unknown): RecoveryActionsSnapshot {
+  function malformed(): never {
+    throw new ProtocolError("PROTOCOL_MALFORMED", "HostFailure.recoveryActions", "HostFailure.recoveryActions 必须是无空洞且每项为非空字符串的建议文本数组");
+  }
+  try {
+    if (!Array.isArray(value)) malformed();
+    const elements: unknown[] = [];
+    const length = value.length;
+    if (!Number.isSafeInteger(length) || length < 0) malformed();
+    for (let index = 0; index < length; index++) {
+      if (!Object.hasOwn(value, index)) malformed();
+      elements.push(value[index]);
+    }
+    const snapshot: unknown[] = structuredClone(elements);
+    const actions: string[] = [];
+    for (let index = 0; index < snapshot.length; index++) {
+      if (!Object.hasOwn(snapshot, index)) malformed();
+      const action: unknown = snapshot[index];
+      if (typeof action !== "string" || action.trim().length === 0) malformed();
+      actions.push(action);
+    }
+    return { ok: true, actions };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+// code 复用首读结果，额外诊断字段的读取失败不得破坏错误报告。
+function safeReadableErrorStrings(error: unknown, classified: WasmFailureClassification): { readonly code?: string; readonly where?: string } {
+  if (error === null || typeof error !== "object") return {};
+  const result: { code?: string; where?: string } = {};
+  if (classified.kind === "unstructured" && typeof classified.code === "string") result.code = classified.code;
+  try {
+    const whereValue = (error as Readonly<Record<string, unknown>>).where;
+    if (typeof whereValue === "string") result.where = whereValue;
+  } catch {
+    // 读取失败时省略该字段：诊断回填不得成为新的错误源。
+  }
+  return result;
+}
+
+function structuredHostFailure(error: unknown, where: string, classified: WasmFailureClassification): WorkerFailureDetails | null {
   if (classified.kind === "structured") {
     const source = error as Readonly<Record<string, unknown>>;
     // Error.message 不可枚举；核心字段只读一次，诊断中也不再访问原始错误。
-    const original: { code: string; message: string; where?: string } = { code: classified.code, message: classified.message };
+    const original: { code: string; message: string; where?: unknown } = { code: classified.code, message: classified.message };
     const projected: Record<string, unknown> = { ...original };
     let phase = "读取结构化错误详情失败";
     try {
@@ -100,11 +153,20 @@ function structuredHostFailure(error: unknown, where: string): WorkerFailureDeta
         if (Object.hasOwn(source, key)) {
           const value = source[key];
           projected[key] = value;
-          if (key === "where" && typeof value === "string") original.where = value;
+          if (key === "where") {
+            const snapshot = cloneSafeSnapshot(value);
+            if (snapshot.ok) original.where = snapshot.value;
+          }
         }
       }
       phase = "校验结构化错误详情失败";
-      const failure = parseHostFailure(projected, where);
+      const parserInput = { ...projected };
+      if (Object.hasOwn(projected, "recoveryActions") && projected.recoveryActions !== null) {
+        const snapshot = cloneSafeRecoveryActions(projected.recoveryActions);
+        if (!snapshot.ok) throw snapshot.error;
+        parserInput.recoveryActions = snapshot.actions;
+      }
+      const failure = parseHostFailure(parserInput, where);
       // parser 会访问数组 getter；clone 会访问嵌套 getter。两者都属于错误报告的受保护边界。
       phase = "发送结构化错误详情失败";
       return structuredClone(failure);
@@ -113,11 +175,45 @@ function structuredHostFailure(error: unknown, where: string): WorkerFailureDeta
       if (phase === "校验结构化错误详情失败" && !(detail.kind === "structured" && detail.code === "PROTOCOL_MALFORMED")) {
         phase = "读取结构化错误详情失败";
       }
-      return {
+      const demoted: WorkerFailureDetails = {
         code: "WASM_WORKER_PROTOCOL", where,
-        message: `${phase}：${describeWasmFailure(detailError)}`,
+        message: `${phase}：${classificationMessage(detail)}`,
         cause: original,
       };
+      // 可恢复拒绝不得因诊断无法克隆而销毁会话；只降级非法详情并显式列明。
+      if (projected.recoverable === true && classified.code.trim().length > 0 && classified.message.trim().length > 0) {
+        const degradedKeys: string[] = [];
+        const retained: Record<string, unknown> = {};
+        const snapshotActions = cloneSafeRecoveryActions(projected.recoveryActions);
+        if (snapshotActions.ok) retained.recoveryActions = snapshotActions.actions;
+        else if (Object.hasOwn(projected, "recoveryActions")) {
+          if (projected.recoveryActions === null) retained.recoveryActions = null;
+          else degradedKeys.push("recoveryActions");
+        }
+        let causeChain: unknown = original;
+        for (const key of ["cause", "context"] as const) {
+          if (!Object.hasOwn(projected, key)) continue;
+          const snapshot = cloneSafeSnapshot(projected[key]);
+          if (!snapshot.ok) {
+            degradedKeys.push(key);
+            continue;
+          }
+          if (key === "context") retained.context = snapshot.value;
+          else causeChain = { ...original, cause: snapshot.value };
+        }
+        const fallbackCause: WorkerFailureDetails = degradedKeys.length > 0
+          ? { ...demoted, cause: causeChain, message: `${demoted.message}；降级字段：${degradedKeys.join("、")}` }
+          : { ...demoted, cause: causeChain };
+        return {
+          code: classified.code,
+          where: typeof original.where === "string" && original.where.trim().length > 0 ? original.where : where,
+          message: classified.message,
+          recoverable: true,
+          ...retained,
+          cause: fallbackCause,
+        };
+      }
+      return demoted;
     }
   }
   if (classified.kind === "access-error") {
@@ -126,12 +222,22 @@ function structuredHostFailure(error: unknown, where: string): WorkerFailureDeta
   return null;
 }
 
-function workerFailureDetails(error: unknown, where: string): WorkerFailureDetails {
-  const structured = structuredHostFailure(error, where);
+function classificationMessage(classified: WasmFailureClassification): string {
+  if (classified.kind === "structured") return classified.message;
+  if (classified.kind === "access-error") return classified.reason;
+  return classified.description;
+}
+
+function workerFailureDetails(error: unknown, where: string, classified: WasmFailureClassification): WorkerFailureDetails {
+  const structured = structuredHostFailure(error, where, classified);
   if (structured !== null) return structured;
-  const message = describeWasmFailure(error);
+  const message = classificationMessage(classified);
   if (message.trim().length === 0) {
-    return { code: "WASM_WORKER_PROTOCOL", where, message: "非结构化错误没有可读的非空 message", cause: { message } };
+    const cause: { code?: string; where?: string; message: string } = { message };
+    const readable = safeReadableErrorStrings(error, classified);
+    if (readable.code !== undefined) cause.code = readable.code;
+    if (readable.where !== undefined) cause.where = readable.where;
+    return { code: "WASM_WORKER_PROTOCOL", where, message: "非结构化错误没有可读的非空 message", cause };
   }
   return { code: "WASM_WORKER_PROTOCOL", where, message };
 }
@@ -153,8 +259,17 @@ function optionalNpcDecisionTrace(wasm: typeof import("../../wasm-pkg/web_wasm.j
 }
 
 export function postFailure(where: string, error: unknown): void {
-  const failure = workerFailureDetails(error, where);
-  postFailureDetails(where, failure);
+  postFailureDetails(where, workerFailureDetails(error, where, classifyWasmFailure(error)));
+}
+
+function withStopFailure(failure: WorkerFailureDetails, stopped: WasmLoopStopResult): WorkerFailureDetails {
+  if (stopped.ok) return failure;
+  const details = workerFailureDetails(stopped.error, "wasm-worker.stop", classifyWasmFailure(stopped.error));
+  // 停止二次错误放入诊断，不覆盖原始 code、message 或 cause。
+  return { ...failure, context: {
+    ...(Object.hasOwn(failure, "context") ? { failureContext: failure.context } : {}),
+    stopFailure: { ...details, message: `停止循环时交付已提交帧失败：${details.message}` },
+  } };
 }
 
 function postFailureDetails(where: string, failure: WorkerFailureDetails): void {
@@ -163,11 +278,16 @@ function postFailureDetails(where: string, failure: WorkerFailureDetails): void 
     ctx.postMessage({ type: "failure", generation, ...failure, where: failure.where || where });
   } catch (sendError) {
     // failure 已是 clone-safe 快照；显式报告传输失败，不把原始错误留在 Worker 控制台。
-    ctx.postMessage({
-      type: "failure", generation, code: "WASM_WORKER_PROTOCOL", where,
-      message: `发送结构化错误详情失败：${describeWasmFailure(sendError)}`,
-      cause: failure,
-    });
+    try {
+      ctx.postMessage({
+        type: "failure", generation, code: "WASM_WORKER_PROTOCOL", where,
+        message: `发送结构化错误详情失败：${describeWasmFailure(sendError)}`,
+        cause: failure,
+      });
+    } catch (lastResortError) {
+      // 死端口只能显式登记完整快照，不能让错误报告器再次抛错。
+      console.error(`WASM Worker 错误报告通道双失败（${where}）：`, failure, lastResortError);
+    }
   }
 }
 
@@ -190,8 +310,13 @@ function postIngressBridge(): void {
   ctx.postMessage({ type: "ingress", generation: slot.readGeneration(), token: token(session), ...ingressBridge });
 }
 
-function respondOperationError(message: WorkerMessage, error: unknown): void {
-  ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: describeWasmFailure(error) });
+// operationError 发送失败不能阻断后续 failure 报告，也不能再读取原始 message。
+function respondOperationError(message: WorkerMessage, failureMessage: string): void {
+  try {
+    ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: failureMessage });
+  } catch (sendError) {
+    console.error(`WASM Worker operationError 通道发送失败（requestId=${String(message.requestId)}）：`, failureMessage, sendError);
+  }
 }
 
 async function initialize(requestedThreads: unknown): Promise<void> {
@@ -689,15 +814,17 @@ ctx.addEventListener("message", (event) => {
           throw new Error(`未知 Worker 消息：${message.type}`);
       }
     } catch (error) {
-      const structuredFailure = structuredHostFailure(error, `wasm-worker.${message.type}`);
+      const classified = classifyWasmFailure(error);
+      const where = `wasm-worker.${message.type}`;
+      const structuredFailure = structuredHostFailure(error, where, classified);
       if (structuredFailure !== null) {
-        loop.stop();
-        if (structuredFailure.code === "REPORT_CORRECTION_REJECTED" && structuredFailure.recoverable === true && typeof message.requestId === "number") respondOperationError(message, error);
-        postFailureDetails(`wasm-worker.${message.type}`, structuredFailure);
+        const failure = withStopFailure(structuredFailure, loop.stopForFailure());
+        if (failure.code === "REPORT_CORRECTION_REJECTED" && failure.recoverable === true && typeof message.requestId === "number") respondOperationError(message, failure.message);
+        postFailureDetails(where, failure);
       } else if (typeof message.requestId === "number") {
-        respondOperationError(message, error);
+        respondOperationError(message, workerFailureDetails(error, where, classified).message);
       } else {
-        postFailure("wasm-worker.message", error);
+        postFailureDetails("wasm-worker.message", workerFailureDetails(error, "wasm-worker.message", classified));
       }
     }
   })();

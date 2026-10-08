@@ -1,7 +1,8 @@
 export type WasmFailureClassification =
   | { readonly kind: "structured"; readonly code: string; readonly message: string }
   | { readonly kind: "access-error"; readonly reason: string }
-  | { readonly kind: "unstructured" };
+  // 保留首读核心字段生成的描述，避免错误报告再次触发 getter。
+  | { readonly kind: "unstructured"; readonly description: string; readonly code?: string };
 
 function safeString(value: unknown): string {
   try {
@@ -34,10 +35,29 @@ export function describeWasmFailure(error: unknown): string {
   return safeString(error);
 }
 
+function diagnosticSnapshot(error: object, code: unknown, message: unknown): object {
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  const keys = Object.keys(error);
+  for (const key of new Set([...keys, "toJSON"])) {
+    Object.defineProperty(snapshot, key, {
+      enumerable: keys.includes(key),
+      get() {
+        if (key === "code") return code;
+        if (key === "message") return message;
+        const value: unknown = Reflect.get(error, key, error);
+        // 私有字段需要原对象的 brand，getter 与 toJSON 都保留原 receiver。
+        if (key === "toJSON" && typeof value === "function") return (...args: unknown[]) => Reflect.apply(value, error, args);
+        return value;
+      },
+    });
+  }
+  return snapshot;
+}
+
 export function classifyWasmFailure(error: unknown): WasmFailureClassification {
   if (error !== null && typeof error === "object") {
     try {
-      if (Array.isArray(error)) return { kind: "unstructured" };
+      if (Array.isArray(error)) return { kind: "unstructured", description: describeWasmFailure(error) };
       const candidate = error as Readonly<Record<string, unknown>>;
       const code = candidate.code;
       const message = candidate.message;
@@ -49,9 +69,12 @@ export function classifyWasmFailure(error: unknown): WasmFailureClassification {
       ) {
         return { kind: "structured", code, message };
       }
+      // JSON.stringify 也会读取可枚举的核心字段；只让它看到首读快照。
+      const description = error instanceof Error ? safeString(message) : describeWasmFailure(diagnosticSnapshot(error, code, message));
+      return { kind: "unstructured", description, ...(typeof code === "string" && code.length > 0 ? { code } : {}) };
     } catch (accessError) {
       return { kind: "access-error", reason: describeWasmFailure(accessError) };
     }
   }
-  return { kind: "unstructured" };
+  return { kind: "unstructured", description: describeWasmFailure(error) };
 }
