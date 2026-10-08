@@ -706,14 +706,18 @@ export function createWorkerHost(
         async proposeCompanyAction(proposal) {
           const requestedGeneration = currentGeneration;
           const response = await requests.request({ type: "proposeCompanyAction", requestId: requests.nextRequestId(), generation: requestedGeneration, proposal }, "proposalOutcome");
-          if (disposed || currentGeneration !== requestedGeneration) throw new Error("玩家提案响应属于已过期 generation");
+          if (disposed || currentGeneration !== requestedGeneration) {
+            // 写命令的响应过期 ≠ 未受理：引擎侧可能已建账（仅响应被判过期）。
+            // 提示核对权威状态，避免诱导重复提案建第二本账簿（同 G 批认购入口口径）。
+            throw new Error("玩家提案响应属于已过期 generation；请先以公司能力面核对该公司当前未完成方案，勿盲目重试");
+          }
           return parsePlayerProposalOutcome(response.outcome);
         },
         async setSimplePreferences(company, preferences) {
           if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("偏好编辑公司身份必须是非空且不超过 64 字符的字符串");
           const requestedGeneration = currentGeneration;
           await requests.request({ type: "setSimplePreferences", requestId: requests.nextRequestId(), generation: requestedGeneration, company, preferences }, "preferencesSet");
-          if (disposed || currentGeneration !== requestedGeneration) throw new Error("偏好编辑响应属于已过期 generation");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("偏好编辑响应属于已过期 generation（偏好编辑为幂等覆盖，确认当前会话后重试安全）");
         },
         async companySimplePreferences(company) {
           if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("偏好查询公司身份必须是非空且不超过 64 字符的字符串");

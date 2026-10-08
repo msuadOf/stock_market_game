@@ -356,6 +356,31 @@ fn player_rights_secondary_and_repurchase_proposals_are_accepted() {
         "配股提案应构造面向全体股东模式"
     );
 
+    // 同日第二起配股提案与首起推导出相同除权日：既有碰撞预检按制度拒绝
+    // （复核 note-3 补直接断言——玩家路径的碰撞拒绝以制度拒绝分类显式呈现）。
+    let collision = session
+        .propose_company_action(
+            AccountId(0),
+            PlayerCompanyProposal::RightsOffering {
+                company: issuer.clone(),
+                price_per_share: Money::from_cents(10),
+                shares_per_existing_share_micros: 100_000,
+                payment_days: 1,
+            },
+        )
+        .expect_err("同除权日第二起配股提案必须被既有碰撞预检拒绝");
+    match collision {
+        PlayerProposalError::Institutional { kind, detail, class } => {
+            assert_eq!(kind, PlayerProposalKind::RightsOffering);
+            assert_eq!(class, CompanyErrorClass::BusinessCondition);
+            assert!(
+                detail.contains("同除权日") && detail.contains("配股"),
+                "拒绝原因应指向同除权日配股碰撞：{detail}"
+            );
+        }
+        other => panic!("应返回制度拒绝，实际 {other:?}"),
+    }
+
     // 定向增发与配股同日提案会推导出相同除权日（R 与缴款期同口径），既有
     // 碰撞预检按制度拒绝同日第二起——因此增发用例在独立会话中验证（受理与
     // 定向对象构造本身），碰撞拒绝语义已由既有机制覆盖。

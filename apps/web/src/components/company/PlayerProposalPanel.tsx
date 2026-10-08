@@ -240,7 +240,7 @@ export function PlayerProposalPanel({ companyId, onProposalSubmit, onCapabilitie
           </>
         )}
         <button type="button" disabled={submitting} onClick={submit}>{submitting ? "提交中…" : "提交提案"}</button>
-        {error !== null && <p className="company-state is-error" role="alert">提案未提交：{error}</p>}
+        {error !== null && <p className="company-state is-error" role="alert">提案提交异常（受理结果以引擎权威状态为准，请先核对当前未完成方案再决定是否重试）：{error}</p>}
         {result !== null && result.outcome === "accepted" && (
           <p className="company-state" role="status">已受理：{proposalKindLabel(result.kind)} 方案 <span className="mono">{result.identity}</span>（批准 {result.approved_on}、公告 {result.announced_on}），按既有状态机推进。</p>
         )}
