@@ -90,8 +90,35 @@ function structuredHostFailure(error: unknown, where: string): WorkerFailureDeta
   const classified = classifyWasmFailure(error);
   if (classified.kind === "structured") {
     const source = error as Readonly<Record<string, unknown>>;
-    const allowed = ["code", "where", "message", "cause", "context", "recoverable", "recoveryActions"];
-    return parseHostFailure(Object.fromEntries(Object.entries(source).filter(([key]) => allowed.includes(key))), where);
+    // Error.message 不可枚举；核心字段只读一次，诊断中也不再访问原始错误。
+    const original: { code: string; message: string; where?: string } = { code: classified.code, message: classified.message };
+    const projected: Record<string, unknown> = { ...original };
+    let phase = "读取结构化错误详情失败";
+    try {
+      for (const key of ["where", "cause", "context", "recoverable", "recoveryActions"]) {
+        phase = `读取结构化错误字段 ${key} 失败`;
+        if (Object.hasOwn(source, key)) {
+          const value = source[key];
+          projected[key] = value;
+          if (key === "where" && typeof value === "string") original.where = value;
+        }
+      }
+      phase = "校验结构化错误详情失败";
+      const failure = parseHostFailure(projected, where);
+      // parser 会访问数组 getter；clone 会访问嵌套 getter。两者都属于错误报告的受保护边界。
+      phase = "发送结构化错误详情失败";
+      return structuredClone(failure);
+    } catch (detailError) {
+      const detail = classifyWasmFailure(detailError);
+      if (phase === "校验结构化错误详情失败" && !(detail.kind === "structured" && detail.code === "PROTOCOL_MALFORMED")) {
+        phase = "读取结构化错误详情失败";
+      }
+      return {
+        code: "WASM_WORKER_PROTOCOL", where,
+        message: `${phase}：${describeWasmFailure(detailError)}`,
+        cause: original,
+      };
+    }
   }
   if (classified.kind === "access-error") {
     return { code: "WASM_WORKER_PROTOCOL", where, message: `读取结构化错误失败：${classified.reason}` };
@@ -102,7 +129,11 @@ function structuredHostFailure(error: unknown, where: string): WorkerFailureDeta
 function workerFailureDetails(error: unknown, where: string): WorkerFailureDetails {
   const structured = structuredHostFailure(error, where);
   if (structured !== null) return structured;
-  return { code: "WASM_WORKER_PROTOCOL", where, message: describeWasmFailure(error) };
+  const message = describeWasmFailure(error);
+  if (message.trim().length === 0) {
+    return { code: "WASM_WORKER_PROTOCOL", where, message: "非结构化错误没有可读的非空 message", cause: { message } };
+  }
+  return { code: "WASM_WORKER_PROTOCOL", where, message };
 }
 
 function requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
@@ -127,7 +158,17 @@ export function postFailure(where: string, error: unknown): void {
 }
 
 function postFailureDetails(where: string, failure: WorkerFailureDetails): void {
-  ctx.postMessage({ type: "failure", generation: slot.readGeneration(), ...failure, where: failure.where || where });
+  const generation = slot.readGeneration();
+  try {
+    ctx.postMessage({ type: "failure", generation, ...failure, where: failure.where || where });
+  } catch (sendError) {
+    // failure 已是 clone-safe 快照；显式报告传输失败，不把原始错误留在 Worker 控制台。
+    ctx.postMessage({
+      type: "failure", generation, code: "WASM_WORKER_PROTOCOL", where,
+      message: `发送结构化错误详情失败：${describeWasmFailure(sendError)}`,
+      cause: failure,
+    });
+  }
 }
 
 function postBaseline(): void {
