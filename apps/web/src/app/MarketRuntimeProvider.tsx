@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
-import type { AccountDividendTaxStatusView, CompanyPreferenceRejectionView, DividendTaxOutstandingView, PersonalTradeHistoryRequest, PersonalTradeHistoryPage, RejectedRightsSubscriptionView } from "../host/engine-host.ts";
+import type { AccountDividendTaxStatusView, CompanyCapabilities, CompanyPreferenceRejectionView, DividendTaxOutstandingView, FlatWithholdingReceiptView, OwnerRightsOfferingView, PeriodChangeExplanation, PersonalTradeHistoryRequest, PersonalTradeHistoryPage, RejectedRightsSubscriptionView } from "../host/engine-host.ts";
 import type { PublicReportAvailability, PublicReportAvailabilityQuery } from "../types/engine.ts";
 import type { MarketHistoryRequest, MarketHistoryPage } from "../host/market-history.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
@@ -46,6 +46,10 @@ interface MarketRuntimeActions {
   queryDividendTaxOutstanding: () => Promise<readonly DividendTaxOutstandingView[]>;
   queryRejectedRightsSubscriptions: () => Promise<readonly RejectedRightsSubscriptionView[]>;
   queryCompanyPreferenceRejections: (company: string) => Promise<readonly CompanyPreferenceRejectionView[]>;
+  queryCompanyCapabilities: (company: string) => Promise<CompanyCapabilities>;
+  queryCompanyPeriodExplanation: (company: string, periodEnd: string) => Promise<PeriodChangeExplanation>;
+  queryOwnerRightsOfferings: () => Promise<readonly OwnerRightsOfferingView[]>;
+  queryOwnerFlatWithholdingReceipts: () => Promise<readonly FlatWithholdingReceiptView[]>;
   calculateIntradayAverage: (input: IntradayAverageInput) => Promise<IntradayAverageResult | null>;
   calculateIntradayAverageCurve: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
 }
@@ -176,6 +180,50 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("偏好拒绝台账响应属于已切换的宿主或市场");
     return result;
   }, [hostRef]);
+  const queryCompanyCapabilities = useCallback(async (company: string) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询公司能力面");
+    if (host.companyCapabilities === undefined) throw new Error("当前宿主不支持公司能力面查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.companyCapabilities(company);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("公司能力面响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
+  const queryCompanyPeriodExplanation = useCallback(async (company: string, periodEnd: string) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询期间解释");
+    if (host.companyPeriodExplanation === undefined) throw new Error("当前宿主不支持期间解释查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.companyPeriodExplanation(company, periodEnd);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("期间解释响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
+  const queryOwnerRightsOfferings = useCallback(async () => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询本人配股权益");
+    if (host.ownerRightsOfferings === undefined) throw new Error("当前宿主不支持本人配股权益查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.ownerRightsOfferings();
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("本人配股权益响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
+  const queryOwnerFlatWithholdingReceipts = useCallback(async () => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询简税代扣回执");
+    if (host.ownerFlatWithholdingReceipts === undefined) throw new Error("当前宿主不支持简税代扣回执查询");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.ownerFlatWithholdingReceipts();
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("简税代扣回执响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
   const calculateIntradayAverageCurve = useCallback(async (input: IntradayAverageCurveInput) => {
     const host = hostRef.current;
     if (host === null) throw new Error("游戏宿主尚未就绪，不能计算分时均价曲线");
@@ -202,6 +250,10 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryDividendTaxOutstanding,
     queryRejectedRightsSubscriptions,
     queryCompanyPreferenceRejections,
+    queryCompanyCapabilities,
+    queryCompanyPeriodExplanation,
+    queryOwnerRightsOfferings,
+    queryOwnerFlatWithholdingReceipts,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   }), [
@@ -224,6 +276,10 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryDividendTaxOutstanding,
     queryRejectedRightsSubscriptions,
     queryCompanyPreferenceRejections,
+    queryCompanyCapabilities,
+    queryCompanyPeriodExplanation,
+    queryOwnerRightsOfferings,
+    queryOwnerFlatWithholdingReceipts,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   ]);

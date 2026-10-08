@@ -64,7 +64,9 @@ impl SimpleFundamentals {
             ))?;
             let kind = issuers
                 .get(&item.company)
-                .ok_or_else(|| CompanySystemError::Invalid("Simple 财务开账缺少发行人".into()))?
+                .ok_or_else(|| {
+                    CompanySystemError::InvalidInput("Simple 财务开账缺少发行人".into())
+                })?
                 .kind;
             let finance = SimpleFinanceState::create(
                 item.company.clone(),
@@ -113,7 +115,7 @@ impl SimpleFundamentals {
         date: CivilDate,
     ) -> Result<Vec<SimpleDisclosureCandidate>, CompanySystemError> {
         if self.advanced_through.next()? != date {
-            return Err(CompanySystemError::Invalid(format!(
+            return Err(CompanySystemError::InvalidInput(format!(
                 "日期必须连续推进：上次 {}，本次 {date}",
                 self.advanced_through
             )));
@@ -139,7 +141,7 @@ impl SimpleFundamentals {
                 let previous = self
                     .companies
                     .get(&config.company)
-                    .ok_or_else(|| CompanySystemError::Invalid("公司状态缺失".into()))?;
+                    .ok_or_else(|| CompanySystemError::SystemState("公司状态缺失".into()))?;
                 let generated = generate_period(
                     &config.generation,
                     &previous.generation,
@@ -184,15 +186,15 @@ impl SimpleFundamentals {
                 source,
             } => {
                 if !revenue.is_positive() || source.trim().is_empty() {
-                    return Err(CompanySystemError::Invalid(
+                    return Err(CompanySystemError::InvalidInput(
                         "复业需要正收入与明确场景说明".into(),
                     ));
                 }
                 let state = self.companies.get_mut(&company).ok_or_else(|| {
-                    CompanySystemError::Invalid(format!("未知公司 {}", company.0))
+                    CompanySystemError::InvalidInput(format!("未知公司 {}", company.0))
                 })?;
                 if !state.generation.amounts.revenue.is_zero() || state.pending_restart.is_some() {
-                    return Err(CompanySystemError::Invalid(
+                    return Err(CompanySystemError::BusinessCondition(
                         "仅零收入且没有待执行复业的公司可以复业".into(),
                     ));
                 }
@@ -208,7 +210,7 @@ impl SimpleFundamentals {
             || self.history_start > self.advanced_through.next()?
             || self.companies.len() != self.config.companies.len()
         {
-            return Err(CompanySystemError::Invalid(
+            return Err(CompanySystemError::SystemState(
                 "Simple 日期或公司状态集合不一致".into(),
             ));
         }
@@ -226,7 +228,7 @@ impl SimpleFundamentals {
             let state = self
                 .companies
                 .get(&config.company)
-                .ok_or_else(|| CompanySystemError::Invalid("Simple 缺少公司状态".into()))?;
+                .ok_or_else(|| CompanySystemError::SystemState("Simple 缺少公司状态".into()))?;
             state.finance.validate()?;
             state.generation.validate(&config.generation)?;
             state
@@ -238,7 +240,7 @@ impl SimpleFundamentals {
                 || state.finance.opening_date() != self.history_start.prev()?
                 || state.finance.as_of() != latest_end
             {
-                return Err(CompanySystemError::Invalid(
+                return Err(CompanySystemError::SystemState(
                     "Simple 财务身份、配置或期间不一致".into(),
                 ));
             }
@@ -248,7 +250,7 @@ impl SimpleFundamentals {
                 state.generation.amounts.variable_expense,
             ] {
                 if amount.is_negative() {
-                    return Err(CompanySystemError::Invalid(
+                    return Err(CompanySystemError::SystemState(
                         "Simple 月度营收和费用必须非负".into(),
                     ));
                 }
@@ -258,7 +260,7 @@ impl SimpleFundamentals {
                     || source.trim().is_empty()
                     || !state.generation.amounts.revenue.is_zero()
                 {
-                    return Err(CompanySystemError::Invalid("待执行复业不合法".into()));
+                    return Err(CompanySystemError::SystemState("待执行复业不合法".into()));
                 }
             }
             if self.history.is_empty()
@@ -268,7 +270,7 @@ impl SimpleFundamentals {
                         .initial_state(OperatingRng::from_state(0))?
                         .amounts
             {
-                return Err(CompanySystemError::Invalid(
+                return Err(CompanySystemError::SystemState(
                     "Simple 初始期间基准与明确配置不一致".into(),
                 ));
             }
@@ -302,14 +304,14 @@ impl SimpleFundamentals {
                 let candidate = self
                     .history
                     .get(offset)
-                    .ok_or_else(|| CompanySystemError::Invalid("Simple 月度历史缺失".into()))?;
+                    .ok_or_else(|| CompanySystemError::SystemState("Simple 月度历史缺失".into()))?;
                 if &candidate.company != *company
                     || candidate.explanation.cycle != self.config.settlement_cycle
                     || candidate.period_start != cursor
                     || candidate.period_end != end
                     || candidate.explanation.previous != previous[company]
                 {
-                    return Err(CompanySystemError::Invalid(
+                    return Err(CompanySystemError::SystemState(
                         "Simple 月度历史身份、期间或连续性非法".into(),
                     ));
                 }
@@ -326,7 +328,7 @@ impl SimpleFundamentals {
                         .map(|state| &state.generation.amounts)
                         != Some(&candidate.amounts)
                 {
-                    return Err(CompanySystemError::Invalid(
+                    return Err(CompanySystemError::SystemState(
                         "Simple 最新月生成额与当前状态不一致".into(),
                     ));
                 }
@@ -338,7 +340,7 @@ impl SimpleFundamentals {
             cursor = end.next()?;
         }
         if offset != self.history.len() {
-            return Err(CompanySystemError::Invalid(
+            return Err(CompanySystemError::SystemState(
                 "Simple 历史包含多余或未来材料".into(),
             ));
         }

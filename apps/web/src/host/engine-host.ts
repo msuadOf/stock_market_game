@@ -26,8 +26,12 @@ import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "
 export type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse };
 import type { AccountDividendTaxStatusView } from "../types/generated/AccountDividendTaxStatusView";
 import type { DividendTaxOutstandingView } from "../types/generated/DividendTaxOutstandingView";
+import type { CompanyCapabilities } from "../types/generated/CompanyCapabilities";
+import type { OwnerRightsOfferingView } from "../types/generated/OwnerRightsOfferingView";
+import type { PeriodChangeExplanation } from "../types/generated/PeriodChangeExplanation";
 import type { CompanyPreferenceRejectionView, RejectedRightsSubscriptionView } from "./corporate-action-views.ts";
-export type { AccountDividendTaxStatusView, DividendTaxOutstandingView, CompanyPreferenceRejectionView, RejectedRightsSubscriptionView };
+import type { FlatWithholdingReceiptView } from "./company-contract-views.ts";
+export type { AccountDividendTaxStatusView, DividendTaxOutstandingView, CompanyPreferenceRejectionView, RejectedRightsSubscriptionView, FlatWithholdingReceiptView, CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation };
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -154,4 +158,12 @@ export interface EngineHost {
   rejectedRightsSubscriptions?(): Promise<readonly RejectedRightsSubscriptionView[]>;
   /** 仅支持本地 WASM 宿主：公司行为偏好提案拒绝台账查询（ADR-0037）。缺失表示该宿主明确不支持，UI 须显式提示。 */
   companyPreferenceRejections?(company: string): Promise<readonly CompanyPreferenceRejectionView[]>;
+  /** 仅支持本地 WASM 宿主：公司共同契约能力面（F 批收口；含本人权利摘要，owner 隔离）。缺失表示该宿主明确不支持。 */
+  companyCapabilities?(company: string): Promise<CompanyCapabilities>;
+  /** 仅支持本地 WASM 宿主：按公司+期间读取期间变化解释。缺失表示该宿主明确不支持。 */
+  companyPeriodExplanation?(company: string, periodEnd: string): Promise<PeriodChangeExplanation>;
+  /** 仅支持本地 WASM 宿主：本人配股权证/额度/缴款窗口查询（owner 隔离）。缺失表示该宿主明确不支持。 */
+  ownerRightsOfferings?(): Promise<readonly OwnerRightsOfferingView[]>;
+  /** 仅支持本地 WASM 宿主：简税（FlatWithholding）代扣回执查询（owner 隔离）。缺失表示该宿主明确不支持。 */
+  ownerFlatWithholdingReceipts?(): Promise<readonly FlatWithholdingReceiptView[]>;
 }

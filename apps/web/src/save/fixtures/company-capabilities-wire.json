@@ -1,0 +1,104 @@
+{
+  "action_readiness": [
+    {
+      "blockers": [],
+      "kind": "CashDividend",
+      "ready": true
+    },
+    {
+      "blockers": [],
+      "kind": "StockDistribution",
+      "ready": true
+    },
+    {
+      "blockers": [],
+      "kind": "RightsOffering",
+      "ready": true
+    },
+    {
+      "blockers": [
+        "新局未启用发行人回购机制（issuer_repurchase_enabled=false）"
+      ],
+      "kind": "IssuerRepurchase",
+      "ready": false
+    },
+    {
+      "blockers": [],
+      "kind": "ShareSplit",
+      "ready": true
+    }
+  ],
+  "active_plans": [
+    {
+      "identity": "rights-2030",
+      "key_dates": [
+        {
+          "date": "2030-01-02",
+          "label": "批准日"
+        },
+        {
+          "date": "2030-01-03",
+          "label": "公告日"
+        },
+        {
+          "date": "2030-01-04",
+          "label": "股权登记日"
+        },
+        {
+          "date": "2030-01-07",
+          "label": "缴款起始日"
+        },
+        {
+          "date": "2030-01-11",
+          "label": "缴款截止日"
+        },
+        {
+          "date": "2030-01-14",
+          "label": "除权日"
+        },
+        {
+          "date": "2030-01-15",
+          "label": "划款日"
+        }
+      ],
+      "kind": "RightsOffering",
+      "stage": "Entitled"
+    }
+  ],
+  "cash_flow": true,
+  "cash_settlement": false,
+  "distributable_profit": {
+    "Available": {
+      "accumulated_after_loss_yuan": "1800000.00",
+      "available_for_distribution_yuan": "1710000.00",
+      "reserve_basis_year": 2029,
+      "statutory_reserve_yuan": "90000.00"
+    }
+  },
+  "equity": true,
+  "full_financial_statements": true,
+  "issued_shares": "10000000",
+  "net_income": true,
+  "owner_rights": [
+    {
+      "entitled_shares": "1500000",
+      "event_id": "rights-2030",
+      "open_subscription_remaining": null,
+      "payment_window": "Open",
+      "stage": "Entitled",
+      "stock": "600888"
+    }
+  ],
+  "par_value_per_share": {
+    "Unavailable": {
+      "reason": "尚无已入账的送转／拆股面值事实，在册每股面值不可用"
+    }
+  },
+  "registered_capital": {
+    "Available": {
+      "amount_yuan": "100000.00"
+    }
+  },
+  "revenue": true,
+  "unsupported_reason": "汇总财务已接通；共同股本行为的实际投资者结算仍待接线，不能按模式缺资金拒绝或冒称已支持"
+}

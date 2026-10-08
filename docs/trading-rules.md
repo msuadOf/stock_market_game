@@ -585,6 +585,18 @@ simple 模型内近似该发起方（ADR-0037：偏好自动方案与显式 API 
   （`SimpleCompanyPreferences` 分红/送转项，未配置=不自动提案）同批接线；Tauri/远程宿主
   查询面留待后续批次，不支持时 UI 显式提示。
 
+## 公司共同契约公共查询面（2026-10-08 F 批，R4 最小公共合同）
+
+本节登记公司行为共同契约对宿主/UI 暴露的**只读**查询合同；全部为既有事实的投影，不产生新状态、不开放内部账簿、不改变任何交易语义（受理门禁仍在各 approve/subscribe 入口）：
+
+- **公司能力面** `GameSession::company_capabilities(company, account)`（wasm 导出 `company_capabilities`，owner 固定本机玩家）：静态能力位 + 每股面值（Money 分字符串；无送转/拆股面值锚时显式 reason 不填零）+ 现行总股本（发行人登记表）+ 注册资本与可分配利润快照（元字符串，与公开报表同口径）+ 当前未完成方案（五类各：阶段超集 + 关键法定日期中文标签）+ 各行为业务条件快照（「满足」仅指可评估前置条件，不承诺受理）+ 本人权利摘要（owner 隔离）。
+- **期间变化解释** `GameSession::company_period_explanation(company, period_end)`（wasm `company_period_explanation`）：按公司+结算周期末日读取既有 history 的 `PeriodChangeExplanation`；非周期末日=非法输入、未结算/早于前史=业务条件拒绝，均按四分类显式报错。
+- **本人配股权益** `GameSession::owner_rights_offerings(account)`（wasm `owner_rights_offerings`）：未完成配股方案（Settled 终态不出现）的权证/公开配售剩余额度（与受理口径同构：额度−已入账−已排队）/缴款窗口状态（相对查询日 BeforeOpen/Open/Closed）/排队与已结算认购。owner 隔离。
+- **简税代扣回执** `GameSession::owner_flat_withholding_receipts(account)`（wasm `owner_flat_withholding_receipts`）：仅 FlatWithholding 模式；其他模式显式拒绝不冒充空台账。owner 隔离。
+- **错误四分类**：公司域公共错误（`CompanySystemError`）携带附加分类面 `classification()`（非法输入／业务条件拒绝／未支持操作／系统状态错误）；分类不替代具体错误信息，display 与控制流不变。`Invalid` 泛滥的调用点按「逐步映射」迁移（本批已迁移未知公司、复业条件、恢复勾稽等；余量见台账）。
+
+Tauri／远程宿主的同款查询面仍留待后续批次；宿主不支持时 UI 逐区显式提示。
+
 ## 尚未模拟
 
 新股上市初期无涨跌幅限制、科创板/北交所的全部差异、停复牌、退市整理、盘中临停、

@@ -48,7 +48,17 @@ fn fixture_lot(id: &str, qty: u64, acquired_on: CivilDate) -> ShareLot {
 /// 玩家(0) 3,000,000 股 + 机构 NPC(1) 1,000,000 股 + Treasury 6,000,000 股
 /// （总股本 10,000,000）；玩家已开个人税账。面值 1 分（注册资本 = 总股本×1 分），
 /// 配股价 10 分/股（高于面值）。
-fn session_with_registry(rights_enabled: bool) -> (GameSession, StockCode, CompanyId) {
+pub(crate) fn session_with_registry(rights_enabled: bool) -> (GameSession, StockCode, CompanyId) {
+    session_with_registry_capital(rights_enabled, 0)
+}
+
+/// [`session_with_registry`] 的注册资本变体：注册资本 = 总股本 × 1 分 +
+/// `extra_cents`（非零 `extra_cents` 构造与发行股数不能整除的法定事实，
+/// 供 readiness 整除分支负例使用）。
+pub(crate) fn session_with_registry_capital(
+    rights_enabled: bool,
+    extra_cents: i128,
+) -> (GameSession, StockCode, CompanyId) {
     let mut setup = rights_setup();
     setup.rights_offering_enabled = rights_enabled;
     let mut session = GameSession::new(setup, 42).unwrap();
@@ -98,7 +108,7 @@ fn session_with_registry(rights_enabled: bool) -> (GameSession, StockCode, Compa
     session
         .define_dividend_legal_facts(
             &issuer,
-            AccountingAmount::from_cents(i128::from(total_shares)),
+            AccountingAmount::from_cents(i128::from(total_shares) + extra_cents),
             "rights test legal fact".into(),
         )
         .unwrap();
@@ -107,7 +117,7 @@ fn session_with_registry(rights_enabled: bool) -> (GameSession, StockCode, Compa
 
 /// 面向全体股东：每 10 股配 5 股（50%），价格 8 元/股；R=2030-01-04，
 /// 缴款期 5 个交易日。
-fn all_shareholders_plan(issuer: &CompanyId, stock: &StockCode) -> RightsOfferingEventPlan {
+pub(crate) fn all_shareholders_plan(issuer: &CompanyId, stock: &StockCode) -> RightsOfferingEventPlan {
     let mut plan = RightsOfferingEventPlan {
         event_id: "rights-2030".into(),
         approval_reference: "board-2030".into(),
@@ -137,7 +147,7 @@ fn all_shareholders_plan(issuer: &CompanyId, stock: &StockCode) -> RightsOfferin
     plan
 }
 
-fn complete_day(session: &mut GameSession) {
+pub(crate) fn complete_day(session: &mut GameSession) {
     // 休市自然日不推进市场 tick，直接日结（双时钟语义）。
     if session.civil_clock().phase() != crate::session::CivilPhase::ClosedDay {
         for _ in 0..session.state.setup.ticks_per_day {

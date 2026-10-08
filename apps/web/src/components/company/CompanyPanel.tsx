@@ -19,6 +19,8 @@ import { ReportCorrectionPanel, type ReportCorrectionControl } from "./ReportCor
 import { DividendTaxPanel, type DividendTaxQueryResult } from "./DividendTaxPanel.tsx";
 import { RightsSubscriptionRejectionPanel } from "./RightsSubscriptionRejectionPanel.tsx";
 import { PreferenceRejectionsPanel } from "./PreferenceRejectionsPanel.tsx";
+import { CompanyContractPanel } from "./CompanyContractPanel.tsx";
+import type { CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation, FlatWithholdingReceiptView } from "../../host/engine-host.ts";
 import type { CompanyPreferenceRejectionView, RejectedRightsSubscriptionView } from "../../host/corporate-action-views.ts";
 import { isIsoMonthEnd, reportAvailabilityReason } from "./report-availability.ts";
 import "./company.css";
@@ -41,6 +43,14 @@ interface CompanyPanelProps {
   readonly onRightsRejectionQuery?: (() => Promise<readonly RejectedRightsSubscriptionView[]>) | undefined;
   /** 该公司偏好提案拒绝台账查询；undefined 表示宿主明确不支持，面板显式提示。 */
   readonly onPreferenceRejectionsQuery?: ((companyId: string) => Promise<readonly CompanyPreferenceRejectionView[]>) | undefined;
+  /** 公司共同契约能力面查询（F 批收口；owner 隔离）；undefined 表示宿主明确不支持，面板显式提示。 */
+  readonly onCapabilitiesQuery?: ((companyId: string) => Promise<CompanyCapabilities>) | undefined;
+  /** 本人配股权益查询（owner 隔离）；undefined 表示宿主明确不支持。 */
+  readonly onOwnerRightsQuery?: (() => Promise<readonly OwnerRightsOfferingView[]>) | undefined;
+  /** 期间变化解释查询；undefined 表示宿主明确不支持。 */
+  readonly onExplanationQuery?: ((companyId: string, periodEnd: string) => Promise<PeriodChangeExplanation>) | undefined;
+  /** 简税代扣回执查询（owner 隔离）；undefined 表示宿主明确不支持。 */
+  readonly onFlatReceiptsQuery?: (() => Promise<readonly FlatWithholdingReceiptView[]>) | undefined;
 }
 
 function CompanyIdentity({ company }: { readonly company: PublicCompany }) {
@@ -56,7 +66,7 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
   buttons[(next + ids.length) % ids.length]?.focus();
 }
 
-export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration, onDividendTaxQuery, onRightsRejectionQuery, onPreferenceRejectionsQuery }: CompanyPanelProps) {
+export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration, onDividendTaxQuery, onRightsRejectionQuery, onPreferenceRejectionsQuery, onCapabilitiesQuery, onOwnerRightsQuery, onExplanationQuery, onFlatReceiptsQuery }: CompanyPanelProps) {
   const company = companyId === null ? undefined : publicCompanyById(companyId);
   const cache = companyId === null ? undefined : companyState.companies[companyId];
   const rootPage = cache?.pages.root;
@@ -162,6 +172,16 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
       <DividendTaxPanel onQuery={onDividendTaxQuery} refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`} />
       <RightsSubscriptionRejectionPanel onQuery={onRightsRejectionQuery} refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`} />
       <PreferenceRejectionsPanel companyId={companyId} onQuery={onPreferenceRejectionsQuery} refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}:${companyId}`} />
+      {companyId !== null && (
+        <CompanyContractPanel
+          companyId={companyId}
+          onCapabilitiesQuery={onCapabilitiesQuery}
+          onOwnerRightsQuery={onOwnerRightsQuery}
+          onExplanationQuery={onExplanationQuery}
+          onFlatReceiptsQuery={onFlatReceiptsQuery}
+          refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`}
+        />
+      )}
       {state.kind === "idle" && <p className="company-state">正在请求已公开报告…</p>}
       {state.kind === "loading" && <p className="company-state" aria-live="polite">正在加载已公开报告…</p>}
       {state.kind === "empty" && availabilityReport === undefined && <p className="company-state">截至当前模拟自然日，该公司没有已公开报告。</p>}

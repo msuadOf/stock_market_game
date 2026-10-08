@@ -9,6 +9,25 @@ use crate::company::counterparty::CounterpartyId;
 use crate::company::spec::CompanyId;
 use thiserror::Error;
 
+/// 公司域公共错误的四分类（F 批共同契约收口，R4 最小公共合同）。
+///
+/// 分类是**附加结构**，不替代具体错误信息：调用方仍按原变体与 display 字符串
+/// 处理错误；本分类仅供宿主／UI 按语义分流（提示输入修正／说明业务条件／
+/// 标注未支持／上报系统故障）。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub enum CompanyErrorClass {
+    /// 非法输入：调用方传入的结构、身份、日期或参数不合法。
+    InvalidInput,
+    /// 业务条件拒绝：输入合法，但当前制度、状态或额度不满足业务条件。
+    BusinessCondition,
+    /// 未支持操作：当前实现／模式明确不支持该操作。
+    UnsupportedOperation,
+    /// 系统状态错误：内部状态不一致或违反不变量（防御式编程显式暴露）。
+    SystemState,
+}
+
 /// 公司域操作失败（规格/开局/映射/对手方/合同/授信）。
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum CompanyError {

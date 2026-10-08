@@ -52,7 +52,11 @@ pub use cash_dividend_tax::{CashDividendTaxBook, CashDividendTaxMode, DividendTa
 pub mod cash_dividend;
 pub mod ex_reference_price;
 #[cfg(test)]
+mod capabilities_tests;
+#[cfg(test)]
 mod dividend_contract_tests;
+#[cfg(test)]
+mod error_classification_tests;
 mod dividend;
 pub use dividend::{
     DistributableProfit, DividendDeclaration, DividendLegalFacts, DividendPaymentFact,
@@ -75,6 +79,7 @@ pub use customer_finance::{
 };
 pub use defaults::default_companies;
 pub use error::CompanyError;
+pub use error::CompanyErrorClass;
 pub use events::{ActiveShock, ShockKind, ShockParams};
 pub use industrial::{
     IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,

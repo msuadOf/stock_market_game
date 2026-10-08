@@ -41,7 +41,9 @@ fn fixture_lot(id: &str, qty: u64, acquired_on: CivilDate) -> ShareLot {
     }
 }
 
-fn session_with_registry(enabled: bool) -> (GameSession, StockCode, CompanyId, AccountId) {
+/// `pub(crate)`：company_contract_views_tests（F 修复轮）复用同一 fixture 构建
+/// readiness 场景，避免重复装配口径（同 rights_offering_session_tests 先例）。
+pub(crate) fn session_with_registry(enabled: bool) -> (GameSession, StockCode, CompanyId, AccountId) {
     let mut setup = repurchase_setup(enabled);
     setup.npcs.retail_count = 0;
     let mut session = GameSession::new(setup, 42).unwrap();
@@ -91,7 +93,8 @@ fn session_with_registry(enabled: bool) -> (GameSession, StockCode, CompanyId, A
     (session, stock, issuer, repurchase_account)
 }
 
-fn repurchase_plan(issuer: &CompanyId, stock: &StockCode) -> IssuerRepurchasePlan {
+/// `pub(crate)`：同 `session_with_registry`（F 修复轮 readiness 测试复用）。
+pub(crate) fn repurchase_plan(issuer: &CompanyId, stock: &StockCode) -> IssuerRepurchasePlan {
     IssuerRepurchasePlan {
         event_id: "repurchase-2030".into(),
         approval_reference: "board-repurchase-2030".into(),
@@ -113,7 +116,8 @@ fn player_cash(session: &GameSession) -> i64 {
     session.state.accounts.get(&AccountId(0)).unwrap().cash().cents()
 }
 
-fn complete_day(session: &mut GameSession) {
+/// `pub(crate)`：同 `session_with_registry`（F 修复轮 readiness 测试复用）。
+pub(crate) fn complete_day(session: &mut GameSession) {
     // 休市自然日不推进市场 tick，直接日结（双时钟语义）。
     if session.civil_clock().phase() != crate::session::CivilPhase::ClosedDay {
         for _ in 0..session.state.setup.ticks_per_day {

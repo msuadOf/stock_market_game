@@ -7,11 +7,16 @@ pub enum FundamentalSource {
     SimpleGenerated,
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export)]
 pub struct PeriodAmounts {
+    /// 元字符串（与公开报表同口径）。
+    #[ts(type = "string")]
     pub revenue: AccountingAmount,
+    #[ts(type = "string")]
     pub fixed_expense: AccountingAmount,
+    #[ts(type = "string")]
     pub variable_expense: AccountingAmount,
 }
 

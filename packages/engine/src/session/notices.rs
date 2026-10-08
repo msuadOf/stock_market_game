@@ -950,8 +950,13 @@ mod tests {
         let committed = session.business_state_hash().unwrap();
         let mut repeated = session.state.company_system.export_state();
         let repeated_before = serde_json::to_value(&repeated).unwrap();
+        // 「日期必须连续推进」已在 F 批错误四分类中由 `Invalid` 迁移至
+        // `InvalidInput`（调用方传入非连续日期属非法输入语义；display 文案与
+        // 控制流不变，仅变体身份迁移——见 agents/company-system/contract-closure.md
+        // F 批交付 1 与修复轮记录）。本断言跟随变体身份，其余（信息原文、状态
+        // 不被破坏、哈希不变）保持不变。
         assert!(
-            matches!(repeated.advance_day(settled), Err(crate::company::CompanySystemError::Invalid(message))
+            matches!(repeated.advance_day(settled), Err(crate::company::CompanySystemError::InvalidInput(message))
             if message.contains("日期必须连续推进") && message.contains(&settled.to_iso()))
         );
         assert_eq!(serde_json::to_value(repeated).unwrap(), repeated_before);

@@ -200,9 +200,11 @@ fn simple_creates_dated_summary_prehistory_with_expense_derived_loss() {
             .add(deferred_tax_asset)
             .unwrap()
     );
-    let caps = state.capabilities(&spec().id).unwrap();
+    let caps = state.company_facts(&spec().id).unwrap();
     assert!(caps.full_financial_statements && caps.cash_flow);
     assert!(!caps.cash_settlement);
+    // F 批能力面升级：公司侧当前事实同时给出（总股本来自发行人登记表）。
+    assert_eq!(caps.issued_shares, 1000);
 }
 
 #[test]
