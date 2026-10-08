@@ -1,6 +1,6 @@
 /* oxlint-disable react/only-export-components -- 文案 helper 供 SSR 测试与面板共用（同 RightsSubscriptionRejectionPanel 模式） */
 import { useEffect, useRef, useState } from "react";
-import type { CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation, FlatWithholdingReceiptView } from "../../host/engine-host.ts";
+import type { CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation, FlatWithholdingReceiptView, QueuedRightsSubscriptionView } from "../../host/engine-host.ts";
 
 interface CompanyContractPanelProps {
   readonly companyId: string;
@@ -8,6 +8,9 @@ interface CompanyContractPanelProps {
   readonly onCapabilitiesQuery: ((company: string) => Promise<CompanyCapabilities>) | undefined;
   /** 本人配股权益查询（owner 隔离）；undefined 表示宿主明确不支持。 */
   readonly onOwnerRightsQuery: (() => Promise<readonly OwnerRightsOfferingView[]>) | undefined;
+  /** 本人配股认购提交（owner 隔离；参数=配股事件+认购股数）；受理回执/拒绝显式展示；
+   *  undefined 表示宿主明确不支持（UI 显式提示，不静默隐藏）。 */
+  readonly onRightsSubscription?: ((eventId: string, shares: string) => Promise<QueuedRightsSubscriptionView>) | undefined;
   /** 期间变化解释查询；undefined 表示宿主明确不支持。 */
   readonly onExplanationQuery: ((company: string, periodEnd: string) => Promise<PeriodChangeExplanation>) | undefined;
   /** 简税代扣回执查询（owner 隔离）；undefined 表示宿主明确不支持（非 Flat 模式由 engine 报错展示）。 */
@@ -93,6 +96,30 @@ export function contractQueryTrigger(enabled: boolean, refreshKey: string): stri
   return `${enabled ? "supported" : "unsupported"}:${refreshKey}`;
 }
 
+/** 认购候选：缴款期内（Open）且本人既未排队也未结算认购、且存在可认购
+ *  额度（具名权利或公开配售剩余额度）的方案；engine 侧同名条件仍是权威。 */
+export function rightsSubscriptionCandidates(rights: readonly OwnerRightsOfferingView[]): readonly OwnerRightsOfferingView[] {
+  return rights.filter((view) =>
+    view.payment_window === "Open"
+    && view.queued_subscription === null
+    && view.settled_subscription === null
+    && (view.owner_entitlement !== null || view.open_subscription_remaining_shares !== null));
+}
+
+/** 认购上限：优先具名权利股数，其次公开配售剩余额度；两者皆无 = null
+ *  （不可认购；候选过滤已排除该形态，此处显式返回 null 不填零）。 */
+export function rightsSubscriptionMaxShares(view: OwnerRightsOfferingView): string | null {
+  if (view.owner_entitlement !== null) return view.owner_entitlement.rights_shares;
+  return view.open_subscription_remaining_shares;
+}
+
+/** 认购输入校验：规范正整数十进制字符串且不超过上限（BigInt 比较；上限
+ *  形态由 `decimal` parser 保证规范）。 */
+export function rightsSubscriptionInputValid(shares: string, maxShares: string): boolean {
+  if (!/^[1-9]\d*$/.test(shares)) return false;
+  return BigInt(shares) <= BigInt(maxShares);
+}
+
 function useQueried<T>(query: (() => Promise<T>) | undefined, refreshKey: string): readonly [T | null, string | null, boolean, () => void] {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +160,7 @@ function useQueried<T>(query: (() => Promise<T>) | undefined, refreshKey: string
  * 公司共同契约能力面（F 批收口）：只读展示公司当前事实、未完成方案阶段、
  * 各行为业务条件、本人配股权益与期间变化解释；owner 隔离查询，不新增写操作。
  */
-export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRightsQuery, onExplanationQuery, onFlatReceiptsQuery, refreshKey }: CompanyContractPanelProps) {
+export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRightsQuery, onRightsSubscription, onExplanationQuery, onFlatReceiptsQuery, refreshKey }: CompanyContractPanelProps) {
   const [capabilities, capabilitiesError, capabilitiesLoading, refreshCapabilities] = useQueried(
     onCapabilitiesQuery === undefined ? undefined : () => onCapabilitiesQuery(companyId),
     `${refreshKey}:${companyId}`,
@@ -145,11 +172,27 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
   const [explanationError, setExplanationError] = useState<string | null>(null);
   const [explanationLoading, setExplanationLoading] = useState(false);
   const explanationSequence = useRef(0);
+  // 认购提交：事件选择 + 股数输入 + 受理回执/拒绝显式展示。
+  const [subscriptionEventId, setSubscriptionEventId] = useState("");
+  const [subscriptionShares, setSubscriptionShares] = useState("");
+  const [subscriptionReceipt, setSubscriptionReceipt] = useState<QueuedRightsSubscriptionView | null>(null);
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+  const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
+  const subscriptionSequence = useRef(0);
 
   useEffect(() => {
     setExplanation(null);
     setExplanationError(null);
     explanationSequence.current += 1;
+  }, [companyId, refreshKey]);
+
+  // 会话/公司/刷新键变化即重置认购表单：旧会话的输入与回执不得残留在新上下文。
+  useEffect(() => {
+    setSubscriptionEventId("");
+    setSubscriptionShares("");
+    setSubscriptionReceipt(null);
+    setSubscriptionError(null);
+    subscriptionSequence.current += 1;
   }, [companyId, refreshKey]);
 
   const queryExplanation = () => {
@@ -167,6 +210,37 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
           setExplanationError(failure instanceof Error ? failure.message : String(failure));
           setExplanationLoading(false);
         }
+      },
+    );
+  };
+
+  const subscriptionCandidates = rights === null ? [] : rightsSubscriptionCandidates(rights);
+  const selectedSubscription = subscriptionCandidates.find((view) => view.event_id === subscriptionEventId) ?? subscriptionCandidates[0];
+  const subscriptionMax = selectedSubscription === undefined ? null : rightsSubscriptionMaxShares(selectedSubscription);
+  const subscriptionInputValid = selectedSubscription !== undefined
+    && subscriptionMax !== null
+    && rightsSubscriptionInputValid(subscriptionShares, subscriptionMax);
+
+  const submitSubscription = () => {
+    if (onRightsSubscription === undefined || selectedSubscription === undefined || !subscriptionInputValid || subscriptionSubmitting) return;
+    const current = ++subscriptionSequence.current;
+    const eventId = selectedSubscription.event_id;
+    const shares = subscriptionShares;
+    setSubscriptionReceipt(null);
+    setSubscriptionError(null);
+    setSubscriptionSubmitting(true);
+    onRightsSubscription(eventId, shares).then(
+      (receipt) => {
+        if (subscriptionSequence.current !== current) return;
+        setSubscriptionReceipt(receipt);
+        setSubscriptionSubmitting(false);
+        // 受理成功后刷新权益表：认购进度列即刻反映排队认购事实。
+        refreshRights();
+      },
+      (failure) => {
+        if (subscriptionSequence.current !== current) return;
+        setSubscriptionError(failure instanceof Error ? failure.message : String(failure));
+        setSubscriptionSubmitting(false);
       },
     );
   };
@@ -260,6 +334,38 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
               </table>
             )}
             <button type="button" disabled={rightsLoading} onClick={refreshRights}>刷新配股权益</button>
+            <div className="company-rights-subscription" aria-label="配股认购提交">
+              <h6>配股认购提交</h6>
+              {onRightsSubscription === undefined
+                ? <p className="company-state">当前宿主不支持配股认购提交。</p>
+                : (
+                  <>
+                    {subscriptionCandidates.length === 0
+                      ? <p className="company-state">当前没有可提交认购的配股方案（无缴款期内且本人未认购的方案）。</p>
+                      : (
+                        <>
+                          <label className="company-picker"><span>配股事件</span>
+                            <select aria-label="认购配股事件" value={selectedSubscription?.event_id ?? ""} onChange={(event) => { setSubscriptionEventId(event.currentTarget.value); setSubscriptionReceipt(null); setSubscriptionError(null); }}>
+                              {subscriptionCandidates.map((view) => <option key={view.event_id} value={view.event_id}>{view.event_id} · {view.stock} · 认购价 {view.price_per_share} 分</option>)}
+                            </select>
+                          </label>
+                          <label className="company-picker"><span>认购股数{subscriptionMax !== null ? `（上限 ${subscriptionMax} 股）` : ""}</span>
+                            <input aria-label="认购股数" inputMode="numeric" value={subscriptionShares} onChange={(event) => { setSubscriptionShares(event.currentTarget.value); setSubscriptionReceipt(null); setSubscriptionError(null); }} />
+                          </label>
+                          <button type="button" disabled={!subscriptionInputValid || subscriptionSubmitting} onClick={submitSubscription}>{subscriptionSubmitting ? "正在提交…" : "提交认购"}</button>
+                          {subscriptionShares !== "" && selectedSubscription !== undefined && subscriptionMax !== null && !rightsSubscriptionInputValid(subscriptionShares, subscriptionMax)
+                            && <p className="company-state is-error" role="alert">认购股数必须是 1 到 {subscriptionMax} 之间的整数。</p>}
+                        </>
+                      )}
+                    {subscriptionError !== null && <p className="company-state is-error" role="alert">认购被拒绝：{subscriptionError}</p>}
+                    {subscriptionReceipt !== null && (
+                      <p className="company-state" role="status">
+                        认购已受理：事件 {subscriptionReceipt.event_id} · {subscriptionReceipt.requested_shares} 股 · 提交日 {subscriptionReceipt.submitted_on}（当日日终划扣认购款；日终拒绝回执另见「配股认购拒绝回执」区）。
+                      </p>
+                    )}
+                  </>
+                )}
+            </div>
           </>
         )}
       <h5>期间变化解释</h5>

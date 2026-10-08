@@ -11,7 +11,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
-import type { AccountDividendTaxStatusView, CompanyCapabilities, CompanyPreferenceRejectionView, DividendTaxOutstandingView, FlatWithholdingReceiptView, OwnerRightsOfferingView, PeriodChangeExplanation, PersonalTradeHistoryRequest, PersonalTradeHistoryPage, RejectedRightsSubscriptionView } from "../host/engine-host.ts";
+import type { AccountDividendTaxStatusView, CompanyCapabilities, CompanyPreferenceRejectionView, DividendTaxOutstandingView, FlatWithholdingReceiptView, OwnerRightsOfferingView, PeriodChangeExplanation, PersonalTradeHistoryRequest, PersonalTradeHistoryPage, QueuedRightsSubscriptionView, RejectedRightsSubscriptionView } from "../host/engine-host.ts";
 import type { PublicReportAvailability, PublicReportAvailabilityQuery } from "../types/engine.ts";
 import type { MarketHistoryRequest, MarketHistoryPage } from "../host/market-history.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
@@ -50,6 +50,8 @@ interface MarketRuntimeActions {
   queryCompanyPeriodExplanation: (company: string, periodEnd: string) => Promise<PeriodChangeExplanation>;
   queryOwnerRightsOfferings: () => Promise<readonly OwnerRightsOfferingView[]>;
   queryOwnerFlatWithholdingReceipts: () => Promise<readonly FlatWithholdingReceiptView[]>;
+  /** 本人配股认购提交（owner 隔离；写命令）。受理回执/拒绝按调用方展示。 */
+  submitRightsSubscription: (eventId: string, shares: string) => Promise<QueuedRightsSubscriptionView>;
   calculateIntradayAverage: (input: IntradayAverageInput) => Promise<IntradayAverageResult | null>;
   calculateIntradayAverageCurve: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
 }
@@ -224,6 +226,19 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("简税代扣回执响应属于已切换的宿主或市场");
     return result;
   }, [hostRef]);
+  const submitRightsSubscription = useCallback(async (eventId: string, shares: string) => {
+    const host = hostRef.current;
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能提交配股认购");
+    if (host.subscribeRightsOffering === undefined) throw new Error("当前宿主不支持配股认购提交");
+    if (eventId.trim().length === 0 || eventId.length > 128) throw new Error("配股认购事件身份必须是非空且不超过 128 字符的字符串");
+    if (!/^[1-9]\d*$/.test(shares) || shares.length > 20) throw new Error("配股认购股数必须是正的规范 u64 十进制字符串");
+    const before = store.getState();
+    const generation = before.snapshot.generation;
+    const result = await host.subscribeRightsOffering(eventId, shares);
+    const after = store.getState();
+    if (hostRef.current !== host || after.snapshot.generation !== generation) throw new Error("配股认购响应属于已切换的宿主或市场");
+    return result;
+  }, [hostRef]);
   const calculateIntradayAverageCurve = useCallback(async (input: IntradayAverageCurveInput) => {
     const host = hostRef.current;
     if (host === null) throw new Error("游戏宿主尚未就绪，不能计算分时均价曲线");
@@ -254,6 +269,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryCompanyPeriodExplanation,
     queryOwnerRightsOfferings,
     queryOwnerFlatWithholdingReceipts,
+    submitRightsSubscription,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   }), [
@@ -280,6 +296,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
     queryCompanyPeriodExplanation,
     queryOwnerRightsOfferings,
     queryOwnerFlatWithholdingReceipts,
+    submitRightsSubscription,
     calculateIntradayAverage,
     calculateIntradayAverageCurve,
   ]);

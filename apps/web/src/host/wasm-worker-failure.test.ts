@@ -213,3 +213,18 @@ test("S2 查询消息先做请求字段校验：无效 requestId 与公司身份
   messageListener!({ data: { type: "preferenceRejections", generation: 0, requestId: 3, company: 600101 } } as MessageEvent);
   assert.deepEqual(posted, [{ type: "operationError", requestId: 3, generation: 0, message: "偏好台账公司身份必须是非空且不超过 64 字符的字符串" }]);
 });
+
+test("G 批认购提交消息先做请求字段校验：无效事件身份与股数走 operationError 显式拒绝", () => {
+  posted.length = 0;
+  messageListener!({ data: { type: "subscribeRightsOffering", generation: 0, requestId: -1, eventId: "rights-event", shares: "41" } } as MessageEvent);
+  assert.deepEqual(posted, [{ type: "operationError", requestId: -1, generation: 0, message: "配股认购提交请求 ID 无效" }]);
+  posted.length = 0;
+  messageListener!({ data: { type: "subscribeRightsOffering", generation: 0, requestId: 5, eventId: " ", shares: "41" } } as MessageEvent);
+  assert.deepEqual(posted, [{ type: "operationError", requestId: 5, generation: 0, message: "配股认购事件身份必须是非空且不超过 128 字符的字符串" }]);
+  posted.length = 0;
+  messageListener!({ data: { type: "subscribeRightsOffering", generation: 0, requestId: 6, eventId: "rights-event", shares: "0" } } as MessageEvent);
+  assert.deepEqual(posted, [{ type: "operationError", requestId: 6, generation: 0, message: "配股认购股数必须是正的规范 u64 十进制字符串" }]);
+  posted.length = 0;
+  messageListener!({ data: { type: "subscribeRightsOffering", generation: 0, requestId: 7, eventId: "rights-event", shares: 41 } } as MessageEvent);
+  assert.deepEqual(posted, [{ type: "operationError", requestId: 7, generation: 0, message: "配股认购股数必须是正的规范 u64 十进制字符串" }]);
+});

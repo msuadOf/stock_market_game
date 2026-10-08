@@ -10,6 +10,9 @@ let contractKindLabel: typeof import("./CompanyContractPanel.tsx").contractKindL
 let contractStageLabel: typeof import("./CompanyContractPanel.tsx").contractStageLabel;
 let contractWindowLabel: typeof import("./CompanyContractPanel.tsx").contractWindowLabel;
 let contractQueryTrigger: typeof import("./CompanyContractPanel.tsx").contractQueryTrigger;
+let rightsSubscriptionCandidates: typeof import("./CompanyContractPanel.tsx").rightsSubscriptionCandidates;
+let rightsSubscriptionMaxShares: typeof import("./CompanyContractPanel.tsx").rightsSubscriptionMaxShares;
+let rightsSubscriptionInputValid: typeof import("./CompanyContractPanel.tsx").rightsSubscriptionInputValid;
 
 before(async () => {
   vite = await createServer({ configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
@@ -19,6 +22,9 @@ before(async () => {
   contractStageLabel = panel.contractStageLabel;
   contractWindowLabel = panel.contractWindowLabel;
   contractQueryTrigger = panel.contractQueryTrigger;
+  rightsSubscriptionCandidates = panel.rightsSubscriptionCandidates;
+  rightsSubscriptionMaxShares = panel.rightsSubscriptionMaxShares;
+  rightsSubscriptionInputValid = panel.rightsSubscriptionInputValid;
 });
 
 after(async () => { if (vite) await vite.close(); });
@@ -53,6 +59,8 @@ test("支持查询的宿主在 SSR 初始态不误报不支持", () => {
     companyId: "C-600101",
     onCapabilitiesQuery: () => Promise.resolve({} as never),
     onOwnerRightsQuery: () => Promise.resolve([]),
+    // G 批起认购提交同为可选支持位：全支持宿主不得在任何区域误报「不支持」。
+    onRightsSubscription: () => Promise.resolve({ event_id: "e", account: "0", requested_shares: "41", submitted_on: "2030-01-08" }),
     onExplanationQuery: () => Promise.resolve({} as never),
     onFlatReceiptsQuery: () => Promise.resolve([]),
     refreshKey: "g1:2030-01-02",
@@ -106,4 +114,86 @@ test("渲染期零请求（SSR 调用计数：两次渲染均不在 render 阶�
   // SSR 不执行 effect，查询只应发生在 effect；若有人在渲染路径直接调用
   // query（绕过 effect 契约），此处立即暴露。
   assert.equal(calls, 0);
+});
+
+// —— G 批配股认购入口：候选/上限/输入校验纯函数与 SSR 静态态 ——
+
+type RightsView = Parameters<typeof rightsSubscriptionCandidates>[0][number];
+
+function rightsView(overrides: Partial<RightsView> & { readonly event_id: string }): RightsView {
+  return {
+    stock: "600101",
+    issuer: "C-600101",
+    stage: "Entitled",
+    payment_window: "Open",
+    price_per_share: "500",
+    payment_start_on: "2030-01-08",
+    payment_deadline_on: "2030-01-10",
+    ex_rights_on: "2030-01-13",
+    settlement_on: "2030-01-15",
+    owner_entitlement: null,
+    open_subscription_remaining_shares: null,
+    queued_subscription: null,
+    settled_subscription: null,
+    ...overrides,
+  } as RightsView;
+}
+
+test("认购候选只含缴款期内且本人未提交认购的方案", () => {
+  const views = [
+    rightsView({ event_id: "open-entitled", owner_entitlement: { rights_shares: "50", lock_until: null } }),
+    rightsView({ event_id: "open-openquota", open_subscription_remaining_shares: "100" }),
+    rightsView({ event_id: "closed", payment_window: "Closed", owner_entitlement: { rights_shares: "50", lock_until: null } }),
+    rightsView({ event_id: "before-open", payment_window: "BeforeOpen", owner_entitlement: { rights_shares: "50", lock_until: null } }),
+    rightsView({ event_id: "queued", queued_subscription: { requested_shares: "10", submitted_on: "2030-01-08" } }),
+    rightsView({ event_id: "settled", settled_subscription: { requested_shares: "50", paid_shares: "30", paid_amount: "15000", waived_shares: "20" } }),
+    rightsView({ event_id: "no-right-no-quota" }),
+  ];
+  assert.deepEqual(rightsSubscriptionCandidates(views).map((view) => view.event_id), ["open-entitled", "open-openquota"]);
+});
+
+test("认购上限优先具名权利，其次公开配售剩余额度", () => {
+  assert.equal(rightsSubscriptionMaxShares(rightsView({ event_id: "e", owner_entitlement: { rights_shares: "50", lock_until: null }, open_subscription_remaining_shares: "100" })), "50");
+  assert.equal(rightsSubscriptionMaxShares(rightsView({ event_id: "e", open_subscription_remaining_shares: "100" })), "100");
+  assert.equal(rightsSubscriptionMaxShares(rightsView({ event_id: "e" })), null);
+});
+
+test("认购输入校验只接受不超过上限的正整数（规范十进制字符串）", () => {
+  assert.equal(rightsSubscriptionInputValid("41", "50"), true);
+  assert.equal(rightsSubscriptionInputValid("50", "50"), true);
+  assert.equal(rightsSubscriptionInputValid("51", "50"), false);
+  assert.equal(rightsSubscriptionInputValid("0", "50"), false);
+  assert.equal(rightsSubscriptionInputValid("", "50"), false);
+  assert.equal(rightsSubscriptionInputValid("4.5", "50"), false);
+  assert.equal(rightsSubscriptionInputValid("-1", "50"), false);
+  assert.equal(rightsSubscriptionInputValid("041", "50"), false);
+  assert.equal(rightsSubscriptionInputValid(" 41", "50"), false);
+});
+
+test("宿主不支持认购提交时显式提示而非静默隐藏", () => {
+  const markup = renderToStaticMarkup(createElement(CompanyContractPanel, {
+    companyId: "C-600101",
+    onCapabilitiesQuery: undefined,
+    onOwnerRightsQuery: () => Promise.resolve([]),
+    onRightsSubscription: undefined,
+    onExplanationQuery: undefined,
+    onFlatReceiptsQuery: undefined,
+    refreshKey: "g1:2030-01-02",
+  }));
+  assert.match(markup, /本人配股权益/);
+  assert.match(markup, /当前宿主不支持配股认购提交/);
+});
+
+test("支持认购提交的宿主在 SSR 初始态不误报不支持", () => {
+  const markup = renderToStaticMarkup(createElement(CompanyContractPanel, {
+    companyId: "C-600101",
+    onCapabilitiesQuery: undefined,
+    onOwnerRightsQuery: () => Promise.resolve([]),
+    onRightsSubscription: () => Promise.resolve({ event_id: "e", account: "0", requested_shares: "41", submitted_on: "2030-01-08" }),
+    onExplanationQuery: undefined,
+    onFlatReceiptsQuery: undefined,
+    refreshKey: "g1:2030-01-02",
+  }));
+  assert.match(markup, /本人配股权益/);
+  assert.doesNotMatch(markup, /当前宿主不支持配股认购提交/);
 });

@@ -769,6 +769,55 @@ pub fn owner_rejected_rights_subscriptions(handle: u32) -> Result<JsValue, JsVal
     })
 }
 
+/// 玩家（固定 AccountId(0)，owner 隔离）显式提交配股认购（参数 = 配股事件 +
+/// 认购股数）。受理成功返回排队认购回执（当日日终划扣，恰好一条——engine
+/// 拒绝同一持有人重复提交）；现金不足、缴款窗口外、额度不足、重复提交等由
+/// engine 显式拒绝，完整错误信息直接抛给宿主展示，不静默降级。
+/// `shares` 必须是规范 u64 非负十进制字符串（与股数 wire 口径一致）。
+#[wasm_bindgen]
+pub fn subscribe_rights_offering(
+    handle: u32,
+    event_id: String,
+    shares: String,
+) -> Result<JsValue, JsValue> {
+    if event_id.trim().is_empty() || event_id.encode_utf16().count() > 128 {
+        return Err(JsValue::from_str(
+            "认购配股事件身份必须是非空且不超过 128 字符的字符串",
+        ));
+    }
+    if shares.is_empty()
+        || shares.len() > 20
+        || !shares.bytes().all(|byte| byte.is_ascii_digit())
+        || (shares.len() > 1 && shares.starts_with('0'))
+    {
+        return Err(JsValue::from_str(
+            "认购股数必须是规范 u64 非负十进制字符串",
+        ));
+    }
+    let shares = shares
+        .parse::<u64>()
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    with_session(handle, |session| {
+        let owner = AccountId(0);
+        session
+            .subscribe_rights_offering(&event_id, owner, shares)
+            .map_err(session_error_to_js)?;
+        // 受理成功后 (event_id, owner) 在排队队列中恰好一条（重复提交被
+        // engine 拒绝），据此取回受理回执事实。
+        let receipt = session
+            .game()
+            .corporate_actions()
+            .rights_subscription_queue
+            .iter()
+            .find(|queued| queued.event_id == event_id && queued.account == owner)
+            .cloned()
+            .ok_or_else(|| {
+                JsValue::from_str("配股认购受理成功但排队回执缺失（引擎状态不一致）")
+            })?;
+        to_js(&receipt)
+    })
+}
+
 /// 查询某公司行为偏好自动提案的拒绝台账（ADR-0037）。只读读取最近一次已完成
 /// 自然日日终存档中的公司系统状态（偏好台账只在日结候选事务内变更）；首个日终
 /// 完成前显式报错，不静默返回空台账冒充「无拒绝」。
