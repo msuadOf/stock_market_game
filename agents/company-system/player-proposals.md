@@ -60,12 +60,13 @@ Web：`host/player-proposals.test.ts`（parser 三分支+畸形拒绝、六类�
 | 受影响引擎组 | 13 组并发复跑全绿（player-proposals/simple-prefs/company::system/simple-session/corporate-actions/contract-rights/repurchase/split/mechanism-switch/tax-mode/auto-registry/persistence） | `groups/*.log` |
 | `session::persistence` 13 败 | **pristine main `b7ace30a` 独立 worktree 复跑逐项一致**（31 过/13 败同名）——既有基线，零新增 | `/tmp/n2b-baseline-persistence.log` |
 | `session::corporate_actions` | 单独跑 19/19 绿（7.36s；并行批次内超时 10s 为多组同时启动的编译/启动竞争，非测试失败） | 终端复跑 |
+| engine lib 全量 | 1676 过/257 败——失败数与 N2a 台账登记的基线 257 完全一致（family 分布：session 244/verification_evidence 8/company 3/accounting 2，均为既有持久化 envelope 重放与环境性失败家族）；`player_proposal` 零失败 | `engine-lib-full.log` |
 | typegen | 184 项导出全过（新增 PlayerProposalKind/Receipt/Error/CompanyProposal/Outcome + StockDistributionKind/ShareSplitDirection/RepurchasePurpose）；生成文件零漂移（check 仅因未提交报 untracked） | `typegen.log` |
 | tsc | `tsc -b apps/web --force` 0 错误 | `tsc.log` |
 | oxlint | 本批 12 个 web 文件 0 警告 | `oxlint.log` |
 | cargo check | `-p web-wasm` 通过；`--workspace --all-targets --exclude stock-market-game` 通过 | `wasm-check2.log`、`workspace-check.log` |
 
-未运行完整回归与浏览器 E2E（本批验证范围与 N2a/F 批先例一致）；Web 全量套件未整批跑（受影响文件定向复跑，`node_modules` 经符号链接自 N2a worktree——依赖清单与基线逐字节一致已核对）。
+未运行完整回归与浏览器 E2E（本批验证范围与 N2a/F 批先例一致）；Web 全量套件未整批跑（受影响文件定向复跑，`node_modules` 经符号链接自 N2a worktree——依赖清单与基线逐字节一致已核对）。过程记录：一次对含 `mod` 声明文件的直接 rustfmt 触发子模块递归格式化（默认无 rustfmt.toml），已整体回退 Rust 文件后仅重放本批语义改动；最终 diff 19 文件 +297/−10 + 15 新文件，`cargo fmt -p {engine,web-wasm} --check` 确认新增代码块零格式差异（其余报警均为 main 既有漂移）。
 
 ## 已知边界与遗留
 
