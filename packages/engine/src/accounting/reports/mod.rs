@@ -238,6 +238,8 @@ fn industry_of_chart(chart: &AccountChart) -> Result<IndustryPresentation, Repor
 pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, ReportError> {
     let ((first, last), prior_window) = request.kind.resolve(request.period)?;
     let restatement = !request.adjustments.is_empty();
+    // 更早调整可能改变期初权益，不能只检查窗口内；更晚有效期间不影响本期 ROE。
+    let roe_restatement = request.adjustments.values().any(|target| *target <= last);
     let roe_books = match &request.source {
         ReportSource::Standalone { books, .. } => Some(*books),
         ReportSource::Consolidated { .. } | ReportSource::ConsolidatedRestated { .. } => None,
@@ -313,7 +315,7 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
         roe_period,
         equity.opening_parent,
         income.report_period.net_income,
-        restatement,
+        roe_restatement,
     )?;
     Ok(ReportSet {
         scope,

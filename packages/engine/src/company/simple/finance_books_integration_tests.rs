@@ -729,6 +729,12 @@ fn tampered_capital_action_entries_are_rejected_by_restore_validation() {
 
 /// 构造可用于 `correct_report` 的 Simple CompanySystem（prehistory 1 期，月度披露）。
 fn correction_ready_system() -> (crate::company::CompanySystem, crate::company::CompanyId) {
+    correction_ready_system_with_prehistory(1)
+}
+
+fn correction_ready_system_with_prehistory(
+    prehistory_periods: u16,
+) -> (crate::company::CompanySystem, crate::company::CompanyId) {
     use crate::accounting::{IncomeTaxPolicy, TaxPolicy, VatPolicy};
     use crate::company::config::CompanySystemConfig;
     use crate::company::simple::finance::{
@@ -765,7 +771,7 @@ fn correction_ready_system() -> (crate::company::CompanySystem, crate::company::
                 persistence_bp: 0,
                 noise: noise.clone(),
             },
-            prehistory_periods: 1,
+            prehistory_periods,
             settlement_cycle: SettlementCycle::Monthly,
             companies: vec![SimpleCompanyConfig {
                 company: company.clone(),
@@ -879,6 +885,174 @@ fn correct_report_accepts_legal_income_correction_and_links_book_display() {
         "收入更正 100 分按默认 30% 比例增加投资额展示 30 分");
     assert_eq!(after.cash_book, before.cash_book.add(amount(75)).unwrap(),
         "收入更正 100 分扣除所得税 25 分后，现金展示增加 75 分");
+}
+
+/// 两月前史中更正后月：前月完整 ReportSet 不变，原公开版不可变，
+/// 重述影响的期初权益与后续报告仍显式缺少完整权益事件历史。
+#[test]
+fn later_month_correction_preserves_earlier_report_and_rebuilds_affected_history() {
+    use crate::accounting::closing::CorrectionRequest;
+    use crate::accounting::reports::{
+        generate_report_set, ReportRequest, ReportRoeBasis, ReportRoeUnavailable, ReportRoeValue,
+        ReportSource,
+    };
+    use crate::calendar::CivilInstant;
+    use crate::information::{
+        publish_simple_scheduled, MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule,
+        PublicationOrigin, PublicLibrary, ReportFrequency,
+    };
+
+    let (mut system, company) = correction_ready_system_with_prehistory(2);
+    let mut library = PublicLibrary::new();
+    let original_at = CivilInstant::from_hms(date(1, 1), 18, 0, 0).unwrap();
+    publish_simple_scheduled(
+        &system,
+        ReportFrequency::Monthly {
+            schedule: MonthlyReportSchedule::Preset {
+                preset: MonthlyReportPreset::FirstDayEvening,
+                delay: MonthlyReportDelay::None,
+            },
+        },
+        17,
+        None,
+        original_at,
+        &mut library,
+        false,
+    )
+    .unwrap();
+    let earlier_period = AccountingPeriod::from_ymd(2029, 11).unwrap();
+    let target_period = AccountingPeriod::from_ymd(2029, 12).unwrap();
+    let earlier = library
+        .latest_report(&company, ReportKind::Monthly, earlier_period, original_at)
+        .unwrap()
+        .clone();
+    let target = library
+        .latest_report(&company, ReportKind::Monthly, target_period, original_at)
+        .unwrap()
+        .clone();
+    let finance = system.finance(&company).unwrap();
+    assert!(matches!(earlier.reports.roe.ordinary_roe, ReportRoeValue::Available(_)));
+    assert!(matches!(target.reports.roe.ordinary_roe, ReportRoeValue::Available(_)));
+    let before_finance = finance.clone();
+    let before_library = library.clone();
+    let before_display = system.simple_book_display(&company).unwrap();
+    let adjustment = JournalEntry {
+        source: BusinessEventId::new(finance.next_event_id()),
+        date: date(1, 2),
+        kind: BusinessKind::CashRevenue,
+        cash_flow: CashFlowClass::Operating,
+        lines: vec![
+            line("1002", PostingSide::Debit, amount(1_000)),
+            line("6001", PostingSide::Credit, amount(1_000)),
+        ],
+    };
+    let corrected_at = CivilInstant::from_hms(date(1, 2), 18, 0, 0).unwrap();
+
+    // 第一笔合法、第二笔来源重复的批次必须全部回滚，不能消费第一笔的事件身份。
+    let rejected = system.correct_report(
+        &company,
+        CorrectionRequest {
+            reason: "重复来源整批拒绝".into(),
+            entries: vec![adjustment.clone(), adjustment.clone()],
+        },
+        target.id,
+        corrected_at,
+        &mut library,
+    );
+    assert!(matches!(rejected, Err(crate::company::CompanyCorrectionError::Accounting { .. })));
+    assert_eq!(system.finance(&company).unwrap(), &before_finance);
+    assert_eq!(library, before_library);
+    assert_eq!(system.simple_book_display(&company).unwrap(), before_display);
+
+    let ids = system
+        .correct_report(
+            &company,
+            CorrectionRequest {
+                reason: "补记十二月已收现收入十元".into(),
+                entries: vec![adjustment.clone()],
+            },
+            target.id,
+            corrected_at,
+            &mut library,
+        )
+        .expect("更正后月不得使前月 ROE 漂移并拒绝合法更正");
+    assert_eq!(ids.len(), 1);
+    let corrected = library.report(ids[0], corrected_at).unwrap();
+    assert_eq!(corrected.supersedes, Some(target.id));
+    assert_eq!(corrected.origin, PublicationOrigin::Correction);
+    assert_eq!(corrected.reports.version.sequence, 2);
+    assert_eq!(corrected.reports.version.supersedes, Some(1));
+    assert_eq!(library.report(target.id, corrected_at).unwrap(), &target);
+    assert_eq!(library.report(earlier.id, corrected_at).unwrap(), &earlier);
+    assert_eq!(
+        library.latest_report(&company, ReportKind::Monthly, earlier_period, corrected_at).unwrap(),
+        &earlier,
+    );
+
+    let finance = system.finance(&company).unwrap();
+    finance.validate().unwrap();
+    assert_eq!(finance.report(earlier_period, ReportKind::Monthly).unwrap(), &earlier.reports);
+    assert_eq!(finance.report(target_period, ReportKind::Monthly).unwrap(), &corrected.reports);
+    assert_eq!(
+        finance.closing().version(&target.reports.scope, target_period, ReportKind::Monthly, 1),
+        Some(&target.reports),
+    );
+    let adjustments = finance.closing().restatement_periods(&target.reports.scope).unwrap();
+    assert_eq!(adjustments[&adjustment.source], target_period);
+    let rebuilt_earlier = generate_report_set(ReportRequest {
+        period: earlier_period,
+        kind: ReportKind::Monthly,
+        source: ReportSource::Standalone {
+            id: finance.member_id(),
+            books: finance.books(),
+            industry: finance.industry(),
+        },
+        version: earlier.reports.version.clone(),
+        adjustments,
+    })
+    .unwrap();
+    assert_eq!(rebuilt_earlier, earlier.reports);
+    let unsupported = ReportRoeBasis::Unsupported {
+        reason: ReportRoeUnavailable::IncompleteEquityEventHistory,
+    };
+    assert_eq!(corrected.reports.roe.basis, unsupported);
+    assert_eq!(
+        corrected.reports.income.report_period.net_income,
+        target.reports.income.report_period.net_income.add(amount(750)).unwrap(),
+    );
+    assert_eq!(corrected.reports.cash_flow.operating, target.reports.cash_flow.operating);
+    assert_eq!(corrected.reports.cash_flow.investing, target.reports.cash_flow.investing);
+    assert_eq!(corrected.reports.cash_flow.financing, target.reports.cash_flow.financing);
+    assert_eq!(corrected.reports.cash_flow.opening_cash, target.reports.cash_flow.opening_cash);
+    assert_eq!(corrected.reports.cash_flow.closing_cash, target.reports.cash_flow.closing_cash);
+    assert!(corrected.reports.cash_flow.indirect.iter().any(|row| {
+        row.label == "重述调整对应现金流量（按实际收付期间列报）" && row.amount == amount(-1_000)
+    }));
+    assert_eq!(system.simple_book_display(&company).unwrap().cash_book,
+        before_display.cash_book.add(amount(750)).unwrap());
+    assert_eq!(system.simple_book_display(&company).unwrap().investment_book,
+        before_display.investment_book);
+
+    let restored: SimpleFinanceState = serde_json::from_slice(&serde_json::to_vec(finance).unwrap()).unwrap();
+    restored.validate().unwrap();
+    assert_eq!(&restored, finance);
+
+    // 后续月从更正后的期初权益生成；收入仍归十二月，现金只归真实一月。
+    let mut next_finance = restored;
+    next_finance.apply_month(date(1, 31), &PeriodAmounts {
+        revenue: amount(10_000),
+        fixed_expense: amount(3_000),
+        variable_expense: amount(4_000),
+    }).unwrap();
+    let next = next_finance.report(AccountingPeriod::of_date(date(1, 31)), ReportKind::Monthly).unwrap();
+    assert_eq!(next.roe.basis, unsupported);
+    assert_eq!(next.equity.opening_parent, corrected.reports.equity.closing_parent);
+    assert_eq!(next.income.report_period.net_income, amount(2_250));
+    assert_eq!(next.cash_flow.operating, amount(1_000));
+    assert!(next.cash_flow.indirect.iter().any(|row| {
+        row.label == "重述调整对应现金流量（按实际收付期间列报）" && row.amount == amount(1_000)
+    }));
+    next_finance.validate().unwrap();
 }
 
 /// 更正失败必须原子回滚：公司财务与公开资料库保持原状。
