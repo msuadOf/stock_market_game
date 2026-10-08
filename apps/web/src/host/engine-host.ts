@@ -29,9 +29,9 @@ import type { DividendTaxOutstandingView } from "../types/generated/DividendTaxO
 import type { CompanyCapabilities } from "../types/generated/CompanyCapabilities";
 import type { OwnerRightsOfferingView } from "../types/generated/OwnerRightsOfferingView";
 import type { PeriodChangeExplanation } from "../types/generated/PeriodChangeExplanation";
-import type { CompanyPreferenceRejectionView, RejectedRightsSubscriptionView } from "./corporate-action-views.ts";
+import type { CompanyPreferenceRejectionView, QueuedRightsSubscriptionView, RejectedRightsSubscriptionView } from "./corporate-action-views.ts";
 import type { FlatWithholdingReceiptView } from "./company-contract-views.ts";
-export type { AccountDividendTaxStatusView, DividendTaxOutstandingView, CompanyPreferenceRejectionView, RejectedRightsSubscriptionView, FlatWithholdingReceiptView, CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation };
+export type { AccountDividendTaxStatusView, DividendTaxOutstandingView, CompanyPreferenceRejectionView, QueuedRightsSubscriptionView, RejectedRightsSubscriptionView, FlatWithholdingReceiptView, CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation };
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -156,6 +156,11 @@ export interface EngineHost {
   dividendTaxOutstanding?(): Promise<readonly DividendTaxOutstandingView[]>;
   /** 仅支持本地 WASM 宿主：本人配股认购拒绝回执查询（owner 隔离）。缺失表示该宿主明确不支持，UI 须显式提示。 */
   rejectedRightsSubscriptions?(): Promise<readonly RejectedRightsSubscriptionView[]>;
+  /** 仅支持本地 WASM 宿主：本人配股认购提交（owner 隔离；参数=配股事件+认购股数，
+   *  股数为规范 u64 十进制字符串）。受理成功返回排队认购回执（当日日终划扣）；
+   *  现金不足/窗口外/超额/重复提交等拒绝以完整错误信息抛出，UI 显式展示。
+   *  缺失表示该宿主明确不支持，UI 须显式提示。 */
+  subscribeRightsOffering?(eventId: string, shares: string): Promise<QueuedRightsSubscriptionView>;
   /** 仅支持本地 WASM 宿主：公司行为偏好提案拒绝台账查询（ADR-0037）。缺失表示该宿主明确不支持，UI 须显式提示。 */
   companyPreferenceRejections?(company: string): Promise<readonly CompanyPreferenceRejectionView[]>;
   /** 仅支持本地 WASM 宿主：公司共同契约能力面（F 批收口；含本人权利摘要，owner 隔离）。缺失表示该宿主明确不支持。 */

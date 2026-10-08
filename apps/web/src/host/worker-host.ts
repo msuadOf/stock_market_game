@@ -33,7 +33,7 @@ import { normalizeConfirmationCursor, normalizeIntradayAverageCurveInput, normal
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage } from "./personal-trade-history.ts";
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./engine-host.ts";
 import { parseAccountDividendTaxStatusView, parseDividendTaxOutstandingViews } from "./dividend-tax.ts";
-import { parseCompanyPreferenceRejections, parseRejectedRightsSubscriptions } from "./corporate-action-views.ts";
+import { parseCompanyPreferenceRejections, parseQueuedRightsSubscription, parseRejectedRightsSubscriptions } from "./corporate-action-views.ts";
 import {
   parseCompanyCapabilities,
   parseFlatWithholdingReceipts,
@@ -662,6 +662,14 @@ export function createWorkerHost(
           const response = await requests.request({ type: "rightsRejections", requestId: requests.nextRequestId(), generation: requestedGeneration }, "rightsRejections");
           if (disposed || currentGeneration !== requestedGeneration || baselineEpoch !== queryEpoch) throw new Error("配股认购拒绝回执查询属于已过期 generation");
           return parseRejectedRightsSubscriptions(response.receipts);
+        },
+        async subscribeRightsOffering(eventId, shares) {
+          // 写命令（产生新的排队认购事实）：必须基于当前未过期的会话 generation
+          // 受理，响应前 generation 变化即拒绝，防止认购落到已切换的宿主/会话。
+          const requestedGeneration = currentGeneration;
+          const response = await requests.request({ type: "subscribeRightsOffering", requestId: requests.nextRequestId(), generation: requestedGeneration, eventId, shares }, "rightsSubscriptionAccepted");
+          if (disposed || currentGeneration !== requestedGeneration) throw new Error("配股认购提交响应属于已过期 generation，请核对权威认购状态，勿重复提交");
+          return parseQueuedRightsSubscription(response.receipt);
         },
         async companyPreferenceRejections(company) {
           if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("偏好台账公司身份必须是非空且不超过 64 字符的字符串");

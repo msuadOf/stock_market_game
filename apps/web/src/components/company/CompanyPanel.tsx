@@ -20,7 +20,7 @@ import { DividendTaxPanel, type DividendTaxQueryResult } from "./DividendTaxPane
 import { RightsSubscriptionRejectionPanel } from "./RightsSubscriptionRejectionPanel.tsx";
 import { PreferenceRejectionsPanel } from "./PreferenceRejectionsPanel.tsx";
 import { CompanyContractPanel } from "./CompanyContractPanel.tsx";
-import type { CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation, FlatWithholdingReceiptView } from "../../host/engine-host.ts";
+import type { CompanyCapabilities, OwnerRightsOfferingView, PeriodChangeExplanation, FlatWithholdingReceiptView, QueuedRightsSubscriptionView } from "../../host/engine-host.ts";
 import type { CompanyPreferenceRejectionView, RejectedRightsSubscriptionView } from "../../host/corporate-action-views.ts";
 import { isIsoMonthEnd, reportAvailabilityReason } from "./report-availability.ts";
 import "./company.css";
@@ -47,6 +47,9 @@ interface CompanyPanelProps {
   readonly onCapabilitiesQuery?: ((companyId: string) => Promise<CompanyCapabilities>) | undefined;
   /** 本人配股权益查询（owner 隔离）；undefined 表示宿主明确不支持。 */
   readonly onOwnerRightsQuery?: (() => Promise<readonly OwnerRightsOfferingView[]>) | undefined;
+  /** 本人配股认购提交（owner 隔离；参数=配股事件+认购股数，受理回执/拒绝显式展示）；
+   *  undefined 表示宿主明确不支持。 */
+  readonly onRightsSubscription?: ((eventId: string, shares: string) => Promise<QueuedRightsSubscriptionView>) | undefined;
   /** 期间变化解释查询；undefined 表示宿主明确不支持。 */
   readonly onExplanationQuery?: ((companyId: string, periodEnd: string) => Promise<PeriodChangeExplanation>) | undefined;
   /** 简税代扣回执查询（owner 隔离）；undefined 表示宿主明确不支持。 */
@@ -66,7 +69,7 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, ids: readonly str
   buttons[(next + ids.length) % ids.length]?.focus();
 }
 
-export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration, onDividendTaxQuery, onRightsRejectionQuery, onPreferenceRejectionsQuery, onCapabilitiesQuery, onOwnerRightsQuery, onExplanationQuery, onFlatReceiptsQuery }: CompanyPanelProps) {
+export function CompanyPanel({ allowCompanySelection = true, companyId, companyState, initialCivilDate, onCompanyChange, onReadingChange, onQuery, onAvailabilityQuery, onAdvanceCivilDay, reportCorrectionControl, timelineGeneration, onDividendTaxQuery, onRightsRejectionQuery, onPreferenceRejectionsQuery, onCapabilitiesQuery, onOwnerRightsQuery, onRightsSubscription, onExplanationQuery, onFlatReceiptsQuery }: CompanyPanelProps) {
   const company = companyId === null ? undefined : publicCompanyById(companyId);
   const cache = companyId === null ? undefined : companyState.companies[companyId];
   const rootPage = cache?.pages.root;
@@ -177,6 +180,7 @@ export function CompanyPanel({ allowCompanySelection = true, companyId, companyS
           companyId={companyId}
           onCapabilitiesQuery={onCapabilitiesQuery}
           onOwnerRightsQuery={onOwnerRightsQuery}
+          onRightsSubscription={onRightsSubscription}
           onExplanationQuery={onExplanationQuery}
           onFlatReceiptsQuery={onFlatReceiptsQuery}
           refreshKey={`${timelineGeneration ?? "current"}:${companyState.civilDate ?? initialCivilDate}`}

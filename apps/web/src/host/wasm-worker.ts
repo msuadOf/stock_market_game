@@ -13,6 +13,7 @@ import { parseReportCorrectionStatus } from "./report-corrections.ts";
 import { parseCompanyReportCorrection } from "../save/schema/company/report-corrections.ts";
 import { normalizeMarketHistoryRequest } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
+import { parseQueuedRightsSubscription } from "./corporate-action-views.ts";
 
 type WorkerMessage = Readonly<Record<string, unknown>> & { readonly type: string };
 type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDecisionTraceRecord[];
@@ -44,6 +45,7 @@ type WasmTransportExtensions = typeof import("../../wasm-pkg/web_wasm.js") & {
   readonly owner_dividend_tax_status?: (handle: number) => unknown;
   readonly owner_dividend_tax_outstanding_views?: (handle: number) => unknown;
   readonly owner_rejected_rights_subscriptions?: (handle: number) => readonly unknown[];
+  readonly subscribe_rights_offering?: (handle: number, eventId: string, shares: string) => unknown;
   readonly company_preference_rejections?: (handle: number, company: string) => readonly unknown[];
   readonly company_capabilities?: (handle: number, company: string) => unknown;
   readonly company_period_explanation?: (handle: number, company: string, periodEnd: string) => unknown;
@@ -532,6 +534,23 @@ ctx.addEventListener("message", (event) => {
           const queryRejected = (wasm as WasmTransportExtensions).owner_rejected_rights_subscriptions;
           if (queryRejected === undefined) throw new Error("当前 WASM bindings 不支持配股认购拒绝回执查询，请重建 bindings");
           ctx.postMessage({ type: "rightsRejections", requestId: message.requestId, generation: requestedGeneration, receipts: queryRejected(session) });
+          return;
+        }
+        case "subscribeRightsOffering": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 0) throw new Error("配股认购提交请求 ID 无效");
+          if (typeof message.eventId !== "string" || message.eventId.trim().length === 0 || message.eventId.length > 128) throw new Error("配股认购事件身份必须是非空且不超过 128 字符的字符串");
+          // 股数与 engine/wasm 同口径：规范 u64 十进制字符串且必须为正
+          //（零股认购在引擎侧同样显式拒绝，此处前置拦截非法输入格式）。
+          if (typeof message.shares !== "string" || message.shares.length > 20 || !/^[1-9]\d*$/.test(message.shares)) throw new Error("配股认购股数必须是正的规范 u64 十进制字符串");
+          const [session, wasm] = slot.requireHandle();
+          const subscribe = (wasm as WasmTransportExtensions).subscribe_rights_offering;
+          if (subscribe === undefined) throw new Error("当前 WASM bindings 不支持配股认购提交，请重建 bindings");
+          // engine 的拒绝（现金不足/窗口外/超额/重复提交等）以异常形式完整
+          // 上抛，经外层 catch 走 operationError 原样透传，不静默降级。
+          const receipt = parseQueuedRightsSubscription(subscribe(session, message.eventId, message.shares));
+          if (receipt.event_id !== message.eventId || receipt.requested_shares !== message.shares) throw new Error("配股认购受理回执与请求不一致");
+          ctx.postMessage({ type: "rightsSubscriptionAccepted", requestId: message.requestId, generation: requestedGeneration, receipt });
           return;
         }
         case "preferenceRejections": {

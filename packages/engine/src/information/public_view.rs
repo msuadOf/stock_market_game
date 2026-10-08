@@ -113,6 +113,20 @@ fn validate_announcement_content(
             }
             Ok(())
         }
+        AnnouncementContent::StockDistribution(plan) => {
+            plan.validate()
+                .map_err(|error| InformationError::InconsistentLibrary {
+                    detail: format!("invalid stock distribution announcement: {error}"),
+                })?;
+            if &plan.issuer != company || plan.announced_on != occurred_on {
+                return Err(InformationError::InconsistentLibrary {
+                    detail: format!(
+                        "stock distribution announcement does not match issuer/date on {occurred_on}"
+                    ),
+                });
+            }
+            Ok(())
+        }
     }
 }
 

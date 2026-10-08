@@ -1455,6 +1455,20 @@ fn session_with_approved_stock_distribution(
     crate::company::CompanyId,
     crate::account::StockCode,
 ) {
+    session_with_approved_stock_distribution_opts(mixed_restriction, false)
+}
+
+/// `inst_observer = true` 时额外装配一个机构 NPC（AccountId(1)）并对该证券
+/// 记录 watchlist 关注 + Immediate 获知节奏（现金分红公告 fixture 同款口径），
+/// 用于验证公开公告的 NPC 本人获知；不改变既有用例的账面事实。
+fn session_with_approved_stock_distribution_opts(
+    mixed_restriction: bool,
+    inst_observer: bool,
+) -> (
+    GameSession,
+    crate::company::CompanyId,
+    crate::account::StockCode,
+) {
     use crate::account::Position;
     use crate::accounting::AccountingAmount;
     use crate::company::share_registry::{
@@ -1464,6 +1478,9 @@ fn session_with_approved_stock_distribution(
     use crate::orderbook::AccountId;
 
     let mut setup = simple_setup();
+    if inst_observer {
+        setup.npcs.inst_count = 1;
+    }
     setup.ticks_per_day = 1;
     setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
     let mut session = GameSession::new(setup, 42).unwrap();
@@ -1561,7 +1578,131 @@ fn session_with_approved_stock_distribution(
         approved_total_new_shares: 2,
     };
     session.approve_stock_distribution(plan).unwrap();
+    if inst_observer {
+        session
+            .state
+            .belief_participants
+            .get_mut(&AccountId(1))
+            .expect("inst_observer fixture 必须包含机构 NPC AccountId(1)")
+            .watchlist_mut()
+            .record_attention(&stock, 0, 0)
+            .unwrap();
+        session
+            .state
+            .npc_attention
+            .get_mut(&AccountId(1))
+            .expect("inst_observer fixture 必须包含机构 NPC 注意力状态")
+            .information_cadence = NpcInformationCadence::Immediate;
+    }
     (session, issuer, stock)
+}
+
+#[test]
+fn stock_distribution_becomes_public_typed_announcement_and_is_personally_acquired_only_at_disclosure() {
+    use crate::information::AnnouncementContent;
+    use crate::orderbook::AccountId;
+
+    let (mut session, issuer, stock) = session_with_approved_stock_distribution_opts(false, true);
+    let account = AccountId(1);
+    // 先在开局观察时点送达前史材料，使 NPC 形成自己的基线（获知事实按 publication
+    // 独立断言，成因断言只要求不因送转公告施加 Shock/信用违约）。
+    let opened = session.observation_civil_instant();
+    session.deliver_public_information(opened).unwrap();
+    let previous_cause = session.state.belief_participants[&account]
+        .belief()
+        .entry(&stock)
+        .and_then(|entry| entry.last_cause.clone());
+    // 01-02（批准日）日终：方案仍为 Approved，公开库在披露相位不可见送转公告。
+    let approval_day = complete_test_civil_day(&mut session);
+    assert!(
+        session
+            .state
+            .library
+            .announcements_for_company(&issuer, approval_day.disclosure_instant)
+            .iter()
+            .all(|announcement| !matches!(
+                announcement.content,
+                AnnouncementContent::StockDistribution(_)
+            )),
+        "公告日前公开库不得出现送转公告"
+    );
+    // 01-03（公告日）日终：18:00 相位发布 typed 送转方案公告（恰好一次）。
+    let disclosure = complete_test_civil_day(&mut session);
+    let announcement = session
+        .state
+        .library
+        .announcements_for_company(&issuer, disclosure.disclosure_instant)
+        .into_iter()
+        .find(|announcement| matches!(
+            announcement.content,
+            AnnouncementContent::StockDistribution(_)
+        ))
+        .cloned()
+        .expect("已批准送转必须在其计划公告日的 18:00 相位公开发布");
+    assert_eq!(announcement.published_at, disclosure.disclosure_instant);
+    assert_eq!(announcement.occurred_on, disclosure.settled_date);
+    let AnnouncementContent::StockDistribution(plan) = &announcement.content else {
+        unreachable!("上方 matches 已筛选送转变体");
+    };
+    assert_eq!(plan.event_id, "distribution-1");
+    assert_eq!(
+        plan.announced_on,
+        crate::CivilDate::from_iso("2030-01-03").unwrap()
+    );
+    // NPC 本人获知：关注该证券的 NPC 在披露相位即时获知公告事实。
+    let acquired = session.state.belief_participants[&account]
+        .information()
+        .observed_at_of(announcement.id);
+    assert_eq!(acquired, Some(disclosure.disclosure_instant));
+    // 送转公告不构成经营冲击或信用违约信念成因。
+    let cause_after = session.state.belief_participants[&account]
+        .belief()
+        .entry(&stock)
+        .and_then(|entry| entry.last_cause.clone());
+    assert_eq!(
+        cause_after, previous_cause,
+        "送转公告获知不得施加 Shock 或信用违约成因"
+    );
+    // 披露前不可见：以公告日前一披露相位读取该公告必须被显式拒绝。
+    assert!(matches!(
+        session
+            .state
+            .library
+            .announcement(announcement.id, approval_day.disclosure_instant),
+        Err(crate::information::InformationError::EarlyRead { .. })
+    ));
+    // 重复推进日结不重复发布（后续日终不再新增送转公告）。
+    let repeated = complete_test_civil_day(&mut session);
+    assert_eq!(
+        session
+            .state
+            .library
+            .announcements_for_company(&issuer, repeated.disclosure_instant)
+            .into_iter()
+            .filter(|announcement| matches!(
+                announcement.content,
+                AnnouncementContent::StockDistribution(_)
+            ))
+            .count(),
+        1,
+        "送转公告恰好一次"
+    );
+    // restore 深等：公开库（含 typed 送转公告）恢复后逐条一致。
+    let restored = GameSession::restore(&session.save().unwrap()).unwrap();
+    assert_eq!(
+        restored.state.library, session.state.library,
+        "恢复后的公开库必须与存档前深度相等"
+    );
+    assert!(restored
+        .state
+        .library
+        .announcements_for_company(&issuer, disclosure.disclosure_instant)
+        .iter()
+        .any(|restored_announcement| restored_announcement.id == announcement.id
+            && matches!(
+                restored_announcement.content,
+                AnnouncementContent::StockDistribution(_)
+            )));
 }
 
 #[test]

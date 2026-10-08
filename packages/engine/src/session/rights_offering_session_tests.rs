@@ -465,6 +465,83 @@ fn rights_full_chain_announces_entitles_charges_settles_credits_and_restores() {
     );
 }
 
+/// G 批宿主认购命令桥的引擎契约：玩家现金不足提交即显式拒绝且不留排队事实；
+/// 补足现金后受理成功，(event_id, 本人) 在排队队列中恰有一条回执（wasm
+/// `subscribe_rights_offering` 导出按同一事实返回受理回执），重复提交被拒。
+#[test]
+fn player_subscription_rejects_insufficient_cash_and_queues_single_owner_receipt() {
+    let (mut session, stock, issuer) = session_with_registry(true);
+    let plan = all_shareholders_plan(&issuer, &stock);
+    session.approve_rights_offering(plan.clone()).unwrap();
+    while session.civil_date() < plan.payment_start_on {
+        complete_day(&mut session);
+    }
+    // 玩家现金压到 1 分（< 1 股 × 10 分）：提交即显式拒绝，不产生排队事实。
+    {
+        let account = session.state.accounts.get_mut(&AccountId(0)).unwrap();
+        let drain = account
+            .cash()
+            .sub(crate::money::Money::from_cents(1))
+            .unwrap();
+        account.debit_cash(drain).unwrap();
+    }
+    let error = session
+        .subscribe_rights_offering("rights-2030", AccountId(0), 1)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("真实现金"),
+        "现金不足必须显式拒绝：{error}"
+    );
+    assert!(
+        session
+            .state
+            .corporate_actions
+            .rights_subscription_queue
+            .is_empty(),
+        "被拒认购不得入队"
+    );
+    // 补足现金后受理：队列中 (event_id, 本人) 恰有一条回执。
+    {
+        let account = session.state.accounts.get_mut(&AccountId(0)).unwrap();
+        account
+            .credit_cash(crate::money::Money::from_cents(100))
+            .unwrap();
+    }
+    session
+        .subscribe_rights_offering("rights-2030", AccountId(0), 1)
+        .unwrap();
+    let queued = session
+        .state
+        .corporate_actions
+        .rights_subscription_queue
+        .iter()
+        .filter(|queued| {
+            queued.event_id == "rights-2030" && queued.account == AccountId(0)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(queued.len(), 1, "同一持有人同一事件只能有一条排队认购");
+    assert_eq!(queued[0].requested_shares, 1);
+    assert_eq!(queued[0].submitted_on, session.civil_date());
+    // 重复提交被拒：回执唯一性由 engine 守卫。
+    assert!(
+        session
+            .subscribe_rights_offering("rights-2030", AccountId(0), 1)
+            .is_err(),
+        "重复提交必须显式拒绝"
+    );
+    assert_eq!(
+        session
+            .state
+            .corporate_actions
+            .rights_subscription_queue
+            .iter()
+            .filter(|queued| queued.account == AccountId(0))
+            .count(),
+        1
+    );
+    let _ = stock;
+}
+
 #[test]
 fn subscription_beyond_rights_or_window_is_rejected() {
     let (mut session, stock, issuer) = session_with_registry(true);

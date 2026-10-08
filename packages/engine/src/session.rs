@@ -5055,6 +5055,7 @@ impl GameSession {
                 rights_offerings: &self.state.corporate_actions.rights_offerings,
                 issuer_repurchases: &self.state.corporate_actions.issuer_repurchases,
                 share_splits: &self.state.corporate_actions.share_splits,
+                stock_distributions: &self.state.corporate_actions.stock_distributions,
                 library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;

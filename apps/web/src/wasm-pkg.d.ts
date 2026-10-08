@@ -31,6 +31,7 @@ declare module "*wasm-pkg/web_wasm.js" {
   export function owner_dividend_tax_outstanding_views(handle: number): DividendTaxOutstandingView[];
   export function configure_dividend_tax_book(handle: number, account: string, stock: string, profile: DividendTaxProfile): void;
   export function owner_rejected_rights_subscriptions(handle: number): unknown[];
+  export function subscribe_rights_offering(handle: number, eventId: string, shares: string): unknown;
   export function company_preference_rejections(handle: number, company: string): unknown[];
   export function company_capabilities(handle: number, company: string): unknown;
   export function company_period_explanation(handle: number, company: string, periodEnd: string): unknown;

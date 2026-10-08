@@ -292,6 +292,20 @@ impl ProtocolSession {
             .configure_cash_dividend_tax_book(account, stock, profile)
     }
 
+    /// 玩家／宿主显式认购配股（宿主显式入口；owner 隔离由宿主层固定账户）。
+    /// 受理成功即入队（缴款期内当日日终划扣）；现金不足、窗口外、超额或重复
+    /// 提交等由 engine 显式拒绝，错误完整上抛不静默。
+    pub fn subscribe_rights_offering(
+        &mut self,
+        event_id: &str,
+        account: crate::AccountId,
+        shares: u64,
+    ) -> Result<(), SessionError> {
+        self.state
+            .game
+            .subscribe_rights_offering(event_id, account, shares)
+    }
+
     pub fn report_correction_epoch(&self) -> crate::session::ReportCorrectionEpoch {
         self.state.game.report_correction_epoch()
     }

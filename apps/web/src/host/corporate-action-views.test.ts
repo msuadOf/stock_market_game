@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseCompanyPreferenceRejections, parseRejectedRightsSubscriptions } from "./corporate-action-views.ts";
+import { parseCompanyPreferenceRejections, parseQueuedRightsSubscription, parseRejectedRightsSubscriptions } from "./corporate-action-views.ts";
 
 const REJECTED_SUBSCRIPTION = {
   event_id: "rights-event", account: "0", requested_shares: "41",
@@ -25,6 +25,21 @@ const PREFERENCE_REJECTION = {
   company: "C-600101", evaluated_on: "2030-01-31", kind: "StockDistribution",
   detail: "累计股本扩张已达上限，不再提案",
 };
+
+const QUEUED_SUBSCRIPTION = {
+  event_id: "rights-event", account: "0", requested_shares: "41", submitted_on: "2030-01-07",
+};
+
+test("排队认购受理回执按 engine wire 形状严格解析并复核 owner 隔离", () => {
+  assert.deepEqual(parseQueuedRightsSubscription(QUEUED_SUBSCRIPTION), QUEUED_SUBSCRIPTION);
+  assert.throws(() => parseQueuedRightsSubscription({ ...QUEUED_SUBSCRIPTION, extra: 1 }), /必填|extra/);
+  assert.throws(() => parseQueuedRightsSubscription({ ...QUEUED_SUBSCRIPTION, event_id: " " }), /认购事件身份不能为空/);
+  assert.throws(() => parseQueuedRightsSubscription({ ...QUEUED_SUBSCRIPTION, account: "1" }), /owner 隔离/);
+  assert.throws(() => parseQueuedRightsSubscription({ ...QUEUED_SUBSCRIPTION, account: "account-0" }), /规范账户十进制字符串/);
+  assert.throws(() => parseQueuedRightsSubscription({ ...QUEUED_SUBSCRIPTION, requested_shares: "0" }), /认购股数必须为正/);
+  assert.throws(() => parseQueuedRightsSubscription({ ...QUEUED_SUBSCRIPTION, submitted_on: "2030-1-7" }), /submitted_on/);
+  assert.throws(() => parseQueuedRightsSubscription(null), /必须是对象/);
+});
 
 test("偏好拒绝台账 owner 查询面按 engine wire 形状严格解析", () => {
   assert.deepEqual(parseCompanyPreferenceRejections([PREFERENCE_REJECTION]), [PREFERENCE_REJECTION]);

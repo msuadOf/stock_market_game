@@ -193,6 +193,10 @@ pub enum AnnouncementContent {
     RightsOffering(RightsOfferingAnnouncement),
     IssuerRepurchase(IssuerRepurchaseAnnouncement),
     ShareSplit(crate::company::share_split::ShareSplitEventPlan),
+    /// 已批准送转（股票股利与资本公积转增）方案公告：与拆股／缩股同构，
+    /// 枚举负载是方案本体（无 `{ plan }` 包装），披露事实只含方案条款；
+    /// 分配与入账结果由后续回执事实承载。
+    StockDistribution(crate::company::stock_distribution::StockDistributionEventPlan),
 }
 
 /// 已批准配股／增发方案公告（面向全体股东配股或定向增发；披露事实只含方案
