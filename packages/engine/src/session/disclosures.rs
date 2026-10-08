@@ -63,6 +63,7 @@ pub(super) struct SimpleDayEndDisclosureCtx<'a> {
     pub issuer_repurchases:
         &'a [crate::company::issuer_repurchase::IssuerRepurchaseBook],
     pub share_splits: &'a [crate::company::share_split::ShareSplitBook],
+    pub stock_distributions: &'a [crate::company::stock_distribution::StockDistributionBook],
     pub library: &'a mut PublicLibrary,
 }
 
@@ -195,6 +196,23 @@ impl DisclosureDispatch {
                     occurred_on: ctx.report.settled_date,
                     published_at: ctx.report.disclosure_instant,
                     content: AnnouncementContent::ShareSplit(book.plan().clone()),
+                })?;
+                announcements_published.push(id);
+            }
+        }
+        // 送转（股票股利与资本公积转增）方案公告：复用同一公告通道（同日 18:00
+        // 相位、恰好一次；`announce` 状态推进发生在日结更早的公司行为阶段，
+        // 此处只对 Announced 且当日到期的方案公开发布）。
+        for book in ctx.stock_distributions {
+            if book.status()
+                == &crate::company::stock_distribution::StockDistributionStatus::Announced
+                && book.plan().announced_on == ctx.report.settled_date
+            {
+                let id = ctx.library.publish_announcement(AnnouncementRequest {
+                    company: book.plan().issuer.clone(),
+                    occurred_on: ctx.report.settled_date,
+                    published_at: ctx.report.disclosure_instant,
+                    content: AnnouncementContent::StockDistribution(book.plan().clone()),
                 })?;
                 announcements_published.push(id);
             }
