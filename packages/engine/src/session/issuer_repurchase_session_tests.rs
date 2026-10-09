@@ -111,6 +111,7 @@ pub(crate) fn repurchase_plan(issuer: &CompanyId, stock: &StockCode) -> IssuerRe
         purpose: RepurchasePurpose::ReduceCapital,
         completion_policy:
             crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion,
+        approval_unit_event_id: None,
     }
 }
 
@@ -1442,3 +1443,6 @@ fn failed_day_end_rolls_back_first_treasury_and_can_retry() {
     assert_eq!(treasury_shares_of(&session, &stock), 100);
     assert_registry_conserves_issued(&session, &issuer);
 }
+
+#[path = "issuer_repurchase_unit_tests.rs"]
+mod share_unit_tests;

@@ -1,0 +1,678 @@
+{
+  "actions": {
+    "account_gross_receipts": [],
+    "applied_ex_reference_groups": [
+      {
+        "cash_plan_ids": [],
+        "date": "2030-01-04",
+        "reference": {
+          "ex_date": "2030-01-04",
+          "reference_price": "500"
+        },
+        "rights_event_ids": [],
+        "split_event_ids": [
+          "empty-r-inventory"
+        ],
+        "stock": "600888",
+        "stock_event_ids": []
+      }
+    ],
+    "dividend_tax_books": [
+      {
+        "account": "1",
+        "collections": [
+          {
+            "available_cash": "71549153",
+            "collected": "0",
+            "day": "2030-01-04",
+            "event_id": "dividend-tax-collect:AccountId(1):600888:2030-01-04",
+            "needs_funds": false,
+            "operation_seq": 4,
+            "outstanding": {
+              "denominator": "1",
+              "numerator": "0"
+            },
+            "remaining_cash": "71549153"
+          }
+        ],
+        "days": [
+          {
+            "acquisition": null,
+            "day": "2030-01-02",
+            "dispositions": [],
+            "event_id": "session-market:600888:1:2030-01-02",
+            "net_change": "0",
+            "operation_seq": 1
+          },
+          {
+            "acquisition": null,
+            "day": "2030-01-03",
+            "dispositions": [],
+            "event_id": "session-market:600888:1:2030-01-03",
+            "net_change": "0",
+            "operation_seq": 2
+          },
+          {
+            "acquisition": null,
+            "day": "2030-01-04",
+            "dispositions": [
+              {
+                "disposed_on": "2030-01-04",
+                "lot": {
+                  "acquired_on": "2030-01-01",
+                  "class": "PublicMarket",
+                  "id": "tax:initial:600888:1",
+                  "qty": "200",
+                  "source": {
+                    "InitialAllocation": {
+                      "evidence": "session-auto:initial-allocation:600888"
+                    }
+                  }
+                }
+              }
+            ],
+            "event_id": "session-market:600888:1:2030-01-04",
+            "net_change": "-200",
+            "operation_seq": 3
+          },
+          {
+            "acquisition": {
+              "acquired_on": "2030-01-04",
+              "class": "PublicMarket",
+              "id": "tax:share-split:empty-r-inventory:account-1",
+              "qty": "8000000",
+              "source": {
+                "CorporateAction": {
+                  "event": "empty-r-inventory"
+                }
+              }
+            },
+            "day": "2030-01-04",
+            "dispositions": [],
+            "event_id": "share-split:empty-r-inventory:1",
+            "net_change": "8000000",
+            "operation_seq": 5
+          }
+        ],
+        "dividends": [],
+        "lots": [
+          {
+            "acquired_on": "2030-01-01",
+            "class": "PublicMarket",
+            "id": "tax:initial:600888:1",
+            "qty": "7999800",
+            "source": {
+              "InitialAllocation": {
+                "evidence": "session-auto:initial-allocation:600888"
+              }
+            }
+          },
+          {
+            "acquired_on": "2030-01-04",
+            "class": "PublicMarket",
+            "id": "tax:share-split:empty-r-inventory:account-1",
+            "qty": "8000000",
+            "source": {
+              "CorporateAction": {
+                "event": "empty-r-inventory"
+              }
+            }
+          }
+        ],
+        "opened_on": "2030-01-01",
+        "opening_lots": [
+          {
+            "acquired_on": "2030-01-01",
+            "class": "PublicMarket",
+            "id": "tax:initial:600888:1",
+            "qty": "8000000",
+            "source": {
+              "InitialAllocation": {
+                "evidence": "session-auto:initial-allocation:600888"
+              }
+            }
+          }
+        ],
+        "operation_seq": 5,
+        "profile": "IndividualPublicMarket",
+        "redenominations": [],
+        "settled_on": "2030-01-04",
+        "stock": "600888"
+      }
+    ],
+    "dividends": [],
+    "external_receipts": [],
+    "flat_withholding_receipts": [],
+    "issuer_repurchases": [
+      {
+        "cancelled_on": null,
+        "cancelled_shares": "0",
+        "completed_on": null,
+        "fills": [
+          {
+            "day": "2030-01-04",
+            "fees": "501",
+            "gross": "100000",
+            "shares": "200",
+            "stock": "600888"
+          }
+        ],
+        "last_order_day": "2030-01-04",
+        "plan": {
+          "announced_on": "2030-01-02",
+          "approval_reference": "board-repurchase-2030",
+          "approval_unit_event_id": null,
+          "approved_on": "2030-01-02",
+          "completion_policy": "CancelOnCompletion",
+          "event_id": "repurchase-2030",
+          "exchange": "sse",
+          "issuer": "C-600888",
+          "max_shares": "600",
+          "price_cap_per_share": "1100",
+          "purpose": "ReduceCapital",
+          "stock": "600888",
+          "total_budget": "5000000",
+          "window_deadline_on": "2030-01-09",
+          "window_start_on": "2030-01-03"
+        },
+        "share_unit_adjustments": [
+          {
+            "shares_after": "0",
+            "shares_before": "0",
+            "split_event_id": "empty-r-inventory"
+          }
+        ],
+        "status": "Executing",
+        "withdrawn_remainder": null
+      }
+    ],
+    "registries": [
+      {
+        "holdings": [
+          {
+            "holder": {
+              "Account": "1"
+            },
+            "lots": [
+              {
+                "acquired_on": "2030-01-01",
+                "id": "initial:600888:1",
+                "qty": "7999800",
+                "restriction": "Unrestricted",
+                "source": {
+                  "InitialAllocation": {
+                    "evidence": "session-auto:initial-allocation:600888"
+                  }
+                }
+              },
+              {
+                "acquired_on": "2030-01-04",
+                "id": "share-split:empty-r-inventory:account-1",
+                "qty": "8000000",
+                "restriction": "Unrestricted",
+                "source": {
+                  "CorporateAction": {
+                    "event": "empty-r-inventory"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "holder": {
+              "External": "session-auto:founding:600888"
+            },
+            "lots": [
+              {
+                "acquired_on": "2030-01-01",
+                "id": "initial:600888:founding",
+                "qty": "2000000",
+                "restriction": "Unrestricted",
+                "source": {
+                  "InitialAllocation": {
+                    "evidence": "session-auto:initial-allocation:600888:founding"
+                  }
+                }
+              },
+              {
+                "acquired_on": "2030-01-04",
+                "id": "share-split:empty-r-inventory:external-session-auto:founding:600888",
+                "qty": "2000000",
+                "restriction": "Unrestricted",
+                "source": {
+                  "CorporateAction": {
+                    "event": "empty-r-inventory"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "holder": "IssuerTreasury",
+            "lots": [
+              {
+                "acquired_on": "2030-01-04",
+                "id": "market:600888:issuer-treasury:2030-01-04",
+                "qty": "200",
+                "restriction": "Unrestricted",
+                "source": {
+                  "SecondaryMarket": {
+                    "settlement": "2"
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "issued_shares": "20000000",
+        "issuer": "C-600888",
+        "issuer_repurchase_account": {
+          "account_reference": "issuer-repurchase-account-2",
+          "established_on": "2030-01-01",
+          "source_evidence": "repurchase-2030"
+        },
+        "receipts": [
+          {
+            "disposals": [],
+            "request": {
+              "changes": [
+                {
+                  "acquisition": null,
+                  "change": "0",
+                  "consume": null,
+                  "holder": {
+                    "Account": "1"
+                  }
+                },
+                {
+                  "acquisition": null,
+                  "change": "0",
+                  "consume": null,
+                  "holder": {
+                    "External": "session-auto:founding:600888"
+                  }
+                }
+              ],
+              "day": "2030-01-02",
+              "event_id": "session-market:600888:2030-01-02",
+              "scope": "PublicMarket"
+            }
+          },
+          {
+            "disposals": [],
+            "request": {
+              "changes": [
+                {
+                  "acquisition": null,
+                  "change": "0",
+                  "consume": null,
+                  "holder": {
+                    "Account": "1"
+                  }
+                },
+                {
+                  "acquisition": null,
+                  "change": "0",
+                  "consume": null,
+                  "holder": {
+                    "External": "session-auto:founding:600888"
+                  }
+                }
+              ],
+              "day": "2030-01-03",
+              "event_id": "session-market:600888:2030-01-03",
+              "scope": "PublicMarket"
+            }
+          },
+          {
+            "disposals": [
+              {
+                "disposed_on": "2030-01-04",
+                "holder": {
+                  "Account": "1"
+                },
+                "lot": {
+                  "acquired_on": "2030-01-01",
+                  "id": "initial:600888:1",
+                  "qty": "200",
+                  "restriction": "Unrestricted",
+                  "source": {
+                    "InitialAllocation": {
+                      "evidence": "session-auto:initial-allocation:600888"
+                    }
+                  }
+                }
+              }
+            ],
+            "request": {
+              "changes": [
+                {
+                  "acquisition": null,
+                  "change": "-200",
+                  "consume": null,
+                  "holder": {
+                    "Account": "1"
+                  }
+                },
+                {
+                  "acquisition": null,
+                  "change": "0",
+                  "consume": null,
+                  "holder": {
+                    "External": "session-auto:founding:600888"
+                  }
+                },
+                {
+                  "acquisition": {
+                    "lot_id": "market:600888:issuer-treasury:2030-01-04",
+                    "restriction": "Unrestricted",
+                    "source": {
+                      "SecondaryMarket": {
+                        "settlement": "2"
+                      }
+                    }
+                  },
+                  "change": "200",
+                  "consume": null,
+                  "holder": "IssuerTreasury"
+                }
+              ],
+              "day": "2030-01-04",
+              "event_id": "session-market:600888:2030-01-04",
+              "scope": "PublicMarket"
+            }
+          },
+          {
+            "disposals": [],
+            "request": {
+              "changes": [
+                {
+                  "acquisition": {
+                    "lot_id": "share-split:empty-r-inventory:account-1",
+                    "restriction": "Unrestricted",
+                    "source": {
+                      "CorporateAction": {
+                        "event": "empty-r-inventory"
+                      }
+                    }
+                  },
+                  "change": "8000000",
+                  "consume": null,
+                  "holder": {
+                    "Account": "1"
+                  }
+                },
+                {
+                  "acquisition": {
+                    "lot_id": "share-split:empty-r-inventory:external-session-auto:founding:600888",
+                    "restriction": "Unrestricted",
+                    "source": {
+                      "CorporateAction": {
+                        "event": "empty-r-inventory"
+                      }
+                    }
+                  },
+                  "change": "2000000",
+                  "consume": null,
+                  "holder": {
+                    "External": "session-auto:founding:600888"
+                  }
+                }
+              ],
+              "day": "2030-01-04",
+              "event_id": "share-split:empty-r-inventory",
+              "scope": {
+                "ShareReDenomination": {
+                  "basis": "board-empty-r"
+                }
+              }
+            }
+          }
+        ],
+        "registrations": [
+          {
+            "event_id": "empty-r-inventory",
+            "holdings": [
+              {
+                "holder": {
+                  "Account": "1"
+                },
+                "lots": [
+                  {
+                    "acquired_on": "2030-01-01",
+                    "id": "initial:600888:1",
+                    "qty": "8000000",
+                    "restriction": "Unrestricted",
+                    "source": {
+                      "InitialAllocation": {
+                        "evidence": "session-auto:initial-allocation:600888"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "holder": {
+                  "External": "session-auto:founding:600888"
+                },
+                "lots": [
+                  {
+                    "acquired_on": "2030-01-01",
+                    "id": "initial:600888:founding",
+                    "qty": "2000000",
+                    "restriction": "Unrestricted",
+                    "source": {
+                      "InitialAllocation": {
+                        "evidence": "session-auto:initial-allocation:600888:founding"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "issued_shares": "10000000",
+            "issuer": "C-600888",
+            "issuer_repurchase_account": {
+              "account_reference": "issuer-repurchase-account-2",
+              "established_on": "2030-01-01",
+              "source_evidence": "repurchase-2030"
+            },
+            "registered_on": "2030-01-03",
+            "settled_receipts": "2",
+            "stock": "600888"
+          }
+        ],
+        "settled_on": "2030-01-04",
+        "stock": "600888"
+      }
+    ],
+    "rejected_rights_subscriptions": [],
+    "rights_offerings": [],
+    "rights_subscription_queue": [],
+    "share_splits": [
+      {
+        "plan": {
+          "announced_on": "2030-01-02",
+          "approval_reference": "board-empty-r",
+          "approved_on": "2030-01-02",
+          "direction": "Split",
+          "event_id": "empty-r-inventory",
+          "ex_rights_on": "2030-01-04",
+          "exchange": "sse",
+          "issuer": "C-600888",
+          "ratio": "2",
+          "registered_on": "2030-01-03",
+          "stock": "600888"
+        },
+        "receipt": {
+          "approval_reference": "board-empty-r",
+          "direction": "Split",
+          "event_id": "empty-r-inventory",
+          "holders": [
+            {
+              "fractional_numerator": "0",
+              "holder": {
+                "Account": "1"
+              },
+              "new_shares": "16000000",
+              "original_lots": [
+                {
+                  "acquired_on": "2030-01-01",
+                  "id": "initial:600888:1",
+                  "qty": "8000000",
+                  "restriction": "Unrestricted",
+                  "source": {
+                    "InitialAllocation": {
+                      "evidence": "session-auto:initial-allocation:600888"
+                    }
+                  }
+                }
+              ],
+              "original_shares": "8000000",
+              "tie_break_award": "0"
+            },
+            {
+              "fractional_numerator": "0",
+              "holder": {
+                "External": "session-auto:founding:600888"
+              },
+              "new_shares": "4000000",
+              "original_lots": [
+                {
+                  "acquired_on": "2030-01-01",
+                  "id": "initial:600888:founding",
+                  "qty": "2000000",
+                  "restriction": "Unrestricted",
+                  "source": {
+                    "InitialAllocation": {
+                      "evidence": "session-auto:initial-allocation:600888:founding"
+                    }
+                  }
+                }
+              ],
+              "original_shares": "2000000",
+              "tie_break_award": "0"
+            }
+          ],
+          "issued_shares_after": "20000000",
+          "issued_shares_before": "10000000",
+          "issuer": "C-600888",
+          "ratio": "2",
+          "registered_on": "2030-01-03",
+          "registration_event_id": "empty-r-inventory",
+          "stock": "600888",
+          "tie_break_seed": "8764446102713268647"
+        },
+        "registration": {
+          "event_id": "empty-r-inventory",
+          "holdings": [
+            {
+              "holder": {
+                "Account": "1"
+              },
+              "lots": [
+                {
+                  "acquired_on": "2030-01-01",
+                  "id": "initial:600888:1",
+                  "qty": "8000000",
+                  "restriction": "Unrestricted",
+                  "source": {
+                    "InitialAllocation": {
+                      "evidence": "session-auto:initial-allocation:600888"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "holder": {
+                "External": "session-auto:founding:600888"
+              },
+              "lots": [
+                {
+                  "acquired_on": "2030-01-01",
+                  "id": "initial:600888:founding",
+                  "qty": "2000000",
+                  "restriction": "Unrestricted",
+                  "source": {
+                    "InitialAllocation": {
+                      "evidence": "session-auto:initial-allocation:600888:founding"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "issued_shares": "10000000",
+          "issuer": "C-600888",
+          "issuer_repurchase_account": {
+            "account_reference": "issuer-repurchase-account-2",
+            "established_on": "2030-01-01",
+            "source_evidence": "repurchase-2030"
+          },
+          "registered_on": "2030-01-03",
+          "settled_receipts": "2",
+          "stock": "600888"
+        },
+        "settled_on": "2030-01-04",
+        "status": "Settled"
+      }
+    ],
+    "stock_distributions": []
+  },
+  "context": {
+    "currentDate": "2030-01-05",
+    "issuers": {
+      "C-600888": {
+        "issued_shares": "20000000",
+        "listed_stock": "600888"
+      }
+    },
+    "setup": {
+      "stocks": [
+        {
+          "code": "600888",
+          "total_shares": "10000000",
+          "exchange": "Shanghai",
+          "tick": "1"
+        }
+      ],
+      "dividend_tax_mode": "AShareIndividual",
+      "flat_withholding_bp": null,
+      "npcs": {
+        "retail_count": 1,
+        "inst_count": 0,
+        "hot_count": 0
+      }
+    },
+    "snapshot": {
+      "markets": {
+        "600888": {
+          "last_cash_ex_reference": {
+            "ex_date": "2030-01-04",
+            "reference_price": "500"
+          }
+        }
+      },
+      "accounts": {
+        "0": {
+          "positions": {}
+        },
+        "1": {
+          "positions": {
+            "600888": {
+              "qty": 15999800
+            }
+          }
+        },
+        "2": {
+          "positions": {
+            "600888": {
+              "qty": 200
+            }
+          }
+        }
+      }
+    }
+  }
+}

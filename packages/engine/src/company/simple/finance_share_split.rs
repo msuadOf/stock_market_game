@@ -61,13 +61,29 @@ impl SimpleFinanceState {
     /// 重锚解析；已批准未入账的重新计值不改变在册股份面值。无已入账重新计值时
     /// 沿用送转 bind-once 面值共识。回购注销等针对存量股份的核减必须用本口径，
     /// 不得用 `current_par_value`（声明链口径，含未生效重锚——独立复核修复轮发现）。
-    pub fn outstanding_par_value(
+    pub fn outstanding_par_value(&self) -> Result<Option<crate::money::Money>, SimpleFinanceError> {
+        self.outstanding_par_value_through(None)
+    }
+
+    /// `as_of` 日已入账的每股面值（回购注销金额勾稽按注销日口径复核，Task174）。
+    pub fn outstanding_par_value_at(
         &self,
+        as_of: CivilDate,
+    ) -> Result<Option<crate::money::Money>, SimpleFinanceError> {
+        self.outstanding_par_value_through(Some(as_of))
+    }
+
+    fn outstanding_par_value_through(
+        &self,
+        through: Option<CivilDate>,
     ) -> Result<Option<crate::money::Money>, SimpleFinanceError> {
         if let Some(latest_settled) = self
             .share_splits
             .values()
-            .filter(|fact| fact.settled_on.is_some())
+            .filter(|fact| {
+                fact.settled_on
+                    .is_some_and(|settled| through.is_none_or(|limit| settled <= limit))
+            })
             .max_by(|left, right| {
                 (left.settled_on, &left.event_id).cmp(&(right.settled_on, &right.event_id))
             })

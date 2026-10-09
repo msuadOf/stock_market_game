@@ -2109,6 +2109,7 @@ fn validate_rejects_nontrading_receipt_without_credited_stock_distribution_book(
                     },
                     restriction: ShareRestriction::Unrestricted,
                 }),
+                consume: None,
             }],
         })
         .unwrap();

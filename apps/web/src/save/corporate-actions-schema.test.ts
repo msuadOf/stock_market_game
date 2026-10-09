@@ -13,7 +13,7 @@ type MutableShareDayReceipt = {
     event_id: string
     day: string
     scope: "PublicMarket" | { NonTradingTransfer: { basis: string } }
-    changes: { holder: { Account: string } | { External: string }; change: string; acquisition: { lot_id: string; source: AcquisitionSource; restriction: ShareRestriction } | null }[]
+    changes: { holder: { Account: string } | { External: string }; change: string; acquisition: { lot_id: string; source: AcquisitionSource; restriction: ShareRestriction } | null; consume: { lot_id: string; qty: string }[] | null }[]
   }
   disposals: unknown[]
 }
@@ -333,7 +333,7 @@ test("非交易过户送转入账按同日追加回执登记并守恒发行股�
   const issueDay: MutableShareDayReceipt = {
     request: {
       event_id: "stock-distribution:distribution-1", day: "2030-01-02", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
-      changes: [{ holder, change: "2", acquisition: { lot_id: "stock-distribution:distribution-1:account-0", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
+      changes: [{ holder, change: "2", acquisition: { lot_id: "stock-distribution:distribution-1:account-0", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" }, consume: null }],
     },
     disposals: [],
   }
@@ -356,7 +356,7 @@ test("非交易过户送转入账按同日追加回执登记并守恒发行股�
   assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, issued_shares: "13", holdings: [{ holder, lots: [lot, creditedLot] }, { holder: { External: "holder-a" }, lots: [{ ...lot, id: "external-lot", qty: "5" }] }] }] }, { ...context, issuers: { "C-600101": { listed_stock: "600101", issued_shares: "13" } } }), /初始股数加公司行为净增发不一致/)
   // 非交易过户不得减持、不得使用二级市场来源，也不得凭空造零股。
   const disposal = JSON.parse(JSON.stringify(issueDay)) as typeof issueDay
-  disposal.request.changes = [{ holder, change: "-1", acquisition: null }]
+  disposal.request.changes = [{ holder, change: "-1", acquisition: null, consume: null }]
   assert.throws(() => parseSessionCorporateActions({ ...actions, registries: [{ ...registry, receipts: [marketDay, disposal] }] }, context), /非交易过户不得减持/)
   const secondary = JSON.parse(JSON.stringify(issueDay)) as typeof issueDay
   secondary.request.changes[0]!.acquisition!.source = { SecondaryMarket: { settlement: "not-a-corporate-action" } }
@@ -376,7 +376,7 @@ test("登记快照发行股数按登记日后的非交易过户增发回放核�
   const issueDay: MutableShareDayReceipt = {
     request: {
       event_id: "stock-distribution:distribution-1", day: "2030-01-02", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
-      changes: [{ holder: { Account: "0" }, change: "2", acquisition: { lot_id: "bonus-a", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
+      changes: [{ holder: { Account: "0" }, change: "2", acquisition: { lot_id: "bonus-a", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" }, consume: null }],
     },
     disposals: [],
   }
@@ -403,7 +403,7 @@ function creditedStockDistributionRegistry() {
   const issueDay = {
     request: {
       event_id: "stock-distribution:distribution-1", day: "2030-01-03", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
-      changes: [{ holder, change: "2", acquisition: { lot_id: "stock-distribution:distribution-1:account-0", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" } }],
+      changes: [{ holder, change: "2", acquisition: { lot_id: "stock-distribution:distribution-1:account-0", source: { CorporateAction: { event: "distribution-1" } }, restriction: "Unrestricted" }, consume: null }],
     },
     disposals: [],
   }
@@ -484,7 +484,7 @@ test("税账日结允许同日正向公司行为续记且拒绝同日非正向�
 
 const engineRightsPlan = { event_id: "rights-event", approval_reference: "board-rights", issuer: "C-600101", stock: "600101", exchange: "sse", approved_on: "2030-01-02", announced_on: "2030-01-03", registered_on: "2030-01-06", payment_start_on: "2030-01-07", payment_deadline_on: "2030-01-08", ex_rights_on: "2030-01-09", settlement_on: "2030-01-10", listing_on: "2030-01-10", price_per_share: "10", mode: { RightsToAllShareholders: { shares_per_existing_share_micros: "500000" } }, npc_subscription_strategy: "FullByDefault" }
 
-const engineRepurchasePlan = { event_id: "repurchase-event", approval_reference: "board-repurchase", issuer: "C-600101", stock: "600101", exchange: "sse", approved_on: "2030-01-02", announced_on: "2030-01-02", window_start_on: "2030-01-03", window_deadline_on: "2030-01-07", price_cap_per_share: "1100", total_budget: "5000000", max_shares: "100", purpose: "ReduceCapital", completion_policy: "CancelOnCompletion" }
+const engineRepurchasePlan = { event_id: "repurchase-event", approval_reference: "board-repurchase", issuer: "C-600101", stock: "600101", exchange: "sse", approved_on: "2030-01-02", announced_on: "2030-01-02", window_start_on: "2030-01-03", window_deadline_on: "2030-01-07", price_cap_per_share: "1100", total_budget: "5000000", max_shares: "100", purpose: "ReduceCapital", completion_policy: "CancelOnCompletion", approval_unit_event_id: null }
 
 test("配股 plan 的交易所枚举域与 engine 真实序列化值一致", async () => {
   const { parseRightsOfferingEventPlanValue } = await import("./schema/corporate-actions.ts")
@@ -541,8 +541,8 @@ test("税账与名册回执覆盖勾稽：按引擎同款 scope→事件 id 派�
     request: {
       event_id: "session-market:600101:2030-01-04", day: "2030-01-04", scope: "PublicMarket",
       changes: [
-        { holder: account, change: "2", acquisition: { lot_id: marketLot.id, source: marketLot.source, restriction: "Unrestricted" } },
-        { holder: external, change: "-2", acquisition: null },
+        { holder: account, change: "2", acquisition: { lot_id: marketLot.id, source: marketLot.source, restriction: "Unrestricted" }, consume: null },
+        { holder: external, change: "-2", acquisition: null, consume: null },
       ],
     },
     disposals: [{ holder: external, lot: { ...externalLot, qty: "2" }, disposed_on: "2030-01-04" }],
@@ -550,7 +550,7 @@ test("税账与名册回执覆盖勾稽：按引擎同款 scope→事件 id 派�
   const distributionReceipt = {
     request: {
       event_id: "stock-distribution:d1", day: "2030-01-04", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
-      changes: [{ holder: account, change: "3", acquisition: { lot_id: distributionLot.id, source: distributionLot.source, restriction: "Unrestricted" } }],
+      changes: [{ holder: account, change: "3", acquisition: { lot_id: distributionLot.id, source: distributionLot.source, restriction: "Unrestricted" }, consume: null }],
     },
     disposals: [],
   }
@@ -620,9 +620,9 @@ test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户�
     request: {
       event_id: "session-market:600101:2030-01-04", day: "2030-01-04", scope: "PublicMarket",
       changes: [
-        { holder: account, change: "2", acquisition: { lot_id: marketLot.id, source: marketLot.source, restriction: "Unrestricted" } },
-        { holder: "IssuerTreasury", change: "1", acquisition: { lot_id: treasuryLot.id, source: treasuryLot.source, restriction: "Unrestricted" } },
-        { holder: { External: "holder-a" }, change: "-3", acquisition: null },
+        { holder: account, change: "2", acquisition: { lot_id: marketLot.id, source: marketLot.source, restriction: "Unrestricted" }, consume: null },
+        { holder: "IssuerTreasury", change: "1", acquisition: { lot_id: treasuryLot.id, source: treasuryLot.source, restriction: "Unrestricted" }, consume: null },
+        { holder: { External: "holder-a" }, change: "-3", acquisition: null, consume: null },
       ],
     },
     disposals: [{ holder: { External: "holder-a" }, lot: { ...externalLot, qty: "3" }, disposed_on: "2030-01-04" }],
@@ -630,21 +630,21 @@ test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户�
   const distributionReceipt = {
     request: {
       event_id: "stock-distribution:d1", day: "2030-01-04", scope: { NonTradingTransfer: { basis: "shareholders-resolution-1" } },
-      changes: [{ holder: account, change: "3", acquisition: { lot_id: distributionLot.id, source: distributionLot.source, restriction: "Unrestricted" } }],
+      changes: [{ holder: account, change: "3", acquisition: { lot_id: distributionLot.id, source: distributionLot.source, restriction: "Unrestricted" }, consume: null }],
     },
     disposals: [],
   }
   const cancellationReceipt = {
     request: {
       event_id: "repurchase-cancellation:c1", day: "2030-01-04", scope: { IssuerRepurchaseCancellation: { basis: "cancellation-resolution-1" } },
-      changes: [{ holder: "IssuerTreasury", change: "-1", acquisition: null }],
+      changes: [{ holder: "IssuerTreasury", change: "-1", acquisition: null, consume: [{ lot_id: treasuryLot.id, qty: treasuryLot.qty }] }],
     },
     disposals: [{ holder: "IssuerTreasury", lot: treasuryLot, disposed_on: "2030-01-04" }],
   }
   const zeroChangeReceipt = {
     request: {
       event_id: "session-market:600101:2030-01-05", day: "2030-01-05", scope: "PublicMarket",
-      changes: [{ holder: account, change: "0", acquisition: null }],
+      changes: [{ holder: account, change: "0", acquisition: null, consume: null }],
     },
     disposals: [],
   }
@@ -702,9 +702,9 @@ test("回购注销回执镜像引擎 validate_request：恰一条 IssuerTreasury
         request: {
           event_id: "session-market:600101:2030-01-03", day: "2030-01-03", scope: "PublicMarket",
           changes: [
-            { holder: account, change: "2", acquisition: { lot_id: "acct-lot", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" } },
-            { holder: "IssuerTreasury", change: "1", acquisition: { lot_id: treasuryLot.id, source: treasuryLot.source, restriction: "Unrestricted" } },
-            { holder: { External: "holder-a" }, change: "-3", acquisition: null },
+            { holder: account, change: "2", acquisition: { lot_id: "acct-lot", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }, consume: null },
+            { holder: "IssuerTreasury", change: "1", acquisition: { lot_id: treasuryLot.id, source: treasuryLot.source, restriction: "Unrestricted" }, consume: null },
+            { holder: { External: "holder-a" }, change: "-3", acquisition: null, consume: null },
           ],
         },
         disposals: [{ holder: { External: "holder-a" }, lot: { ...externalLot, qty: "3" }, disposed_on: "2030-01-03" }],
@@ -724,23 +724,23 @@ test("回购注销回执镜像引擎 validate_request：恰一条 IssuerTreasury
   const realForm = {
     request: {
       event_id: "repurchase-cancellation:c1", day: "2030-01-03", scope: { IssuerRepurchaseCancellation: { basis: "cancellation-resolution-1" } },
-      changes: [{ holder: "IssuerTreasury", change: "-1", acquisition: null }],
+      changes: [{ holder: "IssuerTreasury", change: "-1", acquisition: null, consume: [{ lot_id: treasuryLot.id, qty: treasuryLot.qty }] }],
     },
     disposals: [{ holder: "IssuerTreasury", lot: treasuryLot, disposed_on: "2030-01-03" }],
   }
   assert.doesNotThrow(() => parseSessionCorporateActions(actions(baseRegistry(realForm)), context), "真实形态负净额注销回执必须通过")
   // 负例 1：两条分录（引擎要求恰一条专户核减）。
-  const twoChanges = { ...realForm, request: { ...realForm.request, changes: [...realForm.request.changes, { holder: account, change: "0", acquisition: null }] } }
+  const twoChanges = { ...realForm, request: { ...realForm.request, changes: [...realForm.request.changes, { holder: account, change: "0", acquisition: null, consume: null }] } }
   assert.throws(() => parseSessionCorporateActions(actions(baseRegistry(twoChanges)), context), /恰含一条专户核减分录/)
   // 负例 2：核减落到 Account 持有人（旧 fixture 的 +1 Account 形态，引擎不可能产生）。
   const accountHolderReduction = {
-    request: { ...realForm.request, changes: [{ holder: account, change: "-1", acquisition: null }] },
+    request: { ...realForm.request, changes: [{ holder: account, change: "-1", acquisition: null, consume: [{ lot_id: "acct-lot", qty: "1" }] }] },
     disposals: [{ holder: account, lot: { id: "acct-lot", qty: "1", acquired_on: "2030-01-03", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }, disposed_on: "2030-01-03" }],
   }
   assert.throws(() => parseSessionCorporateActions(actions(baseRegistry(accountHolderReduction)), context), /只能核减发行人库藏股持有人/)
   // 负例 3：正向「注销」（净额非严格为负）。
   const positiveCancellation = {
-    request: { ...realForm.request, changes: [{ holder: "IssuerTreasury", change: "1", acquisition: { lot_id: "treasury-lot-2", source: { SecondaryMarket: { settlement: "repurchase-fill-2" } }, restriction: "Unrestricted" } }] },
+    request: { ...realForm.request, changes: [{ holder: "IssuerTreasury", change: "1", acquisition: { lot_id: "treasury-lot-2", source: { SecondaryMarket: { settlement: "repurchase-fill-2" } }, restriction: "Unrestricted" }, consume: null }] },
     disposals: [],
   }
   assert.throws(() => parseSessionCorporateActions(actions(baseRegistry(positiveCancellation)), context), /必须为负向核减/)
@@ -761,8 +761,8 @@ test("税账覆盖勾稽与 replay 纳入 ShareReDenomination 重新计值回执
   const splitCreditedExternal = { id: "share-split:split-1:external-holder-a", qty: "4", acquired_on: "2030-01-03", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" }
   const splitReceipt = {
     request: { event_id: "share-split:split-1", day: "2030-01-03", scope: { ShareReDenomination: { basis: "shareholders-resolution-1" } }, changes: [
-      { holder: account, change: "4", acquisition: { lot_id: "share-split:split-1:account-0", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" } },
-      { holder: external, change: "4", acquisition: { lot_id: "share-split:split-1:external-holder-a", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" } },
+      { holder: account, change: "4", acquisition: { lot_id: "share-split:split-1:account-0", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" }, consume: null },
+      { holder: external, change: "4", acquisition: { lot_id: "share-split:split-1:external-holder-a", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" }, consume: null },
     ] },
     disposals: [],
   }
@@ -813,8 +813,8 @@ test("税账覆盖勾稽与 replay 纳入 ShareReDenomination 重新计值回执
     request: {
       event_id: "session-market:600101:2030-01-04", day: "2030-01-04", scope: "PublicMarket",
       changes: [
-        { holder: account, change: "2", acquisition: { lot_id: "market-lot-1", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" } },
-        { holder: external, change: "-2", acquisition: null },
+        { holder: account, change: "2", acquisition: { lot_id: "market-lot-1", source: { SecondaryMarket: { settlement: "settle-1" } }, restriction: "Unrestricted" }, consume: null },
+        { holder: external, change: "-2", acquisition: null, consume: null },
       ],
     },
     disposals: [{ holder: external, lot: { ...externalInitialLot, qty: "2" }, disposed_on: "2030-01-04" }],
@@ -822,14 +822,14 @@ test("税账覆盖勾稽与 replay 纳入 ShareReDenomination 重新计值回执
   const zeroChangeReceipt = {
     request: {
       event_id: "session-market:600101:2030-01-05", day: "2030-01-05", scope: "PublicMarket",
-      changes: [{ holder: account, change: "0", acquisition: null }],
+      changes: [{ holder: account, change: "0", acquisition: null, consume: null }],
     },
     disposals: [],
   }
   const consolidationReceipt = {
     request: { event_id: "share-split:consolidation-1", day: "2030-01-05", scope: { ShareReDenomination: { basis: "shareholders-resolution-2" } }, changes: [
-      { holder: account, change: "-4", acquisition: null },
-      { holder: external, change: "-1", acquisition: null },
+      { holder: account, change: "-4", acquisition: null, consume: null },
+      { holder: external, change: "-1", acquisition: null, consume: null },
     ] },
     disposals: [
       { holder: account, lot: { ...initialLot, qty: "4" }, disposed_on: "2030-01-05" },
@@ -959,8 +959,8 @@ test("拆股／缩股账簿严格解析并交叉核对重新计值回执", () =>
   const splitCreditedExternal = { id: "share-split:split-1:external-holder-a", qty: "4", acquired_on: "2030-01-03", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" }
   const redenominationDay = {
     request: { event_id: "share-split:split-1", day: "2030-01-03", scope: { ShareReDenomination: { basis: "shareholders-resolution-1" } }, changes: [
-      { holder, change: "4", acquisition: { lot_id: "share-split:split-1:account-0", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" } },
-      { holder: { External: "holder-a" }, change: "4", acquisition: { lot_id: "share-split:split-1:external-holder-a", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" } },
+      { holder, change: "4", acquisition: { lot_id: "share-split:split-1:account-0", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" }, consume: null },
+      { holder: { External: "holder-a" }, change: "4", acquisition: { lot_id: "share-split:split-1:external-holder-a", source: { CorporateAction: { event: "split-1" } }, restriction: "Unrestricted" }, consume: null },
     ] },
     disposals: [],
   }
