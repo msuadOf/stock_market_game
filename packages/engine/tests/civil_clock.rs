@@ -180,6 +180,36 @@ fn closed_days_accrue_without_trading() {
     let code = setup.stocks[0].code.clone();
     let mut scenario = SpringFestivalScenario::with_setup(setup);
     let player = AccountId(0);
+    // 日历/T+1 用例只需真实对手盘，冻结合法持仓 NPC 的排队卖单，不押随机策略交叉。
+    let mut queued = scenario.session.save().unwrap();
+    GameSession::restore(&queued).expect("排队前合法存档基线");
+    let seller = *queued.npc_attention.keys().find(|owner| {
+        queued.snapshot.accounts[owner].positions.get(&code)
+            .is_some_and(|position| position.qty - position.t1_locked >= 100)
+    }).expect("真实初始分配必须给 NPC 至少一手可卖股份");
+    for attention in queued.npc_attention.values_mut() {
+        attention.next_attention_candidate_tick = u64::MAX;
+    }
+    let account_cursor = queued.ingress_receipt_cursors.next_account_ordinal.entry(seller).or_insert(0);
+    let account_ordinal = *account_cursor;
+    *account_cursor += 1;
+    let stock_cursor = queued.ingress_receipt_cursors.next_stock_ordinal.entry(code.clone()).or_insert(0);
+    let stock_ordinal = *stock_cursor;
+    *stock_cursor += 1;
+    queued.pending_npc = Some(engine::session::PendingNpcBatch {
+        observed_tick: queued.snapshot.tick,
+        observed_accounts: vec![seller],
+        intents: vec![engine::session::ReceiptBearingIntent {
+            owner: seller,
+            intent: Intent::PlaceLimit {
+                code: code.clone(), side: Side::Sell,
+                price: engine::LimitPrice::Fixed(Money::from_cents(600)), qty: 100,
+            },
+            account_ordinal, stock_ordinal,
+        }],
+        dependencies: Vec::new(),
+    });
+    scenario.session = GameSession::restore(&queued).expect("当前 typed NPC 排队事实必须恢复");
 
     // 休市起点不挪日期：开局 civil 日期就是 setup 声明的周五。
     assert_eq!(scenario.session.civil_date(), date(PRE_HOLIDAY_FRIDAY));
@@ -423,11 +453,16 @@ fn closed_days_accrue_without_trading() {
         before_weekend.rng_state, after_weekend.rng_state,
         "closed days must not consume the session RNG"
     );
-    assert_eq!(
-        before_weekend.npc_attention, after_weekend.npc_attention,
-        "closed days must not consume any NPC attention RNG"
-    );
-    assert_eq!(
+    // 2bf5b2a9 自然日信息检查可推进，市场注意力候选与 RNG 必须冻结。
+    assert_eq!(before_weekend.npc_attention.len(), after_weekend.npc_attention.len());
+    for (owner, before) in &before_weekend.npc_attention {
+        let after = &after_weekend.npc_attention[owner];
+        assert_eq!(after.information_cadence, before.information_cadence);
+        assert_eq!(after.base_probability, before.base_probability);
+        assert_eq!(after.next_attention_candidate_tick, before.next_attention_candidate_tick);
+        assert_eq!(after.rng_state, before.rng_state);
+        assert!(after.next_information_check >= before.next_information_check);
+    }    assert_eq!(
         before_weekend.market_minute_closes, after_weekend.market_minute_closes,
         "market minutes only advance on trading days"
     );

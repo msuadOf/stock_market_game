@@ -1585,6 +1585,21 @@ mod chain_restructure_tests {
         );
         group.reports.income.net_income_to_parent =
             Some(group.reports.income.cumulative.net_income);
+        // 年报 report_period 与 cumulative 同窗口，归母口径须同步补齐才能通过合并校验。
+        group.reports.income.report_period_net_income_to_parent =
+            Some(group.reports.income.cumulative.net_income);
+        // 合并归母权益事件尚不支持，ROE 必须与 generate_report_set 的 Unsupported 产物同构。
+        let reason =
+            crate::accounting::reports::ReportRoeUnavailable::ConsolidatedAttributionFactsUnavailable;
+        let unavailable = crate::accounting::reports::ReportRoeValue::Unavailable {
+            reason,
+        };
+        group.reports.roe = crate::accounting::reports::ReportRoe {
+            basis: crate::accounting::reports::ReportRoeBasis::Unsupported { reason },
+            ordinary_roe: unavailable.clone(),
+            adjusted_roe: unavailable.clone(),
+            weighted_average_parent_equity_cents: unavailable,
+        };
         group.reports.income.minority_net_income = Some(crate::accounting::AccountingAmount::ZERO);
         group.reports.equity.opening_minority = Some(crate::accounting::AccountingAmount::ZERO);
         group.reports.equity.minority_net_income = Some(crate::accounting::AccountingAmount::ZERO);

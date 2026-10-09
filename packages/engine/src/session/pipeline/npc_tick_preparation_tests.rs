@@ -307,13 +307,8 @@ fn next_tick_account_validation_rechecks_npc_orders_against_current_cash() {
     let (mut session, npc) = due_retail(8, 100);
     super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
 
-    assert!(session
-        .state
-        .pending_npc
-        .as_ref()
-        .unwrap()
-        .intents
-        .is_empty());
+    // 新会话尚未到首个日界 queue 时 NPC 队列保持 None；初始态不得携带决策意图。
+    assert!(session.state.pending_npc.is_none());
     session.state.pending_npc = None;
     super::queue_npc_for_next_tick(&mut session).unwrap();
     let pending = session.state.pending_npc.as_ref().unwrap();
@@ -495,6 +490,44 @@ fn intent_candidates_failure_discards_the_whole_tick_candidate() {
 #[test]
 fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() {
     let (mut session, npc) = due_retail(41, 100);
+    // 手补报价不能伪造 tick=0 活动，先真实申撤并同步 NPC 候选以保持当前 tick due 前提。
+    session.state.attention_scheduler.clear();
+    session.state.npc_attention.get_mut(&npc).unwrap().next_attention_candidate_tick = 1;
+    session.state.attention_scheduler.enqueue(1, npc);
+    let priming_code = session.state.setup.stocks[0].code.clone();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: priming_code.clone(),
+                side: Side::Buy,
+                price: crate::LimitPrice::Lowest,
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: priming_code,
+                id: crate::OrderId(session.state.next_order_id),
+            },
+        )
+        .unwrap();
+    let priming_events = session.step().unwrap();
+    assert!(
+        priming_events
+            .iter()
+            .all(|event| !matches!(event, Event::Trade { .. }))
+    );
+    // 首 tick 候选已准备过下一批 NPC，测试捕获前重置到原 due_retail 观察点。
+    let current_tick = session.state.tick;
+    let attention = session.state.npc_attention.get_mut(&npc).unwrap();
+    attention.next_attention_candidate_tick = current_tick;
+    attention.rng_state = 3;
+    session.state.attention_scheduler.clear();
+    session.state.attention_scheduler.enqueue(current_tick, npc);
     session
         .state
         .accounts
@@ -572,6 +605,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
             ..
         }
     ));
+    let receipt_base = queued_session.state.ingress_receipt_cursors.clone();
     super::queue_npc_for_next_tick(&mut queued_session).unwrap();
     let expected = candidates
         .iter()
@@ -589,7 +623,8 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         serde_json::to_value(expected).unwrap()
     );
     assert!(queued.iter().enumerate().all(|(index, received)| {
-        received.account_ordinal == index as u64 && received.stock_ordinal == index as u64
+        received.account_ordinal == receipt_base.next_account_ordinal.get(&npc).copied().unwrap_or(0) + index as u64
+            && received.stock_ordinal == receipt_base.next_stock_ordinal.get(&code).copied().unwrap_or(0) + index as u64
     }));
     let encoded = serde_json::to_value(queued_session.save().unwrap()).unwrap();
     assert_eq!(

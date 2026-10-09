@@ -121,6 +121,14 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
         roots
     };
 
+    // tick 事务读取已提交版本的 NPC 队列（npc_tick_preparation 契约）；
+    // 本用例无 NPC 决策，按同文件 queued_npc_cancel 先例注入空批次。
+    authority.state.pending_npc = Some(crate::session::PendingNpcBatch {
+        dependencies: Vec::new(),
+        observed_tick: authority.state.tick,
+        observed_accounts: Vec::new(),
+        intents: Vec::new(),
+    });
     let mut preview = authority.clone_for_tick_shadow().unwrap();
     let mut ingress = ReadyIngress::capture_sources(&mut preview)
         .unwrap()

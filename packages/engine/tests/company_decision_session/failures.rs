@@ -42,6 +42,14 @@ fn world_mutations_between_observations_do_not_change_personal_decisions() {
     for _ in 0..60 {
         session.step().expect("healthy step");
     }
+    // 2bf5b2a9 自然日 cadence 与市场 attention 独立，锁定未读前提再比较决策。
+    let mut unread = session.save().unwrap();
+    let tomorrow = unread.civil_clock.current_date.next().unwrap();
+    for attention in unread.npc_attention.values_mut() {
+        attention.information_cadence = engine::session::NpcInformationCadence::EveryDays { days: 7 };
+        attention.next_information_check = engine::CivilInstant::new(tomorrow, 0).unwrap();
+    }
+    session = GameSession::restore(&unread).unwrap();
     let before = belief_snapshot(&session);
     assert!(
         !before.is_empty(),

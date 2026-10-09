@@ -155,6 +155,7 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // 保留事件、权威业务事实、原顺序与所有独立 guards。旧锚保留：
     // 18099143602724613260 / 16192716476036528973 / 2620780488067564097；
     // 原字节 FNV/SHA 与逐 path 核验见 money-wire-golden.md。
+    // 0c6a7793 旧表示锚之后 ce5b3a1c..a07d2431 演化 Simple/Setup；只重钉现行静默场景，不宣称旧业务逐字节等价。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -164,17 +165,17 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 14_588_880_118_627_202_930);
+    assert_complete_projection(0, 11_572_407_623_641_889_976);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 10_855_500_538_460_332_623);
+    assert_complete_projection(3, 11_728_167_582_188_373_707);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 14_140_194_587_992_130_069);
+    assert_complete_projection(6, 18_308_112_575_746_819_741);
 }
 
 #[test]

@@ -191,7 +191,10 @@ impl TestOrderSaveFixture {
     }
 
     fn with_resting_sellers(seller_count: u32, player_cash: i64) -> Self {
-        let mut setup = sample_setup();
+        Self::with_resting_sellers_setup(sample_setup(), seller_count, player_cash)
+    }
+
+    fn with_resting_sellers_setup(mut setup: SessionSetup, seller_count: u32, player_cash: i64) -> Self {
         setup.npcs = NpcSetup {
             retail_count: seller_count,
             inst_count: 0,
@@ -1251,10 +1254,11 @@ fn restore_rejects_missing_deterministic_state() {
 
     let mut missing_candles = save;
     missing_candles.snapshot.daily_candles.clear();
-    assert!(matches!(
-        GameSession::restore(&missing_candles),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("daily-candle")
-    ));
+    let missing_candles_error = GameSession::restore(&missing_candles).err().expect("缺日K必须拒绝");
+    assert!(matches!(&missing_candles_error,
+        // ADR-0034 派生交易日检查先于旧 daily-candle 集合检查，仍定位同一缺失事实。
+        engine::SessionError::InvalidSave(message) if message.contains("缺少完整交易日历史")
+    ), "{missing_candles_error}");
 
     let mut continuous_setup = sample_setup();
     continuous_setup.auction_ticks = 0;
@@ -1280,7 +1284,7 @@ fn restore_rejects_missing_deterministic_state() {
         .pop();
     assert!(matches!(
         GameSession::restore(&truncated_candles),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("expected 360")
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("缺少完整交易日历史")
     ));
 
     for _ in 1..10 {
@@ -2235,21 +2239,22 @@ fn restore_rejects_daily_statistics_below_a_minimum_that_exceeds_u64() {
 
 #[test]
 fn restore_accepts_a_wide_ohlc_upper_bound_without_u64_multiplication_overflow() {
-    let mut session = GameSession::new(sample_setup(), 42).unwrap();
-    session.step().expect("healthy step");
-    let mut save = session.save().expect("healthy save");
-    let candle = save
-        .snapshot
-        .active_daily_candles
-        .get_mut(&StockCode("600101".to_string()))
-        .unwrap();
-    candle.high = Money::from_cents(i64::MAX);
-    candle.volume = 3;
-    candle.trade_stats = Some(engine::DailyTradeStats {
-        turnover_cents: 3_000,
-        trade_count: 3,
-    });
-
+    let code = StockCode("600101".to_string());
+    let mut traded = TestOrderSaveFixture::with_resting_sellers(1, 10_000_000)
+        .restore().expect("合法成交前缀");
+    traded.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
+        code: code.clone(), side: Side::Buy, price: LimitPrice::Fixed(Money::from_cents(1_000)), qty: 100,
+    }).unwrap();
+    let events = traded.step().unwrap();
+    assert!(events.iter().any(|event| matches!(event, Event::Trade { qty: 100, .. })));
+    let mut save = traded.save().unwrap();
+    GameSession::restore(&save).expect("真实量价事实须先通过恢复基线");
+    // ADR-0034 要求分钟与日K同构，宽上界同时注入两份权威表示以隔离乘法边界。
+    save.snapshot.active_daily_candles.get_mut(&code).unwrap().high = Money::from_cents(i64::MAX);
+    let bars = save.runtime_state.active_minute_history.get_mut(&code).unwrap();
+    assert_eq!(bars.len(), 1);
+    bars[0].high = Money::from_cents(i64::MAX);
+    assert!(u128::from(i64::MAX as u64) * u128::from(bars[0].volume_shares) > u128::from(u64::MAX));
     GameSession::restore(&save).expect("可表示的成交额不能因宽 OHLC 上界而被误拒绝");
 }
 
@@ -3040,7 +3045,8 @@ fn formal_session_rejects_zero_total_shares_even_when_float_is_zero() {
     setup.stocks[0].float_shares = 0;
 
     let error = GameSession::new(setup, 42).err().expect("零总股本必须失败");
-    assert!(error.to_string().contains("total_shares must be > 0"));
+    // CompanySystem 先校验发行人 issued_shares，仍严格拒绝零总股本。
+    assert!(error.to_string().contains("zero issued shares"), "{error}");
 }
 
 // 初始持仓市场转活集成测试（分配后 step 出 Trade）+ FloatAllocation 导出。
@@ -4664,19 +4670,21 @@ fn session_intraday_return_requires_a_real_opening_trade_not_the_zero_volume_pla
         "a zero-volume previous-close placeholder is not an opening trade"
     );
 
-    let mut traded_save = no_trade.save().expect("healthy save");
-    let candle = traded_save
-        .snapshot
-        .active_daily_candles
-        .get_mut(&code)
-        .unwrap();
-    candle.open = Money::from_cents(900);
-    candle.low = Money::from_cents(900);
-    candle.volume = 200;
-    candle.trade_stats = Some(engine::DailyTradeStats {
-        turnover_cents: 190_000,
-        trade_count: 2,
-    });
+    // ADR-0034 恢复勾稽分钟与日K，两个真实对手盘产生 900 开盘、1000 末价。
+    let mut traded_setup = sample_setup();
+    traded_setup.ticks_per_day = 240;
+    traded_setup.config.price_cage_enabled = false;
+    let mut fixture = TestOrderSaveFixture::with_resting_sellers_setup(traded_setup, 2, 10_000_000);
+    fixture.save_mut().resting_orders.get_mut(&code).unwrap()[0].price = Money::from_cents(900);
+    let mut traded = fixture.restore().unwrap();
+    traded.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
+        code: code.clone(), side: Side::Buy, price: LimitPrice::Fixed(Money::from_cents(1_000)), qty: 200,
+    }).unwrap();
+    let events = traded.step().unwrap();
+    assert_eq!(events.iter().filter(|event| matches!(event, Event::Trade { .. })).count(), 2);
+    let traded_save = traded.save().unwrap();
+    let candle = &traded_save.snapshot.active_daily_candles[&code];
+    assert_eq!((candle.open, candle.close, candle.volume), (Money::from_cents(900), Money::from_cents(1000), 200));
     let traded = engine::GameSession::restore(&traded_save).unwrap();
     let observation = traded.market_price_path_observations().unwrap();
     assert_eq!(observation[&code].intraday.return_ratio, Some(1.0 / 9.0));
@@ -4971,26 +4979,32 @@ fn restore_rejects_continuous_orders_during_call_auction() {
     };
     setup.auction_ticks = 3;
     let session = GameSession::new(setup, 42).unwrap();
-    let mut save = session.save().expect("healthy save");
-    save.resting_orders
-        .get_mut(&code)
-        .unwrap()
-        .push(engine::Order {
-            id: engine::OrderId(1),
-            side: Side::Buy,
-            price: Money::from_cents(1000),
-            qty: 100,
-            original_qty: 100,
-            filled_qty: 0,
-            filled_value: Money::ZERO,
-            owner: AccountId(0),
-            seq: 1,
-        });
-    save.next_order_id = 2;
-    // Only the trading phase is corrupt; the inserted order has a valid cursor.
-    save.book_next_sequences.insert(code.clone(), 2);
+    // 挂单注入需先真实申撤建立日内活动事实（TestOrderSaveFixture 同模式），
+    // 只把交易阶段这一项事实变违规。
+    let mut fixture = TestOrderSaveFixture::from_save(session.save().expect("healthy save"));
+    {
+        let save = fixture.save_mut();
+        save.resting_orders
+            .get_mut(&code)
+            .unwrap()
+            .push(engine::Order {
+                id: engine::OrderId(1),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+                original_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: AccountId(0),
+                seq: 1,
+            });
+        save.next_order_id = 2;
+        // Only the trading phase is corrupt; the inserted order has a valid cursor.
+        save.book_next_sequences.insert(code.clone(), 2);
+    }
 
-    let error = GameSession::restore(&save)
+    let error = fixture
+        .restore()
         .err()
         .expect("continuous orders in call auction must be rejected");
     assert!(
@@ -5059,40 +5073,44 @@ fn restore_rejects_unreachable_t1_locks() {
 fn restore_rejects_split_odd_lot_sell_orders() {
     let code = StockCode("600101".to_string());
     let session = player_session_with_position(150, 10_000_000);
-    let mut save = session.save().expect("healthy save");
-    save.resting_orders.insert(
-        code.clone(),
-        vec![
-            engine::Order {
-                id: engine::OrderId(1),
-                side: Side::Sell,
-                price: Money::from_cents(1000),
-                qty: 25,
-                original_qty: 25,
-                filled_qty: 0,
-                filled_value: Money::ZERO,
-                owner: AccountId(0),
-                seq: 1,
-            },
-            engine::Order {
-                id: engine::OrderId(2),
-                side: Side::Sell,
-                price: Money::from_cents(1000),
-                qty: 25,
-                original_qty: 25,
-                filled_qty: 0,
-                filled_value: Money::ZERO,
-                owner: AccountId(0),
-                seq: 2,
-            },
-        ],
-    );
-    save.next_order_id = 3;
-    // Keep the new cursor valid so the original quantity/value corruption is tested.
-    save.book_next_sequences.insert(code.clone(), 3);
+    // 挂单注入先经真实申撤 priming 建立活动事实，只把数量拆零这一项变违规。
+    let mut fixture = TestOrderSaveFixture::from_save(session.save().expect("healthy save"));
+    {
+        let save = fixture.save_mut();
+        save.resting_orders.insert(
+            code.clone(),
+            vec![
+                engine::Order {
+                    id: engine::OrderId(1),
+                    side: Side::Sell,
+                    price: Money::from_cents(1000),
+                    qty: 25,
+                    original_qty: 25,
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                    owner: AccountId(0),
+                    seq: 1,
+                },
+                engine::Order {
+                    id: engine::OrderId(2),
+                    side: Side::Sell,
+                    price: Money::from_cents(1000),
+                    qty: 25,
+                    original_qty: 25,
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                    owner: AccountId(0),
+                    seq: 2,
+                },
+            ],
+        );
+        save.next_order_id = 3;
+        // Keep the new cursor valid so the original quantity/value corruption is tested.
+        save.book_next_sequences.insert(code.clone(), 3);
+    }
 
     assert!(matches!(
-        GameSession::restore(&save),
+        fixture.restore(),
         Err(engine::SessionError::InvalidSave(message))
             if message.contains("odd-lot")
     ));
@@ -5232,27 +5250,35 @@ fn restore_validates_multiple_partial_sell_orders_independently_of_storage_order
 fn restore_rejects_filled_value_without_matching_quantity_progress() {
     let code = StockCode("600101".to_string());
     let session = player_session_with_position(0, 10_000_000);
-    let mut save = session.save().expect("healthy save");
-    save.resting_orders.insert(
-        code.clone(),
-        vec![engine::Order {
-            id: engine::OrderId(1),
-            side: Side::Buy,
-            price: Money::from_cents(1000),
-            qty: 1,
-            original_qty: 1,
-            filled_qty: 0,
-            filled_value: Money::from_cents(1),
-            owner: AccountId(0),
-            seq: 1,
-        }],
-    );
-    save.next_order_id = 2;
-    // Keep the new cursor valid so the original quantity/value corruption is tested.
-    save.book_next_sequences.insert(code.clone(), 2);
+    // 挂单注入先经真实申撤 priming 建立活动事实，只把成交值与数量进度
+    // 不勾稽这一项变违规。
+    let mut fixture = TestOrderSaveFixture::from_save(session.save().expect("healthy save"));
+    {
+        let save = fixture.save_mut();
+        save.resting_orders.insert(
+            code.clone(),
+            vec![engine::Order {
+                id: engine::OrderId(1),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+                original_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: AccountId(0),
+                seq: 1,
+            }],
+        );
+        save.next_order_id = 2;
+        // 先保持当前 cursor 与 A 股整手合法，只注入待测成交值损坏。
+        save.book_next_sequences.insert(code.clone(), 2);
+    }
+    let restored = fixture.restore().expect("零成交值与零数量进度的整手挂单必须先合法恢复");
+    let mut corrupted = restored.save().unwrap();
+    corrupted.resting_orders.get_mut(&code).unwrap()[0].filled_value = Money::from_cents(1);
 
     assert!(matches!(
-        GameSession::restore(&save),
+        GameSession::restore(&corrupted),
         Err(engine::SessionError::InvalidSave(message))
             if message.contains("invalid saved resting order")
     ));
@@ -5262,52 +5288,60 @@ fn restore_rejects_filled_value_without_matching_quantity_progress() {
 fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() {
     let code = StockCode("600101".to_string());
 
+    // 两段挂单注入都先经真实申撤 priming 建立活动事实，只把部分成交值的
+    // 限价方向违约这一项变违规。
     let buy_session = player_session_with_position(0, 10_000_000);
-    let mut buy_save = buy_session.save().expect("healthy save");
-    buy_save.resting_orders.insert(
-        code.clone(),
-        vec![engine::Order {
-            id: engine::OrderId(1),
-            side: Side::Buy,
-            price: Money::from_cents(1000),
-            qty: 100,
-            original_qty: 200,
-            filled_qty: 100,
-            filled_value: Money::from_cents(110_000),
-            owner: AccountId(0),
-            seq: 1,
-        }],
-    );
-    buy_save.next_order_id = 2;
-    // Keep the new cursor valid so the original quantity/value corruption is tested.
-    buy_save.book_next_sequences.insert(code.clone(), 2);
+    let mut buy_fixture = TestOrderSaveFixture::from_save(buy_session.save().expect("healthy save"));
+    {
+        let buy_save = buy_fixture.save_mut();
+        buy_save.resting_orders.insert(
+            code.clone(),
+            vec![engine::Order {
+                id: engine::OrderId(1),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+                original_qty: 200,
+                filled_qty: 100,
+                filled_value: Money::from_cents(110_000),
+                owner: AccountId(0),
+                seq: 1,
+            }],
+        );
+        buy_save.next_order_id = 2;
+        // Keep the new cursor valid so the original quantity/value corruption is tested.
+        buy_save.book_next_sequences.insert(code.clone(), 2);
+    }
     assert!(matches!(
-        GameSession::restore(&buy_save),
+        buy_fixture.restore(),
         Err(engine::SessionError::InvalidSave(message))
             if message.contains("filled value")
     ));
 
     let sell_session = player_session_with_position(200, 10_000_000);
-    let mut sell_save = sell_session.save().expect("healthy save");
-    sell_save.resting_orders.insert(
-        code.clone(),
-        vec![engine::Order {
-            id: engine::OrderId(1),
-            side: Side::Sell,
-            price: Money::from_cents(1000),
-            qty: 100,
-            original_qty: 200,
-            filled_qty: 100,
-            filled_value: Money::from_cents(90_000),
-            owner: AccountId(0),
-            seq: 1,
-        }],
-    );
-    sell_save.next_order_id = 2;
-    // Keep the new cursor valid so the original quantity/value corruption is tested.
-    sell_save.book_next_sequences.insert(code.clone(), 2);
+    let mut sell_fixture = TestOrderSaveFixture::from_save(sell_session.save().expect("healthy save"));
+    {
+        let sell_save = sell_fixture.save_mut();
+        sell_save.resting_orders.insert(
+            code.clone(),
+            vec![engine::Order {
+                id: engine::OrderId(1),
+                side: Side::Sell,
+                price: Money::from_cents(1000),
+                qty: 100,
+                original_qty: 200,
+                filled_qty: 100,
+                filled_value: Money::from_cents(90_000),
+                owner: AccountId(0),
+                seq: 1,
+            }],
+        );
+        sell_save.next_order_id = 2;
+        // Keep the new cursor valid so the original quantity/value corruption is tested.
+        sell_save.book_next_sequences.insert(code.clone(), 2);
+    }
     assert!(matches!(
-        GameSession::restore(&sell_save),
+        sell_fixture.restore(),
         Err(engine::SessionError::InvalidSave(message))
             if message.contains("filled value")
     ));
@@ -5347,7 +5381,7 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
     let pending = session.save().unwrap();
     let pending_json = serde_json::to_value(&pending).unwrap();
     assert_eq!(
-        pending_json["pending_player"][0][1]["PlaceLimit"]["price"],
+        pending_json["pending_player"][0]["intent"]["PlaceLimit"]["price"],
         "Highest"
     );
     let mut session = GameSession::restore(&pending).unwrap();
@@ -5417,6 +5451,7 @@ fn symbolic_highest_admitted_before_the_sell_can_move_its_price_cage() {
 
 #[test]
 fn symbolic_price_supports_both_extremes_on_both_sides_with_or_without_a_cage() {
+    let source = player_session_with_position(100, 10_000_000).save().unwrap();
     for enabled in [true, false] {
         for (side, rule, expected) in [
             (Side::Buy, "Highest", if enabled { 1020 } else { 1100 }),
@@ -5425,9 +5460,7 @@ fn symbolic_price_supports_both_extremes_on_both_sides_with_or_without_a_cage() 
             (Side::Sell, "Lowest", if enabled { 980 } else { 900 }),
         ] {
             let request = symbolic_limit_request(side, rule, 100);
-            let mut save = player_session_with_position(100, 10_000_000)
-                .save()
-                .unwrap();
+            let mut save = source.clone();
             save.setup.config.price_cage_enabled = enabled;
             let mut session = GameSession::restore(&save).unwrap();
             session

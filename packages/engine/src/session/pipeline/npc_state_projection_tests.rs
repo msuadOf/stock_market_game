@@ -288,6 +288,12 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
     })
     .unwrap();
     let mut candidate = plan.state.take_session().unwrap();
+    // plan_tick 的日界 queue 已在 shadow 上消费过一次注意力调度，测试自己的
+    // 捕获前重新强制候选，保持「两个 due NPC」的原始场景语义。
+    let candidate_tick = candidate.state.tick;
+    for account in [AccountId(1), AccountId(2)] {
+        npc_working_quote_tests::force_attention_candidate(&mut candidate, account, candidate_tick);
+    }
     let captured = capture_decision_snapshot(&mut candidate).unwrap();
     assert_eq!(
         captured.snapshot.due_npc_ids(),

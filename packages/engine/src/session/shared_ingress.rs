@@ -498,7 +498,8 @@ mod tests {
         let mut retry = game.clone_for_tick_shadow().unwrap();
         retry.freeze_shared_ingress().unwrap();
         assert_eq!(retry.state.pending_player.len(), 1);
-        assert!(retry.state.pending_npc.as_ref().unwrap().intents.is_empty());
+        // 未到首个日界 queue 时 NPC 队列保持 None；不得携带决策意图。
+        assert!(retry.state.pending_npc.is_none());
         assert_eq!(retry.state.pending_player[0].account_ordinal, 0);
     }
 
@@ -706,7 +707,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 2]
         );
-        assert!(save.pending_npc.as_ref().unwrap().intents.is_empty());
+        // 未到首个日界 queue 时 NPC 队列保持 None；不得携带决策意图。
+        assert!(save.pending_npc.is_none());
         assert_eq!(
             save.ingress_receipt_cursors.next_account_ordinal[&AccountId(0)],
             3

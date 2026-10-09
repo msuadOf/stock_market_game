@@ -289,6 +289,44 @@ fn adapter_preserves_stock_queue_order_and_rejects_nonserializable_ids() {
 fn reverse_order_ids_keep_stock_arrival_priority_after_save_restore() {
     let mut game = opening_game();
     let code = StockCode("600888".to_owned());
+    // 手补竞价订单必须有真实活动，推迟 NPC 后用玩家申撤建立两个申报 tick（迁移批同模式）。
+    // AccountPagedMap 无 values_mut，按 id 逐个推迟全部 NPC 的注意力候选。
+    let npc_ids: Vec<crate::AccountId> = game.state.npc_attention.keys().copied().collect();
+    for id in npc_ids {
+        if let Some(attention) = game.state.npc_attention.get_mut(&id) {
+            attention.next_attention_candidate_tick = game.state.tick + 10;
+        }
+    }
+    game.state.attention_scheduler.clear();
+    let priming_code = code.clone();
+    game.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: priming_code.clone(),
+            side: Side::Buy,
+            price: crate::LimitPrice::Lowest,
+            qty: 100,
+        },
+    )
+    .unwrap();
+    game.enqueue_player_intent(
+        AccountId(0),
+        Intent::Cancel {
+            code: priming_code,
+            id: OrderId(game.state.next_order_id),
+        },
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let events = game.step().unwrap();
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event, crate::Event::Trade { .. }))
+        );
+    }
+    // priming 申撤可能留下空桶 entry，注入手补订单前清干净。
+    game.state.auction_orders.clear();
     game.state
         .accounts
         .get_mut(&AccountId(0))

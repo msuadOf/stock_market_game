@@ -185,7 +185,17 @@ fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
 fn per_share_valuations_stay_in_price_dimension_not_total_equity() {
     // 拒绝整体权益量纲误接：每股区间的「分」值域必须与股价同量级，
     // 而不是公司总权益估计（10^9 股本公司会大 6-7 个数量级）。
-    let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
+    let mut setup = chain_setup("2030-01-07");
+    // Simple 固定汇总金额与亿级股本不再配平，尺度放大以保持“可用每股价格”前提。
+    let engine::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system else { unreachable!("测试只支持 Simple"); };
+    for company in &mut config.companies {
+        company.generation.initial_revenue = engine::accounting::AccountingAmount::from_cents(company.generation.initial_revenue.cents() * 1_000);
+        company.generation.initial_fixed_expense = engine::accounting::AccountingAmount::from_cents(company.generation.initial_fixed_expense.cents() * 1_000);
+        for line in &mut company.finance.opening_lines {
+            line.amount = engine::accounting::AccountingAmount::from_cents(line.amount.cents() * 1_000);
+        }
+    }
+    let mut session = GameSession::new(setup, SEED).unwrap();
     for _ in 0..120 {
         session.step().expect("healthy step");
     }
@@ -201,7 +211,8 @@ fn per_share_valuations_stay_in_price_dimension_not_total_equity() {
                 assert!(
                     summary.per_share_pessimistic_cents > 0
                         && summary.per_share_optimistic_cents
-                            >= summary.per_share_pessimistic_cents
+                            >= summary.per_share_pessimistic_cents,
+                    "{account}/{stock}: {summary:?}"
                 );
                 // 每股（分）应在价格量级（< 10^6 分 = 1 万元/股）；
                 // 总权益误接会是 10^9+ 分量级。

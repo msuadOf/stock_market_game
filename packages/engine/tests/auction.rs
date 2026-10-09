@@ -83,7 +83,7 @@ impl AuctionFixture {
             total_shares: 1_000_000,
             float_shares: 1_000_000,
         };
-        let setup = SessionSetup {
+        let mut setup = SessionSetup {
             company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
             stocks: vec![
                 stock("600101", 1_120, SecurityCategory::MainBoard),
@@ -101,7 +101,8 @@ impl AuctionFixture {
             config: GameConfig::proposed_defaults(),
             strategy_params: StrategyParams {
                 retail: RetailParams {
-                    arrival_rate: 0.3,
+                    // 提高 InsufficientHistory 到达率，使配平后的买卖双方在竞价窗口真实相遇。
+                    arrival_rate: 0.6,
                     order_size_mean: 200,
                     chase_prob: 0.4,
                 },
@@ -132,7 +133,21 @@ impl AuctionFixture {
             par_value_per_share: engine::Money::from_cents(100),
             auto_corporate_foundation: false,
         };
+        Self::balance_fundamentals(&mut setup);
         Self { setup, seed }
+    }
+
+    /// Simple 汇总利润与百万股本需配平，避免高 PE 让真实竞价 fixture 系统性只剩卖盘。
+    fn balance_fundamentals(setup: &mut SessionSetup) {
+        let engine::company::config::CompanySystemConfig::Simple(simple) = &mut setup.company_system else {
+            panic!("竞价 fixture 必须使用 Simple 公司系统");
+        };
+        for company in &mut simple.companies {
+            company.generation.initial_revenue =
+                engine::accounting::AccountingAmount::from_cents(1_000_000_000);
+            company.generation.initial_fixed_expense =
+                engine::accounting::AccountingAmount::from_cents(850_000_000);
+        }
     }
     fn quiet_on_exchange(auction_ticks: u64, seed: u64, exchange: StockExchange) -> Self {
         let mut fixture = Self::quiet(auction_ticks, seed);
@@ -151,6 +166,7 @@ impl AuctionFixture {
     fn retain_stock(&mut self, code: &StockCode) {
         self.setup.stocks.retain(|stock| &stock.code == code);
         self.setup.company_system = simple_company_fixture!(engine; codes = self.setup.stocks.iter().map(|stock| stock.code.0.as_str()));
+        Self::balance_fundamentals(&mut self.setup);
         assert_eq!(self.setup.stocks.len(), 1, "fixture stock must exist");
     }
 

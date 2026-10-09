@@ -30,6 +30,14 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
 
     // When: Friday completes, then Friday and one closed civil day settle.
     run_trading_day(&mut session);
+    // 2bf5b2a9 自然日日终也可获知；显式推迟信息 cadence 才满足“未读”前提。
+    let mut unread = session.save().unwrap();
+    let after_weekend = unread.civil_clock.current_date.next().unwrap().next().unwrap();
+    for attention in unread.npc_attention.values_mut() {
+        attention.information_cadence = engine::session::NpcInformationCadence::EveryDays { days: 7 };
+        attention.next_information_check = engine::CivilInstant::new(after_weekend, 0).unwrap();
+    }
+    session = GameSession::restore(&unread).unwrap();
     let beliefs_before = serde_json::to_vec(&session.save().expect("healthy save").belief_books)
         .expect("belief books serialize");
     let friday = session.end_civil_day().expect("completed Friday settles");

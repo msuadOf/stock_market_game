@@ -47,17 +47,19 @@ struct WeekendScenario {
 
 impl WeekendScenario {
     fn new(offset: u8) -> Self {
+        Self::for_company(offset, CompanyId(INDUSTRIAL_ID.into()))
+    }
+
+    fn for_company(offset: u8, company: CompanyId) -> Self {
         let year = saturday_q1_year(offset);
         let saturday = scheduled_instant(ScheduledReportKind::Q1, year, offset)
             .expect("saturday q1 instant")
             .date();
         let friday = saturday.prev().expect("friday before saturday");
+        let mut operations = single_company_config(history_start_of(friday).prev().expect("as_of before history"));
+        operations.companies[0].spec.id = company;
         let seeded = assemble_seeded_prehistory(
-            single_company_config(
-                history_start_of(friday)
-                    .prev()
-                    .expect("as_of before history"),
-            ),
+            operations,
             friday,
             engine::information::ReportFrequency::Quarterly,
         )
@@ -109,9 +111,10 @@ impl WeekendScenario {
 /// 断言公布本身零市场副作用（事件 seq / day / tick / 快照全部不变）。
 #[test]
 fn weekend_report_publishes_without_trade() {
-    let company = CompanyId(INDUSTRIAL_ID.to_string());
+    // Session 已改为 Simple，两套独立生产者须使用同一发行人才能冻结同一披露日。
+    let company = CompanyId("C-600101".into());
     let offset = stable_company_offset(OPS_SEED, &company);
-    let mut scenario = WeekendScenario::new(offset);
+    let mut scenario = WeekendScenario::for_company(offset, company.clone());
     let year = scenario.year;
     let q1_instant = scheduled_instant(ScheduledReportKind::Q1, year, offset).expect("instant");
 
@@ -161,7 +164,16 @@ fn weekend_report_publishes_without_trade() {
     );
     let save_after = scenario.session.save().expect("healthy settled save");
     assert_eq!(save_after.rng_state, save_before.rng_state);
-    assert_eq!(save_after.npc_attention, save_before.npc_attention);
+    // 2bf5b2a9 自然日信息送达可推进 next_information_check，不得消费市场注意力随机流。
+    assert_eq!(save_after.npc_attention.len(), save_before.npc_attention.len());
+    for (owner, before) in &save_before.npc_attention {
+        let after = &save_after.npc_attention[owner];
+        assert_eq!(after.information_cadence, before.information_cadence);
+        assert_eq!(after.base_probability, before.base_probability);
+        assert_eq!(after.next_attention_candidate_tick, before.next_attention_candidate_tick);
+        assert_eq!(after.rng_state, before.rng_state);
+        assert!(after.next_information_check >= before.next_information_check);
+    }
     assert!(saturday_report.events.len() > 1);
     for (index, event) in saturday_report.events.iter().enumerate() {
         assert_eq!(event.seq(), seq_before + index as u64 + 1);

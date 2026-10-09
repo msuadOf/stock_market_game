@@ -19,10 +19,10 @@ use engine::session::{
 use engine::strategy::{HotParams, InstParams, Intent, RetailParams, StrategyParams};
 use engine::{AccountId, LimitPrice, Side};
 
-/// 场景规模刻意保持很小：3 个交易日 × 240 tick/日 × 16 个 NPC × 2 只股票，
+/// 压缩为 3 个交易日 × 30 tick/日 × 16 个 NPC × 2 只股票，保持全部真实交易阶段。
 /// 作为受控短回放，覆盖开盘集合竞价、连续竞价、收盘集合竞价与日界。
 const REPLAY_SEED: u64 = 0x5EED_2026_0903;
-const TICKS_PER_DAY: u64 = 240;
+const TICKS_PER_DAY: u64 = 30;
 const REPLAY_DAYS: u64 = 3;
 
 /// 以下为 historical 锚点沿革，任务号、旧格式与摘要用于追踪原始证据。
@@ -101,9 +101,10 @@ const REPLAY_DAYS: u64 = 3;
 /// token 加引号，新 events/mid/end 原字节全部精确复现，其他业务事实与顺序不变。
 /// 旧锚保留：7922886018261573110 / 9809656468401244634 / 15011441865679768707。
 /// 独立 FNV/SHA、逐 path 核验与真实业务 guards 见 money-wire-golden.md。
-const PINNED_EVENTS_FNV: u64 = 9_977_927_079_659_249_770;
-const PINNED_SAVE_MID_FNV: u64 = 9_397_357_771_902_842_944;
-const PINNED_SAVE_END_FNV: u64 = 10_556_944_033_955_451_089;
+// 2026-10-09：旧锚在 0c6a7793 钉定，后续 Simple/Setup 演化且原长 fixture 超过 10s；短场景全部业务 guards 通过后重钉。
+const PINNED_EVENTS_FNV: u64 = 15_274_933_171_419_834_014;
+const PINNED_SAVE_MID_FNV: u64 = 6_627_958_319_940_489_179;
+const PINNED_SAVE_END_FNV: u64 = 483_190_306_896_860_110;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -136,7 +137,8 @@ fn replay_setup() -> SessionSetup {
             retail_count: 12,
             inst_count: 2,
             hot_count: 2,
-            retail_cash_median: Money::from_cents(5_000_000),
+            // 当前个人仓位步幅必须覆盖一手，避免已分配库存让短回放只剩卖单。
+            retail_cash_median: Money::from_cents(50_000_000),
         },
         config: GameConfig::proposed_defaults(),
         strategy_params: StrategyParams {
@@ -156,8 +158,8 @@ fn replay_setup() -> SessionSetup {
             },
         },
         ticks_per_day: TICKS_PER_DAY,
-        auction_ticks: 15,
-        closing_auction_ticks: 6,
+        auction_ticks: 3,
+        closing_auction_ticks: 3,
         history_len: 10,
         t1_enabled: true,
         report_frequency: engine::information::ReportFrequency::Quarterly,
@@ -419,7 +421,8 @@ fn identical_construction_replays_bit_identical() {
     assert_eq!(
         fnv1a64(&first.events_bytes),
         PINNED_EVENTS_FNV,
-        "event stream drifted from the pinned controlled-scenario anchor"
+        "event stream drifted from the pinned controlled-scenario anchor; mid={} end={}",
+        fnv1a64(&first.save_mid_bytes), fnv1a64(&first.save_end_bytes)
     );
     assert_eq!(
         fnv1a64(&first.save_mid_bytes),

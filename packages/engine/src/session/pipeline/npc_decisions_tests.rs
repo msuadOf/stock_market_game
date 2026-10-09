@@ -92,48 +92,54 @@ fn shared_receiver_accepts_player_between_fast_and_slow_npc_completions() {
 
 #[test]
 fn npc_completion_channel_receives_fast_account_first_and_drains_after_consumer_failure() {
+    // 被测完成顺序要求两 worker，自建池以免 runner 的全局 RAYON=1 改写测试前提。
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .unwrap();
     let snapshot = snapshot(vec![AccountId(1), AccountId(2)]);
     let received = Arc::new(std::sync::Mutex::new(Vec::new()));
     let authority_receipts = crate::session::IngressReceiptCursors::default();
     let candidate_receipts = Arc::new(std::sync::Mutex::new(authority_receipts.clone()));
-    assert!(rayon::current_num_threads() >= 2);
     let (release_sender, release_receiver) = std::sync::mpsc::channel();
     let release_receiver = std::sync::Mutex::new(release_receiver);
-    let result = stream_npc_decisions_with(
-        snapshot,
-        &crate::GameConfig::proposed_defaults(),
-        |account| {
-            if account == AccountId(1) {
-                release_receiver
+    let result = pool.install(|| {
+        stream_npc_decisions_with(
+            snapshot,
+            &crate::GameConfig::proposed_defaults(),
+            |account| {
+                if account == AccountId(1) {
+                    release_receiver
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .expect("fast account must be consumed before slow worker is released");
+                }
+            },
+            |completed| {
+                received.lock().unwrap().push(completed.account);
+                candidate_receipts
                     .lock()
                     .unwrap()
-                    .recv_timeout(std::time::Duration::from_secs(2))
-                    .expect("fast account must be consumed before slow worker is released");
-            }
-        },
-        |completed| {
-            received.lock().unwrap().push(completed.account);
-            candidate_receipts
-                .lock()
-                .unwrap()
-                .receive(
-                    completed.account,
-                    Intent::PlaceLimit {
-                        code: StockCode("600000".to_owned()),
-                        side: crate::Side::Buy,
-                        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
-                        qty: 100,
-                    },
-                )
-                .unwrap();
-            if completed.account == AccountId(2) {
-                release_sender.send(()).unwrap();
-                Err("injected consumer failure")
-            } else {
-                Ok(())
-            }
-        },
-    );
+                    .receive(
+                        completed.account,
+                        Intent::PlaceLimit {
+                            code: StockCode("600000".to_owned()),
+                            side: crate::Side::Buy,
+                            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+                            qty: 100,
+                        },
+                    )
+                    .unwrap();
+                if completed.account == AccountId(2) {
+                    release_sender.send(()).unwrap();
+                    Err("injected consumer failure")
+                } else {
+                    Ok(())
+                }
+            },
+        )
+    });
     assert_eq!(*received.lock().unwrap(), vec![AccountId(2), AccountId(1)]);
     assert!(matches!(
         result,

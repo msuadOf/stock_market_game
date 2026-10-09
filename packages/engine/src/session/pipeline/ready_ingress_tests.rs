@@ -133,8 +133,23 @@ fn same_stock_fifo_uses_receipt_time_across_player_and_npc_queues() {
 
 #[test]
 fn same_account_cash_lane_uses_cross_source_receive_time() {
-    let mut session =
-        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 45).unwrap();
+    // 引入时引用 quote_setup 的 stocks[1]，但该 fixture 只有一只股票；
+    // 本用例需要两只不同股票隔离 cash lane，这里在 fixture 上补第二只。
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    let second = crate::StockSpec {
+        code: crate::StockCode("600889".to_string()),
+        exchange: crate::StockExchange::Shanghai,
+        initial_price: crate::Money::from_cents(1_000),
+        category: crate::SecurityCategory::MainBoard,
+        limit_pct: 0.10,
+        tick: crate::Money::from_cents(1),
+        total_shares: 10_000_000,
+        float_shares: 0,
+    };
+    setup.company_system =
+        simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()).chain(std::iter::once(second.code.0.as_str())));
+    setup.stocks.push(second);
+    let mut session = GameSession::new(setup, 45).unwrap();
     let first_stock = session.state.setup.stocks[0].code.clone();
     let second_stock = session.state.setup.stocks[1].code.clone();
     session
@@ -183,6 +198,14 @@ fn same_account_cash_lane_uses_cross_source_receive_time() {
 fn enqueue_after_tick_capture_is_deferred_to_the_next_capture() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    // capture_sources 之后的 enqueue 属下一捕获窗口；本用例无 NPC 决策，
+    // 按 committed 版本 NPC 队列契约注入空批次（同 continuous_tick 先例）。
+    session.state.pending_npc = Some(crate::session::PendingNpcBatch {
+        observed_tick: session.state.tick,
+        observed_accounts: Vec::new(),
+        intents: Vec::new(),
+        dependencies: Vec::new(),
+    });
     let code = session.state.setup.stocks[0].code.clone();
     let intent = || Intent::PlaceLimit {
         code: code.clone(),

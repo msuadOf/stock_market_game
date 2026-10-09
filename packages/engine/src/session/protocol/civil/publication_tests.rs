@@ -1,31 +1,63 @@
-use crate::company::{ActiveShock, CompanyId, ShockKind};
+use crate::company::CompanyId;
 use crate::session::{CompanyDisclosureKind, Event, GameSession};
 
 #[test]
 fn confirmed_low_level_announcement_consumer_exposes_only_public_index_after_reconnect() {
-    let session = GameSession::new(setup(), 41).unwrap();
-    let save = session.save().unwrap();
+    // Simple 管线重建：旧 CompanyOperations 冲击公告 fixture 的报告来源
+    // （SimulationAccounting + fixture 自建发行人）已被 Simple-only 存档契约
+    // 拒绝，本用例改用真实分红方案公告（flat_dividend_fixture 全链）验证
+    // 同一意图——public index 只由已发布事实构成，私有获知不泄漏。
+    let mut setup = setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let holders = [(crate::AccountId(0), "player-lot", 100_u64)];
+    let (mut session, ..) = crate::session::dividend_tax_mode_tests::flat_dividend_fixture(
+        setup.clone(),
+        1,
+        &holders,
+    );
+    let (mut with_acquisition, ..) = crate::session::dividend_tax_mode_tests::flat_dividend_fixture(
+        setup,
+        1,
+        &holders,
+    );
     let company = CompanyId("C-600101".into());
-    let date = save.civil_clock.current_date;
-    let (library, confirmed, fact_report) = crate::session::company_assembly::financial_fixture_tests::confirmed_announcement_fixture(
-            &session, ActiveShock {
-                kind: ShockKind::ContractWon,
-                amplitude_bp: 1000,
-                starts_on: date,
-                expires_on: date.next().unwrap(),
-            },
-        );
-    let mut session = GameSession::restore(&save).unwrap();
-    let mut with_acquisition = GameSession::restore(&save).unwrap();
-    session.state.library = std::sync::Arc::new(library.clone());
-    with_acquisition.state.library = std::sync::Arc::new(library);
-    let public_id = *with_acquisition
-        .state
-        .library
-        .all_publication_ids()
-        .unwrap()
-        .first()
-        .unwrap();
+    // 01-02 会话与日终；01-03 会话跑完后由 end_civil_day_update 执行当日日终，
+    // 在 18:00 相位发布分红公告（真实披露链，announced_on=01-03）。
+    for game in [&mut session, &mut with_acquisition] {
+        for _ in 0..game.state.setup.ticks_per_day {
+            game.step().expect("healthy step");
+        }
+        game.end_civil_day().expect("healthy civil day end");
+    }
+    let closing_frames = |game: &mut GameSession| {
+        (0..game.state.setup.ticks_per_day)
+            .map(|_| game.step_frame().expect("真实 closing session frame"))
+            .collect::<Vec<_>>()
+    };
+    let frames = closing_frames(&mut session);
+    let acquired_frames = closing_frames(&mut with_acquisition);
+    let announced_update = session.end_civil_day_update(&frames).unwrap();
+    announced_update.validate().unwrap();
+    with_acquisition.end_civil_day_update(&acquired_frames).unwrap();
+    let announcement_ids: Vec<_> = announced_update
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                kind: CompanyDisclosureKind::Announcement,
+                ..
+            } => Some(publication_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !announcement_ids.is_empty(),
+        "分红公告必须在 announced_on 日终真实发布"
+    );
+
+    // 私有获知发生在公告已发布之后，不得改变后续 public index。
+    let public_id = *announcement_ids.first().unwrap();
     let owner = *with_acquisition
         .state
         .belief_participants
@@ -38,7 +70,7 @@ fn confirmed_low_level_announcement_consumer_exposes_only_public_index_after_rec
             owner,
             &with_acquisition.state.library,
             public_id,
-            crate::calendar::CivilInstant::new(date, 0).unwrap(),
+            crate::calendar::CivilInstant::new(with_acquisition.civil_date(), 0).unwrap(),
         )
         .unwrap();
     *with_acquisition
@@ -47,38 +79,37 @@ fn confirmed_low_level_announcement_consumer_exposes_only_public_index_after_rec
         .get_mut(&owner)
         .unwrap()
         .information_mut() = private;
-    let update = update_with_confirmed_announcement(&mut session, confirmed.clone(), fact_report.clone());
-    let acquired_update = update_with_confirmed_announcement(&mut with_acquisition, confirmed, fact_report);
+
+    // 开市日日终更新必须消费完整真实 TickFrame，不能用空批次冒充收盘。
+    let frames = closing_frames(&mut session);
+    let acquired_frames = closing_frames(&mut with_acquisition);
+    let update = session.end_civil_day_update(&frames).unwrap();
+    let acquired_update = with_acquisition.end_civil_day_update(&acquired_frames).unwrap();
     assert_eq!(
         update.refresh.public_publication_ids,
         acquired_update.refresh.public_publication_ids
     );
+    assert!(update
+        .refresh
+        .public_publication_ids
+        .contains(&public_id.value().to_string()));
     update.validate().unwrap();
     let reconnected = GameSession::restore(&session.save().unwrap()).unwrap();
     let public = &reconnected.state.library;
-    let mut announcements = 0;
-    for event in &update.events {
-        if let Event::CompanyDisclosurePublished {
-            publication_id,
-            published_at,
-            kind: CompanyDisclosureKind::Announcement,
-            ..
-        } = event
-        {
-            announcements += 1;
-            assert!(update
-                .refresh
-                .public_publication_ids
-                .contains(&publication_id.value().to_string()));
-            let item = public.announcement(*publication_id, *published_at).unwrap();
-            assert_eq!(item.company, company);
-            assert!(public
-                .announcements_for_company(&company, *published_at)
-                .iter()
-                .any(|entry| entry.id == *publication_id));
-        }
+    let published_at = crate::calendar::CivilInstant::new(
+        crate::CivilDate::from_iso("2030-01-03").unwrap(),
+        64800,
+    )
+    .unwrap();
+    for publication_id in &announcement_ids {
+        let item = public.announcement(*publication_id, published_at).unwrap();
+        assert_eq!(item.company, company);
+        // 公司索引与 by-id/global 扫描是独立路径，恢复后必须分别锁定真实公告可见性。
+        assert!(public
+            .announcements_for_company(&company, published_at)
+            .iter()
+            .any(|entry| entry.id == *publication_id));
     }
-    assert!(announcements > 0);
     let ids = public.all_publication_ids().unwrap();
     assert_eq!(
         update.refresh.public_publication_ids,
@@ -90,21 +121,6 @@ fn confirmed_low_level_announcement_consumer_exposes_only_public_index_after_rec
         let now = crate::calendar::CivilInstant::new(reconnected.civil_date(), 0).unwrap();
         assert!(public.report(id, now).is_ok() || public.announcement(id, now).is_ok());
     }
-}
-
-fn update_with_confirmed_announcement(
-    session: &mut GameSession,
-    confirmed: crate::session::DayEndDisclosures,
-    mut fact_report: crate::session::CivilDayEndReport,
-) -> super::CivilUpdate {
-    let mut update = session.end_civil_day_update(&[]).unwrap();
-    session.record_company_disclosure_events(&mut fact_report, confirmed).unwrap();
-    update.events.extend(fact_report.events);
-    update.facts = super::attach_facts(&update.events).unwrap();
-    update.seq_to = session.seq();
-    update.refresh.snapshot = session.snapshot();
-    update.validate().unwrap();
-    update
 }
 
 pub(super) fn setup() -> crate::SessionSetup {

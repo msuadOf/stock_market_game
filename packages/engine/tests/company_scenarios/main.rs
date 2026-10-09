@@ -119,6 +119,18 @@ pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     let mut focused = setup(start_date);
     focused.stocks.retain(|stock| stock.code.0 == "600101");
     focused.company_system = simple_company_fixture!(engine; codes = focused.stocks.iter().map(|stock| stock.code.0.as_str()));
+    // Simple 按完整窗口生成年报，三月开局须有三年期间才能包含上一份完整年报。
+    let engine::company::config::CompanySystemConfig::Simple(config) = &mut focused.company_system else { unreachable!("测试只支持 Simple"); };
+    config.prehistory_periods = 36;
+    // 控制场景需要不同年度材料真有变化且每股金额可表示，不使用恒定零增长的摘要。
+    for company in &mut config.companies {
+        company.generation.initial_revenue = engine::accounting::AccountingAmount::from_cents(company.generation.initial_revenue.cents() * 1_000);
+        company.generation.initial_fixed_expense = engine::accounting::AccountingAmount::from_cents(company.generation.initial_fixed_expense.cents() * 1_000);
+        company.generation.revenue_trend = engine::company::simple::period::AnnualTrendConfig::Fixed { annual_growth_bp: 1_500 };
+        for line in &mut company.finance.opening_lines {
+            line.amount = engine::accounting::AccountingAmount::from_cents(line.amount.cents() * 1_000);
+        }
+    }
     focused.npcs = NpcSetup {
         retail_count: 0,
         inst_count: 2,

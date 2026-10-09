@@ -663,8 +663,10 @@ mod tests {
         )
         .unwrap();
         assert!(conflicts);
-        assert_eq!(plan.successors, vec![vec![2], vec![3], vec![], vec![]]);
-        assert_eq!(plan.incoming, vec![0, 0, 1, 1]);
+        // ADR-0032：同股候选按真实接收 ordinal 追加 FIFO 边，与账户股份
+        // lane 边并存；同股同账户对出现双重后继，根判定不受影响。
+        assert_eq!(plan.successors, vec![vec![2], vec![3, 3], vec![], vec![]]);
+        assert_eq!(plan.incoming, vec![0, 0, 1, 2]);
     }
 
     #[test]

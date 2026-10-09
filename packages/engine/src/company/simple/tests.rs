@@ -132,6 +132,23 @@ fn restored_finance_baseline_must_match_fundamentals_history_start() {
         serde_json::to_value(earlier).unwrap();
     assert!(serde_json::from_value::<CompanySystem>(saved).is_err());
 }
+#[test]
+fn aggregate_restore_rejects_income_tax_restatements_without_matching_closing_worksheet() {
+    let system = create(config());
+    let mut encoded = serde_json::to_value(&system).unwrap();
+    serde_json::from_value::<CompanySystem>(encoded.clone()).expect("合法聚合存档必须先恢复");
+    let finance_value = &mut encoded["implementation"]["state"]["companies"]["A"]["finance"];
+    let finance: SimpleFinanceState = serde_json::from_value(finance_value.clone()).unwrap();
+    let source = finance.books().journal().entries().next().unwrap().source.value().to_string();
+    let target = crate::accounting::AccountingPeriod::from_ymd(finance.opening_date().year() - 1, finance.opening_date().month()).unwrap();
+    let restatements = &mut finance_value["income_tax_position"]["restatements"];
+    assert!(restatements.as_object().unwrap().is_empty());
+    // CompanySystem 聚合恢复同时拥有 tax 与 closing，合法历史映射必须交叉勾稽而不能只过低层校验。
+    restatements[&source] = serde_json::to_value(target).unwrap();
+    let error = serde_json::from_value::<CompanySystem>(encoded).expect_err("税务与结账重述映射不一致必须拒绝");
+    assert!(error.to_string().contains("税务与报告更正工作底稿不同步"), "{error}");
+}
+
 fn create(config: SimpleConfig) -> CompanySystem {
     CompanySystem::create(
         vec![spec()],

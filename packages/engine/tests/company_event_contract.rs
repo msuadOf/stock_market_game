@@ -96,7 +96,32 @@ fn advance_to_next_report(session: &mut GameSession) -> Vec<Event> {
 #[test]
 fn scheduled_publication_event_is_lossless_public_and_precedes_civil_advance() {
     // Given: an authoritative session before its next scheduled public report.
-    let mut session = GameSession::new(setup("2030-01-01"), 29).expect("fixture session is valid");
+    let mut fixture = setup("2030-01-01");
+    fixture.auto_corporate_foundation = true;
+    let mut session = GameSession::new(fixture, 29).expect("fixture session is valid");
+    // Simple 不再产生旧经营冲击公告，同报表披露日受理真实现金分红方案保持公告排序意图。
+    let company = engine::company::CompanyId("C-600101".into());
+    let exchange = engine::calendar::CalendarExchange::Sse;
+    let announced_on = engine::information::scheduled_instant(
+        engine::information::ScheduledReportKind::Annual, 2029,
+        engine::information::stable_company_offset(29, &company),
+    ).unwrap().date();
+    let policy = engine::calendar::CalendarPolicy::from_parts(session.save().unwrap().civil_clock.policy).unwrap();
+    let calendar = engine::calendar::TradingCalendar::from_policy(policy).unwrap();
+    let registered_on = calendar.next_trading_day(exchange, announced_on).unwrap();
+    let ex_dividend_on = calendar.next_trading_day(exchange, registered_on).unwrap();
+    let payable_on = calendar.next_trading_day(exchange, ex_dividend_on).unwrap();
+    let plan = engine::company::cash_dividend::CashDividendPlan::new(
+        "event-contract-dividend".into(), company, StockCode("600101".into()), exchange,
+        engine::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+        session.civil_date(), announced_on, registered_on, ex_dividend_on, payable_on,
+        Money::from_cents(1), Money::from_cents(10_000_000), &calendar,
+    ).unwrap();
+    session.approve_cash_dividend(engine::company::DividendDeclaration {
+        plan_id: plan.plan_id.clone(), approved_on: session.civil_date(),
+        total_gross: engine::accounting::AccountingAmount::from_cents(10_000_000),
+        registered_capital: engine::accounting::AccountingAmount::from_cents(1_000_000_000),
+    }, plan).unwrap();
 
     // When: the civil/disclosure path reaches a newly due report.
     let events = advance_to_next_report(&mut session);
