@@ -50,6 +50,7 @@ fn transfer(qty: i128) -> ShareDayRequest {
                 holder: account(1),
                 change: -qty,
                 acquisition: None,
+                consume: None,
             },
             DayNetChange {
                 holder: account(u64::MAX),
@@ -61,6 +62,7 @@ fn transfer(qty: i128) -> ShareDayRequest {
                     },
                     restriction: ShareRestriction::Unrestricted,
                 }),
+                consume: None,
             },
         ],
     }
@@ -160,6 +162,7 @@ fn share_quantities_and_signed_changes_use_exact_canonical_decimal_strings() {
                 holder: account(1),
                 change: -i128::from(quantity),
                 acquisition: None,
+                consume: None,
             },
             DayNetChange {
                 holder: account(2),
@@ -171,6 +174,7 @@ fn share_quantities_and_signed_changes_use_exact_canonical_decimal_strings() {
                     },
                     restriction: ShareRestriction::Unrestricted,
                 }),
+                consume: None,
             },
         ],
     };
@@ -270,6 +274,7 @@ fn zero_net_day_does_not_reset_acquisition_and_duplicate_input_is_rejected() {
                 holder: account(1),
                 change: 0,
                 acquisition: None,
+                consume: None,
             }],
         })
         .unwrap();
@@ -577,6 +582,7 @@ fn issuance_request(day_text: &str, event_id: &str) -> ShareDayRequest {
                     },
                     restriction: ShareRestriction::Unrestricted,
                 }),
+                consume: None,
             },
             DayNetChange {
                 holder: HolderId::External("nonfloat-owner".into()),
@@ -591,6 +597,7 @@ fn issuance_request(day_text: &str, event_id: &str) -> ShareDayRequest {
                         release_on: day("2030-06-01"),
                     },
                 }),
+                consume: None,
             },
         ],
     }
@@ -644,6 +651,7 @@ fn non_trading_transfer_rejects_disposal_secondary_source_and_zero_total() {
         holder: account(1),
         change: -1,
         acquisition: None,
+        consume: None,
     });
     assert!(registry.close_day(disposal).is_err());
     let mut secondary = issuance_request("2030-01-02", "issue-secondary");
@@ -793,6 +801,7 @@ fn split_change(holder: HolderId, delta: i128, lot_id: &str) -> DayNetChange {
             },
             restriction: ShareRestriction::Unrestricted,
         }),
+        consume: None,
     }
 }
 
@@ -855,16 +864,19 @@ fn share_redenomination_consolidation_consumes_restricted_lots_and_shrinks_issue
                 holder: account(1),
                 change: -25,
                 acquisition: None,
+                consume: None,
             },
             DayNetChange {
                 holder: HolderId::External("nonfloat-owner".into()),
                 change: -20,
                 acquisition: None,
+                consume: None,
             },
             DayNetChange {
                 holder: HolderId::IssuerTreasury,
                 change: -5,
                 acquisition: None,
+                consume: None,
             },
         ],
     );
@@ -919,6 +931,7 @@ fn share_redenomination_validates_scope_specific_rules() {
                 holder: account(2),
                 change: -30,
                 acquisition: None,
+                consume: None,
             },
         ],
     );
@@ -935,6 +948,7 @@ fn share_redenomination_validates_scope_specific_rules() {
                 holder: HolderId::External("nonfloat-owner".into()),
                 change: -30,
                 acquisition: None,
+                consume: None,
             },
         ],
     );
@@ -946,13 +960,16 @@ fn share_redenomination_validates_scope_specific_rules() {
         "拒绝必须指明重新计值须同向：{error}"
     );
     assert_eq!(registry, before);
-    // 同一持有人两条净变动拒绝（必须单一净额）。
+    // 同一持有人分桶多条净变动：Task174 起 Treasury 分桶重新计值允许同向多笔
+    //（各自携带独立取得 lot）；在克隆名册上验证接受，原名册保持 before 勾稽。
     let duplicate = redenomination(
         "dup-1",
         "2030-01-02",
         vec![split_change(account(1), 10, "d1"), split_change(account(1), 5, "d2")],
     );
-    assert!(registry.close_day(duplicate).is_err());
+    let mut bucketed = registry.clone();
+    bucketed.close_day(duplicate).unwrap();
+    assert_ne!(bucketed, before);
     // 空 basis 拒绝。
     let mut empty_basis =
         redenomination("b-1", "2030-01-02", vec![split_change(account(1), 10, "b1")]);
@@ -979,6 +996,7 @@ fn share_redenomination_validates_scope_specific_rules() {
                 source: AcquisitionSource::CorporateAction { event: "e".into() },
                 restriction: ShareRestriction::Unrestricted,
             }),
+            consume: None,
         }],
     );
     assert!(registry.close_day(negative_with_acquisition).is_err());
@@ -990,6 +1008,7 @@ fn share_redenomination_validates_scope_specific_rules() {
             holder: account(1),
             change: -500,
             acquisition: None,
+            consume: None,
         }],
     );
     let result = registry.close_day(overdraw);
@@ -1029,4 +1048,105 @@ fn share_redenomination_can_append_on_the_settled_day_and_replays_in_registratio
     let restored: ShareRegistry =
         serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
     assert_eq!(restored, registry);
+}
+
+/// 回购注销必须携带显式 lot 消耗选择（Task174）：不落入无条件 FIFO（FIFO 会
+/// 先吃 initial 残桶或别的 plan 的份额）；选择必须精确覆盖核减量。
+#[test]
+fn issuer_repurchase_cancellation_requires_explicit_lot_consumption() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    // 无显式消耗选择 → 显式拒绝。
+    let no_selection = ShareDayRequest {
+        event_id: "cancel-no-selection".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::IssuerRepurchaseCancellation { basis: "b".into() },
+        changes: vec![DayNetChange {
+            holder: HolderId::IssuerTreasury,
+            change: -3,
+            acquisition: None,
+            consume: None,
+        }],
+    };
+    let error = registry.close_day(no_selection).unwrap_err();
+    assert!(
+        error.to_string().contains("explicit lot consumption"),
+        "注销必须要求显式消耗选择：{error}"
+    );
+    // 选择量与核减量不一致 → 拒绝。
+    let mismatched = ShareDayRequest {
+        event_id: "cancel-mismatch".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::IssuerRepurchaseCancellation { basis: "b".into() },
+        changes: vec![DayNetChange {
+            holder: HolderId::IssuerTreasury,
+            change: -3,
+            acquisition: None,
+            consume: Some(vec![LotConsumption {
+                lot_id: "treasury".into(),
+                qty: 2,
+            }]),
+        }],
+    };
+    assert!(registry.close_day(mismatched).is_err());
+    // 显式选择核减指定 lot：只动 treasury lot，不动账户 lot。
+    let exact = ShareDayRequest {
+        event_id: "cancel-exact".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::IssuerRepurchaseCancellation { basis: "b".into() },
+        changes: vec![DayNetChange {
+            holder: HolderId::IssuerTreasury,
+            change: -3,
+            acquisition: None,
+            consume: Some(vec![LotConsumption {
+                lot_id: "treasury".into(),
+                qty: 3,
+            }]),
+        }],
+    };
+    let receipt = registry.close_day(exact).unwrap();
+    assert_eq!(receipt.disposals.len(), 1);
+    assert_eq!(receipt.disposals[0].lot.id, "treasury");
+    assert_eq!(registry.issued_shares(), 97);
+}
+
+/// 低级项①回归：显式消耗选择不得进入公开市场 scope（FIFO＋限售校验不得被
+/// 手改存档借显式路径绕过）。
+#[test]
+fn explicit_lot_consumption_is_rejected_in_public_market_scope() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    let sneaky = ShareDayRequest {
+        event_id: "public-explicit".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::PublicMarket,
+        changes: vec![
+            DayNetChange {
+                holder: account(1),
+                change: -3,
+                acquisition: None,
+                consume: Some(vec![LotConsumption {
+                    lot_id: "old".into(),
+                    qty: 3,
+                }]),
+            },
+            DayNetChange {
+                holder: account(7),
+                change: 3,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "buyer-7".into(),
+                    source: AcquisitionSource::SecondaryMarket {
+                        settlement: "s".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+                consume: None,
+            },
+        ],
+    };
+    let error = registry.close_day(sneaky).unwrap_err();
+    assert!(
+        error.to_string().contains("explicit lot consumption"),
+        "公开市场负向带显式消耗必须拒绝：{error}"
+    );
 }

@@ -3812,6 +3812,24 @@ impl GameSession {
             .filter(|id| self.state.accounts.contains_key(id))
     }
 
+    /// 单位锚只读已应用的除权事实，不能把到达 ex 日期当作已经应用。
+    pub fn current_trading_unit_anchor(
+        &self,
+        stock: &StockCode,
+        date: crate::calendar::CivilDate,
+    ) -> Option<String> {
+        self.state
+            .corporate_actions
+            .applied_ex_reference_groups
+            .iter()
+            .filter(|group| {
+                group.stock == *stock && group.date <= date && !group.split_event_ids.is_empty()
+            })
+            .max_by_key(|group| group.date)
+            .and_then(|group| group.split_event_ids.first())
+            .cloned()
+    }
+
     /// 汇总发行人回购账户当日买入成交（真实回执；卖出恒不可能——回购只买不卖）。
     fn collect_issuer_repurchase_fills(
         &self,
@@ -4233,6 +4251,14 @@ impl GameSession {
                 "回购方案的批准日期或公告日期与当前会话日期不一致".into(),
             ));
         }
+        // 批准锚取审批当刻已应用的交易事实，日期到达 ex 日不能替代实际应用。
+        let session_anchor = self.current_trading_unit_anchor(&plan.stock, self.civil_date());
+        if plan.approval_unit_event_id != session_anchor {
+            return Err(SessionError::InvalidSetup(format!(
+                "回购批准单位锚 {:?} 与审批当刻真实交易单位锚 {session_anchor:?} 不一致",
+                plan.approval_unit_event_id
+            )));
+        }
         plan.validate_calendar(self.state.civil_clock.calendar())
             .map_err(|error| SessionError::InvalidSetup(format!("回购日程非法：{error}")))?;
         if self
@@ -4397,6 +4423,59 @@ impl GameSession {
             .cloned()
             .ok_or_else(|| SessionError::InvalidSetup("回购注销缺少股东名册".into()))?;
         let issued_before = registry_checkpoint.issued_shares();
+        // 显式 lot 消耗选择：只核减本 plan 仍持有的份额（真实净买入 market lot +
+        // 既往拆股/缩股增量 lot），名册不再无条件 FIFO 吃 initial 残桶或别的 plan。
+        let split_context = self.state.corporate_actions.split_unit_context(&stock);
+        let current_inventory = self.state.corporate_actions.issuer_repurchases[index]
+            .current_inventory_shares(&split_context)
+            .map_err(|error| SessionError::InvalidSetup(format!("回购库存重放失败：{error}")))?;
+        if shares > current_inventory {
+            return Err(SessionError::InvalidSetup(format!(
+                "回购注销 {shares} 股超过方案 {event_id} 当前库存 {current_inventory} 股"
+            )));
+        }
+        let treasury_lots: Vec<crate::company::share_registry::ShareLot> = registry_checkpoint
+            .holdings()
+            .iter()
+            .find(|holding| {
+                holding.holder == crate::company::share_registry::HolderId::IssuerTreasury
+            })
+            .map(|holding| holding.lots.clone())
+            .unwrap_or_default();
+        let lot_ids: std::collections::BTreeSet<String> = self
+            .state
+            .corporate_actions
+            .plan_treasury_lot_ids(event_id, &stock)
+            .into_iter()
+            .collect();
+        let mut ordered: Vec<&crate::company::share_registry::ShareLot> = treasury_lots
+            .iter()
+            .filter(|lot| lot_ids.contains(&lot.id))
+            .collect();
+        ordered.sort_by(|left, right| {
+            (left.acquired_on, &left.id).cmp(&(right.acquired_on, &right.id))
+        });
+        let mut remaining = shares;
+        let mut selection = Vec::new();
+        for lot in ordered {
+            if remaining == 0 {
+                break;
+            }
+            let consumed = remaining.min(lot.qty);
+            if consumed == 0 {
+                continue;
+            }
+            selection.push(crate::company::share_registry::LotConsumption {
+                lot_id: lot.id.clone(),
+                qty: consumed,
+            });
+            remaining -= consumed;
+        }
+        if remaining != 0 {
+            return Err(SessionError::InvalidSetup(format!(
+                "回购方案 {event_id} 名册可归属 lot 不足以核减 {shares} 股（缺 {remaining}）"
+            )));
+        }
         let mut candidate_registry = registry_checkpoint.clone();
         candidate_registry
             .close_day(crate::company::share_registry::ShareDayRequest {
@@ -4414,6 +4493,7 @@ impl GameSession {
                         SessionError::InvalidSetup("回购注销股数超出范围".to_string())
                     })?,
                     acquisition: None,
+                    consume: Some(selection),
                 }],
             })
             .map_err(|error| SessionError::InvalidSetup(format!("回购注销名册核减失败：{error}")))?;
@@ -4435,7 +4515,12 @@ impl GameSession {
                 issued_before,
             )
             .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        // 全部成功后一次性安装候选状态并推进账簿状态机。
+        // 全部成功后一次性安装候选状态并推进账簿状态机；record_cancellation 的
+        // 库存上界校验失败时不安装任何候选（无部分状态泄露）。
+        let mut candidate_books = self.state.corporate_actions.issuer_repurchases.clone();
+        candidate_books[index]
+            .record_cancellation(on, shares, &split_context)
+            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
         let registry_index = self
             .state
             .corporate_actions
@@ -4446,9 +4531,7 @@ impl GameSession {
         self.state.corporate_actions.registries[registry_index] = candidate_registry;
         self.state.accounts = candidate_accounts;
         self.state.company_system = std::sync::Arc::new(candidate_system);
-        self.state.corporate_actions.issuer_repurchases[index]
-            .record_cancellation(on, shares)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
+        self.state.corporate_actions.issuer_repurchases = candidate_books;
         Ok(())
     }
 
@@ -4489,9 +4572,20 @@ impl GameSession {
             match book.plan().completion_policy {
                 crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion => {}
             }
-            let shares = book.total_filled_shares();
+            // 读当前重放库存（含单位调整与历史部分注销残量），不读历史成交合计：
+            // 拆股/缩股后注销必须按当前单位股数执行（Task174）；重放失败属事实
+            // 损坏，显式上抛不静默跳过。
+            let split_context = self
+                .state
+                .corporate_actions
+                .split_unit_context(&book.plan().stock);
+            let shares = book
+                .current_inventory_shares(&split_context)
+                .map_err(|error| {
+                    SessionError::InvalidSetup(format!("回购库存重放失败：{error}"))
+                })?;
             if shares == 0 {
-                // 零成交：无股份可核减，保持 Completed 终态（不阻塞新方案）。
+                // 零库存（零成交或残量已尽）：无股份可核减，保持 Completed 终态。
                 continue;
             }
             // 在途委托竞态守卫：回购账户在该证券订单簿仍有未成交委托 → 该日
@@ -4547,9 +4641,62 @@ impl GameSession {
             let Ok(remaining) = book.remaining_budget() else {
                 continue;
             };
-            let share_room = plan
-                .max_shares
-                .saturating_sub(book.total_filled_shares());
+            // 执行数量/价格上限按「批准锚单位 → 当日交易单位」精确比例换算
+            // （Task174）；库存读重放值，ex 当日盘中调整尚未入账时按
+            // 「已记录链尾 → 当日」再取整换算（合法碎股奖励只会把 room 压到 0）。
+            let split_context = self.state.corporate_actions.split_unit_context(&plan.stock);
+            let execution_cap =
+                plan.execution_max_shares(day, &split_context)
+                    .map_err(|error| StepFatal::InvariantViolation {
+                        description: format!("回购数量上限换算失败：{error}"),
+                        location: "GameSession::place_issuer_repurchase_orders".into(),
+                    })?;
+            let recorded_inventory = match book.current_inventory_shares(&split_context) {
+                Ok(inventory) => inventory,
+                // tick shadow 内不能静默吞错：库存重放失败属权威事实损坏。
+                Err(error) => {
+                    return Err(StepFatal::InvariantViolation {
+                        description: format!("回购库存重放失败：{error}"),
+                        location: "GameSession::place_issuer_repurchase_orders".into(),
+                    });
+                }
+            };
+            let recorded_anchor = split_context
+                .iter()
+                .filter(|entry| {
+                    book.share_unit_adjustments()
+                        .iter()
+                        .any(|adjustment| adjustment.split_event_id == entry.event_id)
+                })
+                .max_by(|left, right| {
+                    (left.ex_on, &left.event_id).cmp(&(right.ex_on, &right.event_id))
+                })
+                .map(|entry| entry.event_id.clone())
+                .or_else(|| plan.approval_unit_event_id.clone());
+            let (tail_num, tail_den) =
+                match crate::company::issuer_repurchase::unit_conversion_factor(
+                    recorded_anchor.as_deref(),
+                    day,
+                    &split_context,
+                ) {
+                    Ok(factor) => factor,
+                    Err(error) => {
+                        return Err(StepFatal::InvariantViolation {
+                            description: format!("回购单位换算失败：{error}"),
+                            location: "GameSession::place_issuer_repurchase_orders".into(),
+                        });
+                    }
+                };
+            let inventory_today = crate::company::issuer_repurchase::convert_shares_floor(
+                recorded_inventory,
+                tail_num,
+                tail_den,
+            )
+            .map_err(|error| StepFatal::InvariantViolation {
+                description: format!("回购库存换算失败：{error}"),
+                location: "GameSession::place_issuer_repurchase_orders".into(),
+            })?;
+            let share_room = execution_cap.saturating_sub(inventory_today);
             if share_room == 0 {
                 continue;
             }
@@ -4557,9 +4704,9 @@ impl GameSession {
                 Some(market) => market,
                 None => continue,
             };
-            // 委托价上界取三者最小：方案价格上限、涨停价−1 个最小价位（63 号
-            // 第 30 条（一）：申报价格不得为当日涨幅限制的价格）、连续竞价买入
-            // 价格笼子上界（不绕过既有申报规则）。
+            // 委托价上界取三者最小：方案价格上限（按当日交易单位换算并向下取
+            // 最小价位）、涨停价−1 个最小价位（63 号第 30 条（一）：申报价格不得
+            // 为当日涨幅限制的价格）、连续竞价买入价格笼子上界（不绕过既有申报规则）。
             let up_stop = match market.up_stop() {
                 Ok(up_stop) => up_stop,
                 Err(_) => continue,
@@ -4573,19 +4720,29 @@ impl GameSession {
                 .find(|spec| spec.code == plan.stock)
                 .map(|spec| spec.tick)
                 .unwrap_or(Money::from_cents(1));
+            let plan_cap_cents =
+                match plan.execution_price_cap_cents(day, tick.cents(), &split_context) {
+                    Ok(cents) => cents,
+                    Err(error) => {
+                        return Err(StepFatal::InvariantViolation {
+                            description: format!("回购价格上限换算失败：{error}"),
+                            location: "GameSession::place_issuer_repurchase_orders".into(),
+                        });
+                    }
+                };
+            if plan_cap_cents <= 0 {
+                continue;
+            }
+            let plan_cap = Money::from_cents(plan_cap_cents);
             // 价格笼子上界：max(参考价×102%, 参考价+10 个最小价位)（既有交易规则）。
             let reference = market.continuous_limit_reference(crate::orderbook::Side::Buy);
-            let cage_upper = reference
-                .apply_rate(1.02)
-                .unwrap_or(reference)
-                .max(
-                    reference
-                        .add(tick.mul_shares(10).unwrap_or(tick))
-                        .unwrap_or(reference),
-                );
-            let cap = plan
-                .price_cap_per_share
-                .min(up_stop.sub(tick).unwrap_or(plan.price_cap_per_share))
+            let cage_upper = reference.apply_rate(1.02).unwrap_or(reference).max(
+                reference
+                    .add(tick.mul_shares(10).unwrap_or(tick))
+                    .unwrap_or(reference),
+            );
+            let cap = plan_cap
+                .min(up_stop.sub(tick).unwrap_or(plan_cap))
                 .min(cage_upper);
             if cap <= Money::ZERO {
                 continue;
@@ -5042,13 +5199,35 @@ impl GameSession {
                 &mut self.state.accounts,
             )
             .map_err(|error| SessionError::InvalidSave(format!("送转日终结算失败：{error}")))?;
+        // 拆股／缩股两相位（Task174）：入账相位（ex 日换算冻结 R 库存并记录各
+        // 回购 plan 的单位调整）先于当日到期回购注销——注销随后按当前单位股数
+        // 执行；登记相位（R 日冻结快照）后于注销——R 快照必须反映已完成的到期
+        // 注销，避免 R+1 按旧快照复活已注销库存桶。
+        let repurchase_account_for_phases = self.issuer_repurchase_account_id();
         self.state
             .corporate_actions
-            .process_share_splits_on_day_end(
+            .settle_share_splits_on_day_end(
+                report.settled_date,
+                std::sync::Arc::make_mut(&mut self.state.company_system),
+                &mut self.state.accounts,
+                repurchase_account_for_phases,
+            )
+            .map_err(|error| {
+                SessionError::InvalidSave(format!("拆股／缩股日终结算失败：{error}"))
+            })?;
+        // 完成即默认注销（H 批 2026-10-08 用户决策）：完成判定（上一日终或更早）
+        // 的方案在本次日终自动注销，复用既有手动注销路径（候选事务、显式 lot
+        // 消耗、当前单位股数）。置于入账相位之后、登记相位之前。
+        self.auto_cancel_completed_repurchases(report.settled_date)
+            .map_err(|error| {
+                SessionError::InvalidSave(format!("发行人回购自动注销失败：{error}"))
+            })?;
+        self.state
+            .corporate_actions
+            .register_share_splits_on_day_end(
                 report.settled_date,
                 self.state.civil_clock.calendar(),
                 std::sync::Arc::make_mut(&mut self.state.company_system),
-                &mut self.state.accounts,
             )
             .map_err(|error| SessionError::InvalidSave(format!("拆股／缩股日终结算失败：{error}")))?;
         self.state
@@ -5063,6 +5242,15 @@ impl GameSession {
         let issuer_fills = self.collect_issuer_repurchase_fills(report.settled_date)?;
         let repurchase_account_id = self.issuer_repurchase_account_id();
         let repurchase_lot_size = self.state.setup.config.lot_size;
+        // 价格上限换算取各证券自身最小价位（不用全市场 max tick，否则大 tick
+        // 股票会低估其他股票的整手下限、误判提前完成）。
+        let repurchase_price_tick_cents: BTreeMap<StockCode, i64> = self
+            .state
+            .setup
+            .stocks
+            .iter()
+            .map(|spec| (spec.code.clone(), spec.tick.cents()))
+            .collect();
         let repurchase_account_for_validate = repurchase_account_id;
         self.state
             .corporate_actions
@@ -5072,15 +5260,11 @@ impl GameSession {
                 &mut self.state.accounts,
                 repurchase_account_id,
                 repurchase_lot_size,
+                &repurchase_price_tick_cents,
                 Some(std::sync::Arc::make_mut(&mut self.state.company_system)),
             )
-            .map_err(|error| SessionError::InvalidSave(format!("发行人回购日终结算失败：{error}")))?;
-        // 完成即默认注销（H 批 2026-10-08 用户决策）：完成判定（上一日终或更早）
-        // 的方案在本次日终自动注销。放在回购日终结算之后、跨域勾稽之前，注销
-        // 引起的账户/名册/账面核减纳入同一次日终校验。
-        self.auto_cancel_completed_repurchases(report.settled_date)
             .map_err(|error| {
-                SessionError::InvalidSave(format!("发行人回购自动注销失败：{error}"))
+                SessionError::InvalidSave(format!("发行人回购日终结算失败：{error}"))
             })?;
         let account_positions = self
             .state

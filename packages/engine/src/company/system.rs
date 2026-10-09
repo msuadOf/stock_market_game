@@ -205,6 +205,59 @@ impl CompanySystem {
     }
 
     /// 当前每股面值权威（拆股／缩股重锚链；无重新计值事实时沿用送转 bind-once）。
+    /// `as_of` 日已入账的每股面值（回购注销金额勾稽按注销日口径复核，Task174）。
+    pub fn outstanding_par_value_at(
+        &self,
+        company: &CompanyId,
+        as_of: CivilDate,
+    ) -> Result<Option<crate::money::Money>, CompanySystemError> {
+        Ok(self.finance(company)?.outstanding_par_value_at(as_of)?)
+    }
+
+    /// `as_of` 日的注册资本：当前法定事实 − 之后发生的资本演进（送转/配股增资、
+    /// 缩股核减、回购注销核减），供注销日面值整除口径复核。
+    pub fn registered_capital_at(
+        &self,
+        company: &CompanyId,
+        as_of: CivilDate,
+    ) -> Result<Option<crate::accounting::AccountingAmount>, CompanySystemError> {
+        let finance = self.finance(company)?;
+        let Some(current) = finance
+            .legal_facts()
+            .clone()
+            .map(|facts| facts.registered_capital)
+        else {
+            return Ok(None);
+        };
+        let mut adjusted = current;
+        for fact in finance.stock_distribution_facts()? {
+            if fact.credited_on.is_some_and(|credited| credited > as_of) {
+                adjusted = adjusted.sub(fact.capital_increase)?;
+            }
+        }
+        for fact in finance.rights_offering_facts()? {
+            if let (Some(settled), Some(increase)) = (fact.settled_on, &fact.capital_increase) {
+                if settled > as_of {
+                    adjusted = adjusted.sub(*increase)?;
+                }
+            }
+        }
+        for fact in finance.share_split_facts()? {
+            if fact.settled_on.is_some_and(|settled| settled > as_of) {
+                adjusted = adjusted.add(fact.registered_capital_reduction.clone())?;
+            }
+        }
+        for fact in finance.issuer_repurchase_facts()? {
+            if let (Some(cancelled), Some(reduction)) = (fact.cancelled_on, &fact.capital_reduction)
+            {
+                if cancelled > as_of {
+                    adjusted = adjusted.add(reduction.clone())?;
+                }
+            }
+        }
+        Ok(Some(adjusted))
+    }
+
     pub fn current_par_value(
         &self,
         company: &CompanyId,

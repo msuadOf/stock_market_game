@@ -11,7 +11,8 @@ export type ShareRegistry = { readonly stock: string; readonly issuer: string; r
 export type ShareDayReceipt = { readonly request: ShareDayRequest; readonly disposals: readonly DisposedLot[] }
 export type MovementScope = "PublicMarket" | { readonly NonTradingTransfer: { readonly basis: string } } | { readonly IssuerRepurchaseCancellation: { readonly basis: string } } | { readonly ShareReDenomination: { readonly basis: string } }
 export type ShareDayRequest = { readonly event_id: string; readonly day: string; readonly scope: MovementScope; readonly changes: readonly DayNetChange[] }
-export type DayNetChange = { readonly holder: HolderId; readonly change: string; readonly acquisition: NetAcquisition | null }
+export type LotConsumption = { readonly lot_id: string; readonly qty: string }
+export type DayNetChange = { readonly holder: HolderId; readonly change: string; readonly acquisition: NetAcquisition | null; readonly consume: readonly LotConsumption[] | null }
 export type NetAcquisition = { readonly lot_id: string; readonly source: AcquisitionSource; readonly restriction: ShareRestriction }
 export type DisposedLot = { readonly holder: HolderId; readonly lot: ShareLot; readonly disposed_on: string }
 export type CashDividendFormula = "StandardCashOnly" | "ExchangeApprovedAdjustment"
@@ -94,16 +95,18 @@ export type RepurchasePurpose = "ReduceCapital" | "EmployeeIncentive" | "Convert
 /// 日终自动注销；与 engine `RepurchaseCompletionPolicy` 枚举域严格一致，
 /// engine 新增变体时本域必须同步（无兼容旧档，缺字段/未知变体均显式拒绝）。
 export type RepurchaseCompletionPolicy = "CancelOnCompletion"
-export type IssuerRepurchasePlan = { readonly event_id: string; readonly approval_reference: string; readonly issuer: string; readonly stock: string; readonly exchange: CalendarExchange; readonly approved_on: string; readonly announced_on: string; readonly window_start_on: string; readonly window_deadline_on: string; readonly price_cap_per_share: string; readonly total_budget: string; readonly max_shares: string; readonly purpose: RepurchasePurpose; readonly completion_policy: RepurchaseCompletionPolicy }
+export type IssuerRepurchasePlan = { readonly event_id: string; readonly approval_reference: string; readonly issuer: string; readonly stock: string; readonly exchange: CalendarExchange; readonly approved_on: string; readonly announced_on: string; readonly window_start_on: string; readonly window_deadline_on: string; readonly price_cap_per_share: string; readonly total_budget: string; readonly max_shares: string; readonly purpose: RepurchasePurpose; readonly completion_policy: RepurchaseCompletionPolicy; readonly approval_unit_event_id: string | null }
 export type RepurchaseFillRecord = { readonly stock: string; readonly day: string; readonly shares: string; readonly gross: string; readonly fees: string }
 export type IssuerRepurchaseStatus = "Approved" | "Announced" | "Executing" | "Completed" | "Cancelled"
-export type IssuerRepurchaseBook = { readonly plan: IssuerRepurchasePlan; readonly status: IssuerRepurchaseStatus; readonly fills: readonly RepurchaseFillRecord[]; readonly completed_on: string | null; readonly withdrawn_remainder: string | null; readonly cancelled_on: string | null; readonly cancelled_shares: string; readonly last_order_day: string | null }
+/** 股份单位调整事实（严格持久化）：某次拆股/缩股对该 plan 库存的汇总换算。 */
+export type ShareUnitAdjustment = { readonly split_event_id: string; readonly shares_before: string; readonly shares_after: string }
+export type IssuerRepurchaseBook = { readonly plan: IssuerRepurchasePlan; readonly status: IssuerRepurchaseStatus; readonly fills: readonly RepurchaseFillRecord[]; readonly share_unit_adjustments: readonly ShareUnitAdjustment[]; readonly completed_on: string | null; readonly withdrawn_remainder: string | null; readonly cancelled_on: string | null; readonly cancelled_shares: string; readonly last_order_day: string | null }
 export type SessionCorporateActions = { readonly registries: readonly ShareRegistry[]; readonly dividends: readonly CashDividendBook[]; readonly dividend_tax_books: readonly CashDividendTaxBook[]; readonly flat_withholding_receipts: readonly FlatWithholdingReceipt[]; readonly stock_distributions: readonly StockDistributionBook[]; readonly share_splits: readonly ShareSplitBook[]; readonly rights_offerings: readonly RightsOfferingBook[]; readonly rights_subscription_queue: readonly QueuedRightsSubscription[]; readonly rejected_rights_subscriptions: readonly RejectedRightsSubscription[]; readonly issuer_repurchases: readonly IssuerRepurchaseBook[]; readonly account_gross_receipts: readonly AccountDividendGrossReceipt[]; readonly external_receipts: readonly ExternalDividendReceipt[]; readonly applied_ex_reference_groups: readonly AppliedExReferenceGroup[] }
 export type AppliedExReferenceGroup = { readonly date: string; readonly stock: string; readonly cash_plan_ids: readonly string[]; readonly stock_event_ids: readonly string[]; readonly rights_event_ids: readonly string[]; readonly split_event_ids: readonly string[]; readonly reference: import("./company/ex-reference-price.ts").ExReferencePrice }
 
 export type Context = {
   readonly issuers: Readonly<Record<string, { readonly listed_stock: string | null; readonly issued_shares: string }>>
-  readonly setup: { readonly stocks: readonly { readonly code: string; readonly total_shares: string; readonly exchange: "Shanghai" | "Shenzhen"; readonly tick: string }[]; readonly dividend_tax_mode: "FlatWithholding" | "AShareIndividual" | "Exempt"; readonly flat_withholding_bp: number | null }
+  readonly setup: { readonly stocks: readonly { readonly code: string; readonly total_shares: string; readonly exchange: "Shanghai" | "Shenzhen"; readonly tick: string }[]; readonly dividend_tax_mode: "FlatWithholding" | "AShareIndividual" | "Exempt"; readonly flat_withholding_bp: number | null; readonly npcs?: { readonly retail_count: number; readonly inst_count: number; readonly hot_count: number } }
   readonly snapshot: { readonly markets: Readonly<Record<string, { readonly last_cash_ex_reference: { readonly ex_date: string; readonly reference_price: string } | null }>>; readonly accounts: Readonly<Record<string, { readonly positions: Readonly<Record<string, { readonly qty: number }>> }>> }
   readonly currentDate: string
 }
@@ -112,6 +115,55 @@ const U64_MAX = (1n << 64n) - 1n
 const I64_MAX = (1n << 63n) - 1n
 const I128_MIN = -(1n << 127n)
 const I128_MAX = (1n << 127n) - 1n
+
+// 同余数先按码点排序，保持与 Rust 的 UTF-8 身份排序一致。
+function compareBucketKeys(left: string, right: string): number {
+  const a = Array.from(left), b = Array.from(right)
+  for (let index = 0; index < Math.min(a.length, b.length); index++) {
+    const difference = a[index]!.codePointAt(0)! - b[index]!.codePointAt(0)!
+    if (difference !== 0) return difference
+  }
+  return a.length - b.length
+}
+
+function allocateTreasuryBuckets(shares: readonly bigint[], direction: ShareSplitDirection, ratio: bigint, target: bigint, seed: bigint, path: string): bigint[] {
+  const result = shares.map(value => direction === "Split" ? value * ratio : value / ratio)
+  const base = result.reduce((sum, value) => sum + value, 0n)
+  if (direction === "Split") {
+    if (base !== target) throw new SaveSchemaError(path, "拆股分桶合计与冻结目标不一致")
+    return result
+  }
+  const extra = target - base
+  const remainder = shares.map(value => value % ratio)
+  const candidates = shares.map((_value, index) => index).filter(index => remainder[index]! > 0n)
+    .sort((left, right) => remainder[left]! > remainder[right]! ? -1 : remainder[left]! < remainder[right]! ? 1 : 0)
+  if (extra < 0n || extra > BigInt(candidates.length)) throw new SaveSchemaError(path, "缩股碎股奖励与冻结目标不一致")
+  function randomIndex(upper: number): number {
+    const limit = BigInt(upper), floor = ((-limit) & U64_MAX) % limit
+    while (true) {
+      seed = (seed + 0x9e3779b97f4a7c15n) & U64_MAX
+      let value = seed
+      value = ((value ^ (value >> 30n)) * 0xbf58476d1ce4e5b9n) & U64_MAX
+      value = ((value ^ (value >> 27n)) * 0x94d049bb133111ebn) & U64_MAX
+      value ^= value >> 31n
+      if (value >= floor) return Number(value % limit)
+    }
+  }
+  let start = 0
+  while (start < candidates.length) {
+    let end = start + 1
+    while (end < candidates.length && remainder[candidates[end]!] === remainder[candidates[start]!]) end++
+    for (let index = end - 1; index > start; index--) {
+      const swap = start + randomIndex(index - start + 1)
+      const old = candidates[index]!
+      candidates[index] = candidates[swap]!
+      candidates[swap] = old
+    }
+    start = end
+  }
+  for (let index = 0; index < Number(extra); index++) result[candidates[index]!] = result[candidates[index]!]! + 1n
+  return result
+}
 
 /// setup 股票的 `StockExchange`（wire：Shanghai／Shenzhen）到公司行为 plan 的
 /// `CalendarExchange`（wire：sse／szse）映射。两者是 engine 侧两个不同枚举，
@@ -298,7 +350,7 @@ function parseDayReceipt(value: unknown, path: string) {
   const changes: DayNetChange[] = array(request.changes, `${path}.request.changes`).map((item, index) => {
     const changePath = `${path}.request.changes[${index}]`
     const change = record(item, changePath)
-    exact(change, ["holder", "change", "acquisition"], changePath)
+    exact(change, ["holder", "change", "acquisition", "consume"], changePath)
     let acquisition: NetAcquisition | null = null
     if (change.acquisition !== null) {
       const source = record(change.acquisition, `${changePath}.acquisition`)
@@ -307,9 +359,23 @@ function parseDayReceipt(value: unknown, path: string) {
       if (lot_id.trim() === "") throw new SaveSchemaError(`${changePath}.acquisition.lot_id`, "股份批次身份不能为空")
       acquisition = { lot_id, source: parseSource(source.source, `${changePath}.acquisition.source`), restriction: parseRestriction(source.restriction, `${changePath}.acquisition.restriction`) }
     }
+    let consume: readonly LotConsumption[] | null = null
+    if (change.consume !== null) {
+      consume = array(change.consume, `${changePath}.consume`).map((entry, entryIndex) => {
+        const entryPath = `${changePath}.consume[${entryIndex}]`
+        const row = record(entry, entryPath)
+        exact(row, ["lot_id", "qty"], entryPath)
+        const lot_id = string(row.lot_id, `${entryPath}.lot_id`)
+        const qty = decimal(row.qty, `${entryPath}.qty`)
+        if (lot_id.trim() === "" || BigInt(qty) <= 0n) throw new SaveSchemaError(entryPath, "显式消耗选择必须指名批次且数量为正")
+        if (BigInt(qty) > U64_MAX) throw new SaveSchemaError(`${entryPath}.qty`, "消耗数量超出 u64")
+        return { lot_id, qty }
+      })
+    }
     const changeValue = signedI128(change.change, `${changePath}.change`)
     if ((BigInt(changeValue) > 0n) !== (acquisition !== null)) throw new SaveSchemaError(`${changePath}.acquisition`, "仅正向股份变动必须含收购事实")
-    return { holder: holderValue(parseHolder(change.holder, `${changePath}.holder`)), change: changeValue, acquisition }
+    if (consume !== null && BigInt(changeValue) >= 0n) throw new SaveSchemaError(`${changePath}.consume`, "显式消耗选择只允许出现在负向净变动")
+    return { holder: holderValue(parseHolder(change.holder, `${changePath}.holder`)), change: changeValue, acquisition, consume }
   })
   const day = civilDate(request.day, `${path}.request.day`)
   const disposals = array(receipt.disposals, `${path}.disposals`).map((item, index) => {
@@ -320,7 +386,8 @@ function parseDayReceipt(value: unknown, path: string) {
     const lot = parseLot(disposal.lot, `${disposalPath}.lot`)
     const disposed_on = civilDate(disposal.disposed_on, `${disposalPath}.disposed_on`)
     if (disposed_on !== day || lot.acquired_on > day) throw new SaveSchemaError(disposalPath, "处置日期必须等于日结日且不得早于批次取得日期")
-    if (typeof lot.restriction === "object" && lot.restriction.Restricted.release_on > day) throw new SaveSchemaError(disposalPath, "公开转让处置了尚未解除限制的股份")
+    if (typeof lot.restriction === "object" && lot.restriction.Restricted.release_on > day &&
+        !(typeof parsedScope === "object" && "ShareReDenomination" in parsedScope)) throw new SaveSchemaError(disposalPath, "非重新计值处置了尚未解除限制的股份")
     return { holder, lot, disposed_on }
   })
   const changedHolders = new Set<string>()
@@ -334,31 +401,74 @@ function parseDayReceipt(value: unknown, path: string) {
   const isCancellation = typeof parsedScope === "object" && "IssuerRepurchaseCancellation" in parsedScope
   if (isCancellation) {
     // 与引擎 validate_request 的 cancellation 分支同构：恰一条专户核减分录、
-    // 持有人必须是 IssuerTreasury、严格负向。「无 acquisition」一腿由解析层
-    // 既有不变量（acquisition ⇔ 正向变动）覆盖，负向分录带 acquisition 在
-    // changes 解析处已被「仅正向股份变动必须含收购事实」拒绝。
+    // 持有人必须是 IssuerTreasury、严格负向、必须携带显式 lot 消耗选择（不再
+    // 无条件 FIFO——引擎按本 plan 仍持有份额构造消耗）。「无 acquisition」一腿
+    // 由解析层既有不变量（acquisition ⇔ 正向变动）覆盖。
     if (changes.length !== 1) throw new SaveSchemaError(`${path}.request.changes`, "回购注销必须恰含一条专户核减分录")
     const [sole] = changes
     if (sole.holder !== "IssuerTreasury") throw new SaveSchemaError(`${path}.request.changes[0].holder`, "回购注销只能核减发行人库藏股持有人")
     if (BigInt(sole.change) >= 0n) throw new SaveSchemaError(`${path}.request.changes[0].change`, "回购注销分录必须为负向核减")
+    if (sole.consume === null) throw new SaveSchemaError(`${path}.request.changes[0].consume`, "回购注销必须携带显式 lot 消耗选择")
+    const selectionTotal = sole.consume.reduce((sum, entry) => sum + BigInt(entry.qty), 0n)
+    if (selectionTotal !== -BigInt(sole.change)) throw new SaveSchemaError(`${path}.request.changes[0].consume`, "显式消耗选择必须精确覆盖核减量")
   }
   const nonTradingAcquisition = typeof parsedScope === "object"
+  // 显式消耗选择只属于回购注销与重新计值（Treasury 分桶）：公开市场处置走
+  // FIFO＋限售校验，携带显式选择一律拒绝（与引擎 validate_request 同构）。
+  for (const [index, change] of changes.entries()) {
+    if (change.consume !== null && !isCancellation && !isRedenomination) {
+      throw new SaveSchemaError(`${path}.request.changes[${index}].consume`, "显式消耗选择只允许出现在回购注销或重新计值")
+    }
+  }
+  // 逐持有人核销勾稽（重新计值允许同一持有人分桶多笔净变动，逐笔对齐会误判）。
+  const expectedByHolder = new Map<string, bigint>()
+  const selectionByHolder = new Map<string, Map<string, bigint>>()
   for (const [index, change] of changes.entries()) {
     const holderKey = JSON.stringify(change.holder)
-    if (changedHolders.has(holderKey)) throw new SaveSchemaError(`${path}.request.changes[${index}].holder`, "日结请求重复包含持有人")
+    // 重新计值允许分桶多笔同向净变动（initial 残桶 + 各回购 plan 库存桶）；
+    // 其余 scope 仍要求一人一笔净额。
+    if (changedHolders.has(holderKey) && !isRedenomination) throw new SaveSchemaError(`${path}.request.changes[${index}].holder`, "日结请求重复包含持有人")
     changedHolders.add(holderKey)
     net += BigInt(change.change)
     if (net < I128_MIN || net > I128_MAX) throw new SaveSchemaError(`${path}.request.changes`, "日变动数量合计超出 i128")
     if (BigInt(change.change) > U64_MAX || BigInt(change.change) < -U64_MAX) throw new SaveSchemaError(`${path}.request.changes[${index}].change`, "日变动绝对值超出 u64")
     if (isNonTradingTransfer && BigInt(change.change) < 0n) throw new SaveSchemaError(`${path}.request.changes[${index}].change`, "非交易过户不得减持持有人股份")
-    const disposed = disposals.filter(item => JSON.stringify(item.holder) === holderKey).reduce((sum, item) => sum + BigInt(item.lot.qty), 0n)
-    const expected = BigInt(change.change) < 0n ? -BigInt(change.change) : 0n
-    if (disposed !== expected) throw new SaveSchemaError(`${path}.disposals`, "处置数量与持有人净减持不一致")
+    if (BigInt(change.change) < 0n) {
+      const expected = (expectedByHolder.get(holderKey) ?? 0n) - BigInt(change.change)
+      expectedByHolder.set(holderKey, expected)
+    }
+    if (change.consume !== null) {
+      const selection = selectionByHolder.get(holderKey) ?? new Map<string, bigint>()
+      for (const entry of change.consume) {
+        if (selection.has(entry.lot_id)) throw new SaveSchemaError(`${path}.request.changes[${index}].consume`, "显式消耗选择重复指名同一批次")
+        selection.set(entry.lot_id, BigInt(entry.qty))
+      }
+      selectionByHolder.set(holderKey, selection)
+    }
     if (BigInt(change.change) > 0n) {
       const acquisition = change.acquisition as { readonly source: AcquisitionSource; readonly restriction: ShareRestriction }
       if (nonTradingAcquisition) {
         if (Object.keys(acquisition.source)[0] !== "CorporateAction") throw new SaveSchemaError(`${path}.request.changes[${index}].acquisition`, "非交易过户新增股份必须来自公司行为来源")
       } else if (Object.keys(acquisition.source)[0] !== "SecondaryMarket" || acquisition.restriction !== "Unrestricted") throw new SaveSchemaError(`${path}.request.changes[${index}].acquisition`, "公开市场买入必须为 SecondaryMarket 且股份无限制")
+    }
+  }
+  const disposedByHolder = new Map<string, bigint>()
+  const disposedLotByHolder = new Map<string, Map<string, bigint>>()
+  for (const disposal of disposals) {
+    const holderKey = JSON.stringify(disposal.holder)
+    disposedByHolder.set(holderKey, (disposedByHolder.get(holderKey) ?? 0n) + BigInt(disposal.lot.qty))
+    const lots = disposedLotByHolder.get(holderKey) ?? new Map<string, bigint>()
+    lots.set(disposal.lot.id, (lots.get(disposal.lot.id) ?? 0n) + BigInt(disposal.lot.qty))
+    disposedLotByHolder.set(holderKey, lots)
+  }
+  for (const [holderKey, expected] of expectedByHolder) {
+    if ((disposedByHolder.get(holderKey) ?? 0n) !== expected) throw new SaveSchemaError(`${path}.disposals`, "处置数量与持有人净减持不一致")
+  }
+  if (disposedByHolder.size !== expectedByHolder.size) throw new SaveSchemaError(`${path}.disposals`, "处置事实没有对应净减持持有人")
+  for (const [holderKey, selection] of selectionByHolder) {
+    const actual = disposedLotByHolder.get(holderKey)
+    if (actual === undefined || actual.size !== selection.size || [...selection.entries()].some(([lotId, qty]) => actual.get(lotId) !== qty)) {
+      throw new SaveSchemaError(`${path}.disposals`, "显式消耗选择与处置回执不一致")
     }
   }
   if (isNonTradingTransfer) {
@@ -412,7 +522,8 @@ function parseRegistry(value: unknown, path: string) {
     if (receipt.request.day > settled_on) throw new SaveSchemaError(`${path}.receipts[${index}].request.day`, "日结事件日期晚于股东名册日")
     const nonTrading = typeof receipt.request.scope === "object"
     if (previousDay !== "") {
-      const consecutive = nonTrading ? receipt.request.day === previousDay : addCivilDays(previousDay, 1) === receipt.request.day
+      const cancellation = typeof receipt.request.scope === "object" && "IssuerRepurchaseCancellation" in receipt.request.scope
+      const consecutive = cancellation ? receipt.request.day >= previousDay : nonTrading ? receipt.request.day === previousDay : addCivilDays(previousDay, 1) === receipt.request.day
       if (!consecutive) throw new SaveSchemaError(`${path}.receipts[${index}].request.day`, "日结回执日期必须逐自然日连续，非交易过户与公开市场日结同日追加")
     }
     for (const [changeIndex, change] of receipt.request.changes.entries()) if (change.acquisition !== null) {
@@ -1083,6 +1194,14 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     if (date > context.currentDate || ex_date !== date || !stock.trim() || BigInt(reference_price) <= 0n || (cash_plan_ids.length === 0 && stock_event_ids.length === 0 && rights_event_ids.length === 0 && split_event_ids.length === 0) || new Set(cash_plan_ids).size !== cash_plan_ids.length || new Set(stock_event_ids).size !== stock_event_ids.length || new Set(rights_event_ids).size !== rights_event_ids.length || new Set(split_event_ids).size !== split_event_ids.length) throw new SaveSchemaError(itemPath, "已应用除权除息组事实非法")
     return { date, stock, cash_plan_ids, stock_event_ids, rights_event_ids, split_event_ids, reference: { ex_date, reference_price } }
   })
+  let repurchaseAccountId: string | null = null
+  if (issuer_repurchases.length !== 0) {
+    const counts = context.setup.npcs
+    if (counts === undefined || ![counts.retail_count, counts.inst_count, counts.hot_count].every(value => Number.isSafeInteger(value) && value >= 0)) {
+      throw new SaveSchemaError(path, "回购账户库存复核缺少合法 setup.npcs 身份参数")
+    }
+    repurchaseAccountId = (BigInt(counts.retail_count) + BigInt(counts.inst_count) + BigInt(counts.hot_count) + 1n).toString()
+  }
   const registryByStock = new Map<string, ReturnType<typeof parseRegistry>>()
   const planIds = new Set<string>()
   for (const [index, registry] of registries.entries()) {
@@ -1103,6 +1222,8 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     if (stock === undefined || BigInt(registry.issued_shares) !== expectedIssued || expectedIssued <= 0n) throw new SaveSchemaError(`${path}.registries[${index}]`, "股东名册与 setup 股票身份或初始股数加公司行为净增发不一致")
     if (registry.settled_on > context.currentDate) throw new SaveSchemaError(`${path}.registries[${index}].settled_on`, "股东名册日期晚于存档日")
     for (const [account, accountState] of Object.entries(context.snapshot.accounts)) {
+      // 专户在后文按具名 plan→Treasury 份额复核，不能当普通 Account 股东。
+      if (account === repurchaseAccountId) continue
       const position = accountState.positions[registry.stock]?.qty ?? 0
       if (!Number.isSafeInteger(position) || position < 0) throw new SaveSchemaError(`snapshot.accounts.${account}.positions.${registry.stock}.qty`, "账户股份必须是非负安全整数")
       const recorded = registry.holderShares.get(JSON.stringify({ Account: account })) ?? "0"
@@ -1182,10 +1303,158 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
     const book = rights_offerings.find(book => book.plan.event_id === receipt.event_id)
     if (book?.subscriptions.some(record => typeof record.holder === "object" && "Account" in record.holder && record.holder.Account === receipt.account)) throw new SaveSchemaError(itemPath, "拒绝回执与已入账认购并存")
   }
+  const inventoryByPlan = new Map<string, bigint>()
+  const splitInventoryByPlan = new Map<string, Map<string, bigint>>()
   for (const [index, book] of issuer_repurchases.entries()) {
     const registry = registryByStock.get(book.plan.stock)
     if (registry === undefined || registry.issuer !== book.plan.issuer) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].plan`, "回购方案没有匹配的发行人股东名册")
     if (book.plan.approved_on > context.currentDate) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].plan.approved_on`, "回购批准日期晚于存档日")
+    // 单位链跨域勾稽（与引擎 validate_share_units 同构）：fills + 单位调整 +
+    // 注销按 (日期, 秩) 重放；调整必须引用本证券已登记事件且与方向/比例一致；
+    // 当前库存不得超过「批准锚 → 存档日单位」的执行上限 + 合法碎股奖励数；
+    // 注销不超重放库存。
+    const chain = share_splits
+      .filter(split => split.plan.stock === book.plan.stock)
+      .map(split => ({ event_id: split.plan.event_id, ex_on: split.plan.ex_rights_on, direction: split.plan.direction, ratio: BigInt(split.plan.ratio) }))
+      .sort((left, right) => (left.ex_on < right.ex_on ? -1 : left.ex_on > right.ex_on ? 1 : left.event_id < right.event_id ? -1 : 1))
+    if (book.plan.approval_unit_event_id !== null && !chain.some(entry => entry.event_id === book.plan.approval_unit_event_id)) {
+      throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].plan.approval_unit_event_id`, "回购批准单位锚不在本证券单位链上")
+    }
+    const anchorEx = book.plan.approval_unit_event_id === null ? null : chain.find(entry => entry.event_id === book.plan.approval_unit_event_id)?.ex_on ?? null
+    if (book.plan.approval_unit_event_id !== null && anchorEx === null) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].plan.approval_unit_event_id`, "回购批准单位锚不在本证券单位链上")
+    function followsAnchor(eventEx: string): boolean {
+      return anchorEx === null || eventEx > anchorEx
+    }
+    function capAt(date: string): bigint {
+      let numerator = 1n, denominator = 1n
+      for (const entry of chain) {
+        if (entry.ex_on > date || (anchorEx !== null && entry.ex_on <= anchorEx)) continue
+        if (entry.direction === "Split") numerator *= entry.ratio
+        else denominator *= entry.ratio
+      }
+      const cap = BigInt(book.plan.max_shares) * numerator / denominator
+      if (cap > U64_MAX) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].plan.max_shares`, "当前单位数量上限超出 u64")
+      return cap
+    }
+    type ReplayEvent = { day: string; rank: number; apply: (inventory: bigint) => bigint }
+    const events: ReplayEvent[] = []
+    let unitDate = book.plan.approved_on
+    let unitCap = BigInt(book.plan.max_shares)
+    let awards = 0n
+    for (const adjustment of book.share_unit_adjustments) {
+      const entry = chain.find(entry => entry.event_id === adjustment.split_event_id)
+      const split = share_splits.find(split => split.plan.event_id === adjustment.split_event_id && split.plan.stock === book.plan.stock)
+      if (entry === undefined || split?.settled_on == null) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].share_unit_adjustments`, "单位调整引用未知或尚未入账的拆股/缩股事件")
+      if (entry.ex_on > unitDate) unitDate = entry.ex_on
+      events.push({ day: entry.ex_on, rank: 0, apply: inventory => {
+        if (inventory !== BigInt(adjustment.shares_before)) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].share_unit_adjustments`, "单位调整的换算前库存与重放不一致")
+        const before = BigInt(adjustment.shares_before), after = BigInt(adjustment.shares_after)
+        let splitInventory = splitInventoryByPlan.get(entry.event_id)
+        if (splitInventory === undefined) { splitInventory = new Map<string, bigint>(); splitInventoryByPlan.set(entry.event_id, splitInventory) }
+        splitInventory.set(book.plan.event_id, inventory)
+        let converted: bigint, award = 0n
+        const bound = unitCap + awards
+        if (bound > U64_MAX) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}]`, "库存允许上界超出 u64")
+        if (entry.direction === "Split") {
+          if (after !== before * entry.ratio) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].share_unit_adjustments`, "拆股单位调整必须精确放大库存")
+          converted = bound * entry.ratio
+        } else {
+          if (after !== before / entry.ratio && after !== before / entry.ratio + 1n) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].share_unit_adjustments`, "缩股单位调整必须等于商或商加一次合法奖励")
+          converted = bound / entry.ratio
+          award = after > before / entry.ratio ? 1n : 0n
+        }
+        if (converted > U64_MAX) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}]`, "换算后的库存允许上界超出 u64")
+        // 合并上界先取整，保留批准上限与既有奖励之间的进位。
+        const capAfter = capAt(entry.ex_on)
+        awards = (converted > capAfter ? converted - capAfter : 0n) + award
+        unitCap = capAfter
+        return after
+      } })
+    }
+    for (const split of share_splits) {
+      if (split.plan.stock === book.plan.stock && split.settled_on !== null && followsAnchor(split.plan.ex_rights_on) &&
+          !book.share_unit_adjustments.some(adjustment => adjustment.split_event_id === split.plan.event_id)) {
+        throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].share_unit_adjustments`, "已入账事件缺少包括零库存在内的单位事实")
+      }
+    }
+    for (const fill of book.fills) {
+      if (fill.day > unitDate) unitDate = fill.day
+      events.push({ day: fill.day, rank: 1, apply: inventory => {
+        // 奖励只解释既有库存，不增加新的成交额度。
+        const cap = capAt(fill.day)
+        const room = cap > inventory ? cap - inventory : 0n
+        if (BigInt(fill.shares) > room) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].fills`, "当日成交超过当前单位剩余批准数量")
+        return inventory + BigInt(fill.shares)
+      } })
+    }
+    if (book.cancelled_on !== null) {
+      const cancelledShares = BigInt(book.cancelled_shares)
+      events.push({ day: book.cancelled_on, rank: 2, apply: inventory => {
+        if (inventory < cancelledShares) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].cancelled_shares`, "回购注销超过重放库存")
+        return inventory - cancelledShares
+      } })
+    }
+    events.sort((left, right) => (left.day < right.day ? -1 : left.day > right.day ? 1 : left.rank - right.rank))
+    let inventory = 0n
+    for (const event of events) inventory = event.apply(inventory)
+    // 存档日期可能是下一 ex 日，库存只能按已发生的成交/单位事实校验。
+    if (unitDate > context.currentDate) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}]`, "库存事实晚于存档日期")
+    const executionCap = capAt(unitDate)
+    if (executionCap + awards > U64_MAX || inventory > executionCap + awards) throw new SaveSchemaError(`${path}.issuer_repurchases[${index}].share_unit_adjustments`, "重放库存超过当前单位执行上限与合法碎股奖励之和")
+    inventoryByPlan.set(book.plan.event_id, inventory)
+  }
+  // 奖励由冻结 Treasury 目标重算，不能让可编辑 after 字段变成自由库存计数器。
+  for (const split of share_splits) {
+    if (split.settled_on === null || split.receipt === null) continue
+    const beforeByPlan = splitInventoryByPlan.get(split.plan.event_id)
+    const chainOfStock = share_splits
+      .filter(entry => entry.plan.stock === split.plan.stock)
+      .map(entry => ({ event_id: entry.plan.event_id, ex_on: entry.plan.ex_rights_on }))
+    const active = issuer_repurchases.filter(book => book.plan.stock === split.plan.stock &&
+      (beforeByPlan?.get(book.plan.event_id) ?? 0n) > 0n &&
+      (book.plan.approval_unit_event_id === null || split.plan.ex_rights_on > (chainOfStock.find(entry => entry.event_id === book.plan.approval_unit_event_id)?.ex_on ?? "")))
+      .sort((left, right) => compareBucketKeys(left.plan.event_id, right.plan.event_id))
+    const treasury = split.receipt.holders.find(holder => holder.holder === "IssuerTreasury")
+    if (treasury === undefined) {
+      if (active.length !== 0) throw new SaveSchemaError(path, "冻结登记缺少有库存方案的 Treasury")
+      continue
+    }
+    const shares = active.map(book => beforeByPlan!.get(book.plan.event_id)!)
+    const total = shares.reduce((sum, value) => sum + value, 0n)
+    const initial = BigInt(treasury.original_shares) - total
+    if (initial < 0n) throw new SaveSchemaError(path, "plan 库存超过冻结 Treasury")
+    const initialOffset = initial > 0n ? 1 : 0
+    if (initialOffset !== 0) shares.unshift(initial)
+    const allocated = allocateTreasuryBuckets(shares, split.plan.direction, BigInt(split.plan.ratio), BigInt(treasury.new_shares), BigInt(split.receipt.tie_break_seed), path)
+    for (const [index, book] of active.entries()) {
+      const adjustment = book.share_unit_adjustments.find(item => item.split_event_id === split.plan.event_id)!
+      if (BigInt(adjustment.shares_after) !== allocated[index + initialOffset]) throw new SaveSchemaError(path, "plan 单位调整与冻结分桶实际奖励不一致")
+    }
+  }
+  for (const registry of registries) {
+    const treasury = registry.holdings.find(holding => holding.holder === "IssuerTreasury")
+    const lots = treasury === undefined ? [] : treasury.lots
+    const claimed = new Set<string>()
+    for (const book of issuer_repurchases.filter(book => book.plan.stock === registry.stock)) {
+      const ids = new Set(book.fills.map(fill => `market:${registry.stock}:issuer-treasury:${fill.day}`))
+      for (const adjustment of book.share_unit_adjustments) ids.add(`share-split-treasury:${JSON.stringify([adjustment.split_event_id, `plan:${book.plan.event_id}`])}`)
+      const attributed = lots.filter(lot => ids.has(lot.id)).reduce((sum, lot) => {
+        if (claimed.has(lot.id)) throw new SaveSchemaError(path, "一个 Treasury lot 不能被多个 plan 占有")
+        claimed.add(lot.id)
+        return sum + BigInt(lot.qty)
+      }, 0n)
+      if (attributed !== inventoryByPlan.get(book.plan.event_id)) throw new SaveSchemaError(path, "plan 当前库存与名册归属 lot 份额不一致")
+    }
+  }
+  if (repurchaseAccountId !== null) {
+    const account = context.snapshot.accounts[repurchaseAccountId]
+    if (account === undefined) throw new SaveSchemaError(path, "回购库存没有匹配的真实账户")
+    const byStock = new Map<string, bigint>()
+    for (const book of issuer_repurchases) byStock.set(book.plan.stock, (byStock.get(book.plan.stock) ?? 0n) + inventoryByPlan.get(book.plan.event_id)!)
+    for (const [stock, inventory] of byStock) {
+      const qty = account.positions[stock]?.qty
+      if ((qty === undefined ? 0n : BigInt(qty)) !== inventory) throw new SaveSchemaError(path, "回购账户实际持仓与 plan 当前库存不一致")
+    }
   }
   const groupKeys = new Set<string>()
   for (const [index, group] of applied_ex_reference_groups.entries()) {
@@ -1439,7 +1708,7 @@ export function parseRightsOfferingEventPlanValue(value: unknown, path: string):
 
 export function parseIssuerRepurchasePlanValue(value: unknown, path: string): IssuerRepurchasePlan {
   const plan = record(value, path)
-  exact(plan, ["event_id", "approval_reference", "issuer", "stock", "exchange", "approved_on", "announced_on", "window_start_on", "window_deadline_on", "price_cap_per_share", "total_budget", "max_shares", "purpose", "completion_policy"], path)
+  exact(plan, ["event_id", "approval_reference", "issuer", "stock", "exchange", "approved_on", "announced_on", "window_start_on", "window_deadline_on", "price_cap_per_share", "total_budget", "max_shares", "purpose", "completion_policy", "approval_unit_event_id"], path)
   const event_id = string(plan.event_id, `${path}.event_id`), approval_reference = string(plan.approval_reference, `${path}.approval_reference`)
   const issuer = string(plan.issuer, `${path}.issuer`), stock = string(plan.stock, `${path}.stock`)
   const exchange = oneOf(plan.exchange, `${path}.exchange`, ["sse", "szse"] as const)
@@ -1449,9 +1718,11 @@ export function parseIssuerRepurchasePlanValue(value: unknown, path: string): Is
   const max_shares = decimal(plan.max_shares, `${path}.max_shares`)
   const purpose = oneOf(plan.purpose, `${path}.purpose`, ["ReduceCapital", "EmployeeIncentive", "ConvertibleConversion", "ValueMaintenance"] as const)
   const completion_policy = oneOf(plan.completion_policy, `${path}.completion_policy`, ["CancelOnCompletion"] as const)
+  const approval_unit_event_id = plan.approval_unit_event_id === null ? null : string(plan.approval_unit_event_id, `${path}.approval_unit_event_id`)
+  if (approval_unit_event_id !== null && approval_unit_event_id.trim() === "") throw new SaveSchemaError(`${path}.approval_unit_event_id`, "批准单位锚必须为 null 或非空拆股/缩股事件 id")
   if (!event_id.trim() || !approval_reference.trim() || !issuer.trim() || !stock.trim() || BigInt(price_cap_per_share) <= 0n || BigInt(total_budget) <= 0n || BigInt(max_shares) <= 0n) throw new SaveSchemaError(path, "回购方案身份、价格或额度非法")
   if (!(approved_on <= announced_on && announced_on <= window_start_on && window_start_on <= window_deadline_on)) throw new SaveSchemaError(path, "回购日程日期顺序非法")
-  return { event_id, approval_reference, issuer, stock, exchange, approved_on, announced_on, window_start_on, window_deadline_on, price_cap_per_share, total_budget, max_shares, purpose, completion_policy }
+  return { event_id, approval_reference, issuer, stock, exchange, approved_on, announced_on, window_start_on, window_deadline_on, price_cap_per_share, total_budget, max_shares, purpose, completion_policy, approval_unit_event_id }
 }
 
 function parseRightsOfferingBook(value: unknown, path: string): RightsOfferingBook {
@@ -1516,9 +1787,9 @@ function parseRightsOfferingBook(value: unknown, path: string): RightsOfferingBo
 
 function parseIssuerRepurchaseBook(value: unknown, path: string): IssuerRepurchaseBook {
   const book = record(value, path)
-  exact(book, ["plan", "status", "fills", "completed_on", "withdrawn_remainder", "cancelled_on", "cancelled_shares", "last_order_day"], path)
+  exact(book, ["plan", "status", "fills", "share_unit_adjustments", "completed_on", "withdrawn_remainder", "cancelled_on", "cancelled_shares", "last_order_day"], path)
   const parsedPlan = parseIssuerRepurchasePlanValue(book.plan, `${path}.plan`)
-  const { stock, window_start_on, window_deadline_on, total_budget, max_shares } = parsedPlan
+  const { stock, window_start_on, window_deadline_on, total_budget } = parsedPlan
   const status = oneOf(book.status, `${path}.status`, ["Approved", "Announced", "Executing", "Completed", "Cancelled"] as const)
   const fills = array(book.fills, `${path}.fills`).map((item, index) => {
     const itemPath = `${path}.fills[${index}]`, fill = record(item, itemPath)
@@ -1530,18 +1801,31 @@ function parseIssuerRepurchaseBook(value: unknown, path: string): IssuerRepurcha
     if (day < window_start_on || day > window_deadline_on) throw new SaveSchemaError(`${itemPath}.day`, "回购成交日期不在执行窗口内")
     return { stock: fillStock, day, shares, gross, fees }
   })
+  const seenAdjustments = new Set<string>()
+  const share_unit_adjustments = array(book.share_unit_adjustments, `${path}.share_unit_adjustments`).map((item, index) => {
+    const itemPath = `${path}.share_unit_adjustments[${index}]`, adjustment = record(item, itemPath)
+    exact(adjustment, ["split_event_id", "shares_before", "shares_after"], itemPath)
+    const split_event_id = string(adjustment.split_event_id, `${itemPath}.split_event_id`)
+    const shares_before = decimal(adjustment.shares_before, `${itemPath}.shares_before`)
+    const shares_after = decimal(adjustment.shares_after, `${itemPath}.shares_after`)
+    if (!split_event_id.trim() || (BigInt(shares_before) === 0n && BigInt(shares_after) !== 0n)) throw new SaveSchemaError(itemPath, "单位调整必须指名事件，零库存换算后仍须为零")
+    if (BigInt(shares_before) > U64_MAX || BigInt(shares_after) > U64_MAX) throw new SaveSchemaError(itemPath, "单位调整数量超出 u64")
+    if (seenAdjustments.has(split_event_id)) throw new SaveSchemaError(itemPath, "同一拆股/缩股事件的单位调整不得重复")
+    seenAdjustments.add(split_event_id)
+    return { split_event_id, shares_before, shares_after }
+  })
   const completed_on = book.completed_on === null ? null : civilDate(book.completed_on, `${path}.completed_on`)
   const withdrawn_remainder = book.withdrawn_remainder === null ? null : money(book.withdrawn_remainder, `${path}.withdrawn_remainder`)
   const cancelled_on = book.cancelled_on === null ? null : civilDate(book.cancelled_on, `${path}.cancelled_on`)
   const cancelled_shares = decimal(book.cancelled_shares, `${path}.cancelled_shares`)
   const last_order_day = book.last_order_day === null ? null : civilDate(book.last_order_day, `${path}.last_order_day`)
-  const totalShares = fills.reduce((sum, fill) => sum + BigInt(fill.shares), 0n)
   const totalSpent = fills.reduce((sum, fill) => sum + BigInt(fill.gross) + BigInt(fill.fees), 0n)
-  if (totalShares > BigInt(max_shares)) throw new SaveSchemaError(`${path}.fills`, "回购成交合计超过数量上限")
+  // 数量上限按批准锚单位表达，跨单位重放校验（含成交上限与注销上界）在
+  // parseSessionCorporateActions 拿到拆股/缩股账簿后的跨域勾稽段执行。
   if (totalSpent > BigInt(total_budget)) throw new SaveSchemaError(`${path}.fills`, "回购成交支出超过获批额度")
   if (completed_on === null && withdrawn_remainder !== null) throw new SaveSchemaError(`${path}.withdrawn_remainder`, "回收事实缺少完成日期")
   if (completed_on !== null && (withdrawn_remainder === null || BigInt(withdrawn_remainder) !== BigInt(total_budget) - totalSpent)) throw new SaveSchemaError(`${path}.withdrawn_remainder`, "回收差额必须等于额度减实际支出")
   if ((status === "Completed" || status === "Cancelled") !== (completed_on !== null)) throw new SaveSchemaError(`${path}.status`, "回购状态与完成事实不一致")
-  if ((cancelled_on !== null || BigInt(cancelled_shares) !== 0n) && (status !== "Cancelled" || cancelled_on === null || BigInt(cancelled_shares) === 0n || BigInt(cancelled_shares) > totalShares)) throw new SaveSchemaError(`${path}.cancelled_shares`, "回购注销事实非法")
-  return { plan: parsedPlan, status, fills, completed_on, withdrawn_remainder, cancelled_on, cancelled_shares, last_order_day }
+  if ((cancelled_on !== null || BigInt(cancelled_shares) !== 0n) && (status !== "Cancelled" || cancelled_on === null || BigInt(cancelled_shares) === 0n)) throw new SaveSchemaError(`${path}.cancelled_shares`, "回购注销事实非法")
+  return { plan: parsedPlan, status, fills, share_unit_adjustments, completed_on, withdrawn_remainder, cancelled_on, cancelled_shares, last_order_day }
 }

@@ -390,6 +390,126 @@ fn shuffle_equal_remainders(candidates: &mut [usize], holders: &[HolderSplitOutc
     }
 }
 
+/// Treasury 分桶换算的桶键与数量：`initial` 残桶或某个回购 plan 的实买库存桶。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryBucket {
+    /// 稳定桶键：`initial` 或回购方案 event_id（仅作身份标识，不决定输入序）。
+    pub key: String,
+    pub shares: u64,
+}
+
+/// 在 Treasury 持有人的**汇总换算目标**内做分桶分配：拆股逐桶乘 `ratio`（恒整除、
+/// 无碎股）；缩股逐桶取商、汇总整股奖励数按余数降序 + seed 洗牌依序各多得 1 股，
+/// 与持有人级 [`allocate_share_split`] 同一纪律——不逐桶独立 floor，保证
+/// Σ桶结果 == 该持有人的汇总 `new_shares`。本函数对桶的**传入顺序**敏感：余数
+/// 并列时先按稳定排序保留传入序、再在同组内 seed 洗牌；调用方（入账与恢复
+/// 复核两侧）必须按同一序构造：initial 残桶在最前，plan 桶按账簿 event_id
+/// 升序（`issuer_repurchases` 本身按 event_id 排序维护）。
+pub fn allocate_treasury_buckets(
+    buckets: &[TreasuryBucket],
+    direction: &ShareSplitDirection,
+    ratio: u64,
+    aggregate_new_shares: u64,
+    seed: u64,
+) -> Result<Vec<u64>, ShareSplitError> {
+    if ratio < 2 {
+        return Err(ShareSplitError::InvalidPlan {
+            detail: "treasury bucket re-denomination requires an integer ratio >= 2".into(),
+        });
+    }
+    match direction {
+        ShareSplitDirection::Split => {
+            let mut result = Vec::with_capacity(buckets.len());
+            for bucket in buckets {
+                let new = bucket
+                    .shares
+                    .checked_mul(ratio)
+                    .ok_or(ShareSplitError::ArithmeticOverflow)?;
+                result.push(new);
+            }
+            let total = result
+                .iter()
+                .try_fold(0_u64, |sum, value| sum.checked_add(*value))
+                .ok_or(ShareSplitError::ArithmeticOverflow)?;
+            if total != aggregate_new_shares {
+                return Err(ShareSplitError::SnapshotMismatch {
+                    detail: format!(
+                        "treasury split buckets total {total} but aggregate target is {aggregate_new_shares}"
+                    ),
+                });
+            }
+            Ok(result)
+        }
+        ShareSplitDirection::Consolidate => {
+            let mut result: Vec<u64> = buckets.iter().map(|bucket| bucket.shares / ratio).collect();
+            let base_total = result
+                .iter()
+                .try_fold(0_u64, |sum, value| sum.checked_add(*value))
+                .ok_or(ShareSplitError::ArithmeticOverflow)?;
+            let extra = aggregate_new_shares.checked_sub(base_total).ok_or(
+                ShareSplitError::SnapshotMismatch {
+                    detail: format!(
+                        "treasury consolidation base total {base_total} exceeds the aggregate target {aggregate_new_shares}"
+                    ),
+                },
+            )?;
+            if usize::try_from(extra)
+                .map(|extra| extra > buckets.len())
+                .unwrap_or(true)
+            {
+                return Err(ShareSplitError::SnapshotMismatch {
+                    detail: format!(
+                        "treasury consolidation extra awards {extra} exceed the bucket count"
+                    ),
+                });
+            }
+            let remainders: Vec<u64> = buckets.iter().map(|bucket| bucket.shares % ratio).collect();
+            let mut candidates: Vec<usize> = (0..buckets.len())
+                .filter(|index| remainders[*index] > 0)
+                .collect();
+            candidates.sort_by(|left, right| remainders[*right].cmp(&remainders[*left]));
+            shuffle_equal_bucket_remainders(&mut candidates, &remainders, seed);
+            for index in candidates
+                .into_iter()
+                .take(usize::try_from(extra).map_err(|_| ShareSplitError::ArithmeticOverflow)?)
+            {
+                result[index] = result[index]
+                    .checked_add(1)
+                    .ok_or(ShareSplitError::ArithmeticOverflow)?;
+            }
+            let total = result
+                .iter()
+                .try_fold(0_u64, |sum, value| sum.checked_add(*value))
+                .ok_or(ShareSplitError::ArithmeticOverflow)?;
+            if total != aggregate_new_shares {
+                return Err(ShareSplitError::SnapshotMismatch {
+                    detail: format!(
+                        "treasury consolidation buckets total {total} but aggregate target is {aggregate_new_shares}"
+                    ),
+                });
+            }
+            Ok(result)
+        }
+    }
+}
+
+fn shuffle_equal_bucket_remainders(candidates: &mut [usize], remainders: &[u64], seed: u64) {
+    let mut random = SeededRandom(seed);
+    let mut start = 0;
+    while start < candidates.len() {
+        let remainder = remainders[candidates[start]];
+        let mut end = start + 1;
+        while end < candidates.len() && remainders[candidates[end]] == remainder {
+            end += 1;
+        }
+        for index in (start + 1..end).rev() {
+            let swap = start + random.index(index - start + 1);
+            candidates.swap(index, swap);
+        }
+        start = end;
+    }
+}
+
 struct SeededRandom(u64);
 
 impl SeededRandom {

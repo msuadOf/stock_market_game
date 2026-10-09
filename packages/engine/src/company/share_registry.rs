@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -102,6 +102,18 @@ pub struct NetAcquisition {
     pub restriction: ShareRestriction,
 }
 
+/// 负向净变动的**显式 lot 消耗选择**：从指定 lot 依序核减指定数量。回购注销
+/// 与 Treasury 分桶重新计值用它精确消耗「本 plan 自己的库存 lot」，不落入
+/// 无条件 FIFO（FIFO 会先吃 initial 残桶或别的 plan 的份额）。`None` 保持
+/// 既有 FIFO 语义（公开市场处置与其他持有人重新计值不变）。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LotConsumption {
+    pub lot_id: String,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    pub qty: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DayNetChange {
@@ -110,6 +122,10 @@ pub struct DayNetChange {
     pub change: i128,
     #[serde(deserialize_with = "required_acquisition")]
     pub acquisition: Option<NetAcquisition>,
+    /// 必填 nullable（缺字段显式拒绝）：显式消耗选择；仅负向净变动允许携带，
+    /// 且回购注销 scope 强制要求（不再无条件 FIFO）。
+    #[serde(deserialize_with = "required_consume")]
+    pub consume: Option<Vec<LotConsumption>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -389,35 +405,104 @@ impl ShareRegistry {
                     .iter_mut()
                     .find(|holding| holding.holder == change.holder)
                     .ok_or_else(|| error("disposing holder is not registered"))?;
-                let mut remaining = quantity;
-                for lot in &mut holding.lots {
-                    if remaining == 0 {
-                        break;
-                    }
-                    // 未解禁限售 lot 不可被公开市场处置；拆股／缩股的重新计值
-                    // 不是转让，允许消耗限售 lot（限售属性由存活 lot 继续承载）。
-                    if let ShareRestriction::Restricted { release_on, .. } = &lot.restriction {
-                        if request.day < *release_on && !redenomination_scope {
-                            continue;
+                if let Some(selection) = change.consume.as_ref() {
+                    // 显式消耗选择：按选择核减指定 lot，不落入无条件 FIFO。限售
+                    // 纪律与 FIFO 路径一致——未解禁限售 lot 只有重新计值允许消耗
+                    //（scope 已在 validate_request 限定为注销/重新计值，注销对象
+                    // 为 Treasury lot，此处再按 lot 级复核防手改存档绕过）。
+                    let mut selected = std::collections::BTreeMap::new();
+                    let mut selection_total = 0_u64;
+                    for entry in selection {
+                        if entry.lot_id.trim().is_empty() || entry.qty == 0 {
+                            return Err(error(
+                                "explicit lot consumption entries must name an existing lot and a positive quantity",
+                            ));
                         }
+                        if selected.insert(entry.lot_id.clone(), entry.qty).is_some() {
+                            return Err(error(
+                                "explicit lot consumption names one lot more than once",
+                            ));
+                        }
+                        selection_total = selection_total
+                            .checked_add(entry.qty)
+                            .ok_or_else(|| error("explicit lot consumption total overflow"))?;
                     }
-                    let consumed = remaining.min(lot.qty);
-                    let mut disposed = lot.clone();
-                    disposed.qty = consumed;
-                    disposals.push(DisposedLot {
-                        holder: change.holder.clone(),
-                        lot: disposed,
-                        disposed_on: request.day,
-                    });
-                    lot.qty -= consumed;
-                    remaining -= consumed;
-                }
-                if remaining != 0 {
-                    return Err(ShareRegistryError::InsufficientTransferableShares {
-                        holder: change.holder.clone(),
-                        requested: quantity,
-                        available: quantity - remaining,
-                    });
+                    if selection_total != quantity {
+                        return Err(error(
+                            "explicit lot consumption must cover exactly the requested reduction",
+                        ));
+                    }
+                    let mut consumed_lots = Vec::with_capacity(selected.len());
+                    for (lot_id, qty) in &selected {
+                        let lot = holding
+                            .lots
+                            .iter()
+                            .find(|lot| &lot.id == lot_id)
+                            .ok_or_else(|| {
+                                error("explicit lot consumption names an unregistered lot")
+                            })?;
+                        if let ShareRestriction::Restricted { release_on, .. } = &lot.restriction {
+                            if request.day < *release_on && !redenomination_scope {
+                                return Err(error(
+                                    "explicit lot consumption cannot dispose an unreleased restricted lot",
+                                ));
+                            }
+                        }
+                        if lot.qty < *qty {
+                            return Err(error(
+                                "explicit lot consumption exceeds the lot's current quantity",
+                            ));
+                        }
+                        let mut disposed = lot.clone();
+                        disposed.qty = *qty;
+                        consumed_lots.push(disposed);
+                    }
+                    for (lot_id, qty) in &selected {
+                        let lot = holding
+                            .lots
+                            .iter_mut()
+                            .find(|lot| &lot.id == lot_id)
+                            .expect("lot presence was validated above");
+                        lot.qty -= qty;
+                    }
+                    for disposed in consumed_lots {
+                        disposals.push(DisposedLot {
+                            holder: change.holder.clone(),
+                            lot: disposed,
+                            disposed_on: request.day,
+                        });
+                    }
+                } else {
+                    let mut remaining = quantity;
+                    for lot in &mut holding.lots {
+                        if remaining == 0 {
+                            break;
+                        }
+                        // 未解禁限售 lot 不可被公开市场处置；拆股／缩股的重新计值
+                        // 不是转让，允许消耗限售 lot（限售属性由存活 lot 继续承载）。
+                        if let ShareRestriction::Restricted { release_on, .. } = &lot.restriction {
+                            if request.day < *release_on && !redenomination_scope {
+                                continue;
+                            }
+                        }
+                        let consumed = remaining.min(lot.qty);
+                        let mut disposed = lot.clone();
+                        disposed.qty = consumed;
+                        disposals.push(DisposedLot {
+                            holder: change.holder.clone(),
+                            lot: disposed,
+                            disposed_on: request.day,
+                        });
+                        lot.qty -= consumed;
+                        remaining -= consumed;
+                    }
+                    if remaining != 0 {
+                        return Err(ShareRegistryError::InsufficientTransferableShares {
+                            holder: change.holder.clone(),
+                            requested: quantity,
+                            available: quantity - remaining,
+                        });
+                    }
                 }
                 holding.lots.retain(|lot| lot.qty != 0);
             } else if change.change > 0 {
@@ -607,31 +692,69 @@ impl ShareRegistry {
                 }
             }
             previous_day = Some(receipt.request.day);
+            // 逐持有人核销勾稽：负向净变动合计 == 处置回执合计；带显式消耗选择的
+            // 持有人，其处置回执必须与选择逐 lot 精确一致（重新计值允许同一持有
+            // 人分桶多笔净变动，逐笔对齐会误判，按持有人聚合核对）。
+            let mut expected_by_holder: BTreeMap<&HolderId, u64> = BTreeMap::new();
+            let mut consumed_by_holder: BTreeMap<&HolderId, u64> = BTreeMap::new();
+            let mut selection_by_holder: BTreeMap<&HolderId, BTreeMap<&str, u64>> = BTreeMap::new();
+            let mut disposed_by_holder: BTreeMap<&HolderId, BTreeMap<&str, u64>> = BTreeMap::new();
             for change in &receipt.request.changes {
                 if let Some(acquisition) = &change.acquisition {
                     if !acquired_ids.insert(&acquisition.lot_id) {
                         return Err(error("historical acquisition lot identity reused"));
                     }
                 }
-                let consumed = receipt
-                    .disposals
-                    .iter()
-                    .filter(|disposed| disposed.holder == change.holder)
-                    .try_fold(0i128, |total, disposed| {
-                        total
-                            .checked_add(i128::from(disposed.lot.qty))
-                            .ok_or_else(|| error("disposal sum overflow"))
-                    })?;
-                let expected = if change.change < 0 {
-                    change
-                        .change
-                        .checked_neg()
-                        .ok_or_else(|| error("negative share change overflow"))?
-                } else {
-                    0
-                };
-                if consumed != expected {
+                if change.change < 0 {
+                    let quantity = u64::try_from(
+                        change
+                            .change
+                            .checked_neg()
+                            .ok_or_else(|| error("negative share change overflow"))?,
+                    )
+                    .map_err(|_| error("share change exceeds u64"))?;
+                    let total = expected_by_holder.entry(&change.holder).or_default();
+                    *total = total
+                        .checked_add(quantity)
+                        .ok_or_else(|| error("disposal sum overflow"))?;
+                }
+                if let Some(selection) = &change.consume {
+                    let map = selection_by_holder.entry(&change.holder).or_default();
+                    for entry in selection {
+                        if map.insert(entry.lot_id.as_str(), entry.qty).is_some() {
+                            return Err(error(
+                                "explicit lot consumption names one lot more than once",
+                            ));
+                        }
+                    }
+                }
+            }
+            for disposed in &receipt.disposals {
+                let total = consumed_by_holder.entry(&disposed.holder).or_default();
+                *total = total
+                    .checked_add(disposed.lot.qty)
+                    .ok_or_else(|| error("disposal sum overflow"))?;
+                let map = disposed_by_holder.entry(&disposed.holder).or_default();
+                let lot = map.entry(disposed.lot.id.as_str()).or_default();
+                *lot = lot
+                    .checked_add(disposed.lot.qty)
+                    .ok_or_else(|| error("disposal sum overflow"))?;
+            }
+            for (holder, expected) in &expected_by_holder {
+                if consumed_by_holder.get(holder) != Some(expected) {
                     return Err(error("disposal receipt does not match daily net reduction"));
+                }
+            }
+            if consumed_by_holder.len() != expected_by_holder.len() {
+                return Err(error(
+                    "disposal receipt names a holder without a net reduction",
+                ));
+            }
+            for (holder, selection) in &selection_by_holder {
+                if disposed_by_holder.get(holder) != Some(selection) {
+                    return Err(error(
+                        "explicit lot consumption does not match the disposal receipt",
+                    ));
                 }
             }
             let mut disposal_ids = BTreeSet::new();
@@ -646,10 +769,13 @@ impl ShareRegistry {
                 // 未解禁限售 lot 只有公开市场处置才禁止；拆股／缩股的重新计值
                 // 允许消耗限售 lot（scope 已在 close_day 核验）。
                 if matches!(&disposed.lot.restriction, ShareRestriction::Restricted { release_on, .. } if *release_on > disposed.disposed_on)
-                    && matches!(receipt.request.scope, MovementScope::PublicMarket)
+                    && !matches!(
+                        receipt.request.scope,
+                        MovementScope::ShareReDenomination { .. }
+                    )
                 {
                     return Err(error(
-                        "public transfer receipt contains an unreleased physical lot",
+                        "transfer receipt contains an unreleased physical lot",
                     ));
                 }
                 if disposed.disposed_on != receipt.request.day
@@ -883,6 +1009,13 @@ fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError>
                 "cancellation cannot create acquisition lots",
             ));
         }
+        // 注销不再无条件 FIFO：必须携带显式 lot 消耗选择（Session 按本 plan
+        // 仍持有份额构造），否则会误吃 initial 残桶或别的 plan 的库存。
+        if change.consume.is_none() {
+            return Err(error(
+                "issuer repurchase cancellation requires an explicit lot consumption selection",
+            ));
+        }
     }
     if request.event_id.trim().is_empty() {
         return Err(error("empty daily settlement identity"));
@@ -891,9 +1024,24 @@ fn validate_request(request: &ShareDayRequest) -> Result<(), ShareRegistryError>
     let mut total = 0i128;
     for change in &request.changes {
         validate_holder(&change.holder)?;
-        if !holders.insert(&change.holder) {
+        // 重新计值允许同一持有人分桶多笔净变动（Treasury initial 残桶 + 各 plan
+        // 实买库存桶）；其余 scope 仍要求一人一笔净额。
+        if !holders.insert(&change.holder) && !is_redenomination {
             return Err(error(
                 "daily request contains duplicate holder; supply one net change",
+            ));
+        }
+        if change.consume.is_some() && change.change >= 0 {
+            return Err(error(
+                "explicit lot consumption is only valid on a net reduction",
+            ));
+        }
+        // 显式消耗选择只属于回购注销与重新计值（Treasury 分桶）两个 scope：
+        // 公开市场处置必须走 FIFO＋限售校验，带显式选择一律拒绝（防手改存档
+        // 借显式路径绕过未解禁限售 lot 的处置限制）。
+        if change.consume.is_some() && !is_cancellation && !is_redenomination {
+            return Err(error(
+                "explicit lot consumption is only valid for issuer repurchase cancellation or re-denomination",
             ));
         }
         total = total
@@ -1051,6 +1199,12 @@ fn required_acquisition<'de, Decoder: serde::Deserializer<'de>>(
     decoder: Decoder,
 ) -> Result<Option<NetAcquisition>, Decoder::Error> {
     Option::<NetAcquisition>::deserialize(decoder)
+}
+
+fn required_consume<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<Vec<LotConsumption>>, Decoder::Error> {
+    Option::<Vec<LotConsumption>>::deserialize(decoder)
 }
 
 fn required_issuer_repurchase_account<'de, Decoder: serde::Deserializer<'de>>(

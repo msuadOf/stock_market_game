@@ -93,6 +93,110 @@ pub struct IssuerRepurchasePlan {
     pub purpose: RepurchasePurpose,
     /// 完成后的股份处置策略（H 批默认注销；扩展位，当前唯一变体）。
     pub completion_policy: RepurchaseCompletionPolicy,
+    /// 批准股份单位锚（必填 nullable，无 serde 默认）：`max_shares` 与
+    /// `price_cap_per_share` 所处交易单位对应的拆股／缩股事件 id；`None` 表示
+    /// 开局基准单位（该证券尚无已生效重新计值）。受理时必须与审批当刻真实
+    /// 已应用的交易单位一致（Session 按 split 链核验），方案一经批准不可变。
+    #[serde(deserialize_with = "required_unit_anchor")]
+    pub approval_unit_event_id: Option<String>,
+}
+
+/// 股份单位调整事实（严格持久化，必填字段、无 serde 默认）：某次拆股／缩股
+/// 重新计值对本 plan 当时库存的汇总换算结果。当前库存不由任意可改的计数器
+/// 承载，而是由 fills（不可改写）+ 本调整事实 + 注销事实按 ex 日序重放推导。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareUnitAdjustment {
+    pub split_event_id: String,
+    /// 换算前库存（换算事件 ex 日之前累积的当前单位股数）。
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    pub shares_before: u64,
+    /// 换算后库存（缩股碎股奖励含在内，与 Treasury 分桶分配结果一致）。
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    pub shares_after: u64,
+}
+
+/// 单位换算上下文：某证券已登记的拆股／缩股事件链（由 Session 从 share_splits
+/// 账簿投影；不含未登记事件）。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SplitUnitContext {
+    pub event_id: String,
+    pub ex_on: CivilDate,
+    pub direction: crate::company::share_split::ShareSplitDirection,
+    pub ratio: u64,
+}
+
+/// 批准锚单位 → `through` 日交易单位的精确换算比例 (分子 p, 分母 q)：
+/// 新股数 = 旧股数 × p / q。锚 `None` 表示开局基准单位（链上全部 ex ≤ through
+/// 的重新计值都计入）；锚为具体事件时从该事件之后（ex 严格大于锚 ex）计入。
+pub fn unit_conversion_factor(
+    anchor: Option<&str>,
+    through: CivilDate,
+    context: &[SplitUnitContext],
+) -> Result<(u64, u64), IssuerRepurchaseError> {
+    let anchor_ex = match anchor {
+        None => None,
+        Some(event_id) => {
+            if event_id.trim().is_empty() {
+                return Err(invalid("approval unit anchor event id must not be blank"));
+            }
+            Some(
+                context
+                    .iter()
+                    .find(|entry| entry.event_id == event_id)
+                    .ok_or_else(|| {
+                        invalid(&format!(
+                            "approval unit anchor {event_id} is not a registered split event of this stock"
+                        ))
+                    })?
+                    .ex_on,
+            )
+        }
+    };
+    let mut numerator = 1_u64;
+    let mut denominator = 1_u64;
+    for entry in context {
+        if entry.ratio < 2 {
+            return Err(invalid("share unit ratio must be at least two"));
+        }
+        if entry.ex_on > through {
+            continue;
+        }
+        // 锚事件自身的单位即批准单位，不重复计入。
+        if anchor_ex.is_some_and(|anchor_ex| entry.ex_on <= anchor_ex) {
+            continue;
+        }
+        match entry.direction {
+            crate::company::share_split::ShareSplitDirection::Split => {
+                numerator = numerator.checked_mul(entry.ratio).ok_or(
+                    IssuerRepurchaseError::InvalidPlan {
+                        detail: "share unit conversion factor overflow".into(),
+                    },
+                )?;
+            }
+            crate::company::share_split::ShareSplitDirection::Consolidate => {
+                denominator = denominator.checked_mul(entry.ratio).ok_or(
+                    IssuerRepurchaseError::InvalidPlan {
+                        detail: "share unit conversion factor overflow".into(),
+                    },
+                )?;
+            }
+        }
+    }
+    Ok((numerator, denominator))
+}
+
+/// 精确比例向下取整换算：`value × p / q`（u128 中间量，不静默饱和）。
+pub fn convert_shares_floor(
+    value: u64,
+    numerator: u64,
+    denominator: u64,
+) -> Result<u64, IssuerRepurchaseError> {
+    if denominator == 0 {
+        return Err(invalid("share unit denominator cannot be zero"));
+    }
+    u64::try_from(u128::from(value) * u128::from(numerator) / u128::from(denominator))
+        .map_err(|_| invalid("converted share quantity exceeds u64"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -122,12 +226,28 @@ pub enum IssuerRepurchaseError {
     },
     #[error("issuer repurchase: cancellation shares {requested} exceed completed fills {completed}")]
     CancellationExceedsFills { requested: u64, completed: u64 },
+    #[error(
+        "issuer repurchase: cancellation shares {requested} exceed current inventory {available}"
+    )]
+    CancellationExceedsInventory { requested: u64, available: u64 },
+    #[error("issuer repurchase: fill {fill} would exceed the execution cap {cap} in current share units (inventory {inventory})")]
+    FillExceedsExecutionCap { cap: u64, inventory: u64, fill: u64 },
+    #[error("issuer repurchase: share unit replay failed: {detail}")]
+    UnitReplay { detail: String },
 }
 
 fn invalid(detail: &str) -> IssuerRepurchaseError {
     IssuerRepurchaseError::InvalidPlan {
         detail: detail.to_owned(),
     }
+}
+
+/// 必填 nullable 的 serde 辅助：字段缺键显式拒绝、null 合法（与 DayNetChange
+/// .acquisition 的 required_acquisition 同一仓库既有惯例，不引入兼容默认）。
+fn required_unit_anchor<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<String>, Decoder::Error> {
+    Option::<String>::deserialize(decoder)
 }
 
 impl IssuerRepurchasePlan {
@@ -145,6 +265,15 @@ impl IssuerRepurchasePlan {
         if self.max_shares == 0 {
             return Err(invalid("share cap must be positive"));
         }
+        if self
+            .approval_unit_event_id
+            .as_ref()
+            .is_some_and(|event_id| event_id.trim().is_empty())
+        {
+            return Err(invalid(
+                "approval unit anchor must be null or a non-blank split event id",
+            ));
+        }
         if !(self.approved_on <= self.announced_on
             && self.announced_on <= self.window_start_on
             && self.window_start_on <= self.window_deadline_on)
@@ -154,6 +283,58 @@ impl IssuerRepurchasePlan {
             ));
         }
         Ok(())
+    }
+
+    /// `through` 日交易单位下的数量执行上限：批准锚单位 → 该单位精确比例向下取整。
+    pub fn execution_max_shares(
+        &self,
+        through: CivilDate,
+        split_context: &[SplitUnitContext],
+    ) -> Result<u64, IssuerRepurchaseError> {
+        let (numerator, denominator) = unit_conversion_factor(
+            self.approval_unit_event_id.as_deref(),
+            through,
+            split_context,
+        )?;
+        convert_shares_floor(self.max_shares, numerator, denominator)
+    }
+
+    /// `through` 日交易单位下的申报价上限（分）：批准价上限按精确比例反向换算
+    /// （价格单位与股数单位互为倒数）并向下取最小价位；不足一个价位时返回 0
+    ///（执行器跳过当日委托，不伪造价格）。
+    pub fn execution_price_cap_cents(
+        &self,
+        through: CivilDate,
+        tick_cents: i64,
+        split_context: &[SplitUnitContext],
+    ) -> Result<i64, IssuerRepurchaseError> {
+        let (numerator, denominator) = unit_conversion_factor(
+            self.approval_unit_event_id.as_deref(),
+            through,
+            split_context,
+        )?;
+        if tick_cents <= 0 {
+            return Err(invalid("minimum price tick must be positive"));
+        }
+        let cap_cents = self.price_cap_per_share.cents().unsigned_abs() as u128;
+        let tick = tick_cents.unsigned_abs() as u128;
+        let scaled = cap_cents * u128::from(denominator) / u128::from(numerator);
+        let floored = scaled / tick * tick;
+        i64::try_from(floored).map_err(|_| IssuerRepurchaseError::InvalidPlan {
+            detail: "converted price cap exceeds the money domain".into(),
+        })
+    }
+
+    /// 基准锚已包含的事件不能因回填审批日期再调整一次。
+    pub fn unit_event_follows_approval_anchor(&self, event_id: &str, context: &[SplitUnitContext]) -> Result<bool, IssuerRepurchaseError> {
+        let event = context.iter().find(|entry| entry.event_id == event_id).ok_or_else(|| invalid("unknown unit event"))?;
+        match self.approval_unit_event_id.as_deref() {
+            None => Ok(true),
+            Some(anchor_id) => {
+                let anchor = context.iter().find(|entry| entry.event_id == anchor_id).ok_or_else(|| invalid("unknown approval unit anchor"))?;
+                Ok(event.ex_on > anchor.ex_on)
+            }
+        }
     }
 
     /// 窗口日期均为该交易所交易日。
@@ -218,6 +399,8 @@ pub struct IssuerRepurchaseBook {
     plan: IssuerRepurchasePlan,
     status: IssuerRepurchaseStatus,
     fills: Vec<RepurchaseFillRecord>,
+    /// 股份单位调整事实链（严格持久化；当前库存按 fills + 本链 + 注销事实重放推导）。
+    share_unit_adjustments: Vec<ShareUnitAdjustment>,
     completed_on: Option<CivilDate>,
     /// 计划完成时回收的未用合成资金（含费用余量）。
     withdrawn_remainder: Option<Money>,
@@ -234,6 +417,7 @@ struct IssuerRepurchaseBookState {
     plan: IssuerRepurchasePlan,
     status: IssuerRepurchaseStatus,
     fills: Vec<RepurchaseFillRecord>,
+    share_unit_adjustments: Vec<ShareUnitAdjustment>,
     completed_on: Option<CivilDate>,
     withdrawn_remainder: Option<Money>,
     cancelled_on: Option<CivilDate>,
@@ -250,6 +434,7 @@ impl TryFrom<IssuerRepurchaseBookState> for IssuerRepurchaseBook {
             plan: state.plan,
             status: state.status,
             fills: state.fills,
+            share_unit_adjustments: state.share_unit_adjustments,
             completed_on: state.completed_on,
             withdrawn_remainder: state.withdrawn_remainder,
             cancelled_on: state.cancelled_on,
@@ -268,6 +453,7 @@ impl IssuerRepurchaseBook {
             plan,
             status: IssuerRepurchaseStatus::Approved,
             fills: Vec::new(),
+            share_unit_adjustments: Vec::new(),
             completed_on: None,
             withdrawn_remainder: None,
             cancelled_on: None,
@@ -284,6 +470,9 @@ impl IssuerRepurchaseBook {
     }
     pub fn fills(&self) -> &[RepurchaseFillRecord] {
         &self.fills
+    }
+    pub fn share_unit_adjustments(&self) -> &[ShareUnitAdjustment] {
+        &self.share_unit_adjustments
     }
     pub fn completed_on(&self) -> Option<CivilDate> {
         self.completed_on
@@ -353,8 +542,14 @@ impl IssuerRepurchaseBook {
             })
     }
 
-    /// 记录一个交易日的真实成交汇总（窗口内、额度内、数量上限内）。
-    pub fn record_fill(&mut self, fill: RepurchaseFillRecord) -> Result<(), IssuerRepurchaseError> {
+    /// 记录一个交易日的真实成交汇总（窗口内、额度内、数量上限内）。数量上限按
+    /// 「批准锚单位 → 成交日交易单位」的精确比例向下取整执行；缩股合法碎股奖励
+    /// 允许库存高于 floor(cap)（award 计数抵扣），不为奖励拒绝真实成交。
+    pub fn record_fill(
+        &mut self,
+        fill: RepurchaseFillRecord,
+        split_context: &[SplitUnitContext],
+    ) -> Result<(), IssuerRepurchaseError> {
         if !matches!(
             self.status,
             IssuerRepurchaseStatus::Announced | IssuerRepurchaseStatus::Executing
@@ -387,13 +582,346 @@ impl IssuerRepurchaseBook {
                 gross: fill.gross,
             });
         }
-        if self.total_filled_shares() + fill.shares > self.plan.max_shares {
-            return Err(invalid("fill exceeds the approved share cap"));
+        let cap = self.plan.execution_max_shares(fill.day, split_context)?;
+        let (inventory, _) = self.replay_inventory(
+            split_context,
+            Some((fill.day, Self::REPLAY_RANK_FILL)),
+            true,
+        )?;
+        // 奖励只解释既有库存，不增加新的成交额度。
+        if fill.shares > cap.saturating_sub(inventory) {
+            return Err(IssuerRepurchaseError::FillExceedsExecutionCap {
+                cap,
+                inventory,
+                fill: fill.shares,
+            });
         }
         self.fills.push(fill);
         self.fills.sort_by(|left, right| left.day.cmp(&right.day));
         self.status = IssuerRepurchaseStatus::Executing;
         Ok(())
+    }
+
+    /// 记录一次拆股／缩股对本 plan 库存的汇总换算（Session 在重新计值入账时调用）。
+    /// `shares_before` 必须与当前重放库存一致，换算结果须与事件方向/比例一致，
+    /// 不接受凭空改写（重放校验显式拒绝数量篡改）。
+    pub fn record_share_unit_adjustment(
+        &mut self,
+        adjustment: ShareUnitAdjustment,
+        split_context: &[SplitUnitContext],
+    ) -> Result<(), IssuerRepurchaseError> {
+        if adjustment.split_event_id.trim().is_empty() {
+            return Err(IssuerRepurchaseError::UnitReplay {
+                detail: "share unit adjustment requires the split event identity".into(),
+            });
+        }
+        if self
+            .share_unit_adjustments
+            .iter()
+            .any(|existing| existing.split_event_id == adjustment.split_event_id)
+        {
+            return Err(IssuerRepurchaseError::UnitReplay {
+                detail: format!(
+                    "split event {} already adjusted this plan's inventory",
+                    adjustment.split_event_id
+                ),
+            });
+        }
+        let entry = split_context
+            .iter()
+            .find(|entry| entry.event_id == adjustment.split_event_id)
+            .ok_or_else(|| IssuerRepurchaseError::UnitReplay {
+                detail: format!(
+                    "split event {} is not registered for this stock's unit chain",
+                    adjustment.split_event_id
+                ),
+            })?
+            .clone();
+        // 零库存同样经历单位事件，但不得借碎股奖励凭空取得股份。
+        if adjustment.shares_before == 0 && adjustment.shares_after != 0 {
+            return Err(IssuerRepurchaseError::UnitReplay {
+                detail: "zero inventory must remain zero through a share unit adjustment".into(),
+            });
+        }
+        let (inventory, _) = self.replay_inventory(
+            split_context,
+            Some((entry.ex_on, Self::REPLAY_RANK_ADJUSTMENT)),
+            true,
+        )?;
+        if inventory != adjustment.shares_before {
+            return Err(IssuerRepurchaseError::UnitReplay {
+                detail: format!(
+                    "adjustment {} claims {} shares before, but replayed inventory is {}",
+                    adjustment.split_event_id, adjustment.shares_before, inventory
+                ),
+            });
+        }
+        match entry.direction {
+            crate::company::share_split::ShareSplitDirection::Split => {
+                let expected = adjustment.shares_before.checked_mul(entry.ratio).ok_or(
+                    IssuerRepurchaseError::UnitReplay {
+                        detail: "split adjustment overflow".into(),
+                    },
+                )?;
+                if adjustment.shares_after != expected {
+                    return Err(IssuerRepurchaseError::UnitReplay {
+                        detail: format!(
+                            "split adjustment {} must multiply inventory exactly (expected {expected})"
+                            , adjustment.split_event_id
+                        ),
+                    });
+                }
+            }
+            crate::company::share_split::ShareSplitDirection::Consolidate => {
+                let base = adjustment.shares_before / entry.ratio;
+                if adjustment.shares_after != base && adjustment.shares_after != base + 1 {
+                    return Err(IssuerRepurchaseError::UnitReplay {
+                        detail: format!(
+                            "consolidation adjustment {} must equal the base share or the base plus one legal fractional award",
+                            adjustment.split_event_id
+                        ),
+                    });
+                }
+            }
+        }
+        self.share_unit_adjustments.push(adjustment);
+        self.share_unit_adjustments
+            .sort_by(|left, right| left.split_event_id.cmp(&right.split_event_id));
+        Ok(())
+    }
+
+    /// 当前库存（按 fills + 单位调整链 + 注销事实重放推导；不读历史成交合计）。
+    pub fn current_inventory_shares(
+        &self,
+        split_context: &[SplitUnitContext],
+    ) -> Result<u64, IssuerRepurchaseError> {
+        Ok(self.replay_inventory(split_context, None, true)?.0)
+    }
+
+    /// 某次拆股／缩股 ex 日**之前**的库存（恢复复核分桶 uses_before 时使用）。
+    pub fn inventory_before_split(
+        &self,
+        split_event_id: &str,
+        split_context: &[SplitUnitContext],
+    ) -> Result<u64, IssuerRepurchaseError> {
+        let entry = split_context
+            .iter()
+            .find(|entry| entry.event_id == split_event_id)
+            .ok_or_else(|| IssuerRepurchaseError::UnitReplay {
+                detail: format!(
+                    "split event {split_event_id} is not registered for this stock's unit chain"
+                ),
+            })?;
+        Ok(self
+            .replay_inventory(
+                split_context,
+                Some((entry.ex_on, Self::REPLAY_RANK_ADJUSTMENT)),
+                true,
+            )?
+            .0)
+    }
+
+    /// 单位上下文校验（Session validate/restore 调用；结构性 validate 不含链信息）：
+    /// 全量重放校验调整一致性与注销不超当前份额，并核对当前库存不超过
+    /// 「批准锚 → as_of 交易单位」的执行上限 + 合法碎股奖励数。
+    pub fn validate_share_units(
+        &self,
+        split_context: &[SplitUnitContext],
+        as_of: CivilDate,
+    ) -> Result<(), IssuerRepurchaseError> {
+        let (inventory, awards) = self.replay_inventory(split_context, None, true)?;
+        // 存档时钟可能已指向下一个 ex 日；库存单位只由实际成交/已记录单位事实决定。
+        let mut unit_date = self
+            .fills
+            .iter()
+            .map(|fill| fill.day)
+            .max()
+            .unwrap_or(self.plan.approved_on);
+        for adjustment in &self.share_unit_adjustments {
+            let entry = split_context
+                .iter()
+                .find(|entry| entry.event_id == adjustment.split_event_id)
+                .ok_or_else(|| invalid("unknown share unit adjustment"))?;
+            unit_date = unit_date.max(entry.ex_on);
+        }
+        if unit_date > as_of {
+            return Err(invalid("inventory fact is later than validation date"));
+        }
+        let cap = self.plan.execution_max_shares(unit_date, split_context)?;
+        let allowed = cap
+            .checked_add(awards)
+            .ok_or_else(|| invalid("inventory allowance overflow"))?;
+        if inventory > allowed {
+            return Err(IssuerRepurchaseError::UnitReplay {
+                detail: format!(
+                    "current inventory {inventory} exceeds the execution cap {cap} beyond legal fractional awards ({awards})"
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// 重放事件秩：同一天内「单位调整（ex 日日终入账）先于当日新成交、注销最后」。
+    pub(crate) const REPLAY_RANK_ADJUSTMENT: u8 = 0;
+    pub(crate) const REPLAY_RANK_FILL: u8 = 1;
+    const REPLAY_RANK_CANCELLATION: u8 = 2;
+
+    /// 按 (日期, 秩) 重放 fills + 单位调整 + 注销，返回 (库存, 合法碎股奖励数)。
+    /// `cutoff = Some((day, rank))` 时只重放严格早于该秩点的事件；注销事件由
+    /// `include_cancellation` 控制（注销前的库存核验需要排除注销本身）。
+    fn replay_inventory(
+        &self,
+        split_context: &[SplitUnitContext],
+        cutoff: Option<(CivilDate, u8)>,
+        include_cancellation: bool,
+    ) -> Result<(u64, u64), IssuerRepurchaseError> {
+        let mut events: Vec<(CivilDate, u8, u64)> = Vec::new();
+        for adjustment in &self.share_unit_adjustments {
+            let entry = split_context
+                .iter()
+                .find(|entry| entry.event_id == adjustment.split_event_id)
+                .ok_or_else(|| IssuerRepurchaseError::UnitReplay {
+                    detail: format!(
+                        "share unit adjustment references unknown split event {}",
+                        adjustment.split_event_id
+                    ),
+                })?;
+            events.push((entry.ex_on, Self::REPLAY_RANK_ADJUSTMENT, 0));
+        }
+        for fill in &self.fills {
+            events.push((fill.day, Self::REPLAY_RANK_FILL, fill.shares));
+        }
+        if include_cancellation {
+            if let Some(cancelled_on) = self.cancelled_on {
+                events.push((
+                    cancelled_on,
+                    Self::REPLAY_RANK_CANCELLATION,
+                    self.cancelled_shares,
+                ));
+            }
+        }
+        events.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
+        let mut inventory: u64 = 0;
+        let mut awards: u64 = 0;
+        let mut unit_cap = self.plan.max_shares;
+        for (day, rank, _) in &events {
+            if let Some((cutoff_day, cutoff_rank)) = cutoff {
+                if (*day, *rank) >= (cutoff_day, cutoff_rank) {
+                    break;
+                }
+            }
+            match rank {
+                rank if *rank == Self::REPLAY_RANK_ADJUSTMENT => {
+                    let adjustment = self
+                        .share_unit_adjustments
+                        .iter()
+                        .find(|adjustment| {
+                            split_context.iter().any(|entry| {
+                                entry.event_id == adjustment.split_event_id && entry.ex_on == *day
+                            })
+                        })
+                        .expect("adjustment events were built from this book");
+                    let entry = split_context
+                        .iter()
+                        .find(|entry| entry.event_id == adjustment.split_event_id)
+                        .expect("context entry existence was checked above");
+                    if inventory != adjustment.shares_before {
+                        return Err(IssuerRepurchaseError::UnitReplay {
+                            detail: format!(
+                                "adjustment {} claims {} shares before, but replayed inventory is {}",
+                                adjustment.split_event_id, adjustment.shares_before, inventory
+                            ),
+                        });
+                    }
+                    if adjustment.shares_before == 0 && adjustment.shares_after != 0 {
+                        return Err(invalid("zero inventory cannot receive a fractional award"));
+                    }
+                    match entry.direction {
+                        crate::company::share_split::ShareSplitDirection::Split => {
+                            let expected = adjustment.shares_before.checked_mul(entry.ratio);
+                            if expected != Some(adjustment.shares_after) {
+                                return Err(IssuerRepurchaseError::UnitReplay {
+                                    detail: format!(
+                                        "split adjustment {} does not multiply inventory exactly",
+                                        adjustment.split_event_id
+                                    ),
+                                });
+                            }
+                        }
+                        crate::company::share_split::ShareSplitDirection::Consolidate => {
+                            let base = adjustment.shares_before / entry.ratio;
+                            if adjustment.shares_after != base
+                                && adjustment.shares_after != base + 1
+                            {
+                                return Err(IssuerRepurchaseError::UnitReplay {
+                                    detail: format!(
+                                        "consolidation adjustment {} is neither the base share nor the base plus one legal award",
+                                        adjustment.split_event_id
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                    // 合并上界先换算，避免分别 floor(cap) 和 floor(award) 丢进位。
+                    let bound = unit_cap
+                        .checked_add(awards)
+                        .ok_or_else(|| invalid("inventory allowance overflow"))?;
+                    let (numerator, denominator) = match entry.direction {
+                        crate::company::share_split::ShareSplitDirection::Split => (entry.ratio, 1),
+                        crate::company::share_split::ShareSplitDirection::Consolidate => {
+                            (1, entry.ratio)
+                        }
+                    };
+                    let converted = u64::try_from(
+                        u128::from(bound) * u128::from(numerator) / u128::from(denominator),
+                    )
+                    .map_err(|_| invalid("converted inventory allowance overflow"))?;
+                    let cap_after = self.plan.execution_max_shares(entry.ex_on, split_context)?;
+                    let actual_award = u64::from(
+                        matches!(
+                            entry.direction,
+                            crate::company::share_split::ShareSplitDirection::Consolidate
+                        ) && adjustment.shares_after > adjustment.shares_before / entry.ratio,
+                    );
+                    awards = converted
+                        .saturating_sub(cap_after)
+                        .checked_add(actual_award)
+                        .ok_or_else(|| invalid("inventory allowance overflow"))?;
+                    unit_cap = cap_after;
+                    inventory = adjustment.shares_after;
+                }
+                rank if *rank == Self::REPLAY_RANK_FILL => {
+                    let fill = self
+                        .fills
+                        .iter()
+                        .find(|fill| fill.day == *day)
+                        .expect("fill events were built from this book");
+                    let cap = self.plan.execution_max_shares(fill.day, split_context)?;
+                    if fill.shares > cap.saturating_sub(inventory) {
+                        return Err(invalid(
+                            "historical fill exceeds its current-unit approved room",
+                        ));
+                    }
+                    inventory = inventory.checked_add(fill.shares).ok_or(
+                        IssuerRepurchaseError::UnitReplay {
+                            detail: "replayed inventory overflow".into(),
+                        },
+                    )?;
+                }
+                _ => {
+                    if inventory < self.cancelled_shares {
+                        return Err(IssuerRepurchaseError::UnitReplay {
+                            detail: format!(
+                                "cancellation of {} shares exceeds replayed inventory {inventory}",
+                                self.cancelled_shares
+                            ),
+                        });
+                    }
+                    inventory -= self.cancelled_shares;
+                }
+            }
+        }
+        Ok((inventory, awards))
     }
 
     /// 计划完成：窗口截止（或额度／数量用尽后调用方显式完成）时回收未用合成资金。
@@ -447,11 +975,13 @@ impl IssuerRepurchaseBook {
         Ok(())
     }
 
-    /// 注销执行（减资用途）：注销股数不得超过累计成交股数；同一日重复幂等。
+    /// 注销执行（减资用途）：注销股数不得超过**当前重放库存**（含单位换算与
+    /// 历史部分注销残量），不得用历史成交合计限制当前单位股数；同一日重复幂等。
     pub fn record_cancellation(
         &mut self,
         on: CivilDate,
         shares: u64,
+        split_context: &[SplitUnitContext],
     ) -> Result<(), IssuerRepurchaseError> {
         if shares == 0 {
             return Err(invalid("cancelled shares must be positive"));
@@ -472,11 +1002,11 @@ impl IssuerRepurchaseBook {
                 operation: "record cancellation",
             });
         }
-        let filled = self.total_filled_shares();
-        if shares > filled {
-            return Err(IssuerRepurchaseError::CancellationExceedsFills {
+        let available = self.replay_inventory(split_context, None, false)?.0;
+        if shares > available {
+            return Err(IssuerRepurchaseError::CancellationExceedsInventory {
                 requested: shares,
-                completed: filled,
+                available,
             });
         }
         if on < self.completed_on.unwrap_or(on) {
@@ -488,7 +1018,8 @@ impl IssuerRepurchaseBook {
         Ok(())
     }
 
-    /// 结构一致性校验（恢复路径也走这里）。
+    /// 结构一致性校验（恢复路径也走这里；无单位链信息的检查，含单位换算的
+    /// 完整复核由 `validate_share_units` 在 Session validate/restore 执行）。
     pub fn validate(&self) -> Result<(), IssuerRepurchaseError> {
         self.plan.validate()?;
         if self.total_spent().is_err() || self.remaining_budget().is_err() {
@@ -497,8 +1028,18 @@ impl IssuerRepurchaseBook {
                 gross: self.plan.total_budget,
             });
         }
-        if self.total_filled_shares() > self.plan.max_shares {
-            return Err(invalid("fills exceed the approved share cap"));
+        // 数量上限按批准锚单位表达；跨单位执行上限的重放校验在
+        // validate_share_units（需要 split 链上下文）。
+        let mut adjustment_ids = std::collections::BTreeSet::new();
+        for adjustment in &self.share_unit_adjustments {
+            if adjustment.split_event_id.trim().is_empty()
+                || (adjustment.shares_before == 0 && adjustment.shares_after != 0)
+                || !adjustment_ids.insert(adjustment.split_event_id.clone())
+            {
+                return Err(invalid(
+                    "share unit adjustments must reference distinct split events; zero inventory must stay zero",
+                ));
+            }
         }
         match (self.status.clone(), self.completed_on, self.withdrawn_remainder) {
             (IssuerRepurchaseStatus::Approved, None, None) => {}
@@ -521,8 +1062,7 @@ impl IssuerRepurchaseBook {
             return Err(invalid("fill day outside the execution window"));
         }
         if (self.cancelled_on.is_some() || self.cancelled_shares > 0)
-            && (self.status != IssuerRepurchaseStatus::Cancelled
-                || self.cancelled_shares > self.total_filled_shares())
+            && (self.status != IssuerRepurchaseStatus::Cancelled || self.cancelled_shares == 0)
         {
             return Err(invalid("cancellation facts are inconsistent"));
         }

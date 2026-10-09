@@ -638,6 +638,9 @@ impl GameSession {
                     // 参数，引擎固定默认变体。
                     completion_policy:
                         crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion,
+                    // 批准单位锚取提案当刻真实已应用的交易单位（与显式 API 同一
+                    // 核验口径，玩家不自选锚）。
+                    approval_unit_event_id: self.current_trading_unit_anchor(&stock, today),
                 };
                 if let Err(error) = self.approve_issuer_repurchase(plan) {
                     // 分类依据当前开关状态（非错误文本启发式）：开关关闭 → 未支持

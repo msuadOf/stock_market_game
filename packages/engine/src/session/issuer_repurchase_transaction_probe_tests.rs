@@ -129,6 +129,7 @@ fn probe_plan(issuer: &CompanyId, stock: &StockCode) -> IssuerRepurchasePlan {
         purpose: RepurchasePurpose::ReduceCapital,
         completion_policy:
             crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion,
+        approval_unit_event_id: None,
     }
 }
 

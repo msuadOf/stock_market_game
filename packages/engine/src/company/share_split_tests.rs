@@ -270,3 +270,47 @@ fn restored_book_without_registration_serializes_strictly() {
         .insert("surprise".into(), serde_json::json!(1));
     assert!(serde_json::from_str::<ShareSplitBook>(&injected.to_string()).is_err());
 }
+
+/// Treasury 分桶换算（Task174）：拆股逐桶精确放大；缩股共享汇总目标（商+余数
+/// 降序+seed 洗牌发奖励），Σ桶 == 汇总 new_shares，不逐桶独立 floor。
+#[test]
+fn treasury_buckets_split_exactly_and_consolidation_shares_the_target() {
+    use super::ShareSplitDirection as Dir;
+    use super::{allocate_treasury_buckets, TreasuryBucket};
+    let buckets = vec![
+        TreasuryBucket {
+            key: "initial".into(),
+            shares: 9_999_000,
+        },
+        TreasuryBucket {
+            key: "plan-a".into(),
+            shares: 60,
+        },
+        TreasuryBucket {
+            key: "plan-b".into(),
+            shares: 100,
+        },
+    ];
+    // 拆股 2:1：逐桶 ×2，Σ == 汇总。
+    let split = allocate_treasury_buckets(&buckets, &Dir::Split, 2, 19_998_320, 7).unwrap();
+    assert_eq!(split, vec![19_998_000, 120, 200]);
+    // 缩股 7:1：base = [1_428_428, 8, 14]；Σrem = 4+4+2 = 10 ≥ 7 → 恰一次 +1
+    // 落在余数并列最高的 initial/plan-a 之一（seed 决定），Σ == 汇总目标。
+    let total = 9_999_160_u64;
+    let target = total / 7;
+    let consolidated =
+        allocate_treasury_buckets(&buckets, &Dir::Consolidate, 7, target, 42).unwrap();
+    assert_eq!(consolidated[2], 14, "余 2 的桶不得获奖");
+    let awarded = (consolidated[0] == 1_428_429) as u64 + (consolidated[1] == 9) as u64;
+    assert_eq!(awarded, 1, "恰一个最高余数桶获得 +1");
+    assert_eq!(
+        consolidated.iter().sum::<u64>(),
+        target,
+        "分桶合计必须等于汇总目标"
+    );
+    // 同输入同 seed 确定性复算。
+    let again = allocate_treasury_buckets(&buckets, &Dir::Consolidate, 7, target, 42).unwrap();
+    assert_eq!(consolidated, again);
+    // Σbase 超过汇总目标（数量篡改）拒绝。
+    assert!(allocate_treasury_buckets(&buckets, &Dir::Consolidate, 7, 1_428_449, 42).is_err());
+}
