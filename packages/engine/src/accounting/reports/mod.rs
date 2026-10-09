@@ -42,6 +42,7 @@ use crate::accounting::consolidation::{ConsolidationRequest, MemberId, ScopeId};
 use crate::accounting::journal::BusinessEventId;
 use crate::accounting::ledger::{AccountChart, TrialBalanceSummary};
 use crate::accounting::period::AccountingPeriod;
+use crate::accounting::AccountingAmount;
 
 /// 行业列报口径（按 AccountChart.version 对应：1/2 工业、3 银行、4 保险、5 地产）。
 #[derive(
@@ -195,6 +196,7 @@ pub enum ReportRoeUnavailable {
     ComparativePeriodSpecialTreatment,
     UnclassifiedEquityEvent,
     ConsolidatedAttributionFactsUnavailable,
+    StandaloneHasNoMinorityInterest,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -211,6 +213,67 @@ pub enum ReportRoeBasis {
     Unsupported { reason: ReportRoeUnavailable },
 }
 
+/// 非经常性损益项目列示行（证监会披露口径；当前已登记简化下列示恒空）。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRoeNonRecurringItem {
+    pub code: String,
+    pub name: String,
+    /// 税后归母口径金额（分项税影响未登记细分 → 已登记简化下无实例）。
+    pub amount: AccountingAmount,
+}
+
+/// 扣非净利润事实：项目列示可得（含派生归母扣非），或类型化不可用（不填零）。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum ReportRoeNonRecurring {
+    Listed {
+        items: Vec<ReportRoeNonRecurringItem>,
+        /// 归母净利润 − Σ项目（税后归母）；同一账套窗口派生，不跨期累计。
+        parent_net_income_after_deduction: AccountingAmount,
+    },
+    Unavailable { reason: ReportRoeUnavailable },
+}
+
+/// 权益事件实际生效类别（与公式层 EquityEventKind 同语义的披露投影）。
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum ReportRoeEquityEventKind {
+    Increase,
+    Decrease,
+    Other,
+}
+
+/// 逐项归属权益事件明细行。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRoeEquityEvent {
+    /// 实际生效日（ISO 日期字符串；与窗口/期间同风格的边界 DTO）。
+    pub effective_on: String,
+    pub kind: ReportRoeEquityEventKind,
+    /// `Increase`/`Decrease` 为正的绝对金额；`Other` 为带方向的净变动。
+    pub amount: AccountingAmount,
+}
+
+/// 归属维度的权益事件列示：逐项可得或类型化不可用（不填零）。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum ReportRoeEquityEventListing {
+    Items(Vec<ReportRoeEquityEvent>),
+    Unavailable { reason: ReportRoeUnavailable },
+}
+
+/// 逐项归属权益事件：归属母公司 / 少数股东两列独立列示。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRoeEquityEventBreakdown {
+    pub attributable_to_parent: ReportRoeEquityEventListing,
+    pub minority_interest: ReportRoeEquityEventListing,
+}
+
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 #[serde(deny_unknown_fields)]
@@ -219,6 +282,10 @@ pub struct ReportRoe {
     pub ordinary_roe: ReportRoeValue,
     pub adjusted_roe: ReportRoeValue,
     pub weighted_average_parent_equity_cents: ReportRoeValue,
+    /// 非经常性损益项目列示与归母扣非净利润派生（扣非 ROE 的分子来源）。
+    pub non_recurring: ReportRoeNonRecurring,
+    /// 加权平均权益事件按归属逐项列示（单体/合并可得性不同）。
+    pub equity_events: ReportRoeEquityEventBreakdown,
 }
 
 /// 科目表版本 → 行业列报口径。

@@ -93,15 +93,21 @@ const incomeColumns = object({
   operating: lines, investing: lines, financing: lines, discontinued: lines,
   ...amounts(["operating_subtotal", "investing_subtotal", "financing_subtotal", "discontinued_subtotal", "income_tax", "net_income"]),
 });
-const roeUnavailable = ["NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts", "IncompleteEquityEventHistory", "SameControlCombination", "ComparativePeriodSpecialTreatment", "UnclassifiedEquityEvent", "ConsolidatedAttributionFactsUnavailable"] as const;
+const roeUnavailable = ["NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts", "IncompleteEquityEventHistory", "SameControlCombination", "ComparativePeriodSpecialTreatment", "UnclassifiedEquityEvent", "ConsolidatedAttributionFactsUnavailable", "StandaloneHasNoMinorityInterest"] as const;
 function rational(value: unknown, path: string): void {
   const ratio = record(value, path);
   object({ numerator: (entry, entryPath) => { if (typeof entry !== "string" || !/^(0|-?[1-9]\d*)$/.test(entry)) throw new TypeError(`${entryPath} 必须是规范有符号整数字符串`); }, denominator: (entry, entryPath) => { if (typeof entry !== "string" || !/^[1-9]\d*$/.test(entry)) throw new TypeError(`${entryPath} 必须是规范正整数字符串`); } })(ratio, path);
 }
 const reportRoeValue = tagged({ Available: rational, Unavailable: object({ reason: choice(roeUnavailable) }) });
+const nonRecurringItem = object({ code: text, name: text, amount });
+const reportRoeNonRecurring = tagged({ Listed: object({ items: array(nonRecurringItem), parent_net_income_after_deduction: amount }), Unavailable: object({ reason: choice(roeUnavailable) }) });
+const equityEvent = object({ effective_on: date, kind: choice(["Increase", "Decrease", "Other"]), amount });
+const equityEventListing = tagged({ Items: array(equityEvent), Unavailable: object({ reason: choice(roeUnavailable) }) });
 const reportRoe = object({
   basis: (value, path) => { if (value !== "AttributableToOrdinaryShareholders") tagged({ Unsupported: object({ reason: choice(roeUnavailable) }) })(value, path); },
   ordinary_roe: reportRoeValue, adjusted_roe: reportRoeValue, weighted_average_parent_equity_cents: reportRoeValue,
+  non_recurring: reportRoeNonRecurring,
+  equity_events: object({ attributable_to_parent: equityEventListing, minority_interest: equityEventListing }),
 });
 const note = object({
   code: text, name: text, target: tagged({ BalanceSheet: text, Income: text }),
@@ -164,18 +170,36 @@ function validateConsistency(value: PublicReportSummary): void {
     const reason = roe.basis.Unsupported.reason;
     if (reason === "NonPositiveAverageEquity" || reason === "MissingNonRecurringIncomeFacts") throw new TypeError("WASM 公开报告.financials.roe.basis unsupported reason 不能表示具体 ROE 指标不可用");
     if ([roe.ordinary_roe, roe.adjusted_roe, roe.weighted_average_parent_equity_cents].some((value) => unavailable(value) !== reason)) throw new TypeError("WASM 公开报告.financials.roe unsupported 口径及不可用原因不一致");
+    if (!("Unavailable" in roe.non_recurring) || roe.non_recurring.Unavailable.reason !== reason) throw new TypeError("WASM 公开报告.financials.roe unsupported 口径必须使扣非列示同因不可用");
+    if ([roe.equity_events.attributable_to_parent, roe.equity_events.minority_interest].some((listing) => !("Unavailable" in listing) || listing.Unavailable.reason !== reason)) throw new TypeError("WASM 公开报告.financials.roe unsupported 口径必须使逐项归属列示同因不可用");
   } else {
     if ("Consolidated" in details.scope) throw new TypeError("WASM 公开报告.financials.roe 合并报告缺少归母权益事件明细，不支持 ROE");
-    if (unavailable(roe.adjusted_roe) !== "MissingNonRecurringIncomeFacts") throw new TypeError("WASM 公开报告.financials.roe 扣非指标缺少事实时必须明确不可用");
+    if (!("Items" in roe.equity_events.attributable_to_parent)) throw new TypeError("WASM 公开报告.financials.roe 单体归母口径必须逐项列示权益事件");
+    if (!("Unavailable" in roe.equity_events.minority_interest) || roe.equity_events.minority_interest.Unavailable.reason !== "StandaloneHasNoMinorityInterest") throw new TypeError("WASM 公开报告.financials.roe 单体报告少数股东权益事件必须显式不可用");
     if (!("Available" in roe.weighted_average_parent_equity_cents)) throw new TypeError("WASM 公开报告.financials.roe 缺少平均归母权益精确值");
     const average = roe.weighted_average_parent_equity_cents.Available;
     const averageNumerator = BigInt(average.numerator);
+    const profitCents = BigInt((income.report_period_net_income_to_parent ?? flow.net_income).replace(".", ""));
+    if (!("Listed" in roe.non_recurring)) {
+      if (roe.non_recurring.Unavailable.reason !== "MissingNonRecurringIncomeFacts") throw new TypeError("WASM 公开报告.financials.roe 非经常列示不可用时只能使用缺少事实原因");
+      if (unavailable(roe.adjusted_roe) !== "MissingNonRecurringIncomeFacts") throw new TypeError("WASM 公开报告.financials.roe 扣非指标缺少事实时必须明确不可用");
+    } else {
+      const listing = roe.non_recurring.Listed;
+      const deductedCents = profitCents - listing.items.reduce((total, item) => total + BigInt(item.amount.replace(".", "")), 0n);
+      if (BigInt(listing.parent_net_income_after_deduction.replace(".", "")) !== deductedCents) throw new TypeError("WASM 公开报告.financials.roe 扣非归母净利润与项目列示及归母净利润不勾稽");
+      if (averageNumerator <= 0n) {
+        if (unavailable(roe.adjusted_roe) !== "NonPositiveAverageEquity") throw new TypeError("WASM 公开报告.financials.roe 非正平均权益下扣非 ROE 必须明确不可用");
+      } else {
+        if (!("Available" in roe.adjusted_roe)) throw new TypeError("WASM 公开报告.financials.roe 扣非事实可得且正平均权益下扣非 ROE 必须可用");
+        const adjusted = roe.adjusted_roe.Available;
+        if (BigInt(adjusted.numerator) * averageNumerator !== deductedCents * BigInt(average.denominator) * BigInt(adjusted.denominator)) throw new TypeError("WASM 公开报告.financials.roe 扣非 ROE 与扣非归母净利润及平均归母权益不一致");
+      }
+    }
     if (averageNumerator <= 0n) {
       if (unavailable(roe.ordinary_roe) !== "NonPositiveAverageEquity") throw new TypeError("WASM 公开报告.financials.roe 非正平均权益必须明确不可用");
     } else {
       if (!("Available" in roe.ordinary_roe)) throw new TypeError("WASM 公开报告.financials.roe 正平均权益下普通 ROE 必须可用");
       const ordinary = roe.ordinary_roe.Available;
-      const profitCents = BigInt((income.report_period_net_income_to_parent ?? flow.net_income).replace(".", ""));
       if (BigInt(ordinary.numerator) * averageNumerator !== profitCents * BigInt(average.denominator) * BigInt(ordinary.denominator)) throw new TypeError("WASM 公开报告.financials.roe 普通 ROE 与报告窗口利润及平均归母权益不一致");
     }
   }

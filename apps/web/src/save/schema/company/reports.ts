@@ -18,9 +18,15 @@ export type Scope = { readonly Standalone: string } | { readonly Consolidated: s
 export type Comparative<T> = { readonly Available: T } | { readonly Unavailable: { readonly reason: "NoPriorYearHistory" } }
 export type LineAmount = readonly [(typeof balanceLines)[number] | (typeof incomeLines)[number], DecimalAmount]
 export type IncomeColumns = { readonly operating: readonly LineAmount[]; readonly operating_subtotal: DecimalAmount; readonly investing: readonly LineAmount[]; readonly investing_subtotal: DecimalAmount; readonly financing: readonly LineAmount[]; readonly financing_subtotal: DecimalAmount; readonly discontinued: readonly LineAmount[]; readonly discontinued_subtotal: DecimalAmount; readonly income_tax: DecimalAmount; readonly net_income: DecimalAmount }
-export type ReportRoeUnavailable = "NonPositiveAverageEquity" | "MissingNonRecurringIncomeFacts" | "IncompleteEquityEventHistory" | "SameControlCombination" | "ComparativePeriodSpecialTreatment" | "UnclassifiedEquityEvent" | "ConsolidatedAttributionFactsUnavailable"
+export type ReportRoeUnavailable = "NonPositiveAverageEquity" | "MissingNonRecurringIncomeFacts" | "IncompleteEquityEventHistory" | "SameControlCombination" | "ComparativePeriodSpecialTreatment" | "UnclassifiedEquityEvent" | "ConsolidatedAttributionFactsUnavailable" | "StandaloneHasNoMinorityInterest"
 export type ReportRoeValue = { readonly Available: { readonly numerator: string; readonly denominator: string } } | { readonly Unavailable: { readonly reason: ReportRoeUnavailable } }
-export type ReportRoe = { readonly basis: "AttributableToOrdinaryShareholders" | { readonly Unsupported: { readonly reason: ReportRoeUnavailable } }; readonly ordinary_roe: ReportRoeValue; readonly adjusted_roe: ReportRoeValue; readonly weighted_average_parent_equity_cents: ReportRoeValue }
+export type ReportRoeNonRecurringItem = { readonly code: string; readonly name: string; readonly amount: DecimalAmount }
+export type ReportRoeNonRecurring = { readonly Listed: { readonly items: readonly ReportRoeNonRecurringItem[]; readonly parent_net_income_after_deduction: DecimalAmount } } | { readonly Unavailable: { readonly reason: ReportRoeUnavailable } }
+export type ReportRoeEquityEventKind = "Increase" | "Decrease" | "Other"
+export type ReportRoeEquityEvent = { readonly effective_on: string; readonly kind: ReportRoeEquityEventKind; readonly amount: DecimalAmount }
+export type ReportRoeEquityEventListing = { readonly Items: readonly ReportRoeEquityEvent[] } | { readonly Unavailable: { readonly reason: ReportRoeUnavailable } }
+export type ReportRoeEquityEventBreakdown = { readonly attributable_to_parent: ReportRoeEquityEventListing; readonly minority_interest: ReportRoeEquityEventListing }
+export type ReportRoe = { readonly basis: "AttributableToOrdinaryShareholders" | { readonly Unsupported: { readonly reason: ReportRoeUnavailable } }; readonly ordinary_roe: ReportRoeValue; readonly adjusted_roe: ReportRoeValue; readonly weighted_average_parent_equity_cents: ReportRoeValue; readonly non_recurring: ReportRoeNonRecurring; readonly equity_events: ReportRoeEquityEventBreakdown }
 export type BalanceSheet = { readonly asset_lines: readonly LineAmount[]; readonly total_assets: DecimalAmount; readonly liability_lines: readonly LineAmount[]; readonly total_liabilities: DecimalAmount; readonly equity_lines: readonly LineAmount[]; readonly total_equity: DecimalAmount; readonly equity_to_parent: DecimalAmount; readonly liabilities_and_equity: DecimalAmount; readonly closing_cash: DecimalAmount; readonly prior_year_end: Comparative<readonly LineAmount[]> }
 export type CashFlow = { readonly operating: DecimalAmount; readonly investing: DecimalAmount; readonly financing: DecimalAmount; readonly net_change: DecimalAmount; readonly opening_cash: DecimalAmount; readonly closing_cash: DecimalAmount; readonly indirect: readonly { readonly label: string; readonly amount: DecimalAmount }[] }
 export type Equity = { readonly opening_parent: DecimalAmount; readonly net_income: DecimalAmount; readonly other_comprehensive: DecimalAmount; readonly capital_contributions: DecimalAmount; readonly distributions: DecimalAmount; readonly closing_parent: DecimalAmount; readonly opening_minority: DecimalAmount | null; readonly minority_net_income: DecimalAmount | null; readonly closing_minority: DecimalAmount | null }
@@ -41,7 +47,7 @@ function scope(value: unknown, path: string): Scope { const [tag, body] = varian
 function line(value: unknown, path: string, allowed: readonly string[]): LineAmount { const item = array(value, path); if (item.length !== 2) throw new SaveSchemaError(path, "必须是二元组"); return [oneOf(item[0], `${path}[0]`, allowed) as LineAmount[0], amount(item[1], `${path}[1]`)] }
 function comparative<T>(value: unknown, path: string, parser: (item: unknown, itemPath: string) => T): Comparative<T> { const [tag, body] = variant(value, path); if (tag === "Available") return { Available: parser(body, `${path}.Available`) }; if (tag === "Unavailable") { const item = record(body, `${path}.Unavailable`); exact(item, ["reason"], `${path}.Unavailable`); return { Unavailable: { reason: oneOf(item.reason, `${path}.Unavailable.reason`, ["NoPriorYearHistory"] as const) } } }; throw new SaveSchemaError(path, "包含无效比较项") }
 function parseColumns(value: unknown, path: string): IncomeColumns { const item = record(value, path); exact(item, ["operating", "operating_subtotal", "investing", "investing_subtotal", "financing", "financing_subtotal", "discontinued", "discontinued_subtotal", "income_tax", "net_income"], path); const lines = (name: "operating" | "investing" | "financing" | "discontinued") => array(item[name], `${path}.${name}`).map((entry, index) => line(entry, `${path}.${name}[${index}]`, incomeLines)); return { operating: lines("operating"), operating_subtotal: amount(item.operating_subtotal, `${path}.operating_subtotal`), investing: lines("investing"), investing_subtotal: amount(item.investing_subtotal, `${path}.investing_subtotal`), financing: lines("financing"), financing_subtotal: amount(item.financing_subtotal, `${path}.financing_subtotal`), discontinued: lines("discontinued"), discontinued_subtotal: amount(item.discontinued_subtotal, `${path}.discontinued_subtotal`), income_tax: amount(item.income_tax, `${path}.income_tax`), net_income: amount(item.net_income, `${path}.net_income`) } }
-const roeUnavailable = ["NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts", "IncompleteEquityEventHistory", "SameControlCombination", "ComparativePeriodSpecialTreatment", "UnclassifiedEquityEvent", "ConsolidatedAttributionFactsUnavailable"] as const
+const roeUnavailable = ["NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts", "IncompleteEquityEventHistory", "SameControlCombination", "ComparativePeriodSpecialTreatment", "UnclassifiedEquityEvent", "ConsolidatedAttributionFactsUnavailable", "StandaloneHasNoMinorityInterest"] as const
 function parseReportRoeValue(value: unknown, path: string): ReportRoeValue {
   const [tag, body] = variant(value, path)
   if (tag === "Available") {
@@ -60,9 +66,44 @@ function parseReportRoeValue(value: unknown, path: string): ReportRoeValue {
   }
   throw new SaveSchemaError(path, "包含无效 ROE 可用值变体")
 }
+function parseNonRecurring(value: unknown, path: string): ReportRoeNonRecurring {
+  const [tag, body] = variant(value, path)
+  if (tag === "Listed") {
+    const listing = record(body, `${path}.Listed`)
+    exact(listing, ["items", "parent_net_income_after_deduction"], `${path}.Listed`)
+    return { Listed: { items: array(listing.items, `${path}.Listed.items`).map((entry, index) => {
+      const item = record(entry, `${path}.Listed.items[${index}]`)
+      exact(item, ["code", "name", "amount"], `${path}.Listed.items[${index}]`)
+      return { code: string(item.code, `${path}.Listed.items[${index}].code`), name: string(item.name, `${path}.Listed.items[${index}].name`), amount: amount(item.amount, `${path}.Listed.items[${index}].amount`) }
+    }), parent_net_income_after_deduction: amount(listing.parent_net_income_after_deduction, `${path}.Listed.parent_net_income_after_deduction`) } }
+  }
+  if (tag === "Unavailable") {
+    const unavailable = record(body, `${path}.Unavailable`)
+    exact(unavailable, ["reason"], `${path}.Unavailable`)
+    return { Unavailable: { reason: oneOf(unavailable.reason, `${path}.Unavailable.reason`, roeUnavailable) } }
+  }
+  throw new SaveSchemaError(path, "包含无效非经常性损益列示变体")
+}
+const equityEventKinds = ["Increase", "Decrease", "Other"] as const
+function parseEquityEventListing(value: unknown, path: string): ReportRoeEquityEventListing {
+  const [tag, body] = variant(value, path)
+  if (tag === "Items") {
+    return { Items: array(body, `${path}.Items`).map((entry, index) => {
+      const event = record(entry, `${path}.Items[${index}]`)
+      exact(event, ["effective_on", "kind", "amount"], `${path}.Items[${index}]`)
+      return { effective_on: civilDate(event.effective_on, `${path}.Items[${index}].effective_on`), kind: oneOf(event.kind, `${path}.Items[${index}].kind`, equityEventKinds), amount: amount(event.amount, `${path}.Items[${index}].amount`) }
+    }) }
+  }
+  if (tag === "Unavailable") {
+    const unavailable = record(body, `${path}.Unavailable`)
+    exact(unavailable, ["reason"], `${path}.Unavailable`)
+    return { Unavailable: { reason: oneOf(unavailable.reason, `${path}.Unavailable.reason`, roeUnavailable) } }
+  }
+  throw new SaveSchemaError(path, "包含无效权益事件列示变体")
+}
 function parseReportRoe(value: unknown, path: string): ReportRoe {
   const item = record(value, path)
-  exact(item, ["basis", "ordinary_roe", "adjusted_roe", "weighted_average_parent_equity_cents"], path)
+  exact(item, ["basis", "ordinary_roe", "adjusted_roe", "weighted_average_parent_equity_cents", "non_recurring", "equity_events"], path)
   let basis: ReportRoe["basis"]
   if (item.basis === "AttributableToOrdinaryShareholders") basis = item.basis
   else {
@@ -74,7 +115,9 @@ function parseReportRoe(value: unknown, path: string): ReportRoe {
     if (reason === "NonPositiveAverageEquity" || reason === "MissingNonRecurringIncomeFacts") throw new SaveSchemaError(`${path}.basis.Unsupported.reason`, "该原因只可用于具体 ROE 指标，不可用于 unsupported basis")
     basis = { Unsupported: { reason } }
   }
-  return { basis, ordinary_roe: parseReportRoeValue(item.ordinary_roe, `${path}.ordinary_roe`), adjusted_roe: parseReportRoeValue(item.adjusted_roe, `${path}.adjusted_roe`), weighted_average_parent_equity_cents: parseReportRoeValue(item.weighted_average_parent_equity_cents, `${path}.weighted_average_parent_equity_cents`) }
+  const events = record(item.equity_events, `${path}.equity_events`)
+  exact(events, ["attributable_to_parent", "minority_interest"], `${path}.equity_events`)
+  return { basis, ordinary_roe: parseReportRoeValue(item.ordinary_roe, `${path}.ordinary_roe`), adjusted_roe: parseReportRoeValue(item.adjusted_roe, `${path}.adjusted_roe`), weighted_average_parent_equity_cents: parseReportRoeValue(item.weighted_average_parent_equity_cents, `${path}.weighted_average_parent_equity_cents`), non_recurring: parseNonRecurring(item.non_recurring, `${path}.non_recurring`), equity_events: { attributable_to_parent: parseEquityEventListing(events.attributable_to_parent, `${path}.equity_events.attributable_to_parent`), minority_interest: parseEquityEventListing(events.minority_interest, `${path}.equity_events.minority_interest`) } }
 }
 function validateReportRoe(report: ReportSet, path: string): void {
   const [windowStart, windowEnd] = report.window
@@ -105,22 +148,44 @@ function validateReportRoe(report: ReportSet, path: string): void {
     for (const [key, value] of [["ordinary_roe", roe.ordinary_roe], ["adjusted_roe", roe.adjusted_roe], ["weighted_average_parent_equity_cents", roe.weighted_average_parent_equity_cents]] as const) {
       if (!("Unavailable" in value) || value.Unavailable.reason !== reason) throw new SaveSchemaError(`${path}.roe.${key}`, "unsupported basis必须使所有 ROE 指标使用相同不可用原因")
     }
+    if (!("Unavailable" in roe.non_recurring) || roe.non_recurring.Unavailable.reason !== reason) throw new SaveSchemaError(`${path}.roe.non_recurring`, "unsupported basis必须使扣非列示使用相同不可用原因")
+    for (const [key, listing] of [["attributable_to_parent", roe.equity_events.attributable_to_parent], ["minority_interest", roe.equity_events.minority_interest]] as const) {
+      if (!("Unavailable" in listing) || listing.Unavailable.reason !== reason) throw new SaveSchemaError(`${path}.roe.equity_events.${key}`, "unsupported basis必须使逐项归属列示使用相同不可用原因")
+    }
     return
   }
   if (consolidated) throw new SaveSchemaError(`${path}.roe.basis`, "合并报告缺少归母权益事件明细，不支持 ROE")
+  if (!("Items" in roe.equity_events.attributable_to_parent)) throw new SaveSchemaError(`${path}.roe.equity_events.attributable_to_parent`, "单体归母口径必须逐项列示归属母公司权益事件")
+  if (!("Unavailable" in roe.equity_events.minority_interest) || roe.equity_events.minority_interest.Unavailable.reason !== "StandaloneHasNoMinorityInterest") throw new SaveSchemaError(`${path}.roe.equity_events.minority_interest`, "单体报告的少数股东权益事件必须显式不可用，不填零")
   const average = roe.weighted_average_parent_equity_cents
   if (!("Available" in average)) throw new SaveSchemaError(`${path}.roe.weighted_average_parent_equity_cents`, "归母口径必须保留平均归母权益精确值")
   const averageNumerator = BigInt(average.Available.numerator)
   const averageDenominator = BigInt(average.Available.denominator)
+  const profitCents = BigInt(reportPeriodParentNetIncome.replace(".", ""))
+  if (!("Listed" in roe.non_recurring)) {
+    if (roe.non_recurring.Unavailable.reason !== "MissingNonRecurringIncomeFacts") throw new SaveSchemaError(`${path}.roe.non_recurring`, "非经常列示不可用时只能使用缺少非经常损益事实原因")
+    if (!("Unavailable" in roe.adjusted_roe) || roe.adjusted_roe.Unavailable.reason !== "MissingNonRecurringIncomeFacts") throw new SaveSchemaError(`${path}.roe.adjusted_roe`, "缺少扣非利润事实时必须明确不可用")
+  } else {
+    const listing = roe.non_recurring.Listed
+    const itemTotalCents = listing.items.reduce((total, item) => total + BigInt(item.amount.replace(".", "")), 0n)
+    const expectedDeductedCents = profitCents - itemTotalCents
+    if (BigInt(listing.parent_net_income_after_deduction.replace(".", "")) !== expectedDeductedCents) throw new SaveSchemaError(`${path}.roe.non_recurring`, "扣非归母净利润必须与项目列示及归母净利润勾稽")
+    const deductedCents = expectedDeductedCents
+    if (averageNumerator <= 0n) {
+      if (!("Unavailable" in roe.adjusted_roe) || roe.adjusted_roe.Unavailable.reason !== "NonPositiveAverageEquity") throw new SaveSchemaError(`${path}.roe.adjusted_roe`, "平均权益非正时扣非 ROE 必须明确不可用")
+    } else {
+      if (!("Available" in roe.adjusted_roe)) throw new SaveSchemaError(`${path}.roe.adjusted_roe`, "扣非事实可得且平均权益为正时扣非 ROE 必须可用")
+      const ratio = roe.adjusted_roe.Available
+      if (BigInt(ratio.numerator) * averageNumerator !== deductedCents * averageDenominator * BigInt(ratio.denominator)) throw new SaveSchemaError(`${path}.roe.adjusted_roe`, "扣非 ROE 必须与扣非归母净利润和平均权益一致")
+    }
+  }
   if (averageNumerator <= 0n) {
     if (!("Unavailable" in roe.ordinary_roe) || roe.ordinary_roe.Unavailable.reason !== "NonPositiveAverageEquity") throw new SaveSchemaError(`${path}.roe.ordinary_roe`, "平均权益非正时普通 ROE 必须明确不可用")
   } else {
     if (!("Available" in roe.ordinary_roe)) throw new SaveSchemaError(`${path}.roe.ordinary_roe`, "平均权益为正时普通 ROE 必须可用")
-    const profitCents = BigInt(reportPeriodParentNetIncome.replace(".", ""))
     const ratio = roe.ordinary_roe.Available
     if (BigInt(ratio.numerator) * averageNumerator !== profitCents * averageDenominator * BigInt(ratio.denominator)) throw new SaveSchemaError(`${path}.roe.ordinary_roe`, "必须与同期间同归属净利润和平均权益一致")
   }
-  if (!("Unavailable" in roe.adjusted_roe) || roe.adjusted_roe.Unavailable.reason !== "MissingNonRecurringIncomeFacts") throw new SaveSchemaError(`${path}.roe.adjusted_roe`, "缺少扣非利润事实时必须明确不可用")
 }
 function parseNotes(value: unknown, path: string): Notes { const item = record(value, path); exact(item, ["items", "consolidation_split_items"], path); const note = (entry: unknown, entryPath: string): NoteItem => { const value = record(entry, entryPath); exact(value, ["code", "name", "target", "opening", "movement", "ytd_movement", "closing"], entryPath); const [tag, body] = variant(value.target, `${entryPath}.target`); const target = tag === "BalanceSheet" ? { BalanceSheet: oneOf(body, `${entryPath}.target.BalanceSheet`, balanceLines) } : tag === "Income" ? { Income: oneOf(body, `${entryPath}.target.Income`, incomeLines) } : (() => { throw new SaveSchemaError(`${entryPath}.target`, "包含无效附注目标") })(); return { code: string(value.code, `${entryPath}.code`), name: string(value.name, `${entryPath}.name`), target, opening: amount(value.opening, `${entryPath}.opening`), movement: amount(value.movement, `${entryPath}.movement`), ytd_movement: amount(value.ytd_movement, `${entryPath}.ytd_movement`), closing: amount(value.closing, `${entryPath}.closing`) } }; return { items: array(item.items, `${path}.items`).map((entry, index) => note(entry, `${path}.items[${index}]`)), consolidation_split_items: array(item.consolidation_split_items, `${path}.consolidation_split_items`).map((entry, index) => note(entry, `${path}.consolidation_split_items[${index}]`)) } }
 

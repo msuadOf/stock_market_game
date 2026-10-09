@@ -405,14 +405,31 @@
         }
       },
       "adjusted_roe": {
-        "Unavailable": {
-          "reason": "MissingNonRecurringIncomeFacts"
+        "Available": {
+          "numerator": "0",
+          "denominator": "1"
         }
       },
       "weighted_average_parent_equity_cents": {
         "Available": {
           "numerator": "5404319552844595806",
           "denominator": "6"
+        }
+      },
+      "non_recurring": {
+        "Listed": {
+          "items": [],
+          "parent_net_income_after_deduction": "0.00"
+        }
+      },
+      "equity_events": {
+        "attributable_to_parent": {
+          "Items": []
+        },
+        "minority_interest": {
+          "Unavailable": {
+            "reason": "StandaloneHasNoMinorityInterest"
+          }
         }
       }
     }

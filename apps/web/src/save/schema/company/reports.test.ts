@@ -21,7 +21,7 @@ const report = {
     prior_year_end: { Available: [["SimpleDividendSettlementAdjustment", "0.00"], ["StatutoryReserve", "0.00"], ["RetainedEarnings", "0.00"]] },
   },
   income: { report_period: columns(), report_period_net_income_to_parent: null, quarter: columns(), cumulative: columns(), prior_year: { Unavailable: { reason: "NoPriorYearHistory" } }, minority_net_income: null, net_income_to_parent: null },
-  roe: { basis: "AttributableToOrdinaryShareholders", ordinary_roe: { Available: { numerator: "0", denominator: "1" } }, adjusted_roe: unavailable("MissingNonRecurringIncomeFacts"), weighted_average_parent_equity_cents: { Available: { numerator: "1", denominator: "1" } } },
+  roe: { basis: "AttributableToOrdinaryShareholders", ordinary_roe: { Available: { numerator: "0", denominator: "1" } }, adjusted_roe: { Available: { numerator: "0", denominator: "1" } }, weighted_average_parent_equity_cents: { Available: { numerator: "1", denominator: "1" } }, non_recurring: { Listed: { items: [], parent_net_income_after_deduction: "0.00" } }, equity_events: { attributable_to_parent: { Items: [] }, minority_interest: unavailable("StandaloneHasNoMinorityInterest") } },
   cash_flow: { operating: "0.00", investing: "0.00", financing: "0.00", net_change: "0.00", opening_cash: "0.00", closing_cash: "0.00", indirect: [] },
   equity: { opening_parent: "0.00", net_income: "0.00", other_comprehensive: "0.00", capital_contributions: "0.00", distributions: "0.00", closing_parent: "30.00", opening_minority: null, minority_net_income: null, closing_minority: null },
   notes: {
@@ -52,7 +52,7 @@ test("资产负债表行只能进入 Rust 定义的对应区，不接受未知�
 })
 
 test("ReportSet 严格解析必需的窗口利润与 ROE 精确值，不默认缺字段", { timeout: 10000 }, () => {
-  const valid = { ...report, income: { ...report.income, report_period: { ...columns(), operating_subtotal: "12.00", net_income: "12.00" } }, equity: { ...report.equity, net_income: "12.00" }, roe: { basis: "AttributableToOrdinaryShareholders", ordinary_roe: { Available: { numerator: "1200", denominator: "5000" } }, adjusted_roe: unavailable("MissingNonRecurringIncomeFacts"), weighted_average_parent_equity_cents: { Available: { numerator: "5000", denominator: "1" } } } }
+  const valid = { ...report, income: { ...report.income, report_period: { ...columns(), operating_subtotal: "12.00", net_income: "12.00" } }, equity: { ...report.equity, net_income: "12.00" }, roe: { basis: "AttributableToOrdinaryShareholders", ordinary_roe: { Available: { numerator: "1200", denominator: "5000" } }, adjusted_roe: { Available: { numerator: "1200", denominator: "5000" } }, weighted_average_parent_equity_cents: { Available: { numerator: "5000", denominator: "1" } }, non_recurring: { Listed: { items: [], parent_net_income_after_deduction: "12.00" } }, equity_events: { attributable_to_parent: { Items: [] }, minority_interest: unavailable("StandaloneHasNoMinorityInterest") } } }
   assert.deepEqual(parseReportSet(valid, "report"), valid)
   const { roe: _roe, ...missingRoe } = valid
   const { report_period: _reportPeriod, ...missingPeriodIncome } = valid.income
@@ -72,6 +72,36 @@ test("ReportSet 严格解析必需的窗口利润与 ROE 精确值，不默认�
   assert.throws(() => parseReportSet({ ...valid, income: { ...valid.income, report_period: { ...valid.income.report_period, net_income: "11.00" } } }, "report"), /report_period.net_income/)
 })
 
+test("ROE 扣非列示与逐项归属事件严格解析并勾稽，不默认缺字段不填零", { timeout: 10000 }, () => {
+  const base = { ...report, income: { ...report.income, report_period: { ...columns(), operating_subtotal: "20.00", net_income: "20.00" } }, equity: { ...report.equity, net_income: "20.00" } }
+  const deductedRoe = { basis: "AttributableToOrdinaryShareholders" as const, ordinary_roe: { Available: { numerator: "2000", denominator: "5000" } }, adjusted_roe: { Available: { numerator: "1600", denominator: "5000" } }, weighted_average_parent_equity_cents: { Available: { numerator: "5000", denominator: "1" } }, non_recurring: { Listed: { items: [{ code: "non_operating_disposal", name: "非流动资产处置损益", amount: "4.00" }], parent_net_income_after_deduction: "16.00" } }, equity_events: { attributable_to_parent: { Items: [{ effective_on: "2030-01-15", kind: "Decrease", amount: "10.00" }] }, minority_interest: unavailable("StandaloneHasNoMinorityInterest") } }
+  const valid = { ...base, roe: deductedRoe }
+  assert.deepEqual(parseReportSet(valid, "report"), valid)
+
+  // 缺非经常列示 / 缺逐项归属列示 → 拒绝（不默认）。
+  const stripped = { ...deductedRoe }
+  delete (stripped as Record<string, unknown>).non_recurring
+  assert.throws(() => parseReportSet({ ...base, roe: stripped }, "report"), /non_recurring/)
+  const strippedEvents = { ...deductedRoe }
+  delete (strippedEvents as Record<string, unknown>).equity_events
+  assert.throws(() => parseReportSet({ ...base, roe: strippedEvents }, "report"), /equity_events/)
+
+  // 归母扣非与项目列示不勾稽 → 拒绝。
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, non_recurring: { Listed: { items: deductedRoe.non_recurring.Listed.items, parent_net_income_after_deduction: "15.00" } } } }, "report"), /勾稽/)
+  // 扣非 ROE 与扣非金额/平均权益不勾稽 → 拒绝。
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, adjusted_roe: { Available: { numerator: "1500", denominator: "5000" } } } }, "report"), /扣非/)
+  // 单体报告把少数股东事件列示成空 Items（填零）→ 拒绝。
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, equity_events: { ...deductedRoe.equity_events, minority_interest: { Items: [] } } } }, "report"), /少数股东/)
+  // 单体报告归母事件列示不可用 → 拒绝。
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, equity_events: { attributable_to_parent: unavailable("StandaloneHasNoMinorityInterest"), minority_interest: unavailable("StandaloneHasNoMinorityInterest") } } }, "report"), /归母/)
+  // 非经常列示不可用时原因只能用缺少事实，且扣非 ROE 同因不可用。
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, non_recurring: unavailable("UnclassifiedEquityEvent") } }, "report"), /非经常/)
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, non_recurring: unavailable("MissingNonRecurringIncomeFacts") } }, "report"), /扣非/)
+  // 事件生效日/类别/金额非法 → 拒绝。
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, equity_events: { ...deductedRoe.equity_events, attributable_to_parent: { Items: [{ effective_on: "2030-13-01", kind: "Decrease", amount: "10.00" }] } } } }, "report"), /effective_on/)
+  assert.throws(() => parseReportSet({ ...base, roe: { ...deductedRoe, equity_events: { ...deductedRoe.equity_events, attributable_to_parent: { Items: [{ effective_on: "2030-01-15", kind: "Sudden", amount: "10.00" }] } } } }, "report"), /kind/)
+})
+
 test("ReportSet 归母窗口净利润必须严格按范围校验并勾稽 ROE 与权益表", { timeout: 10000 }, () => {
   const consolidated = {
     ...report,
@@ -80,12 +110,12 @@ test("ReportSet 归母窗口净利润必须严格按范围校验并勾稽 ROE �
     scope: { Consolidated: "C-600101" },
     income: { ...report.income, report_period: { ...columns(), operating_subtotal: "12.00", net_income: "12.00" }, quarter: { ...columns(), operating_subtotal: "999.00", net_income: "999.00" }, cumulative: { ...columns(), operating_subtotal: "999.00", net_income: "999.00" }, report_period_net_income_to_parent: "12.00", net_income_to_parent: "999.00" },
     equity: { ...report.equity, net_income: "12.00" },
-    roe: { basis: { Unsupported: { reason: "ConsolidatedAttributionFactsUnavailable" } }, ordinary_roe: unavailable("ConsolidatedAttributionFactsUnavailable"), adjusted_roe: unavailable("ConsolidatedAttributionFactsUnavailable"), weighted_average_parent_equity_cents: unavailable("ConsolidatedAttributionFactsUnavailable") },
+    roe: { basis: { Unsupported: { reason: "ConsolidatedAttributionFactsUnavailable" } }, ordinary_roe: unavailable("ConsolidatedAttributionFactsUnavailable"), adjusted_roe: unavailable("ConsolidatedAttributionFactsUnavailable"), weighted_average_parent_equity_cents: unavailable("ConsolidatedAttributionFactsUnavailable"), non_recurring: unavailable("ConsolidatedAttributionFactsUnavailable"), equity_events: { attributable_to_parent: unavailable("ConsolidatedAttributionFactsUnavailable"), minority_interest: unavailable("ConsolidatedAttributionFactsUnavailable") } },
   }
   assert.deepEqual(parseReportSet(consolidated, "report"), consolidated)
   assert.throws(() => parseReportSet({ ...report, income: { ...report.income, report_period_net_income_to_parent: "0.00" } }, "report"), /报告范围一致/)
   assert.throws(() => parseReportSet({ ...consolidated, income: { ...consolidated.income, report_period_net_income_to_parent: null } }, "report"), /报告范围一致/)
-  const forgedAvailableRoe = { basis: "AttributableToOrdinaryShareholders", ordinary_roe: { Available: { numerator: "1200", denominator: "1" } }, adjusted_roe: unavailable("MissingNonRecurringIncomeFacts"), weighted_average_parent_equity_cents: { Available: { numerator: "1", denominator: "1" } } }
+  const forgedAvailableRoe = { basis: "AttributableToOrdinaryShareholders", ordinary_roe: { Available: { numerator: "1200", denominator: "1" } }, adjusted_roe: { Available: { numerator: "1200", denominator: "1" } }, weighted_average_parent_equity_cents: { Available: { numerator: "1", denominator: "1" } }, non_recurring: { Listed: { items: [], parent_net_income_after_deduction: "12.00" } }, equity_events: { attributable_to_parent: { Items: [] }, minority_interest: unavailable("StandaloneHasNoMinorityInterest") } }
   assert.throws(() => parseReportSet({ ...consolidated, roe: forgedAvailableRoe }, "report"), /合并报告.*不支持 ROE/)
   assert.throws(() => parseReportSet({ ...consolidated, equity: { ...consolidated.equity, net_income: "11.00" } }, "report"), /equity.net_income.*同窗口归属/)
 })

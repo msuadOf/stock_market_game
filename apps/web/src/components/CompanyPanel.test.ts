@@ -56,22 +56,32 @@ test("ROE 使用精确有理数格式化并明确展示不支持的口径和缺�
     ordinary_roe: { Available: { numerator: "8800", denominator: "104400" } },
     adjusted_roe: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } },
     weighted_average_parent_equity_cents: { Unavailable: { reason: "IncompleteEquityEventHistory" } },
+    non_recurring: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } },
+    equity_events: { attributable_to_parent: { Items: [] }, minority_interest: { Unavailable: { reason: "StandaloneHasNoMinorityInterest" } } },
   }), [
     { label: "ROE 口径", value: "归属于普通股股东", unavailable: false },
     { label: "加权平均净资产收益率（归母净利润）", value: "8.43%", unavailable: false },
     { label: "加权平均净资产收益率（扣非归母净利润）", value: "不可用：缺少扣非归母利润事实", unavailable: true },
+    { label: "扣除非经常性损益后归母净利润", value: "不可用：缺少扣非归母利润事实", unavailable: true },
+    { label: "非经常性损益项目", value: "不可用：缺少扣非归母利润事实", unavailable: true },
+    { label: "归属母公司权益事件（逐项）", value: "0 项", unavailable: false },
+    { label: "少数股东权益事件（逐项）", value: "单体报告无少数股东权益事件", unavailable: true },
   ]);
   assert.equal(reportRoeIndicators({
     basis: { Unsupported: { reason: "SameControlCombination" } },
     ordinary_roe: { Unavailable: { reason: "SameControlCombination" } },
     adjusted_roe: { Unavailable: { reason: "SameControlCombination" } },
     weighted_average_parent_equity_cents: { Unavailable: { reason: "SameControlCombination" } },
+    non_recurring: { Unavailable: { reason: "SameControlCombination" } },
+    equity_events: { attributable_to_parent: { Unavailable: { reason: "SameControlCombination" } }, minority_interest: { Unavailable: { reason: "SameControlCombination" } } },
   })[0]?.value, "不可用：同一控制下企业合并特殊处理尚不支持");
   assert.equal(reportRoeIndicators({
     basis: "AttributableToOrdinaryShareholders",
     ordinary_roe: { Available: { numerator: "1", denominator: "20000" } },
     adjusted_roe: { Unavailable: { reason: "NonPositiveAverageEquity" } },
     weighted_average_parent_equity_cents: { Unavailable: { reason: "NonPositiveAverageEquity" } },
+    non_recurring: { Listed: { items: [], parent_net_income_after_deduction: "0.00" } },
+    equity_events: { attributable_to_parent: { Items: [] }, minority_interest: { Unavailable: { reason: "StandaloneHasNoMinorityInterest" } } },
   })[1]?.value, "0.00%");
 });
 

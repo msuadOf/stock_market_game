@@ -61,7 +61,7 @@ fn report(period: DisclosureReportPeriod) -> DisclosureRoeInput {
         },
         equity_events: vec![],
         equity_event_history_complete: true,
-        same_control_combination: false,
+        same_control_combinations: vec![],
         comparative_period: false,
     }
 }
@@ -143,14 +143,73 @@ fn rejects_total_consolidated_income_mixed_with_parent_equity_basis() {
 }
 
 #[test]
-fn refuses_same_control_and_comparative_special_rules_explicitly() {
-    let mut input = report(full_year());
-    input.same_control_combination = true;
-    assert_eq!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::Unsupported(DisclosureRoeUnsupported::SameControlCombination)));
-
+fn refuses_comparative_special_rules_explicitly() {
+    // 比较期间特殊处理需要比较期事实输入模型，repo 未登记 → 显式不支持。
     let mut input = report(full_year());
     input.comparative_period = true;
     assert_eq!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::Unsupported(DisclosureRoeUnsupported::ComparativePeriodSpecialTreatment)));
+}
+
+#[test]
+fn same_control_combined_assets_weight_from_period_start_for_ordinary_roe() {
+    // 规则9第4条已登记条文：报告期普通 ROE 被合并方净资产自报告期初加权。
+    let mut input = report(full_year());
+    input.same_control_combinations.push(SameControlCombination {
+        period: full_year(),
+        scope: scope(),
+        attribution: attribution(),
+        combined_on: date(2030, 4, 1),
+        combined_net_assets: amount(48_000),
+    });
+
+    let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
+        panic!("同一控制报告期路径已按已登记条文实现");
+    };
+    // 普通分母：(100_000×12 + 48_000×12)×2 + 24_000×12 = 3_840_000，除 24。
+    assert_eq!(result.weighted_average_parent_equity_cents, ratio(3_840_000, 24));
+    assert_eq!(result.ordinary_roe, DisclosureRoeValue::Available(ratio(576_000, 3_840_000)));
+}
+
+#[test]
+fn same_control_combined_assets_weight_from_month_after_combination_for_adjusted_roe() {
+    // 规则9第4条已登记条文：报告期扣非 ROE 被合并方净资产自合并日次月起加权。
+    let mut input = report(full_year());
+    input.same_control_combinations.push(SameControlCombination {
+        period: full_year(),
+        scope: scope(),
+        attribution: attribution(),
+        combined_on: date(2030, 4, 1),
+        combined_net_assets: amount(48_000),
+    });
+
+    let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&input).unwrap() else {
+        panic!("同一控制报告期路径已按已登记条文实现");
+    };
+    // 4月1日合并 → 次月起计权 8 个月：(100_000×12 + 48_000×8)×2 + 24_000×12 = 3_456_000。
+    assert_eq!(result.adjusted_weighted_average_parent_equity_cents, ratio(3_456_000, 24));
+    assert_eq!(result.adjusted_roe, DisclosureRoeValue::Available(ratio(288_000, 3_456_000)));
+}
+
+#[test]
+fn same_control_combination_outside_the_report_period_is_rejected() {
+    let mut input = report(full_year());
+    input.same_control_combinations.push(SameControlCombination {
+        period: full_year(),
+        scope: scope(),
+        attribution: attribution(),
+        combined_on: date(2029, 12, 31),
+        combined_net_assets: amount(48_000),
+    });
+    assert!(matches!(calculate_disclosure_roe(&input), Err(DisclosureRoeError::EventOutsidePeriod { .. })));
+}
+
+#[test]
+fn denominators_coincide_without_same_control_combinations() {
+    // 无同一控制事项时两个公式分母一致（既有一般公式行为不回归）。
+    let DisclosureRoeOutcome::Available(result) = calculate_disclosure_roe(&report(full_year())).unwrap() else {
+        panic!("positive average equity is available")
+    };
+    assert_eq!(result.weighted_average_parent_equity_cents, result.adjusted_weighted_average_parent_equity_cents);
 }
 
 #[test]
@@ -164,6 +223,7 @@ fn zero_profit_with_nonpositive_average_equity_is_unavailable() {
         ordinary_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
         adjusted_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
         weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
+        adjusted_weighted_average_parent_equity_cents: ratio(-2_400_000, 24),
     }));
 }
 
@@ -190,6 +250,7 @@ fn positive_profit_with_nonpositive_average_equity_is_unavailable() {
         ordinary_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
         adjusted_roe: DisclosureRoeValue::Unavailable(DisclosureRoeUnavailable::NonPositiveAverageEquity),
         weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
+        adjusted_weighted_average_parent_equity_cents: ratio(-4_512_000, 24),
     }));
 }
 

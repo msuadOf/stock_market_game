@@ -53,14 +53,26 @@ test("公开报告要求真实窗口净利润和一致的 ROE ratio，不让错�
   const wrongRoe = publicReportGold();
   wrongRoe.financials.roe.ordinary_roe = { Available: { numerator: "8801", denominator: "104400" } };
   assert.throws(() => normalizePublicReportById(wrongRoe), /普通 ROE.*不一致/);
+  const inconsistentDeducted = publicReportGold();
+  inconsistentDeducted.financials.roe.non_recurring = { Listed: { items: [], parent_net_income_after_deduction: "87.00" } };
+  assert.throws(() => normalizePublicReportById(inconsistentDeducted), /扣非归母净利润.*勾稽/);
+  const wrongAdjustedRoe = publicReportGold();
+  wrongAdjustedRoe.financials.roe.adjusted_roe = { Available: { numerator: "8700", denominator: "104400" } };
+  assert.throws(() => normalizePublicReportById(wrongAdjustedRoe), /扣非 ROE.*不一致/);
   const missingAdjustedFacts = publicReportGold();
+  missingAdjustedFacts.financials.roe.non_recurring = { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } };
   missingAdjustedFacts.financials.roe.adjusted_roe = { Available: { numerator: "0", denominator: "1" } };
   assert.throws(() => normalizePublicReportById(missingAdjustedFacts), /扣非指标.*不可用/);
+  const fabricatedMinorityItems = publicReportGold();
+  fabricatedMinorityItems.financials.roe.equity_events.minority_interest = { Items: [] };
+  assert.throws(() => normalizePublicReportById(fabricatedMinorityItems), /少数股东权益事件.*不可用/);
   for (const reason of ["NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts"] as const) {
     const invalidUnsupportedBasis = publicReportGold();
     invalidUnsupportedBasis.financials.roe = {
       basis: { Unsupported: { reason } }, ordinary_roe: { Unavailable: { reason } },
       adjusted_roe: { Unavailable: { reason } }, weighted_average_parent_equity_cents: { Unavailable: { reason } },
+      non_recurring: { Unavailable: { reason } },
+      equity_events: { attributable_to_parent: { Unavailable: { reason } }, minority_interest: { Unavailable: { reason } } },
     };
     assert.throws(() => normalizePublicReportById(invalidUnsupportedBasis), /basis.*unsupported reason/);
   }
@@ -84,6 +96,8 @@ test("报告期间归母净利润必须是同窗值且仅合并口径提供", ()
     ordinary_roe: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } },
     adjusted_roe: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } },
     weighted_average_parent_equity_cents: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } },
+    non_recurring: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } },
+    equity_events: { attributable_to_parent: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } }, minority_interest: { Unavailable: { reason: "ConsolidatedAttributionFactsUnavailable" } } },
   });
   assert.doesNotThrow(() => normalizePublicReportById(validConsolidated));
   const wrongWindow = structuredClone(validConsolidated);
