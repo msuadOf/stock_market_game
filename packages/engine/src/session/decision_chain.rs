@@ -1598,7 +1598,15 @@ mod chain_restructure_tests {
             basis: crate::accounting::reports::ReportRoeBasis::Unsupported { reason },
             ordinary_roe: unavailable.clone(),
             adjusted_roe: unavailable.clone(),
-            weighted_average_parent_equity_cents: unavailable,
+            weighted_average_parent_equity_cents: unavailable.clone(),
+            non_recurring:
+                crate::accounting::reports::ReportRoeNonRecurring::Unavailable { reason },
+            equity_events: crate::accounting::reports::ReportRoeEquityEventBreakdown {
+                attributable_to_parent:
+                    crate::accounting::reports::ReportRoeEquityEventListing::Unavailable { reason },
+                minority_interest:
+                    crate::accounting::reports::ReportRoeEquityEventListing::Unavailable { reason },
+            },
         };
         group.reports.income.minority_net_income = Some(crate::accounting::AccountingAmount::ZERO);
         group.reports.equity.opening_minority = Some(crate::accounting::AccountingAmount::ZERO);

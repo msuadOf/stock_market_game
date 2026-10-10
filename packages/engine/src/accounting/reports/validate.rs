@@ -286,6 +286,27 @@ impl ReportSet {
                         });
                     }
                 }
+                if !matches!(
+                    &roe.non_recurring,
+                    super::ReportRoeNonRecurring::Unavailable { reason: actual } if *actual == reason
+                ) {
+                    return Err(ReportError::InvalidRoe {
+                        detail: "unsupported basis必须使扣非列示带同一不可用原因",
+                    });
+                }
+                for listing in [
+                    &roe.equity_events.attributable_to_parent,
+                    &roe.equity_events.minority_interest,
+                ] {
+                    if !matches!(
+                        listing,
+                        super::ReportRoeEquityEventListing::Unavailable { reason: actual } if *actual == reason
+                    ) {
+                        return Err(ReportError::InvalidRoe {
+                            detail: "unsupported basis必须使逐项归属列示带同一不可用原因",
+                        });
+                    }
+                }
                 return Ok(());
             }
             super::ReportRoeBasis::AttributableToOrdinaryShareholders => {}
@@ -295,15 +316,23 @@ impl ReportSet {
                 detail: "合并报告缺少归母权益事件明细，不能提供可用 ROE",
             });
         }
-
+        // 单体归母口径：少数股东权益事件不可表示，必须显式 unavailable（不填零）。
         if !matches!(
-            &roe.adjusted_roe,
-            super::ReportRoeValue::Unavailable {
-                reason: super::ReportRoeUnavailable::MissingNonRecurringIncomeFacts
+            &roe.equity_events.minority_interest,
+            super::ReportRoeEquityEventListing::Unavailable {
+                reason: super::ReportRoeUnavailable::StandaloneHasNoMinorityInterest
             }
         ) {
             return Err(ReportError::InvalidRoe {
-                detail: "缺少扣非归母净利润事实时，扣非 ROE 必须明确不可用",
+                detail: "单体报告的少数股东权益事件列示必须显式不可用",
+            });
+        }
+        if !matches!(
+            &roe.equity_events.attributable_to_parent,
+            super::ReportRoeEquityEventListing::Items(_)
+        ) {
+            return Err(ReportError::InvalidRoe {
+                detail: "单体归母口径必须逐项列示归属母公司权益事件",
             });
         }
 
@@ -319,6 +348,79 @@ impl ReportSet {
             .income
             .report_period_net_income_to_parent
             .unwrap_or(self.income.report_period.net_income);
+        match &roe.non_recurring {
+            super::ReportRoeNonRecurring::Unavailable { reason } => {
+                if *reason != super::ReportRoeUnavailable::MissingNonRecurringIncomeFacts {
+                    return Err(ReportError::InvalidRoe {
+                        detail: "扣非列示不可用时只能使用缺少非经常损益事实原因",
+                    });
+                }
+                if !matches!(
+                    &roe.adjusted_roe,
+                    super::ReportRoeValue::Unavailable {
+                        reason: super::ReportRoeUnavailable::MissingNonRecurringIncomeFacts
+                    }
+                ) {
+                    return Err(ReportError::InvalidRoe {
+                        detail: "缺少扣非归母净利润事实时，扣非 ROE 必须明确不可用",
+                    });
+                }
+            }
+            super::ReportRoeNonRecurring::Listed {
+                items,
+                parent_net_income_after_deduction,
+            } => {
+                // 归母扣非必须由同窗口归母净利润扣除非经常项目列示得出。
+                let mut expected = net_income;
+                for item in items {
+                    expected = expected.sub(item.amount)?;
+                }
+                if *parent_net_income_after_deduction != expected {
+                    return Err(ReportError::InvalidRoe {
+                        detail: "扣非归母净利润必须与项目列示及归母净利润勾稽",
+                    });
+                }
+                match (
+                    &roe.adjusted_roe,
+                    average.0.sign() != Sign::Plus,
+                ) {
+                    (
+                        super::ReportRoeValue::Unavailable {
+                            reason: super::ReportRoeUnavailable::NonPositiveAverageEquity,
+                        },
+                        true,
+                    ) => {}
+                    (super::ReportRoeValue::Available(value), true) => {
+                        let _ = parse_report_rational(value)?;
+                        return Err(ReportError::InvalidRoe {
+                            detail: "平均权益非正时，扣非 ROE 必须不可用",
+                        });
+                    }
+                    (super::ReportRoeValue::Unavailable { .. }, false) => {
+                        return Err(ReportError::InvalidRoe {
+                            detail: "扣非事实可得时，扣非 ROE 不可静默不可用",
+                        });
+                    }
+                    (super::ReportRoeValue::Unavailable { .. }, true) => {
+                        return Err(ReportError::InvalidRoe {
+                            detail: "平均权益非正时，扣非 ROE 不可使用其他不可用原因",
+                        });
+                    }
+                    (super::ReportRoeValue::Available(value), false) => {
+                        let rate = parse_report_rational(value)?;
+                        if &rate.0 * &average.0
+                            != BigInt::from(parent_net_income_after_deduction.cents())
+                                * &average.1
+                                * &rate.1
+                        {
+                            return Err(ReportError::InvalidRoe {
+                                detail: "扣非 ROE 与扣非归母净利润及平均归母权益不一致",
+                            });
+                        }
+                    }
+                }
+            }
+        }
         match (
             &roe.ordinary_roe,
             average.0.sign() != Sign::Plus,

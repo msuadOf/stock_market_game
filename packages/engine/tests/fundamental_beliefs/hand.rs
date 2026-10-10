@@ -154,6 +154,19 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
                 weighted_average_parent_equity_cents: engine::accounting::reports::ReportRoeValue::Unavailable {
                     reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
                 },
+                non_recurring: engine::accounting::reports::ReportRoeNonRecurring::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                equity_events: engine::accounting::reports::ReportRoeEquityEventBreakdown {
+                    attributable_to_parent:
+                        engine::accounting::reports::ReportRoeEquityEventListing::Unavailable {
+                            reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                        },
+                    minority_interest:
+                        engine::accounting::reports::ReportRoeEquityEventListing::Unavailable {
+                            reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                        },
+                },
             },
             cash_flow: CashFlowStatement {
                 operating: AccountingAmount::from_cents(spec.operating_cf_cents),

@@ -44,8 +44,10 @@ export function publicReportGold(): PublicReportSummary {
       roe: {
         basis: "AttributableToOrdinaryShareholders",
         ordinary_roe: { Available: { numerator: "8800", denominator: "104400" } },
-        adjusted_roe: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" } },
+        adjusted_roe: { Available: { numerator: "8800", denominator: "104400" } },
         weighted_average_parent_equity_cents: { Available: { numerator: "104400", denominator: "1" } },
+        non_recurring: { Listed: { items: [], parent_net_income_after_deduction: "88.00" } },
+        equity_events: { attributable_to_parent: { Items: [] }, minority_interest: { Unavailable: { reason: "StandaloneHasNoMinorityInterest" } } },
       },
       cash_flow: {
         operating: "120.00", investing: "0.00", financing: "500.00", net_change: "620.00",

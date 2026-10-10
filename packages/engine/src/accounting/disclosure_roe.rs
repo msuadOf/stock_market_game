@@ -1,8 +1,11 @@
 //! 证监会公告〔2010〕2号规则9披露 ROE 计算。
 //!
-//! 本实现限于规则第4条一般公式；同一控制下企业合并及比较期间特殊处理明确返回
-//! 不支持，不以一般公式替代。月份权重依据权益实际生效日期，采用变动次月起至
-//! 报告期末的整月数。输入绑定公开报告期间、报告范围与普通股股东归属口径。
+//! 规则第4条一般公式已实现；同一控制下企业合并的报告期特殊路径按
+//! `agents/company-system/official-roe-research.md` 已登记条文实现（普通公式
+//! 被合并方净资产自报告期初加权；扣非公式自合并日次月起加权）。比较期间特殊
+//! 处理需要比较期事实输入模型，repo 未登记 → 显式不支持，不以一般公式替代。
+//! 月份权重依据权益实际生效日期，采用变动次月起至报告期末的整月数。输入绑定
+//! 公开报告期间、报告范围与普通股股东归属口径。
 
 use crate::accounting::{AccountingAmount, ScopeId};
 use crate::calendar::CivilDate;
@@ -58,6 +61,18 @@ pub struct ActualEquityEvent {
     pub amount: AccountingAmount,
 }
 
+/// 同一控制下企业合并事件（规则9第4条特殊路径；法源见 official-roe-research.md）。
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub struct SameControlCombination {
+    pub period: DisclosureReportPeriod,
+    pub scope: ScopeId,
+    pub attribution: DisclosureAttributionBasis,
+    /// 合并日：扣非公式中被合并方净资产自该日次月起计权。
+    pub combined_on: CivilDate,
+    /// 被合并方于合并日的净资产（归母口径）。
+    pub combined_net_assets: AccountingAmount,
+}
+
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct DisclosureRoeInput {
     pub report: PublicReportIdentity,
@@ -66,7 +81,7 @@ pub struct DisclosureRoeInput {
     pub adjusted_parent_net_income: ReportFact,
     pub equity_events: Vec<ActualEquityEvent>,
     pub equity_event_history_complete: bool,
-    pub same_control_combination: bool,
+    pub same_control_combinations: Vec<SameControlCombination>,
     pub comparative_period: bool,
 }
 
@@ -79,7 +94,7 @@ pub struct OrdinaryDisclosureRoeInput {
     pub ordinary_parent_net_income: AccountingAmount,
     pub equity_events: Vec<ActualEquityEvent>,
     pub equity_event_history_complete: bool,
-    pub same_control_combination: bool,
+    pub same_control_combinations: Vec<SameControlCombination>,
     pub comparative_period: bool,
 }
 
@@ -94,6 +109,8 @@ pub struct DisclosureRoeResult {
     pub ordinary_roe: DisclosureRoeValue,
     pub adjusted_roe: DisclosureRoeValue,
     pub weighted_average_parent_equity_cents: ExactRational,
+    /// 扣非公式分母：同一控制事项下与普通分母不同（合并日次月起计权）。
+    pub adjusted_weighted_average_parent_equity_cents: ExactRational,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -112,6 +129,8 @@ pub enum DisclosureRoeUnavailable {
 pub struct OrdinaryDisclosureRoeResult {
     pub ordinary_roe: DisclosureRoeValue,
     pub weighted_average_parent_equity_cents: ExactRational,
+    /// 扣非公式分母：同一控制事项下与普通分母不同（合并日次月起计权）。
+    pub adjusted_weighted_average_parent_equity_cents: ExactRational,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug)]
@@ -122,7 +141,6 @@ pub enum DisclosureRoeValue {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum DisclosureRoeUnsupported {
-    SameControlCombination,
     ComparativePeriodSpecialTreatment,
 }
 
@@ -155,11 +173,6 @@ pub fn calculate_disclosure_roe(
     validate_period(period)?;
     if input.report.published_on < period.end {
         return Err(DisclosureRoeError::ReportNotYetEnded);
-    }
-    if input.same_control_combination {
-        return Err(DisclosureRoeError::Unsupported(
-            DisclosureRoeUnsupported::SameControlCombination,
-        ));
     }
     if input.comparative_period {
         return Err(DisclosureRoeError::Unsupported(
@@ -196,7 +209,7 @@ pub fn calculate_disclosure_roe(
         ordinary_parent_net_income: input.ordinary_parent_net_income.value,
         equity_events: input.equity_events.clone(),
         equity_event_history_complete: input.equity_event_history_complete,
-        same_control_combination: input.same_control_combination,
+        same_control_combinations: input.same_control_combinations.clone(),
         comparative_period: input.comparative_period,
     })?;
     let adjusted_profit = BigInt::from(input.adjusted_parent_net_income.value.cents());
@@ -204,12 +217,17 @@ pub fn calculate_disclosure_roe(
     let adjusted_roe = roe_ratio(
         adjusted_profit,
         months,
-        ordinary.weighted_average_parent_equity_cents.numerator.clone(),
+        ordinary
+            .adjusted_weighted_average_parent_equity_cents
+            .numerator
+            .clone(),
     );
     Ok(DisclosureRoeOutcome::Available(DisclosureRoeResult {
         ordinary_roe: ordinary.ordinary_roe,
         adjusted_roe,
         weighted_average_parent_equity_cents: ordinary.weighted_average_parent_equity_cents,
+        adjusted_weighted_average_parent_equity_cents: ordinary
+            .adjusted_weighted_average_parent_equity_cents,
     }))
 }
 
@@ -218,11 +236,6 @@ pub fn calculate_ordinary_disclosure_roe(
 ) -> Result<OrdinaryDisclosureRoeResult, DisclosureRoeError> {
     let period = input.period;
     validate_period(period)?;
-    if input.same_control_combination {
-        return Err(DisclosureRoeError::Unsupported(
-            DisclosureRoeUnsupported::SameControlCombination,
-        ));
-    }
     if input.comparative_period {
         return Err(DisclosureRoeError::Unsupported(
             DisclosureRoeUnsupported::ComparativePeriodSpecialTreatment,
@@ -236,7 +249,7 @@ pub fn calculate_ordinary_disclosure_roe(
     }
 
     let months = month_index(period.end) - month_index(period.start) + 1;
-    let mut weighted_equity_months =
+    let mut ordinary_weighted_equity_months =
         BigInt::from(input.opening_parent_equity.cents()) * BigInt::from(months);
     for event in &input.equity_events {
         if event.period != period {
@@ -273,14 +286,38 @@ pub fn calculate_ordinary_disclosure_roe(
             EquityEventKind::Decrease => -cents,
             EquityEventKind::Other => cents,
         };
-        weighted_equity_months +=
+        ordinary_weighted_equity_months +=
             BigInt::from(signed_cents) * BigInt::from(months_after_effective_month);
     }
 
-    let average_equity_numerator = weighted_equity_months * BigInt::from(2)
-        + BigInt::from(input.ordinary_parent_net_income.cents()) * BigInt::from(months);
+    // 同一控制合并：普通公式自报告期初全额加权；扣非公式自合并日次月起加权
+    //（规则9第4条已登记条文，两个分母在此分流）。
+    let mut adjusted_weighted_equity_months = ordinary_weighted_equity_months.clone();
+    for combination in &input.same_control_combinations {
+        validate_same_control_combination(combination, period, &input.scope, input.attribution)?;
+        let cents = combination.combined_net_assets.cents();
+        if cents <= 0 {
+            return Err(DisclosureRoeError::InvalidEventDirection);
+        }
+        ordinary_weighted_equity_months += BigInt::from(cents) * BigInt::from(months);
+        let months_after_combined_month =
+            month_index(period.end) - month_index(combination.combined_on);
+        adjusted_weighted_equity_months +=
+            BigInt::from(cents) * BigInt::from(months_after_combined_month);
+    }
+
+    let net_income_months =
+        BigInt::from(input.ordinary_parent_net_income.cents()) * BigInt::from(months);
+    let average_equity_numerator =
+        ordinary_weighted_equity_months * BigInt::from(2) + net_income_months.clone();
     let average_equity = ExactRational {
         numerator: average_equity_numerator.clone(),
+        denominator: BigInt::from(2 * months),
+    };
+    let adjusted_average_equity_numerator =
+        adjusted_weighted_equity_months * BigInt::from(2) + net_income_months;
+    let adjusted_average_equity = ExactRational {
+        numerator: adjusted_average_equity_numerator,
         denominator: BigInt::from(2 * months),
     };
     let ordinary_roe = roe_ratio(
@@ -291,7 +328,35 @@ pub fn calculate_ordinary_disclosure_roe(
     Ok(OrdinaryDisclosureRoeResult {
         ordinary_roe,
         weighted_average_parent_equity_cents: average_equity,
+        adjusted_weighted_average_parent_equity_cents: adjusted_average_equity,
     })
+}
+
+fn validate_same_control_combination(
+    combination: &SameControlCombination,
+    period: DisclosureReportPeriod,
+    scope: &ScopeId,
+    attribution: DisclosureAttributionBasis,
+) -> Result<(), DisclosureRoeError> {
+    if combination.period != period {
+        return Err(DisclosureRoeError::FactPeriodMismatch {
+            fact: "same control combination",
+        });
+    }
+    if combination.scope != *scope {
+        return Err(DisclosureRoeError::FactScopeMismatch {
+            fact: "same control combination",
+        });
+    }
+    if combination.attribution != attribution {
+        return Err(DisclosureRoeError::FactAttributionMismatch {
+            fact: "same control combination",
+        });
+    }
+    if combination.combined_on < period.start || combination.combined_on > period.end {
+        return Err(DisclosureRoeError::EventOutsidePeriod);
+    }
+    Ok(())
 }
 
 fn zero_ratio() -> ExactRational {

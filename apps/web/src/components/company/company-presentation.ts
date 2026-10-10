@@ -115,6 +115,7 @@ function reportRoeUnavailableReason(reason: ReportRoeUnavailable): string {
     case "ComparativePeriodSpecialTreatment": return "比较期间特殊处理尚不支持"
     case "UnclassifiedEquityEvent": return "存在未分类权益变动"
     case "ConsolidatedAttributionFactsUnavailable": return "合并归母数据不可用"
+    case "StandaloneHasNoMinorityInterest": return "单体报告无少数股东权益事件"
     default: return assertNever(reason)
   }
 }
@@ -139,10 +140,29 @@ export function reportRoeIndicators(roe: ReportRoe): readonly ReportIndicator[] 
     : `不可用：${reportRoeUnavailableReason(roe.basis.Unsupported.reason)}`
   const ordinary = reportRoeValue(roe.ordinary_roe)
   const adjusted = reportRoeValue(roe.adjusted_roe)
+  // 扣非归母净利润与逐项归属事件来自同一 ReportRoe 事实（证监会规则9披露口径）。
+  const deducted = "Listed" in roe.non_recurring
+    ? { text: roe.non_recurring.Listed.parent_net_income_after_deduction, unavailable: false }
+    : { text: `不可用：${reportRoeUnavailableReason(roe.non_recurring.Unavailable.reason)}`, unavailable: true }
+  const nonRecurringTotal = "Listed" in roe.non_recurring && roe.non_recurring.Listed.items.length > 0
+    ? { text: roe.non_recurring.Listed.items.map((item) => `${item.name} ${item.amount}`).join("；"), unavailable: false }
+    : "Listed" in roe.non_recurring
+      ? { text: "无（已登记简化：本游戏报表不产出非经常项目行）", unavailable: false }
+      : { text: `不可用：${reportRoeUnavailableReason(roe.non_recurring.Unavailable.reason)}`, unavailable: true }
+  const minorityEvents = "Items" in roe.equity_events.minority_interest
+    ? { text: `${roe.equity_events.minority_interest.Items.length} 项`, unavailable: false }
+    : { text: reportRoeUnavailableReason(roe.equity_events.minority_interest.Unavailable.reason), unavailable: true }
+  const parentEvents = "Items" in roe.equity_events.attributable_to_parent
+    ? { text: `${roe.equity_events.attributable_to_parent.Items.length} 项`, unavailable: false }
+    : { text: reportRoeUnavailableReason(roe.equity_events.attributable_to_parent.Unavailable.reason), unavailable: true }
   return [
     { label: "ROE 口径", value: basis, unavailable: typeof roe.basis !== "string" },
     { label: "加权平均净资产收益率（归母净利润）", value: ordinary.text, unavailable: ordinary.unavailable },
     { label: "加权平均净资产收益率（扣非归母净利润）", value: adjusted.text, unavailable: adjusted.unavailable },
+    { label: "扣除非经常性损益后归母净利润", value: deducted.text, unavailable: deducted.unavailable },
+    { label: "非经常性损益项目", value: nonRecurringTotal.text, unavailable: nonRecurringTotal.unavailable },
+    { label: "归属母公司权益事件（逐项）", value: parentEvents.text, unavailable: parentEvents.unavailable },
+    { label: "少数股东权益事件（逐项）", value: minorityEvents.text, unavailable: minorityEvents.unavailable },
   ]
 }
 

@@ -119,7 +119,10 @@ test("公司面板按钮调用宿主可用性查询并发送必填期间、类�
   let tree = view.render();
   const reportText = view.textContent(tree);
   assert.match(reportText, /加权平均净资产收益率（归母净利润）8\.43%/);
-  assert.match(reportText, /加权平均净资产收益率（扣非归母净利润）不可用：缺少扣非归母利润事实/);
+  // 扣非列示为空项目集（已登记简化）时扣非 ROE 与普通一致，且逐项归属按单体口径展示。
+  assert.match(reportText, /加权平均净资产收益率（扣非归母净利润）8\.43%/);
+  assert.match(reportText, /扣除非经常性损益后归母净利润88\.00/);
+  assert.match(reportText, /少数股东权益事件（逐项）单体报告无少数股东权益事件/);
   const controls = view.elements(tree);
   const period = controls.find((element) => element.props["aria-label"] === "报告期末");
   const kind = controls.find((element) => element.props["aria-label"] === "报告类型");

@@ -7,4 +7,5 @@ export type ReportRoeUnavailable =
   | "SameControlCombination"
   | "ComparativePeriodSpecialTreatment"
   | "UnclassifiedEquityEvent"
-  | "ConsolidatedAttributionFactsUnavailable";
+  | "ConsolidatedAttributionFactsUnavailable"
+  | "StandaloneHasNoMinorityInterest";
