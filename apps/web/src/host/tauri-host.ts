@@ -25,6 +25,8 @@ import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, type MarketHistoryRequest, type MarketHistoryPage } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, type CurrentMinuteHistoryRequest, type CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./engine-host.ts";
+// 公司共同契约查询（任务 178 Desktop 桥接）：与本地 WASM 宿主同源 parser。
+import { parseCompanyCapabilities, parseFlatWithholdingReceipts, parseOwnerRightsOfferings, parsePeriodChangeExplanation } from "./company-contract-views.ts";
 
 type EngineEventPayload = {
   readonly session_id: string;
@@ -327,6 +329,37 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
       const response = record(await invoke<unknown>("query_stock_history", { sessionId: requireSession(), generation: cursor.generation, code }), "Tauri query_stock_history");
       timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri query_stock_history.generation"), "Tauri 股票历史响应属于已过期会话 generation");
       return parseHistoricalStockData(response.value, code);
+    },
+    async companyCapabilities(company: string) {
+      if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("能力面公司身份必须是非空且不超过 64 字符的字符串");
+      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询公司能力面");
+      const cursor = timeline.captureQueryCursor();
+      const response = record(await invoke<unknown>("company_capabilities", { sessionId: requireSession(), generation: cursor.generation, company }), "Tauri company_capabilities");
+      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri company_capabilities.generation"), "Tauri 公司能力面响应属于已过期会话 generation");
+      return parseCompanyCapabilities(response.value);
+    },
+    async companyPeriodExplanation(company: string, periodEnd: string) {
+      if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("期间解释公司身份必须是非空且不超过 64 字符的字符串");
+      if (typeof periodEnd !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) throw new Error("期间解释 periodEnd 必须是 ISO YYYY-MM-DD");
+      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询期间解释");
+      const cursor = timeline.captureQueryCursor();
+      const response = record(await invoke<unknown>("company_period_explanation", { sessionId: requireSession(), generation: cursor.generation, company, periodEnd }), "Tauri company_period_explanation");
+      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri company_period_explanation.generation"), "Tauri 期间解释响应属于已过期会话 generation");
+      return parsePeriodChangeExplanation(response.value);
+    },
+    async ownerRightsOfferings() {
+      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询本人配股权益");
+      const cursor = timeline.captureQueryCursor();
+      const response = record(await invoke<unknown>("owner_rights_offerings", { sessionId: requireSession(), generation: cursor.generation }), "Tauri owner_rights_offerings");
+      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri owner_rights_offerings.generation"), "Tauri 本人配股权益响应属于已过期会话 generation");
+      return parseOwnerRightsOfferings(response.value);
+    },
+    async ownerFlatWithholdingReceipts() {
+      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询简税代扣回执");
+      const cursor = timeline.captureQueryCursor();
+      const response = record(await invoke<unknown>("owner_flat_withholding_receipts", { sessionId: requireSession(), generation: cursor.generation }), "Tauri owner_flat_withholding_receipts");
+      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri owner_flat_withholding_receipts.generation"), "Tauri 简税代扣回执响应属于已过期会话 generation");
+      return parseFlatWithholdingReceipts(response.value);
     },
     async initialAllocation() {
       timeline.baselineForRead("Tauri 基线尚未就绪，不能查询初始分配");

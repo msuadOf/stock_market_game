@@ -227,6 +227,76 @@ async fn player_working_orders(
         .map_err(map_send_error)
 }
 
+/// F 批共同契约查询面（任务 178 Desktop 桥接）：公司身份校验与 web-wasm
+/// 导出同口径（UTF-16 ≤ 64）；owner 固定本机玩家 0。
+fn parse_company_argument(company: &str) -> Result<engine::company::CompanyId, String> {
+    if company.trim().is_empty() || company.encode_utf16().count() > 64 {
+        return Err("公司身份必须是非空且 UTF-16 不超过 64 字符的字符串".to_owned());
+    }
+    Ok(engine::company::CompanyId(company.to_owned()))
+}
+
+#[tauri::command]
+async fn company_capabilities(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    company: String,
+) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .company_capabilities(parse_generation(generation)?, parse_company_argument(&company)?)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn company_period_explanation(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    company: String,
+    period_end: String,
+) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
+    let period_end = engine::CivilDate::from_iso(&period_end)
+        .map_err(|error| format!("period_end 必须是合法 ISO 日期：{error}"))?;
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .company_period_explanation(
+            parse_generation(generation)?,
+            parse_company_argument(&company)?,
+            period_end,
+        )
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn owner_rights_offerings(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .owner_rights_offerings(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn owner_flat_withholding_receipts(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .owner_flat_withholding_receipts(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
+}
+
 #[tauri::command]
 async fn query_stock_history(
     state: State<'_, DesktopState>,
@@ -635,6 +705,10 @@ fn command_builder_base<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             calculate_intraday_average,
             calculate_intraday_average_curve,
             player_working_orders,
+            company_capabilities,
+            company_period_explanation,
+            owner_rights_offerings,
+            owner_flat_withholding_receipts,
             query_stock_history,
             personal_trade_confirmations,
             personal_trade_history,
@@ -682,6 +756,10 @@ fn command_builder_base<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
             calculate_intraday_average,
             calculate_intraday_average_curve,
             player_working_orders,
+            company_capabilities,
+            company_period_explanation,
+            owner_rights_offerings,
+            owner_flat_withholding_receipts,
             query_stock_history,
             personal_trade_confirmations,
             personal_trade_history,

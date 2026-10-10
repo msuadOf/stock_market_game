@@ -46,3 +46,5 @@ engine = { version = "0.1.0", path = "../../packages/engine", features = ["verif
 tokio = { version = "1.52.3", features = ["full", "test-util"] }
 # tower 的 ServiceExt::oneshot 用于集成测试黑盒打 router（与 healthz.rs 一致）。
 tower = { version = "0.5.3", features = ["util"] }
+# 矩阵 fixture 再生成需要单线程 rayon：并行 tick 下引擎不承诺可复现（用户决策）。
+rayon = { workspace = true }

@@ -37,6 +37,8 @@ mod fatal_tests;
 mod protocol_tests;
 #[cfg(test)]
 mod archive_tests;
+#[cfg(test)]
+mod company_query_tests;
 
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数。
 /// 与前端 BASE_INTERVAL_MS(1000) 对齐：1x 时一个 tick = 游戏世界 1 秒。
@@ -311,6 +313,27 @@ pub enum SessionCommand {
         query: engine::session::CurrentMinuteHistoryRequest,
         reply: oneshot::Sender<Result<GenerationResponse<engine::session::CurrentMinuteHistoryResponse>, SessionError>>,
     },
+    /// F 批共同契约查询面（任务 178 Desktop 桥接）：owner 固定本机玩家 0，
+    /// 与 web-wasm 导出同口径；wire 为 engine 正规 JSON。
+    CompanyCapabilities {
+        generation: u64,
+        company: engine::company::CompanyId,
+        reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
+    },
+    CompanyPeriodExplanation {
+        generation: u64,
+        company: engine::company::CompanyId,
+        period_end: CivilDate,
+        reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
+    },
+    OwnerRightsOfferings {
+        generation: u64,
+        reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
+    },
+    OwnerFlatWithholdingReceipts {
+        generation: u64,
+        reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
+    },
     QueryBaseline {
         generation: u64,
         reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
@@ -469,6 +492,77 @@ impl SessionHandles {
             .send(SessionCommand::Snapshot { reply: tx })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    /// F 批共同契约能力面（任务 178 Desktop 桥接）：engine 正规 JSON wire。
+    pub async fn company_capabilities(
+        &self,
+        generation: u64,
+        company: engine::company::CompanyId,
+    ) -> Result<GenerationResponse<serde_json::Value>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::CompanyCapabilities {
+                generation,
+                company,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn company_period_explanation(
+        &self,
+        generation: u64,
+        company: engine::company::CompanyId,
+        period_end: CivilDate,
+    ) -> Result<GenerationResponse<serde_json::Value>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::CompanyPeriodExplanation {
+                generation,
+                company,
+                period_end,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn owner_rights_offerings(
+        &self,
+        generation: u64,
+    ) -> Result<GenerationResponse<serde_json::Value>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::OwnerRightsOfferings {
+                generation,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn owner_flat_withholding_receipts(
+        &self,
+        generation: u64,
+    ) -> Result<GenerationResponse<serde_json::Value>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::OwnerFlatWithholdingReceipts {
+                generation,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     pub async fn player_working_orders(
@@ -1370,6 +1464,92 @@ impl<R: Runtime> SessionActor<R> {
                 } else {
                     let response = self.game.query_current_minute_history_for(AccountId(0), &query);
                     self.generation_response(generation, response)
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::CompanyCapabilities {
+                generation,
+                company,
+                reply,
+            } => {
+                // owner 隔离固定本机玩家（单玩家模式与 web-wasm 同口径）。
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!(
+                        "stale session generation {generation}; current generation is {}",
+                        self.generation
+                    )))
+                } else {
+                    let queried = self
+                        .game
+                        .game()
+                        .company_capabilities(&company, AccountId(0))
+                        .and_then(|value| {
+                            serde_json::to_value(&value)
+                                .map_err(|error| SessionError::InvalidSave(error.to_string()))
+                        });
+                    self.generation_response(generation, queried)
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::CompanyPeriodExplanation {
+                generation,
+                company,
+                period_end,
+                reply,
+            } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!(
+                        "stale session generation {generation}; current generation is {}",
+                        self.generation
+                    )))
+                } else {
+                    let queried = self
+                        .game
+                        .game()
+                        .company_period_explanation(&company, period_end)
+                        .and_then(|value| {
+                            serde_json::to_value(&value)
+                                .map_err(|error| SessionError::InvalidSave(error.to_string()))
+                        });
+                    self.generation_response(generation, queried)
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::OwnerRightsOfferings { generation, reply } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!(
+                        "stale session generation {generation}; current generation is {}",
+                        self.generation
+                    )))
+                } else {
+                    let queried = self
+                        .game
+                        .game()
+                        .owner_rights_offerings(AccountId(0))
+                        .and_then(|value| {
+                            serde_json::to_value(&value)
+                                .map_err(|error| SessionError::InvalidSave(error.to_string()))
+                        });
+                    self.generation_response(generation, queried)
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::OwnerFlatWithholdingReceipts { generation, reply } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!(
+                        "stale session generation {generation}; current generation is {}",
+                        self.generation
+                    )))
+                } else {
+                    let queried = self
+                        .game
+                        .game()
+                        .owner_flat_withholding_receipts(AccountId(0))
+                        .and_then(|value| {
+                            serde_json::to_value(&value)
+                                .map_err(|error| SessionError::InvalidSave(error.to_string()))
+                        });
+                    self.generation_response(generation, queried)
                 };
                 let _ = reply.send(result);
             }

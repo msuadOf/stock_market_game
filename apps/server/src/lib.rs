@@ -122,6 +122,22 @@ fn app_router_with_state(state: AppState) -> Router {
             get(routes::api_public_report),
         )
         .route(
+            "/api/companies/:company_id/capabilities",
+            get(routes::api_company_capabilities),
+        )
+        .route(
+            "/api/companies/:company_id/period-explanation",
+            get(routes::api_company_period_explanation),
+        )
+        .route(
+            "/api/owner/rights-offerings",
+            get(routes::api_owner_rights_offerings),
+        )
+        .route(
+            "/api/owner/flat-withholding-receipts",
+            get(routes::api_owner_flat_withholding_receipts),
+        )
+        .route(
             "/api/diagnostics/npc/:account",
             get(routes::api_npc_decision_diagnostics),
         )

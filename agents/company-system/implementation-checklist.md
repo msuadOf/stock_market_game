@@ -98,10 +98,8 @@
 - [x] `CompanySystem` 父层严格校验所选实现、身份、期间和状态结构；未知模式、错配状态或缺字段拒绝，不自动迁移。
 - [x] `CivilClock` 自然日日结按候选状态调用实现、生成应公开材料、验证不变量后原子提交；系统失败保留原状态。Simple 按配置周期结算，其他自然日仍处理共同日期、披露或公司行为，不虚构逐日经营网络。（2026-10-07 对账勾选）依据：日结候选事务与失败回滚由 `session` 日终管线承担（host76 批 5 项，含月末后置故障回滚与修复重试 1 项，其余为事件映射、独立 scheduler、工业税折旧与地产零税：`.tmp/checklist-wave4/host76-migration-short-tests.log`；`session::failure` 组）；B1/P/M 各批「失败不提交部分状态」断言（[送转记录](stock-distribution.md)、[偏好台账](simple-preferences.md)、[配股与回购台账](rights-and-repurchase.md)）；非结算日仍推进自然日并处理披露/公司行为日程（配股缴款期逐日、报告公开日任意自然日）。
 - [x] 仅成功日结进入宿主存档，恢复保留随机状态、结算周期进度、历史结果、账面状态和未完成公司行为，不重生成/重复处理。（2026-10-07 对账勾选）依据：ADR-0025 边界；三 producer fixture 经 release Engine 生成并以 restore/resave 深等＋Web `parseSaveSlot` 深等验证（`.tmp/company-system/m-integration/`）；偏好台账恢复不重复入账（`session::simple_preferences_session_tests.rs`）；认购排队/拒绝回执恢复勾稽（`session::rights_offering_session_tests.rs`）。
-- [ ] Rust、WASM/Web 严格解析、Server/Desktop 宿主及存档使用同一契约，不加默认字段兼容。
-  - 2026-10-07 对账：Rust↔WASM↔Web 已同构（ts-rs 正规导出＋严格 parser＋fixture 深等，typegen 检查通过）；Server/Desktop 宿主对公司域存档契约的共享矩阵未覆盖（desktop 需先构建 web/dist，属既有环境前置；远程宿主税务/公司行为查询面未接线）——三宿主契约矩阵为真实缺口，保持未勾，建议宿主接线批次处理。
-- [ ] 测试新局选择/局内不可换、模式严格 restore、状态错配拒绝、日结回滚、跨结算周期恢复、公司行为/资金幂等和三宿主共享字段解析。
-  - 2026-10-07 对账：除「三宿主共享字段解析」外的子项均有定向短测（新局选择/不可换：见 §6 前三项勾选证据；restore/错配拒绝：`session::persistence` 组；日结回滚：`session::failure` 组与 host76 日志；跨结算周期恢复与幂等：见本节第二条证据）——三宿主共享字段解析未覆盖，保持未勾，建议宿主接线批次处理。
+- [x] Rust、WASM/Web 严格解析、Server/Desktop 宿主及存档使用同一契约，不加默认字段兼容。（2026-10-10 任务 178 勾选）依据：engine 真实公司域 fixture `apps/web/src/save/fixtures/company-domain-host-matrix-save.json`（已派息分红＋简税代扣回执 6 笔＋公告中方案＋自动名册，`UPDATE_COMPANY_HOST_MATRIX_FIXTURE=1` 再生成，单线程 rayon 下可复现）四路径深等——engine 直连 restore/resave（`apps/server/tests/company_save_contract.rs`）、Web 严格 `parseSaveSlot`＋缺字段/未知枚举显式拒绝（`apps/web/src/save/company-host-matrix.test.ts`）、Server 宿主 SQLite `resume_session`→`save` 深等（同 server 测试）、Desktop 宿主 actor＋native-store 往返深等（`apps/desktop/src-tauri/src/actor/company_query_tests.rs`，dist 前置已构建）；查询面同契约由 REST 深等 engine 直连（`apps/server/tests/company_contract_queries.rs`）与 Desktop 命令深等锚定。缺字段/错配在四路径均显式拒绝，无默认兼容。
+- [x] 测试新局选择/局内不可换、模式严格 restore、状态错配拒绝、日结回滚、跨结算周期恢复、公司行为/资金幂等和三宿主共享字段解析。（2026-10-10 任务 178 补齐「三宿主共享字段解析」后勾选；其余子项证据见 2026-10-07 对账）三宿主共享字段解析依据：同上条四路径矩阵测试（engine/WASM-Web/Server/Desktop 解析同一 fixture 深等）。
 
 ### 7. Simulation 延后范围
 
