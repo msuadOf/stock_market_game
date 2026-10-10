@@ -28,8 +28,9 @@ it("partitions files across real processes without overselling the CPU budget", 
     available_cpu_count: 128,
     file_count: 17,
     shard_count: 8,
-    max_concurrent_processes: 8,
-    aggregate_process_budget: 8,
+    per_shard_file_concurrency: 16,
+    max_concurrent_processes: 128,
+    aggregate_process_budget: 128,
     shards: [
       [files[0], files[8], files[16]],
       [files[1], files[9]],
@@ -71,9 +72,32 @@ it("shares one ten-second deadline across every shard", async () => {
   assert.ok(calls.every((call) => call.timeoutMs <= 10_000));
   assert.ok(calls.every((call) => call.command === process.execPath));
   assert.ok(calls.every((call) => call.args.includes("--test-force-exit")));
-  assert.deepEqual(calls.flatMap((call) => call.args.slice(5)).sort(), [...files].sort());
+  assert.deepEqual(calls.flatMap((call) => call.args.slice(4)).sort(), [...files].sort());
   assert.equal(result.file_count, 3);
   assert.equal(result.shard_count, 2);
+});
+
+it("每个测试文件独立进程隔离，禁止同进程共享导致的 mock 状态串扰", async () => {
+  const calls = [];
+  const files = Array.from({ length: 16 }, (_, index) => `/web/src/file-${index}.test.ts`);
+  const policy = await runWebTestBatch({
+    webRoot: "/web",
+    cpuCount: 16,
+    discover: async () => files,
+    run: async (options) => {
+      calls.push(options);
+      return { stdout: "", stderr: "" };
+    },
+  });
+  assert.equal(policy.shard_count, 8);
+  assert.ok(calls.every((call) => !call.args.includes("--test-isolation=none")),
+    "禁止 --test-isolation=none：同进程共享已证实造成 player-proposals 与 wasm-worker 系列串扰");
+  for (const call of calls) {
+    const concurrency = Number(/--test-concurrency=(\d+)/.exec(call.args.join(" "))?.[1]);
+    assert.ok(Number.isInteger(concurrency) && concurrency >= 1, "每分片必须显式声明每文件并发");
+  }
+  const aggregate = calls.length * Number(/--test-concurrency=(\d+)/.exec(calls[0].args.join(" "))?.[1]);
+  assert.ok(aggregate <= 16, "分片×每文件并发不得超卖 CPU 预算");
 });
 
 it("fails fast and aborts in-flight sibling shards", async () => {

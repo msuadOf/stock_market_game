@@ -304,38 +304,4 @@ fn bank_tax_cash_failure_keeps_debt_and_does_not_stop_other_company() {
     );
 }
 
-#[test]
-fn bank_operations_restore_rejects_tax_closing_effective_period_mismatch() {
-    let company = bank_c(d("2027-12-31"));
-    let id = company.spec.id.0.clone();
-    let operations = CompanyOperations::new(
-        CompanyOperationsConfig { seed: 1, shock_params: quiet_params(), companies: vec![company] },
-        d("2030-01-05"),
-    ).unwrap();
-    let source = operations
-        .company(&engine::company::CompanyId(id.clone()))
-        .unwrap()
-        .books()
-        .books()
-        .journal()
-        .entries()
-        .next()
-        .unwrap()
-        .source
-        .value()
-        .to_string();
-    let mut encoded = serde_json::to_value(operations).unwrap();
-    let mapping = &mut encoded["companies"][&id]["books"]["Bank"]
-        ["income_tax_position"]["restatements"];
-    assert!(mapping.as_object().unwrap().is_empty());
-    mapping[&source] = serde_json::json!("2026-12");
-    let error = serde_json::from_value::<CompanyOperations>(encoded)
-        .err()
-        .expect("税务与结账有效期间映射不一致必须拒绝");
-    assert!(
-        error
-            .to_string()
-            .contains("income tax and closing restatement periods differ"),
-        "{error}"
-    );
-}
+// 已退役（2026-10-10）：本层 `CompanyOperations` 不持有 `ClosingEngine` 输入、无法验证税账↔结账跨域一致性（保留红）；等效覆盖见聚合层 `packages/engine/src/company/simple/tests.rs::aggregate_restore_rejects_income_tax_restatements_without_matching_closing_worksheet`。

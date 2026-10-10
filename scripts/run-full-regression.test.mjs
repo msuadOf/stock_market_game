@@ -631,10 +631,12 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
       collectFingerprint: async () => fixture.fingerprint,
       run: async ({ args }) => {
         calls += 1;
-        return { stdout: args.includes("--list") && !args.includes("--ignored") ? "ordinary: test\n" : "" };
+        return { stdout: args.includes("--list")
+          ? (args.includes("--exact") ? "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative: test\n" : (args.includes("--ignored") ? "" : "ordinary: test\n"))
+          : "" };
       },
     });
-    assert.equal(calls, 6);
+    assert.equal(calls, 7);
   } finally {
     await fixture.cleanup();
   }
@@ -702,24 +704,36 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
       run: async (options) => {
         calls.push(options);
         nowMs += 1;
-        return { stdout: options.args.includes("--list") && !options.args.includes("--ignored") ? "ordinary::case: test\n" : "", stderr: "" };
+        return { stdout: options.args.includes("--list")
+          ? (options.args.includes("--exact")
+            ? "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative: test\n"
+            : (options.args.includes("--ignored") ? "" : "ordinary::case: test\n"))
+          : "", stderr: "" };
       },
     });
-    assert.equal(calls.filter((call) => call.command === fixture.artifact).length, 4);
+    assert.equal(calls.filter((call) => call.command === fixture.artifact).length, 5);
     const ordinaryBinary = calls.find((call) => call.args.includes("ordinary::case"));
     assert.equal(ordinaryBinary.timeoutMs, 10_000);
     assert.deepEqual(ordinaryBinary.args, ["ordinary::case", "--exact", "--test-threads=1"]);
     assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, "7");
-    const longValidation = calls.find((call) => call.command === fixture.artifact && call.args.includes("--ignored") && !call.args.includes("--list"));
+    const longValidationListing = calls.find((call) => call.command === fixture.artifact && call.args.includes("--list") && call.args.includes("--exact"));
+    assert.deepEqual(longValidationListing.args, [
+      "--list",
+      "--format=terse",
+      "--exact",
+      "--ignored",
+      "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative",
+    ]);
+    const longValidation = calls.find((call) => call.command === fixture.artifact && !call.args.includes("--list") && call.args.includes("--ignored"));
     assert.deepEqual(longValidation.args, [
-      "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
+      "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative",
       "--exact",
       "--ignored",
       "--test-threads=1",
     ]);
     assert.equal(longValidation.env.RAYON_NUM_THREADS, "7");
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
-    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_996);
+    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_995);
     const web = calls.find((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
     assert.equal(web.command, process.execPath);
     assert.equal(web.timeoutMs, 10_000);
@@ -832,7 +846,9 @@ it("rejects source drift detected after the shared execution phase", async () =>
       collectFingerprint: async () => fingerprintCall++ === 0
         ? fixture.fingerprint
         : { ...fixture.fingerprint, digest: "d".repeat(64) },
-      run: async () => ({ stdout: "", stderr: "" }),
+      run: async ({ args }) => ({ stdout: args.includes("--list") && args.includes("--exact")
+        ? "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative: test\n"
+        : "", stderr: "" }),
     }), /source changed during test execution/i);
   } finally {
     await fixture.cleanup();
@@ -945,6 +961,48 @@ it("wraps an explicit phase around its complete internal workflow with one exter
   assert.equal(calls[0].timeoutMs, 300_000);
   assert.equal(calls[0].env.STOCK_GAME_FULL_REGRESSION_INTERNAL_PHASE, "1");
   assert.deepEqual(calls[0].args.slice(1), ["--internal-build", "--inventory", "/workspace/.tmp/inventory.json"]);
+});
+
+it("canonical 长验过滤名必须与 Rust 测试源的真实用例一致，防止改名漂移", async () => {
+  const required = regression.REQUIRED_LONG_VALIDATIONS;
+  assert.ok(Array.isArray(required) && required.length > 0, "REQUIRED_LONG_VALIDATIONS 必须导出且非空");
+  for (const validation of required) {
+    assert.equal(typeof validation.targetLabel, "string");
+    assert.equal(typeof validation.filter, "string");
+    const [targetKind, targetName] = validation.targetLabel.split(":");
+    assert.equal(targetKind, "test", "当前静态核对只覆盖集成测试目标");
+    const [moduleName, ...caseParts] = validation.filter.split("::");
+    const caseName = caseParts.join("::");
+    const targetRoot = path.join(path.resolve(import.meta.dirname, ".."), "packages", "engine", "tests", targetName);
+    const declared = await readFile(path.join(targetRoot, "main.rs"), "utf8").catch(() => {
+      throw new Error(`长验目标目录不存在：${targetRoot}`);
+    });
+    assert.match(declared, new RegExp(`^mod ${moduleName};$`, "m"),
+      `${validation.targetLabel} 的 main.rs 未声明 mod ${moduleName}`);
+    const moduleSource = await readFile(path.join(targetRoot, `${moduleName}.rs`), "utf8");
+    assert.match(moduleSource, new RegExp(`fn ${caseName}\\(`),
+      `过滤名 ${validation.filter} 在 ${moduleName}.rs 中没有同名用例，长验会 0-case 假绿`);
+  }
+});
+
+it("长验过滤命中 0 条用例时必须显式报错，不允许空集静默绿", async () => {
+  const fixture = await createSealedFixture();
+  let ordinaryExecutions = 0;
+  try {
+    await assert.rejects(executeFullRegression({
+      inventoryPath: fixture.inventoryPath,
+      collectFingerprint: async () => fixture.fingerprint,
+      runScripts: async () => ({ file_count: 0 }),
+      run: async ({ args }) => {
+        if (args.includes("--list") && args.includes("--exact")) return { stdout: "" };
+        if (args.includes("--list")) return { stdout: args.includes("--ignored") ? "" : "ordinary: test\n" };
+        ordinaryExecutions += 1;
+      },
+    }), /resolved to 0 test cases/);
+    assert.equal(ordinaryExecutions, 1, "只有普通 case 被执行，长验空集必须在运行前拦截");
+  } finally {
+    await fixture.cleanup();
+  }
 });
 
 it("validates explicit build and execute CLI modes", () => {

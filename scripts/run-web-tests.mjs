@@ -69,12 +69,15 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
   const sharedOffset = compilerSuite === undefined ? 0 : 1;
   if (compilerSuite !== undefined) shards[0].push(compilerSuite);
   sharedFiles.forEach((file, index) => shards[sharedOffset + index % (shardCount - sharedOffset)].push(file));
+  const perShardFileConcurrency = Math.max(1, Math.floor(availableCpuCount / shardCount));
+  const fileProcessBudget = shardCount * perShardFileConcurrency;
   return {
     available_cpu_count: availableCpuCount,
     file_count: files.length,
     shard_count: shardCount,
-    max_concurrent_processes: shardCount,
-    aggregate_process_budget: shardCount,
+    per_shard_file_concurrency: perShardFileConcurrency,
+    max_concurrent_processes: fileProcessBudget,
+    aggregate_process_budget: fileProcessBudget,
     shards,
   };
 }
@@ -109,11 +112,11 @@ export async function runWebTestBatch({
       const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(label));
       await run({
         command: process.execPath,
+        // 默认 isolation=process：每文件独立子进程，杜绝同进程 mock worker 状态串扰（player-proposals×wasm-worker 系列已实测互扰）。
         args: [
           "--test",
           "--test-timeout=10000",
-          "--test-isolation=none",
-          "--test-concurrency=1",
+          `--test-concurrency=${policy.per_shard_file_concurrency}`,
           "--test-force-exit",
           ...shard,
         ],

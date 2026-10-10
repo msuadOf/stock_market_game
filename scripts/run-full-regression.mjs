@@ -19,10 +19,10 @@ const FULL_REGRESSION_INVENTORY_SCHEMA_VERSION = 1;
 const FULL_REGRESSION_SOURCE_ALGORITHM = "full-regression-source-fingerprint";
 const FULL_REGRESSION_SOURCE_ALGORITHM_VERSION = 1;
 const FULL_REGRESSION_INTERNAL_PHASE_ENV = "STOCK_GAME_FULL_REGRESSION_INTERNAL_PHASE";
-const REQUIRED_LONG_VALIDATIONS = [
+export const REQUIRED_LONG_VALIDATIONS = [
   {
     targetLabel: "test:company_scenarios",
-    filter: "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
+    filter: "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative",
   },
 ];
 export const FULL_REGRESSION_SOURCE_INPUTS = [
@@ -422,6 +422,21 @@ async function executeRequiredLongValidations({ artifacts, policy, run, cwd, env
       throw new Error(`required long validation target ${validation.targetLabel} resolved to ${matches.length} prebuilt binaries`);
     }
     const artifact = matches[0];
+    // 过滤名漂移时 --exact 会命中 0 条用例并静默绿，必须先列出并显式拒绝空集。
+    const listTimeoutMs = remainingMs(`required long validation listing ${validation.filter}`);
+    const listing = await run({
+      command: artifact.executable,
+      args: ["--list", "--format=terse", "--exact", "--ignored", validation.filter],
+      env: { ...env, RAYON_NUM_THREADS: String(policy.rayonThreadsPerBinary) },
+      cwd,
+      timeoutMs: listTimeoutMs,
+      captureOutput: true,
+      cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, listTimeoutMs - 1)),
+    });
+    const listedCases = parseRustTestCases(listing?.stdout);
+    if (listedCases.length !== 1) {
+      throw new Error(`required long validation filter ${validation.filter} resolved to ${listedCases.length} test cases in ${artifact.label}`);
+    }
     const timeoutMs = remainingMs(`required long validation ${validation.filter}`);
     const startedAt = now();
     await run({
