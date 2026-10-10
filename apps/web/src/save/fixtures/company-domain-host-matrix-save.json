@@ -2145,7 +2145,7 @@
                       {
                         "cash_flow": "NonCash",
                         "date": "2027-12-31",
-                        "kind": "SimplePeriodSummary",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2156,7 +2156,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 2
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2027-12-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2168,7 +2176,7 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 2
+                        "source": 3
                       }
                     ],
                     [
@@ -2188,36 +2196,6 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 3
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-01-31",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
                         "source": 4
                       }
                     ],
@@ -2225,27 +2203,7 @@
                       {
                         "cash_flow": "NonCash",
                         "date": "2028-01-31",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 5
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-02-29",
-                        "kind": "SimplePeriodSummary",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2256,7 +2214,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 5
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-01-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2274,7 +2240,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-02-29",
+                        "date": "2028-01-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2294,8 +2260,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-03-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-02-29",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2306,7 +2272,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 8
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-02-29",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2315,26 +2289,6 @@
                           {
                             "account": "simple_payable",
                             "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 8
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-03-31",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
                             "side": "Credit"
                           }
                         ],
@@ -2344,37 +2298,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-04-30",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 10
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-04-30",
+                        "date": "2028-02-29",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2388,14 +2312,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 11
+                        "source": 10
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-05-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-03-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2406,7 +2330,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 11
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-03-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2424,7 +2356,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-05-31",
+                        "date": "2028-03-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2444,8 +2376,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-06-30",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-04-30",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2456,7 +2388,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 14
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-04-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2465,26 +2405,6 @@
                           {
                             "account": "simple_payable",
                             "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 14
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-06-30",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
                             "side": "Credit"
                           }
                         ],
@@ -2494,37 +2414,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-07-31",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 16
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-07-31",
+                        "date": "2028-04-30",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2538,14 +2428,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 17
+                        "source": 16
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-08-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-05-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2556,7 +2446,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 17
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-05-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2574,7 +2472,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-08-31",
+                        "date": "2028-05-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2594,8 +2492,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-09-30",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-06-30",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2606,7 +2504,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 20
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-06-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2615,26 +2521,6 @@
                           {
                             "account": "simple_payable",
                             "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 20
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-09-30",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
                             "side": "Credit"
                           }
                         ],
@@ -2644,37 +2530,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-10-31",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 22
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-10-31",
+                        "date": "2028-06-30",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2688,14 +2544,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 23
+                        "source": 22
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-11-30",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-07-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2706,7 +2562,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 23
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-07-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2724,7 +2588,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-11-30",
+                        "date": "2028-07-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2744,8 +2608,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2028-12-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-08-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2756,7 +2620,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 26
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-08-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2765,26 +2637,6 @@
                           {
                             "account": "simple_payable",
                             "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 26
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2028-12-31",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
                             "side": "Credit"
                           }
                         ],
@@ -2794,37 +2646,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-01-31",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 28
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2029-01-31",
+                        "date": "2028-08-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2838,14 +2660,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 29
+                        "source": 28
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-02-28",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-09-30",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2856,7 +2678,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 29
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-09-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2874,7 +2704,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-02-28",
+                        "date": "2028-09-30",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2894,8 +2724,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-03-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-10-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -2906,7 +2736,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 32
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-10-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -2915,26 +2753,6 @@
                           {
                             "account": "simple_payable",
                             "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 32
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2029-03-31",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
                             "side": "Credit"
                           }
                         ],
@@ -2944,37 +2762,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-04-30",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 34
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2029-04-30",
+                        "date": "2028-10-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -2988,14 +2776,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 35
+                        "source": 34
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-05-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-11-30",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -3006,7 +2794,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 35
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-11-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -3024,7 +2820,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-05-31",
+                        "date": "2028-11-30",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -3044,8 +2840,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-06-30",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2028-12-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -3056,7 +2852,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 38
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2028-12-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -3065,26 +2869,6 @@
                           {
                             "account": "simple_payable",
                             "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 38
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2029-06-30",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
                             "side": "Credit"
                           }
                         ],
@@ -3094,37 +2878,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-07-31",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 40
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2029-07-31",
+                        "date": "2028-12-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -3138,14 +2892,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 41
+                        "source": 40
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-08-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2029-01-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -3156,7 +2910,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 41
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-01-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -3174,7 +2936,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-08-31",
+                        "date": "2029-01-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -3194,8 +2956,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-09-30",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2029-02-28",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -3206,7 +2968,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 44
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-02-28",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -3215,26 +2985,6 @@
                           {
                             "account": "simple_payable",
                             "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 44
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2029-09-30",
-                        "kind": "TaxAccrual",
-                        "lines": [
-                          {
-                            "account": "6801",
-                            "amount": "25000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "222104",
-                            "amount": "25000.00",
                             "side": "Credit"
                           }
                         ],
@@ -3244,37 +2994,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-10-31",
-                        "kind": "SimplePeriodSummary",
-                        "lines": [
-                          {
-                            "account": "simple_receivable",
-                            "amount": "1000000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_revenue",
-                            "amount": "1000000.00",
-                            "side": "Credit"
-                          },
-                          {
-                            "account": "simple_fixed_expense",
-                            "amount": "900000.00",
-                            "side": "Debit"
-                          },
-                          {
-                            "account": "simple_payable",
-                            "amount": "900000.00",
-                            "side": "Credit"
-                          }
-                        ],
-                        "source": 46
-                      }
-                    ],
-                    [
-                      {
-                        "cash_flow": "NonCash",
-                        "date": "2029-10-31",
+                        "date": "2029-02-28",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -3288,14 +3008,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 47
+                        "source": 46
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-11-30",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2029-03-31",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -3306,7 +3026,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 47
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-03-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -3324,7 +3052,7 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-11-30",
+                        "date": "2029-03-31",
                         "kind": "TaxAccrual",
                         "lines": [
                           {
@@ -3344,8 +3072,8 @@
                     [
                       {
                         "cash_flow": "NonCash",
-                        "date": "2029-12-31",
-                        "kind": "SimplePeriodSummary",
+                        "date": "2029-04-30",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -3356,7 +3084,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 50
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-04-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -3368,7 +3104,471 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 50
+                        "source": 51
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-04-30",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 52
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-05-31",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 53
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-05-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 54
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-05-31",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 55
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-06-30",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 56
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-06-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 57
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-06-30",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 58
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-07-31",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 59
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-07-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 60
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-07-31",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 61
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-08-31",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 62
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-08-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 63
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-08-31",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 64
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-09-30",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 65
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-09-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 66
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-09-30",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 67
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-10-31",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 68
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-10-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 69
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-10-31",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 70
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-11-30",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 71
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-11-30",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 72
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-11-30",
+                        "kind": "TaxAccrual",
+                        "lines": [
+                          {
+                            "account": "6801",
+                            "amount": "25000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "222104",
+                            "amount": "25000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 73
+                      }
+                    ],
+                    [
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-12-31",
+                        "kind": "SimpleRevenueAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_receivable",
+                            "amount": "1000000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_revenue",
+                            "amount": "1000000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 74
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2029-12-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
+                          {
+                            "account": "simple_fixed_expense",
+                            "amount": "900000.00",
+                            "side": "Debit"
+                          },
+                          {
+                            "account": "simple_payable",
+                            "amount": "900000.00",
+                            "side": "Credit"
+                          }
+                        ],
+                        "source": 75
                       }
                     ],
                     [
@@ -3388,7 +3588,7 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 51
+                        "source": 76
                       }
                     ],
                     [
@@ -3413,7 +3613,7 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 52
+                        "source": 77
                       }
                     ],
                     [
@@ -3433,14 +3633,14 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 53
+                        "source": 78
                       }
                     ],
                     [
                       {
                         "cash_flow": "NonCash",
                         "date": "2030-01-31",
-                        "kind": "SimplePeriodSummary",
+                        "kind": "SimpleRevenueAccrual",
                         "lines": [
                           {
                             "account": "simple_receivable",
@@ -3451,7 +3651,15 @@
                             "account": "simple_revenue",
                             "amount": "1000000.00",
                             "side": "Credit"
-                          },
+                          }
+                        ],
+                        "source": 79
+                      },
+                      {
+                        "cash_flow": "NonCash",
+                        "date": "2030-01-31",
+                        "kind": "SimpleFixedExpenseAccrual",
+                        "lines": [
                           {
                             "account": "simple_fixed_expense",
                             "amount": "900000.00",
@@ -3463,7 +3671,7 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 54
+                        "source": 80
                       }
                     ],
                     [
@@ -3483,7 +3691,7 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 55
+                        "source": 81
                       }
                     ],
                     [
@@ -3503,7 +3711,7 @@
                             "side": "Credit"
                           }
                         ],
-                        "source": 56
+                        "source": 82
                       }
                     ]
                   ],
@@ -3914,11 +4122,28 @@
                         "period": "2027-12",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1007500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1007500000",
@@ -4387,11 +4612,28 @@
                         "period": "2028-01",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1022500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1022500000",
@@ -4860,11 +5102,28 @@
                         "period": "2028-02",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1037500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1037500000",
@@ -5333,11 +5592,28 @@
                         "period": "2028-03",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1052500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1052500000",
@@ -5806,11 +6082,28 @@
                         "period": "2028-03",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "3112500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "3112500000",
@@ -6279,11 +6572,28 @@
                         "period": "2028-04",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1067500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1067500000",
@@ -6752,11 +7062,28 @@
                         "period": "2028-05",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1082500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1082500000",
@@ -7225,11 +7552,28 @@
                         "period": "2028-06",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1097500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1097500000",
@@ -7698,11 +8042,28 @@
                         "period": "2028-06",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "3247500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "3247500000",
@@ -8171,11 +8532,28 @@
                         "period": "2028-06",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "6360000000",
+                              "numerator": "540000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "450000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "6360000000",
@@ -8644,11 +9022,28 @@
                         "period": "2028-07",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1112500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1112500000",
@@ -9117,11 +9512,28 @@
                         "period": "2028-08",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1127500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1127500000",
@@ -9590,11 +10002,28 @@
                         "period": "2028-09",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1142500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1142500000",
@@ -10063,11 +10492,28 @@
                         "period": "2028-09",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "3382500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "3382500000",
@@ -10536,11 +10982,28 @@
                         "period": "2028-10",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1157500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1157500000",
@@ -11048,11 +11511,28 @@
                         "period": "2028-11",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1172500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1172500000",
@@ -11560,11 +12040,28 @@
                         "period": "2028-12",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1187500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1187500000",
@@ -12072,11 +12569,28 @@
                         "period": "2028-12",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "3517500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "3517500000",
@@ -12584,11 +13098,28 @@
                         "period": "2028-12",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "13260000000",
+                              "numerator": "2160000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "900000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "13260000000",
@@ -13096,11 +13627,28 @@
                         "period": "2029-01",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1202500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1202500000",
@@ -13608,11 +14156,28 @@
                         "period": "2029-02",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1217500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1217500000",
@@ -14120,11 +14685,28 @@
                         "period": "2029-03",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1232500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1232500000",
@@ -14632,11 +15214,28 @@
                         "period": "2029-03",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "3652500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "3652500000",
@@ -15144,11 +15743,28 @@
                         "period": "2029-04",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1247500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1247500000",
@@ -15656,11 +16272,28 @@
                         "period": "2029-05",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1262500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1262500000",
@@ -16168,11 +16801,28 @@
                         "period": "2029-06",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1277500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1277500000",
@@ -16680,11 +17330,28 @@
                         "period": "2029-06",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "3787500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "3787500000",
@@ -17192,11 +17859,28 @@
                         "period": "2029-06",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "7440000000",
+                              "numerator": "540000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "450000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "7440000000",
@@ -17704,11 +18388,28 @@
                         "period": "2029-07",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1292500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1292500000",
@@ -18216,11 +18917,28 @@
                         "period": "2029-08",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1307500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1307500000",
@@ -18728,11 +19446,28 @@
                         "period": "2029-09",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1322500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1322500000",
@@ -19240,11 +19975,28 @@
                         "period": "2029-09",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "3922500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "3922500000",
@@ -19752,11 +20504,28 @@
                         "period": "2029-10",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1337500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1337500000",
@@ -20264,11 +21033,28 @@
                         "period": "2029-11",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1352500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1352500000",
@@ -20776,11 +21562,28 @@
                         "period": "2029-12",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1367500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1367500000",
@@ -21288,11 +22091,28 @@
                         "period": "2029-12",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "4057500000",
+                              "numerator": "135000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "225000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "4057500000",
@@ -21800,11 +22620,28 @@
                         "period": "2029-12",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "15420000000",
+                              "numerator": "2160000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": []
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "900000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "15420000000",
@@ -22357,11 +23194,34 @@
                         "period": "2030-01",
                         "roe": {
                           "adjusted_roe": {
-                            "Unavailable": {
-                              "reason": "MissingNonRecurringIncomeFacts"
+                            "Available": {
+                              "denominator": "1382500000",
+                              "numerator": "15000000"
                             }
                           },
                           "basis": "AttributableToOrdinaryShareholders",
+                          "equity_events": {
+                            "attributable_to_parent": {
+                              "Items": [
+                                {
+                                  "amount": "500000.00",
+                                  "effective_on": "2030-01-01",
+                                  "kind": "Decrease"
+                                }
+                              ]
+                            },
+                            "minority_interest": {
+                              "Unavailable": {
+                                "reason": "StandaloneHasNoMinorityInterest"
+                              }
+                            }
+                          },
+                          "non_recurring": {
+                            "Listed": {
+                              "items": [],
+                              "parent_net_income_after_deduction": "75000.00"
+                            }
+                          },
                           "ordinary_roe": {
                             "Available": {
                               "denominator": "1382500000",
@@ -22431,12 +23291,12 @@
                     "registered_capital": "10000000.00",
                     "total_gross": "500000.00"
                   },
-                  "declaration_source": 52,
+                  "declaration_source": 77,
                   "payments": {
                     "dividend-payment:simple-preference:C-600101:dividend:2029-12-31:2030-01-03": {
                       "amount": "500000.00",
                       "paid_on": "2030-01-03",
-                      "source": 53
+                      "source": 78
                     }
                   },
                   "reserve": "90000.00",
@@ -22449,7 +23309,7 @@
                     "registered_capital": "10000000.00",
                     "total_gross": "400000.00"
                   },
-                  "declaration_source": 56,
+                  "declaration_source": 82,
                   "payments": {},
                   "reserve": "0.00",
                   "reserve_basis_year": null
@@ -22494,7 +23354,7 @@
                 "registered_capital": "10000000.00",
                 "source_evidence": "session-auto:registered-capital:par-cents=100:shares=10000000"
               },
-              "next_event_id": "57",
+              "next_event_id": "83",
               "opening_date": "2027-11-30",
               "recognized_periods": [
                 [
@@ -30648,11 +31508,28 @@
           "period": "2028-03",
           "roe": {
             "adjusted_roe": {
-              "Unavailable": {
-                "reason": "MissingNonRecurringIncomeFacts"
+              "Available": {
+                "denominator": "3112500000",
+                "numerator": "135000000"
               }
             },
             "basis": "AttributableToOrdinaryShareholders",
+            "equity_events": {
+              "attributable_to_parent": {
+                "Items": []
+              },
+              "minority_interest": {
+                "Unavailable": {
+                  "reason": "StandaloneHasNoMinorityInterest"
+                }
+              }
+            },
+            "non_recurring": {
+              "Listed": {
+                "items": [],
+                "parent_net_income_after_deduction": "225000.00"
+              }
+            },
             "ordinary_roe": {
               "Available": {
                 "denominator": "3112500000",
@@ -31136,11 +32013,28 @@
           "period": "2028-06",
           "roe": {
             "adjusted_roe": {
-              "Unavailable": {
-                "reason": "MissingNonRecurringIncomeFacts"
+              "Available": {
+                "denominator": "6360000000",
+                "numerator": "540000000"
               }
             },
             "basis": "AttributableToOrdinaryShareholders",
+            "equity_events": {
+              "attributable_to_parent": {
+                "Items": []
+              },
+              "minority_interest": {
+                "Unavailable": {
+                  "reason": "StandaloneHasNoMinorityInterest"
+                }
+              }
+            },
+            "non_recurring": {
+              "Listed": {
+                "items": [],
+                "parent_net_income_after_deduction": "450000.00"
+              }
+            },
             "ordinary_roe": {
               "Available": {
                 "denominator": "6360000000",
@@ -31624,11 +32518,28 @@
           "period": "2028-09",
           "roe": {
             "adjusted_roe": {
-              "Unavailable": {
-                "reason": "MissingNonRecurringIncomeFacts"
+              "Available": {
+                "denominator": "3382500000",
+                "numerator": "135000000"
               }
             },
             "basis": "AttributableToOrdinaryShareholders",
+            "equity_events": {
+              "attributable_to_parent": {
+                "Items": []
+              },
+              "minority_interest": {
+                "Unavailable": {
+                  "reason": "StandaloneHasNoMinorityInterest"
+                }
+              }
+            },
+            "non_recurring": {
+              "Listed": {
+                "items": [],
+                "parent_net_income_after_deduction": "225000.00"
+              }
+            },
             "ordinary_roe": {
               "Available": {
                 "denominator": "3382500000",
@@ -32151,11 +33062,28 @@
           "period": "2028-12",
           "roe": {
             "adjusted_roe": {
-              "Unavailable": {
-                "reason": "MissingNonRecurringIncomeFacts"
+              "Available": {
+                "denominator": "13260000000",
+                "numerator": "2160000000"
               }
             },
             "basis": "AttributableToOrdinaryShareholders",
+            "equity_events": {
+              "attributable_to_parent": {
+                "Items": []
+              },
+              "minority_interest": {
+                "Unavailable": {
+                  "reason": "StandaloneHasNoMinorityInterest"
+                }
+              }
+            },
+            "non_recurring": {
+              "Listed": {
+                "items": [],
+                "parent_net_income_after_deduction": "900000.00"
+              }
+            },
             "ordinary_roe": {
               "Available": {
                 "denominator": "13260000000",
@@ -32678,11 +33606,28 @@
           "period": "2029-03",
           "roe": {
             "adjusted_roe": {
-              "Unavailable": {
-                "reason": "MissingNonRecurringIncomeFacts"
+              "Available": {
+                "denominator": "3652500000",
+                "numerator": "135000000"
               }
             },
             "basis": "AttributableToOrdinaryShareholders",
+            "equity_events": {
+              "attributable_to_parent": {
+                "Items": []
+              },
+              "minority_interest": {
+                "Unavailable": {
+                  "reason": "StandaloneHasNoMinorityInterest"
+                }
+              }
+            },
+            "non_recurring": {
+              "Listed": {
+                "items": [],
+                "parent_net_income_after_deduction": "225000.00"
+              }
+            },
             "ordinary_roe": {
               "Available": {
                 "denominator": "3652500000",
@@ -33205,11 +34150,28 @@
           "period": "2029-06",
           "roe": {
             "adjusted_roe": {
-              "Unavailable": {
-                "reason": "MissingNonRecurringIncomeFacts"
+              "Available": {
+                "denominator": "7440000000",
+                "numerator": "540000000"
               }
             },
             "basis": "AttributableToOrdinaryShareholders",
+            "equity_events": {
+              "attributable_to_parent": {
+                "Items": []
+              },
+              "minority_interest": {
+                "Unavailable": {
+                  "reason": "StandaloneHasNoMinorityInterest"
+                }
+              }
+            },
+            "non_recurring": {
+              "Listed": {
+                "items": [],
+                "parent_net_income_after_deduction": "450000.00"
+              }
+            },
             "ordinary_roe": {
               "Available": {
                 "denominator": "7440000000",
@@ -33732,11 +34694,28 @@
           "period": "2029-09",
           "roe": {
             "adjusted_roe": {
-              "Unavailable": {
-                "reason": "MissingNonRecurringIncomeFacts"
+              "Available": {
+                "denominator": "3922500000",
+                "numerator": "135000000"
               }
             },
             "basis": "AttributableToOrdinaryShareholders",
+            "equity_events": {
+              "attributable_to_parent": {
+                "Items": []
+              },
+              "minority_interest": {
+                "Unavailable": {
+                  "reason": "StandaloneHasNoMinorityInterest"
+                }
+              }
+            },
+            "non_recurring": {
+              "Listed": {
+                "items": [],
+                "parent_net_income_after_deduction": "225000.00"
+              }
+            },
             "ordinary_roe": {
               "Available": {
                 "denominator": "3922500000",
