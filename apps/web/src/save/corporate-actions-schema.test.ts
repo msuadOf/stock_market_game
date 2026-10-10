@@ -59,7 +59,7 @@ test("公司行为状态要求全部十一个显式数组，空数组表示已�
 test("公司行为状态要求十一个显式数组并严格校验股息税账序列", () => {
   const taxBook = {
     operation_seq: 0, account: "0", stock: "600101", profile: "IndividualPublicMarket",
-    opened_on: "2030-01-03", opening_lots: [], settled_on: "2030-01-03", lots: [], days: [], dividends: [], collections: [], redenominations: [],
+    opened_on: "2030-01-03", opening_lots: [], settled_on: "2030-01-03", lots: [], days: [], dividends: [], collections: [], redenominations: [], stock_bonus_bases: [],
   }
   const lot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
   const registry = { ...validRegistry(), holdings: [{ holder: { Account: "0" }, lots: [lot] }, { holder: { External: "holder-a" }, lots: [] }] }
@@ -103,7 +103,7 @@ test("简税代扣回执按模式门禁勾稽并可由比例复算", () => {
   // Flat 模式到账回执标记非 FlatWithholding：拒绝（回执配对勾稽先于状态推导）。
   assert.throws(() => parseSessionCorporateActions({ ...actions, account_gross_receipts: [{ ...grossReceipt, tax_status: "TreatmentNotConfigured" as const }] }, flatContext), /缺少金额一致的 FlatWithholding 分红到账回执/)
   // Flat 模式残留个人差别化税账：拒绝。
-  const taxBook = { operation_seq: 0, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-08", opening_lots: [], settled_on: "2030-01-08", lots: [], days: [], dividends: [], collections: [], redenominations: [] }
+  const taxBook = { operation_seq: 0, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-08", opening_lots: [], settled_on: "2030-01-08", lots: [], days: [], dividends: [], collections: [], redenominations: [], stock_bonus_bases: [] }
   assert.throws(() => parseSessionCorporateActions({ ...actions, dividend_tax_books: [taxBook] }, flatContext), /不得配置个人差别化税账/)
 })
 
@@ -118,7 +118,7 @@ test("账户分红到账税身份必须与同账户同证券税账配置一致",
     status: "Paid", registration, entitlements: [{ holder, shares: "10", gross: "10" }], paid: [[holder, "10"]], failures: [], payments: [payment],
   }
   const taxLot = { id: "tax-account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, class: "PublicMarket" }
-  const taxBook = { operation_seq: 0, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-08", opening_lots: [taxLot], settled_on: "2030-01-08", lots: [taxLot], days: [], dividends: [], collections: [], redenominations: [] }
+  const taxBook = { operation_seq: 0, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-08", opening_lots: [taxLot], settled_on: "2030-01-08", lots: [taxLot], days: [], dividends: [], collections: [], redenominations: [], stock_bonus_bases: [] }
   const receipt = { payment_id: "payment-a", plan_id: "plan-a", account: "0", paid_on: "2030-01-06", gross: "10", tax_status: "IndividualPublicMarket" }
   const actions = { registries: [registry], dividends: [dividend], dividend_tax_books: [taxBook], flat_withholding_receipts: [], account_gross_receipts: [receipt], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], share_splits: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
   const context = { ...registryContext(), currentDate: "2030-01-08", snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 10 } } } } } }
@@ -282,7 +282,7 @@ test("税账首个日结必须紧邻开账日下一自然日", () => {
       operation_seq: 1, account: "0", stock: "600101", profile: "IndividualPublicMarket",
       opened_on: "2030-01-03", opening_lots: [taxLot], settled_on: settledOn, lots: [taxLot],
       days: [{ operation_seq: 1, event_id: "day-a", day: firstDay, net_change: "0", acquisition: null, dispositions: [] }],
-      dividends: [], collections: [], redenominations: [],
+      dividends: [], collections: [], redenominations: [], stock_bonus_bases: [],
     }
     return { registries: [registry], dividends: [], dividend_tax_books: [taxBook], flat_withholding_receipts: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], share_splits: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
   }
@@ -296,7 +296,7 @@ test("精确税额分数必须完整约简（gcd=1），非仅拒绝可整除", 
     operation_seq: 1, account: "0", stock: "600101", profile: "IndividualPublicMarket",
     opened_on: "2030-01-03", opening_lots: [], settled_on: "2030-01-03", lots: [], days: [], dividends: [],
     collections: [{ operation_seq: 1, event_id: "col-a", day: "2030-01-03", available_cash: "10", collected: "0", remaining_cash: "10", outstanding: { numerator: "2", denominator: "4" }, needs_funds: true }],
-    redenominations: [],
+    redenominations: [], stock_bonus_bases: [],
   }
   const lot = { id: "account-lot", qty: "10", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }
   const registry = { ...validRegistry(), settled_on: "2030-01-03", holdings: [{ holder: { Account: "0" }, lots: [lot] }, { holder: { External: "holder-a" }, lots: [] }] }
@@ -459,7 +459,7 @@ test("税账日结允许同日正向公司行为续记且拒绝同日非正向�
   const creditLot = { id: "tax:stock-distribution:d1:account-0", qty: "3", acquired_on: "2030-01-04", source: { CorporateAction: { event: "d1" } }, class: "PublicMarket" }
   const marketDay = { operation_seq: 1, event_id: "session-market:600101:0:2030-01-04", day: "2030-01-04", net_change: "0", acquisition: null, dispositions: [] }
   const creditDay = { operation_seq: 2, event_id: "stock-distribution:d1:0", day: "2030-01-04", net_change: "3", acquisition: creditLot, dispositions: [] }
-  const book = { operation_seq: 2, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-03", opening_lots: [taxLot], settled_on: "2030-01-04", lots: [taxLot, creditLot], days: [marketDay, creditDay], dividends: [], collections: [], redenominations: [] }
+  const book = { operation_seq: 2, account: "0", stock: "600101", profile: "IndividualPublicMarket", opened_on: "2030-01-03", opening_lots: [taxLot], settled_on: "2030-01-04", lots: [taxLot, creditLot], days: [marketDay, creditDay], dividends: [], collections: [], redenominations: [], stock_bonus_bases: [] }
   const registry = { ...validRegistry("13"), settled_on: "2030-01-04", holdings: [{ holder: { Account: "0" }, lots: [{ id: "account-lot", qty: "13", acquired_on: "2030-01-01", source: { InitialAllocation: { evidence: "setup" } }, restriction: "Unrestricted" }] }] }
   const actions = { registries: [registry], dividends: [], dividend_tax_books: [book], flat_withholding_receipts: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], share_splits: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
   const context = { ...registryContext("13"), currentDate: "2030-01-05", snapshot: { markets: {}, accounts: { "0": { positions: { "600101": { qty: 13 } } } } } }
@@ -571,7 +571,7 @@ test("税账与名册回执覆盖勾稽：按引擎同款 scope→事件 id 派�
       { operation_seq: 1, event_id: "session-market:600101:0:2030-01-04", day: "2030-01-04", net_change: "2", acquisition: taxMarketLot, dispositions: [] },
       { operation_seq: 2, event_id: "stock-distribution:d1:0", day: "2030-01-04", net_change: "3", acquisition: taxDistributionLot, dispositions: [] },
     ],
-    lots: [taxMarketLot, taxDistributionLot], dividends: [], collections: [], redenominations: [],
+    lots: [taxMarketLot, taxDistributionLot], dividends: [], collections: [], redenominations: [], stock_bonus_bases: [],
   }
   const actions = { registries: [registry], dividends: [], dividend_tax_books: [fullCoverageBook], flat_withholding_receipts: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], share_splits: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
   // setup 初始股数 12：公开市场日只在持有人间转移（发行数不变），送转非交易过户 +3 → 名册 15。
@@ -666,7 +666,7 @@ test("税账覆盖勾稽对回购注销回执显式跳过、对零变动账户�
       { operation_seq: 2, event_id: "stock-distribution:d1:0", day: "2030-01-04", net_change: "3", acquisition: taxDistributionLot, dispositions: [] },
       { operation_seq: 3, event_id: "session-market:600101:0:2030-01-05", day: "2030-01-05", net_change: "0", acquisition: null, dispositions: [] },
     ],
-    lots: [taxMarketLot, taxDistributionLot], dividends: [], collections: [], redenominations: [],
+    lots: [taxMarketLot, taxDistributionLot], dividends: [], collections: [], redenominations: [], stock_bonus_bases: [],
   }
   const actions = { registries: [registry], dividends: [], dividend_tax_books: [bookWithZeroDay], flat_withholding_receipts: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [], stock_distributions: [], share_splits: [], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
   // setup 初始 12 ＋ 送转 3 − 回购注销 1 = 名册/发行人 14（账户 5＋外部 9）。
@@ -789,7 +789,7 @@ test("税账覆盖勾稽与 replay 纳入 ShareReDenomination 重新计值回执
     operation_seq: 1, account: "0", stock: "600101", profile: "IndividualPublicMarket",
     opened_on: "2030-01-02", opening_lots: [taxOpeningLot], settled_on: "2030-01-03",
     days: [{ operation_seq: 1, event_id: "share-split:split-1:0", day: "2030-01-03", net_change: "4", acquisition: taxSplitLot, dispositions: [] }],
-    lots: [taxOpeningLot, taxSplitLot], dividends: [], collections: [], redenominations: [],
+    lots: [taxOpeningLot, taxSplitLot], dividends: [], collections: [], redenominations: [], stock_bonus_bases: [],
   }
   const splitAnchor = { ex_date: "2030-01-03", reference_price: "500" }
   const splitActions = { registries: [splitRegistry], dividends: [], dividend_tax_books: [splitTaxBook], flat_withholding_receipts: [], account_gross_receipts: [], external_receipts: [], applied_ex_reference_groups: [{ date: "2030-01-03", stock: "600101", cash_plan_ids: [], stock_event_ids: [], rights_event_ids: [], split_event_ids: ["split-1"], reference: splitAnchor }], stock_distributions: [], share_splits: [splitBook], rights_offerings: [], rights_subscription_queue: [], rejected_rights_subscriptions: [], issuer_repurchases: [] }
@@ -862,7 +862,7 @@ test("税账覆盖勾稽与 replay 纳入 ShareReDenomination 重新计值回执
       { operation_seq: 1, event_id: "session-market:600101:0:2030-01-04", day: "2030-01-04", net_change: "2", acquisition: taxMarketLot, dispositions: [] },
       { operation_seq: 2, event_id: "session-market:600101:0:2030-01-05", day: "2030-01-05", net_change: "0", acquisition: null, dispositions: [] },
     ],
-    redenominations: [{ operation_seq: 3, event_id: "share-split:consolidation-1:0", day: "2030-01-05", net_change: "-4", removed: [{ lot: { ...taxInitialLot, qty: "4" }, disposed_on: "2030-01-05" }] }],
+    redenominations: [{ operation_seq: 3, event_id: "share-split:consolidation-1:0", day: "2030-01-05", net_change: "-4", removed: [{ lot: { ...taxInitialLot, qty: "4" }, disposed_on: "2030-01-05" }] }], stock_bonus_bases: [],
     lots: [{ ...taxInitialLot, qty: "2" }, taxMarketLot], dividends: [], collections: [],
   }
   const consolidationAnchor = { ex_date: "2030-01-05", reference_price: "500" }
@@ -877,7 +877,7 @@ test("税账覆盖勾稽与 replay 纳入 ShareReDenomination 重新计值回执
   // 缺少重新计值事实（既无日结也无核减回执）：覆盖勾稽显式拒绝。
   const missingRedenomination = {
     ...consolidationTaxBook, operation_seq: 2,
-    redenominations: [],
+    redenominations: [], stock_bonus_bases: [],
     lots: [taxInitialLot, taxMarketLot],
   }
   assert.throws(() => parseSessionCorporateActions({ ...consolidationActions, dividend_tax_books: [missingRedenomination], flat_withholding_receipts: [] }, consolidationContext), /未入账/)

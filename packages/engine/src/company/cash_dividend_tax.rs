@@ -325,6 +325,28 @@ pub struct TaxRedenominationReceipt {
     pub(crate) removed: Vec<TaxDisposition>,
 }
 
+/// 送股（股票股利）个税税基事实：送股对个人按**股票面值**计入股息税基
+/// （财税〔2012〕85号：股票股利属「个人从公开发行和转让市场取得的股票」，
+/// 其应纳税所得按面值核定）；税款因送转无现金，沿用差别化机制在股东后续
+/// 卖出该批次时从卖出款中扣缴。取得日 = R+1 到账日由关联税批次承载
+/// （同日续记既有口径）；资本公积（股本溢价）转增对个人不征税，不产生本事实
+/// （现行登记简化：本模型资本公积只有股本溢价单一来源口径）。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StockBonusTaxBasis {
+    #[serde(with = "crate::orderbook::js_safe_u64")]
+    pub(crate) operation_seq: u64,
+    /// 送转事件身份（与名册非交易过户回执、税批次 CorporateAction 来源一致）。
+    pub(crate) event_id: String,
+    pub(crate) credited_on: CivilDate,
+    /// 关联税批次（取得日 = R+1）的 lot 身份。
+    pub(crate) lot_id: String,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    pub(crate) qty: u64,
+    /// 每股面值（该送转事件声明的 bind-once 面值，现行面值权威链冻结值）。
+    pub(crate) par_value_per_share: Money,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "TaxBookState")]
 pub struct CashDividendTaxBook {
@@ -341,6 +363,7 @@ pub struct CashDividendTaxBook {
     dividends: Vec<RegisteredTaxDividend>,
     collections: Vec<TaxCollectionReceipt>,
     redenominations: Vec<TaxRedenominationReceipt>,
+    stock_bonus_bases: Vec<StockBonusTaxBasis>,
 }
 
 #[derive(Deserialize)]
@@ -358,6 +381,7 @@ struct TaxBookState {
     dividends: Vec<RegisteredTaxDividend>,
     collections: Vec<TaxCollectionReceipt>,
     redenominations: Vec<TaxRedenominationReceipt>,
+    stock_bonus_bases: Vec<StockBonusTaxBasis>,
 }
 
 impl TryFrom<TaxBookState> for CashDividendTaxBook {
@@ -376,6 +400,7 @@ impl TryFrom<TaxBookState> for CashDividendTaxBook {
             dividends: state.dividends,
             collections: state.collections,
             redenominations: state.redenominations,
+            stock_bonus_bases: state.stock_bonus_bases,
         };
         book.validate()?;
         Ok(book)
@@ -403,6 +428,7 @@ impl CashDividendTaxBook {
             dividends: vec![],
             collections: vec![],
             redenominations: vec![],
+            stock_bonus_bases: vec![],
         };
         book.validate()?;
         Ok(book)
@@ -561,6 +587,82 @@ impl CashDividendTaxBook {
         *self = candidate;
         Ok(())
     }
+    /// 送股个税税基入账：在送转批次以同日续记落到税账 FIFO 之后，与到账同日
+    /// 记录「面值 × 股数」的应税事实（转增免税，不产生本事实）。事件身份幂等：
+    /// 同事实重放 Ok、异事实显式拒绝；同一税批次只允许计基一次。
+    pub fn record_stock_bonus_basis(
+        &mut self,
+        event_id: String,
+        credited_on: CivilDate,
+        lot_id: String,
+        qty: u64,
+        par_value_per_share: Money,
+    ) -> Result<(), DividendTaxError> {
+        if let Some(existing) = self
+            .stock_bonus_bases
+            .iter()
+            .find(|basis| basis.event_id == event_id)
+        {
+            if existing.credited_on == credited_on
+                && existing.lot_id == lot_id
+                && existing.qty == qty
+                && existing.par_value_per_share == par_value_per_share
+            {
+                return Ok(());
+            }
+            return Err(invalid(
+                "stock bonus tax basis identity reused with different facts",
+            ));
+        }
+        if event_id.trim().is_empty()
+            || lot_id.trim().is_empty()
+            || qty == 0
+            || par_value_per_share.cents() <= 0
+            || credited_on != self.settled_on
+        {
+            return Err(invalid(
+                "stock bonus tax basis requires identity, positive shares, positive par value and the current credit day",
+            ));
+        }
+        if self
+            .stock_bonus_bases
+            .iter()
+            .any(|basis| basis.lot_id == lot_id)
+        {
+            return Err(invalid(
+                "a tax lot can only carry one stock bonus tax basis",
+            ));
+        }
+        let lot = self
+            .lots
+            .iter()
+            .find(|lot| lot.id == lot_id)
+            .ok_or_else(|| invalid("stock bonus tax basis references an unknown tax lot"))?;
+        if lot.acquired_on != credited_on
+            || lot.qty != qty
+            || (lot.source
+                != TaxAcquisitionSource::CorporateAction {
+                    event: event_id.clone(),
+                })
+        {
+            return Err(invalid(
+                "stock bonus tax basis must reference the corporate-action credit lot created on the same day",
+            ));
+        }
+        let mut candidate = self.clone();
+        let operation_seq = candidate.advance_operation()?;
+        candidate.stock_bonus_bases.push(StockBonusTaxBasis {
+            operation_seq,
+            event_id,
+            credited_on,
+            lot_id,
+            qty,
+            par_value_per_share,
+        });
+        candidate.validate()?;
+        *self = candidate;
+        Ok(())
+    }
     pub fn record_payment(
         &mut self,
         event_id: &str,
@@ -694,6 +796,25 @@ impl CashDividendTaxBook {
             .iter()
             .find(|receipt| receipt.event_id == event_id)
     }
+    /// 送股税基事实只读视图（供 Session 层勾稽与测试断言使用）。
+    pub(crate) fn stock_bonus_bases(&self) -> &[StockBonusTaxBasis] {
+        &self.stock_bonus_bases
+    }
+    pub(crate) fn stock_bonus_basis_by_event(&self, event_id: &str) -> Option<&StockBonusTaxBasis> {
+        self.stock_bonus_bases
+            .iter()
+            .find(|basis| basis.event_id == event_id)
+    }
+    /// 按批次身份解析其取得日与税类：创建事实（日结回执 acquisition）永久留存，
+    /// 优先于仍持有中的当前批次快照；两者都缺属结构损坏，显式失败。
+    fn resolve_lot_facts(&self, lot_id: &str) -> Result<&DividendTaxLot, DividendTaxError> {
+        self.days
+            .iter()
+            .filter_map(|day| day.acquisition.as_ref())
+            .find(|lot| lot.id == lot_id)
+            .or_else(|| self.lots.iter().find(|lot| lot.id == lot_id))
+            .ok_or_else(|| invalid("tax lot facts cannot be resolved from day receipts"))
+    }
 
     pub(crate) fn receipt_by_event(&self, event_id: &str) -> Option<&TaxDayReceipt> {
         self.days
@@ -807,6 +928,52 @@ impl CashDividendTaxBook {
                 .checked_add(assessed.round_half_up_cents()?)
                 .ok_or_else(|| overflow("assessed tax cents"))?;
         }
+        // 送股税基：送股按面值计入股息税基，与现金分红同一差别化机制——
+        // 解禁前到账按 10% 立即计税（85号第四条）；其余在关联批次处置时按
+        // 持股档位计税（限售档期自解禁日起算）。每笔送股事件合计税额同样
+        // 四舍五入到分（与每笔分红同一登记口径）。
+        for basis in self
+            .stock_bonus_bases
+            .iter()
+            .filter(|basis| basis.operation_seq <= operation_seq)
+        {
+            let lot = self.resolve_lot_facts(&basis.lot_id)?;
+            let per_share =
+                ExactDividendTaxAmount::new(i128::from(basis.par_value_per_share.cents()), 1)?;
+            let mut assessed = ExactDividendTaxAmount::zero();
+            match &lot.class {
+                TaxShareClass::StatutoryRestricted { release_on, .. }
+                    if basis.credited_on < *release_on =>
+                {
+                    assessed = per_share.multiply(basis.qty, 10)?;
+                }
+                class => {
+                    let start = match class {
+                        TaxShareClass::PublicMarket => lot.acquired_on,
+                        TaxShareClass::StatutoryRestricted { release_on, .. } => *release_on,
+                    };
+                    for day in self.days.iter().filter(|day| {
+                        day.day > basis.credited_on
+                            && day.day <= through
+                            && day.operation_seq <= operation_seq
+                    }) {
+                        for disposition in day
+                            .dispositions
+                            .iter()
+                            .filter(|disposition| disposition.lot.id == basis.lot_id)
+                        {
+                            assessed = assessed.add(&per_share.multiply(
+                                disposition.lot.qty,
+                                personal_cash_dividend_rate(start, disposition.disposed_on)?,
+                            )?)?;
+                        }
+                    }
+                }
+            }
+            total_cents = total_cents
+                .checked_add(assessed.round_half_up_cents()?)
+                .ok_or_else(|| overflow("assessed stock bonus tax cents"))?;
+        }
         Ok(total_cents)
     }
     pub fn validate(&self) -> Result<(), DividendTaxError> {
@@ -828,6 +995,9 @@ impl CashDividendTaxBook {
         }
         for reduction in &self.redenominations {
             operations.push((reduction.operation_seq, reduction.day));
+        }
+        for basis in &self.stock_bonus_bases {
+            operations.push((basis.operation_seq, basis.credited_on));
         }
         operations.sort_unstable_by_key(|(sequence, _)| *sequence);
         let mut previous_fact_day = self.opened_on;
@@ -908,6 +1078,31 @@ impl CashDividendTaxBook {
             {
                 if dividend.lots != replayed {
                     return Err(invalid("registered dividend tax lots contradict actual holding facts at registration"));
+                }
+            }
+            if let Some(basis) = self
+                .stock_bonus_bases
+                .iter()
+                .find(|basis| basis.operation_seq == *sequence)
+            {
+                // 计基时点的批次快照必须与重放一致：同日创建、同数量、同送转来源
+                // 事件——任何篡改（数量/日期/批次归属）都在恢复重放时显式暴露。
+                let lot = replayed
+                    .iter()
+                    .find(|lot| lot.id == basis.lot_id)
+                    .ok_or_else(|| {
+                        invalid("stock bonus tax basis references a lot absent at its sequence")
+                    })?;
+                if lot.qty != basis.qty
+                    || lot.acquired_on != basis.credited_on
+                    || (lot.source
+                        != TaxAcquisitionSource::CorporateAction {
+                            event: basis.event_id.clone(),
+                        })
+                {
+                    return Err(invalid(
+                        "stock bonus tax basis contradicts the credited lot facts",
+                    ));
                 }
             }
         }
@@ -1016,9 +1211,32 @@ impl CashDividendTaxBook {
                 ));
             }
         }
+        // 送股税基事实：身份与批次唯一、数量与面值为正、日期在账期内；
+        // 与重放批次的一致性由上方按操作序的逐点校验承载。
+        let mut bonus_event_ids = BTreeSet::new();
+        let mut bonus_lot_ids = BTreeSet::new();
+        for basis in &self.stock_bonus_bases {
+            if basis.event_id.trim().is_empty()
+                || basis.lot_id.trim().is_empty()
+                || basis.qty == 0
+                || basis.par_value_per_share.cents() <= 0
+                || basis.credited_on < self.opened_on
+                || basis.credited_on > self.settled_on
+                || !bonus_event_ids.insert(&basis.event_id)
+                || !bonus_lot_ids.insert(&basis.lot_id)
+            {
+                return Err(invalid(
+                    "invalid stock bonus tax basis identity, quantity, par value or date",
+                ));
+            }
+        }
         // 收尾日须等于最后一条事实（日结或重新计值核减）的日期。
-        let tail_day = previous_day
-            .max(self.redenominations.last().map(|receipt| receipt.day).unwrap_or(previous_day));
+        let tail_day = previous_day.max(
+            self.redenominations
+                .last()
+                .map(|receipt| receipt.day)
+                .unwrap_or(previous_day),
+        );
         if tail_day != self.settled_on {
             return Err(invalid("tax settled day does not match receipt tail"));
         }

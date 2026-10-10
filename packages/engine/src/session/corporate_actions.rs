@@ -776,6 +776,17 @@ impl SessionCorporateActions {
                 .ok_or_else(|| {
                     SessionCorporateActionsError::Invalid("送转入账缺少冻结分配回执".into())
                 })?;
+            // 送转个税税基来源：Simple 声明事实的 kind 与 bind-once 面值（面值
+            // 权威链的冻结值；转增免税不产生税基——现行登记简化：本模型资本
+            // 公积只有股本溢价单一来源口径，法源对个人不征）。
+            let finance_fact = company_system
+                .stock_distribution_facts(&plan.issuer)
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+                .into_iter()
+                .find(|fact| fact.event_id == plan.event_id)
+                .ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid("送转入账缺少Simple声明事实".into())
+                })?;
             let credit_lots = holder_credit_lots(&receipt, day)
                 .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
             let mut changes = Vec::with_capacity(credit_lots.len());
@@ -876,6 +887,25 @@ impl SessionCorporateActions {
                     Some(acquisition),
                 )
                 .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                // 送股个税（任务175）：个人取得送股按面值计入股息税基，税款在
+                // 后续卖出时按差别化档位从卖出款扣缴；资本公积（股本溢价）转增
+                // 对个人免税，不产生税基事实（登记简化，见 docs/trading-rules.md）。
+                if plan.kind
+                    == crate::company::stock_distribution::StockDistributionKind::BonusShares
+                {
+                    book.record_stock_bonus_basis(
+                        plan.event_id.clone(),
+                        day,
+                        format!(
+                            "tax:stock-distribution:{}:{}",
+                            plan.event_id,
+                            holder_key(&lot.holder)
+                        ),
+                        lot.qty,
+                        finance_fact.par_value_per_share,
+                    )
+                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
+                }
             }
             company_system
                 .record_stock_distribution_credit(
@@ -2769,6 +2799,120 @@ impl SessionCorporateActions {
                         "账户 {account:?} 的股息税账缺少名册回执 {} 的日结事实：\
                          送转×税账交互未入账，拒绝静默缺股",
                         receipt.request.event_id
+                    )));
+                }
+            }
+        }
+        // 送股税基↔送转账簿勾稽（任务175）：已入账送股事件（BonusShares）对
+        // 每个有税账的账户持有人必须有面值与数量一致的税基事实；转增事件与
+        // 未入账事件不得携带税基。缺失或篡改（面值/数量/事件归属）在恢复时
+        // 显式拒绝，不允许静默漏税或凭空计税。
+        let mut credited_bonus_facts: BTreeMap<String, (crate::calendar::CivilDate, crate::money::Money)> =
+            BTreeMap::new();
+        for book in &self.stock_distributions {
+            let Some(credited_on) = book.credited_on() else {
+                continue;
+            };
+            if book.plan().kind
+                != crate::company::stock_distribution::StockDistributionKind::BonusShares
+            {
+                continue;
+            }
+            let declared_par = company_system
+                .stock_distribution_facts(&book.plan().issuer)
+                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
+                .into_iter()
+                .find(|fact| fact.event_id == book.plan().event_id)
+                .map(|fact| fact.par_value_per_share)
+                .ok_or_else(|| {
+                    SessionCorporateActionsError::Invalid(
+                        "已入账送股事件缺少Simple声明面值事实".into(),
+                    )
+                })?;
+            credited_bonus_facts.insert(book.plan().event_id.clone(), (credited_on, declared_par));
+        }
+        let credited_conversion_events: BTreeSet<&str> = self
+            .stock_distributions
+            .iter()
+            .filter(|book| {
+                book.credited_on().is_some()
+                    && book.plan().kind
+                        == crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion
+            })
+            .map(|book| book.plan().event_id.as_str())
+            .collect();
+        for tax_book in &self.dividend_tax_books {
+            let account = tax_book.account();
+            let registry = self
+                .registries
+                .iter()
+                .find(|registry| registry.stock() == tax_book.stock())
+                .expect("registry presence was checked above");
+            for basis in tax_book.stock_bonus_bases() {
+                if credited_conversion_events.contains(basis.event_id.as_str()) {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "转增事件 {} 对个人免税，不得携带送股税基事实",
+                        basis.event_id
+                    )));
+                }
+                let Some(&(credited_on, declared_par)) =
+                    credited_bonus_facts.get(&basis.event_id)
+                else {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "送股税基事实 {} 缺少已入账的送股事件",
+                        basis.event_id
+                    )));
+                };
+                let expected_receipt = format!("stock-distribution:{}", basis.event_id);
+                let holder_change = registry
+                    .receipt_by_event(&expected_receipt)
+                    .and_then(|receipt| {
+                        receipt.request.changes.iter().find(|change| {
+                            change.holder == HolderId::Account(account)
+                        })
+                    })
+                    .map(|change| change.change);
+                let Some(holder_change) = holder_change else {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "送股税基事实 {} 引用的账户 {account:?} 不在分配回执中",
+                        basis.event_id
+                    )));
+                };
+                let holder_qty = u64::try_from(holder_change).map_err(|_| {
+                    SessionCorporateActionsError::Invalid("送股税基勾稽遇到负数股数".into())
+                })?;
+                if basis.credited_on != credited_on
+                    || basis.qty != holder_qty
+                    || basis.par_value_per_share != declared_par
+                {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "送股税基事实 {} 的入账日、数量或面值与送转事件声明不一致",
+                        basis.event_id
+                    )));
+                }
+            }
+            // 反向覆盖：已入账送股事件分配到本账户的正股数必须有对应税基。
+            for (event_id, (credited_on, _par)) in &credited_bonus_facts {
+                let expected_receipt = format!("stock-distribution:{event_id}");
+                let Some(receipt) = registry.receipt_by_event(&expected_receipt) else {
+                    continue;
+                };
+                let Some(change) = receipt
+                    .request
+                    .changes
+                    .iter()
+                    .find(|change| change.holder == HolderId::Account(account))
+                else {
+                    continue;
+                };
+                if change.change <= 0 {
+                    continue;
+                }
+                let basis = tax_book.stock_bonus_basis_by_event(event_id);
+                let basis_ok = basis.is_some_and(|basis| basis.credited_on == *credited_on);
+                if !basis_ok {
+                    return Err(SessionCorporateActionsError::Invalid(format!(
+                        "已入账送股事件 {event_id} 分配给账户 {account:?} 的送股税基缺失"
                     )));
                 }
             }

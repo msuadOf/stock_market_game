@@ -745,6 +745,18 @@ fn sell_player_shares_today(
     stock: &crate::account::StockCode,
     qty: u32,
 ) -> Money {
+    sell_player_shares_today_at(session, account, stock, qty, 1_000)
+}
+
+/// 同 [`sell_player_shares_today`]，但允许显式指定限价（除权锚后的涨跌带
+/// 与 1000 分不兼容时使用，如送转除权参考价 1000/1.3 → 769 分）。
+fn sell_player_shares_today_at(
+    session: &mut GameSession,
+    account: crate::orderbook::AccountId,
+    stock: &crate::account::StockCode,
+    qty: u32,
+    price_cents: i64,
+) -> Money {
     let institution = crate::orderbook::AccountId(1);
     session
         .state
@@ -762,7 +774,7 @@ fn sell_player_shares_today(
         .place(crate::Order {
             id: crate::OrderId(buyer_order_id),
             side: crate::Side::Buy,
-            price: Money::from_cents(1_000),
+            price: Money::from_cents(price_cents),
             qty: 100,
             original_qty: 100,
             filled_qty: 0,
@@ -779,7 +791,7 @@ fn sell_player_shares_today(
             crate::Intent::PlaceLimit {
                 code: stock.clone(),
                 side: crate::Side::Sell,
-                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+                price: crate::LimitPrice::Fixed(Money::from_cents(price_cents)),
                 qty,
             },
         )
@@ -2191,21 +2203,102 @@ fn session_with_distribution_tax_interaction(
     crate::company::CompanyId,
     crate::account::StockCode,
 ) {
+    session_with_distribution_tax_interaction_opts(
+        player_lots,
+        player_qty,
+        plan_dates,
+        ticks_per_day,
+        freeze_npc,
+        DistributionTaxFixtureOpts::default(),
+    )
+}
+
+/// 送转×税账 fixture 的可变选项（默认与既有调用方完全一致：送股、面值 1 分、
+/// 大 A 个人模式）；送转个税批次（任务175）扩展：转增、自定义面值、税制模式、
+/// 资本公积注入。
+struct DistributionTaxFixtureOpts {
+    kind: crate::company::stock_distribution::StockDistributionKind,
+    par_cents: i64,
+    mode: crate::company::cash_dividend_tax::CashDividendTaxMode,
+    flat_withholding_bp: Option<u32>,
+    stamp_tax_rate_zero: bool,
+    capital_reserve_cents: Option<i128>,
+    /// 转增排除回购专户自持股需要已登记的专户事实（证监会回购规则第13条）。
+    issuer_repurchase_account_fact: bool,
+}
+
+impl Default for DistributionTaxFixtureOpts {
+    fn default() -> Self {
+        Self {
+            kind: crate::company::stock_distribution::StockDistributionKind::BonusShares,
+            par_cents: 1,
+            mode: crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual,
+            flat_withholding_bp: None,
+            stamp_tax_rate_zero: false,
+            capital_reserve_cents: None,
+            issuer_repurchase_account_fact: false,
+        }
+    }
+}
+
+fn session_with_distribution_tax_interaction_opts(
+    player_lots: Vec<crate::company::share_registry::ShareLot>,
+    player_qty: u64,
+    plan_dates: (&str, &str, &str, &str),
+    ticks_per_day: u64,
+    freeze_npc: bool,
+    opts: DistributionTaxFixtureOpts,
+) -> (
+    GameSession,
+    crate::company::CompanyId,
+    crate::account::StockCode,
+) {
     use crate::accounting::AccountingAmount;
     use crate::company::share_registry::{HolderId, ShareHolding, ShareRegistry, ShareRestriction};
-    use crate::company::stock_distribution::{StockDistributionEventPlan, StockDistributionKind};
+    use crate::company::stock_distribution::StockDistributionEventPlan;
 
     let mut setup = simple_setup();
     setup.ticks_per_day = ticks_per_day;
     setup.npcs.inst_count = 1;
-    // 大 A 个人差别化：装配名册即自动为玩家开个人税账（simple_setup 已置模式）。
-    setup.dividend_tax_mode =
-        crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual;
-    setup.flat_withholding_bp = None;
+    setup.dividend_tax_mode = opts.mode;
+    setup.flat_withholding_bp = opts.flat_withholding_bp;
+    if opts.stamp_tax_rate_zero {
+        setup.config.stamp_tax_rate = 0.0;
+    }
     setup.start_date = crate::CivilDate::from_iso(plan_dates.0).unwrap();
     if let crate::company::config::CompanySystemConfig::Simple(config) = &mut setup.company_system {
         config.prehistory_periods = 24;
         config.settlement_cycle = crate::company::simple::period::SettlementCycle::Monthly;
+        if let Some(reserve) = opts.capital_reserve_cents {
+            // 转增声明按资本公积科目余额校验：fixture 注入股本溢价贷方余额，
+            // 借方配平挂在应收展示科目（与 finance 单测同一口径）。
+            let inject = |account: &str,
+                          side: crate::accounting::PostingSide,
+                          amount: i128|
+             crate::accounting::JournalLine {
+                account: crate::accounting::LedgerAccountId(account.into()),
+                side,
+                amount: AccountingAmount::from_cents(amount),
+            };
+            config
+                .companies[0]
+                .finance
+                .opening_lines
+                .push(inject(
+                    crate::accounting::reports::simple_summary::RECEIVABLE,
+                    crate::accounting::PostingSide::Debit,
+                    reserve,
+                ));
+            config
+                .companies[0]
+                .finance
+                .opening_lines
+                .push(inject(
+                    crate::accounting::reports::simple_summary::CAPITAL_RESERVE,
+                    crate::accounting::PostingSide::Credit,
+                    reserve,
+                ));
+        }
     }
     let mut session = GameSession::new(setup, 42).unwrap();
     let stock = session.state.setup.stocks[0].code.clone();
@@ -2219,8 +2312,8 @@ fn session_with_distribution_tax_interaction(
     let date = |value| crate::CivilDate::from_iso(value).unwrap();
     let approved_on = date(plan_dates.0);
     let total_shares = session.state.setup.stocks[0].total_shares;
-    // 面值 0.01 元：注册资本 = 发行股数 × 1 分，保证整除。
-    let capital = AccountingAmount::from_cents(i128::from(total_shares));
+    // 注册资本 = 发行股数 × 每股面值（分），保证整除。
+    let capital = AccountingAmount::from_cents(i128::from(total_shares) * i128::from(opts.par_cents));
     session
         .define_dividend_legal_facts(&issuer, capital, "explicit test legal fact".into())
         .unwrap();
@@ -2272,8 +2365,26 @@ fn session_with_distribution_tax_interaction(
         ],
     )
     .unwrap();
-    // 默认大 A 模式：登记成功即自动为玩家开个人税账。
+    // 大 A 模式：登记成功即自动为玩家开个人税账；Flat/Exempt 不开账。
     session.configure_share_registry(registry).unwrap();
+    if opts.issuer_repurchase_account_fact {
+        let registry = session
+            .state
+            .corporate_actions
+            .registries
+            .iter_mut()
+            .find(|registry| registry.stock() == &stock)
+            .expect("configure_share_registry 必已建立名册");
+        registry
+            .set_issuer_repurchase_account(
+                crate::company::share_registry::IssuerRepurchaseAccountFacts {
+                    account_reference: "fixture-repurchase-account".into(),
+                    source_evidence: "fixture".into(),
+                    established_on: approved_on,
+                },
+            )
+            .unwrap();
+    }
     if freeze_npc {
         let institution = crate::orderbook::AccountId(1);
         session
@@ -2290,7 +2401,7 @@ fn session_with_distribution_tax_interaction(
         issuer: issuer.clone(),
         stock: stock.clone(),
         exchange: crate::calendar::CalendarExchange::Sse,
-        kind: StockDistributionKind::BonusShares,
+        kind: opts.kind,
         approved_on,
         announced_on: date(plan_dates.1),
         registered_on: date(plan_dates.2),
@@ -2552,10 +2663,12 @@ fn dividend_after_stock_distribution_taxes_full_snapshot_shares_with_month_end_b
         "全额卖出后税账 FIFO 必须清零"
     );
     let last_collection = book.collections().last().expect("卖出日终必须收缴税款");
+    // 现金分红税：旧 10 股 × 10 分 × 10% + 送转 3 股 × 10 分 × 20% = 16 分；
+    // 送股税基（任务175）：送转 3 股 × 面值 1 分 × 20% = 0.6 分 → half-up 1 分。
     assert_eq!(
         last_collection.collected,
-        Money::from_cents(16),
-        "税额必须按手算口径对全部 13 股求值（旧 10 股 10% + 送转 3 股 20%）"
+        Money::from_cents(17),
+        "税额 = 现金分红 16 分 + 送股税基 1 分（对全部 13 股求值）"
     );
 }
 
@@ -2854,5 +2967,553 @@ fn validate_rejects_registry_receipt_missing_from_dividend_tax_book() {
     assert!(
         rejection.to_string().contains("送转"),
         "税账缺少名册回执日结事实必须显式指向送转×税账交互：{rejection}"
+    );
+}
+
+// ===========================================================================
+// 送转个税（任务175，2026-10-10）：送股按面值计税、转增免税（登记简化：
+// 本模型资本公积只有股本溢价单一来源口径，法源对个人不征——若未来建模
+// 非股本溢价来源转增须重核应税性，不得沿用本简化）。
+// ===========================================================================
+
+/// 送股税基 fixture：面值 1 元/股（100 分）、10 送 3、R+1 = 01-07 到账；
+/// R+1 当日日终入账（旧 10 股保留，卖出用 FIFO 全额处置）。
+fn session_with_taxable_bonus() -> (GameSession, crate::company::CompanyId, crate::account::StockCode) {
+    let (mut session, issuer, stock) = session_with_distribution_tax_interaction_opts(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        2,
+        true,
+        DistributionTaxFixtureOpts {
+            par_cents: 100,
+            // 送转混合场景（第二批转增）需要资本公积余额与回购专户事实，
+            // 对纯送股用例无副作用。
+            capital_reserve_cents: Some(10_000),
+            issuer_repurchase_account_fact: true,
+            ..DistributionTaxFixtureOpts::default()
+        },
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    (session, issuer, stock)
+}
+
+/// 推进到指定日期（走满途中的交易日 tick 与日终）。
+fn advance_to_sale_day(session: &mut GameSession, target: &str) {
+    let target = crate::CivilDate::from_iso(target).unwrap();
+    while session.civil_date() < target {
+        if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
+            for _ in 0..session.state.setup.ticks_per_day {
+                session.step().unwrap();
+            }
+        }
+        session.end_civil_day().unwrap();
+    }
+}
+
+/// 卖出辅助只消耗一个 tick：日结前补完当日剩余 tick（会话同步约束）。
+fn finish_remaining_ticks(session: &mut GameSession) {
+    for _ in 1..session.state.setup.ticks_per_day {
+        session.step().unwrap();
+    }
+}
+
+/// 税账 JSON 手术：删除全部送股税基事实并把剩余事实的操作序重排为 1..=n，
+/// 构造「账本级自洽但缺税基」的状态（用于命中 Session 级勾稽负例）。
+fn remove_bonus_bases_and_renumber(mut book: serde_json::Value) -> serde_json::Value {
+    let object = book.as_object_mut().unwrap();
+    object.insert("stock_bonus_bases".into(), serde_json::json!([]));
+    let mut slots: Vec<(u64, String)> = Vec::new();
+    for (index, fact) in object["days"].as_array().unwrap().iter().enumerate() {
+        slots.push((
+            fact["operation_seq"].as_u64().unwrap(),
+            format!("days/{index}"),
+        ));
+    }
+    for (index, dividend) in object["dividends"].as_array().unwrap().iter().enumerate() {
+        slots.push((
+            dividend["operation_seq"].as_u64().unwrap(),
+            format!("dividends/{index}"),
+        ));
+        for (payment, payment_index) in dividend["payments"].as_array().unwrap().iter().zip(0..) {
+            slots.push((
+                payment["operation_seq"].as_u64().unwrap(),
+                format!("dividends/{index}/payments/{payment_index}"),
+            ));
+        }
+    }
+    for (index, collection) in object["collections"].as_array().unwrap().iter().enumerate() {
+        slots.push((
+            collection["operation_seq"].as_u64().unwrap(),
+            format!("collections/{index}"),
+        ));
+    }
+    for (index, reduction) in object["redenominations"].as_array().unwrap().iter().enumerate() {
+        slots.push((
+            reduction["operation_seq"].as_u64().unwrap(),
+            format!("redenominations/{index}"),
+        ));
+    }
+    slots.sort_by_key(|(sequence, _)| *sequence);
+    for (position, (_, path)) in slots.iter().enumerate() {
+        *book
+            .pointer_mut(&format!("/{path}/operation_seq"))
+            .expect("手术路径必须存在") = serde_json::json!(u64::try_from(position + 1).unwrap());
+    }
+    book["operation_seq"] = serde_json::json!(u64::try_from(slots.len()).unwrap());
+    book
+}
+
+/// 大 A 模式送股后卖出跨档扣缴：面值 100 分 × 3 股，
+/// 满月当日（2030-02-07）卖出 → 20% → 60 分；次日 → 10% → 30 分。
+/// >1 年免征档由单元测试 `stock_bonus_basis_withholds_par_value_tax_at_statutory_
+/// tiers_on_disposal` 精确覆盖（推进一整年的 Session 场景超单 case 10s 硬上限，
+/// 不在会话层重复）。
+#[test]
+fn stock_bonus_tax_withheld_from_sale_proceeds_across_statutory_tiers() {
+    for (sale, expected_tax) in [("2030-02-07", 60), ("2030-02-08", 30)] {
+        let (mut session, _issuer, stock) = session_with_taxable_bonus();
+        let book = distribution_tax_book(&session, &stock);
+        assert_eq!(
+            book.stock_bonus_bases().len(),
+            1,
+            "送股到账日必须以面值 100 分 × 3 股入税基"
+        );
+        let basis = &book.stock_bonus_bases()[0];
+        assert_eq!(basis.qty, 3);
+        assert_eq!(basis.par_value_per_share, Money::from_cents(100));
+        assert_eq!(
+            basis.credited_on,
+            crate::CivilDate::from_iso("2030-01-07").unwrap()
+        );
+        advance_to_sale_day(&mut session, sale);
+        assert_eq!(session.civil_date().to_string(), sale);
+        let account = crate::orderbook::AccountId(0);
+        let cash_before = session.account(account).unwrap().cash();
+        let sale_net = sell_player_shares_today_at(&mut session, account, &stock, 13, 769);
+        finish_remaining_ticks(&mut session);
+        session.end_civil_day().unwrap();
+        let book = distribution_tax_book(&session, &stock);
+        let collection = book
+            .collections()
+            .last()
+            .expect("送股批次处置当日必须留收缴回执");
+        assert_eq!(
+            collection.collected,
+            Money::from_cents(expected_tax),
+            "{sale} 卖出应扣缴面值×股数×档位"
+        );
+        assert_eq!(book.outstanding_tax().unwrap().numerator(), 0);
+        assert_eq!(
+            session.account(account).unwrap().cash(),
+            cash_before
+                .add(sale_net)
+                .unwrap()
+                .sub(Money::from_cents(expected_tax))
+                .unwrap(),
+            "税款必须从真实卖出款中扣缴"
+        );
+    }
+}
+
+/// 资本公积（股本溢价）转增对个人免税：入账不产生税基事实，全额卖出
+/// 也不产生任何税额收缴。
+#[test]
+fn capital_reserve_conversion_shares_carry_no_bonus_tax_basis() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction_opts(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        2,
+        true,
+        DistributionTaxFixtureOpts {
+            kind: crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion,
+            par_cents: 100,
+            capital_reserve_cents: Some(10_000),
+            issuer_repurchase_account_fact: true,
+            ..DistributionTaxFixtureOpts::default()
+        },
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    let book = distribution_tax_book(&session, &stock);
+    assert!(
+        book.stock_bonus_bases().is_empty(),
+        "转增（股本溢价）免税：不得产生送股税基事实"
+    );
+    let account = crate::orderbook::AccountId(0);
+    let cash_before = session.account(account).unwrap().cash();
+    let sale_net = sell_player_shares_today_at(&mut session, account, &stock, 13, 769);
+    finish_remaining_ticks(&mut session);
+    session.end_civil_day().unwrap();
+    let book = distribution_tax_book(&session, &stock);
+    // 处置日照常留 0 分收缴回执（留痕），但不得有任何实际税额。
+    assert!(
+        book.collections()
+            .iter()
+            .all(|collection| collection.collected.cents() == 0),
+        "转增批次卖出不得产生任何税额收缴：{:?}",
+        book.collections()
+    );
+    assert_eq!(book.outstanding_tax().unwrap().numerator(), 0);
+    assert_eq!(
+        session.account(account).unwrap().cash(),
+        cash_before.add(sale_net).unwrap()
+    );
+}
+
+/// 送转混合方案两口径分列：送股批次计税基、转增批次不计；同日全额卖出
+/// 只对送股 3 股按档位扣税（10% → 30 分），转增 4 股零税。
+#[test]
+fn mixed_bonus_and_conversion_events_tax_bonus_shares_only() {
+    let (mut session, issuer, stock) = session_with_taxable_bonus();
+    // 第一批送股已入账（3 股）。第二批：转增 10送3 于 01-08 批准、01-10 入账
+    // （eligible 15 股 × 0.3 = 4.5 → 获批 4 股按余数全归玩家）。
+    let date = |value: &str| crate::CivilDate::from_iso(value).unwrap();
+    session
+        .approve_stock_distribution(crate::company::stock_distribution::StockDistributionEventPlan {
+            event_id: "distribution-2".into(),
+            approval_reference: "shareholders-resolution-2".into(),
+            issuer: issuer.clone(),
+            stock: stock.clone(),
+            exchange: crate::calendar::CalendarExchange::Sse,
+            kind: crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion,
+            approved_on: date("2030-01-08"),
+            announced_on: date("2030-01-08"),
+            registered_on: date("2030-01-09"),
+            ex_rights_on: date("2030-01-10"),
+            shares_per_existing_share_micros: 300_000,
+            approved_total_new_shares: 4,
+        })
+        .expect("第二批转增需要资本公积余额：fixture 未注入将在此暴露配置缺口");
+    advance_to_sale_day(&mut session, "2030-02-08");
+    let book = distribution_tax_book(&session, &stock);
+    assert_eq!(book.stock_bonus_bases().len(), 1, "只有送股事件计税基");
+    assert_eq!(
+        book.stock_bonus_bases()[0].event_id, "distribution-1",
+        "转增事件不得混入税基"
+    );
+    let account = crate::orderbook::AccountId(0);
+    let cash_before = session.account(account).unwrap().cash();
+    // 二次除权（送转锚 769/1.3 ≈ 592）：卖价取二次除权参考价。
+    let sale_net = sell_player_shares_today_at(&mut session, account, &stock, 17, 592);
+    finish_remaining_ticks(&mut session);
+    session.end_civil_day().unwrap();
+    let book = distribution_tax_book(&session, &stock);
+    let collection = book
+        .collections()
+        .last()
+        .expect("混合方案卖出须留收缴回执");
+    assert_eq!(
+        collection.collected,
+        Money::from_cents(30),
+        "只对送股 3 股 × 面值 100 分 × 10%（1月-1年档）计税"
+    );
+    assert_eq!(book.outstanding_tax().unwrap().numerator(), 0);
+    assert_eq!(
+        session.account(account).unwrap().cash(),
+        cash_before
+            .add(sale_net)
+            .unwrap()
+            .sub(Money::from_cents(30))
+            .unwrap()
+    );
+}
+
+/// 简税与不扣税模式：送转不产生任何个人税基事实（Flat 只对现金分红代扣；
+/// Exempt 全免），卖出不补税。
+#[test]
+fn flat_and_exempt_modes_create_no_stock_bonus_tax_facts() {
+    for mode in [
+        (
+            crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
+            1000u32,
+            false,
+        ),
+        (
+            crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
+            0,
+            true,
+        ),
+    ] {
+        let (mut session, _issuer, stock) = session_with_distribution_tax_interaction_opts(
+            vec![crate::company::share_registry::ShareLot {
+                id: "player-lot".into(),
+                qty: 10,
+                acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+                source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                    evidence: "fixture".into(),
+                },
+                restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+            }],
+            10,
+            ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+            2,
+            true,
+            DistributionTaxFixtureOpts {
+                mode: mode.0,
+                flat_withholding_bp: if mode.0
+                    == crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding
+                {
+                    Some(mode.1)
+                } else {
+                    None
+                },
+                stamp_tax_rate_zero: mode.2,
+                ..DistributionTaxFixtureOpts::default()
+            },
+        );
+        advance_through_distribution_credit(&mut session, "2030-01-07");
+        assert!(
+            session.corporate_actions().dividend_tax_books.is_empty(),
+            "{:?} 模式不得配置个人差别化税账",
+            mode.0
+        );
+        let account = crate::orderbook::AccountId(0);
+        let cash_before = session.account(account).unwrap().cash();
+        let sale_net = sell_player_shares_today_at(&mut session, account, &stock, 13, 769);
+        finish_remaining_ticks(&mut session);
+        session.end_civil_day().unwrap();
+        assert!(
+            session.corporate_actions().dividend_tax_books.is_empty(),
+            "{:?} 模式卖出不得事后补开税账",
+            mode.0
+        );
+        assert_eq!(
+            session.account(account).unwrap().cash(),
+            cash_before.add(sale_net).unwrap(),
+            "{:?} 模式送转卖出不扣缴个税",
+            mode.0
+        );
+    }
+}
+
+/// 限售送股批次：解禁前到账按面值 10% 立即计税（与现金分红限售口径同构，
+/// 85号第四条）；因送转无现金，R+1 当日结算相位已过，未清税额由次一日终追缴。
+#[test]
+fn restricted_stock_bonus_pays_ten_percent_via_next_day_chase() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction_opts(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Restricted {
+                reason: "nonfloat-lock".into(),
+                release_on: crate::CivilDate::from_iso("2030-09-01").unwrap(),
+            },
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        1,
+        true,
+        DistributionTaxFixtureOpts {
+            par_cents: 100,
+            ..DistributionTaxFixtureOpts::default()
+        },
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    let book = distribution_tax_book(&session, &stock);
+    assert_eq!(
+        book.outstanding_tax().unwrap().numerator(),
+        30,
+        "解禁前到账送股 = 面值 100 分 × 3 股 × 10% 立即计税"
+    );
+    assert!(
+        book.collections().is_empty(),
+        "R+1 当日送转入账在日终收缴相位之后，未清税额由次一日终追缴"
+    );
+    advance_to_sale_day(&mut session, "2030-01-08");
+    if session.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading {
+        for _ in 0..session.state.setup.ticks_per_day {
+            session.step().unwrap();
+        }
+    }
+    session.end_civil_day().unwrap();
+    let book = distribution_tax_book(&session, &stock);
+    assert_eq!(
+        book.collections().last().unwrap().collected,
+        Money::from_cents(30),
+        "次一日终必须追缴解禁前送股 10% 税额"
+    );
+}
+
+/// Web 严格 parser 的送转个税 fixtures 产出器（任务175）：真实 Rust codec 输出，
+/// 环境变量 TASK175_SCHEMA_FIXTURE_DIR 存在时写盘，不存在的普通测试运行不写。
+/// 情景一（bonus-sale-withholding）：送股入账 + 满月当日卖出扣缴 20%（60 分）。
+#[test]
+fn emit_task175_bonus_sale_withholding_fixture() {
+    let (mut session, _issuer, stock) = session_with_taxable_bonus();
+    let account = crate::orderbook::AccountId(0);
+    sell_player_shares_today_at(&mut session, account, &stock, 13, 769);
+    finish_remaining_ticks(&mut session);
+    session.end_civil_day().unwrap();
+    let book = distribution_tax_book(&session, &stock);
+    assert_eq!(book.collections().last().unwrap().collected, Money::from_cents(60));
+    emit_task175_schema_fixture(&session, "bonus-sale-withholding");
+}
+
+/// 情景二（conversion-no-basis）：转增（股本溢价）入账不产生税基事实。
+#[test]
+fn emit_task175_conversion_no_basis_fixture() {
+    let (mut session, _issuer, stock) = session_with_distribution_tax_interaction_opts(
+        vec![crate::company::share_registry::ShareLot {
+            id: "player-lot".into(),
+            qty: 10,
+            acquired_on: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+            source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                evidence: "fixture".into(),
+            },
+            restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+        }],
+        10,
+        ("2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07"),
+        2,
+        true,
+        DistributionTaxFixtureOpts {
+            kind: crate::company::stock_distribution::StockDistributionKind::CapitalReserveConversion,
+            par_cents: 100,
+            capital_reserve_cents: Some(10_000),
+            issuer_repurchase_account_fact: true,
+            ..DistributionTaxFixtureOpts::default()
+        },
+    );
+    advance_through_distribution_credit(&mut session, "2030-01-07");
+    let book = distribution_tax_book(&session, &stock);
+    assert!(book.stock_bonus_bases().is_empty());
+    emit_task175_schema_fixture(&session, "conversion-no-basis");
+}
+
+/// 与 task174 同构的 Web fixture 投影：真实 codec 输出 `{actions, context}`。
+fn emit_task175_schema_fixture(session: &GameSession, name: &str) {
+    let directory = match std::env::var("TASK175_SCHEMA_FIXTURE_DIR") {
+        Ok(directory) => directory,
+        Err(std::env::VarError::NotPresent) => return,
+        Err(error) => panic!("schema fixture 环境路径非法：{error}"),
+    };
+    let saved = serde_json::to_value(session.save().unwrap()).unwrap();
+    let issuers: serde_json::Map<String, serde_json::Value> = session
+        .state
+        .company_system
+        .issuers()
+        .iter()
+        .map(|(id, issuer)| {
+            (
+                id.0.clone(),
+                serde_json::json!({
+                    "listed_stock": issuer.listed_stock.as_ref().map(|stock| &stock.0),
+                    "issued_shares": issuer.issued_shares.to_string(),
+                }),
+            )
+        })
+        .collect();
+    let projection = serde_json::json!({
+        "actions": session.state.corporate_actions,
+        "context": { "issuers": issuers, "setup": saved["setup"], "snapshot": saved["snapshot"],
+                     "currentDate": session.civil_date().to_string() },
+    });
+    std::fs::write(
+        std::path::Path::new(&directory).join(format!("task175-{name}.json")),
+        serde_json::to_vec_pretty(&projection).unwrap(),
+    )
+    .unwrap();
+}
+
+/// 送股税基事实严格存档：restore 两次深等价；缺字段/缺税基/篡改面值的存档
+/// 被显式拒绝（面值权威在送转声明，账本级无法自证，由 Session 勾稽承载）。
+#[test]
+fn stock_bonus_basis_survives_restore_and_tampering_is_rejected() {
+    let (mut session, _issuer, stock) = session_with_taxable_bonus();
+    let account = crate::orderbook::AccountId(0);
+    let pre_sale = session.save().unwrap();
+    // —— 篡改负例在卖出前构造（尚无收缴回执，账本级守卫不可自证）——
+    // 缺 stock_bonus_bases 键：严格 serde 无兼容，先拒。
+    let mut missing = serde_json::to_value(&pre_sale).unwrap();
+    let books = missing
+        .pointer_mut("/corporate_actions/dividend_tax_books")
+        .and_then(|value| value.as_array_mut())
+        .expect("存档必须携带税账");
+    books[0]
+        .as_object_mut()
+        .unwrap()
+        .remove("stock_bonus_bases");
+    assert!(
+        serde_json::from_value::<SaveSlot>(missing).is_err(),
+        "缺 stock_bonus_bases 键的旧形状必须被严格 serde 拒绝"
+    );
+    // 序号自洽但清空税基：账本级通过，必须被 Session 送股税基↔送转账簿勾稽拒。
+    let rebuilt_book: crate::company::cash_dividend_tax::CashDividendTaxBook =
+        serde_json::from_value(remove_bonus_bases_and_renumber(
+            serde_json::to_value(distribution_tax_book(&session, &stock)).unwrap(),
+        ))
+        .unwrap();
+    let mut probed = GameSession::restore(&pre_sale).unwrap();
+    let index = probed
+        .state
+        .corporate_actions
+        .dividend_tax_books
+        .iter()
+        .position(|book| book.account() == crate::orderbook::AccountId(0) && book.stock() == &stock)
+        .unwrap();
+    probed.state.corporate_actions.dividend_tax_books[index] = rebuilt_book;
+    let positions = account_position_projection(&probed);
+    let rejection = probed
+        .state
+        .corporate_actions
+        .validate(
+            &positions,
+            &probed.state.company_system,
+            probed.civil_date(),
+            None,
+            None,
+        )
+        .err()
+        .expect("缺送股税基的账本必须被 Session 勾稽拒绝");
+    assert!(
+        rejection.to_string().contains("送股税基"),
+        "送股税基缺失必须被勾稽显式拒绝：{rejection}"
+    );
+    // 篡改面值（100 → 50 分）：必须与送转声明面值不一致而被拒。
+    let mut tampered = serde_json::to_value(&pre_sale).unwrap();
+    let books = tampered
+        .pointer_mut("/corporate_actions/dividend_tax_books")
+        .and_then(|value| value.as_array_mut())
+        .unwrap();
+    books[0]["stock_bonus_bases"][0]["par_value_per_share"] = serde_json::json!("50");
+    let tampered_saved: SaveSlot = serde_json::from_value(tampered).unwrap();
+    let rejection = GameSession::restore(&tampered_saved).err().expect("篡改送股税基面值的存档必须被恢复拒绝");
+    assert!(
+        rejection.to_string().contains("面值"),
+        "篡改送股税基面值必须被勾稽显式拒绝：{rejection}"
+    );
+    // —— 真实卖出 13 股（零股规则：卖出量 ≡ 可用量 mod lot_size）后，restore
+    // 两次与原档深等价（税基 + 处置收缴回执全链路存档往返）。
+    sell_player_shares_today_at(&mut session, account, &stock, 13, 769);
+    finish_remaining_ticks(&mut session);
+    session.end_civil_day().unwrap();
+    let saved = session.save().unwrap();
+    let first = GameSession::restore(&saved).unwrap();
+    let second = GameSession::restore(&first.save().unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(second.save().unwrap()).unwrap(),
+        serde_json::to_value(&saved).unwrap(),
+        "restore 两次必须与原档深等价"
     );
 }

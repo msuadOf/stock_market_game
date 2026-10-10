@@ -757,3 +757,325 @@ fn redenomination_reduction_validates_boundaries() {
     tampered["redenominations"][0]["net_change"] = serde_json::json!("-9");
     assert!(serde_json::from_value::<CashDividendTaxBook>(tampered).is_err());
 }
+
+// ---------- 送股个税税基（2026-10-10，任务175） ----------
+//
+// 语义：个人取得送股（未分配利润转股本的股票股利）按股票面值计入股息税基，
+// 持股期限自 R+1 到账日起算（财税〔2012〕85号第六条（八）+第一条第二款，
+// 取得日口径已由既有同日续记实现）；税款在股东后续卖出时按差别化档位从
+// 卖出款扣缴。资本公积（股本溢价）转增对个人不征税——本引擎资本公积只有
+// 股本溢价单一来源口径，故登记简化为「送股应税、转增一律免税」。
+
+/// 空开账税账 + R+1 送股入账 + 送股税基：返回已记账的 book。
+fn book_with_bonus_basis(
+    qty: u64,
+    par_cents: i64,
+    restriction: TaxShareClass,
+) -> CashDividendTaxBook {
+    let mut book = CashDividendTaxBook::new(
+        AccountId(0),
+        StockCode("600001".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-01-01"),
+        vec![],
+    )
+    .unwrap();
+    book.record_net_day("market-2030-01-02".into(), date("2030-01-02"), 0, None)
+        .unwrap();
+    let credit_lot = DividendTaxLot {
+        id: "tax:stock-distribution:d1:account-0".into(),
+        qty,
+        acquired_on: date("2030-01-02"),
+        source: TaxAcquisitionSource::CorporateAction { event: "d1".into() },
+        class: restriction,
+    };
+    book.record_net_day(
+        "stock-distribution:d1:0".into(),
+        date("2030-01-02"),
+        i128::try_from(qty).unwrap(),
+        Some(credit_lot),
+    )
+    .unwrap();
+    book.record_stock_bonus_basis(
+        "d1".into(),
+        date("2030-01-02"),
+        "tax:stock-distribution:d1:account-0".into(),
+        qty,
+        Money::from_cents(par_cents),
+    )
+    .unwrap();
+    book
+}
+
+/// 逐日推进零净额日结到卖出日前一自然日，再在卖出日全额卖出送转批次。
+fn dispose_bonus_on(book: CashDividendTaxBook, sale: &str, qty: u64) -> CashDividendTaxBook {
+    let mut book = book;
+    let sale_day = date(sale);
+    while book.settled_on().next().as_ref() != Ok(&sale_day) {
+        let next = book
+            .settled_on()
+            .next()
+            .expect("civil date always has a successor");
+        book.record_net_day(format!("market-{next}"), next, 0, None)
+            .unwrap();
+    }
+    book.record_net_day(
+        format!("sell-{sale}"),
+        sale_day,
+        -i128::try_from(qty).unwrap(),
+        None,
+    )
+    .unwrap();
+    book
+}
+
+/// 送股税基按面值 × 股数 × 差别化档位在处置时计税（取得日 2030-01-02；
+/// 登记口径：卖出日=周年日仍归上一档）：
+/// 面值 100 分 × 3 股，卖出 2030-02-02（满月当日，≤1月）→ 20% → 60 分；
+/// 2030-02-03（1月-1年）→ 10% → 30 分；2031-01-03（>1年）→ 0 分。
+/// 同账并入一批无税基的转增批次：卖出不产生任何税（转增一律免税的登记简化）。
+#[test]
+fn stock_bonus_basis_withholds_par_value_tax_at_statutory_tiers_on_disposal() {
+    for (sale, expected_cents) in [("2030-02-02", 60), ("2030-02-03", 30), ("2031-01-03", 0)] {
+        let mut book = CashDividendTaxBook::new(
+            AccountId(0),
+            StockCode("600001".into()),
+            DividendTaxProfile::IndividualPublicMarket,
+            date("2030-01-01"),
+            vec![],
+        )
+        .unwrap();
+        book.record_net_day("market-2030-01-02".into(), date("2030-01-02"), 0, None)
+            .unwrap();
+        // 同日两批：送股批次（有税基）与转增批次（无税基，转增免税）。
+        book.record_net_day(
+            "stock-distribution:bonus-1:0".into(),
+            date("2030-01-02"),
+            3,
+            Some(DividendTaxLot {
+                id: "tax:stock-distribution:bonus-1:account-0".into(),
+                qty: 3,
+                acquired_on: date("2030-01-02"),
+                source: TaxAcquisitionSource::CorporateAction {
+                    event: "bonus-1".into(),
+                },
+                class: TaxShareClass::PublicMarket,
+            }),
+        )
+        .unwrap();
+        book.record_stock_bonus_basis(
+            "bonus-1".into(),
+            date("2030-01-02"),
+            "tax:stock-distribution:bonus-1:account-0".into(),
+            3,
+            Money::from_cents(100),
+        )
+        .unwrap();
+        book.record_net_day(
+            "stock-distribution:conversion-1:0".into(),
+            date("2030-01-02"),
+            2,
+            Some(DividendTaxLot {
+                id: "tax:stock-distribution:conversion-1:account-0".into(),
+                qty: 2,
+                acquired_on: date("2030-01-02"),
+                source: TaxAcquisitionSource::CorporateAction {
+                    event: "conversion-1".into(),
+                },
+                class: TaxShareClass::PublicMarket,
+            }),
+        )
+        .unwrap();
+        let book = dispose_bonus_on(book, sale, 5);
+        assert_eq!(
+            book.outstanding().unwrap(),
+            ExactDividendTaxAmount::new(expected_cents, 1).unwrap(),
+            "送股税基在 {sale} 卖出应评估 {expected_cents} 分（转增 2 股不计税）"
+        );
+    }
+}
+
+/// 限售送股批次：解禁前到账按 10% 立即计税（与现金分红限售口径同构，
+/// 85号第四条），无现金故留未清税额由后续日终追缴。
+#[test]
+fn restricted_stock_bonus_basis_assesses_ten_percent_immediately() {
+    let restricted = TaxShareClass::StatutoryRestricted {
+        release_on: date("2030-06-01"),
+        basis: StatutoryRestrictedBasis::FinanceTax2009167,
+        qualification_evidence: "nonfloat-lock".into(),
+    };
+    let book = book_with_bonus_basis(3, 100, restricted);
+    assert_eq!(
+        book.outstanding().unwrap(),
+        ExactDividendTaxAmount::new(30, 1).unwrap(),
+        "解禁前到账的送股税基 = 面值 100 分 × 3 股 × 10%"
+    );
+}
+
+/// 每笔送股税基合计应纳税额四舍五入（half-up）到分（与每笔分红同一登记口径）：
+/// 面值 5 分 × 1 股 × 10% = 0.5 分 → 1 分。
+#[test]
+fn stock_bonus_basis_rounds_half_up_per_event() {
+    let book = book_with_bonus_basis(1, 5, TaxShareClass::PublicMarket);
+    let book = dispose_bonus_on(book, "2030-02-03", 1);
+    assert_eq!(
+        book.outstanding().unwrap(),
+        ExactDividendTaxAmount::new(1, 1).unwrap(),
+        "0.5 分按 half-up 取整为 1 分"
+    );
+}
+
+/// 送股税基入账的防御边界：重复入账（同事实幂等、异事实拒绝）、零数量、
+/// 非正面值、未知批次、批次日期不符、同一批次二次计基、非送转来源批次。
+#[test]
+fn record_stock_bonus_basis_rejects_conflicting_duplicates_and_invalid_facts() {
+    let mut book = book_with_bonus_basis(3, 100, TaxShareClass::PublicMarket);
+    let before = book.clone();
+    // 同事件同事实幂等：不报错、不重复。
+    book.record_stock_bonus_basis(
+        "d1".into(),
+        date("2030-01-02"),
+        "tax:stock-distribution:d1:account-0".into(),
+        3,
+        Money::from_cents(100),
+    )
+    .unwrap();
+    assert_eq!(book, before);
+    // 同事件异事实（数量不同）显式拒绝。
+    assert!(book
+        .record_stock_bonus_basis(
+            "d1".into(),
+            date("2030-01-02"),
+            "tax:stock-distribution:d1:account-0".into(),
+            2,
+            Money::from_cents(100),
+        )
+        .is_err());
+    // 同事件异面值拒绝。
+    assert!(book
+        .record_stock_bonus_basis(
+            "d1".into(),
+            date("2030-01-02"),
+            "tax:stock-distribution:d1:account-0".into(),
+            3,
+            Money::from_cents(50),
+        )
+        .is_err());
+    // 未知批次拒绝。
+    assert!(book
+        .record_stock_bonus_basis(
+            "d2".into(),
+            date("2030-01-02"),
+            "tax:stock-distribution:d2:account-0".into(),
+            1,
+            Money::from_cents(100),
+        )
+        .is_err());
+    // 记基日期必须等于当前结算日（与到账同日）。
+    assert!(book
+        .record_stock_bonus_basis(
+            "d3".into(),
+            date("2030-01-03"),
+            "tax:stock-distribution:d1:account-0".into(),
+            3,
+            Money::from_cents(100),
+        )
+        .is_err());
+    // 同一批次二次计基（不同事件）拒绝。
+    assert!(book
+        .record_stock_bonus_basis(
+            "d4".into(),
+            date("2030-01-02"),
+            "tax:stock-distribution:d1:account-0".into(),
+            3,
+            Money::from_cents(100),
+        )
+        .is_err());
+    // 零数量与零面值拒绝。
+    let mut zero_day = CashDividendTaxBook::new(
+        AccountId(0),
+        StockCode("600001".into()),
+        DividendTaxProfile::IndividualPublicMarket,
+        date("2030-01-01"),
+        vec![],
+    )
+    .unwrap();
+    zero_day
+        .record_net_day(
+            "market-2030-01-02".into(),
+            date("2030-01-02"),
+            1,
+            Some(DividendTaxLot {
+                id: "secondary-lot".into(),
+                qty: 1,
+                acquired_on: date("2030-01-02"),
+                source: TaxAcquisitionSource::SecondaryMarket {
+                    settlement: "s".into(),
+                },
+                class: TaxShareClass::PublicMarket,
+            }),
+        )
+        .unwrap();
+    assert!(zero_day
+        .record_stock_bonus_basis(
+            "d5".into(),
+            date("2030-01-02"),
+            "secondary-lot".into(),
+            0,
+            Money::from_cents(100),
+        )
+        .is_err());
+    assert!(zero_day
+        .record_stock_bonus_basis(
+            "d6".into(),
+            date("2030-01-02"),
+            "secondary-lot".into(),
+            1,
+            Money::from_cents(0),
+        )
+        .is_err());
+    // 非送转来源（二级市场）批次不得计送股税基。
+    assert!(zero_day
+        .record_stock_bonus_basis(
+            "d7".into(),
+            date("2030-01-02"),
+            "secondary-lot".into(),
+            1,
+            Money::from_cents(100),
+        )
+        .is_err());
+}
+
+/// 送股税基事实严格 serde 往返保持；篡改数量、日期与重复批次在账本级恢复
+/// 校验被拒。面值篡改账本级不可检（无公司事实可比对），由 Session 级
+/// 与送转声明面值的勾稽承载（见 session 测试）。
+#[test]
+fn stock_bonus_basis_survives_strict_serde_and_tampering_is_rejected() {
+    let book = book_with_bonus_basis(3, 100, TaxShareClass::PublicMarket);
+    let restored: CashDividendTaxBook =
+        serde_json::from_value(serde_json::to_value(&book).unwrap()).unwrap();
+    assert_eq!(restored, book);
+    let valid = serde_json::to_value(&book).unwrap();
+    let mut tampered = valid.clone();
+    tampered["stock_bonus_bases"][0]["qty"] = serde_json::json!(2);
+    assert!(serde_json::from_value::<CashDividendTaxBook>(tampered).is_err());
+    let mut tampered = valid.clone();
+    tampered["stock_bonus_bases"][0]["credited_on"] = serde_json::json!("2030-01-03");
+    assert!(serde_json::from_value::<CashDividendTaxBook>(tampered).is_err());
+    let mut duplicated = valid.clone();
+    let cloned = duplicated["stock_bonus_bases"][0].clone();
+    duplicated["stock_bonus_bases"]
+        .as_array_mut()
+        .unwrap()
+        .push(cloned);
+    assert!(
+        serde_json::from_value::<CashDividendTaxBook>(duplicated).is_err(),
+        "同一批次/事件身份的税基重复入账必须在恢复时拒绝"
+    );
+    let mut missing = valid.clone();
+    missing.as_object_mut().unwrap().remove("stock_bonus_bases");
+    assert!(
+        serde_json::from_value::<CashDividendTaxBook>(missing).is_err(),
+        "严格契约：缺 stock_bonus_bases 键的旧形状必须显式拒绝"
+    );
+}

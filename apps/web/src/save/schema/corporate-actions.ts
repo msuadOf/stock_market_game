@@ -36,8 +36,11 @@ export type DividendCashReceipt = { readonly operation_seq: number; readonly pay
 export type RegisteredTaxDividend = { readonly operation_seq: number; readonly event_id: string; readonly registered_on: string; readonly per_share: ExactDividendTaxAmount; readonly lots: readonly DividendTaxLot[]; readonly payments: readonly DividendCashReceipt[] }
 export type TaxCollectionReceipt = { readonly operation_seq: number; readonly event_id: string; readonly day: string; readonly available_cash: string; readonly collected: string; readonly remaining_cash: string; readonly outstanding: ExactDividendTaxAmount; readonly needs_funds: boolean }
 export type TaxRedenominationReceipt = { readonly operation_seq: number; readonly event_id: string; readonly day: string; readonly net_change: string; readonly removed: readonly { readonly lot: DividendTaxLot; readonly disposed_on: string }[] }
+// 送股个税税基（任务175）：送股按面值计入股息税基、处置时按差别化档位扣缴；
+// 转增（股本溢价）免税不产生本事实。par_value_per_share 为分字符串（Money wire）。
+export type StockBonusTaxBasis = { readonly operation_seq: number; readonly event_id: string; readonly credited_on: string; readonly lot_id: string; readonly qty: string; readonly par_value_per_share: string }
 export type DividendTaxProfile = "IndividualPublicMarket" | "ResidentEnterprise" | "SecuritiesFund" | "NonResident"
-export type CashDividendTaxBook = { readonly operation_seq: number; readonly account: string; readonly stock: string; readonly profile: DividendTaxProfile; readonly opened_on: string; readonly opening_lots: readonly DividendTaxLot[]; readonly settled_on: string; readonly lots: readonly DividendTaxLot[]; readonly days: readonly TaxDayReceipt[]; readonly dividends: readonly RegisteredTaxDividend[]; readonly collections: readonly TaxCollectionReceipt[]; readonly redenominations: readonly TaxRedenominationReceipt[] }
+export type CashDividendTaxBook = { readonly operation_seq: number; readonly account: string; readonly stock: string; readonly profile: DividendTaxProfile; readonly opened_on: string; readonly opening_lots: readonly DividendTaxLot[]; readonly settled_on: string; readonly lots: readonly DividendTaxLot[]; readonly days: readonly TaxDayReceipt[]; readonly dividends: readonly RegisteredTaxDividend[]; readonly collections: readonly TaxCollectionReceipt[]; readonly redenominations: readonly TaxRedenominationReceipt[]; readonly stock_bonus_bases: readonly StockBonusTaxBasis[] }
 export type AccountDividendGrossReceipt = { readonly payment_id: string; readonly plan_id: string; readonly account: string; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
 export type ExternalDividendReceipt = { readonly payment_id: string; readonly plan_id: string; readonly holder: { readonly External: string }; readonly paid_on: string; readonly gross: string; readonly tax_status: DividendTaxStatus }
 export type FlatWithholdingReceipt = { readonly payment_id: string; readonly plan_id: string; readonly account: string; readonly paid_on: string; readonly gross: string; readonly rate_bp: number; readonly withheld: string }
@@ -822,7 +825,7 @@ function parseExactAmount(value: unknown, path: string): ExactDividendTaxAmount 
 
 function parseTaxBook(value: unknown, path: string): CashDividendTaxBook {
   const book = record(value, path)
-  exact(book, ["operation_seq", "account", "stock", "profile", "opened_on", "opening_lots", "settled_on", "lots", "days", "dividends", "collections", "redenominations"], path)
+  exact(book, ["operation_seq", "account", "stock", "profile", "opened_on", "opening_lots", "settled_on", "lots", "days", "dividends", "collections", "redenominations", "stock_bonus_bases"], path)
   const profile = oneOf(book.profile, `${path}.profile`, ["IndividualPublicMarket", "ResidentEnterprise", "SecuritiesFund", "NonResident"] as const)
   if (profile !== "IndividualPublicMarket") throw new SaveSchemaError(`${path}.profile`, "当前仅实现个人公开市场现金分红税")
   const account = accountId(book.account, `${path}.account`)
@@ -911,7 +914,24 @@ function parseTaxBook(value: unknown, path: string): CashDividendTaxBook {
     if (total !== -BigInt(net_change)) throw new SaveSchemaError(`${reductionPath}.removed`, "税账重新计值核减片段合计与净额不一致")
     return { operation_seq: integer(receipt.operation_seq, `${reductionPath}.operation_seq`, 1), event_id, day: civilDate(receipt.day, `${reductionPath}.day`), net_change, removed }
   })
-  const parsed: CashDividendTaxBook = { operation_seq: integer(book.operation_seq, `${path}.operation_seq`, 0), account, stock, profile, opened_on, opening_lots, settled_on, lots, days, dividends, collections, redenominations }
+  const stock_bonus_bases: StockBonusTaxBasis[] = array(book.stock_bonus_bases, `${path}.stock_bonus_bases`).map((item, index) => {
+    const basisPath = `${path}.stock_bonus_bases[${index}]`, basis = record(item, basisPath)
+    exact(basis, ["operation_seq", "event_id", "credited_on", "lot_id", "qty", "par_value_per_share"], basisPath)
+    const event_id = string(basis.event_id, `${basisPath}.event_id`)
+    const lot_id = string(basis.lot_id, `${basisPath}.lot_id`)
+    const par = money(basis.par_value_per_share, `${basisPath}.par_value_per_share`)
+    if (event_id.trim() === "" || lot_id.trim() === "") throw new SaveSchemaError(basisPath, "送股税基事件与批次身份不能为空")
+    if (BigInt(par) <= 0n) throw new SaveSchemaError(`${basisPath}.par_value_per_share`, "送股税基面值必须为正")
+    return {
+      operation_seq: integer(basis.operation_seq, `${basisPath}.operation_seq`, 1),
+      event_id,
+      credited_on: civilDate(basis.credited_on, `${basisPath}.credited_on`),
+      lot_id,
+      qty: positiveU64(basis.qty, `${basisPath}.qty`),
+      par_value_per_share: par,
+    }
+  })
+  const parsed: CashDividendTaxBook = { operation_seq: integer(book.operation_seq, `${path}.operation_seq`, 0), account, stock, profile, opened_on, opening_lots, settled_on, lots, days, dividends, collections, redenominations, stock_bonus_bases }
   validateTaxBookReplay(parsed, path)
   return parsed
 }
@@ -925,6 +945,7 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
     ]),
     ...book.collections.map(receipt => ({ operation_seq: receipt.operation_seq, path: "collections", day: receipt.day })),
     ...book.redenominations.map(receipt => ({ operation_seq: receipt.operation_seq, path: "redenominations", day: receipt.day })),
+    ...book.stock_bonus_bases.map(basis => ({ operation_seq: basis.operation_seq, path: "stock_bonus_bases", day: basis.credited_on })),
   ].sort((left, right) => left.operation_seq - right.operation_seq)
   if (book.operation_seq !== operations.length) throw new SaveSchemaError(`${path}.operation_seq`, "税账操作序列与事实数量不一致")
   let previousDay = book.opened_on
@@ -935,9 +956,16 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
   }
   const eventIds = new Set<string>()
   const paymentIds = new Set<string>()
-  for (const fact of [...book.days, ...book.dividends, ...book.collections, ...book.redenominations]) {
+  const bonusLotIds = new Set<string>()
+  for (const fact of [...book.days, ...book.dividends, ...book.collections, ...book.redenominations, ...book.stock_bonus_bases]) {
     if (eventIds.has(fact.event_id)) throw new SaveSchemaError(path, "税账事件身份重复")
     eventIds.add(fact.event_id)
+  }
+  // 送股税基：同一税批次只允许计基一次（与引擎 validate 同构）。
+  for (const basis of book.stock_bonus_bases) {
+    if (bonusLotIds.has(basis.lot_id)) throw new SaveSchemaError(path, "同一税批次不得重复携带送股税基")
+    bonusLotIds.add(basis.lot_id)
+    if (basis.credited_on < book.opened_on || basis.credited_on > book.settled_on) throw new SaveSchemaError(path, "送股税基到账日不在账期内")
   }
   for (const dividend of book.dividends) {
     for (const payment of dividend.payments) {
@@ -971,14 +999,20 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
     dayCursor = day.day
   }
   const replayed = book.opening_lots.map(lot => ({ ...lot }))
-  // 与引擎 validate 同构：按 operation_seq 交织回放日结与重新计值核减——缩股的
-  // FIFO 核减片段会真实减少 lot 数量（非应税、不进处置口径），不应用核减就无法
-  // 重构缩股后的当前批次。
-  const sequenceOf = (fact: { kind: "day"; day: typeof book.days[number] } | { kind: "redenomination"; receipt: TaxRedenominationReceipt }): number =>
-    fact.kind === "day" ? fact.day.operation_seq : fact.receipt.operation_seq
-  const sequencedFacts: ({ kind: "day"; day: typeof book.days[number] } | { kind: "redenomination"; receipt: TaxRedenominationReceipt })[] = [
-    ...book.days.map((day): { kind: "day"; day: typeof book.days[number] } => ({ kind: "day", day })),
-    ...book.redenominations.map((receipt): { kind: "redenomination"; receipt: TaxRedenominationReceipt } => ({ kind: "redenomination", receipt })),
+  // 与引擎 validate 同构：按 operation_seq 交织回放日结、重新计值核减与送股税基
+  // 勾稽——缩股的 FIFO 核减片段会真实减少 lot 数量（非应税、不进处置口径），
+  // 送股税基在其操作序时点必须与批次快照（同日创建、同数量、同送转来源事件）
+  // 完全一致，否则拒绝恢复。
+  type SequencedFact =
+    | { kind: "day"; day: typeof book.days[number] }
+    | { kind: "redenomination"; receipt: TaxRedenominationReceipt }
+    | { kind: "bonus"; basis: StockBonusTaxBasis }
+  const sequenceOf = (fact: SequencedFact): number =>
+    fact.kind === "day" ? fact.day.operation_seq : fact.kind === "redenomination" ? fact.receipt.operation_seq : fact.basis.operation_seq
+  const sequencedFacts: SequencedFact[] = [
+    ...book.days.map((day): SequencedFact => ({ kind: "day", day })),
+    ...book.redenominations.map((receipt): SequencedFact => ({ kind: "redenomination", receipt })),
+    ...book.stock_bonus_bases.map((basis): SequencedFact => ({ kind: "bonus", basis })),
   ].sort((left, right) => sequenceOf(left) - sequenceOf(right))
   for (const fact of sequencedFacts) {
     if (fact.kind === "day") {
@@ -991,13 +1025,20 @@ function validateTaxBookReplay(book: CashDividendTaxBook, path: string): void {
         if (remaining === 0n) replayed.splice(index, 1)
         else replayed[index] = { ...replayed[index]!, qty: remaining.toString() }
       }
-    } else {
+    } else if (fact.kind === "redenomination") {
       for (const entry of fact.receipt.removed) {
         const index = replayed.findIndex(lot => lot.id === entry.lot.id)
         if (index === -1 || BigInt(replayed[index]!.qty) < BigInt(entry.lot.qty)) throw new SaveSchemaError(path, "税账重新计值核减引用不存在的批次或数量")
         const remaining = BigInt(replayed[index]!.qty) - BigInt(entry.lot.qty)
         if (remaining === 0n) replayed.splice(index, 1)
         else replayed[index] = { ...replayed[index]!, qty: remaining.toString() }
+      }
+    } else {
+      const basis = fact.basis
+      const lot = replayed.find(lot => lot.id === basis.lot_id)
+      if (lot === undefined) throw new SaveSchemaError(path, "送股税基引用的税批次在其操作序时点不存在")
+      if (BigInt(lot.qty) !== BigInt(basis.qty) || lot.acquired_on !== basis.credited_on || !("CorporateAction" in lot.source) || lot.source.CorporateAction.event !== basis.event_id) {
+        throw new SaveSchemaError(path, "送股税基与入账税批次事实不一致")
       }
     }
   }
@@ -1594,6 +1635,33 @@ export function parseSessionCorporateActions(value: unknown, context: Context, p
       } else {
         const exhaustive: never = scope
         throw new SaveSchemaError(itemPath, `未知名册回执 scope 变体：${String(exhaustive)}`)
+      }
+    }
+    // 送股税基↔送转账簿勾稽（任务175，与 engine `SessionCorporateActions::validate`
+    // 同构）：税基必须对应已入账送股事件、到账日一致、数量与该账户的名册非交易
+    // 过户分录一致；转增事件不得携带税基。面值与 Simple 声明面值的比对在引擎侧
+    // 承载（Web 投影不携带 finance 声明事实，如实登记边界而非伪造校验）。
+    for (const basis of taxBook.stock_bonus_bases) {
+      const distribution = stock_distributions.find(book => book.plan.event_id === basis.event_id)
+      if (distribution === undefined || distribution.credited_on === null || distribution.plan.kind !== "BonusShares") {
+        throw new SaveSchemaError(itemPath, `送股税基事件 ${basis.event_id} 缺少已入账的送股（BonusShares）账簿`)
+      }
+      if (distribution.credited_on !== basis.credited_on) {
+        throw new SaveSchemaError(itemPath, `送股税基事件 ${basis.event_id} 的到账日与送转账簿不一致`)
+      }
+      const registryReceipt = registry.receipts.find(receipt => receipt.request.event_id === `stock-distribution:${basis.event_id}`)
+      const change = registryReceipt?.request.changes.find(change => JSON.stringify(change.holder) === JSON.stringify({ Account: taxBook.account }))
+      if (change === undefined || BigInt(change.change) !== BigInt(basis.qty)) {
+        throw new SaveSchemaError(itemPath, `送股税基事件 ${basis.event_id} 的数量与名册非交易过户分录不一致`)
+      }
+    }
+    // 反向覆盖：已入账送股事件分配到本账户的正股数必须有对应税基。
+    for (const distribution of stock_distributions) {
+      if (distribution.credited_on === null || distribution.plan.kind !== "BonusShares" || distribution.plan.stock !== taxBook.stock) continue
+      const registryReceipt = registry.receipts.find(receipt => receipt.request.event_id === `stock-distribution:${distribution.plan.event_id}`)
+      const change = registryReceipt?.request.changes.find(change => JSON.stringify(change.holder) === JSON.stringify({ Account: taxBook.account }))
+      if (change !== undefined && BigInt(change.change) > 0n && !taxBook.stock_bonus_bases.some(basis => basis.event_id === distribution.plan.event_id && basis.credited_on === distribution.credited_on)) {
+        throw new SaveSchemaError(itemPath, `已入账送股事件 ${distribution.plan.event_id} 分配给账户 ${taxBook.account} 的送股税基缺失`)
       }
     }
   }

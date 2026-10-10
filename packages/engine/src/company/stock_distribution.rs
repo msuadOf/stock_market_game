@@ -42,6 +42,9 @@ pub struct HolderDistribution {
     pub original_shares: u64,
     #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     pub whole_shares: u64,
+    // 与 share_split 的碎股分子同一 wire 纪律：规范十进制字符串（修复轮发现
+    // 的漂移——此前裸 u64 数字与 Web 严格 parser 的字符串契约不一致）。
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
     pub fractional_numerator: u64,
     pub original_lots: Vec<ShareLot>,
 }
