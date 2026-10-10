@@ -2,7 +2,7 @@
 
 > **范围与状态：** 本文按 2026-10-06 最新 [Q14 公司基本面与经营系统设计蓝图](../remaining-questions-and-features/q14-financial-model-design.md) 重整。目标是 `company/` 薄共同入口及可独立运行的 `SimpleFundamentals`，其财务查询、披露、分红、配股、增发、回购与 `CompanySimulation` 具有相同功能和业务语义。`CompanySimulation` 的经营系统由用户授权后续另开分支；当前不要求先完成客户/行业生产 dispatch。计划不代表实现或验收已完成。
 
-当前已接通周期生成、四种 `CompanyKind` 的汇总财务、公开查询与披露、Session 日结和严格恢复，以及新局的 seed 预览与实际创建。基本面不是完整经营仿真；各类别使用独立标注的虚拟汇总科目，不冒充贷款、保费或客户收付款。现金分红候选接线已验证显式名册/法定事实下的真实税前到账、应付清偿、同日合计除息锚及公开公告/NPC 本人获知；个人公开市场身份可通过真实 FIFO 卖出触发股息税补缴并严格恢复。送转已接通实际登记全链路（方案→R 日碎股分配→R+1 非交易过户入账、投资者加股、发行股数守恒、沪深分列除权锚），限售继承按同限售类整批继承、混合来源显式拒绝，Simple 侧只做面值展示事实。送转公开 typed 公告与 NPC 本人获知已于 2026-10-08 G 批接通（18:00 公告通道、Web 存档 parser 同步）；送转个税与转增资本公积账面校验仍未完成（后者 2026-10-08 N3 批已接通）。2026-10-07 S2 批已接通本机 WASM 宿主的偏好配置 UI 入口（新局 `SimpleCompanyPreferences`）、偏好提案拒绝台账与配股认购拒绝回执查询面；Tauri/远程宿主查询面、其他税务身份仍未完成，`cash_settlement` 如实为 `false`。底层接线不能扩称完整分红、认购或回购已可使用；证据与边界见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)、[送转登记记录](stock-distribution.md)及[当前交接](current-handoff.md)。
+当前已接通周期生成、四种 `CompanyKind` 的汇总财务、公开查询与披露、Session 日结和严格恢复，以及新局的 seed 预览与实际创建。基本面不是完整经营仿真；各类别使用独立标注的虚拟汇总科目，不冒充贷款、保费或客户收付款。现金分红候选接线已验证显式名册/法定事实下的真实税前到账、应付清偿、同日合计除息锚及公开公告/NPC 本人获知；个人公开市场身份可通过真实 FIFO 卖出触发股息税补缴并严格恢复。送转已接通实际登记全链路（方案→R 日碎股分配→R+1 非交易过户入账、投资者加股、发行股数守恒、沪深分列除权锚），限售继承按同限售类整批继承、混合来源显式拒绝，Simple 侧只做面值展示事实。送转公开 typed 公告与 NPC 本人获知已于 2026-10-08 G 批接通（18:00 公告通道、Web 存档 parser 同步）；送转个税由 2026-10-10 任务175落地：`AShareIndividual` 送股按冻结面值计税基并于 R+1 入账、卖出按持有期差别化扣缴，限售股份解禁前到账按 10% 立即计税并于次日追缴；转增免税（资本公积仅登记股本溢价单一来源简化），`FlatWithholding`/`Exempt` 不建税基，引擎/Web 两级勾稽及 restore 深等通过，依据与实现登记见 [`trading-rules.md`](../../docs/trading-rules.md)「送转」章和[送转登记记录](stock-distribution.md)。转增资本公积账面余额前置校验已由 2026-10-08 N3 批接通。2026-10-07 S2 批已接通本机 WASM 宿主的偏好配置 UI 入口（新局 `SimpleCompanyPreferences`）、偏好提案拒绝台账与配股认购拒绝回执查询面；Tauri/远程宿主查询面、其他税务身份仍未完成，`cash_settlement` 如实为 `false`。底层接线不能扩称完整分红、认购或回购已可使用；证据与边界见[除息基础复核](ex-reference-price-review.md)、[Session 接线复核](session-corporate-actions-review.md)、[送转登记记录](stock-distribution.md)及[当前交接](current-handoff.md)。
 
 验证范围只包括短单测、编译、类型检查及构建。前序 Simple 批次的 Rust 代表短测 85 项、Web 新合同短测 45 项通过；后续报告窗口、现金公告、个人信息不足及股份分配基础的定向证据分别登记于[当前交接](current-handoff.md)，不把 85／45 作为所有后续改动的最终证据。真实存档由 release Engine 生成并验证恢复续行，绑定通过正规 typegen 生成。默认 features 下的 workspace 调用方编译及前序 WASM／Web 构建通过；旧经营 Session 的特定集团和冲击接线留作后续 Simulation 门禁，不因迁移测试归档而登记为通过。未运行完整回归。
 
@@ -52,17 +52,17 @@
 
 - [x] 使用显式 `SimpleConfig` 输入营收、固定开支、变动开支等少量参数，以及严格为月、季度、半年或年的结算周期；按所选周期结算，不强制内部按月生成。营收与各开支的随机扰动按结算周期分别配置。已确认可编辑虚拟 preset；具体 preset 数值由明确配置提供，不复制历史工业三模板或真实公司统计。
 - [x] 依 `Revenue_t = Revenue_(t-1) × (1 + RevenueGrowth_t)`、固定费用变化及变动费用金额/比例规则生成期间输入；同一费用不得由金额增长和收入比例重复生成。
-- [ ] 由收入、费用、利息、折旧、税费及其他明确项目生成分录/汇总事实，再派生税前利润、净利润、净资产、同期间 ROE 和共同报表；不采用旧 `NetMargin × Revenue` 独立生成净利润的方案。
-  - 2026-10-07 对账：Simple 已由收入/费用/税务一致推导利润（`company::simple::finance*.rs`，`finance_tests.rs`／`finance_period_tests.rs`），不再独立抽取净利率；但「分录级」生成仍以汇总科目表达（虚拟汇总科目，不冒充逐笔分录）——分录级派生为真实缺口，保持未勾，建议后续 Simple 财务细化批次处理。
+- [x] 由收入、费用、利息、折旧、税费及其他明确项目生成分录/汇总事实，再派生税前利润、净利润、净资产、同期间 ROE 和共同报表；不采用旧 `NetMargin × Revenue` 独立生成净利润的方案。
+  - 2026-10-10 任务176：删除 `SimplePeriodSummary`，无兼容旧档并显式拒绝；收入、固定/变动费用分别生成 `BusinessKind` `SimpleRevenueAccrual`／`SimpleFixedExpenseAccrual`／`SimpleVariableExpenseAccrual` 分录；同批原子来源的两行 `NonCash` 连续零额不落账。税前/净利润、权益、ROE、`cash_book`/`investment_book` 均由 `Books` 单源派生；`validate` 按 history 重构期望分录多重集匹配，重述底稿豁免。证据见[当前交接](current-handoff.md)任务176行。
 - [x] 汇总财务使用明确的账面规则支撑报表勾稽；实际股本操作不能被下一结算周期重新生成的账面值覆盖。（2026-10-07 对账勾选）依据：`SimpleFinanceState::validate`（`packages/engine/src/company/simple/finance_validation.rs`）勾稽财务身份/期间/注册资本演进（分红声明注册资本等值、送转批准时点演进链，含篡改负例，见 [送转记录](stock-distribution.md)「B1 独立复核」major-1 与 Web 同构 parser 检查）；股本行为事实 bind-once、拒绝改写（`finance_stock_distribution.rs`／`finance_dividend.rs`，`finance_stock_distribution_tests.rs`／`finance_dividend_tests.rs` 覆盖），M 批配股募集资金面值演进注册资本亦同口径（[配股与回购台账](rights-and-repurchase.md)）。
 - [x] 保存配置、期间事实、待处理复业动作、随机状态和恢复所需数据；解释只引用真实生成输入，不伪造客户、订单、研发项目及详细分录。股本动作状态仍属于未完成的共同结算部分。
-- [ ] TDD 覆盖四种结算周期与年化换算、周期对应的独立随机扰动配置、同长度期间基准、自然亏损、零基数/显式复业、费用重复计入、税费与分录勾稽、ROE 期间和平均权益、有公司行为前后权益变化、跨期连续性及失败原子性。
-  - 2026-10-07 对账：部分子项已有定向短测（四周期×年化定点与独立扰动：`company::simple` 周期测试组；ROE 期间/平均权益：`accounting::period_roe` 及报告窗口组；跨期连续性/恢复：`session::company_simple_session_tests`）；「费用重复计入」「失败原子性」等细项未逐项核对到独立用例，保持未勾，建议 Simple 财务细化批次按子项补齐。
+- [x] TDD 覆盖四种结算周期与年化换算、周期对应的独立随机扰动配置、同长度期间基准、自然亏损、零基数/显式复业、费用重复计入、税费与分录勾稽、ROE 期间和平均权益、有公司行为前后权益变化、跨期连续性及失败原子性。
+  - 2026-10-10 任务176对账：四周期×年化、独立扰动、跨期连续与 restore 深等的既有及新增用例齐备；费用重复计入覆盖解释级与分录级漂移/复制/缺失三负例；失败原子性覆盖过账后税额溢出时三侧均无部分状态。证据见[当前交接](current-handoff.md)任务176行。
 
 ### 4. 隔离账面公司财务与投资者实际结算
 
-- [ ] simple 的营收、固定开支、变动开支与其他财务字段从前一结算账面值按显式百分比配置更新；公司资金/投资额字段依约只作为汇总账面数据，不生成真实资金流、业务来源或额外现金余额 owner。
-  - 2026-10-07 对账：营收/固定开支按显式基点趋势更新已实现（`company::simple::growth.rs` 与 `generation` 状态）；「公司现金/投资额」汇总展示字段当前 Simple 财务状态并未建模（无此类字段，也无对应真实资金流），该半句的落地与否需产品先确认是否仍要该展示面——保持未勾，建议 Simple 财务细化批次决策后勾选。
+- [x] simple 的营收、固定开支、变动开支与其他财务字段从前一结算账面值按显式百分比配置更新；公司资金/投资额字段依约只作为汇总账面数据，不生成真实资金流、业务来源或额外现金余额 owner。
+  - 2026-10-10 对账勾选：营收/固定开支按显式基点趋势更新由既有 `growth.rs` 实现；`cash_book=留存收益`、`investment_book=收入×bp` 展示字段于 N3 批（`dc311164`）落地；176 批后两者均由 `Books` 分录单源派生。仅为展示，无资金 owner、无 `SyntheticFunding`。证据见[当前交接](current-handoff.md)任务176行。
 - [x] 报表保持内部期间计算一致，但明确标注 simple 的账面现金/投资不是 simulation 真实收付的等价事实；不为满足表面上的守恒而制造 `SyntheticFunding`、客户收付款、借款或投资者入账分录。
 - [x] 分红/认购/回购的投资者现金与股份变化进入唯一真实账户/股份账簿，并通过稳定来源 key、事件状态和原子候选提交防止重复执行；这些真实记录不得在简单公司账面百分比更新时被覆盖。
 - [x] 对齐 common company-action 逻辑时分别明确“公司账面展示结果”和“投资者账户真实结算结果”：分红按可分配利润/方案等条件，不以 simple 展示现金作为拒绝条件；配股/增发需要投资者本人现金；回购必须实际委托并成交。不得将公司账面现金变化解释为真实付款来源，也不得跳过实际认购资金、订单成交或失败原子性。
@@ -71,7 +71,7 @@
 
 ### 5. 接通共同公司行为与披露
 
-- [x] 分红、配股、增发、回购使用同一共同条件校验、股份登记、税务和结算行为；simple 以汇总状态满足条件，不以模式为由拒绝。（2026-10-07 对账勾选）依据：四类行为均走 `SessionCorporateActions` 共同入口与股东名册/税账，条件用 Simple 财务事实而非展示现金，无任何按模式拒绝分支——现金分红（[分红基础复核](cash-dividend-book-review.md)、[财务接线复核](simple-dividend-finance-review.md)）、配股/增发与回购（M 批 2026-10-07，`session::rights_offering_session_tests.rs`／`session::issuer_repurchase_session_tests.rs`，[配股与回购台账](rights-and-repurchase.md)）；Simple 侧「分红不被展示现金不足拒绝」等断言在 `session::company_simple_session_tests.rs` 覆盖。送转个税与送转公开公告仍缺口，登记于[送转记录](stock-distribution.md)，不在本条四类范围内。
+- [x] 分红、配股、增发、回购使用同一共同条件校验、股份登记、税务和结算行为；simple 以汇总状态满足条件，不以模式为由拒绝。（2026-10-07 对账勾选）依据：四类行为均走 `SessionCorporateActions` 共同入口与股东名册/税账，条件用 Simple 财务事实而非展示现金，无任何按模式拒绝分支——现金分红（[分红基础复核](cash-dividend-book-review.md)、[财务接线复核](simple-dividend-finance-review.md)）、配股/增发与回购（M 批 2026-10-07，`session::rights_offering_session_tests.rs`／`session::issuer_repurchase_session_tests.rs`，[配股与回购台账](rights-and-repurchase.md)）；Simple 侧「分红不被展示现金不足拒绝」等断言在 `session::company_simple_session_tests.rs` 覆盖。送转公开公告已由 2026-10-08 G 批接通，送转个人所得税已由 2026-10-10 任务175接通，均登记于[送转记录](stock-distribution.md)，且不在本条四类范围内。
 - [x] 公司行为偏好自动提案（ADR-0037，P 批 2026-10-07）：偏好类型与评估属 simple 模型内部（`company/simple/preferences.rs`，共同层仅最小接口），每公司显式配置现金分红/送转偏好（未配置=不产生方案），结算周期末日结算完成后于日结候选事务内走与显式 API 完全相同的 approve/announce/登记/入账入口与制度校验，被拒提案如实记入偏好台账（同周期幂等、不重试风暴）、严格持久化（新字段 `SimpleCompanyConfig.preferences` / `SimpleCompanyState.preference_ledger`，旧档显式拒绝）、Web parseSetup/parser 与 fixtures 同步；配股/增发/回购偏好项仅留类型扩展位（机制已由 M 批落地并经本合并并入），偏好配置 UI 入口未接。证据见[偏好台账](simple-preferences.md)。
 - [x] 开局自动名册/面值法定事实/后入股东税账与温和默认偏好（2026-10-08 N2a，用户决策「开局自动建名册」+「新局温和默认偏好」）：`SessionSetup.par_value_per_share`（默认 100 分，新局可编辑，严格持久化）与 `auto_corporate_foundation`（产品默认开）两新必填字段；`GameSession::new` 在初始筹码分配后自动装配全流通名册（未分配余量归具名外部股东、无 IssuerTreasury）、注册资本=面值×总股本、按三层税制模式自动开账；后入股东首次经二级市场净买入入册时由名册维护钩子同步开个人税账（AShareIndividual、个人身份；入册前分红不追溯）；Web DEFAULT_SETUP 温和默认偏好（3000bp/100 万元/每周期、送转关）+ ParValueInput 新局面值编辑。正常新局首周期偏好评估不再跳过、自动分红全链路到账（Flat 付款日代扣含后入玩家）。证据见[自动名册台账](auto-registry.md)；名册日结回执随交易日线性增长的存档体积为已登记边界。
 - [x] 玩家提案 + 偏好局内编辑（2026-10-08 N2b，用户决策「持仓即可、直接生效」+「偏好局内编辑即时生效、下周期评估」；**登记为游戏化简化**——真实 A 股投资者不能发起公司决议）：`GameSession::propose_company_action` 六类行为（分红/送转/配股/增发定向本人/回购/拆股）以最小参数集提案，前置只有账户持仓（>0，名册外持仓也算持有），构造显式方案后**直接调用既有 approve_* 入口**（制度校验零旁路，拒绝原样上抛并附加 F 批四分类，开关关闭显式拒绝「本局未启用」）；`set_simple_preferences` 局内编辑任意时刻可改、下一结算周期评估生效、同周期已产生提案不回滚（严格持久化沿用 P 批字段，两侧配置同步满足恢复勾稽）；wasm/worker/engine-host 全链接线（三类显式结果对象不抛错）+ 严格 parser + CompanyPanel「发起提案」区（F 批能力面前置展示）与局内偏好编辑。~~回购提案受 M 批 `established_on ≤ 名册结算日` 守卫——实际仅开局装配日（首个日终前）可受理、此后恒拒~~（**2026-10-08 H 批已作废**：`established_on` 改取名册 `settled_on`，局中任意日可受理，见下条）。证据见[玩家提案台账](player-proposals.md)。
@@ -84,9 +84,9 @@
 - [ ] 按实施时有效的 A 股官方规则核验公司行为制度并记录依据日期；公司汇总账面金额不被当作公司法定可分配资金余额的模拟证据。
   - 2026-10-07 对账：大部分制度已核验并登记依据（`docs/trading-rules.md`「公司行为」各节：206号令配股日程/比例上限、回购若干规定、分红两个月支付、个人股息税差别化三档等），且可分配条件用会计事实而非账面展示现金；但仍有显式登记的证据缺口（沪市配股操作条文、配股除权日 L+1 实践口径、缴款期天数参数化等，见 [配股与回购台账](rights-and-repurchase.md)「证据缺口」）——缺口补齐前不勾选。
 - [x] 接通基本面/报表材料生成、披露库、查询 DTO、NPC 报告抽取、交易和 UI；维持公开日期、范围、更正与本人已获知权限。
-- [ ] 按已有结算事实形成覆盖报告期间的流量汇总、期末余额和重算后的期间比率，不累计相加各期 ROE；长结算周期不能提供更短期间数据时，准确表达细期间数据不可用，不均分未来金额、不伪造已结算资料、不取消披露；说明 simple 来源为简化模型，不声称真实客户/订单数据。
+- [x] 按已有结算事实形成覆盖报告期间的流量汇总、期末余额和重算后的期间比率，不累计相加各期 ROE；长结算周期不能提供更短期间数据时，准确表达细期间数据不可用，不均分未来金额、不伪造已结算资料、不取消披露；说明 simple 来源为简化模型，不声称真实客户/订单数据。
 
-报告窗口流量、证监会规则9一般 ROE、公开 DTO 和 Web 显示已接通并通过定向短测及独立复核；合并逐项归属权益事件、扣非及特殊公式尚未闭合，因此该复合条目不整体勾选。月报/季报等合法材料已被本人获知但没有同范围年报时，估值及到期明确不可用而不阻断日结；损坏 acquisition 引用仍回滚。信用违约缺本人年报的路径仍是独立剩余缺口，不从中期材料测试推断所有触发器完成。
+2026-10-10 任务177＋176对账勾选：报告窗口流量、规则9 ROE 双分母、扣非 45 类穷举、同一控制报告期特殊公式及逐项归属权益事件列示已接通；比较期间特殊公式以显式 `Err(ComparativePeriodSpecialTreatment)` 登记为不支持。合法中期材料缺同范围年报时仍明确不可用且不阻断日结；Simple 来源注明为简化模型，不声称真实客户/订单。信用违约缺本人年报的触发路径仍是独立剩余缺口。证据见[当前交接](current-handoff.md)任务177/176行。
 
 - [ ] 测试两模式共同公司行为语义、分红不被 simple 展示现金不足错误拒绝、分红方案/可分配利润条件、投资者认购余额不足拒绝、回购只按真实成交、真实投资者账户/股份单次结算幂等、simple 结算更新不覆盖公司行为结果、披露前不可见及 NPC/玩家权限边界。
   - 2026-10-07 对账：除「两模式共同语义」外，Simple 单侧断言均已有定向短测（`session::company_simple_session_tests.rs`、`session::corporate_actions` 测试组、`session::cash_dividend` 组；幂等/不覆盖见 [送转记录](stock-distribution.md) 与 [配股与回购台账](rights-and-repurchase.md) 各恢复/重放用例；披露前不可见见信息交付 10 项）；「两模式共同语义对照」→ Simulation 分支，保持未勾。
