@@ -128,12 +128,7 @@ fn credited_bonus_distribution_posts_entries_reflected_in_next_reports() {
     let mut state = profitable_annual_fixture();
     bind_capital(&mut state);
     state
-        .declare_stock_distribution(bonus_declaration(
-            "dist-1",
-            3_000,
-            10_000,
-            in_2031(1, 1),
-        ))
+        .declare_stock_distribution(bonus_declaration("dist-1", 3_000, 10_000, in_2031(1, 1)))
         .unwrap();
     state
         .record_stock_distribution_credit("dist-1", in_2031(1, 2), 3_000)
@@ -141,7 +136,10 @@ fn credited_bonus_distribution_posts_entries_reflected_in_next_reports() {
     // 修复缺失计提后的分录：借 4103（送股 3_000 + 法定公积金 2_700），
     // 贷法定公积金 2_700、贷 4001（股本增加 3_000）；权益总额不变。
     assert_eq!(credit_balance(&state, "4001"), amount(13_000));
-    assert_eq!(credit_balance(&state, accounts::STATUTORY_RESERVE), amount(2_700));
+    assert_eq!(
+        credit_balance(&state, accounts::STATUTORY_RESERVE),
+        amount(2_700)
+    );
     assert_eq!(
         state
             .books()
@@ -163,10 +161,7 @@ fn credited_bonus_distribution_posts_entries_reflected_in_next_reports() {
         Some(amount(13_000))
     );
     assert_eq!(
-        count_entries(
-            &state,
-            BusinessKind::CompanyStockDistributionCredit
-        ),
+        count_entries(&state, BusinessKind::CompanyStockDistributionCredit),
         1
     );
     // 重复回填幂等：不追加第二笔分录。
@@ -174,10 +169,7 @@ fn credited_bonus_distribution_posts_entries_reflected_in_next_reports() {
         .record_stock_distribution_credit("dist-1", in_2031(1, 2), 3_000)
         .unwrap());
     assert_eq!(
-        count_entries(
-            &state,
-            BusinessKind::CompanyStockDistributionCredit
-        ),
+        count_entries(&state, BusinessKind::CompanyStockDistributionCredit),
         1
     );
     // 报表恒等式仍成立。
@@ -300,19 +292,21 @@ fn repurchase_cancellation_reduces_share_capital_in_books() {
     let mut state = profitable_annual_fixture();
     bind_capital(&mut state);
     state
-        .declare_issuer_repurchase(crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact {
-            event_id: "buy-1".into(),
-            approval_reference: "board-buy-1".into(),
-            approved_on: in_2031(1, 1),
-            synthetic_funding: amount(10_000),
-            purpose: crate::company::issuer_repurchase::RepurchasePurpose::ReduceCapital,
-            spent: None,
-            withdrawn_remainder: None,
-            completed_on: None,
-            cancelled_shares: 0,
-            cancelled_on: None,
-            capital_reduction: None,
-        })
+        .declare_issuer_repurchase(
+            crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact {
+                event_id: "buy-1".into(),
+                approval_reference: "board-buy-1".into(),
+                approved_on: in_2031(1, 1),
+                synthetic_funding: amount(10_000),
+                purpose: crate::company::issuer_repurchase::RepurchasePurpose::ReduceCapital,
+                spent: None,
+                withdrawn_remainder: None,
+                completed_on: None,
+                cancelled_shares: 0,
+                cancelled_on: None,
+                capital_reduction: None,
+            },
+        )
         .unwrap();
     state
         .record_issuer_repurchase_completion("buy-1", in_2031(1, 10), amount(6_000), amount(4_000))
@@ -395,10 +389,7 @@ fn share_consolidation_posts_reduction_and_split_posts_nothing() {
         .record_share_split_credit("consol-1", in_2031(1, 4), 10_000, 4_999)
         .unwrap();
     assert_eq!(credit_balance(&state, "4001"), amount(9_998));
-    assert_eq!(
-        credit_balance(&state, accounts::CAPITAL_RESERVE),
-        amount(2)
-    );
+    assert_eq!(credit_balance(&state, accounts::CAPITAL_RESERVE), amount(2));
     state.validate().unwrap();
 }
 
@@ -519,10 +510,7 @@ fn book_display_fields_are_strictly_persisted() {
     assert_eq!(restored, state);
     // 旧档缺少 cash_book / investment_book 被显式拒绝。
     let mut missing_cash = saved.clone();
-    missing_cash
-        .as_object_mut()
-        .unwrap()
-        .remove("cash_book");
+    missing_cash.as_object_mut().unwrap().remove("cash_book");
     assert!(serde_json::from_value::<SimpleFinanceState>(missing_cash).is_err());
     let mut missing_investment = saved.clone();
     missing_investment
@@ -539,8 +527,7 @@ fn book_display_fields_are_strictly_persisted() {
     assert!(serde_json::from_value::<SimpleFinanceState>(missing_config).is_err());
     // 比例越界（>10000bp）被拒绝。
     let mut invalid_bp = saved.clone();
-    invalid_bp["config"]["book_display"]["investment_of_revenue_bp"] =
-        serde_json::json!(10_001);
+    invalid_bp["config"]["book_display"]["investment_of_revenue_bp"] = serde_json::json!(10_001);
     let parsed: Result<SimpleFinanceState, _> = serde_json::from_value(invalid_bp);
     assert!(parsed.unwrap().validate().is_err());
 }
@@ -551,12 +538,7 @@ fn action_entry_backdated_into_closed_period_is_rejected() {
     let mut state = profitable_annual_fixture();
     bind_capital(&mut state);
     state
-        .declare_stock_distribution(bonus_declaration(
-            "dist-1",
-            3_000,
-            10_000,
-            in_2031(1, 1),
-        ))
+        .declare_stock_distribution(bonus_declaration("dist-1", 3_000, 10_000, in_2031(1, 1)))
         .unwrap();
     // 先结算 2031-01（as_of 推进到 2031-01-31），再以月初日期回填入账：
     // 2031-01-02 已落在封账期间内，必须显式拒绝且不落任何分录。
@@ -566,10 +548,7 @@ fn action_entry_backdated_into_closed_period_is_rejected() {
         .is_err());
     assert_eq!(credit_balance(&state, "4001"), amount(10_000));
     assert_eq!(
-        count_entries(
-            &state,
-            BusinessKind::CompanyStockDistributionCredit
-        ),
+        count_entries(&state, BusinessKind::CompanyStockDistributionCredit),
         0
     );
 }
@@ -594,12 +573,7 @@ fn report_roe_survives_cross_action_windows() {
         .record_rights_offering_settlement("rights-1", in_2031(1, 2), 5_000, amount(10_000))
         .unwrap();
     state
-        .declare_stock_distribution(bonus_declaration(
-            "dist-1",
-            1_000,
-            15_000,
-            in_2031(1, 3),
-        ))
+        .declare_stock_distribution(bonus_declaration("dist-1", 1_000, 15_000, in_2031(1, 3)))
         .unwrap();
     state
         .record_stock_distribution_credit("dist-1", in_2031(1, 4), 1_000)
@@ -648,12 +622,7 @@ fn tampered_capital_action_entries_are_rejected_by_restore_validation() {
     let mut state = profitable_annual_fixture();
     bind_capital(&mut state);
     state
-        .declare_stock_distribution(bonus_declaration(
-            "dist-1",
-            3_000,
-            10_000,
-            in_2031(1, 1),
-        ))
+        .declare_stock_distribution(bonus_declaration("dist-1", 3_000, 10_000, in_2031(1, 1)))
         .unwrap();
     state
         .record_stock_distribution_credit("dist-1", in_2031(1, 2), 3_000)
@@ -705,9 +674,7 @@ fn tampered_capital_action_entries_are_rejected_by_restore_validation() {
     let mut extra = saved.clone();
     {
         let next_source = state.next_event_id();
-        let batches = extra["books"]["journal"]["batches"]
-            .as_array_mut()
-            .unwrap();
+        let batches = extra["books"]["journal"]["batches"].as_array_mut().unwrap();
         batches.push(serde_json::json!([{
             "source": next_source,
             "date": "2031-01-02",
@@ -862,7 +829,7 @@ fn correct_report_accepts_legal_income_correction_and_links_book_display() {
         entries: vec![JournalEntry {
             source: BusinessEventId::new(next),
             date: CivilDate::from_ymd(2030, 1, 2).unwrap(),
-            kind: BusinessKind::SimplePeriodSummary,
+            kind: BusinessKind::SimpleRevenueAccrual,
             cash_flow: CashFlowClass::NonCash,
             lines: vec![
                 line(accounts::RECEIVABLE, PostingSide::Debit, amount(100)),
@@ -881,10 +848,16 @@ fn correct_report_accepts_legal_income_correction_and_links_book_display() {
         .expect("合法 +1 元收入更正必须被接受");
     assert!(!published.is_empty());
     let after = system.simple_book_display(&company).unwrap();
-    assert_eq!(after.investment_book, before.investment_book.add(amount(30)).unwrap(),
-        "收入更正 100 分按默认 30% 比例增加投资额展示 30 分");
-    assert_eq!(after.cash_book, before.cash_book.add(amount(75)).unwrap(),
-        "收入更正 100 分扣除所得税 25 分后，现金展示增加 75 分");
+    assert_eq!(
+        after.investment_book,
+        before.investment_book.add(amount(30)).unwrap(),
+        "收入更正 100 分按默认 30% 比例增加投资额展示 30 分"
+    );
+    assert_eq!(
+        after.cash_book,
+        before.cash_book.add(amount(75)).unwrap(),
+        "收入更正 100 分扣除所得税 25 分后，现金展示增加 75 分"
+    );
 }
 
 /// 两月前史中更正后月：前月完整 ReportSet 不变，原公开版不可变，
@@ -899,7 +872,7 @@ fn later_month_correction_preserves_earlier_report_and_rebuilds_affected_history
     use crate::calendar::CivilInstant;
     use crate::information::{
         publish_simple_scheduled, MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule,
-        PublicationOrigin, PublicLibrary, ReportFrequency,
+        PublicLibrary, PublicationOrigin, ReportFrequency,
     };
 
     let (mut system, company) = correction_ready_system_with_prehistory(2);
@@ -931,8 +904,14 @@ fn later_month_correction_preserves_earlier_report_and_rebuilds_affected_history
         .unwrap()
         .clone();
     let finance = system.finance(&company).unwrap();
-    assert!(matches!(earlier.reports.roe.ordinary_roe, ReportRoeValue::Available(_)));
-    assert!(matches!(target.reports.roe.ordinary_roe, ReportRoeValue::Available(_)));
+    assert!(matches!(
+        earlier.reports.roe.ordinary_roe,
+        ReportRoeValue::Available(_)
+    ));
+    assert!(matches!(
+        target.reports.roe.ordinary_roe,
+        ReportRoeValue::Available(_)
+    ));
     let before_finance = finance.clone();
     let before_library = library.clone();
     let before_display = system.simple_book_display(&company).unwrap();
@@ -959,10 +938,16 @@ fn later_month_correction_preserves_earlier_report_and_rebuilds_affected_history
         corrected_at,
         &mut library,
     );
-    assert!(matches!(rejected, Err(crate::company::CompanyCorrectionError::Accounting { .. })));
+    assert!(matches!(
+        rejected,
+        Err(crate::company::CompanyCorrectionError::Accounting { .. })
+    ));
     assert_eq!(system.finance(&company).unwrap(), &before_finance);
     assert_eq!(library, before_library);
-    assert_eq!(system.simple_book_display(&company).unwrap(), before_display);
+    assert_eq!(
+        system.simple_book_display(&company).unwrap(),
+        before_display
+    );
 
     let ids = system
         .correct_report(
@@ -985,19 +970,32 @@ fn later_month_correction_preserves_earlier_report_and_rebuilds_affected_history
     assert_eq!(library.report(target.id, corrected_at).unwrap(), &target);
     assert_eq!(library.report(earlier.id, corrected_at).unwrap(), &earlier);
     assert_eq!(
-        library.latest_report(&company, ReportKind::Monthly, earlier_period, corrected_at).unwrap(),
+        library
+            .latest_report(&company, ReportKind::Monthly, earlier_period, corrected_at)
+            .unwrap(),
         &earlier,
     );
 
     let finance = system.finance(&company).unwrap();
     finance.validate().unwrap();
-    assert_eq!(finance.report(earlier_period, ReportKind::Monthly).unwrap(), &earlier.reports);
-    assert_eq!(finance.report(target_period, ReportKind::Monthly).unwrap(), &corrected.reports);
     assert_eq!(
-        finance.closing().version(&target.reports.scope, target_period, ReportKind::Monthly, 1),
+        finance.report(earlier_period, ReportKind::Monthly).unwrap(),
+        &earlier.reports
+    );
+    assert_eq!(
+        finance.report(target_period, ReportKind::Monthly).unwrap(),
+        &corrected.reports
+    );
+    assert_eq!(
+        finance
+            .closing()
+            .version(&target.reports.scope, target_period, ReportKind::Monthly, 1),
         Some(&target.reports),
     );
-    let adjustments = finance.closing().restatement_periods(&target.reports.scope).unwrap();
+    let adjustments = finance
+        .closing()
+        .restatement_periods(&target.reports.scope)
+        .unwrap();
     assert_eq!(adjustments[&adjustment.source], target_period);
     let rebuilt_earlier = generate_report_set(ReportRequest {
         period: earlier_period,
@@ -1018,35 +1016,74 @@ fn later_month_correction_preserves_earlier_report_and_rebuilds_affected_history
     assert_eq!(corrected.reports.roe.basis, unsupported);
     assert_eq!(
         corrected.reports.income.report_period.net_income,
-        target.reports.income.report_period.net_income.add(amount(750)).unwrap(),
+        target
+            .reports
+            .income
+            .report_period
+            .net_income
+            .add(amount(750))
+            .unwrap(),
     );
-    assert_eq!(corrected.reports.cash_flow.operating, target.reports.cash_flow.operating);
-    assert_eq!(corrected.reports.cash_flow.investing, target.reports.cash_flow.investing);
-    assert_eq!(corrected.reports.cash_flow.financing, target.reports.cash_flow.financing);
-    assert_eq!(corrected.reports.cash_flow.opening_cash, target.reports.cash_flow.opening_cash);
-    assert_eq!(corrected.reports.cash_flow.closing_cash, target.reports.cash_flow.closing_cash);
+    assert_eq!(
+        corrected.reports.cash_flow.operating,
+        target.reports.cash_flow.operating
+    );
+    assert_eq!(
+        corrected.reports.cash_flow.investing,
+        target.reports.cash_flow.investing
+    );
+    assert_eq!(
+        corrected.reports.cash_flow.financing,
+        target.reports.cash_flow.financing
+    );
+    assert_eq!(
+        corrected.reports.cash_flow.opening_cash,
+        target.reports.cash_flow.opening_cash
+    );
+    assert_eq!(
+        corrected.reports.cash_flow.closing_cash,
+        target.reports.cash_flow.closing_cash
+    );
     assert!(corrected.reports.cash_flow.indirect.iter().any(|row| {
         row.label == "重述调整对应现金流量（按实际收付期间列报）" && row.amount == amount(-1_000)
     }));
-    assert_eq!(system.simple_book_display(&company).unwrap().cash_book,
-        before_display.cash_book.add(amount(750)).unwrap());
-    assert_eq!(system.simple_book_display(&company).unwrap().investment_book,
-        before_display.investment_book);
+    assert_eq!(
+        system.simple_book_display(&company).unwrap().cash_book,
+        before_display.cash_book.add(amount(750)).unwrap()
+    );
+    assert_eq!(
+        system
+            .simple_book_display(&company)
+            .unwrap()
+            .investment_book,
+        before_display.investment_book
+    );
 
-    let restored: SimpleFinanceState = serde_json::from_slice(&serde_json::to_vec(finance).unwrap()).unwrap();
+    let restored: SimpleFinanceState =
+        serde_json::from_slice(&serde_json::to_vec(finance).unwrap()).unwrap();
     restored.validate().unwrap();
     assert_eq!(&restored, finance);
 
     // 后续月从更正后的期初权益生成；收入仍归十二月，现金只归真实一月。
     let mut next_finance = restored;
-    next_finance.apply_month(date(1, 31), &PeriodAmounts {
-        revenue: amount(10_000),
-        fixed_expense: amount(3_000),
-        variable_expense: amount(4_000),
-    }).unwrap();
-    let next = next_finance.report(AccountingPeriod::of_date(date(1, 31)), ReportKind::Monthly).unwrap();
+    next_finance
+        .apply_month(
+            date(1, 31),
+            &PeriodAmounts {
+                revenue: amount(10_000),
+                fixed_expense: amount(3_000),
+                variable_expense: amount(4_000),
+            },
+        )
+        .unwrap();
+    let next = next_finance
+        .report(AccountingPeriod::of_date(date(1, 31)), ReportKind::Monthly)
+        .unwrap();
     assert_eq!(next.roe.basis, unsupported);
-    assert_eq!(next.equity.opening_parent, corrected.reports.equity.closing_parent);
+    assert_eq!(
+        next.equity.opening_parent,
+        corrected.reports.equity.closing_parent
+    );
     assert_eq!(next.income.report_period.net_income, amount(2_250));
     assert_eq!(next.cash_flow.operating, amount(1_000));
     assert!(next.cash_flow.indirect.iter().any(|row| {
@@ -1092,7 +1129,7 @@ fn failed_correction_leaves_finance_and_library_unchanged() {
         entries: vec![JournalEntry {
             source: BusinessEventId::new(next),
             date: CivilDate::from_ymd(2030, 1, 2).unwrap(),
-            kind: BusinessKind::SimplePeriodSummary,
+            kind: BusinessKind::SimpleRevenueAccrual,
             cash_flow: CashFlowClass::NonCash,
             lines: vec![line("6001", PostingSide::Credit, amount(100))],
         }],
@@ -1103,14 +1140,16 @@ fn failed_correction_leaves_finance_and_library_unchanged() {
                 &company,
                 request,
                 ids[0],
-                CivilInstant::from_hms(CivilDate::from_ymd(2030, 1, 2).unwrap(), 18, 0, 0)
-                    .unwrap(),
+                CivilInstant::from_hms(CivilDate::from_ymd(2030, 1, 2).unwrap(), 18, 0, 0).unwrap(),
                 &mut library,
             )
             .is_err(),
         "不平衡更正必须被拒绝"
     );
-    assert_eq!(system.simple_book_display(&company).unwrap(), before_display);
+    assert_eq!(
+        system.simple_book_display(&company).unwrap(),
+        before_display
+    );
     assert_eq!(
         serde_json::to_value(system.finance(&company).unwrap()).unwrap(),
         before_finance
@@ -1153,7 +1192,10 @@ fn repurchase_cancellation_keeps_earlier_dividend_declaration_valid() {
         .unwrap();
     // 注销 1_000 股（面值 1 分）→ 注册资本 10_000 → 9_000。
     let result = state.record_issuer_repurchase_cancellation("rep-1", in_2031(1, 4), 1_000, 10_000);
-    assert!(result.is_ok(), "合法回购注销不得因既有分红冻结注册资本被阻断：{result:?}");
+    assert!(
+        result.is_ok(),
+        "合法回购注销不得因既有分红冻结注册资本被阻断：{result:?}"
+    );
     assert_eq!(
         state.legal_facts().as_ref().unwrap().registered_capital,
         amount(9_000)
@@ -1207,7 +1249,9 @@ fn repurchase_cancellation_ignores_declared_but_unsettled_split() {
     distribution.par_value_per_share = Money::from_cents(100);
     distribution.capital_increase = amount(1_000);
     state.declare_stock_distribution(distribution).unwrap();
-    state.record_stock_distribution_credit("dist-1", in_2031(1, 2), 10).unwrap();
+    state
+        .record_stock_distribution_credit("dist-1", in_2031(1, 2), 10)
+        .unwrap();
     // 拆股已批准（1 拆 2，面值 100 → 50）但未到入账日：在册股份面值仍为 100 分。
     use crate::company::share_split::{ShareSplitDeclaration, ShareSplitDirection};
     state
@@ -1264,7 +1308,9 @@ fn repurchase_cancellation_uses_current_par_value_after_share_split() {
     distribution.par_value_per_share = Money::from_cents(100);
     distribution.capital_increase = amount(1_000);
     state.declare_stock_distribution(distribution).unwrap();
-    state.record_stock_distribution_credit("dist-1", in_2031(1, 2), 10).unwrap();
+    state
+        .record_stock_distribution_credit("dist-1", in_2031(1, 2), 10)
+        .unwrap();
     // 拆股 1 拆 2：110 股变 220 股，面值 100 分 → 50 分，注册资本仍为 11_000 分。
     use crate::company::share_split::{ShareSplitDeclaration, ShareSplitDirection};
     state
@@ -1279,7 +1325,9 @@ fn repurchase_cancellation_uses_current_par_value_after_share_split() {
             registered_capital_at_approval: amount(11_000),
         })
         .unwrap();
-    state.record_share_split_credit("split-1", in_2031(1, 4), 110, 220).unwrap();
+    state
+        .record_share_split_credit("split-1", in_2031(1, 4), 110, 220)
+        .unwrap();
     use crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact;
     state
         .declare_issuer_repurchase(IssuerRepurchaseFinanceFact {
@@ -1319,21 +1367,14 @@ fn tampered_action_entry_cash_flow_is_rejected_by_restore_validation() {
     let mut state = profitable_annual_fixture();
     bind_capital(&mut state);
     state
-        .declare_stock_distribution(bonus_declaration(
-            "dist-1",
-            3_000,
-            10_000,
-            in_2031(1, 1),
-        ))
+        .declare_stock_distribution(bonus_declaration("dist-1", 3_000, 10_000, in_2031(1, 1)))
         .unwrap();
     state
         .record_stock_distribution_credit("dist-1", in_2031(1, 2), 3_000)
         .unwrap();
     let mut saved = serde_json::to_value(&state).unwrap();
     {
-        let batches = saved["books"]["journal"]["batches"]
-            .as_array_mut()
-            .unwrap();
+        let batches = saved["books"]["journal"]["batches"].as_array_mut().unwrap();
         'find: for batch in batches.iter_mut() {
             for entry in batch.as_array_mut().unwrap() {
                 if entry["kind"] == "CompanyStockDistributionCredit" {

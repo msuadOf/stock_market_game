@@ -408,6 +408,19 @@ Simple 的 `CompanyKind` 必须由配置显式提供，并与发行人和 Financ
 `SimpleGenerated`。新增科目只存在于 Simple 账套；报表分类仅在科目实际存在时启用，既有
 Simulation 行业科目表和经营语义不变。完整报表及所得税继续来自同一权威账簿和共享税务 Owner。
 
+**结算逐项分录（2026-10-10 分录级派生批）**：Simple 结算周期不再以单笔混合摘要分录
+（旧 `SimplePeriodSummary`，已按无兼容原则整体删除，携带旧值的存档在 engine 与 Web 两端
+显式拒绝）过账，而是按明确项目逐项入账——收入（`SimpleRevenueAccrual`，借
+`simple_receivable`／贷 `simple_revenue`）、固定费用（`SimpleFixedExpenseAccrual`，借
+`simple_fixed_expense`／贷 `simple_payable`）、变动费用（`SimpleVariableExpenseAccrual`，
+借 `simple_variable_expense`／贷 `simple_payable`），三笔同批原子提交、来源连续递增、
+零金额项目不落零金额凭证；所得税仍由共享税务 Owner 以 `TaxAccrual` 分录计提。税前利润、
+净利润、净资产、ROE 与账面展示字段（`cash_book`／`investment_book`）全部由这些分录事实经
+唯一账簿派生，无第二来源。恢复勾稽按 history 生成金额重构期望逐项分录并与权威账簿做多重集
+匹配（已登记更正按重述工作底稿豁免）：同一项目重复计入、拆分漂移或缺失均显式拒绝。
+🎮 简化登记：Simple 未建模利息与折旧项目（无对应生成事实，不伪造分录），留待
+`CompanySimulation` 分支按真实业务事实接入。
+
 `SessionSetup.groups` 继续保存固定根公司及直接子公司持股股数，这是共同发行人/股本事实，不等同于
 simple 追踪公司资金。集团关系、股本从
 `CompanySpec` 派生，按 §2.1 的单层、精确基点、严格多数控制及期间覆盖规则验证。

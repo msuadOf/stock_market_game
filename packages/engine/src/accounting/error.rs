@@ -11,8 +11,8 @@ use thiserror::Error;
 /// `cause` 内是首条被拒原因（可 `matches!` 精确匹配）。
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum AccountingError {
-    #[error("Simple 汇总摘要 {event:?} 必须使用 NonCash，实际为 {cash_flow:?}")]
-    SimpleSummaryCashFlow {
+    #[error("Simple 结算分录 {event:?} 必须使用 NonCash，实际为 {cash_flow:?}")]
+    SimpleSettlementCashFlow {
         event: BusinessEventId,
         cash_flow: crate::accounting::CashFlowClass,
     },
