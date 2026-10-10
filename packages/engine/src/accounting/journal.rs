@@ -59,7 +59,15 @@ impl BusinessEventId {
     ts_rs::TS,
 )]
 pub enum BusinessKind {
-    SimplePeriodSummary,
+    /// Simple 汇总收入确认（借 simple_receivable／贷 simple_revenue；非现金，
+    /// 不冒充客户交易；逐项分录，2026-10-10 分录级派生批）。
+    SimpleRevenueAccrual,
+    /// Simple 汇总固定费用计提（借 simple_fixed_expense／贷 simple_payable；
+    /// 非现金，逐项分录）。
+    SimpleFixedExpenseAccrual,
+    /// Simple 汇总变动费用计提（借 simple_variable_expense／贷 simple_payable；
+    /// 非现金，逐项分录）。
+    SimpleVariableExpenseAccrual,
     CompanyDividendDeclaration,
     CompanyDividendPayment,
     /// 送转真实入账（权益内部结转：送股借 4103／转增借资本公积，贷 4001；
@@ -226,10 +234,14 @@ impl JournalEntry {
     /// 复式不变量验证（过账与存档恢复共用同一路径）：
     /// 非空行、每行正金额、借贷两侧俱全、借贷总额相等。
     pub fn validate_invariants(&self) -> Result<(), AccountingError> {
-        if self.kind == BusinessKind::SimplePeriodSummary
-            && self.cash_flow != CashFlowClass::NonCash
+        if matches!(
+            self.kind,
+            BusinessKind::SimpleRevenueAccrual
+                | BusinessKind::SimpleFixedExpenseAccrual
+                | BusinessKind::SimpleVariableExpenseAccrual
+        ) && self.cash_flow != CashFlowClass::NonCash
         {
-            return Err(AccountingError::SimpleSummaryCashFlow {
+            return Err(AccountingError::SimpleSettlementCashFlow {
                 event: self.source,
                 cash_flow: self.cash_flow,
             });

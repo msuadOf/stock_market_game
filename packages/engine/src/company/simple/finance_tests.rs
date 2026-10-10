@@ -9,18 +9,24 @@ pub(super) fn amount(cents: i128) -> AccountingAmount {
 }
 
 #[test]
-fn synthetic_period_summary_cannot_claim_real_operating_cash_flow() {
-    let entry = JournalEntry {
-        source: BusinessEventId::new(2),
-        date: date(1, 31),
-        kind: BusinessKind::SimplePeriodSummary,
-        cash_flow: CashFlowClass::Operating,
-        lines: vec![
-            line("1122", PostingSide::Debit, amount(100)),
-            line("6001", PostingSide::Credit, amount(100)),
-        ],
-    };
-    assert!(entry.validate_invariants().is_err());
+fn synthetic_settlement_entries_cannot_claim_real_operating_cash_flow() {
+    for kind in [
+        BusinessKind::SimpleRevenueAccrual,
+        BusinessKind::SimpleFixedExpenseAccrual,
+        BusinessKind::SimpleVariableExpenseAccrual,
+    ] {
+        let entry = JournalEntry {
+            source: BusinessEventId::new(2),
+            date: date(1, 31),
+            kind,
+            cash_flow: CashFlowClass::Operating,
+            lines: vec![
+                line("1122", PostingSide::Debit, amount(100)),
+                line("6001", PostingSide::Credit, amount(100)),
+            ],
+        };
+        assert!(entry.validate_invariants().is_err());
+    }
 }
 pub(super) fn fixture() -> SimpleFinanceState {
     SimpleFinanceState::create(
@@ -94,17 +100,15 @@ fn duplicate_month_and_invalid_amount_leave_entire_summary_unchanged() {
     let before = serde_json::to_vec(&state).unwrap();
     assert!(state.apply_month(date(1, 31), &amounts).is_err());
     assert_eq!(serde_json::to_vec(&state).unwrap(), before);
-    assert!(
-        state
-            .apply_month(
-                date(2, 28),
-                &PeriodAmounts {
-                    revenue: amount(-1),
-                    ..amounts
-                }
-            )
-            .is_err()
-    );
+    assert!(state
+        .apply_month(
+            date(2, 28),
+            &PeriodAmounts {
+                revenue: amount(-1),
+                ..amounts
+            }
+        )
+        .is_err());
     assert_eq!(serde_json::to_vec(&state).unwrap(), before);
 }
 

@@ -81,32 +81,42 @@ impl SimpleFinanceState {
         let capital_increase_after = |approved_on: crate::calendar::CivilDate| {
             let mut total = AccountingAmount::ZERO;
             for other in self.stock_distributions.values().filter(|other| {
-                other.credited_on.is_some_and(|credited| credited >= approved_on)
+                other
+                    .credited_on
+                    .is_some_and(|credited| credited >= approved_on)
             }) {
                 total = total.add(other.capital_increase)?;
             }
             for other in self.rights_offerings.values().filter(|other| {
-                other.settled_on.is_some_and(|settled| settled >= approved_on)
+                other
+                    .settled_on
+                    .is_some_and(|settled| settled >= approved_on)
             }) {
                 let increase = other.capital_increase.ok_or_else(|| {
                     SimpleFinanceError::StockDistributionInvalid(format!(
-                        "已结算配股 {} 缺少股本增加金额", other.event_id
+                        "已结算配股 {} 缺少股本增加金额",
+                        other.event_id
                     ))
                 })?;
                 total = total.add(increase)?;
             }
             for other in self.issuer_repurchases.values().filter(|other| {
-                other.cancelled_on.is_some_and(|cancelled| cancelled >= approved_on)
+                other
+                    .cancelled_on
+                    .is_some_and(|cancelled| cancelled >= approved_on)
             }) {
                 let reduction = other.capital_reduction.ok_or_else(|| {
                     SimpleFinanceError::StockDistributionInvalid(format!(
-                        "已注销回购 {} 缺少股本核减金额", other.event_id
+                        "已注销回购 {} 缺少股本核减金额",
+                        other.event_id
                     ))
                 })?;
                 total = total.sub(reduction)?;
             }
             for other in self.share_splits.values().filter(|other| {
-                other.settled_on.is_some_and(|settled| settled >= approved_on)
+                other
+                    .settled_on
+                    .is_some_and(|settled| settled >= approved_on)
             }) {
                 total = total.sub(other.registered_capital_reduction)?;
             }
@@ -119,9 +129,7 @@ impl SimpleFinanceState {
                 .0
                 .as_ref()
                 .ok_or_else(|| {
-                    SimpleFinanceError::DividendInvalid(
-                        "存在分红计划但缺少注册资本法定事实".into(),
-                    )
+                    SimpleFinanceError::DividendInvalid("存在分红计划但缺少注册资本法定事实".into())
                 })?
                 .registered_capital
                 .sub(later_stock_credits)?;
@@ -321,8 +329,7 @@ impl SimpleFinanceState {
                     )));
                 }
                 if settled_on < fact.approved_on
-                    || (fact.issued_shares == 0
-                        && proceeds != AccountingAmount::from_cents(0))
+                    || (fact.issued_shares == 0 && proceeds != AccountingAmount::from_cents(0))
                 {
                     return Err(SimpleFinanceError::StockDistributionInvalid(format!(
                         "配股声明 {event_id} 的结算回填日期、股数或募集资金非法"
@@ -362,13 +369,13 @@ impl SimpleFinanceState {
                     }
                 }
                 crate::company::share_split::ShareSplitDirection::Consolidate => {
-                    if after_cents != before_cents.checked_mul(fact.ratio as i64).ok_or_else(
-                        || {
+                    if after_cents
+                        != before_cents.checked_mul(fact.ratio as i64).ok_or_else(|| {
                             SimpleFinanceError::ShareSplitInvalid(format!(
                                 "缩股声明 {event_id} 的面值换算溢出"
                             ))
-                        },
-                    )? {
+                        })?
+                    {
                         return Err(SimpleFinanceError::ShareSplitInvalid(format!(
                             "缩股声明 {event_id} 的面值换算不满足整数比例放大"
                         )));
@@ -601,7 +608,11 @@ impl SimpleFinanceState {
                 }
             };
             lines.push(line("4001", PostingSide::Credit, fact.capital_increase));
-            expected.push((BusinessKind::CompanyStockDistributionCredit, credited_on, lines));
+            expected.push((
+                BusinessKind::CompanyStockDistributionCredit,
+                credited_on,
+                lines,
+            ));
         }
         for fact in self.rights_offerings.values() {
             let (Some(settled_on), Some(proceeds), Some(capital_increase)) =
@@ -677,9 +688,14 @@ impl SimpleFinanceState {
         ];
         // 以计数映射匹配多重集：同内容事实按次数消费，不反复线性查找并删除 Vec。
         let key = |kind: BusinessKind, date: CivilDate, lines: &[JournalLine]| {
-            (kind, date, lines.iter().map(|line| {
-                (line.account.clone(), line.side, line.amount)
-            }).collect::<Vec<_>>())
+            (
+                kind,
+                date,
+                lines
+                    .iter()
+                    .map(|line| (line.account.clone(), line.side, line.amount))
+                    .collect::<Vec<_>>(),
+            )
         };
         let mut counts = std::collections::BTreeMap::new();
         for (kind, date, lines) in expected {
@@ -692,14 +708,18 @@ impl SimpleFinanceState {
             if entry.cash_flow != CashFlowClass::NonCash {
                 return Err(SimpleFinanceError::Invalid(format!(
                     "公司行为分录（{:?}，{}，来源 {}）必须为 NonCash",
-                    entry.kind, entry.date, entry.source.value()
+                    entry.kind,
+                    entry.date,
+                    entry.source.value()
                 )));
             }
             let entry_key = key(entry.kind, entry.date, &entry.lines);
             let count = counts.get_mut(&entry_key).ok_or_else(|| {
                 SimpleFinanceError::Invalid(format!(
                     "公司行为分录（{:?}，{}，来源 {}）与已登记行为事实不一致或无法勾稽",
-                    entry.kind, entry.date, entry.source.value()
+                    entry.kind,
+                    entry.date,
+                    entry.source.value()
                 ))
             })?;
             *count -= 1;
@@ -721,11 +741,117 @@ impl SimpleFinanceState {
     fn validate_book_display(&self) -> Result<(), SimpleFinanceError> {
         let mut reference = self.clone();
         reference.refresh_book_display()?;
-        if self.cash_book != reference.cash_book || self.investment_book != reference.investment_book
+        if self.cash_book != reference.cash_book
+            || self.investment_book != reference.investment_book
         {
             return Err(SimpleFinanceError::Invalid(
                 "账面展示现金或投资额与权威账簿重算值不一致".into(),
             ));
+        }
+        Ok(())
+    }
+
+    /// 结算分录勾稽（2026-10-10 分录级派生批）：按 history 生成金额重构期望
+    /// 逐项分录（kind + 日期 + 借贷行），与权威账簿做多重集匹配——结算分录
+    /// 是一次性事实，同一项目不得重复计入、拆分漂移或缺失；已登记更正
+    /// （closing 重述工作底稿按来源记账）的分录豁免。由
+    /// `SimpleFundamentals::validate` 在恢复时携带 history 调用。
+    pub(crate) fn validate_settlement_entries(
+        &self,
+        history: &[&crate::company::api::SimpleDisclosureCandidate],
+    ) -> Result<(), SimpleFinanceError> {
+        use crate::accounting::reports::simple_summary as accounts;
+        let items = [
+            (
+                BusinessKind::SimpleRevenueAccrual,
+                accounts::RECEIVABLE,
+                accounts::REVENUE,
+            ),
+            (
+                BusinessKind::SimpleFixedExpenseAccrual,
+                accounts::FIXED_EXPENSE,
+                accounts::PAYABLE,
+            ),
+            (
+                BusinessKind::SimpleVariableExpenseAccrual,
+                accounts::VARIABLE_EXPENSE,
+                accounts::PAYABLE,
+            ),
+        ];
+        let mut counts = std::collections::BTreeMap::new();
+        for candidate in history {
+            let amounts = &candidate.amounts;
+            for (kind, debit, credit) in items {
+                let amount = match kind {
+                    BusinessKind::SimpleRevenueAccrual => amounts.revenue,
+                    BusinessKind::SimpleFixedExpenseAccrual => amounts.fixed_expense,
+                    _ => amounts.variable_expense,
+                };
+                if !amount.is_positive() {
+                    continue;
+                }
+                let expected = (
+                    kind,
+                    candidate.period_end,
+                    vec![
+                        (debit.to_owned(), PostingSide::Debit, amount),
+                        (credit.to_owned(), PostingSide::Credit, amount),
+                    ],
+                );
+                *counts.entry(expected).or_insert(0_usize) += 1;
+            }
+        }
+        let restatements = self
+            .closing
+            .restatement_periods(&ScopeId::Standalone(self.member_id()));
+        for entry in self.books.journal().entries() {
+            if !matches!(
+                entry.kind,
+                BusinessKind::SimpleRevenueAccrual
+                    | BusinessKind::SimpleFixedExpenseAccrual
+                    | BusinessKind::SimpleVariableExpenseAccrual
+            ) {
+                continue;
+            }
+            if entry.cash_flow != CashFlowClass::NonCash {
+                return Err(SimpleFinanceError::Invalid(format!(
+                    "结算分录（{:?}，{}，来源 {}）必须为 NonCash",
+                    entry.kind,
+                    entry.date,
+                    entry.source.value()
+                )));
+            }
+            // 更正分录按来源登记在重述工作底稿，内容已由更正路径原子验证。
+            if restatements.is_some_and(|map| map.contains_key(&entry.source)) {
+                continue;
+            }
+            let entry_key = (
+                entry.kind,
+                entry.date,
+                entry
+                    .lines
+                    .iter()
+                    .map(|line| (line.account.0.clone(), line.side, line.amount))
+                    .collect::<Vec<_>>(),
+            );
+            let count = counts.get_mut(&entry_key).ok_or_else(|| {
+                SimpleFinanceError::Invalid(format!(
+                    "结算分录（{:?}，{}，来源 {}）与生成事实不一致：不得重复计入、拆分或漂移",
+                    entry.kind,
+                    entry.date,
+                    entry.source.value()
+                ))
+            })?;
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&entry_key);
+            }
+        }
+        if let Some(((kind, date, _), _)) = counts.first_key_value() {
+            return Err(SimpleFinanceError::Invalid(format!(
+                "已生成期间缺少对应结算分录（{:?}，{date}）——结算分录不得被回退或遗漏",
+                kind
+            )));
         }
         Ok(())
     }

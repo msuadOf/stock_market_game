@@ -19,6 +19,8 @@ use crate::company::stock_distribution::{
 use crate::company::{CompanyId, CompanyKind};
 #[path = "finance_dividend.rs"]
 mod dividend;
+#[path = "finance_issuer_repurchase.rs"]
+mod issuer_repurchase;
 #[path = "finance_kind.rs"]
 mod kind;
 #[path = "finance_posting.rs"]
@@ -27,8 +29,8 @@ mod posting;
 mod report_validation;
 #[path = "finance_rights_offering.rs"]
 mod rights_offering;
-#[path = "finance_issuer_repurchase.rs"]
-mod issuer_repurchase;
+#[path = "finance_share_split.rs"]
+mod share_split;
 #[path = "finance_state.rs"]
 mod state;
 #[path = "finance_stock_distribution.rs"]
@@ -36,8 +38,6 @@ mod stock_distribution;
 #[cfg(test)]
 #[path = "finance_stock_distribution_tests.rs"]
 mod stock_distribution_tests;
-#[path = "finance_share_split.rs"]
-mod share_split;
 #[path = "finance_validation.rs"]
 mod validation;
 
@@ -161,16 +161,17 @@ pub struct SimpleFinanceState {
     income_tax_position: IncomeTaxPosition,
     recognized_periods: Vec<(CivilDate, CivilDate)>,
     dividends: std::collections::BTreeMap<String, DividendPlanState>,
-    stock_distributions:
-        std::collections::BTreeMap<String, StockDistributionFinanceFact>,
+    stock_distributions: std::collections::BTreeMap<String, StockDistributionFinanceFact>,
     share_splits:
         std::collections::BTreeMap<String, crate::company::share_split::ShareSplitFinanceFact>,
     rights_offerings: std::collections::BTreeMap<
         String,
         crate::company::rights_offering::RightsOfferingFinanceFact,
     >,
-    issuer_repurchases:
-        std::collections::BTreeMap<String, crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact>,
+    issuer_repurchases: std::collections::BTreeMap<
+        String,
+        crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact,
+    >,
     #[serde(deserialize_with = "deserialize_required_option")]
     legal_facts: RequiredOption<DividendLegalFacts>,
     /// 账面展示现金（2026-10-08 用户决策）：累计净利润 − 累计已付分红（留存收益
@@ -286,17 +287,20 @@ fn line(account: &str, side: PostingSide, amount: AccountingAmount) -> JournalLi
     }
 }
 #[cfg(test)]
-#[path = "finance_dividend_tests.rs"]
-mod dividend_tests;
-#[cfg(test)]
 #[path = "finance_books_integration_tests.rs"]
 mod books_integration_tests;
+#[cfg(test)]
+#[path = "finance_dividend_tests.rs"]
+mod dividend_tests;
 #[cfg(test)]
 #[path = "finance_kind_tests.rs"]
 mod kind_tests;
 #[cfg(test)]
 #[path = "finance_period_tests.rs"]
 mod period_tests;
+#[cfg(test)]
+#[path = "finance_settlement_entry_tests.rs"]
+mod settlement_entry_tests;
 #[cfg(test)]
 #[path = "finance_tests.rs"]
 mod tests;

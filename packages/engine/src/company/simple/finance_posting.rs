@@ -36,44 +36,60 @@ impl SimpleFinanceState {
         self.next_event_id = next;
         Ok(())
     }
+    /// 逐项结算分录（2026-10-10 分录级派生批）：收入／固定费用／变动费用
+    /// 各生成一笔独立 `BusinessKind` 的两行分录（同一批次原子提交、来源
+    /// 连续递增），税前利润、净利润、权益、ROE 与账面展示字段全部由这些
+    /// 分录事实经唯一账簿派生。零金额项目不落零金额凭证。
     pub(super) fn post_summary(
         &mut self,
         date: CivilDate,
         amounts: &PeriodAmounts,
     ) -> Result<(), SimpleFinanceError> {
-        let mut lines = Vec::new();
         use crate::accounting::reports::simple_summary as accounts;
-        for (debit, credit, amount) in [
-            (accounts::RECEIVABLE, accounts::REVENUE, amounts.revenue),
+        let items: [(BusinessKind, &str, &str, AccountingAmount); 3] = [
             (
+                BusinessKind::SimpleRevenueAccrual,
+                accounts::RECEIVABLE,
+                accounts::REVENUE,
+                amounts.revenue,
+            ),
+            (
+                BusinessKind::SimpleFixedExpenseAccrual,
                 accounts::FIXED_EXPENSE,
                 accounts::PAYABLE,
                 amounts.fixed_expense,
             ),
             (
+                BusinessKind::SimpleVariableExpenseAccrual,
                 accounts::VARIABLE_EXPENSE,
                 accounts::PAYABLE,
                 amounts.variable_expense,
             ),
-        ] {
-            if amount.is_positive() {
-                lines.push(line(debit, PostingSide::Debit, amount));
-                lines.push(line(credit, PostingSide::Credit, amount));
+        ];
+        let mut entries = Vec::new();
+        let mut next_id = self.next_event_id;
+        for (kind, debit, credit, amount) in items {
+            if !amount.is_positive() {
+                continue;
             }
-        }
-        if !lines.is_empty() {
-            let next = self
-                .next_event_id
+            let source = BusinessEventId::new(next_id);
+            next_id = next_id
                 .checked_add(1)
-                .ok_or_else(|| SimpleFinanceError::Invalid("摘要事件序号耗尽".into()))?;
-            self.books.post_batch(vec![JournalEntry {
-                source: BusinessEventId::new(self.next_event_id),
+                .ok_or_else(|| SimpleFinanceError::Invalid("结算分录事件序号耗尽".into()))?;
+            entries.push(JournalEntry {
+                source,
                 date,
-                kind: BusinessKind::SimplePeriodSummary,
+                kind,
                 cash_flow: CashFlowClass::NonCash,
-                lines,
-            }])?;
-            self.next_event_id = next;
+                lines: vec![
+                    line(debit, PostingSide::Debit, amount),
+                    line(credit, PostingSide::Credit, amount),
+                ],
+            });
+        }
+        if !entries.is_empty() {
+            self.books.post_batch(entries)?;
+            self.next_event_id = next_id;
         }
         Ok(())
     }

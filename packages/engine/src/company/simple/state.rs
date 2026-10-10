@@ -1,16 +1,16 @@
 use super::{
-    SimpleConfig,
     finance::SimpleFinanceState,
-    period::{PeriodGenerationState, generate_period},
+    period::{generate_period, PeriodGenerationState},
+    SimpleConfig,
 };
 use crate::{
     accounting::AccountingAmount,
     calendar::CivilDate,
     company::{
-        CompanyId, CompanySystemError,
         api::*,
         identity::IssuerRegistry,
         rng::{OperatingRng, RngStream},
+        CompanyId, CompanySystemError,
     },
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -229,6 +229,17 @@ impl SimpleFundamentals {
                 .companies
                 .get(&config.company)
                 .ok_or_else(|| CompanySystemError::SystemState("Simple 缺少公司状态".into()))?;
+            // 分录级勾稽先于整体 finance 校验：结算分录与 history 生成金额
+            // 逐项一致（更正分录按重述工作底稿豁免）——同一项目不得重复计入、
+            // 拆分或缺失，入口错误按分录口径报出。
+            let company_history: Vec<&SimpleDisclosureCandidate> = self
+                .history
+                .iter()
+                .filter(|candidate| candidate.company == config.company)
+                .collect();
+            state
+                .finance
+                .validate_settlement_entries(&company_history)?;
             state.finance.validate()?;
             state.generation.validate(&config.generation)?;
             state
