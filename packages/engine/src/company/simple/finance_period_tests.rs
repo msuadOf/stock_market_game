@@ -110,11 +110,17 @@ fn report_period_income_and_roe_use_each_report_window_not_cumulative_roe() {
             }
         )
     );
+    // 177 批（a86c7a19）起非经常损益按证监会口径穷举列示：Simple 各业务
+    // 均为经常性、扣非列示为空集，扣非 ROE 与普通 ROE 同值可用（合并轮按
+    // 177 新契约修正基线的 Unavailable 过期断言；main 上该断言本就红）。
     assert_eq!(
         annual.roe.adjusted_roe,
-        crate::accounting::reports::ReportRoeValue::Unavailable {
-            reason: crate::accounting::reports::ReportRoeUnavailable::MissingNonRecurringIncomeFacts,
-        }
+        crate::accounting::reports::ReportRoeValue::Available(
+            crate::accounting::reports::ReportRational {
+                numerator: "1872000".into(),
+                denominator: "1176000".into(),
+            }
+        )
     );
 }
 

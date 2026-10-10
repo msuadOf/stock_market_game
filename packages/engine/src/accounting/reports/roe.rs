@@ -174,7 +174,9 @@ fn non_recurring_income_items(
         // 若落入非经常口径（如资产处置、政府补助、债务重组），必须在此分支
         // 登记项目 code/name 与税后归母金额，未登记时编译期即暴露。
         match entry.kind {
-            BusinessKind::SimplePeriodSummary
+            BusinessKind::SimpleRevenueAccrual
+            | BusinessKind::SimpleFixedExpenseAccrual
+            | BusinessKind::SimpleVariableExpenseAccrual
             | BusinessKind::CompanyDividendDeclaration
             | BusinessKind::CompanyDividendPayment
             | BusinessKind::CompanyStockDistributionCredit
