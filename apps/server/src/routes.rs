@@ -647,6 +647,33 @@ pub struct StockHistoryQuery {
     pub code: engine::StockCode,
 }
 
+/// 公司共同契约查询（任务 178）：公司身份与 wasm 导出同口径（UTF-16 ≤ 64）。
+fn parse_company_id(company_id: &str) -> Result<engine::company::CompanyId, Response> {
+    if company_id.trim().is_empty() || company_id.encode_utf16().count() > 64 {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "COMPANY_QUERY_REJECTED",
+            "公司身份必须是非空且 UTF-16 不超过 64 字符的字符串",
+        ));
+    }
+    Ok(engine::company::CompanyId(company_id.to_owned()))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompanyContractQuery {
+    pub session_id: String,
+    pub generation: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeriodExplanationQuery {
+    pub session_id: String,
+    pub generation: u64,
+    pub period_end: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InitialAllocationQuery {
@@ -1052,6 +1079,188 @@ pub async fn api_public_report(
         Err(SendCommandError::Rejected(reason)) => public_query_error(reason),
         Err(SendCommandError::InvalidSpeed(_)) => {
             unreachable!("report query cannot validate speed")
+        }
+    }
+}
+
+/// GET /api/companies/:company_id/capabilities：F 批共同契约能力面
+/// （owner 隔离按请求成员账户；任务 178 Server 暴露）。
+pub async fn api_company_capabilities(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(company_id): Path<String>,
+    Query(query): Query<CompanyContractQuery>,
+) -> Response {
+    let company = match parse_company_id(&company_id) {
+        Ok(company) => company,
+        Err(response) => return response,
+    };
+    let (handles, subject) =
+        match authorized_session(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(value) => value,
+            Err(response) => return *response,
+        };
+    match handles
+        .company_capabilities_for(query.generation, subject, company)
+        .await
+    {
+        Ok((generation, capabilities)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "generation": generation.to_string(),
+                "capabilities": capabilities,
+            })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason)) if reason.starts_with("STALE_SESSION_GENERATION:") => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "COMPANY_QUERY_REJECTED", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("company query cannot validate speed")
+        }
+    }
+}
+
+/// GET /api/companies/:company_id/period-explanation：期间变化解释。
+pub async fn api_company_period_explanation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(company_id): Path<String>,
+    Query(query): Query<PeriodExplanationQuery>,
+) -> Response {
+    let company = match parse_company_id(&company_id) {
+        Ok(company) => company,
+        Err(response) => return response,
+    };
+    let period_end = match engine::CivilDate::from_iso(&query.period_end) {
+        Ok(date) => date,
+        Err(error) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "COMPANY_QUERY_REJECTED",
+                format!("period_end 必须是合法 ISO 日期：{error}"),
+            )
+        }
+    };
+    let (handles, subject) =
+        match authorized_session(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(value) => value,
+            Err(response) => return *response,
+        };
+    match handles
+        .company_period_explanation_for(query.generation, subject, company, period_end)
+        .await
+    {
+        Ok((generation, explanation)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "generation": generation.to_string(),
+                "explanation": explanation,
+            })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason)) if reason.starts_with("STALE_SESSION_GENERATION:") => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "COMPANY_QUERY_REJECTED", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("company query cannot validate speed")
+        }
+    }
+}
+
+/// GET /api/owner/rights-offerings：本人配股权证/额度/缴款窗口（owner 隔离）。
+pub async fn api_owner_rights_offerings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<CompanyContractQuery>,
+) -> Response {
+    let (handles, subject) =
+        match authorized_session(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(value) => value,
+            Err(response) => return *response,
+        };
+    match handles
+        .owner_rights_offerings_for(query.generation, subject)
+        .await
+    {
+        Ok((generation, offerings)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "generation": generation.to_string(),
+                "offerings": offerings,
+            })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason)) if reason.starts_with("STALE_SESSION_GENERATION:") => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "COMPANY_QUERY_REJECTED", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("company query cannot validate speed")
+        }
+    }
+}
+
+/// GET /api/owner/flat-withholding-receipts：简税代扣回执（owner 隔离；
+/// 非 Flat 模式 engine 显式拒绝，不冒充空台账）。
+pub async fn api_owner_flat_withholding_receipts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<CompanyContractQuery>,
+) -> Response {
+    let (handles, subject) =
+        match authorized_session(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(value) => value,
+            Err(response) => return *response,
+        };
+    match handles
+        .owner_flat_withholding_receipts_for(query.generation, subject)
+        .await
+    {
+        Ok((generation, receipts)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "generation": generation.to_string(),
+                "receipts": receipts,
+            })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason)) if reason.starts_with("STALE_SESSION_GENERATION:") => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "COMPANY_QUERY_REJECTED", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("company query cannot validate speed")
         }
     }
 }

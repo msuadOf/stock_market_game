@@ -25,6 +25,8 @@ import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, type MarketH
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, type CurrentMinuteHistoryRequest, type CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./engine-host.ts";
 import { exact, record } from "./protocol/guards.ts";
+// 公司共同契约查询（任务 178 Server 暴露）：与本地 WASM 宿主同源 parser。
+import { parseCompanyCapabilities, parseFlatWithholdingReceipts, parseOwnerRightsOfferings, parsePeriodChangeExplanation } from "./company-contract-views.ts";
 import { parseReportCorrectionResponse, reportCorrectionFailureGeneration } from "./report-corrections.ts";
 import { parseCompanyReportCorrection } from "../save/schema/company/report-corrections.ts";
 import { parseMoney } from "../utils/money.ts";
@@ -503,6 +505,51 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (Object.keys(response).length !== 2 || typeof response.generation !== "string" || !Object.hasOwn(response, "data")) throw new Error("远程股票历史响应字段无效");
       publisher.assertQueryCursor(cursor, response.generation, "远程股票历史响应属于已过期会话 generation");
       return parseHistoricalStockData(response.data, code);
+    },
+    async companyCapabilities(company: string) {
+      if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("能力面公司身份必须是非空且不超过 64 字符的字符串");
+      if (marketContext.member === null) throw new Error("尚未入场，不能查询公司能力面");
+      const account = marketContext.member.account_id;
+      const cursor = publisher.captureQueryCursor("远程公司能力面查询需要当前会话 generation");
+      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation });
+      const response = record(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(company)}/capabilities?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }), "远程公司能力面响应");
+      exact(response, ["generation", "capabilities"], "远程公司能力面响应");
+      publisher.assertQueryCursor(cursor, response.generation, "远程公司能力面响应属于已过期会话 generation");
+      if (marketContext.member?.account_id !== account) throw new Error("远程公司能力面响应属于已切换的本人账户");
+      return parseCompanyCapabilities(response.capabilities);
+    },
+    async companyPeriodExplanation(company: string, periodEnd: string) {
+      if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("期间解释公司身份必须是非空且不超过 64 字符的字符串");
+      if (typeof periodEnd !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) throw new Error("期间解释 periodEnd 必须是 ISO YYYY-MM-DD");
+      if (marketContext.member === null) throw new Error("尚未入场，不能查询期间解释");
+      const cursor = publisher.captureQueryCursor("远程期间解释需要当前会话 generation");
+      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation, period_end: periodEnd });
+      const response = record(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(company)}/period-explanation?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }), "远程期间解释响应");
+      exact(response, ["generation", "explanation"], "远程期间解释响应");
+      publisher.assertQueryCursor(cursor, response.generation, "远程期间解释响应属于已过期会话 generation");
+      return parsePeriodChangeExplanation(response.explanation);
+    },
+    async ownerRightsOfferings() {
+      if (marketContext.member === null) throw new Error("尚未入场，不能查询本人配股权益");
+      const account = marketContext.member.account_id;
+      const cursor = publisher.captureQueryCursor("远程本人配股权益需要当前会话 generation");
+      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation });
+      const response = record(await requestJson(`${baseUrl}/api/owner/rights-offerings?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }), "远程本人配股权益响应");
+      exact(response, ["generation", "offerings"], "远程本人配股权益响应");
+      publisher.assertQueryCursor(cursor, response.generation, "远程本人配股权益响应属于已过期会话 generation");
+      if (marketContext.member?.account_id !== account) throw new Error("远程本人配股权益响应属于已切换的本人账户");
+      return parseOwnerRightsOfferings(response.offerings);
+    },
+    async ownerFlatWithholdingReceipts() {
+      if (marketContext.member === null) throw new Error("尚未入场，不能查询简税代扣回执");
+      const account = marketContext.member.account_id;
+      const cursor = publisher.captureQueryCursor("远程简税代扣回执需要当前会话 generation");
+      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation });
+      const response = record(await requestJson(`${baseUrl}/api/owner/flat-withholding-receipts?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }), "远程简税代扣回执响应");
+      exact(response, ["generation", "receipts"], "远程简税代扣回执响应");
+      publisher.assertQueryCursor(cursor, response.generation, "远程简税代扣回执响应属于已过期会话 generation");
+      if (marketContext.member?.account_id !== account) throw new Error("远程简税代扣回执响应属于已切换的本人账户");
+      return parseFlatWithholdingReceipts(response.receipts);
     },
     async initialAllocation() {
       if (disposed) throw new Error("远程会话已经销毁，不能查询初始分配");

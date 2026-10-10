@@ -698,6 +698,23 @@ pub enum MemberRequest {
         generation: u64,
         query: engine::session::CurrentMinuteHistoryRequest,
     },
+    /// F 批共同契约查询面（任务 178 Server 暴露）：公司能力面/期间解释/
+    /// 本人配股权益/简税代扣回执，owner 隔离按请求成员账户。
+    CompanyCapabilities {
+        generation: u64,
+        company: engine::company::CompanyId,
+    },
+    CompanyPeriodExplanation {
+        generation: u64,
+        company: engine::company::CompanyId,
+        period_end: engine::CivilDate,
+    },
+    OwnerRightsOfferings {
+        generation: u64,
+    },
+    OwnerFlatWithholdingReceipts {
+        generation: u64,
+    },
     AdmissionCash {
         generation: u64,
         cash: engine::Money,
@@ -729,6 +746,11 @@ pub enum MemberResponse {
     TradeHistory(u64, engine::session::PersonalTradeHistoryPage),
     MarketHistory(u64, engine::session::MarketHistoryPage),
     CurrentMinuteHistory(u64, engine::session::CurrentMinuteHistoryResponse),
+    // 公司契约查询以 engine Serialize 正规 JSON 传递（与 Orders 先例同构）。
+    CompanyCapabilities(u64, serde_json::Value),
+    CompanyPeriodExplanation(u64, serde_json::Value),
+    OwnerRightsOfferings(u64, serde_json::Value),
+    OwnerFlatWithholdingReceipts(u64, serde_json::Value),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1299,6 +1321,81 @@ impl SessionHandles {
         match self.member_request(subject, MemberRequest::TradeHistory { generation, query }).await? {
             MemberResponse::TradeHistory(generation, page) => Ok((generation, page)),
             _ => Err(SendCommandError::Rejected("本人日期交割历史响应类型错误".into())),
+        }
+    }
+
+    /// F 批共同契约能力面（任务 178 Server 暴露）：engine 正规 JSON wire。
+    pub async fn company_capabilities_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        company: engine::company::CompanyId,
+    ) -> Result<(u64, serde_json::Value), SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::CompanyCapabilities { generation, company },
+            )
+            .await?
+        {
+            MemberResponse::CompanyCapabilities(generation, value) => Ok((generation, value)),
+            _ => Err(SendCommandError::Rejected("公司能力面响应类型错误".into())),
+        }
+    }
+
+    pub async fn company_period_explanation_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        company: engine::company::CompanyId,
+        period_end: engine::CivilDate,
+    ) -> Result<(u64, serde_json::Value), SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::CompanyPeriodExplanation {
+                    generation,
+                    company,
+                    period_end,
+                },
+            )
+            .await?
+        {
+            MemberResponse::CompanyPeriodExplanation(generation, value) => Ok((generation, value)),
+            _ => Err(SendCommandError::Rejected("期间解释响应类型错误".into())),
+        }
+    }
+
+    pub async fn owner_rights_offerings_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+    ) -> Result<(u64, serde_json::Value), SendCommandError> {
+        match self
+            .member_request(subject, MemberRequest::OwnerRightsOfferings { generation })
+            .await?
+        {
+            MemberResponse::OwnerRightsOfferings(generation, value) => Ok((generation, value)),
+            _ => Err(SendCommandError::Rejected("本人配股权益响应类型错误".into())),
+        }
+    }
+
+    pub async fn owner_flat_withholding_receipts_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+    ) -> Result<(u64, serde_json::Value), SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::OwnerFlatWithholdingReceipts { generation },
+            )
+            .await?
+        {
+            MemberResponse::OwnerFlatWithholdingReceipts(generation, value) => {
+                Ok((generation, value))
+            }
+            _ => Err(SendCommandError::Rejected("简税代扣回执响应类型错误".into())),
         }
     }
     pub async fn market_history_for(
@@ -2600,7 +2697,11 @@ impl SessionActor {
                     MemberRequest::WorkingOrders { generation }
                     | MemberRequest::History { generation, .. }
                     | MemberRequest::Confirmations { generation, .. }
-                    | MemberRequest::TradeHistory { generation, .. } => *generation,
+                    | MemberRequest::TradeHistory { generation, .. }
+                    | MemberRequest::CompanyCapabilities { generation, .. }
+                    | MemberRequest::CompanyPeriodExplanation { generation, .. }
+                    | MemberRequest::OwnerRightsOfferings { generation }
+                    | MemberRequest::OwnerFlatWithholdingReceipts { generation } => *generation,
                     _ => unreachable!("成员只读交易请求必须携带generation"),
                 };
                 if generation != self.timeline_generation {
@@ -2633,6 +2734,45 @@ impl SessionActor {
                             .map(|page| MemberResponse::TradeHistory(generation, page))
                             .map_err(|error| SendCommandError::Rejected(error.to_string()))
                     }
+                    MemberRequest::CompanyCapabilities { company, .. } => {
+                        // owner 隔离：能力面只含查询成员本人的权利摘要。
+                        serde_json::to_value(
+                            self.game
+                                .game()
+                                .company_capabilities(&company, account)
+                                .map_err(|error| SendCommandError::Rejected(error.to_string()))?,
+                        )
+                        .map(|value| MemberResponse::CompanyCapabilities(generation, value))
+                        .map_err(|error| SendCommandError::Rejected(error.to_string()))
+                    }
+                    MemberRequest::CompanyPeriodExplanation {
+                        company,
+                        period_end,
+                        ..
+                    } => serde_json::to_value(
+                        self.game
+                            .game()
+                            .company_period_explanation(&company, period_end)
+                            .map_err(|error| SendCommandError::Rejected(error.to_string()))?,
+                    )
+                    .map(|value| MemberResponse::CompanyPeriodExplanation(generation, value))
+                    .map_err(|error| SendCommandError::Rejected(error.to_string())),
+                    MemberRequest::OwnerRightsOfferings { .. } => serde_json::to_value(
+                        self.game
+                            .game()
+                            .owner_rights_offerings(account)
+                            .map_err(|error| SendCommandError::Rejected(error.to_string()))?,
+                    )
+                    .map(|value| MemberResponse::OwnerRightsOfferings(generation, value))
+                    .map_err(|error| SendCommandError::Rejected(error.to_string())),
+                    MemberRequest::OwnerFlatWithholdingReceipts { .. } => serde_json::to_value(
+                        self.game
+                            .game()
+                            .owner_flat_withholding_receipts(account)
+                            .map_err(|error| SendCommandError::Rejected(error.to_string()))?,
+                    )
+                    .map(|value| MemberResponse::OwnerFlatWithholdingReceipts(generation, value))
+                    .map_err(|error| SendCommandError::Rejected(error.to_string())),
                     _ => unreachable!("成员只读交易请求必须已通过generation校验"),
                 }
             }

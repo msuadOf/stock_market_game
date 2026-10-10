@@ -39,6 +39,26 @@ describe("Tauri host startup contract", () => {
     assert.match(hostSource, /generation: timeline\.currentGeneration\(\)/);
   });
 
+  it("bridges the company contract queries with the shared web parsers", () => {
+    // 任务 178：F 批四查询面经 Tauri 命令暴露，且解析复用 Web 同源 parser。
+    const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
+    const libSource = readFileSync(
+      new URL("../../../desktop/src-tauri/src/lib.rs", import.meta.url),
+      "utf8",
+    );
+    assert.match(hostSource, /invoke<unknown>\("company_capabilities"/);
+    assert.match(hostSource, /invoke<unknown>\("company_period_explanation"/);
+    assert.match(hostSource, /invoke<unknown>\("owner_rights_offerings"/);
+    assert.match(hostSource, /invoke<unknown>\("owner_flat_withholding_receipts"/);
+    assert.match(hostSource, /parseCompanyCapabilities\(response\.value\)/);
+    assert.match(hostSource, /parsePeriodChangeExplanation\(response\.value\)/);
+    assert.match(hostSource, /parseOwnerRightsOfferings\(response\.value\)/);
+    assert.match(hostSource, /parseFlatWithholdingReceipts\(response\.value\)/);
+    // 两份 generate_handler（默认与 host-parity）都必须注册四个命令。
+    const registrations = libSource.match(/^\s{12}(company_capabilities|company_period_explanation|owner_rights_offerings|owner_flat_withholding_receipts),$/gm) ?? [];
+    assert.equal(registrations.length, 8, "每个命令必须在两份 handler 列表各注册一次");
+  });
+
   it("keeps generation as an exact decimal string and preserves actor restore ordering", () => {
     const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
     const timelineSource = readFileSync(new URL("./tauri-timeline-state.ts", import.meta.url), "utf8");
