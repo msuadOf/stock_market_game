@@ -36,6 +36,7 @@ pub mod bridge;
 pub mod coordinator;
 pub mod decision;
 pub mod desk;
+pub mod drive;
 pub mod event_bridge;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

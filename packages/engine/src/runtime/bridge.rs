@@ -110,9 +110,22 @@ pub fn accounts_projection_from_session(
     n_stocks: usize,
 ) -> (Vec<i64>, Vec<Vec<u32>>, Vec<crate::AccountId>) {
     let profiles = session.account_strategy_profiles();
-    let mut cash = Vec::with_capacity(profiles.len());
-    let mut shares = Vec::with_capacity(profiles.len());
-    let mut ids = Vec::with_capacity(profiles.len());
+    let mut cash = Vec::with_capacity(profiles.len() + 1);
+    let mut shares = Vec::with_capacity(profiles.len() + 1);
+    let mut ids = Vec::with_capacity(profiles.len() + 1);
+    // 玩家并入（F §6.3 资源持有者同构）：AccountId(0) 惯例位先行。
+    if let Some(player) = session.account(crate::AccountId(0)) {
+        let mut row = vec![0u32; n_stocks];
+        for (code, position) in player.positions() {
+            let idx = code.0 as usize;
+            if idx < n_stocks {
+                row[idx] = position.qty();
+            }
+        }
+        cash.push(player.cash().cents());
+        shares.push(row);
+        ids.push(crate::AccountId(0));
+    }
     for (id, _profile) in profiles {
         let Some(account) = session.account(id) else {
             continue;

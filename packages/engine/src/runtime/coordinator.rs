@@ -81,6 +81,8 @@ pub struct TickEvidence {
     pub desk_views: Vec<(StockIdx, super::protocol::StockPublic)>,
     /// 各交易部本收束点挂单数（观察面）。
     pub desk_resting: Vec<(StockIdx, u64)>,
+    /// 本 tick 双腿成交事实（事件映射输入）。
+    pub desk_trades: Vec<super::protocol::DeskTradeFact>,
 }
 
 /// PreCommit 校验器（骨架注入点；批 3+ 换 PreCommitValidation）。
@@ -128,6 +130,7 @@ pub fn converge_round(
     let mut entities_out = 0u64;
     let mut desk_views = Vec::with_capacity(n_stocks);
     let mut desk_resting = Vec::with_capacity(n_stocks);
+    let mut desk_trades = Vec::new();
     while groups_left > 0 || desks_left > 0 {
         let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
             Ok(m) => m,
@@ -161,6 +164,7 @@ pub fn converge_round(
                 desk_hashes.push((r.stock, r.committed_hash));
                 desk_views.push((r.stock, r.view.clone()));
                 desk_resting.push((r.stock, r.resting_count));
+                desk_trades.extend(r.trades.iter().copied());
             }
             UpMsg::TaskDied { who, payload } => {
                 return RoundOutcome::TaskDied { who, payload };
@@ -190,6 +194,7 @@ pub fn converge_round(
         entities_out,
         desk_views,
         desk_resting,
+        desk_trades,
     }))
 }
 

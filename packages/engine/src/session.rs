@@ -18,9 +18,9 @@ mod company_groups;
 mod continuous_cancellation;
 mod decision_chain;
 mod deferred_drop;
+use crate::u64_decimal;
 pub use deferred_drop::defer as defer_destruction;
 use deferred_drop::defer_swap;
-use crate::u64_decimal;
 #[doc(hidden)]
 pub use deferred_drop::host_deferred_count as deferred_destruction_count;
 #[doc(hidden)]
@@ -122,9 +122,7 @@ use persistence::{validate_save_slot, validate_saved_order_state};
 
 pub use attention::NpcAttentionState;
 mod notices;
-pub use civil_clock::{
-    CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase,
-};
+pub use civil_clock::{CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase};
 pub use company_groups::{GroupHolding, GroupStructure};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
 pub use disclosures::{
@@ -799,7 +797,6 @@ impl IngressReceiptCursors {
         })
     }
 }
-
 
 type ContinuousOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, Order)>>;
 type AuctionOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, AuctionOrderSnap)>>;
@@ -2495,6 +2492,11 @@ impl GameSession {
     pub fn market_count(&self) -> usize {
         self.state.markets.len()
     }
+    /// runtime 驱动器导出：确定性配置面副本（批 8d 纵切）。
+    pub fn export_setup_for_runtime(&self) -> SessionSetup {
+        self.state.setup.clone()
+    }
+
     /// 账户数量（含玩家）。
     pub fn account_count(&self) -> usize {
         self.state.accounts.len()
@@ -2642,7 +2644,9 @@ impl GameSession {
         let instant = report.disclosure_instant;
         let publication = project(&candidate, report)?;
         self.commit_tick_shadow(candidate);
-        for observer in self.state.civil_clock.disclosure_observers() { observer(instant); }
+        for observer in self.state.civil_clock.disclosure_observers() {
+            observer(instant);
+        }
         Ok(publication)
     }
 
@@ -2654,8 +2658,7 @@ impl GameSession {
             Some(due_date) => due_date.min(next_company_day),
             None => next_company_day,
         };
-        let next_work_date = company_work_date
-            .min(self.state.civil_clock.next_civil_event_date());
+        let next_work_date = company_work_date.min(self.state.civil_clock.next_civil_event_date());
         // CivilClock 对合并时点执行重复/回拨/跳日/上界校验；过期公司 due
         // 因此不能被当日推进静默跨过，且不产生新的运行时 String 错误载体。
         let mut report = self.state.civil_clock.end_day(next_work_date)?;
@@ -2706,7 +2709,10 @@ impl GameSession {
     }
 
     fn next_civil_seq(&mut self) -> Result<u64, SessionError> {
-        self.state.seq = self.state.seq.checked_add(1)
+        self.state.seq = self
+            .state
+            .seq
+            .checked_add(1)
             .filter(|seq| *seq <= crate::orderbook::js_safe_u64::MAX)
             .ok_or_else(|| StepFatal::InvariantViolation {
                 location: "GameSession::record_civil_day_events".to_owned(),
@@ -4632,39 +4638,107 @@ impl CommittableSessionState {
         defer_swap(&mut self.setup, setup, FieldId::Setup);
         // 运行时费率快照随 shadow 原样回流（shadow 从权威克隆而来，二者恒相等；
         // 会话外的静默改写在下一 tick 门禁被指纹比对拒绝）。
-        defer_swap(&mut self.validated_config, validated_config, FieldId::ValidatedConfig);
+        defer_swap(
+            &mut self.validated_config,
+            validated_config,
+            FieldId::ValidatedConfig,
+        );
         defer_swap(&mut self.stocks, stocks, FieldId::Stocks);
         defer_swap(&mut self.rng, rng, FieldId::Rng);
         self.seed = seed;
         defer_swap(&mut self.markets, markets, FieldId::Markets);
         defer_swap(&mut self.accounts, accounts, FieldId::Accounts);
-        defer_swap(&mut self.history_reads, history_reads, FieldId::HistoryReads);
-        defer_swap(&mut self.price_history, price_history, FieldId::PriceHistory);
-        defer_swap(&mut self.market_minute_closes, market_minute_closes, FieldId::MarketMinuteCloses);
+        defer_swap(
+            &mut self.history_reads,
+            history_reads,
+            FieldId::HistoryReads,
+        );
+        defer_swap(
+            &mut self.price_history,
+            price_history,
+            FieldId::PriceHistory,
+        );
+        defer_swap(
+            &mut self.market_minute_closes,
+            market_minute_closes,
+            FieldId::MarketMinuteCloses,
+        );
         defer_swap(&mut self.candle_book, candle_book, FieldId::CandleBook);
-        defer_swap(&mut self.pending_player, pending_player, FieldId::PendingPlayer);
-        defer_swap(&mut self.ingress_receipt_cursors, ingress_receipt_cursors, FieldId::IngressReceiptCursors);
-        defer_swap(&mut self.npc_attention, npc_attention, FieldId::NpcAttention);
-        defer_swap(&mut self.retail_experience, retail_experience, FieldId::RetailExperience);
-        defer_swap(&mut self.npc_order_lifecycles, npc_order_lifecycles, FieldId::NpcOrderLifecycles);
-        defer_swap(&mut self.last_retail_decisions, last_retail_decisions, FieldId::LastRetailDecisions);
-        defer_swap(&mut self.last_retail_order_events, last_retail_order_events, FieldId::LastRetailOrderEvents);
+        defer_swap(
+            &mut self.pending_player,
+            pending_player,
+            FieldId::PendingPlayer,
+        );
+        defer_swap(
+            &mut self.ingress_receipt_cursors,
+            ingress_receipt_cursors,
+            FieldId::IngressReceiptCursors,
+        );
+        defer_swap(
+            &mut self.npc_attention,
+            npc_attention,
+            FieldId::NpcAttention,
+        );
+        defer_swap(
+            &mut self.retail_experience,
+            retail_experience,
+            FieldId::RetailExperience,
+        );
+        defer_swap(
+            &mut self.npc_order_lifecycles,
+            npc_order_lifecycles,
+            FieldId::NpcOrderLifecycles,
+        );
+        defer_swap(
+            &mut self.last_retail_decisions,
+            last_retail_decisions,
+            FieldId::LastRetailDecisions,
+        );
+        defer_swap(
+            &mut self.last_retail_order_events,
+            last_retail_order_events,
+            FieldId::LastRetailOrderEvents,
+        );
         #[cfg(feature = "simulation-diagnostics")]
         {
-            defer_swap(&mut self.npc_decision_traces, npc_decision_traces, FieldId::NpcDecisionTraces);
+            defer_swap(
+                &mut self.npc_decision_traces,
+                npc_decision_traces,
+                FieldId::NpcDecisionTraces,
+            );
             defer_swap(&mut self.causal, causal, FieldId::Causal);
         }
-        defer_swap(&mut self.attention_scheduler, attention_scheduler, FieldId::AttentionScheduler);
-        defer_swap(&mut self.company_registry, company_registry, FieldId::CompanyRegistry);
+        defer_swap(
+            &mut self.attention_scheduler,
+            attention_scheduler,
+            FieldId::AttentionScheduler,
+        );
+        defer_swap(
+            &mut self.company_registry,
+            company_registry,
+            FieldId::CompanyRegistry,
+        );
         defer_swap(&mut self.operations, operations, FieldId::Operations);
         defer_swap(&mut self.groups, groups, FieldId::Groups);
         defer_swap(&mut self.closing, closing, FieldId::Closing);
         defer_swap(&mut self.library, library, FieldId::Library);
         defer_swap(&mut self.disclosures, disclosures, FieldId::Disclosures);
         defer_swap(&mut self.plans, plans, FieldId::Plans);
-        defer_swap(&mut self.belief_participants, belief_participants, FieldId::BeliefParticipants);
-        defer_swap(&mut self.envelope_ledger, envelope_ledger, FieldId::EnvelopeLedger);
-        defer_swap(&mut self.retail_projection_seen, retail_projection_seen, FieldId::RetailProjectionSeen);
+        defer_swap(
+            &mut self.belief_participants,
+            belief_participants,
+            FieldId::BeliefParticipants,
+        );
+        defer_swap(
+            &mut self.envelope_ledger,
+            envelope_ledger,
+            FieldId::EnvelopeLedger,
+        );
+        defer_swap(
+            &mut self.retail_projection_seen,
+            retail_projection_seen,
+            FieldId::RetailProjectionSeen,
+        );
         self.next_receipt_base = next_receipt_base;
         self.next_order_id = next_order_id;
         self.tick = tick;
@@ -4822,9 +4896,9 @@ mod committable_state_tests {
             move |value| {
                 *counter.borrow_mut() += 1;
                 if let Some(old) = value.downcast_ref::<Vec<NpcOrderLifecycle>>() {
-                    lifecycles.borrow_mut().push(
-                        old.capacity() * std::mem::size_of::<NpcOrderLifecycle>(),
-                    );
+                    lifecycles
+                        .borrow_mut()
+                        .push(old.capacity() * std::mem::size_of::<NpcOrderLifecycle>());
                 }
             },
             || {

@@ -134,6 +134,8 @@ pub struct TickRecord {
     pub desk_hashes: Vec<(StockIdx, u64)>,
     /// 各交易部本收束点挂单数（观察面）。
     pub desk_resting: Vec<(StockIdx, u64)>,
+    /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。
+    pub desk_trades: Vec<super::protocol::DeskTradeFact>,
 }
 
 /// 关停报告（期末对账面）。
@@ -402,6 +404,37 @@ impl World {
         &self.public_views
     }
 
+    /// 组账户快照（驱动器纵切/测试面：向全部组发 EchoAccounts 并收齐）。
+    /// 生产热路径不调用（账户上行是调试口径开销）。
+    pub fn snapshot_accounts(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, Vec<GroupAccount>)>, RuntimeError> {
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoAccounts)
+                .map_err(|_| RuntimeError::SendFailed {
+                    detail: "EchoAccounts 广播失败".to_owned(),
+                })?;
+        }
+        let mut out: Vec<(GroupIdx, Vec<GroupAccount>)> = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupEcho { group, accounts } => {
+                    out.push((group, accounts));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("snapshot_accounts 期望 GroupEcho，收到 {other:?}"),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
     /// 运行 n 个 tick（协调者逻辑在本调用线程执行）。
     /// panic 运输：worker panic ⇒ 本函数以原 payload `resume_unwind`（不吞不改写）。
     pub fn run_ticks(&mut self, n: u64) -> Result<u64, RuntimeError> {
@@ -541,6 +574,7 @@ impl World {
             group_hashes: evidence.group_hashes,
             desk_hashes: evidence.desk_hashes,
             desk_resting: evidence.desk_resting,
+            desk_trades: evidence.desk_trades,
         });
     }
 

@@ -150,8 +150,9 @@ impl Account {
         Arc::make_mut(&mut self.state).strategy = strategy;
     }
 
-    #[cfg(test)]
-    pub(crate) fn fixture_set_cash(&mut self, cash: Money) {
+    /// 现金直改（测试夹具与 runtime 驱动器回写共用；外部直改经会话
+    /// `fixture_account_mut` X1 标记入口）。
+    pub fn fixture_set_cash(&mut self, cash: Money) {
         Arc::make_mut(&mut self.state).cash = cash;
     }
 

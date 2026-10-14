@@ -271,6 +271,8 @@ pub enum GroupIn {
     DayEnd(Box<DayEndDirective>),
     /// 关停：上交 `GroupFinal` 后退出。
     Shutdown,
+    /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
+    EchoAccounts,
 }
 
 /// 交易部收件消息。
@@ -331,6 +333,13 @@ pub enum UpMsg {
     GroupFinal(Box<super::group::GroupFinalState>),
     /// 交易部期末上交。
     DeskFinal(Box<super::desk::DeskFinalState>),
+    /// 组账户快照回执（EchoAccounts 应答）。
+    GroupEcho {
+        /// 组索引。
+        group: GroupIdx,
+        /// 当前账户全量快照。
+        accounts: Vec<super::group::GroupAccount>,
+    },
     /// worker 显式失败上抛（铁律二：不静默；尽力发送，通道已断由看门狗兜底）。
     Failed {
         /// 失败 worker。
@@ -366,6 +375,7 @@ impl std::fmt::Debug for UpMsg {
                 write!(f, "GroupDayDone(group={group}, day={day})")
             }
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
+            UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),
             UpMsg::TaskDied { who, .. } => write!(f, "TaskDied({who}, ..)"),
         }

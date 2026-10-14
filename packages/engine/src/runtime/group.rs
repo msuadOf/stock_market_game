@@ -1001,6 +1001,19 @@ pub fn group_main(
                     }
                 }
             }
+            GroupIn::EchoAccounts => {
+                let echo = UpMsg::GroupEcho {
+                    group: state.group,
+                    accounts: state.accounts.clone(),
+                };
+                if up_tx.send(echo).is_err() {
+                    abort.store(true, Ordering::SeqCst);
+                    result = Err(RuntimeError::SendFailed {
+                        detail: format!("组 {who} GroupEcho 发送失败"),
+                    });
+                    break;
+                }
+            }
             GroupIn::Shutdown => {
                 state.observed.push(Observed::Shutdown);
                 // Drain 实体批次已先于 Shutdown 入队（FIFO）：期末名册须含全部回流。
