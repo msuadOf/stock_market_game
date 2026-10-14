@@ -13,21 +13,49 @@ use super::coordinator::{
     broadcast_continue, broadcast_start, converge_round, no_op_validator, GlobalState,
     RoundOutcome, TickEvidence, Validator,
 };
-use super::desk::{desk_main, DeskFinalState};
+use super::desk::{desk_main, DeskFinalState, DeskSetup};
 use super::group::{group_main, GroupAccount, GroupFinalState, GroupScript};
 use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
 use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
 use super::{GroupIdx, StockIdx};
+use crate::config::GameConfig;
+use crate::StockExchange;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+
+/// 每股交易部规格（类别差异显式建模：主板/创业板）。
+#[derive(Clone, Debug)]
+pub struct DeskStockSpec {
+    /// 上市交易所（集合竞价选价规则差异）。
+    pub exchange: StockExchange,
+    /// 初始价（分）。
+    pub initial_price: i64,
+    /// 涨跌幅（基点：主板 1000=10% / 创业板 2000=20%）。
+    pub limit_bps: u32,
+    /// 限价单笔上限（主板 1_000_000 / 创业板 300_000）。
+    pub max_order_qty_limit: u32,
+    /// 市价单笔上限（主板 1_000_000 / 创业板 150_000）。
+    pub max_order_qty_market: u32,
+}
+
+impl DeskStockSpec {
+    /// 主板缺省（10%、100 万股上限）。
+    pub fn main_board(initial_price: i64) -> Self {
+        DeskStockSpec {
+            exchange: StockExchange::Shanghai,
+            initial_price,
+            limit_bps: 1000,
+            max_order_qty_limit: 1_000_000,
+            max_order_qty_market: 1_000_000,
+        }
+    }
+}
 
 /// 世界构造参数。
 pub struct WorldSpec {
     /// 组数 G。
     pub n_groups: usize,
-    /// 股数 N（交易部数）。
-    pub n_stocks: usize,
     /// 每组账户数。
     pub accounts_per_group: usize,
     /// 每账户初始现金（i64 分）。
@@ -42,6 +70,20 @@ pub struct WorldSpec {
     pub watchdog: WatchdogConfig,
     /// 同 tick 续行轮数上限（异常形状显式登记）。
     pub rounds_cap: u32,
+    /// 每股交易部规格（下标=StockIdx）。
+    pub stocks: Vec<DeskStockSpec>,
+    /// 费用/整手/价格笼子配置（引擎 GameConfig 同口径）。
+    pub config: Arc<GameConfig>,
+    /// 每交易日 tick 数。
+    pub ticks_per_day: u64,
+    /// 开盘集合竞价窗口 tick 数（0=全天连续，测试形态）。
+    pub auction_ticks: u64,
+    /// 收盘集合竞价窗口 tick 数。
+    pub closing_auction_ticks: u64,
+    /// 挂单 TTL（tick）。
+    pub order_ttl_ticks: u64,
+    /// tick 收盘价历史容量。
+    pub history_len: usize,
 }
 
 /// 每个已收敛 tick 的记录（测试与审计面）。
@@ -97,9 +139,18 @@ impl World {
                 detail: format!("组数需 1~{}，收到 {}", GroupIdx::MAX, spec.n_groups),
             });
         }
-        if spec.n_stocks == 0 || spec.n_stocks > StockIdx::MAX as usize {
+        let n_stocks = spec.stocks.len();
+        if n_stocks == 0 || n_stocks > StockIdx::MAX as usize {
             return Err(RuntimeError::ProtocolInvariant {
-                detail: format!("股数需 1~{}，收到 {}", StockIdx::MAX, spec.n_stocks),
+                detail: format!("股数需 1~{}，收到 {n_stocks}", StockIdx::MAX),
+            });
+        }
+        if spec.ticks_per_day == 0 || spec.closing_auction_ticks >= spec.ticks_per_day {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "日 tick 配置非法：ticks_per_day={}, closing={}",
+                    spec.ticks_per_day, spec.closing_auction_ticks
+                ),
             });
         }
         if spec.chunk == 0 {
@@ -109,7 +160,6 @@ impl World {
         }
         let WorldSpec {
             n_groups,
-            n_stocks,
             accounts_per_group,
             initial_cash,
             initial_shares,
@@ -117,7 +167,15 @@ impl World {
             chunk,
             watchdog,
             rounds_cap,
+            stocks,
+            config,
+            ticks_per_day,
+            auction_ticks,
+            closing_auction_ticks,
+            order_ttl_ticks,
+            history_len,
         } = spec;
+        let n_stocks = stocks.len();
         let abort = Arc::new(AtomicBool::new(false));
         let (up_tx, up_rx) = channel::<UpMsg>();
         let mut group_rxs = Vec::with_capacity(n_groups);
@@ -147,7 +205,14 @@ impl World {
                 }
                 accounts.push(acct);
             }
-            let state = super::group::GroupState::new(g, accounts, chunk, script_for(g));
+            let state = super::group::GroupState::new(
+                g,
+                accounts,
+                chunk,
+                config.lot_size,
+                Arc::clone(&config),
+                script_for(g),
+            );
             let rx = group_rxs.remove(0);
             let handle = std::thread::Builder::new()
                 .name(format!("rt-group-{g}"))
@@ -163,8 +228,22 @@ impl World {
                 })?;
             handles.push((WorkerId::Group(g), handle));
         }
-        for s in 0..n_stocks as StockIdx {
+        for (s, stock_spec) in stocks.into_iter().enumerate() {
+            let s = s as StockIdx;
             let rx = desk_rxs.remove(0);
+            let setup = DeskSetup {
+                stock: s,
+                exchange: stock_spec.exchange,
+                initial_price: stock_spec.initial_price,
+                limit_bps: stock_spec.limit_bps,
+                max_order_qty_limit: stock_spec.max_order_qty_limit,
+                max_order_qty_market: stock_spec.max_order_qty_market,
+                ticks_per_day,
+                auction_ticks,
+                closing_auction_ticks,
+                order_ttl_ticks,
+                history_len,
+            };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))
                 .spawn({
@@ -172,7 +251,12 @@ impl World {
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
                     let watchdog = watchdog;
-                    move || desk_main(s, n_groups, rx, group_txs, up_tx, abort, watchdog)
+                    let config = Arc::clone(&config);
+                    move || {
+                        desk_main(
+                            setup, n_groups, config, rx, group_txs, up_tx, abort, watchdog,
+                        )
+                    }
                 })
                 .map_err(|e| RuntimeError::SendFailed {
                     detail: format!("spawn rt-desk-{s} 失败：{e}"),

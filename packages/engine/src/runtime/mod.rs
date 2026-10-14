@@ -34,6 +34,7 @@ mod protocol;
 
 pub mod coordinator;
 pub mod desk;
+pub mod fees;
 pub mod group;
 pub mod watchdog;
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,5 +50,7 @@ mod entities_tests;
 mod facts_tests;
 #[cfg(test)]
 mod protocol_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod desk_semantics_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod skeleton_tests;

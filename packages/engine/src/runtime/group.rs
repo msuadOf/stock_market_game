@@ -8,36 +8,54 @@
 //!   全部本 tick 日志。`Continue` 只触发落账（进可逆日志），**不是**转正点。
 //! - **Abort**：逆序回放 + 清 staging + 回到 `committed_tick`（失败后可继续重跑）。
 
+use super::fees::buy_purse_limit;
 use super::protocol::{
     DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
 use super::watchdog::{worker_recv, WatchdogConfig};
 use super::{Entity, GroupIdx, LocalIdx, StockIdx};
+use crate::config::GameConfig;
+use crate::money::Money;
 use crate::orderbook::Side;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 组内账户（骨架档）：现金聚合额 + 每股持仓聚合额 + 每股在途挂单登记。
-/// T+1 冻结字段随批 5 日结接线补齐（骨架无成交，`BoughtShares` 不会出现）。
+/// 组内账户：现金聚合额 + 每股持仓聚合额 + T+1 冻结 + 每股在途挂单登记。
+/// 不变量（期末审计断言）：`shares == sellable + frozen_today`（sellable 派生）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupAccount {
     /// 现金聚合额（i64 分）。
     pub cash: i64,
     /// 每股持仓聚合额（下标=StockIdx）。
     pub shares: Vec<u32>,
+    /// 每股当日买入冻结（T+1：日界解冻，非每 tick——批 5 DayEnd 接线）。
+    pub frozen_today: Vec<u32>,
     /// 每股在途挂单计数（下标=StockIdx；严格所有权口径的诊断面）。
     pub foreign_active: Vec<u16>,
 }
 
 impl GroupAccount {
-    /// 构造：给定现金与股数（持仓/在途清零）。
+    /// 构造：给定现金与股数（持仓/冻结/在途清零）。
     pub fn new(cash: i64, n_stocks: usize) -> Self {
         GroupAccount {
             cash,
             shares: vec![0; n_stocks],
+            frozen_today: vec![0; n_stocks],
             foreign_active: vec![0; n_stocks],
+        }
+    }
+
+    /// 可卖（T+1 口径）：持仓 − 当日冻结。
+    pub fn sellable(&self, stock: StockIdx) -> u32 {
+        self.shares[stock as usize] - self.frozen_today[stock as usize]
+    }
+
+    /// 日界解冻：当日买入进入可卖（DayEnd 相位调用；批 5 接线）。
+    pub fn unfreeze_t1(&mut self) {
+        for f in &mut self.frozen_today {
+            *f = 0;
         }
     }
 }
@@ -59,6 +77,12 @@ enum GroupUndo {
         local: LocalIdx,
         stock: StockIdx,
         delta: i16,
+    },
+    /// T+1 冻结变动（BoughtShares 落账 +qty）。
+    Frozen {
+        local: LocalIdx,
+        stock: StockIdx,
+        delta: i32,
     },
 }
 
@@ -158,6 +182,10 @@ pub struct GroupState {
     pub skipped_orders: u64,
     /// 分段 flush 粒度（op 数）。
     chunk: usize,
+    /// 一手股数（买入整手/卖出零股一次性校验）。
+    lot: u32,
+    /// 费用/整手配置（purse 最坏情况口径）。
+    config: Arc<GameConfig>,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
     /// 决策脚本。
@@ -170,6 +198,8 @@ impl GroupState {
         group: GroupIdx,
         accounts: Vec<GroupAccount>,
         chunk: usize,
+        lot: u32,
+        config: Arc<GameConfig>,
         script: GroupScript,
     ) -> Self {
         GroupState {
@@ -183,6 +213,8 @@ impl GroupState {
             committed_hash: 0,
             skipped_orders: 0,
             chunk,
+            lot,
+            config,
             observed: Vec::new(),
             script,
         }
@@ -197,6 +229,9 @@ impl GroupState {
             h = fnv(h, a.cash as u64);
             for &s in &a.shares {
                 h = fnv(h, s as u64);
+            }
+            for &f in &a.frozen_today {
+                h = fnv(h, f as u64);
             }
             for &f in &a.foreign_active {
                 h = fnv(h, f as u64);
@@ -227,6 +262,14 @@ impl GroupState {
                 } => {
                     let slot = &mut self.accounts[local as usize].foreign_active[stock as usize];
                     *slot = (*slot as i32 - delta as i32) as u16;
+                }
+                GroupUndo::Frozen {
+                    local,
+                    stock,
+                    delta,
+                } => {
+                    let slot = &mut self.accounts[local as usize].frozen_today[stock as usize];
+                    *slot = (*slot as i64 - delta as i64) as u32;
                 }
             }
         }
@@ -286,7 +329,31 @@ impl GroupState {
                     delta: amount,
                 });
             }
-            Entity::BoughtShares { local, qty } | Entity::RefundedShares { local, qty } => {
+            Entity::BoughtShares { local, qty } => {
+                // T+1：当日买入冻结，日界解冻（下一交易日可卖）。
+                let acct = self.acct_mut(local)?;
+                let slot = &mut acct.shares[stock as usize];
+                *slot = slot
+                    .checked_add(qty)
+                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "组 {group} 持仓落账溢出：local={local}, stock={stock}, qty={qty}"
+                        ),
+                    })?;
+                acct.frozen_today[stock as usize] += qty;
+                self.undo.push(GroupUndo::Shares {
+                    local,
+                    stock,
+                    delta: qty as i32,
+                });
+                self.undo.push(GroupUndo::Frozen {
+                    local,
+                    stock,
+                    delta: qty as i32,
+                });
+            }
+            Entity::RefundedShares { local, qty } => {
+                // 卖单余股回流：恢复可卖（不新增冻结）。
                 let acct = self.acct_mut(local)?;
                 let slot = &mut acct.shares[stock as usize];
                 *slot = slot
@@ -407,15 +474,18 @@ impl GroupState {
             let owner = (group, p.local);
             match p.side {
                 Side::Buy => {
-                    // purse = 对价（费用上限随批 3 FeeTable 接入）。
-                    let purse = (p.qty as i64).checked_mul(p.price).ok_or_else(|| {
-                        RuntimeError::ProtocolInvariant {
-                            detail: format!(
-                                "组 {} purse 溢出：qty={}, price={}",
-                                group, p.qty, p.price
-                            ),
-                        }
-                    })?;
+                    // purse = 最坏情况对价 + 佣金上限 + 过户费上限（F §1.5；
+                    // `fees.rs buy_purse_limit`，与现引擎预留同口径）。
+                    let purse = buy_purse_limit(
+                        &self.config,
+                        Money::from_cents(p.price),
+                        p.qty,
+                        Money::ZERO,
+                    )
+                    .map_err(|e| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {group} purse 计算失败：{e:?}"),
+                    })?
+                    .cents();
                     let acct = self.acct_mut(p.local)?;
                     if acct.cash < purse {
                         // 严格所有权：在途退款未到账 ⇒ 显式 skip 计数（不静默、不部分执行）。
@@ -443,12 +513,20 @@ impl GroupState {
                     buffered += 1;
                 }
                 Side::Sell => {
+                    let lot = self.lot;
                     let acct = self.acct_mut(p.local)?;
-                    let slot = &mut acct.shares[p.stock as usize];
-                    if *slot < p.qty {
+                    let sellable = acct.sellable(p.stock);
+                    if p.qty > sellable {
+                        // 含 T+1：当日买入不可卖。
                         self.skipped_orders += 1;
                         continue;
                     }
+                    // 零股须一次性卖出：非整手数量只允许恰好等于全部可卖零头。
+                    if p.qty % lot != 0 && p.qty != sellable {
+                        self.skipped_orders += 1;
+                        continue;
+                    }
+                    let slot = &mut acct.shares[p.stock as usize];
                     *slot -= p.qty;
                     acct.foreign_active[p.stock as usize] += 1;
                     self.undo.push(GroupUndo::Shares {

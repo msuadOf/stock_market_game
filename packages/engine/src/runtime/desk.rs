@@ -1,55 +1,221 @@
-//! 交易部线程骨架（一股一线程）：`DeskIn` 收件箱 + `DeskBatch` 处理循环 +
-//! `DeskReport` 收束 + 实体退回协议。
+//! 交易部线程（一股一线程，独占撮合）——批 3 引擎化。
 //!
-//! 骨架边界（诚实登记）：**无撮合**（价格档 FIFO 撮合、费用、涨跌停带、价格笼子、
-//! 相位门禁随批 3 引擎化接入）——本骨架只做受理登记、对齐/定向撤单的实体退回、
-//! 日终清簿。价格符号仅支持 `Fixed`，其余符号显式失败。
-//!
-//! 失败原子性（F §5.2 交易部簿行）：撤销日志（COW 粒度）覆盖骨架全部可变状态：
-//! 挂单簿、本地序号、resting 计数；Abort 逆序回放 + 清实体出口缓冲。转正 =
-//! 下一 tick 首批 `Ops`（tick 字段前进即隐式转正；同 tick 续行轮 Ops 不触发）。
+//! 业务语义照搬现引擎（脊树），执行形态改为交易部线程私有：
+//! - 簿：双边 `BTreeMap<价, VecDeque<DeskOrder>>` 价格档 × 到达序 FIFO——价格时间
+//!   优先（taker 逐档吃对面最优，同价先到先成交），对齐 `orderbook.rs place_inner`
+//!   与统一簿 RestingKey 语义；成交价恒取 maker 价。
+//! - 校验：相位门禁（`pipeline/phase.rs` PhasePolicy 语义）→ 单笔上限（主板/
+//!   创业板差异，`session.rs SecurityCategory::max_order_qty`）→ 买入整手 →
+//!   价格合法（正数 + tick 整数倍）→ 涨跌停带（闭区间，`market.rs place_inner`）→
+//!   价格笼子（仅连续竞价 + 开关，参考价对手一档→本方一档→最新价，±2% 与十个
+//!   最小价位取宽，`market.rs continuous_limit_*`）。
+//! - 费用：`runtime/fees.rs`（照搬 config.rs/transition.rs，银行家舍入同口径）。
+//! - 集合竞价：申报只积累不撮合；开盘竞价在相位离开申报窗的首个 tick 一次清算
+//!   （`orderbook/auction_clearing.rs select_clearing` 沪深选价规则直接复用），
+//!   余单保留原档转连续；收盘竞价在 Drain 时一次清算后清簿。
+//! - T+1：卖出可卖校验在组端（持仓知识），交易部无账户视图（F §7 行 6/7）。
+//! - 失败原子性：撤销日志覆盖簿/序号/计数/费用桶/行情（快照条目）——Abort 逆序
+//!   回放 + 清出口缓冲；转正 = 下一 tick 首批 Ops（隐式）。
 
+use super::fees::{buyer_charge, seller_charge, FeeQuote};
 use super::protocol::{
     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
 use super::watchdog::{worker_recv, WatchdogConfig};
-use super::{DeskReceipt, Entity, OrderRef, Owner, ReceiptKind, StockIdx};
+use super::{DeskReceipt, Entity, FillFact, GroupIdx, OrderRef, Owner, ReceiptKind, StockIdx};
+use crate::config::GameConfig;
+use crate::money::Money;
+use crate::observation::completed_market_minute_count;
+use crate::orderbook::auction_clearing::{select_clearing, ClearingOrder};
 use crate::orderbook::Side;
-use std::collections::BTreeMap;
+use crate::StockExchange;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
-/// 骨架挂单：资源实体随单驻留交易部（买单 purse=剩余可花；卖单 qty=剩余股数）。
+/// 每股交易部构造参数（世界构造期确定，运行期不变）。
+#[derive(Clone, Debug)]
+pub struct DeskSetup {
+    /// 股索引。
+    pub stock: StockIdx,
+    /// 上市交易所（集合竞价选价规则差异：沪同价取中间价 / 深距离规则）。
+    pub exchange: StockExchange,
+    /// 初始价（分；`last_price`/`last_close` 初值，首日无昨收以开盘价为准）。
+    pub initial_price: i64,
+    /// 涨跌幅（基点：主板 1000 / 创业板 2000）。
+    pub limit_bps: u32,
+    /// 限价单笔申报上限（主板 1_000_000 / 创业板 300_000）。
+    pub max_order_qty_limit: u32,
+    /// 市价单笔申报上限（主板 1_000_000 / 创业板 150_000）。
+    pub max_order_qty_market: u32,
+    /// 每交易日 tick 数。
+    pub ticks_per_day: u64,
+    /// 开盘集合竞价窗口 tick 数（前 2/3 申报、后 1/3 盘前；0=全天连续，测试形态）。
+    pub auction_ticks: u64,
+    /// 收盘集合竞价窗口 tick 数。
+    pub closing_auction_ticks: u64,
+    /// 挂单 TTL（tick）。
+    pub order_ttl_ticks: u64,
+    /// tick 内价格历史容量。
+    pub history_len: usize,
+}
+
+/// 交易相位（照搬 `session.rs TradingPhase` 的 tick 推导）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeskPhase {
+    /// 开盘集合竞价申报期（09:15–09:25：前 2/3 窗口）。
+    CallAuction,
+    /// 盘前（09:25–09:30：不接受申报）。
+    PreOpen,
+    /// 连续竞价。
+    Continuous,
+    /// 收盘集合竞价（14:57–15:00：限价申报、不可撤、日终一次撮合）。
+    ClosingAuction,
+}
+
+impl DeskSetup {
+    /// tick 对应交易相位（照搬 `GameSession::phase`）。
+    pub fn phase_at(&self, tick: u64) -> DeskPhase {
+        let day_tick = tick % self.ticks_per_day;
+        let entry = self.auction_ticks - self.auction_ticks / 3;
+        if day_tick < entry {
+            DeskPhase::CallAuction
+        } else if day_tick < self.auction_ticks {
+            DeskPhase::PreOpen
+        } else if day_tick >= self.ticks_per_day - self.closing_auction_ticks {
+            DeskPhase::ClosingAuction
+        } else {
+            DeskPhase::Continuous
+        }
+    }
+
+    /// 相位是否允许撤单（照搬 PhasePolicy::allows_cancel：开盘竞价前 1/3 可撤、
+    /// 连续可撤、盘前与收盘竞价不可撤）。
+    pub fn allows_cancel(&self, tick: u64) -> bool {
+        match self.phase_at(tick) {
+            DeskPhase::CallAuction => tick % self.ticks_per_day < self.auction_ticks / 3,
+            DeskPhase::Continuous => true,
+            DeskPhase::PreOpen | DeskPhase::ClosingAuction => false,
+        }
+    }
+
+    /// 本 tick 是否为连续竞价价格笼子生效窗口。
+    pub fn cage_applies(&self, tick: u64) -> bool {
+        self.phase_at(tick) == DeskPhase::Continuous
+    }
+
+    /// 连续竞价每分钟的 tick 换算输入。
+    fn continuous_ticks_per_day(&self) -> u64 {
+        self.ticks_per_day
+            .checked_sub(self.auction_ticks)
+            .and_then(|t| t.checked_sub(self.closing_auction_ticks))
+            .unwrap_or(0)
+    }
+}
+
+/// 挂单：资源实体随单驻留交易部（买单 purse=剩余可花；卖单 qty=剩余股数）。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SkeletonOrder {
-    /// 复合挂单标识 `(stock, 本地单调序号)`。
+pub struct DeskOrder {
+    /// 复合挂单标识。
     pub order_ref: OrderRef,
     /// 所有者。
     pub owner: Owner,
     /// 方向。
     pub side: Side,
-    /// 受理价（i64 分；符号已在受理时解析为 Fixed）。
+    /// 限价（分；符号已解析）。
     pub price: i64,
     /// 剩余数量。
     pub qty: u32,
-    /// 买单剩余可花现金（卖单恒 0）。
+    /// 买腿剩余可花（卖恒 0）。
     pub purse: i64,
+    /// 累计成交额（分）。
+    pub filled_value: i64,
+    /// 卖腿累计实收费用（分项）。
+    pub charged_commission: i64,
+    /// 卖腿累计实收印花税。
+    pub charged_stamp_tax: i64,
+    /// 卖腿累计实收过户费。
+    pub charged_transfer_fee: i64,
+    /// 到期 tick。
+    pub expire_tick: u64,
 }
 
-/// 交易部撤销日志条目（逆序回放恢复）。
+/// 活动日 K（字段对齐 `session.rs DailyCandle` 的行情面）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeskCandle {
+    /// 开盘价。
+    pub open: i64,
+    /// 最高价。
+    pub high: i64,
+    /// 最低价。
+    pub low: i64,
+    /// 收盘价（最新价）。
+    pub close: i64,
+    /// 成交量（股）。
+    pub volume: u64,
+}
+
+/// 行情面（desk 私有常驻，不每 tick 重建）。
+#[derive(Clone, Debug)]
+pub struct DeskMarket {
+    /// 最新成交价（成交驱动；初值=initial_price）。
+    pub last_price: i64,
+    /// 昨收（涨跌停基准）。
+    pub last_close: i64,
+    /// 日内最高（含昨收锚定：无成交时=last_close）。
+    pub day_high: i64,
+    /// 日内最低。
+    pub day_low: i64,
+    /// 日累计成交量（股）。
+    pub volume_today: u64,
+    /// 日累计成交笔数。
+    pub trade_count: u64,
+    /// 活动日 K。
+    pub candle: Option<DeskCandle>,
+    /// 分钟收盘（绝对交易分钟，无成交分钟沿用当时最新价——对齐
+    /// `observation.rs MarketMinuteClose` 语义）。
+    pub minute_closes: Vec<(u64, i64)>,
+    /// tick 收盘价历史（容量 history_len）。
+    pub recent_prices: VecDeque<i64>,
+}
+
+/// 行情快照（撤销日志条目）。
+#[derive(Clone, Debug)]
+struct MarketSnapshot {
+    last_price: i64,
+    last_close: i64,
+    day_high: i64,
+    day_low: i64,
+    volume_today: u64,
+    trade_count: u64,
+    candle: Option<DeskCandle>,
+    minute_len: usize,
+    recent_len: usize,
+}
+
+/// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
 #[derive(Clone, Debug)]
 enum DeskUndo {
-    /// 新挂入了订单（回滚=移除）。
-    Rested(SkeletonOrder),
-    /// 移除了订单（回滚=放回）。
-    Removed(SkeletonOrder),
-    /// 本地序号前进（回滚=回退）。
+    /// 新挂入订单（回滚=移除）。
+    Inserted(DeskOrder),
+    /// 移除订单（回滚=放回档尾原序由 FIFO 保证——移除只发生在档首，放回档首）。
+    Removed(DeskOrder),
+    /// 订单字段被改（回滚=按 order_ref 原位恢复字段值）。
+    Mutated(DeskOrder),
+    /// 本地序号前进。
     Serial,
     /// resting 计数变动。
     RestingCount(i64),
     /// 累计跳过计数变动。
     Skipped(u64),
+    /// 到期/撤单计数变动。
+    Expired(u64),
+    Cancelled(u64),
+    /// 费用桶累计变动。
+    FeeSink(i64),
+    /// 行情快照（tick 起始整面）。
+    Market(MarketSnapshot),
 }
 
 /// 交易部期末上交状态。
@@ -58,112 +224,218 @@ pub struct DeskFinalState {
     /// 股索引。
     pub stock: StockIdx,
     /// 期末挂单（Drain 后为空）。
-    pub resting: Vec<SkeletonOrder>,
-    /// 累计跳过（受理拒绝）数。
+    pub resting: Vec<DeskOrder>,
+    /// 累计受理拒绝数。
     pub skipped_orders: u64,
-    /// 当前态哈希（Abort 回滚后应等于 `committed_hash`）。
+    /// 累计到期撤销数。
+    pub expired_orders: u64,
+    /// 累计撤单数。
+    pub cancelled_orders: u64,
+    /// 费用桶（守恒审计：双边实收费用累计）。
+    pub fee_sink: i64,
+    /// 期末行情。
+    pub market: DeskMarket,
+    /// 当前态哈希。
     pub state_hash: u64,
     /// 提交态哈希。
     pub committed_hash: u64,
+    /// Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 `committed_hash`；
+    /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据。None=无 Abort）。
+    pub rollback_hash: Option<u64>,
 }
 
 /// 交易部私有状态。
 pub struct DeskState {
-    /// 股索引。
-    pub stock: StockIdx,
-    /// 挂单簿（骨架档：无价格档结构；批 3 换双边 BTreeMap 价格档 × FIFO）。
-    resting: BTreeMap<OrderRef, SkeletonOrder>,
-    /// 本地单调序号（下一个）。
+    setup: DeskSetup,
+    config: Arc<GameConfig>,
+    bids: BTreeMap<i64, VecDeque<DeskOrder>>,
+    asks: BTreeMap<i64, VecDeque<DeskOrder>>,
     next_serial: u64,
-    /// 撤销日志。
     undo: Vec<DeskUndo>,
-    /// 实体出口缓冲（每组一个，本轮收束整体 flush）。
     out: Vec<Vec<Entity>>,
-    /// 回执出口缓冲（每组一个）。
+    fills_out: Vec<Vec<FillFact>>,
     receipts_out: Vec<Vec<DeskReceipt>>,
-    /// 本轮已 final_flush 的组集合。
     flushed: Vec<bool>,
-    /// 当前 tick / 轮。
     cur_tick: u64,
     cur_round: u32,
-    /// 已转正 tick。
     committed_tick: u64,
-    /// 提交态哈希。
     committed_hash: u64,
-    /// 累计受理拒绝数。
+    pub market: DeskMarket,
+    fee_sink: i64,
     pub skipped_orders: u64,
-    /// 挂单数。
+    pub expired_orders: u64,
+    pub cancelled_orders: u64,
     pub resting_count: u64,
+    /// 本 tick 是否已执行开盘清算（防御：一次）。
+    opening_cleared: bool,
+    /// 最近一次 Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 committed_hash；
+    /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据）。
+    rollback_hash: Option<u64>,
 }
 
 impl DeskState {
     /// 构造交易部状态。
-    pub fn new(stock: StockIdx, n_groups: usize) -> Self {
+    pub fn new(setup: DeskSetup, n_groups: usize, config: Arc<GameConfig>) -> Self {
+        let market = DeskMarket {
+            last_price: setup.initial_price,
+            last_close: setup.initial_price,
+            day_high: setup.initial_price,
+            day_low: setup.initial_price,
+            volume_today: 0,
+            trade_count: 0,
+            candle: None,
+            minute_closes: Vec::new(),
+            recent_prices: VecDeque::new(),
+        };
         DeskState {
-            stock,
-            resting: BTreeMap::new(),
+            setup,
+            config,
+            bids: BTreeMap::new(),
+            asks: BTreeMap::new(),
             next_serial: 1,
             undo: Vec::new(),
             out: vec![Vec::new(); n_groups],
+            fills_out: vec![Vec::new(); n_groups],
             receipts_out: vec![Vec::new(); n_groups],
             flushed: vec![false; n_groups],
             cur_tick: 0,
             cur_round: 0,
             committed_tick: 0,
             committed_hash: 0,
+            market,
+            fee_sink: 0,
             skipped_orders: 0,
+            expired_orders: 0,
+            cancelled_orders: 0,
             resting_count: 0,
+            opening_cleared: false,
+            rollback_hash: None,
         }
     }
 
-    /// 当前态哈希（FNV-1a，BTreeMap 确定序）。仅域内容（簿/序号/计数），不含
-    /// 协议位置字段——跨 tick 可比（Abort 回滚等价判据）。
+    /// 当前态哈希（FNV-1a；仅域内容，跨 tick 可比）。
     pub fn state_hash(&self) -> u64 {
         let mut h: u64 = 0xcbf29ce484222325;
-        h = fnv(h, self.stock as u64);
+        h = fnv(h, self.setup.stock as u64);
         h = fnv(h, self.next_serial);
         h = fnv(h, self.resting_count);
-        for (order_ref, o) in &self.resting {
-            h = fnv(h, order_ref.0 as u64);
-            h = fnv(h, order_ref.1);
-            h = fnv(h, o.owner.0 as u64);
-            h = fnv(h, o.owner.1 as u64);
-            h = fnv(
-                h,
-                match o.side {
-                    Side::Buy => 1u64,
-                    Side::Sell => 2u64,
-                },
-            );
-            h = fnv(h, o.price as u64);
-            h = fnv(h, o.qty as u64);
-            h = fnv(h, o.purse as u64);
+        h = fnv(h, self.fee_sink as u64);
+        let m = &self.market;
+        for v in [
+            m.last_price as u64,
+            m.last_close as u64,
+            m.day_high as u64,
+            m.day_low as u64,
+            m.volume_today,
+            m.trade_count,
+            m.minute_closes.len() as u64,
+            m.recent_prices.len() as u64,
+        ] {
+            h = fnv(h, v);
+        }
+        if let Some(c) = m.candle {
+            for v in [
+                c.open as u64,
+                c.high as u64,
+                c.low as u64,
+                c.close as u64,
+                c.volume,
+            ] {
+                h = fnv(h, v);
+            }
+        }
+        for (minute, close) in &m.minute_closes {
+            h = fnv(h, *minute);
+            h = fnv(h, *close as u64);
+        }
+        for &p in &m.recent_prices {
+            h = fnv(h, p as u64);
+        }
+        for (price, level) in self.bids.iter().chain(self.asks.iter()) {
+            for o in level {
+                h = fnv(h, *price as u64);
+                h = fnv(h, o.order_ref.1);
+                h = fnv(h, o.owner.0 as u64);
+                h = fnv(h, o.owner.1 as u64);
+                h = fnv(
+                    h,
+                    match o.side {
+                        Side::Buy => 1u64,
+                        Side::Sell => 2u64,
+                    },
+                );
+                h = fnv(h, o.qty as u64);
+                h = fnv(h, o.purse as u64);
+                h = fnv(h, o.filled_value as u64);
+            }
         }
         h
     }
 
-    /// 逆序回放撤销日志 + 清出口缓冲（Abort）。
+    // ── 撤销日志 ──
+
+    fn snapshot_market(&mut self) {
+        let m = &self.market;
+        self.undo.push(DeskUndo::Market(MarketSnapshot {
+            last_price: m.last_price,
+            last_close: m.last_close,
+            day_high: m.day_high,
+            day_low: m.day_low,
+            volume_today: m.volume_today,
+            trade_count: m.trade_count,
+            candle: m.candle,
+            minute_len: m.minute_closes.len(),
+            recent_len: m.recent_prices.len(),
+        }));
+    }
+
+    /// 逆序回放撤销日志 + 清出口缓冲（Abort/panic 回滚）。
     fn rollback(&mut self) {
-        for entry in self.undo.drain(..).rev() {
+        let undo = std::mem::take(&mut self.undo);
+        for entry in undo.into_iter().rev() {
             match entry {
-                DeskUndo::Rested(o) => {
-                    self.resting.remove(&o.order_ref);
+                DeskUndo::Inserted(o) => {
+                    self.remove_by_ref(&o.order_ref);
                 }
                 DeskUndo::Removed(o) => {
-                    self.resting.insert(o.order_ref, o);
+                    let level = if o.side == Side::Buy {
+                        &mut self.bids
+                    } else {
+                        &mut self.asks
+                    }
+                    .entry(o.price)
+                    .or_default();
+                    level.push_front(o);
                 }
-                DeskUndo::Serial => {
-                    self.next_serial -= 1;
+                DeskUndo::Mutated(o) => {
+                    self.restore_fields(&o);
                 }
+                DeskUndo::Serial => self.next_serial -= 1,
                 DeskUndo::RestingCount(d) => {
                     self.resting_count = (self.resting_count as i64 - d) as u64;
                 }
-                DeskUndo::Skipped(d) => {
-                    self.skipped_orders -= d;
+                DeskUndo::Skipped(d) => self.skipped_orders -= d,
+                DeskUndo::Expired(d) => self.expired_orders -= d,
+                DeskUndo::Cancelled(d) => self.cancelled_orders -= d,
+                DeskUndo::FeeSink(d) => self.fee_sink -= d,
+                DeskUndo::Market(s) => {
+                    let m = &mut self.market;
+                    m.last_price = s.last_price;
+                    m.last_close = s.last_close;
+                    m.day_high = s.day_high;
+                    m.day_low = s.day_low;
+                    m.volume_today = s.volume_today;
+                    m.trade_count = s.trade_count;
+                    m.candle = s.candle;
+                    m.minute_closes.truncate(s.minute_len);
+                    m.recent_prices.truncate(s.recent_len);
                 }
             }
         }
         for buf in &mut self.out {
+            buf.clear();
+        }
+        for buf in &mut self.fills_out {
             buf.clear();
         }
         for buf in &mut self.receipts_out {
@@ -174,10 +446,161 @@ impl DeskState {
         }
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
+        self.opening_cleared = false;
     }
 
-    /// 处理一批 Ops（已由主循环完成 tick/轮防御核对与隐式转正）。
-    fn apply_ops(&mut self, ops: Vec<DeskIn>) -> Result<(), RuntimeError> {
+    fn remove_by_ref(&mut self, order_ref: &OrderRef) {
+        for book in [&mut self.bids, &mut self.asks] {
+            for level in book.values_mut() {
+                level.retain(|o| o.order_ref != *order_ref);
+            }
+        }
+    }
+
+    fn restore_fields(&mut self, snapshot: &DeskOrder) {
+        for book in [&mut self.bids, &mut self.asks] {
+            for level in book.values_mut() {
+                for o in level.iter_mut() {
+                    if o.order_ref == snapshot.order_ref {
+                        *o = snapshot.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 价格边界（照搬 market.rs，Money 同口径取整）──
+
+    fn money(cents: i64) -> Money {
+        Money::from_cents(cents)
+    }
+
+    fn price_bound(
+        &self,
+        reference: Money,
+        ratio_bps: u32,
+        upward: bool,
+    ) -> Result<Money, RuntimeError> {
+        let tick = Money::from_cents(1);
+        let denominator = i128::from(10_000u32) * i128::from(tick.cents());
+        let numerator = i128::from(reference.cents()) * i128::from(ratio_bps);
+        let rounded_ticks = (numerator + denominator / 2) / denominator;
+        let rounded_cents = i64::try_from(rounded_ticks * i128::from(tick.cents()))
+            .map_err(|_| over("涨跌停价溢出"))?;
+        let mut bound = Money::from_cents(rounded_cents.max(tick.cents()));
+        if upward && bound <= reference {
+            bound = reference.add(tick).map_err(|_| over("涨跌停价溢出"))?;
+        } else if !upward && bound >= reference {
+            bound = reference
+                .sub(tick)
+                .map_err(|_| over("涨跌停价溢出"))?
+                .max(tick);
+        }
+        Ok(bound)
+    }
+
+    /// 涨停价（昨收 × (1+limit)，正数四舍五入至最小价位，至少一档）。
+    pub fn up_stop(&self) -> Result<i64, RuntimeError> {
+        Ok(self
+            .price_bound(
+                Self::money(self.market.last_close),
+                10_000 + self.setup.limit_bps,
+                true,
+            )?
+            .cents())
+    }
+
+    /// 跌停价。
+    pub fn down_stop(&self) -> Result<i64, RuntimeError> {
+        Ok(self
+            .price_bound(
+                Self::money(self.market.last_close),
+                10_000 - self.setup.limit_bps,
+                false,
+            )?
+            .cents())
+    }
+
+    fn best_bid(&self) -> Option<i64> {
+        self.bids.keys().next_back().copied()
+    }
+
+    fn best_ask(&self) -> Option<i64> {
+        self.asks.keys().next().copied()
+    }
+
+    /// 连续竞价限价申报基准价（上交所规则 3.3.14：对手一档→本方一档→最新价）。
+    fn continuous_reference(&self, side: Side) -> i64 {
+        match side {
+            Side::Buy => self.best_ask().or_else(|| self.best_bid()),
+            Side::Sell => self.best_bid().or_else(|| self.best_ask()),
+        }
+        .unwrap_or(self.market.last_price)
+    }
+
+    /// 价格笼子边界（买上限/卖下限；±2% 与十个最小价位取宽）。
+    fn cage_bound(&self, side: Side) -> Result<i64, RuntimeError> {
+        let reference = Self::money(self.continuous_reference(side));
+        let ten_ticks = 10i64;
+        match side {
+            Side::Buy => {
+                let pct = self.price_bound(reference, 10_200, true)?.cents();
+                Ok(pct.max(reference.cents() + ten_ticks))
+            }
+            Side::Sell => {
+                let pct = self.price_bound(reference, 9_800, false)?.cents();
+                Ok(pct.min(reference.cents() - ten_ticks).max(1))
+            }
+        }
+    }
+
+    /// 受理价上限/下限：日涨跌停 ∧ 价格笼子（笼子仅连续竞价 + 配置开启时叠加）。
+    fn price_bound_for(
+        &self,
+        side: Side,
+        tick: u64,
+        cage: bool,
+    ) -> Result<(i64, i64), RuntimeError> {
+        let up = self.up_stop()?;
+        let down = self.down_stop()?;
+        if !cage || !self.setup.cage_applies(tick) {
+            return Ok((down, up));
+        }
+        let cage = self.cage_bound(side)?;
+        Ok(match side {
+            Side::Buy => (down, up.min(cage)),
+            Side::Sell => (down.max(cage), up),
+        })
+    }
+
+    /// 解析价格符号（照搬 market.rs resolve_limit_price + 市价=涨跌停保护）。
+    /// 返回 (受理价, 余量是否挂簿)——市价余量不进簿。
+    fn resolve_price(
+        &self,
+        rp: RoutedPrice,
+        side: Side,
+        tick: u64,
+    ) -> Result<(i64, bool), RuntimeError> {
+        let cage = self.config.price_cage_enabled;
+        let (down, up) = self.price_bound_for(side, tick, cage)?;
+        let (price, rest_remainder) = match rp {
+            RoutedPrice::Fixed(p) => (p, true),
+            RoutedPrice::Highest => match side {
+                Side::Buy => (up, true),
+                Side::Sell => (up, true),
+            },
+            RoutedPrice::Lowest => (down, true),
+            RoutedPrice::Market => match side {
+                Side::Buy => (up, false),
+                Side::Sell => (down, false),
+            },
+        };
+        Ok((price, rest_remainder))
+    }
+
+    // ── 受理与撮合 ──
+
+    fn apply_ops(&mut self, tick: u64, ops: Vec<DeskIn>) -> Result<(), RuntimeError> {
         for op in ops {
             match op {
                 DeskIn::Place {
@@ -187,108 +610,539 @@ impl DeskState {
                     qty,
                     purse,
                 } => {
-                    self.place(owner, side, price, qty, purse)?;
+                    self.place(tick, owner, side, price, qty, purse)?;
                 }
-                DeskIn::CancelAll { owner } => {
-                    self.cancel_all_for(owner);
-                }
-                DeskIn::Cancel { owner, order } => {
-                    self.cancel_one(owner, order)?;
-                }
+                DeskIn::CancelAll { owner } => self.cancel_all_for(tick, owner),
+                DeskIn::Cancel { owner, order } => self.cancel_one(tick, owner, order)?,
             }
         }
         Ok(())
     }
 
-    /// 受理下单（骨架档）：解析价格符号 → 基础校验 → 挂簿。
+    /// 受理下单：相位门禁 → 数量上限 → 整手 → 价格合法 → 带/笼 → 撮合/积累 → 挂簿。
+    #[allow(clippy::too_many_arguments)]
     fn place(
         &mut self,
+        tick: u64,
         owner: Owner,
         side: Side,
         rp: RoutedPrice,
         qty: u32,
         purse: i64,
     ) -> Result<(), RuntimeError> {
-        // 符号价（Highest/Lowest/Market）需要活簿与涨跌停带——批 3 接入；
-        // 骨架收到符号价=显式失败（不静默按 0 处理）。
-        let price = match rp {
-            RoutedPrice::Fixed(p) => p,
-            other => {
-                return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!(
-                        "交易部 {} 骨架不支持符号价 {other:?}（批 3 接入）",
-                        self.stock
-                    ),
-                });
+        let phase = self.setup.phase_at(tick);
+        let is_market = matches!(rp, RoutedPrice::Market);
+        // 相位门禁：盘前拒收；竞价阶段只收限价。
+        if phase == DeskPhase::PreOpen {
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::PhaseRejected);
+            return Ok(());
+        }
+        if phase == DeskPhase::CallAuction || phase == DeskPhase::ClosingAuction {
+            if is_market {
+                self.reject(
+                    tick,
+                    owner,
+                    side,
+                    qty,
+                    purse,
+                    ReceiptKind::AuctionLimitOrderRequired,
+                );
+                return Ok(());
             }
+        }
+        // 数量：非零 + 单笔上限（类别差异：主板/创业板 × 限价/市价）。
+        let cap = if is_market {
+            self.setup.max_order_qty_market
+        } else {
+            self.setup.max_order_qty_limit
         };
-        if price <= 0 || qty == 0 || purse < 0 || (side == Side::Sell && purse != 0) {
-            // 带外/非法申报：实体原路退回 + 回执（不静默吞资源）。
-            self.reject(owner, side, qty, purse, ReceiptKind::PriceOutOfBand);
+        if qty == 0 {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "交易部 {} 收到 qty=0 下单（组端校验缺失）",
+                    self.setup.stock
+                ),
+            });
+        }
+        if qty > cap {
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::ExceedsOrderCap);
             return Ok(());
         }
-        if side == Side::Buy && qty % 100 != 0 {
-            self.reject(owner, side, qty, purse, ReceiptKind::NotRoundLot);
+        // 买入整手（卖出零股一次性由组端校验——持仓知识在本组）。
+        if side == Side::Buy && qty % self.config.lot_size != 0 {
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::NotRoundLot);
             return Ok(());
         }
-        let order_ref = (self.stock, self.next_serial);
-        let order = SkeletonOrder {
+        // 价格：正数 + tick 整数倍（最小价位 0.01 元）。
+        let (price, rest_remainder) = self.resolve_price(rp, side, tick)?;
+        if price <= 0 || price % 1 != 0 {
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand);
+            return Ok(());
+        }
+        // 涨跌停带（闭区间）与价格笼子。
+        let cage = self.config.price_cage_enabled;
+        let (down, up) = self.price_bound_for(side, tick, cage)?;
+        if price < down || price > up {
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand);
+            return Ok(());
+        }
+        if purse < 0 || (side == Side::Sell && purse != 0) {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "交易部 {} purse 非法：side={side:?}, purse={purse}",
+                    self.setup.stock
+                ),
+            });
+        }
+        let order_ref = (self.setup.stock, self.next_serial);
+        let order = DeskOrder {
             order_ref,
             owner,
             side,
             price,
             qty,
             purse,
+            filled_value: 0,
+            charged_commission: 0,
+            charged_stamp_tax: 0,
+            charged_transfer_fee: 0,
+            expire_tick: tick.saturating_add(self.setup.order_ttl_ticks),
         };
-        self.next_serial += 1;
-        self.undo.push(DeskUndo::Serial);
-        self.resting.insert(order_ref, order);
-        self.undo.push(DeskUndo::Rested(SkeletonOrder {
-            order_ref,
-            owner,
-            side,
-            price,
-            qty,
-            purse,
-        }));
-        self.resting_count += 1;
-        self.undo.push(DeskUndo::RestingCount(1));
+        match phase {
+            DeskPhase::CallAuction | DeskPhase::ClosingAuction => {
+                // 集合竞价：只积累不撮合。
+                self.rest(order);
+            }
+            DeskPhase::PreOpen | DeskPhase::Continuous => {
+                let mut order = order;
+                self.match_incoming(tick, &mut order)?;
+                if order.qty == 0 {
+                    // 全成：purse slack（最坏情况预留 − 实际扣费）退款 + Closed。
+                    self.close_order_entities(&order);
+                } else if rest_remainder {
+                    self.rest(order);
+                } else {
+                    // 市价余量不进簿：原路退回。
+                    self.close_order_entities(&order);
+                    self.cancelled_orders += 1;
+                    self.undo.push(DeskUndo::Cancelled(1));
+                }
+            }
+        }
         Ok(())
     }
 
-    /// 对齐撤单：撤该 owner 全部挂单，实体原路回流。
-    fn cancel_all_for(&mut self, owner: Owner) {
-        let targets: Vec<OrderRef> = self
-            .resting
-            .values()
-            .filter(|o| o.owner == owner)
-            .map(|o| o.order_ref)
-            .collect();
-        for order_ref in targets {
-            self.close(order_ref);
+    /// 挂簿（记撤销日志）。
+    fn rest(&mut self, order: DeskOrder) {
+        self.next_serial += 1;
+        self.undo.push(DeskUndo::Serial);
+        let book = if order.side == Side::Buy {
+            &mut self.bids
+        } else {
+            &mut self.asks
+        };
+        book.entry(order.price)
+            .or_default()
+            .push_back(order.clone());
+        self.undo.push(DeskUndo::Inserted(order));
+        self.resting_count += 1;
+        self.undo.push(DeskUndo::RestingCount(1));
+    }
+
+    /// 连续竞价撮合：逐档吃对面最优（价格时间优先），成交价取 maker 价。
+    fn match_incoming(&mut self, _tick: u64, order: &mut DeskOrder) -> Result<(), RuntimeError> {
+        loop {
+            if order.qty == 0 {
+                break;
+            }
+            let opposite_best = match order.side {
+                Side::Buy => self.best_ask(),
+                Side::Sell => self.best_bid(),
+            };
+            let Some(best) = opposite_best else { break };
+            let crossed = match order.side {
+                Side::Buy => order.price >= best,
+                Side::Sell => order.price <= best,
+            };
+            if !crossed {
+                break;
+            }
+            // 取档首 maker（同价先到先成交）。
+            let maker = {
+                let book = if order.side == Side::Buy {
+                    &self.asks
+                } else {
+                    &self.bids
+                };
+                book.get(&best)
+                    .and_then(|level| level.front().cloned())
+                    .expect("crossed => 档非空")
+            };
+            let fill_qty = order.qty.min(maker.qty);
+            self.settle_fill(order, maker, fill_qty)?;
+        }
+        Ok(())
+    }
+
+    /// 单笔成交结算：实体互换 + 费用 + FillFact 双边 + 行情更新（全部记撤销日志）。
+    fn settle_fill(
+        &mut self,
+        taker: &mut DeskOrder,
+        maker: DeskOrder,
+        qty: u32,
+    ) -> Result<(), RuntimeError> {
+        let price = maker.price;
+        let value = Money::from_cents(price)
+            .mul_shares(qty)
+            .map_err(|_| over("成交额溢出"))?
+            .cents();
+        // 快照（撤销日志）：taker 与 maker 变更前状态。
+        self.undo.push(DeskUndo::Mutated(taker.clone()));
+        self.undo.push(DeskUndo::Mutated(maker.clone()));
+        // 分别按腿结算（taker/maker 身份不影响费用，只按 side）。
+        let (buy_owner, buy_local, buy_filled_before, buy_purse_before, buy_ref) =
+            if taker.side == Side::Buy {
+                (
+                    taker.owner,
+                    taker.owner.1,
+                    taker.filled_value,
+                    taker.purse,
+                    taker.order_ref,
+                )
+            } else {
+                (
+                    maker.owner,
+                    maker.owner.1,
+                    maker.filled_value,
+                    maker.purse,
+                    maker.order_ref,
+                )
+            };
+        let (sell_owner, sell_local, sell_filled_before, sell_charged_before, sell_ref) =
+            if taker.side == Side::Sell {
+                (
+                    taker.owner,
+                    taker.owner.1,
+                    taker.filled_value,
+                    FeeQuote {
+                        commission: Money::from_cents(taker.charged_commission),
+                        stamp_tax: Money::from_cents(taker.charged_stamp_tax),
+                        transfer_fee: Money::from_cents(taker.charged_transfer_fee),
+                    },
+                    taker.order_ref,
+                )
+            } else {
+                (
+                    maker.owner,
+                    maker.owner.1,
+                    maker.filled_value,
+                    FeeQuote {
+                        commission: Money::from_cents(maker.charged_commission),
+                        stamp_tax: Money::from_cents(maker.charged_stamp_tax),
+                        transfer_fee: Money::from_cents(maker.charged_transfer_fee),
+                    },
+                    maker.order_ref,
+                )
+            };
+        // 买腿：charge = 成交额 + 边际佣金 + 边际过户费；purse 扣减；得股票实体。
+        let charge = buyer_charge(
+            &self.config,
+            Money::from_cents(buy_filled_before),
+            Money::from_cents(value),
+        )
+        .map_err(|_| over("买腿费用计算失败"))?
+        .cents();
+        let buy_commission_delta = marginal(
+            &self.config,
+            Money::from_cents(buy_filled_before),
+            Money::from_cents(buy_filled_before + value),
+            |c, a| c.commission(a),
+        )
+        .map_err(|_| over("佣金边际失败"))?
+        .cents();
+        let buy_transfer_delta = marginal(
+            &self.config,
+            Money::from_cents(buy_filled_before),
+            Money::from_cents(buy_filled_before + value),
+            |c, a| c.transfer_fee(a),
+        )
+        .map_err(|_| over("过户费边际失败"))?
+        .cents();
+        // purse 防御：不足=组端预留口径 bug（purse 应含费用上限），显式失败不静默负数。
+        let buy_purse_after = buy_purse_before - charge;
+        if buy_purse_after < 0 {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "交易部 {} 买腿 purse 不足：purse={buy_purse_before}, charge={charge}（组端预留口径 bug）",
+                    self.setup.stock
+                ),
+            });
+        }
+        // 卖腿：名义费用 → 实收封顶分配（佣金→印花→过户费）；净得实体。
+        let sell_filled_after = sell_filled_before + value;
+        let nominal_after = FeeQuote::nominal(
+            &self.config,
+            Side::Sell,
+            Money::from_cents(sell_filled_after),
+        )
+        .map_err(|_| over("卖腿名义费用失败"))?;
+        let charged = seller_charge(nominal_after, sell_charged_before, Money::from_cents(value))
+            .map_err(|_| over("卖腿费用分配失败"))?;
+        // 应用到 taker/maker 副本（写回簿/订单）。
+        if taker.side == Side::Buy {
+            taker.filled_value += value;
+            taker.purse = buy_purse_after;
+            taker.qty -= qty;
+        } else {
+            taker.filled_value = sell_filled_after;
+            taker.charged_commission += charged.commission.cents();
+            taker.charged_stamp_tax += charged.stamp_tax.cents();
+            taker.charged_transfer_fee += charged.transfer_fee.cents();
+            taker.qty -= qty;
+        }
+        let maker_after = {
+            let mut m = maker.clone();
+            if m.side == Side::Buy {
+                m.filled_value += value;
+                m.purse = buy_purse_after;
+                m.qty -= qty;
+            } else {
+                m.filled_value = sell_filled_after;
+                m.charged_commission += charged.commission.cents();
+                m.charged_stamp_tax += charged.stamp_tax.cents();
+                m.charged_transfer_fee += charged.transfer_fee.cents();
+                m.qty -= qty;
+            }
+            m
+        };
+        // maker 写回：档首扣减或移除。
+        self.apply_maker_fill(&maker, maker_after)?;
+        // 费用桶（守恒）：双边实收**费用**合计（charge 含成交额，须扣除）。
+        let fees_total = (charge - value)
+            + charged.commission.cents()
+            + charged.stamp_tax.cents()
+            + charged.transfer_fee.cents();
+        self.fee_sink += fees_total;
+        self.undo.push(DeskUndo::FeeSink(fees_total));
+        // 实体互换：买方得股票、卖方得净额。
+        let bg = buy_owner.0 as usize;
+        self.out[bg].push(Entity::BoughtShares {
+            local: buy_local,
+            qty,
+        });
+        let sg = sell_owner.0 as usize;
+        self.out[sg].push(Entity::CashProceeds {
+            local: sell_local,
+            amount: charged.deliver_cash.cents(),
+        });
+        // FillFact 双边（信息回流：计划续行/经验/回执聚合）。
+        self.fills_out[bg].push(FillFact {
+            order: buy_ref,
+            owner: buy_owner,
+            side: Side::Buy,
+            price,
+            qty,
+            commission: buy_commission_delta,
+            stamp_tax: 0,
+            transfer_fee: buy_transfer_delta,
+        });
+        self.fills_out[sg].push(FillFact {
+            order: sell_ref,
+            owner: sell_owner,
+            side: Side::Sell,
+            price,
+            qty,
+            commission: charged.commission.cents(),
+            stamp_tax: charged.stamp_tax.cents(),
+            transfer_fee: charged.transfer_fee.cents(),
+        });
+        // 行情更新：末笔成交价、日内高低、量、笔数、活动日 K。
+        let m = &mut self.market;
+        m.last_price = price;
+        m.day_high = m.day_high.max(price);
+        m.day_low = m.day_low.min(price);
+        m.volume_today += qty as u64;
+        m.trade_count += 1;
+        let candle = m.candle.get_or_insert(DeskCandle {
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume: 0,
+        });
+        candle.high = candle.high.max(price);
+        candle.low = candle.low.min(price);
+        candle.close = price;
+        candle.volume += qty as u64;
+        Ok(())
+    }
+
+    /// maker 写回：清零移除（记 Removed），否则字段恢复（档首原位）。
+    fn apply_maker_fill(
+        &mut self,
+        maker: &DeskOrder,
+        after: DeskOrder,
+    ) -> Result<(), RuntimeError> {
+        let book = if maker.side == Side::Buy {
+            &mut self.bids
+        } else {
+            &mut self.asks
+        };
+        let level = book
+            .get_mut(&maker.price)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!("maker 档缺失：price={}", maker.price),
+            })?;
+        let front = level
+            .front_mut()
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!("maker 档空：price={}", maker.price),
+            })?;
+        if front.order_ref != maker.order_ref {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("maker 非档首：{:?}", maker.order_ref),
+            });
+        }
+        if after.qty == 0 {
+            let removed = level.pop_front().expect("front 已核验");
+            self.undo.push(DeskUndo::Removed(removed));
+            self.resting_count -= 1;
+            self.undo.push(DeskUndo::RestingCount(-1));
+            let book = if maker.side == Side::Buy {
+                &mut self.bids
+            } else {
+                &mut self.asks
+            };
+            if book.get(&maker.price).is_some_and(|l| l.is_empty()) {
+                book.remove(&maker.price);
+            }
+            // maker 全成闭合：买腿 slack 退款（purse 最坏情况 − 实际扣费）+ Closed 恒发。
+            let g = after.owner.0 as usize;
+            if after.side == Side::Buy && after.purse > 0 {
+                self.out[g].push(Entity::CashRefund {
+                    local: after.owner.1,
+                    amount: after.purse,
+                });
+            }
+            self.out[g].push(Entity::Closed {
+                local: after.owner.1,
+            });
+        } else {
+            *front = after;
+        }
+        Ok(())
+    }
+
+    /// 终结挂单实体出口：买单 purse 余额退款 / 卖单余股回流（零额不推）+
+    /// Closed 恒发（零额终结也必须发，否则在途登记泄漏）。
+    fn close_order_entities(&mut self, order: &DeskOrder) {
+        let g = order.owner.0 as usize;
+        match order.side {
+            Side::Buy => {
+                if order.purse > 0 {
+                    self.out[g].push(Entity::CashRefund {
+                        local: order.owner.1,
+                        amount: order.purse,
+                    });
+                }
+            }
+            Side::Sell => {
+                if order.qty > 0 {
+                    self.out[g].push(Entity::RefundedShares {
+                        local: order.owner.1,
+                        qty: order.qty,
+                    });
+                }
+            }
+        }
+        self.out[g].push(Entity::Closed {
+            local: order.owner.1,
+        });
+    }
+
+    /// 移除挂单（记 Removed）。
+    fn remove_order(&mut self, order: &DeskOrder) {
+        let book = if order.side == Side::Buy {
+            &mut self.bids
+        } else {
+            &mut self.asks
+        };
+        if let Some(level) = book.get_mut(&order.price) {
+            if let Some(pos) = level.iter().position(|o| o.order_ref == order.order_ref) {
+                let removed = level.remove(pos).expect("position 已核验");
+                self.undo.push(DeskUndo::Removed(removed));
+                self.resting_count -= 1;
+                self.undo.push(DeskUndo::RestingCount(-1));
+                if level.is_empty() {
+                    book.remove(&order.price);
+                }
+            }
         }
     }
 
-    /// 定向撤单：命中则撤余量；未命中=已全成（骨架无撮合 ⇒ 语义近似为已终结），
-    /// 显式回执。
-    fn cancel_one(&mut self, owner: Owner, order: OrderRef) -> Result<(), RuntimeError> {
-        if order.0 != self.stock {
-            // 复合标识股前缀指向他股：路由错误=结构性 bug，显式失败。
+    /// 对齐撤单：撤该 owner 全部挂单（实体原路回流）。撤单窗口门禁在组端不知相位，
+    /// 由交易部统一裁决。
+    fn cancel_all_for(&mut self, tick: u64, owner: Owner) {
+        let allowed = self.setup.allows_cancel(tick);
+        let targets: Vec<DeskOrder> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .flat_map(|l| l.iter())
+            .filter(|o| o.owner == owner)
+            .cloned()
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        if !allowed {
+            for o in targets {
+                self.receipts_out[owner.0 as usize].push(DeskReceipt {
+                    order: o.order_ref,
+                    owner,
+                    kind: ReceiptKind::CancelWindowClosed,
+                });
+            }
+            return;
+        }
+        for o in targets {
+            self.remove_order(&o);
+            self.close_order_entities(&o);
+            self.cancelled_orders += 1;
+            self.undo.push(DeskUndo::Cancelled(1));
+        }
+    }
+
+    /// 定向撤单：命中撤余量；未命中=已全成（显式业务回执）。
+    fn cancel_one(&mut self, tick: u64, owner: Owner, order: OrderRef) -> Result<(), RuntimeError> {
+        if order.0 != self.setup.stock {
             return Err(RuntimeError::ProtocolInvariant {
-                detail: format!("交易部 {} 收到他股撤单：order={order:?}", self.stock),
+                detail: format!("交易部 {} 收到他股撤单：order={order:?}", self.setup.stock),
             });
         }
-        match self.resting.get(&order) {
-            Some(o) if o.owner == owner => {
-                self.close(order);
-            }
-            Some(_) => {
-                // 他人挂单：不变态，显式回执（防御）。
-                self.receipts_out[owner.0 as usize].push(DeskReceipt {
-                    order,
-                    owner,
-                    kind: ReceiptKind::AlreadyFilled,
-                });
+        let found: Option<DeskOrder> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .flat_map(|l| l.iter())
+            .find(|o| o.order_ref == order)
+            .cloned();
+        let kind = match &found {
+            Some(o) if o.owner != owner => Some(ReceiptKind::OrderNotFound),
+            Some(_) if !self.setup.allows_cancel(tick) => Some(ReceiptKind::CancelWindowClosed),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            self.receipts_out[owner.0 as usize].push(DeskReceipt { order, owner, kind });
+            return Ok(());
+        }
+        match found {
+            Some(o) => {
+                self.remove_order(&o);
+                self.close_order_entities(&o);
+                self.cancelled_orders += 1;
+                self.undo.push(DeskUndo::Cancelled(1));
+                Ok(())
             }
             None => {
                 self.receipts_out[owner.0 as usize].push(DeskReceipt {
@@ -296,41 +1150,21 @@ impl DeskState {
                     owner,
                     kind: ReceiptKind::AlreadyFilled,
                 });
+                Ok(())
             }
-        }
-        Ok(())
-    }
-
-    /// 终结挂单：移簿（记撤销日志）+ 实体出口（买单退款/卖单余股 + Closed 恒发）。
-    fn close(&mut self, order_ref: OrderRef) {
-        if let Some(order) = self.resting.remove(&order_ref) {
-            self.undo.push(DeskUndo::Removed(order.clone()));
-            self.resting_count -= 1;
-            self.undo.push(DeskUndo::RestingCount(-1));
-            let g = order.owner.0 as usize;
-            match order.side {
-                Side::Buy => {
-                    self.out[g].push(Entity::CashRefund {
-                        local: order.owner.1,
-                        amount: order.purse,
-                    });
-                }
-                Side::Sell => {
-                    self.out[g].push(Entity::RefundedShares {
-                        local: order.owner.1,
-                        qty: order.qty,
-                    });
-                }
-            }
-            self.out[g].push(Entity::Closed {
-                local: order.owner.1,
-            });
         }
     }
 
-    /// 受理拒绝：实体原路退回 + 回执。被拒新单也消耗一个本地序号（OrderRef
-    /// 全局唯一口径包含被拒单；恢复按各股已消耗序号重建）。
-    fn reject(&mut self, owner: Owner, side: Side, qty: u32, purse: i64, kind: ReceiptKind) {
+    /// 受理拒绝：实体原路退回 + 回执（被拒单消耗序号）。
+    fn reject(
+        &mut self,
+        _tick: u64,
+        owner: Owner,
+        side: Side,
+        qty: u32,
+        purse: i64,
+        kind: ReceiptKind,
+    ) {
         let g = owner.0 as usize;
         match side {
             Side::Buy => {
@@ -347,7 +1181,7 @@ impl DeskState {
             }
         }
         self.out[g].push(Entity::Closed { local: owner.1 });
-        let order = (self.stock, self.next_serial);
+        let order = (self.setup.stock, self.next_serial);
         self.next_serial += 1;
         self.undo.push(DeskUndo::Serial);
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
@@ -355,30 +1189,206 @@ impl DeskState {
         self.undo.push(DeskUndo::Skipped(1));
     }
 
-    /// 本轮收束：出口缓冲 flush（先于 DeskReport，因果序是正确性基石）。
+    /// 到期撤销：tick 起点先于本 tick 新意图（对齐 ExpiryShadow 相位时点）。
+    fn expire_due(&mut self, tick: u64) {
+        let due: Vec<DeskOrder> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .flat_map(|l| l.iter())
+            .filter(|o| tick >= o.expire_tick)
+            .cloned()
+            .collect();
+        for o in due {
+            self.remove_order(&o);
+            self.close_order_entities(&o);
+            self.expired_orders += 1;
+            self.undo.push(DeskUndo::Expired(1));
+        }
+    }
+
+    /// 开盘集合竞价一次清算（相位离开申报窗的首个 tick 触发）：
+    /// 沪深选价（`select_clearing` 复用）→ 按清算价 FIFO 配对 → 余单保留原档转连续。
+    fn execute_opening_clearing(&mut self) -> Result<Option<(i64, u64)>, RuntimeError> {
+        self.opening_cleared = true;
+        let orders: Vec<ClearingOrder> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .flat_map(|l| l.iter())
+            .map(|o| ClearingOrder {
+                side: o.side,
+                limit: Money::from_cents(o.price),
+                qty: o.qty as u64,
+            })
+            .collect();
+        let selection = select_clearing(
+            &orders,
+            Money::from_cents(self.market.last_close),
+            self.setup.exchange,
+            Money::from_cents(1),
+        )
+        .map_err(|e| RuntimeError::ProtocolInvariant {
+            detail: format!("开盘清算选价失败：{e:?}"),
+        })?;
+        let Some(sel) = selection else {
+            return Ok(None);
+        };
+        let price = sel.price.cents();
+        self.execute_clearing_at(price, sel.volume)?;
+        Ok(Some((price, sel.volume)))
+    }
+
+    /// 按清算价配对成交（买卖双方都从最优价 FIFO 取，eligible 按清算价过滤）。
+    fn execute_clearing_at(&mut self, price: i64, volume: u64) -> Result<(), RuntimeError> {
+        let mut matched = 0u64;
+        while matched < volume {
+            let buy = {
+                let best = self.bids.keys().next_back().copied();
+                best.and_then(|p| {
+                    if p >= price {
+                        self.bids.get(&p).and_then(|l| l.front().cloned())
+                    } else {
+                        None
+                    }
+                })
+            };
+            let sell = {
+                let best = self.asks.keys().next().copied();
+                best.and_then(|p| {
+                    if p <= price {
+                        self.asks.get(&p).and_then(|l| l.front().cloned())
+                    } else {
+                        None
+                    }
+                })
+            };
+            let (Some(buy), Some(sell)) = (buy, sell) else {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!("清算配对中断：matched={matched}, volume={volume}"),
+                });
+            };
+            let qty = buy.qty.min(sell.qty);
+            if qty == 0 || matched + qty as u64 > volume {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!("清算数量超界：matched={matched}, qty={qty}, volume={volume}"),
+                });
+            }
+            // 以买方为 taker、卖方为 maker 结算（费用按清算价双边计）。
+            let mut taker = buy;
+            let maker = sell;
+            self.settle_fill(&mut taker, maker, qty)?;
+            // taker 全成即闭合；部分成交写回簿（apply_maker_fill 只写 maker——
+            // taker 也是簿内单，需对称写回）。
+            self.write_back_taker(&taker)?;
+            matched += qty as u64;
+        }
+        Ok(())
+    }
+
+    /// taker（簿内单）成交后写回：全成移除（slack 退回），否则原位更新。
+    fn write_back_taker(&mut self, order: &DeskOrder) -> Result<(), RuntimeError> {
+        if order.qty == 0 {
+            self.remove_order(order);
+            self.close_order_entities(order);
+        } else {
+            self.restore_fields(order);
+        }
+        Ok(())
+    }
+
+    /// 新 tick 起点：隐式转正 → 行情快照 → 开盘清算（若跨申报窗）→ 到期撤销。
+    fn begin_tick(&mut self, tick: u64) -> Result<(), RuntimeError> {
+        // 下一 tick 首批 Ops(N) = tick N−1 隐式转正。
+        self.undo.clear();
+        self.committed_tick = self.cur_tick;
+        self.cur_tick = tick;
+        self.cur_round = 0;
+        self.snapshot_market();
+        // 开盘清算：上一 tick 还在申报窗、本 tick 已离开 → 09:25 一次撮合。
+        let prev_phase = self.setup.phase_at(tick.saturating_sub(1));
+        let phase = self.setup.phase_at(tick);
+        if prev_phase == DeskPhase::CallAuction
+            && phase != DeskPhase::CallAuction
+            && !self.opening_cleared
+        {
+            self.execute_opening_clearing()?;
+        }
+        // 到期撤销先于本 tick 新意图。
+        self.expire_due(tick);
+        self.committed_hash = self.state_hash();
+        Ok(())
+    }
+
+    /// 本轮收束：行情收尾（tick 收盘价历史、分钟收盘、零成交 K 占位）→
+    /// 出口缓冲 flush（先于 DeskReport，因果基石）。
+    fn finish_round(&mut self, tick: u64) -> Result<(), RuntimeError> {
+        // 零成交也建立占位 K（对齐 record_trade_or_mark 的 or_insert 语义）。
+        let last = self.market.last_price;
+        let candle = self.market.candle.get_or_insert(DeskCandle {
+            open: last,
+            high: last,
+            low: last,
+            close: last,
+            volume: 0,
+        });
+        candle.close = last;
+        // tick 收盘价历史（容量裁剪）。
+        self.market.recent_prices.push_back(last);
+        if self.market.recent_prices.len() > self.setup.history_len {
+            self.market.recent_prices.pop_front();
+        }
+        // 分钟收盘：连续竞价相位按完成分钟回填（无成交分钟沿用当时最新价）。
+        if self.setup.phase_at(tick) == DeskPhase::Continuous {
+            let continuous = self.setup.continuous_ticks_per_day();
+            if continuous > 0 {
+                let day = tick / self.setup.ticks_per_day;
+                let elapsed =
+                    (tick % self.setup.ticks_per_day).saturating_sub(self.setup.auction_ticks) + 1;
+                let completed =
+                    completed_market_minute_count(elapsed, continuous).map_err(|e| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: format!("分钟映射失败：{e:?}"),
+                        }
+                    })?;
+                let target = day * 240 + completed as u64;
+                while (self.market.minute_closes.len() as u64) < target {
+                    // 中间缺口以当前最新价补齐（无成交分钟沿用当时最新价的简化）。
+                    let idx = self.market.minute_closes.len() as u64;
+                    self.market.minute_closes.push((idx, last));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 本轮收束 flush：实体/成交事实/回执聚合批发组线程。
     fn flush_batches(
         &mut self,
         group_txs: &[Sender<super::protocol::GroupIn>],
         tick: u64,
         round: u32,
-    ) -> Result<(u64, u64), RuntimeError> {
+    ) -> Result<(u64, u64, u64), RuntimeError> {
         let mut entities_total = 0u64;
+        let mut fills_total = 0u64;
         let mut receipts_total = 0u64;
-        let stock = self.stock;
+        let stock = self.setup.stock;
         let out = std::mem::take(&mut self.out);
-        for (g, buf) in out.into_iter().enumerate() {
+        for (g, entities) in out.into_iter().enumerate() {
+            let fills = std::mem::take(&mut self.fills_out[g]);
             let receipts = std::mem::take(&mut self.receipts_out[g]);
-            if buf.is_empty() && receipts.is_empty() {
+            if entities.is_empty() && fills.is_empty() && receipts.is_empty() {
                 continue;
             }
-            entities_total += buf.len() as u64;
+            entities_total += entities.len() as u64;
+            fills_total += fills.len() as u64;
             receipts_total += receipts.len() as u64;
             let batch = DeskBatch {
                 stock,
                 tick,
                 round,
-                entities: buf,
-                fills: Vec::new(),
+                entities,
+                fills,
                 receipts,
             };
             group_txs[g]
@@ -389,30 +1399,99 @@ impl DeskState {
         }
         // take 走的 out 需重建空缓冲（后续轮次/Drain 继续累积）。
         self.out = vec![Vec::new(); group_txs.len()];
-        Ok((entities_total, receipts_total))
+        Ok((entities_total, fills_total, receipts_total))
     }
 
-    /// 强撤全部挂单（Drain：日终清簿语义，实体回流）。
-    fn drain_all(&mut self) {
-        let targets: Vec<OrderRef> = self.resting.keys().copied().collect();
-        for order_ref in targets {
-            self.close(order_ref);
+    /// 强撤全部挂单（Drain 日终清簿）。收盘竞价先一次清算再清余单。
+    fn drain_all(&mut self) -> Result<Option<(i64, u64)>, RuntimeError> {
+        if self.setup.phase_at(self.cur_tick) == DeskPhase::ClosingAuction && !self.opening_cleared
+        {
+            self.opening_cleared = true;
+            let orders: Vec<ClearingOrder> = self
+                .bids
+                .values()
+                .chain(self.asks.values())
+                .flat_map(|l| l.iter())
+                .map(|o| ClearingOrder {
+                    side: o.side,
+                    limit: Money::from_cents(o.price),
+                    qty: o.qty as u64,
+                })
+                .collect();
+            let selection = select_clearing(
+                &orders,
+                Money::from_cents(self.market.last_close),
+                self.setup.exchange,
+                Money::from_cents(1),
+            )
+            .map_err(|e| RuntimeError::ProtocolInvariant {
+                detail: format!("收盘清算选价失败：{e:?}"),
+            })?;
+            if let Some(sel) = selection {
+                let price = sel.price.cents();
+                self.execute_clearing_at(price, sel.volume)?;
+                return Ok(Some((price, sel.volume)));
+            }
+            return Ok(None);
         }
+        let targets: Vec<DeskOrder> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .flat_map(|l| l.iter())
+            .cloned()
+            .collect();
+        for o in targets {
+            self.remove_order(&o);
+            self.close_order_entities(&o);
+        }
+        Ok(None)
     }
 
     /// 期末上交。
     fn final_state(&self) -> DeskFinalState {
         DeskFinalState {
-            stock: self.stock,
-            resting: self.resting.values().cloned().collect(),
+            stock: self.setup.stock,
+            resting: self
+                .bids
+                .values()
+                .chain(self.asks.values())
+                .flat_map(|l| l.iter())
+                .cloned()
+                .collect(),
             skipped_orders: self.skipped_orders,
+            expired_orders: self.expired_orders,
+            cancelled_orders: self.cancelled_orders,
+            fee_sink: self.fee_sink,
+            market: self.market.clone(),
             state_hash: self.state_hash(),
             committed_hash: self.committed_hash,
+            rollback_hash: self.rollback_hash,
         }
     }
 }
 
-/// FNV-1a 混合。
+/// 边际费用 helper（与 fees.rs fee_delta 同口径）。
+fn marginal(
+    config: &GameConfig,
+    before: Money,
+    after: Money,
+    calc: fn(&GameConfig, Money) -> Result<Money, crate::money::MoneyError>,
+) -> Result<Money, crate::money::MoneyError> {
+    let before_fee = if before == Money::ZERO {
+        Money::ZERO
+    } else {
+        calc(config, before)?
+    };
+    calc(config, after)?.sub(before_fee)
+}
+
+fn over(msg: &str) -> RuntimeError {
+    RuntimeError::ProtocolInvariant {
+        detail: msg.to_owned(),
+    }
+}
+
 fn fnv(state: u64, value: u64) -> u64 {
     let mut h = state;
     for b in value.to_le_bytes() {
@@ -422,18 +1501,19 @@ fn fnv(state: u64, value: u64) -> u64 {
     h
 }
 
-/// 交易部主循环（骨架）。
+/// 交易部主循环（批 3 引擎化）。
 pub fn desk_main(
-    stock: StockIdx,
+    setup: DeskSetup,
     n_groups: usize,
+    config: Arc<GameConfig>,
     rx: Receiver<DeskMsg>,
     group_txs: Vec<Sender<super::protocol::GroupIn>>,
     up_tx: Sender<UpMsg>,
     abort: Arc<AtomicBool>,
     watchdog: WatchdogConfig,
 ) -> Result<(), RuntimeError> {
-    let who = WorkerId::Desk(stock);
-    let mut state = DeskState::new(stock, n_groups);
+    let who = WorkerId::Desk(setup.stock);
+    let mut state = DeskState::new(setup, n_groups, config);
     let mut result = Ok(());
     loop {
         let msg = match worker_recv(&rx, &watchdog, &abort, who) {
@@ -469,6 +1549,7 @@ pub fn desk_main(
             }
             Err(payload) => {
                 state.rollback();
+                state.rollback_hash = Some(state.state_hash());
                 abort.store(true, Ordering::SeqCst);
                 let _ = up_tx.send(UpMsg::TaskDied { who, payload });
                 break;
@@ -477,12 +1558,10 @@ pub fn desk_main(
     }
     let final_state = state.final_state();
     let send = up_tx.send(UpMsg::DeskFinal(Box::new(final_state)));
-    if result.is_ok() {
-        if send.is_err() {
-            result = Err(RuntimeError::SendFailed {
-                detail: format!("交易部 {stock} DeskFinal 发送失败"),
-            });
-        }
+    if result.is_ok() && send.is_err() {
+        result = Err(RuntimeError::SendFailed {
+            detail: format!("交易部 {} DeskFinal 发送失败", who),
+        });
     }
     result
 }
@@ -503,33 +1582,26 @@ fn process_msg(
             final_flush,
         } => {
             if tick > state.cur_tick {
-                // 下一 tick 首批 Ops(N) = tick N−1 隐式转正（丢弃撤销日志；同 tick
-                // 续行轮 Ops 不触发）。跳变（>1）= 协议错误。
                 if tick != state.cur_tick + 1 {
                     return Err(RuntimeError::ProtocolInvariant {
                         detail: format!(
                             "交易部 {} Ops tick 跳变：tick={tick}, 上一执行 tick={}",
-                            state.stock, state.cur_tick
+                            state.setup.stock, state.cur_tick
                         ),
                     });
                 }
-                state.undo.clear();
-                state.committed_tick = state.cur_tick;
-                state.cur_tick = tick;
-                state.cur_round = 0;
-                state.committed_hash = state.state_hash();
+                state.begin_tick(tick)?;
             } else if tick < state.cur_tick {
                 return Err(RuntimeError::ProtocolInvariant {
                     detail: format!(
                         "交易部 {} 收到过期 tick 消息：{tick} < {}",
-                        state.stock, state.cur_tick
+                        state.setup.stock, state.cur_tick
                     ),
                 });
             }
             if round != state.cur_round {
                 if round == state.cur_round + 1 {
                     state.cur_round = round;
-                    // 新一轮：重置本轮 final_flush 集合。
                     for f in &mut state.flushed {
                         *f = false;
                     }
@@ -537,7 +1609,7 @@ fn process_msg(
                     return Err(RuntimeError::ProtocolInvariant {
                         detail: format!(
                             "交易部 {} Ops 轮次错序：round={round}, 当前={}",
-                            state.stock, state.cur_round
+                            state.setup.stock, state.cur_round
                         ),
                     });
                 }
@@ -545,16 +1617,16 @@ fn process_msg(
             let g = group as usize;
             if g >= state.flushed.len() {
                 return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!("交易部 {} 收到越界组索引：{group}", state.stock),
+                    detail: format!("交易部 {} 收到越界组索引：{group}", state.setup.stock),
                 });
             }
-            state.apply_ops(ops)?;
+            state.apply_ops(tick, ops)?;
             if final_flush {
                 if state.flushed[g] {
                     return Err(RuntimeError::ProtocolInvariant {
                         detail: format!(
                             "交易部 {} 组 {group} 第 ({tick},{round}) 轮重复 final_flush",
-                            state.stock
+                            state.setup.stock
                         ),
                     });
                 }
@@ -563,21 +1635,29 @@ fn process_msg(
                     for f in &mut state.flushed {
                         *f = false;
                     }
-                    // 本轮撮合输入完毕：实体批次 flush **先于** DeskReport（因果基石）。
-                    let (entities_out, receipts_out) =
+                    // 行情收尾 → 实体批次 flush（先于 DeskReport，因果基石）→ 上报。
+                    state.finish_round(tick)?;
+                    let (entities_out, fills_out, receipts_out) =
                         state.flush_batches(group_txs, tick, round)?;
                     let report = DeskReport {
-                        stock: state.stock,
+                        stock: state.setup.stock,
                         tick,
                         round,
                         resting_count: state.resting_count,
                         entities_out,
                         receipts_out,
                         committed_hash: state.committed_hash,
+                        fills_out,
+                        last_price: state.market.last_price,
+                        day_high: state.market.day_high,
+                        day_low: state.market.day_low,
+                        volume_today: state.market.volume_today,
+                        trade_count: state.market.trade_count,
+                        fee_sink: state.fee_sink,
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {
                         RuntimeError::SendFailed {
-                            detail: format!("交易部 {} DeskReport 发送失败", state.stock),
+                            detail: format!("交易部 {} DeskReport 发送失败", state.setup.stock),
                         }
                     })?;
                 }
@@ -588,19 +1668,23 @@ fn process_msg(
                 return Err(RuntimeError::ProtocolInvariant {
                     detail: format!(
                         "交易部 {} Abort tick 错配：{tick} != {}",
-                        state.stock, state.cur_tick
+                        state.setup.stock, state.cur_tick
                     ),
                 });
             }
             state.rollback();
+            state.rollback_hash = Some(state.state_hash());
         }
         DeskMsg::Drain => {
-            state.drain_all();
+            state.drain_all()?;
+            state.finish_round(state.cur_tick)?;
             state.flush_batches(group_txs, state.cur_tick, state.cur_round)?;
             up_tx
-                .send(UpMsg::DeskDrained { stock: state.stock })
+                .send(UpMsg::DeskDrained {
+                    stock: state.setup.stock,
+                })
                 .map_err(|_| RuntimeError::SendFailed {
-                    detail: format!("交易部 {} DeskDrained 发送失败", state.stock),
+                    detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),
                 })?;
         }
         // Shutdown 由主循环拦截，此处防御保留（不可达）。

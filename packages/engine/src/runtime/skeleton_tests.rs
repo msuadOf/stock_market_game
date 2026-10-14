@@ -17,7 +17,8 @@ fn idle_script() -> GroupScript {
 }
 
 /// 基础世界：给定组/股数与脚本工厂，账户现金 1_000_000 分、每账户各股 1000 股。
-fn basic_spec(
+/// 全天连续竞价形态（auction_ticks=0，测试专用简化），股 @1000 分。
+pub(super) fn basic_spec(
     n_groups: usize,
     n_stocks: usize,
     accounts_per_group: usize,
@@ -26,7 +27,6 @@ fn basic_spec(
     let shares = vec![vec![vec![1_000u32; n_stocks]; accounts_per_group]; n_groups];
     WorldSpec {
         n_groups,
-        n_stocks,
         accounts_per_group,
         initial_cash: 1_000_000,
         initial_shares: shares,
@@ -37,6 +37,15 @@ fn basic_spec(
             long: Duration::from_secs(10),
         },
         rounds_cap: 4,
+        stocks: (0..n_stocks)
+            .map(|_| super::world::DeskStockSpec::main_board(1000))
+            .collect(),
+        config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+        ticks_per_day: 30,
+        auction_ticks: 0,
+        closing_auction_ticks: 3,
+        order_ttl_ticks: 1_000_000,
+        history_len: 16,
     }
 }
 
@@ -190,11 +199,21 @@ fn multi_round_continue_terminates_by_empty_continuation() {
     world.run_ticks(1).expect("多轮 tick 收敛");
     assert_eq!(world.report_log[0].rounds, 1, "轮 0+轮 1，最后轮号=1");
     let report = world.shutdown().expect("关停");
-    // 两单均在簿（无撮合）：Drain 回流后现金/股数复原。
+    // 轮 1 卖单与轮 0 买单同价交叉 ⇒ 成交（maker 价）。
+    // 买方：扣 100_000 对价 + 500 最低佣金 + 1 过户费；得 100 股（T+1 冻结）。
     let acct0 = &report.group_finals[0].accounts[0];
-    assert_eq!(acct0.cash, 1_000_000, "买单 Drain 回流");
+    assert_eq!(acct0.cash, 1_000_000 - 100_501, "买腿实扣=对价+费用");
+    assert_eq!(acct0.shares[0], 1_100, "买入入账");
+    assert_eq!(acct0.frozen_today[0], 100, "T+1 冻结");
+    // 卖方：净得 = 100_000 − (500 佣金 + 50 印花 + 1 过户)。
     let acct1 = &report.group_finals[0].accounts[1];
-    assert_eq!(acct1.shares[0], 1_000, "卖单余股 Drain 回流");
+    assert_eq!(acct1.cash, 1_000_000 + 99_449, "卖腿净得");
+    assert_eq!(acct1.shares[0], 900, "卖出扣股");
+    // 守恒：费用桶=双边费用合计。
+    let desk = &report.desk_finals[0];
+    assert_eq!(desk.fee_sink, 501 + 551, "费用桶");
+    assert_eq!(desk.market.volume_today, 100);
+    assert_eq!(desk.market.trade_count, 1);
 }
 
 #[test]
@@ -300,23 +319,21 @@ fn abort_after_multi_round_rolls_back_three_layers_to_tick_start() {
         }
     }
     for f in &report.desk_finals {
+        // 回滚等价判据：Abort 时刻哈希 == 提交态（tick1 末的行情面合法演化已包含
+        // 在提交态内；Drain 后的变化不污染判据）。
         assert_eq!(
-            f.state_hash, f.committed_hash,
+            f.rollback_hash,
+            Some(f.committed_hash),
             "交易部 {} 回滚不完整",
             f.stock
         );
         assert!(f.resting.is_empty(), "Abort 后簿恢复清空");
-        let expected_tick1_hash = tick1
-            .desk_hashes
-            .iter()
-            .find(|(s, _)| *s == f.stock)
-            .map(|(_, h)| *h)
-            .expect("tick1 应有该交易部哈希");
-        assert_eq!(
-            f.committed_hash, expected_tick1_hash,
-            "交易部 {} 哈希与 tick 起始不一致",
-            f.stock
-        );
+        // 结构断言：tick2 的成交/挂单全部回滚（tick1 空闲 ⇒ 行情面停留在初值）。
+        assert_eq!(f.market.volume_today, 0, "成交量回滚");
+        assert_eq!(f.market.trade_count, 0, "成交笔数回滚");
+        assert_eq!(f.market.last_price, 1000, "最新价回滚");
+        assert_eq!(f.fee_sink, 0, "费用桶回滚");
+        let _ = &tick1.desk_hashes;
     }
 }
 
@@ -560,15 +577,17 @@ fn drain_shutdown_final_leaves_no_inflight_entities() {
     let report: ShutdownReport = world.shutdown().expect("关停对账");
     assert_eq!(report.group_finals.len(), 3, "每组 Final 恰一条");
     assert_eq!(report.desk_finals.len(), 2, "每交易部 Final 恰一条");
+    // 守恒断言（批 3 起撮合活跃，账户间流动）：现金总量 = 初始 − 费用桶合计；
+    // 股份总量不变；在途清零。
+    let mut cash_total = 0i64;
+    let mut fee_total = 0i64;
+    let mut shares_by_stock = vec![0u32; 2];
     for f in &report.group_finals {
-        for (i, acct) in f.accounts.iter().enumerate() {
-            assert_eq!(acct.cash, 1_000_000, "组{}账{}现金复原", f.group, i);
-            assert!(
-                acct.shares.iter().all(|&s| s == 1_000),
-                "组{}账{}股份复原",
-                f.group,
-                i
-            );
+        for acct in &f.accounts {
+            cash_total += acct.cash;
+            for (s, &qty) in acct.shares.iter().enumerate() {
+                shares_by_stock[s] += qty;
+            }
             assert!(
                 acct.foreign_active.iter().all(|&x| x == 0),
                 "组{}在途清零",
@@ -577,7 +596,18 @@ fn drain_shutdown_final_leaves_no_inflight_entities() {
         }
     }
     for f in &report.desk_finals {
+        fee_total += f.fee_sink;
         assert!(f.resting.is_empty(), "交易部{}清簿", f.stock);
         assert_eq!(f.skipped_orders, 0);
     }
+    assert_eq!(
+        cash_total + fee_total,
+        3 * 1_000_000,
+        "现金守恒（含 fee_sink）"
+    );
+    assert!(
+        shares_by_stock.iter().all(|&s| s == 3_000),
+        "股份守恒：{:?}",
+        shares_by_stock
+    );
 }

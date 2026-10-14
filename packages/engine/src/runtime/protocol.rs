@@ -310,6 +310,20 @@ pub struct DeskReport {
     pub receipts_out: u64,
     /// 提交态哈希（隐式转正后立即计算；回滚后 Final 哈希应与之相等）。
     pub committed_hash: u64,
+    /// 本轮成交事实数（双边计数）。
+    pub fills_out: u64,
+    /// 最新价（分）。
+    pub last_price: i64,
+    /// 日内最高（分）。
+    pub day_high: i64,
+    /// 日内最低（分）。
+    pub day_low: i64,
+    /// 日累计成交量（股）。
+    pub volume_today: u64,
+    /// 日累计成交笔数。
+    pub trade_count: u64,
+    /// 费用桶累计（双边实收费用，守恒审计输入）。
+    pub fee_sink: i64,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

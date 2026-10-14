@@ -132,4 +132,8 @@ pub enum ReceiptKind {
     CancelWindowClosed,
     /// 已全成无法撤单（显式业务失败，非错误路径）。
     AlreadyFilled,
+    /// 集合竞价阶段拒收市价申报（竞价只收限价）。
+    AuctionLimitOrderRequired,
+    /// 撤单目标不存在（含非本人挂单的防御拒绝）。
+    OrderNotFound,
 }
