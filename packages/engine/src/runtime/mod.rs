@@ -42,6 +42,9 @@ mod day_end_tests;
 mod decision_tests;
 pub mod fees;
 pub mod group;
+pub mod plans;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod plans_tests;
 pub mod watchdog;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod world;
@@ -50,13 +53,13 @@ pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
 pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, RoutedPrice};
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod desk_semantics_tests;
 #[cfg(test)]
 mod entities_tests;
 #[cfg(test)]
 mod facts_tests;
 #[cfg(test)]
 mod protocol_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod desk_semantics_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod skeleton_tests;

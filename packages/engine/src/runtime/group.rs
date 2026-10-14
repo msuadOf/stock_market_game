@@ -8,15 +8,16 @@
 //!   全部本 tick 日志。`Continue` 只触发落账（进可逆日志），**不是**转正点。
 //! - **Abort**：逆序回放 + 清 staging + 回到 `committed_tick`（失败后可继续重跑）。
 
-use super::decision::{decide_account, NpcProfile};
+use super::decision::{decide_account, NpcProfile, PendingOp};
 use super::fees::buy_purse_limit;
+use super::plans::PlanChain;
 use super::protocol::TickSnapshot;
 use super::protocol::{
     AdminRight, DayEndDirective, DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice,
     RuntimeError, UpMsg, WorkerId,
 };
 use super::watchdog::{worker_recv, WatchdogConfig};
-use super::{Entity, GroupIdx, LocalIdx, StockIdx};
+use super::{Entity, FillFact, GroupIdx, LocalIdx, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
 use crate::orderbook::Side;
@@ -205,6 +206,10 @@ pub struct GroupState {
     ticks_per_day: u64,
     /// 最近一次广播快照（决策观察基；Continue 轮复用）。
     snapshot: Option<std::sync::Arc<TickSnapshot>>,
+    /// 活跃计划链（Continue 轮驱动；跨股步骤产物走实体扣除路径）。
+    plans: Vec<Box<dyn PlanChain>>,
+    /// 本 tick 已见成交事实（计划续行的结果输入；Start 落账后清空）。
+    plan_fills: Vec<FillFact>,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
     /// 决策脚本。
@@ -221,6 +226,7 @@ impl GroupState {
         config: Arc<GameConfig>,
         ticks_per_day: u64,
         decision: Option<(Vec<NpcProfile>, u32)>,
+        plans: Vec<Box<dyn PlanChain>>,
         script: GroupScript,
     ) -> Self {
         GroupState {
@@ -241,6 +247,8 @@ impl GroupState {
             ticks_per_day,
             decision,
             snapshot: None,
+            plans,
+            plan_fills: Vec::new(),
             observed: Vec::new(),
             script,
         }
@@ -300,6 +308,7 @@ impl GroupState {
             }
         }
         self.staging.clear();
+        self.plan_fills.clear();
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
     }
@@ -332,6 +341,8 @@ impl GroupState {
                     detail: format!("组 {} staging 批次股索引越界：{stock}", self.group),
                 });
             }
+            // 成交事实进计划结果缓冲（信息回流：续行由 FillFact 驱动，F §4.3）。
+            self.plan_fills.extend(batch.fills.iter().copied());
             for entity in batch.entities {
                 self.apply_entity(stock as StockIdx, entity)?;
             }
@@ -578,7 +589,7 @@ impl GroupState {
     ) -> Result<(), RuntimeError> {
         // 决策来源：内联 decide_data（批 4）或测试脚本。
         enum Pending {
-            Op(super::decision::PendingOp),
+            Op(PendingOp),
             CancelAll { local: LocalIdx, stock: StockIdx },
         }
         let mut pendings: Vec<Pending> = Vec::new();
@@ -589,34 +600,43 @@ impl GroupState {
         let mut panic_payload: Option<String> = None;
         let mut stall: Option<Duration> = None;
         if let Some((profiles, gap)) = &mut self.decision {
-            let snapshot =
-                self.snapshot
-                    .clone()
-                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
-                        detail: format!("组 {} 决策缺快照（Start 未达即 Continue？）", self.group),
-                    })?;
-            let group_mix = (self.group as u64).wrapping_mul(0x9E3779B9);
-            for local in 0..profiles.len() as LocalIdx {
-                let account = &self.accounts[local as usize];
-                let (ops, decided, cancels) = decide_account(
-                    &mut profiles[local as usize],
-                    group_mix,
-                    tick,
-                    local,
-                    *gap,
-                    &snapshot,
-                    account,
-                    &self.config,
-                );
-                if decided {
-                    due_npcs += 1;
-                    decide_calls += 1;
-                    self.decide_calls_total += 1;
-                }
-                cancel_intents_skipped += cancels as u64;
-                self.cancel_intents_total += cancels as u64;
-                for op in ops {
-                    pendings.push(Pending::Op(op));
+            // Continue 轮跳过普通 due 筛选（F §4.3）——只推进计划链；
+            // 测试脚本路径不受限（脚本按轮定义行为，是续行注入面）。
+            if round > 0 {
+                let _ = (profiles, gap);
+            } else {
+                let snapshot =
+                    self.snapshot
+                        .clone()
+                        .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "组 {} 决策缺快照（Start 未达即 Continue？）",
+                                self.group
+                            ),
+                        })?;
+                let group_mix = (self.group as u64).wrapping_mul(0x9E3779B9);
+                for local in 0..profiles.len() as LocalIdx {
+                    let account = &self.accounts[local as usize];
+                    let (ops, decided, cancels) = decide_account(
+                        &mut profiles[local as usize],
+                        group_mix,
+                        tick,
+                        local,
+                        *gap,
+                        &snapshot,
+                        account,
+                        &self.config,
+                    );
+                    if decided {
+                        due_npcs += 1;
+                        decide_calls += 1;
+                        self.decide_calls_total += 1;
+                    }
+                    cancel_intents_skipped += cancels as u64;
+                    self.cancel_intents_total += cancels as u64;
+                    for op in ops {
+                        pendings.push(Pending::Op(op));
+                    }
                 }
             }
         } else {
@@ -641,6 +661,19 @@ impl GroupState {
                 }));
             }
         }
+        // 计划链推进（批 6）：轮 0=根命令（空结果输入）；轮 k=按本 tick 已见
+        // FillFact 推进（Continue 轮先落账再续行——staging 已在 handle_continue
+        // 应用，plan_fills 随落账收集）。跨股产物并入同一扣除路径。
+        let mut plans_pending = false;
+        let fills = std::mem::take(&mut self.plan_fills);
+        for plan in self.plans.iter_mut() {
+            let step = plan.next_step(&fills);
+            for op in step.ops {
+                pendings.push(Pending::Op(op));
+            }
+            plans_pending |= step.has_more_steps;
+        }
+        continuation |= plans_pending;
         if let Some(payload) = panic_payload {
             std::panic::panic_any(payload);
         }

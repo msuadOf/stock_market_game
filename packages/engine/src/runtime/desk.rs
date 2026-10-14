@@ -22,7 +22,7 @@ use super::protocol::{
     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
 use super::watchdog::{worker_recv, WatchdogConfig};
-use super::{DeskReceipt, Entity, FillFact, GroupIdx, OrderRef, Owner, ReceiptKind, StockIdx};
+use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, ReceiptKind, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
 use crate::observation::completed_market_minute_count;

@@ -49,6 +49,7 @@ pub(super) fn basic_spec(
         decision: None,
         rights_computer: None,
         initial_cash_override: None,
+        plan_factory: None,
     }
 }
 

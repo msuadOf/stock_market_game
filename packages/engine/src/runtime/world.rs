@@ -16,6 +16,7 @@ use super::coordinator::{
 use super::decision::DecisionSetup;
 use super::desk::{desk_main, DeskFinalState, DeskSetup};
 use super::group::{group_main, GroupAccount, GroupFinalState, GroupScript};
+use super::plans::PlanChain;
 use super::protocol::StockPublic;
 use super::protocol::{AdminRight, DayEndDirective};
 use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
@@ -94,6 +95,8 @@ pub struct WorldSpec {
     pub rights_computer: Option<Box<dyn Fn(u32, GroupIdx) -> Vec<AdminRight> + Send>>,
     /// 按账户现金重建（存档候选往返；None=用 initial_cash 均一初始化）。
     pub initial_cash_override: Option<Vec<Vec<i64>>>,
+    /// 计划链工厂（批 6：跨股多步计划经 Continue 轮排空）。
+    pub plan_factory: Option<Box<dyn Fn(GroupIdx) -> Vec<Box<dyn PlanChain>> + Send>>,
 }
 
 /// 日结候选投影（F §6.2 步骤 4：组投影 + 交易部清簿态 + 全局域 + 费用上交；
@@ -221,6 +224,7 @@ impl World {
             decision,
             rights_computer,
             initial_cash_override,
+            plan_factory,
         } = spec;
         let n_stocks = stocks.len();
         let abort = Arc::new(AtomicBool::new(false));
@@ -267,6 +271,7 @@ impl World {
                 }
                 (d.profiles, d.attention_gap_ticks)
             });
+            let group_plans = plan_factory.as_ref().map(|f| f(g)).unwrap_or_default();
             let state = super::group::GroupState::new(
                 g,
                 accounts,
@@ -275,6 +280,7 @@ impl World {
                 Arc::clone(&config),
                 ticks_per_day,
                 group_decision,
+                group_plans,
                 script_for(g),
             );
             let rx = group_rxs.remove(0);
