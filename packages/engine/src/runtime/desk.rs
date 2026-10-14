@@ -273,6 +273,8 @@ pub struct DeskState {
     opening_cleared: bool,
     /// 本 tick 双腿成交事实缓冲（出口随 DeskReport；Abort 清空）。
     trade_facts: Vec<super::protocol::DeskTradeFact>,
+    /// 本 tick 生命周期事实缓冲（受理/撤单/到期）。
+    lifecycle_facts: Vec<super::protocol::DeskLifecycleFact>,
     /// 最近一次 Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 committed_hash；
     /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据）。
     rollback_hash: Option<u64>,
@@ -316,6 +318,7 @@ impl DeskState {
             resting_count: 0,
             opening_cleared: false,
             trade_facts: Vec::new(),
+            lifecycle_facts: Vec::new(),
             rollback_hash: None,
         }
     }
@@ -454,6 +457,7 @@ impl DeskState {
             *f = false;
         }
         self.trade_facts.clear();
+        self.lifecycle_facts.clear();
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
         self.opening_cleared = false;
@@ -742,10 +746,47 @@ impl DeskState {
         Ok(())
     }
 
+    /// 记录受理事实（Accepted）。
+    fn note_accepted(&mut self, order: &DeskOrder) {
+        self.lifecycle_facts
+            .push(super::protocol::DeskLifecycleFact {
+                stock: self.setup.stock,
+                owner: order.owner,
+                order_serial: order.order_ref.1,
+                remaining: order.qty,
+                side: order.side,
+                price: order.price,
+                kind: super::protocol::LifecycleKind::Accepted,
+            });
+    }
+
+    /// 记录终结事实（Cancelled/Expired）。
+    fn note_terminated(&mut self, order: &DeskOrder, kind: super::protocol::LifecycleKind) {
+        self.lifecycle_facts
+            .push(super::protocol::DeskLifecycleFact {
+                stock: self.setup.stock,
+                owner: order.owner,
+                order_serial: order.order_ref.1,
+                remaining: order.qty,
+                side: order.side,
+                price: order.price,
+                kind,
+            });
+    }
+
     /// 挂簿（记撤销日志）。
     fn rest(&mut self, order: DeskOrder) {
         self.next_serial += 1;
         self.undo.push(DeskUndo::Serial);
+        let fact = super::protocol::DeskLifecycleFact {
+            stock: self.setup.stock,
+            owner: order.owner,
+            order_serial: order.order_ref.1,
+            remaining: order.qty,
+            side: order.side,
+            price: order.price,
+            kind: super::protocol::LifecycleKind::Accepted,
+        };
         let book = if order.side == Side::Buy {
             &mut self.bids
         } else {
@@ -757,6 +798,7 @@ impl DeskState {
         self.undo.push(DeskUndo::Inserted(order));
         self.resting_count += 1;
         self.undo.push(DeskUndo::RestingCount(1));
+        self.lifecycle_facts.push(fact);
     }
 
     /// 连续竞价撮合：逐档吃对面最优（价格时间优先），成交价取 maker 价。
@@ -1131,6 +1173,7 @@ impl DeskState {
             return;
         }
         for o in targets {
+            self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
             self.remove_order(&o);
             self.close_order_entities(&o);
             self.cancelled_orders += 1;
@@ -1163,6 +1206,7 @@ impl DeskState {
         }
         match found {
             Some(o) => {
+                self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
                 self.remove_order(&o);
                 self.close_order_entities(&o);
                 self.cancelled_orders += 1;
@@ -1225,6 +1269,7 @@ impl DeskState {
             .cloned()
             .collect();
         for o in due {
+            self.note_terminated(&o, super::protocol::LifecycleKind::Expired);
             self.remove_order(&o);
             self.close_order_entities(&o);
             self.expired_orders += 1;
@@ -1750,6 +1795,11 @@ fn process_msg(
                     }
                     // 行情收尾 → 实体批次 flush（先于 DeskReport，因果基石）→ 上报。
                     state.finish_round(tick)?;
+                    let receipts_detail: Vec<DeskReceipt> = state
+                        .receipts_out
+                        .iter()
+                        .flat_map(|b| b.iter().copied())
+                        .collect();
                     let (entities_out, fills_out, receipts_out) =
                         state.flush_batches(group_txs, tick, round)?;
                     let report = DeskReport {
@@ -1769,6 +1819,8 @@ fn process_msg(
                         fee_sink: state.fee_sink,
                         view: state.build_public(tick),
                         trades: std::mem::take(&mut state.trade_facts),
+                        lifecycle: std::mem::take(&mut state.lifecycle_facts),
+                        receipts_out_list: receipts_detail,
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {
                         RuntimeError::SendFailed {

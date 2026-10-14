@@ -110,3 +110,114 @@ pub fn project_continuous_point(
             .collect(),
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 批 8e：撤单/到期/受理事件映射（事件契约补完）
+// ═══════════════════════════════════════════════════════════════════
+
+use super::protocol::DeskLifecycleFact;
+use super::{DeskReceipt, Owner, StockIdx};
+use crate::orderbook::OrderId;
+use crate::{RejectionReason, Side};
+
+/// 生命周期事件事实（映射输入聚合）。
+#[derive(Clone, Debug)]
+pub struct LifecycleEvents {
+    /// OrderCanceled 输入。
+    pub cancels: Vec<(Owner, StockIdx, u64, u32)>,
+    /// OrderAccepted 输入。
+    pub accepts: Vec<(Owner, StockIdx, u64, Side, i64, u32)>,
+    /// IntentRejected 输入。
+    pub rejections: Vec<(Owner, StockIdx, u64, RejectionReason)>,
+}
+
+/// 从交易部生命周期事实+回执聚合映射输入。
+pub fn collect_lifecycle(facts: &[DeskLifecycleFact], receipts: &[DeskReceipt]) -> LifecycleEvents {
+    let mut out = LifecycleEvents {
+        cancels: vec![],
+        accepts: vec![],
+        rejections: vec![],
+    };
+    for f in facts {
+        match f.kind {
+            super::protocol::LifecycleKind::Cancelled => {
+                out.cancels
+                    .push((f.owner, f.stock, f.order_serial, f.remaining))
+            }
+            super::protocol::LifecycleKind::Expired => {
+                out.cancels
+                    .push((f.owner, f.stock, f.order_serial, f.remaining))
+            }
+            super::protocol::LifecycleKind::Accepted => out.accepts.push((
+                f.owner,
+                f.stock,
+                f.order_serial,
+                f.side,
+                f.price,
+                f.remaining,
+            )),
+        }
+    }
+    for r in receipts {
+        out.rejections
+            .push((r.owner, r.order.0, r.order.1, rejection_reason(r.kind)));
+    }
+    out
+}
+
+/// `ReceiptKind`（runtime 域）→ `RejectionReason`（引擎事件域）。
+pub fn rejection_reason(kind: super::ReceiptKind) -> RejectionReason {
+    use super::ReceiptKind as RK;
+    match kind {
+        RK::PriceOutOfBand => RejectionReason::LimitExceeded,
+        RK::NotRoundLot => RejectionReason::InvalidQuantity,
+        RK::ExceedsOrderCap => RejectionReason::InvalidQuantity,
+        RK::PhaseRejected => RejectionReason::AuctionOrderEntryClosed,
+        RK::CancelWindowClosed => RejectionReason::AuctionOrderNotCancelable,
+        RK::AlreadyFilled => RejectionReason::OrderAlreadyFilled,
+        RK::AuctionLimitOrderRequired => RejectionReason::AuctionLimitOrderRequired,
+        RK::OrderNotFound => RejectionReason::OrderNotFound,
+    }
+}
+
+/// 生命周期事实 → 引擎事件（撤单/到期→OrderCanceled；受理→OrderAccepted；
+/// 回执→IntentRejected）。OrderRef 复合标识 `(stock, serial)` → 引擎
+/// `OrderId`（serial 低 32 位复合——批 8e 近似映射，登记：与旧引擎
+/// OrderId 空间对齐属存档映射批）。
+pub fn project_lifecycle_events(input: &LifecycleEvents, next_seq: &mut u64) -> Vec<Event> {
+    let mut events = Vec::new();
+    let take = |next_seq: &mut u64| -> u64 {
+        let seq = *next_seq;
+        *next_seq = seq.checked_add(1).expect("事件 seq 溢出");
+        seq
+    };
+    for (owner, stock, serial, remaining) in &input.cancels {
+        events.push(Event::OrderCanceled {
+            seq: take(next_seq),
+            account: owner_to_account(*owner),
+            code: StockId(u32::from(*stock)),
+            id: OrderId(*serial),
+            remaining_qty: *remaining,
+        });
+    }
+    for (owner, stock, serial, side, price, remaining) in &input.accepts {
+        events.push(Event::OrderAccepted {
+            seq: take(next_seq),
+            account: owner_to_account(*owner),
+            code: StockId(u32::from(*stock)),
+            id: OrderId(*serial),
+            side: *side,
+            price: Money::from_cents(*price),
+            remaining_qty: *remaining,
+        });
+    }
+    for (owner, stock, serial, reason) in &input.rejections {
+        events.push(Event::IntentRejected {
+            seq: take(next_seq),
+            account: owner_to_account(*owner),
+            code: StockId(u32::from(*stock)),
+            reason: reason.clone(),
+        });
+    }
+    events
+}

@@ -337,13 +337,18 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
     for _ in 0..20 {
         let events = driver.step(&mut session).expect("驱动 tick");
         for e in &events {
-            let crate::Event::Trade { seq, .. } = e else {
-                panic!("纵切事件面=Trade");
+            let seq = match e {
+                crate::Event::Trade { seq, .. } => *seq,
+                // 批 8e：事件面扩全（受理/撤单/拒收），纵切允许全部类型。
+                crate::Event::OrderAccepted { seq, .. }
+                | crate::Event::OrderCanceled { seq, .. }
+                | crate::Event::IntentRejected { seq, .. } => *seq,
+                other => panic!("纵切事件面外的事件：{other:?}"),
             };
             if let Some(prev) = last_seq {
-                assert!(*seq > prev, "seq 全局单调：{seq} <= {prev}");
+                assert!(seq > prev, "seq 全局单调：{seq} <= {prev}");
             }
-            last_seq = Some(*seq);
+            last_seq = Some(seq);
         }
         total_events += events.len();
     }
@@ -359,4 +364,77 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
         after_cash != before_cash || total_events > 0,
         "回写或事件至少一面生效（现金 {before_cash}→{after_cash}，事件 {total_events}）"
     );
+}
+
+#[test]
+fn lifecycle_facts_map_to_engine_event_types() {
+    use super::event_bridge::{collect_lifecycle, project_lifecycle_events, rejection_reason};
+    use super::protocol::{DeskLifecycleFact, LifecycleKind};
+    use super::{DeskReceipt, ReceiptKind};
+    use crate::orderbook::Side;
+    let facts = vec![
+        DeskLifecycleFact {
+            stock: 1,
+            owner: (0, 5),
+            order_serial: 7,
+            remaining: 300,
+            side: Side::Buy,
+            price: 1000,
+            kind: LifecycleKind::Accepted,
+        },
+        DeskLifecycleFact {
+            stock: 1,
+            owner: (0, 5),
+            order_serial: 7,
+            remaining: 100,
+            side: Side::Buy,
+            price: 1000,
+            kind: LifecycleKind::Cancelled,
+        },
+    ];
+    let receipts = vec![DeskReceipt {
+        order: (1, 9),
+        owner: (2, 3),
+        kind: ReceiptKind::PriceOutOfBand,
+    }];
+    let input = collect_lifecycle(&facts, &receipts);
+    assert_eq!(input.cancels.len(), 1);
+    assert_eq!(input.accepts.len(), 1);
+    assert_eq!(input.rejections.len(), 1);
+    assert!(matches!(
+        input.rejections[0].3,
+        crate::RejectionReason::LimitExceeded
+    ));
+    assert!(matches!(
+        rejection_reason(ReceiptKind::CancelWindowClosed),
+        crate::RejectionReason::AuctionOrderNotCancelable
+    ));
+    let mut seq = 100u64;
+    let events = project_lifecycle_events(&input, &mut seq);
+    assert_eq!(events.len(), 3);
+    assert_eq!(seq, 103);
+    for e in &events {
+        match e {
+            crate::Event::OrderCanceled {
+                account,
+                code,
+                id,
+                remaining_qty,
+                ..
+            } => {
+                assert_eq!(code, &crate::StockId(1));
+                assert_eq!(id.0, 7);
+                assert_eq!(*remaining_qty, 100);
+                assert_eq!(*account, super::event_bridge::owner_to_account((0, 5)));
+            }
+            crate::Event::OrderAccepted { side, price, .. } => {
+                assert_eq!(side, &Side::Buy);
+                assert_eq!(price.cents(), 1000);
+            }
+            crate::Event::IntentRejected { reason, .. } => {
+                assert!(matches!(reason, crate::RejectionReason::LimitExceeded));
+            }
+            _ => panic!("应为生命周期事件"),
+        }
+    }
 }

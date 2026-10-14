@@ -426,6 +426,36 @@ pub struct DeskTradeFact {
     pub taker_side: Side,
 }
 
+/// 挂单生命周期事实（批 8e 事件契约：OrderAccepted/OrderCanceled 输入）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeskLifecycleFact {
+    /// 股索引。
+    pub stock: StockIdx,
+    /// 所有者。
+    pub owner: Owner,
+    /// 本地序号（OrderRef.1）。
+    pub order_serial: u64,
+    /// 剩余量。
+    pub remaining: u32,
+    /// 方向（Accepted 用）。
+    pub side: Side,
+    /// 限价（Accepted 用）。
+    pub price: i64,
+    /// 种类。
+    pub kind: LifecycleKind,
+}
+
+/// 生命周期种类。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LifecycleKind {
+    /// 挂簿受理（余量进簿）。
+    Accepted,
+    /// 撤单终结。
+    Cancelled,
+    /// 到期终结。
+    Expired,
+}
+
 /// 交易部本轮报告。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeskReport {
@@ -461,6 +491,10 @@ pub struct DeskReport {
     pub view: StockPublic,
     /// 本轮双腿成交事实（TickFrame 事件映射输入；按成交序）。
     pub trades: Vec<DeskTradeFact>,
+    /// 本轮生命周期事实（受理/撤单/到期）。
+    pub lifecycle: Vec<DeskLifecycleFact>,
+    /// 本轮回执明细（IntentRejected 映射输入）。
+    pub receipts_out_list: Vec<DeskReceipt>,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

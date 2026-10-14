@@ -12,7 +12,7 @@
 
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
-use super::event_bridge::project_trade_events;
+use super::event_bridge::{collect_lifecycle, project_lifecycle_events, project_trade_events};
 use super::world::World;
 use crate::money::Money;
 use crate::strategy::StrategyData;
@@ -84,14 +84,23 @@ impl RuntimeDriver {
                 }
             }
         }
-        // 事件：收束期 DeskReport 携带的成交事实（驱动器从报告日志取）。
-        let trades: Vec<super::protocol::DeskTradeFact> = self
-            .world
-            .report_log
-            .last()
-            .map(|rec| rec.desk_trades.clone())
+        // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
+        let rec = self.world.report_log.last().cloned();
+        let trades = rec
+            .as_ref()
+            .map(|r| r.desk_trades.clone())
             .unwrap_or_default();
-        let events = project_trade_events(&trades, &mut self.next_seq);
+        let lifecycle = rec
+            .as_ref()
+            .map(|r| r.desk_lifecycle.clone())
+            .unwrap_or_default();
+        let receipts = rec
+            .as_ref()
+            .map(|r| r.desk_receipts.clone())
+            .unwrap_or_default();
+        let mut events = project_trade_events(&trades, &mut self.next_seq);
+        let input = collect_lifecycle(&lifecycle, &receipts);
+        events.extend(project_lifecycle_events(&input, &mut self.next_seq));
         Ok(events)
     }
 

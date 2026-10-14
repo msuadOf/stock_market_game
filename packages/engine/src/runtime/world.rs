@@ -21,6 +21,7 @@ use super::protocol::StockPublic;
 use super::protocol::{AdminRight, DayEndDirective};
 use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
 use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
+use super::DeskReceipt;
 use super::{GroupIdx, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
@@ -136,6 +137,10 @@ pub struct TickRecord {
     pub desk_resting: Vec<(StockIdx, u64)>,
     /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
+    /// 本 tick 生命周期事实（受理/撤单/到期；事件映射输入）。
+    pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
+    /// 本轮回执（拒收/不可撤；IntentRejected 映射输入）。
+    pub desk_receipts: Vec<DeskReceipt>,
 }
 
 /// 关停报告（期末对账面）。
@@ -575,6 +580,8 @@ impl World {
             desk_hashes: evidence.desk_hashes,
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
+            desk_lifecycle: evidence.desk_lifecycle,
+            desk_receipts: evidence.desk_receipts,
         });
     }
 

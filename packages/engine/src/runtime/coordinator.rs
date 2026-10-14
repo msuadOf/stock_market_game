@@ -83,6 +83,10 @@ pub struct TickEvidence {
     pub desk_resting: Vec<(StockIdx, u64)>,
     /// 本 tick 双腿成交事实（事件映射输入）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
+    /// 本 tick 生命周期事实（受理/撤单/到期）。
+    pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
+    /// 本轮回执（拒收/不可撤）。
+    pub desk_receipts: Vec<super::DeskReceipt>,
 }
 
 /// PreCommit 校验器（骨架注入点；批 3+ 换 PreCommitValidation）。
@@ -131,6 +135,8 @@ pub fn converge_round(
     let mut desk_views = Vec::with_capacity(n_stocks);
     let mut desk_resting = Vec::with_capacity(n_stocks);
     let mut desk_trades = Vec::new();
+    let mut desk_lifecycle = Vec::new();
+    let mut desk_receipts = Vec::new();
     while groups_left > 0 || desks_left > 0 {
         let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
             Ok(m) => m,
@@ -165,6 +171,8 @@ pub fn converge_round(
                 desk_views.push((r.stock, r.view.clone()));
                 desk_resting.push((r.stock, r.resting_count));
                 desk_trades.extend(r.trades.iter().copied());
+                desk_lifecycle.extend(r.lifecycle.iter().copied());
+                desk_receipts.extend(r.receipts_out_list.iter().copied());
             }
             UpMsg::TaskDied { who, payload } => {
                 return RoundOutcome::TaskDied { who, payload };
@@ -195,6 +203,8 @@ pub fn converge_round(
         desk_views,
         desk_resting,
         desk_trades,
+        desk_lifecycle,
+        desk_receipts,
     }))
 }
 
