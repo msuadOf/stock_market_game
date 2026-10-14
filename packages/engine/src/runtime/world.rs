@@ -406,6 +406,11 @@ impl World {
             .collect()
     }
 
+    /// 全局日历读取（驱动器对账面）。
+    pub fn global_day(&self) -> u32 {
+        self.global.day
+    }
+
     /// 决策观察基读取（测试面）。
     pub fn public_views(&self) -> &[StockPublic] {
         &self.public_views
@@ -595,6 +600,12 @@ impl World {
     /// ③ 组装日结候选跑全部可失败校验——失败 ⇒ Abort 广播（组/部按可逆日志
     ///    整体冲回上一交易日收敛态，日历不推进）；成功 ⇒ 保存不可变候选，
     ///    下一 Start 即隐式提交（可逆日志退役、Abort 窗口关闭）。
+    /// 日结公开入口（驱动器编排：tick 参数由调用方给定）。
+    pub fn run_day_end_public(&mut self) -> Result<(), RuntimeError> {
+        let day_final_tick = self.global.committed_tick;
+        self.run_day_end(day_final_tick)
+    }
+
     fn run_day_end(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {
         let day = ((day_final_tick - 1) / self.ticks_per_day) as u32;
         // ① Drain。

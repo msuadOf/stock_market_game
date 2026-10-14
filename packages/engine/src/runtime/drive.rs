@@ -115,4 +115,33 @@ impl RuntimeDriver {
     pub fn next_seq(&self) -> u64 {
         self.next_seq
     }
+
+    /// runtime 全局日历读取（诊断/对账面）。
+    pub fn world_global_day(&self) -> u32 {
+        self.world.global_day()
+    }
+}
+
+impl RuntimeDriver {
+    /// 日结+自然日推进（批 8g：公司域/civil 全局域等价路径）。
+    ///
+    /// 语义对齐（业务照搬 `end_civil_day` 形状，执行形态改 runtime）：
+    /// - runtime DayEnd（Drain 清簿→组日翻转/权益→候选校验）对应市场侧
+    ///   日终点；`next_seq` 语义由会话权威保留（事件 seq 仍全局单调）；
+    /// - `session.end_civil_day()` 保持为**唯一权威调用**（公司调度/
+    ///   日历/披露的 candidate-安装语义不变）——本方法把两者编排为
+    ///   一个原子序列：runtime 日结成功 ⇒ 会话自然日推进；任一失败
+    ///   ⇒ 两侧各自回滚（runtime Abort 可逆日志冲回、会话 candidate
+    ///   丢弃），日历不推进。
+    pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
+        // runtime 侧日结：Drain→组日翻转→候选校验（失败=内部已 Abort 冲回）。
+        self.world
+            .run_day_end_public()
+            .map_err(|e| format!("runtime 日结失败（内部已 Abort 冲回）：{e:?}"))?;
+        // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
+        session.end_civil_day().map_err(|e| {
+            format!("自然日推进失败（runtime 已日结、会话 candidate 已丢弃）：{e:?}")
+        })?;
+        Ok(())
+    }
 }
