@@ -48,8 +48,12 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
         .get_mut(&owner)
         .unwrap()
         .information_mut() = private;
-    let update = session.end_civil_day_update(&[]).unwrap();
-    let acquired_update = with_acquisition.end_civil_day_update(&[]).unwrap();
+    let update = session
+        .end_civil_day_update(Vec::new(), &mut Default::default())
+        .unwrap();
+    let acquired_update = with_acquisition
+        .end_civil_day_update(Vec::new(), &mut Default::default())
+        .unwrap();
     assert_eq!(
         update.refresh.public_publication_ids,
         acquired_update.refresh.public_publication_ids
@@ -58,7 +62,7 @@ fn real_announcement_barrier_exposes_only_public_index_after_reconnect() {
     let reconnected = GameSession::restore(&session.save().unwrap()).unwrap();
     let public = &reconnected.state.library;
     let mut announcements = 0;
-    for event in &update.events {
+    for event in update.events() {
         if let Event::CompanyDisclosurePublished {
             publication_id,
             published_at,

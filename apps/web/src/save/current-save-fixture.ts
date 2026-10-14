@@ -9,6 +9,7 @@ export function currentSaveFixture(): JsonObject {
       poisoned: false,
       next_receipt_base: "0",
       live_envelopes: [],
+      book_public_cutoff_sequences: { "0": "0" },
       retail_projection_seen: [],
       strategy_states: {
         "1": {
@@ -80,7 +81,6 @@ export function currentSaveFixture(): JsonObject {
       },
       active_daily_candles: {},
     },
-    auction_orders: {},
     resting_orders: {},
     book_next_sequences: { "0": "0" },
     filled_orders: {},
@@ -89,17 +89,13 @@ export function currentSaveFixture(): JsonObject {
     rng_state: "0",
     npc_attention: {},
     retail_experience: {},
-    parent_orders: {},
     npc_order_lifecycles: [],
     pending_player: [],
-    pending_npc: { observed_tick: 0, observed_accounts: [], intents: [], dependencies: [] },
     ingress_receipt_cursors: { next_account_ordinal: {}, next_stock_ordinal: {} },
     next_order_id: 1,
     civil_clock: {
       current_date: "2030-01-01",
       settled_through: null,
-      next_due_seq: 0,
-      pending_due: [],
       policy: {
         algorithm_version: 1,
         default_start: "2030-01-01",
@@ -140,7 +136,6 @@ export function currentSaveFixture(): JsonObject {
     },
     closing_registry: { versions: [], restatements: [] },
     public_library: { next_seq: 0, reports: [], announcements: [] },
-    ops_wiring: { mirrored: [] },
     disclosures: { published_through: null, announced_through: null },
     plans: {
       policy: {
@@ -165,6 +160,5 @@ export function currentSaveFixture(): JsonObject {
     watchlists: {},
     price_memories: {},
     history_reads: { "0": { stocks: {} } },
-    pending_plan_events: [],
   }
 }

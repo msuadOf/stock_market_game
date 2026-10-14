@@ -29,6 +29,7 @@ impl GameSession {
     /// Non-authoritative decision fixtures are rejected, never projected as production state.
     pub fn business_state_hash(&self) -> Result<StateHash, StepFatal> {
         let Self {
+            compute: _,
             ingress: _,
             state,
             poison: _,
@@ -37,10 +38,11 @@ impl GameSession {
                 injected_failure: _,
             #[cfg(test)]
                 post_shadow_failure: _,
-                revision: _,
-} = self;
+            revision: _,
+        } = self;
         let super::CommittableSessionState {
             setup: _,
+            validated_config: _,
             stocks: _,
             rng: _,
             seed: _,
@@ -50,14 +52,10 @@ impl GameSession {
             price_history: _,
             market_minute_closes: _,
             candle_book: _,
-            auction_orders: _,
             pending_player: _,
-            pending_npc: _,
             ingress_receipt_cursors: _,
             npc_attention: _,
             retail_experience: _,
-            parent_orders: _,
-            pending_plan_events: _,
             npc_order_lifecycles: _,
             last_retail_decisions: _,
             last_retail_order_events: _,
@@ -70,7 +68,6 @@ impl GameSession {
             operations: _,
             closing: _,
             library: _,
-            ops_wiring: _,
             disclosures: _,
             groups: _,
             plans: _,
@@ -84,8 +81,7 @@ impl GameSession {
             day: _,
             seq: _,
             civil_clock: _,
-                speculative_prepare: _,
-} = state;
+        } = state;
         let mut hash = StateHash(0xcbf29ce484222325);
         hash.field(&self.state.setup)?;
         hash.field(&self.state.seed)?;
@@ -115,15 +111,11 @@ impl GameSession {
         hash.field(&self.state.market_minute_closes)?;
         hash.field(&self.state.candle_book.histories())?;
         hash.field(&self.state.candle_book.active())?;
-        hash.field(&self.state.auction_orders)?;
         hash.field(&self.state.pending_player)?;
-        hash.field(&self.state.pending_npc)?;
         hash.field(&self.state.ingress_receipt_cursors)?;
         hash.field(&self.state.npc_attention)?;
         hash.field(&self.state.history_reads)?;
         hash.field(&self.state.retail_experience)?;
-        hash.field(&self.state.parent_orders)?;
-        hash.field(&self.state.pending_plan_events)?;
         hash.field(&self.state.npc_order_lifecycles)?;
         let mut queue: Vec<_> = self.state.attention_scheduler.iter().copied().collect();
         queue.sort_unstable();
@@ -144,7 +136,6 @@ impl GameSession {
         })?;
         hash.field(&closing)?;
         hash.field(&self.state.library.hash_projection())?;
-        hash.field(&self.state.ops_wiring)?;
         hash.field(&self.state.disclosures)?;
         hash.field(&self.state.groups)?;
         hash.field(&self.state.plans)?;

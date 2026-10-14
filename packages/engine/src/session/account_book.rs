@@ -3,9 +3,9 @@
 //! Adjacent account pages share a directory group across tick candidates.
 //! Changing an account detaches its group and page, leaving unrelated groups shared.
 
+use crate::compute::parallel::*;
 use crate::strategy::StrategyStateError;
 use crate::{Account, AccountId};
-use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::ops::Index;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -85,47 +85,63 @@ impl AccountBook {
             })
     }
     /// 在相同账户页、价格及预留事实下校验资源。
+    /// 方向B·宽度封顶：页级校验经 scatter-gather（min(页数, active_width)
+    /// 个粗 chunk、协调线程阻塞归并）——`compute` 为会话计算上下文。
     pub(super) fn validate_resources(
         &self,
+        compute: &std::sync::Arc<crate::compute::ComputeContext>,
         prices: &BTreeMap<crate::StockId, crate::Money>,
         reservations: &super::pipeline::LiveReservations,
         validate: impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync,
     ) -> Result<(), super::StepFatal> {
         let prices = Arc::new(prices.clone());
-        self.groups
-            .values()
-            .flat_map(|group| group.iter())
-            .collect::<Vec<_>>()
-            .into_par_iter()
-            .try_for_each(|(page_id, page)| {
-                let projection = reservations.page(*page_id);
-                let mut cache = page.resource_validation.lock().map_err(|error| {
-                    super::StepFatal::InvariantViolation {
-                        description: format!("账户资源校验缓存锁失败：{error}"),
-                        location: "AccountBook::validate_resources".to_owned(),
-                    }
-                })?;
-                if cache.as_ref().is_some_and(|cached| {
-                    cached.prices.as_ref() == prices.as_ref()
-                        && match (&cached.reservations, projection) {
-                            (None, None) => true,
-                            (Some(old), Some(current)) => {
-                                Arc::ptr_eq(old, current) || old == current
-                            }
-                            _ => false,
-                        }
-                }) {
-                    return Ok(());
+        let pages: Vec<_> = self.groups.values().flat_map(|group| group.iter()).collect();
+        // 方向A·任务粗化（宽度税治理）：页级资源校验原先按单页分裂（s5 实测
+        // 每_tick ~627 单页任务，多为缓存命中微任务）。方向B 改走
+        // scatter-gather：min(页数, active_width) 个粗 chunk、阻塞归并零
+        // 自旋；首错按页序（比 par try_for_each 的完成序更确定）。
+        // 页数不超过参与宽度时 gather 原语自身退化为串行。
+        compute.parallel_map_chunks(pages.len(), |index| {
+            let (page_id, page) = pages[index];
+            Self::validate_resources_page(&prices, reservations, &validate, *page_id, page)
+        })?;
+        Ok(())
+    }
+
+    /// 单页资源校验（方向A 抽取：串行/并行同体，错误合同单点承载；
+    /// 行为与原内联闭包逐字一致——缓存命中短路、逐账户 validate、缓存回填）。
+    fn validate_resources_page(
+        prices: &Arc<BTreeMap<crate::StockId, crate::Money>>,
+        reservations: &super::pipeline::LiveReservations,
+        validate: &(impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync),
+        page_id: u64,
+        page: &AccountPage,
+    ) -> Result<(), super::StepFatal> {
+        let projection = reservations.page(page_id);
+        let mut cache = page.resource_validation.lock().map_err(|error| {
+            super::StepFatal::InvariantViolation {
+                description: format!("账户资源校验缓存锁失败：{error}"),
+                location: "AccountBook::validate_resources".to_owned(),
+            }
+        })?;
+        if cache.as_ref().is_some_and(|cached| {
+            cached.prices.as_ref() == prices.as_ref()
+                && match (&cached.reservations, projection) {
+                    (None, None) => true,
+                    (Some(old), Some(current)) => Arc::ptr_eq(old, current) || old == current,
+                    _ => false,
                 }
-                for (id, account) in &page.accounts {
-                    validate(*id, account)?;
-                }
-                *cache = Some(ResourceValidationCache {
-                    prices: prices.clone(),
-                    reservations: projection.cloned(),
-                });
-                Ok(())
-            })
+        }) {
+            return Ok(());
+        }
+        for (id, account) in &page.accounts {
+            validate(*id, account)?;
+        }
+        *cache = Some(ResourceValidationCache {
+            prices: prices.clone(),
+            reservations: projection.cloned(),
+        });
+        Ok(())
     }
     pub(super) fn clone_for_shadow(&self) -> Result<Self, StrategyStateError> {
         for group in self.groups.values() {
@@ -272,6 +288,17 @@ fn group_id(id: AccountId) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// 方向B·测试上下文（2 worker，进程内共享单例——避免逐用例建池放大
+    /// 并行测试的线程/调度噪声；页数≤active_width 时 gather 退化为串行，
+    /// 与原串行测试语义一致）。
+    fn test_compute() -> std::sync::Arc<crate::compute::ComputeContext> {
+        static SHARED: std::sync::OnceLock<std::sync::Arc<crate::compute::ComputeContext>> =
+            std::sync::OnceLock::new();
+        SHARED
+            .get_or_init(|| crate::compute::ComputeContext::with_workers(2).unwrap())
+            .clone()
+    }
     use super::*;
     use crate::strategy::{MomentumStrategy, StrategyState};
     use crate::{AccountKind, Money, StockId};
@@ -332,7 +359,7 @@ mod tests {
         let mut cash = BTreeMap::new();
         let mut sell = BTreeMap::new();
         accounts
-            .validate_resources(
+            .validate_resources(&test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -340,7 +367,7 @@ mod tests {
             .unwrap();
         let mut shadow = accounts.clone_for_shadow().unwrap();
         shadow
-            .validate_resources(
+            .validate_resources(&test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -352,7 +379,7 @@ mod tests {
             .unwrap()
             .fixture_set_cash(Money::from_cents(90));
         shadow
-            .validate_resources(
+            .validate_resources(&test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -361,7 +388,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 3, "只重验发生 mutation 的页");
         prices.insert(StockId(0), Money::from_cents(101));
         shadow
-            .validate_resources(
+            .validate_resources(&test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -370,7 +397,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 5, "价格变化必须重验全部页");
         cash.insert(AccountId(32), Money::from_cents(5));
         shadow
-            .validate_resources(
+            .validate_resources(&test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -379,7 +406,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
         sell.insert(AccountId(0), BTreeMap::from([(StockId(0), 100)]));
         shadow
-            .validate_resources(
+            .validate_resources(&test_compute(),
                 &prices,
                 &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
                 &validate,
@@ -387,7 +414,7 @@ mod tests {
             .unwrap();
         assert_eq!(calls.load(Ordering::Relaxed), 7, "股份预留只使受影响页失效");
         accounts
-            .validate_resources(
+            .validate_resources(&test_compute(),
                 &BTreeMap::from([(StockId(0), Money::from_cents(100))]),
                 &super::super::pipeline::LiveReservations::fixture(
                     &BTreeMap::new(),
@@ -421,7 +448,7 @@ mod tests {
         };
         for _ in 0..2 {
             assert_eq!(
-                accounts.validate_resources(&prices, &reservations, |_, _| {
+                accounts.validate_resources(&test_compute(),&prices, &reservations, |_, _| {
                     calls.fetch_add(1, Ordering::Relaxed);
                     Err(error.clone())
                 }),

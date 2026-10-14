@@ -1091,7 +1091,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
 
     assert_eq!(
         output
-            .events
+            .event_values()
             .iter()
             .filter(|event| matches!(
                 event,
@@ -1106,7 +1106,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     );
     assert_eq!(
         output
-            .events
+            .event_values()
             .iter()
             .filter(|event| matches!(event, Event::Trade { .. }))
             .count(),
@@ -1122,7 +1122,10 @@ fn validated_operations(
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let first_order_id = OrderId(game.state.next_order_id);
     let candidates = build(game.state.next_order_id)
         .into_iter()
@@ -1168,7 +1171,10 @@ fn validated_operations_for_stocks(
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
@@ -1236,12 +1242,15 @@ fn validated_sell_operations(code: &StockId) -> (Vec<ValidatedOperation>, GameCo
     (operations, config)
 }
 
-fn validated_operations_in_session(
+pub(in crate::session::pipeline) fn validated_operations_in_session(
     game: &GameSession,
     account: AccountId,
     intents: Vec<Intent>,
 ) -> Vec<ValidatedOperation> {
-    let plan = plan_tick(PhaseInput { session: game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: game,
+    })
+    .unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
@@ -1272,13 +1281,13 @@ fn validated_operations_in_session(
     output.operations().to_vec()
 }
 
-fn stock_input(
+pub(in crate::session::pipeline) fn stock_input(
     market: Market,
     envelopes: Vec<ContinuousEnvelopeSnapshot>,
     config: GameConfig,
 ) -> ContinuousStockInput {
     ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: crate::session::pipeline::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes,
         operations: vec![],
@@ -1301,7 +1310,7 @@ fn cancel_operation(
     }
 }
 
-fn add_resting(
+pub(in crate::session::pipeline) fn add_resting(
     market: &mut Market,
     code: &StockId,
     owner: AccountId,
@@ -1353,11 +1362,10 @@ fn add_resting(
     };
     ContinuousEnvelopeSnapshot {
         envelope: Envelope::tick_start_existing(key, live.cash, live.shares, audit),
-        audit,
     }
 }
 
-fn empty_market(code: &StockId) -> Market {
+pub(in crate::session::pipeline) fn empty_market(code: &StockId) -> Market {
     Market::new(
         code.clone(),
         Money::from_cents(1_000),
@@ -1367,7 +1375,7 @@ fn empty_market(code: &StockId) -> Market {
     .unwrap()
 }
 
-fn stock(value: &str) -> StockId {
+pub(in crate::session::pipeline) fn stock(value: &str) -> StockId {
     // session fixture 的目录 rank：quote_setup 单股 "600888"=0；
     // two_stock_quote_setup 追加 "600889"=1；"999999" 为目录外未知哨兵。
     // 不经 session 的 standalone 双代码测试请直接用 StockId(0/1) 保持相对次序。

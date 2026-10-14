@@ -1,5 +1,85 @@
 use super::*;
 
+#[test]
+fn compute_context_production_actor_does_not_follow_callers_pool() {
+    use engine::{ComputeContext, ComputeWork};
+    use std::sync::Mutex;
+    for workers in [1, 2] {
+        let compute = ComputeContext::with_workers(workers).unwrap();
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let observed = samples.clone();
+        compute.set_observer(Arc::new(move |sample| {
+            observed.lock().unwrap().push(sample)
+        }));
+        let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+        let game = ProtocolSession::new_with_compute(setup, 7, compute.clone()).unwrap();
+        let (_sender, cmd_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let mut actor = SessionActor {
+            ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+            injected_step_failure: None,
+            pacing: ServerPacing::new(1, game.tick()),
+            game,
+            cmd_rx,
+            event_tx,
+            session_id: "compute-context".into(),
+
+            public_revision: 0,
+            timeline_generation: 1,
+            pause_preferences: PausePreferences::default(),
+            fatal_failure: None,
+            deferred_drop_reported: false,
+        };
+        actor.run_protocol_batch(1);
+        let foreign = rayon::ThreadPoolBuilder::new()
+            .num_threads(3)
+            .build()
+            .unwrap();
+        foreign.install(|| actor.run_protocol_batch(1));
+        assert!(actor.fatal_failure.is_none());
+        assert_eq!(actor.game.tick(), 2);
+        assert!(Arc::ptr_eq(actor.game.game().compute_context(), &compute));
+        for expected in 1..=2 {
+            let update = receiver.try_recv().unwrap().update.unwrap();
+            let ProtocolUpdate::TickBatch(batch) = update else {
+                panic!("必须提交市场 tick")
+            };
+            assert_eq!(batch.frames.last().unwrap().tick, expected);
+        }
+        let samples = samples.lock().unwrap();
+        assert!(samples
+            .iter()
+            .any(|sample| sample.work == ComputeWork::CandidatePrepare));
+        for work in [ComputeWork::Observe, ComputeWork::Analyse, ComputeWork::Decide,
+            ComputeWork::Project, ComputeWork::StockPrepare, ComputeWork::StockMatch, ComputeWork::StockFinish] {
+            assert!(samples.iter().any(|sample| sample.work == work), "未覆盖生产任务 {work:?}");
+        }
+        for sample in samples.iter() {
+            assert_eq!(sample.executing_workers, workers, "{sample:?}");
+            assert!(
+                sample.owner_worker.is_some_and(|index| index < workers),
+                "{sample:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn compute_context_manager_reports_real_owned_registry_not_caller() {
+    let manager = SessionManager::with_compute(1, engine::ComputeContext::with_workers(2).unwrap());
+    let foreign = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+    assert_eq!(foreign.install(|| manager.compute_workers()).unwrap(), 2);
+}
+
+#[test]
+fn compute_context_initialization_failure_does_not_register_authority() {
+    let manager = SessionManager::configured(1, Err(crate::HostComputeInitError::InvalidWorkers));
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    assert!(matches!(manager.new_session(setup, 7), Err(NewSessionError::Compute(_))));
+    assert_eq!(manager.active_session_count(), 0);
+    assert!(manager.sessions.is_empty());
+}
+
 #[tokio::test]
 async fn shared_ingress_receives_player_without_actor_command_polling() {
     let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
@@ -135,13 +215,9 @@ fn assert_failed_cycle_preserves_business_and_ingress_facts(
             "失败 cycle 的已接收 NPC 事实必须保留真实 ordinal gap"
         );
     }
-    for receipt in saved_after.pending_player.iter().chain(
-        saved_after
-            .pending_npc
-            .as_ref()
-            .into_iter()
-            .flat_map(|batch| batch.intents.iter()),
-    ) {
+    // T3 批四：pending_npc 载体删除——受理序核对仅覆盖 pending_player
+    //（NPC 侧 gap 事实由 cursors 对照承载）。
+    for receipt in saved_after.pending_player.iter() {
         assert!(saved_after
             .ingress_receipt_cursors
             .next_account_ordinal
@@ -198,11 +274,12 @@ async fn capture(successful_steps: usize) {
         cmd_rx,
         event_tx,
         session_id: "fatal".into(),
-        fastest_budget: Arc::new(Semaphore::new(1)),
+
         public_revision: 4,
         timeline_generation: 1,
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
+        deferred_drop_reported: false,
     };
 
     actor.run_protocol_batch(if successful_steps == 0 { 1 } else { 8 });
@@ -468,11 +545,12 @@ async fn authority_reads_reject_stale_generations() {
         cmd_rx,
         event_tx,
         session_id: "authority-read".into(),
-        fastest_budget: Arc::new(Semaphore::new(1)),
+
         public_revision: 0,
         timeline_generation: 7,
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
+        deferred_drop_reported: false,
     };
 
     let (reply, response) = oneshot::channel();
@@ -546,11 +624,12 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
         cmd_rx,
         event_tx,
         session_id: "command-burst".into(),
-        fastest_budget: Arc::new(Semaphore::new(1)),
+
         public_revision: 0,
         timeline_generation: 1,
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
+        deferred_drop_reported: false,
     };
     let expected: Vec<_> = (1..=64)
         .map(|lot_count| {
@@ -686,11 +765,12 @@ fn batch_checkpoint_drop_is_deferred_to_dedicated_thread() {
         cmd_rx,
         event_tx,
         session_id: "graveyard".into(),
-        fastest_budget: Arc::new(Semaphore::new(1)),
+
         public_revision: 0,
         timeline_generation: 1,
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
+        deferred_drop_reported: false,
     };
     let before = engine::session::deferred_destruction_count();
     // 零 tick 批：循环体不执行，无任何 commit 移交；checkpoint 建后按成功路径收尾。

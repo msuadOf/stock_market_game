@@ -1,12 +1,12 @@
 use super::*;
 use crate::calendar::{CivilDateError, CivilInstant};
+use crate::compute::parallel::*;
 use crate::error::ValidationFault;
 use crate::information::{
     AcquiredKind, NpcInformationState, NpcObservationContext, PublicLibrary, PublicationId,
     PublicationOrigin,
 };
 use crate::strategy::{BeliefBook, BeliefCause, BeliefInputs};
-use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
@@ -155,7 +155,11 @@ impl GameSession {
     ) -> Result<(), SessionError> {
         let market = self.build_market_view();
         let ids: Vec<_> = self.state.belief_participants.keys().copied().collect();
-        let results = ids
+        let compute = self.compute.clone();
+        let results = compute
+            .parallel(|| {
+            compute.record(crate::compute::ComputeWork::DayEndDeliver);
+            ids
             .into_par_iter()
             .map(|id| {
                 let attention = &self.state.npc_attention[&id];
@@ -295,7 +299,8 @@ impl GameSession {
             })
             .collect::<Vec<_>>()
             .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+            })?;
         for result in results.into_iter().flatten() {
             let (id, information, belief, attention) = result;
             #[cfg(feature = "simulation-diagnostics")]

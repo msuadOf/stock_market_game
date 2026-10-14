@@ -94,7 +94,28 @@ fn malformed_boundary_matrix_rejects_without_relying_on_replay_guard() {
 
 #[test]
 fn civil_replay_is_ordered_atomic_and_detects_coherent_payload_changes() {
-    let (mut session, batch, civil) = settled("2030-01-02");
+    // 用真实双股票生产入口保证帧内至少两个独立事实，反转不可能是单事实空操作。
+    let mut setup = fixture::civil_setup(CivilDate::from_iso("2030-01-02").unwrap());
+    let mut second = setup.stocks[0].clone();
+    second.code = engine::StockCode("600102".into());
+    assert_ne!(second.code, setup.stocks[0].code);
+    setup.stocks.push(second);
+    let mut session = ProtocolSession::new(setup, 41).unwrap();
+    let mut frames = Vec::new();
+    for _ in 0..fixture::TICKS_PER_DAY {
+        frames.push(session.step_frame().unwrap());
+    }
+    let batch = TickBatch {
+        frames,
+        runtime_snapshot: None,
+        runtime_delta: None,
+    };
+    let civil = session.end_civil_day_update().unwrap();
+    assert!(civil
+        .refresh
+        .intraday
+        .iter()
+        .any(|frame| frame.facts.len() >= 2));
     let mut guard = ReplayGuard::new(0, 0);
     assert_eq!(
         guard
@@ -115,12 +136,23 @@ fn civil_replay_is_ordered_atomic_and_detects_coherent_payload_changes() {
     );
     assert_eq!(guard.ingest(&following).unwrap(), ReplayDecision::Applied);
     let mut reversed = civil.clone();
-    reversed.events.reverse();
     reversed.facts.reverse();
     for frame in &mut reversed.refresh.intraday {
-        frame.events.reverse();
         frame.facts.reverse();
     }
+    assert!(
+        civil
+            .refresh
+            .intraday
+            .iter()
+            .zip(&reversed.refresh.intraday)
+            .any(|(before, after)| before
+                .facts
+                .iter()
+                .map(|fact| &fact.key)
+                .ne(after.facts.iter().map(|fact| &fact.key))),
+        "至少一帧的事实顺序必须真的改变，不能反转两次或在单事实/空帧上空转"
+    );
     assert_eq!(
         guard
             .ingest(&EngineUpdate::CivilUpdate(Box::new(reversed)))

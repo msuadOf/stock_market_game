@@ -8,7 +8,6 @@ type WasmSaveMaps = {
   readonly snapshot: { readonly accounts: Record<string, unknown> };
   readonly npc_attention: Record<string, unknown>;
   readonly retail_experience: Record<string, unknown>;
-  readonly parent_orders: Record<string, unknown>;
   readonly information_states: Record<string, unknown>;
   readonly belief_books: Record<string, unknown>;
   readonly watchlists: Record<string, unknown>;
@@ -86,7 +85,6 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
   const strategyStates = accountMap(slot.runtime_state.strategy_states, "策略状态");
   const npcAttention = accountMap(slot.npc_attention, "NPC 注意力");
   const retailExperience = accountMap(slot.retail_experience, "散户经历");
-  const parentOrders = accountMap(slot.parent_orders, "机构母单");
   const informationStates = accountMap(slot.information_states, "个人信息");
   const beliefBooks = accountMap(slot.belief_books, "个人信念");
   const watchlists = accountMap(slot.watchlists, "个人关注");
@@ -100,7 +98,6 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
     },
     npc_attention: npcAttention,
     retail_experience: retailExperience,
-    parent_orders: parentOrders,
     information_states: informationStates,
     belief_books: beliefBooks,
     watchlists,

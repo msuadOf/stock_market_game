@@ -36,46 +36,52 @@ test("requires authoritative refresh for same-tick acceptance and trade regardle
 
 test("keeps same-price orders distinct when projected from the authoritative save", () => {
   const orders = projectPlayerOrders({
-    auction_orders: {},
     resting_orders: { "600101": [
       { id: 7, owner: 0, side: "Buy", price: "1008", qty: 100, original_qty: 200, filled_qty: 100, filled_value: "100800", seq: 1 },
       { id: 8, owner: 0, side: "Buy", price: "1008", qty: 200, original_qty: 200, filled_qty: 0, filled_value: "0", seq: 2 },
     ] },
-  })
+  }, "Continuous")
   assert.deepEqual(orders.map(({ id, remainingQty }) => [id, remainingQty]), [[7, 100], [8, 200]])
 })
 
-test("projects only the player's authoritative auction and continuous orders", () => {
+test("projects only the player's authoritative unified-book orders", () => {
   // 存档 wire 的委托 map 键是 StockId 字符串（ADR 0041）：3=600101、1=002156；
-  // 投影结果 code 原样透传该键。
-  const orders = projectPlayerOrders({
-    auction_orders: {
+  // 投影结果 code 原样透传该键。统一 book 后存档只有 resting_orders。
+  const auctionVenue = projectPlayerOrders({
+    resting_orders: {
       "3": [
-        { owner: 0, side: "Buy", limit: "1105", qty: 200, order_id: 7 },
-        { owner: 3, side: "Sell", limit: "1120", qty: 100, order_id: 8 },
+        { id: 7, owner: 0, side: "Buy", price: "1105", qty: 200, original_qty: 200, filled_qty: 0, filled_value: "0", seq: 1 },
+        { id: 8, owner: 3, side: "Sell", price: "1120", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 2 },
       ],
     },
+  }, "Auction")
+  assert.deepEqual(auctionVenue, [
+    { id: 7, code: "3", side: "Buy", price: "1105", remainingQty: 200, venue: "Auction", frozen: "Cash" },
+  ])
+  const continuousVenue = projectPlayerOrders({
     resting_orders: {
       "1": [
         { id: 11, owner: 0, side: "Sell", price: "2700", qty: 100, original_qty: 200, filled_qty: 100, filled_value: "270000", seq: 19 },
       ],
     },
-  })
-
-  assert.deepEqual(orders, [
-    { id: 7, code: "3", side: "Buy", price: "1105", remainingQty: 200, venue: "Auction", frozen: "Cash" },
+  }, "Continuous")
+  assert.deepEqual(continuousVenue, [
     { id: 11, code: "1", side: "Sell", price: "2700", remainingQty: 100, venue: "Continuous", frozen: "Shares" },
   ])
 })
 
 test("sorts player orders by stable order id without mutating the save payload", () => {
   const slot = {
-    auction_orders: { "600101": [{ owner: 0, side: "Sell" as const, limit: "1100", qty: 100, order_id: 20 }] },
-    resting_orders: { "600101": [{ id: 3, owner: 0, side: "Buy" as const, price: "1000", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 2 }] },
+    resting_orders: {
+      "600101": [
+        { id: 20, owner: 0, side: "Sell" as const, price: "1100", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 3 },
+        { id: 3, owner: 0, side: "Buy" as const, price: "1000", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 2 },
+      ],
+    },
   }
   const before = structuredClone(slot)
 
-  assert.deepEqual(projectPlayerOrders(slot).map((order) => order.id), [3, 20])
+  assert.deepEqual(projectPlayerOrders(slot, "Continuous").map((order) => order.id), [3, 20])
   assert.deepEqual(slot, before)
 })
 

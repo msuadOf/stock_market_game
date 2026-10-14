@@ -11,9 +11,6 @@ use super::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousExecutionRound, ContinuousPlaceFact,
     },
-    stock_auction::auction_day_end::{
-        AuctionExecutionFact, AuctionExecutionRound, AuctionLifecycleFact,
-    },
     CandidateValidationOutcome, CandidateValidationResult, EnvelopeReceipt, IntentCandidate,
     IntentCandidateKey, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal, ValidatedOperation,
 };
@@ -21,6 +18,7 @@ use super::{
 use crate::session::plan_execution::PlanCancelCause;
 use crate::session::{
     plan_chain_candidates::{FrozenPlanChainObservation, PlanChainOperationBatch},
+    plan_continuation_domain::PlanContinuationDomain,
     plan_execution::PlanRouteOutcome,
     OrderFillSettlement, PlanExecutionReport,
 };
@@ -77,43 +75,6 @@ impl PlanChainFactConsumption {
         self.sealed_indices.extend(prepared.sealed_indices);
     }
 
-    fn prepare_auction_round(
-        &self,
-        round: &AuctionExecutionRound,
-    ) -> Result<PlanChainFactConsumption, StepFatal> {
-        let mut operation_ids = BTreeSet::new();
-        let mut receipt_ids = BTreeSet::new();
-        let mut sealed = BTreeSet::new();
-        let mut candidates = BTreeSet::new();
-        for fact in &round.facts {
-            if self.candidate_keys.contains(&fact.candidate_key)
-                || self.sealed_indices.contains(&fact.sealed_index)
-                || !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
-                || !sealed.insert(fact.sealed_index)
-                || !candidates.insert(fact.candidate_key.clone())
-            {
-                return Err(invariant(
-                    "duplicate candidate or sealed identity in auction plan projection",
-                ));
-            }
-            validate_auction_fact_identity(fact)?;
-        }
-        for receipt in &round.receipts {
-            if self.receipts.contains(&receipt.local_key)
-                || !receipt_ids.insert(receipt.local_key.clone())
-            {
-                return Err(invariant(
-                    "duplicate receipt identity in auction plan projection",
-                ));
-            }
-        }
-        Ok(Self {
-            operations: operation_ids,
-            receipts: receipt_ids,
-            candidate_keys: candidates,
-            sealed_indices: sealed,
-        })
-    }
     fn prepare_continuous_round(
         &self,
         round: &ContinuousExecutionRound,
@@ -187,6 +148,20 @@ impl AdaptivePlanChainCoordinator {
         Self::capture_batch(session, roots)
     }
 
+    /// T5（Sol 终裁·完成边界见证）：root 源排空断言（委托 roots 批）。
+    pub(super) fn roots_source_drained(&self) -> bool {
+        self.roots.roots_source_drained()
+    }
+
+    /// T5（必修 1·root 闭环）：capture 期阻塞排空全部 root（委托 roots 批；
+    /// 见 plan_chain_candidates::drain_ready_accounts_at_capture）。
+    pub(super) fn drain_ready_accounts_at_capture(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<(), StepFatal> {
+        self.roots.drain_ready_accounts_at_capture(session)
+    }
+
     pub(super) fn capture_batch(
         session: &GameSession,
         roots: PlanChainOperationBatch,
@@ -209,11 +184,16 @@ impl AdaptivePlanChainCoordinator {
         })
     }
 
+    /// 就绪批入口（测试与生产共用）。Sol 终审·冗余收口：原三态入口
+    /// （`next_ready_batch_typed`→`NextReady::PendingCapacity` 池外容量上提
+    /// 穿透）随执行期 root-wait 删除退役——root 全部在 capture 期闭环，
+    /// 执行期拉取不再等待 root，也不产生容量上提信号（root 决策期的容量
+    /// 等待保留在 `drain_ready_accounts_at_capture` 内部）。
     pub(super) fn next_ready_batch(
         &mut self,
-        session: &mut GameSession,
+        domain: &mut PlanContinuationDomain<'_>,
     ) -> Result<Vec<IntentCandidate>, StepFatal> {
-        self.next_ready_batch_with_root_wait(session, true)
+        self.yield_after_capture_drain(domain)
     }
 
     /// A plan may inspect its own live working orders while preparing an action.
@@ -235,17 +215,15 @@ impl AdaptivePlanChainCoordinator {
         self.unfinished_routes = routes;
     }
 
-    pub(super) fn ready_batch_without_waiting_for_roots(
-        &mut self,
-        session: &mut GameSession,
-    ) -> Result<Vec<IntentCandidate>, StepFatal> {
-        self.next_ready_batch_with_root_wait(session, false)
+    /// 计划来源是否显式排空（设计 §3.1③ Complete 判定：roots 含 pending 分量、
+    /// operations 队列与 routes 全排空——对齐 PlanChainOperationBatch::is_empty）。
+    pub(super) fn plan_source_drained(&self) -> bool {
+        self.roots.is_empty()
     }
 
-    fn next_ready_batch_with_root_wait(
+    fn yield_after_capture_drain(
         &mut self,
-        session: &mut GameSession,
-        blocking_roots: bool,
+        domain: &mut PlanContinuationDomain<'_>,
     ) -> Result<Vec<IntentCandidate>, StepFatal> {
         self.ensure_active()?;
         let Some(observation) = self.observation.as_mut() else {
@@ -257,25 +235,24 @@ impl AdaptivePlanChainCoordinator {
             self.exhausted = true;
             return Ok(Vec::new());
         };
-        let generated = self.roots.yield_adaptive_candidates_with_root_wait(
-            session,
+        let generated = match self.roots.yield_adaptive_candidates_after_capture_drain(
+            domain,
             observation,
-            blocking_roots,
             &self.unfinished_routes,
-        );
-        let candidates = match generated {
-            Ok(candidates) => candidates
-                .into_iter()
-                .map(|candidate| {
-                    IntentCandidate::new(
-                        IntentCandidateKey::plan_chain(candidate.chain_generation_index),
-                        candidate.owner,
-                        candidate.intent,
-                    )
-                })
-                .collect::<Vec<_>>(),
+        ) {
+            Ok(candidates) => candidates,
             Err(error) => return self.fail(error),
         };
+        let candidates = generated
+            .into_iter()
+            .map(|candidate| {
+                IntentCandidate::new(
+                    IntentCandidateKey::plan_chain(candidate.chain_generation_index),
+                    candidate.owner,
+                    candidate.intent,
+                )
+            })
+            .collect::<Vec<_>>();
         #[cfg(feature = "simulation-diagnostics")]
         {
             for candidate in &candidates {
@@ -302,9 +279,17 @@ impl AdaptivePlanChainCoordinator {
         Ok(candidates)
     }
 
+    /// **continuation 写域缝（ADR-0042 §10.1，增量一百已收窄）**：本方法=
+    /// 同股 continuation 计算的执行点，签名只接受窄写域视图
+    /// `PlanContinuationDomain`（§10.2 验收钩子：零 `&mut GameSession`
+    /// 全量借用，类型系统见证）——写本股 market（apply_changed_orders）、
+    /// 计划簿（resume/materialize/parents，按账户）、收据路由（tick 级
+    /// 共享）。剩余迁移缝（①本股 delta 内联 owner ②计划簿按账户分片
+    /// ③多股容器退役）见 ADR-0042 §10.2；账户授权保留在本协调者
+    /// （`validate_available_ready`，不经域）。
     pub(super) fn advance_after_typed_outcomes(
         &mut self,
-        session: &mut GameSession,
+        domain: &mut PlanContinuationDomain<'_>,
         steps: &[CandidateValidationOutcome],
         round: Option<&mut ContinuousExecutionRound>,
     ) -> Result<(), StepFatal> {
@@ -313,25 +298,7 @@ impl AdaptivePlanChainCoordinator {
             Ok(ordered) => ordered,
             Err(error) => return self.fail(error),
         };
-        let result = self.advance_continuous_batch(session, &ordered, round);
-        if result.is_err() {
-            self.failed = true;
-        }
-        result
-    }
-
-    pub(super) fn advance_after_auction_outcomes(
-        &mut self,
-        session: &mut GameSession,
-        steps: &[CandidateValidationOutcome],
-        round: Option<&AuctionExecutionRound>,
-    ) -> Result<(), StepFatal> {
-        self.ensure_active()?;
-        let ordered = match self.outcomes_in_plan_identity_order(steps) {
-            Ok(ordered) => ordered,
-            Err(error) => return self.fail(error),
-        };
-        let result = self.advance_auction_batch(session, &ordered, round);
+        let result = self.advance_continuous_batch(domain, &ordered, round);
         if result.is_err() {
             self.failed = true;
         }
@@ -340,7 +307,7 @@ impl AdaptivePlanChainCoordinator {
 
     fn advance_continuous_batch(
         &mut self,
-        session: &mut GameSession,
+        domain: &mut PlanContinuationDomain<'_>,
         steps: &[CandidateValidationOutcome],
         round: Option<&mut ContinuousExecutionRound>,
     ) -> Result<(), StepFatal> {
@@ -418,7 +385,7 @@ impl AdaptivePlanChainCoordinator {
             return Err(invariant("StockProcessing 返回了额外的计划命令事实"));
         }
         if let Some(round) = round {
-            self.project_execution_round(session, round)?;
+            self.project_execution_round(domain, round)?;
         }
         self.pending
             .retain(|candidate| !selected_keys.contains(candidate.key()));
@@ -426,108 +393,8 @@ impl AdaptivePlanChainCoordinator {
         for step in steps {
             self.pending_cancel_causes.remove(step.candidate_key());
         }
-        self.roots.resume_adaptive_candidates(session, outcomes)
+        self.roots.resume_adaptive_candidates(domain, outcomes)
     }
-
-    fn advance_auction_batch(
-        &mut self,
-        session: &mut GameSession,
-        steps: &[CandidateValidationOutcome],
-        round: Option<&AuctionExecutionRound>,
-    ) -> Result<(), StepFatal> {
-        let selected = self.validate_pending_subset(steps)?;
-        let selected_keys = steps
-            .iter()
-            .map(|step| step.candidate_key().clone())
-            .collect::<BTreeSet<_>>();
-        let mut facts = BTreeMap::new();
-        if let Some(round) = round {
-            if round.facts.iter().any(|fact| {
-                matches!(fact.candidate_key, IntentCandidateKey::PlanChain { .. })
-                    && !selected_keys.contains(&fact.candidate_key)
-            }) {
-                return Err(invariant(
-                    "Auction StockProcessing 返回的计划事实缺少对应的 typed AccountValidation 结果",
-                ));
-            }
-            for fact in round
-                .facts
-                .iter()
-                .filter(|fact| selected_keys.contains(&fact.candidate_key))
-            {
-                if facts
-                    .insert((fact.candidate_key.clone(), fact.sealed_index), fact)
-                    .is_some()
-                {
-                    return Err(invariant(
-                        "StockProcessing 返回了重复的 Auction 计划命令事实",
-                    ));
-                }
-            }
-        }
-        let mut outcomes = Vec::with_capacity(steps.len());
-        for (candidate, step) in selected.iter().zip(steps) {
-            let outcome = match step.result() {
-                CandidateValidationResult::Rejected { reason, .. } => {
-                    if step.operation().is_some() {
-                        return Err(invariant(
-                            "AccountValidation 拒绝的 Auction 命令仍携带 operation",
-                        ));
-                    }
-                    PlanRouteOutcome::Rejected(reason.clone())
-                }
-                CandidateValidationResult::Accepted { sealed_index, .. } => {
-                    let operation = step.operation().ok_or_else(|| {
-                        invariant("AccountValidation 受理的 Auction 命令缺少 operation")
-                    })?;
-                    if operation.candidate_key() != candidate.key()
-                        || operation.sealed_index() != *sealed_index
-                    {
-                        return Err(invariant(
-                            "Auction AccountValidation operation 身份与候选结果不一致",
-                        ));
-                    }
-                    let fact = facts
-                        .remove(&(candidate.key().clone(), *sealed_index))
-                        .ok_or_else(|| {
-                            invariant(
-                                "AccountValidation 受理的 Auction 命令缺少 StockProcessing 事实",
-                            )
-                        })?;
-                    validate_auction_command_fact(candidate, operation, fact)?;
-                    auction_route_outcome(&fact.outcome)
-                }
-            };
-            let IntentCandidateKey::PlanChain {
-                chain_generation_index,
-            } = candidate.key()
-            else {
-                return Err(invariant("pending candidate is not a plan command"));
-            };
-            outcomes.push((
-                candidate.owner(),
-                intent_code(candidate.intent()).clone(),
-                *chain_generation_index,
-                outcome,
-            ));
-        }
-        if !facts.is_empty() {
-            return Err(invariant(
-                "StockProcessing 返回了额外的 Auction 计划命令事实",
-            ));
-        }
-        if let Some(round) = round {
-            self.project_auction_execution_round(session, round)?;
-        }
-        self.pending
-            .retain(|candidate| !selected_keys.contains(candidate.key()));
-        #[cfg(feature = "simulation-diagnostics")]
-        for step in steps {
-            self.pending_cancel_causes.remove(step.candidate_key());
-        }
-        self.roots.resume_adaptive_candidates(session, outcomes)
-    }
-
     fn validate_pending_subset(
         &self,
         steps: &[CandidateValidationOutcome],
@@ -581,153 +448,32 @@ impl AdaptivePlanChainCoordinator {
 
     /// Also consumes NPC/player results before visiting the first plan root. The market and
     /// working-order view advances, while the frozen account/market decision view does not.
+    /// ADR-0042 §10（增量一百）：轮次投影经窄写域视图执行（零全量借用）。
     pub(super) fn project_execution_round(
         &mut self,
-        session: &mut GameSession,
+        domain: &mut PlanContinuationDomain<'_>,
         round: &mut ContinuousExecutionRound,
     ) -> Result<(), StepFatal> {
         self.ensure_active()?;
-        let result = self.project_round(session, round);
+        let result = self.project_round(domain, round);
         if result.is_err() {
             self.failed = true;
         }
         result
-    }
-
-    pub(super) fn project_auction_execution_round(
-        &mut self,
-        session: &mut GameSession,
-        round: &AuctionExecutionRound,
-    ) -> Result<(), StepFatal> {
-        self.ensure_active()?;
-        let result = self.project_auction_round(session, round);
-        if result.is_err() {
-            self.failed = true;
-        }
-        result
-    }
-
-    fn project_auction_round(
-        &mut self,
-        session: &mut GameSession,
-        round: &AuctionExecutionRound,
-    ) -> Result<(), StepFatal> {
-        let prepared = self.consumed.prepare_auction_round(round)?;
-        for (code, projection) in &round.projections {
-            if !session.state.markets.contains_key(code) {
-                return Err(invariant("auction projection returned an unknown stock"));
-            }
-            if projection.orders.is_empty() {
-                session.state.auction_orders.remove(code);
-            } else {
-                session
-                    .state
-                    .auction_orders
-                    .insert(code.clone(), projection.orders.clone());
-            }
-        }
-
-        for fact in &round.facts {
-            #[cfg(feature = "simulation-diagnostics")]
-            project_auction_causal_operation(
-                session,
-                fact,
-                auction_causal_cancel_termination(
-                    &self.pending,
-                    &self.pending_cancel_causes,
-                    fact,
-                )?,
-            );
-            if let IntentCandidateKey::PlanChain {
-                chain_generation_index,
-            } = &fact.candidate_key
-            {
-                let candidate = self
-                    .pending
-                    .iter()
-                    .find(|candidate| candidate.key() == &fact.candidate_key)
-                    .ok_or_else(|| invariant("auction plan fact has no pending command"))?;
-                self.roots.install_accepted_submit_parents(
-                    session,
-                    &[(
-                        candidate.owner(),
-                        intent_code(candidate.intent()).clone(),
-                        *chain_generation_index,
-                        auction_route_outcome(&fact.outcome),
-                    )],
-                )?;
-            }
-            match &fact.outcome {
-                AuctionLifecycleFact::Accepted {
-                    account,
-                    code,
-                    order_id,
-                    side,
-                    qty,
-                    ..
-                } => {
-                    validate_parent_acceptance(session, *account, code, *side, *qty)?;
-                    session.record_parent_order_submission(*account, code, *side, *order_id, *qty);
-                }
-                AuctionLifecycleFact::Canceled {
-                    account,
-                    code,
-                    order_id,
-                    ..
-                } => {
-                    session.record_parent_order_canceled(*account, code, *order_id);
-                    session.remove_npc_order_lifecycle(*account, code, *order_id);
-                }
-                AuctionLifecycleFact::Rejected { .. } => {}
-            }
-            let mut receipts = round
-                .receipts
-                .iter()
-                .filter(|receipt| {
-                    receipt.local_key.source() == ReceiptSource::SealedIntent(fact.sealed_index)
-                })
-                .collect::<Vec<_>>();
-            receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
-            for receipt in receipts {
-                project_receipt(session, receipt)?;
-            }
-            synchronize_projected_plans(session)?;
-        }
-        if round
-            .receipts
-            .iter()
-            .any(|receipt| !matches!(receipt.local_key.source(), ReceiptSource::SealedIntent(_)))
-        {
-            return Err(invariant(
-                "auction operation round exposed a finalizer receipt before finish",
-            ));
-        }
-        if round.facts.is_empty() {
-            synchronize_projected_plans(session)?;
-        }
-        self.consumed.commit_round(prepared);
-        Ok(())
     }
 
     fn project_round(
         &mut self,
-        session: &mut GameSession,
+        domain: &mut PlanContinuationDomain<'_>,
         round: &mut ContinuousExecutionRound,
     ) -> Result<(), StepFatal> {
         let prepared = self.consumed.prepare_continuous_round(round)?;
         for (code, projection) in &mut round.projections {
-            let market = session
-                .state
-                .markets
-                .get_mut(code)
-                .ok_or_else(|| invariant("plan projection returned an unknown stock"))?;
             let delta = projection
                 .market_delta
                 .take()
                 .ok_or_else(|| invariant("plan projection consumed stock changes twice"))?;
-            market
-                .apply_changed_orders(delta)
-                .map_err(|error| invariant(&error.to_string()))?;
+            domain.apply_market_delta(code, delta)?;
         }
         let mut sealed_receipts = BTreeMap::<u64, Vec<&EnvelopeReceipt>>::new();
         let mut finalizer_receipts = Vec::new();
@@ -741,9 +487,10 @@ impl AdaptivePlanChainCoordinator {
             }
         }
         for fact in &round.facts {
+            let plan_routed = matches!(fact.candidate_key, IntentCandidateKey::PlanChain { .. });
             #[cfg(feature = "simulation-diagnostics")]
             project_continuous_causal_start(
-                session,
+                domain,
                 round,
                 fact,
                 causal_cancel_termination(&self.pending, &self.pending_cancel_causes, fact)?,
@@ -758,7 +505,7 @@ impl AdaptivePlanChainCoordinator {
                     .find(|candidate| candidate.key() == &fact.candidate_key)
                     .ok_or_else(|| invariant("plan fact has no pending command"))?;
                 self.roots.install_accepted_submit_parents(
-                    session,
+                    domain,
                     &[(
                         candidate.owner(),
                         intent_code(candidate.intent()).clone(),
@@ -783,14 +530,23 @@ impl AdaptivePlanChainCoordinator {
                         side,
                         ..
                     } => {
-                        validate_parent_acceptance(session, *account, code, *side, *original_qty)?;
-                        session.record_parent_order_submission(
+                        validate_parent_acceptance(
+                            domain.plans(),
                             *account,
                             code,
                             *side,
                             *order_id,
                             *original_qty,
-                        );
+                        )?;
+                        domain
+                            .record_parent_order_submission(
+                                *account,
+                                code,
+                                *side,
+                                *order_id,
+                                *original_qty,
+                            )
+                            .map_err(|error| invariant(&error.to_string()))?;
                         if let ContinuousPlaceFact::Resting {
                             sealed_index,
                             price,
@@ -820,7 +576,7 @@ impl AdaptivePlanChainCoordinator {
                             // Use the actual acceptance-time quote, even when a later operation
                             // in this round changes the market. Parent submission precedes this
                             // check so parent children retain their own execution horizon.
-                            session.register_npc_order_lifecycle_at_quote(
+                            domain.register_npc_order_lifecycle_at_quote(
                                 *account,
                                 code,
                                 &quote.order,
@@ -838,21 +594,26 @@ impl AdaptivePlanChainCoordinator {
                     order_id,
                     ..
                 }) => {
-                    session.record_parent_order_canceled(*account, code, *order_id);
-                    session.remove_npc_order_lifecycle(*account, code, *order_id);
+                    // 计划链 continuation 拥有自己的撤销回写（resume 路径应用
+                    // ChildOrderCanceled）；普通路径（对账撤单/到期/日终）才在
+                    // 事实投影时立即清除计划执行腿的在途子单引用。
+                    if !plan_routed {
+                        domain
+                            .record_parent_order_canceled(*account, code, *order_id)
+                            .map_err(|error| invariant(&error.to_string()))?;
+                    }
+                    domain.remove_npc_order_lifecycle(*account, code, *order_id);
                 }
                 ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {}
             }
             if let Some(receipts) = sealed_receipts.remove(&fact.sealed_index) {
                 for receipt in receipts {
-                    project_receipt(session, receipt)?;
+                    project_receipt(domain, receipt, plan_routed)?;
                 }
             }
             #[cfg(feature = "simulation-diagnostics")]
-            project_continuous_causal_end(session, round, fact)?;
-            // A completed linked parent must disappear before a later independent operation
-            // can be accepted on that account/stock/side, just as in single-operation rounds.
-            synchronize_projected_plans(session)?;
+            project_continuous_causal_end(domain, round, fact)?;
+            // 成交已即时更新唯一 owner；后续操作读取已发生的进度，不再同步第二份母单。
         }
         // Auction/day-end finalizer receipts have no command outcome and are consumed only
         // after that finalizer actually runs. A future command source cannot appear here.
@@ -862,10 +623,8 @@ impl AdaptivePlanChainCoordinator {
             ));
         }
         for receipt in &finalizer_receipts {
-            project_receipt(session, receipt)?;
-        }
-        if round.facts.is_empty() || !finalizer_receipts.is_empty() {
-            synchronize_projected_plans(session)?;
+            // 日终/竞价收尾释放不经过任何 continuation，直接按唯一 owner 语义回写。
+            project_receipt(domain, receipt, false)?;
         }
         // Every order leaving the book has a terminal receipt. project_receipt
         // removes its lifecycle at the actual transition, including a new quote
@@ -903,69 +662,9 @@ impl AdaptivePlanChainCoordinator {
         Err(error)
     }
 }
-
-#[cfg(feature = "simulation-diagnostics")]
-fn project_auction_causal_operation(
-    session: &mut GameSession,
-    fact: &AuctionExecutionFact,
-    cancel_termination: crate::diagnostics::causal::Termination,
-) {
-    match &fact.outcome {
-        AuctionLifecycleFact::Accepted {
-            account,
-            code,
-            order_id,
-            side,
-            qty,
-            ..
-        } => {
-            let quote = session.causal_quote(code);
-            session.causal_submitted_with_quote(*account, *order_id, code, *side, *qty, quote);
-        }
-        AuctionLifecycleFact::Canceled {
-            account,
-            code,
-            order_id,
-            remaining_qty,
-            ..
-        } => session.causal_terminated(
-            (*account, *order_id, *remaining_qty),
-            code,
-            cancel_termination,
-        ),
-        AuctionLifecycleFact::Rejected { .. } => {}
-    }
-}
-
-#[cfg(feature = "simulation-diagnostics")]
-fn auction_causal_cancel_termination(
-    pending: &[IntentCandidate],
-    pending_causes: &BTreeMap<IntentCandidateKey, PlanCancelCause>,
-    fact: &AuctionExecutionFact,
-) -> Result<crate::diagnostics::causal::Termination, StepFatal> {
-    use crate::diagnostics::causal::Termination;
-
-    if !matches!(fact.outcome, AuctionLifecycleFact::Canceled { .. }) {
-        return Ok(Termination::Voluntary);
-    }
-    let is_pending = pending
-        .iter()
-        .any(|candidate| candidate.key() == &fact.candidate_key);
-    match (is_pending, pending_causes.get(&fact.candidate_key).copied()) {
-        (false, None) => Ok(Termination::Voluntary),
-        (true, Some(cause)) => Ok(cause.causal_termination()),
-        (true, None) => Err(invariant(
-            "pending auction plan-chain cancellation has no typed causal provenance",
-        )),
-        (false, Some(_)) => Err(invariant(
-            "auction plan-chain causal provenance belongs to a different operation",
-        )),
-    }
-}
-
 #[cfg(feature = "simulation-diagnostics")]
 fn project_continuous_causal_start(
-    session: &mut GameSession,
+    domain: &mut PlanContinuationDomain<'_>,
     round: &ContinuousExecutionRound,
     fact: &ContinuousExecutionFact,
     cancel_termination: crate::diagnostics::causal::Termination,
@@ -993,7 +692,7 @@ fn project_continuous_causal_start(
             let quotes = quotes.ok_or_else(|| {
                 invariant("successful continuous place has no operation quote projection")
             })?;
-            session.causal_submitted_with_quote(
+            domain.causal_submitted_with_quote(
                 *account,
                 *order_id,
                 code,
@@ -1014,7 +713,7 @@ fn project_continuous_causal_start(
                     "successful continuous cancellation has no operation quote projection",
                 ));
             }
-            session.causal_terminated(
+            domain.causal_terminated(
                 (*account, *order_id, *remaining_qty),
                 code,
                 cancel_termination,
@@ -1051,7 +750,7 @@ fn project_continuous_causal_start(
                     "StockProcessing 拒绝的 Continuous Place 生命周期来源不唯一",
                 ));
             }
-            session.causal_submitted_with_quote(
+            domain.causal_submitted_with_quote(
                 *account,
                 *order_id,
                 code,
@@ -1059,7 +758,7 @@ fn project_continuous_causal_start(
                 *original_qty,
                 causal_quote(code, &quotes.before),
             );
-            session.causal_terminated(
+            domain.causal_terminated(
                 (*account, *order_id, *original_qty),
                 code,
                 crate::diagnostics::causal::Termination::Aborted,
@@ -1107,7 +806,7 @@ fn causal_cancel_termination(
 
 #[cfg(feature = "simulation-diagnostics")]
 fn project_continuous_causal_end(
-    session: &mut GameSession,
+    domain: &mut PlanContinuationDomain<'_>,
     round: &ContinuousExecutionRound,
     fact: &ContinuousExecutionFact,
 ) -> Result<(), StepFatal> {
@@ -1152,7 +851,7 @@ fn project_continuous_causal_end(
         .iter()
         .filter(|trade| trade.triggering_sealed_index == fact.sealed_index)
     {
-        session.causal_record(CausalFactKind::Execution {
+        domain.causal_record(CausalFactKind::Execution {
             code: trade.stock.clone(),
             maker: trade.trade.maker_order_id,
             taker: trade.trade.taker_order_id,
@@ -1173,14 +872,14 @@ fn project_continuous_causal_end(
                     "continuous market remainder release has zero quantity",
                 ));
             }
-            session.causal_terminated(
+            domain.causal_terminated(
                 (receipt.envelope.account, order_id, receipt.qty_before),
                 code,
                 Termination::MarketRemainder,
             );
         }
     }
-    session.causal_record(CausalFactKind::Quote(causal_quote(code, &quotes.after)));
+    domain.causal_record(CausalFactKind::Quote(causal_quote(code, &quotes.after)));
     Ok(())
 }
 
@@ -1276,160 +975,6 @@ fn validate_command_fact(
         Err(invariant("StockProcessing payload 与已 yield 的命令不一致"))
     }
 }
-
-fn validate_auction_command_fact(
-    candidate: &IntentCandidate,
-    operation: &ValidatedOperation,
-    fact: &AuctionExecutionFact,
-) -> Result<(), StepFatal> {
-    validate_auction_fact_identity(fact)?;
-    if fact.candidate_key != *candidate.key() || fact.sealed_index != operation.sealed_index() {
-        return Err(invariant(
-            "Auction StockProcessing 事实与已 yield 的 candidate/sealed 身份不一致",
-        ));
-    }
-    let valid = match (candidate.intent(), operation, &fact.outcome) {
-        (
-            Intent::PlaceLimit {
-                code,
-                side,
-                price,
-                qty,
-            },
-            ValidatedOperation::Place(draft),
-            AuctionLifecycleFact::Accepted {
-                account,
-                code: actual_code,
-                order_id,
-                side: actual_side,
-                qty: actual_qty,
-                ..
-            },
-        ) => {
-            *account == candidate.owner()
-                && actual_code == code
-                && actual_side == side
-                && actual_qty == qty
-                && draft.owner() == *account
-                && draft.code() == code
-                && draft.side() == *side
-                && draft_price_matches(draft, *price)
-                && draft.qty() == *qty
-                && draft.order_id() == *order_id
-                && fact.allocated_order_id == Some(*order_id)
-        }
-        (
-            Intent::PlaceLimit { code, .. },
-            ValidatedOperation::Place(draft),
-            AuctionLifecycleFact::Rejected {
-                account,
-                code: actual_code,
-                order_id,
-                ..
-            },
-        ) => {
-            *account == candidate.owner()
-                && actual_code == code
-                && draft.owner() == *account
-                && draft.code() == code
-                && *order_id == Some(draft.order_id())
-                && fact.allocated_order_id == Some(draft.order_id())
-        }
-        (
-            Intent::Cancel { code, id },
-            ValidatedOperation::Cancel {
-                account,
-                code: actual_code,
-                order_id,
-                ..
-            },
-            AuctionLifecycleFact::Canceled {
-                account: fact_account,
-                code: fact_code,
-                order_id: fact_order,
-                ..
-            },
-        ) => {
-            *account == candidate.owner()
-                && fact_account == account
-                && actual_code == code
-                && fact_code == code
-                && order_id == id
-                && fact_order == id
-                && fact.allocated_order_id.is_none()
-        }
-        (
-            Intent::Cancel { code, id },
-            ValidatedOperation::Cancel {
-                account,
-                code: actual_code,
-                order_id,
-                ..
-            },
-            AuctionLifecycleFact::Rejected {
-                account: fact_account,
-                code: fact_code,
-                order_id: fact_order,
-                ..
-            },
-        ) => {
-            *account == candidate.owner()
-                && fact_account == account
-                && actual_code == code
-                && fact_code == code
-                && order_id == id
-                && *fact_order == Some(*id)
-                && fact.allocated_order_id.is_none()
-        }
-        _ => false,
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(invariant(
-            "Auction StockProcessing payload 与已 yield 的命令不一致",
-        ))
-    }
-}
-
-fn validate_auction_fact_identity(fact: &AuctionExecutionFact) -> Result<(), StepFatal> {
-    let (candidate_key, sealed_index, allocated) = match &fact.outcome {
-        AuctionLifecycleFact::Accepted {
-            candidate_key,
-            sealed_index,
-            order_id,
-            ..
-        } => (candidate_key, *sealed_index, Some(*order_id)),
-        AuctionLifecycleFact::Canceled {
-            candidate_key,
-            sealed_index,
-            ..
-        } => (candidate_key, *sealed_index, None),
-        AuctionLifecycleFact::Rejected {
-            candidate_key,
-            sealed_index,
-            ..
-        } => (candidate_key, *sealed_index, fact.allocated_order_id),
-    };
-    if candidate_key != &fact.candidate_key
-        || sealed_index != fact.sealed_index
-        || allocated != fact.allocated_order_id
-    {
-        return Err(invariant(
-            "Auction StockProcessing 事实的 candidate/sealed/order 身份不一致",
-        ));
-    }
-    Ok(())
-}
-
-fn auction_route_outcome(outcome: &AuctionLifecycleFact) -> PlanRouteOutcome {
-    match outcome {
-        AuctionLifecycleFact::Accepted { order_id, .. } => PlanRouteOutcome::Accepted(*order_id),
-        AuctionLifecycleFact::Canceled { order_id, .. } => PlanRouteOutcome::Canceled(*order_id),
-        AuctionLifecycleFact::Rejected { reason, .. } => PlanRouteOutcome::Rejected(reason.clone()),
-    }
-}
-
 fn validate_fact_identity(fact: &ContinuousExecutionFact) -> Result<(), StepFatal> {
     let valid = match &fact.outcome {
         ContinuousExecutionOutcome::Place {
@@ -1554,47 +1099,48 @@ fn route_outcome(outcome: &ContinuousExecutionOutcome) -> PlanRouteOutcome {
     }
 }
 
-fn synchronize_projected_plans(session: &mut GameSession) -> Result<(), StepFatal> {
-    let mut plans = std::mem::take(&mut session.state.plans);
-    let synchronized = session.synchronize_owned_plan_execution(&mut plans);
-    session.state.plans = plans;
-    synchronized.map_err(|error| invariant(&error.to_string()))
-}
-
 fn validate_parent_acceptance(
-    session: &GameSession,
+    plans: &crate::plans::PlanBook,
     account: AccountId,
     code: &StockId,
     side: Side,
+    order_id: OrderId,
     qty: u32,
 ) -> Result<(), StepFatal> {
-    if let Some(parent) = session
-        .state
-        .parent_orders
-        .get(&account)
-        .and_then(|parents| parents.get(code))
-    {
-        if parent.side() == side {
-            if parent.active_child_order_id().is_some() {
+    if let Some(plan) = plans.active_plan(account, code) {
+        if plan.active_child_order_id() == Some(order_id) {
+            if plan.direction() != side || plan.active_child_remaining_qty() != Some(qty) {
                 return Err(invariant(
-                    "typed acceptance would install a second active parent child",
+                    "typed plan acceptance disagrees with the unique owner",
                 ));
             }
-            if qty == 0 || qty > parent.target_qty().saturating_sub(parent.filled_qty()) {
-                return Err(invariant(
-                    "typed acceptance exceeds parent remaining quantity",
-                ));
+            if let crate::plans::PlanTarget::ShareCount(target) = plan.target() {
+                if qty == 0 || qty > target.saturating_sub(plan.filled_qty()) {
+                    return Err(invariant(
+                        "typed acceptance exceeds parent remaining quantity",
+                    ));
+                }
             }
         }
     }
     Ok(())
 }
 
-fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Result<(), StepFatal> {
+fn project_receipt(
+    domain: &mut PlanContinuationDomain<'_>,
+    receipt: &EnvelopeReceipt,
+    plan_routed: bool,
+) -> Result<(), StepFatal> {
     let key = &receipt.envelope;
     if matches!(receipt.kind, ReceiptKind::Release | ReceiptKind::Reject) {
-        session.record_parent_order_canceled(key.account, &key.stock, key.order);
-        session.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
+        // 计划链 continuation 拥有自己的撤销回写；普通路径的释放才在这里
+        // 立即清除计划执行腿的在途子单引用（唯一 owner 语义）。
+        if !plan_routed {
+            domain
+                .record_parent_order_canceled(key.account, &key.stock, key.order)
+                .map_err(|error| invariant(&error.to_string()))?;
+        }
+        domain.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
         return Ok(());
     }
     if receipt.kind != ReceiptKind::Fill {
@@ -1605,29 +1151,60 @@ fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Resu
         .checked_sub(receipt.qty_after)
         .filter(|qty| *qty > 0)
         .ok_or_else(|| invariant("plan fill receipt has no positive quantity"))?;
-    // Keep the checked value transition even though parent-order projection only needs shares.
-    receipt
+    // 这里是ReceiptAggregation之前的独立计划续行阶段，必须保留其局部链校验。
+    let gross = receipt
         .value_after
         .sub(receipt.value_before)
         .map_err(|error| invariant(&error.to_string()))?;
-    if let Some(parent) = session
-        .state
-        .parent_orders
-        .get(&key.account)
-        .and_then(|parents| parents.get(&key.stock))
+    project_fill_values(domain, key, qty, gross, receipt.qty_after == 0)
+}
+
+/// 聚合之后的Auction续行直接消费同批typed事实，不再从raw计算qty/gross。
+pub(super) fn project_aggregated_fill(
+    session: &mut GameSession,
+    receipt: &EnvelopeReceipt,
+    fact: &super::fill_fact::FillFact,
+) -> Result<(), StepFatal> {
+    if receipt.kind != ReceiptKind::Fill
+        || fact.key() != &receipt.envelope
+        || fact.index() != super::ReceiptIndex(receipt.index)
     {
-        if parent.side() == key.side
-            && parent.active_child_order_id() == Some(key.order)
-            && (parent
+        return Err(invariant("聚合Fill事实与计划审计身份不一致"));
+    }
+    PlanContinuationDomain::scoped(session, |domain| {
+        project_fill_values(
+            domain,
+            fact.key(),
+            fact.qty(),
+            fact.gross(),
+            receipt.qty_after == 0,
+        )
+    })
+}
+
+fn project_fill_values(
+    domain: &mut PlanContinuationDomain<'_>,
+    key: &super::EnvelopeKey,
+    qty: u32,
+    _gross: crate::Money,
+    terminal: bool,
+) -> Result<(), StepFatal> {
+    if let Some(plan) = domain.plans().active_plan(key.account, &key.stock) {
+        if plan.direction() == key.side
+            && plan.active_child_order_id() == Some(key.order)
+            && (plan
                 .active_child_remaining_qty()
                 .is_none_or(|remaining| qty > remaining)
-                || parent
-                    .filled_qty()
-                    .checked_add(qty)
-                    .is_none_or(|filled| filled > parent.target_qty()))
+                || plan.filled_qty().checked_add(qty).is_none_or(|filled| {
+                    filled
+                        > match plan.target() {
+                            crate::plans::PlanTarget::ShareCount(target) => target,
+                            crate::plans::PlanTarget::PositionFractionBp(_) => u32::MAX,
+                        }
+                }))
         {
             return Err(invariant(
-                "typed fill exceeds parent child or target quantity",
+                "typed fill exceeds plan child or target quantity",
             ));
         }
     }
@@ -1637,14 +1214,13 @@ fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Resu
         order_id: key.order,
         qty,
         #[cfg(feature = "simulation-diagnostics")]
-        gross: receipt
-            .value_after
-            .sub(receipt.value_before)
-            .map_err(|error| invariant(&error.to_string()))?,
+        gross: _gross,
     };
-    session.record_parent_order_fills(&key.stock, &[fill]);
-    if receipt.qty_after == 0 {
-        session.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
+    domain
+        .record_parent_order_fills(&key.stock, &[fill])
+        .map_err(|error| invariant(&error.to_string()))?;
+    if terminal {
+        domain.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
     }
     Ok(())
 }

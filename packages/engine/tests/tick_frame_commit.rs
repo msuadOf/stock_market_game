@@ -86,7 +86,7 @@ fn quiet_preopen_ticks_are_not_dropped() {
     }
     let before = game.game().seq();
     let frame = game.step_frame().unwrap();
-    assert!(frame.events.is_empty());
+    assert!(frame.facts.is_empty());
     assert_eq!(frame.tick, 5);
     assert_eq!((frame.seq_from, frame.seq_to), (before, before));
     assert!(frame.validate().is_ok());
@@ -207,9 +207,9 @@ fn completion_is_explicit_in_auction_projection() {
     for _ in 0..20 {
         let frame = game.step_frame().unwrap();
         if frame
-            .events
+            .facts
             .iter()
-            .any(|event| matches!(event, engine::Event::AuctionCompleted { .. }))
+            .any(|fact| matches!(&fact.event, engine::Event::AuctionCompleted { .. }))
         {
             let wire = serde_json::to_string(&frame.timeseries_payload).unwrap();
             assert!(wire.contains("Completion"));
@@ -256,7 +256,7 @@ fn continuous_points_match_authoritative_price_tick() {
         game.step_frame().unwrap();
     }
     let frame = game.step_frame().unwrap();
-    for event in &frame.events {
+    for event in frame.events() {
         if let engine::Event::PriceTick {
             code,
             tick,

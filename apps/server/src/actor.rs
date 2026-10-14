@@ -21,7 +21,7 @@ use engine::session::protocol::{
 };
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode};
 use serde::Serialize;
-use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{debug, info, warn};
 
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数（与前端 RemoteHost 对齐的「真实时间」尺度）。
@@ -35,10 +35,6 @@ const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
 fn fixed_tick_duration(base_ms: u64, speed: f64) -> Duration {
     debug_assert!(speed.is_finite() && speed > 0.0);
     Duration::from_secs_f64((base_ms as f64 / 1_000.0) / speed).max(Duration::from_millis(1))
-}
-
-fn fastest_permits_for_workers(worker_count: usize) -> usize {
-    worker_count.saturating_sub(1).max(1)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -491,9 +487,53 @@ mod fatal_tests;
 #[cfg(test)]
 mod interval_tests {
     use super::{
-        fastest_permits_for_workers, fixed_tick_duration, SpeedMeter, FASTEST_BATCH_BUDGET,
+        fixed_tick_duration, gate_deferred_drop_report, SpeedMeter, FASTEST_BATCH_BUDGET,
     };
     use std::time::Duration;
+
+    #[test]
+    fn deferred_drop_report_gates_first_diagnostic_only() {
+        use engine::session::DeferredDropDegradation;
+        let mut reported = false;
+        // 无退化 → 不报告、不置位。
+        assert_eq!(gate_deferred_drop_report(&mut reported, None), None);
+        assert!(!reported);
+        // 首个退化（真实 errno 透传）→ 报告并置位。
+        assert_eq!(
+            gate_deferred_drop_report(
+                &mut reported,
+                Some(DeferredDropDegradation::SpawnFailed { os_errno: Some(11) })
+            ),
+            Some(("DEFERRED_DROP_SPAWN_FAILED", Some(11)))
+        );
+        assert!(reported);
+        // 已报告后不再刷屏，即使退化升级。
+        assert_eq!(
+            gate_deferred_drop_report(
+                &mut reported,
+                Some(DeferredDropDegradation::UnexpectedDisconnected)
+            ),
+            None
+        );
+        // 新 actor（未报告）首见断连 → 对应诊断码、无 errno。
+        let mut fresh = false;
+        assert_eq!(
+            gate_deferred_drop_report(
+                &mut fresh,
+                Some(DeferredDropDegradation::UnexpectedDisconnected)
+            ),
+            Some(("DEFERRED_DROP_UNEXPECTED_DISCONNECTED", None))
+        );
+        // SpawnFailed 无 errno（非 OS 来源失败）也能报告。
+        let mut no_errno = false;
+        assert_eq!(
+            gate_deferred_drop_report(
+                &mut no_errno,
+                Some(DeferredDropDegradation::SpawnFailed { os_errno: None })
+            ),
+            Some(("DEFERRED_DROP_SPAWN_FAILED", None))
+        );
+    }
 
     #[test]
     fn high_speed_interval_preserves_fractional_milliseconds() {
@@ -502,13 +542,6 @@ mod interval_tests {
             Duration::from_secs_f64(1.0 / 720.0)
         );
         assert_eq!(fixed_tick_duration(0, 1.0), Duration::from_millis(1));
-    }
-
-    #[test]
-    fn fastest_budget_reserves_one_runtime_worker_when_possible() {
-        assert_eq!(fastest_permits_for_workers(1), 1);
-        assert_eq!(fastest_permits_for_workers(2), 1);
-        assert_eq!(fastest_permits_for_workers(8), 7);
     }
 
     #[test]
@@ -930,6 +963,8 @@ pub enum SendCommandError {
 pub enum NewSessionError {
     #[error(transparent)]
     InvalidSetup(#[from] SessionError),
+    #[error("无法初始化会话计算执行上下文：{0}")]
+    Compute(#[source] crate::HostComputeInitError),
     #[error("session capacity reached (maximum {max})")]
     Capacity { max: usize },
 }
@@ -942,7 +977,8 @@ pub enum NewSessionError {
 pub struct SessionManager {
     sessions: Arc<DashMap<String, Arc<SessionHandles>>>,
     active_count: Arc<AtomicUsize>,
-    fastest_budget: Arc<Semaphore>,
+    /// 本宿主提供的计算上下文；同一资源预算由全部会话共享。
+    compute: Result<Arc<engine::ComputeContext>, crate::HostComputeInitError>,
     base_ms: u64,
 }
 
@@ -952,21 +988,28 @@ impl SessionManager {
         Self::with_base_ms(BASE_TICK_MS)
     }
 
-    /// 测试用：自定义 base_ms（很小的值可加速 step 以便断言事件）。
+    /// 未明确配置的宿主使用 OS 可用资源；初始化错误由 new_session 报告。
     pub fn with_base_ms(base_ms: u64) -> Self {
-        let runtime_workers = tokio::runtime::Handle::try_current()
-            .map(|handle| handle.metrics().num_workers())
-            .unwrap_or_else(|error| {
-                warn!(%error, "SessionManager created outside a Tokio runtime; Fastest limited to one concurrent batch");
-                1
-            });
-        // Fastest 是持续计算负载；最多占用 N-1 个 Tokio worker，至少仍允许一个会话运行。
-        // 多核机器保留一核处理 HTTP/WS、定时器和控制命令，避免合法多会话拖死整个服务。
-        let fastest_permits = fastest_permits_for_workers(runtime_workers);
+        Self::configured(base_ms, crate::host_compute_context())
+    }
+
+    pub fn with_compute(base_ms: u64, compute: Arc<engine::ComputeContext>) -> Self {
+        Self::configured(base_ms, Ok(compute))
+    }
+
+    /// 读取本宿主实际持有的 Rayon registry 容量，不读取 caller 的另一个 pool。
+    pub fn compute_workers(&self) -> Result<usize, crate::HostComputeInitError> {
+        self.compute.as_ref().map(|compute| compute.workers()).map_err(|error| *error)
+    }
+
+    fn configured(
+        base_ms: u64,
+        compute: Result<Arc<engine::ComputeContext>, crate::HostComputeInitError>,
+    ) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
             active_count: Arc::new(AtomicUsize::new(0)),
-            fastest_budget: Arc::new(Semaphore::new(fastest_permits)),
+            compute,
             base_ms,
         }
     }
@@ -975,6 +1018,7 @@ impl SessionManager {
     ///
     /// 失败显式返回 `SessionError`（构造非法参数），绝不静默吞（铁律二）。
     pub fn new_session(&self, setup: SessionSetup, seed: u64) -> Result<String, NewSessionError> {
+        let compute = self.compute.clone().map_err(NewSessionError::Compute)?;
         self.active_count
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current < MAX_SESSIONS).then_some(current + 1)
@@ -983,7 +1027,7 @@ impl SessionManager {
         let ticks_per_day = setup.ticks_per_day;
         let auction_ticks = setup.auction_ticks;
         let closing_auction_ticks = setup.closing_auction_ticks;
-        let game = match ProtocolSession::new(setup, seed) {
+        let game = match ProtocolSession::new_with_compute(setup, seed, compute) {
             Ok(game) => game,
             Err(error) => {
                 self.active_count.fetch_sub(1, Ordering::AcqRel);
@@ -1017,13 +1061,22 @@ impl SessionManager {
             cmd_rx,
             event_tx: handles.event_tx.clone(),
             session_id: session_id.clone(),
-            fastest_budget: Arc::clone(&self.fastest_budget),
             public_revision: 0,
             timeline_generation: 1,
             pause_preferences: PausePreferences::default(),
             fatal_failure: None,
+            deferred_drop_reported: false,
         };
-        tokio::spawn(actor.run());
+        // P2①：producer 名额必须在 spawn 前同步登记。guard 作为捕获随 future 移动，
+        // 未 poll/被取消/panic 的丢弃都会析构捕获并释放名额；正常路径在 run
+        // （含 actor 与其 game 的 Drop）完成后释放。修复前登记发生在首次 poll，
+        // `new_session` 返回但 future 未 poll 时 actor_producers 仍为 0，drain 可在
+        // 空账本上伪成功。普通构建 guard 为空操作。
+        let producer = engine::session::verification_actor_guard();
+        tokio::spawn(async move {
+            let _producer = producer;
+            actor.run().await;
+        });
         Ok(session_id)
     }
 
@@ -1053,6 +1106,27 @@ impl Default for SessionManager {
 }
 
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `event_tx`。
+/// 进程级析构后端退化 → 宿主边界稳定诊断码与 errno。
+/// `reported` 已置位后不再重复报告（首个故障可见，不逐 tick 刷屏）。
+fn gate_deferred_drop_report(
+    reported: &mut bool,
+    degradation: Option<engine::session::DeferredDropDegradation>,
+) -> Option<(&'static str, Option<i32>)> {
+    if *reported {
+        return None;
+    }
+    let degradation = degradation?;
+    *reported = true;
+    Some(match degradation {
+        engine::session::DeferredDropDegradation::SpawnFailed { os_errno } => {
+            ("DEFERRED_DROP_SPAWN_FAILED", os_errno)
+        }
+        engine::session::DeferredDropDegradation::UnexpectedDisconnected => {
+            ("DEFERRED_DROP_UNEXPECTED_DISCONNECTED", None)
+        }
+    })
+}
+
 struct SessionActor {
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     #[cfg(test)]
@@ -1062,11 +1136,12 @@ struct SessionActor {
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     event_tx: broadcast::Sender<EngineUpdate>,
     session_id: String,
-    fastest_budget: Arc<Semaphore>,
     public_revision: u64,
     timeline_generation: u64,
     pause_preferences: PausePreferences,
     fatal_failure: Option<HostFailure>,
+    /// 进程级析构后端退化只在本 actor 首次观察时报告（不逐 tick 刷屏）。
+    deferred_drop_reported: bool,
 }
 
 impl SessionActor {
@@ -1115,6 +1190,7 @@ impl SessionActor {
                             let speed_changed = matches!(c, SessionCommand::SetSpeed { .. });
                             let shutting_down = matches!(c, SessionCommand::Shutdown { .. });
                             self.handle_command(c).await;
+                            self.report_deferred_drop_degradation();
                             if shutting_down {
                                 break;
                             }
@@ -1132,14 +1208,8 @@ impl SessionActor {
                 _ = interval.tick(), if !self.pacing.is_fastest() && self.pacing.is_running() => {
                     self.tick_and_broadcast().await;
                 }
-                permit = Arc::clone(&self.fastest_budget).acquire_owned(), if self.pacing.is_fastest() && self.pacing.is_running() => {
-                    match permit {
-                        Ok(_permit) => self.run_fastest_batch(),
-                        Err(_) => {
-                            warn!(session = %self.session_id, "fastest CPU budget closed; actor exiting");
-                            break;
-                        }
-                    }
+                _ = std::future::ready(()), if self.pacing.is_fastest() && self.pacing.is_running() => {
+                    self.run_fastest_batch();
                     tokio::task::yield_now().await;
                 }
             }
@@ -1247,6 +1317,24 @@ impl SessionActor {
         // jemalloc free（实测 ~132µs/tick）不再占用 actor 关键路径；析构无任何
         // 可观察副作用，失败原子性/首错序不受影响（错误路径仍走 rollback_cycle）。
         engine::session::defer_destruction(checkpoint);
+        self.report_deferred_drop_degradation();
+    }
+
+    /// 析构后端退化是性能告警，不是交易失败：不 stop pacing、不关闭 ingress、
+    /// 不触碰 HostUpdate/HostFailure schema。只在宿主边界生成可读字符串。
+    fn report_deferred_drop_degradation(&mut self) {
+        if let Some((code, os_errno)) = gate_deferred_drop_report(
+            &mut self.deferred_drop_reported,
+            engine::session::deferred_destruction_degradation(),
+        ) {
+            warn!(
+                session = %self.session_id,
+                tick = self.game.tick(),
+                code,
+                os_errno,
+                "后台析构后端已退化：析构改为同步释放，交易提交仍有效；请反馈该诊断码与 errno"
+            );
+        }
     }
 
     fn prepare_civil_updates(
@@ -1453,10 +1541,15 @@ impl SessionActor {
                 };
                 let _ = reply.send(result);
             }
-            SessionCommand::Restore { slot, reply } => match self
-                .fatal_rejection()
-                .map_or_else(|| ProtocolSession::restore(&slot), Err)
-            {
+            SessionCommand::Restore { slot, reply } => match self.fatal_rejection().map_or_else(
+                || {
+                    ProtocolSession::restore_with_compute(
+                        &slot,
+                        Arc::clone(self.game.game().compute_context()),
+                    )
+                },
+                Err,
+            ) {
                 Ok(restored) => {
                     let next_generation = match self.timeline_generation.checked_add(1) {
                         Some(generation) => generation,

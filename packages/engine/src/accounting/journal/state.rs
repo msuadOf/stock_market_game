@@ -1,4 +1,10 @@
 //! 权威日记账状态：批次（原子单位）、来源索引、封账状态与 serde（只存事实）。
+//!
+//! 批次存储复用 [`crate::shared_history::AppendOnlyHistory`]（架构项 #13）：
+//! 日结在旧快照（tick shadow / 日结 checkpoint）仍存活时经 `Arc::make_mut`
+//! 推进，批次按实际新增共享——clone/追加只复制有界尾 chunk，不复制整个
+//! 已积累历史；同事务回退用 `pop`（COW，同样有界）。序列化边界仍按批次
+//! 顺序投影为数组的数组，wire 形状不变。
 
 use std::collections::BTreeMap;
 
@@ -6,12 +12,13 @@ use super::{BusinessEventId, JournalEntry};
 use crate::accounting::error::AccountingError;
 use crate::accounting::period::{AccountingPeriod, PeriodStates};
 use crate::calendar::CivilDate;
+use crate::shared_history::AppendOnlyHistory;
 
 /// 权威日记账。批次是原子单位：要么整批入账、要么零痕迹（验证在
 /// [`crate::accounting::Books::post_batch`]，本结构只承载已提交事实）。
 #[derive(Clone, Eq, PartialEq, Debug, Default)]
 pub struct Journal {
-    pub(crate) batches: Vec<Vec<JournalEntry>>,
+    pub(crate) batches: AppendOnlyHistory<Vec<JournalEntry>>,
     /// 来源 → 首次入账日期（派生自 batches，恢复时重建；不在存档中出现）。
     posted: BTreeMap<BusinessEventId, CivilDate>,
     pub(crate) periods: PeriodStates,
@@ -83,7 +90,7 @@ impl Journal {
 
     /// 消耗为批次序列（恢复重放用）。
     pub(crate) fn into_batches(self) -> Vec<Vec<JournalEntry>> {
-        self.batches
+        self.batches.iter().cloned().collect()
     }
 
     /// 已封期间升序（恢复重放用）。
@@ -96,7 +103,7 @@ impl Journal {
 /// 存档里出现重复来源会在重放时显式失败（见 Books 反序列化）。
 #[derive(serde::Serialize)]
 struct JournalSaveRef<'a> {
-    batches: &'a [Vec<JournalEntry>],
+    batches: &'a AppendOnlyHistory<Vec<JournalEntry>>,
     closed: Vec<AccountingPeriod>,
 }
 
@@ -126,14 +133,16 @@ impl<'de> serde::Deserialize<'de> for Journal {
                 .close(period)
                 .map_err(serde::de::Error::custom)?;
         }
-        journal.batches = save.batches;
-        for entry in journal.batches.iter().flatten() {
-            if journal.posted.insert(entry.source, entry.date).is_some() {
-                return Err(serde::de::Error::custom(format!(
-                    "duplicate source {:?} in journal save",
-                    entry.source
-                )));
+        for batch in save.batches {
+            for entry in &batch {
+                if journal.posted.insert(entry.source, entry.date).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate source {:?} in journal save",
+                        entry.source
+                    )));
+                }
             }
+            journal.batches.push(batch);
         }
         Ok(journal)
     }

@@ -5,6 +5,7 @@ import {
   baseState,
   firstFrame,
   frame,
+  isJsonRecord,
   recordArray,
   snapshot,
   tickBatch,
@@ -29,7 +30,6 @@ test("Given facts and events reversed together, when replayed, then it is exact 
   const original = firstFrame(update.TickBatch);
   const reversed = tickBatch([{
     ...original,
-    events: [...recordArray(original.events, "events")].reverse(),
     facts: [...recordArray(original.facts, "facts")].reverse(),
   }], snapshot(1, 2));
 
@@ -72,7 +72,16 @@ test("Given missing, duplicate, or mutated facts, when reduced, then input state
   const duplicateFact = tickBatch([{ ...current, facts: [facts[0] ?? {}, facts[0] ?? {}] }], snapshot(1, 1));
   const original = facts[0];
   if (original === undefined) throw new Error("test fixture invalid");
-  const mutatedFact = tickBatch([{ ...current, facts: [{ ...original, canonical_payload: "{}" }, facts[1] ?? {}] }], snapshot(1, 2));
+  const originalKey = original.key;
+  if (originalKey === undefined || !isJsonRecord(originalKey)) throw new Error("test fixture key invalid");
+  // 载荷身份篡改负例：key 的实体与事件映射断裂（原 canonical payload 比对的等价负例）
+  const mutatedFact = tickBatch([{
+    ...current,
+    facts: [{
+      ...original,
+      key: { ...originalKey, entity: { Account: 1 } },
+    }, facts[1] ?? {}],
+  }], snapshot(1, 2));
 
   for (const malformed of [missingFact, duplicateFact, mutatedFact]) {
     assert.throws(() => reduceEngineUpdate(state, "generation-1", malformed), { code: "PROTOCOL_MALFORMED" });
@@ -108,7 +117,6 @@ test("Given reversed fact arrays, when reduced, then effects and canonical state
   const current = firstFrame(original.TickBatch);
   const reversed = tickBatch([{
     ...current,
-    events: [...recordArray(current.events, "events")].reverse(),
     facts: [...recordArray(current.facts, "facts")].reverse(),
   }], snapshot(1, 2));
 

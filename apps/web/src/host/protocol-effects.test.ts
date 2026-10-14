@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalJson, eventStableKey } from "./protocol/canonical.ts";
+import { eventStableKey } from "./protocol/canonical.ts";
 import type { Event } from "../types/generated/Event.ts";
 import { effectsFromFacts } from "./protocol/effects.ts";
 import { reduceEngineUpdate } from "./protocol/reduce.ts";
@@ -18,13 +18,13 @@ test("NPC普通拒单不冒充玩家反馈，原始事件、玩家拒单和结�
       { Trade: { seq: 4, code: 0, price: "1000", qty: 100, maker: account, taker: 0 } },
     ];
     const facts = events.map((event, index) => ({
-      key: eventStableKey(event, index), event, canonical_payload: canonicalJson(event),
+      key: eventStableKey(event, index), event,
     }));
-    const coded = translateEngineUpdate({ TickBatch: { frames: [{ tick: 1, events: [...events], facts: [...facts], timeseries_payload: { markets: {}, active_daily_candles: {}, closed_daily_candles: {}, auction_points: {}, continuous_points: {} }, seq_from: 0, seq_to: 4 }], runtime_snapshot: null } });
+    const coded = translateEngineUpdate({ TickBatch: { frames: [{ tick: 1, facts: [...facts], timeseries_payload: { markets: {}, active_daily_candles: {}, closed_daily_candles: {}, auction_points: {}, continuous_points: {} }, seq_from: 0, seq_to: 4 }], runtime_snapshot: null } });
     if (!("TickBatch" in coded)) throw new Error("测试期望 TickBatch");
     const codedEvents = coded.TickBatch.frames[0]?.events ?? [];
     const codedFacts = coded.TickBatch.frames[0]?.facts ?? [];
-    const update = tickBatch([{ tick: 1, events, facts, timeseries_payload: timeseries(1), seq_from: 0, seq_to: 4 }], snapshot(1, 4));
+    const update = tickBatch([{ tick: 1, facts, timeseries_payload: timeseries(1), seq_from: 0, seq_to: 4 }], snapshot(1, 4));
     const reduction = reduceEngineUpdate(baseState(), "generation-1", update);
     const notices = reduction.effects.filter(effect => effect.kind === "notice").map(effect => effect.message).sort();
     assert.deepEqual(notices, ["委托被拒：000812 - 资金不足", "结算错误：000812 - 测试结算故障"].sort());
@@ -46,10 +46,9 @@ test("Given stable facts and timeseries, when projected, then notices, trades, a
     TickBatch: {
       frames: [{
         tick: 1,
-        events: [rejected, trade],
         facts: [
-          { key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 }, event: rejected, canonical_payload: canonicalJson(rejected) },
-          { key: { phase_rank: 4, entity: { Stock: 0 }, source: "Sealed", local_event_index: 0 }, event: trade, canonical_payload: canonicalJson(trade) },
+          { key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 }, event: rejected },
+          { key: { phase_rank: 4, entity: { Stock: 0 }, source: "Sealed", local_event_index: 0 }, event: trade },
         ],
         timeseries_payload: timeseries(1),
         seq_from: 0,
@@ -75,9 +74,9 @@ test("Given stable facts and timeseries, when projected, then notices, trades, a
 test("跨帧成交效果保留各自 tick，重试不重复追加", { timeout: 10000 }, () => {
   const frames = [1, 2].map((tick) => {
     const event = { Trade: { seq: tick, code: 0, price: "1000", qty: 100, maker: 0, taker: 1 } };
-    return { tick, events: [event], facts: [{
+    return { tick, facts: [{
       key: { phase_rank: 4, entity: { Stock: 0 }, source: "Sealed", local_event_index: 0 },
-      event, canonical_payload: canonicalJson(event),
+      event,
     }], timeseries_payload: timeseries(tick), seq_from: tick - 1, seq_to: tick };
   });
   const update = tickBatch(frames, snapshot(2, 2));
@@ -100,11 +99,9 @@ test("Given an already filled cancellation, when projected, then the notice expl
     TickBatch: {
       frames: [{
         tick: 1,
-        events: [rejected],
         facts: [{
           key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 },
           event: rejected,
-          canonical_payload: canonicalJson(rejected),
         }],
         timeseries_payload: timeseries(1),
         seq_from: 0,

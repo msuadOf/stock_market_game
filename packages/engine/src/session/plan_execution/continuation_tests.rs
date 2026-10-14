@@ -74,7 +74,7 @@ fn restructure_rechecks_partial_fill_before_applying_smaller_target() {
     let (mut session, mut plans, plan, child) = fixture();
     let order_id = OrderId(7);
     session
-        .install_plan_parent(&plan, child, Some((order_id, 100)))
+        .install_plan_execution(&mut plans, &plan, child, Some((order_id, 100)))
         .unwrap();
     plans
         .apply(
@@ -102,15 +102,16 @@ fn restructure_rechecks_partial_fill_before_applying_smaller_target() {
             },
         )
         .unwrap();
-    // continuation 恢复前，StockProcessing 已撤销未成交余量。
-    let parent = session
-        .state
-        .parent_orders
-        .get_mut(&plan.account())
-        .unwrap()
-        .get_mut(plan.code())
+    // continuation 恢复前，StockProcessing 已撤销未成交余量（唯一 owner 直接回放）。
+    plans
+        .apply(
+            plan.plan_id(),
+            PlanEvent::ChildOrderCanceled {
+                order_id,
+                trading_day: 0,
+            },
+        )
         .unwrap();
-    parent.replace_execution_facts_for_test(60, None, None);
     let progress = route
         .resume(
             &mut session,
@@ -130,10 +131,7 @@ fn restructure_rechecks_partial_fill_before_applying_smaller_target() {
     assert_eq!(current.target(), PlanTarget::ShareCount(100));
     assert_eq!(current.filled_qty(), 60);
     assert_eq!(current.active_child_order_id(), None);
-    assert_eq!(
-        session.state.parent_orders[&plan.account()][plan.code()].active_child_order_id(),
-        None
-    );
+
     let restored: PlanBook = serde_json::from_str(&serde_json::to_string(&plans).unwrap()).unwrap();
     assert_eq!(
         restored
@@ -149,7 +147,7 @@ fn replace_rechecks_partial_fill_after_canceling_the_old_child() {
     let (mut session, mut plans, plan, child) = fixture();
     let order_id = OrderId(8);
     session
-        .install_plan_parent(&plan, child, Some((order_id, child.qty)))
+        .install_plan_execution(&mut plans, &plan, child, Some((order_id, child.qty)))
         .unwrap();
     plans
         .apply(
@@ -179,14 +177,16 @@ fn replace_rechecks_partial_fill_after_canceling_the_old_child() {
             },
         )
         .unwrap();
-    let parent = session
-        .state
-        .parent_orders
-        .get_mut(&plan.account())
-        .unwrap()
-        .get_mut(plan.code())
+    // continuation 恢复前，StockProcessing 已撤销未成交余量（唯一 owner 直接回放）。
+    plans
+        .apply(
+            plan.plan_id(),
+            PlanEvent::ChildOrderCanceled {
+                order_id,
+                trading_day: 0,
+            },
+        )
         .unwrap();
-    parent.replace_execution_facts_for_test(60, None, None);
 
     let result = route
         .resume(
@@ -206,10 +206,7 @@ fn replace_rechecks_partial_fill_after_canceling_the_old_child() {
     let current = plans.plan(plan.plan_id()).unwrap();
     assert_eq!(current.filled_qty(), 60);
     assert_eq!(current.active_child_order_id(), None);
-    assert_eq!(
-        session.state.parent_orders[&plan.account()][plan.code()].active_child_order_id(),
-        None
-    );
+
 }
 
 #[test]
@@ -328,7 +325,7 @@ fn filled_child_can_reject_cancellation_while_its_plan_remains_active() {
 
 #[test]
 fn a_new_plan_submit_keeps_parent_private_until_the_stock_accepts_it() {
-    let (mut session, _plans, plan, child) = fixture();
+    let (mut session, mut plans, plan, child) = fixture();
     let plan_id = plan.plan_id();
     let account = plan.account();
     let code = plan.code().clone();
@@ -339,22 +336,28 @@ fn a_new_plan_submit_keeps_parent_private_until_the_stock_accepts_it() {
         panic!("a new child must yield a submit route");
     };
     assert!(
-        session.state.parent_orders.is_empty(),
-        "candidate generation must not install an unaccepted parent"
+        plans.plan(plan_id).unwrap().execution().is_none(),
+        "candidate generation must not install an unaccepted execution leg"
     );
     route
         .install_accepted_submit_parent(
             &mut session,
+            &mut plans,
             &PlanRouteOutcome::Rejected(RejectionReason::InsufficientCash),
         )
         .unwrap();
-    assert!(session.state.parent_orders.is_empty());
+    assert!(plans.plan(plan_id).unwrap().execution().is_none());
     route
-        .install_accepted_submit_parent(&mut session, &PlanRouteOutcome::Accepted(OrderId(4)))
+        .install_accepted_submit_parent(
+            &mut session,
+            &mut plans,
+            &PlanRouteOutcome::Accepted(OrderId(4)),
+        )
         .unwrap();
-    let parent = &session.state.parent_orders[&account][&code];
-    assert_eq!(parent.linked_plan_id(), Some(plan_id));
-    assert_eq!(parent.active_child_order_id(), None);
+    assert!(plans.plan(plan_id).unwrap().execution().is_some());
+    assert_eq!(plans.plan(plan_id).unwrap().active_child_order_id(), Some(OrderId(4)));
+    assert_eq!(plans.plan(plan_id).unwrap().active_child_remaining_qty(), Some(child.qty));
+    assert_eq!(plans.plan(plan_id).unwrap().filled_qty(), 0);
 }
 
 #[test]
@@ -379,8 +382,7 @@ fn adopting_an_existing_order_is_decided_without_writing_plan_state() {
         })
         .unwrap();
     let before_plans = plans.clone();
-    let before_parents = session.state.parent_orders.clone();
-    let before_pending = session.state.pending_plan_events.clone();
+    let before_pending = plans.clone();
 
     let observation: &GameSession = &session;
     let progress = observation
@@ -388,8 +390,7 @@ fn adopting_an_existing_order_is_decided_without_writing_plan_state() {
         .expect("the matching live order must be adoptable");
     assert!(matches!(progress, PlanExecutionProgress::Adoption { .. }));
     assert_eq!(plans, before_plans);
-    assert_eq!(session.state.parent_orders, before_parents);
-    assert_eq!(session.state.pending_plan_events, before_pending);
+    assert_eq!(plans, before_pending);
 
     let progress = session
         .materialize_plan_progress(&mut plans, progress)
@@ -401,10 +402,7 @@ fn adopting_an_existing_order_is_decided_without_writing_plan_state() {
             ..
         }) if id == order_id
     ));
-    assert_eq!(
-        session.state.parent_orders[&plan.account()][plan.code()].active_child_order_id(),
-        Some(order_id)
-    );
+
     assert_eq!(
         plans.plan(plan.plan_id()).unwrap().active_child_order_id(),
         Some(order_id)
@@ -416,7 +414,7 @@ fn stale_submit_with_an_active_child_waits_for_reconsideration() {
     let (mut session, mut plans, plan, child) = fixture();
     let order_id = OrderId(77);
     session
-        .install_plan_parent(&plan, child, Some((order_id, child.qty)))
+        .install_plan_execution(&mut plans, &plan, child, Some((order_id, child.qty)))
         .unwrap();
     session
         .state
@@ -445,8 +443,7 @@ fn stale_submit_with_an_active_child_waits_for_reconsideration() {
         )
         .unwrap();
     let plan = plans.plan(plan.plan_id()).unwrap().clone();
-    let before_parent = session.state.parent_orders.clone();
-    let before_pending = session.state.pending_plan_events.clone();
+    let before_pending = plans.clone();
 
     let progress = session.submit_plan_child(&plan, child).unwrap();
 
@@ -459,8 +456,7 @@ fn stale_submit_with_an_active_child_waits_for_reconsideration() {
             },
         }) if id == order_id
     ));
-    assert_eq!(session.state.parent_orders, before_parent);
-    assert_eq!(session.state.pending_plan_events, before_pending);
+    assert_eq!(plans, before_pending);
     assert!(plans.plan(plan.plan_id()).is_ok());
     let mut mismatched_plan_json = serde_json::to_value(&plan).unwrap();
     mismatched_plan_json["active_child_order_id"] = serde_json::json!(78);
@@ -469,26 +465,16 @@ fn stale_submit_with_an_active_child_waits_for_reconsideration() {
         session.submit_plan_child(&mismatched_plan, child),
         Err(PlanExecutionError::IncompatibleExecutionState { .. })
     ));
-    session
-        .state
-        .parent_orders
-        .get_mut(&plan.account())
-        .unwrap()
-        .get_mut(plan.code())
-        .unwrap()
-        .restore_active_child_remaining_qty(Some(50));
+    plans
+        .restore_child_remaining_qty(plan.plan_id(), Some(50))
+        .unwrap();
     assert!(matches!(
-        session.submit_plan_child(&plan, child),
+        session.submit_plan_child(plans.plan(plan.plan_id()).unwrap(), child),
         Err(PlanExecutionError::IncompatibleExecutionState { .. })
     ));
-    session
-        .state
-        .parent_orders
-        .get_mut(&plan.account())
-        .unwrap()
-        .get_mut(plan.code())
-        .unwrap()
-        .restore_active_child_remaining_qty(Some(child.qty));
+    plans
+        .restore_child_remaining_qty(plan.plan_id(), Some(child.qty))
+        .unwrap();
     session
         .state
         .markets
@@ -509,20 +495,8 @@ fn partly_filled_child_supersedes_a_stale_submit_before_quantity_validation() {
     child.remaining = 200;
     let order_id = OrderId(78);
     session
-        .install_plan_parent(&plan, child, Some((order_id, 150)))
+        .install_plan_execution(&mut plans, &plan, child, Some((order_id, 200)))
         .unwrap();
-    let parent = session
-        .state
-        .parent_orders
-        .get_mut(&plan.account())
-        .unwrap()
-        .get_mut(plan.code())
-        .unwrap();
-    parent.replace_execution_facts_for_test(
-        50,
-        parent.active_child_order_id(),
-        parent.active_child_remaining_qty(),
-    );
     session
         .state
         .markets
@@ -643,13 +617,20 @@ fn completed_plan_reports_a_stale_submit_without_reopening_it() {
         })
     ));
     assert_eq!(plans, before);
-    session
-        .install_plan_parent(&plan, child, Some((order_id, child.qty)))
-        .unwrap();
     assert!(matches!(
-        session.prepare_plan_observation(&plans, request),
+        session.install_plan_execution(&mut plans, &plan, child, Some((order_id, child.qty))),
+        Err(PlanExecutionError::Plan(crate::plans::PlanError::InvalidTransition { .. }))
+    ));
+    assert_eq!(plans, before, "终态计划不得被安装新执行腿");
+    let mut forged = serde_json::to_value(&plans).unwrap();
+    forged["plans"][plan.plan_id().0.to_string()]["active_child_order_id"] =
+        serde_json::json!(order_id);
+    let forged: PlanBook = serde_json::from_value(forged).unwrap();
+    assert!(matches!(
+        session.prepare_plan_observation(&forged, request),
         Err(PlanExecutionError::IncompatibleExecutionState { .. })
     ));
+    assert_eq!(plans, before);
 }
 
 #[test]
@@ -688,8 +669,6 @@ fn an_adoption_decision_cannot_install_a_parent_after_its_order_disappears() {
         Err(PlanExecutionError::IncompatibleExecutionState { .. })
     ));
     assert_eq!(plans, before);
-    assert!(session.state.parent_orders.is_empty());
-    assert!(session.state.pending_plan_events.is_empty());
 }
 
 #[test]
@@ -727,25 +706,27 @@ fn plan_working_orders_reads_only_the_target_stock_and_account() {
             })
             .unwrap();
     }
-    session.state.auction_orders.insert(
-        target.clone(),
-        vec![
-            crate::session::AuctionOrderSnap {
-                owner,
-                side: Side::Buy,
-                limit: Money::from_cents(906),
-                qty: 100,
-                order_id: 99,
-            },
-            crate::session::AuctionOrderSnap {
-                owner,
-                side: Side::Buy,
-                limit: Money::from_cents(905),
-                qty: 100,
-                order_id: 70,
-            },
-        ],
-    );
+    session
+        .fixture_append_auction_orders(
+            target.clone(),
+            vec![
+                crate::session::AuctionOrderSnap {
+                    owner,
+                    side: Side::Buy,
+                    limit: Money::from_cents(906),
+                    qty: 100,
+                    order_id: 99,
+                },
+                crate::session::AuctionOrderSnap {
+                    owner,
+                    side: Side::Buy,
+                    limit: Money::from_cents(905),
+                    qty: 100,
+                    order_id: 70,
+                },
+            ],
+        )
+        .unwrap();
 
     let mut orders = session
         .plan_working_orders(owner, &target)
@@ -765,110 +746,71 @@ fn plan_working_orders_reads_only_the_target_stock_and_account() {
 }
 
 #[test]
-fn owned_plan_sync_late_failure_keeps_pending_and_parent_unchanged() {
-    let (mut session, mut plans, first, child) = fixture();
-    let second_id = plans
-        .create(PlanOpen {
-            account: first.account(),
-            code: StockId(1),
-            direction: first.direction(),
-            target: first.target(),
-            opinion: first.opinion(),
-            confidence_bp: first.confidence_bp(),
-            urgency: first.urgency(),
-            horizon_trading_days: first.horizon_trading_days(),
-            created_trading_day: first.created_trading_day(),
-        })
+fn owner_batch_installs_nothing_when_a_later_fact_fails() {
+    let (_session, mut plans, first, child) = fixture();
+    _session
+        .install_plan_execution(&mut plans, &first, child, Some((OrderId(1), 100)))
         .unwrap();
-    session
-        .install_plan_parent(&first, child, Some((OrderId(1), 100)))
+    // 装腿后清空在途子单，使批内第二事实（超腿剩余的成交）在前项成功后失败。
+    plans
+        .record_child_released(first.account(), first.code(), OrderId(1), 0)
         .unwrap();
-    session.state.pending_plan_events = vec![
-        PendingPlanEvent::Accepted {
-            plan_id: first.plan_id(),
-            order_id: OrderId(1),
-            trading_day: 0,
-        },
-        PendingPlanEvent::Filled {
-            plan_id: second_id,
-            order_id: OrderId(2),
-            qty: 100,
-            child_complete: true,
-            trading_day: 0,
-        },
-    ];
     let plans_before = plans.clone();
-    let pending_before = session.state.pending_plan_events.clone();
-    let parents_before = session.state.parent_orders.clone();
 
-    assert!(session
-        .synchronize_owned_plan_execution(&mut plans)
-        .is_err());
-    assert_eq!(plans, plans_before);
-    assert_eq!(session.state.pending_plan_events, pending_before);
-    assert_eq!(session.state.parent_orders, parents_before);
+    let events = vec![
+        (
+            first.plan_id(),
+            PlanEvent::ChildOrderAccepted {
+                order_id: OrderId(1),
+                trading_day: 0,
+            },
+        ),
+        (
+            first.plan_id(),
+            PlanEvent::ChildOrderFilled {
+                order_id: OrderId(1),
+                qty: child.qty + 1,
+                child_complete: false,
+                trading_day: 0,
+            },
+        ),
+    ];
+    assert!(plans.apply_active_events_atomically(&events).is_err());
+    assert_eq!(
+        plans, plans_before,
+        "前项成功后项失败时整批不得安装任何计划状态"
+    );
 }
 
 #[test]
-fn owned_plan_sync_consumes_facts_after_completion_and_removes_linked_parent() {
+fn owner_consumes_completion_facts_and_clears_the_execution_leg() {
     let (mut session, mut plans, plan, child) = fixture();
     session
-        .install_plan_parent(&plan, child, Some((OrderId(1), 100)))
+        .install_plan_execution(&mut plans, &plan, child, Some((OrderId(1), 100)))
         .unwrap();
-    let late = PendingPlanEvent::DayEnded {
-        plan_id: plan.plan_id(),
-        trading_day: 0,
-    };
-    session.state.pending_plan_events = vec![
-        PendingPlanEvent::Accepted {
-            plan_id: plan.plan_id(),
-            order_id: OrderId(1),
-            trading_day: 0,
-        },
-        PendingPlanEvent::Filled {
-            plan_id: plan.plan_id(),
-            order_id: OrderId(1),
-            qty: 100,
-            child_complete: true,
-            trading_day: 0,
-        },
-        late,
-    ];
-
-    session
-        .synchronize_owned_plan_execution(&mut plans)
+    plans
+        .record_child_fill(plan.account(), plan.code(), Side::Buy, OrderId(1), 100, 0)
         .unwrap();
 
-    assert_eq!(
-        plans.plan(plan.plan_id()).unwrap().status(),
-        PlanStatus::Completed
-    );
-    assert!(session.state.pending_plan_events.is_empty());
-    assert!(session.state.parent_orders.is_empty());
+    let owner = plans.plan(plan.plan_id()).unwrap();
+    assert_eq!(owner.status(), PlanStatus::Completed);
+    assert_eq!(owner.filled_qty(), 100);
+    assert_eq!(owner.active_child_order_id(), None);
+    assert!(owner.execution().is_none());
     session.state.plans = plans;
     session
         .save()
-        .expect("completed plan has no stale pending fact");
+        .expect("completed plan stores no execution leg");
 }
 
 #[test]
-fn owned_plan_sync_rejects_pending_fact_for_an_unknown_plan() {
-    let (mut session, mut plans, _, _) = fixture();
-    let fact = PendingPlanEvent::DayEnded {
-        plan_id: PlanId(999),
-        trading_day: 0,
-    };
-    session.state.pending_plan_events.push(fact);
+fn owner_rejects_fact_for_an_unknown_plan() {
+    let (_session, mut plans, _, _) = fixture();
     let before = plans.clone();
 
     assert!(matches!(
-        session.synchronize_owned_plan_execution(&mut plans),
-        Err(PlanExecutionError::Plan(
-            crate::plans::PlanError::UnknownPlan {
-                plan_id: PlanId(999)
-            }
-        ))
+        plans.apply(PlanId(999), PlanEvent::TradingDayEnded { trading_day: 0 }),
+        Err(crate::plans::PlanError::UnknownPlan { plan_id: PlanId(999) })
     ));
     assert_eq!(plans, before);
-    assert_eq!(session.state.pending_plan_events, vec![fact]);
 }

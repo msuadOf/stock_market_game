@@ -3,7 +3,7 @@ use crate::session::StepFatal;
 use crate::{AccountId, AccountSnap, GameSession, Side, TradingPhase};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct PlayerOrderDelta {
@@ -14,7 +14,7 @@ pub struct PlayerOrderDelta {
     pub removed: Vec<u64>,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct RuntimeDelta {
@@ -153,6 +153,16 @@ impl GameSession {
     pub fn public_runtime_state(&self) -> Result<PublicRuntimeState, StepFatal> {
         self.require_healthy()?;
         let snapshot = self.runtime_snapshot();
+        self.public_runtime_from_snapshot(&snapshot)
+    }
+
+    /// 从调用方已捕获的快照构造 public runtime；precommit 投影与 frame 共用同一份
+    /// 冻结 candidate 快照，不再对 live authority 二次读取（#4 冻结接口形状）。
+    pub(in crate::session) fn public_runtime_from_snapshot(
+        &self,
+        snapshot: &crate::Snapshot,
+    ) -> Result<PublicRuntimeState, StepFatal> {
+        self.require_healthy()?;
         validate_accounts(&snapshot.accounts).map_err(fatal)?;
         if !snapshot.accounts.contains_key(&AccountId(0)) {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
@@ -169,7 +179,7 @@ impl GameSession {
             seq: snapshot.seq,
             day: snapshot.day,
             phase: snapshot.phase,
-            accounts: snapshot.accounts,
+            accounts: snapshot.accounts.clone(),
             working_orders,
         })
     }
@@ -179,10 +189,23 @@ impl GameSession {
         frames: Vec<TickFrame>,
         previous: Option<&PublicRuntimeState>,
     ) -> Result<(TickBatch, PublicRuntimeState), StepFatal> {
+        let current = self.public_runtime_state()?;
+        let batch = current.tick_batch_delta(frames, previous)?;
+        Ok((batch, current))
+    }
+}
+
+impl PublicRuntimeState {
+    /// 发布只使用 precommit 时冻结的 runtime，不重读 live GameSession。
+    pub fn tick_batch_delta(
+        &self,
+        frames: Vec<TickFrame>,
+        previous: Option<&PublicRuntimeState>,
+    ) -> Result<TickBatch, StepFatal> {
         let first = frames
             .first()
             .ok_or_else(|| fatal(ProtocolError::EmptyBatch))?;
-        let current = self.public_runtime_state()?;
+        let current = self;
         if previous.is_some_and(|before| {
             before.seq != first.seq_from || before.tick.checked_add(1) != Some(first.tick)
         }) {
@@ -241,7 +264,7 @@ impl GameSession {
             frames,
         };
         batch.validate().map_err(fatal)?;
-        Ok((batch, current))
+        Ok(batch)
     }
 }
 

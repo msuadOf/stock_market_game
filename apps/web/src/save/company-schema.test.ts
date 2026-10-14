@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { representativeCompanyOperationsFixture } from "./company-slice-test-fixture.ts"
-import { parseClosingRegistry, parseCompanyOperations, parseDisclosureDispatch, parseOperationsWiring, parsePublicLibrary } from "./schema/company/index.ts"
+import { parseClosingRegistry, parseCompanyOperations, parseDisclosureDispatch, parsePublicLibrary } from "./schema/company/index.ts"
 
 const instant = { date: "2030-04-20", second_of_day: 64800 }
 const balance = { asset_lines: [["CashFunds", "100.00"]], total_assets: "100.00", liability_lines: [], total_liabilities: "0.00", equity_lines: [["PaidInCapital", "100.00"]], total_equity: "100.00", equity_to_parent: "100.00", liabilities_and_equity: "100.00", closing_cash: "100.00", prior_year_end: { Unavailable: { reason: "NoPriorYearHistory" } } }
@@ -15,7 +15,6 @@ test("company schema parsers preserve populated company slices", () => {
   assert.deepEqual(parseCompanyOperations(operations), operations)
   assert.deepEqual(parsePublicLibrary(publicLibrary), publicLibrary)
   assert.deepEqual(parseClosingRegistry(closingRegistry), closingRegistry)
-  assert.deepEqual(parseOperationsWiring({ mirrored: [42] }), { mirrored: [42] })
   assert.deepEqual(parseDisclosureDispatch({ published_through: instant, announced_through: "2030-04-20" }), { published_through: instant, announced_through: "2030-04-20" })
 })
 
@@ -23,6 +22,5 @@ test("company schema parsers reject malformed exact subdomains with paths", () =
   assert.throws(() => parseCompanyOperations({ ...operations, market_rng: { state: 42 } }), /company_operations\.market_rng\.state/)
   assert.throws(() => parsePublicLibrary({ ...publicLibrary, reports: [{ ...publicLibrary.reports[0], reports: { ...reportSet, balance_sheet: { ...balance, total_assets: "1.234" } } }] }), /public_library\.reports\[0\]\.reports\.balance_sheet\.total_assets/)
   assert.throws(() => parseClosingRegistry({ versions: [[{ BadScope: "C-1" }, "2030-03", "Quarter", []]], restatements: [] }), /closing_registry\.versions\[0\]\[0\]/)
-  assert.throws(() => parseOperationsWiring({ mirrored: ["42"] }), /ops_wiring\.mirrored\[0\]/)
   assert.throws(() => parseDisclosureDispatch({ published_through: null }), /disclosures\.announced_through/)
 })

@@ -1,7 +1,7 @@
 //! 构建账户自身的工作单索引、可用现金预算与持仓视图。
 
 use super::*;
-use rayon::prelude::*;
+use crate::compute::parallel::*;
 
 use super::pipeline::npc_split::SessionReadView;
 
@@ -10,48 +10,43 @@ pub(in crate::session) fn working_orders_for_accounts_on(
     view: &SessionReadView,
     owners: &BTreeSet<AccountId>,
 ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
-    let (mut continuous_stocks, mut auction_stocks) = rayon::join(
-        || {
-            view.markets
-                .par_iter()
-                .map(|(code, market)| (code.clone(), market.resting_orders_for_owners(owners)))
-                .collect::<Vec<_>>()
-        },
-        || {
-            view.auction_orders
-                .par_iter()
-                .map(|(code, orders)| {
-                    (
-                        code.clone(),
-                        orders
-                            .iter()
-                            .filter(|order| owners.contains(&order.owner))
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .collect::<Vec<_>>()
-        },
-    );
-    continuous_stocks.sort_by(|left, right| left.0.cmp(&right.0));
-    auction_stocks.sort_by(|left, right| left.0.cmp(&right.0));
-
+    let mut stocks = view.compute.parallel(|| {
+        view.markets
+            .par_iter()
+            .map(|(code, market)| {
+                let mut orders = market
+                    .resting_order_refs()
+                    .filter(|order| owners.contains(&order.owner))
+                    .collect::<Vec<_>>();
+                // 仍按既有arrival seq组织账户DTO；只排序引用，不提前clone撮合Order。
+                orders.sort_by_key(|order| order.seq);
+                (*code, market.matching_mode(), orders)
+            })
+            .collect::<Vec<_>>()
+    });
+    stocks.sort_by_key(|(code, _, _)| *code);
     let mut continuous = ContinuousOrdersByAccount::new();
-    for (code, orders) in continuous_stocks {
-        for order in orders {
-            continuous
-                .entry(order.owner)
-                .or_default()
-                .push((code.clone(), order));
-        }
-    }
     let mut auction = AuctionOrdersByAccount::new();
-    for (code, orders) in auction_stocks {
+    for (code, mode, orders) in stocks {
         for order in orders {
-            auction
-                .entry(order.owner)
-                .or_default()
-                .push((code.clone(), order));
+            if mode == crate::orderbook::MatchingMode::Auction {
+                auction.entry(order.owner).or_default().push((
+                    code,
+                    AuctionOrderSnap {
+                        owner: order.owner,
+                        side: order.side,
+                        limit: order.price,
+                        qty: order.qty,
+                        order_id: order.id.0,
+                    },
+                ));
+            } else {
+                continuous
+                    .entry(order.owner)
+                    .or_default()
+                    // 最终跨阶段owned持有仍必要；直接从book借读构建，避免中间Order快照。
+                    .push((code, order.clone()));
+            }
         }
     }
     (continuous, auction)
@@ -62,7 +57,9 @@ impl GameSession {
     pub(super) fn working_orders_for_accounts(
         &self,
         owners: &BTreeSet<AccountId>,
-    ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) { working_orders_for_accounts_on(&self.read_view(), owners) }
+    ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
+        working_orders_for_accounts_on(&self.read_view(), owners)
+    }
 
     #[cfg(test)]
     pub(super) fn working_orders_by_account(
@@ -85,15 +82,17 @@ mod parallel_index_tests {
         )
         .unwrap();
         // 目录按代码升序分配 id："600888"=0、"600889"=1，与枚举下标一致。
-        for (stock_index, _code) in ["600888", "600889"].into_iter().enumerate() {
+        // 统一 book：同一会话内两只股票显式处于不同 venue，验证账户视图跨市场归并。
+        for (stock_index, mode) in [
+            (0, crate::orderbook::MatchingMode::Continuous),
+            (1, crate::orderbook::MatchingMode::Auction),
+        ] {
             let code = StockId(stock_index as u32);
             for (owner, offset) in [(AccountId(0), 0_u64), (AccountId(1), 1_u64)] {
                 let seq = stock_index as u64 * 10 + offset;
-                session
-                    .state
-                    .markets
-                    .get_mut(&code)
-                    .unwrap()
+                let market = session.state.markets.get_mut(&code).unwrap();
+                market.set_matching_mode(mode).unwrap();
+                market
                     .place(Order {
                         id: OrderId(seq + 1),
                         side: Side::Buy,
@@ -106,18 +105,6 @@ mod parallel_index_tests {
                         seq,
                     })
                     .unwrap();
-                session
-                    .state
-                    .auction_orders
-                    .entry(code.clone())
-                    .or_default()
-                    .push(AuctionOrderSnap {
-                        owner,
-                        side: Side::Buy,
-                        limit: Money::from_cents(900 + offset as i64),
-                        qty: 100,
-                        order_id: seq,
-                    });
             }
         }
 
@@ -142,14 +129,14 @@ mod parallel_index_tests {
                     .iter()
                     .map(|(code, order)| (code.0, order.seq))
                     .collect::<Vec<_>>(),
-                vec![(0, owner.0), (1, owner.0)]
+                vec![(0, owner.0)]
             );
             assert_eq!(
                 one.1[&owner]
                     .iter()
                     .map(|(code, order)| (code.0, order.order_id))
                     .collect::<Vec<_>>(),
-                vec![(0, owner.0), (1, 10 + owner.0)]
+                vec![(1, 11 + owner.0)]
             );
         }
     }

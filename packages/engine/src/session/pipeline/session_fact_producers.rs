@@ -5,7 +5,7 @@
 //! Continuous 股票处理事实通过其输出契约携带显式 sealed identity 与逐股 trade identity。
 
 use super::{
-    event_collection::OwnedEventFact, CandidateValidationResult, EventStableKey, IntentCandidate,
+    event_collection::EventFact, CandidateValidationResult, EventStableKey, IntentCandidate,
     IntentCandidateBatch, IntentCandidateKey, StepFatal,
 };
 use crate::{Event, Intent, StockId};
@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) fn adapt_account_validation_rejection_facts(
     candidates: &IntentCandidateBatch,
     results: &[CandidateValidationResult],
-) -> Result<Vec<OwnedEventFact>, StepFatal> {
+) -> Result<Vec<EventFact>, StepFatal> {
     let candidates_by_key = index_candidates(candidates)?;
     validate_account_validation_result_contract(&candidates_by_key, results)?;
 
@@ -31,7 +31,7 @@ pub(super) fn adapt_account_validation_rejection_facts(
                 reason,
             } => {
                 let binding = candidates_by_key.get(key).ok_or_else(|| {
-                    invariant("AccountValidation 拒绝结果未引用 DecisionShadow 候选")
+                    invariant("AccountValidation 拒绝结果未引用 DecisionAndContinuation 候选")
                 })?;
                 let candidate = binding.candidate;
                 let event = Event::IntentRejected {
@@ -40,7 +40,7 @@ pub(super) fn adapt_account_validation_rejection_facts(
                     code: candidate_code(candidate)?.clone(),
                     reason: reason.clone(),
                 };
-                facts.push(OwnedEventFact {
+                facts.push(EventFact {
                     key: EventStableKey::for_event(&event, *sealed_index),
                     event,
                 });
@@ -62,7 +62,7 @@ fn index_candidates(
     let mut indexed = BTreeMap::new();
     for (canonical_ordinal, candidate) in candidates.candidates().iter().enumerate() {
         let sealed_index = u64::try_from(canonical_ordinal)
-            .map_err(|_| invariant("DecisionShadow 批次超出 sealed identity 域"))?;
+            .map_err(|_| invariant("DecisionAndContinuation 批次超出 sealed identity 域"))?;
         if indexed
             .insert(
                 candidate.key().clone(),
@@ -73,7 +73,7 @@ fn index_candidates(
             )
             .is_some()
         {
-            return Err(invariant("DecisionShadow 批次包含重复候选 key"));
+            return Err(invariant("DecisionAndContinuation 批次包含重复候选 key"));
         }
     }
     Ok(indexed)
@@ -85,7 +85,7 @@ fn validate_account_validation_result_contract(
 ) -> Result<(), StepFatal> {
     if results.len() != candidates.len() {
         return Err(invariant(
-            "AccountValidation 结果数量与不可变 DecisionShadow 候选批次不一致",
+            "AccountValidation 结果数量与不可变 DecisionAndContinuation 候选批次不一致",
         ));
     }
 
@@ -94,10 +94,10 @@ fn validate_account_validation_result_contract(
     for result in results {
         let binding = candidates
             .get(result.key())
-            .ok_or_else(|| invariant("AccountValidation 结果未引用 DecisionShadow 候选"))?;
+            .ok_or_else(|| invariant("AccountValidation 结果未引用 DecisionAndContinuation 候选"))?;
         if result.sealed_index() != binding.sealed_index {
             return Err(invariant(
-                "AccountValidation 结果的 sealed identity 与规范 DecisionShadow 批次的 sealed identity 不一致",
+                "AccountValidation 结果的 sealed identity 与规范 DecisionAndContinuation 批次的 sealed identity 不一致",
             ));
         }
         if !result_keys.insert(result.key()) {

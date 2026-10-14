@@ -38,7 +38,6 @@ export type CompanyOperations = {
   readonly history: History | null
   readonly payment_failures: Readonly<Record<string, readonly (PaymentFailure & { readonly company: string })[]>>
 }
-export type OperationsWiring = { readonly mirrored: readonly number[] }
 export type DisclosureDispatch = { readonly published_through: CivilInstantValue | null; readonly announced_through: string | null }
 
 function parseRng(value: unknown, path: string): OperatingRng {
@@ -99,12 +98,6 @@ export function parseCompanyOperations(value: unknown, path = "company_operation
     history: parsed.history === null ? null : parseHistory(parsed.history, `${path}.history`),
     payment_failures: failures,
   }
-}
-
-export function parseOperationsWiring(value: unknown, path = "ops_wiring"): OperationsWiring {
-  const parsed = record(value, path)
-  exact(parsed, ["mirrored"], path)
-  return { mirrored: array(parsed.mirrored, `${path}.mirrored`).map((entry, index) => integer(entry, `${path}.mirrored[${index}]`, 0)) }
 }
 
 export function parseDisclosureDispatch(value: unknown, path = "disclosures"): DisclosureDispatch {

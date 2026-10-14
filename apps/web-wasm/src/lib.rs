@@ -514,7 +514,7 @@ pub fn initial_allocation(handle: u32) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn calculate_indicators(prices: Vec<f64>, candles: JsValue) -> Result<JsValue, JsValue> {
     let candles: Vec<engine::indicators::OhlcBar> = serde_wasm_bindgen::from_value(candles)?;
-    let indicators = engine::indicators::calculate_indicators(&prices, &candles)
+    let indicators = engine::indicators::calculate_indicators(&prices, &candles, None)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     to_js(&indicators)
 }

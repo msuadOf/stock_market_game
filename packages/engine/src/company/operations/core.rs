@@ -127,7 +127,7 @@ impl Eq for CompanyOperationsHashCache {}
 /// 经营编排引擎（经营与信息披露）。持有调度器、分流 RNG 与全部公司；serde 全量持久化。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyOperations {
-    #[serde(with = "crate::session::u64_decimal")]
+    #[serde(with = "crate::u64_decimal")]
     pub(crate) seed: u64,
     pub(crate) shock_params: ShockParams,
     pub(crate) catalog: crate::company::spec::CompanyCatalog,
@@ -235,6 +235,14 @@ impl CompanyOperations {
 
     pub fn scheduler(&self) -> &OperatingScheduler {
         &self.scheduler
+    }
+
+    /// 公司 due 单一 authority 的下一到期自然日（转发 [`OperatingScheduler::next_due_date`]）。
+    ///
+    /// 会话时间推进据此取公司侧合法时点并调用 [`Self::advance_civil_day`]；
+    /// 自然日时钟不镜像逐项公司待办。
+    pub fn next_due_date(&self) -> Option<CivilDate> {
+        self.scheduler.next_due_date()
     }
 
     pub fn payment_failures_on(&self, date: CivilDate) -> &[PaymentFailureRecord] {

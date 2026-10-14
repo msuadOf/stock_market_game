@@ -2,15 +2,30 @@ use super::{
     DecisionResourceSnapshot, Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents,
     IntentCandidateBatch, IntentCandidateKey, ResVec, StepFatal,
 };
+use crate::compute::parallel::*;
 use crate::{
     AccountId, GameConfig, Intent, LimitPrice, Money, OrderId, RejectionReason, SecurityCategory,
     Side, StockId,
 };
-use rayon::prelude::*;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+
+/// AccountValidation 全拒注入账户集合（测试专用；e1/e2 集成验收）。
+/// 进程级全局静态：使用方必须串行运行并在结束时清空（对齐 ROOT_PANIC_ACCOUNTS
+/// 的隔离口径，防同进程并行用例交叉污染）。
+#[cfg(test)]
+static VALIDATION_REJECT_ACCOUNTS: std::sync::Mutex<BTreeSet<AccountId>> =
+    std::sync::Mutex::new(BTreeSet::new());
+
+/// 配置/清空 AccountValidation 全拒注入账户（测试专用；None 或空切片=清空）。
+#[cfg(test)]
+pub(super) fn set_validation_reject_accounts_for_test(accounts: &[AccountId]) {
+    *VALIDATION_REJECT_ACCOUNTS
+        .lock()
+        .expect("AccountValidation 拒绝注入锁被 poison") = accounts.iter().copied().collect();
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StockValidation {
@@ -350,6 +365,11 @@ impl AccountValidationState {
             .next_order_id_after
             .checked_add(place_count)
             .ok_or_else(|| invariant("AccountValidation 分配 OrderId 时溢出"))?;
+        if place_count > 0 && next_order_id_after > crate::orderbook::js_safe_u64::MAX {
+            return Err(invariant(
+                "AccountValidation 分配 OrderId 超出可序列化 authority 游标范围",
+            ));
+        }
 
         let mut next_order_id = self.output.next_order_id_after;
         let mut steps = Vec::with_capacity(prepared.len());
@@ -556,6 +576,25 @@ impl AccountValidationState {
             .checked_add(1)
             .ok_or_else(|| invariant("AccountValidation 已处理候选数量溢出"))?;
         let key = candidate.key().clone();
+        // e1/e2 集成验收注入（设计 §3.1④）：指定账户的候选一律拒绝——走真实
+        // AccountValidation 拒绝出口（拒绝反馈/推进路径全真），用于钉住
+        // 「F 候选全部被 AccountValidation 拒绝」的 operations 层死区形态。
+        // 进程级全局静态 ⇒ 使用方必须串行并在结束时清空（同 ROOT_PANIC_ACCOUNTS
+        // 口径）。
+        #[cfg(test)]
+        if VALIDATION_REJECT_ACCOUNTS
+            .lock()
+            .expect("AccountValidation 拒绝注入锁被 poison")
+            .contains(&candidate.owner())
+        {
+            self.next_sealed_index = next_sealed_index;
+            self.processed_count = next_processed_count;
+            return Ok(PreparedValidationStep::Rejected {
+                key,
+                sealed_index,
+                reason: RejectionReason::InsufficientCash,
+            });
+        }
         let prepared = match candidate.intent() {
             Intent::Cancel { code, id } => PreparedValidationStep::Cancel {
                 key,
@@ -986,6 +1025,25 @@ impl EnvelopeDraft {
             },
             self.requested_price,
         )
+    }
+
+    /// 单一规范构造点（任务65 #1）：Place 的簿内 Order 只能由此产生。
+    ///
+    /// resolved 价格由调用方（price_resolution）确定；身份/方向/数量/所有者一律取自
+    /// draft，不再散落手工字段搬运。成交进度从零开始，seq 由簿分配。
+    /// 借用形式：place 流程在撮合后仍需 draft 的其余字段。
+    pub fn into_book_order(&self, price: crate::Money) -> crate::Order {
+        crate::Order {
+            id: self.envelope_key.order,
+            side: self.envelope_key.side,
+            price,
+            qty: self.qty,
+            original_qty: self.qty,
+            filled_qty: 0,
+            filled_value: crate::Money::ZERO,
+            owner: self.envelope_key.account,
+            seq: 0,
+        }
     }
 }
 

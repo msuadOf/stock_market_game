@@ -88,7 +88,6 @@ test("strict save boundary rejects malformed nested company and personal-state b
   const cases: readonly [readonly (string | number)[], unknown, RegExp][] = [
     [["setup", "start_date"], "2030-02-30", /setup\.start_date/],
     [["snapshot", "seq"], "0", /snapshot\.seq/],
-    [["auction_orders", "600101"], [{ owner: 1 }], /auction_orders/],
     [["resting_orders", market], [{ id: 1 }], /resting_orders/],
     [["price_history", market, 0], 1.5, /price_history/],
     [["market_minute_closes", market], [{ absolute_trading_minute: 1, close: 1000 }], /market_minute_closes/],
@@ -96,7 +95,12 @@ test("strict save boundary rejects malformed nested company and personal-state b
     [["npc_attention", account, "rng_state"], 42, /npc_attention/],
     [["runtime_state", "strategy_states", account], { Institution: "Unknown" }, /runtime_state/],
     [["retail_experience", "1", "consecutive_failed_buys"], "1", /retail_experience/],
+    // 旧字段（架构项 8 已删除的母单镜像与待应用事实队列）作为未知键必须被拒绝。
     [["parent_orders"], { [account]: { [market]: { code: market } } }, /parent_orders/],
+    [["plans", "plans", plan, "execution"], null, /plans\.plans\.\d+\.execution/],
+    [["plans", "plans", plan, "execution"], undefined, /plans\.plans\.\d+\.execution/],
+    [["plans", "plans", plan, "execution", "limit_price"], 1000, /execution\.limit_price/],
+    [["plans", "plans", plan, "execution", "expires_market_minute"], "500", /execution\.expires_market_minute/],
     [["npc_order_lifecycles"], [{ account: 1 }], /npc_order_lifecycles/],
     [["pending_player"], [[1, { Retired: {} }]], /pending_player/],
     [["next_order_id"], 9_007_199_254_740_992, /next_order_id/],
@@ -104,7 +108,9 @@ test("strict save boundary rejects malformed nested company and personal-state b
     [["company_operations", "companies", company, "spec", "unexpected"], true, /company_operations/],
     [["closing_registry", "versions"], [{}], /closing_registry/],
     [["public_library", "next_seq"], "35", /public_library/],
-    [["ops_wiring", "mirrored", 0], "7067", /ops_wiring/],
+    [["ops_wiring"], { mirrored: [] }, /ops_wiring/],
+    [["civil_clock", "pending_due"], [], /civil_clock\.pending_due/],
+    [["civil_clock", "next_due_seq"], 1, /civil_clock\.next_due_seq/],
     [["disclosures", "announced_through"], "2030-02-30", /disclosures/],
     [["plans", "plans", plan, "status"], { Unknown: {} }, /plans/],
     [["plans", "plans", plan, "review", "last_review_resources"], undefined, /last_review_resources/],
@@ -115,6 +121,7 @@ test("strict save boundary rejects malformed nested company and personal-state b
     [["belief_books", account, "analysis", "fundamental_bp"], "4000", /belief_books/],
     [["watchlists", account, "latest_attention_minute"], 50, /watchlists/],
     [["price_memories", priceMemoryAccount, "stocks", rememberedMarket, "last_touched_minute"], 50, /price_memories/],
+    // 旧待应用事实队列字段（架构项 8 已删除）同样必须被拒绝。
     [["pending_plan_events"], [{ Rejected: {} }], /pending_plan_events/],
   ]
   for (const [path, value, expected] of cases) assert.throws(() => parseSaveSlot(mutate(path, value)), expected)

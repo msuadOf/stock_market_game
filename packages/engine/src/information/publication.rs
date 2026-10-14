@@ -28,7 +28,7 @@ pub const APPROVAL_HOUR: u32 = 8;
 /// 18:00 披露相位的当日秒。
 pub const DISCLOSURE_PHASE_SECOND: u32 = 18 * 3600;
 
-/// 公布 id：库内单调分配，绝不复用（`PlanId`/`DueBusinessId` 先例）。
+/// 公布 id：库内单调分配，绝不复用（`PlanId`/`ScheduledDueId` 先例）。
 #[derive(
     Copy,
     Clone,

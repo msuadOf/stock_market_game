@@ -12,6 +12,7 @@
 //! 公开库由 information 组装，新局由 session::company_assembly 装配）。
 
 mod bank;
+mod closing;
 mod config;
 mod core;
 mod day;
@@ -27,6 +28,7 @@ mod settlements;
 mod state;
 
 pub use bank::BankFlowParams;
+pub use closing::CompanyCloseError;
 pub use config::{CompanyOperationsConfig, FlowParams, IndustryBooks, OperatingCompanyConfig};
 pub use core::{
     ActivatedShockRecord, CompanyDayReport, CompanyOperations, ExpiredShockRecord,

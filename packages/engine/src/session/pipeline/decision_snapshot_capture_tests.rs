@@ -106,17 +106,18 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
         .state
         .attention_scheduler
         .enqueue(tick + 1, unobserved);
+    // 统一 book 下同一股票只能处于一个 venue：连续与竞价视图分别落在两只股票上，
+    // 检查观察过滤逻辑仍按 owner 与 venue 归并。
     for (code, id, owner) in [
-        (&codes[0], 9, observed),
-        (&codes[0], 3, observed),
-        (&codes[0], 4, unobserved),
-        (&codes[0], 5, player),
-        (&codes[1], 11, observed),
+        (codes[0].clone(), 9, observed),
+        (codes[0].clone(), 3, observed),
+        (codes[0].clone(), 4, unobserved),
+        (codes[0].clone(), 5, player),
     ] {
         shadow
             .state
             .markets
-            .get_mut(code)
+            .get_mut(&code)
             .unwrap()
             .place(crate::Order {
                 id: crate::OrderId(id),
@@ -130,19 +131,21 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
                 seq: id,
             })
             .unwrap();
-        shadow
-            .state
-            .auction_orders
-            .entry(code.clone())
-            .or_default()
-            .push(crate::session::AuctionOrderSnap {
-                owner,
+    }
+    shadow
+        .fixture_append_auction_orders(
+            codes[1].clone(),
+            vec![crate::session::AuctionOrderSnap {
+                owner: observed,
                 side: crate::Side::Buy,
                 limit: Money::from_cents(900),
                 qty: 100,
-                order_id: id,
-            });
-    }
+                order_id: 11,
+            }],
+        )
+        .unwrap();
+    // fixture只绕过了受理放book；补齐真实规范财务事实，再测试观察过滤而非缺ledger。
+    shadow.hydrate_or_validate_envelope_ledger().unwrap();
 
     let captured = capture_decision_snapshot(&mut shadow).unwrap();
 
@@ -167,7 +170,6 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
         vec![
             (codes[0].clone(), crate::OrderId(9)),
             (codes[0].clone(), crate::OrderId(3)),
-            (codes[1].clone(), crate::OrderId(11)),
         ]
     );
     assert_eq!(
@@ -175,11 +177,7 @@ fn capture_only_copies_working_orders_owned_by_observed_npcs() {
             .iter()
             .map(|(code, order)| (code.clone(), order.order_id))
             .collect::<Vec<_>>(),
-        vec![
-            (codes[0].clone(), 9),
-            (codes[0].clone(), 3),
-            (codes[1].clone(), 11),
-        ]
+        vec![(codes[1].clone(), 11)]
     );
 }
 
@@ -699,6 +697,8 @@ fn capture_self_view_money_error_precedes_risk_and_missing_strategy() {
             seq: 1,
         })
         .unwrap();
+    // 财务订单必须先真实存在；负cash仍在原available cash优先级处被拒。
+    shadow.hydrate_or_validate_envelope_ledger().unwrap();
     let error = capture_decision_snapshot(&mut shadow).unwrap_err();
 
     assert!(matches!(error, DecisionSnapshotCaptureError::Money {
@@ -729,23 +729,27 @@ fn capture_mixed_working_orders_only_restore_cash_for_the_cancelable_subset() {
     let source = GameSession::new(setup, 79).unwrap();
     let account = AccountId(1);
     let code = source.state.markets.keys().next().unwrap().clone();
-    for (tick, expected_phase, replace_continuous, replace_auction) in [
-        (0, crate::TradingPhase::CallAuction, false, true),
-        (300, crate::TradingPhase::CallAuction, false, false),
-        (600, crate::TradingPhase::PreOpen, false, false),
-        (900, crate::TradingPhase::Continuous, true, false),
-        (15_000, crate::TradingPhase::ClosingAuction, false, false),
+    for (tick, expected_phase, replaceable) in [
+        (0, crate::TradingPhase::CallAuction, true),
+        (300, crate::TradingPhase::CallAuction, false),
+        (600, crate::TradingPhase::PreOpen, false),
+        (900, crate::TradingPhase::Continuous, true),
+        (15_000, crate::TradingPhase::ClosingAuction, false),
     ] {
         let mut shadow = source.clone_for_tick_shadow().unwrap();
         shadow.state.tick = tick;
         shadow.state.attention_scheduler.clear();
         npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+        // 统一 book：股票模式由交易阶段决定，全部工作单落在同一簿上；
+        // 可撤销性由阶段窗口（开盘前1/3、连续、其余不可撤）决定。
+        let mode = crate::session::pipeline::phase::PhasePolicy::capture(&shadow).matching_mode();
+        // 卖单资源与买单cash约束独立；fixture必须真实拥有这些可售股数。
+        shadow.fixture_account_mut(&account).unwrap()
+            .grant_position(code, 100, Money::from_cents(100_000)).unwrap();
         for (id, side) in [(1, crate::Side::Buy), (2, crate::Side::Sell)] {
-            shadow
-                .state
-                .markets
-                .get_mut(&code)
-                .unwrap()
+            let market = shadow.state.markets.get_mut(&code).unwrap();
+            market.set_matching_mode(mode).unwrap();
+            market
                 .place(crate::Order {
                     id: crate::OrderId(id),
                     owner: account,
@@ -758,33 +762,17 @@ fn capture_mixed_working_orders_only_restore_cash_for_the_cancelable_subset() {
                     seq: id,
                 })
                 .unwrap();
-            shadow
-                .state
-                .auction_orders
-                .entry(code.clone())
-                .or_default()
-                .push(crate::session::AuctionOrderSnap {
-                    owner: account,
-                    side,
-                    limit: Money::from_cents(800),
-                    qty: 100,
-                    order_id: id + 2,
-                });
         }
-        // 买单预留分别为成交额 + 500 分佣金 + 1 分过户费；卖单不预留现金。
-        let continuous = Money::from_cents(90_501);
-        let auction = Money::from_cents(80_501);
+        // fixture通过真实水合建立规范费用/预留，最终DTO读取这些事实而不是重建Order。
+        shadow.hydrate_or_validate_envelope_ledger().unwrap();
+        // 买单预留为成交额 + 500 分佣金 + 1 分过户费；卖单不预留现金。
+        let reserved = Money::from_cents(90_501);
         let mut expected = shadow.state.accounts[&account]
             .cash()
-            .sub(continuous)
-            .unwrap()
-            .sub(auction)
+            .sub(reserved)
             .unwrap();
-        if replace_continuous {
-            expected = expected.add(continuous).unwrap();
-        }
-        if replace_auction {
-            expected = expected.add(auction).unwrap();
+        if replaceable {
+            expected = expected.add(reserved).unwrap();
         }
 
         let captured = capture_decision_snapshot(&mut shadow).unwrap();

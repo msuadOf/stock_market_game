@@ -3,7 +3,7 @@ use super::{
     ledger::ConservationState,
     Envelope, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt, JournalRank, ResVec, StepFatal,
 };
-use rayon::prelude::*;
+use crate::compute::parallel::*;
 
 const PARALLEL_ROW_THRESHOLD: usize = 512;
 const ROW_CHUNK_SIZE: usize = 64;
@@ -50,7 +50,7 @@ pub(super) fn record_state(
 pub(super) fn validate_owned_rows(
     rows: &[(&Envelope, &ConservationState)],
 ) -> Result<(), StepFatal> {
-    let checked = map_rows(rows, |(envelope, state)| check_row(envelope, state));
+    let checked = map_rows(rows, None, |(envelope, state)| check_row(envelope, state));
     let mut totals = [ResVec::ZERO; 5];
     for row in checked {
         accumulate_totals(&mut totals, row?)?;
@@ -62,8 +62,27 @@ pub(super) fn validate(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
     validate_with_observer(ledger, || {})
 }
 
+/// 与 [`validate`] 相同的守恒与错误合同；compute 语义同 [`validate_with_observer_in`]。
+pub(super) fn validate_in(
+    ledger: &EnvelopeLedger,
+    compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+) -> Result<(), StepFatal> {
+    validate_with_observer_in(ledger, compute, || {})
+}
+
 pub(super) fn validate_with_observer(
     ledger: &EnvelopeLedger,
+    observe_row: impl Fn() + Sync,
+) -> Result<(), StepFatal> {
+    validate_with_observer_in(ledger, None, observe_row)
+}
+
+/// 与 [`validate_with_observer`] 相同的逐行校验与错误合同；显式传入 compute 时，
+/// ≥512 行的 dense row 审计归入该 registry（见 [`map_rows`] 的 Some 分支），
+/// 未传时按 None 合同在调用线程串行执行，不借用 caller 域的 Rayon registry。
+pub(super) fn validate_with_observer_in(
+    ledger: &EnvelopeLedger,
+    compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
     observe_row: impl Fn() + Sync,
 ) -> Result<(), StepFatal> {
     let mut totals = [ResVec::ZERO; 5];
@@ -93,7 +112,7 @@ pub(super) fn validate_with_observer(
         .chain(ledger.terminal_envelopes.iter())
         .map(|(key, envelope)| (key, envelope))
         .collect();
-    let validated = map_rows(&rows, |(key, envelope)| {
+    let validated = map_rows(&rows, compute, |(key, envelope)| {
         observe_row();
         let state = ledger
             .conservation
@@ -187,6 +206,7 @@ fn validate_aggregate(totals: [ResVec; 5]) -> Result<(), StepFatal> {
 
 pub(super) fn map_rows<T, R>(
     rows: &[T],
+    compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
     validate_row: impl Fn(&T) -> Result<R, StepFatal> + Sync,
 ) -> Vec<Result<R, StepFatal>>
 where
@@ -200,10 +220,22 @@ where
     }
 
     // IndexedParallelIterator 保留源行顺序，直接写入连续结果，避免每个 chunk 单独分配。
-    rows.par_iter()
-        .with_min_len(ROW_CHUNK_SIZE)
-        .map(&validate_row)
-        .collect()
+    match compute {
+        // ReceiptAggregation 链等显式接入的完整校验归入会话 compute registry：
+        // record 在 install 内执行，观察到的 executing_workers/owner_worker 即真实执行域。
+        Some(context) => context.install(|| {
+            context.record(crate::compute::ComputeWork::ReceiptAggregationAudit);
+            rows.par_iter()
+                .with_min_len(ROW_CHUNK_SIZE)
+                .map(&validate_row)
+                .collect()
+        }),
+        // 消灭 caller 域隐式全局入口：不借用 caller 当前的 Rayon registry
+        //（串行脊线程上 par_iter 会惰性初始化全局池，即线程数 132→260 的元凶）。
+        // 未显式接会话上下文的调用方在 ≥512 行时退化为调用线程串行循环；
+        // 逐行校验内容、结果顺序与错误合同与原并行分支完全一致，只改执行域。
+        None => rows.iter().map(|row| validate_row(row)).collect(),
+    }
 }
 
 fn row(envelope: &Envelope, state: &ConservationState) -> Result<ConservationRow, StepFatal> {

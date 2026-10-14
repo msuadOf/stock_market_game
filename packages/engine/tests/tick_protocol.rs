@@ -1,24 +1,24 @@
-use engine::session::protocol::{TickBatch, TickFrame, TickTimeseriesPayload};
+use engine::session::protocol::{EventFact, TickBatch, TickFrame, TickTimeseriesPayload};
 use engine::{AccountId, Event, StockId};
 
 fn frame(tick: u64, before: u64, count: u64) -> TickFrame {
-    let mut frame = TickFrame {
-        facts: Vec::new(),
+    // 独立测试 fixture 的 producer：事件只在此构造一次并携带 typed 身份。
+    let mut cursor = engine::session::protocol::SessionFactCursor::default();
+    let events = (before + 1..=before + count)
+        .map(|seq| Event::IntentRejected {
+            seq,
+            account: AccountId(0),
+            code: StockId(0),
+            reason: engine::RejectionReason::UnknownStock,
+        })
+        .collect();
+    TickFrame {
+        facts: cursor.assign_session_facts(events).unwrap(),
         tick,
         seq_from: before,
         seq_to: before + count,
-        events: (before + 1..=before + count)
-            .map(|seq| Event::IntentRejected {
-                seq,
-                account: AccountId(0),
-                code: StockId(0),
-                reason: engine::RejectionReason::UnknownStock,
-            })
-            .collect(),
         timeseries_payload: TickTimeseriesPayload::default(),
-    };
-    frame.facts = engine::session::protocol::attach_facts(&frame.events).unwrap();
-    frame
+    }
 }
 
 #[test]
@@ -41,14 +41,21 @@ fn replay_rejects_mutated_payload_but_accepts_reversed_facts() {
         ReplayDecision::Applied
     );
     let mut reversed = original.clone();
-    reversed.events.reverse();
     reversed.facts.reverse();
     assert_eq!(
         guard.ingest(&update(reversed)).unwrap(),
         ReplayDecision::ExactRetry
     );
+    // 篡改载荷的账户实体而不改 key：typed 数值身份映射必须拒绝，不依赖 JSON 签名。
     let mut mutated = original.clone();
-    mutated.facts[0].canonical_payload.push(' ');
+    mutated.facts[0].event = Event::OrderCanceled {
+        seq: mutated.facts[0].event.seq(),
+        account: AccountId(1),
+        code: StockId(0),
+        id: engine::OrderId(0),
+        remaining_qty: 1,
+    };
+    assert!(mutated.validate().is_err());
     assert!(guard.ingest(&update(mutated)).is_err());
     let mut duplicate = original;
     duplicate.facts[1].key = duplicate.facts[0].key.clone();
@@ -66,7 +73,7 @@ fn empty_frame_carries_unchanged_exclusive_cursor() {
 fn event_permutation_preserves_frame_validation_and_timeseries() {
     let mut reordered = frame(1, 0, 3);
     let timeseries = serde_json::to_value(&reordered.timeseries_payload).unwrap();
-    reordered.events.reverse();
+    reordered.facts.reverse();
     assert!(reordered.validate().is_ok());
     assert_eq!(
         serde_json::to_value(&reordered.timeseries_payload).unwrap(),
@@ -78,10 +85,13 @@ fn event_permutation_preserves_frame_validation_and_timeseries() {
 fn missing_duplicate_and_outside_sequence_are_rejected() {
     let original = frame(1, 0, 3);
     let mut missing = original.clone();
-    missing.events.pop();
+    missing.facts.pop();
     assert!(missing.validate().is_err());
     let mut duplicate = original.clone();
-    duplicate.events[1] = duplicate.events[0].clone();
+    duplicate.facts[1] = EventFact {
+        key: duplicate.facts[0].key.clone(),
+        event: duplicate.facts[0].event.clone(),
+    };
     assert!(duplicate.validate().is_err());
     let mut outside = original;
     outside.seq_from = 1;

@@ -168,4 +168,10 @@ impl EventStableKey {
     pub const fn local_event_index(&self) -> u64 {
         self.local_event_index
     }
+
+    /// producer 在已确定的域中填入局部序号，不再次从事件生成身份；域本身不可改变。
+    pub(in crate::session) fn with_local_event_index(mut self, index: u64) -> Self {
+        self.local_event_index = index;
+        self
+    }
 }

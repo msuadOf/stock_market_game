@@ -25,7 +25,7 @@ fn continuous_inputs_capture_all_markets_without_preloaded_operations() {
     );
     assert!(inputs
         .iter()
-        .all(|input| input.phase == TradingPhase::Continuous));
+        .all(|input| input.policy.phase() == TradingPhase::Continuous));
     assert!(inputs.iter().all(|input| input.envelopes.is_empty()));
     assert!(inputs.iter().all(|input| input.operations.is_empty()));
     for input in &inputs {
@@ -63,9 +63,8 @@ fn continuous_adapter_carries_only_tick_start_envelopes_matching_each_order_book
     assert_eq!(second.envelopes.len(), 1);
     let snapshot = &second.envelopes[0];
     assert_eq!(snapshot.envelope.origin(), EnvelopeOrigin::TickStart);
-    assert_eq!(snapshot.envelope.audit(), snapshot.audit);
     assert_eq!(snapshot.envelope.key().order, OrderId(91));
-    assert_eq!(snapshot.audit.remaining_qty, 100);
+    assert_eq!(snapshot.audit().remaining_qty, 100);
 }
 
 #[test]
@@ -129,36 +128,34 @@ fn continuous_adapter_preserves_prior_fill_fee_audit_from_the_authoritative_ledg
 
     let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
 
-    assert_eq!(inputs[0].envelopes[0].audit.nominal, nominal);
-    assert_eq!(inputs[0].envelopes[0].audit.charged, nominal);
+    assert_eq!(inputs[0].envelopes[0].audit().nominal, nominal);
+    assert_eq!(inputs[0].envelopes[0].audit().charged, nominal);
 }
 
 #[test]
-fn continuous_adapter_rejects_residual_auction_orders_in_continuous_phase() {
+fn unified_adapter_rejects_book_mode_inconsistent_with_continuous_phase() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
     let code = StockId(0);
-    game.state
-        .auction_orders
-        .entry(code)
-        .or_default()
-        .push(crate::session::AuctionOrderSnap {
+    game.fixture_append_auction_orders(
+        code,
+        vec![crate::session::AuctionOrderSnap {
             owner: AccountId(0),
             side: Side::Buy,
             limit: Money::from_cents(900),
             qty: 100,
             order_id: 93,
-        });
-
+        }],
+    )
+    .unwrap();
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let before = game.business_state_hash().unwrap();
     let error = prepare_incremental_continuous_inputs(&game).unwrap_err();
-
-    assert!(matches!(
-        error,
-        StepFatal::InvariantViolation { description, location }
-            if description.contains("residual auction")
-                && location == "pipeline::continuous_matching_adapter"
-    ));
+    assert!(
+        matches!(error, StepFatal::InvariantViolation { description, location }
+        if description.contains("PhasePolicy") && location == "pipeline::continuous_matching_adapter")
+    );
+    assert_eq!(game.business_state_hash().unwrap(), before);
 }
 
 #[test]
@@ -258,14 +255,16 @@ fn continuous_adapter_rejects_underfunded_live_resources_with_matching_order_fie
     )
     .unwrap();
 
+    // 恢复原capture防御：未可信的raw资源必须拒绝，不能因费用复用而接受underfunded行。
     let error = prepare_incremental_continuous_inputs(&game).unwrap_err();
-
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { description, location }
             if description.contains("live envelope resources")
                 && location == "pipeline::continuous_matching_adapter"
     ));
+    // 恢复/水合也仍有完整拒绝能力（已失败的proof缓存不能被不同入口洗白）。
+    assert!(game.validate_existing_live_envelope_projection().is_err());
 }
 
 #[test]
@@ -308,19 +307,26 @@ fn continuous_adapter_rejects_same_tick_envelopes_in_the_live_ledger() {
 }
 
 #[test]
-fn continuous_adapter_rejects_non_continuous_phase() {
-    let game =
-        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(3), 42).unwrap();
-    assert_eq!(game.phase(), TradingPhase::CallAuction);
-
-    let error = prepare_incremental_continuous_inputs(&game).unwrap_err();
-
-    assert!(matches!(
-        error,
-        StepFatal::InvariantViolation { description, location }
-            if description.contains("Continuous")
-                && location == "pipeline::continuous_matching_adapter"
-    ));
+fn unified_adapter_builds_inputs_for_every_phase_with_matching_policy_mode() {
+    for (setup_ticks, day_tick, expected_phase) in [
+        (3, 0, TradingPhase::CallAuction),
+        (3, 2, TradingPhase::PreOpen),
+        (3, 3, TradingPhase::Continuous),
+    ] {
+        let mut game = GameSession::new(
+            crate::session::npc_working_quote_tests::quote_setup(setup_ticks),
+            42,
+        )
+        .unwrap();
+        game.state.tick = day_tick;
+        game.fixture_sync_market_modes_for_test();
+        assert_eq!(game.phase(), expected_phase);
+        let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
+        assert!(inputs
+            .iter()
+            .all(|input| input.policy.phase() == expected_phase
+                && input.market.matching_mode() == input.policy.matching_mode()));
+    }
 }
 
 fn resting_buy(id: OrderId, owner: AccountId) -> Order {
@@ -420,7 +426,7 @@ fn one_dense_stock_input_validates_on_multiple_workers_and_keeps_the_authoritati
                 .get(snapshot.envelope.key())
                 .unwrap()
         );
-        assert_eq!(snapshot.audit, snapshot.envelope.audit());
+        assert_eq!(snapshot.audit(), snapshot.envelope.audit());
     }
     assert_eq!(game.session_state_hash().unwrap(), before);
 }
@@ -454,15 +460,27 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
         };
         for first_missing in [false, true] {
             let mut game = source.clone_for_tick_shadow().unwrap();
-            let (missing, underfunded) = if first_missing {
+            let (missing, tampered) = if first_missing {
                 (&first, &last)
             } else {
                 (&last, &first)
             };
-            let audit = game.state.envelope_ledger.get(underfunded).unwrap().audit();
+            // 任务65 #1：capture 不再对未触及 resting 单重算预留/费用；本用例改用
+            // audit 字段篡改（4 字段交叉核对负责捕获），保持"按 book 序选择首错"的
+            // 原始测试目的。live 资源重算防御由产出点门禁+费率指纹守卫（T8）承担。
+            let original = game.state.envelope_ledger.get(tampered).unwrap();
+            let live = original.live();
+            let tampered_audit = EnvelopeAudit {
+                filled_value: original
+                    .audit()
+                    .filled_value
+                    .add(Money::from_cents(1))
+                    .unwrap(),
+                ..original.audit()
+            };
             game.state.envelope_ledger.envelopes.insert(
-                underfunded.clone(),
-                Envelope::tick_start_existing(underfunded.clone(), Money::from_cents(1), 0, audit),
+                tampered.clone(),
+                Envelope::tick_start_existing(tampered.clone(), live.cash, live.shares, tampered_audit),
             );
             game.state.envelope_ledger.envelopes.remove(missing);
             let before = game.state.envelope_ledger.clone();
@@ -479,7 +497,7 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
                         description: if first_missing {
                             "continuous order books contain an unledgered order"
                         } else {
-                            "continuous order books disagree with live envelope resources"
+                            "continuous order books disagree with envelope audit"
                         }
                         .to_owned(),
                         location: "pipeline::continuous_matching_adapter".to_owned(),

@@ -1,7 +1,7 @@
 //! Per-account state shared between a committed session and its tick candidate.
 
+use crate::compute::parallel::*;
 use crate::AccountId;
-use rayon::prelude::*;
 use serde::ser::SerializeMap;
 use std::collections::BTreeMap;
 use std::ops::Index;

@@ -12,7 +12,7 @@ fn step_phases_have_fixed_complete_rank_mapping() {
         vec![
             (0, "expiry_shadow"),
             (1, "seal_allocation_snapshot"),
-            (2, "decision_shadow"),
+            (2, "decision_and_continuation"),
             (3, "account_validation"),
             (4, "stock_processing"),
             (5, "receipt_aggregation"),

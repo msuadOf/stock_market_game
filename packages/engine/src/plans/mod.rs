@@ -1,8 +1,8 @@
 //! 可跨日的个人交易计划状态机。
 //!
 //! 纯状态机：转移是 (状态, 事件) 的确定性纯函数，无随机数、无 I/O。
-//! 计划不冻结资产，不建立第二套订单/冻结系统；对现有 `ParentOrderPlan`
-//! 执行子状态仅持可选引用，由会话的计划执行路由接线。
+//! 计划不冻结资产，不建立第二套订单/冻结系统；母单执行子状态
+//! （`PlanExecutionLeg`）唯一保存在 `TradingPlan`，由会话的计划执行路由接线。
 //! 预算分配与紧迫度报价决策分别在 allocation 与 urgency 中实现。
 
 mod allocation;
@@ -34,7 +34,8 @@ pub use quote_policy::{
 pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
 pub use state::{
     OpinionSource, PauseReason, PlanId, PlanOpen, PlanOpinion, PlanStatus, PlanTarget,
-    ResumeReason, ReviewConditions, ReviewResources, TerminationReason, TradingPlan, Urgency,
+    PlanExecutionLeg, ResumeReason, ReviewConditions, ReviewResources, TerminationReason,
+    TradingPlan, Urgency,
 };
 pub use urgency::{
     assess_recovery, assess_urgency, PatienceStyle, PauseAssessment, RecoveryAssessment,
@@ -47,7 +48,7 @@ use std::collections::BTreeMap;
 use validation::{validate_open, validate_policy};
 
 use crate::account::StockId;
-use crate::orderbook::{AccountId, OrderId};
+use crate::orderbook::{AccountId, OrderId, Side};
 
 /// 个人期限按风格为 5/20/60 交易日；风格→期限映射由分析档案派生，这里固定参数。
 pub const HORIZON_TRADING_DAYS_SHORT: u32 = 5;
@@ -385,6 +386,130 @@ impl PlanBook {
     pub fn active_plan(&self, account: AccountId, code: &StockId) -> Option<&TradingPlan> {
         let plan_id = self.by_account_stock.get(&account)?.get(code)?;
         self.plans.get(plan_id)
+    }
+
+    // ── 母单执行子状态的唯一 owner 入口（ADR-0015 2026-09-10 修订）──
+    // 创建/推进/撤销/成交/限价修订都从这里更新 `TradingPlan` 的执行腿；
+    // 会话侧不再持有任何第二份可变计划状态。
+
+    /// 安装/替换一个执行腿的调度参数（新子单报价前调用）。仅 `Active` 计划可安装。
+    pub fn install_execution(
+        &mut self,
+        plan_id: PlanId,
+        child_qty: u32,
+        limit_price: crate::Money,
+        expires_market_minute: u64,
+    ) -> Result<(), PlanError> {
+        let plan = self
+            .plans
+            .get_mut(&plan_id)
+            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        plan.install_execution_leg(child_qty, limit_price, expires_market_minute)
+    }
+
+    /// 权威路由确认接受子单：直接登记执行腿在途子单身份与剩余数量，
+    /// 并登记接受事实（幂等）。方向不符或非本计划子单返回 false。
+    pub fn record_child_submitted(
+        &mut self,
+        account: AccountId,
+        code: &StockId,
+        side: Side,
+        order_id: OrderId,
+        qty: u32,
+        trading_day: u64,
+    ) -> Result<bool, PlanError> {
+        let Some(plan_id) = self
+            .by_account_stock
+            .get(&account)
+            .and_then(|by_stock| by_stock.get(code).copied())
+        else {
+            return Ok(false);
+        };
+        let plan = self
+            .plans
+            .get_mut(&plan_id)
+            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        if plan.direction() != side || plan.execution().is_none() {
+            return Ok(false);
+        }
+        plan.adopt_child_facts(order_id, qty, trading_day)?;
+        Ok(true)
+    }
+
+    /// 子单被确认撤销/到期/拒单释放：清除执行腿在途子单引用（不回退已成交）。
+    /// 非本计划子单返回 false；在途身份不符属于类型化错误。
+    pub fn record_child_released(
+        &mut self,
+        account: AccountId,
+        code: &StockId,
+        order_id: OrderId,
+        trading_day: u64,
+    ) -> Result<bool, PlanError> {
+        let Some(plan_id) = self
+            .by_account_stock
+            .get(&account)
+            .and_then(|by_stock| by_stock.get(code).copied())
+        else {
+            return Ok(false);
+        };
+        let plan = self
+            .plans
+            .get_mut(&plan_id)
+            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        if plan.active_child_order_id() != Some(order_id) {
+            return Ok(false);
+        }
+        plan.record_child_order_canceled(order_id, trading_day)?;
+        Ok(true)
+    }
+
+    /// 按已发生的成交事实立即更新唯一 owner；完成后同步移出活跃索引。
+    pub(crate) fn record_child_fill(
+        &mut self,
+        account: AccountId,
+        code: &StockId,
+        side: Side,
+        order_id: OrderId,
+        qty: u32,
+        trading_day: u64,
+    ) -> Result<bool, PlanError> {
+        let Some(plan) = self.active_plan(account, code) else { return Ok(false); };
+        if plan.direction() != side || plan.active_child_order_id() != Some(order_id) {
+            return Ok(false);
+        }
+        let id = plan.plan_id();
+        let remaining = plan.active_child_remaining_qty()
+            .ok_or(PlanError::MissingExecutionLeg { plan_id: id })?;
+        self.apply(id, PlanEvent::ChildOrderFilled {
+            order_id,
+            qty,
+            child_complete: qty == remaining,
+            trading_day,
+        })?;
+        Ok(true)
+    }
+
+    /// 恢复接缝：用真实订单簿剩余量重建在途子单剩余数量。
+    pub(crate) fn restore_child_remaining_qty(
+        &mut self,
+        plan_id: PlanId,
+        remaining: Option<u32>,
+    ) -> Result<(), PlanError> {
+        let plan = self
+            .plans
+            .get_mut(&plan_id)
+            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        let Some(leg) = plan.execution.as_mut() else {
+            return Err(PlanError::MissingExecutionLeg { plan_id });
+        };
+        match (plan.active_child_order_id, remaining) {
+            (None, None) => Ok(()),
+            (Some(_), Some(qty)) => {
+                leg.active_child_remaining_qty = Some(qty);
+                Ok(())
+            }
+            _ => Err(PlanError::InvalidChildRestore { plan_id }),
+        }
     }
 
     /// 对一个计划应用一个事件：纯 (状态, 事件) 转移，返回事件后的状态。

@@ -1,10 +1,11 @@
 use super::account_validation_context::build_account_validation_context;
 use super::continuous_matching::IncrementalContinuousStockCoordinator;
+use super::continuous_matching::IncrementalContinuousStockCoordinator as IncrementalAuctionStockCoordinator;
 use super::continuous_matching_adapter::prepare_incremental_continuous_inputs;
-use super::continuous_tick_transaction::apply_initial_candidate_stream_for_test;
-use super::stock_auction::auction_day_end::IncrementalAuctionStockCoordinator;
-use super::stock_auction_adapter::prepare_incremental_auction_inputs;
+use super::continuous_matching_adapter::prepare_incremental_continuous_inputs as prepare_incremental_auction_inputs;
+use super::market_tick_transaction::apply_initial_candidate_stream_for_test;
 use super::*;
+use crate::session::plan_continuation_domain::PlanContinuationDomain;
 use crate::{AccountId, Intent, Money, Side};
 
 fn fixture() -> (GameSession, AccountValidatorDriver, IntentCandidateBatch) {
@@ -13,7 +14,7 @@ fn fixture() -> (GameSession, AccountValidatorDriver, IntentCandidateBatch) {
         42,
     )
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &session, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &session }).unwrap();
     let validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -106,7 +107,7 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
                 )
                 .unwrap();
 
-                let rounds = super::pre_open_transaction::apply_initial_candidate_stream(
+                let rounds = super::market_tick_transaction::apply_initial_candidate_stream(
                     &mut validator,
                     &mut stock_execution,
                     &initial,
@@ -139,7 +140,7 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
 fn initial_order_id_overflow_does_not_leave_partial_account_validation_or_matching_work() {
     let (mut session, _, initial) = fixture();
     session.state.next_order_id = u64::MAX - 1;
-    let plan = plan_tick(PhaseInput { session: &session, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput { session: &session }).unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -174,13 +175,14 @@ fn auction_initial_round_batches_accounts_and_stocks_without_clearing_early() {
     let (mut session, _, initial) = fixture();
     session.state.setup.auction_ticks = 900;
     session.state.setup.ticks_per_day = 15_300;
+    session.fixture_sync_market_modes_for_test();
     let mut validator = build_validator(&session);
     let mut stock_execution = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
 
-    let rounds = super::auction_tick_transaction::apply_initial_candidate_stream(
+    let rounds = super::market_tick_transaction::apply_initial_candidate_stream(
         &mut validator,
         &mut stock_execution,
         &initial,
@@ -198,7 +200,7 @@ fn auction_initial_round_batches_accounts_and_stocks_without_clearing_early() {
 }
 
 fn build_validator(session: &GameSession) -> AccountValidatorDriver {
-    let plan = plan_tick(PhaseInput { session, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput { session }).unwrap();
     AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -327,20 +329,28 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
         apply_initial_candidate_stream_for_test(&mut validator, &mut stock_execution, &initial)
             .unwrap();
     assert_eq!(rounds.len(), 1);
-    chain
-        .project_execution_round(&mut session, &mut rounds[0])
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut rounds[0])
+    })
+    .unwrap();
 
     assert!(session.state.plans.plan(plan_id).unwrap().is_terminal());
-    assert!(!session.state.parent_orders.contains_key(&AccountId(1)));
-    assert!(session.state.pending_plan_events.is_empty());
+    assert!(session
+        .state
+        .plans
+        .plan(crate::plans::PlanId(0))
+        .is_ok_and(|plan| plan.execution().is_none()));
     assert_eq!(session.state.markets[&code].resting_order_count(), 1);
     assert_eq!(
         session.state.accounts[&AccountId(1)].cash(),
         cash_before,
         "projection does not settle cash"
     );
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty()
+    );
     let completion = chain.finish().unwrap();
     assert_eq!(completion.consumed.operation_count(), 2);
     assert_eq!(completion.consumed.receipt_count(), 2);
@@ -527,8 +537,7 @@ fn continuous_execution_accepts_independent_stock_facts_in_another_output_order(
     assert_eq!(round.facts.len(), 2);
     round.facts.reverse();
 
-    super::continuous_tick_transaction::validate_execution_round_for_test(&outcomes, &round)
-        .unwrap();
+    super::market_tick_transaction::validate_execution_round_for_test(&outcomes, &round).unwrap();
 }
 
 #[test]
@@ -539,6 +548,7 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
         if auction {
             authority.state.setup.auction_ticks = 900;
             authority.state.setup.ticks_per_day = 15_300;
+            authority.fixture_sync_market_modes_for_test();
         }
         let codes = authority.state.markets.keys().cloned().collect::<Vec<_>>();
         for code in codes {
@@ -558,27 +568,19 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
             authority.business_state_hash().unwrap(),
             authority.session_state_hash().unwrap(),
         );
-        let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+        let mut plan = plan_tick(PhaseInput {
+            session: &authority,
+        })
         .unwrap();
-        plan.state
-            .execute(|candidate| {
-                candidate.state.next_receipt_base = 1;
-                Ok(())
-            })
-            .unwrap();
-        if auction {
-            assert!(
-                super::auction_tick_transaction::apply_tick_shadow_auction_transaction(&mut plan)
-                    .is_err()
-            );
-        } else {
-            assert!(
-                super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(
-                    &mut plan
-                )
+        plan.execute(|candidate| {
+            candidate.state.next_receipt_base = 1;
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan)
                 .is_err()
-            );
-        }
+        );
 
         assert_eq!(
             (
@@ -587,8 +589,9 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
             ),
             authority_before
         );
-        assert!(plan.state.execute(|_| Ok(())).is_err());
+        assert!(plan.execute(|_| Ok(())).is_err());
         assert!(plan.event_outbox.is_empty());
-        assert!(plan.receipt_keys.is_empty());
+        // T2：receipt 事实单载体（key 由 applied_receipts 派生，无独立载体）。
+        assert!(plan.applied_receipts.is_empty());
     }
 }

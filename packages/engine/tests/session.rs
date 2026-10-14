@@ -331,19 +331,6 @@ impl TestOrderSaveFixture {
                 });
             }
         }
-        for (stock, orders) in &save.auction_orders {
-            for order in orders {
-                envelopes.push(engine::SavedLiveEnvelope {
-                    key: engine::SavedEnvelopeKey {
-                        account: order.owner,
-                        stock: stock.clone(),
-                        order: engine::OrderId(order.order_id),
-                        side: order.side,
-                    },
-                    charged: engine::SavedFeeComponents::default(),
-                });
-            }
-        }
         envelopes.sort_by(|left, right| left.key.cmp(&right.key));
 
         // 合法测试输入补齐 FIFO cursor；真实存档保留已撤单或成交订单留下的历史间隙。
@@ -360,33 +347,18 @@ impl TestOrderSaveFixture {
         for (owner, account) in &snapshot.accounts {
             let mut expected_cash = Money::ZERO;
             let mut expected_sells = std::collections::BTreeMap::new();
-            let orders = save
-                .resting_orders
-                .iter()
-                .flat_map(|(code, orders)| {
-                    orders.iter().map(move |order| {
-                        (
-                            code,
-                            order.owner,
-                            order.side,
-                            order.price,
-                            order.qty,
-                            order.filled_value,
-                        )
-                    })
+            let orders = save.resting_orders.iter().flat_map(|(code, orders)| {
+                orders.iter().map(move |order| {
+                    (
+                        code,
+                        order.owner,
+                        order.side,
+                        order.price,
+                        order.qty,
+                        order.filled_value,
+                    )
                 })
-                .chain(save.auction_orders.iter().flat_map(|(code, orders)| {
-                    orders.iter().map(move |order| {
-                        (
-                            code,
-                            order.owner,
-                            order.side,
-                            order.limit,
-                            order.qty,
-                            Money::ZERO,
-                        )
-                    })
-                }));
+            });
             for (code, order_owner, side, price, qty, filled_value) in orders {
                 if order_owner != *owner {
                     continue;
@@ -1631,6 +1603,30 @@ fn full_day_accounting_rejects_tampered_trade_event() {
     );
 }
 
+/// 双时钟契约驱动（fault2066 修复）：休市日与已收盘交易日先经 `end_civil_day`
+/// 推进自然日，直到会话回到合法开盘起点——当前自然日为交易日且当日会话尚未
+/// 入账（交易日 [start..=current] 计数 == `day + 1` 表示当日会话待跑；
+/// == `day` 表示已收盘，与 `end_civil_day` 的会话同步守卫互补）。
+/// 存档校验要求已入账日 K 的日期=自开局起第 N 个交易日（fault2066），而
+/// 日 K 时间戳取自 `civil_clock.current_date()`——只有按本契约驱动（交易日
+/// 收盘后日结、休市日直接日结，见 `GameSession::end_civil_day` 文档与
+/// docs/simulation-calendar.md §4），自产健康档才能通过自身恢复校验。
+/// 盘中调用为无操作（当日会话进行中即满足判据）。
+fn advance_civil_to_session_start(session: &mut GameSession) {
+    loop {
+        if session.civil_clock().phase() == engine::session::CivilPhase::IntradayTrading {
+            let expected = session
+                .civil_clock()
+                .completed_trading_sessions_expected()
+                .expect("clock dates stay within calendar applicability by construction");
+            if expected == session.day() + 1 {
+                return;
+            }
+        }
+        session.end_civil_day().expect("healthy civil day end");
+    }
+}
+
 fn assert_completed_market_day(session: &GameSession, boundaries: usize, ticks_per_day: u64) {
     assert_eq!(boundaries, 1, "每个实例必须恰好完成一次完整交易日日结");
     assert_eq!(session.day(), 1);
@@ -1725,6 +1721,9 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: Sessi
         let mut resources = market_resources(session, expected_accounts);
         let mut trade_totals = TradeTotals::new();
         let mut day_boundaries = 0;
+        // 开局 2030-01-01 为元旦休市：先按双时钟契约推进到首个交易日再开盘，
+        // 否则自产档的日 K 日期过不了恢复校验（fault2066）。
+        advance_civil_to_session_start(session);
         for tick in 0..ticks_per_day {
             let (events, evidence) = session.step_with_commit_evidence().expect("healthy step");
             let after = market_resources(session, expected_accounts);
@@ -4067,8 +4066,11 @@ fn save_restore_preserves_pending_player_intents() {
 #[test]
 fn save_restore_preserves_state() {
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
-    // 跑几步产生状态
+    // 跑几步产生状态。开局 2030-01-01 为元旦休市：逐 tick 前按双时钟契约
+    // 推进自然日（休市日/已收盘日先 end_civil_day），日 K 日期才能与恢复
+    // 校验的交易日序列一致（fault2066）。
     for _ in 0..20 {
+        advance_civil_to_session_start(&mut s);
         s.step().expect("healthy step");
     }
     let saved = s.save().expect("healthy save");
@@ -4513,7 +4515,10 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
     setup.npcs.inst_count = 5;
     setup.npcs.hot_count = 0;
     let mut original = GameSession::new(setup, 0xA01_5A01).unwrap();
+    // 开局 2030-01-01 为元旦休市：逐 tick 前按双时钟契约推进自然日，
+    // 自产档日 K 日期才能与恢复校验一致（fault2066）。
     for _ in 0..25 {
+        advance_civil_to_session_start(&mut original);
         original.step().expect("healthy step");
     }
     let saved = original.save().expect("healthy save");
@@ -4521,8 +4526,11 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
     let mut restored = GameSession::restore(&saved).unwrap();
 
     // 用户已授权不要求跨运行字节一致；恢复后各自独立推进验证健康
-    // （权威存档固化了策略参数，恢复的实例可以合法继续运行）
+    // （权威存档固化了策略参数，恢复的实例可以合法继续运行）；
+    // 末尾还有一次存档→恢复断言，推进同样遵守双时钟契约。
     for _ in 0..40 {
+        advance_civil_to_session_start(&mut original);
+        advance_civil_to_session_start(&mut restored);
         original.step().expect("original healthy step");
         restored.step().expect("restored healthy step");
     }
@@ -4541,8 +4549,16 @@ fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
     // 完整存档：决策链状态随档固化后，恢复默认人口（含信念机构）即可保持
     // 逐字节连续——本测试回归原始断言强度（诊断样本不是权威状态 + 12 步
     // 事件/存档字节等价）。
-    let mut original = GameSession::new(sample_setup(), 42).unwrap();
+    // B 类重锚（t3b5 登记 #3·两处，2026-10-13）：①开局改 2030-01-02（首个
+    // 交易日；旧 2030-01-01 元旦休市直接步进会使自产档日 K 钉休市日、
+    // restore 拒绝 fault2066——同增量八十九根因，旧值留注释）；②步进接入
+    // 双时钟契约驱动（advance_civil_to_session_start，同增量八十九）。
+    // 「seed 须产出真实零售决策样本」前提不变（实测 seed 42 首样仍在窗内）。
+    let mut setup = sample_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut original = GameSession::new(setup, 42).unwrap();
     for _ in 0..20 {
+        advance_civil_to_session_start(&mut original);
         original.step().expect("healthy step");
         if !original.last_retail_decisions().is_empty() {
             break;
@@ -4559,8 +4575,11 @@ fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
         restored.last_retail_decisions().is_empty(),
         "a restored authoritative session must not deserialize old diagnostic samples"
     );
-    // 用户已授权不要求跨运行字节一致；各自独立推进验证健康
+    // 用户已授权不要求跨运行字节一致；各自独立推进验证健康（末段无存档
+    // 断言，驱动仅为契约健康步进）。
     for _ in 0..12 {
+        advance_civil_to_session_start(&mut original);
+        advance_civil_to_session_start(&mut restored);
         original.step().expect("original healthy step");
         restored.step().expect("restored healthy step");
     }
@@ -4929,7 +4948,7 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
 }
 
 #[test]
-fn restore_rejects_continuous_orders_during_call_auction() {
+fn unified_book_restores_call_auction_resting_orders_in_auction_mode() {
     let code = sid();
     let mut setup = sample_setup();
     setup.npcs = NpcSetup {
@@ -4956,17 +4975,33 @@ fn restore_rejects_continuous_orders_during_call_auction() {
             seq: 1,
         });
     save.next_order_id = 2;
-    // Only the trading phase is corrupt; the inserted order has a valid cursor.
     save.book_next_sequences.insert(code.clone(), 2);
-
-    let error = GameSession::restore(&save)
-        .err()
-        .expect("continuous orders in call auction must be rejected");
-    // 数值断言替代原文本断言 "call-auction"（fault2155：集合竞价存档不得含连续撮合挂单）。
-    assert!(
-        matches!(&error, engine::SessionError::InvalidSave(fault) if fault.code == 2155),
-        "unexpected restore error: {error}"
+    // 与真实存档一致：在场委托必须伴随 live envelope（未成交买单费用审计为零）。
+    save.runtime_state.live_envelopes.push(engine::SavedLiveEnvelope {
+        key: engine::SavedEnvelopeKey {
+            account: AccountId(0),
+            stock: code.clone(),
+            order: engine::OrderId(1),
+            side: Side::Buy,
+        },
+        charged: engine::SavedFeeComponents::default(),
+    });
+    // 统一 book：集合竞价阶段的合法委托就在唯一 resting_orders 里。
+    // 旧 fault2155（竞价存档不得含连续挂单）随双容器结构一并退役。
+    let restored = GameSession::restore(&save)
+        .expect("统一 book 下集合竞价阶段挂单必须可恢复");
+    assert_eq!(restored.phase(), engine::TradingPhase::CallAuction);
+    let orders = restored.player_working_orders();
+    assert_eq!(orders.len(), 1, "委托必须在统一 book 中且对本人可见");
+    assert_eq!(orders[0].id, 1);
+    assert_eq!(
+        orders[0].venue,
+        engine::session::protocol::OrderVenue::Auction,
+        "集合竞价阶段的同一委托必须投影为 Auction venue"
     );
+    let snapshot = restored.snapshot();
+    assert!(snapshot.markets[&code].bids.is_empty(), "公开投影不得泄漏未清算竞价单");
+    assert!(snapshot.accounts[&AccountId(0)].reserved_cash > Money::ZERO);
 }
 
 #[test]

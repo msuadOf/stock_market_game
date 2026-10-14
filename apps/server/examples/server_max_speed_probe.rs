@@ -3,6 +3,18 @@ use engine::{session::protocol::EngineUpdate, SessionSetup};
 use server::SessionManager;
 use std::{env, fs, time::Instant};
 
+
+/// 基线没有独立 context API，实际计算使用唯一 Rayon global registry；
+/// 当前实现的同名 inherent getter 优先读取真实宿主 context，不创建第二个 global pool。
+trait BaselineRegistryAccess {
+    fn compute_workers(&self) -> Result<usize, Box<dyn std::error::Error>>;
+}
+impl BaselineRegistryAccess for SessionManager {
+    fn compute_workers(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        Ok(rayon::current_num_threads())
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().skip(1).collect();
     let [setup_path, ticks, threads] = args.as_slice() else {
@@ -22,6 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     runtime.block_on(async move {
         let manager = SessionManager::default_base();
+        let actual_workers = manager.compute_workers()?;
+        if actual_workers != threads { return Err(format!("实际 registry={actual_workers}，请求={threads}").into()); }
         let initialization = Instant::now();
         let id = manager.new_session(setup, 42)?;
         let handles = manager.lookup(&id).ok_or("新建 session 未注册")?;
@@ -49,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         last_tick = frame.tick;
                         committed += 1;
-                        events += frame.events.len();
+                        events += frame.events().len();
                     }
                 }
                 EngineUpdate::CivilUpdate(_) => civil_updates += 1,
@@ -61,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         handles.shutdown().await?;
         println!("{}", serde_json::json!({
             "path": "production_server_actor_fastest", "ticks": committed,
-            "rayon_threads": threads, "tokio_threads": 2,
+            "rayon_threads": actual_workers, "requested_rayon_threads": threads, "tokio_threads": 2,
             "wall_s": wall_s, "speed_x": committed as f64 / wall_s,
             "initialization_s": initialization_s, "events": events,
             "batches": batches, "civil_updates": civil_updates, "metrics": metrics,

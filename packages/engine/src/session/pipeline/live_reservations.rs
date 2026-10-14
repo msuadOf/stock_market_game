@@ -1,8 +1,8 @@
 //! 从不可变 live ledger 页投影资源预留；终结证据不进入下一密封批的预留。
 use super::decision_resources::{allocation_invariant, allocation_money};
 use super::{ledger_paged_map::LedgerPagedMap, Envelope, EnvelopeKey, StepFatal};
+use crate::compute::parallel::*;
 use crate::{AccountId, Money, StockId};
-use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 

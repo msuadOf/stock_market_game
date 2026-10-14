@@ -33,6 +33,18 @@ impl SharedSessionIngress {
         })
     }
 
+    /// T3·失败位置见证（cfg(test)，Astra 四发现裁定·发现 2）：共享 receiver
+    /// 的**当前**回执游标——失败 tick 的永久 gap 事实在此读取（权威
+    /// `state.ingress_receipt_cursors` 只在成功 commit 时同步，读不到失败
+    /// attempt 已分配的 ordinal）。
+    #[cfg(test)]
+    pub(crate) fn receipts_probe(&self) -> super::IngressReceiptCursors {
+        self.lock()
+            .expect("共享 receiver 锁被 poison")
+            .receipts
+            .clone()
+    }
+
     pub fn enqueue_player_intent(
         &self,
         account: AccountId,
@@ -233,6 +245,50 @@ mod tests {
         }
     }
 
+    /// 真实 step 全链路（clone→freeze→执行→commit，binding 换 fork）多轮：
+    /// 外部输入每笔恰好受理一次——订单 id 不重复（不重）、每笔都有受理（不丢）、
+    /// 无一被拒绝；结束时无滞留未消费输入。
+    #[test]
+    fn real_step_chain_delivers_each_external_input_exactly_once_across_forks() {
+        let mut game = game();
+        game.fixture_account_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_cash(Money::from_cents(100_000_000));
+        let source = game.shared_ingress();
+        let mut accepted: Vec<u64> = Vec::new();
+        for _ in 0..4 {
+            source
+                .enqueue_player_intent(AccountId(0), buy(&game, 0))
+                .unwrap();
+            let events = game.step().unwrap();
+            accepted.extend(
+                events
+                    .iter()
+                    .filter_map(|event| match event {
+                        crate::Event::OrderAccepted { account, id, .. }
+                            if *account == AccountId(0) =>
+                        {
+                            Some(id.0)
+                        }
+                        _ => None,
+                    }),
+            );
+            assert!(
+                !events.iter().any(
+                    |event| matches!(event, crate::Event::IntentRejected { account, .. } if *account == AccountId(0))
+                ),
+                "外部输入不应被拒绝"
+            );
+        }
+        assert_eq!(accepted.len(), 4, "每笔外部输入恰好受理一次（不丢不重）");
+        let distinct: std::collections::BTreeSet<_> = accepted.iter().collect();
+        assert_eq!(distinct.len(), accepted.len(), "订单 id 不得重复（重复受理）");
+        assert!(
+            game.save().unwrap().pending_player.is_empty(),
+            "全部输入已被消费，无滞留"
+        );
+    }
+
     #[test]
     fn concurrent_external_receive_precedes_private_npc_completion() {
         let mut game = game();
@@ -306,7 +362,8 @@ mod tests {
         let mut retry = game.clone_for_tick_shadow().unwrap();
         retry.freeze_shared_ingress().unwrap();
         assert_eq!(retry.state.pending_player.len(), 1);
-        assert!(retry.state.pending_npc.as_ref().unwrap().intents.is_empty());
+        // 批四：跨 tick 载体删除——失败后无可消费 NPC 批（staged 槽为空）。
+        assert!(crate::session::pipeline::staged_decision::take_any().is_none());
         assert_eq!(retry.state.pending_player[0].account_ordinal, 0);
     }
 
@@ -409,12 +466,7 @@ mod tests {
                 source.enqueue_player_intent(AccountId(0), player).unwrap();
                 receipt
             };
-            game.state.pending_npc = Some(super::super::PendingNpcBatch {
-                observed_tick: game.tick(),
-                observed_accounts: Vec::new(),
-                intents: vec![receipt],
-                dependencies: Vec::new(),
-            });
+            crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.tick(), Vec::new(), vec![receipt], Vec::new()));
             let events = game.step().unwrap();
             let accepted = events
                 .iter()
@@ -457,12 +509,7 @@ mod tests {
                 source.enqueue_player_intent(AccountId(0), player).unwrap();
                 received
             };
-            game.state.pending_npc = Some(super::super::PendingNpcBatch {
-                observed_tick: game.tick(),
-                observed_accounts: Vec::new(),
-                intents: vec![received],
-                dependencies: Vec::new(),
-            });
+            crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.tick(), Vec::new(), vec![received], Vec::new()));
             let events = game.step().unwrap();
             let accepted = events
                 .iter()
@@ -498,12 +545,7 @@ mod tests {
         let receipt = discarded
             .receive_private_intent(AccountId(0), buy(&game, 0))
             .unwrap();
-        discarded.state.pending_npc = Some(super::super::PendingNpcBatch {
-            observed_tick: discarded.tick(),
-            observed_accounts: Vec::new(),
-            intents: vec![receipt],
-            dependencies: Vec::new(),
-        });
+        crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(discarded.tick(), Vec::new(), vec![receipt], Vec::new()));
         drop(discarded);
         source
             .enqueue_player_intent(AccountId(0), buy(&game, 0))
@@ -516,7 +558,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 2]
         );
-        assert!(save.pending_npc.as_ref().unwrap().intents.is_empty());
+        // 批四：save 结构上不含 pending_npc 键（跨 tick 载体删除）。
+        assert!(serde_json::to_value(&save).unwrap().get("pending_npc").is_none());
         assert_eq!(
             save.ingress_receipt_cursors.next_account_ordinal[&AccountId(0)],
             3

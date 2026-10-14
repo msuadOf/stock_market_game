@@ -4,7 +4,7 @@
 use super::*;
 
 /// 市场快照子结构（单股）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct MarketSnap {
     pub last_price: Money,
     pub last_close: Money,
@@ -21,7 +21,7 @@ pub struct MarketSnap {
 }
 
 /// 持仓快照子结构（单只股票）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct PositionSnap {
     pub qty: u32,
     pub t1_locked: u32,
@@ -34,7 +34,7 @@ pub struct PositionSnap {
 }
 
 /// 账户快照子结构。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct AccountSnap {
     pub cash: Money,
     pub positions: BTreeMap<StockId, PositionSnap>,
@@ -45,7 +45,7 @@ pub struct AccountSnap {
 }
 
 /// 完整玩家状态快照（首次连接/重连）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct Snapshot {
     #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -156,36 +156,22 @@ impl GameSession {
                 );
             }
         }
-        for (code, orders) in &self.state.auction_orders {
-            for order in orders
-                .iter()
-                .filter(|order| include_npc_accounts || order.owner == AccountId(0))
-            {
-                reservations.record_order(
-                    order.owner,
-                    code,
-                    order.side,
-                    order.limit,
-                    order.qty,
-                    Money::ZERO,
-                    &self.state.setup.config,
-                );
-            }
-        }
+        let public_policy = pipeline::phase::PhasePolicy::capture(self);
         let markets = self
             .state
             .markets
             .iter()
             .map(|(code, m)| {
+                let public = public_policy.project_public_book(m);
                 (
                     code.clone(),
                     MarketSnap {
                         last_price: m.last_price(),
                         last_close: m.last_close(),
-                        best_bid: m.best_bid(),
-                        best_ask: m.best_ask(),
-                        bids: m.bid_depth(),
-                        asks: m.ask_depth(),
+                        best_bid: public.best_bid,
+                        best_ask: public.best_ask,
+                        bids: public.bids,
+                        asks: public.asks,
                     },
                 )
             })
@@ -285,17 +271,17 @@ mod tests {
                 })
                 .unwrap();
             session
-                .state
-                .auction_orders
-                .entry(code.clone())
-                .or_default()
-                .push(AuctionOrderSnap {
-                    order_id: owner.0 + 3,
-                    owner,
-                    side: Side::Sell,
-                    limit: Money::from_cents(1100),
-                    qty: 200,
-                });
+                .fixture_append_auction_orders(
+                    code,
+                    vec![AuctionOrderSnap {
+                        order_id: owner.0 + 3,
+                        owner,
+                        side: Side::Sell,
+                        limit: Money::from_cents(1100),
+                        qty: 200,
+                    }],
+                )
+                .unwrap();
         }
         RESERVATION_RECORD_COUNT.with(|count| count.set(0));
         let player = session.runtime_snapshot();
@@ -361,17 +347,17 @@ mod tests {
             (&second, 6, Side::Buy, 100),
         ] {
             session
-                .state
-                .auction_orders
-                .entry(code.clone())
-                .or_default()
-                .push(AuctionOrderSnap {
-                    order_id: id,
-                    owner,
-                    side,
-                    limit: Money::from_cents(1_000),
-                    qty,
-                });
+                .fixture_append_auction_orders(
+                    *code,
+                    vec![AuctionOrderSnap {
+                        order_id: id,
+                        owner,
+                        side,
+                        limit: Money::from_cents(1_000),
+                        qty,
+                    }],
+                )
+                .unwrap();
         }
         let snapshot = session.runtime_snapshot();
         let account = &snapshot.accounts[&owner];

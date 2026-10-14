@@ -193,13 +193,39 @@ pub struct JournalLine {
 }
 
 /// 一笔分录：来源事件 + 日期 + 业务种类 + 现金流类别 + 借贷行。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct JournalEntry {
     pub source: BusinessEventId,
     pub date: CivilDate,
     pub kind: BusinessKind,
     pub cash_flow: CashFlowClass,
     pub lines: Vec<JournalLine>,
+}
+
+/// 分录深拷贝计数（诊断负控：批次共享改造的规模递增依据）。
+/// 只增不减的 relaxed 计数，不参与业务语义。
+/// 生产开销说明：每次 `JournalEntry::clone` 一次 relaxed 原子自增（无锁、
+/// 无分配），量级远低于克隆本身；迁移到诊断 feature 留作后续批次（迁移会
+/// 使非诊断构建与诊断构建的代码路径分叉，需单独评审）。
+static JOURNAL_ENTRY_CLONES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// 当前累计的 `JournalEntry` 深拷贝次数（测试/诊断读取）。
+pub fn journal_entry_clone_count() -> u64 {
+    JOURNAL_ENTRY_CLONES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Clone for JournalEntry {
+    fn clone(&self) -> Self {
+        JOURNAL_ENTRY_CLONES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            source: self.source,
+            date: self.date,
+            kind: self.kind,
+            cash_flow: self.cash_flow,
+            lines: self.lines.clone(),
+        }
+    }
 }
 
 impl JournalEntry {

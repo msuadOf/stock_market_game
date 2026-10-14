@@ -1,13 +1,13 @@
 use super::account_validation_context::build_account_validation_context;
 use super::continuous_matching::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
 use super::continuous_matching_adapter::prepare_incremental_continuous_inputs;
-use super::continuous_tick_transaction::{
-    apply_tick_shadow_continuous_transaction,
-    apply_tick_shadow_continuous_transaction_with_roots_for_test, prepare_continuous_tick,
-    validate_execution_round_for_test,
+use super::market_tick_transaction::{
+    apply_tick_shadow_market_transaction, apply_tick_shadow_market_transaction_with_roots_for_test,
+    prepare_market_tick, validate_execution_round_for_test,
 };
 use super::*;
-use crate::session::{ParentOrderPlan, PlanExecutionDisposition, RetailOrderDiagnosticEvent};
+use crate::session::plan_continuation_domain::PlanContinuationDomain;
+use crate::session::{PlanExecutionDisposition, RetailOrderDiagnosticEvent};
 use crate::{
     AccountId, Event, Intent, Money, Order, OrderId, RejectionReason, RetailExperienceState, Side,
     StockId,
@@ -54,11 +54,13 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
     let next_order_id = authority.state.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(matches!(
         output.plan_reports.as_slice(),
         [report] if matches!(
@@ -66,7 +68,7 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
             PlanExecutionDisposition::Adopted { order_id, .. } if order_id == existing_id
         )
     ));
-    assert!(!output.events.iter().any(|event| matches!(event, Event::OrderAccepted { account, code: accepted_code, .. } if *account == owner && accepted_code == &code)));
+    assert!(!output.event_values().iter().any(|event| matches!(event, Event::OrderAccepted { account, code: accepted_code, .. } if *account == owner && accepted_code == &code)));
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
         .unwrap()
         .commit();
@@ -81,11 +83,6 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
             .active_child_order_id(),
         Some(existing_id)
     );
-    assert_eq!(
-        authority.state.parent_orders[&owner][&code].active_child_order_id(),
-        Some(existing_id)
-    );
-    assert!(authority.state.pending_plan_events.is_empty());
 }
 
 #[test]
@@ -120,11 +117,13 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
     };
 
     let mut preview = authority.clone_for_tick_shadow().unwrap();
-    // 直接测试 ReadyIngress 时仍要建立通常由 plan_tick 准备的 NPC 队列。
-    super::npc_tick_preparation::queue_npc_for_next_tick(&mut preview).unwrap();
-    let mut ingress = ReadyIngress::capture_sources(&mut preview)
+    // 直接测试 ReadyIngress 时仍要准备通常由决策阶段入口生产的 NPC 决策产出
+    // （T3：tick 内 NpcDecisionHandover 槽位；旧跨 tick pending 注入已退役）。
+    let decision_output =
+        super::npc_tick_preparation::produce_decision_output(&mut preview).unwrap();
+    let mut ingress = ReadyIngress::capture_sources(&mut preview, &mut Some(decision_output))
         .unwrap()
-        .capture_roots(&preview, Some(roots(request.clone())))
+        .capture_roots(&mut preview, Some(roots(request.clone())))
         .unwrap();
     let ready = ingress.first_ready_batch(&mut preview).unwrap();
     assert!(ready
@@ -134,14 +133,16 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
         .iter()
         .any(|candidate| matches!(candidate.key(), IntentCandidateKey::PlanChain { .. })));
 
-    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots(request))
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots(request))
             .unwrap();
-    assert!(output.events.iter().any(|event| matches!(event, Event::OrderAccepted { account, code: accepted_code, .. } if *account == AccountId(0) && accepted_code == &code)), "events: {:?}", output.events);
+    assert!(output.event_values().iter().any(|event| matches!(event, Event::OrderAccepted { account, code: accepted_code, .. } if *account == AccountId(0) && accepted_code == &code)), "events: {:?}", output.event_values());
     let plan_order = output
-        .events
+        .event_values()
         .iter()
         .find_map(|event| match event {
             Event::OrderAccepted {
@@ -165,16 +166,11 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
             .active_child_order_id(),
         Some(plan_order)
     );
-    assert_eq!(
-        authority.state.parent_orders[&AccountId(1)][&code].active_child_order_id(),
-        Some(plan_order)
-    );
 }
 
 #[test]
 fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
-    use crate::session::PendingNpcBatch;
 
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let plan_id = request.plan_id;
@@ -206,12 +202,14 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
             },
         )
         .unwrap();
-    authority.state.pending_npc = Some(PendingNpcBatch {
-        dependencies: Vec::new(),
-        observed_tick: authority.state.tick,
-        observed_accounts: Vec::new(),
-        intents: vec![received],
-    });
+    crate::session::pipeline::staged_decision::stage(
+        crate::session::pipeline::NpcDecisionHandover::new(
+            authority.state.tick,
+            Vec::new(),
+            vec![received],
+            Vec::new(),
+        ),
+    );
     authority
         .state
         .npc_attention
@@ -221,12 +219,14 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
     authority.state.attention_scheduler.clear();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
-    assert!(output.events.iter().any(|event| {
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+    assert!(output.event_values().iter().any(|event| {
         matches!(event, Event::OrderCanceled { account, id, .. } if *account == owner && *id == old_id)
     }));
     assert!(!output.plan_reports.iter().any(|report| {
@@ -241,7 +241,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
         })
         .expect("plan must submit a replacement after the queued cancellation");
     assert_ne!(new_id, old_id);
-    assert!(output.events.iter().any(|event| {
+    assert!(output.event_values().iter().any(|event| {
         matches!(event, Event::OrderAccepted { account, code: accepted_code, id, .. }
             if *account == owner && accepted_code == &code && *id == new_id)
     }));
@@ -257,10 +257,6 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
             .active_child_order_id(),
         Some(new_id)
     );
-    assert_eq!(
-        authority.state.parent_orders[&owner][&code].active_child_order_id(),
-        Some(new_id)
-    );
     assert!(authority.state.markets[&code]
         .resting_orders()
         .into_iter()
@@ -274,6 +270,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
 
     let (mut authority, mut request) =
         crate::session::plan_chain_candidates_tests::execution_fixture();
+    let plan_id = request.plan_id;
     let code = request.allocation.code.clone();
     let owner = AccountId(1);
     authority
@@ -285,9 +282,11 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     authority.state.attention_scheduler.clear();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request.clone());
-    let mut first_tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut first_tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
-    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut first_tick, roots).unwrap();
+    apply_tick_shadow_market_transaction_with_roots_for_test(&mut first_tick, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, first_tick)
         .unwrap()
         .commit();
@@ -299,7 +298,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
         .unwrap()
         .active_child_order_id()
         .unwrap();
-    let parent_before = authority.state.parent_orders[&owner][&code].clone();
+    let plans_before = serde_json::to_value(&authority.state.plans).unwrap();
     let reserved_before = authority.reserved_cash_for_account(owner).unwrap();
     let next_order_id = authority.state.next_order_id;
     request.decision.action = QuoteAction::Replace {
@@ -309,12 +308,13 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     };
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut replacement = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut replacement = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut replacement, roots)
-            .unwrap();
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut replacement, roots).unwrap();
     assert!(matches!(
         output.plan_reports.as_slice(),
         [report] if matches!(
@@ -337,12 +337,15 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
         .commit();
 
     assert_eq!(authority.state.next_order_id, next_order_id);
-    assert_eq!(authority.state.parent_orders[&owner][&code], parent_before);
+    assert_eq!(
+        serde_json::to_value(&authority.state.plans).unwrap(),
+        plans_before
+    );
     assert_eq!(
         authority
             .state
             .plans
-            .plan(parent_before.linked_plan_id().unwrap())
+            .plan(plan_id)
             .unwrap()
             .active_child_order_id(),
         Some(old_id)
@@ -353,17 +356,26 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     );
 }
 
-fn live_buy_plan_case(
+pub(super) fn live_buy_plan_case(
     seller_shares: u32,
     seller_holding: u32,
+) -> (GameSession, crate::plans::PlanId, StockId) {
+    live_buy_plan_case_with_day_ticks(seller_shares, seller_holding, 100)
+}
+
+fn live_buy_plan_case_with_day_ticks(
+    seller_shares: u32,
+    seller_holding: u32,
+    ticks_per_day: u64,
 ) -> (GameSession, crate::plans::PlanId, StockId) {
     use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
     use crate::plans::{AllocationGrant, PlanBook, PlanOpen, PlanOpinion, PlanTarget, Urgency};
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
     use crate::session::PlanExecutionRequest;
 
-    let mut authority =
-        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 47).unwrap();
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    setup.ticks_per_day = ticks_per_day;
+    let mut authority = GameSession::new(setup, 47).unwrap();
     // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
     let code = StockId(0);
     let seller = AccountId(0);
@@ -446,9 +458,11 @@ fn live_buy_plan_case(
     };
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
-    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+    apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
         .unwrap()
         .commit();
@@ -488,11 +502,13 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request.clone());
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(output.plan_reports.iter().any(|report| matches!(
         report.disposition,
         PlanExecutionDisposition::Waiting {
@@ -507,9 +523,11 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     assert!(matches!(plan.status(), crate::plans::PlanStatus::Completed));
     assert!(authority
         .state
-        .parent_orders
-        .get(&AccountId(1))
-        .is_none_or(|orders| !orders.contains_key(&code)));
+        .plans
+        .plan(plan_id)
+        .unwrap()
+        .execution()
+        .is_none());
 }
 
 #[test]
@@ -525,7 +543,12 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
         .unwrap();
     let first_restored = GameSession::restore(&first).unwrap();
     assert_eq!(
-        first_restored.state.parent_orders[&AccountId(1)][&code].active_child_remaining_qty(),
+        first_restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
         Some(300)
     );
     let first_reserved =
@@ -559,7 +582,12 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
             "the same partly filled child must survive restore and fill again"
         );
         assert_eq!(
-            restored_saved.state.parent_orders[&AccountId(1)][&code].active_child_remaining_qty(),
+            restored_saved
+                .state
+                .plans
+                .plan(plan_id)
+                .unwrap()
+                .active_child_remaining_qty(),
             Some(200)
         );
         assert_eq!(
@@ -614,10 +642,12 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
     request.decision.action = QuoteAction::Cancel { order_id: old_id };
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request.clone());
-    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let canceled =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(matches!(
         canceled.plan_reports.as_slice(),
         [report] if matches!(report.disposition, PlanExecutionDisposition::Canceled { order_id, .. } if order_id == old_id)
@@ -637,10 +667,12 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
     let next_order_id = authority.state.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut tick = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut tick = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(matches!(
         output.plan_reports.as_slice(),
         [report] if matches!(report.disposition, PlanExecutionDisposition::RemainingBelowBoardLot { remaining_qty: 50 })
@@ -669,13 +701,15 @@ fn plan_chain_cash_rejection_reaches_final_event_and_report() {
         .unwrap()
         .fixture_set_cash(Money::ZERO);
     let before_order_id = authority.state.next_order_id;
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
 
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut plan, roots).unwrap();
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut plan, roots).unwrap();
     assert!(matches!(
         output.validation.results(),
         [CandidateValidationResult::Rejected {
@@ -695,7 +729,7 @@ fn plan_chain_cash_rejection_reaches_final_event_and_report() {
     let committed = super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
         .unwrap()
         .commit();
-    assert!(committed.tick.events.iter().any(|event| matches!(
+    assert!(committed.tick.event_values().iter().any(|event| matches!(
         event,
         Event::IntentRejected {
             account,
@@ -734,7 +768,7 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             .unwrap();
     }
 
-    let committed = prepare_continuous_tick(&mut authority).unwrap().commit();
+    let committed = prepare_market_tick(&mut authority).unwrap().commit();
     let results = committed.output.validation.results();
     assert_eq!(results.len(), 3);
     let result_for = |index| {
@@ -793,10 +827,8 @@ fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             .unwrap();
         assert_eq!(identity.2, expected_id);
     }
-    let player_events = committed
-        .commit
-        .tick
-        .events
+    let committed_events = committed.commit.tick.event_values();
+    let player_events = committed_events
         .iter()
         .filter(|event| {
             matches!(
@@ -855,10 +887,12 @@ fn joint_player_batch_reaches_rebased_commit() {
         )
         .unwrap();
     let before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
 
-    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_market_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), before);
     assert_eq!(authority.state.pending_player.len(), 1);
@@ -887,18 +921,22 @@ fn joint_player_batch_reaches_rebased_commit() {
     assert!(authority.state.pending_player.is_empty());
     assert_eq!(authority.state.markets[&code].resting_orders().len(), 1);
     assert_eq!(authority.state.envelope_ledger.iter().count(), 1);
+    // known-6 #2 处置（B 类重锚，ADR-0042 §9.2）：T3 入口切换后决策在
+    // 消费 tick 入口生产、订单在市场/价格相位**之前**密封受理——
+    // OrderAccepted 先于 PriceTick（旧断言 [PriceTick,PriceTick,OrderAccepted]
+    // 为 tail 时代形状，gdb 实测新序后按新契约重锚；旧锚保留于本注释）。
     assert!(matches!(
-        committed.tick.events.as_slice(),
-        [Event::PriceTick { seq: 1, tick: 1, code: first, .. },
-        Event::PriceTick { seq: 2, tick: 1, code: second, .. },
-        Event::OrderAccepted {
-            seq: 3,
+        committed.tick.event_values().as_slice(),
+        [Event::OrderAccepted {
+            seq: 1,
             account: AccountId(0),
             code: accepted,
             side: Side::Buy,
             remaining_qty: 100,
             ..
-        }] if accepted == &code && first == &code && first < second
+        },
+        Event::PriceTick { seq: 2, tick: 1, code: first, .. },
+        Event::PriceTick { seq: 3, tick: 1, code: second, .. }] if accepted == &code && first == &code && first < second
     ));
     assert_eq!(
         authority.business_state_hash().unwrap(),
@@ -921,20 +959,21 @@ fn joint_downstream_failure_discards_all_three_source_preparation() {
             },
         )
         .unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
-    plan.state
-        .execute(|candidate| {
-            candidate.state.next_receipt_base = 1;
-            Ok(())
-        })
-        .unwrap();
+    plan.execute(|candidate| {
+        candidate.state.next_receipt_base = 1;
+        Ok(())
+    })
+    .unwrap();
     let authority_before = authority.business_state_hash().unwrap();
 
-    assert!(apply_tick_shadow_continuous_transaction(&mut plan).is_err());
+    assert!(apply_tick_shadow_market_transaction(&mut plan).is_err());
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
-    assert!(plan.state.execute(|_| Ok(())).is_err());
+    assert!(plan.execute(|_| Ok(())).is_err());
 }
 
 #[test]
@@ -965,12 +1004,14 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     let mut second = first.clone();
     second.plan_id = second_id;
     second.allocation.plan_id = second_id;
-    let mut initial = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut initial = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(first.clone());
     roots.push_execution(second.clone());
-    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut initial, roots).unwrap();
+    apply_tick_shadow_market_transaction_with_roots_for_test(&mut initial, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, initial)
         .unwrap()
         .commit();
@@ -1021,7 +1062,10 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
             preview_roots,
         )
         .unwrap();
-    let ready = preview_chain.next_ready_batch(&mut preview).unwrap();
+    let ready = PlanContinuationDomain::scoped(&mut preview, |domain| {
+        preview_chain.next_ready_batch(domain)
+    })
+    .unwrap();
     assert_eq!(ready.len(), 2);
     assert!(ready
         .iter()
@@ -1045,19 +1089,20 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     assert_eq!(round.facts.len(), 2);
 
     let before = authority.business_state_hash().unwrap();
-    let mut failed = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut failed = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(first);
     roots.push_execution(second);
     roots.set_adaptive_generation_for_test(u64::MAX - 2);
-    let error =
-        match apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut failed, roots) {
-            Ok(_) => panic!("late plan generation overflow must fail the tick"),
-            Err(error) => error,
-        };
+    let error = match apply_tick_shadow_market_transaction_with_roots_for_test(&mut failed, roots) {
+        Ok(_) => panic!("late plan generation overflow must fail the tick"),
+        Err(error) => error,
+    };
     assert!(format!("{error:?}").contains("plan-chain command ordinal overflow"));
-    assert!(failed.state.execute(|_| Ok(())).is_err());
+    assert!(failed.execute(|_| Ok(())).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), before);
     assert_eq!(
         authority.state.markets[&StockId(0)].resting_order_count(),
@@ -1112,13 +1157,15 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
         request.allocation.code = code;
         requests.push(request);
     }
-    let mut initial = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut initial = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     for request in &requests {
         roots.push_execution(request.clone());
     }
-    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut initial, roots).unwrap();
+    apply_tick_shadow_market_transaction_with_roots_for_test(&mut initial, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, initial)
         .unwrap()
         .commit();
@@ -1142,15 +1189,16 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
             qty: 100,
         };
     }
-    let mut replacement = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut replacement = plan_tick(PhaseInput {
+        session: &authority,
+    })
     .unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     for request in &requests {
         roots.push_execution(request.clone());
     }
     let output =
-        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut replacement, roots)
-            .unwrap();
+        apply_tick_shadow_market_transaction_with_roots_for_test(&mut replacement, roots).unwrap();
     let chain = output
         .candidates
         .candidates()
@@ -1204,7 +1252,7 @@ fn prepared_joint_entry_has_no_fallible_tail_after_commit_validation() {
         )
         .unwrap();
 
-    let committed = prepare_continuous_tick(&mut authority).unwrap().commit();
+    let committed = prepare_market_tick(&mut authority).unwrap().commit();
 
     assert_eq!(
         committed.output.candidates.candidates()[0].key(),
@@ -1248,7 +1296,7 @@ fn retail_diagnostics_cover_account_validation_and_matching_rejections_in_sealed
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -1288,7 +1336,7 @@ fn matching_rejection_preserves_its_allocated_causal_lifecycle() {
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     let facts = authority.causal_facts();
     let submitted = facts
@@ -1333,7 +1381,9 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
     let mut candidate = player_only_session();
     let codes = candidate.state.markets.keys().cloned().collect::<Vec<_>>();
     assert_eq!(codes.len(), 2);
-    let plan = plan_tick(PhaseInput { session: &candidate, speculative: None })
+    let plan = plan_tick(PhaseInput {
+        session: &candidate,
+    })
     .unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
@@ -1373,9 +1423,10 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
         crate::session::plan_chain_candidates::PlanChainOperationBatch::empty(),
     )
     .unwrap();
-    chain
-        .project_execution_round(&mut candidate, &mut round)
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut candidate, |domain| {
+        chain.project_execution_round(domain, &mut round)
+    })
+    .unwrap();
 
     for ((_, code, bid_cents), outcome) in inputs.iter().zip(&outcomes) {
         let order_id = outcome.allocated_order_id().unwrap();
@@ -1453,7 +1504,7 @@ fn retail_cancel_is_projected_once_and_preserves_quote_expiry_diagnostic_order()
         RetailExperienceState::without_equity_reference(),
     );
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -1512,7 +1563,7 @@ fn successful_retail_cancel_is_projected_from_the_matching_fact() {
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -1564,7 +1615,7 @@ fn successful_cancel_records_termination_and_post_quote() {
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     let facts = authority.causal_facts();
     let terminated = facts
@@ -1592,45 +1643,61 @@ fn successful_cancel_records_termination_and_post_quote() {
 
 #[test]
 fn consumed_parent_submission_is_not_applied_again_at_final_projection() {
+    use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
+    use crate::plans::{AllocationGrant, PlanOpen, PlanOpinion, PlanTarget, Urgency};
+    use crate::session::{plan_chain_candidates::PlanChainOperationBatch, PlanExecutionRequest};
     let mut authority = player_only_session();
     let account = AccountId(0);
-    let code = authority.state.markets.keys().next().unwrap().clone();
-    authority
+    let code = *authority.state.markets.keys().next().unwrap();
+    let id = authority
         .state
-        .parent_orders
-        .entry(account)
-        .or_default()
-        .insert(
-            code.clone(),
-            ParentOrderPlan::from_facts(
-                code.clone(),
-                Side::Buy,
-                100,
-                0,
-                100,
-                None,
-                None,
-                Money::from_cents(980),
-                240,
-            ),
-        );
-    authority
-        .enqueue_player_intent(
+        .plans
+        .create(PlanOpen {
             account,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: crate::LimitPrice::Fixed(Money::from_cents(980)),
+            code,
+            direction: Side::Buy,
+            target: PlanTarget::ShareCount(100),
+            opinion: PlanOpinion {
+                signal_score_bp: 3000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8000,
+            urgency: Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    let mut roots = PlanChainOperationBatch::empty();
+    roots.push_execution(PlanExecutionRequest {
+        plan_id: id,
+        allocation: AllocationGrant {
+            plan_id: id,
+            code,
+            allocated_cash: Money::from_cents(1_000_000),
+            constraint: None,
+        },
+        decision: QuoteDecision {
+            action: QuoteAction::Submit {
+                price: Money::from_cents(980),
                 qty: 100,
             },
-        )
-        .unwrap();
-
-    prepare_continuous_tick(&mut authority).unwrap().commit();
-
-    let parent = &authority.state.parent_orders[&account][&code];
-    assert_eq!(parent.active_child_order_id(), Some(OrderId(1)));
-    assert_eq!(parent.active_child_remaining_qty(), Some(100));
+            reason: QuoteReason::OppositeQuoteProbe,
+        },
+        trading_day: 0,
+    });
+    let mut tick = plan_tick(PhaseInput::of(&authority)).unwrap();
+    apply_tick_shadow_market_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+    super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
+        .unwrap()
+        .commit();
+    let owner = authority.state.plans.plan(id).unwrap();
+    assert_eq!(owner.active_child_order_id(), Some(OrderId(1)));
+    assert_eq!(owner.active_child_remaining_qty(), Some(100));
+    assert_eq!(owner.filled_qty(), 0);
+    assert_eq!(
+        authority.state.next_order_id, 2,
+        "受理和最终投影不得重复分配子单"
+    );
 }
 
 #[test]
@@ -1659,7 +1726,9 @@ enum FactIdentityCorruption {
 fn execution_identity_fixture() -> (Vec<CandidateValidationOutcome>, ContinuousExecutionRound) {
     let candidate = player_only_session();
     let code = candidate.state.markets.keys().next().unwrap().clone();
-    let plan = plan_tick(PhaseInput { session: &candidate, speculative: None })
+    let plan = plan_tick(PhaseInput {
+        session: &candidate,
+    })
     .unwrap();
     let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),

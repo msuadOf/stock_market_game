@@ -4,18 +4,19 @@
 //! 不从 vector 位置推导身份，不修改 candidate 或权威事件序号游标。
 
 use super::{
-    event_collection::{collect_events, CollectedEvents, OwnedEventFact},
-    execution_fact_producers::adapt_continuous_facts,
-    stock_execution_transaction::StockExecutionOutput,
-    StepFatal,
+    event_collection::{collect_events, CollectedEvents, EventFact},
+    execution_fact_producers::adapt_continuous_facts, StepFatal,
 };
+#[cfg(test)]
+use super::stock_execution_transaction::StockExecutionOutput;
 use crate::StockId;
 use std::collections::BTreeMap;
 
+#[cfg(test)]
 pub(super) fn collect_continuous_transaction_events(
     stocks: &BTreeMap<StockId, StockExecutionOutput>,
     next_seq: u64,
-    mut facts: Vec<OwnedEventFact>,
+    mut facts: Vec<EventFact>,
 ) -> Result<CollectedEvents, StepFatal> {
     for stock in stocks.values() {
         facts.extend(adapt_continuous_facts(

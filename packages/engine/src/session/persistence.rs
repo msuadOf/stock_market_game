@@ -598,56 +598,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             // fault2031：机构账户区间计算溢出。
             SessionError::InvalidSave(ValidationFault::bare(2031))
         })?;
-    for (account, plans) in &save.parent_orders {
-        if account.0 < first_institution || account.0 > last_institution {
-            // fault2032：母单账户不在机构区间；ctx[0]=AccountId。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2032,
-                vec![account.0],
-            )));
-        }
-        if plans.is_empty() {
-            // fault2033：母单账户计划表为空；ctx[0]=AccountId。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2033,
-                vec![account.0],
-            )));
-        }
-        for (code, plan) in plans {
-            if plan.code != *code || !expected_markets.contains(code) {
-                // fault2034：母单含未知或键值不匹配股票；ctx[0]=AccountId，ctx[1]=StockId。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2034,
-                    vec![account.0, u64::from(code.0)],
-                )));
-            }
-            if plan.target_qty == 0
-                || plan.child_qty == 0
-                || plan.child_qty > plan.target_qty
-                || plan.filled_qty >= plan.target_qty
-                || plan.target_qty % context.config.lot_size != 0
-                || plan.child_qty % context.config.lot_size != 0
-                || plan.limit_price.cents() <= 0
-                || plan.expires_market_minute <= context.current_market_minute
-            {
-                // fault2035：母单违反执行计划不变量；ctx[0]=AccountId，ctx[1]=StockId。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2035,
-                    vec![account.0, u64::from(code.0)],
-                )));
-            }
-            if plan
-                .active_child_order_id
-                .is_some_and(|id| id.0 == 0 || id.0 >= save.next_order_id)
-            {
-                // fault2036：母单活跃子委托 id 非法；ctx[0]=AccountId，ctx[1]=StockId。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2036,
-                    vec![account.0, u64::from(code.0)],
-                )));
-            }
-        }
-    }
     for (id, experience) in &save.retail_experience {
         match (experience.reference_equity, experience.peak_equity) {
             (None, None) => {}
@@ -994,48 +944,9 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         // fault2067：pending 玩家意图不属于玩家账户。
         return Err(SessionError::InvalidSave(ValidationFault::bare(2067)));
     }
-    match &save.pending_npc {
-        None if context.day_tick == 0 => {}
-        Some(queued) if queued.observed_tick == save.snapshot.tick => {
-            // fault2068：pending NPC 依赖表校验失败；ctx[0] 待 C 批数值化
-            // （内层 String 子分支：依赖序非法/重复/前驱非撤单/后继非下单）。
-            queued
-                .validate_dependencies()
-                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2068, vec![0])))?;
-            if queued
-                .observed_accounts
-                .windows(2)
-                .any(|pair| pair[0] >= pair[1])
-            {
-                // fault2069：pending NPC 观察账户非严格递增（不唯一）。
-                return Err(SessionError::InvalidSave(ValidationFault::bare(2069)));
-            }
-            let observed: BTreeSet<_> = queued.observed_accounts.iter().copied().collect();
-            if observed.iter().any(|account| {
-                *account == AccountId(0)
-                    || !save.snapshot.accounts.contains_key(account)
-                    || !save.npc_attention.contains_key(account)
-            }) || queued
-                .intents
-                .iter()
-                .any(|received| !observed.contains(&received.owner))
-            {
-                // fault2070：pending NPC 请求的意图账户不在观察集合内。
-                return Err(SessionError::InvalidSave(ValidationFault::bare(2070)));
-            }
-        }
-        _ => {
-            // fault2071：pending NPC 观察 tick 与快照市场 tick 不一致。
-            return Err(SessionError::InvalidSave(ValidationFault::bare(2071)));
-        }
-    }
     let mut seen_account_receipts = BTreeSet::new();
     let mut seen_stock_receipts = BTreeSet::new();
-    for received in save.pending_player.iter().chain(
-        save.pending_npc
-            .iter()
-            .flat_map(|queued| queued.intents.iter()),
-    ) {
+    for received in save.pending_player.iter() {
         let next_account = save
             .ingress_receipt_cursors
             .next_account_ordinal
@@ -1109,10 +1020,10 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
 
     if save.next_order_id == 0
         || save
-            .auction_orders
+            .resting_orders
             .values()
             .flatten()
-            .any(|order| order.order_id >= save.next_order_id)
+            .any(|order| order.id.0 >= save.next_order_id)
     {
         // fault2079：next_order_id 未严格大于所有已保存委托 id。
         return Err(SessionError::InvalidSave(ValidationFault::bare(2079)));
@@ -1155,6 +1066,24 @@ pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSl
             ),
         ));
     }
+    // T3 批四（ADR-0042 §9.6 选项甲；三轮收口=解析后结构检测替代文本预检）：
+    // `pending_npc` 字段已随跨 tick 载体删除。旧档识别=先解析为
+    // serde_json::Value，检查根对象**是否实持该键**——任意位置的 unicode
+    // 转义（pending\u005fnpc、\u0070ending_npc 等）解析后统一为原键，全部
+    // 落 fault2100（不落通用 2080）；字符串**值**含该子串不触发（值非键）；
+    // 键存在（null/非空皆同）即旧格式，先于 SaveSlot 解码与任何深层业务
+    // 校验（外层 schema 判定优先）；不重算、不静默丢键。ctx=[0]。
+    if serde_json::from_slice::<serde_json::Value>(json)
+        .ok()
+        .and_then(|root| {
+            root.as_object()
+                .map(|object| object.contains_key("pending_npc"))
+        })
+        .unwrap_or(false)
+    {
+        // fault2100：旧跨 tick pending_npc 档不被 T3 入口切换后版本接受。
+        return Err(SessionError::InvalidSave(ValidationFault::new(2100, vec![0])));
+    }
     serde_json::from_slice(json)
         // fault2080：存档 JSON 不可解码；ctx[0] 待 C 批数值化（原文本 "{error}" serde 错误）。
         .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2080, vec![0])))
@@ -1168,15 +1097,9 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
         Shares(AccountId, StockId),
     }
 
+    // 批四：pending_npc 载体删除——先序图仅覆盖 pending_player（跨 lane 环
+    // fault2084 的玩家路径见证保留；NPC 依赖边 fault2081 随载体退役）。
     let mut intents = save.pending_player.clone();
-    let npc_len = save
-        .pending_npc
-        .as_ref()
-        .map_or(0, |queued| queued.intents.len());
-    if let Some(queued) = &save.pending_npc {
-        intents.extend(queued.intents.iter().cloned());
-    }
-    let player_len = intents.len() - npc_len;
     let mut edges = vec![BTreeSet::new(); intents.len()];
     let mut resource_lanes = BTreeMap::<ResourceLane, Vec<(usize, u64)>>::new();
     let mut stock_lanes = BTreeMap::<StockId, Vec<(usize, u64)>>::new();
@@ -1210,15 +1133,6 @@ fn validate_pending_receipt_order(save: &SaveSlot) -> Result<(), SessionError> {
         lane.sort_unstable_by_key(|(_, ordinal)| *ordinal);
         for pair in lane.windows(2) {
             edges[pair[0].0].insert(pair[1].0);
-        }
-    }
-    if let Some(queued) = &save.pending_npc {
-        for &(before, after) in &queued.dependencies {
-            if before >= npc_len || after >= npc_len {
-                // fault2081：pending NPC 依赖下标越出队列批次。
-                return Err(SessionError::InvalidSave(ValidationFault::bare(2081)));
-            }
-            edges[player_len + before].insert(player_len + after);
         }
     }
     let mut incoming = vec![0_usize; intents.len()];
@@ -1374,21 +1288,19 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
             ],
         )));
     }
-    // 镜像集合与调度待办精确相等（sync 收编 + prune 收缩的生产不变量）。
-    if !save.ops_wiring.mirror_is_exact(&save.company_operations) {
-        // fault2101：调度镜像与待办集合不精确相等。
-        return Err(SessionError::InvalidSave(ValidationFault::bare(2101)));
-    }
-    // 时钟到期队列按 (日期,种类) 多重集包含调度待办：经营注册的每条 due 都
-    // 能在时钟队列中配到一条不重复的到期项（丢失/错日 = 派发失步的篡改档）。
-    // 两边 id 是不同空间（调度器 u64 自增 vs 时钟注册序 u32），无法逐 id 连接；
-    // 时钟是通用注册表（register_due 面向第三方，测试自注册 dues 合法共存），
-    // 因此只做包含校验，不要求全量相等。重复注册防线是上面的镜像精确校验。
-    let mut clock_counts: BTreeMap<(crate::calendar::CivilDate, DueKind), usize> = BTreeMap::new();
-    for due in &save.civil_clock.pending_due {
-        *clock_counts.entry((due.due_date, due.kind)).or_default() += 1_usize;
-    }
+    // 公司 due 单一 authority：待办只存在于调度器；不允许任何待办早于当前
+    // 自然日，或超出冻结日历适用范围（均失去恰好一次派发机会）。
     for due in save.company_operations.scheduler().pending() {
+        if due.due_date < save.civil_clock.policy.init_only_min_start
+            || due.due_date > save.civil_clock.policy.runtime_max_end
+        {
+            // fault2234：调度待办日期越出冻结日历适用范围；ctx[0]=due id，ctx[1]=yyyymmdd。
+            let (year, month, day) = due.due_date.ymd();
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2234,
+                vec![due.id.as_u64(), crate::error::ymd_context(year, month, day)],
+            )));
+        }
         if due.due_date < save.civil_clock.current_date {
             // fault2102：调度待办早于当前自然日；ctx[0]=due id，ctx[1]=due_date yyyymmdd，
             // ctx[2] 待 C 批数值化（原文本 "{due:?}" 其余字段 key/action）。
@@ -1401,21 +1313,6 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
                     0,
                 ],
             )));
-        }
-        let kind = super::company_operations::due_kind_of(&due.action);
-        let remaining = clock_counts
-            .get_mut(&(due.due_date, kind))
-            .filter(|count| **count > 0);
-        match remaining {
-            Some(count) => *count -= 1,
-            None => {
-                // fault2103：时钟到期队列缺少经营 due；ctx[0]=due id，ctx[1]=due_date yyyymmdd。
-                let (year, month, day) = due.due_date.ymd();
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2103,
-                    vec![due.id.as_u64(), crate::error::ymd_context(year, month, day)],
-                )));
-            }
         }
     }
     // 公开信息库：全量重验（JSON 路径已验，这里覆盖直接内存构造的 SaveSlot）。
@@ -1911,69 +1808,69 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
                 )));
             }
         }
-    }
-    for (account, plans) in &save.parent_orders {
-        for (code, parent) in plans {
-            let Some(plan_id) = parent.linked_plan_id else {
-                continue;
-            };
-            // fault2145：母单链接计划解析失败；ctx[0]=AccountId，ctx[1]=StockId，ctx[2]=PlanId，
-            // ctx[3] 待 C 批数值化（原文本 "{error}" PlanError）。
-            let linked = save.plans.plan(plan_id).map_err(|_| {
-                SessionError::InvalidSave(ValidationFault::new(
-                    2145,
-                    vec![account.0, u64::from(code.0), plan_id.0, 0],
-                ))
-            })?;
-            if linked.is_terminal() || linked.account() != *account || linked.code() != code {
-                // fault2146：母单链接到不兼容计划；ctx[0]=AccountId，ctx[1]=StockId，ctx[2]=PlanId。
+        if let Some(leg) = plan.execution() {
+            if leg.child_qty() == 0 || leg.limit_price().cents() <= 0 {
+                // fault2183：执行腿参数非法（子单数量/限价非正）；ctx[0]=PlanId。
                 return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2146,
-                    vec![account.0, u64::from(code.0), plan_id.0],
+                    2183,
+                    vec![plan_id.0],
                 )));
             }
-        }
-    }
-    for event in &save.pending_plan_events {
-        // fault2147：待应用计划事件引用未知计划；ctx[0] 待 C 批数值化（原文本 "{error}" PlanError）。
-        let plan = save
-            .plans
-            .plan(event.plan_id())
-            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2147, vec![0])))?;
-        if plan.is_terminal() {
-            // fault2148：待应用计划事件指向已终止计划；ctx[0]=PlanId。
-            return Err(SessionError::InvalidSave(ValidationFault::new(
-                2148,
-                vec![event.plan_id().0],
-            )));
-        }
-        match *event {
-            PendingPlanEvent::Accepted {
-                order_id,
-                trading_day,
-                ..
-            }
-            | PendingPlanEvent::Filled {
-                order_id,
-                trading_day,
-                ..
-            } => {
-                if order_id.0 == 0 || order_id.0 >= save.next_order_id {
-                    // fault2149：待应用计划事件携带越界订单 id；ctx[0]=订单 id。
+            if let Some(active_id) = plan.active_child_order_id() {
+                if active_id.0 == 0 || active_id.0 >= save.next_order_id {
+                    // fault2184：执行腿在途子单 id 越界；ctx[0]=PlanId，ctx[1]=订单 id。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
-                        2149,
-                        vec![order_id.0],
+                        2184,
+                        vec![plan_id.0, active_id.0],
                     )));
                 }
-                if trading_day > saved_day {
-                    // fault2150：待应用计划事件时间戳晚于存档交易日。
-                    return Err(SessionError::InvalidSave(ValidationFault::bare(2150)));
+                // 校验必须用真实订单簿余量：序列化的腿余量在 restore 会被真实
+                // 余量覆盖，不能作为敞口依据（旧 fault2173 语义迁移）。
+                let live_quantities: Vec<u32> = save
+                    .resting_orders
+                    .get(plan.code())
+                    .into_iter()
+                    .flatten()
+                    .filter(|order| {
+                        order.id == active_id
+                            && order.owner == plan.account()
+                            && order.side == plan.direction()
+                    })
+                    .map(|order| order.qty)
+                    .collect();
+                let [live_remaining] = live_quantities.as_slice() else {
+                    // fault1042：计划在途子委托无法唯一重建（竞价/连续簿命中数 ≠ 1）。
+                    // ctx[0]=PlanId，ctx[1]=StockId。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        1042,
+                        vec![plan_id.0, u64::from(plan.code().0)],
+                    )));
+                };
+                let exposure = u64::from(plan.filled_qty())
+                    .checked_add(u64::from(*live_remaining))
+                    .ok_or_else(|| {
+                        // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=PlanId，ctx[1]=StockId。
+                        SessionError::InvalidSave(ValidationFault::new(
+                            2185,
+                            vec![plan_id.0, u64::from(plan.code().0)],
+                        ))
+                    })?;
+                if let crate::plans::PlanTarget::ShareCount(target) = plan.target() {
+                    if exposure > u64::from(target) {
+                        // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=PlanId，ctx[1]=StockId。
+                        return Err(SessionError::InvalidSave(ValidationFault::new(
+                            2185,
+                            vec![plan_id.0, u64::from(plan.code().0)],
+                        )));
+                    }
                 }
-            }
-            PendingPlanEvent::DayEnded { trading_day, .. } => {
-                if trading_day > saved_day {
-                    // fault2151：待应用日终事件时间戳晚于存档交易日。
-                    return Err(SessionError::InvalidSave(ValidationFault::bare(2151)));
+                if leg.active_child_remaining_qty().is_some_and(|stored| stored > *live_remaining)
+                {
+                    // fault2185：序列化余量大于真实订单余量（虚增敞口）。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2185,
+                        vec![plan_id.0, u64::from(plan.code().0)],
+                    )));
                 }
             }
         }
@@ -2034,23 +1931,6 @@ pub(super) fn validate_saved_order_state(
     session: &GameSession,
     save: &SaveSlot,
 ) -> Result<(), SessionError> {
-    if !matches!(
-        session.phase(),
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction
-    ) && !save.auction_orders.is_empty()
-    {
-        // fault2154：竞价外存档不得含竞价委托。
-        return Err(SessionError::InvalidSave(ValidationFault::bare(2154)));
-    }
-    if session.phase() == TradingPhase::CallAuction
-        && save
-            .resting_orders
-            .values()
-            .any(|orders| !orders.is_empty())
-    {
-        // fault2155：集合竞价存档不得含连续撮合挂单。
-        return Err(SessionError::InvalidSave(ValidationFault::bare(2155)));
-    }
     // A completed order keeps its identity permanently. It cannot also be an
     // active order on this or another stock after a save is restored.
     let mut order_ids: BTreeSet<u64> = save
@@ -2078,94 +1958,6 @@ pub(super) fn validate_saved_order_state(
         sell_filled_totals,
         ..SavedReservations::default()
     };
-
-    for (code, orders) in &save.auction_orders {
-        let market = session.state.markets.get(code).ok_or_else(|| {
-            // fault2157：存档竞价委托引用未知股票；ctx[0]=StockId。
-            SessionError::InvalidSave(ValidationFault::new(2157, vec![u64::from(code.0)]))
-        })?;
-        let stock = session
-            .state
-            .setup
-            .stocks
-            .iter()
-            .find(|stock| {
-                stock.code.0
-                    == session
-                        .state
-                        .stocks
-                        .code(*code)
-                        .expect("market code must be cataloged")
-            })
-            .expect("market code must have a stock spec");
-        let tick = stock.tick;
-        // fault2158：跌停价计算子错误压平；ctx[0] 待 C 批数值化（原文本 "{error}" MarketError）。
-        let down = market
-            .down_stop()
-            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2158, vec![0])))?;
-        // fault2159：涨停价计算子错误压平；ctx[0] 待 C 批数值化（原文本 "{error}" MarketError）。
-        let up = market
-            .up_stop()
-            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2159, vec![0])))?;
-        for order in orders {
-            if !session.state.accounts.contains_key(&order.owner) {
-                // fault2160：存档竞价委托引用未知账户；ctx[0]=AccountId。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2160,
-                    vec![order.owner.0],
-                )));
-            }
-            if order.qty == 0
-                || order.qty > stock.category.max_order_qty(false)
-                || (order.side == Side::Buy
-                    && !order
-                        .qty
-                        .is_multiple_of(session.state.setup.config.lot_size))
-                || order.limit < down
-                || order.limit > up
-                || order.limit.cents() % tick.cents() != 0
-            {
-                // fault2161：存档竞价委托字段非法；ctx[0]=StockId，
-                // ctx[1] 待 C 批数值化（原文本 "{order:?}" 委托快照）。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2161,
-                    vec![u64::from(code.0), 0],
-                )));
-            }
-            if !order_ids.insert(order.order_id) {
-                // fault2162：已保存委托 id 跨集合重复；ctx[0]=订单 id。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2162,
-                    vec![order.order_id],
-                )));
-            }
-            reservations.validate_quantity(
-                session,
-                order.owner,
-                code,
-                SavedOrderQuantity {
-                    side: order.side,
-                    limit: order.limit,
-                    remaining_qty: order.qty,
-                    original_qty: order.qty,
-                    filled_qty: 0,
-                    filled_value: Money::ZERO,
-                },
-            )?;
-            max_order_id = max_order_id.max(order.order_id);
-            reservations.record(
-                &session.state.setup.config,
-                order.owner,
-                code,
-                ReservationOrder {
-                    side: order.side,
-                    price: order.limit,
-                    qty: order.qty,
-                    filled_value: Money::ZERO,
-                },
-            )?;
-        }
-    }
 
     for (code, orders) in &save.resting_orders {
         let market = session.state.markets.get(code).ok_or_else(|| {
@@ -2327,91 +2119,15 @@ pub(super) fn validate_saved_order_state(
             )));
         }
         if save
-            .parent_orders
-            .get(&lifecycle.account)
-            .and_then(|plans| plans.get(&lifecycle.code))
-            .is_some_and(|plan| plan.active_child_order_id == Some(lifecycle.order_id))
+            .plans
+            .active_plan(lifecycle.account, &lifecycle.code)
+            .is_some_and(|plan| plan.active_child_order_id() == Some(lifecycle.order_id))
         {
-            // fault2171：NPC 报价生命周期订单与母单活跃子委托重复；ctx[0]=订单 id。
+            // fault2171：NPC 报价生命周期订单与计划执行腿活跃子委托重复；ctx[0]=订单 id。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2171,
                 vec![lifecycle.order_id.0],
             )));
-        }
-    }
-    for (account, plans) in &save.parent_orders {
-        for (code, plan) in plans {
-            let Some(active_id) = plan.active_child_order_id else {
-                continue;
-            };
-            let active_qty = match session.phase() {
-                TradingPhase::CallAuction => save
-                    .auction_orders
-                    .get(code)
-                    .into_iter()
-                    .flatten()
-                    .find(|order| {
-                        order.order_id == active_id.0
-                            && order.owner == *account
-                            && order.side == plan.side
-                    })
-                    .map(|order| order.qty)
-                    .into_iter()
-                    .collect::<Vec<_>>(),
-                TradingPhase::Continuous | TradingPhase::PreOpen => save
-                    .resting_orders
-                    .get(code)
-                    .into_iter()
-                    .flatten()
-                    .find(|order| {
-                        order.id == active_id && order.owner == *account && order.side == plan.side
-                    })
-                    .map(|order| order.qty)
-                    .into_iter()
-                    .collect::<Vec<_>>(),
-                TradingPhase::ClosingAuction => save
-                    .auction_orders
-                    .get(code)
-                    .into_iter()
-                    .flatten()
-                    .filter(|order| {
-                        order.order_id == active_id.0
-                            && order.owner == *account
-                            && order.side == plan.side
-                    })
-                    .map(|order| order.qty)
-                    .chain(
-                        save.resting_orders
-                            .get(code)
-                            .into_iter()
-                            .flatten()
-                            .filter(|order| {
-                                order.id == active_id
-                                    && order.owner == *account
-                                    && order.side == plan.side
-                            })
-                            .map(|order| order.qty),
-                    )
-                    .collect::<Vec<_>>(),
-            };
-            let [active_qty] = active_qty.as_slice() else {
-                // fault2172：母单活跃子委托未匹配唯一在场委托；ctx[0]=AccountId，ctx[1]=StockId。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2172,
-                    vec![account.0, u64::from(code.0)],
-                )));
-            };
-            if plan
-                .filled_qty
-                .checked_add(*active_qty)
-                .is_none_or(|total| total > plan.target_qty)
-            {
-                // fault2173：母单活跃子委托超剩余目标量；ctx[0]=AccountId，ctx[1]=StockId。
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2173,
-                    vec![account.0, u64::from(code.0)],
-                )));
-            }
         }
     }
     Ok(())

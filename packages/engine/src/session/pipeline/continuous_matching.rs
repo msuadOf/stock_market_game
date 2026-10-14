@@ -7,26 +7,32 @@ use super::{
     JournalRank, PlaceKind, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource,
     ReceiptTransition, ResVec, StepFatal, ValidatedOperation,
 };
+use crate::compute::parallel::*;
 use crate::market::MarketDelta;
 use crate::{
     AccountId, GameConfig, Market, MarketError, Money, OrderId, RejectionReason, Side, StockId,
     Trade, TradingPhase,
 };
-use rayon::prelude::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[path = "incremental_continuous_stock_shadow.rs"]
 pub(in crate::session::pipeline) mod incremental_continuous_stock_shadow;
 
 pub(super) use incremental_continuous_stock_shadow::{
     ContinuousExecutionRound, IncrementalContinuousStockCoordinator,
-    IncrementalContinuousStockFinish,
+    IncrementalContinuousStockFinish, StockFinishFatal, StockMarketDataPrior,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ContinuousEnvelopeSnapshot {
+    /// 任务65 #1：不再冗余双存 audit——恒等于 `envelope.audit()`，用访问器读取。
     pub(super) envelope: Envelope,
-    pub(super) audit: EnvelopeAudit,
+}
+
+impl ContinuousEnvelopeSnapshot {
+    pub(super) fn audit(&self) -> EnvelopeAudit {
+        self.envelope.audit()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,7 +96,7 @@ struct ContinuousCancelEffect {
 
 #[derive(Clone, Debug)]
 pub(super) struct ContinuousStockInput {
-    pub(super) phase: TradingPhase,
+    pub(super) policy: super::phase::PhasePolicy,
     pub(super) market: Market,
     pub(super) envelopes: Vec<ContinuousEnvelopeSnapshot>,
     pub(super) operations: Vec<ValidatedOperation>,
@@ -182,6 +188,28 @@ pub(super) struct ContinuousStockOutput {
     pub(super) trades: Vec<ContinuousTradeFact>,
     pub(super) place_facts: Vec<ContinuousPlaceFact>,
     pub(super) cancel_facts: Vec<ContinuousCancelFact>,
+    /// T4（ADR-0042 §6-T4「行情」面）：本股 owner 在收尾内计算的行情 patch。
+    /// 步进输出（process_continuous_stock_step）恒为默认空 patch——行情只在
+    /// 股票 owner 收尾（finish_for_market_tick）一次产出。
+    pub(super) market_data: ContinuousMarketData,
+}
+
+/// T4：本股 owner 收尾产出的行情 patch——活动日 K 终值、价格历史终值、
+/// 分钟收盘回填条目与行情事件；`finalize_continuous_tick` 只机械安装
+/// （`None`=本 tick 不更新该面，如 PreOpen 或无清算竞价）。
+#[derive(Debug, Default)]
+pub(super) struct ContinuousMarketData {
+    /// 收尾后活动日 K（安装=写入 candle_book active；对应旧
+    /// `checked_update_candle`→`update_active_daily_candle` 链）。
+    pub(super) candle: Option<crate::DailyCandle>,
+    /// 收尾后完整价格历史（追加收盘价并按 history_len 裁剪；安装=整值替换）。
+    pub(super) price_history: Option<VecDeque<Money>>,
+    /// 分钟收盘**完整终值**（prior+本 tick 回填；Some=本 tick 走过 Continuous
+    /// 行情面，安装=整值替换，与 price_history 同语义；空 Vec 合法）。
+    pub(super) minute_closes: Option<Vec<crate::MarketMinuteClose>>,
+    /// 本股行情事件（PriceTick/AuctionTick/AuctionCompleted；按原
+    /// finalize 发射序携带，安装侧原位 extend 保持事件顺序与 seq 派号）。
+    pub(super) events: Vec<super::event_collection::EventFact>,
 }
 
 #[derive(Debug)]
@@ -256,7 +284,7 @@ fn process_continuous_stock_step_inner(
 
 /// 单股票单轮的可丢弃候选状态；跨轮最终校验仍由 consuming finish 负责。
 struct ContinuousStockRoundProcessor {
-    phase: TradingPhase,
+    policy: super::phase::PhasePolicy,
     config: GameConfig,
     operations: Vec<ValidatedOperation>,
     private_round: bool,
@@ -275,10 +303,14 @@ struct ContinuousStockRoundProcessor {
 
 impl ContinuousStockRoundProcessor {
     fn new(
-        input: ContinuousStockInput,
+        mut input: ContinuousStockInput,
         next_trade_event_index: u64,
         prior_ledger: Option<PrivateStockLedger>,
     ) -> Result<Self, StepFatal> {
+        input
+            .market
+            .set_matching_mode(input.policy.matching_mode())
+            .map_err(|error| invariant(&error.to_string()))?;
         let private_round = prior_ledger.is_some();
         let before_last_price = input.market.last_price();
         let before_last_close = input.market.last_close();
@@ -303,7 +335,7 @@ impl ContinuousStockRoundProcessor {
             })
             .collect();
         for envelope in &created_envelopes {
-            envelope.validate()?;
+            envelope.verified_live(&input.config)?;
         }
         let ledger = if let Some(mut ledger) = prior_ledger {
             ledger.insert_created_for_stock_round(created_envelopes.iter().cloned())?;
@@ -324,10 +356,11 @@ impl ContinuousStockRoundProcessor {
             trades: Vec::new(),
             place_facts: Vec::new(),
             cancel_facts: Vec::new(),
+            market_data: ContinuousMarketData::default(),
         };
 
         Ok(Self {
-            phase: input.phase,
+            policy: input.policy,
             config: input.config,
             operations: input.operations,
             private_round,
@@ -357,13 +390,26 @@ impl ContinuousStockRoundProcessor {
                     code,
                     order_id,
                 } => {
-                    if self.phase == TradingPhase::PreOpen {
+                    if !self.policy.allows_cancel() {
+                        // 已成交身份先于开盘/收盘不可撤窗口，承接既有精确业务反馈。
+                        let reason = match self.output.market.filled_order_owner(order_id) {
+                            Some(owner)
+                                if self.policy.phase() != TradingPhase::PreOpen
+                                    && owner == account =>
+                            {
+                                ContinuousCancelRejection::OrderAlreadyFilled
+                            }
+                            Some(_) if self.policy.phase() != TradingPhase::PreOpen => {
+                                ContinuousCancelRejection::NotOrderOwner
+                            }
+                            _ => ContinuousCancelRejection::AuctionOrderNotCancelable,
+                        };
                         let fact = ContinuousCancelFact::Rejected {
                             sealed_index,
                             account,
                             code,
                             order_id,
-                            reason: ContinuousCancelRejection::AuctionOrderNotCancelable,
+                            reason,
                         };
                         self.output.cancel_facts.push(fact.clone());
                         self.execution_facts.push(ContinuousExecutionFact {
@@ -373,11 +419,6 @@ impl ContinuousStockRoundProcessor {
                             outcome: ContinuousExecutionOutcome::Cancel(fact),
                         });
                         continue;
-                    }
-                    if self.phase != TradingPhase::Continuous {
-                        return Err(invariant(
-                            "continuous cancellation was routed outside continuous trading",
-                        ));
                     }
                     let prior_order = self.output.market.resting_order_by_id(order_id).cloned();
                     let cancel = cancel_continuous_order_from_private_ledger(
@@ -430,7 +471,7 @@ impl ContinuousStockRoundProcessor {
                     });
                 }
                 ValidatedOperation::Place(draft) => {
-                    if let Some(reason) = place_phase_rejection(self.phase, draft.kind())? {
+                    if let Some(reason) = self.policy.place_rejection(draft.kind()) {
                         self.reject_place(&draft, reason)?;
                         #[cfg(feature = "simulation-diagnostics")]
                         insert_unchanged_operation_quote(
@@ -455,9 +496,14 @@ impl ContinuousStockRoundProcessor {
                         self.ledger.get(draft.key())?,
                         &self.output.market,
                         &self.config,
-                        self.phase == TradingPhase::Continuous && self.config.price_cage_enabled,
+                        self.policy
+                            .applies_price_cage(self.config.price_cage_enabled),
                     )?;
-                    if self.config.price_cage_enabled && draft.kind() == PlaceKind::Limit {
+                    if self
+                        .policy
+                        .applies_price_cage(self.config.price_cage_enabled)
+                        && draft.kind() == PlaceKind::Limit
+                    {
                         let bound = self
                             .output
                             .market
@@ -481,17 +527,8 @@ impl ContinuousStockRoundProcessor {
 
                     // LimitExceeded 在修改订单簿前检查；其他错误丢弃整个 private tick candidate，
                     // 因此无须为每张 incoming 委托复制不断增长的订单簿。
-                    let result = match self.output.market.place_recording(crate::Order {
-                        id: draft.order_id(),
-                        side: draft.side(),
-                        price,
-                        qty: draft.qty(),
-                        original_qty: draft.qty(),
-                        filled_qty: 0,
-                        filled_value: Money::ZERO,
-                        owner: draft.owner(),
-                        seq: 0,
-                    }) {
+                    // 簿内 Order 只经 draft 的单一 typed 构造点产生（任务65 #1）。
+                    let result = match self.output.market.place_recording(draft.into_book_order(price)) {
                         Ok(result) => result,
                         Err(MarketError::LimitExceeded { .. }) => {
                             self.reject_place(&draft, RejectionReason::LimitExceeded)?;
@@ -897,7 +934,6 @@ pub(super) fn validate_private_market_with_observer(
         let orders = market.resting_order_refs().collect::<Vec<_>>();
         let checked = orders
             .par_iter()
-            .with_min_len(128)
             .map_init(make_key, |key, order| {
                 validate_private_order(ledger, config, order, key, &observe_row)
             })
@@ -951,45 +987,12 @@ fn validate_private_order(
             "stock round left an order and its live envelope out of sync",
         ));
     }
-    match order.side {
-        Side::Buy => {
-            let expected = crate::session::buy_order_reservation(
-                config,
-                order.price,
-                order.qty,
-                order.filled_value,
-            )
-            .map_err(|error| invariant(&error.to_string()))?;
-            if envelope.live() != ResVec::new(expected, 0) {
-                return Err(invariant(
-                    "resting buy envelope disagrees with its exact reservation",
-                ));
-            }
-        }
-        Side::Sell if envelope.live() != ResVec::new(Money::ZERO, order.qty) => {
-            return Err(invariant(
-                "resting sell envelope disagrees with its quantity",
-            ));
-        }
-        Side::Sell => {}
+    if envelope.key() != key {
+        return Err(invariant("private ledger行键与规范订单身份不一致"));
     }
+    // capture带来的未变证明直接复用；new/checked转换更新过的行只建立自己的新证明。
+    envelope.verified_live_for_stock(config)?;
     Ok(())
-}
-
-fn place_phase_rejection(
-    phase: TradingPhase,
-    kind: PlaceKind,
-) -> Result<Option<RejectionReason>, StepFatal> {
-    match phase {
-        TradingPhase::Continuous => Ok(None),
-        TradingPhase::PreOpen => Ok(Some(RejectionReason::AuctionOrderEntryClosed)),
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction if kind == PlaceKind::Market => {
-            Ok(Some(RejectionReason::AuctionLimitOrderRequired))
-        }
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction => Err(invariant(
-            "auction limit order was routed to the continuous stock worker",
-        )),
-    }
 }
 
 impl ContinuousStockRoundProcessor {
@@ -1193,82 +1196,16 @@ impl<'a> ContinuousFillReceiptProjection<'a> {
             .states
             .get_mut(&key)
             .ok_or_else(|| invariant("trade participant has no live envelope"))?;
-        let audit = envelope.audit();
-        if audit.filled_value != filled_value_before {
-            return Err(invariant(
-                "trade filled-value history disagrees with envelope audit",
-            ));
-        }
-        let remaining_qty_after = audit
-            .remaining_qty
-            .checked_sub(fill_qty)
-            .ok_or_else(|| invariant("trade fill exceeds envelope remaining quantity"))?;
-        let value_after = audit
-            .filled_value
-            .add(gross)
-            .map_err(|error| invariant(&error.to_string()))?;
-        let transition = match key.side {
-            Side::Buy => FillTransition::buy(BuyFillInput {
-                config: self.config,
-                limit: audit.limit,
-                fill_qty,
-                remaining_qty_after,
-                filled_value_before: audit.filled_value,
-                gross_delta: gross,
-                live_before: envelope.live(),
-            })?,
-            Side::Sell => FillTransition::sell(SellFillInput {
-                config: self.config,
-                fill_qty,
-                remaining_qty_after,
-                filled_value_before: audit.filled_value,
-                gross_delta: gross,
-                nominal_before: audit.nominal,
-                charged_before: audit.charged,
-            })?,
-        };
         let ordinal = take_ordinal(&mut self.ordinals, &key)?;
-        let receipt = EnvelopeReceipt {
-            index: 0,
-            local_key: ReceiptLocalKey::new(
-                JournalRank::SealedBatch,
-                ReceiptSource::SealedIntent(self.draft.sealed_index()),
-                ReceiptTransition {
-                    envelope: key.clone(),
-                    ordinal,
-                },
-            )?,
-            envelope: key,
-            kind: ReceiptKind::Fill,
-            qty_before: audit.remaining_qty,
-            qty_after: remaining_qty_after,
-            value_before: audit.filled_value,
-            value_after,
-            delta: transition.delta,
-            nominal: transition.nominal,
-            charged: transition.charged,
-            charged_before: audit.charged,
-            charged_after: transition.charged_after,
-            deliver_qty: transition.deliver_qty,
-            deliver_cash: transition.deliver_cash,
-        };
-        let filled_qty = audit
-            .filled_qty
-            .checked_add(fill_qty)
-            .ok_or_else(|| invariant("envelope cumulative filled quantity overflow"))?;
-        envelope.apply(
-            transition.delta,
-            EnvelopeAudit {
-                limit: audit.limit,
-                remaining_qty: remaining_qty_after,
-                filled_qty,
-                filled_value: value_after,
-                nominal: transition.nominal_after,
-                charged: transition.charged_after,
-            },
-            false,
-        )?;
-        Ok(receipt)
+        super::order_receipts::fill_receipt(
+            envelope,
+            ReceiptSource::SealedIntent(self.draft.sealed_index()),
+            ordinal,
+            filled_value_before,
+            fill_qty,
+            gross,
+            self.config,
+        )
     }
 }
 
@@ -1371,7 +1308,6 @@ fn cancel_continuous_order_from_private_ledger(
             .get(&key)
             .map_err(|_| invariant("canceled order has no live envelope"))?;
         Ok(ContinuousEnvelopeSnapshot {
-            audit: envelope.audit(),
             envelope: envelope.clone(),
         })
     })
@@ -1450,15 +1386,15 @@ fn release_receipt(
         )?,
         envelope: key,
         kind: ReceiptKind::Release,
-        qty_before: snapshot.audit.remaining_qty,
-        qty_after: snapshot.audit.remaining_qty,
-        value_before: snapshot.audit.filled_value,
-        value_after: snapshot.audit.filled_value,
+        qty_before: snapshot.audit().remaining_qty,
+        qty_after: snapshot.audit().remaining_qty,
+        value_before: snapshot.audit().filled_value,
+        value_after: snapshot.audit().filled_value,
         delta: ReceiptDelta::sealed(ResVec::ZERO, snapshot.envelope.live(), ResVec::ZERO),
         nominal: FeeComponents::ZERO,
         charged: FeeComponents::ZERO,
-        charged_before: snapshot.audit.charged,
-        charged_after: snapshot.audit.charged,
+        charged_before: snapshot.audit().charged,
+        charged_after: snapshot.audit().charged,
         deliver_qty: 0,
         deliver_cash: Money::ZERO,
     })
@@ -1469,16 +1405,14 @@ fn validate_snapshot(
     order: &crate::Order,
 ) -> Result<(), StepFatal> {
     let key = snapshot.envelope.key();
-    if snapshot.envelope.audit() != snapshot.audit {
-        return Err(invariant("live envelope and supplied audit disagree"));
-    }
+    let audit = snapshot.audit();
     if key.account != order.owner
         || key.order != order.id
         || key.side != order.side
-        || snapshot.audit.limit != order.price
-        || snapshot.audit.remaining_qty != order.qty
-        || snapshot.audit.filled_qty != order.filled_qty
-        || snapshot.audit.filled_value != order.filled_value
+        || audit.limit != order.price
+        || audit.remaining_qty != order.qty
+        || audit.filled_qty != order.filled_qty
+        || audit.filled_value != order.filled_value
     {
         return Err(invariant(
             "live envelope audit disagrees with canceled order",

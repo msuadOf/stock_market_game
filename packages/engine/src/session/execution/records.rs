@@ -1,74 +1,36 @@
-//! 母单订单记录：成交推进、子单关联与撤单清除。
+//! 权威子单事实回写：计划进度、在途身份与执行腿仅由 PlanBook 修改。
 
 use super::*;
 
 impl GameSession {
-    /// 母单进度仅由撮合结算成功后的实际成交推进。
+    /// 消费真实成交事实；逐腿即时更新 owner，后续腿与 continuation 可见已发生的进度。
     pub(in crate::session) fn record_parent_order_fills(
         &mut self,
         code: &StockId,
         fills: &[OrderFillSettlement],
-    ) {
-        let mut completed = Vec::new();
+    ) -> Result<(), crate::plans::PlanError> {
         for fill in fills {
+            self.state.plans.record_child_fill(
+                fill.account,
+                code,
+                fill.side,
+                fill.order_id,
+                fill.qty,
+                u64::from(self.state.day),
+            )?;
             #[cfg(feature = "simulation-diagnostics")]
             {
                 let time = self.causal_time();
                 self.state.causal.record_continuous_fill(
-                    time,
-                    fill.order_id,
-                    fill.account,
-                    code,
-                    fill.qty,
-                    fill.gross.cents(),
+                    time, fill.order_id, fill.account, code, fill.qty, fill.gross.cents(),
                 );
             }
-            let Some(plan) = self
-                .state
-                .parent_orders
-                .get_mut(&fill.account)
-                .and_then(|plans| plans.get_mut(code))
-            else {
-                continue;
-            };
-            let Some(transition) =
-                plan.record_fill_after_settlement(fill.side, fill.order_id, fill.qty)
-            else {
-                continue;
-            };
-            let pending_event = transition.linked_plan_id.map(|plan_id| {
-                crate::session::plan_execution::PendingPlanEvent::Filled {
-                    plan_id,
-                    order_id: fill.order_id,
-                    qty: fill.qty,
-                    child_complete: transition.child_complete,
-                    trading_day: u64::from(self.state.day),
-                }
-            });
-            if transition.completed_unlinked {
-                completed.push((fill.account, code.clone()));
-            }
-            if let Some(event) = pending_event {
-                self.state.pending_plan_events.push(event);
-            }
         }
-        for (account, code) in completed {
-            let empty = {
-                let plans = self
-                    .state
-                    .parent_orders
-                    .get_mut(&account)
-                    .expect("completed parent-order owner must exist");
-                plans.remove(&code);
-                plans.is_empty()
-            };
-            if empty {
-                self.state.parent_orders.remove(&account);
-            }
-        }
+        Ok(())
     }
 
-    /// 订单已被权威路由接受后，将其与当前母单的唯一在途子单关联。
+    /// 与旧镜像一致：计划账户/股票/方向的已接受委托被唯一 owner 采纳为在途子单
+    /// （幂等；同批第二张不同子单是类型化错误）。无执行腿时不属于计划。
     pub(in crate::session) fn record_parent_order_submission(
         &mut self,
         account: AccountId,
@@ -76,43 +38,33 @@ impl GameSession {
         side: Side,
         order_id: OrderId,
         qty: u32,
-    ) {
-        let Some(plan) = self
-            .state
-            .parent_orders
-            .get_mut(&account)
-            .and_then(|plans| plans.get_mut(code))
-        else {
-            return;
-        };
-        if !plan.record_submission(side, order_id, qty) {
-            return;
-        }
-        let pending_event = plan.linked_plan_id.map(|plan_id| {
-            crate::session::plan_execution::PendingPlanEvent::Accepted {
-                plan_id,
-                order_id,
-                trading_day: u64::from(self.state.day),
+    ) -> Result<(), crate::plans::PlanError> {
+        if let Some(plan) = self.state.plans.active_plan(account, code) {
+            if plan.active_child_order_id() == Some(order_id) {
+                if plan.direction() != side || plan.active_child_remaining_qty() != Some(qty) {
+                    return Err(crate::plans::PlanError::InvalidExecutionParameters {
+                        plan_id: plan.plan_id(),
+                    });
+                }
+                return Ok(());
             }
-        });
-        if let Some(event) = pending_event {
-            self.state.pending_plan_events.push(event);
         }
+        self.state.plans.record_child_submitted(
+            account, code, side, order_id, qty, u64::from(self.state.day),
+        )?;
+        Ok(())
     }
 
+    /// 已确认撤销或到期释放才清除子单引用；拒绝撤单不会调用该入口。
     pub(in crate::session) fn record_parent_order_canceled(
         &mut self,
         account: AccountId,
         code: &StockId,
         order_id: OrderId,
-    ) {
-        if let Some(plan) = self
-            .state
-            .parent_orders
-            .get_mut(&account)
-            .and_then(|plans| plans.get_mut(code))
-        {
-            plan.clear_matching_child(order_id);
-        }
+    ) -> Result<(), crate::plans::PlanError> {
+        self.state.plans.record_child_released(
+            account, code, order_id, u64::from(self.state.day),
+        )?;
+        Ok(())
     }
 }

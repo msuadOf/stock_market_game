@@ -73,19 +73,47 @@ fn business_hash_detects_pending_facts_counters_and_strategy_state() {
     game.state.next_receipt_base += 1;
     assert_ne!(game.business_state_hash().unwrap(), before);
     game.state.next_receipt_base -= 1;
+    let plan_id = game
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account: AccountId(1),
+            code: StockId(0),
+            direction: crate::Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(100),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    // Astra 终审 P2a：execution 与 strategy 各自建立"变更前"独立基线——
+    // 旧写法在新增计划后仍用开局基线断言 strategy 差异，计划本身即让断言通过，
+    // 检错力被稀释；现改为逐变更独立对照，恢复各自独立的检错能力。
+    let with_plan = game.business_state_hash().unwrap();
     game.state
-        .pending_plan_events
-        .push(PendingPlanEvent::DayEnded {
-            plan_id: crate::plans::PlanId(999),
-            trading_day: 0,
-        });
-    assert_ne!(game.business_state_hash().unwrap(), before);
-    game.state.pending_plan_events.clear();
+        .plans
+        .install_execution(plan_id, 100, crate::Money::from_cents(1_000), 240)
+        .unwrap();
+    assert_ne!(
+        game.business_state_hash().unwrap(),
+        with_plan,
+        "执行腿变更必须独立于计划创建被检出"
+    );
+    let with_execution = game.business_state_hash().unwrap();
     let account = game.fixture_account_mut(&AccountId(1)).unwrap();
     account.set_strategy(Box::new(
         crate::MomentumStrategy::new(5, 0.04, 100).unwrap(),
     ));
-    assert_ne!(game.business_state_hash().unwrap(), before);
+    assert_ne!(
+        game.business_state_hash().unwrap(),
+        with_execution,
+        "strategy 变更必须独立于计划/执行腿被检出"
+    );
 }
 
 #[test]
@@ -124,7 +152,9 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 
-    let fatal = match super::pipeline::plan_tick(super::pipeline::PhaseInput { session: &game, speculative: None }) {
+    let fatal = match super::pipeline::plan_tick(super::pipeline::PhaseInput {
+        session: &game,
+    }) {
         Ok(_) => panic!("private plan must reject the overflowing allocation snapshot"),
         Err(fatal) => fatal,
     };

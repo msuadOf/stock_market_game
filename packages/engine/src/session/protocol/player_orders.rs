@@ -26,7 +26,7 @@ pub struct SaveCandidateKey {
     pub settled_date: crate::CivilDate,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[ts(export)]
 pub struct PlayerWorkingOrder {
@@ -44,26 +44,6 @@ pub struct PlayerWorkingOrder {
 impl crate::session::GameSession {
     pub fn player_working_orders(&self) -> Vec<PlayerWorkingOrder> {
         let mut orders = Vec::new();
-        for (code, auction_orders) in &self.state.auction_orders {
-            for order in auction_orders {
-                if order.owner != crate::AccountId(0) || order.qty == 0 {
-                    continue;
-                }
-                orders.push(PlayerWorkingOrder {
-                    id: order.order_id,
-                    code: code.clone(),
-                    side: order.side,
-                    price: order.limit,
-                    remaining_qty: order.qty,
-                    venue: OrderVenue::Auction,
-                    frozen: if order.side == Side::Buy {
-                        FrozenAsset::Cash
-                    } else {
-                        FrozenAsset::Shares
-                    },
-                });
-            }
-        }
         for (code, market) in &self.state.markets {
             for order in market.resting_orders_for(crate::AccountId(0)) {
                 if order.owner != crate::AccountId(0) || order.qty == 0 {
@@ -75,7 +55,11 @@ impl crate::session::GameSession {
                     side: order.side,
                     price: order.price,
                     remaining_qty: order.qty,
-                    venue: OrderVenue::Continuous,
+                    venue: if market.matching_mode() == crate::orderbook::MatchingMode::Auction {
+                        OrderVenue::Auction
+                    } else {
+                        OrderVenue::Continuous
+                    },
                     frozen: if order.side == Side::Buy {
                         FrozenAsset::Cash
                     } else {

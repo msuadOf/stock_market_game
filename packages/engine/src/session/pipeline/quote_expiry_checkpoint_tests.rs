@@ -37,7 +37,10 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     let seq_before = game.seq();
     let cursor_before = game.state.next_receipt_base;
 
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let ledger = plan.envelope_ledger().unwrap();
 
     assert!(plan.expiry().releases.is_empty());
@@ -45,8 +48,9 @@ fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     for envelope in projected {
         assert_eq!(ledger.get(envelope.key()).unwrap(), &envelope);
     }
+    // 统一 book：NPC 连续单与玩家竞价单都在同一簿上，各保留一行。
     assert_eq!(game.state.markets[&code].resting_orders_for(npc).len(), 1);
-    assert_eq!(game.state.auction_orders[&code].len(), 1);
+    assert_eq!(game.state.markets[&code].resting_order_count(), 2);
     assert_eq!(game.state.accounts[&npc].cash(), cash_before);
     assert_eq!(game.seq(), seq_before);
     assert_eq!(game.state.next_receipt_base, cursor_before);

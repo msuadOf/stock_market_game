@@ -1,6 +1,6 @@
 use super::{AccountValidationContext, StepFatal, StockValidation};
+use crate::compute::parallel::*;
 use crate::{GameSession, SecurityCategory, StockId};
-use rayon::prelude::*;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

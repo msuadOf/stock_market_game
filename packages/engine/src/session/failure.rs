@@ -26,8 +26,12 @@ impl GameSession {
 
     /// 所有市场工作运行在私有 tick shadow；失败候选被丢弃。
     /// 权威状态只接收最终不会失败的 CommitTick 状态交换。
+    ///
+    /// 返回的事件数组是从已提交事实记录批次投影出的交付视图（架构项 #6）：
+    /// 会话内部不保留第二份事件权威，身份仍只存在于 `EventFact` 记录中。
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
-        self.step_inner(false).map(|committed| committed.events)
+        self.step_inner(false)
+            .map(|committed| committed.facts.into_iter().map(|fact| fact.event).collect())
     }
 
     /// 执行与 [`Self::step`] 相同的生产权威路径，并返回
@@ -38,11 +42,12 @@ impl GameSession {
         &mut self,
     ) -> Result<(Vec<Event>, super::pipeline::TickCommitEvidence), StepFatal> {
         let committed = self.step_inner(true)?;
+        let evidence = committed
+            .evidence
+            .expect("commit evidence was requested at the authoritative entry");
         Ok((
-            committed.events,
-            committed
-                .evidence
-                .expect("commit evidence was requested at the authoritative entry"),
+            committed.facts.into_iter().map(|fact| fact.event).collect(),
+            evidence,
         ))
     }
 
@@ -50,20 +55,16 @@ impl GameSession {
         &mut self,
         capture_commit_evidence: bool,
     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
-        self.require_healthy()?;
-        #[cfg(test)]
-        if self.injected_failure.is_some() {
-            if let Err(fatal) = self.run_pre_mutation_hook() {
-                return Err(self.poison_failed_step(fatal));
-            }
-        }
-        if self.state.accounts.has_missing_npc_strategy() {
-            let fatal = StepFatal::InvariantViolation {
-                description: "non-player account has no authoritative strategy".to_owned(),
-                location: "GameSession::step".to_owned(),
-            };
-            return Err(self.poison_failed_step(fatal));
-        }
+        self.step_on_context(capture_commit_evidence)
+    }
+
+    /// 协调逻辑在调用线程；各并行 burst 经会话上下文进入其池（架构项 14）。
+    pub(crate) fn step_on_context(
+        &mut self,
+        capture_commit_evidence: bool,
+    ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
+        self.check_step_start()
+            .map_err(|fatal| self.poison_failed_step(fatal))?;
         // 每个生产交易阶段均进入同一 Escrow 完整 tick 事务。
         // 只有完成不会失败的权威状态交换后才交付结果。
         let result = super::pipeline::execute_authoritative_tick(self, capture_commit_evidence);
@@ -71,6 +72,21 @@ impl GameSession {
             Ok(committed) => Ok(committed),
             Err(fatal) => Err(self.poison_failed_step(fatal)),
         }
+    }
+
+    /// step 家族共用的前置检查：健康状态、测试注入失败与 NPC 策略完整性。
+    /// frame 投影路径（step_frame_and_commit）与 step_inner 都从这里进入同一 dispatcher。
+    pub(super) fn check_step_start(&mut self) -> Result<(), StepFatal> {
+        self.require_healthy()?;
+        #[cfg(test)]
+        self.run_pre_mutation_hook()?;
+        if self.state.accounts.has_missing_npc_strategy() {
+            return Err(StepFatal::InvariantViolation {
+                description: "non-player account has no authoritative strategy".to_owned(),
+                location: "GameSession::step".to_owned(),
+            });
+        }
+        Ok(())
     }
 
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {

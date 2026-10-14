@@ -164,7 +164,7 @@ fn saved_fee_components(fees: FeeComponents) -> SavedFeeComponents {
 }
 
 #[test]
-fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
+fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
     let mut session = session_with_runtime_state();
     let code = StockId(0);
     let institution = AccountId(1);
@@ -186,42 +186,44 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
             _ => None,
         })
         .expect("fixture player order must be accepted");
+    let plan_id = session
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account: institution,
+            code: code.clone(),
+            direction: Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(100),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
     session
         .state
-        .parent_orders
-        .entry(institution)
-        .or_default()
-        .insert(
-            code.clone(),
-            ParentOrderPlan::from_saved_facts(
-                code.clone(),
-                Side::Buy,
-                100,
-                0,
-                100,
-                None,
-                None,
-                None,
-                Money::from_cents(1_000),
-                480,
-            ),
-        );
+        .plans
+        .install_execution(plan_id, 100, Money::from_cents(1_000), 480)
+        .unwrap();
     let mut forged = session
         .save()
-        .expect("unlinked parent without a child is valid");
-    let plan = forged
-        .parent_orders
-        .get_mut(&institution)
-        .unwrap()
-        .get_mut(&code)
-        .unwrap();
-    plan.active_child_order_id = Some(player_order);
+        .expect("an execution leg without a child is valid");
+    {
+        let mut encoded = serde_json::to_value(&forged).unwrap();
+        encoded["plans"]["plans"][&plan_id.0.to_string()]["active_child_order_id"] =
+            serde_json::json!(player_order.0);
+        forged = serde_json::from_value(encoded).unwrap();
+    }
 
     // 数值断言替代原文本断言 "active child does not match a live order"
-    // （fault2172：母单活跃子委托未匹配唯一在场委托）。
+    // （fault1042：计划在途子委托无法唯一重建）。
     assert!(matches!(
         GameSession::restore(&forged),
-        Err(SessionError::InvalidSave(fault)) if fault.code == 2172
+        Err(SessionError::InvalidSave(fault)) if fault.code == 1042
     ));
 }
 
@@ -628,25 +630,161 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
 }
 
 #[test]
-fn parent_plan_save_omits_rebuilt_child_quantity_and_rejects_injected_legacy_field() {
-    let plan = crate::session::SaveParentOrderPlan {
-        code: StockId(0),
-        side: Side::Buy,
-        target_qty: 200,
-        filled_qty: 0,
-        child_qty: 100,
-        active_child_order_id: Some(OrderId(1)),
-        linked_plan_id: None,
-        limit_price: Money::from_cents(1_000),
-        expires_market_minute: 500,
-    };
-    let mut encoded = serde_json::to_value(&plan).expect("parent plan must encode");
-    assert!(!encoded
-        .as_object()
+fn execution_leg_wire_rejects_injected_unknown_fields() {
+    let leg = crate::plans::PlanExecutionLeg::from_facts_for_tests(
+        100,
+        Money::from_cents(1_000),
+        500,
+        Some(100),
+    );
+    let mut encoded = serde_json::to_value(&leg).expect("execution leg must encode");
+    encoded["legacy_parent_field"] = serde_json::json!(1);
+    assert!(
+        serde_json::from_value::<crate::plans::PlanExecutionLeg>(encoded).is_err(),
+        "legacy parent mirror fields must be rejected by the leg contract"
+    );
+}
+
+/// 唯一 owner 在途子单存档 fixture：计划 400 股、已成交 100、真实簿余量 300。
+fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
+    let mut session = low_price_session();
+    let code = StockId(0);
+    let account = crate::AccountId(1);
+    let plan_id = session
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account,
+            code: code.clone(),
+            direction: Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(400),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    session
+        .state
+        .plans
+        .install_execution(plan_id, 400, Money::from_cents(1), 480)
+        .unwrap();
+    session
+        .state
+        .plans
+        .record_child_submitted(account, &code, Side::Buy, OrderId(1), 400, 0)
+        .unwrap();
+    session
+        .state
+        .plans
+        .apply(
+            plan_id,
+            crate::plans::PlanEvent::ChildOrderFilled {
+                order_id: OrderId(1),
+                qty: 100,
+                child_complete: false,
+                trading_day: 0,
+            },
+        )
+        .unwrap();
+    session
+        .state
+        .markets
+        .get_mut(&code)
         .unwrap()
-        .contains_key("active_child_remaining_qty"));
-    encoded["active_child_remaining_qty"] = serde_json::json!(99);
-    assert!(serde_json::from_value::<crate::session::SaveParentOrderPlan>(encoded).is_err());
+        .place(crate::Order {
+            id: OrderId(1),
+            side: Side::Buy,
+            price: Money::from_cents(1),
+            qty: 300,
+            original_qty: 400,
+            filled_qty: 100,
+            filled_value: Money::from_cents(100),
+            owner: account,
+            seq: 0,
+        })
+        .unwrap();
+    session.state.next_order_id = 2;
+    session.hydrate_or_validate_envelope_ledger().unwrap();
+    (session, plan_id, code)
+}
+
+#[test]
+fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+        ["active_child_remaining_qty"] = serde_json::json!(1);
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    let restored = GameSession::restore(&forged).expect("stale serialized remaining is rebuilt");
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+}
+
+#[test]
+fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // 字段缺失：唯一 owner 从真实订单簿重建。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+        .as_object_mut()
+        .unwrap()
+        .remove("active_child_remaining_qty");
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    let restored = GameSession::restore(&forged).expect("absent remaining is rebuilt");
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+}
+
+#[test]
+fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // filled=350（≤ target 400，2144 不触发），真实余量 300 ⇒ exposure 650 > 400。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["filled_qty"] = serde_json::json!(350);
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    assert!(matches!(
+        GameSession::restore(&forged),
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+    ));
+    assert!(authority.state.plans.plan(plan_id).is_ok());
+}
+
+#[test]
+fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // 序列化余量(999) > 真实余量(300)：虚增敞口直接拒绝。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+        ["active_child_remaining_qty"] = serde_json::json!(999);
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    assert!(matches!(
+        GameSession::restore(&forged),
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+    ));
 }
 
 #[test]
@@ -674,41 +812,66 @@ fn runtime_envelope_rejects_injected_derived_fields() {
 }
 
 #[test]
-fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
+fn partial_plan_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
     let mut source = low_price_session();
     let key = install_partially_filled_sell(&mut source);
+    let plan_id = source
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account: key.account,
+            code: key.stock.clone(),
+            direction: Side::Sell,
+            target: crate::plans::PlanTarget::ShareCount(50_100),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: -3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
     source
         .state
-        .parent_orders
-        .entry(key.account)
-        .or_default()
-        .insert(
-            key.stock.clone(),
-            ParentOrderPlan::from_saved_facts(
-                key.stock.clone(),
-                key.side,
-                50_100,
-                50_001,
-                50_100,
-                Some(key.order),
-                Some(1),
-                None,
-                Money::from_cents(1),
-                480,
-            ),
-        );
-    let saved = source.save().expect("partially filled parent must save");
-    let encoded = serde_json::to_value(&saved).unwrap();
-    assert!(
-        encoded["parent_orders"][key.account.0.to_string()][key.stock.0.to_string()]
-            .get("active_child_remaining_qty")
-            .is_none()
+        .plans
+        .install_execution(plan_id, 50_100, Money::from_cents(1), 480)
+        .unwrap();
+    source
+        .state
+        .plans
+        .record_child_submitted(
+            key.account,
+            &key.stock,
+            Side::Sell,
+            key.order,
+            50_002,
+            0,
+        )
+        .unwrap();
+    source
+        .state
+        .plans
+        .apply(
+            plan_id,
+            crate::plans::PlanEvent::ChildOrderFilled {
+                order_id: key.order,
+                qty: 50_001,
+                child_complete: false,
+                trading_day: 0,
+            },
+        )
+        .unwrap();
+    let saved = source.save().expect("partially filled plan must save");
+    let restored = GameSession::restore(&saved).expect("plan must rebuild from its live child");
+    let plan = restored.state.plans.plan(plan_id).unwrap();
+    assert_eq!(plan.active_child_remaining_qty(), Some(1));
+    assert_eq!(
+        plan.target(),
+        crate::plans::PlanTarget::ShareCount(50_100)
     );
-    let restored = GameSession::restore(&saved).expect("parent must rebuild from its live child");
-    let parent = &restored.state.parent_orders[&key.account][&key.stock];
-    assert_eq!(parent.active_child_remaining_qty(), Some(1));
-    assert_eq!(parent.target_qty(), 50_100);
-    assert_eq!(parent.filled_qty(), 50_001);
+    assert_eq!(plan.filled_qty(), 50_001);
     assert_eq!(
         restored.state.markets[&key.stock].resting_orders_for(key.account)[0].qty,
         1
@@ -1558,4 +1721,122 @@ fn save_slot_uses_current_structure_and_rejects_legacy_runtime_key() {
         .unwrap()
         .insert("runtime_v2".to_owned(), runtime);
     assert!(serde_json::from_value::<SaveSlot>(legacy).is_err());
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn dense_restore_rebuilds_ledger_audit_in_the_session_compute_registry() {
+    use crate::compute::ComputeContext;
+    use std::sync::{Arc, Mutex};
+    const CHILD: &str = "DENSE_RESTORE_AUDIT_ENGINE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::persistence::saved_runtime_tests::dense_restore_rebuilds_ledger_audit_in_the_session_compute_registry",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "独立 dense restore 审计 child 失败：{status}");
+        return;
+    }
+    // child 独占 global 初始化；若恢复审计逃逸到 global，owner 观察缺失或 worker 数不符。
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(3)
+        .build_global()
+        .unwrap();
+    let foreign = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+
+    // ≥512 行的 live 委托账本：低价格小数量挂 520 张 buy，hydrate 成 520 个 live envelope。
+    fn dense_source() -> GameSession {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.stocks[0].initial_price = Money::from_cents(1);
+        setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
+        let mut session = GameSession::new(setup, 42).expect("dense fixture 必须初始化");
+        let code = StockId(0);
+        for ordinal in 1..=520u64 {
+            session
+                .state
+                .markets
+                .get_mut(&code)
+                .expect("fixture market must exist")
+                .place(Order {
+                    id: OrderId(ordinal),
+                    side: Side::Buy,
+                    price: Money::from_cents(1),
+                    qty: 100,
+                    original_qty: 100,
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                    owner: AccountId(1),
+                    seq: ordinal,
+                })
+                .expect("dense fixture order must be accepted");
+        }
+        session.state.next_order_id = 521;
+        session
+            .hydrate_or_validate_envelope_ledger()
+            .expect("dense fixture ledger must hydrate");
+        assert!(
+            session.state.envelope_ledger.iter().count() >= 512,
+            "dense fixture 必须达到并行审计阈值"
+        );
+        session
+    }
+
+    let mut wrong = Vec::new();
+    for workers in [1usize, 2] {
+        for caller in ["ordinary", "global3", "foreign3"] {
+            // 源会话使用无观察者的独立上下文：save 路径审计不计入恢复侧样本。
+            let source = dense_source();
+            let save = source.save().expect("dense quiet point must save");
+            let compute = ComputeContext::with_workers(workers).unwrap();
+            let samples = Arc::new(Mutex::new(Vec::new()));
+            let observed = samples.clone();
+            compute.set_observer(Arc::new(move |sample| {
+                observed.lock().unwrap().push(sample)
+            }));
+            let restored_result = Arc::new(Mutex::new(Ok(())));
+            let outcome = restored_result.clone();
+            let mut run = move || {
+                *outcome.lock().unwrap() =
+                    GameSession::restore_with_compute(&save, compute.clone())
+                        .map_err(|_| ())
+                        .map(|_| ());
+            };
+            match caller {
+                "ordinary" => run(),
+                "global3" => rayon::scope(|_| run()),
+                "foreign3" => foreign.install(move || run()),
+                _ => unreachable!(),
+            }
+            assert!(
+                restored_result.lock().unwrap().is_ok(),
+                "workers={workers} caller={caller} dense restore 必须成功"
+            );
+            let samples = samples.lock().unwrap();
+            let audits: Vec<_> = samples
+                .iter()
+                .filter(|s| s.work == crate::compute::ComputeWork::ReceiptAggregationAudit)
+                .collect();
+            // 恢复链上 build_ledger 至少被 validate_runtime_state 与 restore 主体各走一次；
+            // 重建 ledger 是全新缓存，≥512 行必然走未缓存并行审计。
+            if audits.len() < 2 {
+                wrong.push(format!(
+                    "workers={workers} caller={caller} 恢复审计观察不足两次：{samples:?}"
+                ));
+            }
+            for sample in audits {
+                if sample.executing_workers != workers
+                    || !sample.owner_worker.is_some_and(|index| index < workers)
+                {
+                    wrong.push(format!(
+                        "workers={workers} caller={caller} 恢复审计逃离会话 registry：{sample:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "dense restore 审计逃离会话 registry：{wrong:#?}");
 }

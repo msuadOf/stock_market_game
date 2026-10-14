@@ -1,4 +1,4 @@
-use rayon::prelude::*;
+use crate::compute::parallel::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
@@ -234,20 +234,33 @@ fn kdj_ohlc(bars: &[OhlcBar]) -> Kdj {
     accumulator.finish()
 }
 
+/// `compute`：会话计算上下文；`None` 时串行计算（消灭全局 rayon 池惰性初始化
+/// 入口——HTTP 线程等非池环境曾实测 +128 常驻线程，#67 缺口①修1，
+/// 先例：ledger_conservation::map_rows 的 Option<&ComputeContext> 口径）。
 pub fn calculate_indicators(
     prices: &[f64],
     candles: &[OhlcBar],
+    compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
 ) -> Result<IndicatorResults, IndicatorInputError> {
     validate_input(prices, candles)?;
     let results = if prices.len().max(candles.len()) >= 2048 {
-        let (macd, (price_kdj, candle_kdj)) = rayon::join(
-            || macd(prices),
-            || rayon::join(|| kdj(prices), || kdj_ohlc(candles)),
-        );
-        IndicatorResults {
-            macd,
-            price_kdj,
-            candle_kdj,
+        match compute {
+            Some(context) => {
+                let (macd, (price_kdj, candle_kdj)) = context.join(
+                    || macd(prices),
+                    || context.join(|| kdj(prices), || kdj_ohlc(candles)),
+                );
+                IndicatorResults {
+                    macd,
+                    price_kdj,
+                    candle_kdj,
+                }
+            }
+            None => IndicatorResults {
+                macd: macd(prices),
+                price_kdj: kdj(prices),
+                candle_kdj: kdj_ohlc(candles),
+            },
         }
     } else {
         IndicatorResults {
@@ -257,26 +270,6 @@ pub fn calculate_indicators(
         }
     };
     validate_results(&results)?;
-    Ok(results)
-}
-
-pub fn calculate_indicators_batch(
-    inputs: &[IndicatorInput],
-) -> Result<Vec<IndicatorResults>, IndicatorInputError> {
-    for input in inputs {
-        validate_input(&input.prices, &input.candles)?;
-    }
-    let results: Vec<_> = inputs
-        .par_iter()
-        .map(|input| IndicatorResults {
-            macd: macd(&input.prices),
-            price_kdj: kdj(&input.prices),
-            candle_kdj: kdj_ohlc(&input.candles),
-        })
-        .collect();
-    for result in &results {
-        validate_results(result)?;
-    }
     Ok(results)
 }
 
@@ -308,6 +301,111 @@ fn rsv(close: f64, high: f64, low: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{kdj, kdj_ohlc, macd, IndicatorInput, IndicatorInputError, OhlcBar};
+
+    // 修2（增量十四）：batch 死入口删除时本混合测试被整块误删，现恢复其全部
+    // 单项入口断言（NaN/Infinity/非法 OHLC/NonFiniteResult），去掉 batch 分支并
+    // 适配三参签名——覆盖不降。
+    #[test]
+    fn indicator_calculation_rejects_non_finite_prices_and_invalid_ohlc() {
+        assert_eq!(
+            super::calculate_indicators(
+                &[],
+                &[OhlcBar {
+                    high: f64::MAX,
+                    low: -f64::MAX,
+                    close: f64::MAX,
+                }],
+                None
+            ),
+            Err(IndicatorInputError::NonFiniteResult {
+                series: "candle KDJ K",
+                index: 0,
+            })
+        );
+        assert_eq!(
+            super::calculate_indicators(&[f64::NAN], &[], None),
+            Err(IndicatorInputError::NonFinitePrice { index: 0 })
+        );
+        assert_eq!(
+            super::calculate_indicators(&[f64::INFINITY], &[], None),
+            Err(IndicatorInputError::NonFinitePrice { index: 0 })
+        );
+        assert_eq!(
+            super::calculate_indicators(
+                &[],
+                &[OhlcBar {
+                    high: f64::INFINITY,
+                    low: 1.0,
+                    close: 1.0,
+                }],
+                None
+            ),
+            Err(IndicatorInputError::NonFiniteOhlc { index: 0 })
+        );
+        assert_eq!(
+            super::calculate_indicators(
+                &[],
+                &[OhlcBar {
+                    high: 2.0,
+                    low: f64::NAN,
+                    close: 1.5,
+                }],
+                None
+            ),
+            Err(IndicatorInputError::NonFiniteOhlc { index: 0 })
+        );
+        assert_eq!(
+            super::calculate_indicators(
+                &[],
+                &[OhlcBar {
+                    high: 2.0,
+                    low: 1.0,
+                    close: f64::NEG_INFINITY,
+                }],
+                None
+            ),
+            Err(IndicatorInputError::NonFiniteOhlc { index: 0 })
+        );
+        assert_eq!(
+            super::calculate_indicators(
+                &[],
+                &[OhlcBar {
+                    high: 1.0,
+                    low: 2.0,
+                    close: 1.5,
+                }],
+                None
+            ),
+            Err(IndicatorInputError::InvalidOhlcRange { index: 0 })
+        );
+        // 修1（增量十五）：十三删除记录（incremental-vs-runnerfinal.patch:229 区）
+        // 共 9 条单项断言，十四复原 7 条，此处补回遗漏两条——close 越出 [low,high]
+        // 上侧与下侧各自成断言；补齐后与删除记录逐条对照 9/9 全复原。
+        assert_eq!(
+            super::calculate_indicators(
+                &[],
+                &[OhlcBar {
+                    high: 2.0,
+                    low: 1.0,
+                    close: 2.5,
+                }],
+                None
+            ),
+            Err(IndicatorInputError::InvalidOhlcRange { index: 0 })
+        );
+        assert_eq!(
+            super::calculate_indicators(
+                &[],
+                &[OhlcBar {
+                    high: 2.0,
+                    low: 1.0,
+                    close: 0.5,
+                }],
+                None
+            ),
+            Err(IndicatorInputError::InvalidOhlcRange { index: 0 })
+        );
+    }
 
     #[test]
     fn recurrence_protection_spans_ema_period_and_kdj_window_rollover() {
@@ -435,32 +533,13 @@ mod tests {
     #[test]
     fn indicator_result_serializes_with_transport_field_names() {
         let result =
-            super::calculate_indicators(&[10.0], &[]).expect("valid input should calculate");
+            super::calculate_indicators(&[10.0], &[], None).expect("valid input should calculate");
         let value = serde_json::to_value(result).expect("indicator result should serialize");
 
         assert!(value.get("priceKdj").is_some());
         assert!(value.get("candleKdj").is_some());
         assert_eq!(value["macd"]["histogram"].as_array().unwrap().len(), 1);
         assert!(value["candleKdj"]["k"].as_array().unwrap().is_empty());
-    }
-
-    #[test]
-    fn indicator_batch_keeps_input_order_and_accepts_optional_candles() {
-        let inputs: Vec<super::IndicatorInput> = serde_json::from_value(serde_json::json!([
-            { "prices": [10.0, 12.0] },
-            { "prices": [20.0, 21.0], "candles": [] }
-        ]))
-        .expect("candles may be omitted for close-only indicators");
-
-        let results =
-            super::calculate_indicators_batch(&inputs).expect("valid batch should calculate");
-
-        assert_eq!(results.len(), 2);
-        assert_close(results[0].macd.dif[1], macd(&inputs[0].prices).dif[1]);
-        assert_close(results[1].macd.dif[1], macd(&inputs[1].prices).dif[1]);
-        assert!(super::calculate_indicators_batch(&[])
-            .expect("empty batch should calculate")
-            .is_empty());
     }
 
     #[test]
@@ -479,130 +558,92 @@ mod tests {
             price_kdj: kdj(&prices),
             candle_kdj: kdj_ohlc(&candles),
         };
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(8)
-            .build()
-            .unwrap();
-        let actual = pool
-            .install(|| super::calculate_indicators(&prices, &candles))
-            .unwrap();
+        // 修1 后并行分支只经会话 ComputeContext（消灭全局池入口）；本测试随之
+        // 用真实 8-worker 上下文覆盖 Some 路径，None 串行路径由
+        // indicators_over_2048_points_do_not_spawn_threads 护栏覆盖。
+        let context = crate::compute::ComputeContext::with_workers(8).unwrap();
+        let actual = super::calculate_indicators(&prices, &candles, Some(&context)).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(
-            super::calculate_indicators(&[], &[]).unwrap().macd.dif,
+            super::calculate_indicators(&[], &[], None).unwrap().macd.dif,
             Vec::<f64>::new()
         );
     }
-
-    #[test]
-    fn indicator_calculation_rejects_non_finite_prices_and_invalid_ohlc() {
-        assert_eq!(
-            super::calculate_indicators(
-                &[],
-                &[OhlcBar {
-                    high: f64::MAX,
-                    low: -f64::MAX,
-                    close: f64::MAX,
-                }]
-            ),
-            Err(IndicatorInputError::NonFiniteResult {
-                series: "candle KDJ K",
-                index: 0,
-            })
-        );
-        assert_eq!(
-            super::calculate_indicators_batch(&[IndicatorInput {
-                prices: vec![],
-                candles: vec![OhlcBar {
-                    high: f64::MAX,
-                    low: -f64::MAX,
-                    close: f64::MAX,
-                }],
-            }]),
-            Err(IndicatorInputError::NonFiniteResult {
-                series: "candle KDJ K",
-                index: 0,
-            })
-        );
-        assert_eq!(
-            super::calculate_indicators(&[f64::NAN], &[]),
-            Err(IndicatorInputError::NonFinitePrice { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators(&[f64::INFINITY], &[]),
-            Err(IndicatorInputError::NonFinitePrice { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators(
-                &[],
-                &[OhlcBar {
-                    high: f64::INFINITY,
-                    low: 1.0,
-                    close: 1.0,
-                }]
-            ),
-            Err(IndicatorInputError::NonFiniteOhlc { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators(
-                &[],
-                &[OhlcBar {
-                    high: 2.0,
-                    low: f64::NAN,
-                    close: 1.5,
-                }]
-            ),
-            Err(IndicatorInputError::NonFiniteOhlc { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators(
-                &[],
-                &[OhlcBar {
-                    high: 2.0,
-                    low: 1.0,
-                    close: f64::NEG_INFINITY,
-                }]
-            ),
-            Err(IndicatorInputError::NonFiniteOhlc { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators(
-                &[],
-                &[OhlcBar {
-                    high: 1.0,
-                    low: 2.0,
-                    close: 1.5,
-                }]
-            ),
-            Err(IndicatorInputError::InvalidOhlcRange { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators(
-                &[],
-                &[OhlcBar {
-                    high: 2.0,
-                    low: 1.0,
-                    close: 2.5,
-                }]
-            ),
-            Err(IndicatorInputError::InvalidOhlcRange { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators(
-                &[],
-                &[OhlcBar {
-                    high: 2.0,
-                    low: 1.0,
-                    close: 0.5,
-                }]
-            ),
-            Err(IndicatorInputError::InvalidOhlcRange { index: 0 })
-        );
-        assert_eq!(
-            super::calculate_indicators_batch(&[IndicatorInput {
-                prices: vec![1.0, f64::NAN],
-                candles: vec![],
-            }]),
-            Err(IndicatorInputError::NonFinitePrice { index: 1 })
-        );
-    }
 }
+
+/// #67 缺口①·修1/修3 护栏（增量十五观测可靠性收口）：≥2048 点指标计算
+/// （None 上下文）期间与之后的进程线程峰值均不得增长。修复前该分支走自由函数
+/// crate::compute::join（全局 rayon 池惰性初始化；HTTP 线程等非池环境实测常驻
+/// +128 线程，R5 257→385）。
+///
+/// 覆盖主张（如实收窄）：本护栏主张限定为「独立首触语义下，常驻型线程泄漏
+/// （+128 级全局池初始化）必被抓」。周期采样（200µs）存在调度间隙盲区，
+/// **不主张**瞬时峰的可靠捕获——低于采样周期的瞬时线程创建/销毁可能漏采，
+/// 该边界为已知限制。池已被其他代码初始化时护栏空转（rayon 无查询接口，
+/// 该状态不可检）；口径依赖独立进程首触。
+///
+/// 口径（完整命令，勿用子串过滤以免空跑；--exact 需含模块全路径）：
+///   cargo test -p engine --lib indicators::indicators_over_2048_points_do_not_spawn_threads -- --ignored --exact --test-threads 1
+#[test]
+#[ignore = "口径=独立进程首触：cargo test -p engine --lib indicators::indicators_over_2048_points_do_not_spawn_threads -- --ignored --exact --test-threads 1；并行套件中兄弟测试线程活动噪声化进程计数，且池已初始化时护栏空转（状态不可检）——均为口径限制非缺陷"]
+#[cfg(target_os = "linux")]
+fn indicators_over_2048_points_do_not_spawn_threads() {
+    fn task_count() -> usize {
+        // /proc/self/task 条目数=线程数（与 /proc/self/status Threads 等效）。
+        // 修2b：读取/遍历失败显式 panic（防御式原则，不吞错不用默认值）。
+        let entries = std::fs::read_dir("/proc/self/task")
+            .expect("linux 必须可读 /proc/self/task");
+        let mut count = 0;
+        for entry in entries {
+            entry.expect("task 条目读取不得失败");
+            count += 1;
+        }
+        count
+    }
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::sync::Arc;
+    let prices: Vec<f64> = (0..4096).map(|index| index as f64).collect();
+    let before = task_count();
+    // 修2a：采样启动握手——计算开始前等采样线程完成首采（peak=0 空过不可能），
+    // 并在断言中核验 samples_count>0。
+    let peak = Arc::new(AtomicUsize::new(0));
+    let samples = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (first_tx, first_rx) = mpsc::channel::<usize>();
+    let sampler_peak = Arc::clone(&peak);
+    let sampler_samples = Arc::clone(&samples);
+    let sampler_stop = Arc::clone(&stop);
+    let sampler = std::thread::spawn(move || {
+        let mut first_sent = false;
+        while !sampler_stop.load(Ordering::Relaxed) {
+            let count = task_count();
+            sampler_peak.fetch_max(count, Ordering::Relaxed);
+            sampler_samples.fetch_add(1, Ordering::Relaxed);
+            if !first_sent {
+                first_sent = true;
+                first_tx.send(count).expect("首采握手通道必须可达");
+            }
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
+    });
+    let first_sample = first_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("采样线程必须在计算开始前完成首采");
+    assert!(first_sample >= before, "首采线程数不得低于计算前基线");
+    let results = calculate_indicators(&prices, &[], None);
+    stop.store(true, Ordering::Relaxed);
+    sampler.join().expect("采样线程必须可 join");
+    let after = task_count();
+    let max_observed = peak.load(Ordering::Relaxed);
+    let samples_count = samples.load(Ordering::Relaxed);
+    assert!(results.is_ok());
+    assert!(samples_count > 0, "无样本即无观测：peak=0 空过不允许");
+    // 期望：串行路径零线程增长；容差 2 = 采样线程自身 +1 与调度边界 +1（旁注）。
+    assert!(
+        max_observed <= before + 2 && after <= before + 2,
+        "≥2048 点指标计算不得触发线程增长（before={before} max_observed={max_observed} after={after} samples={samples_count}；期望零增长，容差 2）"
+    );
+}
+
+

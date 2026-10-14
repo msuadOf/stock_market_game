@@ -4,7 +4,7 @@ use engine::calendar::{
 use engine::company::scheduler::{OperatingScheduler, ScheduledAction, SchedulerRequest};
 use engine::company::CompanyId;
 use engine::plans::{PlanBook, PlanOpen};
-use engine::session::{CivilClock, DueKind};
+use engine::session::CivilClock;
 use engine::{
     AccountId, OpinionSource, PlanId, PlanOpinion, PlanPolicy, PlanTarget, Side, StockId,
     TradingPlan, Urgency,
@@ -134,65 +134,60 @@ fn scheduler_exhaustion_is_explicit_and_preserves_state() {
 }
 
 #[test]
-fn clock_restore_rejects_duplicate_due_identity() {
+fn scheduler_next_due_date_tracks_earliest_pending() {
+    // 公司 due 的单一 authority：下一到期自然日由调度器自己回答，
+    // 会话时间推进据此取合法时点；时钟不再镜像逐项待办。
+    let mut scheduler = OperatingScheduler::new();
+    assert_eq!(scheduler.next_due_date(), None, "空队列无下一到期");
+    scheduler.submit(request("late", "2030-01-10")).unwrap();
+    scheduler.submit(request("early", "2030-01-08")).unwrap();
+    assert_eq!(scheduler.next_due_date(), Some(date("2030-01-08")));
+    let dispatched = scheduler.pop_due_on(date("2030-01-08")).unwrap();
+    assert_eq!(dispatched.len(), 1);
+    assert_eq!(scheduler.next_due_date(), Some(date("2030-01-10")));
+    scheduler.pop_due_on(date("2030-01-10")).unwrap();
+    assert_eq!(scheduler.next_due_date(), None);
+}
+
+#[test]
+fn cancelled_due_is_absent_after_restore_and_does_not_reuse_identity() {
+    use engine::company::scheduler::SchedulerError;
+    let mut scheduler = OperatingScheduler::new();
+    let cancelled = scheduler.submit(request("early", "2030-01-08")).unwrap();
+    let retained = scheduler.submit(request("late", "2030-01-10")).unwrap();
+    assert_eq!(scheduler.cancel_due(cancelled).unwrap().id, cancelled);
+    assert_eq!(scheduler.next_due_date(), Some(date("2030-01-10")));
+    let state = serde_json::to_vec(&scheduler).unwrap();
+    assert!(matches!(scheduler.cancel_due(cancelled), Err(SchedulerError::DueNotPending { id }) if id == cancelled));
+    assert_eq!(serde_json::to_vec(&scheduler).unwrap(), state, "重复取消显式拒绝且不改状态");
+
+    let mut restored: OperatingScheduler = serde_json::from_slice(&state).unwrap();
+    assert!(restored.pop_due_on(date("2030-01-08")).unwrap().is_empty(), "取消项不因恢复重新派发");
+    let replacement = restored.submit(request("early", "2030-01-09")).unwrap();
+    assert!(replacement.value() > retained.value(), "取消后的来源 key 可复用，但 due id 不复用");
+    let replacement_due = restored.pop_due_on(date("2030-01-09")).unwrap();
+    assert_eq!(replacement_due.len(), 1);
+    assert_eq!(replacement_due[0].id, replacement);
+    let final_due = restored.pop_due_on(date("2030-01-10")).unwrap();
+    assert_eq!(final_due.len(), 1);
+    assert_eq!(final_due[0].id, retained, "取消不改变无关待办的次序与身份");
+}
+
+#[test]
+fn clock_due_horizon_guard_uses_frozen_policy_applicability() {
+    // 公司 due 单一 authority 后，日历适用范围守卫由时钟承担（原
+    // register_due 的 day_status 校验迁移）：上界内合法、越上界/越下界拒绝。
     let start = date("2030-01-07");
-    let mut clock = CivilClock::new(start, CalendarExchange::Sse).unwrap();
-    let first = clock.register_due(start, DueKind::InterestAccrual).unwrap();
+    let clock = CivilClock::new(start, CalendarExchange::Sse).unwrap();
     clock
-        .register_due(date("2030-01-08"), DueKind::ContractMaturity)
-        .unwrap();
-    let mut save = clock.save();
-    save.pending_due[1].id = first.id;
-    assert!(CivilClock::from_parts(start, &save, CalendarExchange::Sse).is_err());
-}
-
-#[test]
-fn clock_restore_rejects_future_due_outside_frozen_policy() {
-    let start = date("2030-01-07");
-    let mut clock = CivilClock::new(start, CalendarExchange::Sse).unwrap();
-    clock.register_due(start, DueKind::InterestAccrual).unwrap();
-    let mut save = clock.save();
-    save.pending_due[0].due_date = date("2100-01-01");
-    assert!(CivilClock::from_parts(start, &save, CalendarExchange::Sse).is_err());
-}
-
-#[test]
-fn clock_exhaustion_is_explicit_and_preserves_state() {
-    let start = date("2030-01-07");
-    let mut save = CivilClock::new(start, CalendarExchange::Sse)
-        .unwrap()
-        .save();
-    save.next_due_seq = u32::MAX - 1;
-    let mut clock = CivilClock::from_parts(start, &save, CalendarExchange::Sse).unwrap();
-    assert_eq!(
-        clock
-            .register_due(start, DueKind::InterestAccrual)
-            .unwrap()
-            .id
-            .value(),
-        u32::MAX - 1
+        .validate_due_horizon(date("2099-12-31"))
+        .expect("runtime ceiling is inside applicability");
+    assert!(
+        clock.validate_due_horizon(date("2100-01-01")).is_err(),
+        "due 越过运行上界必须拒绝"
     );
-    let before = serde_json::to_value(clock.save()).unwrap();
-    assert!(clock
-        .register_due(start, DueKind::ContractMaturity)
-        .is_err());
-    assert_eq!(serde_json::to_value(clock.save()).unwrap(), before);
-}
-
-#[test]
-fn empty_clock_zero_cursor_keeps_existing_restore_contract() {
-    let start = date("2030-01-07");
-    let mut save = CivilClock::new(start, CalendarExchange::Sse)
-        .unwrap()
-        .save();
-    save.next_due_seq = 0;
-    let mut clock = CivilClock::from_parts(start, &save, CalendarExchange::Sse).unwrap();
-    assert_eq!(
-        clock
-            .register_due(start, DueKind::InterestAccrual)
-            .unwrap()
-            .id
-            .value(),
-        0
+    assert!(
+        clock.validate_due_horizon(date("1997-12-31")).is_err(),
+        "due 早于初始化专用下界必须拒绝"
     );
 }

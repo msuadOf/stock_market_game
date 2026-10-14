@@ -348,16 +348,7 @@ impl<'a> PlanLifecycleReview<'a> {
                                             });
                                         }
                                         if withdraw_buy {
-                                            let child_order_id = self
-                                                .session
-                                                .state
-                                                .parent_orders
-                                                .get(&id)
-                                                .and_then(|parents| parents.get(code))
-                                                .filter(|parent| {
-                                                    parent.linked_plan_id() == Some(plan_id)
-                                                })
-                                                .and_then(|parent| parent.active_child_order_id());
+                                            let child_order_id = plan.active_child_order_id();
                                             if child_order_id.is_none()
                                                 || self.session.plan_child_is_cancellable_now()
                                             {
@@ -483,17 +474,9 @@ impl<'a> PlanLifecycleReview<'a> {
                 // 成交到日终，且反向后的新子单会触发
                 // record_parent_order_submission 的「第二在途子单」断言。
                 let will_terminate = revision.below_filled_rationale.is_some();
-                let linked_parent = self
-                    .session
-                    .state
-                    .parent_orders
-                    .get(&id)
-                    .and_then(|parents| parents.get(code))
-                    .filter(|parent| parent.linked_plan_id() == Some(plan_id));
-                let child_order_id =
-                    linked_parent.and_then(|parent| parent.active_child_order_id());
-                let child_would_exceed_new_target = linked_parent
-                    .and_then(|parent| parent.active_child_remaining_qty())
+                let child_order_id = plan.active_child_order_id();
+                let child_would_exceed_new_target = plan
+                    .active_child_remaining_qty()
                     .is_some_and(|remaining| {
                         plan.filled_qty()
                             .checked_add(remaining)

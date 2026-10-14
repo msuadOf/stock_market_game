@@ -6,6 +6,57 @@ use crate::{
 };
 
 #[test]
+fn unified_stock_worker_accepts_and_reserves_crossed_auction_quotes_without_fill() {
+    let code = StockId(0);
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.fixture_account_mut(&AccountId(0))
+        .unwrap()
+        .grant_position(code.clone(), 100, Money::from_cents(1000))
+        .unwrap();
+    let (operations, config) = validated_operations_in_session(
+        &game,
+        &code,
+        vec![
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1050)),
+                qty: 100,
+            },
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(950)),
+                qty: 100,
+            },
+        ],
+    );
+    let output = process_continuous_stock(ContinuousStockInput {
+        policy: super::phase::PhasePolicy::new(TradingPhase::CallAuction, 0, 1),
+        market: empty_market(&code),
+        envelopes: Vec::new(),
+        operations,
+        config,
+    })
+    .expect("集合竞价受理须沿共同资源预留与股票执行路径");
+    assert_eq!(output.created_envelopes.len(), 2);
+    assert!(output.trades.is_empty());
+    assert!(output
+        .receipts
+        .iter()
+        .all(|receipt| receipt.kind != ReceiptKind::Fill));
+    assert!(output.terminal_keys.is_empty());
+    assert_eq!(output.market.resting_order_count(), 2);
+    assert_eq!(output.market.last_price(), Money::from_cents(1000));
+    assert!(output
+        .place_facts
+        .iter()
+        .all(|fact| matches!(fact, ContinuousPlaceFact::Resting { .. })));
+    validate_worker_receipts(&[], &output);
+}
+
+#[test]
 fn highest_buy_resolves_at_receipt_time_and_releases_only_the_excess_reservation() {
     // 数值身份后无字符串可断言：本文件纯 fixture 单股按目录 rank 恒取 StockId(0)。
     let code = StockId(0);
@@ -24,7 +75,7 @@ fn highest_buy_resolves_at_receipt_time_and_releases_only_the_excess_reservation
     assert!(expected_live < budget);
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: Vec::new(),
         operations,
@@ -275,10 +326,7 @@ fn cancellation_after_an_earlier_fill_continues_the_receipt_audit_chain() {
     );
     let input = ContinuousCancelInput {
         market,
-        envelopes: vec![ContinuousEnvelopeSnapshot {
-            envelope: after_fill,
-            audit: after_fill_audit,
-        }],
+        envelopes: vec![ContinuousEnvelopeSnapshot { envelope: after_fill }],
         operation: ContinuousCancelOperation {
             sealed_index: 41,
             account: AccountId(1),
@@ -397,7 +445,6 @@ fn seller_cancel_after_partial_fill_preserves_nonzero_nominal_and_charged_audit(
         market,
         envelopes: vec![ContinuousEnvelopeSnapshot {
             envelope: envelope.clone(),
-            audit: partial_audit,
         }],
         operation: ContinuousCancelOperation {
             sealed_index: 88,
@@ -443,11 +490,18 @@ fn cancellation_fails_closed_for_missing_duplicate_or_drifted_snapshots() {
     });
     assert!(duplicate.is_err());
 
-    let mut drifted = fixture.snapshot.clone();
-    drifted.audit.remaining_qty = 99;
+    // 任务65 #1：supplied-audit 双存已删除；漂移用例改为 envelope 审计与簿进度不一致，
+    // 由 validate_snapshot 的 4 字段交叉核对负责 fail closed（语义等价迁移）。
     let drift = cancel_continuous_order(ContinuousCancelInput {
         market: fixture.market,
-        envelopes: vec![drifted],
+        envelopes: vec![ContinuousEnvelopeSnapshot {
+            envelope: Envelope::tick_start_existing(
+                envelope_key(&fixture.code, OrderId(7)),
+                Money::from_cents(99_500),
+                0,
+                audit(99, 0, Money::ZERO),
+            ),
+        }],
         operation,
     });
     assert!(drift.is_err());
@@ -508,7 +562,7 @@ fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() 
         .collect::<Vec<_>>();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
@@ -539,7 +593,7 @@ fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
     let draft = place_draft(&operations[0]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
@@ -581,7 +635,7 @@ fn price_cage_reject_consumes_the_preallocated_id_and_releases_the_draft() {
     let draft = place_draft(&operations[0]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
@@ -643,7 +697,7 @@ fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
     // This worker input fixes actual admission order within one batch, keeping
     // the matching-time recheck coverage independent of free scheduling.
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
@@ -706,7 +760,7 @@ fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
     let draft = place_draft(&operations[0]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![maker.clone()],
         operations,
@@ -743,7 +797,7 @@ fn auction_market_reject_releases_the_draft_without_routing_to_the_book() {
     let draft = place_draft(&operations[0]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::CallAuction,
+        policy: super::phase::PhasePolicy::new(TradingPhase::CallAuction, 0, 1),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
@@ -780,7 +834,7 @@ fn continuous_market_without_liquidity_releases_the_draft_and_reports_zero_fille
     let draft = place_draft(&operations[0]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
@@ -840,7 +894,7 @@ fn continuous_market_partial_fill_releases_remainder_with_the_next_ordinal() {
     let draft = place_draft(&operations[0]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![maker.clone()],
         operations,
@@ -923,7 +977,7 @@ fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() 
     let sealed_index = draft.sealed_index();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![first.clone(), second.clone()],
         operations,
@@ -1133,7 +1187,7 @@ fn same_stock_competing_limits_fill_in_received_order_with_descending_identities
     operations.reverse();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![maker.clone()],
         operations,
@@ -1203,7 +1257,7 @@ fn trade_fact_identity_spans_multiple_sealed_operations_legs_and_makers() {
     ]);
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: makers.to_vec(),
         operations,
@@ -1286,7 +1340,7 @@ fn account_facts_use_the_triggering_sealed_operation_as_identity() {
     let draft = place_draft(&operations[1]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![existing.clone()],
         operations,
@@ -1350,7 +1404,7 @@ fn each_stock_worker_numbers_trade_facts_from_zero() {
         let sealed_index = operations[0].sealed_index();
 
         let output = process_continuous_stock(ContinuousStockInput {
-            phase: TradingPhase::Continuous,
+            policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
             market,
             envelopes: vec![maker.clone()],
             operations,
@@ -1417,7 +1471,7 @@ fn partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit() {
     let incoming = place_draft(&operations[0]).clone();
 
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![seller.clone()],
         operations,
@@ -1505,10 +1559,7 @@ impl CancelFixture {
         Self {
             code,
             market,
-            snapshot: ContinuousEnvelopeSnapshot {
-                envelope,
-                audit: envelope_audit,
-            },
+            snapshot: ContinuousEnvelopeSnapshot { envelope },
         }
     }
 
@@ -1593,7 +1644,10 @@ fn validated_operations_in_session(
     intents: Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
-    let plan = plan_tick(PhaseInput { session: game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: game,
+    })
+    .unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
@@ -1700,7 +1754,6 @@ fn add_resting_snapshot(
     };
     ContinuousEnvelopeSnapshot {
         envelope: Envelope::tick_start_existing(key, cash, shares, envelope_audit),
-        audit: envelope_audit,
     }
 }
 
@@ -1760,7 +1813,7 @@ fn symbolic_resolution_and_two_makers_keep_source_local_fill_ordinals() {
     let draft = place_draft(&operations[0]).clone();
     let resolved = market.limit_order_price_bound(Side::Buy, true).unwrap();
     let output = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: initial.clone(),
         operations,

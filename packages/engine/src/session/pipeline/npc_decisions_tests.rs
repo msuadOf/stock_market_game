@@ -23,6 +23,7 @@ fn external_host_consumes_npc_results_on_its_calling_thread() {
     stream_npc_decisions(
         snapshot(vec![AccountId(1), AccountId(2)]),
         &crate::GameConfig::proposed_defaults(),
+        &crate::compute::ComputeContext::shared_default().unwrap(),
         |completed| {
             assert_eq!(
                 std::thread::current().id(),
@@ -64,8 +65,12 @@ fn shared_receiver_accepts_player_between_fast_and_slow_npc_completions() {
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     let release_rx = std::sync::Mutex::new(release_rx);
     let mut npc_receipts = Vec::new();
+    // 缺口②配额化后 burst 预算=workers−drives：2-worker 池在协调者登记
+    // drive 后仅剩 1 个 spawn 槽，快/慢两任务的并行交错前提被预算截断
+    // （设计 §1.2 动态并行度）。本测试的对象是共享 ingress 的玩家接收
+    // 交错，不是 burst 预算——池宽提至 3 恢复两任务可同时在飞的前提。
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(2)
+        .num_threads(3)
         .build()
         .unwrap();
     std::thread::scope(|scope| {
@@ -79,10 +84,13 @@ fn shared_receiver_accepts_player_between_fast_and_slow_npc_completions() {
                 .unwrap();
             release_tx.send(()).unwrap();
         });
+        let pool = std::sync::Arc::new(pool);
+        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
         pool.install(|| {
             stream_npc_decisions_with(
                 snapshot(vec![AccountId(1), AccountId(2)]),
                 &crate::GameConfig::proposed_defaults(),
+                &shared,
                 |account| {
                     if account == AccountId(1) {
                         release_rx
@@ -127,6 +135,7 @@ fn npc_completion_channel_receives_fast_account_first_and_drains_after_consumer_
     let result = stream_npc_decisions_with(
         snapshot,
         &crate::GameConfig::proposed_defaults(),
+        &crate::compute::ComputeContext::shared_default().unwrap(),
         |account| {
             if account == AccountId(1) {
                 release_receiver
@@ -184,10 +193,13 @@ fn npc_completion_channel_does_not_deadlock_with_one_rayon_worker() {
         .num_threads(1)
         .build()
         .unwrap();
-    let result = pool.install(|| {
+    let pool = std::sync::Arc::new(pool);
+    let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+    let result = pool.install(move || {
         stream_npc_decisions(
             snapshot(vec![AccountId(1), AccountId(2)]),
             &crate::GameConfig::proposed_defaults(),
+            &shared,
             |_| Ok::<_, ()>(()),
         )
     });
@@ -217,8 +229,7 @@ fn concurrent_sessions_can_queue_npcs_from_every_worker_in_a_two_worker_pool() {
                         account,
                     );
                     let tick = session.state.tick;
-                    session.state.pending_npc = None;
-                    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+                                    let attention = session.state.npc_attention.get_mut(&account).unwrap();
                     attention.next_attention_candidate_tick = tick;
                     attention.rng_state = 3;
                     let mut quiet_probe = attention.clone();
@@ -229,13 +240,10 @@ fn concurrent_sessions_can_queue_npcs_from_every_worker_in_a_two_worker_pool() {
                     ));
                     session.state.attention_scheduler.enqueue(tick, account);
                     super::npc_tick_preparation::queue_npc_for_next_tick(&mut session).unwrap();
-                    session
-                        .state
-                        .pending_npc
-                        .as_ref()
+                    crate::session::pipeline::staged_decision::peek_any()
                         .unwrap()
-                        .observed_accounts
-                        .clone()
+                        .observed_accounts()
+                        .to_vec()
                 })
                 .collect::<Vec<_>>()
         });
@@ -870,7 +878,7 @@ fn npc_decisions_sizes_buys_with_the_explicit_session_fee_configuration() {
     assert_eq!(standard.intents().len(), 2);
 
     // 佣金本身已需要全部现金，策略就没有资金再支付成交额。
-    // 这也验证 DecisionShadow 不会悄悄使用默认佣金代替传入的会话配置。
+    // 这也验证 DecisionAndContinuation 不会悄悄使用默认佣金代替传入的会话配置。
     config.commission_min = snapshot.account(AccountId(9)).unwrap().self_view().cash;
     config.validate().unwrap();
     let expensive = run_npc_decisions(snapshot, &config).unwrap();

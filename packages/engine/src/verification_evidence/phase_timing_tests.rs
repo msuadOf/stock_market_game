@@ -193,20 +193,134 @@ fn evidence_serializes_all_measurements_as_decimal_strings() {
 
 #[test]
 fn runnable_thread_samples_follow_the_real_rayon_registry() {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(2)
-        .build()
-        .unwrap();
-    let timing = pool.install(|| {
-        production_session(0)
-            .step_with_phase_timing()
-            .unwrap()
-            .timing
-    });
+    let pool = std::sync::Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap(),
+    );
+    let compute = crate::ComputeContext::from_pool(pool.clone());
+    let mut session = production_session(0);
+    session.rebind_compute_for_verification(compute);
+    let timing = pool.install(|| session.step_with_phase_timing().unwrap().timing);
 
     for record in timing.records() {
         assert_eq!(record.runnable_thread_sample().minimum(), 2);
         assert_eq!(record.runnable_thread_sample().maximum(), 2);
+    }
+}
+
+#[test]
+fn compute_context_timing_binding_restores_after_error_unwind_and_nested_burst() {
+    with_phase_timing_binding(PhaseTimingBinding(None), || {
+        start_capture().unwrap();
+        let original = current_phase_timing_binding();
+        let alternate = PhaseTimingBinding(Some(std::sync::Arc::new(std::sync::Mutex::new(Collector::new()))));
+        let result: Result<(), ()> = with_phase_timing_binding(alternate.clone(), || {
+            assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), alternate.0.as_ref().unwrap()));
+            with_phase_timing_binding(original.clone(), || {
+                assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+            });
+            Err(())
+        });
+        assert!(result.is_err());
+        assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+        // 只在测试捕获 panic，验证 RAII；生产不把 panic 当可恢复 tick。
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_phase_timing_binding(PhaseTimingBinding(None), || panic!("测试观察绑定 unwind"));
+        }));
+        assert!(panic.is_err());
+        assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+    });
+    assert!(current_phase_timing_binding().0.is_none());
+}
+
+#[test]
+fn compute_context_shared_host_sessions_keep_timing_isolated() {
+    let compute = crate::ComputeContext::with_workers(2).unwrap();
+    std::thread::scope(|threads| {
+        for _ in 0..2 {
+            let compute = compute.clone();
+            threads.spawn(move || {
+                let mut session = production_session(0);
+                session.rebind_compute_for_verification(compute);
+                for _ in 0..2 {
+                    let timing = session.step_with_phase_timing().unwrap();
+                    assert_eq!(timing.timing().records().len(), 10);
+                    for record in timing.timing().records() {
+                        assert!(record.span_count() > 0);
+                        assert_eq!(record.runnable_thread_sample().maximum(), 2);
+                    }
+                }
+            });
+        }
+    });
+}
+
+#[test]
+fn compute_context_completion_implies_binding_exclusive_no_panic() {
+    let compute = crate::ComputeContext::with_workers(2).unwrap();
+    start_capture().unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    compute.spawn_two_stage(
+        || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            7_u32
+        },
+        move |value| done_tx.send(value).expect("两段式收尾信号必须可达"),
+    );
+    // 协调者收到完成信号 ⇒ 按协议最后一个绑定克隆已析构 ⇒ take_capture 必须成功且不 panic。
+    assert_eq!(done_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), 7);
+    let collector = take_capture().expect("完成信号之后绑定必须独占");
+    assert!(matches!(
+        collector.finish(),
+        Err(PhaseTimingCaptureError::NoCommittedTick)
+    ));
+}
+
+#[test]
+fn compute_context_error_path_with_inflight_task_never_masks_step_fatal() {
+    let compute = crate::ComputeContext::with_workers(2).unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let fatal = crate::session::StepFatal::InvariantViolation {
+        description: "原始业务错误".to_owned(),
+        location: "compute_context_error_path".to_owned(),
+    };
+    let outcome = capture_one_committed_tick::<()>(|| {
+        // 必须在 capture 启动后派发，才能真实持有这一捕获的绑定。
+        compute.spawn_two_stage(
+            move || {
+                assert!(current_phase_timing_binding().0.is_some());
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+                1_u32
+            },
+            move |value| { let _ = done_tx.send(value); },
+        );
+        entered_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        // worker 在 release channel 上暂停且仍持有绑定，协调者此刻错误退出。
+        Err(fatal.clone())
+    });
+    assert!(matches!(outcome, Err(PhaseTimingCaptureError::Step(ref error)) if error == &fatal));
+    assert!(current_phase_timing_binding().0.is_none(), "错误路径必须丢弃观察账本");
+    release_tx.send(()).unwrap();
+    assert_eq!(done_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), 1);
+}
+
+#[test]
+fn compute_context_foreign_caller_preserves_real_timing_capture() {
+    let compute = crate::ComputeContext::with_workers(1).unwrap();
+    let mut session = production_session(0);
+    session.rebind_compute_for_verification(compute);
+    let foreign = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+    let timed = foreign.install(|| session.step_with_phase_timing()).unwrap();
+    assert_eq!(timed.timing().records().len(), 10);
+    for record in timed.timing().records() {
+        assert!(record.span_count() > 0);
+        assert_eq!(record.runnable_thread_sample().minimum(), 1);
+        assert_eq!(record.runnable_thread_sample().maximum(), 1);
     }
 }
 
@@ -260,7 +374,7 @@ fn phase_timing_identity_keeps_rank_index_names_and_tick_mapping() {
     let tick_phases = [
         TickPhase::ExpiryShadow,
         TickPhase::SealAllocationSnapshot,
-        TickPhase::DecisionShadow,
+        TickPhase::DecisionAndContinuation,
         TickPhase::AccountValidation,
         TickPhase::StockProcessing,
         TickPhase::ReceiptAggregation,
@@ -317,7 +431,7 @@ fn phase_timing_ledger_preserves_overflow_order_and_partial_samples() {
         span_count: u64::MAX,
         ..Accumulator::EMPTY
     };
-    assert_eq!(ledger.record_span(phase, 1), Some("span_count"));
+    assert_eq!(ledger.record_span(phase, 1, 1), Some("span_count"));
     let value = ledger.accumulator(phase);
     assert_eq!(
         (value.wall_time_ns, value.span_count, value.sample_count),
@@ -325,7 +439,7 @@ fn phase_timing_ledger_preserves_overflow_order_and_partial_samples() {
     );
     ledger.accumulator_mut(phase).sample_count = u64::MAX;
     assert_eq!(
-        ledger.record_span(phase, 1),
+        ledger.record_span(phase, 1, 1),
         Some("runnable_thread_sample_count")
     );
     assert_eq!(

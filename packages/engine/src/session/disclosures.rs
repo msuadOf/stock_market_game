@@ -1,8 +1,9 @@
 //! 在自然日经营终局后派发 18:00 披露。
 //!
-//! GameSession 先执行 `ops_wiring.run_day_end`，月末或年末通过行业可变账套
-//! 完成 `close_month`/`close_year`，再将同一份 [`CivilDayEndReport`] 传入
-//! [`DisclosureDispatch::run_day_end`]。定期报告须经登记簿校验、定稿后公布。
+//! GameSession 先经公司领域入口完成当日经营与必要关账，再将同一份
+//! [`CivilDayEndReport`] 传入 [`DisclosureDispatch::run_day_end`]。领域入口
+//! 准备定稿材料身份/政策，Session 不读取账套、成本或应计字段；公开库仍
+//! 与公司事实、NPC 本人获知分开，材料经登记簿校验后才公布。
 //!
 //! 18:00 观察者使用无捕获的 `fn(CivilInstant)`；权威相位瞬间由
 //! [`CivilDayEndReport::disclosure_instant`] 承载。生产 hook
@@ -11,12 +12,12 @@
 
 use crate::accounting::closing::ClosingEngine;
 use crate::calendar::{CivilDate, CivilDateError, CivilInstant};
-use crate::company::operations::CompanyOperations;
+use crate::company::operations::{CompanyCloseError, CompanyOperations};
 use crate::company::CompanyId;
 
 use crate::information::{
-    ensure_original_registered, industry_presentation, scheduled_instant, stable_company_offset,
-    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
+    scheduled_instant, stable_company_offset,
+    AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
     PublicationId, PublicationOrigin, PublicationRequest, ScheduledReportKind, APPROVAL_HOUR,
 };
 use crate::session::civil_clock::{CivilClock, CivilDayEndReport};
@@ -32,6 +33,8 @@ pub enum DisclosureError {
     Information(#[from] InformationError),
     #[error("civil date error: {0}")]
     Date(#[from] CivilDateError),
+    #[error(transparent)]
+    Company(#[from] CompanyCloseError),
 }
 
 /// 一次日终披露的结果（确定性顺序：公告先于定期报告；公司 id 序）。
@@ -141,7 +144,7 @@ impl DisclosureDispatch {
         }
 
         // 2) 定期披露（窗口内的排期；公司 id 序 ⇒ PublicationId 确定）。
-        for (id, company) in &ctx.ops.companies {
+        for id in ctx.ops.companies.keys() {
             let offset = stable_company_offset(
                 ctx.ops.seed,
                 ctx.ops
@@ -162,7 +165,7 @@ impl DisclosureDispatch {
                         continue;
                     }
                     let publication =
-                        ctx.publish_scheduled(id, company, instant, fiscal_year, kind, offset)?;
+                        ctx.publish_scheduled(id, instant, fiscal_year, kind, offset)?;
                     out.reports_published.push(publication);
                     for group in ctx.groups.iter().filter(|group| group.root == *id) {
                         let publication = super::company_groups::publish_group_scheduled(
@@ -190,37 +193,25 @@ impl DayEndDisclosureCtx<'_> {
     fn publish_scheduled(
         &mut self,
         company_id: &CompanyId,
-        company: &crate::company::operations::OperatingCompany,
         instant: CivilInstant,
         fiscal_year: i32,
         kind: ScheduledReportKind,
         offset: u8,
     ) -> Result<PublicationId, DisclosureError> {
-        let books = company.books().books();
-        let industry = industry_presentation(company.spec().kind);
-        let member = crate::accounting::consolidation::MemberId(company_id.0.clone());
         let period = kind.landing_period(fiscal_year)?;
-        ensure_original_registered(
-            self.closing,
-            books,
-            &member,
-            industry,
-            period,
-            kind.report_kind(),
+        let registered = self.ops.prepare_report_for_publication(
+            *company_id, period, kind.report_kind(), self.closing,
         )?;
-        let policy = AccountingPolicyRef {
-            chart_version: books.ledger().chart().version(),
-        };
         let approval = CivilInstant::from_hms(instant.date(), APPROVAL_HOUR, 0, 0)?;
         let publication = self.library.publish_closed(
             self.closing,
             PublicationRequest {
                 company: company_id.clone(),
-                scope: crate::accounting::consolidation::ScopeId::Standalone(member),
+                scope: registered.scope,
                 period,
                 kind: kind.report_kind(),
                 sequence: 1,
-                policy,
+                policy: registered.policy,
                 approved_at: approval,
                 published_at: instant,
                 origin: PublicationOrigin::ScheduledDisclosure {

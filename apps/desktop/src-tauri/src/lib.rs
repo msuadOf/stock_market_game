@@ -61,7 +61,7 @@ fn calculate_indicators(
     prices: Vec<f64>,
     candles: Vec<engine::indicators::OhlcBar>,
 ) -> Result<engine::indicators::IndicatorResults, String> {
-    engine::indicators::calculate_indicators(&prices, &candles).map_err(|error| error.to_string())
+    engine::indicators::calculate_indicators(&prices, &candles, None).map_err(|error| error.to_string())
 }
 
 // ── Tauri 命令 ──────────────────────────────────────────────────────────────

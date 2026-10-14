@@ -33,6 +33,7 @@
 
 use super::*;
 
+use crate::compute::parallel::*;
 use crate::information::{discovery_candidates, NpcObservationContext, PublicationId};
 #[cfg(test)]
 use crate::observation::{build_technical_observation, TechnicalDailyInput};
@@ -51,7 +52,6 @@ use crate::plans::{
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::strategy::{BeliefBook, BeliefCause, BeliefInputs, PerShareRange, ValuationOutcome};
-use rayon::prelude::*;
 mod lifecycle;
 pub(in crate::session) mod personal_state;
 mod quote;
@@ -75,8 +75,9 @@ impl DecisionChainObservation {
         Self::capture_for_roots_on(&session.read_view(), market)
     }
 
-    /// 读视图版本（queue 链转换目标形态）。
-    fn capture_for_roots_on(
+    /// 读视图版本（queue 链转换目标形态）；T1·两阶段：queue 共享输入捕获
+    /// 复用（协调线程捕获一次，账户任务共享只读借用）。
+    pub(in crate::session) fn capture_for_roots_on(
         view: &crate::session::pipeline::npc_split::SessionReadView,
         market: MarketView,
     ) -> Result<Self, StepFatal> {
@@ -105,34 +106,37 @@ impl DecisionChainObservation {
         view: &crate::session::pipeline::npc_split::SessionReadView,
     ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {
         let stocks = view.candle_book.histories().iter().collect::<Vec<_>>();
-        let prepared = stocks
-            .into_par_iter()
-            .map(|(code, candles)| {
-                let invariant = |description: String| StepFatal::InvariantViolation {
-                    description,
-                    location: "decision_chain::build_chain_technical_observations".to_owned(),
-                };
-                let observation = (|| {
-                    u32::try_from(candles.len()).map_err(|_| {
-                        invariant(format!("daily candle count exceeds u32 for {code:?}"))
-                    })?;
-                    let bars: Vec<crate::strategy::TechnicalDailyBar> = candles
-                        .recent_traded()
-                        .iter()
-                        .map(|candle| crate::strategy::TechnicalDailyBar {
-                            high: candle.high,
-                            low: candle.low,
-                            close: candle.close,
-                        })
-                        .collect();
-                    Ok(build_technical_observation_from_recent_trades(
-                        &bars,
-                        candles.traded_count(),
-                    ))
-                })();
-                (code.clone(), observation)
-            })
-            .collect::<Vec<_>>();
+        let prepared = view.compute.parallel(|| {
+            stocks
+                .into_par_iter()
+                .map(|(code, candles)| {
+                    view.compute.record(crate::compute::ComputeWork::Analyse);
+                    let invariant = |description: String| StepFatal::InvariantViolation {
+                        description,
+                        location: "decision_chain::build_chain_technical_observations".to_owned(),
+                    };
+                    let observation = (|| {
+                        u32::try_from(candles.len()).map_err(|_| {
+                            invariant(format!("daily candle count exceeds u32 for {code:?}"))
+                        })?;
+                        let bars: Vec<crate::strategy::TechnicalDailyBar> = candles
+                            .recent_traded()
+                            .iter()
+                            .map(|candle| crate::strategy::TechnicalDailyBar {
+                                high: candle.high,
+                                low: candle.low,
+                                close: candle.close,
+                            })
+                            .collect();
+                        Ok(build_technical_observation_from_recent_trades(
+                            &bars,
+                            candles.traded_count(),
+                        ))
+                    })();
+                    (code.clone(), observation)
+                })
+                .collect::<Vec<_>>()
+        });
         // 股票任务完成顺序可不同；仍按 StockId 选择首个错误并构造规范结果 map。
         prepared
             .into_iter()
@@ -173,11 +177,7 @@ impl DecisionChainObservation {
                     .iter()
                     .any(|announcement| announcement.published_at.date() >= threshold);
             if fresh {
-                exposed.insert(
-                    view.stocks
-                        .id(&stock.code.0)
-                        .expect("配置股票必须已入目录"),
-                );
+                exposed.insert(view.stocks.id(&stock.code.0).expect("配置股票必须已入目录"));
             }
         }
         exposed
@@ -835,10 +835,12 @@ impl GameSession {
             now,
             exposed,
         );
-        while operations
-            .prepare_ready_accounts(self, true)
-            .expect("test plan roots must prepare")
-        {}
+        while matches!(
+            operations
+                .prepare_ready_accounts(self, true)
+                .expect("test plan roots must prepare"),
+            crate::session::plan_chain_candidates::PrepareReady::Progress(true)
+        ) {}
         operations
     }
 
@@ -1219,15 +1221,13 @@ impl GameSession {
     /// 集合竞价委托快照（诊断/测试）：(side, price_cents, qty, owner) 列表。
     pub fn auction_orders_debug(&self, code: &StockId) -> Vec<(Side, i64, u32, AccountId)> {
         self.state
-            .auction_orders
+            .markets
             .get(code)
-            .map(|orders| {
-                orders
-                    .iter()
-                    .map(|order| (order.side, order.limit.cents(), order.qty, order.owner))
-                    .collect()
-            })
-            .unwrap_or_default()
+            .into_iter()
+            .filter(|market| market.matching_mode() == crate::orderbook::MatchingMode::Auction)
+            .flat_map(|market| market.resting_orders())
+            .map(|order| (order.side, order.price.cents(), order.qty, order.owner))
+            .collect()
     }
 
     /// 单账户单股的 混合分析与方向迟滞 评估（诊断/测试）。
@@ -1470,6 +1470,8 @@ pub(in crate::session) fn next_routable_sell_qty(
 
 #[cfg(test)]
 mod chain_restructure_tests {
+    use crate::session::plan_continuation_domain::PlanContinuationDomain;
+
     #[cfg(feature = "simulation-diagnostics")]
     #[test]
     fn trace_links_a_real_cancellation_and_its_plan_transition() {
@@ -2381,7 +2383,6 @@ mod chain_restructure_tests {
             None
         );
         force_attention(&mut session, account);
-        session.state.pending_npc = None;
         crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
         session.step().unwrap();
         let experience = session.state.belief_participants[&account]
@@ -3045,7 +3046,13 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
-        let child = session.state.parent_orders[&account][&code].clone();
+        let (child_id, child) = {
+            let plan = session.state.plans.active_plan(account, &code).unwrap();
+            (
+                plan.active_child_order_id().unwrap(),
+                *plan.execution().unwrap(),
+            )
+        };
         let frozen = session.reserved_cash_for_account(account).unwrap();
         session
             .fixture_account_mut(&account)
@@ -3082,9 +3089,7 @@ mod chain_restructure_tests {
             .expect("keeping an already funded child needs no second budget");
         assert_eq!(
             request.decision.action,
-            crate::plans::QuoteAction::Keep {
-                order_id: child.active_child_order_id().unwrap()
-            }
+            crate::plans::QuoteAction::Keep { order_id: child_id }
         );
         assert_eq!(request.allocation.allocated_cash, Money::ZERO);
         assert_eq!(session.reserved_cash_for_account(account).unwrap(), frozen);
@@ -3098,9 +3103,7 @@ mod chain_restructure_tests {
             .unwrap();
         assert_eq!(
             request.decision.action,
-            crate::plans::QuoteAction::Keep {
-                order_id: child.active_child_order_id().unwrap()
-            }
+            crate::plans::QuoteAction::Keep { order_id: child_id }
         );
         assert_eq!(request.allocation.allocated_cash, Money::ZERO);
         assert_eq!(session.reserved_cash_for_account(account).unwrap(), frozen);
@@ -3231,11 +3234,11 @@ mod chain_restructure_tests {
             serde_json::to_value(session.state.accounts[&account].positions().get(&code)).unwrap(),
             position
         );
-        assert!(!session
+        assert!(session
             .state
-            .parent_orders
-            .get(&account)
-            .is_some_and(|parents| parents.contains_key(&code)));
+            .plans
+            .active_plan(account, &code)
+            .is_none_or(|plan| plan.execution().is_none()));
     }
 
     #[test]
@@ -3337,7 +3340,7 @@ mod chain_restructure_tests {
 
     fn set_urgency_minutes(session: &mut GameSession, falling: bool) {
         session.state.tick = 30;
-        session.state.pending_npc = None;
+        session.fixture_sync_market_modes_for_test();
         let end = session.current_market_minute();
         session.state.market_minute_closes.insert(
             session.stock_id("000812").unwrap(),
@@ -3438,7 +3441,6 @@ mod chain_restructure_tests {
             PlanStatus::Paused { .. }
         ));
         session.state.tick += 1;
-        session.state.pending_npc = None;
         crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
         drive_once(&mut session, &reversal_assessment(2_000));
         assert_eq!(
@@ -3600,6 +3602,7 @@ mod chain_restructure_tests {
     fn urgency_quote_uses_frozen_policy_instead_of_default() {
         let mut session = probe_session();
         session.state.setup.auction_ticks = 10;
+        session.fixture_sync_market_modes_for_test();
         session
             .state
             .plans
@@ -3658,6 +3661,7 @@ mod chain_restructure_tests {
             for (side, expected) in [(Side::Buy, buy_price), (Side::Sell, sell_price)] {
                 let mut session = probe_session();
                 session.state.setup.auction_ticks = auction_ticks;
+                session.fixture_sync_market_modes_for_test();
                 session.state.setup.config.price_cage_enabled = cage_enabled;
                 let owner = AccountId(1);
                 let code = session.stock_id("000812").unwrap();
@@ -3747,7 +3751,9 @@ mod chain_restructure_tests {
         assert!(!session.active_plan_requires_review(account));
 
         session.state.setup.auction_ticks = 10;
+        session.fixture_sync_market_modes_for_test();
         session.state.tick = session.state.setup.ticks_per_day;
+        session.fixture_sync_market_modes_for_test();
         session.state.day = 1;
         assert!(!session.active_plan_requires_review(account));
         session
@@ -3821,6 +3827,7 @@ mod chain_restructure_tests {
             },
         )]);
         session.state.setup.auction_ticks = 10;
+        session.fixture_sync_market_modes_for_test();
         let market = session.build_market_view();
         assert!(session
             .collect_plan_lifecycle_actions(account, &assessment, &market, &session.state.plans)
@@ -3830,6 +3837,7 @@ mod chain_restructure_tests {
             .unwrap()
             .is_empty());
         session.state.tick = 10;
+        session.fixture_sync_market_modes_for_test();
         assert_eq!(session.phase(), TradingPhase::Continuous);
         assert!(!session
             .capture_ready_decision_chain_roots(&[])
@@ -3927,9 +3935,6 @@ mod chain_restructure_tests {
         let view = session.build_market_view();
         let mut operations = PlanChainOperationBatch::empty();
 
-        session
-            .synchronize_owned_plan_execution(&mut plans)
-            .expect("fixture plan facts must synchronize");
         let observation: &GameSession = &session;
         if let Some(cursor) = observation.prepare_plan_quotes_for_account(owner, &view, &plans) {
             operations.push_quote_plans(cursor);
@@ -3949,9 +3954,10 @@ mod chain_restructure_tests {
             .is_empty());
         assert!(session
             .state
-            .parent_orders
-            .get(&owner)
-            .and_then(|parents| parents.get(&code))
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .execution()
             .is_none());
         let plan = session.state.plans.plan(plan_id).unwrap();
         assert_eq!(plan.filled_qty(), 0);
@@ -4073,6 +4079,7 @@ mod chain_restructure_tests {
         // Enter the call auction: an empty book is explicitly represented as a two-sided
         // protected quote, so the test exercises the actual submit route rather than a wait.
         session.state.setup.auction_ticks = 10;
+        session.fixture_sync_market_modes_for_test();
         let owner_account = session
             .fixture_account_mut(&owner)
             .expect("fixture owner must exist");
@@ -4148,9 +4155,6 @@ mod chain_restructure_tests {
         let view = session.build_market_view();
         let mut operations = PlanChainOperationBatch::empty();
 
-        session
-            .synchronize_owned_plan_execution(&mut plans)
-            .expect("fixture plan facts must synchronize");
         let observation: &GameSession = &session;
         if let Some(cursor) = observation.prepare_plan_quotes_for_account(owner, &view, &plans) {
             operations.push_quote_plans(cursor);
@@ -4170,12 +4174,11 @@ mod chain_restructure_tests {
         assert!(
             session
                 .state
-                .parent_orders
-                .get(&owner)
-                .and_then(|parents| parents.get(&code))
-                .and_then(|parent| parent.active_child_order_id())
+                .plans
+                .active_plan(owner, &code)
+                .and_then(|plan| plan.active_child_order_id())
                 .is_some(),
-            "the accepted child must be linked to its parent plan"
+            "the accepted child must be linked to its plan execution leg"
         );
         assert!(
             session.reserved_cash_for_account(owner).unwrap()
@@ -4202,6 +4205,7 @@ mod chain_restructure_tests {
             (15_300, 54_000),
         ] {
             session.state.tick = tick;
+            session.fixture_sync_market_modes_for_test();
             assert_eq!(session.chain_observation_instant().second_of_day(), seconds);
         }
         let mut setup = session.save().expect("healthy save").setup;
@@ -4211,6 +4215,7 @@ mod chain_restructure_tests {
         let mut session = GameSession::new(setup, 42).unwrap();
         for (tick, seconds) in [(119, 41_340), (120, 46_800), (121, 46_860), (240, 54_000)] {
             session.state.tick = tick;
+            session.fixture_sync_market_modes_for_test();
             assert_eq!(session.chain_observation_instant().second_of_day(), seconds);
         }
     }
@@ -4223,7 +4228,7 @@ mod chain_restructure_tests {
         setup.closing_auction_ticks = 180;
         let mut session = GameSession::new(setup, 42).unwrap();
         session.state.tick = 8_099;
-        session.state.pending_npc = None;
+        session.fixture_sync_market_modes_for_test();
         crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
         let before = session.chain_observation_instant();
         let market_before = session.current_market_minute();
@@ -4287,36 +4292,26 @@ mod chain_restructure_tests {
     }
 
     #[test]
-    fn generation_preserves_pending_plan_facts_when_a_child_fill_is_waiting() {
+    fn generation_preserves_plan_facts_across_a_decision_chain_run() {
         let mut session = seeded_buy_plan_with_child();
-        let parent = session.state.parent_orders[&AccountId(1)]
-            [&session.stock_id("000812").unwrap()]
-            .clone();
-        session
+        let plan_id = session
             .state
-            .pending_plan_events
-            .push(PendingPlanEvent::Filled {
-                plan_id: parent.linked_plan_id().unwrap(),
-                order_id: parent.active_child_order_id().unwrap(),
-                qty: 100,
-                child_complete: false,
-                trading_day: u64::from(session.state.day),
-            });
-        let pending = serde_json::to_value(&session.state.pending_plan_events).unwrap();
-        let parents = serde_json::to_value(&session.state.parent_orders).unwrap();
+            .plans
+            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .unwrap()
+            .plan_id();
+        let plans = serde_json::to_value(&session.state.plans).unwrap();
         let identities = (session.state.next_order_id, session.state.seq);
 
         let _batch = session.run_decision_chain(&[AccountId(1)]);
 
-        assert_eq!(
-            serde_json::to_value(&session.state.pending_plan_events).unwrap(),
-            pending
-        );
-        assert_eq!(
-            serde_json::to_value(&session.state.parent_orders).unwrap(),
-            parents
-        );
+        assert_eq!(serde_json::to_value(&session.state.plans).unwrap(), plans);
         assert_eq!((session.state.next_order_id, session.state.seq), identities);
+        assert_eq!(
+            session.state.plans.plan(plan_id).unwrap().filled_qty(),
+            0,
+            "决策链生成不得伪造未路由的成交进度"
+        );
     }
 
     use super::*;
@@ -4599,7 +4594,6 @@ mod chain_restructure_tests {
             },
             &mut seed_events,
         );
-        session.state.pending_npc = None;
         crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
         let events = session.step().expect("healthy step");
         // 场景断言：计划 + 在途子单确实就位（后续测试依赖）。
@@ -4615,10 +4609,9 @@ mod chain_restructure_tests {
         assert!(
             session
                 .state
-                .parent_orders
-                .get(&AccountId(1))
-                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
-                .and_then(|parent| parent.active_child_order_id())
+                .plans
+                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .and_then(|plan| plan.active_child_order_id())
                 .is_some(),
             "seed scenario must leave an in-flight child order"
         );
@@ -4644,9 +4637,11 @@ mod chain_restructure_tests {
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         let plan = session.state.plans.active_plan(account, &code).unwrap();
-        let parent = &session.state.parent_orders[&account][&code];
-        let child_id = parent.active_child_order_id().unwrap();
-        let child_exposure = plan.filled_qty() + parent.active_child_remaining_qty().unwrap();
+        let leg = plan
+            .execution()
+            .expect("seeded plan carries an execution leg");
+        let child_id = plan.active_child_order_id().unwrap();
+        let child_exposure = plan.filled_qty() + leg.active_child_remaining_qty().unwrap();
         let market = session.build_market_view();
         let matching = (1..=10_000).find_map(|score| {
             let actions = session.collect_plan_lifecycle_actions(
@@ -4679,10 +4674,7 @@ mod chain_restructure_tests {
         let current = session.state.plans.active_plan(account, &code).unwrap();
         assert_eq!(current.target(), revision.target);
         assert_eq!(current.active_child_order_id(), None);
-        assert_eq!(
-            session.state.parent_orders[&account][&code].active_child_order_id(),
-            None
-        );
+
         assert!(!session.state.markets[&code]
             .resting_orders_for(account)
             .iter()
@@ -4695,9 +4687,11 @@ mod chain_restructure_tests {
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         let plan = session.state.plans.active_plan(account, &code).unwrap();
-        let parent = &session.state.parent_orders[&account][&code];
-        let child_id = parent.active_child_order_id().unwrap();
-        let child_remaining = parent.active_child_remaining_qty().unwrap();
+        let leg = plan
+            .execution()
+            .expect("seeded plan carries an execution leg");
+        let child_id = plan.active_child_order_id().unwrap();
+        let child_remaining = leg.active_child_remaining_qty().unwrap();
         let exposure = plan.filled_qty() + child_remaining;
         let market = session.build_market_view();
         let score = (1..=10_000)
@@ -4726,9 +4720,10 @@ mod chain_restructure_tests {
         let mut observation =
             crate::session::plan_chain_candidates::FrozenPlanChainObservation::capture(&session)
                 .unwrap();
-        let ready = roots
-            .yield_adaptive_candidates(&mut session, &mut observation)
-            .unwrap();
+        let ready = PlanContinuationDomain::scoped(&mut session, |domain| {
+            roots.yield_adaptive_candidates(domain, &mut observation)
+        })
+        .unwrap();
         assert_eq!(ready.len(), 1);
         assert!(matches!(ready[0].intent, Intent::Cancel { id, .. } if id == child_id));
 
@@ -4752,14 +4747,6 @@ mod chain_restructure_tests {
                 },
             )
             .unwrap();
-        let parent = session
-            .state
-            .parent_orders
-            .get_mut(&account)
-            .unwrap()
-            .get_mut(&code)
-            .unwrap();
-        parent.replace_execution_facts_for_test(parent.filled_qty() + child_remaining, None, None);
         session
             .state
             .markets
@@ -4772,9 +4759,9 @@ mod chain_restructure_tests {
             PlanStatus::Active
         );
 
-        roots
-            .resume_adaptive_candidates(
-                &mut session,
+        PlanContinuationDomain::scoped(&mut session, |domain| {
+            roots.resume_adaptive_candidates(
+                domain,
                 [(
                     account,
                     code.clone(),
@@ -4782,11 +4769,12 @@ mod chain_restructure_tests {
                     PlanRouteOutcome::Rejected(RejectionReason::OrderAlreadyFilled),
                 )],
             )
-            .unwrap();
-        assert!(roots
-            .yield_adaptive_candidates(&mut session, &mut observation)
-            .unwrap()
-            .is_empty());
+        })
+        .unwrap();
+        assert!(PlanContinuationDomain::scoped(&mut session, |domain| roots
+            .yield_adaptive_candidates(domain, &mut observation))
+        .unwrap()
+        .is_empty());
         let reports = roots.finish_adaptive().unwrap();
         assert!(reports.iter().any(|report| matches!(
             report.disposition,
@@ -4802,9 +4790,10 @@ mod chain_restructure_tests {
         );
         assert!(session
             .state
-            .parent_orders
-            .get(&account)
-            .and_then(|by_stock| by_stock.get(&code))
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .execution()
             .is_none());
     }
 
@@ -4863,10 +4852,9 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let child_id = session
             .state
-            .parent_orders
-            .get(&AccountId(1))
-            .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
-            .and_then(|parent| parent.active_child_order_id())
+            .plans
+            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .and_then(|plan| plan.active_child_order_id())
             .expect("child must be in flight");
 
         // 反向信号跨过 ±2000bp 迟滞：Buy → Sell。
@@ -4883,17 +4871,15 @@ mod chain_restructure_tests {
         assert_eq!(direction, Side::Sell, "plan must have flipped to Sell");
         assert_eq!(filled, 0, "ReverseRestart resets the fill progress");
         assert_eq!(status, "Active");
-        // 撤单清空了母单在途子单引用——反向后的新子单不会被
-        // 「第二在途子单」断言卡死（install_plan_parent 可覆盖安装）。
+        // 撤单清空了计划执行腿的在途子单引用——反向后的新子单不会被
+        // 「第二在途子单」守卫卡死（install_execution 可覆盖安装）。
         assert!(
             session
                 .state
-                .parent_orders
-                .get(&AccountId(1))
-                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
-                .map(|parent| parent.active_child_order_id().is_none())
-                .unwrap_or(true),
-            "the linked parent must no longer carry the canceled child"
+                .plans
+                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .is_none_or(|plan| plan.active_child_order_id().is_none()),
+            "the reversed plan must no longer carry the canceled child"
         );
     }
 
@@ -4902,37 +4888,26 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let child_id = session
             .state
-            .parent_orders
-            .get(&AccountId(1))
-            .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
-            .and_then(|parent| parent.active_child_order_id())
+            .plans
+            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .and_then(|plan| plan.active_child_order_id())
             .expect("child must be in flight");
         // 手工推进计划进度（计划簿事件路径）：filled 500_000 / target 599_300；
         // 同向弱信号（score 1000）修订后的目标差量 ≈13.9 万股 < 已成交 50 万股
         // ⇒ below_filled_rationale ⇒ 终止（真实撤子单先行）。
         {
-            let mut plans = std::mem::take(&mut session.state.plans);
-            plans
-                .apply(
-                    crate::plans::PlanId(0),
-                    crate::plans::PlanEvent::ChildOrderAccepted {
-                        order_id: OrderId(999),
-                        trading_day: 0,
-                    },
-                )
+            let code = session.stock_id("000812").unwrap();
+            // 把真实在途子单的剩余量临时视为 500_100，推进 500_000 后仍余 100 在途。
+            session
+                .state
+                .plans
+                .restore_child_remaining_qty(crate::plans::PlanId(0), Some(500_100))
                 .unwrap();
-            plans
-                .apply(
-                    crate::plans::PlanId(0),
-                    crate::plans::PlanEvent::ChildOrderFilled {
-                        order_id: OrderId(999),
-                        qty: 500_000,
-                        child_complete: false,
-                        trading_day: 0,
-                    },
-                )
+            session
+                .state
+                .plans
+                .record_child_fill(AccountId(1), &code, crate::Side::Buy, child_id, 500_000, 0)
                 .unwrap();
-            session.state.plans = plans;
         }
 
         let events = drive_once(&mut session, &reversal_assessment(1_000));
@@ -4953,11 +4928,10 @@ mod chain_restructure_tests {
         assert!(
             session
                 .state
-                .parent_orders
-                .get(&AccountId(1))
-                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
+                .plans
+                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
                 .is_none(),
-            "the dead linked parent entry must be removed"
+            "the dead plan must leave the active index"
         );
     }
 
@@ -4966,34 +4940,29 @@ mod chain_restructure_tests {
         // Given: a plan-linked parent whose child has already resolved but whose plan remains active.
         let mut session = seeded_buy_plan_with_child();
         let code = session.stock_id("000812").unwrap();
-        let parent = session
-            .state
-            .parent_orders
-            .get_mut(&AccountId(1))
-            .and_then(|parents| parents.get_mut(&code))
-            .expect("seeded parent must exist");
-        parent.replace_execution_facts_for_test(parent.filled_qty(), None, None);
+        // 子单已解决而计划仍活跃：直接把执行腿重装为无在途子单。
         {
             let mut plans = std::mem::take(&mut session.state.plans);
             plans
-                .apply(
-                    PlanId(0),
-                    PlanEvent::ChildOrderAccepted {
-                        order_id: OrderId(999),
-                        trading_day: 0,
-                    },
+                .restore_child_remaining_qty(PlanId(0), Some(500_100))
+                .unwrap();
+            let real_child = plans
+                .plan(PlanId(0))
+                .unwrap()
+                .active_child_order_id()
+                .unwrap();
+            plans
+                .record_child_fill(
+                    AccountId(1),
+                    &code,
+                    crate::Side::Buy,
+                    real_child,
+                    500_000,
+                    0,
                 )
                 .unwrap();
             plans
-                .apply(
-                    PlanId(0),
-                    PlanEvent::ChildOrderFilled {
-                        order_id: OrderId(999),
-                        qty: 500_000,
-                        child_complete: false,
-                        trading_day: 0,
-                    },
-                )
+                .record_child_released(AccountId(1), &code, real_child, 0)
                 .unwrap();
             session.state.plans = plans;
         }
@@ -5009,11 +4978,12 @@ mod chain_restructure_tests {
         assert!(
             session
                 .state
-                .parent_orders
-                .get(&AccountId(1))
-                .and_then(|parents| parents.get(&code))
+                .plans
+                .plan(PlanId(0))
+                .unwrap()
+                .execution()
                 .is_none(),
-            "a terminated plan without an active child must release its linked parent slot"
+            "a terminated plan must not retain an execution leg"
         );
     }
 
@@ -5022,20 +4992,22 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let child_id = session
             .state
-            .parent_orders
-            .get(&AccountId(1))
-            .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
-            .and_then(|parent| parent.active_child_order_id())
+            .plans
+            .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+            .and_then(|plan| plan.active_child_order_id())
             .expect("child must be in flight");
         // ticks_per_day=100、closing_auction_ticks=10 ⇒ tick ≥ 90 为收盘集合
         // 竞价（不可撤阶段）。
         session.state.tick = 95;
-        session.state.pending_npc = Some(crate::session::PendingNpcBatch {
-            dependencies: Vec::new(),
-            observed_tick: session.state.tick,
-            observed_accounts: Vec::new(),
-            intents: Vec::new(),
-        });
+        session.fixture_sync_market_modes_for_test();
+        crate::session::pipeline::staged_decision::stage(
+            crate::session::pipeline::NpcDecisionHandover::new(
+                session.state.tick,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
 
         let events = drive_once(&mut session, &reversal_assessment(-6_000));
 
@@ -5063,12 +5035,11 @@ mod chain_restructure_tests {
         assert_eq!(
             session
                 .state
-                .parent_orders
-                .get(&AccountId(1))
-                .and_then(|parents| parents.get(&session.stock_id("000812").unwrap()))
-                .and_then(|parent| parent.active_child_order_id()),
+                .plans
+                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .and_then(|plan| plan.active_child_order_id()),
             Some(child_id),
-            "the linked parent must still reference its child"
+            "the plan execution leg must still reference its child"
         );
     }
 
@@ -5129,6 +5100,7 @@ mod chain_restructure_tests {
         let owner = AccountId(1);
         let code = session.stock_id("000812").unwrap();
         session.state.setup.auction_ticks = 10;
+        session.fixture_sync_market_modes_for_test();
         session
             .fixture_account_mut(&owner)
             .unwrap()
@@ -5163,9 +5135,6 @@ mod chain_restructure_tests {
         let view = session.build_market_view();
         let mut operations = PlanChainOperationBatch::empty();
 
-        session
-            .synchronize_owned_plan_execution(&mut plans)
-            .expect("fixture plan facts must synchronize");
         let observation: &GameSession = &session;
         if let Some(cursor) = observation.prepare_plan_quotes_for_account(owner, &view, &plans) {
             operations.push_quote_plans(cursor);
@@ -5192,7 +5161,7 @@ mod chain_restructure_tests {
             .active_plan(owner, &code)
             .unwrap()
             .clone();
-        let parents = serde_json::to_value(&session.state.parent_orders).unwrap();
+        let plans_snapshot = serde_json::to_value(&session.state.plans).unwrap();
         let reservation = session.reserved_cash_for_account(owner).unwrap();
         let order_count = session.state.markets[&code].resting_order_count();
         let mut batch = PlanChainOperationBatch::empty();
@@ -5225,8 +5194,8 @@ mod chain_restructure_tests {
         assert_eq!(current.filled_qty(), old.filled_qty());
         assert_eq!(current.active_child_order_id(), old.active_child_order_id());
         assert_eq!(
-            serde_json::to_value(&session.state.parent_orders).unwrap(),
-            parents
+            serde_json::to_value(&session.state.plans).unwrap(),
+            plans_snapshot
         );
         assert_eq!(
             session.reserved_cash_for_account(owner).unwrap(),

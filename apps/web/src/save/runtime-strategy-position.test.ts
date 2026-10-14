@@ -28,6 +28,7 @@ function strategyStates(positionStep: unknown): Record<string, Record<string, Re
 function runtime(strategyStates: unknown) {
   return {
     poisoned: false, next_receipt_base: "0", live_envelopes: [],
+    book_public_cutoff_sequences: { "0": "0" },
     retail_projection_seen: [], strategy_states: strategyStates,
   }
 }

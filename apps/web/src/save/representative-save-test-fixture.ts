@@ -5,13 +5,19 @@ const save = JSON.parse(readFileSync(new URL("./fixtures/current-schema-save.jso
 
 /** 含非空领域数据的 schema projection；可省略跨域引用，因此不声明 Rust restore 有效。 */
 export function representativeCurrentSaveFixture(): Record<string, unknown> {
+  // 正例 fixture 显式迁入当前单 book 结构；parser 仍严格拒绝旧字段。
+  const { auction_orders: _removedAuctionOrders, ...currentBookSave } = save
   const snapshot = save.snapshot as Record<string, unknown>
   const { day: _day, phase: _phase, ...savedSnapshot } = snapshot
   const markets = snapshot.markets as Record<string, Record<string, unknown>>
   const accounts = snapshot.accounts as Record<string, Record<string, unknown>>
   const planBook = save.plans as { plans: Record<string, Record<string, unknown>> }
   return {
-    ...save,
+    ...currentBookSave,
+    runtime_state: {
+      ...(save.runtime_state as Record<string, unknown>),
+      book_public_cutoff_sequences: Object.fromEntries(Object.keys(markets).map((code) => [code, "0"])),
+    },
     urgency_policy: currentSaveFixture().urgency_policy,
     plans: {
       ...planBook,

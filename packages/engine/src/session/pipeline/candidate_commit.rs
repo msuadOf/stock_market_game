@@ -49,7 +49,7 @@ pub(super) fn prepare_candidate_commit<'authority>(
 ) -> Result<PreparedCandidateCommit<'authority>, StepFatal> {
     authority.require_healthy()?;
     candidate.require_healthy()?;
-    let mut rebased_in_tail = false;
+
     if candidate.state.tick
         == authority
             .state
@@ -58,39 +58,10 @@ pub(super) fn prepare_candidate_commit<'authority>(
             .ok_or_else(|| invariant("market tick overflow".to_owned()))?
     {
         // 收盘后的自然日结仍可能发布经营和披露；下一日请求不能先进入日终候选。
-        if !candidate
-            .state
-            .tick
-            .is_multiple_of(candidate.state.setup.ticks_per_day)
-        {
-            // X1 重排：rebase 物理先行（探索波实证 Rayon1 逐字节等价，2084/2084），
-            // 其错误延后到 queue 错误之后传播，保持原首错序（queue 先于 rebase）。
-            rebased_in_tail = true;
-            let rebase_result = candidate
-                .state
-                .envelope_ledger
-                .rebase_private_for_tick_commit();
-            let produced_revision = candidate.external_revision();
-            let (view, mut writes) = super::npc_split::npc_split(&mut candidate);
-            let (queue_result, speculative) = rayon::join(
-                || super::npc_tick_preparation::queue_npc_on(&view, &mut writes),
-                // X1 投机预计算（棒次 16 真零拷复装）：与 queue 并发准备；消费纯
-                // 移动（ReadOnlyStart 无 Clone，深拷编译不可能——终审作废后重测）。
-                || {
-                    super::read_only_start::can_prepare_on(&view).then(|| {
-                        super::read_only_start::SpeculativePrepareStash {
-                            for_tick: view.tick,
-                            produced_revision,
-                            work: super::read_only_start::prepare_on(&view),
-                        }
-                    })
-                },
-            );
-            queue_result?;
-            rebase_result?;
-            // 失败路径 candidate 整体丢弃；成功路径把投机结果随 candidate 提交流转。
-            candidate.state.speculative_prepare = speculative;
-        }
+        // （日内/日界两分支的 rebase 物理先行差异随 T3 尾部生产删除失去意义——
+        // Sol 终审·冗余收口：原 X1 的「先行 vs 后置」双分支与重复
+        // `validate_receipt_cursor` 收敛为单一路径：先校验游标，再 rebase，
+        // 再断言游标未变；rebase 不改游标，先验等价。）
     } else if candidate.state.tick != authority.state.tick {
         return Err(invariant(
             "CommitTick candidate 推进了超过一个市场 tick".to_owned(),
@@ -98,16 +69,15 @@ pub(super) fn prepare_candidate_commit<'authority>(
     }
     validate_receipt_cursor(&candidate)?;
     let receipt_cursor = candidate.state.next_receipt_base;
-    if !rebased_in_tail {
-        let rebase_result = candidate
+    let rebase_compute = candidate.compute.clone();
+    let rebase_result = rebase_compute.parallel(|| {
+        rebase_compute.record(crate::compute::ComputeWork::LedgerRebase);
+        candidate
             .state
             .envelope_ledger
-            .rebase_private_for_tick_commit();
-        validate_receipt_cursor(&candidate)?;
-        rebase_result?;
-    } else {
-        validate_receipt_cursor(&candidate)?;
-    }
+            .rebase_private_for_tick_commit()
+    });
+    rebase_result?;
     if candidate.state.next_receipt_base != receipt_cursor {
         return Err(invariant(
             "live-ledger rebase changed the global receipt cursor".to_owned(),
@@ -140,8 +110,7 @@ impl PreparedCandidateCommit<'_> {
 
 pub(super) struct PreparedTickPlanCommit<'authority> {
     prepared: PreparedCandidateCommit<'authority>,
-    events: Vec<crate::Event>,
-    event_keys: Vec<super::EventStableKey>,
+    facts: Vec<crate::session::protocol::EventFact>,
     evidence: Option<TickCommitEvidence>,
 }
 
@@ -166,13 +135,24 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     plan: TickShadowPlan,
     capture_commit_evidence: bool,
 ) -> Result<PreparedTickPlanCommit<'authority>, StepFatal> {
-    validate_receipt_keys(&plan.receipt_keys)?;
-    let events = plan.event_outbox;
-    let event_keys = plan.event_keys;
-    validate_event_keys(&events, &event_keys, plan.expiry.releases.len())?;
-    let mut candidate = plan.state.into_session()?;
-    let memory_accounts: BTreeSet<_> = plan
-        .applied_receipts
+    // T2（ADR-0042 §T2）：receipt 事实链单载体——key 序列在唯一消费点从
+    // applied_receipts 一次性派生（不再持久双存）；owner 一次解构消费。
+    let TickShadowPlan {
+        session,
+        event_outbox: facts,
+        applied_receipts,
+        auction_finalizers,
+        expiry,
+        ..
+    } = plan;
+    let receipt_keys: Vec<ReceiptLocalKey> = applied_receipts
+        .iter()
+        .map(|receipt| receipt.local_key.clone())
+        .collect();
+    validate_receipt_keys(&receipt_keys)?;
+    validate_event_facts(&facts, expiry.releases.len())?;
+    let mut candidate = session.ok_or_else(TickShadowPlan::consumed_shadow_public)?;
+    let memory_accounts: BTreeSet<_> = applied_receipts
         .iter()
         .map(|receipt| receipt.envelope.account)
         .filter(|account| candidate.state.belief_participants.contains_key(account))
@@ -183,15 +163,15 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     }
     validate_applied_receipt_journal(
         &candidate.state.envelope_ledger,
-        &plan.applied_receipts,
-        &plan.receipt_keys,
+        &applied_receipts,
+        &receipt_keys,
     )?;
     let evidence = if capture_commit_evidence {
         Some(TickCommitEvidence::capture(
             &candidate.state.envelope_ledger,
-            &plan.applied_receipts,
-            &plan.receipt_keys,
-            plan.auction_finalizers,
+            &applied_receipts,
+            &receipt_keys,
+            auction_finalizers,
         )?)
     } else {
         None
@@ -201,24 +181,24 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     let prepared = prepare_candidate_commit(authority, candidate)?;
     Ok(PreparedTickPlanCommit {
         prepared,
-        events,
-        event_keys,
+        facts,
         evidence,
     })
 }
 
-fn validate_event_keys(
-    events: &[crate::Event],
-    keys: &[super::EventStableKey],
+fn validate_event_facts(
+    facts: &[crate::session::protocol::EventFact],
     expiry_count: usize,
 ) -> Result<(), StepFatal> {
-    if events.len() != keys.len() || expiry_count > events.len() {
+    if expiry_count > facts.len() {
         return Err(invariant(
             "ExpiryShadow 与 DerivationAudit 的事件身份数量与 CommitTick outbox 不一致".to_owned(),
         ));
     }
     let mut seen = BTreeSet::new();
-    for (index, (event, key)) in events.iter().zip(keys).enumerate() {
+    for (index, fact) in facts.iter().enumerate() {
+        let event = &fact.event;
+        let key = &fact.key;
         let is_quote_expiry = index < expiry_count;
         let has_quote_expiry_index =
             key.local_event_index() >= super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE;
@@ -285,6 +265,28 @@ fn validate_applied_receipt_journal(
 }
 
 impl PreparedTickPlanCommit<'_> {
+    /// publication 只借用已准备的冻结 candidate；全部可失败投影在唯一 CommitTick 之前完成
+    /// （#4 冻结门禁形状）。载荷是单批有类型事件记录（架构项 #6）。
+    pub(in crate::session) fn project_and_commit<P>(
+        self,
+        project: impl FnOnce(
+            crate::session::protocol::TickCandidateProjection<'_>,
+            Vec<crate::session::protocol::EventFact>,
+        ) -> Result<P, StepFatal>,
+    ) -> Result<(P, Option<TickCommitEvidence>), StepFatal> {
+        let projection = crate::session::protocol::TickCandidateProjection::new(
+            &self.prepared.candidate,
+            self.prepared.authority.seq(),
+        );
+        let publication = project(projection, self.facts)?;
+        crate::verification_evidence::validate_precommit()?;
+        crate::verification_evidence::enter_phase(super::TickPhase::CommitTick);
+        let tick = self.prepared.candidate.tick();
+        self.prepared.commit();
+        crate::verification_evidence::mark_committed(tick);
+        Ok((publication, self.evidence))
+    }
+
     #[cfg(test)]
     pub(crate) fn evidence(&self) -> &TickCommitEvidence {
         self.evidence
@@ -292,13 +294,11 @@ impl PreparedTickPlanCommit<'_> {
             .expect("test prepared tick requested commit evidence")
     }
 
+    #[cfg(test)]
     pub(super) fn commit(self) -> CandidateTickCommitResult {
         let _receipt = self.prepared.commit();
         CandidateTickCommitResult {
-            tick: TickCommitResult {
-                events: self.events,
-                event_keys: self.event_keys,
-            },
+            tick: TickCommitResult { facts: self.facts },
             #[cfg(test)]
             receipt: _receipt,
             evidence: self.evidence,
@@ -338,21 +338,26 @@ mod event_identity_tests {
             id: OrderId(seq),
             remaining_qty: 100,
         };
-        let events = [canceled(1), canceled(2)];
-        let keys = [
-            super::super::EventStableKey::for_event(
-                &events[0],
-                super::super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE,
-            ),
-            super::super::EventStableKey::for_event(&events[1], 0),
+        let facts = [
+            crate::session::protocol::EventFact {
+                key: super::super::EventStableKey::for_event(
+                    &canceled(1),
+                    super::super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE,
+                ),
+                event: canceled(1),
+            },
+            crate::session::protocol::EventFact {
+                key: super::super::EventStableKey::for_event(&canceled(2), 0),
+                event: canceled(2),
+            },
         ];
-        validate_event_keys(&events, &keys, 1).unwrap();
+        validate_event_facts(&facts, 1).unwrap();
 
-        assert_ne!(keys[0], keys[1]);
+        assert_ne!(facts[0].key, facts[1].key);
         assert_eq!(
-            keys[0].local_event_index(),
+            facts[0].key.local_event_index(),
             super::super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE
         );
-        assert_eq!(keys[1].local_event_index(), 0);
+        assert_eq!(facts[1].key.local_event_index(), 0);
     }
 }

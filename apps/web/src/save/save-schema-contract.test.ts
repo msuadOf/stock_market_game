@@ -3,7 +3,6 @@ import test from "node:test"
 import { parseSaveJson, parseSaveSlot } from "./save-schema.ts"
 import { parseSaveSnapshot } from "./schema/save-snapshot.ts"
 import { parseSaveRuntime } from "./schema/runtime-state.ts"
-import { parseOrderState } from "./schema/orders.ts"
 import { currentSaveFixture } from "./current-save-fixture.ts"
 
 function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unknown {
@@ -111,6 +110,7 @@ test("runtime envelope persists identity and actual charges only", () => {
     poisoned: false,
     next_receipt_base: "0",
     live_envelopes: [envelope],
+    book_public_cutoff_sequences: { "600888": "0" },
     retail_projection_seen: [],
     strategy_states: {},
   }
@@ -123,23 +123,73 @@ test("runtime envelope persists identity and actual charges only", () => {
   }
 })
 
-test("saved parent plans omit child remaining quantity and reject injected mirrors", () => {
-  const base = {
+test("当前存档不再携带 parent_orders 与 pending_plan_events，旧字段按未知键拒绝", () => {
+  const current = currentSaveFixture()
+  assert.equal("parent_orders" in current, false)
+  assert.equal("pending_plan_events" in current, false)
+  assert.deepEqual(parseSaveSlot(current), current)
+  assert.throws(() => parseSaveSlot({ ...current, parent_orders: {} }), /parent_orders/)
+  assert.throws(() => parseSaveSlot({ ...current, pending_plan_events: [] }), /pending_plan_events/)
+})
+
+/** 构造带执行腿的合法计划（结构对齐 Rust TradingPlan wire 契约）。 */
+function planWithExecutionLeg(): Record<string, unknown> {
+  return {
+    plan_id: 1,
+    account: 1,
     code: 0,
-    side: "Buy",
-    target_qty: 100,
-    filled_qty: 0,
-    child_qty: 100,
-    active_child_order_id: 1,
-    limit_price: "1000",
-    expires_market_minute: "500",
+    direction: "Buy",
+    target: { ShareCount: 500 },
+    filled_qty: 100,
+    opinion: { signal_score_bp: 2_500, source: "Blended" },
+    confidence_bp: 6_000,
+    urgency: "Normal",
+    status: "Active",
+    version: 2,
+    last_revision: null,
+    last_resume: null,
+    created_trading_day: 1,
+    horizon_trading_days: 20,
+    review: {
+      min_signal_delta_bp: 1_000,
+      min_price_change_bp: 200,
+      last_review_signal_score_bp: 2_500,
+      last_review_trading_day: 1,
+      last_review_price: null,
+      last_review_acquired_count: 0,
+      last_review_resources: null,
+    },
+    active_child_order_id: 4,
+    execution: { child_qty: 200, limit_price: "1000", expires_market_minute: 500, active_child_remaining_qty: 100 },
+    last_event_trading_day: 3,
   }
-  const orderState = { ...currentSaveFixture(), parent_orders: { "1": { "0": base } } }
-  assert.deepEqual(parseOrderState(orderState).parent_orders, orderState.parent_orders)
-  assert.throws(() => parseOrderState({
-    ...orderState,
-    parent_orders: { "1": { "0": { ...base, active_child_remaining_qty: 100 } } },
-  }), /parent_orders\.1\.0\.active_child_remaining_qty/)
+}
+
+test("计划执行腿作为 TradingPlan.execution 保存并拒绝非规范形态", () => {
+  const current = currentSaveFixture()
+  const policy = (current.plans as { policy: unknown }).policy
+  const plan = planWithExecutionLeg()
+  const save = { ...current, plans: { policy, next_plan_seq: 2, plans: { "1": plan } } }
+  const parsed = parseSaveSlot(save)
+  assert.deepEqual(parsed.plans.plans["1"], plan)
+  // 执行腿缺省（尚未执行或腿已结束）仍是合法计划。
+  const { execution: _absent, active_child_order_id: _child, ...withoutLeg } = plan
+  assert.deepEqual(parseSaveSlot({ ...current, plans: { policy, next_plan_seq: 2, plans: { "1": { ...withoutLeg, active_child_order_id: null } } } }).plans.plans["1"], { ...withoutLeg, active_child_order_id: null })
+  for (const execution of [
+    null,
+    { child_qty: 200, limit_price: "1000", expires_market_minute: 500, active_child_remaining_qty: 100, unexpected: true },
+    { child_qty: "200", limit_price: "1000", expires_market_minute: 500, active_child_remaining_qty: 100 },
+    { child_qty: 200, limit_price: 1000, expires_market_minute: 500, active_child_remaining_qty: 100 },
+    { child_qty: 200, limit_price: "1000", expires_market_minute: "500", active_child_remaining_qty: 100 },
+    { child_qty: 200, limit_price: "1000", expires_market_minute: 500, active_child_remaining_qty: "100" },
+    { child_qty: 0, limit_price: "1000", expires_market_minute: 500, active_child_remaining_qty: 100 },
+  ]) {
+    assert.throws(
+      () => parseSaveSlot({ ...current, plans: { policy, next_plan_seq: 2, plans: { "1": { ...plan, execution } } } }),
+      /plans\.plans\.1\.execution/,
+      JSON.stringify(execution),
+    )
+  }
 })
 
 test("book sequence cursors preserve empty-book history and lossless u64 boundaries", () => {
@@ -179,10 +229,16 @@ test("pending player and NPC limit intents preserve fixed, highest and lowest pr
   const save = {
     ...currentSaveFixture(),
     pending_player: intents.map((intent, index) => ({ owner: 0, intent, account_ordinal: String(index), stock_ordinal: String(index) })),
-    pending_npc: { observed_tick: 0, observed_accounts: [1], intents: intents.map((intent, index) => ({ owner: 1, intent, account_ordinal: String(index), stock_ordinal: String(index) })), dependencies: [] },
   }
   assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
-  assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_npc, save.pending_npc)
+  assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_player, save.pending_player)
+  // T3 批四：pending_npc 载体删除——携带该键（任意形态）即旧格式档，根解析
+  // 层显式拒绝（镜像引擎 fault2100；原 NPC 价格保持段随键删除退役，价格
+  // wire 语义由 pending_player 全覆盖）。
+  assert.throws(
+    () => parseSaveSlot({ ...save, pending_npc: { observed_tick: 0, observed_accounts: [1], intents: [], dependencies: [] } }),
+    /旧格式存档/,
+  )
 })
 
 test("receipt cursors and pending ordinals preserve lossless u64 decimal strings", () => {
@@ -205,7 +261,6 @@ test("pending limit intents reject legacy numeric and malformed symbolic prices"
     const queued = { owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" }
     const save = { ...currentSaveFixture(), pending_player: [queued] }
     assert.throws(() => parseSaveSlot(save), /pending_player\[0\].*price/, JSON.stringify(price))
-    assert.throws(() => parseSaveSlot({ ...save, pending_player: [], pending_npc: { observed_tick: 0, observed_accounts: [1], intents: [{ owner: 1, intent, account_ordinal: "0", stock_ordinal: "0" }], dependencies: [] } }), /pending_npc\.intents\[0\].*price/, JSON.stringify(price))
   }
 })
 
@@ -217,60 +272,17 @@ test("pending fixed price preserves integer amounts for later engine rejection",
   }
 })
 
-function pendingNpcReplacementBatch() {
-  return {
-    observed_tick: 0,
-    observed_accounts: [1],
-    intents: [
-      { owner: 1, intent: { Cancel: { code: 600888, id: 42 } }, account_ordinal: "0", stock_ordinal: "0" },
-      { owner: 1, intent: { Cancel: { code: 600888, id: 43 } }, account_ordinal: "1", stock_ordinal: "1" },
-      { owner: 1, intent: { Cancel: { code: 600888, id: 44 } }, account_ordinal: "2", stock_ordinal: "2" },
-      { owner: 1, intent: { PlaceLimit: { code: 600888, side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
-      { owner: 1, intent: { PlaceMarket: { code: 600888, side: "Buy", qty: 100 } }, account_ordinal: "4", stock_ordinal: "4" },
-    ],
-    dependencies: [[0, 3], [1, 3], [1, 4]],
-  }
-}
-
-test("pending NPC replacement dependencies are mandatory", () => {
-  const { dependencies: _removed, ...batch } = pendingNpcReplacementBatch()
-  assert.throws(
-    () => parseSaveSlot({ ...currentSaveFixture(), pending_npc: batch }),
-    /pending_npc\.dependencies.*必填/,
-  )
-})
-
-test("pending NPC replacement dependencies preserve explicit edges without requiring live old orders", () => {
-  const batch = pendingNpcReplacementBatch()
-  const save = { ...currentSaveFixture(), pending_npc: batch }
-  assert.deepEqual(parseSaveSlot(save).pending_npc, batch)
-  assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_npc, batch)
-})
-
-test("pending NPC replacement dependencies reject malformed or unrelated edges", () => {
-  const batch = pendingNpcReplacementBatch()
-  const invalidEdges: readonly unknown[] = [
-    null, [[0]], [[0, 3, 4]], [[-1, 3]], [[0.5, 3]], [[0, "3"]],
-    [[0, Number.MAX_SAFE_INTEGER + 1]], [[0, 5]], [[3, 0]], [[0, 0]],
-    [[0, 3], [0, 3]], [[0, 1]], [[3, 4]],
-  ]
-  for (const dependencies of invalidEdges) {
-    assert.throws(
-      () => parseSaveSlot({ ...currentSaveFixture(), pending_npc: { ...batch, dependencies } }),
-      /pending_npc\.dependencies/,
-      `invalid dependencies ${JSON.stringify(dependencies)}`,
-    )
-  }
-  for (const replacement of [
-    { owner: 2, intent: { PlaceLimit: { code: 600888, side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
-    { owner: 1, intent: { PlaceLimit: { code: 1, side: "Buy", price: { Fixed: "1000" }, qty: 100 } }, account_ordinal: "3", stock_ordinal: "3" },
+// T3 批四退役登记：pending_npc wire 载体删除——原「NPC 替换依赖表」三用例
+//（必填/显式边保留/非法边拒绝）随键删除退役；依赖表语义由引擎侧
+// DecisionOutput::validate_dependencies 单元测试（npc_tick_preparation_tests）
+// 唯一承载；携带 pending_npc 键（任意形态）的存档按旧格式显式拒绝。
+test("legacy saves carrying pending_npc are rejected at the root parser", () => {
+  for (const legacy of [
+    null,
+    { observed_tick: 0, observed_accounts: [], intents: [], dependencies: [] },
+    { observed_tick: 0, observed_accounts: [1], intents: [{ owner: 1, intent: { Cancel: { code: 600888, id: 42 } }, account_ordinal: "0", stock_ordinal: "0" }], dependencies: [[0, 1]] },
   ]) {
-    const intents = structuredClone(batch.intents)
-    intents[3] = replacement
-    assert.throws(
-      () => parseSaveSlot({ ...currentSaveFixture(), pending_npc: { ...batch, intents } }),
-      /pending_npc\.dependencies/,
-    )
+    assert.throws(() => parseSaveSlot({ ...currentSaveFixture(), pending_npc: legacy }), /旧格式存档/)
   }
 })
 
@@ -283,18 +295,14 @@ test("存档仅接受当前结构，不接受任何 schema_version 标记", () =
   }
 })
 
-test("auction save identifies orders without accepting the old arrival field", () => {
-  const order = { owner: 0, side: "Buy", limit: "100", qty: 100, order_id: 1 }
-  const save = { ...currentSaveFixture(), auction_orders: { "0": [order] } }
-  assert.deepEqual(parseSaveSlot(save).auction_orders, save.auction_orders)
-  const { order_id: _removed, ...oldOrder } = order
+test("统一 book 后存档不再有 auction_orders，旧字段按未知根字段显式拒绝", () => {
   assert.throws(
-    () => parseSaveSlot({ ...save, auction_orders: { "0": [{ ...oldOrder, arrival_seq: 1 }] } }),
-    /auction_orders.*order_id/,
+    () => parseSaveSlot({ ...currentSaveFixture(), auction_orders: { "0": [{ owner: 0, side: "Buy", limit: "100", qty: 100, order_id: 1 }] } }),
+    /auction_orders/,
   )
   assert.throws(
-    () => parseSaveSlot({ ...save, auction_orders: { "0": [{ ...order, arrival_seq: 1 }] } }),
-    /auction_orders.*arrival_seq/,
+    () => parseSaveSlot({ ...currentSaveFixture(), auction_orders: { "0": [{ owner: 0, side: "Buy", limit: "100", qty: 100, arrival_seq: 1 }] } }),
+    /auction_orders/,
   )
 })
 
@@ -504,6 +512,7 @@ test("当前存档使用 runtime_state，不含实施代号与版本标记", () 
 test("SavedReceiptSource 接受 QuoteExpiry 并明确拒绝旧 P0Expiry 标签", () => {
   const runtime = {
     poisoned: false, next_receipt_base: "1", live_envelopes: [], strategy_states: {},
+    book_public_cutoff_sequences: { "0": "0" },
     retail_projection_seen: [{ ...validReceipt(), local_key: { ...validReceipt().local_key as object, source: { QuoteExpiry: 7 } } }],
   }
   assert.deepEqual(parseSaveRuntime(runtime), runtime)

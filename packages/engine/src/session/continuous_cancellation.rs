@@ -23,6 +23,7 @@ pub(super) enum ContinuousCancellationError {
     OrderAlreadyFilled,
     NotOrderOwner,
     Market(MarketError),
+    Plan(crate::plans::PlanError),
 }
 
 impl GameSession {
@@ -59,13 +60,14 @@ impl GameSession {
             return Err(ContinuousCancellationError::NotOrderOwner);
         }
 
+        self.record_parent_order_canceled(account, &code, order_id)
+            .map_err(ContinuousCancellationError::Plan)?;
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_terminated((account, order_id, order.qty), &code, cause.termination());
         self.state.markets.insert(code.clone(), candidate_market);
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_snapshot(&code);
         self.remove_npc_order_lifecycle(account, &code, order_id);
-        self.record_parent_order_canceled(account, &code, order_id);
         self.record_retail_order_canceled(account, code.clone(), order_id, order.qty);
 
         Ok(ContinuousCancellationFact {

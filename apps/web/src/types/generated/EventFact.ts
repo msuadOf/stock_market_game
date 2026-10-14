@@ -2,8 +2,7 @@
 import type { Event } from "./Event";
 import type { EventStableKey } from "./EventStableKey";
 
-export type EventFact = {
-  key: EventStableKey;
-  event: Event;
-  canonical_payload: string;
-};
+/**
+ * 一条已提交事件的唯一事实记录：数值身份 + 事件载荷。
+ */
+export type EventFact = { key: EventStableKey; event: Event };

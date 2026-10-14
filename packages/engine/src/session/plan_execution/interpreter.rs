@@ -38,16 +38,17 @@ impl PlanExecutionRoute {
         &self.command
     }
 
-    /// StockProcessing 接受子单后，新的 parent 才对执行事实投影可见。
+    /// StockProcessing 接受子单后，新的执行腿才对执行事实投影可见。
     pub(in crate::session) fn install_accepted_submit_parent(
         &self,
         session: &mut GameSession,
+        plans: &mut PlanBook,
         outcome: &PlanRouteOutcome,
     ) -> Result<(), PlanExecutionError> {
-        if let (Continuation::Submit { plan, child }, PlanRouteOutcome::Accepted(_)) =
+        if let (Continuation::Submit { plan, child }, PlanRouteOutcome::Accepted(order_id)) =
             (&self.continuation, outcome)
         {
-            session.install_plan_parent(plan, *child, None)?;
+            session.install_plan_execution(plans, plan, *child, Some((*order_id, child.qty)))?;
         }
         Ok(())
     }

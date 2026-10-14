@@ -49,27 +49,37 @@ impl GameSession {
             })?;
         let work = accounts
             .into_iter()
-            .map(|id| (id, PlanPersonalState::take_on(writes, id)))
+            .map(|id| {
+                // 批处理路径：行已在观察批安装，经写组读出（与任务路径同一
+                // `observe_retail_analysis_on`）。
+                let row = writes
+                    .retail_experience
+                    .get(&id)
+                    .cloned()
+                    .expect("observed retail must have an experience row");
+                (id, PlanPersonalState::take_on(writes, id), row)
+            })
             .collect::<Vec<_>>();
         let plans = &*writes.plans;
-        let experience = &*writes.retail_experience;
-        let results = work
-            .into_par_iter()
-            .map(|(id, mut personal)| {
-                let assessments = Self::observe_retail_analysis_on(
-                    view,
-                    plans,
-                    experience,
-                    id,
-                    &mut personal,
-                    &observation,
-                    &thirty_minute_market,
-                )?;
-                Ok((id, personal, assessments))
-            })
-            .collect::<Vec<Result<_, StepFatal>>>()
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+        let results = view.compute.parallel(|| {
+            work.into_par_iter()
+                .map(|(id, mut personal, row)| {
+                    view.compute.record(crate::compute::ComputeWork::Analyse);
+                    let assessments = Self::observe_retail_analysis_on(
+                        view,
+                        plans,
+                        &row,
+                        id,
+                        &mut personal,
+                        &observation,
+                        &thirty_minute_market,
+                    )?;
+                    Ok((id, personal, assessments))
+                })
+                .collect::<Vec<Result<_, StepFatal>>>()
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+        })?;
         let mut output = BTreeMap::new();
         for (id, personal, assessments) in results {
             personal.install_on(writes, id);
@@ -85,10 +95,15 @@ impl GameSession {
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
     ) -> Result<BTreeMap<StockId, CandidateAssessment>, StepFatal> {
+        let row = self
+            .state
+            .retail_experience
+            .get(&id)
+            .expect("observed retail must have an experience row");
         Self::observe_retail_analysis_on(
             &self.read_view(),
             &self.state.plans,
-            &self.state.retail_experience,
+            row,
             id,
             personal,
             observation,
@@ -96,11 +111,12 @@ impl GameSession {
         )
     }
 
-    /// 读视图+写组再借用版本。
-    fn observe_retail_analysis_on(
+    /// 读视图+写组再借用版本；T1·两阶段（ADR-0042 §T1）：经验行经参数传入
+    /// （观察更新后的 owned 行），queue 账户任务与批处理捕获共用本实现。
+    pub(in crate::session) fn observe_retail_analysis_on(
         view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
         plans: &crate::plans::PlanBook,
-        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
+        experience: &crate::RetailExperienceState,
         id: AccountId,
         personal: &mut PlanPersonalState,
         observation: &DecisionChainObservation,
@@ -128,13 +144,7 @@ impl GameSession {
                 .map_err(|error| invariant(error.to_string()))?;
         }
         personal.watchlist.prune(&protected);
-        let candidates = root_candidate_codes(
-            id,
-            &held,
-            &personal.watchlist,
-            &plans,
-            discovered,
-        );
+        let candidates = root_candidate_codes(id, &held, &personal.watchlist, &plans, discovered);
         let day = u64::from(view.day);
         let mut reports: BTreeMap<StockId, PublicationId> = BTreeMap::new();
         let mut credit_defaults = Vec::new();
@@ -176,7 +186,8 @@ impl GameSession {
                     }
                     let newer = match reports.get(code) {
                         Some(prior) => {
-                            let prior = view.library
+                            let prior = view
+                                .library
                                 .report(*prior, observation.now)
                                 .map_err(|error| invariant(error.to_string()))?;
                             crate::strategy::own_known_report_priority(material)
@@ -209,7 +220,8 @@ impl GameSession {
             let Some(company) = view.issuer_of_stock(*code) else {
                 continue;
             };
-            let spec = view.operations
+            let spec = view
+                .operations
                 .company(&company)
                 .ok_or_else(|| {
                     invariant(format!("retail issuer {company:?} has no operating books"))
@@ -267,9 +279,7 @@ impl GameSession {
                     .map_err(|error| invariant(error.to_string()))?;
             }
         }
-        let account_experience = experience
-            .get(&id)
-            .ok_or_else(|| invariant(format!("retail {id:?} has no personal experience")))?;
+        let account_experience = experience;
         if checks_information {
             personal
                 .attention
@@ -288,14 +298,14 @@ impl GameSession {
             let signals = Self::retail_candidate_signals_on(
                 view,
                 plans,
-                experience,
+                account_experience,
                 id,
                 code,
                 personal,
                 observation,
                 thirty_minute_market,
             )
-                .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
+            .map_err(|error| invariant(format!("retail {id:?} {code:?}: {error}")))?;
             personal
                 .price_memory
                 .record_public_history_read(code, minute, &mut personal.history_reads)
@@ -318,10 +328,15 @@ impl GameSession {
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
     ) -> Result<CandidateSignals, String> {
+        let row = self
+            .state
+            .retail_experience
+            .get(&id)
+            .expect("retail must have an experience row");
         Self::retail_candidate_signals_on(
             &self.read_view(),
             &self.state.plans,
-            &self.state.retail_experience,
+            row,
             id,
             code,
             personal,
@@ -334,7 +349,7 @@ impl GameSession {
     fn retail_candidate_signals_on(
         view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
         plans: &crate::plans::PlanBook,
-        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
+        experience: &crate::RetailExperienceState,
         id: AccountId,
         code: &StockId,
         personal: &PlanPersonalState,
@@ -390,7 +405,14 @@ impl GameSession {
         let experience = if personal.belief.analysis().weights().experience_cost_bp() == 0 {
             SignalContribution::unavailable(SignalUnavailableReason::ZeroWeight)
         } else {
-            Self::retail_cost_signal_on(view, experience, id, code, observation, thirty_minute_market)?
+            Self::retail_cost_signal_on(
+                view,
+                experience,
+                id,
+                code,
+                observation,
+                thirty_minute_market,
+            )?
         };
         Ok(CandidateSignals {
             fundamental,
@@ -408,9 +430,14 @@ impl GameSession {
         observation: &DecisionChainObservation,
         thirty_minute_market: &crate::observation::EqualWeightMarketObservation,
     ) -> Result<SignalContribution, String> {
+        let row = self
+            .state
+            .retail_experience
+            .get(&id)
+            .expect("retail must have an experience row");
         Self::retail_cost_signal_on(
             &self.read_view(),
-            &self.state.retail_experience,
+            row,
             id,
             code,
             observation,
@@ -418,10 +445,10 @@ impl GameSession {
         )
     }
 
-    /// 读视图+写组再借用版本。
+    /// 读视图+写组再借用版本；T1：经验行经参数传入。
     fn retail_cost_signal_on(
         view: &crate::session::pipeline::npc_split::SessionReadView<'_>,
-        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
+        experience: &crate::RetailExperienceState,
         id: AccountId,
         code: &StockId,
         observation: &DecisionChainObservation,
@@ -436,9 +463,7 @@ impl GameSession {
         else {
             return Err(format!("retail {id:?} has no retail execution strategy"));
         };
-        let account_experience = experience
-            .get(&id)
-            .ok_or_else(|| format!("retail {id:?} has no personal experience"))?;
+        let account_experience = experience;
         let inputs = account
             .positions()
             .iter()

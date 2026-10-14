@@ -57,7 +57,6 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     let base = focused_disclosure_session("2030-12-31");
     let mut controlled = base.save().expect("healthy save");
     controlled.plans = Default::default();
-    controlled.parent_orders.clear();
     controlled.npc_order_lifecycles.clear();
     for attention in controlled.npc_attention.values_mut() {
         attention.next_attention_candidate_tick = u64::MAX;

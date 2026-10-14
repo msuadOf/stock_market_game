@@ -8,7 +8,7 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
     let mut game = fixture();
     let code = StockId(0);
     place(&mut game, &code, OrderId(41), 100);
-    game.state.auction_orders.insert(
+    game.fixture_append_auction_orders(
         code.clone(),
         vec![AuctionOrderSnap {
             owner: AccountId(2),
@@ -17,7 +17,8 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
             qty: 100,
             order_id: 42,
         }],
-    );
+    )
+    .unwrap();
     let before = game.business_state_hash().unwrap();
 
     let projected = game.project_live_envelopes().unwrap();
@@ -315,7 +316,7 @@ fn existing_ledger_validation_does_not_rebuild_owned_envelope_projections() {
     let mut game = fixture();
     let code = StockId(0);
     place(&mut game, &code, OrderId(61), 100);
-    game.state.auction_orders.insert(
+    game.fixture_append_auction_orders(
         code.clone(),
         vec![AuctionOrderSnap {
             owner: AccountId(2),
@@ -324,7 +325,8 @@ fn existing_ledger_validation_does_not_rebuild_owned_envelope_projections() {
             qty: 100,
             order_id: 62,
         }],
-    );
+    )
+    .unwrap();
     game.hydrate_or_validate_envelope_ledger().unwrap();
     let before = game.business_state_hash().unwrap();
     let ledger = game.state.envelope_ledger.clone();

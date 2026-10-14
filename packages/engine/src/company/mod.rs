@@ -11,6 +11,7 @@
 //! 历史公开库由 `information` 提供，会话装配由 `session` 负责。
 //! 公司注册表独立构建，不依赖 `session`；依赖方向为 session → company。
 
+pub(crate) mod assembly;
 pub mod bank;
 mod contracts;
 mod counterparty;
@@ -18,6 +19,7 @@ pub mod customer_finance;
 mod defaults;
 mod error;
 pub mod events;
+pub mod groups;
 pub mod industrial;
 pub mod insurance;
 mod opening;

@@ -16,6 +16,9 @@ pub struct SavedRuntimeState {
     #[serde(with = "super::super::u64_decimal")]
     pub next_receipt_base: u64,
     pub live_envelopes: Vec<SavedLiveEnvelope>,
+    /// 单 book 的公开可见性受理截点（数值事实，不复制竞价或连续订单集合）。
+    #[serde(with = "super::super::book_sequence_map")]
+    pub book_public_cutoff_sequences: BTreeMap<StockId, u64>,
     pub retail_projection_seen: Vec<SavedRetailReceiptIdentity>,
     /// 完整生产策略状态是权威事实；profile 从 enum value 派生，不重复保存。
     pub strategy_states: BTreeMap<AccountId, crate::strategy::StrategyState>,
@@ -92,7 +95,12 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
             session.state.setup.simulation_policy_id
         )));
     }
-    session.state.envelope_ledger.validate_complete_evidence()?;
+    // save 侧完整校验与 restore 侧同源：≥512 行的并行审计必须归入会话 compute
+    // registry（capture 入口持有 session，不得落入 caller 当前的池）。
+    session
+        .state
+        .envelope_ledger
+        .validate_complete_evidence_in(session.compute_context())?;
     if session.state.envelope_ledger.terminal_count() != 0 {
         return Err(invariant(
             "quiet-point envelope ledger retains terminal tick evidence".to_owned(),
@@ -164,6 +172,12 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
         poisoned: false,
         next_receipt_base: session.state.next_receipt_base,
         live_envelopes,
+        book_public_cutoff_sequences: session
+            .state
+            .markets
+            .iter()
+            .map(|(code, market)| (*code, market.auction_public_cutoff_sequence()))
+            .collect(),
         retail_projection_seen,
         strategy_states,
     };
@@ -205,6 +219,35 @@ pub fn validate_runtime_state(
         )));
     }
 
+    let expected_markets = session
+        .state
+        .markets
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if state
+        .book_public_cutoff_sequences
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        != expected_markets
+    {
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2290)));
+    }
+    for (code, cutoff) in &state.book_public_cutoff_sequences {
+        let market = &session.state.markets[code];
+        if *cutoff > market.book_next_sequence()
+            || (matches!(
+                session.phase(),
+                TradingPhase::Continuous | TradingPhase::PreOpen
+            ) && *cutoff != 0)
+        {
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2291,
+                vec![u64::from(code.0), *cutoff, market.book_next_sequence()],
+            )));
+        }
+    }
     let ledger = state.build_ledger(session)?;
     validate_live_envelopes_against_orders(session, state, &ledger)?;
 
@@ -399,10 +442,36 @@ pub fn restore_runtime_state(
             })?
             .restore_strategy(Some(strategy));
     }
+    for (code, cutoff) in &state.book_public_cutoff_sequences {
+        session
+            .state
+            .markets
+            .get_mut(code)
+            .expect("完整键集已校验")
+            .restore_auction_public_cutoff_sequence(*cutoff)
+            .map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(
+                    2291,
+                    vec![u64::from(code.0), *cutoff],
+                ))
+            })?;
+    }
     session.state.accounts = accounts;
     session.state.envelope_ledger = ledger;
     session.state.retail_projection_seen = seen;
     session.state.next_receipt_base = state.next_receipt_base;
+    // restore重建的raw行没有serde proof。全部既有类型化fault（2216–2228）已按原优先级
+    // 执行完毕后才在此建立每订单自己的证明；本循环不得先于任何typed检查触发。
+    let config = session.state.setup.config.clone();
+    for (key, envelope) in session.state.envelope_ledger.iter() {
+        envelope.verified_live(&config).map_err(|_| {
+            // fault2220：restore末尾财务证明建立失败（同码复用压平）；ctx为订单身份。
+            SessionError::InvalidSave(ValidationFault::new(
+                2220,
+                vec![key.account.0, u64::from(key.stock.0), key.order.0],
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -448,8 +517,11 @@ impl SavedRuntimeState {
             .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2219, vec![0])))?;
         // fault2220：信封账本完整证据校验子错误压平；ctx[0] 待 C 批数值化
         // （原文 "saved live envelope ledger evidence is invalid: {error}"）。
+        // 重建的 ledger 是全新缓存，≥512 行时必须走未缓存并行审计：使用
+        // session 自身的 compute 上下文（restore_with_compute 与 save 路径同源），
+        // 不落入 caller 当前的 global/foreign registry。
         ledger
-            .validate_complete_evidence()
+            .validate_complete_evidence_in(session.compute_context())
             .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2220, vec![0])))?;
         Ok(ledger)
     }

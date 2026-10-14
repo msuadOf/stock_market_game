@@ -31,9 +31,10 @@ fn adaptive_source_generation_is_continuous_across_distinct_root_accounts() {
     roots.push_execution(request);
     roots.push_execution(second_request);
     let mut observation = FrozenPlanChainObservation::capture(&session).unwrap();
-    let batch = roots
-        .yield_adaptive_candidates(&mut session, &mut observation)
-        .unwrap();
+    let batch = PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.yield_adaptive_candidates(domain, &mut observation)
+    })
+    .unwrap();
     assert_eq!(
         batch
             .iter()
@@ -41,9 +42,9 @@ fn adaptive_source_generation_is_continuous_across_distinct_root_accounts() {
             .collect::<Vec<_>>(),
         vec![(AccountId(1), 0), (AccountId(0), 1)]
     );
-    roots
-        .resume_adaptive_candidates(
-            &mut session,
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.resume_adaptive_candidates(
+            domain,
             [
                 (
                     AccountId(1),
@@ -59,11 +60,13 @@ fn adaptive_source_generation_is_continuous_across_distinct_root_accounts() {
                 ),
             ],
         )
-        .unwrap();
-    assert!(roots
-        .yield_adaptive_candidates(&mut session, &mut observation)
-        .unwrap()
-        .is_empty());
+    })
+    .unwrap();
+    assert!(PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.yield_adaptive_candidates(domain, &mut observation)
+    })
+    .unwrap()
+    .is_empty());
     assert_eq!(roots.finish_adaptive().unwrap().len(), 2);
 }
 
@@ -74,16 +77,18 @@ fn same_plan_cannot_yield_again_until_its_typed_result_arrives() {
     roots.push_execution(request);
     let mut observation = FrozenPlanChainObservation::capture(&session).unwrap();
     assert_eq!(
-        roots
-            .yield_adaptive_candidates(&mut session, &mut observation)
-            .unwrap()
-            .len(),
+        PlanContinuationDomain::scoped(&mut session, |domain| {
+            roots.yield_adaptive_candidates(domain, &mut observation)
+        })
+        .unwrap()
+        .len(),
         1
     );
-    assert!(roots
-        .yield_adaptive_candidates(&mut session, &mut observation)
-        .unwrap()
-        .is_empty());
+    assert!(PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.yield_adaptive_candidates(domain, &mut observation)
+    })
+    .unwrap()
+    .is_empty());
 }
 
 #[test]
@@ -143,9 +148,10 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
     );
     let mut observation = FrozenPlanChainObservation::capture(&session).unwrap();
 
-    let batch = roots
-        .yield_adaptive_candidates(&mut session, &mut observation)
-        .unwrap();
+    let batch = PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.yield_adaptive_candidates(domain, &mut observation)
+    })
+    .unwrap();
     assert_eq!(batch.len(), 1);
     assert!(matches!(batch[0].intent, Intent::PlaceLimit { .. }));
     assert_eq!(
@@ -166,9 +172,9 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
             .last_event_trading_day(),
         1
     );
-    roots
-        .resume_adaptive_candidates(
-            &mut session,
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.resume_adaptive_candidates(
+            domain,
             [(
                 owner,
                 first,
@@ -176,11 +182,13 @@ fn lifecycle_skips_a_pending_stock_and_observes_an_independent_stock() {
                 PlanRouteOutcome::Rejected(RejectionReason::InsufficientCash),
             )],
         )
-        .unwrap();
-    assert!(roots
-        .yield_adaptive_candidates(&mut session, &mut observation)
-        .unwrap()
-        .is_empty());
+    })
+    .unwrap();
+    assert!(PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.yield_adaptive_candidates(domain, &mut observation)
+    })
+    .unwrap()
+    .is_empty());
     assert_eq!(
         session
             .state
@@ -200,7 +208,8 @@ fn adaptive_source_late_generation_overflow_is_typed_and_emits_no_candidate() {
     roots.set_adaptive_generation_for_test(u64::MAX);
     let mut observation = FrozenPlanChainObservation::capture(&session).unwrap();
     assert!(matches!(
-        roots.yield_adaptive_candidates(&mut session, &mut observation),
+        PlanContinuationDomain::scoped(&mut session, |domain| roots
+            .yield_adaptive_candidates(domain, &mut observation)),
         Err(StepFatal::InvariantViolation { .. })
     ));
 }
@@ -271,14 +280,15 @@ fn adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands() {
     let mut observation = FrozenPlanChainObservation::capture(&session).unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let candidate = roots
-        .yield_adaptive_candidates(&mut session, &mut observation)
-        .unwrap()
-        .remove(0);
+    let candidate = PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.yield_adaptive_candidates(domain, &mut observation)
+    })
+    .unwrap()
+    .remove(0);
     assert!(matches!(candidate.intent, Intent::Cancel { .. }));
-    roots
-        .resume_adaptive_candidates(
-            &mut session,
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.resume_adaptive_candidates(
+            domain,
             [(
                 AccountId(1),
                 code,
@@ -286,11 +296,13 @@ fn adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands() {
                 PlanRouteOutcome::Rejected(RejectionReason::OrderNotFound),
             )],
         )
-        .unwrap();
-    assert!(roots
-        .yield_adaptive_candidates(&mut session, &mut observation)
-        .unwrap()
-        .is_empty());
+    })
+    .unwrap();
+    assert!(PlanContinuationDomain::scoped(&mut session, |domain| {
+        roots.yield_adaptive_candidates(domain, &mut observation)
+    })
+    .unwrap()
+    .is_empty());
     assert!(matches!(
         roots.finish_adaptive().unwrap()[0].disposition,
         PlanExecutionDisposition::RouteRejected {
@@ -304,10 +316,12 @@ fn root_coordinator_empty_poll_does_not_take_personal_state() {
     let (mut session, _) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let before = session.business_state_hash().unwrap();
     let mut coordinator = PlanRootCoordinator::empty();
-    assert!(coordinator
-        .prepare_ready_accounts(&mut session, false)
-        .unwrap()
-        .is_none());
+    assert!(matches!(
+        coordinator
+            .prepare_ready_accounts(&mut session, false)
+            .unwrap(),
+        crate::session::plan_chain_candidates::RootPoll::Delivered(None)
+    ));
     assert!(coordinator.is_empty());
     assert_eq!(session.business_state_hash().unwrap(), before);
 }
@@ -315,23 +329,58 @@ fn root_coordinator_empty_poll_does_not_take_personal_state() {
 #[test]
 fn root_coordinator_disconnected_worker_is_explicit_failure() {
     let (mut session, _) = crate::session::plan_chain_candidates_tests::execution_fixture();
-    let (sender, receiver) = std::sync::mpsc::channel();
+    let (sender, receiver) = std::sync::mpsc::channel::<super::RootMessage>();
     drop(sender);
+    let compute = session.compute.clone();
     let mut coordinator = PlanRootCoordinator {
         source: AccountSource::InFlight {
+            sender: {
+                let (sender, _) = std::sync::mpsc::channel::<super::RootMessage>();
+                sender
+            },
             receiver,
             remaining: 1,
             snapshot: std::sync::Arc::new(RootReadContext::capture(&session).unwrap()),
+            observations: std::sync::Arc::new(
+                super::super::decision_chain::DecisionChainObservation {
+                    market: session.build_market_view(),
+                    paths: BTreeMap::new(),
+                    technical: BTreeMap::new(),
+                    now: crate::calendar::CivilInstant::new(
+                        crate::calendar::CivilDate::from_iso("2030-01-02").unwrap(),
+                        0,
+                    )
+                    .unwrap(),
+                    exposed: BTreeSet::new(),
+                },
+            ),
+            pending: std::collections::VecDeque::new(),
+            compute,
+            task_died: None,
         },
-        completion_sender: None,
     };
     assert!(matches!(
         coordinator.prepare_ready_accounts(&mut session, false),
         Err(StepFatal::InvariantViolation { .. })
     ));
-    assert!(coordinator
-        .set_completion_sender(std::sync::mpsc::channel().0)
-        .is_err());
+    // 增量二十（Drop 排空协议加强）：协调者销毁时尚有未收满的 remaining 而
+    // 通道已断 = 「无标记的静默消失」，销毁点必须同样显式失败（Drop panic
+    // 而非静默丢弃）——与 prepare 的 Err 共同构成双重点显式报告。
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(coordinator)));
+    let payload = dropped.expect_err("Disconnected+未收满 remaining 的销毁必须显式失败（不静默）");
+    let message = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_string())
+        })
+        .unwrap_or_default();
+    assert!(
+        message.contains("无标记静默消失"),
+        "Drop 显式失败必须指明静默消失形态：{message}"
+    );
 }
 
 #[test]

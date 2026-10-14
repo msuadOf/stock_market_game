@@ -18,13 +18,13 @@ pub(super) fn project_continuous_retail_lifecycle(
     candidates: &IntentCandidateBatch,
     validation: &AccountValidationOutput,
     execution_facts: &[ContinuousExecutionFact],
-    receipts: &[EnvelopeReceipt],
+    receipts: &super::fill_fact::ReceiptBatch,
     consumed: &PlanChainFactConsumption,
 ) -> Result<(), StepFatal> {
     let candidates = index_candidates(candidates)?;
     if candidates.len() != validation.results().len() {
         return Err(invariant(
-            "AccountValidation 结果数量与 Continuous DecisionShadow 候选批次不一致",
+            "AccountValidation 结果数量与 Continuous DecisionAndContinuation 候选批次不一致",
         ));
     }
     let mut facts = BTreeMap::new();
@@ -75,7 +75,7 @@ pub(super) fn project_continuous_retail_lifecycle(
     let mut fill_quantities = BTreeMap::new();
     for result in validation.results() {
         let candidate = candidates.get(result.key()).ok_or_else(|| {
-            invariant("Continuous AccountValidation 结果缺少 DecisionShadow 候选")
+            invariant("Continuous AccountValidation 结果缺少 DecisionAndContinuation 候选")
         })?;
         match result {
             CandidateValidationResult::Rejected { reason, .. } => {
@@ -88,13 +88,7 @@ pub(super) fn project_continuous_retail_lifecycle(
                 validate_operation(candidate, fact)?;
                 project_operation(session, &mut events, fact)?;
                 for receipt in fills_by_request.remove(sealed_index).unwrap_or_default() {
-                    let qty = receipt
-                        .qty_before
-                        .checked_sub(receipt.qty_after)
-                        .filter(|qty| *qty > 0)
-                        .ok_or_else(|| {
-                            invariant("continuous retail fill has no positive quantity")
-                        })?;
+                    let qty = receipts.fill_for(receipt)?.qty();
                     if session
                         .state
                         .retail_experience
@@ -311,7 +305,7 @@ fn validate_operation(
 ) -> Result<(), StepFatal> {
     if fact.candidate_key() != candidate.key() {
         return Err(invariant(
-            "Continuous StockProcessing 事实属于其他 DecisionShadow 候选",
+            "Continuous StockProcessing 事实属于其他 DecisionAndContinuation 候选",
         ));
     }
     let valid = match (candidate.intent(), fact.outcome()) {
@@ -391,7 +385,7 @@ fn validate_operation(
         Ok(())
     } else {
         Err(invariant(
-            "Continuous StockProcessing payload 与其 DecisionShadow 候选不一致",
+            "Continuous StockProcessing payload 与其 DecisionAndContinuation 候选不一致",
         ))
     }
 }
@@ -442,7 +436,7 @@ fn index_candidates(
     let mut indexed = BTreeMap::new();
     for candidate in candidates.candidates() {
         if indexed.insert(candidate.key(), candidate).is_some() {
-            return Err(invariant("Continuous DecisionShadow 批次含有重复 key"));
+            return Err(invariant("Continuous DecisionAndContinuation 批次含有重复 key"));
         }
     }
     Ok(indexed)

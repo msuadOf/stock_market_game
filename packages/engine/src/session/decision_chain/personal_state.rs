@@ -82,8 +82,20 @@ pub(in crate::session) struct PlanPersonalState {
 }
 
 impl PlanPersonalState {
+    /// T1·两阶段（ADR-0042 §T1）：queue 账户任务在任务内做 attention 判定
+    /// （推进个人 RNG 流）——经访问器独占访问，不开放字段本身。
+    pub(in crate::session) fn attention(&self) -> &NpcAttentionState {
+        &self.attention
+    }
+
+    /// 同上，可变访问（evaluate_candidate_with_signal 原地推进状态）。
+    pub(in crate::session) fn attention_mut(&mut self) -> &mut NpcAttentionState {
+        &mut self.attention
+    }
+
     pub(in crate::session) fn take(session: &mut GameSession, account: AccountId) -> Self {
-        let (_, mut writes) = crate::session::pipeline::npc_split::npc_split(session);
+        // 只需写组，不创建读视图（避免不必要的 lifecycles/accounts 克隆）。
+        let mut writes = crate::session::pipeline::npc_split::npc_writes(session);
         Self::take_on(&mut writes, account)
     }
 
@@ -116,7 +128,8 @@ impl PlanPersonalState {
     }
 
     pub(in crate::session) fn install(self, session: &mut GameSession, account: AccountId) {
-        let (_, mut writes) = crate::session::pipeline::npc_split::npc_split(session);
+        // 同 take：只需写组，不创建读视图。
+        let mut writes = crate::session::pipeline::npc_split::npc_writes(session);
         self.install_on(&mut writes, account);
     }
 
@@ -268,6 +281,36 @@ mod participant_owner_tests {
             session.business_state_hash().unwrap(),
             restored.business_state_hash().unwrap()
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "has no attention state")]
+    fn take_missing_attention_panics_first() {
+        let mut session = two_institutions();
+        let account = AccountId(1);
+        session.state.npc_attention.remove(&account);
+        session.state.belief_participants.remove(&account);
+        session.state.history_reads.remove(&account);
+        PlanPersonalState::take(&mut session, account);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no watchlist")]
+    fn take_missing_participant_panics_after_attention() {
+        let mut session = two_institutions();
+        let account = AccountId(1);
+        session.state.belief_participants.remove(&account);
+        session.state.history_reads.remove(&account);
+        PlanPersonalState::take(&mut session, account);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no history-read ledger")]
+    fn take_missing_history_panics_after_participant() {
+        let mut session = two_institutions();
+        let account = AccountId(1);
+        session.state.history_reads.remove(&account);
+        PlanPersonalState::take(&mut session, account);
     }
 
     #[test]

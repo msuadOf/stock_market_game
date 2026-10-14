@@ -1,6 +1,5 @@
-use super::auction_tick_transaction::prepare_auction_tick;
-use super::continuous_tick_transaction::{
-    apply_tick_shadow_continuous_transaction, prepare_continuous_tick,
+use super::market_tick_transaction::{
+    apply_tick_shadow_market_transaction, prepare_market_tick,
 };
 use super::*;
 use crate::{
@@ -34,7 +33,7 @@ fn ordinary_tick_skips_commit_evidence_replay_but_diagnostic_tick_captures_it() 
 #[test]
 fn prepared_commit_preserves_actual_receipt_chains_before_commit_rebase() {
     let (mut authority, code) = continuous_trade_session();
-    let prepared = prepare_continuous_tick(&mut authority).unwrap();
+    let prepared = prepare_market_tick(&mut authority).unwrap();
 
     assert!(prepared.evidence().expiry_receipts().is_empty());
     assert_eq!(prepared.evidence().receipts().len(), 2);
@@ -94,7 +93,7 @@ fn prepared_commit_exposes_the_applied_quote_expiry_receipt_without_reconstructi
     let (mut authority, code, account, order_id) = expiring_buy_session();
     let cash_before = authority.state.accounts[&account].cash();
 
-    let committed = prepare_continuous_tick(&mut authority).unwrap().commit();
+    let committed = prepare_market_tick(&mut authority).unwrap().commit();
     let evidence = committed.commit.evidence.as_ref().unwrap();
 
     assert!(committed.output.receipts.is_empty());
@@ -136,9 +135,9 @@ fn prepared_commit_exposes_the_applied_quote_expiry_receipt_without_reconstructi
 #[test]
 fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
-    apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    apply_tick_shadow_market_transaction(&mut plan).unwrap();
     assert!(!plan.applied_receipts.is_empty());
     plan.applied_receipts.clear();
     let business_before = authority.business_state_hash().unwrap();
@@ -161,9 +160,9 @@ fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
 #[test]
 fn ordinary_commit_rejects_receipt_journal_missing_applied_values() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
-    apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    apply_tick_shadow_market_transaction(&mut plan).unwrap();
     plan.applied_receipts.clear();
     let before = authority.business_state_hash().unwrap();
 
@@ -182,9 +181,9 @@ fn ordinary_commit_rejects_receipt_journal_missing_applied_values() {
 #[test]
 fn prepared_commit_rejects_tampered_receipt_values_without_touching_authority() {
     let (mut authority, _) = continuous_trade_session();
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
-    apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    apply_tick_shadow_market_transaction(&mut plan).unwrap();
     let receipt = plan.applied_receipts.first_mut().unwrap();
     receipt.deliver_qty = receipt.deliver_qty.checked_add(1).unwrap();
     let business_before = authority.business_state_hash().unwrap();
@@ -210,15 +209,11 @@ fn prepared_commit_reports_per_stock_finalizer_executions_from_the_real_tail() {
     setup.closing_auction_ticks = 10;
     let mut authority = GameSession::new(setup, 73).unwrap();
     authority.state.tick = 99;
-    authority.state.pending_npc = Some(crate::session::PendingNpcBatch {
-        dependencies: Vec::new(),
-        observed_tick: authority.state.tick,
-        observed_accounts: Vec::new(),
-        intents: Vec::new(),
-    });
+    authority.fixture_sync_market_modes_for_test();
+    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(authority.state.tick, Vec::new(), Vec::new(), Vec::new()));
     assert_eq!(authority.phase(), TradingPhase::ClosingAuction);
 
-    let prepared = prepare_auction_tick(&mut authority).unwrap();
+    let prepared = prepare_market_tick(&mut authority).unwrap();
     let finalizers = prepared.evidence().auction_finalizers().to_vec();
 
     assert_eq!(finalizers.len(), 2);
@@ -251,7 +246,7 @@ fn prepared_commit_reports_per_stock_finalizer_executions_from_the_real_tail() {
 fn prepared_commit_keeps_quote_expiry_and_sealed_receipts_in_one_global_chain() {
     let mut authority = mixed_quote_expiry_and_sealed_receipt_session();
 
-    let committed = prepare_continuous_tick(&mut authority).unwrap().commit();
+    let committed = prepare_market_tick(&mut authority).unwrap().commit();
     let evidence = committed.commit.evidence.as_ref().unwrap();
 
     assert_eq!(evidence.receipts().len(), 3);

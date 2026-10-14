@@ -1,7 +1,7 @@
 //! 权威日 K 的生成、盘中维护与收盘归档。
 
 use super::*;
-use crate::experience::AppendOnlyHistory;
+use crate::shared_history::AppendOnlyHistory;
 use std::collections::VecDeque;
 use std::ops::Index;
 
@@ -124,6 +124,12 @@ impl SessionCandleBook {
 
     #[cfg(test)]
     pub(super) fn set_active(&mut self, code: StockId, candle: DailyCandle) {
+        self.active.insert(code, candle);
+    }
+
+    /// T4（ADR-0042 §6-T4 行情面）：安装股票 owner 收尾产出的活动日 K 终值
+    /// （与 record_trade_or_mark 的 entry().or_insert() 语义一致：缺席即建立）。
+    pub(super) fn install_active(&mut self, code: StockId, candle: DailyCandle) {
         self.active.insert(code, candle);
     }
 }
@@ -294,13 +300,13 @@ pub(super) fn preset_candle_dates(
 }
 
 impl DailyTradeStats {
-    fn from_trade(price: Money, quantity: u64) -> Self {
+    pub(super) fn from_trade(price: Money, quantity: u64) -> Self {
         let mut stats = Self::default();
         stats.record_trade(price, quantity);
         stats
     }
 
-    fn record_trade(&mut self, price: Money, quantity: u64) {
+    pub(super) fn record_trade(&mut self, price: Money, quantity: u64) {
         let price_cents = u64::try_from(price.cents())
             .expect("trade price must be positive before daily statistics are updated");
         let gross_cents = price_cents

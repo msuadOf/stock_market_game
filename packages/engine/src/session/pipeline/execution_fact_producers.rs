@@ -8,7 +8,7 @@ use super::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousPlaceFact, ContinuousTradeFact,
     },
-    event_collection::OwnedEventFact,
+    event_collection::EventFact,
     EventStableKey, StepFatal,
 };
 
@@ -18,7 +18,7 @@ use super::{
 /// Known-stock worker facts continue through `adapt_continuous_facts` at the single finish seam.
 pub(super) fn adapt_continuous_execution_facts(
     executions: &[ContinuousExecutionFact],
-) -> Result<Vec<OwnedEventFact>, StepFatal> {
+) -> Result<Vec<EventFact>, StepFatal> {
     let mut places = Vec::new();
     let mut cancels = Vec::new();
     for execution in executions {
@@ -41,7 +41,7 @@ pub(super) fn adapt_continuous_facts(
     places: &[ContinuousPlaceFact],
     cancels: &[ContinuousCancelFact],
     trades: &[ContinuousTradeFact],
-) -> Result<Vec<OwnedEventFact>, StepFatal> {
+) -> Result<Vec<EventFact>, StepFatal> {
     let mut facts = Vec::new();
     for place in places {
         match place {
@@ -141,8 +141,8 @@ pub(super) fn adapt_continuous_facts(
     Ok(facts)
 }
 
-fn push_fact(facts: &mut Vec<OwnedEventFact>, event: Event, local_event_index: u64) {
-    facts.push(OwnedEventFact {
+fn push_fact(facts: &mut Vec<EventFact>, event: Event, local_event_index: u64) {
+    facts.push(EventFact {
         key: EventStableKey::for_event(&event, local_event_index),
         event,
     });
@@ -160,7 +160,7 @@ fn cancellation_reason(reason: ContinuousCancelRejection) -> RejectionReason {
     }
 }
 
-fn validate_unique_facts(facts: &[OwnedEventFact]) -> Result<(), StepFatal> {
+fn validate_unique_facts(facts: &[EventFact]) -> Result<(), StepFatal> {
     let mut seen = BTreeSet::new();
     for fact in facts {
         if !seen.insert(&fact.key) {

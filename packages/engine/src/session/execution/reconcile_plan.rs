@@ -42,81 +42,96 @@ impl GameSession {
 
     /// 读视图版本（queue 链转换目标形态）：会话读集仅 tick/setup（竞价不可撤销
     /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
+    /// 读视图版本（queue 链转换目标形态）：会话读集仅 tick/setup（竞价不可撤销
+    /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
     pub(in crate::session) fn plan_npc_working_order_reconciliation_on(
         view: &SessionReadView<'_>,
-        mut desired: Vec<Intent>,
+        desired: Vec<Intent>,
         phase: TradingPhase,
         scope: ReconcileScope,
         working: WorkingOrderSlices<'_>,
     ) -> ReconciliationPlan {
-        let in_scope = |code: &StockId| match &scope {
-            ReconcileScope::AllWorkingOrders => true,
-            ReconcileScope::ReviewedStocks(stocks) => stocks.contains(code),
-        };
-        let mut decisions = Vec::new();
-        match phase {
-            TradingPhase::Continuous => {
-                for (code, order) in working.continuous {
-                    if !in_scope(code) {
-                        continue;
-                    }
-                    if take_exact(&mut desired, code, order.side, order.price, order.qty) {
-                        decisions.push(WorkingOrderDecision::Keep { order_id: order.id });
-                    } else if let Some(intent) = desired
-                        .iter()
-                        .find(|intent| same_side(intent, code, order.side))
-                        .cloned()
-                    {
-                        decisions.push(WorkingOrderDecision::Replace {
-                            old_order_id: order.id,
-                            new_intent: intent,
-                        });
-                    } else {
-                        decisions.push(WorkingOrderDecision::Cancel {
-                            order_id: order.id,
-                            code: code.clone(),
-                        });
-                    }
+        plan_npc_working_order_reconciliation_standalone(
+            view.tick % view.setup.ticks_per_day < view.setup.auction_ticks / 3,
+            view.markets,
+            desired,
+            phase,
+            scope,
+            working,
+        )
+    }
+}
+
+/// 纯参数版本（T1·两阶段审计：决策任务内可调——竞价可撤窗口布尔与行情
+/// 快照由调用方捕获一次传入，任务不借用会话视图）。
+pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
+    cancelable_auction_window: bool,
+    markets: &std::collections::BTreeMap<StockId, Market>,
+    mut desired: Vec<Intent>,
+    phase: TradingPhase,
+    scope: ReconcileScope,
+    working: WorkingOrderSlices<'_>,
+) -> ReconciliationPlan {
+    let in_scope = |code: &StockId| match &scope {
+        ReconcileScope::AllWorkingOrders => true,
+        ReconcileScope::ReviewedStocks(stocks) => stocks.contains(code),
+    };
+    let mut decisions = Vec::new();
+    match phase {
+        TradingPhase::Continuous => {
+            for (code, order) in working.continuous {
+                if !in_scope(code) {
+                    continue;
+                }
+                if take_exact(&mut desired, code, order.side, order.price, order.qty) {
+                    decisions.push(WorkingOrderDecision::Keep { order_id: order.id });
+                } else if let Some(intent) = desired
+                    .iter()
+                    .find(|intent| same_side(intent, code, order.side))
+                    .cloned()
+                {
+                    decisions.push(WorkingOrderDecision::Replace {
+                        old_order_id: order.id,
+                        new_intent: intent,
+                    });
+                } else {
+                    decisions.push(WorkingOrderDecision::Cancel {
+                        order_id: order.id,
+                        code: code.clone(),
+                    });
                 }
             }
-            TradingPhase::CallAuction => {
-                let cancelable =
-                    view.tick % view.setup.ticks_per_day < view.setup.auction_ticks / 3;
-                for (code, order) in working.auction {
-                    if !in_scope(code) {
-                        continue;
-                    }
-                    if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
-                        decisions.push(WorkingOrderDecision::Keep {
-                            order_id: OrderId(order.order_id),
-                        });
-                    } else if cancelable {
-                        decisions.push(WorkingOrderDecision::Cancel {
-                            order_id: OrderId(order.order_id),
-                            code: code.clone(),
-                        });
-                    } else {
-                        let market = view
-                            .markets
-                            .get(code)
-                            .expect("working auction stock exists");
-                        suppress_noncancelable(
-                            &mut desired,
-                            code,
-                            order.side,
-                            order.limit,
-                            &scope,
-                            market,
-                        );
-                    }
+        }
+        TradingPhase::CallAuction => {
+            for (code, order) in working.auction {
+                if !in_scope(code) {
+                    continue;
+                }
+                if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
+                    decisions.push(WorkingOrderDecision::Keep { order_id: OrderId(order.order_id) });
+                } else if cancelable_auction_window {
+                    decisions.push(WorkingOrderDecision::Cancel {
+                        order_id: OrderId(order.order_id),
+                        code: code.clone(),
+                    });
+                } else {
+                    let market = markets.get(code).expect("working auction stock exists");
+                    suppress_noncancelable(
+                        &mut desired,
+                        code,
+                        order.side,
+                        order.limit,
+                        &scope,
+                        market,
+                    );
                 }
             }
-            TradingPhase::ClosingAuction | TradingPhase::PreOpen => {}
         }
-        ReconciliationPlan {
-            decisions,
-            residual_intents: desired,
-        }
+        TradingPhase::ClosingAuction | TradingPhase::PreOpen => {}
+    }
+    ReconciliationPlan {
+        decisions,
+        residual_intents: desired,
     }
 }
 

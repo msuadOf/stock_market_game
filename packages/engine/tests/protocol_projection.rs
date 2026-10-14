@@ -1,5 +1,12 @@
-use engine::session::protocol::{attach_facts, project_timeseries, AuctionPointKind};
+use engine::session::protocol::{project_timeseries, AuctionPointKind, SessionFactCursor};
 use engine::{Event, Money, Snapshot, StockId, TradingPhase};
+
+/// 独立测试 fixture 的 producer：事实身份在此一次分配。
+fn fixture_facts(
+    events: &[Event],
+) -> Result<Vec<engine::session::protocol::EventFact>, engine::session::protocol::ProtocolError> {
+    SessionFactCursor::default().assign_session_facts(events.to_vec())
+}
 
 fn snapshot() -> Snapshot {
     Snapshot {
@@ -45,7 +52,7 @@ fn multiple_indications_and_completion_survive_permutation() {
             matched_volume: 500,
         },
     ];
-    let mut facts = attach_facts(&events).unwrap();
+    let mut facts = fixture_facts(&events).unwrap();
     let expected = project_timeseries(&facts, snapshot());
     facts.reverse();
     let projected = project_timeseries(&facts, snapshot());

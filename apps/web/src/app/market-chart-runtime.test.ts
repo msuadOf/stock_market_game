@@ -7,7 +7,6 @@ import type { HostUpdate } from "../host/host-update.ts";
 import { createBaselineUpdate, createProtocolUpdate } from "../host/host-update.ts";
 import { parseEngineUpdate, parseProtocolSnapshot } from "../host/protocol/parse.ts";
 import { createProtocolState } from "../host/protocol/types.ts";
-import { canonicalJson } from "../host/protocol/canonical.ts";
 import { civilUpdate, dailyCandle, frame, market, snapshot, timeseries } from "../host/protocol-test-fixtures.ts";
 import type { ChartRuntimeObservation } from "./market-chart-runtime.test-support.tsx";
 import type { EngineHost } from "../host/engine-host.ts";
@@ -171,7 +170,7 @@ test("production AfterClose-only 进入非交易日时保留真实收盘分时",
   } };
   const civil = createProtocolUpdate("1", { CivilUpdate: { ...parsed.CivilUpdate,
     kinds: ["AfterClose"], boundary: { ...parsed.CivilUpdate.boundary, next_status: { Closed: "Weekend" } },
-    events: [event], facts: [{ ...parsed.CivilUpdate.facts[0], event, canonical_payload: canonicalJson(event) }],
+    facts: [{ ...parsed.CivilUpdate.facts[0], event }],
   } });
   const after = render([civil], { baseline: initial, afterUpdates: (runtime) => runtime.selectChart("000812") }).after;
   assert.equal(after.prices.length, 1);

@@ -28,8 +28,11 @@ use std::{
 #[path = "verification_evidence/phase_timing.rs"]
 mod phase_timing;
 pub(crate) use phase_timing::{
-    begin_authoritative_tick, enter_phase, mark_committed, validate_precommit,
+    begin_authoritative_tick, current_phase_timing_binding, enter_phase, mark_committed,
+    validate_precommit, with_phase_timing_binding, PhaseTimingBinding,
 };
+#[cfg(any(test, feature = "verification-harness"))]
+pub(crate) use phase_timing::phase_timing_binding_installed_on_this_thread;
 pub use phase_timing::{
     CommittedPhaseTiming, PhaseTimingCaptureError, PhaseTimingPhase, PhaseTimingRecord,
     RunnableThreadSample, TimedStep,

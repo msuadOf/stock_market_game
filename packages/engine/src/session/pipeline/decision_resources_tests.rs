@@ -50,9 +50,14 @@ fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservatio
     let before_reservation = before_expiry.project_live_envelopes().unwrap()[0]
         .live()
         .cash;
-    let before_plan = plan_tick(PhaseInput { session: &before_expiry, speculative: None })
+    let before_plan = plan_tick(PhaseInput {
+        session: &before_expiry,
+    })
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
 
     assert_eq!(before_reservation, reservation);
     assert_eq!(
@@ -93,9 +98,14 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
     let sellable_before = game.state.accounts[&account].sellable_qty(&code);
     let reserved = game.project_live_envelopes().unwrap()[0].live().shares;
     let before_expiry = decision_resources_fixture(crate::Side::Sell, false).0;
-    let before_plan = plan_tick(PhaseInput { session: &before_expiry, speculative: None })
+    let before_plan = plan_tick(PhaseInput {
+        session: &before_expiry,
+    })
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
 
     assert_eq!(reserved, sellable_before);
     assert_eq!(
@@ -129,7 +139,10 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
 #[test]
 fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     let (buy_game, buy_account, buy_code) = decision_resources_fixture(crate::Side::Buy, false);
-    let buy_plan = plan_tick(PhaseInput { session: &buy_game, speculative: None }).unwrap();
+    let buy_plan = plan_tick(PhaseInput {
+        session: &buy_game,
+    })
+    .unwrap();
     assert!(
         buy_plan
             .decision_resources()
@@ -148,7 +161,9 @@ fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unkno
     );
 
     let (sell_game, sell_account, sell_code) = decision_resources_fixture(crate::Side::Sell, false);
-    let sell_plan = plan_tick(PhaseInput { session: &sell_game, speculative: None })
+    let sell_plan = plan_tick(PhaseInput {
+        session: &sell_game,
+    })
     .unwrap();
     assert_eq!(
         sell_plan
@@ -194,7 +209,7 @@ fn decision_resources_sell_reservation_uses_account_book_key() {
 }
 
 #[test]
-fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
+fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserved() {
     // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
     let code = crate::StockId(0);
     let seller = crate::AccountId(1);
@@ -231,21 +246,76 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
         },
         &mut events,
     );
-    let baseline = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
-    game.state.pending_plan_events.push(
-        crate::session::plan_execution::PendingPlanEvent::DayEnded {
-            plan_id: crate::PlanId(1),
-            trading_day: 0,
-        },
-    );
+    // 计划执行腿只描述已提交子单；决策资源仍以真实订单簿 envelope 为准。
+    let plan_id = game
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account: player,
+            code: code.clone(),
+            direction: crate::Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(400),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    game.state
+        .plans
+        .install_execution(plan_id, 100, crate::Money::from_cents(980), 240)
+        .unwrap();
 
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let allocation = plan.decision_resources().unwrap();
 
     assert_eq!(allocation.available_cash(seller).unwrap(), seller_cash);
     assert_eq!(allocation.available_sell_qty(seller, &code).unwrap(), 0);
     assert!(allocation.available_cash(player).unwrap() < player_cash);
-    assert_eq!(game.state.pending_plan_events.len(), 1);
+    // 执行腿只描述已提交子单，不重复冻结资产：与无计划腿的基线一致。
+    let mut without_leg = GameSession::new(
+        crate::session::npc_working_quote_tests::quote_setup(2),
+        42,
+    )
+    .unwrap();
+    without_leg
+        .fixture_account_mut(&seller)
+        .unwrap()
+        .fixture_set_strategy(None);
+    without_leg
+        .fixture_account_mut(&seller)
+        .unwrap()
+        .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
+        .unwrap();
+    let mut plain_events = Vec::new();
+    without_leg.seed_order_for_test(
+        seller,
+        crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: crate::Side::Sell,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
+            qty: 100,
+        },
+        &mut plain_events,
+    );
+    without_leg.seed_order_for_test(
+        player,
+        crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
+            qty: 100,
+        },
+        &mut plain_events,
+    );
+    let baseline = plan_tick(PhaseInput { session: &without_leg }).unwrap();
     assert_eq!(
         allocation.available_cash(player).unwrap(),
         baseline
@@ -321,7 +391,10 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         .unwrap();
     let before = game.business_state_hash().unwrap();
 
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let resources = plan.decision_resources().unwrap();
 
     assert_eq!(resources.raw_cash(account).unwrap(), raw_cash);
@@ -392,7 +465,9 @@ fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
         .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let before = game.business_state_hash().unwrap();
 
-    let error = match plan_tick(PhaseInput { session: &game, speculative: None }) {
+    let error = match plan_tick(PhaseInput {
+        session: &game,
+    }) {
         Ok(_) => panic!("资产溢出必须使 SealAllocationSnapshot 密封失败"),
         Err(error) => error,
     };

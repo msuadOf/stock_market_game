@@ -162,21 +162,13 @@ impl GameSession {
             if desired_qty == 0 {
                 continue;
             }
-            let active_child = self
-                .state
-                .parent_orders
-                .get(&id)
-                .and_then(|parents| parents.get(plan.code()))
-                .filter(|parent| parent.linked_plan_id() == Some(plan.plan_id()))
-                .and_then(|parent| {
-                    parent.active_child_order_id().map(|order_id| ActiveQuote {
-                        order_id,
-                        price: parent.limit_price(),
-                        qty: parent
-                            .active_child_remaining_qty()
-                            .unwrap_or(parent.child_qty()),
-                    })
-                });
+            let active_child = plan.execution().and_then(|leg| {
+                plan.active_child_order_id().map(|order_id| ActiveQuote {
+                    order_id,
+                    price: leg.limit_price(),
+                    qty: leg.active_child_remaining_qty().unwrap_or(leg.child_qty()),
+                })
+            });
             let mut quote_inputs = QuoteDecisionInputs {
                 side: plan.direction(),
                 urgency: urgency.urgency,

@@ -23,25 +23,17 @@ fn fixture() -> (GameSession, PlanExecutionRequest) {
 fn audit_boundary_continuous_precheck_failure_disables_coordinator() {
     let (mut session, request) = fixture();
     let mut chain = coordinator(&session, request);
-    let batch = chain.next_ready_batch(&mut session).unwrap();
+    let batch =
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap();
     assert!(!batch.is_empty());
-    assert!(chain
-        .advance_after_typed_outcomes(&mut session, &[], None)
-        .is_err());
-    assert!(chain.next_ready_batch(&mut session).is_err());
-    assert!(chain.finish().is_err());
-}
-
-#[test]
-fn audit_boundary_auction_precheck_failure_disables_coordinator() {
-    let (mut session, request) = fixture();
-    let mut chain = coordinator(&session, request);
-    let batch = chain.next_ready_batch(&mut session).unwrap();
-    assert!(!batch.is_empty());
-    assert!(chain
-        .advance_after_auction_outcomes(&mut session, &[], None)
-        .is_err());
-    assert!(chain.next_ready_batch(&mut session).is_err());
+    assert!(PlanContinuationDomain::scoped(&mut session, |domain| chain
+        .advance_after_typed_outcomes(domain, &[], None))
+    .is_err());
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .is_err()
+    );
     assert!(chain.finish().is_err());
 }
 
@@ -94,7 +86,11 @@ fn empty_account_source_finishes_without_a_frozen_observation() {
     );
     let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
 
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty()
+    );
     assert!(chain.finish().unwrap().reports.is_empty());
 }
 
@@ -112,10 +108,19 @@ fn plan_observation_waits_for_an_earlier_request_from_its_account_and_stock() {
         },
     )]);
 
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty()
+    );
     assert!(chain.pending.is_empty());
     chain.clear_unfinished_routes();
-    assert_eq!(chain.next_ready_batch(&mut session).unwrap().len(), 1);
+    assert_eq!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -132,7 +137,12 @@ fn unrelated_account_request_on_the_same_stock_does_not_block_plan_root() {
         },
     )]);
 
-    assert_eq!(chain.next_ready_batch(&mut session).unwrap().len(), 1);
+    assert_eq!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 fn execute(
@@ -145,7 +155,8 @@ fn execute(
     CandidateValidationOutcome,
     Option<ContinuousExecutionRound>,
 )> {
-    let mut batch = chain.next_ready_batch(session).unwrap();
+    let mut batch =
+        PlanContinuationDomain::scoped(session, |domain| chain.next_ready_batch(domain)).unwrap();
     if batch.is_empty() {
         return None;
     }
@@ -157,9 +168,10 @@ fn execute(
             .apply_round(vec![operation.clone()])
             .unwrap()
     });
-    chain
-        .advance_after_typed_outcomes(session, std::slice::from_ref(&outcome), round.as_mut())
-        .unwrap();
+    PlanContinuationDomain::scoped(session, |domain| {
+        chain.advance_after_typed_outcomes(domain, std::slice::from_ref(&outcome), round.as_mut())
+    })
+    .unwrap();
     Some((candidate, outcome, round))
 }
 
@@ -240,7 +252,6 @@ fn adaptive_real_validation_and_matching_two_cancels_then_new_order_complete_in_
         cash,
         "SettlementShadow 尚未运行"
     );
-    assert!(session.state.pending_plan_events.is_empty());
 }
 
 #[test]
@@ -313,11 +324,6 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
             .active_child_order_id(),
         Some(order_id)
     );
-    assert_eq!(
-        session.state.parent_orders[&AccountId(1)][&request.allocation.code]
-            .active_child_order_id(),
-        Some(order_id)
-    );
 }
 
 #[test]
@@ -348,7 +354,9 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         );
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
-    let pending_cancel = chain.next_ready_batch(&mut session).unwrap();
+    let pending_cancel =
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap();
     assert_eq!(pending_cancel.len(), 1);
     assert!(matches!(pending_cancel[0].intent(), Intent::Cancel { id, .. } if *id == old_id));
 
@@ -366,9 +374,10 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
     let mut seller_round = stock_execution
         .apply_round(vec![seller_step.operation().unwrap().clone()])
         .unwrap();
-    chain
-        .project_execution_round(&mut session, &mut seller_round)
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut seller_round)
+    })
+    .unwrap();
     assert_eq!(
         session
             .state
@@ -383,11 +392,14 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
     let mut cancel_round = stock_execution
         .apply_round(vec![cancel_step.operation().unwrap().clone()])
         .unwrap();
-    chain
-        .advance_after_typed_outcomes(&mut session, &[cancel_step], Some(&mut cancel_round))
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.advance_after_typed_outcomes(domain, &[cancel_step], Some(&mut cancel_round))
+    })
+    .unwrap();
     assert!(
-        chain.next_ready_batch(&mut session).unwrap().is_empty(),
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty(),
         "the remaining 50 shares cannot produce another 100-share buy request"
     );
     assert_eq!(
@@ -425,7 +437,10 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         );
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request);
-    let first = chain.next_ready_batch(&mut session).unwrap().remove(0);
+    let first =
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .remove(0);
     assert!(matches!(first.intent(), Intent::Cancel { id, .. } if *id == ids[0]));
 
     let seller = IntentCandidate::new(
@@ -453,9 +468,10 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
             ..
         }
     )));
-    chain
-        .project_execution_round(&mut session, &mut seller_round)
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut seller_round)
+    })
+    .unwrap();
     assert!(session.state.markets[&code]
         .resting_orders_for(AccountId(1))
         .iter()
@@ -465,11 +481,14 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     let mut first_round = stock_execution
         .apply_round(vec![first_step.operation().unwrap().clone()])
         .unwrap();
-    chain
-        .advance_after_typed_outcomes(&mut session, &[first_step], Some(&mut first_round))
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.advance_after_typed_outcomes(domain, &[first_step], Some(&mut first_round))
+    })
+    .unwrap();
 
-    let next = chain.next_ready_batch(&mut session).unwrap();
+    let next =
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap();
     assert_eq!(next.len(), 1);
     assert!(matches!(next[0].intent(), Intent::PlaceLimit { .. }));
     assert!(session.state.markets[&code]
@@ -479,10 +498,15 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     let mut submit_round = stock_execution
         .apply_round(vec![submit_step.operation().unwrap().clone()])
         .unwrap();
-    chain
-        .advance_after_typed_outcomes(&mut session, &[submit_step], Some(&mut submit_round))
-        .unwrap();
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.advance_after_typed_outcomes(domain, &[submit_step], Some(&mut submit_round))
+    })
+    .unwrap();
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty()
+    );
     let complete = chain.finish().unwrap();
     let PlanExecutionDisposition::Submitted { order_id, .. } = complete.reports[0].disposition
     else {
@@ -498,10 +522,6 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
             .plan(plan_id)
             .unwrap()
             .active_child_order_id(),
-        Some(order_id)
-    );
-    assert_eq!(
-        session.state.parent_orders[&AccountId(1)][&code].active_child_order_id(),
         Some(order_id)
     );
     assert_eq!(
@@ -590,6 +610,7 @@ fn adaptive_cancel_release_never_refills_account_validation_cash_for_the_followu
 
 fn fill_case(resting_sell_qty: u32) {
     let (mut session, mut request) = fixture();
+    let plan_id = request.plan_id;
     let code = request.allocation.code.clone();
     request.decision.action = QuoteAction::Submit {
         price: Money::from_cents(1_000),
@@ -629,7 +650,6 @@ fn fill_case(resting_sell_qty: u32) {
             .filled_qty(),
         resting_sell_qty
     );
-    assert!(session.state.pending_plan_events.is_empty());
     if resting_sell_qty == 100 {
         assert!(matches!(
             round.facts[0].outcome,
@@ -638,26 +658,33 @@ fn fill_case(resting_sell_qty: u32) {
                 ..
             }
         ));
-        assert!(!session
+        assert!(session
             .state
-            .parent_orders
-            .get(&AccountId(1))
-            .is_some_and(|parents| parents.contains_key(&code)));
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .execution()
+            .is_none());
     } else {
         assert_eq!(
-            session.state.parent_orders[&AccountId(1)][&code].filled_qty(),
+            session.state.plans.plan(plan_id).unwrap().filled_qty(),
             resting_sell_qty
         );
         assert_eq!(
-            session.state.parent_orders[&AccountId(1)][&code].active_child_remaining_qty(),
+            session
+                .state
+                .plans
+                .plan(plan_id)
+                .unwrap()
+                .active_child_remaining_qty(),
             Some(100 - resting_sell_qty)
         );
     }
     let before = serde_json::to_value(&session.state.plans).unwrap();
     assert!(
-        chain
-            .project_execution_round(&mut session, &mut round)
-            .is_err(),
+        PlanContinuationDomain::scoped(&mut session, |domain| chain
+            .project_execution_round(domain, &mut round))
+        .is_err(),
         "same facts must not be applied twice"
     );
     assert_eq!(serde_json::to_value(&session.state.plans).unwrap(), before);
@@ -689,7 +716,10 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
             )
             .unwrap();
         }
-        let candidate = chain.next_ready_batch(&mut session).unwrap().remove(0);
+        let candidate =
+            PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+                .unwrap()
+                .remove(0);
         let outcome = validator.consume(candidate.clone()).unwrap();
         let Intent::Cancel { code, id } = candidate.intent() else {
             panic!("expected conflict cancel");
@@ -714,14 +744,18 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
             #[cfg(feature = "simulation-diagnostics")]
             operation_quotes: BTreeMap::new(),
         };
-        chain
-            .advance_after_typed_outcomes(
-                &mut session,
+        PlanContinuationDomain::scoped(&mut session, |domain| {
+            chain.advance_after_typed_outcomes(
+                domain,
                 std::slice::from_ref(&outcome),
                 Some(&mut rejected),
             )
-            .unwrap();
-        assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+        })
+        .unwrap();
+        assert!(PlanContinuationDomain::scoped(&mut session, |domain| chain
+            .next_ready_batch(domain))
+        .unwrap()
+        .is_empty());
         assert!(matches!(
             chain.finish().unwrap().reports[0].disposition,
             PlanExecutionDisposition::RouteRejected {
@@ -738,7 +772,10 @@ fn adaptive_wrong_candidate_or_sealed_identity_stops_the_coordinator() {
         let (mut session, request) = fixture();
         let (mut validator, mut stock_execution) = seal(&mut session);
         let mut chain = coordinator(&session, request);
-        let candidate = chain.next_ready_batch(&mut session).unwrap().remove(0);
+        let candidate =
+            PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+                .unwrap()
+                .remove(0);
         let outcome = validator.consume(candidate).unwrap();
         let mut round = stock_execution
             .apply_round(vec![outcome.operation().unwrap().clone()])
@@ -748,14 +785,17 @@ fn adaptive_wrong_candidate_or_sealed_identity_stops_the_coordinator() {
         } else {
             round.facts[0].sealed_index += 1;
         }
-        assert!(chain
-            .advance_after_typed_outcomes(
-                &mut session,
+        assert!(PlanContinuationDomain::scoped(&mut session, |domain| {
+            chain.advance_after_typed_outcomes(
+                domain,
                 std::slice::from_ref(&outcome),
-                Some(&mut round)
+                Some(&mut round),
             )
-            .is_err());
-        assert!(chain.next_ready_batch(&mut session).is_err());
+        })
+        .is_err());
+        assert!(PlanContinuationDomain::scoped(&mut session, |domain| chain
+            .next_ready_batch(domain))
+        .is_err());
         assert!(chain.finish().is_err());
     }
 }
@@ -793,7 +833,9 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
     roots.push_execution(first);
     roots.push_execution(second);
     let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
-    let batch = chain.next_ready_batch(&mut session).unwrap();
+    let batch =
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap();
     assert_eq!(batch.len(), 2);
     assert_eq!(
         batch.iter().map(IntentCandidate::owner).collect::<Vec<_>>(),
@@ -807,9 +849,9 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
     let mut round = stock_execution.apply_round(operations).unwrap();
     assert_eq!(round.facts.len(), 2);
     round.facts[1].sealed_index += 1;
-    assert!(chain
-        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
-        .is_err());
+    assert!(PlanContinuationDomain::scoped(&mut session, |domain| chain
+        .advance_after_typed_outcomes(domain, &outcomes, Some(&mut round)))
+    .is_err());
     assert!(chain.finish().is_err());
     assert_eq!(authority.business_state_hash().unwrap(), before);
 }
@@ -873,7 +915,9 @@ fn run_independent_stock_round(
     }
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
-    let batch = chain.next_ready_batch(&mut session).unwrap();
+    let batch =
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap();
     assert_eq!(batch.len(), 2);
     let outcomes = validator.consume_round(batch).unwrap();
     if split_feedback {
@@ -882,13 +926,14 @@ fn run_independent_stock_round(
             let mut round = stock_execution
                 .apply_round(vec![outcome.operation().unwrap().clone()])
                 .unwrap();
-            chain
-                .advance_after_typed_outcomes(
-                    &mut session,
+            PlanContinuationDomain::scoped(&mut session, |domain| {
+                chain.advance_after_typed_outcomes(
+                    domain,
                     std::slice::from_ref(outcome),
                     Some(&mut round),
                 )
-                .unwrap();
+            })
+            .unwrap();
         }
     } else {
         let mut round = stock_execution
@@ -903,11 +948,16 @@ fn run_independent_stock_round(
         if reverse_facts {
             round.facts.reverse();
         }
-        chain
-            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
-            .unwrap();
+        PlanContinuationDomain::scoped(&mut session, |domain| {
+            chain.advance_after_typed_outcomes(domain, &outcomes, Some(&mut round))
+        })
+        .unwrap();
     }
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(chain.finish().unwrap().reports.len(), plan_ids.len());
     for plan_id in plan_ids {
         assert!(session
@@ -963,7 +1013,9 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
     let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
     let (mut validator, mut stock_execution) = seal(&mut session);
 
-    let batch = chain.next_ready_batch(&mut session).unwrap();
+    let batch =
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap();
     assert_eq!(batch.len(), 2, "both natural plan quotes must be ready");
     assert_eq!(
         batch
@@ -985,10 +1037,15 @@ fn account_execution_quotes_two_existing_stocks_before_either_matching_result() 
         )
         .unwrap();
     assert_eq!(round.projections.len(), 2);
-    chain
-        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
-        .unwrap();
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.advance_after_typed_outcomes(domain, &outcomes, Some(&mut round))
+    })
+    .unwrap();
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(chain.finish().unwrap().reports.len(), 2);
     for plan_id in plan_ids {
         assert!(session
@@ -1031,54 +1088,17 @@ fn projected_rounds_reject_reused_candidate_or_sealed_identity() {
             AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
                 .unwrap();
         let mut first_round = rejected_round(IntentCandidateKey::player(0), 0);
-        chain
-            .project_execution_round(&mut session, &mut first_round)
-            .unwrap();
+        PlanContinuationDomain::scoped(&mut session, |domain| {
+            chain.project_execution_round(domain, &mut first_round)
+        })
+        .unwrap();
         let mut duplicate_round = rejected_round(key, sealed);
-        assert!(chain
-            .project_execution_round(&mut session, &mut duplicate_round)
-            .is_err());
-        assert!(chain.next_ready_batch(&mut session).is_err());
-    }
-}
-
-#[test]
-fn projected_auction_rounds_reject_reused_candidate_or_sealed_identity() {
-    let rejected_round = |candidate_key: IntentCandidateKey, sealed_index| AuctionExecutionRound {
-        facts: vec![AuctionExecutionFact {
-            candidate_key: candidate_key.clone(),
-            sealed_index,
-            allocated_order_id: None,
-            outcome: AuctionLifecycleFact::Rejected {
-                candidate_key,
-                sealed_index,
-                account: AccountId(0),
-                code: StockId(0),
-                order_id: None,
-                reason: RejectionReason::OrderNotFound,
-            },
-        }],
-        receipts: Vec::new(),
-        projections: BTreeMap::new(),
-    };
-    for (key, sealed) in [
-        (IntentCandidateKey::player(0), 1),
-        (IntentCandidateKey::player(1), 0),
-    ] {
-        let (mut session, _) = fixture();
-        let mut chain =
-            AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
-                .unwrap();
-        chain
-            .project_auction_execution_round(
-                &mut session,
-                &rejected_round(IntentCandidateKey::player(0), 0),
-            )
-            .unwrap();
-        assert!(chain
-            .project_auction_execution_round(&mut session, &rejected_round(key, sealed))
-            .is_err());
-        assert!(chain.next_ready_batch(&mut session).is_err());
+        assert!(PlanContinuationDomain::scoped(&mut session, |domain| chain
+            .project_execution_round(domain, &mut duplicate_round))
+        .is_err());
+        assert!(PlanContinuationDomain::scoped(&mut session, |domain| chain
+            .next_ready_batch(domain))
+        .is_err());
     }
 }
 
@@ -1099,7 +1119,8 @@ fn adaptive_late_chain_generation_overflow_discards_only_private_progress() {
     .unwrap();
     chain.roots.set_adaptive_generation_for_test(u64::MAX);
     assert!(matches!(
-        chain.next_ready_batch(&mut candidate_session),
+        PlanContinuationDomain::scoped(&mut candidate_session, |domain| chain
+            .next_ready_batch(domain)),
         Err(StepFatal::InvariantViolation { .. })
     ));
     assert!(chain.finish().is_err());
@@ -1160,10 +1181,15 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
             original_qty: 100,
         }
     ));
-    chain
-        .project_execution_round(&mut session, &mut round)
-        .unwrap();
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut round)
+    })
+    .unwrap();
+    assert!(
+        PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(chain.finish().unwrap().consumed.operation_count(), 1);
 }
 
@@ -1237,11 +1263,16 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
         &snapshot,
     )
     .unwrap();
+    // Sol 终审·冗余收口后测试对齐生产形状：root 在 capture 期排空后再执行
+    //（yield 不再懒计算 root）。
+    chain.drain_ready_accounts_at_capture(&mut session).unwrap();
     let (mut validator, mut stock_execution) = seal(&mut session);
     let mut owners = Vec::new();
     let mut keys = Vec::new();
     loop {
-        let batch = chain.next_ready_batch(&mut session).unwrap();
+        let batch =
+            PlanContinuationDomain::scoped(&mut session, |domain| chain.next_ready_batch(domain))
+                .unwrap();
         if batch.is_empty() {
             break;
         }
@@ -1253,9 +1284,10 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
             .filter_map(|outcome| outcome.operation().cloned())
             .collect();
         let mut round = stock_execution.apply_round(operations).unwrap();
-        chain
-            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
-            .unwrap();
+        PlanContinuationDomain::scoped(&mut session, |domain| {
+            chain.advance_after_typed_outcomes(domain, &outcomes, Some(&mut round))
+        })
+        .unwrap();
     }
     owners.sort();
     assert_eq!(owners, vec![AccountId(1), AccountId(2)]);

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
 import { parseEngineUpdate } from "./protocol/parse.ts";
-import { canonicalJson } from "./protocol/canonical.ts";
 import { frame, snapshot, tickBatch } from "./protocol-test-fixtures.ts";
 import { buildErrorFeedback } from "../app/error-details.ts";
 import type { HostFailure } from "./host-update.ts";
@@ -167,10 +166,9 @@ test("Given an already-published tick batch, when a CivilUpdate shares its tick 
       kinds: ["AfterClose", "BeforeOpen"],
       tick: 1,
       civil_date: "2030-01-03",
-      events: [{ CivilDateAdvanced: { seq: 2, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } }],
       facts: (() => {
         const event = { CivilDateAdvanced: { seq: 2, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } };
-        return [{ key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 }, event, canonical_payload: canonicalJson(event) }];
+        return [{ key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 }, event }];
       })(),
       seq_from: 1,
       seq_to: 2,

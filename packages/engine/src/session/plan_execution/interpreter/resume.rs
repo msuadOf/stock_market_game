@@ -29,9 +29,6 @@ impl GameSession {
                             }
                         } else {
                             plans.apply(plan_id, event)?;
-                            if terminating || plans.plan(plan_id)?.is_terminal() {
-                                self.remove_linked_parent(plan_id);
-                            }
                             PlanExecutionDisposition::Canceled {
                                 order_id,
                                 reason: QuoteReason::PendingReconsideration,
@@ -99,16 +96,12 @@ impl GameSession {
             Continuation::Submit { plan, child } => {
                 let disposition = match outcome {
                     PlanRouteOutcome::Accepted(order_id) => {
-                        self.synchronize_owned_plan_execution(plans)?;
                         PlanExecutionDisposition::Submitted {
                             order_id,
                             reason: child.reason,
                         }
                     }
-                    other => {
-                        self.remove_empty_linked_parent(plan.plan_id());
-                        other.failure()?
-                    }
+                    other => other.failure()?,
                 };
                 PlanExecutionProgress::Complete(PlanExecutionReport { disposition })
             }

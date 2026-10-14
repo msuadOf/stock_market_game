@@ -139,6 +139,9 @@ impl EnvelopeLedger {
         let mut audits = LedgerPagedMap::default();
         let mut conservation = LedgerPagedMap::default();
         for envelope in envelopes {
+            // 构造期只做结构校验；出生财务不变量属于证明建立（verified_live），
+            // 不得在restore类型化fault层（如2228）之前触发。
+            envelope.validate()?;
             let key = envelope.key().clone();
             let audit = envelope.audit();
             if values.insert(key.clone(), envelope).is_some() {
@@ -172,13 +175,32 @@ impl EnvelopeLedger {
         self.apply_with_normalizer(receipts, ledger_candidate::normalize)
     }
 
+    /// 与 [`Self::apply`] 相同的守恒与错误合同；串行脊调用方（ExpiryShadow）传入
+    /// 会话 compute 上下文，使 ≥512 行的聚合守恒审计归入会话 registry，
+    /// 而不是借用 caller 域或在调用线程退化为串行。
+    pub fn apply_in(
+        &mut self,
+        receipts: &mut [EnvelopeReceipt],
+        compute: &std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<(), StepFatal> {
+        let mut shadow = self.clone();
+        shadow.apply_private_with_normalizer(
+            receipts,
+            ledger_candidate::normalize,
+            true,
+            Some(compute),
+        )?;
+        *self = shadow;
+        Ok(())
+    }
+
     fn apply_with_normalizer(
         &mut self,
         receipts: &mut [EnvelopeReceipt],
         normalize: impl FnOnce(&mut u64, &[EnvelopeReceipt]) -> Result<Vec<EnvelopeReceipt>, StepFatal>,
     ) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
-        shadow.apply_private_with_normalizer(receipts, normalize, true)?;
+        shadow.apply_private_with_normalizer(receipts, normalize, true, None)?;
         *self = shadow;
         Ok(())
     }
@@ -188,6 +210,7 @@ impl EnvelopeLedger {
         receipts: &mut [EnvelopeReceipt],
         normalize: impl FnOnce(&mut u64, &[EnvelopeReceipt]) -> Result<Vec<EnvelopeReceipt>, StepFatal>,
         validate_aggregate: bool,
+        compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
     ) -> Result<(), StepFatal> {
         let candidate = normalize(&mut self.next_receipt_index, receipts)?;
         for receipt in &candidate {
@@ -197,7 +220,7 @@ impl EnvelopeLedger {
             self.apply_one(receipt)?;
         }
         if validate_aggregate {
-            ledger_conservation::validate(self)?;
+            ledger_conservation::validate_in(self, compute)?;
         }
         receipts.clone_from_slice(&candidate);
         Ok(())
@@ -225,7 +248,20 @@ impl EnvelopeLedger {
 
     pub fn remove_terminal(&mut self, keys: &[EnvelopeKey]) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
-        shadow.remove_terminal_private(keys, true)?;
+        shadow.remove_terminal_private(keys, true, None)?;
+        *self = shadow;
+        Ok(())
+    }
+
+    /// 与 [`Self::remove_terminal`] 相同的守恒与错误合同；compute 语义同
+    /// [`Self::apply_in`]：≥512 行的聚合守恒审计归入给定会话 registry。
+    pub fn remove_terminal_in(
+        &mut self,
+        keys: &[EnvelopeKey],
+        compute: &std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<(), StepFatal> {
+        let mut shadow = self.clone();
+        shadow.remove_terminal_private(keys, true, Some(compute))?;
         *self = shadow;
         Ok(())
     }
@@ -234,6 +270,7 @@ impl EnvelopeLedger {
         &mut self,
         keys: &[EnvelopeKey],
         validate_aggregate: bool,
+        compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
     ) -> Result<(), StepFatal> {
         for key in keys {
             let envelope = self
@@ -248,7 +285,7 @@ impl EnvelopeLedger {
             self.terminal_envelopes.insert(key.clone(), envelope);
         }
         if validate_aggregate {
-            ledger_conservation::validate(self)?;
+            ledger_conservation::validate_in(self, compute)?;
         }
         Ok(())
     }
@@ -260,8 +297,8 @@ impl EnvelopeLedger {
         receipts: &mut [EnvelopeReceipt],
         terminal_keys: &[EnvelopeKey],
     ) -> Result<(), StepFatal> {
-        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize, true)?;
-        self.remove_terminal_private(terminal_keys, true)
+        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize, true, None)?;
+        self.remove_terminal_private(terminal_keys, true, None)
     }
 
     /// StockProcessing 持有可丢弃的逐股账本，立即逐项校验 receipt transition。
@@ -271,8 +308,8 @@ impl EnvelopeLedger {
         receipts: &mut [EnvelopeReceipt],
         terminal_keys: &[EnvelopeKey],
     ) -> Result<(), StepFatal> {
-        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize, false)?;
-        self.remove_terminal_private(terminal_keys, false)
+        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize, false, None)?;
+        self.remove_terminal_private(terminal_keys, false, None)
     }
 
     /// ReceiptAggregation owns this ledger for the rest of the private tick. The caller checks
@@ -288,8 +325,9 @@ impl EnvelopeLedger {
             receipts,
             |next_index, receipts| ledger_candidate::index_in_order(next_index, receipts.to_vec()),
             false,
+            None,
         )?;
-        self.remove_terminal_private(terminal_keys, false)
+        self.remove_terminal_private(terminal_keys, false, None)
     }
 
     /// 原子安装 AccountValidation 创建的 envelopes，后续由 ReceiptAggregation 校验。
@@ -301,8 +339,8 @@ impl EnvelopeLedger {
     ) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
         shadow.insert_created_for_stock_round(envelopes)?;
-        validate_ledger_evidence(self)?;
-        validate_ledger_evidence(&shadow)?;
+        validate_ledger_evidence(self, None)?;
+        validate_ledger_evidence(&shadow, None)?;
         *self = shadow;
         Ok(())
     }
@@ -373,7 +411,7 @@ impl EnvelopeLedger {
 
     /// CommitTick owner 在失败时丢弃完整 tick candidate；只 detach 实际变化的页。
     pub(super) fn rebase_private_for_tick_commit(&mut self) -> Result<(), StepFatal> {
-        validate_ledger_evidence(self)?;
+        validate_ledger_evidence(self, None)?;
 
         // 校验已证明 basis = live + spent + released；TickStart 且 basis = live
         // 的行没有本 tick 的消费事实，累积费用也已被审计。无变化时保留共享行。
@@ -499,6 +537,7 @@ impl EnvelopeLedger {
     }
 
     /// 调用方按完整 EnvelopeKey 排序，先核对 nominal 与 charged；此门禁保留完整字段比较。
+    /// 任务65 #1：逐 tick 校验改走轻量门；此完整门禁由恢复/水合路径使用。
     pub(in crate::session) fn validate_borrowed_tick_start_projection(
         &self,
         projected: &[super::BorrowedTickStartEnvelope<'_>],
@@ -548,11 +587,24 @@ impl EnvelopeLedger {
     /// This read-only gate is intended for adapters that must reject an
     /// incomplete or contradictory ledger before deriving downstream input.
     pub fn validate_complete_evidence(&self) -> Result<(), StepFatal> {
-        validate_ledger_evidence(self)
+        validate_ledger_evidence(self, None)
+    }
+
+    /// 与 [`Self::validate_complete_evidence`] 相同的校验合同；ReceiptAggregation
+    /// 链必须传入会话 compute 上下文，让 ≥512 行的并行 row 审计归入会话 registry，
+    /// 而不是 caller 当前的池。
+    pub fn validate_complete_evidence_in(
+        &self,
+        compute: &std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<(), StepFatal> {
+        validate_ledger_evidence(self, Some(compute))
     }
 }
 
-fn validate_ledger_evidence(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
+fn validate_ledger_evidence(
+    ledger: &EnvelopeLedger,
+    compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+) -> Result<(), StepFatal> {
     // 缓存覆盖下方完整校验的全部输入。Weak 保留 allocation identity，避免 ABA，
     // 且 Arc::make_mut 会在 mutation 时使该 identity 失效。
     let mut cache = ledger.evidence_cache.lock().map_err(|error| {
@@ -566,12 +618,15 @@ fn validate_ledger_evidence(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
     }) {
         return Ok(());
     }
-    validate_ledger_evidence_uncached(ledger)?;
+    validate_ledger_evidence_uncached(ledger, compute)?;
     *cache = Some(EvidenceCache::capture(ledger));
     Ok(())
 }
 
-fn validate_ledger_evidence_uncached(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
+fn validate_ledger_evidence_uncached(
+    ledger: &EnvelopeLedger,
+    compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+) -> Result<(), StepFatal> {
     #[cfg(test)]
     EVIDENCE_VALIDATION_COUNT.with(|count| count.set(count.get() + 1));
     let dense_checked = if ledger.envelopes.len() >= 512
@@ -582,7 +637,7 @@ fn validate_ledger_evidence_uncached(ledger: &EnvelopeLedger) -> Result<(), Step
             .iter()
             .chain(ledger.terminal_envelopes.iter())
             .collect();
-        let checked = ledger_conservation::map_rows(&rows, |(key, envelope)| {
+        let checked = ledger_conservation::map_rows(&rows, compute, |(key, envelope)| {
             let state = ledger
                 .conservation
                 .get(key)
@@ -668,6 +723,9 @@ fn validate_ledger_evidence_row_with_conservation(
     conservation: Option<&ConservationState>,
 ) -> Result<(), StepFatal> {
     envelope.validate()?;
+    if envelope.key() != key {
+        return Err(ledger_validation::invariant("ledger行键与规范订单身份不一致"));
+    }
     if ledger.envelopes.contains_key(key) && ledger.terminal_envelopes.contains_key(key) {
         return Err(ledger_validation::invariant(
             "live and terminal envelope rows overlap",

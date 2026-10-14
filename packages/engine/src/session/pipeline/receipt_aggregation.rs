@@ -1,29 +1,35 @@
+use super::fill_fact::ReceiptBatch;
 use super::{Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, StepFatal};
 use crate::GameSession;
 
 /// Applies ReceiptAggregation to a private ledger candidate and advances both authoritative
 /// receipt cursors together. A split cursor is an invariant failure, never a
 /// condition to repair by choosing one side.
+///
+/// 返回（收据，typed Fill 事实）：收据是审计记录；事实在产出点派生一次供下游消费。
 pub(super) fn apply_session_receipt_transaction(
     session: &mut GameSession,
     created_envelopes: Vec<Envelope>,
     worker_batches: Vec<Vec<EnvelopeReceipt>>,
     terminal_keys: Vec<EnvelopeKey>,
-) -> Result<Vec<EnvelopeReceipt>, StepFatal> {
+) -> Result<ReceiptBatch, StepFatal> {
     if session.state.next_receipt_base != session.state.envelope_ledger.next_receipt_index() {
         return Err(session_cursor_mismatch(
             session.state.next_receipt_base,
             session.state.envelope_ledger.next_receipt_index(),
         ));
     }
-    let receipts = apply_receipt_transaction(
+    // 大账本完整校验使用会话自己的 compute registry；caller 所在线程不影响资源域。
+    let compute = session.compute_context().clone();
+    let batch = apply_receipt_transaction(
         &mut session.state.envelope_ledger,
         created_envelopes,
         worker_batches,
         terminal_keys,
+        &compute,
     )?;
     session.state.next_receipt_base = session.state.envelope_ledger.next_receipt_index();
-    Ok(receipts)
+    Ok(batch)
 }
 
 fn session_cursor_mismatch(session_cursor: u64, ledger_cursor: u64) -> StepFatal {
@@ -46,27 +52,32 @@ pub(super) fn apply_receipt_transaction(
     created_envelopes: Vec<Envelope>,
     worker_batches: Vec<Vec<EnvelopeReceipt>>,
     terminal_keys: Vec<EnvelopeKey>,
-) -> Result<Vec<EnvelopeReceipt>, StepFatal> {
-    let (candidate, receipts) = apply_owned_receipt_transaction(
+    compute: &std::sync::Arc<crate::compute::ComputeContext>,
+) -> Result<ReceiptBatch, StepFatal> {
+    let (candidate, batch) = apply_owned_receipt_transaction(
         ledger.clone(),
         created_envelopes,
         worker_batches,
         terminal_keys,
+        compute,
     )?;
     *ledger = candidate;
-    Ok(receipts)
+    Ok(batch)
 }
 
 /// The enclosing tick owns and discards this ledger on failure. All rows are
 /// checked at the input and output boundaries; the batch itself applies each
 /// transition in place instead of repeatedly cloning the entire order ledger.
+///
+/// Fill 事实在此（收据产出点）派生恰好一次；调用方消费 typed 结果，不得重推。
 pub(super) fn apply_owned_receipt_transaction(
     mut candidate: EnvelopeLedger,
     created_envelopes: Vec<Envelope>,
     worker_batches: Vec<Vec<EnvelopeReceipt>>,
     terminal_keys: Vec<EnvelopeKey>,
-) -> Result<(EnvelopeLedger, Vec<EnvelopeReceipt>), StepFatal> {
-    candidate.validate_complete_evidence()?;
+    compute: &std::sync::Arc<crate::compute::ComputeContext>,
+) -> Result<(EnvelopeLedger, ReceiptBatch), StepFatal> {
+    candidate.validate_complete_evidence_in(compute)?;
     let cursor_before = candidate.next_receipt_index();
 
     candidate.insert_created_for_stock_round(created_envelopes)?;
@@ -89,7 +100,7 @@ pub(super) fn apply_owned_receipt_transaction(
     }
     #[cfg(not(any(test, feature = "verification-harness")))]
     candidate.apply_private_for_stock_round(&mut receipts, &terminal_keys)?;
-    candidate.validate_complete_evidence()?;
+    candidate.validate_complete_evidence_in(compute)?;
 
     let receipt_count = u64::try_from(receipts.len()).map_err(|_| cursor_mismatch())?;
     let expected_cursor = cursor_before
@@ -99,7 +110,8 @@ pub(super) fn apply_owned_receipt_transaction(
         return Err(cursor_mismatch());
     }
 
-    Ok((candidate, receipts))
+    let batch = ReceiptBatch::from_aggregation(receipts)?;
+    Ok((candidate, batch))
 }
 
 fn cursor_mismatch() -> StepFatal {

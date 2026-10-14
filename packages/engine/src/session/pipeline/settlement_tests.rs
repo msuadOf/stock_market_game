@@ -45,7 +45,7 @@ fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
             .install(|| {
                 ReceiptSettlementPlan::from_receipts(&receipts)
                     .unwrap()
-                    .prepare_accounts(&accounts, true)
+                    .prepare_accounts(&crate::ComputeContext::with_workers(threads).unwrap(), &accounts, true)
                     .unwrap()
             })
     };
@@ -601,7 +601,7 @@ fn settlement_plan_ignores_zero_quantity_fill_before_gross_and_fee_checks() {
     receipt.charged.stamp_tax = Money::from_cents(1);
     let (patch, application) = ReceiptSettlementPlan::from_receipts(&[receipt])
         .unwrap()
-        .prepare_accounts(&AccountBook::default(), true)
+        .prepare_accounts(&crate::ComputeContext::shared_default().unwrap(), &AccountBook::default(), true)
         .unwrap();
     assert!(patch.is_empty());
     assert_eq!(application.applied_receipts, 0);

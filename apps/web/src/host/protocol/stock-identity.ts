@@ -7,7 +7,7 @@
  * 既有 store、视图、排序与过滤逻辑继续面向代码串，不需要感知 StockId。
  *
  * 翻译顺序契约：事件/事实必须先以原始数值形态通过 `validate.ts` 的
- * `canonical_payload` 与稳定键比对（引擎签名字符串按数值生成），随后才能翻译；
+ * 稳定键与事件映射按数值比对（引擎不再生成 canonical payload 签名串），随后才能翻译；
  * 快照与 runtime delta 不含引擎签名串，可边解析边翻译。反向（请求层）翻译见
  * `wireIntentOf` 与 `config/stock-ids.ts` 的 `stockIdOf`。
  */
@@ -51,7 +51,6 @@ export type WireEvent = Exclude<Event, { DayBoundary: unknown }> | { readonly Da
 export type WireEventFact = {
   readonly key: EventStableKey;
   readonly event: WireEvent;
-  readonly canonical_payload: string;
 };
 
 /** wire 账户快照。 */
@@ -100,7 +99,6 @@ export type WireTickTimeseriesPayload = {
 /** wire tick 帧。 */
 export type WireTickFrame = {
   readonly tick: number;
-  readonly events: readonly WireEvent[];
   readonly facts: readonly WireEventFact[];
   readonly timeseries_payload: WireTickTimeseriesPayload;
   readonly seq_from: number;
@@ -122,7 +120,6 @@ export type WireCivilUpdate = {
   readonly kinds: readonly CivilUpdateKind[];
   readonly tick: number;
   readonly civil_date: string;
-  readonly events: readonly WireEvent[];
   readonly facts: readonly WireEventFact[];
   readonly seq_from: number;
   readonly seq_to: number;
@@ -161,11 +158,10 @@ export type CodedEvent =
   | { readonly OrderCanceled: { readonly seq: number; readonly account: AccountId; readonly code: string; readonly id: number; readonly remaining_qty: number } }
   | { readonly OrderAccepted: { readonly seq: number; readonly account: AccountId; readonly code: string; readonly id: number; readonly side: Side; readonly price: Money; readonly remaining_qty: number } };
 
-/** 翻译后的事实：`canonical_payload` 保持引擎签名的原始字符串，不重写。 */
+/** 翻译后的事实记录：与 wire 一致，仅事件载荷被翻译为代码串形态。 */
 export type CodedEventFact = {
   readonly key: CodedEventStableKey;
   readonly event: CodedEvent;
-  readonly canonical_payload: string;
 };
 
 /** 翻译后的账户快照：持仓/卖出占用按代码串建键。 */
@@ -322,7 +318,8 @@ function codedEvent(event: WireEvent, path: string): CodedEvent {
     return { DayBoundary: { ...event.DayBoundary, closed_daily_candles: codedStockKeys(event.DayBoundary.closed_daily_candles, `${path}.DayBoundary.closed_daily_candles`) } };
   }
   if ("CivilDateAdvanced" in event) return { CivilDateAdvanced: { ...event.CivilDateAdvanced } };
-  if ("CompanyDisclosurePublished" in event) return { CompanyDisclosurePublished: { ...event.CompanyDisclosurePublished } };
+  // CompanyId 在 wire 是数值；UI 的现有公司键只在此边界格式化为十进制，不冒充 StockCode。
+  if ("CompanyDisclosurePublished" in event) return { CompanyDisclosurePublished: { ...event.CompanyDisclosurePublished, company: String(event.CompanyDisclosurePublished.company) } };
   if ("IntentRejected" in event) return { IntentRejected: { ...event.IntentRejected, code: stockCodeOf(event.IntentRejected.code, `${path}.IntentRejected.code`) } };
   if ("SettlementError" in event) return { SettlementError: { ...event.SettlementError, code: stockCodeOf(event.SettlementError.code, `${path}.SettlementError.code`) } };
   if ("OrderCanceled" in event) return { OrderCanceled: { ...event.OrderCanceled, code: stockCodeOf(event.OrderCanceled.code, `${path}.OrderCanceled.code`) } };
@@ -334,8 +331,6 @@ function codedFact(fact: WireEventFact, path: string): CodedEventFact {
   return {
     key: codedStableKey(fact.key, `${path}.key`),
     event: codedEvent(fact.event, `${path}.event`),
-    // canonical_payload 是引擎按数值身份生成的签名字符串，原样保留，不随翻译重写。
-    canonical_payload: fact.canonical_payload,
   };
 }
 
@@ -375,10 +370,12 @@ export function translateSnapshot(snapshot: WireSnapshot, path: string): CodedSn
 
 function codedFrame(frame: WireTickFrame, path: string): CodedTickFrame {
   const payload = frame.timeseries_payload;
+  const facts = frame.facts.map((fact, index) => codedFact(fact, `${path}.facts[${index}]`));
   return {
     tick: frame.tick,
-    events: frame.events.map((event, index) => codedEvent(event, `${path}.events[${index}]`)),
-    facts: frame.facts.map((fact, index) => codedFact(fact, `${path}.facts[${index}]`)),
+    facts,
+    // 事件视图只借用记录中的同一载荷；不再次翻译或构造事件。
+    events: facts.map((fact) => fact.event),
     timeseries_payload: {
       markets: codedStockKeys(payload.markets, `${path}.timeseries_payload.markets`),
       active_daily_candles: codedStockKeys(payload.active_daily_candles, `${path}.timeseries_payload.active_daily_candles`),
@@ -428,11 +425,12 @@ export function translateEngineUpdate(update: WireEngineUpdate, path = "EngineUp
     };
   }
   const civil = update.CivilUpdate;
+  const facts = civil.facts.map((fact, index) => codedFact(fact, `${path}.CivilUpdate.facts[${index}]`));
   return {
     CivilUpdate: {
       ...civil,
-      events: civil.events.map((event, index) => codedEvent(event, `${path}.CivilUpdate.events[${index}]`)),
-      facts: civil.facts.map((fact, index) => codedFact(fact, `${path}.CivilUpdate.facts[${index}]`)),
+      facts,
+      events: facts.map((fact) => fact.event),
       refresh: {
         ...civil.refresh,
         snapshot: translateSnapshot(civil.refresh.snapshot, `${path}.CivilUpdate.refresh.snapshot`),

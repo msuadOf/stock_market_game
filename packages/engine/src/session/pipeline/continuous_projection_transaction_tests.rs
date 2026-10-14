@@ -69,16 +69,22 @@ fn same_local_identity_on_two_stocks_collects_canonically_and_advances_seq() {
 
     assert_eq!(collected.next_seq, 11);
     assert!(matches!(
-        collected.events.as_slice(),
+        collected.facts.as_slice(),
         [
-            Event::Trade {
-                seq: 10,
-                code: first_code,
+            crate::session::protocol::EventFact {
+                event: Event::Trade {
+                    seq: 10,
+                    code: first_code,
+                    ..
+                },
                 ..
             },
-            Event::Trade {
-                seq: 11,
-                code: second_code,
+            crate::session::protocol::EventFact {
+                event: Event::Trade {
+                    seq: 11,
+                    code: second_code,
+                    ..
+                },
                 ..
             }
         ] if first_code == &alpha_code && second_code == &StockId(1)

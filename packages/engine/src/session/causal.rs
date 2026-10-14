@@ -74,11 +74,10 @@ impl GameSession {
         self.causal_record(CausalFactKind::Quote(quote));
         let plan = self
             .state
-            .parent_orders
-            .get(&account)
-            .and_then(|plans| plans.get(code))
-            .filter(|plan| plan.side() == side)
-            .and_then(|plan| plan.linked_plan_id());
+            .plans
+            .active_plan(account, code)
+            .filter(|plan| plan.direction() == side)
+            .map(|plan| plan.plan_id());
         self.causal_record(CausalFactKind::Submitted(OrderOrigin {
             order,
             account,

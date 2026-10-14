@@ -12,15 +12,20 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
+#[cfg(test)]
+mod company_closing_tests;
 mod company_groups;
-mod company_operations;
 mod continuous_cancellation;
 mod decision_chain;
 mod deferred_drop;
 pub use deferred_drop::defer as defer_destruction;
+use deferred_drop::defer_swap;
+use crate::u64_decimal;
 #[doc(hidden)]
 pub use deferred_drop::host_deferred_count as deferred_destruction_count;
-use deferred_drop::defer_swap;
+#[doc(hidden)]
+pub use deferred_drop::host_deferred_degradation as deferred_destruction_degradation;
+pub use deferred_drop::DeferredDropDegradation;
 mod disclosures;
 mod envelope_projection;
 mod execution;
@@ -29,6 +34,38 @@ mod hash;
 mod history_reads;
 mod shared_ingress;
 pub use shared_ingress::SharedSessionIngress;
+#[cfg(feature = "verification-harness")]
+mod verify_metrics;
+#[cfg(feature = "verification-harness")]
+pub use deferred_drop::{drain as verification_drain, DrainFailure};
+#[cfg(feature = "verification-harness")]
+pub use verify_metrics::records as verification_job_records;
+#[cfg(feature = "verification-harness")]
+pub use verify_metrics::snapshot as verification_metrics_snapshot;
+#[cfg(feature = "verification-harness")]
+pub use verify_metrics::{JobKind, JobRecord, TraceInvalid, VerifySnapshot};
+
+/// 仅诊断构建记录 actor producer 的完整 lifetime；普通构建为零大小空操作。
+/// P2②：私有字段防止绕过工厂构造（无登记构造 + Drop 递减会破坏 drain 前提：
+/// 1→0 隐藏活 producer，0→MAX 静默回绕）。只有 [`verification_actor_guard`] 能构造。
+#[doc(hidden)]
+pub struct VerificationActorGuard(());
+#[doc(hidden)]
+#[inline(always)]
+pub fn verification_actor_guard() -> VerificationActorGuard {
+    #[cfg(feature = "verification-harness")]
+    verify_metrics::METRICS
+        .actor_producers
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    VerificationActorGuard(())
+}
+impl Drop for VerificationActorGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        #[cfg(feature = "verification-harness")]
+        verify_metrics::METRICS.producer_exit();
+    }
+}
 mod initial_allocation;
 mod institutional_behavior;
 mod minimal_snapshot;
@@ -36,6 +73,7 @@ mod observation_clock;
 mod persistence;
 pub mod pipeline;
 mod plan_chain_candidates;
+mod plan_continuation_domain;
 mod plan_execution;
 mod player_candidates;
 pub mod protocol;
@@ -62,6 +100,10 @@ mod hash_contract_tests;
 #[cfg(test)]
 mod plan_chain_candidates_tests;
 #[cfg(test)]
+mod plan_root_quota_tests;
+#[cfg(test)]
+mod plan_root_quota_wave_tests;
+#[cfg(test)]
 mod player_candidates_tests;
 #[cfg(test)]
 mod reconciliation_plan_phase_tests;
@@ -81,17 +123,14 @@ use persistence::{validate_save_slot, validate_saved_order_state};
 pub use attention::NpcAttentionState;
 mod notices;
 pub use civil_clock::{
-    CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase, DueBusiness,
-    DueBusinessId, DueKind,
+    CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase,
 };
 pub use company_groups::{GroupHolding, GroupStructure};
-pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,
 };
-pub use execution::ParentOrderPlan;
 pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
 pub use notices::NpcInformationCadence;
 pub use persistence::{
@@ -100,8 +139,7 @@ pub use persistence::{
     SavedRetailReceiptIdentity, SavedRuntimeState, MAX_SAVE_DECODE_BYTES, SIMULATION_POLICY_ID,
 };
 pub use plan_execution::{
-    PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
-    PlanExecutionRequest,
+    PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport, PlanExecutionRequest,
 };
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 
@@ -141,7 +179,6 @@ use thiserror::Error;
 
 /// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
 /// 日终所有剩余子单和计划都会失效，绝不跨日沿用旧观点。
-pub const PARENT_ORDER_HORIZON_MINUTES: u64 = GAME_INTRADAY_MINUTES_PER_DAY as u64;
 
 /// SplitMix64：确定性 PRNG。种子化、可重放（同种子同序列）。
 #[derive(Clone)]
@@ -438,7 +475,6 @@ pub struct SaveSlot {
     pub seed: u64,
     pub snapshot: SaveSnapshot,
     /// 日内存档恢复集合竞价所需的完整委托队列。
-    pub auction_orders: BTreeMap<StockId, Vec<AuctionOrderSnap>>,
     /// 连续竞价未成交委托。
     pub resting_orders: BTreeMap<StockId, Vec<Order>>,
     /// 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
@@ -461,15 +497,11 @@ pub struct SaveSlot {
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
-    /// 机构策略已经形成、但尚未完全成交的母单执行计划。
-    /// 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
-    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockId, SaveParentOrderPlan>>,
     /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
     pub pending_player: Vec<ReceiptBearingIntent>,
     /// 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求；日界处尚未生成。
-    pub pending_npc: Option<PendingNpcBatch>,
     pub ingress_receipt_cursors: IngressReceiptCursors,
     /// 保持订单 id/到达序继续单调递增。
     #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -489,9 +521,6 @@ pub struct SaveSlot {
     /// 公开信息库（报告 + 公告；恢复走 from_parts 逐条重验）。
     #[ts(skip)]
     pub public_library: crate::information::PublicLibrary,
-    /// 经营 ↔ 时钟到期镜像（已镜像调度事件 id 集合）。
-    #[ts(skip)]
-    pub ops_wiring: CompanyOperationsClockWiring,
     /// 披露派发游标（published_through / announced_through）。
     #[ts(skip)]
     pub disclosures: DisclosureDispatch,
@@ -508,10 +537,6 @@ pub struct SaveSlot {
     pub watchlists: BTreeMap<AccountId, crate::experience::PersonalWatchlist>,
     pub price_memories: BTreeMap<AccountId, crate::experience::PersonalPriceMemory>,
     pub history_reads: BTreeMap<AccountId, crate::experience::PersonalHistoryReadLedger>,
-    /// 计划执行待应用事实队列（存档边界只保留「计划簿中仍存活」的条目；
-    /// 未知/已终止计划的迟到条目按完整存档契约显式丢弃。
-    #[ts(skip)]
-    pub pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
 }
 
 impl SaveSlot {
@@ -521,58 +546,6 @@ impl SaveSlot {
             .stock_catalog()
             .ok()
             .and_then(|catalog| catalog.id(code))
-    }
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-#[ts(export)]
-pub struct SaveParentOrderPlan {
-    pub code: StockId,
-    pub side: Side,
-    pub target_qty: u32,
-    pub filled_qty: u32,
-    pub child_qty: u32,
-    pub active_child_order_id: Option<OrderId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub linked_plan_id: Option<crate::plans::PlanId>,
-    pub limit_price: Money,
-    #[serde(with = "u64_decimal")]
-    #[ts(type = "string")]
-    pub expires_market_minute: u64,
-}
-
-impl From<&ParentOrderPlan> for SaveParentOrderPlan {
-    fn from(plan: &ParentOrderPlan) -> Self {
-        Self {
-            code: plan.code().clone(),
-            side: plan.side(),
-            target_qty: plan.target_qty(),
-            filled_qty: plan.filled_qty(),
-            child_qty: plan.child_qty(),
-            active_child_order_id: plan.active_child_order_id(),
-            linked_plan_id: plan.linked_plan_id(),
-            limit_price: plan.limit_price(),
-            expires_market_minute: plan.expires_market_minute(),
-        }
-    }
-}
-
-impl From<SaveParentOrderPlan> for ParentOrderPlan {
-    fn from(plan: SaveParentOrderPlan) -> Self {
-        Self::from_saved_facts(
-            plan.code,
-            plan.side,
-            plan.target_qty,
-            plan.filled_qty,
-            plan.child_qty,
-            plan.active_child_order_id,
-            None,
-            plan.linked_plan_id,
-            plan.limit_price,
-            plan.expires_market_minute,
-        )
     }
 }
 
@@ -592,26 +565,6 @@ pub struct NpcOrderLifecycle {
     pub placed_market_minute: u64,
     /// 到达该分钟后，由 NPC 经正常撤单生命周期撤回。
     pub expires_market_minute: u64,
-}
-
-pub(crate) mod u64_decimal {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&value.to_string())
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        String::deserialize(deserializer)?
-            .parse::<u64>()
-            .map_err(serde::de::Error::custom)
-    }
 }
 
 mod canonical_u64_decimal {
@@ -793,18 +746,6 @@ pub struct FilledOrderSnap {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
-pub struct PendingNpcBatch {
-    #[serde(with = "crate::orderbook::js_safe_u64")]
-    #[ts(type = "number")]
-    pub observed_tick: u64,
-    pub observed_accounts: Vec<AccountId>,
-    pub intents: Vec<ReceiptBearingIntent>,
-    /// Reconciliation cancellation -> replacement admission, by intent position.
-    pub dependencies: Vec<(usize, usize)>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
 pub struct ReceiptBearingIntent {
     pub owner: AccountId,
     pub intent: Intent,
@@ -859,42 +800,6 @@ impl IngressReceiptCursors {
     }
 }
 
-impl PendingNpcBatch {
-    pub(super) fn validate_dependencies(&self) -> Result<(), String> {
-        let mut seen = BTreeSet::new();
-        for &(before, after) in &self.dependencies {
-            let prefix = format!("pending NPC dependency {before}->{after}");
-            if before >= after || after >= self.intents.len() {
-                return Err(format!(
-                    "{prefix} must reference earlier and later queued intents"
-                ));
-            }
-            if !seen.insert((before, after)) {
-                return Err(format!("{prefix} is duplicated"));
-            }
-            let before = &self.intents[before];
-            let after = &self.intents[after];
-            let Intent::Cancel {
-                code: before_code, ..
-            } = &before.intent
-            else {
-                return Err(format!("{prefix} predecessor is not a cancellation"));
-            };
-            let after_code = match &after.intent {
-                Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. } => code,
-                Intent::Cancel { .. } => {
-                    return Err(format!("{prefix} successor is not a placement"));
-                }
-            };
-            if before.owner != after.owner || before_code != after_code {
-                return Err(format!(
-                    "{prefix} must belong to the same account and stock"
-                ));
-            }
-        }
-        Ok(())
-    }
-}
 
 type ContinuousOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, Order)>>;
 type AuctionOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, AuctionOrderSnap)>>;
@@ -913,6 +818,8 @@ struct WorkingOrderSlices<'a> {
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
 #[derive(Debug, Error)]
 pub enum SessionError {
+    #[error(transparent)]
+    ComputeInitialization(#[from] crate::compute::ComputeInitError),
     #[error(transparent)]
     Step(#[from] StepFatal),
     /// 构造参数非法（stocks 空 / ticks_per_day==0 等）。数值码+数值上下文（ADR 0041）。
@@ -959,9 +866,9 @@ pub enum SessionError {
     /// 透传自然日时钟错误（冻结日历与双时钟 日结验证/原子失败）。
     #[error(transparent)]
     CivilClock(#[from] CivilClockError),
-    /// 透传公司经营接线错误（会话装配与执行接线 日终编排）。
+    /// 透传公司经营错误（会话装配与执行接线 日终编排：装配校验与逐日经营推进）。
     #[error(transparent)]
-    CompanyOperations(#[from] company_operations::CompanyOperationsSeamError),
+    CompanyOperations(Box<crate::company::operations::OperationsError>),
     /// 透传披露派发错误（会话装配与执行接线 日终编排）。
     #[error(transparent)]
     Disclosure(#[from] DisclosureError),
@@ -974,6 +881,12 @@ pub enum SessionError {
     /// 透传只读公开信息查询错误。
     #[error(transparent)]
     Information(#[from] Box<crate::information::InformationError>),
+}
+
+impl From<crate::company::operations::OperationsError> for SessionError {
+    fn from(source: crate::company::operations::OperationsError) -> Self {
+        Self::CompanyOperations(Box::new(source))
+    }
 }
 
 /// A 股证券类别；类别决定涨跌幅与差异化申报数量上限。
@@ -1054,7 +967,7 @@ impl SecurityCategory {
 }
 
 /// 单只股票初始规格（行情/涨跌停/tick/总股本/流通盘）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct StockSpec {
     pub code: StockCode,
     /// 上市交易所；配置与存档必须显式提供。
@@ -1447,9 +1360,10 @@ impl SessionSetup {
 /// 会话 RNG、按 tick 派生的决策 RNG 与可存档的个体注意力 RNG 都源于同一 seed，
 /// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
+    compute: std::sync::Arc<crate::compute::ComputeContext>,
     ingress: Option<shared_ingress::IngressBinding>,
     /// 外部直改计数（X1 新鲜度校验）：任何绕过 tick 管线、在 commit 与下个
-    /// plan_tick 之间改权威状态的行为必须自增；投机 stash 消费要求相等。
+    /// plan_tick 之间改权威状态的行为必须自增（直改入口统一标记）。
     /// 不入 state 克隆链——shadow 克隆取值快照，commit 不回写。
     revision: std::sync::atomic::AtomicU64,
     poison: Option<StepFatal>,
@@ -1464,6 +1378,10 @@ pub struct GameSession {
 /// tick shadow 与自然日日结共同提交的唯一状态集合。
 struct CommittableSessionState {
     setup: SessionSetup,
+    /// 运行时-only 费率快照（任务65 #1 前置条件守卫）：于 GameSession::new（含恢复重建）
+    /// 时固定，不参与存档/business_state_hash。逐 tick 与 `setup.config` O(1) 比对，
+    /// 任何静默热改 → capture/校验门禁 fail closed（见 envelope_projection 守卫）。
+    validated_config: GameConfig,
     /// 股票目录（ADR 0041）：id ↔ 代码/显示名的唯一翻译层，构造后不可变。
     stocks: StockCatalog,
     rng: SplitMix64,
@@ -1474,14 +1392,10 @@ struct CommittableSessionState {
     price_history: BTreeMap<StockId, VecDeque<Money>>,
     market_minute_closes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
     candle_book: SessionCandleBook,
-    auction_orders: BTreeMap<StockId, Vec<AuctionOrderSnap>>,
     pending_player: Vec<ReceiptBearingIntent>,
-    pending_npc: Option<PendingNpcBatch>,
     ingress_receipt_cursors: IngressReceiptCursors,
     npc_attention: AccountPagedMap<NpcAttentionState>,
     retail_experience: AccountPagedMap<RetailExperienceState>,
-    parent_orders: BTreeMap<AccountId, BTreeMap<StockId, ParentOrderPlan>>,
-    pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 上一 tick 中实际观察并判断目标仓位与经历调整的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
@@ -1502,8 +1416,6 @@ struct CommittableSessionState {
     closing: std::sync::Arc<crate::accounting::closing::ClosingEngine>,
     /// 公开信息库（公开信息；前史已播种）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
-    /// 经营 ↔ 时钟到期镜像。
-    ops_wiring: CompanyOperationsClockWiring,
     /// 披露派发游标。
     disclosures: DisclosureDispatch,
     /// 跨日个人交易计划（个人计划生命周期；PlanBook 本身支持全账户）。
@@ -1523,9 +1435,141 @@ struct CommittableSessionState {
     seq: u64,
     /// 冻结日历与双时钟 自然日经营时钟：与 tick/交易日计数分离的权威自然日推进。
     civil_clock: CivilClock,
-    /// X1 投机预计算暂存（不进存档/hash；candidate 尾部产出、随提交流转、plan_tick 消费）。
-    speculative_prepare: Option<pipeline::SpeculativePrepareStash>,
 }
+
+/// commit_from 逐字段移交的字段身份（Luna 修复1 + Astra 修复2升级 + 增量五复检收窄）。
+/// 仅 verification-harness 计量消费；析构语义零变化。完整性契约（如实范围，不称
+/// 无条件保证）：
+/// a) 防护面：任何 defer_swap 调用点的删除、字段集成员/数量变化（含加字段不
+///    更新全集、FieldId variant 复用）必然让
+///    verify_metrics_classifies_real_defer_swap_fields_as_commit_field 变红；
+/// b) 盲区 1（已知，如实登记）：FieldId 是调用点自报标签，未与真实字段做类型级
+///    绑定——错标（把 A 字段的 swap 标成 B 的 FieldId）叠加"删一换一"可绕过本绊线；
+/// c) 盲区 2（已知，如实登记）：新增重字段若不经 defer_swap 而直接赋值（commit
+///    路径同步析构），本绊线不拦截——它只观测走 defer_swap 的移交。
+/// 同步清单：给 CommittableSessionState 增删字段时 ①增删枚举项 ②commit_from 的
+/// defer_swap 传新项 ③同步更新两个 cfg 变体的 COMMIT_FIELD_EXPECTED 全集。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[repr(u8)]
+pub(in crate::session) enum FieldId {
+    Setup = 0,
+    ValidatedConfig,
+    Stocks,
+    Rng,
+    Markets,
+    Accounts,
+    HistoryReads,
+    PriceHistory,
+    MarketMinuteCloses,
+    CandleBook,
+    PendingPlayer,
+    IngressReceiptCursors,
+    NpcAttention,
+    RetailExperience,
+    // owner8 引擎闭包（批次④）删除 parent_orders/pending_plan_events 两个 state 字段，
+    // 其 FieldId 变体随之移除（设计内更新，非弱化——见下方 COMMIT_FIELD_EXPECTED）。
+    NpcOrderLifecycles,
+    LastRetailDecisions,
+    LastRetailOrderEvents,
+    NpcDecisionTraces,
+    Causal,
+    AttentionScheduler,
+    CompanyRegistry,
+    Operations,
+    Groups,
+    Closing,
+    Library,
+    Disclosures,
+    Plans,
+    BeliefParticipants,
+    EnvelopeLedger,
+    RetailProjectionSeen,
+    CivilClock,
+    SpeculativePrepare,
+}
+
+/// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
+/// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
+/// 默认 features 为 30 项；开启 simulation-diagnostics 时为 32 项（追加
+/// NpcDecisionTraces/Causal）。owner8 批次④删除两字段后由 33/35 收窄为 31/33
+///（Astra 终审口径校正：下文一律按现行 31/33 口径表述）。一致性要求（Astra
+/// 增量六措辞校正；批四删除 PendingNpc 字段后 30/32 口径）：32 项变体去掉两个
+/// 诊断项（NpcDecisionTraces/Causal）后，其余 30 项与默认变体逐项一致——诊断项插在默认变体第 20 项
+/// （LastRetailOrderEvents）之后，其后的项在 33 项变体中下标后移，逐下标位置
+/// 并不一致（人工同步维护，盲区 1 的自报标签性质同样适用于此处清单）。
+#[cfg(not(feature = "simulation-diagnostics"))]
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
+    FieldId::Setup,
+    FieldId::ValidatedConfig,
+    FieldId::Stocks,
+    FieldId::Rng,
+    FieldId::Markets,
+    FieldId::Accounts,
+    FieldId::HistoryReads,
+    FieldId::PriceHistory,
+    FieldId::MarketMinuteCloses,
+    FieldId::CandleBook,
+    FieldId::PendingPlayer,
+    FieldId::IngressReceiptCursors,
+    FieldId::NpcAttention,
+    FieldId::RetailExperience,
+    FieldId::NpcOrderLifecycles,
+    FieldId::LastRetailDecisions,
+    FieldId::LastRetailOrderEvents,
+    FieldId::AttentionScheduler,
+    FieldId::CompanyRegistry,
+    FieldId::Operations,
+    FieldId::Groups,
+    FieldId::Closing,
+    FieldId::Library,
+    FieldId::Disclosures,
+    FieldId::Plans,
+    FieldId::BeliefParticipants,
+    FieldId::EnvelopeLedger,
+    FieldId::RetailProjectionSeen,
+    FieldId::CivilClock,
+    FieldId::SpeculativePrepare,
+];
+
+#[cfg(feature = "simulation-diagnostics")]
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
+    FieldId::Setup,
+    FieldId::ValidatedConfig,
+    FieldId::Stocks,
+    FieldId::Rng,
+    FieldId::Markets,
+    FieldId::Accounts,
+    FieldId::HistoryReads,
+    FieldId::PriceHistory,
+    FieldId::MarketMinuteCloses,
+    FieldId::CandleBook,
+    FieldId::PendingPlayer,
+    FieldId::IngressReceiptCursors,
+    FieldId::NpcAttention,
+    FieldId::RetailExperience,
+    FieldId::NpcOrderLifecycles,
+    FieldId::LastRetailDecisions,
+    FieldId::LastRetailOrderEvents,
+    FieldId::NpcDecisionTraces,
+    FieldId::Causal,
+    FieldId::AttentionScheduler,
+    FieldId::CompanyRegistry,
+    FieldId::Operations,
+    FieldId::Groups,
+    FieldId::Closing,
+    FieldId::Library,
+    FieldId::Disclosures,
+    FieldId::Plans,
+    FieldId::BeliefParticipants,
+    FieldId::EnvelopeLedger,
+    FieldId::RetailProjectionSeen,
+    FieldId::CivilClock,
+    FieldId::SpeculativePrepare,
+];
+
+/// FieldId 全变体数（含 simulation-diagnostics 两项），verify_metrics 计数数组长度。
+pub(in crate::session) const FIELD_ID_COUNT: usize = 32;
+const _: () = assert!(FieldId::SpeculativePrepare as usize == FIELD_ID_COUNT - 1);
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
 ///
@@ -1661,7 +1705,6 @@ fn retained_behavior_daily_closes_history(history: &DailyCandleHistory) -> Vec<C
         .collect()
 }
 
-
 impl GameSession {
     /// 外部直改计数当前值（X1 新鲜度校验）。
     pub(crate) fn external_revision(&self) -> u64 {
@@ -1670,10 +1713,11 @@ impl GameSession {
 
     /// 标记一次绕过 tick 管线的权威直改（X1 红线：直改必须先 mark）。
     pub(crate) fn mark_external_mutation(&self) {
-        self.revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// 测试夹具对 markets（stash 读域）的直改入口：标记外部直改后返回可变市场。
+    /// 测试夹具对 markets 的直改入口：标记外部直改后返回可变市场。
     #[cfg(test)]
     pub(crate) fn fixture_market_mut(
         &mut self,
@@ -1681,15 +1725,6 @@ impl GameSession {
     ) -> Option<&mut crate::Market> {
         self.mark_external_mutation();
         self.state.markets.get_mut(code)
-    }
-
-    /// X1 投机 stash 单点移交：plan_tick 前从权威取走（消费纯移动、零深拷）。
-    /// plan 失败时移交份随 plan 一起丢弃——重试回退内联现算，只损失一次投机
-    /// （性能级），不触及权威状态与失败原子性。
-    pub(in crate::session) fn take_speculative_for_plan(
-        &mut self,
-    ) -> Option<pipeline::read_only_start_export::SpeculativePrepareStash> {
-        self.state.speculative_prepare.take()
     }
 
     /// 直改入口：等价于 state.accounts.get_mut 并标记外部直改
@@ -1706,6 +1741,7 @@ impl GameSession {
 impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
         Ok(Self {
+            compute: self.compute.clone(),
             ingress: self
                 .ingress
                 .as_ref()
@@ -1736,7 +1772,38 @@ impl GameSession {
     /// - 玩家 `AccountId(0)`：`Account::new`（strategy 默认 None）。
     /// - NPC 按 retail/inst/hot 计数逐个生成（id 递增），`StrategyFactory::build` 注入策略。
     pub fn new(setup: SessionSetup, seed: u64) -> Result<GameSession, SessionError> {
-        Self::new_with_company_event_multiplier(setup, seed, 10_000)
+        Self::new_with_compute(
+            setup,
+            seed,
+            crate::compute::ComputeContext::shared_default()?,
+        )
+    }
+
+    /// 宿主明确提供资源；整个会话、candidate 与读视图共享此上下文。
+    pub fn new_with_compute(
+        setup: SessionSetup,
+        seed: u64,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<GameSession, SessionError> {
+        // T3 批四·staged 决策槽防串扰：libtest 复用线程，上一用例残留的
+        // staged 批不得泄漏进本会话的 produce（cfg(test) 适配面专属）。
+        #[cfg(test)]
+        crate::session::pipeline::staged_decision::clear();
+        Self::new_configured(setup, seed, 10_000, compute)
+    }
+
+    pub fn compute_context(&self) -> &std::sync::Arc<crate::compute::ComputeContext> {
+        &self.compute
+    }
+
+    /// 验证/测试专用：把克隆会话重绑到实验用的执行上下文（按线程数对比执行边界）。
+    /// 生产路径的资源所有权不经过此入口；不影响业务状态与存档。
+    #[cfg(any(test, feature = "verification-harness"))]
+    pub fn rebind_compute_for_verification(
+        &mut self,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+    ) {
+        self.compute = compute;
     }
 
     /// Creates a fresh session with a validated diagnostic-only company-event multiplier.
@@ -1745,6 +1812,20 @@ impl GameSession {
         setup: SessionSetup,
         seed: u64,
         event_multiplier_bp: u16,
+    ) -> Result<GameSession, SessionError> {
+        Self::new_configured(
+            setup,
+            seed,
+            event_multiplier_bp,
+            crate::compute::ComputeContext::shared_default()?,
+        )
+    }
+
+    fn new_configured(
+        setup: SessionSetup,
+        seed: u64,
+        event_multiplier_bp: u16,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
     ) -> Result<GameSession, SessionError> {
         if !matches!(event_multiplier_bp, 5_000 | 10_000 | 20_000) {
             // fault1027: 公司事件倍率只允许 5000/10000/20000 bp。ctx[0] = 实际倍率（bp）。
@@ -1807,13 +1888,14 @@ impl GameSession {
             SessionError::InvalidSetup(ValidationFault::new(1028, vec![0]))
         })?;
         let mut civil_clock = civil_clock;
-        let mut ops_wiring = CompanyOperationsClockWiring::new();
-        ops_wiring
-            .install(&mut civil_clock, &ops)
-            .map_err(SessionError::CompanyOperations)?;
+        // 公司 due 单一 authority 后，装配边界仍按本局冻结日历校验全部待办 horizon。
+        for due in ops.scheduler().pending() {
+            civil_clock.validate_due_horizon(due.due_date)?;
+        }
         let disclosures = DisclosureDispatch::new(seeded_through);
         disclosures.install(&mut civil_clock);
         let mut sess = GameSession {
+            compute,
             ingress: None,
             revision: std::sync::atomic::AtomicU64::new(0),
             poison: None,
@@ -1826,6 +1908,7 @@ impl GameSession {
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),
                 groups: setup.groups.clone(),
+                validated_config: setup.config.clone(),
                 setup,
                 stocks,
                 rng,
@@ -1836,14 +1919,10 @@ impl GameSession {
                 price_history,
                 market_minute_closes,
                 candle_book: SessionCandleBook::new(daily_candles, BTreeMap::new()),
-                auction_orders: BTreeMap::new(),
                 pending_player: Vec::new(),
-                pending_npc: None,
                 ingress_receipt_cursors: IngressReceiptCursors::default(),
                 npc_attention: AccountPagedMap::default(),
                 retail_experience: AccountPagedMap::default(),
-                parent_orders: BTreeMap::new(),
-                pending_plan_events: Vec::new(),
                 npc_order_lifecycles: Vec::new(),
                 last_retail_decisions: Vec::new(),
                 last_retail_order_events: Vec::new(),
@@ -1855,7 +1934,6 @@ impl GameSession {
                 operations: std::sync::Arc::new(ops),
                 closing: std::sync::Arc::new(closing),
                 library: std::sync::Arc::new(library),
-                ops_wiring,
                 disclosures,
                 plans: crate::plans::PlanBook::default(),
                 urgency_policy: crate::plans::UrgencyPolicy::default(),
@@ -1869,9 +1947,14 @@ impl GameSession {
                 day: 0,
                 seq: 0,
                 civil_clock,
-                speculative_prepare: None,
             },
         };
+        let mode = pipeline::phase::PhasePolicy::capture(&sess).matching_mode();
+        for market in sess.state.markets.values_mut() {
+            market
+                .set_matching_mode(mode)
+                .expect("新局空簿可以进入配置交易阶段");
+        }
         sess.populate_npcs(AccountKind::Retail)?;
         sess.populate_npcs(AccountKind::Inst)?;
         sess.populate_npcs(AccountKind::Hot)?;
@@ -2523,11 +2606,20 @@ impl GameSession {
     /// `Err` 不改变会话与时钟状态。step 的 tick 循环完全不变——日结是新接在
     /// 收盘之后的自然日权威推进，不是 tick 循环的一部分。
     ///
-    /// 会话装配与执行接线（经营与信息披露顺序）：时钟日结（到期派发 + 18:00 相位）→ 经营终局
-    /// （`CompanyOperationsClockWiring::run_day_end` 推进当日经营并增量再同步）
-    /// → 月/年末封账（`close_accounting_periods`）→ 披露派发
-    /// （`DisclosureDispatch::run_day_end`，公告先于定期报告）。
+    /// 会话装配与执行接线（经营与信息披露顺序）：时钟日结（自然日推进 + 18:00 相位）→
+    /// 经营终局（`CompanyOperations::advance_civil_day` 在单一 authority 调度器内
+    /// 恰好一次派发当日公司到期）→ 月/年末封账（`close_accounting_periods`）→
+    /// 披露派发（`DisclosureDispatch::run_day_end`，公告先于定期报告）。
     pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
+        self.with_prepared_civil_day(|_, report| Ok(report))
+    }
+
+    /// 自然日与 market tick 一样先在同版 candidate 完成全部 publication callback，
+    /// 成功后一次安装；失败不得先触发 observer 再靠 checkpoint 回滚。
+    pub(in crate::session) fn with_prepared_civil_day<P>(
+        &mut self,
+        project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,
+    ) -> Result<P, SessionError> {
         self.require_healthy()?;
         let expected_sessions = self
             .state
@@ -2542,30 +2634,60 @@ impl GameSession {
                 },
             ));
         }
-        let checkpoint = self.clone_for_tick_shadow().map_err(|_error| {
-            // fault1034: 自然日日终检查点克隆失败。槽0 待 C 批数值化（原文本为内层 StepFatal 文本）。
+        let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
+            // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
             SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
         })?;
-        match self.end_civil_day_after_session_check() {
-            Ok(report) => Ok(report),
-            Err(error) => {
-                *self = checkpoint;
-                Err(error)
-            }
-        }
+        let report = candidate.end_civil_day_after_session_check()?;
+        let instant = report.disclosure_instant;
+        let publication = project(&candidate, report)?;
+        self.commit_tick_shadow(candidate);
+        for observer in self.state.civil_clock.disclosure_observers() { observer(instant); }
+        Ok(publication)
     }
 
     fn end_civil_day_after_session_check(&mut self) -> Result<CivilDayEndReport, SessionError> {
-        let mut report = self
-            .state
-            .civil_clock
-            .end_day(self.state.civil_clock.current_date())?;
-        self.state.ops_wiring.run_day_end(
-            &report,
-            &mut self.state.civil_clock,
-            std::sync::Arc::make_mut(&mut self.state.operations),
-        )?;
-        self.close_accounting_periods(report.settled_date)?;
+        // Session 合并公司 due、每日经营与其他 civil 事件的下一工作自然日；
+        // 各 authority 仍只持有自己的队列/日历，不复制或镜像逐项公司待办。
+        let next_company_day = self.state.operations.next_expected_date();
+        let company_work_date = match self.state.operations.next_due_date() {
+            Some(due_date) => due_date.min(next_company_day),
+            None => next_company_day,
+        };
+        let next_work_date = company_work_date
+            .min(self.state.civil_clock.next_civil_event_date());
+        // CivilClock 对合并时点执行重复/回拨/跳日/上界校验；过期公司 due
+        // 因此不能被当日推进静默跨过，且不产生新的运行时 String 错误载体。
+        let mut report = self.state.civil_clock.end_day(next_work_date)?;
+        // 公司经营日（单一 authority：OperatingScheduler 在内部恰好一次派发
+        // 当日到期；跳日/次序守卫由 next_expected 序列与 (due_date, id) 排序承担）。
+        // next_due 为 None 或未来日期不改变当日经营/封账/披露的执行。
+        std::sync::Arc::make_mut(&mut self.state.operations)
+            .advance_civil_day(report.settled_date)?;
+        // 日结新增待办仍须落在冻结日历适用范围内（日结新增边界）。
+        for due in self.state.operations.scheduler().pending() {
+            self.state.civil_clock.validate_due_horizon(due.due_date)?;
+        }
+        std::sync::Arc::make_mut(&mut self.state.operations)
+            .close_accounting_periods(
+                report.settled_date,
+                &self.state.groups,
+                std::sync::Arc::make_mut(&mut self.state.closing),
+            )
+            .map_err(|source| match source {
+                crate::company::operations::CompanyCloseError::Date(date) => {
+                    SessionError::CivilClock(CivilClockError::CivilDate(date))
+                }
+                crate::company::operations::CompanyCloseError::Closing(closing) => {
+                    SessionError::Closing(*closing)
+                }
+                crate::company::operations::CompanyCloseError::Information(information) => {
+                    SessionError::Information(information)
+                }
+                crate::company::operations::CompanyCloseError::Fault(fault) => {
+                    SessionError::InvalidSetup(fault)
+                }
+            })?;
         let disclosures = self
             .state
             .disclosures
@@ -2577,16 +2699,20 @@ impl GameSession {
                 library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;
-        self.state
-            .ops_wiring
-            .prune_dispatched(&self.state.operations);
         self.record_civil_day_events(&mut report, disclosures)?;
         self.deliver_public_information(report.disclosure_instant)?;
         self.prune_all_personal_memories();
-        for observer in self.state.civil_clock.disclosure_observers() {
-            observer(report.disclosure_instant);
-        }
         Ok(report)
+    }
+
+    fn next_civil_seq(&mut self) -> Result<u64, SessionError> {
+        self.state.seq = self.state.seq.checked_add(1)
+            .filter(|seq| *seq <= crate::orderbook::js_safe_u64::MAX)
+            .ok_or_else(|| StepFatal::InvariantViolation {
+                location: "GameSession::record_civil_day_events".to_owned(),
+                description: "civil event seq 超出可发布整数范围".to_owned(),
+            })?;
+        Ok(self.state.seq)
     }
 
     fn record_civil_day_events(
@@ -2602,7 +2728,7 @@ impl GameSession {
                 .map(|announcement| (announcement.company.clone(), announcement.published_at))
                 .map_err(|error| SessionError::Information(Box::new(error)))?;
             report.events.push(Event::CompanyDisclosurePublished {
-                seq: self.next_seq(),
+                seq: self.next_civil_seq()?,
                 publication_id,
                 company,
                 published_at,
@@ -2623,7 +2749,7 @@ impl GameSession {
                 })
                 .map_err(|error| SessionError::Information(Box::new(error)))?;
             report.events.push(Event::CompanyDisclosurePublished {
-                seq: self.next_seq(),
+                seq: self.next_civil_seq()?,
                 publication_id,
                 company,
                 published_at,
@@ -2631,79 +2757,11 @@ impl GameSession {
             });
         }
         report.events.push(Event::CivilDateAdvanced {
-            seq: self.next_seq(),
+            seq: self.next_civil_seq()?,
             settled_date: report.settled_date,
             next_date: report.next_date,
             next_status: report.next_status.clone(),
         });
-        Ok(())
-    }
-
-    /// 月/年末封账（经营与信息披露 日终顺序的第二步）：settled 是当月最后一天时对该月
-    /// 封月；12 月末走 `close_year`（其内部含 12 月封月 + 年报版本）。封账后
-    /// 该期间拒绝后续入账（底座守卫），晚于封账日的分录天然落在开放期间。
-    fn close_accounting_periods(
-        &mut self,
-        settled: crate::calendar::CivilDate,
-    ) -> Result<(), SessionError> {
-        let is_month_end = settled
-            .next()
-            .map(|next| next.month() != settled.month())
-            .unwrap_or(false);
-        if !is_month_end {
-            return Ok(());
-        }
-        let year_end = settled.month() == 12;
-        let period = crate::accounting::AccountingPeriod::from_ymd(settled.year(), settled.month())
-            .map_err(|_error| {
-                // fault1035: 封账期间（年/月）构造非法。槽0 待 C 批数值化（原文本为内层错误文本）。
-                SessionError::InvalidSetup(ValidationFault::new(1035, vec![0]))
-            })?;
-        let targets: Vec<(
-            crate::company::CompanyId,
-            crate::accounting::consolidation::MemberId,
-            crate::accounting::reports::IndustryPresentation,
-        )> = self
-            .state
-            .operations
-            .companies
-            .iter()
-            .map(|(id, company)| {
-                (
-                    id.clone(),
-                    crate::accounting::consolidation::MemberId(id.0.clone()),
-                    crate::information::industry_presentation(company.spec().kind),
-                )
-            })
-            .collect();
-        for (company_id, member, industry) in targets {
-            let Some(company) =
-                std::sync::Arc::make_mut(&mut self.state.operations).company_mut(&company_id)
-            else {
-                continue;
-            };
-            let books = company.books_mut();
-            let result = if year_end {
-                std::sync::Arc::make_mut(&mut self.state.closing)
-                    .close_year(books, &member, industry, settled.year())
-                    .map(|_| ())
-            } else {
-                std::sync::Arc::make_mut(&mut self.state.closing)
-                    .close_month(books, &member, industry, period)
-                    .map(|_| ())
-            };
-            result.map_err(SessionError::Closing)?;
-        }
-        company_groups::record_group_periods(
-            &self.state.groups,
-            &self.state.operations,
-            std::sync::Arc::make_mut(&mut self.state.closing),
-            period,
-        )
-        .map_err(|_error| {
-            // fault1036: 分组封账登记失败。槽0 待 C 批数值化（原文本为内层错误文本）。
-            SessionError::InvalidSetup(ValidationFault::new(1036, vec![0]))
-        })?;
         Ok(())
     }
 
@@ -2793,27 +2851,11 @@ impl GameSession {
     }
 
     fn reserved_cash_for_account(&self, account: AccountId) -> Result<Money, MoneyError> {
-        let auction_reserved = self
-            .state
-            .auction_orders
-            .values()
-            .flatten()
-            .filter(|order| order.owner == account)
-            .try_fold(Money::ZERO, |total, order| {
-                let required = live_cash_reservation(
-                    &self.state.setup.config,
-                    order.side,
-                    order.limit,
-                    order.qty,
-                    Money::ZERO,
-                )?;
-                total.add(required)
-            })?;
         self.state
             .markets
             .values()
             .flat_map(|market| market.resting_orders_for(account))
-            .try_fold(auction_reserved, |total, order| {
+            .try_fold(Money::ZERO, |total, order| {
                 let required = live_cash_reservation(
                     &self.state.setup.config,
                     order.side,
@@ -2985,9 +3027,8 @@ impl GameSession {
         order_id: OrderId,
     ) -> bool {
         self.state
-            .parent_orders
-            .get(&account)
-            .and_then(|plans| plans.get(code))
+            .plans
+            .active_plan(account, code)
             .is_some_and(|plan| plan.active_child_order_id() == Some(order_id))
     }
 
@@ -3092,7 +3133,6 @@ impl GameSession {
             setup: self.state.setup.clone(),
             seed: self.state.seed,
             snapshot: self.save_snapshot_projection(),
-            auction_orders: self.state.auction_orders.clone(),
             resting_orders: self
                 .state
                 .markets
@@ -3130,23 +3170,8 @@ impl GameSession {
             rng_state: self.state.rng.state,
             npc_attention: self.state.npc_attention.to_map(),
             retail_experience: self.state.retail_experience.to_map(),
-            parent_orders: self
-                .state
-                .parent_orders
-                .iter()
-                .map(|(account, plans)| {
-                    (
-                        *account,
-                        plans
-                            .iter()
-                            .map(|(code, plan)| (code.clone(), SaveParentOrderPlan::from(plan)))
-                            .collect(),
-                    )
-                })
-                .collect(),
             npc_order_lifecycles: self.state.npc_order_lifecycles.clone(),
             pending_player: self.state.pending_player.clone(),
-            pending_npc: self.state.pending_npc.clone(),
             ingress_receipt_cursors: self.state.ingress_receipt_cursors.clone(),
             next_order_id: self.state.next_order_id,
             civil_clock: self.state.civil_clock.save(),
@@ -3155,7 +3180,6 @@ impl GameSession {
             groups: self.state.groups.clone(),
             closing_registry: self.state.closing.as_ref().clone(),
             public_library: self.state.library.as_ref().clone(),
-            ops_wiring: self.state.ops_wiring.clone(),
             disclosures: self.state.disclosures.clone(),
             plans: self.state.plans.clone(),
             urgency_policy: self.state.urgency_policy,
@@ -3184,20 +3208,6 @@ impl GameSession {
                 .map(|(id, participant)| (*id, participant.price_memory().clone()))
                 .collect(),
             history_reads: self.state.history_reads.to_map(),
-            // 存档契约只保留「计划簿中仍存活」的待应用事实；未知/已终止计划
-            // 的迟到条目在此按完整存档契约显式丢弃（永不适用）。
-            pending_plan_events: self
-                .state
-                .pending_plan_events
-                .iter()
-                .copied()
-                .filter(|event| {
-                    self.state
-                        .plans
-                        .plan(event.plan_id())
-                        .is_ok_and(|plan| !plan.is_terminal())
-                })
-                .collect(),
         }
     }
 
@@ -3211,12 +3221,23 @@ impl GameSession {
     ///
     /// 不保留：前端派生的分时采样。策略价格窗口和 RNG 状态会被精确恢复。
     pub fn restore(save: &SaveSlot) -> Result<GameSession, SessionError> {
+        Self::restore_with_compute(save, crate::compute::ComputeContext::shared_default()?)
+    }
+
+    /// 恢复路径与宿主计算资源显式绑定；restore 继续使用 direct-engine 默认上下文。
+    pub fn restore_with_compute(
+        save: &SaveSlot,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<GameSession, SessionError> {
+        // T3 批四·staged 决策槽防串扰（同 new_with_compute）。
+        #[cfg(test)]
+        crate::session::pipeline::staged_decision::clear();
         save.urgency_policy.validate().map_err(|_error| {
             // fault1037: 存档 urgency_policy 校验失败。槽0 待 C 批数值化（原文本为内层校验错误文本）。
             SessionError::InvalidSave(ValidationFault::new(1037, vec![0]))
         })?;
         validate_save_slot(save)?;
-        let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
+        let mut sess = GameSession::new_with_compute(save.setup.clone(), save.seed, compute)?;
         sess.fresh_initial_allocation = false;
 
         // 清空初始持仓分配 → 用快照精确覆盖
@@ -3259,6 +3280,13 @@ impl GameSession {
             market.restore_prices(snap_mkt.last_price, snap_mkt.last_close);
         }
 
+        sess.state.tick = save.snapshot.tick;
+        let restored_mode = pipeline::phase::PhasePolicy::capture(&sess).matching_mode();
+        for (code, market) in &mut sess.state.markets {
+            market.set_matching_mode(restored_mode).map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(1038, vec![u64::from(code.0), 0]))
+            })?;
+        }
         // 保留原始时间排序键与历史游标；空簿也可能已有已撤/已成交委托。
         // 在私有订单簿内验证，不允许恢复过程产生新的成交。
         for (code, market) in &mut sess.state.markets {
@@ -3308,7 +3336,6 @@ impl GameSession {
             session_calendar_exchange(save.setup.stocks[0].exchange),
         )?;
         validate_saved_order_state(&sess, save)?;
-        sess.state.auction_orders = save.auction_orders.clone();
         sess.state.next_order_id = save.next_order_id;
 
         // 当前存档完整覆盖所有影响后续演进的确定性状态。
@@ -3377,63 +3404,8 @@ impl GameSession {
             .map(|(id, state)| (state.next_attention_candidate_tick, *id))
             .collect();
         sess.state.retail_experience = save.retail_experience.clone().into();
-        sess.state.parent_orders = save
-            .parent_orders
-            .iter()
-            .map(|(account, plans)| {
-                (
-                    *account,
-                    plans
-                        .iter()
-                        .map(|(code, plan)| (code.clone(), ParentOrderPlan::from(plan.clone())))
-                        .collect(),
-                )
-            })
-            .collect();
-        for (account, plans) in &mut sess.state.parent_orders {
-            for (code, plan) in plans {
-                let Some(active_id) = plan.active_child_order_id() else {
-                    plan.restore_active_child_remaining_qty(None);
-                    continue;
-                };
-                let active_quantities = save
-                    .auction_orders
-                    .get(code)
-                    .into_iter()
-                    .flatten()
-                    .filter(|order| {
-                        order.order_id == active_id.0
-                            && order.owner == *account
-                            && order.side == plan.side()
-                    })
-                    .map(|order| order.qty)
-                    .chain(
-                        save.resting_orders
-                            .get(code)
-                            .into_iter()
-                            .flatten()
-                            .filter(|order| {
-                                order.id == active_id
-                                    && order.owner == *account
-                                    && order.side == plan.side()
-                            })
-                            .map(|order| order.qty),
-                    )
-                    .collect::<Vec<_>>();
-                let [remaining_qty] = active_quantities.as_slice() else {
-                    // fault1042: 父订单活跃子委托无法唯一重建（竞价/连续簿命中数 ≠ 1）。
-                    // ctx[0] = AccountId，ctx[1] = StockId。
-                    return Err(SessionError::InvalidSave(ValidationFault::new(
-                        1042,
-                        vec![account.0, u64::from(code.0)],
-                    )));
-                };
-                plan.restore_active_child_remaining_qty(Some(*remaining_qty));
-            }
-        }
         sess.state.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.state.pending_player = save.pending_player.clone();
-        sess.state.pending_npc = save.pending_npc.clone();
         sess.state.ingress_receipt_cursors = save.ingress_receipt_cursors.clone();
         // 诊断缓存不属于存档事实，恢复后由实际 tick 重新生成。
         sess.state.last_retail_decisions.clear();
@@ -3481,9 +3453,89 @@ impl GameSession {
         sess.state.groups = save.groups.clone();
         sess.state.closing = std::sync::Arc::new(save.closing_registry.clone());
         sess.state.library = std::sync::Arc::new(save.public_library.clone());
-        sess.state.ops_wiring = save.ops_wiring.clone();
         sess.state.disclosures = save.disclosures.clone();
         sess.state.plans = save.plans.clone();
+        // 执行腿在途子单的剩余数量从真实订单簿/竞价队列重建（唯一 owner 的
+        // restore 路径；旧 `parent_orders` 镜像已删除）。
+        let active_plan_ids = sess.state.plans.active_plan_ids();
+        for plan_id in active_plan_ids {
+            let (account, code, direction, active_id) = {
+                let plan = sess
+                    .state
+                    .plans
+                    .plan(plan_id)
+                    .expect("active plan ids resolve");
+                match plan.active_child_order_id() {
+                    Some(active_id) => (
+                        plan.account(),
+                        plan.code().clone(),
+                        plan.direction(),
+                        active_id,
+                    ),
+                    None => continue,
+                }
+            };
+            let active_quantities = save
+                .resting_orders
+                .get(&code)
+                .into_iter()
+                .flatten()
+                .filter(|order| {
+                    order.id == active_id && order.owner == account && order.side == direction
+                })
+                .map(|order| order.qty)
+                .collect::<Vec<_>>();
+            let [remaining_qty] = active_quantities.as_slice() else {
+                // fault1042: 计划在途子委托无法唯一重建（竞价/连续簿命中数 ≠ 1）。
+                // ctx[0] = AccountId，ctx[1] = StockId。
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    1042,
+                    vec![account.0, u64::from(code.0)],
+                )));
+            };
+            // 以真实订单余量做 checked exposure 校验：恢复不得用簿上余量盖过
+            // 计划份额目标（旧 fault2173 的语义迁移到唯一 owner）。
+            let filled = sess
+                .state
+                .plans
+                .plan(plan_id)
+                .expect("active plan ids resolve")
+                .filled_qty();
+            let exposure = u64::from(filled)
+                .checked_add(u64::from(*remaining_qty))
+                .ok_or_else(|| {
+                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=AccountId，ctx[1]=StockId。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        2185,
+                        vec![account.0, u64::from(code.0)],
+                    ))
+                })?;
+            if let crate::plans::PlanTarget::ShareCount(target) = sess
+                .state
+                .plans
+                .plan(plan_id)
+                .expect("active plan ids resolve")
+                .target()
+            {
+                if exposure > u64::from(target) {
+                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=AccountId，ctx[1]=StockId。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2185,
+                        vec![account.0, u64::from(code.0)],
+                    )));
+                }
+            }
+            sess.state
+                .plans
+                .restore_child_remaining_qty(plan_id, Some(*remaining_qty))
+                .map_err(|_error| {
+                    // fault1042：执行腿与真实订单簿不一致。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        1042,
+                        vec![account.0, u64::from(code.0)],
+                    ))
+                })?;
+        }
         sess.state.urgency_policy = save.urgency_policy;
         sess.state.belief_participants = save
             .belief_books
@@ -3502,7 +3554,6 @@ impl GameSession {
             .collect();
         sess.state.history_reads = save.history_reads.clone().into_iter().collect();
         sess.reconcile_institutional_holdings()?;
-        sess.state.pending_plan_events = save.pending_plan_events.clone();
         // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
         sess.state.disclosures.install(&mut sess.state.civil_clock);
 
@@ -3694,7 +3745,74 @@ mod intraday_volume_curve_tests {
 
 #[cfg(test)]
 impl GameSession {
-    /// Seed a passive order for tests of downstream stages without advancing a market tick.
+    pub(crate) fn auction_order_projection_for_test(
+        &self,
+    ) -> BTreeMap<StockId, Vec<AuctionOrderSnap>> {
+        self.state
+            .markets
+            .iter()
+            .filter(|(_, market)| market.matching_mode() == crate::orderbook::MatchingMode::Auction)
+            .filter_map(|(code, market)| {
+                let orders = market
+                    .resting_orders()
+                    .into_iter()
+                    .map(|order| AuctionOrderSnap {
+                        owner: order.owner,
+                        side: order.side,
+                        limit: order.price,
+                        qty: order.qty,
+                        order_id: order.id.0,
+                    })
+                    .collect::<Vec<_>>();
+                (!orders.is_empty()).then_some((*code, orders))
+            })
+            .collect()
+    }
+
+    /// cfg(test) fixture 辅助：直接改写 tick/setup 后，把每只股票的 book 模式
+    /// 重新对齐当前 PhasePolicy，保持统一不变量（模式只由交易阶段决定）。
+    pub(crate) fn fixture_sync_market_modes_for_test(&mut self) {
+        let mode = pipeline::phase::PhasePolicy::capture(self).matching_mode();
+        for market in self.state.markets.values_mut() {
+            market
+                .set_matching_mode(mode)
+                .expect("测试跳时后的空/未交叉簿可以进入目标阶段模式");
+        }
+    }
+
+    pub(crate) fn fixture_append_auction_orders(
+        &mut self,
+        code: StockId,
+        orders: Vec<AuctionOrderSnap>,
+    ) -> Result<Option<Vec<AuctionOrderSnap>>, crate::MarketError> {
+        let previous = self.auction_order_projection_for_test().remove(&code);
+        let market = self
+            .state
+            .markets
+            .get_mut(&code)
+            .expect("竞价fixture股票必须存在");
+        market.set_matching_mode(crate::orderbook::MatchingMode::Auction)?;
+        let mut restored = market.resting_orders();
+        let mut next_seq = market.book_next_sequence();
+        for order in orders {
+            restored.push(Order {
+                id: OrderId(order.order_id),
+                side: order.side,
+                price: order.limit,
+                qty: order.qty,
+                original_qty: order.qty,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: order.owner,
+                seq: next_seq,
+            });
+            next_seq = next_seq.checked_add(1).expect("竞价fixture序号不能溢出");
+        }
+        market.restore_resting_orders(&restored, next_seq)?;
+        Ok(previous)
+    }
+
+    /// 在真实book中放置下游测试所需的被动单，不推进市场 tick。
     pub(crate) fn seed_order_for_test(
         &mut self,
         account: AccountId,
@@ -3735,17 +3853,17 @@ impl GameSession {
                     .expect("fixture order IDs");
                 let seq = self.next_seq();
                 if auction {
-                    self.state
-                        .auction_orders
-                        .entry(code.clone())
-                        .or_default()
-                        .push(AuctionOrderSnap {
+                    self.fixture_append_auction_orders(
+                        code,
+                        vec![AuctionOrderSnap {
                             owner: account,
                             side,
                             limit: price,
                             qty,
                             order_id: id.0,
-                        });
+                        }],
+                    )
+                    .expect("fixture 竞价挂入不得重复身份");
                 } else {
                     let (last_price, best_bid, best_ask) = {
                         let market = self.state.markets.get(&code).expect("fixture stock exists");
@@ -3825,7 +3943,8 @@ impl GameSession {
                         .cancel(id)
                         .expect("fixture cancellation succeeds");
                     self.remove_npc_order_lifecycle(account, &code, id);
-                    self.record_parent_order_canceled(account, &code, id);
+                    self.record_parent_order_canceled(account, &code, id)
+                        .expect("fixture plan cancellation succeeds");
                     events.push(Event::OrderCanceled {
                         seq: self.next_seq(),
                         account,
@@ -3834,16 +3953,13 @@ impl GameSession {
                         remaining_qty: order.qty,
                     });
                 } else {
-                    let orders = self
+                    let order = self
                         .state
-                        .auction_orders
+                        .markets
                         .get_mut(&code)
-                        .expect("fixture stock exists");
-                    let index = orders
-                        .iter()
-                        .position(|order| order.order_id == id.0)
+                        .expect("fixture stock exists")
+                        .cancel(id)
                         .expect("fixture auction order exists");
-                    let order = orders.remove(index);
                     events.push(Event::OrderCanceled {
                         seq: self.next_seq(),
                         account,
@@ -4192,275 +4308,17 @@ mod npc_working_quote_tests {
             .expect("accepted observation must persist the reviewed unheld stock");
         assert_eq!(stock.entry_reference_price, None);
         assert_eq!(stock.last_buy_price, None);
-        assert_eq!(
+        // T3（ADR-0042 §9.3/§9.7，A4 失败 2 双契约登记）：观察分钟一律 stamp
+        // f(epoch)——本观察在 epoch 0 受理（D(0) 于消费 tick 入口生产同 tick
+        // 消费），写入=day0 的 epoch-0 分钟（0）；step 返回后的
+        // current_market_minute() 已推进到 f(1)，不再与观察 stamp 同拍。禁止
+        // 加一/减 tick 修绿——按同一决策 epoch 的冻结观察基精确比较（v3）。
+        assert_eq!(stock.last_observed_market_minute, 0);
+        assert_ne!(
             stock.last_observed_market_minute,
-            session.current_market_minute()
+            session.current_market_minute(),
+            "发布节奏差：观察 stamp 停留在决策 epoch 的冻结分钟"
         );
-    }
-
-    #[test]
-    fn parent_buy_does_not_overbuy_when_an_odd_lot_partial_fill_leaves_a_sub_lot_target() {
-        let code = StockId(0);
-        let institution = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 992).unwrap();
-        session
-            .state
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan::from_saved_facts(
-                    code.clone(),
-                    Side::Buy,
-                    400,
-                    350,
-                    100,
-                    None,
-                    None,
-                    None,
-                    Money::from_cents(1_000),
-                    PARENT_ORDER_HORIZON_MINUTES,
-                ),
-            );
-
-        let mut desired = Vec::new();
-        session.append_parent_child_or_working_intent(
-            institution,
-            &code,
-            0,
-            WorkingOrderSlices {
-                continuous: &[],
-                auction: &[],
-            },
-            &mut desired,
-        );
-
-        assert!(desired.is_empty(), "不足一手的残余不得触发超额或非法买单");
-        assert_eq!(
-            session.state.parent_orders[&institution][&code].remaining_qty(),
-            50
-        );
-    }
-
-    #[test]
-    fn institution_symbolic_intent_bypasses_parent_order_and_supersedes_old_target() {
-        let code = StockId(0);
-        let institution = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 994).unwrap();
-        let empty_working = WorkingOrderSlices {
-            continuous: &[],
-            auction: &[],
-        };
-        let fixed = buy(&code, 1_000);
-        let initial =
-            session.materialize_parent_order_intents(institution, vec![fixed], 0, empty_working);
-        assert!(matches!(
-            initial.as_slice(),
-            [Intent::PlaceLimit {
-                price: LimitPrice::Fixed(_),
-                ..
-            }]
-        ));
-        assert!(session.state.parent_orders[&institution].contains_key(&code));
-
-        let symbolic = Intent::PlaceLimit {
-            code: code.clone(),
-            side: Side::Buy,
-            price: LimitPrice::Highest,
-            qty: 100,
-        };
-        let desired =
-            session.materialize_parent_order_intents(institution, vec![symbolic], 0, empty_working);
-        assert!(matches!(
-            desired.as_slice(),
-            [Intent::PlaceLimit {
-                price: LimitPrice::Highest,
-                ..
-            }]
-        ));
-        assert!(!session.state.parent_orders.contains_key(&institution));
-    }
-
-    #[test]
-    fn mixed_fixed_and_symbolic_intents_survive_with_or_without_an_old_parent() {
-        let code = StockId(0);
-        let institution = AccountId(1);
-        let empty_working = WorkingOrderSlices {
-            continuous: &[],
-            auction: &[],
-        };
-        let mut baseline = None;
-        for with_old_parent in [false, true] {
-            let mut session = GameSession::new(quote_setup(0), 995).unwrap();
-            if with_old_parent {
-                session.materialize_parent_order_intents(
-                    institution,
-                    vec![Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Buy,
-                        price: LimitPrice::Fixed(Money::from_cents(950)),
-                        qty: 400,
-                    }],
-                    0,
-                    empty_working,
-                );
-            }
-            let desired = session.materialize_parent_order_intents(
-                institution,
-                vec![
-                    buy(&code, 1_000),
-                    Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Buy,
-                        price: LimitPrice::Highest,
-                        qty: 100,
-                    },
-                ],
-                0,
-                empty_working,
-            );
-            assert!(matches!(
-                desired.as_slice(),
-                [
-                    Intent::PlaceLimit {
-                        price: LimitPrice::Highest,
-                        ..
-                    },
-                    Intent::PlaceLimit {
-                        price: LimitPrice::Fixed(price),
-                        ..
-                    }
-                ] if *price == Money::from_cents(1_000)
-            ));
-            let parent = &session.state.parent_orders[&institution][&code];
-            assert_eq!(parent.target_qty(), 100);
-            assert_eq!(parent.limit_price(), Money::from_cents(1_000));
-            let result = (
-                serde_json::to_value(&desired).unwrap(),
-                serde_json::to_value(parent).unwrap(),
-            );
-            if let Some(expected) = &baseline {
-                assert_eq!(&result, expected);
-            } else {
-                baseline = Some(result);
-            }
-        }
-    }
-
-    #[test]
-    fn closing_auction_does_not_duplicate_a_parent_child_still_resting_in_continuous_book() {
-        let code = StockId(0);
-        let institution = AccountId(1);
-        let mut setup = quote_setup(0);
-        setup.ticks_per_day = 100;
-        setup.closing_auction_ticks = 10;
-        let mut session = GameSession::new(setup, 993).unwrap();
-        session.state.tick = 90;
-        session
-            .state
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan::from_saved_facts(
-                    code.clone(),
-                    Side::Buy,
-                    400,
-                    0,
-                    100,
-                    Some(OrderId(1)),
-                    Some(100),
-                    None,
-                    Money::from_cents(1_000),
-                    PARENT_ORDER_HORIZON_MINUTES * 2,
-                ),
-            );
-        let continuous = [(
-            code.clone(),
-            Order {
-                id: OrderId(1),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-                original_qty: 100,
-                filled_qty: 0,
-                filled_value: Money::ZERO,
-                owner: institution,
-                seq: 0,
-            },
-        )];
-        let mut desired = Vec::new();
-        session.append_parent_child_or_working_intent(
-            institution,
-            &code,
-            0,
-            WorkingOrderSlices {
-                continuous: &continuous,
-                auction: &[],
-            },
-            &mut desired,
-        );
-
-        assert!(desired.is_empty(), "收盘集合竞价不得复制连续簿中的母单子单");
-    }
-
-    #[test]
-    fn closing_auction_restores_a_parent_child_that_remains_in_continuous_book() {
-        let code = StockId(0);
-        let institution = AccountId(1);
-        let mut setup = quote_setup(0);
-        setup.ticks_per_day = 2;
-        setup.closing_auction_ticks = 1;
-        let mut session = GameSession::new(setup, 994).unwrap();
-        session.step().expect("healthy step");
-        assert_eq!(session.phase(), TradingPhase::ClosingAuction);
-        session
-            .state
-            .markets
-            .get_mut(&code)
-            .unwrap()
-            .place(Order {
-                id: OrderId(1),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-                original_qty: 100,
-                filled_qty: 0,
-                filled_value: Money::ZERO,
-                owner: institution,
-                seq: 0,
-            })
-            .unwrap();
-        session.state.next_order_id = 2;
-        session
-            .state
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan::from_saved_facts(
-                    code.clone(),
-                    Side::Buy,
-                    400,
-                    0,
-                    100,
-                    Some(OrderId(1)),
-                    Some(100),
-                    None,
-                    Money::from_cents(1_000),
-                    PARENT_ORDER_HORIZON_MINUTES * 2,
-                ),
-            );
-
-        session
-            .hydrate_or_validate_envelope_ledger()
-            .expect("direct order-book fixture must synchronize current save authority");
-
-        let restored = GameSession::restore(&session.save().expect("healthy save")).unwrap();
-        assert_eq!(restored.state.parent_orders, session.state.parent_orders);
     }
 
     #[test]
@@ -4628,6 +4486,7 @@ impl CommittableSessionState {
     fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
         let Self {
             setup,
+            validated_config,
             stocks,
             rng,
             seed,
@@ -4637,14 +4496,10 @@ impl CommittableSessionState {
             price_history,
             market_minute_closes,
             candle_book,
-            auction_orders,
             pending_player,
-            pending_npc,
             ingress_receipt_cursors,
             npc_attention,
             retail_experience,
-            parent_orders,
-            pending_plan_events,
             npc_order_lifecycles,
             last_retail_decisions,
             last_retail_order_events,
@@ -4658,7 +4513,6 @@ impl CommittableSessionState {
             groups,
             closing,
             library,
-            ops_wiring,
             disclosures,
             plans,
             urgency_policy,
@@ -4671,7 +4525,6 @@ impl CommittableSessionState {
             day,
             seq,
             civil_clock,
-            speculative_prepare: _stash_not_carried_into_shadow,
         } = self;
         let accounts =
             accounts
@@ -4682,6 +4535,7 @@ impl CommittableSessionState {
                 })?;
         Ok(Self {
             setup: setup.clone(),
+            validated_config: validated_config.clone(),
             stocks: stocks.clone(),
             rng: rng.clone(),
             seed: *seed,
@@ -4691,14 +4545,10 @@ impl CommittableSessionState {
             price_history: price_history.clone(),
             market_minute_closes: market_minute_closes.clone(),
             candle_book: candle_book.clone(),
-            auction_orders: auction_orders.clone(),
             pending_player: pending_player.clone(),
-            pending_npc: pending_npc.clone(),
             ingress_receipt_cursors: ingress_receipt_cursors.clone(),
             npc_attention: npc_attention.clone(),
             retail_experience: retail_experience.clone(),
-            parent_orders: parent_orders.clone(),
-            pending_plan_events: pending_plan_events.clone(),
             npc_order_lifecycles: npc_order_lifecycles.clone(),
             last_retail_decisions: last_retail_decisions.clone(),
             last_retail_order_events: last_retail_order_events.clone(),
@@ -4712,7 +4562,6 @@ impl CommittableSessionState {
             operations: operations.clone(),
             closing: closing.clone(),
             library: library.clone(),
-            ops_wiring: ops_wiring.clone(),
             disclosures: disclosures.clone(),
             plans: plans.clone(),
             urgency_policy: *urgency_policy,
@@ -4725,13 +4574,18 @@ impl CommittableSessionState {
             day: *day,
             seq: *seq,
             civil_clock: civil_clock.clone(),
-            speculative_prepare: None,
         })
     }
 
     fn commit_from(&mut self, shadow: Self) {
+        #[cfg(feature = "verification-harness")]
+        let _commit_scope = verify_metrics::Scope::new(
+            &verify_metrics::METRICS.commit_from_calls,
+            &verify_metrics::METRICS.commit_from_ns,
+        );
         let Self {
             setup,
+            validated_config,
             stocks,
             rng,
             seed,
@@ -4741,14 +4595,10 @@ impl CommittableSessionState {
             price_history,
             market_minute_closes,
             candle_book,
-            auction_orders,
             pending_player,
-            pending_npc,
             ingress_receipt_cursors,
             npc_attention,
             retail_experience,
-            parent_orders,
-            pending_plan_events,
             npc_order_lifecycles,
             last_retail_decisions,
             last_retail_order_events,
@@ -4762,7 +4612,6 @@ impl CommittableSessionState {
             groups,
             closing,
             library,
-            ops_wiring,
             disclosures,
             plans,
             belief_participants,
@@ -4774,58 +4623,54 @@ impl CommittableSessionState {
             day,
             seq,
             civil_clock,
-            speculative_prepare,
             urgency_policy,
         } = shadow;
         // 专用析构线程（E7 复活路径）：旧权威值的析构整体移交池外线程，
         // actor 只做字段交接。四个分页容器原先走 rayon 池内 par drop，
         // 池外移交后也不再产生池交互。Copy 字段仍直接赋值。
         self.urgency_policy = urgency_policy;
-        defer_swap(&mut self.setup, setup);
-        defer_swap(&mut self.stocks, stocks);
-        defer_swap(&mut self.rng, rng);
+        defer_swap(&mut self.setup, setup, FieldId::Setup);
+        // 运行时费率快照随 shadow 原样回流（shadow 从权威克隆而来，二者恒相等；
+        // 会话外的静默改写在下一 tick 门禁被指纹比对拒绝）。
+        defer_swap(&mut self.validated_config, validated_config, FieldId::ValidatedConfig);
+        defer_swap(&mut self.stocks, stocks, FieldId::Stocks);
+        defer_swap(&mut self.rng, rng, FieldId::Rng);
         self.seed = seed;
-        defer_swap(&mut self.markets, markets);
-        defer_swap(&mut self.accounts, accounts);
-        defer_swap(&mut self.history_reads, history_reads);
-        defer_swap(&mut self.price_history, price_history);
-        defer_swap(&mut self.market_minute_closes, market_minute_closes);
-        defer_swap(&mut self.candle_book, candle_book);
-        defer_swap(&mut self.auction_orders, auction_orders);
-        defer_swap(&mut self.pending_player, pending_player);
-        defer_swap(&mut self.pending_npc, pending_npc);
-        defer_swap(&mut self.ingress_receipt_cursors, ingress_receipt_cursors);
-        defer_swap(&mut self.npc_attention, npc_attention);
-        defer_swap(&mut self.retail_experience, retail_experience);
-        defer_swap(&mut self.parent_orders, parent_orders);
-        defer_swap(&mut self.pending_plan_events, pending_plan_events);
-        defer_swap(&mut self.npc_order_lifecycles, npc_order_lifecycles);
-        defer_swap(&mut self.last_retail_decisions, last_retail_decisions);
-        defer_swap(&mut self.last_retail_order_events, last_retail_order_events);
+        defer_swap(&mut self.markets, markets, FieldId::Markets);
+        defer_swap(&mut self.accounts, accounts, FieldId::Accounts);
+        defer_swap(&mut self.history_reads, history_reads, FieldId::HistoryReads);
+        defer_swap(&mut self.price_history, price_history, FieldId::PriceHistory);
+        defer_swap(&mut self.market_minute_closes, market_minute_closes, FieldId::MarketMinuteCloses);
+        defer_swap(&mut self.candle_book, candle_book, FieldId::CandleBook);
+        defer_swap(&mut self.pending_player, pending_player, FieldId::PendingPlayer);
+        defer_swap(&mut self.ingress_receipt_cursors, ingress_receipt_cursors, FieldId::IngressReceiptCursors);
+        defer_swap(&mut self.npc_attention, npc_attention, FieldId::NpcAttention);
+        defer_swap(&mut self.retail_experience, retail_experience, FieldId::RetailExperience);
+        defer_swap(&mut self.npc_order_lifecycles, npc_order_lifecycles, FieldId::NpcOrderLifecycles);
+        defer_swap(&mut self.last_retail_decisions, last_retail_decisions, FieldId::LastRetailDecisions);
+        defer_swap(&mut self.last_retail_order_events, last_retail_order_events, FieldId::LastRetailOrderEvents);
         #[cfg(feature = "simulation-diagnostics")]
         {
-            defer_swap(&mut self.npc_decision_traces, npc_decision_traces);
-            defer_swap(&mut self.causal, causal);
+            defer_swap(&mut self.npc_decision_traces, npc_decision_traces, FieldId::NpcDecisionTraces);
+            defer_swap(&mut self.causal, causal, FieldId::Causal);
         }
-        defer_swap(&mut self.attention_scheduler, attention_scheduler);
-        defer_swap(&mut self.company_registry, company_registry);
-        defer_swap(&mut self.operations, operations);
-        defer_swap(&mut self.groups, groups);
-        defer_swap(&mut self.closing, closing);
-        defer_swap(&mut self.library, library);
-        defer_swap(&mut self.ops_wiring, ops_wiring);
-        defer_swap(&mut self.disclosures, disclosures);
-        defer_swap(&mut self.plans, plans);
-        defer_swap(&mut self.belief_participants, belief_participants);
-        defer_swap(&mut self.envelope_ledger, envelope_ledger);
-        defer_swap(&mut self.retail_projection_seen, retail_projection_seen);
+        defer_swap(&mut self.attention_scheduler, attention_scheduler, FieldId::AttentionScheduler);
+        defer_swap(&mut self.company_registry, company_registry, FieldId::CompanyRegistry);
+        defer_swap(&mut self.operations, operations, FieldId::Operations);
+        defer_swap(&mut self.groups, groups, FieldId::Groups);
+        defer_swap(&mut self.closing, closing, FieldId::Closing);
+        defer_swap(&mut self.library, library, FieldId::Library);
+        defer_swap(&mut self.disclosures, disclosures, FieldId::Disclosures);
+        defer_swap(&mut self.plans, plans, FieldId::Plans);
+        defer_swap(&mut self.belief_participants, belief_participants, FieldId::BeliefParticipants);
+        defer_swap(&mut self.envelope_ledger, envelope_ledger, FieldId::EnvelopeLedger);
+        defer_swap(&mut self.retail_projection_seen, retail_projection_seen, FieldId::RetailProjectionSeen);
         self.next_receipt_base = next_receipt_base;
         self.next_order_id = next_order_id;
         self.tick = tick;
         self.day = day;
         self.seq = seq;
-        defer_swap(&mut self.civil_clock, civil_clock);
-        defer_swap(&mut self.speculative_prepare, speculative_prepare);
+        defer_swap(&mut self.civil_clock, civil_clock, FieldId::CivilClock);
     }
 }
 
@@ -4840,24 +4685,256 @@ mod committable_state_tests {
         }
     }
 
+    /// 观察真实成功 step 的移交值与实际 Job，不依赖其他实例的累计计数。
+    /// 裁决 (d)（逐字段 defer_swap）形态：旧状态以完整字段 Job 集离开 commit 关键路径。
+    /// 原 #23 断言「恰一个完整 CommittableSessionState Job（携带 (tick,cash)）」属被
+    /// 否决的 replace 形态，随该形态失效（leader 裁决 2026-10-10 登记项）；本版以字段
+    /// Job 等价覆盖其意图：字段集完整（≥30 Job）、旧状态真实（旧 AccountBook 携带步前
+    /// 现金）、Arc lease 恰一次释放、drain 后无残留。
+    /// 覆盖局限（Astra 登记）：Job 在测试线程手动执行（受控 backend），本测试自身
+    /// 不能证明执行线程在池外——池外专用线程路径由 deferred_drop 测试组的
+    /// defer_runs_on_dedicated_thread_and_counts（真实 backend）覆盖。
     #[test]
-    fn commit_defers_old_state_destruction_to_dedicated_thread() {
+    #[cfg(not(target_family = "wasm"))]
+    fn successful_step_transfers_one_complete_old_state_and_releases_it_once() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::Arc;
         let mut session =
             GameSession::new(npc_working_quote_tests::retail_quote_setup(), 719).unwrap();
-        session.step().unwrap();
-        let before = deferred_drop::deferred_count();
-        session.step().unwrap();
-        assert!(
-            deferred_drop::deferred_count() > before,
-            "commit_from 未把旧权威状态移交专用析构线程"
+        let before_tick = session.state.tick;
+        let before_cash = session.state.accounts[&AccountId(0)].cash();
+        let owners = Arc::strong_count(&session.state.company_registry);
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let evidence = observed.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+        deferred_drop::controlled::with_backend(
+            sender,
+            move |value| {
+                evidence.borrow_mut().push((
+                    value.downcast_ref::<CommittableSessionState>().is_some(),
+                    value
+                        .downcast_ref::<AccountBook>()
+                        .map(|old| old[&AccountId(0)].cash()),
+                ));
+            },
+            || session.step().unwrap(),
         );
-        // 生产形态断言（试验 A 教训）：真实 step 提交路径上全部非 Copy 字段
-        // （36 个）都必须走 defer_swap，而不是只有个别字段被移交。
+        let observed = observed.borrow();
         assert!(
-            deferred_drop::deferred_count() - before >= 30,
-            "生产 commit 路径的移交数量不足（期望 ≥30/次提交，实际 {}）",
-            deferred_drop::deferred_count() - before
+            observed.len() >= 29,
+            "旧状态必须以完整字段集离开关键路径（当前字段表 32 个 defer_swap；批四删除 PendingNpc），实际 {} 个 Job",
+            observed.len()
         );
+        assert!(
+            observed.iter().all(|(whole, _)| !*whole),
+            "裁决 (d)：移交单位是字段 Job，不得出现整状态 Job"
+        );
+        let old_cash_jobs: Vec<_> = observed.iter().filter_map(|&(_, cash)| cash).collect();
+        assert_eq!(
+            old_cash_jobs,
+            vec![before_cash],
+            "恰一个旧 AccountBook Job，且必须携带步前现金"
+        );
+        assert_eq!(session.state.tick, before_tick + 1);
+        assert_eq!(
+            Arc::strong_count(&session.state.company_registry),
+            owners + 1,
+            "未执行的 company_registry 字段 Job 必须仍持有真实旧状态 Arc"
+        );
+        let jobs: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(jobs.len(), observed.len(), "全部字段 Job 必须成功入队");
+        for job in jobs {
+            job();
+        }
+        assert_eq!(
+            Arc::strong_count(&session.state.company_registry),
+            owners,
+            "旧状态的 Arc lease 必须恰一次释放"
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn failed_step_does_not_transfer_authority_to_drop_backend() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 720).unwrap();
+        let before = session.business_state_hash().unwrap();
+        let revision = session.external_revision();
+        session.post_shadow_failure = Some(fatal("controlled post-shadow failure"));
+        let attempts = Rc::new(RefCell::new(0));
+        let evidence = attempts.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+        let result = deferred_drop::controlled::with_backend(
+            sender,
+            move |_| *evidence.borrow_mut() += 1,
+            || session.step(),
+        );
+        assert!(result.is_err());
+        assert_eq!(*attempts.borrow(), 0);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+        assert_eq!(session.business_state_hash().unwrap(), before);
+        assert_eq!(session.external_revision(), revision);
+        assert!(session.poison.is_some());
+    }
+
+    /// 64 条是 Job 数上限而不是字节上限；用 65 次连续 commit 实测受控 backlog 与 drain。
+    /// 裁决 (d) 形态：每次 commit 移交一个完整字段 Job 集（K≥30），队列容量语义不变。
+    /// 原 #23 的「每旧 State 恰一个 Job + State 本体字节记账」断言属被否决的 replace
+    /// 形态，随该形态失效（leader 裁决 2026-10-10 登记项）；字节证据改为最重字段
+    /// （npc_order_lifecycles，4096 条/次）容量记账 + 全字段 Job 计数。
+    /// 覆盖局限（Astra 登记）：Job 在测试线程手动 drain，本测试自身不能证明执行
+    /// 线程在池外——同上，由真实 backend 的专用线程测试覆盖。
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn complete_state_backlog_is_bounded_and_full_queue_releases_inline() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 721).unwrap();
+        session.state.npc_order_lifecycles = (0..4096)
+            .map(|id| NpcOrderLifecycle {
+                account: AccountId(1),
+                code: StockId(0),
+                order_id: OrderId(id),
+                placed_market_minute: 0,
+                expires_market_minute: 100,
+            })
+            .collect();
+        let baseline_owners = Arc::strong_count(&session.state.company_registry);
+        let observed_jobs = Rc::new(RefCell::new(0_usize));
+        let counter = observed_jobs.clone();
+        let lifecycle_bytes = Rc::new(RefCell::new(Vec::<usize>::new()));
+        let lifecycles = lifecycle_bytes.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+        deferred_drop::controlled::with_backend(
+            sender,
+            move |value| {
+                *counter.borrow_mut() += 1;
+                if let Some(old) = value.downcast_ref::<Vec<NpcOrderLifecycle>>() {
+                    lifecycles.borrow_mut().push(
+                        old.capacity() * std::mem::size_of::<NpcOrderLifecycle>(),
+                    );
+                }
+            },
+            || {
+                for _ in 0..65 {
+                    let shadow = session.clone_for_tick_shadow().unwrap();
+                    session.commit_tick_shadow(shadow);
+                }
+            },
+        );
+        let total = *observed_jobs.borrow();
+        assert_eq!(total % 65, 0, "每次 commit 的字段 Job 数必须一致");
+        let per_commit = total / 65;
+        assert!(
+            per_commit >= 29,
+            "每次 commit 必须移交完整字段集（≥29 Job；字段表 32——批四删除 PendingNpc），实际 {per_commit}"
+        );
+        assert_eq!(
+            lifecycle_bytes.borrow().len(),
+            65,
+            "65 次 commit 每次恰一个 lifecycle 字段 Job"
+        );
+        assert!(
+            lifecycle_bytes
+                .borrow()
+                .iter()
+                .all(|&bytes| bytes >= 4096 * std::mem::size_of::<NpcOrderLifecycle>()),
+            "旧 lifecycle 容器必须完整移交（4096 条容量）"
+        );
+        let jobs: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(
+            jobs.len(),
+            64,
+            "积压上界=队列容量：65×{per_commit} 个 Job 中只有 64 个留在队列"
+        );
+        let enqueued = jobs.len();
+        let inline_released = total - enqueued;
+        assert!(inline_released >= 1, "满队列后其余 Job 必须就地释放");
+        let before_drain = Arc::strong_count(&session.state.company_registry);
+        assert!(
+            before_drain > baseline_owners && before_drain <= baseline_owners + 64,
+            "未析构旧 Arc 有界（≤队列容量 64）且非空"
+        );
+        // Astra 小修 a)：65 次尝试的 lifecycle 容量总计是"移交总量"而非"队列保留量"
+        // （受控队列只持有最先入队的 64 个字段 Job，其中含 ~2 份 lifecycle Job）。
+        let lifecycle_transferred_bytes_total: usize = lifecycle_bytes.borrow().iter().sum();
+        let drain_start = std::time::Instant::now();
+        for job in jobs {
+            job();
+        }
+        let drain_ns = drain_start.elapsed().as_nanos();
+        assert_eq!(
+            Arc::strong_count(&session.state.company_registry),
+            baseline_owners,
+            "drain 后旧状态必须完全析构，无残留"
+        );
+        println!(
+            "{}",
+            serde_json::json!({"commits":65,"jobs_per_commit":per_commit,"attempted_jobs":total,"enqueued":enqueued,"inline":inline_released,"pending_before_drain":enqueued,"pending_after_drain":0,"lifecycle_transferred_bytes_total":lifecycle_transferred_bytes_total,"transferred_bytes_scope":"65 次 lifecycle 尝试容量总计（非队列保留量：队列仅持最先入队的 64 个字段 Job，含 ~2 份 lifecycle）","drain_ns":drain_ns})
+        );
+    }
+
+    /// 修复1（Luna：CommitField 生产路径可达性）+ 修复2升级（Astra：字段集合级
+    /// 完整性，取代纯计数绊线）。走真实 commit_from→defer_swap 路径断言：
+    /// ①JobKind 分类为 CommitField 且计数 == COMMIT_FIELD_EXPECTED 全集大小；
+    /// ②per-FieldId 计数的**集合相等**：一次 commit 的观测字段多重集恰为期望全集
+    /// 每项一次——任何单字段 defer_swap→直接赋值的回退（反例：把 markets 改回
+    /// `self.markets = markets;`，重容器回 commit 路径同步析构）必然红：Markets
+    /// 的 per-FieldId 增量为 0 ≠ 1；纯计数绊线可被"删一个+换一个"绕过，集合
+    /// 相等不能（被删字段的计数缺失即红）。给结构体加字段而不更新
+    /// COMMIT_FIELD_EXPECTED 同样红（新字段观测到、期望集没有）。红绿反例
+    /// 证据见 logs/red-green-astra-counterexample-{red,green}.log。
+    /// ③CommitState 增量必须为 0（裁决 (d)：逐字段形态不存在整状态移交）。
+    /// 期望集随 cfg 条件化（默认 33 / simulation-diagnostics 35，与 commit_from
+    /// 条件 swap 对齐——Astra 增量四复检修复1）。已知盲区与如实边界见 FieldId
+    /// 注释 b/c：自报标签可被错标绕过、绕过 defer_swap 的直接赋值新字段不被拦。
+    /// 运行现状：verification-harness+simulation-diagnostics 同开在本链树上因
+    /// 既有 simdiag 编译债务（16 处，全部位于 simdiag 专属代码，见增量二登记）
+    /// 无法构建，该组合的绊线执行验证待该债务修复后补（logs/
+    /// simdiag-both-features-check.log 为本轮实测证据）。
+    /// 运行口径：本测试读全局 METRICS 的 snapshot（ledger 派生 by_kind），
+    /// 必须以独立过滤运行（cargo test -p engine --lib --features
+    /// verification-harness verify_metrics_classifies）：同模块的
+    /// producer_registration_pairs_and_underflow_exit_faults_explicitly 会按
+    /// 预期语义对全局台账落 sticky fault（code=5，加固冻结 limits 登记项），
+    /// 同进程并发/先后运行都会使 snapshot 永久 Err，与本测试的正确性无关。
+    #[test]
+    #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
+    fn verify_metrics_classifies_real_defer_swap_fields_as_commit_field() {
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 723).unwrap();
+        let before = verify_metrics::snapshot().expect("计量台账一致");
+        session.step().unwrap();
+        let after = verify_metrics::snapshot().expect("计量台账一致");
+        let classified = after.by_kind[JobKind::CommitField as usize].registered
+            - before.by_kind[JobKind::CommitField as usize].registered;
+        assert_eq!(
+            classified,
+            COMMIT_FIELD_EXPECTED.len() as u64,
+            "修复1：真实 defer_swap 路径必须全部计量为 CommitField"
+        );
+        let whole_states = after.by_kind[JobKind::CommitState as usize].registered
+            - before.by_kind[JobKind::CommitState as usize].registered;
+        assert_eq!(whole_states, 0, "裁决 (d)：不得出现整状态 Job");
+        for expected in COMMIT_FIELD_EXPECTED {
+            let delta = after.by_field[expected as usize] - before.by_field[expected as usize];
+            assert_eq!(
+                delta, 1,
+                "修复2升级：字段 {expected:?} 的移交计数必须恰为 1（集合级完整性绊线）"
+            );
+        }
     }
 
     #[test]
@@ -4895,7 +4972,16 @@ mod committable_state_tests {
     fn state_commit_installs_candidate_facts_and_keeps_authority_hooks() {
         let mut session =
             GameSession::new(npc_working_quote_tests::retail_quote_setup(), 718).unwrap();
+        session.shared_ingress();
+        session
+            .revision
+            .store(17, std::sync::atomic::Ordering::Relaxed);
+        let original_allocation = session.fresh_initial_allocation;
         let mut shadow = session.clone_for_tick_shadow().unwrap();
+        shadow
+            .revision
+            .store(99, std::sync::atomic::Ordering::Relaxed);
+        shadow.fresh_initial_allocation = !original_allocation;
         shadow
             .enqueue_player_intent(
                 AccountId(0),
@@ -4923,6 +5009,10 @@ mod committable_state_tests {
 
         session.commit_tick_shadow(shadow);
 
+        // ingress 的具体 fork/cutoff/receipt 不重不丢由 shared_ingress 的真实输入
+        // 测试验证；这里只断言外层 authority 的 revision/生命周期/故障钩子未被替换。
+        assert_eq!(session.external_revision(), 17);
+        assert_eq!(session.fresh_initial_allocation, original_allocation);
         assert_eq!(session.poison, Some(fatal("preserved poison")));
         assert_eq!(session.injected_failure, Some(fatal("preserved injection")));
         assert_eq!(
@@ -4935,6 +5025,26 @@ mod committable_state_tests {
         assert_eq!(
             serde_json::to_value(session.save().unwrap()).unwrap(),
             expected
+        );
+    }
+
+    /// 后台创建失败是性能退化，不是交易提交失败：真实 step 成功、authority 安装完整。
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn real_step_commits_successfully_when_drop_thread_cannot_spawn() {
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 720).unwrap();
+        let before_tick = session.tick();
+        let before_cash = session.state.accounts[&AccountId(0)].cash();
+        let (result, degradation) =
+            deferred_drop::controlled::with_failed_backend(Some(11), || session.step());
+        assert!(result.is_ok(), "defer 退化不能把已提交 tick 变成失败");
+        assert_eq!(session.tick(), before_tick + 1);
+        assert_eq!(session.state.accounts[&AccountId(0)].cash(), before_cash);
+        assert!(session.poison.is_none());
+        assert_eq!(
+            degradation,
+            Some(DeferredDropDegradation::SpawnFailed { os_errno: Some(11) })
         );
     }
 }

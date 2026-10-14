@@ -132,9 +132,6 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
       "12": { stocks: {} },
     },
     npc_attention: {},
-    parent_orders: {
-      "12": { "0": { target_qty: 100 } },
-    },
     runtime_state: {
       poisoned: false,
       next_receipt_base: "0",
@@ -155,7 +152,6 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     snapshot: { accounts: Record<string, unknown> };
     retail_experience: Record<string, unknown>;
     npc_attention: Record<string, unknown>;
-    parent_orders: Record<string, unknown>;
     runtime_state: { strategy_states: Record<string, unknown> };
     information_states: Record<string, unknown>;
     belief_books: Record<string, unknown>;
@@ -165,7 +161,6 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
   }) as {
     snapshot: { accounts: Map<number, unknown> };
     retail_experience: Map<number, unknown>;
-    parent_orders: Map<number, unknown>;
     runtime_state: { strategy_states: Map<number, unknown> };
   };
 
@@ -173,8 +168,6 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
   assert.deepEqual([...prepared.snapshot.accounts.keys()], [0, 12]);
   assert.ok(prepared.retail_experience instanceof Map);
   assert.deepEqual([...prepared.retail_experience.keys()], [12]);
-  assert.ok(prepared.parent_orders instanceof Map);
-  assert.deepEqual([...prepared.parent_orders.keys()], [12]);
   assert.ok(prepared.runtime_state.strategy_states instanceof Map);
   assert.deepEqual([...prepared.runtime_state.strategy_states.keys()], [12]);
 });
@@ -191,7 +184,6 @@ test("WASM restore rehydrates every new-save account map without changing decima
       strategy_states: { "1": {} },
     },
     retail_experience: { "1": {} },
-    parent_orders: { "1": { "600101": {} } },
     information_states: { "1": {} },
     belief_books: { "1": {} },
     watchlists: { "1": {} },
@@ -202,7 +194,7 @@ test("WASM restore rehydrates every new-save account map without changing decima
   const prepared = prepareSaveForWasm(slot as never) as Record<string, unknown>;
 
   for (const field of [
-    "snapshot", "npc_attention", "runtime_state.strategy_states", "retail_experience", "parent_orders",
+    "snapshot", "npc_attention", "runtime_state.strategy_states", "retail_experience",
     "information_states", "belief_books", "watchlists", "price_memories", "plans",
   ]) {
     const value = field === "snapshot"
@@ -214,9 +206,6 @@ test("WASM restore rehydrates every new-save account map without changing decima
       : prepared[field];
     assert.ok(value instanceof Map, `${field} must cross the WASM boundary as a Map`);
   }
-  const parentOrders = prepared.parent_orders as Map<number, Record<string, unknown>>;
-  const accountPlans = parentOrders.get(1);
-  assert.deepEqual(Object.keys(accountPlans ?? {}), ["600101"]);
   assert.deepEqual(
     prepared.runtime_state,
     {

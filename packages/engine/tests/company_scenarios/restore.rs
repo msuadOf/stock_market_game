@@ -34,8 +34,8 @@ fn restored_session_preserves_immediate_save_integrity_and_continues_independent
     // 各自的存档必须可解码、可恢复（合法状态）
     for session in [&uninterrupted, &restored] {
         let save_bytes = serde_json::to_vec(&session.save().expect("healthy save")).unwrap();
-        let decoded =
-            engine::session::decode_save_slot(&save_bytes, &Default::default()).expect("save decodes");
+        let decoded = engine::session::decode_save_slot(&save_bytes, &Default::default())
+            .expect("save decodes");
         GameSession::restore(&decoded).expect("save restores to valid session");
     }
 }

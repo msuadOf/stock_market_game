@@ -5,7 +5,7 @@ fn wire() -> Value {
     json!({
         "frames": [{
             "tick": 1, "seq_from": 0, "seq_to": 0,
-            "events": [], "facts": [],
+            "facts": [],
             "timeseries_payload": {
                 "markets": {}, "active_daily_candles": {}, "closed_daily_candles": {},
                 "auction_points": {}, "continuous_points": {}

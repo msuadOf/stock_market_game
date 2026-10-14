@@ -7,7 +7,6 @@ import { CompanyRequestRegistry } from "./company-request-registry.ts";
 import { frame, civilUpdate, isJsonRecord, recordArray } from "./protocol-test-fixtures.ts";
 import { parseNormalizedEngineUpdate, type NormalizedTickFrame } from "./protocol/index.ts";
 import type { EngineEvent } from "../types/engine.ts";
-import { canonicalJson } from "./protocol/canonical.ts";
 import { companyReducer } from "../store/company-slice.ts";
 
 type QueryHost = Pick<EngineHost, "capabilities" | "publicReportById" | "queryPublicReports">;
@@ -250,7 +249,6 @@ test("accepts reordered TickFrame events after protocol normalization restores c
   const wireFrame = frame(1, 0, [0, 1]);
   const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [{
     ...wireFrame,
-    events: [...recordArray(wireFrame.events, "events")].reverse(),
     facts: [...recordArray(wireFrame.facts, "facts")].reverse(),
   }], runtime_snapshot: null } });
   if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
@@ -264,7 +262,7 @@ test("accepts reordered CivilUpdate events and facts after protocol normalizatio
   if (!isJsonRecord(update.refresh) || !isJsonRecord(update.refresh.snapshot)) throw new Error("test fixture invalid");
   const disclosureEvent = {
     CompanyDisclosurePublished: {
-      seq: 2, publication_id: 9, company: "600001",
+      seq: 2, publication_id: 9, company: 600001,
       published_at: { date: "2030-01-02", second_of_day: 64_800 }, kind: "Announcement",
     },
   };
@@ -273,15 +271,12 @@ test("accepts reordered CivilUpdate events and facts after protocol normalizatio
   } };
   const normalized = parseNormalizedEngineUpdate({ CivilUpdate: {
     ...update,
-    events: [civilEvent, disclosureEvent],
     facts: [{
       key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 1 },
       event: civilEvent,
-      canonical_payload: canonicalJson(civilEvent),
     }, {
       key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
       event: disclosureEvent,
-      canonical_payload: canonicalJson(disclosureEvent),
     }],
     seq_to: 3,
     refresh: {

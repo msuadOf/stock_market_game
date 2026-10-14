@@ -12,24 +12,12 @@ export type PlayerWorkingOrder = {
   readonly frozen: "Cash" | "Shares"
 }
 
-type WorkingOrderSource = Pick<StrictSaveEnvelope, "auction_orders" | "resting_orders">
+type WorkingOrderSource = Pick<StrictSaveEnvelope, "resting_orders">
 
-export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWorkingOrder[] {
+export function projectPlayerOrders(slot: WorkingOrderSource, venue: PlayerWorkingOrder["venue"]): readonly PlayerWorkingOrder[] {
   const orders: PlayerWorkingOrder[] = []
-  for (const [code, auctionOrders] of Object.entries(slot.auction_orders)) {
-    for (const order of auctionOrders) {
-      if (order.owner !== 0) continue
-      orders.push({
-        id: order.order_id,
-        code,
-        side: order.side,
-        price: order.limit,
-        remainingQty: order.qty,
-        venue: "Auction",
-        frozen: order.side === "Buy" ? "Cash" : "Shares",
-      })
-    }
-  }
+  // 统一 book 后存档不再携带独立竞价委托集合；投影 resting_orders 的调用方
+  // 必须显式交出权威 venue，不从另一份委托集合或默认值猜测。
   for (const [code, restingOrders] of Object.entries(slot.resting_orders)) {
     for (const order of restingOrders) {
       if (order.owner !== 0 || order.qty === 0) continue
@@ -39,7 +27,7 @@ export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWo
         side: order.side,
         price: order.price,
         remainingQty: order.qty,
-        venue: "Continuous",
+        venue,
         frozen: order.side === "Buy" ? "Cash" : "Shares",
       })
     }

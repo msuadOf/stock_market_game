@@ -57,7 +57,7 @@ function entity(value: unknown, path: string): EntityTag {
   switch (kind) {
     case "Stock":
       // wire 股票身份为数值 StockId（u32）；翻译回代码串发生在 validate 之后的
-      // stock-identity.ts，保证稳定键/canonical_payload 仍按数值比对。
+      // stock-identity.ts，保证稳定键仍按数值比对。
       return { Stock: safeU32(payload, `${path}.Stock`) };
     case "Account":
       return { Account: safeInteger(payload, `${path}.Account`) };
@@ -107,7 +107,7 @@ function event(value: unknown, path: string): WireEvent {
       return { CivilDateAdvanced: { seq, settled_date: parseIsoDate(field(payload, "settled_date", `${path}.CivilDateAdvanced`), `${path}.CivilDateAdvanced.settled_date`), next_date: parseIsoDate(field(payload, "next_date", `${path}.CivilDateAdvanced`), `${path}.CivilDateAdvanced.next_date`), next_status: parseDayStatus(field(payload, "next_status", `${path}.CivilDateAdvanced`), `${path}.CivilDateAdvanced.next_status`) } };
     case "CompanyDisclosurePublished":
       exact(payload, ["seq", "publication_id", "company", "published_at", "kind"], `${path}.CompanyDisclosurePublished`);
-      return { CompanyDisclosurePublished: { seq, publication_id: safeU32(field(payload, "publication_id", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.publication_id`), company: text(field(payload, "company", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.company`), published_at: parseInstant(field(payload, "published_at", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.published_at`), kind: parseDisclosureKind(field(payload, "kind", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.kind`) } };
+      return { CompanyDisclosurePublished: { seq, publication_id: safeU32(field(payload, "publication_id", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.publication_id`), company: safeU32(field(payload, "company", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.company`), published_at: parseInstant(field(payload, "published_at", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.published_at`), kind: parseDisclosureKind(field(payload, "kind", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.kind`) } };
     case "IntentRejected":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.IntentRejected`);
       return { IntentRejected: { seq, account: safeInteger(field(payload, "account", `${path}.IntentRejected`), `${path}.IntentRejected.account`), code: safeU32(field(payload, "code", `${path}.IntentRejected`), `${path}.IntentRejected.code`), reason: enumValue(field(payload, "reason", `${path}.IntentRejected`), REJECTION_REASONS, `${path}.IntentRejected.reason`) } };
@@ -131,8 +131,8 @@ function isEventName(value: string | undefined): value is typeof EVENT_NAMES[num
 
 function fact(value: unknown, path: string): WireEventFact {
   const source = record(value, path);
-  exact(source, ["key", "event", "canonical_payload"], path);
-  return { key: stableKey(field(source, "key", path), `${path}.key`), event: event(field(source, "event", path), `${path}.event`), canonical_payload: text(field(source, "canonical_payload", path), `${path}.canonical_payload`) };
+  exact(source, ["key", "event"], path);
+  return { key: stableKey(field(source, "key", path), `${path}.key`), event: event(field(source, "event", path), `${path}.event`) };
 }
 
 function continuous(value: unknown, path: string): ContinuousPoint {
@@ -206,8 +206,8 @@ function account(value: unknown, path: string): WireAccountSnap {
 
 function frame(value: unknown, path: string): WireTickFrame {
   const source = record(value, path);
-  exact(source, ["tick", "events", "facts", "timeseries_payload", "seq_from", "seq_to"], path);
-  return { tick: safeInteger(field(source, "tick", path), `${path}.tick`), events: values(field(source, "events", path), `${path}.events`).map((entry, index) => event(entry, `${path}.events[${index}]`)), facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)), timeseries_payload: payload(field(source, "timeseries_payload", path), `${path}.timeseries_payload`), seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`), seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`) };
+  exact(source, ["tick", "facts", "timeseries_payload", "seq_from", "seq_to"], path);
+  return { tick: safeInteger(field(source, "tick", path), `${path}.tick`), facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)), timeseries_payload: payload(field(source, "timeseries_payload", path), `${path}.timeseries_payload`), seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`), seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`) };
 }
 
 function refresh(value: unknown, path: string): WireCivilRefresh {
@@ -218,7 +218,7 @@ function refresh(value: unknown, path: string): WireCivilRefresh {
 
 function civil(value: unknown, path: string): WireCivilUpdate {
   const source = record(value, path);
-  exact(source, ["boundary", "kinds", "tick", "civil_date", "events", "facts", "seq_from", "seq_to", "refresh"], path);
+  exact(source, ["boundary", "kinds", "tick", "civil_date", "facts", "seq_from", "seq_to", "refresh"], path);
   const boundary = record(field(source, "boundary", path), `${path}.boundary`);
   exact(boundary, ["settled_date", "settled_phase", "next_date", "next_status"], `${path}.boundary`);
   return {
@@ -226,7 +226,6 @@ function civil(value: unknown, path: string): WireCivilUpdate {
     kinds: values(field(source, "kinds", path), `${path}.kinds`).map((entry, index) => enumValue(entry, CIVIL_KINDS, `${path}.kinds[${index}]`)),
     tick: safeInteger(field(source, "tick", path), `${path}.tick`),
     civil_date: parseIsoDate(field(source, "civil_date", path), `${path}.civil_date`),
-    events: values(field(source, "events", path), `${path}.events`).map((entry, index) => event(entry, `${path}.events[${index}]`)),
     facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)),
     seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`),
     seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`),

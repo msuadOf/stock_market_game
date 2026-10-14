@@ -328,17 +328,25 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
     assert!(pending
         .iter()
         .all(|due| due.due_date >= save.civil_clock.current_date));
-    // 待应用事实队列的保留规则：只保留计划簿中仍存活的计划条目。
-    for event in &save.pending_plan_events {
-        let plan = save
-            .plans
-            .plan(event.plan_id())
-            .expect("saved pending event must reference a book plan");
-        assert!(
-            !plan.is_terminal(),
-            "save boundary must drop events of terminal plans"
-        );
-    }
+    // 架构项 8（统一交易计划的可变所有者）删除了存档边界的待应用事实队列与
+    // 旧母单镜像：wire 上不得再出现这两个键，执行状态只存在于 plans 的执行腿。
+    // （批次③保守合成时保留旧断言；owner8 engine 闭包（批次④）落地字段删除后恢复。）
+    assert!(
+        value
+            .as_object()
+            .expect("save wire must be a JSON object")
+            .get("pending_plan_events")
+            .is_none(),
+        "save wire must not carry the removed pending_plan_events queue"
+    );
+    assert!(
+        value
+            .as_object()
+            .expect("save wire must be a JSON object")
+            .get("parent_orders")
+            .is_none(),
+        "save wire must not carry the removed parent_orders mirror"
+    );
     // 经营推进时点与自然日时钟一致。
     assert_eq!(
         save.company_operations.next_expected_date(),

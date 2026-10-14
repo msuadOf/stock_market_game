@@ -16,6 +16,9 @@
 #[global_allocator]
 static NATIVE_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+pub mod shared_history;
+pub(crate) mod u64_decimal;
+
 pub mod indicators;
 pub mod money;
 pub use money::{Money, MoneyError};
@@ -62,7 +65,10 @@ pub mod market;
 pub use market::{Market, MarketError};
 
 pub mod compute;
-pub use compute::{create_backend, ComputeBackend, ComputeError, ComputeMode, CpuBackend};
+pub use compute::{
+    create_backend, ComputeBackend, ComputeContext, ComputeError, ComputeInitError, ComputeMode,
+    ComputeWork, CpuBackend,
+};
 
 pub mod verification_evidence;
 
@@ -70,8 +76,8 @@ pub mod session;
 pub use session::{
     decode_save_slot, AccountSnap, AuctionOrderSnap, BetweenKindDistribution, DailyCandle,
     DailyTradeStats, Event, FloatAllocation, GameSession, IngressReceiptCursors, MarketSnap,
-    NpcAttentionState, NpcSetup, ParentOrderPlan, PendingNpcBatch, PendingPlanEvent, PositionSnap,
-    ReceiptBearingIntent, RejectionReason, SaveDecodeLimits, SaveParentOrderPlan, SaveSlot,
+    NpcAttentionState, NpcSetup, PositionSnap,
+    ReceiptBearingIntent, RejectionReason, SaveDecodeLimits, SaveSlot,
     SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank, SavedLiveEnvelope,
     SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition, SavedRetailReceiptIdentity,
     SavedRuntimeState, SecurityCategory, SessionError, SessionSetup, SharedSessionIngress,

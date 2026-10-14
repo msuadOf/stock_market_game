@@ -10,7 +10,10 @@ fn accepted_buy_worker(
     buyer: AccountId,
 ) -> super::continuous_matching::ContinuousStockOutput {
     let code = game.state.markets.keys().next().unwrap().clone();
-    let plan = plan_tick(PhaseInput { session: game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: game,
+    })
+    .unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         buyer,
@@ -71,8 +74,8 @@ fn successful_candidate_installs_matching_through_projection_state_and_cursors_t
     assert_eq!(game.state.markets[&code].resting_orders().len(), 1);
     assert!(output.receipts.is_empty());
     assert_eq!(output.settlement.settlement.applied_receipts, 0);
-    assert_eq!(output.events.len(), 1);
-    match output.events[0].clone() {
+    assert_eq!(output.event_values().len(), 1);
+    match output.event_values()[0].clone() {
         Event::OrderAccepted {
             seq,
             code: event_code,
@@ -134,7 +137,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
     let output = apply_session_execution_transaction(&mut game, vec![worker], Vec::new()).unwrap();
 
     assert_eq!(output.settlement.settlement.applied_receipts, 2);
-    assert!(output.events.iter().any(|event| matches!(
+    assert!(output.event_values().iter().any(|event| matches!(
         event,
         Event::Trade { maker: AccountId(0), taker, qty: 100, .. } if *taker == buyer
     )));
@@ -247,6 +250,7 @@ fn unknown_worker_stock_is_rejected_without_extending_session_markets() {
         trades: Vec::new(),
         place_facts: Vec::new(),
         cancel_facts: Vec::new(),
+        market_data: Default::default(),
     };
     let before = game.business_state_hash().unwrap();
     let market_count = game.state.markets.len();

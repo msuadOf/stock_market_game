@@ -60,6 +60,9 @@ pub struct Market {
     limit_bps: u32,
     /// 申报价格最小变动单位。
     tick: Money,
+    /// 进入 Auction 时已经受理的下一 seq 截点；不保存第二份订单或可变盘口。
+    /// Closing 的公开连续余单取 seq < 截点，Opening 由 PhasePolicy 隐藏全部未清算单。
+    auction_public_cutoff_sequence: u64,
 }
 
 /// The changed part of one stock book after a tick-private worker round.
@@ -81,6 +84,7 @@ impl Market {
             self.last_close,
             self.limit_bps,
             self.tick,
+            self.auction_public_cutoff_sequence,
             self.book.hash_projection(),
         )
     }
@@ -121,6 +125,7 @@ impl Market {
             last_close: initial_price,
             limit_bps: rounded_limit as u32,
             tick,
+            auction_public_cutoff_sequence: 0,
         })
     }
 
@@ -317,6 +322,81 @@ impl Market {
             self.last_price = last.price;
         }
         Ok(result)
+    }
+
+    /// 返回当前撮合模式（透传底层 OrderBook）。
+    pub fn matching_mode(&self) -> crate::orderbook::MatchingMode {
+        self.book.mode()
+    }
+
+    /// 设置撮合模式（透传底层 OrderBook）。
+    pub fn set_matching_mode(
+        &mut self,
+        mode: crate::orderbook::MatchingMode,
+    ) -> Result<(), crate::orderbook::OrderError> {
+        let before = self.book.mode();
+        self.book.set_mode(mode)?;
+        if before != mode {
+            self.auction_public_cutoff_sequence = if mode == crate::orderbook::MatchingMode::Auction {
+                self.book.next_sequence()
+            } else { 0 };
+        }
+        Ok(())
+    }
+
+    pub(crate) fn auction_public_cutoff_sequence(&self) -> u64 {
+        self.auction_public_cutoff_sequence
+    }
+
+    /// 恢复受理时序事实；合法性在安装到 authority 之前由存档完整校验确认。
+    pub(crate) fn restore_auction_public_cutoff_sequence(&mut self, cutoff: u64) -> Result<(), MarketError> {
+        if cutoff > self.book.next_sequence() {
+            return Err(MarketError::InvalidParams { reason: "公开可见性截点超过 book 下一受理序号".to_owned() });
+        }
+        self.auction_public_cutoff_sequence = cutoff;
+        Ok(())
+    }
+
+    pub(crate) fn depth_before_sequence(&self, cutoff: u64) -> (Vec<(Money, u64)>, Vec<(Money, u64)>) {
+        let mut bids = BTreeMap::<Money, u64>::new();
+        let mut asks = BTreeMap::<Money, u64>::new();
+        for order in self.resting_order_refs().filter(|order| order.seq < cutoff) {
+            let level = match order.side { Side::Buy => &mut bids, Side::Sell => &mut asks }
+                .entry(order.price).or_default();
+            *level = level.checked_add(u64::from(order.qty)).expect("公开盘口数量不能溢出");
+        }
+        (bids.into_iter().rev().collect(), asks.into_iter().collect())
+    }
+
+    /// 集合竞价清算：在清算价批量撮合，并由末笔清算价更新 last_price。
+    pub fn execute_auction_clearing(
+        &mut self,
+        exchange: crate::StockExchange,
+    ) -> Result<crate::orderbook::AuctionClearingResult, MarketError> {
+        let result = self
+            .book
+            .execute_auction_clearing(self.last_close, exchange)?;
+        if let Some(price) = result.price {
+            self.last_price = price;
+        }
+        Ok(result)
+    }
+
+    /// 集合竞价参考价（不产生 Trades，不修改状态）。
+    pub fn indicative_clearing_price(
+        &self,
+        exchange: crate::StockExchange,
+    ) -> Result<Option<Money>, MarketError> {
+        Ok(self
+            .book
+            .indicative_clearing_price(self.last_close, exchange)?)
+    }
+
+    pub(crate) fn auction_indicative(
+        &self,
+        exchange: crate::StockExchange,
+    ) -> Result<(Option<(Money, u64)>, u64), MarketError> {
+        Ok(self.book.auction_indicative(self.last_close, exchange)?)
     }
 
     /// 买盘最优价（透传 book）。空簿返回 None。

@@ -1,5 +1,5 @@
-use super::continuous_tick_transaction::{
-    apply_tick_shadow_continuous_transaction, prepare_continuous_tick,
+use super::market_tick_transaction::{
+    apply_tick_shadow_market_transaction, prepare_market_tick,
 };
 use super::*;
 use crate::session::RetailOrderDiagnosticEvent;
@@ -33,10 +33,10 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
         enqueue_crossing_buy(&mut authority, &code);
     }
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
 
-    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_market_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
     assert_eq!(authority.state.pending_player.len(), 2);
@@ -98,7 +98,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
     assert_eq!(output.settlement.settlement.applied_receipts, 4);
     assert_eq!(output.settlement.settlement.applied_groups, 2);
     assert!(matches!(
-        output.events.as_slice(),
+        output.event_values().as_slice(),
         [
             Event::Trade {
                 seq: 1,
@@ -128,7 +128,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
         .unwrap()
         .commit();
 
-    assert_eq!(committed.tick.events, output.events);
+    assert_eq!(committed.tick.event_values(), output.event_values());
     assert!(authority.state.pending_player.is_empty());
     assert_eq!(authority.state.next_order_id, 4);
     assert_eq!(authority.seq(), 3);
@@ -173,7 +173,7 @@ fn projects_retail_submission_and_bilateral_fills_from_typed_facts() {
         .insert(SELLER, RetailExperienceState::without_equity_reference());
     enqueue_crossing_buy(&mut authority, &code);
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -215,7 +215,7 @@ fn projects_each_retail_fill_with_its_own_request() {
     enqueue_crossing_buy(&mut authority, &code);
     enqueue_crossing_buy(&mut authority, &code);
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -274,7 +274,7 @@ fn market_remainder_is_not_reported_as_an_auction_abort() {
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(authority
         .last_retail_order_events()
@@ -318,7 +318,7 @@ fn crossing_trade_has_a_complete_causal_chain() {
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     let report = authority.causal_diagnostics().unwrap();
     assert_eq!(report.submitted_qty, u64::from(LOT * 3));
@@ -340,10 +340,10 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     let (mut authority, code) = session_with_resting_sell(t1_enabled, LOT);
     enqueue_crossing_buy(&mut authority, &code);
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput { session: &authority, speculative: None })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
 
-    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_market_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
     assert_eq!(authority.state.pending_player.len(), 1);
@@ -368,7 +368,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     assert_eq!(output.settlement.settlement.applied_groups, 2);
     assert!(output.settlement.events.is_empty());
     assert!(matches!(
-        output.events.as_slice(),
+        output.event_values().as_slice(),
         [Event::Trade {
             seq: 1,
             code: traded_code,
@@ -385,7 +385,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
         .unwrap()
         .commit();
 
-    assert_eq!(committed.tick.events, output.events);
+    assert_eq!(committed.tick.event_values(), output.event_values());
     assert!(authority.state.pending_player.is_empty());
     assert_eq!(authority.state.next_order_id, 3);
     assert_eq!(authority.seq(), 2);

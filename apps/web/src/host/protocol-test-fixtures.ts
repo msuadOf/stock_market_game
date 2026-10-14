@@ -1,4 +1,3 @@
-import { canonicalJson } from "./protocol/canonical.ts";
 import { parseProtocolSnapshot } from "./protocol/parse.ts";
 import { createProtocolState } from "./protocol/types.ts";
 
@@ -48,7 +47,6 @@ export function fact(seq: number, localEventIndex: number, code: number = FIXTUR
   return {
     key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: localEventIndex },
     event,
-    canonical_payload: canonicalJson(event),
   };
 }
 
@@ -66,7 +64,6 @@ export function timeseries(tick: number): JsonRecord {
 export function frame(tick: number, seqFrom: number, codes: readonly number[]): JsonRecord {
   return {
     tick,
-    events: codes.map((code, index) => rejection(seqFrom + index + 1, code)),
     facts: codes.map((code, index) => fact(seqFrom + index + 1, index, code)),
     timeseries_payload: timeseries(tick),
     seq_from: seqFrom,
@@ -134,11 +131,9 @@ export function civilUpdate(): JsonRecord {
       kinds: ["AfterClose", "BeforeOpen"],
       tick: 1,
       civil_date: "2030-01-03",
-      events: [event],
       facts: [{
         key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
         event,
-        canonical_payload: canonicalJson(event),
       }],
       seq_from: 1,
       seq_to: 2,

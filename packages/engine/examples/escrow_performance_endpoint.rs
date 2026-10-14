@@ -96,17 +96,18 @@ fn execute(request: Request) -> Result<Value, String> {
         .seed
         .parse::<u64>()
         .map_err(|error| error.to_string())?;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .map_err(|error| error.to_string())?;
-    let (completed, totals, samples) = pool.install(|| {
+    let compute =
+        engine::ComputeContext::with_workers(threads).map_err(|error| error.to_string())?;
+    let compute_for_closure = compute.clone();
+    let (completed, totals, samples) = compute.install(move || {
+        let compute = compute_for_closure;
         let mut completed = 0_u64;
         let mut totals = BTreeMap::<String, u128>::new();
         let mut samples = Vec::new();
         for _ in 0..workload.repetitions {
             let mut game =
-                GameSession::new(setup.clone(), seed).map_err(|error| error.to_string())?;
+                engine::GameSession::new_with_compute(setup.clone(), seed, compute.clone())
+                    .map_err(|error| error.to_string())?;
             for _ in 0..workload.completed_ticks / workload.repetitions {
                 // 两个交易时段间完成真实自然日操作；
                 // 不生成虚假 TickFrame，也不从 wall time 中扣除这些操作。

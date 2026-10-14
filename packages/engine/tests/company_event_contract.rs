@@ -282,7 +282,7 @@ fn civil_report_refresh_validates_and_reconnect_resolves_publication() {
         }
         let update = session.end_civil_day_update().unwrap();
         update.validate().unwrap();
-        for event in &update.events {
+        for event in update.events() {
             if let Event::CompanyDisclosurePublished {
                 publication_id,
                 kind: CompanyDisclosureKind::Report { .. },

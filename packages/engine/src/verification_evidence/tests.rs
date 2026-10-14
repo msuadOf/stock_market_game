@@ -8,8 +8,7 @@ use crate::{
     },
     session::{
         protocol::{
-            attach_facts, AuctionPoint, AuctionPointKind, ContinuousPoint, ProtocolSession,
-            TickTimeseriesPayload,
+            AuctionPoint, AuctionPointKind, ContinuousPoint, ProtocolSession, TickTimeseriesPayload,
         },
         CompanyDisclosureKind, FloatAllocation, NpcSetup, SecurityCategory, SessionSetup,
         StockExchange, StockSpec,
@@ -18,6 +17,13 @@ use crate::{
     InstParams, MarketSnap, Money, RejectionReason, RetailParams, StockCode, StrategyParams,
     TradingPhase,
 };
+
+// 独立测试 fixture 的 producer；不在生产协议层重建身份。
+fn fixture_facts(
+    events: &[Event],
+) -> Result<Vec<crate::session::protocol::EventFact>, crate::session::protocol::ProtocolError> {
+    crate::session::protocol::SessionFactCursor::default().assign_session_facts(events.to_vec())
+}
 
 fn assert_no_json_numbers(value: &Value) {
     fn visit(value: &Value, path: &str) {
@@ -67,7 +73,6 @@ fn assert_versioned_evidence_runtime_numbers_are_decimal_strings(value: &Value) 
 fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
     let quiet = TickFrame {
         tick: 1,
-        events: Vec::new(),
         facts: Vec::new(),
         timeseries_payload: TickTimeseriesPayload::default(),
         seq_from: 0,
@@ -572,8 +577,7 @@ fn frame(events: Vec<Event>) -> TickFrame {
     let seq_to = u64::try_from(events.len()).unwrap();
     TickFrame {
         tick: 5,
-        facts: attach_facts(&events).unwrap(),
-        events,
+        facts: fixture_facts(&events).unwrap(),
         timeseries_payload: TickTimeseriesPayload::default(),
         seq_from: 0,
         seq_to,
@@ -853,7 +857,7 @@ fn real_civil_update_projects_validated_session_lifecycle_shared_ordinals() {
     let disclosure_seq = first_seq.checked_add(1).unwrap();
     let announcement_seq = disclosure_seq.checked_add(1).unwrap();
     let publication_id = PublicationId::new(u32::MAX);
-    update.events = vec![
+    let events = vec![
         Event::CivilDateAdvanced {
             seq: first_seq,
             settled_date: update.boundary.settled_date,
@@ -871,7 +875,7 @@ fn real_civil_update_projects_validated_session_lifecycle_shared_ordinals() {
         },
         announcement_event(announcement_seq, u32::MAX - 1),
     ];
-    update.facts = attach_facts(&update.events).unwrap();
+    update.facts = fixture_facts(&events).unwrap();
     update.seq_to = announcement_seq;
     update.refresh.snapshot.seq = announcement_seq;
     update.refresh.public_publication_ids = vec![
@@ -931,8 +935,7 @@ fn tick_before_civil(stock: &StockId) -> TickFrame {
     ];
     let frame = TickFrame {
         tick: 5,
-        facts: attach_facts(&events).unwrap(),
-        events,
+        facts: fixture_facts(&events).unwrap(),
         timeseries_payload: TickTimeseriesPayload::default(),
         seq_from: 0,
         seq_to: 3,
@@ -959,7 +962,7 @@ fn civil_after_tick(duplicate_disclosure: bool) -> CivilUpdate {
             report_revision: u32::MAX,
         },
     };
-    update.events = if duplicate_disclosure {
+    let events = if duplicate_disclosure {
         vec![
             announcement_event(4, u32::MAX - 1),
             date_event,
@@ -970,8 +973,8 @@ fn civil_after_tick(duplicate_disclosure: bool) -> CivilUpdate {
     };
     update.tick = 5;
     update.seq_from = 3;
-    update.seq_to = update.events.last().unwrap().seq();
-    update.facts = attach_facts(&update.events).unwrap();
+    update.seq_to = events.last().unwrap().seq();
+    update.facts = fixture_facts(&events).unwrap();
     update.refresh.snapshot.tick = update.tick;
     update.refresh.snapshot.seq = update.seq_to;
     update.refresh.public_publication_ids = vec![u32::MAX.to_string(), (u32::MAX - 1).to_string()];
@@ -1053,14 +1056,13 @@ fn update_stream_failure_does_not_consume_sequence_or_identity_state() {
     sequence_gap.seq_from += 1;
     sequence_gap.seq_to += 1;
     sequence_gap.refresh.snapshot.seq += 1;
-    for event in &mut sequence_gap.events {
-        match event {
+    for fact in &mut sequence_gap.facts {
+        match &mut fact.event {
             Event::CivilDateAdvanced { seq, .. }
             | Event::CompanyDisclosurePublished { seq, .. } => *seq += 1,
             unexpected => panic!("unexpected CivilUpdate event: {unexpected:?}"),
         }
     }
-    sequence_gap.facts = attach_facts(&sequence_gap.events).unwrap();
     for (offset, fact) in sequence_gap.facts.iter_mut().enumerate() {
         fact.key = crate::session::pipeline::EventStableKey::for_event(
             &fact.event,
@@ -1093,8 +1095,7 @@ fn stateful_update_stream_projection_resets_ordinal_domains_on_the_next_tick() {
     let events = vec![announcement_event(2, 10)];
     let second = TickFrame {
         tick: 6,
-        facts: attach_facts(&events).unwrap(),
-        events,
+        facts: fixture_facts(&events).unwrap(),
         timeseries_payload: TickTimeseriesPayload::default(),
         seq_from: 1,
         seq_to: 2,

@@ -379,6 +379,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
     let receipt = fill(1, Side::Buy, 10, 100, 100_000);
 
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -411,6 +412,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
 
     let exit = fill(2, Side::Sell, 11, 100, 120_000);
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -436,6 +438,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
     let before_replay = experience.clone();
 
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -476,6 +479,7 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
         (12, fill(3, Side::Sell, 12, 4, 4_080)),
     ] {
         apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
             &mut accounts,
             &mut retail_experience,
             &mut books,
@@ -521,6 +525,7 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
     let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
     let buy = fill(1, Side::Buy, 10, 1, 100_000);
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -537,6 +542,7 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
 
     let sell = fill(2, Side::Sell, 11, 1, 1);
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -1132,6 +1138,7 @@ fn settlement_plan_account_failure_preserves_all_four_transaction_containers() {
     )
     .unwrap();
     let error = apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut experience,
         &mut books,

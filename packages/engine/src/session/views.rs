@@ -1,110 +1,113 @@
 //! 构建市场视图与散户行为、风险观察的策略输入。
 
 use super::*;
-use rayon::prelude::*;
+use crate::compute::parallel::*;
 
 use super::pipeline::npc_split::SessionReadView;
 
 /// build_market_view 的读视图版本：只消费 view 字段，行为与 GameSession 同名方法逐行同源。
 pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> MarketView {
+    let public_policy = pipeline::phase::PhasePolicy::capture_on(view);
     let apply_price_cage =
         view.phase() == TradingPhase::Continuous && view.setup.config.price_cage_enabled;
-    let stocks = view
-        .markets
-        .par_iter()
-        .map(|(code, m)| {
-            let hist: Vec<Money> = view
-                .price_history
-                .get(code)
-                .map(|d| d.iter().copied().collect())
-                .expect("every market must have a price-history queue");
-            let completed_minute_prices: Vec<Money> = view
-                .market_minute_closes
-                .get(code)
-                .expect("every market must have canonical minute history")
-                .iter()
-                .map(|sample| sample.close)
-                .collect();
-            let historical = view
-                .candle_book
-                .histories()
-                .get(code)
-                .expect("every market must have authoritative daily candles");
-            let sample_count = historical.len().min(20);
-            let average_daily_volume = if sample_count == 0 {
-                0.0
-            } else {
-                historical
-                    .iter_rev()
-                    .take(sample_count)
-                    .map(|candle| candle.volume as f64)
-                    .sum::<f64>()
-                    / sample_count as f64
-            };
-            let current_volume = view
-                .candle_book
-                .active()
-                .get(code)
-                .map_or(0, |candle| candle.volume) as f64;
-            let elapsed_fraction = intraday_expected_volume_fraction(
-                view.tick % view.setup.ticks_per_day + 1,
-                view.setup.ticks_per_day,
-                view.setup.auction_ticks,
-            );
-            let expected_volume = average_daily_volume * elapsed_fraction;
-            let relative_volume = if expected_volume > 0.0 {
-                current_volume / expected_volume
-            } else {
-                0.0
-            };
-            let bid_volume: u64 = m
-                .bid_depth()
-                .into_iter()
-                .take(5)
-                .map(|(_, quantity)| quantity)
-                .sum();
-            let ask_volume: u64 = m
-                .ask_depth()
-                .into_iter()
-                .take(5)
-                .map(|(_, quantity)| quantity)
-                .sum();
-            let depth_total = bid_volume.saturating_add(ask_volume);
-            let order_book_imbalance = if depth_total == 0 {
-                0.0
-            } else {
-                (bid_volume as f64 - ask_volume as f64) / depth_total as f64
-            };
-            (
-                code.clone(),
-                StockView {
-                    best_bid: m.best_bid(),
-                    best_ask: m.best_ask(),
-                    last_price: m.last_price(),
-                    daily_upper_limit: m.up_stop().unwrap_or_else(|error| {
-                        panic!(
-                            "daily upper limit observation failed for {}: {error}",
-                            code.0
-                        )
-                    }),
-                    max_buy_price: m
-                        .limit_order_price_bound(Side::Buy, apply_price_cage)
-                        .unwrap_or_else(|error| {
-                            panic!("buy limit observation failed for {}: {error}", code.0)
+    let stocks = view.compute.parallel(|| {
+        view.markets
+            .par_iter()
+            .map(|(code, m)| {
+                let hist: Vec<Money> = view
+                    .price_history
+                    .get(code)
+                    .map(|d| d.iter().copied().collect())
+                    .expect("every market must have a price-history queue");
+                let completed_minute_prices: Vec<Money> = view
+                    .market_minute_closes
+                    .get(code)
+                    .expect("every market must have canonical minute history")
+                    .iter()
+                    .map(|sample| sample.close)
+                    .collect();
+                let historical = view
+                    .candle_book
+                    .histories()
+                    .get(code)
+                    .expect("every market must have authoritative daily candles");
+                let sample_count = historical.len().min(20);
+                let average_daily_volume = if sample_count == 0 {
+                    0.0
+                } else {
+                    historical
+                        .iter_rev()
+                        .take(sample_count)
+                        .map(|candle| candle.volume as f64)
+                        .sum::<f64>()
+                        / sample_count as f64
+                };
+                let current_volume = view
+                    .candle_book
+                    .active()
+                    .get(code)
+                    .map_or(0, |candle| candle.volume) as f64;
+                let elapsed_fraction = intraday_expected_volume_fraction(
+                    view.tick % view.setup.ticks_per_day + 1,
+                    view.setup.ticks_per_day,
+                    view.setup.auction_ticks,
+                );
+                let expected_volume = average_daily_volume * elapsed_fraction;
+                let relative_volume = if expected_volume > 0.0 {
+                    current_volume / expected_volume
+                } else {
+                    0.0
+                };
+                let public = public_policy.project_public_book(m);
+                let bid_volume: u64 = public
+                    .bids
+                    .iter()
+                    .take(5)
+                    .map(|(_, quantity)| *quantity)
+                    .sum();
+                let ask_volume: u64 = public
+                    .asks
+                    .iter()
+                    .take(5)
+                    .map(|(_, quantity)| *quantity)
+                    .sum();
+                let depth_total = bid_volume.saturating_add(ask_volume);
+                let order_book_imbalance = if depth_total == 0 {
+                    0.0
+                } else {
+                    (bid_volume as f64 - ask_volume as f64) / depth_total as f64
+                };
+                (
+                    code.clone(),
+                    StockView {
+                        best_bid: public.best_bid,
+                        best_ask: public.best_ask,
+                        last_price: m.last_price(),
+                        daily_upper_limit: m.up_stop().unwrap_or_else(|error| {
+                            panic!(
+                                "daily upper limit observation failed for {}: {error}",
+                                code.0
+                            )
                         }),
-                    min_sell_price: m
-                        .limit_order_price_bound(Side::Sell, apply_price_cage)
-                        .unwrap_or_else(|error| {
-                            panic!("sell limit observation failed for {}: {error}", code.0)
-                        }),
-                    recent_prices: hist,
-                    recent_market_minute_prices: completed_minute_prices,
-                    relative_volume,
-                    order_book_imbalance,
-                },
-            )
-        })
-        .collect();
+                        max_buy_price: m
+                            .limit_order_price_bound(Side::Buy, apply_price_cage)
+                            .unwrap_or_else(|error| {
+                                panic!("buy limit observation failed for {}: {error}", code.0)
+                            }),
+                        min_sell_price: m
+                            .limit_order_price_bound(Side::Sell, apply_price_cage)
+                            .unwrap_or_else(|error| {
+                                panic!("sell limit observation failed for {}: {error}", code.0)
+                            }),
+                        recent_prices: hist,
+                        recent_market_minute_prices: completed_minute_prices,
+                        relative_volume,
+                        order_book_imbalance,
+                    },
+                )
+            })
+            .collect()
+    });
     MarketView {
         stocks,
         tick: view.tick,
@@ -117,32 +120,34 @@ pub(in crate::session) fn market_price_path_observations_on(
     view: &SessionReadView,
 ) -> Result<BTreeMap<StockId, PricePathObservation>, ObservationError> {
     let codes = view.markets.keys().collect::<Vec<_>>();
-    let results = codes
-        .par_iter()
-        .map(|code| {
-            let code = *code;
-            let minutes = view
-                .market_minute_closes
-                .get(code)
-                .expect("every market must have canonical minute history");
-            let retained_daily = view
-                .candle_book
-                .histories()
-                .get(code)
-                .expect("every market must have authoritative daily candles");
-            // 行为窗口最长 250 个已完成交易日；长局不能在每个观察 tick
-            // 重复制和重校验数千日历史。绝对交易日序号仍被保留。
-            let daily = retained_behavior_daily_closes_history(retained_daily);
-            let current_day_open = view
-                .candle_book
-                .active()
-                .get(code)
-                .filter(|candle| candle.volume > 0)
-                .map(|candle| candle.open);
-            build_price_path_observation(minutes, &daily, current_day_open)
-                .map(|observation| (code.clone(), observation))
-        })
-        .collect::<Vec<_>>();
+    let results = view.compute.parallel(|| {
+        codes
+            .par_iter()
+            .map(|code| {
+                let code = *code;
+                let minutes = view
+                    .market_minute_closes
+                    .get(code)
+                    .expect("every market must have canonical minute history");
+                let retained_daily = view
+                    .candle_book
+                    .histories()
+                    .get(code)
+                    .expect("every market must have authoritative daily candles");
+                // 行为窗口最长 250 个已完成交易日；长局不能在每个观察 tick
+                // 重复制和重校验数千日历史。绝对交易日序号仍被保留。
+                let daily = retained_behavior_daily_closes_history(retained_daily);
+                let current_day_open = view
+                    .candle_book
+                    .active()
+                    .get(code)
+                    .filter(|candle| candle.volume > 0)
+                    .map(|candle| candle.open);
+                build_price_path_observation(minutes, &daily, current_day_open)
+                    .map(|observation| (code.clone(), observation))
+            })
+            .collect::<Vec<_>>()
+    });
     results.into_iter().collect()
 }
 
@@ -153,14 +158,18 @@ impl GameSession {
     /// 与已完成的标准交易分钟收盘分别拷入视图。游资趋势只读取后者，因此宿主 tick
     /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
     /// 随后安全地 `self.state.accounts.get_mut`。
-    pub(super) fn build_market_view(&self) -> MarketView { build_market_view_on(&self.read_view()) }
+    pub(super) fn build_market_view(&self) -> MarketView {
+        build_market_view_on(&self.read_view())
+    }
 
     /// 按当前权威分钟序列与已完成日 K 构造每股公共价格路径观测。
     ///
     /// 该函数不消耗 RNG、不改变会话，也不读取宿主墙钟或 UI/Publisher 状态。
     pub fn market_price_path_observations(
         &self,
-    ) -> Result<BTreeMap<StockId, PricePathObservation>, ObservationError> { market_price_path_observations_on(&self.read_view()) }
+    ) -> Result<BTreeMap<StockId, PricePathObservation>, ObservationError> {
+        market_price_path_observations_on(&self.read_view())
+    }
 
     #[cfg(test)]
     pub(super) fn behavior_market_observation(&self) -> BehaviorMarketObservation {

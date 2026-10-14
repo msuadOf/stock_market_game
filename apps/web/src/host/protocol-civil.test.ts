@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalJson } from "./protocol/canonical.ts";
 import { reduceEngineUpdate } from "./protocol/reduce.ts";
 import {
   baseState,
@@ -60,11 +59,9 @@ test("Given two CivilDateAdvanced facts in one barrier, when reduced, then it re
   const duplicate: JsonRecord = {
     CivilUpdate: {
       ...civil,
-      events: [...recordArray(civil["events"], "civil events"), event],
       facts: [...recordArray(civil["facts"], "civil facts"), {
         key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 1 },
         event,
-        canonical_payload: canonicalJson(event),
       }],
       seq_to: 3,
       refresh: { ...refresh, snapshot: snapshot(1, 3) },
@@ -88,11 +85,9 @@ test("Given an AfterClose refresh whose history does not start at the settled-da
       tick: 2,
       seq_from: 2,
       seq_to: 3,
-      events: [{ CivilDateAdvanced: { seq: 3, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } }],
       facts: [{
         key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
         event: { CivilDateAdvanced: { seq: 3, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } },
-        canonical_payload: canonicalJson({ CivilDateAdvanced: { seq: 3, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } }),
       }],
       refresh: {
         ...refresh,

@@ -93,7 +93,7 @@ fn complete_projection(auction_ticks: u64, seed: u64, ticks: u64) -> Vec<Vec<u8>
                     let save = game.save().expect("healthy save");
                     assert!(save.setup.config.price_cage_enabled);
                     assert!(save.resting_orders.values().all(Vec::is_empty));
-                    assert!(save.auction_orders.values().all(Vec::is_empty));
+                    assert!(game.player_working_orders().is_empty());
                     assert!(!events
                         .iter()
                         .any(|event| matches!(event, Event::Trade { .. })));
@@ -148,6 +148,12 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // 保留事件、权威业务事实、原顺序与所有独立 guards。旧锚保留：
     // 18099143602724613260 / 16192716476036528973 / 2620780488067564097；
     // 原字节 FNV/SHA 与逐 path 核验见 money-wire-golden.md。
+    // T3 线重锚（增量五十一·B 类双登记）：决策前移（四十~四十八：attention
+    // 节律/受理时点/个人 patch 发布进度）改变 projection 字节——A1 §8 输出
+    // 等价收窄+§9.7 登记面。基线证据：三用例在 48/49 态已红
+    // （logs/t3b5-baseline48/49.txt），非批四回归。旧锚保留（T3 前最后形态）：
+    // 1454294662355836716 系列之后末代=14588880118627202930 /
+    // 10855500538460332623 / 14140194587992130069；新锚=下列常量。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -157,17 +163,17 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 14_588_880_118_627_202_930);
+    assert_complete_projection(0, 14_183_549_150_061_140_820);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 10_855_500_538_460_332_623);
+    assert_complete_projection(3, 862_635_824_146_359_871);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 14_140_194_587_992_130_069);
+    assert_complete_projection(6, 7_784_286_686_475_819_964);
 }
 
 #[test]

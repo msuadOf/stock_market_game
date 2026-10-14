@@ -6,7 +6,7 @@ import { validateEngineUpdate } from "./validate.ts";
 function normalizeFrame(frame: CodedTickFrame): NormalizedTickFrame {
   return {
     tick: frame.tick,
-    events: [...frame.events].sort((left, right) => eventSeq(left) - eventSeq(right)),
+    events: frame.facts.map((fact) => fact.event).sort((left, right) => eventSeq(left) - eventSeq(right)),
     facts: [...frame.facts].sort((left, right) => codedFactIdentity(left).localeCompare(codedFactIdentity(right))),
     continuousPoints: frame.timeseries_payload.continuous_points,
     auctionPoints: frame.timeseries_payload.auction_points,
@@ -46,7 +46,7 @@ export function normalizeEngineUpdate(update: CodedEngineUpdate): NormalizedEngi
     kind: "civil-update",
     update: {
       ...update.CivilUpdate,
-      events: [...update.CivilUpdate.events].sort((left, right) => eventSeq(left) - eventSeq(right)),
+      events: update.CivilUpdate.facts.map((fact) => fact.event).sort((left, right) => eventSeq(left) - eventSeq(right)),
       facts: [...update.CivilUpdate.facts].sort((left, right) => codedFactIdentity(left).localeCompare(codedFactIdentity(right))),
     },
     refresh: update.CivilUpdate.refresh,
@@ -56,7 +56,7 @@ export function normalizeEngineUpdate(update: CodedEngineUpdate): NormalizedEngi
 
 export function parseNormalizedEngineUpdate(value: unknown): NormalizedEngineUpdate {
   const update = parseEngineUpdate(value);
-  // 事件/事实先以数值形态通过 canonical_payload 与稳定键校验，再整体翻译为代码串。
+  // 事实先以数值形态通过稳定键与 seq 覆盖校验，再整体翻译为代码串。
   validateEngineUpdate(update);
   return normalizeEngineUpdate(translateEngineUpdate(update));
 }

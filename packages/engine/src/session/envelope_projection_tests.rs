@@ -18,7 +18,7 @@ fn continuous_buy_and_sell_projection_carry_exact_resources_and_audit() {
 fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audit() {
     let mut game = fixture();
     let code = StockId(0);
-    game.state.auction_orders.insert(
+    game.fixture_append_auction_orders(
         code.clone(),
         vec![
             AuctionOrderSnap {
@@ -36,7 +36,8 @@ fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audi
                 order_id: 22,
             },
         ],
-    );
+    )
+    .unwrap();
 
     let envelopes = game.project_live_envelopes().unwrap();
 
@@ -48,7 +49,7 @@ fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audi
 fn seller_projection_and_runtime_reservation_both_exclude_cash_escrow() {
     let mut game = fixture();
     let code = StockId(0);
-    game.state.auction_orders.insert(
+    game.fixture_append_auction_orders(
         code.clone(),
         vec![AuctionOrderSnap {
             owner: AccountId(1),
@@ -57,7 +58,8 @@ fn seller_projection_and_runtime_reservation_both_exclude_cash_escrow() {
             qty: 100,
             order_id: 23,
         }],
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         game.reserved_cash_for_account(AccountId(1)).unwrap(),
@@ -71,12 +73,13 @@ fn seller_projection_and_runtime_reservation_both_exclude_cash_escrow() {
 }
 
 #[test]
-fn live_envelope_projection_rejects_duplicate_continuous_and_auction_identity() {
+fn unified_book_rejects_duplicate_order_identity_at_insertion() {
     let mut game = fixture();
     let code = StockId(0);
     place(&mut game, &code, OrderFixture::buy(OrderId(99)));
-    game.state.auction_orders.insert(
-        code.clone(),
+    // 统一 book 下重复身份在挂入时即被订单簿拒绝，不再依赖投影层事后查重。
+    let duplicate = game.fixture_append_auction_orders(
+        code,
         vec![AuctionOrderSnap {
             owner: AccountId(1),
             side: Side::Buy,
@@ -85,10 +88,13 @@ fn live_envelope_projection_rejects_duplicate_continuous_and_auction_identity() 
             order_id: 99,
         }],
     );
-    let before = game.state.envelope_ledger.clone();
-    assert!(game.project_live_envelopes().is_err());
-    assert!(game.hydrate_or_validate_envelope_ledger().is_err());
-    assert_eq!(game.state.envelope_ledger, before);
+    assert!(
+        duplicate.is_err(),
+        "重复身份挂入必须显式失败，不产生第二份活动委托"
+    );
+    // 挂入被拒后簿上仍只有原始委托；hydration 正常完成即一致性证据。
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    assert_eq!(game.state.markets[&code].resting_order_count(), 1);
 }
 
 #[test]

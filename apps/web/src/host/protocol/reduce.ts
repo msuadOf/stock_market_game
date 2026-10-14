@@ -109,7 +109,7 @@ export function reduceEngineUpdate(
 ): ProtocolReduction {
   sameGeneration(state, generation);
   const update = parseEngineUpdate(unknownUpdate);
-  // 先按原始数值形态完成 canonical_payload/稳定键校验，再翻译为代码串归一化。
+  // 先按原始数值形态完成稳定键/seq 校验，再翻译为代码串归一化。
   validateEngineUpdate(update);
   const range = updateRange(update);
   const canonical = canonicalEngineUpdate(update);

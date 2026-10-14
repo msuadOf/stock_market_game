@@ -536,6 +536,14 @@ pub async fn api_new(
                 format!("server permits at most {max} active sessions"),
             )
         }
+        Err(NewSessionError::Compute(error)) => {
+            warn!(%error, "new_session rejected because the compute context failed");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "COMPUTE_CONTEXT_UNAVAILABLE",
+                format!("无法初始化会话计算执行上下文：{error}"),
+            )
+        }
     }
 }
 
@@ -687,7 +695,7 @@ pub(crate) async fn api_calculate_indicators(
     {
         return *response;
     }
-    match engine::indicators::calculate_indicators(&body.prices, &body.candles) {
+    match engine::indicators::calculate_indicators(&body.prices, &body.candles, None) {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(error) => api_error(
             StatusCode::BAD_REQUEST,
@@ -2008,7 +2016,6 @@ mod publisher_connection_tests {
                         seq_from: seq,
                         seq_to: seq,
                         facts: Vec::new(),
-                        events: Vec::new(),
                         timeseries_payload: Default::default(),
                     }],
                     runtime_snapshot: None,

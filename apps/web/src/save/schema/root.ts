@@ -1,4 +1,4 @@
-import { parseClosingRegistry, parseCompanyOperations, parseDisclosureDispatch, parseOperationsWiring, parsePublicLibrary } from "./company/index.ts"
+import { parseClosingRegistry, parseCompanyOperations, parseDisclosureDispatch, parsePublicLibrary } from "./company/index.ts"
 import { parseGroups } from "./company/groups.ts"
 import { parseSetup } from "./market.ts"
 import { parseSaveSnapshot } from "./save-snapshot.ts"
@@ -7,7 +7,7 @@ import { parseBeliefBooks } from "./personal/beliefs.ts"
 import { parseRetailExperienceStates } from "./personal/experience.ts"
 import { parseInformationStates } from "./personal/information.ts"
 import { parseHistoryReads, parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
-import { parsePendingPlanEvents, parsePlanBook } from "./personal/plans.ts"
+import { parsePlanBook } from "./personal/plans.ts"
 import { decimal, exact, record } from "./primitives.ts"
 import { parseCivilClock } from "./civil-clock.ts"
 import { parseSaveRuntime } from "./runtime-state.ts"
@@ -18,7 +18,6 @@ export type StrictSaveEnvelope = {
   readonly setup: ReturnType<typeof parseSetup>
   readonly seed: string
   readonly snapshot: ReturnType<typeof parseSaveSnapshot>
-  readonly auction_orders: ReturnType<typeof parseOrderState>["auction_orders"]
   readonly book_next_sequences: ReturnType<typeof parseOrderState>["book_next_sequences"]
   readonly resting_orders: ReturnType<typeof parseOrderState>["resting_orders"]
   readonly price_history: ReturnType<typeof parseOrderState>["price_history"]
@@ -26,10 +25,8 @@ export type StrictSaveEnvelope = {
   readonly rng_state: string
   readonly npc_attention: ReturnType<typeof parseOrderState>["npc_attention"]
   readonly retail_experience: ReturnType<typeof parseRetailExperienceStates>
-  readonly parent_orders: ReturnType<typeof parseOrderState>["parent_orders"]
   readonly npc_order_lifecycles: ReturnType<typeof parseOrderState>["npc_order_lifecycles"]
   readonly pending_player: ReturnType<typeof parseOrderState>["pending_player"]
-  readonly pending_npc: ReturnType<typeof parseOrderState>["pending_npc"]
   readonly ingress_receipt_cursors: ReturnType<typeof parseOrderState>["ingress_receipt_cursors"]
   readonly next_order_id: number
   readonly civil_clock: ReturnType<typeof parseCivilClock>
@@ -37,7 +34,6 @@ export type StrictSaveEnvelope = {
   readonly company_operations: ReturnType<typeof parseCompanyOperations>
   readonly closing_registry: ReturnType<typeof parseClosingRegistry>
   readonly public_library: ReturnType<typeof parsePublicLibrary>
-  readonly ops_wiring: ReturnType<typeof parseOperationsWiring>
   readonly disclosures: ReturnType<typeof parseDisclosureDispatch>
   readonly plans: ReturnType<typeof parsePlanBook>
   readonly urgency_policy: ReturnType<typeof parseUrgencyPolicy>
@@ -46,13 +42,18 @@ export type StrictSaveEnvelope = {
   readonly watchlists: ReturnType<typeof parseWatchlists>
   readonly price_memories: ReturnType<typeof parsePriceMemories>
   readonly history_reads: ReturnType<typeof parseHistoryReads>
-  readonly pending_plan_events: ReturnType<typeof parsePendingPlanEvents>
 }
 
-const ROOT_KEYS = ["runtime_state", "setup", "seed", "snapshot", "auction_orders", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "parent_orders", "npc_order_lifecycles", "pending_player", "pending_npc", "ingress_receipt_cursors", "next_order_id", "civil_clock", "groups", "company_operations", "closing_registry", "public_library", "ops_wiring", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads", "pending_plan_events"] as const
+const ROOT_KEYS = ["runtime_state", "setup", "seed", "snapshot", "resting_orders", "book_next_sequences", "filled_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "npc_order_lifecycles", "pending_player", "ingress_receipt_cursors", "next_order_id", "civil_clock", "groups", "company_operations", "closing_registry", "public_library", "disclosures", "plans", "urgency_policy", "information_states", "belief_books", "watchlists", "price_memories", "history_reads"] as const
 
 export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const root = record(value, "根节点")
+  // T3 批四（引擎 ADR-0042 §9.6 选项甲）：跨 tick `pending_npc` 载体删除——
+  // 携带该键的存档是旧格式，显式拒绝（镜像引擎解码边界 fault2100；不静默
+  // 丢键）。根节点 exact 检查本会拒绝未知键，此处先给出精确错误信息。
+  if ("pending_npc" in root) {
+    throw new Error("旧格式存档（含 pending_npc 键）不被当前版本接受：请用当前引擎重新生成存档")
+  }
   exact(root, ROOT_KEYS, "根节点")
   const order = parseOrderState(root)
   const setup = parseSetup(root.setup, "setup")
@@ -65,6 +66,13 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const expectedStockIdKeys = [...setup.stocks.map((stock) => stock.code)].sort().map((_, index) => String(index))
   exact(order.book_next_sequences, expectedStockIdKeys, "book_next_sequences (setup.stocks→StockId)")
   exact(order.book_next_sequences, Object.keys(snapshot.markets), "book_next_sequences (snapshot.markets)")
+  const runtime_state = parseSaveRuntime(root.runtime_state)
+  exact(runtime_state.book_public_cutoff_sequences, expectedStockIdKeys, "runtime_state.book_public_cutoff_sequences (setup.stocks→StockId)")
+  for (const [code, cutoff] of Object.entries(runtime_state.book_public_cutoff_sequences)) {
+    if (BigInt(cutoff) > BigInt(order.book_next_sequences[code])) {
+      throw new Error(`存档 runtime_state.book_public_cutoff_sequences.${code} 超过 book_next_sequences`)
+    }
+  }
   exact(root.history_reads as Record<string, unknown>, Object.keys(snapshot.accounts), "history_reads (snapshot.accounts)")
-  return { runtime_state: parseSaveRuntime(root.runtime_state), setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: parseCivilClock(root.civil_clock), groups: parseGroups(root.groups), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), ops_wiring: parseOperationsWiring(root.ops_wiring), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), pending_plan_events: parsePendingPlanEvents(root.pending_plan_events) }
+  return { runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: parseCivilClock(root.civil_clock), groups: parseGroups(root.groups), company_operations: parseCompanyOperations(root.company_operations), closing_registry: parseClosingRegistry(root.closing_registry), public_library: parsePublicLibrary(root.public_library), disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads) }
 }

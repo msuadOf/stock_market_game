@@ -1,10 +1,10 @@
-use super::{GameSession, StepFatal, TickShadowPlan};
 use super::npc_split::SessionReadView;
+use super::{GameSession, StepFatal, TickShadowPlan};
 use crate::session::account_book::AccountBook;
 use crate::{AccountId, Money, StockId};
 use std::collections::BTreeMap;
 
-/// DecisionShadow 观察、AccountValidation 预留的资源均来自报价过期后的事实；每个账户只准备一次。
+/// DecisionAndContinuation 观察、AccountValidation 预留的资源均来自报价过期后的事实；每个账户只准备一次。
 #[derive(Clone)]
 pub struct DecisionResourceSnapshot {
     accounts: AccountBook,
@@ -79,9 +79,7 @@ const EMPTY_POSITION: DecisionPositionResources = DecisionPositionResources {
 };
 
 pub(super) fn plan_allocation(shadow: &mut TickShadowPlan) -> Result<(), StepFatal> {
-    let resources = shadow
-        .state
-        .execute(|session| DecisionResourceSnapshot::seal(session))?;
+    let resources = shadow.execute(|session| DecisionResourceSnapshot::seal(session))?;
     shadow.decision_resources = Some(resources);
     Ok(())
 }
@@ -92,18 +90,19 @@ impl DecisionResourceSnapshot {
     }
 
     /// 读视图版本（prepare 链投机路径共用；读集：setup/stocks/markets/
-    /// envelope_ledger，validate_resources 走 view.accounts 浅克隆快照——
-    /// 只读 cash/positions 等账务事实，与直读 live 语义一致）。
+    /// envelope_ledger 与 accounts，只读 cash/positions 等账务事实。
+    /// view 可借用也可隔离；返回的资源对象必须独立保留封前 snapshot）。
     pub(super) fn seal_on(view: &SessionReadView<'_>) -> Result<Self, StepFatal> {
+        view.compute.install(|| Self::seal_on_context(view))
+    }
+
+    fn seal_on_context(view: &SessionReadView<'_>) -> Result<Self, StepFatal> {
         let configured_stocks = view
             .setup
             .stocks
             .iter()
             .map(|stock| {
-                let id = view
-                    .stocks
-                    .id(&stock.code.0)
-                    .expect("配置股票必须已入目录");
+                let id = view.stocks.id(&stock.code.0).expect("配置股票必须已入目录");
                 let price = view
                     .markets
                     .get(&id)
@@ -116,9 +115,10 @@ impl DecisionResourceSnapshot {
         let reservations = view.envelope_ledger.live_reservations()?;
 
         view.accounts.validate_resources(
+            &view.compute,
             &configured_stocks,
             &reservations,
-            |account_id, account| {
+            |account_id, account| -> Result<(), StepFatal> {
                 (|| {
                     let reserved = reservations.cash(account_id);
                     let available_cash = account.cash().sub(reserved).map_err(allocation_money)?;
@@ -188,7 +188,8 @@ impl DecisionResourceSnapshot {
             ));
         }
         Ok(Self {
-            accounts: view.accounts.clone(),
+            // 资源会跨越 view 的借用期，显式克隆 AccountBook 保持封前资源事实。
+            accounts: view.accounts.as_ref().clone(),
             configured_stocks,
             reservations,
         })

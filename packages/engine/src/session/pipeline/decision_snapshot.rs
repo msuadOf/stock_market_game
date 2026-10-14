@@ -33,6 +33,21 @@ pub struct DecisionAccountInput {
     failure_influence: Option<u16>,
 }
 
+/// T1·两阶段（ADR-0042 §T1）：决策**共享**输入的只读借用视图——queue 链由
+/// 协调线程捕获一次（MarketView 等不复制给每账户），账户任务组装个人
+/// `DecisionAccountInput` 后经 [`decide_npc_account_from_shared`] 直接进入
+/// decide 核心；单账户快照（[`DecisionSnapshot`]）路径经 `shared_inputs()`
+/// 复用同一核心。
+pub(in crate::session) struct DecisionSharedInputs<'a> {
+    pub(in crate::session) tick: u64,
+    pub(in crate::session) npc_seed_base: u64,
+    pub(in crate::session) phase: TradingPhase,
+    pub(in crate::session) market_minute: u64,
+    pub(in crate::session) market: &'a MarketView,
+    pub(in crate::session) behavior_market: Option<&'a BehaviorMarketObservation>,
+    pub(in crate::session) urgency_policy: &'a crate::plans::UrgencyPolicy,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum DecisionSnapshotError {
     #[error("due NPC accounts must be strictly increasing")]
@@ -278,5 +293,18 @@ impl DecisionSnapshot {
         self.accounts
             .get(&account)
             .ok_or(DecisionSnapshotError::MissingAccount(account))
+    }
+
+    /// 共享半边的只读借用视图（T1：与账户任务共享同一 decide 核心）。
+    pub(in crate::session) fn shared_inputs(&self) -> DecisionSharedInputs<'_> {
+        DecisionSharedInputs {
+            tick: self.tick,
+            npc_seed_base: self.npc_seed_base,
+            phase: self.phase,
+            market_minute: self.market_minute,
+            market: &self.market,
+            behavior_market: self.behavior_market.as_ref(),
+            urgency_policy: &self.urgency_policy,
+        }
     }
 }

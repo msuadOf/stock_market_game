@@ -141,31 +141,50 @@ fn complete_save_decoding_rejects_duplicate_operating_due_id() {
 }
 
 #[test]
-fn complete_save_restore_rejects_duplicate_clock_id_and_future_due_outside_policy() {
-    let baseline = baseline();
-    let pending = baseline["civil_clock"]["pending_due"].as_array().unwrap();
-    assert!(!pending.is_empty());
-    let mut duplicate = baseline.clone();
-    duplicate["civil_clock"]["pending_due"]
-        .as_array_mut()
-        .unwrap()
-        .push(pending[0].clone());
-    let error = restore_error(duplicate);
-    assert!(error.contains("duplicate due id"), "{error}");
-    let mut outside = baseline;
-    let mut future_due = outside["civil_clock"]["pending_due"][0].clone();
-    let next_seq = outside["civil_clock"]["next_due_seq"].as_u64().unwrap();
-    future_due["id"] = serde_json::json!(next_seq);
-    future_due["due_date"] = serde_json::json!("2100-01-01");
-    outside["civil_clock"]["next_due_seq"] = serde_json::json!(next_seq + 1);
-    outside["civil_clock"]["pending_due"]
-        .as_array_mut()
-        .unwrap()
-        .push(future_due);
-    let error = restore_error(outside);
-    assert!(error.contains("2100-01-01"), "{error}");
-    assert!(
-        !error.contains("mirror"),
-        "不应由后续镜像校验误核销：{error}"
-    );
+fn complete_save_decoding_rejects_civil_clock_due_mirror_fields() {
+    // 公司 due 单一 authority：时钟侧携带旧镜像字段（pending_due/next_due_seq）
+    // 在解码边界显式失败，不接受静默忽略的旧格式。
+    for (field, value) in [
+        ("pending_due", serde_json::json!([])),
+        ("next_due_seq", serde_json::json!(1)),
+    ] {
+        let mut wire = baseline();
+        wire["civil_clock"][field] = value;
+        let decoded = decode_save_slot(
+            &serde_json::to_vec(&wire).unwrap(),
+            &SaveDecodeLimits::default(),
+        );
+        assert!(
+            matches!(decoded, Err(engine::session::SessionError::InvalidSave(ref fault)) if fault.code == 2080),
+            "旧公司镜像字段 {field} 必须在 JSON 解码边界以结构化 2080 拒绝"
+        );
+    }
+}
+
+#[test]
+fn complete_save_restore_rejects_scheduler_due_beyond_runtime_ceiling() {
+    // 公司 due 单一 authority 后，日历适用范围校验必须由会话边界承担：
+    // 待办 due 晚于冻结政策 runtime_max_end（2099-12-31）= 失去恰好一次
+    // 派发机会的越界待办，恢复显式拒绝（fault2234）。
+    let mut wire = baseline();
+    let scheduler = &mut wire["company_operations"]["scheduler"];
+    let pending = scheduler["pending"].as_array_mut().unwrap();
+    assert!(pending.len() >= 2, "基线存档须有多条待办");
+    // 取日期最大的一条（排序仍保持：2100-01-01 仍是最大）。
+    pending
+        .iter_mut()
+        .max_by_key(|due| due["due_date"].as_str().unwrap().to_owned())
+        .unwrap()["due_date"] = serde_json::json!("2100-01-01");
+    let save = decode_save_slot(
+        &serde_json::to_vec(&wire).unwrap(),
+        &SaveDecodeLimits::default(),
+    )
+    .unwrap();
+    match GameSession::restore(&save) {
+        Err(engine::session::SessionError::InvalidSave(fault)) => {
+            assert_eq!(fault.code, 2234, "越界 due 用 fault2234 拒绝：{fault}");
+        }
+        Ok(_) => panic!("越界待办必须被恢复边界拒绝，实际恢复成功"),
+        Err(other) => panic!("越界 due 应以 fault2234 拒绝，实际：{other}"),
+    }
 }

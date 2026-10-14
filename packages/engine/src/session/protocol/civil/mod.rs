@@ -1,11 +1,11 @@
-use super::{validate_sequence, ProtocolError, TickBatch, TickFrame};
+use super::{validate_sequence, ProtocolError, SessionFactCursor, TickBatch, TickFrame};
 use crate::error::ValidationFault;
 use crate::session::{Event, GameSession, SessionError, Snapshot, StockSpec};
 mod boundary;
 #[cfg(test)]
 mod publication_tests;
 mod session;
-use super::{attach_facts, EventFact};
+use super::EventFact;
 pub use boundary::CivilBoundary;
 pub use session::{ProtocolCheckpoint, ProtocolSession};
 
@@ -17,7 +17,7 @@ pub enum CivilUpdateKind {
     CivilAdvance,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct CivilRefresh {
     #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -29,7 +29,10 @@ pub struct CivilRefresh {
     pub public_publication_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+/// 自然日日结更新。事件只随 `facts` 记录出现一次（架构项 #6）；
+/// 纯事件视图由消费方在边界从 facts 投影。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CivilUpdate {
     pub boundary: CivilBoundary,
@@ -38,7 +41,6 @@ pub struct CivilUpdate {
     #[ts(type = "number")]
     pub tick: u64,
     pub civil_date: String,
-    pub events: Vec<Event>,
     pub facts: Vec<EventFact>,
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
@@ -49,7 +51,14 @@ pub struct CivilUpdate {
     pub refresh: CivilRefresh,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+impl CivilUpdate {
+    /// 事件投影：借用事实记录中的事件，不复制身份或第二份权威。
+    pub fn events(&self) -> impl Iterator<Item = &Event> + '_ {
+        self.facts.iter().map(|fact| &fact.event)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum EngineUpdate {
     TickBatch(Box<TickBatch>),
@@ -77,15 +86,19 @@ impl PausePreferences {
 
 impl CivilUpdate {
     pub fn validate(&self) -> Result<(), ProtocolError> {
-        super::facts::validate_facts(&self.facts, &self.events)?;
+        super::facts::validate_facts(&self.facts)?;
         self.boundary.validate(self)?;
-        validate_sequence(&self.events, self.seq_from, self.seq_to)?;
+        validate_sequence(
+            self.facts.iter().map(|fact| fact.event.seq()),
+            self.facts.len(),
+            self.seq_from,
+            self.seq_to,
+        )?;
         if self.refresh.snapshot.tick != self.tick || self.refresh.snapshot.seq != self.seq_to {
             return Err(ProtocolError::SnapshotMismatch);
         }
         let advances: Vec<_> = self
-            .events
-            .iter()
+            .events()
             .filter_map(|event| match event {
                 Event::CivilDateAdvanced {
                     next_date,
@@ -142,7 +155,7 @@ impl CivilUpdate {
         let reports: std::collections::BTreeSet<_> =
             self.refresh.public_publication_ids.iter().collect();
         if reports.len() != self.refresh.public_publication_ids.len()
-            || self.events.iter().any(|event| match event {
+            || self.events().any(|event| match event {
                 Event::CompanyDisclosurePublished { publication_id, .. } => {
                     !reports.contains(&publication_id.value().to_string())
                 }
@@ -152,15 +165,10 @@ impl CivilUpdate {
             return Err(ProtocolError::CivilBoundary);
         }
         if self.kinds.contains(&CivilUpdateKind::AfterClose) {
-            let history = TickBatch {
-                frames: self.refresh.intraday.clone(),
-                runtime_snapshot: None,
-                runtime_delta: None,
-            };
-            history.validate()?;
-            if u64::try_from(history.frames.len()).ok() != Some(self.refresh.ticks_per_day)
+            let history = &self.refresh.intraday;
+            super::validate_frames(history)?;
+            if u64::try_from(history.len()).ok() != Some(self.refresh.ticks_per_day)
                 || history
-                    .frames
                     .last()
                     .map(|frame| (frame.tick, frame.seq_to))
                     != Some((self.tick, self.seq_from))
@@ -200,19 +208,42 @@ fn protocol_save_fault(error: ProtocolError) -> ValidationFault {
 impl GameSession {
     fn end_civil_day_update(
         &mut self,
-        intraday: &[TickFrame],
+        intraday: Vec<TickFrame>,
+        fact_cursor: &mut SessionFactCursor,
     ) -> Result<CivilUpdate, SessionError> {
+        let settled_phase = self.validate_civil_intraday(&intraday)?;
+        let seq_from = self.seq();
+        let mut cursor = fact_cursor.clone();
+        cursor.begin_tick(self.tick());
+        let update = self.with_prepared_civil_day(|candidate, report| {
+            let update = candidate.project_civil_update(
+                intraday,
+                settled_phase,
+                seq_from,
+                report,
+                &cursor,
+            )?;
+            update
+                .validate()
+                .map_err(|error| SessionError::InvalidSave(protocol_save_fault(error)))?;
+            cursor
+                .record_committed_facts(&update.facts)
+                .map_err(|error| SessionError::InvalidSave(protocol_save_fault(error)))?;
+            Ok(update)
+        })?;
+        *fact_cursor = cursor;
+        Ok(update)
+    }
+
+    fn validate_civil_intraday(
+        &self,
+        intraday: &[TickFrame],
+    ) -> Result<crate::session::CivilPhase, SessionError> {
         let settled_phase = self.civil_clock().phase();
         let after_close = settled_phase != crate::session::CivilPhase::ClosedDay;
         if after_close {
-            let batch = TickBatch {
-                frames: intraday.to_vec(),
-                runtime_snapshot: None,
-                runtime_delta: None,
-            };
-            // fault3001-3008: 收盘 intraday 批校验失败（ProtocolError 变体映射，见 protocol_save_fault）。
-            batch
-                .validate()
+            // fault3001-3008：借用现有历史校验，不为门禁建立第二份发布事实。
+            super::validate_frames(intraday)
                 .map_err(|error| SessionError::InvalidSave(protocol_save_fault(error)))?;
             let expected_start = self
                 .tick()
@@ -227,10 +258,19 @@ impl GameSession {
                 return Err(SessionError::InvalidSave(ValidationFault::bare(3009)));
             }
         }
-        let seq_from = self.seq();
-        let report = self.end_civil_day()?;
+        Ok(settled_phase)
+    }
+
+    fn project_civil_update(
+        &self,
+        intraday: Vec<TickFrame>,
+        settled_phase: crate::session::CivilPhase,
+        seq_from: u64,
+        report: crate::session::CivilDayEndReport,
+        fact_cursor: &SessionFactCursor,
+    ) -> Result<CivilUpdate, SessionError> {
         let mut kinds = Vec::new();
-        if after_close {
+        if settled_phase != crate::session::CivilPhase::ClosedDay {
             kinds.push(CivilUpdateKind::AfterClose);
         }
         if matches!(report.next_status, crate::DayStatus::Trading) {
@@ -239,6 +279,11 @@ impl GameSession {
         if kinds.is_empty() {
             kinds.push(CivilUpdateKind::CivilAdvance);
         }
+        // 日结事件的 producer 在此基于发布流游标一次分配 typed 身份；
+        // 协议层不再重新编号，也不再并行保留无身份的 events 数组（架构项 #6）。
+        let facts = fact_cursor
+            .assign_session_facts(report.events)
+            .map_err(|error| SessionError::InvalidSave(protocol_save_fault(error)))?;
         Ok(CivilUpdate {
             boundary: CivilBoundary {
                 settled_date: report.settled_date,
@@ -246,20 +291,17 @@ impl GameSession {
                 next_date: report.next_date,
                 next_status: report.next_status.clone(),
             },
-            // fault3001-3008: 日结事件挂靠 facts 失败（ProtocolError 变体映射，见 protocol_save_fault）。
-            facts: attach_facts(&report.events)
-                .map_err(|error| SessionError::InvalidSave(protocol_save_fault(error)))?,
+            facts,
             kinds,
             tick: self.tick(),
             civil_date: self.civil_date().to_iso(),
-            events: report.events,
             seq_from,
             seq_to: self.seq(),
             refresh: CivilRefresh {
                 ticks_per_day: self.state.setup.ticks_per_day,
                 snapshot: self.snapshot(),
                 securities: self.state.setup.stocks.clone(),
-                intraday: intraday.to_vec(),
+                intraday,
                 public_publication_ids: self
                     .state
                     .library

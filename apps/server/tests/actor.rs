@@ -24,12 +24,12 @@ fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
             batch
                 .frames
                 .iter()
-                .flat_map(|frame| &frame.events)
+                .flat_map(|frame| frame.events())
                 .collect()
         }
         engine::session::protocol::EngineUpdate::CivilUpdate(civil) => {
             civil.validate().unwrap();
-            civil.events.iter().collect()
+            civil.events().collect()
         }
     }
 }
@@ -104,15 +104,112 @@ async fn prepare_completed_day(handles: &server::actor::SessionHandles, seed: u6
     let slot = game.save().expect("completed day must be saveable");
     assert_eq!(slot.snapshot.tick, 0);
     assert!(slot.civil_clock.settled_through.is_some());
-    assert!(slot
-        .pending_npc
-        .as_ref()
-        .is_none_or(|batch| batch.intents.is_empty()));
-    assert!(slot.parent_orders.values().all(|plans| plans.is_empty()));
+    // T3 批四：pending_npc 载体删除（键缺失为更强形态）；parent_orders 为
+    // owner8 批次④既有删除字段（本文件历史遗留引用，随本批一并清理）。
+
     handles
         .restore(slot)
         .await
         .expect("completed-day fixture must restore");
+}
+
+#[test]
+fn single_pool_actor_filled_leaves_do_not_initialize_global() {
+    const CHILD: &str = "STOCK_SINGLE_POOL_ACTOR_CHILD_WORKERS";
+    if let Some(workers) = std::env::var_os(CHILD) {
+        let workers: usize = workers.to_str().unwrap().parse().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let valid = runtime.block_on(async {
+            use engine::compute::ComputeWork;
+            use std::sync::{Arc, Mutex};
+            let compute = engine::ComputeContext::with_workers(workers).unwrap();
+            let samples = Arc::new(Mutex::new(Vec::new()));
+            let observed = samples.clone();
+            compute.set_observer(Arc::new(move |sample| observed.lock().unwrap().push(sample)));
+            let manager = SessionManager::with_compute(1, compute.clone());
+            assert_eq!(manager.compute_workers().unwrap(), workers);
+            let mut setup = active_market_setup();
+            setup.start_date = engine::CivilDate::from_iso("2030-01-06").unwrap();
+            setup.float_allocation = engine::FloatAllocation::class_percentages(
+                1.0, 0.0, 0.0, engine::WithinKindDistribution::EqualPercentage);
+            let id = manager.new_session(setup.clone(), 42).unwrap();
+            let handles = manager.lookup(&id).unwrap();
+            handles.set_running(false).await.unwrap();
+            // 真实休市日日结后的可编辑存档，守恒转移 100 股开局库存；不伪造 Fill。
+            let mut initial = engine::session::protocol::ProtocolSession::new_with_compute(setup, 42, compute).unwrap();
+            initial.end_civil_day_update().unwrap();
+            let mut slot = initial.save().unwrap();
+            let code = engine::StockId(0);
+            let totals = |slot: &engine::session::SaveSlot| slot.snapshot.accounts.values().fold(
+                (0_i128, 0_u64, 0_i128), |sum, account| {
+                    let position = account.positions.get(&code);
+                    (sum.0 + i128::from(account.cash.cents()),
+                     sum.1 + position.map_or(0, |p| u64::from(p.qty)),
+                     sum.2 + position.map_or(0, |p| i128::from(p.invested_cents)))
+                });
+            let before = totals(&slot);
+            let donor = slot.snapshot.accounts.iter_mut().filter(|(id, _)| **id != AccountId(0))
+                .find_map(|(_, account)| account.positions.get_mut(&code).filter(|p| p.qty >= 100)).unwrap();
+            assert_eq!(donor.t1_locked, 0);
+            donor.qty -= 100;
+            donor.invested_cents -= 100_000;
+            slot.snapshot.accounts.get_mut(&AccountId(0)).unwrap().positions.insert(code,
+                engine::PositionSnap { qty: 100, t1_locked: 0, invested_cents: 100_000, recovered_cents: 0 });
+            assert_eq!(totals(&slot), before);
+            handles.restore(slot).await.unwrap();
+            samples.lock().unwrap().clear();
+            handles.enqueue(2, Intent::PlaceLimit {
+                code: engine::StockId(0), side: Side::Sell,
+                price: engine::LimitPrice::Lowest, qty: 100,
+            }).await.unwrap();
+            let mut affected = std::collections::BTreeSet::new();
+            let mut fill_count = 0;
+            let mut updates = handles.subscribe_events();
+            handles.set_running(true).await.unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let update = updates.recv().await.unwrap();
+                    assert!(update.failure.is_none(), "真实 Actor 不得报错：{:?}", update.failure);
+                    for event in protocol_events(&update) {
+                        if let engine::Event::Trade { qty, price, maker, taker, .. } = event {
+                            assert!(*qty > 0 && *price > Money::ZERO);
+                            assert_ne!(maker, taker);
+                            affected.extend([*maker, *taker]);
+                            fill_count += 1;
+                        }
+                    }
+                    let hits = samples.lock().unwrap();
+                    if fill_count > 0 && hits.iter().any(|s| s.work == ComputeWork::ReceiptProjectionAccount) { break; }
+                }
+            }).await.expect("真实 Actor 在短 deadline 内应成交并广播");
+            handles.set_running(false).await.unwrap();
+            assert!(fill_count > 0 && affected.len() >= 2, "Actor fixture 必须实际成交并触及多账户");
+            handles.shutdown().await.unwrap();
+            manager.remove(&id).unwrap();
+            let samples = samples.lock().unwrap();
+            let mut valid = true;
+            for work in [ComputeWork::SettlementAccount, ComputeWork::ReceiptProjectionAccount] {
+                let hits: Vec<_> = samples.iter().filter(|s| s.work == work).collect();
+                assert!(!hits.is_empty(), "Actor 必须执行非空实际 leaf {work:?}");
+                eprintln!("single_pool_actor workers={workers} fills={fill_count} affected={affected:?} work={work:?} samples={hits:?}");
+                valid &= hits.iter().all(|s| s.executing_workers == workers && s.owner_worker.is_some_and(|i| i < workers));
+            }
+            valid
+        });
+        drop(runtime);
+        // 仅此 fresh child 的最后一步允许初始化 global，随后立即退出，不影响任何其他 case。
+        let global_unused = rayon::ThreadPoolBuilder::new().num_threads(3).build_global().is_ok();
+        eprintln!("single_pool_actor workers={workers} actual_leaf_owner_valid={valid} global_was_unused={global_unused}");
+        std::process::exit(if valid && global_unused { 0 } else { 1 });
+    }
+    let mut failures = Vec::new();
+    for workers in [1, 2] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "single_pool_actor_filled_leaves_do_not_initialize_global", "--nocapture"])
+            .env(CHILD, workers.to_string()).status().unwrap();
+        if !status.success() { failures.push((workers, status)); }
+    }
+    assert!(failures.is_empty(), "fresh Actor child 的真实 leaf/无 global 门禁失败：{failures:?}");
 }
 
 #[tokio::test]
@@ -523,17 +620,16 @@ async fn actor_market_goes_live_produces_trade_events() {
         let mut slot = initial.save().expect("成功自然日日结应能生成公共存档");
         assert_eq!(slot.snapshot.tick, 0, "周末 fixture 不得运行任何市场 tick");
         assert!(slot.resting_orders.values().all(Vec::is_empty));
-        assert!(slot.auction_orders.values().all(Vec::is_empty));
+        assert!(slot.runtime_state.live_envelopes.is_empty(), "统一 book 为空时不能残留竞价冻结资源");
         assert!(slot.filled_orders.values().all(Vec::is_empty));
         assert!(slot.runtime_state.live_envelopes.is_empty());
-        assert!(slot.parent_orders.values().all(BTreeMap::is_empty));
         assert!(slot.pending_player.is_empty());
         assert!(slot.npc_order_lifecycles.is_empty());
         // 可编辑存档的受控开局条件：仅丢弃未受理的初始 NPC 输入，不冒充成交或撤单；
         // 已受理委托为空，后续买单必须由真实 NPC 观察重新生成。
-        let pending_npc = slot.pending_npc.as_mut().expect("开局应保留当前观察截点");
-        pending_npc.intents.clear();
-        pending_npc.dependencies.clear();
+        // T3 批四：pending_npc 载体删除——日终档不保留跨日 NPC 待处理批次由
+        // 键缺失结构性承载（原 parent_orders 断言为 owner8 批次④既有删除字段的
+        // 历史遗留引用，随本批清理）。
         let code = engine::StockId(0);
         let totals = |slot: &engine::session::SaveSlot| {
             slot.snapshot

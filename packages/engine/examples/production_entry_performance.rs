@@ -78,7 +78,8 @@ fn seed_active_plans(
             })
             .map_err(|error| error.to_string())?;
     }
-    let restored = GameSession::restore(&save).map_err(|error| error.to_string())?;
+    let restored = GameSession::restore_with_compute(&save, game.compute_context().clone())
+        .map_err(|error| error.to_string())?;
     Ok((restored, accounts.into_iter().collect()))
 }
 
@@ -94,19 +95,24 @@ fn execute(
         .setup
         .validate()
         .map_err(|error| error.to_string())?;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
+    let compute =
+        engine::ComputeContext::with_workers(threads).map_err(|error| error.to_string())?;
+    {
+        let game = engine::GameSession::new_with_compute(
+            workload.setup.clone(),
+            workload.seed,
+            compute.clone(),
+        )
         .map_err(|error| error.to_string())?;
-    pool.install(|| {
-        let game = GameSession::new(workload.setup.clone(), workload.seed)
-            .map_err(|error| error.to_string())?;
         let (mut game, plan_accounts) = seed_active_plans(game, workload.plan_accounts)?;
         let stock_codes = workload
             .setup
             .stocks
             .iter()
-            .map(|stock| game.stock_id(&stock.code.0).expect("工作负载股票必须已入目录"))
+            .map(|stock| {
+                game.stock_id(&stock.code.0)
+                    .expect("工作负载股票必须已入目录")
+            })
             .collect::<Vec<_>>();
         let run_start = Instant::now();
         let mut step_wall_ns = 0_u128;
@@ -220,7 +226,7 @@ fn execute(
             "ticks": workload.ticks,
             "plan_accounts": workload.plan_accounts,
             "player_orders_per_tick": workload.player_orders_per_tick,
-            "rayon_threads": rayon::current_num_threads(),
+            "rayon_threads": compute.workers(),
             "step_wall_ns": step_wall_ns.to_string(),
             "run_wall_ns": run_wall_ns.to_string(),
             "phase_wall_ns": phase_wall_ns,
@@ -230,7 +236,7 @@ fn execute(
             "plan_account_resting_orders": plan_account_resting_orders,
             "plan_children_or_fills": plan_children_or_fills,
         }))
-    })
+    }
 }
 
 fn run() -> Result<(), String> {

@@ -1,4 +1,4 @@
-use super::event_collection::{collect_events, OwnedEventFact};
+use super::event_collection::{collect_events, EventFact};
 use super::*;
 use crate::{AccountId, Event, Money, OrderId, Side, StockId, TradingPhase};
 
@@ -30,9 +30,9 @@ fn accepted(seq: u64) -> Event {
     }
 }
 
-fn fact(event: Event, ordinal: u64) -> OwnedEventFact {
+fn fact(event: Event, ordinal: u64) -> EventFact {
     let key = EventStableKey::for_event(&event, ordinal);
-    OwnedEventFact { key, event }
+    EventFact { key, event }
 }
 
 #[test]
@@ -43,17 +43,13 @@ fn collector_preserves_arrival_order_and_assigns_continuous_external_sequence() 
     let output = collect_events(vec![fact(accepted, 4), fact(auction, 9)], 40).unwrap();
 
     assert_eq!(output.next_seq, 42);
-    assert!(matches!(
-        output.events.as_slice(),
-        [
-            Event::OrderAccepted { seq: 41, .. },
-            Event::AuctionTick { seq: 42, .. }
-        ]
-    ));
-    let published =
-        crate::session::protocol::attach_facts_with_keys(&output.events, &output.keys).unwrap();
-    assert_eq!(published[0].key.local_event_index(), 4);
-    assert_eq!(published[1].key.local_event_index(), 9);
+    let seqs: Vec<u64> = output.facts.iter().map(|fact| fact.event.seq()).collect();
+    assert_eq!(seqs, vec![41, 42]);
+    assert!(matches!(output.facts[0].event, Event::OrderAccepted { .. }));
+    assert!(matches!(output.facts[1].event, Event::AuctionTick { .. }));
+    // 单记录贯穿：producer 的局部身份原样保留在 facts 中，不再拆分重装
+    assert_eq!(output.facts[0].key.local_event_index(), 4);
+    assert_eq!(output.facts[1].key.local_event_index(), 9);
 }
 
 #[test]
@@ -63,7 +59,7 @@ fn collector_rejects_a_key_whose_variant_mapping_does_not_match_its_event() {
 
     assert!(matches!(
         collect_events(
-            vec![OwnedEventFact {
+            vec![EventFact {
                 key: mismatched_key,
                 event,
             }],
@@ -93,11 +89,11 @@ fn collector_rejects_duplicate_session_lifecycle_identity_without_advancing_curs
     assert!(matches!(
         collect_events(
             vec![
-                OwnedEventFact {
+                EventFact {
                     key: key.clone(),
                     event: first,
                 },
-                OwnedEventFact { key, event: second },
+                EventFact { key, event: second },
             ],
             50,
         ),
@@ -107,7 +103,7 @@ fn collector_rejects_duplicate_session_lifecycle_identity_without_advancing_curs
 
     let output = collect_events(vec![fact(auction_tick(73), 0)], 50).unwrap();
     assert_eq!(output.next_seq, 51);
-    assert_eq!(output.events[0].seq(), 51);
+    assert_eq!(output.facts[0].event.seq(), 51);
 }
 
 #[test]

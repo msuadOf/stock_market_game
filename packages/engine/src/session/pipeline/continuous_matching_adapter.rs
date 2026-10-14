@@ -1,9 +1,10 @@
 use super::{
-    continuous_matching::{ContinuousEnvelopeSnapshot, ContinuousStockInput},
-    npc_split::SessionReadView, EnvelopeKey, EnvelopeOrigin, StepFatal,
+    continuous_matching::{ContinuousEnvelopeSnapshot, ContinuousStockInput, StockMarketDataPrior},
+    npc_split::SessionReadView,
+    EnvelopeKey, EnvelopeOrigin, StepFatal,
 };
+use crate::compute::parallel::*;
 use crate::{GameSession, Market, Order, StockId, TradingPhase};
-use rayon::prelude::*;
 
 /// 结构性测试计数器：记录 prepare_stock_input_on 内 BTreeSet 增量插入查重的次数。
 /// 融合排序方案落地后该路径应消失，计数保持 0。
@@ -26,6 +27,32 @@ pub(super) fn prepare_incremental_continuous_inputs_on(
     prepare_inputs_with_observer_on(view, || {})
 }
 
+/// T4（ADR-0042 §6-T4「行情」面）：从只读 view 逐股构建行情先验（活动日 K/
+/// 价格历史/分钟收盘/裁剪长度/日界基线），交 `continuous_shards` 注入股票
+/// owner——owner 连续持有并在收尾一次产出 patch。`None` 先验=会话侧缺该
+/// 股条目（收尾需要时按原错误文案显式失败）。
+pub(super) fn market_data_priors(
+    view: &SessionReadView<'_>,
+) -> std::collections::BTreeMap<crate::StockId, StockMarketDataPrior> {
+    let candle_time = crate::session::candles::candle_date_time(view.civil_clock.current_date());
+    view.markets
+        .keys()
+        .map(|code| {
+            (
+                code.clone(),
+                StockMarketDataPrior {
+                    candle: view.candle_book.active().get(code).cloned(),
+                    price_history: view.price_history.get(code).cloned(),
+                    minute_closes: view.market_minute_closes.get(code).cloned(),
+                    candle_time,
+                    history_len: view.setup.history_len,
+                    day: u64::from(view.day),
+                },
+            )
+        })
+        .collect()
+}
+
 pub(super) fn prepare_inputs_with_observer(
     session: &GameSession,
     observe_row: impl Fn() + Sync,
@@ -33,39 +60,25 @@ pub(super) fn prepare_inputs_with_observer(
     prepare_inputs_with_observer_on(&session.read_view(), observe_row)
 }
 
-/// 读视图版本（读集：phase 经 view 推导，auction_orders/markets/envelope_ledger）。
+/// 读视图版本（读集：phase 经 view 推导，markets/envelope_ledger）。
 pub(super) fn prepare_inputs_with_observer_on(
     view: &SessionReadView<'_>,
     observe_row: impl Fn() + Sync,
 ) -> Result<Vec<ContinuousStockInput>, StepFatal> {
-    if !matches!(
-        view.phase(),
-        TradingPhase::Continuous | TradingPhase::PreOpen
-    ) {
-        return Err(invariant(
-            "continuous-book stock inputs require Continuous or PreOpen phase",
-        ));
-    }
-    if view
-        .auction_orders
-        .values()
-        .any(|orders| !orders.is_empty())
-    {
-        return Err(invariant(
-            "continuous-book phase contains residual auction orders",
-        ));
-    }
-
-    let mut prepared = view
-        .markets
-        .par_iter()
-        .map(|(code, market)| {
-            (
-                code.clone(),
-                prepare_stock_input_on(view, code, market, &observe_row),
-            )
-        })
-        .collect::<Vec<_>>();
+    crate::session::envelope_projection::verify_fee_config_unchanged(view)?;
+    let mut prepared = view.compute.parallel(|| {
+        view.compute
+            .record(crate::compute::ComputeWork::StockPrepare);
+        view.markets
+            .par_iter()
+            .map(|(code, market)| {
+                (
+                    code.clone(),
+                    prepare_stock_input_on(view, code, market, &observe_row),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
     // Error selection and the returned layout are stable; neither ranks orders.
     prepared.sort_unstable_by(|left, right| left.0.cmp(&right.0));
     let mut inputs = Vec::with_capacity(prepared.len());
@@ -103,6 +116,10 @@ fn prepare_stock_input_on(
             "market map key disagrees with the market stock code",
         ));
     }
+    let policy = super::phase::PhasePolicy::capture_on(view);
+    if market.matching_mode() != policy.matching_mode() {
+        return Err(invariant("市场 book 模式与 PhasePolicy 不一致"));
+    }
     // 同一批订单只用一次 identity 排序承担两项职责：相邻比较查重 + 按 identity 序发射。
     // 单股内 stock 为常量，(account, order, side) 的 identity 序与完整 EnvelopeKey 序一致，
     // 因此不再需要捕获后的第二次 String 全键排序；identity 元组是 Copy，比较也不触 String。
@@ -129,29 +146,28 @@ fn prepare_stock_input_on(
     let mut slots: Vec<Option<ContinuousEnvelopeSnapshot>> = Vec::with_capacity(plan.len());
     if market.resting_order_count() >= 512 {
         // 并行核对独立行；Result 保序收集，首错不会按完成先后选择。
-        let captured: Vec<_> = market
-            .resting_order_refs()
-            .enumerate()
-            .collect::<Vec<_>>()
-            .par_iter()
-            .with_min_len(128)
-            .map_init(make_key, |key, (book_index, order)| {
+        // 方向A+B·任务粗化→宽度封顶（宽度税治理）：挂单捕获原先按单订单
+        // 分裂（s5 实测每_tick ~1.8k 单订单任务=LOCAL_PUSH 主力），方向A
+        // 加 with_min_len 后仍残留 rayon join 驱动线程 SpinLatch 自旋+全池
+        // O(N) 偷取扫描（128w ~77 万次/ tick，.tmp/width-fix-A/ 归因）；
+        // 方向B 改走 scatter-gather：min(订单数, active_width) 个粗 chunk、
+        // 协调线程阻塞归并零自旋。捕获结果与首错选择（按簿序）不变。
+        let orders: Vec<(usize, &Order)> = market.resting_order_refs().enumerate().collect();
+        let captured: Vec<ContinuousEnvelopeSnapshot> = view
+            .compute
+            .parallel_map_chunks(orders.len(), |index| {
+                let (book_index, order) = orders[index];
+                let mut key = make_key();
                 capture_order_on(
                     view,
                     code,
                     order,
-                    duplicate_by_book[*book_index],
-                    key,
+                    duplicate_by_book[book_index],
+                    &mut key,
                     observe_row,
                 )
-            })
-            .collect::<Vec<_>>();
-        for result in captured {
-            slots.push(match result {
-                Ok(snapshot) => Some(snapshot),
-                Err(error) => return Err(error),
-            });
-        }
+            })?;
+        slots.extend(captured.into_iter().map(Some));
     } else {
         let mut key = make_key();
         for (book_index, order) in market.resting_order_refs().enumerate() {
@@ -182,7 +198,7 @@ fn prepare_stock_input_on(
     Ok((
         count,
         ContinuousStockInput {
-            phase: view.phase(),
+            policy,
             market: market.clone(),
             envelopes,
             operations: Vec::new(),
@@ -202,10 +218,14 @@ fn order_identity(order: &Order) -> (crate::AccountId, crate::OrderId, u8) {
     )
 }
 
-/// 读视图版本（内部叶子；读 envelope_ledger，费用事实走 facts 叶子的 on 版）。
+/// 读视图版本（内部叶子；读 envelope_ledger）。
+///
+/// 任务65 #1 轻量 capture：保留 book↔ledger 四字段交叉核对与 envelope 完整校验，
+/// 不再对既有 resting 单重算预留/名义费用——该值由 AccountValidation 创建、逐腿
+/// receipt 与恢复 hydrate 权威确立；费率输入不可变由 prepare 入口的指纹守卫兜底。
 fn capture_order_on(
     view: &SessionReadView<'_>,
-    code: &StockId,
+    _code: &StockId,
     order: &Order,
     duplicate: bool,
     key: &mut EnvelopeKey,
@@ -230,7 +250,9 @@ fn capture_order_on(
             "报价过期后的 live ledger 包含 origin 非 TickStart 的 envelope",
         ));
     }
-    let projected = GameSession::project_continuous_envelope_facts_on(view, code, order)?;
+    if envelope.key() != key {
+        return Err(invariant("ledger行键与规范订单身份不一致"));
+    }
     let audit = envelope.audit();
     if envelope.pending_price().is_some()
         || audit.limit != order.price
@@ -242,13 +264,9 @@ fn capture_order_on(
             "continuous order books disagree with envelope audit",
         ));
     }
-    if envelope.live() != projected.live {
-        return Err(invariant(
-            "continuous order books disagree with live envelope resources",
-        ));
-    }
+    // 每订单proof随clone进入private worker；未变事实不在worker初始化中重建。
+    envelope.verified_live_for_capture(&view.setup.config)?;
     Ok(ContinuousEnvelopeSnapshot {
-        audit,
         envelope: envelope.clone(),
     })
 }

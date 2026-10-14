@@ -1,10 +1,17 @@
 use super::ledger_tests::*;
-use super::receipt_aggregation::{apply_receipt_transaction, apply_session_receipt_transaction};
-use super::{
-    Envelope, EnvelopeLedger, JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey,
-    ReceiptSource, ReceiptTransition, ResVec, StepFatal,
+use super::receipt_aggregation::{
+    apply_receipt_transaction as apply_receipt_transaction_with_compute,
+    apply_session_receipt_transaction,
 };
-use crate::{GameSession, Money};
+use super::{
+    Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, JournalRank, ReceiptDelta, ReceiptKind,
+    ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
+};
+use crate::{AccountId, GameSession, Money, OrderId, Side, StockId};
+
+fn audit_compute() -> std::sync::Arc<crate::compute::ComputeContext> {
+    crate::compute::ComputeContext::with_workers(2).unwrap()
+}
 
 fn game_with_ledger(ledger: EnvelopeLedger) -> GameSession {
     let cursor = ledger.next_receipt_index();
@@ -245,6 +252,165 @@ fn illegal_source_kind_and_noncontiguous_local_ordinal_are_transactional() {
         apply_receipt_transaction(&mut ledger, Vec::new(), vec![vec![gap]], Vec::new(),).is_err()
     );
     assert_eq!(ledger, before);
+}
+
+/// 既有单 ledger 用例的等价入口：审计固定落在独立测试 compute registry。
+/// 统一事务返回 ReceiptBatch（raw + typed Fill 事实）；既有用例只消费 raw 审计链，
+/// 这里交出 raw 所有权，typed 事实派生语义由 fill_fact_tests 覆盖。
+fn apply_receipt_transaction(
+    ledger: &mut EnvelopeLedger,
+    created_envelopes: Vec<Envelope>,
+    worker_batches: Vec<Vec<EnvelopeReceipt>>,
+    terminal_keys: Vec<EnvelopeKey>,
+) -> Result<Vec<EnvelopeReceipt>, StepFatal> {
+    apply_receipt_transaction_with_compute(
+        ledger,
+        created_envelopes,
+        worker_batches,
+        terminal_keys,
+        &audit_compute(),
+    )
+    .map(super::fill_fact::ReceiptBatch::into_raw)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn dense_receipt_audit_uses_the_session_compute_registry() {
+    use crate::compute::ComputeContext;
+    use std::sync::{Arc, Mutex};
+    const CHILD: &str = "DENSE_RECEIPT_AUDIT_ENGINE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::pipeline::receipt_aggregation_tests::dense_receipt_audit_uses_the_session_compute_registry",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "独立 dense receipt 审计 child 失败：{status}"
+        );
+        return;
+    }
+    // child 独占 global 初始化；若审计逃逸到 global，owner 观察会缺失或 worker 数不符。
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(3)
+        .build_global()
+        .unwrap();
+    let foreign = rayon::ThreadPoolBuilder::new()
+        .num_threads(3)
+        .build()
+        .unwrap();
+
+    fn dense_ledger() -> EnvelopeLedger {
+        let envelopes = (0..520u64).map(|ordinal| {
+            Envelope::created_at_validation(
+                EnvelopeKey {
+                    account: AccountId(1),
+                    stock: StockId(0),
+                    order: OrderId(ordinal + 1),
+                    side: Side::Buy,
+                },
+                Money::from_cents(100),
+                0,
+                audit_with_remaining(100),
+            )
+        });
+        EnvelopeLedger::new(41, envelopes).unwrap()
+    }
+
+    let mut wrong = Vec::new();
+    for workers in [1usize, 2] {
+        for caller in ["ordinary", "global3", "foreign3"] {
+            let compute = ComputeContext::with_workers(workers).unwrap();
+            let samples = Arc::new(Mutex::new(Vec::new()));
+            let observed = samples.clone();
+            compute.set_observer(Arc::new(move |sample| {
+                observed.lock().unwrap().push(sample)
+            }));
+            let mut session = GameSession::new_with_compute(
+                crate::session::npc_working_quote_tests::quote_setup(0),
+                42,
+                compute.clone(),
+            )
+            .unwrap();
+            let ledger = dense_ledger();
+            session.state.next_receipt_base = ledger.next_receipt_index();
+            session.state.envelope_ledger = ledger;
+            // 8 个真实 mutation receipt：全量 sealed 后转 terminal，
+            // Arc::make_mut 使 evidence 缓存 identity 失效，两次完整校验都走未缓存路径。
+            let sealed_keys: Vec<_> = (0..8u64)
+                .map(|ordinal| EnvelopeKey {
+                    account: AccountId(1),
+                    stock: StockId(0),
+                    order: OrderId(ordinal + 1),
+                    side: Side::Buy,
+                })
+                .collect();
+            let receipts: Vec<_> = sealed_keys
+                .iter()
+                .map(|sealed| {
+                    sealed_receipt(
+                        sealed.clone(),
+                        ReceiptDelta::sealed(
+                            ResVec::new(Money::from_cents(100), 0),
+                            ResVec::ZERO,
+                            ResVec::ZERO,
+                        ),
+                        0,
+                    )
+                })
+                .collect();
+            let run = move || {
+                apply_session_receipt_transaction(
+                    &mut session,
+                    Vec::new(),
+                    vec![receipts],
+                    sealed_keys,
+                )
+                .unwrap()
+                .len()
+            };
+            let applied = match caller {
+                "ordinary" => run(),
+                "global3" => rayon::scope(|_| run()),
+                "foreign3" => foreign.install(run),
+                _ => unreachable!(),
+            };
+            if applied != 8 {
+                wrong.push(format!(
+                    "workers={workers} caller={caller} applied={applied}"
+                ));
+            }
+            let samples = samples.lock().unwrap();
+            let audits: Vec<_> = samples
+                .iter()
+                .filter(|s| s.work == crate::compute::ComputeWork::ReceiptAggregationAudit)
+                .collect();
+            // mutation 使 evidence 缓存 identity 失效：两次完整校验都必须走未缓存并行分支。
+            if audits.len() < 2 {
+                wrong.push(format!(
+                    "workers={workers} caller={caller} ≥512行审计观察不足两次：{samples:?}"
+                ));
+            }
+            for sample in audits {
+                if sample.executing_workers != workers
+                    || !sample.owner_worker.is_some_and(|index| index < workers)
+                {
+                    wrong.push(format!(
+                        "workers={workers} caller={caller} 审计逃离会话 registry：{sample:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "dense receipt 审计逃离会话 registry：{wrong:#?}"
+    );
 }
 
 #[test]

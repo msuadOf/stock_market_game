@@ -2,11 +2,11 @@
 //!
 //! nominal 费用由 stock_processing 计算；此处只累计 EnvelopeReceipt::charged 的实际实收金额。
 
-use super::{EnvelopeReceipt, ReceiptKind, StepFatal};
+use super::{EnvelopeReceipt, FeeComponents, ReceiptKind, StepFatal};
 use crate::account::SettlementTotals;
+use crate::compute::parallel::*;
 use crate::session::account_book::AccountBook;
 use crate::{Account, AccountId, Money, Side, StockId};
-use rayon::prelude::*;
 use std::collections::BTreeMap;
 
 /// 实际 Settlement 工作的审计计数；非 Fill 收据不触发账户结算。
@@ -29,8 +29,11 @@ pub(super) fn apply_receipt_settlements(
     receipts: &[EnvelopeReceipt],
     t1_enabled: bool,
 ) -> Result<SettlementApplication, StepFatal> {
-    let (settled, application) =
-        ReceiptSettlementPlan::from_receipts(receipts)?.prepare_accounts(accounts, t1_enabled)?;
+    let (settled, application) = ReceiptSettlementPlan::from_receipts(receipts)?.prepare_accounts(
+        &crate::ComputeContext::shared_default().expect("测试计算上下文"),
+        accounts,
+        t1_enabled,
+    )?;
     accounts.extend(settled);
     Ok(application)
 }
@@ -43,6 +46,7 @@ pub(super) struct ReceiptSettlementPlan {
 }
 
 impl ReceiptSettlementPlan {
+    #[cfg(test)]
     pub(super) fn from_receipts(receipts: &[EnvelopeReceipt]) -> Result<Self, StepFatal> {
         let mut plan = Self::default();
         for receipt in receipts {
@@ -51,6 +55,40 @@ impl ReceiptSettlementPlan {
         Ok(plan)
     }
 
+    /// typed 消费入口（任务65 #11）：qty/gross/charged 来自产出点一次派生的 FillFact，
+    /// 此处只保留结算侧业务断言（买方印花税为零等），不再从收据 before/after 重推。
+    pub(super) fn from_fill_facts<'a>(
+        facts: impl IntoIterator<Item = &'a super::fill_fact::FillFact>,
+    ) -> Result<Self, StepFatal> {
+        let mut plan = Self::default();
+        for fact in facts {
+            plan.record_fill_fact(fact)?;
+        }
+        Ok(plan)
+    }
+
+    fn record_fill_fact(&mut self, fact: &super::fill_fact::FillFact) -> Result<(), StepFatal> {
+        if fact.key().side == Side::Buy && fact.charged().stamp_tax != Money::ZERO {
+            return Err(invariant("buyer receipt has non-zero stamp tax"));
+        }
+        let totals = self
+            .totals_by_account_stock
+            .entry((fact.key().account, fact.key().stock.clone()))
+            .or_default();
+        let side_totals = match fact.key().side {
+            Side::Buy => &mut totals.buy,
+            Side::Sell => &mut totals.sell,
+        };
+        add_receipt(side_totals, fact.gross(), fact.qty(), fact.charged())?;
+        self.application.applied_receipts = self
+            .application
+            .applied_receipts
+            .checked_add(1)
+            .ok_or_else(|| invariant("settlement receipt count overflow"))?;
+        Ok(())
+    }
+
+    #[cfg(test)]
     fn record_receipt(&mut self, receipt: &EnvelopeReceipt) -> Result<(), StepFatal> {
         if receipt.kind != ReceiptKind::Fill {
             return Ok(());
@@ -83,7 +121,7 @@ impl ReceiptSettlementPlan {
             Side::Buy => &mut totals.buy,
             Side::Sell => &mut totals.sell,
         };
-        add_receipt(side_totals, gross, qty, receipt)?;
+        add_receipt(side_totals, gross, qty, receipt.charged)?;
         self.application.applied_receipts = self
             .application
             .applied_receipts
@@ -95,6 +133,7 @@ impl ReceiptSettlementPlan {
     /// 按账户并行准备 shadow，按原账户顺序取首错；全部成功才交出 patch。
     pub(super) fn prepare_accounts(
         mut self,
+        compute: &crate::ComputeContext,
         accounts: &AccountBook,
         t1_enabled: bool,
     ) -> Result<(BTreeMap<AccountId, Account>, SettlementApplication), StepFatal> {
@@ -102,38 +141,41 @@ impl ReceiptSettlementPlan {
         for ((account_id, stock), totals) in self.totals_by_account_stock {
             grouped.entry(account_id).or_default().push((stock, totals));
         }
-        let prepared: Vec<Result<_, StepFatal>> = grouped
-            .into_par_iter()
-            .map(|(account_id, stocks)| {
-                let mut account = accounts
-                    .get(&account_id)
-                    .ok_or_else(|| {
-                        invariant(&format!("settlement account {} is missing", account_id.0))
-                    })?
-                    .clone_for_shadow()
-                    .map_err(|error| invariant(&error.to_string()))?;
-                let mut applied_groups = 0_usize;
-                for (stock, totals) in stocks {
-                    if totals.buy.qty > 0 {
-                        account
-                            .apply_settlement(Side::Buy, stock.clone(), totals.buy, t1_enabled)
-                            .map_err(|error| invariant(&error.to_string()))?;
-                        applied_groups = applied_groups
-                            .checked_add(1)
-                            .ok_or_else(|| invariant("settlement group count overflow"))?;
+        let prepared: Vec<Result<_, StepFatal>> = compute.parallel(|| {
+            grouped
+                .into_par_iter()
+                .map(|(account_id, stocks)| {
+                    compute.record(crate::compute::ComputeWork::SettlementAccount);
+                    let mut account = accounts
+                        .get(&account_id)
+                        .ok_or_else(|| {
+                            invariant(&format!("settlement account {} is missing", account_id.0))
+                        })?
+                        .clone_for_shadow()
+                        .map_err(|error| invariant(&error.to_string()))?;
+                    let mut applied_groups = 0_usize;
+                    for (stock, totals) in stocks {
+                        if totals.buy.qty > 0 {
+                            account
+                                .apply_settlement(Side::Buy, stock.clone(), totals.buy, t1_enabled)
+                                .map_err(|error| invariant(&error.to_string()))?;
+                            applied_groups = applied_groups
+                                .checked_add(1)
+                                .ok_or_else(|| invariant("settlement group count overflow"))?;
+                        }
+                        if totals.sell.qty > 0 {
+                            account
+                                .apply_settlement(Side::Sell, stock, totals.sell, t1_enabled)
+                                .map_err(|error| invariant(&error.to_string()))?;
+                            applied_groups = applied_groups
+                                .checked_add(1)
+                                .ok_or_else(|| invariant("settlement group count overflow"))?;
+                        }
                     }
-                    if totals.sell.qty > 0 {
-                        account
-                            .apply_settlement(Side::Sell, stock, totals.sell, t1_enabled)
-                            .map_err(|error| invariant(&error.to_string()))?;
-                        applied_groups = applied_groups
-                            .checked_add(1)
-                            .ok_or_else(|| invariant("settlement group count overflow"))?;
-                    }
-                }
-                Ok((account_id, account, applied_groups))
-            })
-            .collect();
+                    Ok((account_id, account, applied_groups))
+                })
+                .collect()
+        });
         let mut settled = BTreeMap::new();
         for result in prepared {
             let (account_id, account, groups) = result?;
@@ -152,7 +194,7 @@ fn add_receipt(
     totals: &mut SettlementTotals,
     gross: Money,
     qty: u32,
-    receipt: &EnvelopeReceipt,
+    charged: FeeComponents,
 ) -> Result<(), StepFatal> {
     totals.gross = totals
         .gross
@@ -160,15 +202,15 @@ fn add_receipt(
         .map_err(|error| invariant(&error.to_string()))?;
     totals.commission = totals
         .commission
-        .add(receipt.charged.commission)
+        .add(charged.commission)
         .map_err(|error| invariant(&error.to_string()))?;
     totals.stamp_tax = totals
         .stamp_tax
-        .add(receipt.charged.stamp_tax)
+        .add(charged.stamp_tax)
         .map_err(|error| invariant(&error.to_string()))?;
     totals.transfer_fee = totals
         .transfer_fee
-        .add(receipt.charged.transfer_fee)
+        .add(charged.transfer_fee)
         .map_err(|error| invariant(&error.to_string()))?;
     totals.qty = totals
         .qty

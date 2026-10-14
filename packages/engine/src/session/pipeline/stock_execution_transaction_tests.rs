@@ -39,7 +39,10 @@ fn account_validation_buy_operations_for_quantities(
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput { session: &game, speculative: None }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let batch = IntentCandidateBatch::new(
         quantities
             .iter()
@@ -127,7 +130,6 @@ fn resting_sell_snapshot_with_qty(
             qty,
             audit,
         ),
-        audit,
     }
 }
 
@@ -155,7 +157,7 @@ fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
     let mut market = empty_market(&code);
     let maker = resting_sell_snapshot_with_qty(&mut market, &code, 200);
     let worker = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![maker.clone()],
         operations,
@@ -217,7 +219,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
     let mut market = empty_market(&code);
     let maker = resting_sell_snapshot_with_qty(&mut market, &code, 200);
     let worker = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![maker.clone()],
         operations: vec![
@@ -279,7 +281,7 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     let code = code();
     let (operations, config) = account_validation_buy_operations(&code);
     let worker = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
@@ -323,7 +325,7 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     let mut market = empty_market(&code);
     let maker = resting_sell_snapshot(&mut market, &code);
     let worker = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![maker.clone()],
         operations,
@@ -373,7 +375,7 @@ fn settlement_projection_failure_after_receipt_aggregation_receipts_keeps_every_
     let mut market = empty_market(&code);
     let maker = resting_sell_snapshot(&mut market, &code);
     let worker = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market,
         envelopes: vec![maker.clone()],
         operations,
@@ -457,7 +459,7 @@ fn duplicate_stock_worker_outputs_are_rejected_before_receipt_aggregation_or_set
     let (first_operations, config) = account_validation_buy_operations(&code);
     let (second_operations, _) = account_validation_buy_operations(&code);
     let first = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations: first_operations,
@@ -465,7 +467,7 @@ fn duplicate_stock_worker_outputs_are_rejected_before_receipt_aggregation_or_set
     })
     .unwrap();
     let second = process_continuous_stock(ContinuousStockInput {
-        phase: TradingPhase::Continuous,
+        policy: super::phase::PhasePolicy::new(TradingPhase::Continuous, 0, 0),
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations: second_operations,

@@ -174,7 +174,7 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
         .expect("player fixture accepts pending intent");
     let business_before = session.business_state_hash().unwrap();
     let seq_before = session.seq();
-    let auction_before = session.state.auction_orders.clone();
+    let auction_before = session.auction_order_projection_for_test().clone();
     let lifecycle_before = session.state.npc_order_lifecycles.clone();
     let pending_before = session.state.pending_player.len();
 
@@ -188,7 +188,7 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
     assert_eq!(plan.decisions.len(), 1);
     assert_eq!(session.business_state_hash().unwrap(), business_before);
     assert_eq!(session.seq(), seq_before);
-    assert_eq!(session.state.auction_orders, auction_before);
+    assert_eq!(session.auction_order_projection_for_test(), auction_before);
     assert_eq!(session.state.npc_order_lifecycles, lifecycle_before);
     assert_eq!(session.state.pending_player.len(), pending_before);
 }

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canonicalJson } from "./protocol/canonical.ts";
 import { parseNormalizedEngineUpdate } from "./protocol/index.ts";
 import { parseEngineUpdate, parseProtocolSnapshot } from "./protocol/parse.ts";
 import {
@@ -85,7 +84,7 @@ test("Given every Event wire variant, when parsed in an update, then all eleven 
     { PriceTick: { seq: 4, tick: 1, code: 0, last_price: "1000", daily_candle: dailyCandle(), bids: [], asks: [] } },
     { DayBoundary: { seq: 5, day: 1, closed_daily_candles: { "0": dailyCandle() } } },
     { CivilDateAdvanced: { seq: 6, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: { Closed: { OfficialHoliday: { citation_id: "SSE-2030" } } } } },
-    { CompanyDisclosurePublished: { seq: 7, publication_id: 7, company: "C-600000", published_at: { date: "2030-01-03", second_of_day: 64_800 }, kind: { Report: { report_revision: 1 } } } },
+    { CompanyDisclosurePublished: { seq: 7, publication_id: 7, company: 0, published_at: { date: "2030-01-03", second_of_day: 64_800 }, kind: { Report: { report_revision: 1 } } } },
     { IntentRejected: { seq: 8, account: 0, code: 0, reason: "OrderAlreadyFilled" } },
     { SettlementError: { seq: 9, account: 0, code: 0, reason: "settlement failed" } },
     { OrderCanceled: { seq: 10, account: 0, code: 0, id: 8, remaining_qty: 100 } },
@@ -108,8 +107,7 @@ test("Given every Event wire variant, when parsed in an update, then all eleven 
     TickBatch: {
       frames: [{
         tick: 1,
-        events,
-        facts: events.map((event, index) => ({ key: keys[index] ?? {}, event, canonical_payload: canonicalJson(event) })),
+        facts: events.map((event, index) => ({ key: keys[index] ?? {}, event })),
         timeseries_payload: timeseries(1),
         seq_from: 0,
         seq_to: 11,
@@ -120,7 +118,7 @@ test("Given every Event wire variant, when parsed in an update, then all eleven 
 
   const parsed = parseEngineUpdate(update);
 
-  assert.equal("TickBatch" in parsed && parsed.TickBatch.frames[0]?.events.length, 11);
+  assert.equal("TickBatch" in parsed && parsed.TickBatch.frames[0]?.facts.length, 11);
 });
 
 test("Given malformed tags, fields, keys, bigint, or enums, when parsed, then each is rejected", () => {
@@ -129,7 +127,7 @@ test("Given malformed tags, fields, keys, bigint, or enums, when parsed, then ea
   const malformedInputs = [
     ["extra", tickBatch([{ ...current, extra: true }], snapshot(1, 1))],
     ["unknown", { Unknown: valid.TickBatch }],
-    ["badTag", tickBatch([{ ...current, events: [{ Wrong: { seq: 1 } }] }], snapshot(1, 1))],
+    ["badTag", tickBatch([{ ...current, facts: [{ key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 }, event: { Wrong: { seq: 1 } } }] }], snapshot(1, 1))],
     ["unsafe", tickBatch([{ ...current, tick: 9_007_199_254_740_992n }], snapshot(1, 1))],
   ] as const;
 
@@ -147,11 +145,9 @@ test("Given a decimal string beyond u64, when parsed, then opaque protocol IDs a
       kinds: ["BeforeOpen"],
       tick: 0,
       civil_date: "2030-01-03",
-      events: [{ CivilDateAdvanced: { seq: 1, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } }],
       facts: [{
         key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
         event: { CivilDateAdvanced: { seq: 1, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } },
-        canonical_payload: canonicalJson({ CivilDateAdvanced: { seq: 1, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading" } }),
       }],
       seq_from: 0,
       seq_to: 1,
@@ -206,7 +202,7 @@ test("Given malformed StockSpec structural fields, when parsed, then transport r
 test("Given structural-key attacks or normalized Map collisions, when parsed, then the boundary rejects them", () => {
   const valid = tickBatch([frame(1, 0, [0])], snapshot(1, 1));
   const current = firstFrame(valid.TickBatch);
-  const parsedJson: unknown = JSON.parse('{"TickBatch":{"frames":[{"tick":1,"events":[],"facts":[],"timeseries_payload":{"markets":{"__proto__":{"last_price":"1000"}},"active_daily_candles":{},"closed_daily_candles":{},"auction_points":{},"continuous_points":{}},"seq_from":0,"seq_to":0}],"runtime_snapshot":null}}');
+  const parsedJson: unknown = JSON.parse('{"TickBatch":{"frames":[{"tick":1,"facts":[],"timeseries_payload":{"markets":{"__proto__":{"last_price":"1000"}},"active_daily_candles":{},"closed_daily_candles":{},"auction_points":{},"continuous_points":{}},"seq_from":0,"seq_to":0}],"runtime_snapshot":null}}');
   const collidingMaps = {
     TickBatch: {
       ...valid.TickBatch,
@@ -224,7 +220,7 @@ test("Given structural-key attacks or normalized Map collisions, when parsed, th
   };
 
   for (const forbidden of ["__proto__", "prototype", "constructor"]) {
-    const dangerous: unknown = JSON.parse(`{"TickBatch":{"frames":[{"tick":1,"events":[],"facts":[],"timeseries_payload":{"markets":{"${forbidden}":{}},"active_daily_candles":{},"closed_daily_candles":{},"auction_points":{},"continuous_points":{}},"seq_from":0,"seq_to":0}],"runtime_snapshot":null}}`);
+    const dangerous: unknown = JSON.parse(`{"TickBatch":{"frames":[{"tick":1,"facts":[],"timeseries_payload":{"markets":{"${forbidden}":{}},"active_daily_candles":{},"closed_daily_candles":{},"auction_points":{},"continuous_points":{}},"seq_from":0,"seq_to":0}],"runtime_snapshot":null}}`);
     assert.throws(() => parseEngineUpdate(dangerous), { code: "PROTOCOL_MALFORMED" }, forbidden);
   }
   assert.throws(() => parseEngineUpdate(parsedJson), { code: "PROTOCOL_MALFORMED" });
@@ -284,7 +280,7 @@ test("Given Rust-width boundary values, when parsed, then u8 and u32 fields keep
     CompanyDisclosurePublished: {
       seq: 1,
       publication_id: 1,
-      company: "C-future",
+      company: 4_294_967_295,
       published_at: { date: "2030-01-03", second_of_day: 0 },
       kind: { Report: { report_revision: 4_294_967_295 } },
     },
@@ -292,9 +288,8 @@ test("Given Rust-width boundary values, when parsed, then u8 and u32 fields keep
   const fact = {
     key: { phase_rank: 255, entity: "Session", source: "Session", local_event_index: 0 },
     event: disclosure,
-    canonical_payload: canonicalJson(disclosure),
   };
-  const acceptedFrame = { ...current, events: [disclosure], facts: [fact], seq_from: 0, seq_to: 1 };
+  const acceptedFrame = { ...current, facts: [fact], seq_from: 0, seq_to: 1 };
   const accepted = {
     TickBatch: {
       frames: [acceptedFrame],
@@ -307,7 +302,7 @@ test("Given Rust-width boundary values, when parsed, then u8 and u32 fields keep
     TickBatch: { ...accepted.TickBatch, frames: [{ ...acceptedFrame, facts: [{ ...fact, key: { ...fact.key, phase_rank: 256 } }] }] },
   }), { code: "PROTOCOL_MALFORMED" });
   assert.throws(() => parseEngineUpdate({
-    TickBatch: { ...accepted.TickBatch, frames: [{ ...acceptedFrame, events: [{ CompanyDisclosurePublished: { ...disclosure.CompanyDisclosurePublished, kind: { Report: { report_revision: 4_294_967_296 } } } }] }] },
+    TickBatch: { ...accepted.TickBatch, frames: [{ ...acceptedFrame, facts: [{ ...fact, event: { CompanyDisclosurePublished: { ...disclosure.CompanyDisclosurePublished, kind: { Report: { report_revision: 4_294_967_296 } } } } }] }] },
   }), { code: "PROTOCOL_MALFORMED" });
   assert.throws(() => parseEngineUpdate({
     TickBatch: { ...accepted.TickBatch, frames: [{ ...acceptedFrame, facts: [{ ...fact, key: { ...fact.key, phase_rank: -1 } }] }] },

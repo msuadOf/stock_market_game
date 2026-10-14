@@ -13,12 +13,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if ticks == 0 || threads == 0 {
         return Err("ticks 与 threads 必须大于零".into());
     }
-    // 与生产宿主一样，coordinator 运行在调用线程，保留全部 Rayon worker 处理计算任务。
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build_global()?;
+    // 与生产宿主一样，coordinator 运行在调用线程；计算任务全部走会话计算上下文。
+    let compute = engine::ComputeContext::with_workers(threads)?;
     (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut game = GameSession::new(setup, 42)?;
+        let mut game = GameSession::new_with_compute(setup, 42, compute.clone())?;
         let mut phases = BTreeMap::<String, u128>::new();
         let mut events = 0;
         let started = Instant::now();

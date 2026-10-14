@@ -79,6 +79,7 @@ export type SavedRuntimeState = {
   readonly poisoned: boolean
   readonly next_receipt_base: string
   readonly live_envelopes: readonly SavedLiveEnvelope[]
+  readonly book_public_cutoff_sequences: Readonly<Record<string, string>>
   readonly retail_projection_seen: readonly SavedRetailReceiptIdentity[]
   readonly strategy_states: Readonly<Record<string, RuntimeStrategyState>>
 }
@@ -231,11 +232,13 @@ function receiptIdentity(value: unknown, path: string): SavedRetailReceiptIdenti
 
 export function parseSaveRuntime(value: unknown, path = "runtime_state"): SavedRuntimeState {
   const parsed = record(value, path)
-  exact(parsed, ["poisoned", "next_receipt_base", "live_envelopes", "retail_projection_seen", "strategy_states"], path)
+  exact(parsed, ["poisoned", "next_receipt_base", "live_envelopes", "book_public_cutoff_sequences", "retail_projection_seen", "strategy_states"], path)
   return {
     poisoned: boolean(parsed.poisoned, `${path}.poisoned`),
     next_receipt_base: decimal(parsed.next_receipt_base, `${path}.next_receipt_base`),
     live_envelopes: array(parsed.live_envelopes, `${path}.live_envelopes`).map((item, index) => liveEnvelope(item, `${path}.live_envelopes[${index}]`)),
+    book_public_cutoff_sequences: map(parsed.book_public_cutoff_sequences, `${path}.book_public_cutoff_sequences`,
+      (key, keyPath) => { safeIntegerKey(key, keyPath); u32(Number(key), keyPath) }, decimal),
     retail_projection_seen: array(parsed.retail_projection_seen, `${path}.retail_projection_seen`).map((item, index) => receiptIdentity(item, `${path}.retail_projection_seen[${index}]`)),
     strategy_states: map(parsed.strategy_states, `${path}.strategy_states`, accountKey, strategyState),
   }
