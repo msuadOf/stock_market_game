@@ -135,7 +135,6 @@ impl DeskBatch {
 // ═══════════════════════════════════════════════════════════════════
 
 use super::GroupIdx;
-use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 /// worker 身份（错误上报与 Final 对账用）。
@@ -156,13 +155,42 @@ impl std::fmt::Display for WorkerId {
     }
 }
 
-/// tick 广播快照（骨架档：全市场公共态视图随批 4 引擎化接入）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// 单股上一收束点公共态（协调者广播快照元素；字段对齐 `strategy::StockView`）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct StockPublic {
+    /// 最新价（分）。
+    pub last_price: i64,
+    /// 买一（分；空簿 None）。
+    pub best_bid: Option<i64>,
+    /// 卖一（分；空簿 None）。
+    pub best_ask: Option<i64>,
+    /// 本观察版本允许的最高买入限价（涨停 ∧ 笼子交集）。
+    pub max_buy_price: i64,
+    /// 本交易日的涨停价（符号价 purse 最坏情况基准）。
+    pub daily_upper_limit: i64,
+    /// 本观察版本允许的最低卖出限价。
+    pub min_sell_price: i64,
+    /// 最近 N 个 tick 收盘价（分）。
+    pub recent_prices: Vec<i64>,
+    /// 当日已完成标准交易分钟收盘（分）。
+    pub minute_closes: Vec<i64>,
+    /// 日累计成交量（股）。
+    pub volume_today: u64,
+    /// 相对历史同期预期量倍率（骨架 1.0，预期量基线随批 5 接入）。
+    pub relative_volume: f64,
+    /// 前五档买卖失衡 [-1,1]。
+    pub order_book_imbalance: f64,
+}
+
+/// tick 广播快照（批 4：附带全股上一收束点公共态，组端只读）。
+#[derive(Clone, Debug, PartialEq)]
 pub struct TickSnapshot {
     /// 当前 tick。
     pub tick: u64,
     /// 市场分钟数。
     pub market_minute: u32,
+    /// 全股公共态（下标=StockIdx）。
+    pub stocks: Vec<StockPublic>,
 }
 
 /// 组线程收件消息（coordinator 的控制消息与交易部的实体批次共用一个 mpsc；
@@ -289,12 +317,18 @@ pub struct GroupReport {
     pub skipped: u64,
     /// 本组是否还有续行需求（计划续行；协调者据此决定 Continue）。
     pub continuation: bool,
+    /// 本轮到期 NPC 数（attention 简化 due 检查）。
+    pub due_npcs: u64,
+    /// 本轮实际调用 decide_data 次数。
+    pub decide_calls: u64,
+    /// 被登记跳过的 Cancel 意图数（OrderRef 跟踪随批 6 接线，不静默）。
+    pub cancel_intents_skipped: u64,
     /// 提交态哈希（Start 转正后立即计算；回滚后 Final 哈希应与之相等）。
     pub committed_hash: u64,
 }
 
 /// 交易部本轮报告。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DeskReport {
     /// 股索引。
     pub stock: StockIdx,
@@ -324,6 +358,8 @@ pub struct DeskReport {
     pub trade_count: u64,
     /// 费用桶累计（双边实收费用，守恒审计输入）。
     pub fee_sink: i64,
+    /// 本收束点公共态（协调者安装进下一 tick 广播快照）。
+    pub view: StockPublic,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

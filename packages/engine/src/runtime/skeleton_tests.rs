@@ -46,6 +46,7 @@ pub(super) fn basic_spec(
         closing_auction_ticks: 3,
         order_ttl_ticks: 1_000_000,
         history_len: 16,
+        decision: None,
     }
 }
 

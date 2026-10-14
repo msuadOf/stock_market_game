@@ -33,7 +33,11 @@ mod facts;
 mod protocol;
 
 pub mod coordinator;
+pub mod decision;
 pub mod desk;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod decision_tests;
 pub mod fees;
 pub mod group;
 pub mod watchdog;

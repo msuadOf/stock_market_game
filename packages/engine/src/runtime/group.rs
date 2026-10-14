@@ -8,7 +8,9 @@
 //!   全部本 tick 日志。`Continue` 只触发落账（进可逆日志），**不是**转正点。
 //! - **Abort**：逆序回放 + 清 staging + 回到 `committed_tick`（失败后可继续重跑）。
 
+use super::decision::{decide_account, NpcProfile};
 use super::fees::buy_purse_limit;
+use super::protocol::TickSnapshot;
 use super::protocol::{
     DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
@@ -152,6 +154,10 @@ pub struct GroupFinalState {
     pub accounts: Vec<GroupAccount>,
     /// 累计跳过单量。
     pub skipped_orders: u64,
+    /// 累计到期决策次数。
+    pub decide_calls_total: u64,
+    /// 累计 Cancel 意图跳过数。
+    pub cancel_intents_total: u64,
     /// 当前态哈希（Abort 回滚后应等于 `committed_hash`）。
     pub state_hash: u64,
     /// 提交态哈希（最后一次 Start 转正后）。
@@ -180,12 +186,22 @@ pub struct GroupState {
     committed_hash: u64,
     /// 累计跳过单量。
     pub skipped_orders: u64,
+    /// 累计到期 NPC 决策次数（attention due）。
+    pub decide_calls_total: u64,
+    /// 累计被登记跳过的 Cancel 意图数。
+    pub cancel_intents_total: u64,
     /// 分段 flush 粒度（op 数）。
     chunk: usize,
     /// 一手股数（买入整手/卖出零股一次性校验）。
     lot: u32,
     /// 费用/整手配置（purse 最坏情况口径）。
     config: Arc<GameConfig>,
+    /// 决策装配（Some=内联 decide_data 路径；None=测试脚本路径）。
+    decision: Option<(Vec<NpcProfile>, u32)>,
+    /// 每交易日 tick 数（T+1 日界解冻判定）。
+    ticks_per_day: u64,
+    /// 最近一次广播快照（决策观察基；Continue 轮复用）。
+    snapshot: Option<std::sync::Arc<TickSnapshot>>,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
     /// 决策脚本。
@@ -200,6 +216,8 @@ impl GroupState {
         chunk: usize,
         lot: u32,
         config: Arc<GameConfig>,
+        ticks_per_day: u64,
+        decision: Option<(Vec<NpcProfile>, u32)>,
         script: GroupScript,
     ) -> Self {
         GroupState {
@@ -212,9 +230,14 @@ impl GroupState {
             committed_tick: 0,
             committed_hash: 0,
             skipped_orders: 0,
+            decide_calls_total: 0,
+            cancel_intents_total: 0,
             chunk,
             lot,
             config,
+            ticks_per_day,
+            decision,
+            snapshot: None,
             observed: Vec::new(),
             script,
         }
@@ -414,6 +437,25 @@ impl GroupState {
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
+        // T+1 日界解冻：跨交易日首 tick（对齐"当日买入下一交易日日界解锁"，
+        // DayEnd 相位接线前以 Start 为等价可见点，记逆操作可冲回）。
+        let day_before = (self.committed_tick.saturating_sub(1)) / self.ticks_per_day.max(1);
+        let day_after = (tick.saturating_sub(1)) / self.ticks_per_day.max(1);
+        if day_after > day_before {
+            for local in 0..self.accounts.len() as LocalIdx {
+                let frozen = self.accounts[local as usize].frozen_today.clone();
+                for (stock, &f) in frozen.iter().enumerate() {
+                    if f > 0 {
+                        self.accounts[local as usize].frozen_today[stock] = 0;
+                        self.undo.push(GroupUndo::Frozen {
+                            local,
+                            stock: stock as StockIdx,
+                            delta: -(f as i32),
+                        });
+                    }
+                }
+            }
+        }
         self.committed_hash = self.state_hash();
         self.run_round(tick, 0, desk_txs, up_tx)
     }
@@ -448,11 +490,75 @@ impl GroupState {
         desk_txs: &[Sender<super::protocol::DeskMsg>],
         up_tx: &Sender<UpMsg>,
     ) -> Result<(), RuntimeError> {
-        let plan = (self.script)(tick, round);
-        if let Some(payload) = plan.panic_payload {
+        // 决策来源：内联 decide_data（批 4）或测试脚本。
+        enum Pending {
+            Op(super::decision::PendingOp),
+            CancelAll { local: LocalIdx, stock: StockIdx },
+        }
+        let mut pendings: Vec<Pending> = Vec::new();
+        let mut continuation = false;
+        let mut due_npcs = 0u64;
+        let mut decide_calls = 0u64;
+        let mut cancel_intents_skipped = 0u64;
+        let mut panic_payload: Option<String> = None;
+        let mut stall: Option<Duration> = None;
+        if let Some((profiles, gap)) = &mut self.decision {
+            let snapshot =
+                self.snapshot
+                    .clone()
+                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {} 决策缺快照（Start 未达即 Continue？）", self.group),
+                    })?;
+            let group_mix = (self.group as u64).wrapping_mul(0x9E3779B9);
+            for local in 0..profiles.len() as LocalIdx {
+                let account = &self.accounts[local as usize];
+                let (ops, decided, cancels) = decide_account(
+                    &mut profiles[local as usize],
+                    group_mix,
+                    tick,
+                    local,
+                    *gap,
+                    &snapshot,
+                    account,
+                    &self.config,
+                );
+                if decided {
+                    due_npcs += 1;
+                    decide_calls += 1;
+                    self.decide_calls_total += 1;
+                }
+                cancel_intents_skipped += cancels as u64;
+                self.cancel_intents_total += cancels as u64;
+                for op in ops {
+                    pendings.push(Pending::Op(op));
+                }
+            }
+        } else {
+            let plan = (self.script)(tick, round);
+            panic_payload = plan.panic_payload;
+            stall = plan.stall;
+            continuation = plan.continuation;
+            for c in &plan.cancels {
+                pendings.push(Pending::CancelAll {
+                    local: c.local,
+                    stock: c.stock,
+                });
+            }
+            for p in &plan.places {
+                pendings.push(Pending::Op(super::decision::PendingOp {
+                    local: p.local,
+                    stock: p.stock,
+                    side: p.side,
+                    routed: RoutedPrice::Fixed(p.price),
+                    purse_reference: p.price,
+                    qty: p.qty,
+                }));
+            }
+        }
+        if let Some(payload) = panic_payload {
             std::panic::panic_any(payload);
         }
-        if let Some(stall) = plan.stall {
+        if let Some(stall) = stall {
             std::thread::sleep(stall);
         }
         let group = self.group;
@@ -461,24 +567,31 @@ impl GroupState {
         let mut buffered = 0usize;
         let mut ops_sent = 0u64;
         // 对齐撤单先于下单（同批次 FIFO；脚本顺序保证）。
-        for c in &plan.cancels {
-            let active = self.accounts[c.local as usize].foreign_active[c.stock as usize];
+        for c in pendings.iter().filter_map(|p| match p {
+            Pending::CancelAll { local, stock } => Some((*local, *stock)),
+            _ => None,
+        }) {
+            let active = self.accounts[c.0 as usize].foreign_active[c.1 as usize];
             if active > 0 {
-                buffers[c.stock as usize].push(DeskIn::CancelAll {
-                    owner: (group, c.local),
+                buffers[c.1 as usize].push(DeskIn::CancelAll {
+                    owner: (group, c.0),
                 });
                 buffered += 1;
             }
         }
-        for p in &plan.places {
+        for p in pendings.iter().filter_map(|p| match p {
+            Pending::Op(op) => Some(*op),
+            _ => None,
+        }) {
             let owner = (group, p.local);
             match p.side {
                 Side::Buy => {
                     // purse = 最坏情况对价 + 佣金上限 + 过户费上限（F §1.5；
-                    // `fees.rs buy_purse_limit`，与现引擎预留同口径）。
+                    // `fees.rs buy_purse_limit`，与现引擎预留同口径。符号价/市价
+                    // 的最坏情况 = 日涨停（`purse_reference`，F §1.5）。
                     let purse = buy_purse_limit(
                         &self.config,
-                        Money::from_cents(p.price),
+                        Money::from_cents(p.purse_reference.max(1)),
                         p.qty,
                         Money::ZERO,
                     )
@@ -506,7 +619,7 @@ impl GroupState {
                     buffers[p.stock as usize].push(DeskIn::Place {
                         owner,
                         side: p.side,
-                        price: RoutedPrice::Fixed(p.price),
+                        price: p.routed,
                         qty: p.qty,
                         purse,
                     });
@@ -542,7 +655,7 @@ impl GroupState {
                     buffers[p.stock as usize].push(DeskIn::Place {
                         owner,
                         side: p.side,
-                        price: RoutedPrice::Fixed(p.price),
+                        price: p.routed,
                         qty: p.qty,
                         purse: 0,
                     });
@@ -562,8 +675,11 @@ impl GroupState {
             round,
             ops_sent,
             skipped: self.skipped_orders,
-            continuation: plan.continuation,
+            continuation,
             committed_hash: self.committed_hash,
+            due_npcs,
+            decide_calls,
+            cancel_intents_skipped,
         };
         up_tx
             .send(UpMsg::GroupReport(report))
@@ -578,6 +694,8 @@ impl GroupState {
             group: self.group,
             accounts: self.accounts.clone(),
             skipped_orders: self.skipped_orders,
+            decide_calls_total: self.decide_calls_total,
+            cancel_intents_total: self.cancel_intents_total,
             state_hash: self.state_hash(),
             committed_hash: self.committed_hash,
             observed: self.observed.clone(),
@@ -672,6 +790,7 @@ pub fn group_main(
                     result = Err(e);
                     break;
                 }
+                state.snapshot = Some(snapshot);
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     state.handle_start(tick, &desk_txs, &up_tx)
                 }));

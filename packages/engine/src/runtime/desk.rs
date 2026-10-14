@@ -1320,6 +1320,38 @@ impl DeskState {
         Ok(())
     }
 
+    /// 本收束点公共态（协调者安装进下一 tick 广播）。
+    fn build_public(&self, tick: u64) -> super::protocol::StockPublic {
+        let (down, up_buy) = self
+            .price_bound_for(Side::Buy, tick, self.config.price_cage_enabled)
+            .unwrap_or((1, self.market.last_price));
+        super::protocol::StockPublic {
+            last_price: self.market.last_price,
+            best_bid: self.best_bid(),
+            best_ask: self.best_ask(),
+            max_buy_price: up_buy,
+            daily_upper_limit: self.up_stop().unwrap_or(self.market.last_close),
+            min_sell_price: down,
+            recent_prices: self.market.recent_prices.iter().copied().collect(),
+            minute_closes: self.market.minute_closes.iter().map(|(_, c)| *c).collect(),
+            volume_today: self.market.volume_today,
+            relative_volume: 1.0,
+            order_book_imbalance: self.top5_imbalance(),
+        }
+    }
+
+    /// 前五档买卖失衡（照搬原型 `top5_imbalance`）。
+    fn top5_imbalance(&self) -> f64 {
+        let bid: u64 = self.bids.values().rev().take(5).map(count_qty).sum();
+        let ask: u64 = self.asks.values().take(5).map(count_qty).sum();
+        let total = bid + ask;
+        if total == 0 {
+            0.0
+        } else {
+            (bid as f64 - ask as f64) / total as f64
+        }
+    }
+
     /// 本轮收束：行情收尾（tick 收盘价历史、分钟收盘、零成交 K 占位）→
     /// 出口缓冲 flush（先于 DeskReport，因果基石）。
     fn finish_round(&mut self, tick: u64) -> Result<(), RuntimeError> {
@@ -1492,6 +1524,28 @@ fn over(msg: &str) -> RuntimeError {
     }
 }
 
+/// 价格边界计算（照搬 `market.rs price_bound`：基准 × 比率后正数四舍五入至
+/// 最小价位 0.01 元，不足一档至少移动一档）。交易部与世界初始视图共用。
+pub fn bound_price(reference: Money, ratio_bps: u32, upward: bool) -> Result<Money, String> {
+    let tick = Money::from_cents(1);
+    let denominator = i128::from(10_000u32) * i128::from(tick.cents());
+    let numerator = i128::from(reference.cents()) * i128::from(ratio_bps);
+    let rounded_ticks = (numerator + denominator / 2) / denominator;
+    let rounded_cents =
+        i64::try_from(rounded_ticks * i128::from(tick.cents())).map_err(|e| format!("{e}"))?;
+    let mut bound = Money::from_cents(rounded_cents.max(tick.cents()));
+    if upward && bound <= reference {
+        bound = reference.add(tick).map_err(|e| format!("{e}"))?;
+    } else if !upward && bound >= reference {
+        bound = reference.sub(tick).map_err(|e| format!("{e}"))?.max(tick);
+    }
+    Ok(bound)
+}
+
+fn count_qty(level: &VecDeque<DeskOrder>) -> u64 {
+    level.iter().map(|o| o.qty as u64).sum()
+}
+
 fn fnv(state: u64, value: u64) -> u64 {
     let mut h = state;
     for b in value.to_le_bytes() {
@@ -1654,6 +1708,7 @@ fn process_msg(
                         volume_today: state.market.volume_today,
                         trade_count: state.market.trade_count,
                         fee_sink: state.fee_sink,
+                        view: state.build_public(tick),
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {
                         RuntimeError::SendFailed {

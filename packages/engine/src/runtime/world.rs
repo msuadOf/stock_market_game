@@ -13,12 +13,15 @@ use super::coordinator::{
     broadcast_continue, broadcast_start, converge_round, no_op_validator, GlobalState,
     RoundOutcome, TickEvidence, Validator,
 };
+use super::decision::DecisionSetup;
 use super::desk::{desk_main, DeskFinalState, DeskSetup};
 use super::group::{group_main, GroupAccount, GroupFinalState, GroupScript};
+use super::protocol::StockPublic;
 use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
 use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
 use super::{GroupIdx, StockIdx};
 use crate::config::GameConfig;
+use crate::money::Money;
 use crate::StockExchange;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -84,6 +87,8 @@ pub struct WorldSpec {
     pub order_ttl_ticks: u64,
     /// tick 收盘价历史容量。
     pub history_len: usize,
+    /// 内联决策装配（Some=decide_data 路径；None=测试脚本路径）。
+    pub decision: Option<DecisionSetup>,
 }
 
 /// 每个已收敛 tick 的记录（测试与审计面）。
@@ -97,6 +102,8 @@ pub struct TickRecord {
     pub group_hashes: Vec<(GroupIdx, u64)>,
     /// 各交易部提交态哈希。
     pub desk_hashes: Vec<(StockIdx, u64)>,
+    /// 各交易部本收束点挂单数（观察面）。
+    pub desk_resting: Vec<(StockIdx, u64)>,
 }
 
 /// 关停报告（期末对账面）。
@@ -129,6 +136,8 @@ pub struct World {
     /// 已死亡 worker（Failed 路径收齐的 Final；world 不可再跑 tick）。
     dead_finals: Option<ShutdownReport>,
     dead_reason: Option<String>,
+    /// 全股上一收束点公共态（决策观察基；DeskReport 安装更新）。
+    public_views: Vec<StockPublic>,
 }
 
 impl World {
@@ -174,6 +183,7 @@ impl World {
             closing_auction_ticks,
             order_ttl_ticks,
             history_len,
+            decision,
         } = spec;
         let n_stocks = stocks.len();
         let abort = Arc::new(AtomicBool::new(false));
@@ -205,12 +215,23 @@ impl World {
                 }
                 accounts.push(acct);
             }
+            let group_decision = decision.clone().map(|mut d| {
+                // 组因子混入种子：防跨组同种子同输出。
+                for (i, p) in d.profiles.iter_mut().enumerate() {
+                    p.seed ^= (g as u64)
+                        .wrapping_mul(0x9E3779B97F4A7C15)
+                        .wrapping_add(i as u64);
+                }
+                (d.profiles, d.attention_gap_ticks)
+            });
             let state = super::group::GroupState::new(
                 g,
                 accounts,
                 chunk,
                 config.lot_size,
                 Arc::clone(&config),
+                ticks_per_day,
+                group_decision,
                 script_for(g),
             );
             let rx = group_rxs.remove(0);
@@ -228,6 +249,8 @@ impl World {
                 })?;
             handles.push((WorkerId::Group(g), handle));
         }
+        let stocks_specs: Vec<DeskStockSpec> = stocks.clone();
+        let cage_on = config.price_cage_enabled;
         for (s, stock_spec) in stocks.into_iter().enumerate() {
             let s = s as StockIdx;
             let rx = desk_rxs.remove(0);
@@ -280,12 +303,48 @@ impl World {
             n_stocks,
             dead_finals: None,
             dead_reason: None,
+            public_views: Self::initial_views(&stocks_specs, cage_on),
         })
     }
 
     /// 注入 PreCommit 校验器（测试/批 3+ 接线点）。
     pub fn set_validator(&mut self, v: Validator) {
         self.validator = v;
+    }
+
+    /// 初始公共态（tick1 决策观察基；涨跌停按构造规格推导，无盘口）。
+    fn initial_views(specs: &[DeskStockSpec], cage_on: bool) -> Vec<StockPublic> {
+        let _ = cage_on;
+        specs
+            .iter()
+            .map(|s| {
+                let last = s.initial_price.max(1);
+                let up =
+                    super::desk::bound_price(Money::from_cents(last), 10_000 + s.limit_bps, true)
+                        .unwrap_or(Money::from_cents(last));
+                let down =
+                    super::desk::bound_price(Money::from_cents(last), 10_000 - s.limit_bps, false)
+                        .unwrap_or(Money::from_cents(1));
+                StockPublic {
+                    last_price: last,
+                    best_bid: None,
+                    best_ask: None,
+                    max_buy_price: up.cents(),
+                    daily_upper_limit: up.cents(),
+                    min_sell_price: down.cents(),
+                    recent_prices: vec![last],
+                    minute_closes: Vec::new(),
+                    volume_today: 0,
+                    relative_volume: 1.0,
+                    order_book_imbalance: 0.0,
+                }
+            })
+            .collect()
+    }
+
+    /// 决策观察基读取（测试面）。
+    pub fn public_views(&self) -> &[StockPublic] {
+        &self.public_views
     }
 
     /// 运行 n 个 tick（协调者逻辑在本调用线程执行）。
@@ -298,7 +357,7 @@ impl World {
         }
         for _ in 0..n {
             let tick = self.global.committed_tick + 1;
-            broadcast_start(&self.group_txs, tick)?;
+            broadcast_start(&self.group_txs, tick, &self.public_views)?;
             let mut rounds = 0u32;
             loop {
                 let evidence = self.converge_or_die(tick, rounds)?;
@@ -408,6 +467,11 @@ impl World {
     fn install_tick(&mut self, tick: u64, rounds: u32, evidence: TickEvidence) {
         // tick 成功转正：清除可能残留的全局中止标记（上一次 Abort 已回滚收敛）。
         self.abort.store(false, Ordering::SeqCst);
+        for (stock, view) in evidence.desk_views {
+            if let Some(slot) = self.public_views.get_mut(stock as usize) {
+                *slot = view;
+            }
+        }
         self.global.committed_tick = tick;
         self.global.day = (tick / 240) as u32;
         self.global.events_installed += evidence.entities_out;
@@ -416,6 +480,7 @@ impl World {
             rounds,
             group_hashes: evidence.group_hashes,
             desk_hashes: evidence.desk_hashes,
+            desk_resting: evidence.desk_resting,
         });
     }
 

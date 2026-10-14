@@ -77,6 +77,10 @@ pub struct TickEvidence {
     pub continuation_any: bool,
     /// 本轮实体流出总数（守恒审计输入，批 3+ 扩展）。
     pub entities_out: u64,
+    /// 各交易部公共态（安装进下一 tick 广播快照；决策观察基）。
+    pub desk_views: Vec<(StockIdx, super::protocol::StockPublic)>,
+    /// 各交易部本收束点挂单数（观察面）。
+    pub desk_resting: Vec<(StockIdx, u64)>,
 }
 
 /// PreCommit 校验器（骨架注入点；批 3+ 换 PreCommitValidation）。
@@ -122,6 +126,8 @@ pub fn converge_round(
     let mut desk_hashes = Vec::with_capacity(n_stocks);
     let mut continuation_any = false;
     let mut entities_out = 0u64;
+    let mut desk_views = Vec::with_capacity(n_stocks);
+    let mut desk_resting = Vec::with_capacity(n_stocks);
     while groups_left > 0 || desks_left > 0 {
         let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
             Ok(m) => m,
@@ -153,6 +159,8 @@ pub fn converge_round(
                 desks_left -= 1;
                 entities_out += r.entities_out;
                 desk_hashes.push((r.stock, r.committed_hash));
+                desk_views.push((r.stock, r.view.clone()));
+                desk_resting.push((r.stock, r.resting_count));
             }
             UpMsg::TaskDied { who, payload } => {
                 return RoundOutcome::TaskDied { who, payload };
@@ -180,6 +188,8 @@ pub fn converge_round(
         desk_hashes,
         continuation_any,
         entities_out,
+        desk_views,
+        desk_resting,
     }))
 }
 
@@ -187,10 +197,12 @@ pub fn converge_round(
 pub fn broadcast_start(
     group_txs: &[Sender<super::protocol::GroupIn>],
     tick: u64,
+    stocks: &[super::protocol::StockPublic],
 ) -> Result<Arc<TickSnapshot>, RuntimeError> {
     let snapshot = Arc::new(TickSnapshot {
         tick,
         market_minute: (tick / 60) as u32,
+        stocks: stocks.to_vec(),
     });
     for tx in group_txs {
         tx.send(super::protocol::GroupIn::Start {
