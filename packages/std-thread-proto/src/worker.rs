@@ -3,8 +3,11 @@
 //! 每 tick：收 TickStart → spawn NPC 决策线程（或 persist 池/内联）→ join →
 //! 本股撮合 → T+1 解冻 → TickDone 回传 coordinator。NPC 名册与订单簿是
 //! worker 私有状态，除决策只读外全部单线程变更，无锁。
+//!
+//! 名册承载于 `Arena`（含外部席位扩展，见 book.rs）；按股私有臂的竞技场
+//! 只有本地名册槽，撮合行为与本文件的历史实现完全一致（外部槽恒空）。
 
-use crate::book::{Placement, StockBook};
+use crate::book::{Arena, Placement, StockBook};
 use crate::npc::{FeeTable, Npc};
 use crate::setup::{build_roster, ProtoConfig, StockSpec};
 use crate::ProtoError;
@@ -33,7 +36,7 @@ impl ThreadGauge {
         }
     }
 
-    fn enter(&self) {
+    pub(crate) fn enter(&self) {
         let now = self.current.fetch_add(1, Ordering::Relaxed) + 1;
         let mut p = self.peak.load(Ordering::Relaxed);
         while now > p {
@@ -47,7 +50,7 @@ impl ThreadGauge {
         }
     }
 
-    fn exit(&self) {
+    pub(crate) fn exit(&self) {
         self.current.fetch_sub(1, Ordering::Relaxed);
     }
 
@@ -65,6 +68,8 @@ pub struct MarketSnapshot {
 }
 
 /// 单股公共状态（coordinator 维护的历史 + worker 上一 tick 结果）。
+/// `best_bid/best_ask/imbalance` 是上一 tick 收束时的盘口快照——跨股臂的
+/// 外股决策视图用它（与决策时刻的活簿等新鲜，见 xworker.rs 视图说明）。
 #[derive(Clone)]
 pub struct StockPublicState {
     pub last_price: i64,
@@ -75,6 +80,10 @@ pub struct StockPublicState {
     pub rel_volume: f64,
     /// 量能期望（EWMA），coordinator 内部用。
     pub expected_volume: f64,
+    /// 上一 tick 收束时盘口（跨股臂外股视图用；按股私有臂不读）。
+    pub best_bid: Option<i64>,
+    pub best_ask: Option<i64>,
+    pub imbalance: f64,
 }
 
 /// coordinator → worker 消息。
@@ -95,6 +104,8 @@ pub struct TickDone {
     pub decide_calls: u64,
     pub intents: u64,
     pub resting: u64,
+    /// 前 5 档失衡（跨股臂快照安装用；按股私有臂填了不读）。
+    pub imbalance: f64,
 }
 
 /// worker 退出时上交的期末状态（审计用）。
@@ -121,9 +132,53 @@ struct IntentRecord {
 
 /// 决策 chunk 统计。
 #[derive(Default, Clone, Copy)]
-struct ChunkStats {
-    decide_calls: u64,
-    intents: u64,
+pub struct ChunkStats {
+    pub decide_calls: u64,
+    pub intents: u64,
+}
+
+/// 符号价格的统一表达（本股/跨股路由共用）：Fixed 具体价，Highest/Lowest
+/// 在**目标股**的受理时解析，Market 以目标股涨跌停带保护。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoutedPrice {
+    Fixed(i64),
+    Highest,
+    Lowest,
+    Market,
+}
+
+impl RoutedPrice {
+    /// engine LimitPrice + 市价标记 → RoutedPrice。
+    pub fn from_limit(price: &LimitPrice, market: bool) -> Self {
+        if market {
+            RoutedPrice::Market
+        } else {
+            match price {
+                LimitPrice::Fixed(m) => RoutedPrice::Fixed(m.cents()),
+                LimitPrice::Highest => RoutedPrice::Highest,
+                LimitPrice::Lowest => RoutedPrice::Lowest,
+            }
+        }
+    }
+
+    /// 在目标股簿上解析为具体价格（对齐引擎受理语义；跨股臂在目标股线程执行）。
+    pub fn resolve(&self, side: engine::orderbook::Side, book: &StockBook, upper: i64, lower: i64) -> i64 {
+        match self {
+            RoutedPrice::Fixed(p) => *p,
+            RoutedPrice::Highest => match side {
+                engine::orderbook::Side::Buy => book.best_ask().unwrap_or(upper).min(upper),
+                engine::orderbook::Side::Sell => upper,
+            },
+            RoutedPrice::Lowest => match side {
+                engine::orderbook::Side::Sell => book.best_bid().unwrap_or(lower).max(lower),
+                engine::orderbook::Side::Buy => lower,
+            },
+            RoutedPrice::Market => match side {
+                engine::orderbook::Side::Buy => upper,
+                engine::orderbook::Side::Sell => lower,
+            },
+        }
+    }
 }
 
 /// persist 模式的常驻决策线程池（每股一个）。
@@ -176,7 +231,7 @@ pub fn worker_main(
 ) -> Result<(), ProtoError> {
     let (npcs, float_remainder) = build_roster(&cfg, stock_idx, &spec, id_base)?;
     let code = StockCode(spec.code.clone());
-    let npcs: Arc<RwLock<Vec<Npc>>> = Arc::new(RwLock::new(npcs));
+    let arena: Arc<RwLock<Arena>> = Arc::new(RwLock::new(Arena::new(npcs, stock_idx as u8)));
     let mut book = StockBook::new();
     let fees = FeeTable::from_config(&game_cfg);
     // 涨跌停带：初始价 ±limit（单日口径，3000 tick 不跨日，见 design.md 简化登记）。
@@ -188,7 +243,7 @@ pub fn worker_main(
     // persist 模式：起常驻决策线程。
     let pool = if persist_mode && per_stock_threads > 0 {
         Some(spawn_persist_pool(
-            Arc::clone(&npcs),
+            Arc::clone(&arena),
             Arc::new(code.clone()),
             Arc::clone(&cfg),
             Arc::clone(&game_cfg),
@@ -211,7 +266,7 @@ pub fn worker_main(
             &game_cfg,
             &code,
             stock_idx,
-            &npcs,
+            &arena,
             &mut book,
             &fees,
             upper,
@@ -239,10 +294,11 @@ pub fn worker_main(
     }
     // Drop pool：关闭派工通道并 join 常驻线程，之后名册 Arc 独占可回收。
     drop(pool);
-    let npcs = Arc::try_unwrap(npcs)
+    let npcs = Arc::try_unwrap(arena)
         .map_err(|_| ProtoError::ChannelClosed("npcs 仍有引用".into()))?
         .into_inner()
-        .map_err(|_| ProtoError::ChannelClosed("npcs 锁中毒".into()))?;
+        .map_err(|_| ProtoError::ChannelClosed("npcs 锁中毒".into()))?
+        .into_roster();
     let final_state = FinalState {
         stock_idx,
         npcs,
@@ -270,7 +326,7 @@ fn run_tick(
     game_cfg: &engine::config::GameConfig,
     code: &StockCode,
     stock_idx: usize,
-    npcs: &Arc<RwLock<Vec<Npc>>>,
+    arena: &Arc<RwLock<Arena>>,
     book: &mut StockBook,
     fees: &FeeTable,
     upper: i64,
@@ -289,14 +345,15 @@ fn run_tick(
     let volume_before = book.volume_shares;
     let (records, stats) = if per_stock_threads == 0 {
         // 内联串行（width=0 基线臂）。
-        let guard = npcs
+        let guard = arena
             .read()
             .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))?;
-        decide_range(&guard, 0, guard.len() as u32, code, &market, game_cfg, cfg.seed, tick)
+        decide_range(guard.accounts(), 0, guard.roster_len, code, &market, game_cfg, cfg.seed, tick)
     } else if let Some(pool) = pool {
         // persist 池：派工 → 收结果。
+        let len = arena_len(arena)?;
         for (slot, tx) in pool.work_txs.iter().enumerate() {
-            let (from, to) = chunk_range(npcs_len(npcs)?, per_stock_threads, slot);
+            let (from, to) = chunk_range(len, per_stock_threads, slot);
             tx.send(PersistWork {
                 market: Arc::clone(&market),
                 npc_from: from,
@@ -324,8 +381,8 @@ fn run_tick(
         (records, stats)
     } else {
         // spawn 模式：std::thread::scope 现起现 join（用户原模型）。
-        let len = npcs_len(npcs)?;
-        let guard = npcs
+        let len = arena_len(arena)?;
+        let guard = arena
             .read()
             .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))?;
         let seed = cfg.seed;
@@ -335,7 +392,7 @@ fn run_tick(
             let mut handles = Vec::with_capacity(per_stock_threads as usize);
             for slot in 0..per_stock_threads as usize {
                 let (from, to) = chunk_range(len, per_stock_threads, slot);
-                let guard = &*guard;
+                let roster = guard.accounts();
                 let market = &market;
                 let code = code;
                 let game_cfg = game_cfg;
@@ -343,7 +400,7 @@ fn run_tick(
                 handles.push(scope.spawn(move || {
                     gauge.enter();
                     let out = decide_range(
-                        guard,
+                        roster,
                         from,
                         to,
                         code,
@@ -376,12 +433,12 @@ fn run_tick(
 
     // ── 相位 2：挂单到期（写锁）──
     {
-        let mut guard = write_npcs(npcs)?;
+        let mut guard = write_arena(arena)?;
         book.expire_due(&mut guard, tick)?;
         // ── 相位 3：意图应用（工作单对齐 + 撮合）──
         apply_intents(&mut guard, book, records, upper, lower, fees, tick, cfg)?;
         // ── 相位 4：T+1 解冻 ──
-        for npc in guard.iter_mut() {
+        for npc in guard.accounts_mut() {
             npc.unfreeze_t1();
         }
     }
@@ -395,6 +452,7 @@ fn run_tick(
         decide_calls: stats.decide_calls,
         intents: stats.intents,
         resting: book.resting_orders(),
+        imbalance: book.top5_imbalance(),
     })
 }
 
@@ -456,7 +514,7 @@ fn decide_range(
 
 /// 应用意图：先做该 NPC 的工作单对齐（撤自己全部挂单），再解析价格并下单。
 fn apply_intents(
-    npcs: &mut [Npc],
+    arena: &mut Arena,
     book: &mut StockBook,
     records: Vec<IntentRecord>,
     upper: i64,
@@ -467,7 +525,7 @@ fn apply_intents(
 ) -> Result<(), ProtoError> {
     for rec in records {
         // 引擎语义：决策复核的股票两侧工作单与最新目标对齐。
-        book.cancel_all_for(npcs, rec.npc_idx)?;
+        book.cancel_all_for(arena, rec.npc_idx)?;
         let resolved = match &rec.intent {
             Intent::PlaceLimit {
                 side,
@@ -475,33 +533,12 @@ fn apply_intents(
                 qty,
                 ..
             } => {
-                let p = match price {
-                    LimitPrice::Fixed(m) => m.cents(),
-                    // Highest/Lowest 解析为对面最优（无对面则带边界）。
-                    LimitPrice::Highest => match side {
-                        engine::orderbook::Side::Buy => book
-                            .best_ask()
-                            .unwrap_or(upper)
-                            .min(upper),
-                        engine::orderbook::Side::Sell => upper,
-                    },
-                    LimitPrice::Lowest => match side {
-                        engine::orderbook::Side::Sell => book
-                            .best_bid()
-                            .unwrap_or(lower)
-                            .max(lower),
-                        engine::orderbook::Side::Buy => lower,
-                    },
-                };
-                Some((*side, p, *qty))
+                let rp = RoutedPrice::from_limit(price, false);
+                Some((*side, rp.resolve(*side, book, upper, lower), *qty))
             }
             Intent::PlaceMarket { side, qty, .. } => {
-                // 市价以涨跌停价作保护（对齐引擎语义）。
-                let p = match side {
-                    engine::orderbook::Side::Buy => upper,
-                    engine::orderbook::Side::Sell => lower,
-                };
-                Some((*side, p, *qty))
+                let rp = RoutedPrice::Market;
+                Some((*side, rp.resolve(*side, book, upper, lower), *qty))
             }
             // 策略层不产 Cancel（会话层职责）；出现即显式计数，不静默。
             Intent::Cancel { .. } => None,
@@ -515,7 +552,7 @@ fn apply_intents(
             continue;
         }
         let outcome = book.place(
-            npcs,
+            arena,
             rec.npc_idx,
             side,
             price,
@@ -568,16 +605,17 @@ fn build_market_view(
     }
 }
 
-fn npcs_len(npcs: &Arc<RwLock<Vec<Npc>>>) -> Result<u32, ProtoError> {
-    let len = npcs
+fn arena_len(arena: &Arc<RwLock<Arena>>) -> Result<u32, ProtoError> {
+    let len = arena
         .read()
         .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))?
-        .len() as u32;
+        .roster_len;
     Ok(len)
 }
 
-fn write_npcs(npcs: &Arc<RwLock<Vec<Npc>>>) -> Result<std::sync::RwLockWriteGuard<'_, Vec<Npc>>, ProtoError> {
-    npcs.write()
+fn write_arena(arena: &Arc<RwLock<Arena>>) -> Result<std::sync::RwLockWriteGuard<'_, Arena>, ProtoError> {
+    arena
+        .write()
         .map_err(|_| ProtoError::ChannelClosed("npcs 写锁中毒".into()))
 }
 
@@ -594,7 +632,7 @@ fn chunk_range(len: u32, threads: u32, slot: usize) -> (u32, u32) {
 
 /// 起 persist 模式常驻决策线程池（每股 per_stock_threads 个）。
 fn spawn_persist_pool(
-    npcs: Arc<RwLock<Vec<Npc>>>,
+    arena: Arc<RwLock<Arena>>,
     code: Arc<StockCode>,
     cfg: Arc<ProtoConfig>,
     game_cfg: Arc<engine::config::GameConfig>,
@@ -607,7 +645,7 @@ fn spawn_persist_pool(
     for slot in 0..per_stock_threads as usize {
         let (work_tx, work_rx) = std::sync::mpsc::channel::<PersistWork>();
         work_txs.push(work_tx);
-        let npcs = Arc::clone(&npcs);
+        let arena = Arc::clone(&arena);
         let code = Arc::clone(&code);
         let cfg = Arc::clone(&cfg);
         let game_cfg = Arc::clone(&game_cfg);
@@ -616,12 +654,12 @@ fn spawn_persist_pool(
         handles.push(std::thread::spawn(move || {
             gauge.enter();
             while let Ok(work) = work_rx.recv() {
-                let out = npcs
+                let out = arena
                     .read()
                     .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))
                     .and_then(|guard| {
                         Ok(decide_range(
-                            &guard,
+                            guard.accounts(),
                             work.npc_from,
                             work.npc_to,
                             &code,

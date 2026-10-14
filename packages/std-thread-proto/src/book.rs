@@ -1,4 +1,4 @@
-//! 本股订单簿撮合（worker 单线程私有，无锁）。
+//! 本股订单簿撮合（worker 单线程私有，无锁）+ 统一账户竞技场。
 //!
 //! 语义（对齐大 A 基线，简化项登记于 design.md §5）：
 //! - 价格优先、同价 FIFO（时间优先）：`BTreeMap<price, VecDeque>`。
@@ -10,17 +10,230 @@
 //! - 工作单对齐（对齐引擎「买卖两侧工作单与最新目标对齐」语义）：NPC 发出
 //!   新意图前撤掉自己的全部挂单，从根上排除自成交。
 //! - 挂单 TTL 到期撤销（FIFO 队列，index 校验存活）。
+//!
+//! 账户竞技场（跨股臂扩展）：本地名册槽 0..roster_len 之外可分配「外部交易部
+//! 席位」槽。外部席位是家端 escrow 的资源实体（现金/股数已从家端账户转出，
+//! 所有权随路由单流入本股交易部），撮合代码对两类槽位无差别操作。外部槽的
+//! 每次账户变更都会产生 `FillReceipt`，由 worker 上交 coordinator 中转回
+//! 家端应用；本地槽不产生回执（按股私有臂行为与原先完全一致）。
 
 use crate::npc::{FeeTable, Npc};
 use crate::ProtoError;
 use engine::orderbook::Side;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+/// 外部账户身份：(home 股索引, 家端名册内 npc 索引)。
+pub type ForeignId = (u8, u32);
+
+/// 撮合回执：外部（跨股）订单的成交/终结事件。目标股 worker 产生 →
+/// coordinator 中转 → 家端 worker 在回执相位应用到次级仓位/现金。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FillReceipt {
+    /// 外部买单成交：家端 cash -= charge、reserved_cash -= charge、
+    /// 次级仓 qty/frozen_today += qty。
+    BuyFill {
+        home: u8,
+        npc: u32,
+        stock: u8,
+        qty: u32,
+        charge: i64,
+    },
+    /// 外部卖单成交：家端 cash += net、次级仓 qty/reserved_shares -= qty。
+    SellFill {
+        home: u8,
+        npc: u32,
+        stock: u8,
+        qty: u32,
+        net: i64,
+    },
+    /// 外部买单终结（全成/撤/到期）：家端 reserved_cash -= release。
+    /// release = 席位剩余现金（escrow 总额 − 累计成交扣费），≥ 0。
+    BuyClosed {
+        home: u8,
+        npc: u32,
+        stock: u8,
+        release: i64,
+    },
+    /// 外部卖单终结：家端次级仓 reserved_shares -= qty、sellable += qty。
+    SellClosed { home: u8, npc: u32, stock: u8, qty: u32 },
+}
+
+impl FillReceipt {
+    /// 回执目标家端股索引（coordinator 分发用）。
+    pub fn home(&self) -> u8 {
+        match *self {
+            FillReceipt::BuyFill { home, .. }
+            | FillReceipt::SellFill { home, .. }
+            | FillReceipt::BuyClosed { home, .. }
+            | FillReceipt::SellClosed { home, .. } => home,
+        }
+    }
+}
+
+/// 统一账户竞技场：本地名册 + 外部交易部席位共用一个账号下标空间，
+/// 挂单的 `npc_idx` 一律指向竞技场槽位。
+pub struct Arena {
+    /// 全部账户（本地名册在前，外部席位在后）。
+    pub accounts: Vec<Npc>,
+    /// 槽位 → 外部身份（None = 本地名册槽）。与 accounts 等长。
+    pub foreign: Vec<Option<ForeignId>>,
+    /// 待上交的回执缓冲（仅外部槽产生）。worker 每相位取走。
+    pub receipts: Vec<FillReceipt>,
+    /// 本地名册长度（= 竞技场前缀长度）。
+    pub roster_len: u32,
+    /// 本竞技场服务的股票索引（回执的 stock 字段来源）。
+    pub stock_idx: u8,
+}
+
+impl Arena {
+    pub fn new(roster: Vec<Npc>, stock_idx: u8) -> Self {
+        let roster_len = roster.len() as u32;
+        let foreign = vec![None; roster.len()];
+        Arena {
+            accounts: roster,
+            foreign,
+            receipts: Vec::new(),
+            roster_len,
+            stock_idx,
+        }
+    }
+
+    pub fn roster(&self) -> &[Npc] {
+        &self.accounts[..self.roster_len as usize]
+    }
+
+    pub fn accounts(&self) -> &[Npc] {
+        &self.accounts
+    }
+
+    pub fn accounts_mut(&mut self) -> &mut [Npc] {
+        &mut self.accounts
+    }
+
+    pub fn into_roster(self) -> Vec<Npc> {
+        debug_assert!(self.receipts.is_empty(), "回收竞技场时回执缓冲必须已清空");
+        // 只上交本地名册：外部席位是 escrow 镜像（其权威账在家端回执里），
+        // 不得混入期末审计的持仓统计。
+        let mut accounts = self.accounts;
+        accounts.truncate(self.roster_len as usize);
+        accounts
+    }
+
+    /// 分配外部席位。买单传 `cash`（escrow 总额）；卖单传 `shares`
+    /// （预留股数，落位为可卖）。返回槽位号。
+    pub fn alloc_desk(&mut self, id: ForeignId, cash: i64, shares: u32) -> u32 {
+        let slot = self.accounts.len() as u32;
+        self.accounts.push(Npc::desk(cash, shares));
+        self.foreign.push(Some(id));
+        if crate::xdbg() {
+            eprintln!("[desk alloc] slot={slot} id={id:?} cash={cash} shares={shares} stock={}", self.stock_idx);
+        }
+        slot
+    }
+
+    /// 回收外部席位（仅在对应挂单全部终结且回执已产生后由 worker 调用）。
+    pub fn free_desk(&mut self, slot: u32) {
+        if crate::xdbg() {
+            eprintln!(
+                "[desk free] slot={slot} id={:?} cash={} shares={} stock={}",
+                self.foreign[slot as usize],
+                self.accounts[slot as usize].cash,
+                self.accounts[slot as usize].qty,
+                self.stock_idx
+            );
+        }
+        self.foreign[slot as usize] = None;
+        // 槽位本身保留（下标稳定性），账户数据作废不再引用。
+    }
+
+    /// 复用已回收的席位槽（重置为新的 escrow 实体）。
+    pub fn reuse_desk(&mut self, slot: u32, id: ForeignId, cash: i64, shares: u32) {
+        if crate::xdbg() {
+            eprintln!(
+                "[desk reuse] slot={slot} id={id:?} cash={cash} shares={shares} stock={} 旧cash={} 旧qty={}",
+                self.stock_idx,
+                self.accounts[slot as usize].cash,
+                self.accounts[slot as usize].qty
+            );
+        }
+        self.accounts[slot as usize] = Npc::desk(cash, shares);
+        self.foreign[slot as usize] = Some(id);
+    }
+
+    /// 外部买单成交回执（本地槽不产生）。
+    fn note_buy_fill(&mut self, slot: u32, qty: u32, charge: i64) {
+        if let Some((home, npc)) = self.foreign[slot as usize] {
+            self.receipts.push(FillReceipt::BuyFill {
+                home,
+                npc,
+                stock: self.stock_idx,
+                qty,
+                charge,
+            });
+        }
+    }
+
+    /// 外部卖单成交回执。
+    fn note_sell_fill(&mut self, slot: u32, qty: u32, net: i64) {
+        if let Some((home, npc)) = self.foreign[slot as usize] {
+            self.receipts.push(FillReceipt::SellFill {
+                home,
+                npc,
+                stock: self.stock_idx,
+                qty,
+                net,
+            });
+        }
+    }
+
+    /// 外部买单终结：席位剩余现金全额回流家端并清零。
+    fn note_buy_closed(&mut self, slot: u32) {
+        if let Some((home, npc)) = self.foreign[slot as usize] {
+            let acct = &mut self.accounts[slot as usize];
+            let release = acct.cash;
+            debug_assert!(
+                release >= 0,
+                "外部买席位现金为负：slot={slot} cash={release}"
+            );
+            acct.cash = 0;
+            self.receipts.push(FillReceipt::BuyClosed {
+                home,
+                npc,
+                stock: self.stock_idx,
+                release,
+            });
+        }
+    }
+
+    /// 外部卖单终结：剩余预留股回流家端可卖，并清零席位镜像。
+    fn note_sell_closed(&mut self, slot: u32, qty: u32) {
+        if qty == 0 {
+            return;
+        }
+        if let Some((home, npc)) = self.foreign[slot as usize] {
+            let acct = &mut self.accounts[slot as usize];
+            debug_assert!(
+                acct.qty >= qty,
+                "外部卖席位股数不足：slot={slot} qty={} 释放={qty}",
+                acct.qty
+            );
+            acct.qty -= qty;
+            acct.sellable -= qty;
+            self.receipts.push(FillReceipt::SellClosed {
+                home,
+                npc,
+                stock: self.stock_idx,
+                qty,
+            });
+        }
+    }
+}
+
 /// 挂单/在途单统一形态（在途单不进簿，复用字段）。
 #[derive(Clone, Debug)]
 pub struct Order {
     pub id: u64,
-    /// 本股名册索引。
+    /// 竞技场槽位（本地名册索引或外部席位槽位）。
     pub npc_idx: u32,
     pub side: Side,
     /// 限价（分）。
@@ -61,7 +274,7 @@ pub struct StockBook {
     asks: BTreeMap<i64, VecDeque<Order>>,
     /// id -> (side, price)，撤单/到期定位。
     index: HashMap<u64, (Side, i64)>,
-    /// npc_idx -> 活跃挂单 id（工作单对齐用）。
+    /// 竞技场槽位 -> 活跃挂单 id（工作单对齐用）。
     by_npc: HashMap<u32, Vec<u64>>,
     next_id: u64,
     /// (expire_tick, id) FIFO（ttl 恒定时单调）。
@@ -125,10 +338,20 @@ impl StockBook {
         self.resting_count
     }
 
+    /// 某竞技场槽位是否还有活跃挂单（外部席位回收判定用）。
+    pub fn has_active_orders(&self, npc_idx: u32) -> bool {
+        self.by_npc.contains_key(&npc_idx)
+    }
+
+    /// 某竞技场槽位的活跃挂单 id（诊断用）。
+    pub fn active_order_ids(&self, npc_idx: u32) -> Vec<u64> {
+        self.by_npc.get(&npc_idx).cloned().unwrap_or_default()
+    }
+
     /// 下单入口：先冻结（买资金/卖可卖），再对价撮合，剩余挂簿。
     pub fn place(
         &mut self,
-        npcs: &mut [Npc],
+        arena: &mut Arena,
         npc_idx: u32,
         side: Side,
         price: i64,
@@ -153,7 +376,7 @@ impl StockBook {
             fee_charged: 0,
         };
         {
-            let npc = &mut npcs[npc_idx as usize];
+            let npc = &mut arena.accounts[npc_idx as usize];
             match side {
                 Side::Buy => {
                     let value = mul_price_qty(price, qty)?;
@@ -177,8 +400,13 @@ impl StockBook {
                 }
             }
         }
-        let remaining = self.match_incoming(npcs, &mut inc, fees)?;
+        let remaining = self.match_incoming(arena, &mut inc, fees)?;
         if remaining == 0 {
+            // 外部**买**单全部成交：席位剩余 escrow（slack）回流家端。
+            // （卖单席位剩余的是累计卖出净额，归 SellFill 回执，不得误发 BuyClosed。）
+            if side == Side::Buy {
+                arena.note_buy_closed(npc_idx);
+            }
             return Ok(Placement::FullyFilled);
         }
         // 剩余挂簿。
@@ -203,7 +431,7 @@ impl StockBook {
     /// 对价撮合：incoming 依次吃对面最优档。返回剩余数量。
     fn match_incoming(
         &mut self,
-        npcs: &mut [Npc],
+        arena: &mut Arena,
         inc: &mut Order,
         fees: &FeeTable,
     ) -> Result<u32, ProtoError> {
@@ -222,7 +450,7 @@ impl StockBook {
             if !crossed {
                 break;
             }
-            // 解构出不相交的可变字段借用：对面簿、索引、npc 索引、统计。
+            // 解构出不相交的可变字段借用：对面簿、索引、槽位索引、统计。
             let Self {
                 bids,
                 asks,
@@ -259,7 +487,7 @@ impl StockBook {
                     min_trade_price,
                     max_trade_price,
                 };
-                settle_fill(npcs, maker, inc, q, fees, stats)?;
+                settle_fill(arena, maker, inc, q, fees, stats)?;
                 inc.qty -= q;
                 maker.qty -= q;
                 if maker.qty == 0 {
@@ -269,7 +497,14 @@ impl StockBook {
                     *resting_count -= 1;
                     // 买单完全成交：释放剩余冻结。
                     if done.reserved_cash > 0 {
-                        npcs[done.npc_idx as usize].reserved_cash -= done.reserved_cash;
+                        arena.accounts[done.npc_idx as usize].reserved_cash -= done.reserved_cash;
+                    }
+                    // 外部挂单终结：买单回流剩余 escrow，卖单释放剩余预留股
+                    // （各自只对本方向生效；本地槽不产生回执）。
+                    if done.side == Side::Buy {
+                        arena.note_buy_closed(done.npc_idx);
+                    } else {
+                        arena.note_sell_closed(done.npc_idx, done.qty);
                     }
                 } else {
                     break; // maker 部分成交，incoming 已耗尽。
@@ -285,8 +520,13 @@ impl StockBook {
         Ok(inc.qty)
     }
 
-    /// 工作单对齐：撤掉某 NPC 的全部挂单（两侧），释放资金/可卖。
-    pub fn cancel_all_for(&mut self, npcs: &mut [Npc], npc_idx: u32) -> Result<u64, ProtoError> {
+    /// 工作单对齐：撤掉某竞技场槽位的全部挂单（两侧），释放资金/可卖。
+    /// 跨股臂：外部槽位撤单同样产生终结回执（escrow 回流家端）。
+    pub fn cancel_all_for(
+        &mut self,
+        arena: &mut Arena,
+        npc_idx: u32,
+    ) -> Result<u64, ProtoError> {
         let ids = match self.by_npc.remove(&npc_idx) {
             Some(ids) => ids,
             None => return Ok(0),
@@ -312,12 +552,16 @@ impl StockBook {
             self.resting_count -= 1;
             self.cancelled_orders += 1;
             cancelled += 1;
-            let npc = &mut npcs[order.npc_idx as usize];
             match side {
-                Side::Buy => npc.reserved_cash -= order.reserved_cash,
+                Side::Buy => {
+                    arena.accounts[order.npc_idx as usize].reserved_cash -= order.reserved_cash;
+                    arena.note_buy_closed(order.npc_idx);
+                }
                 Side::Sell => {
+                    let npc = &mut arena.accounts[order.npc_idx as usize];
                     npc.reserved_shares -= order.qty;
                     npc.sellable += order.qty;
+                    arena.note_sell_closed(order.npc_idx, order.qty);
                 }
             }
             if level.is_empty() {
@@ -328,7 +572,7 @@ impl StockBook {
     }
 
     /// 到期撤销：expire_tick ≤ tick 的挂单全部撤出并释放占用。
-    pub fn expire_due(&mut self, npcs: &mut [Npc], tick: u64) -> Result<(), ProtoError> {
+    pub fn expire_due(&mut self, arena: &mut Arena, tick: u64) -> Result<(), ProtoError> {
         while let Some(&(expire_tick, id)) = self.expiry_queue.front() {
             if expire_tick > tick {
                 break;
@@ -352,12 +596,16 @@ impl StockBook {
             let order = level.remove(pos).expect("position 已确认");
             self.resting_count -= 1;
             self.expired_orders += 1;
-            let npc = &mut npcs[order.npc_idx as usize];
             match side {
-                Side::Buy => npc.reserved_cash -= order.reserved_cash,
+                Side::Buy => {
+                    arena.accounts[order.npc_idx as usize].reserved_cash -= order.reserved_cash;
+                    arena.note_buy_closed(order.npc_idx);
+                }
                 Side::Sell => {
+                    let npc = &mut arena.accounts[order.npc_idx as usize];
                     npc.reserved_shares -= order.qty;
                     npc.sellable += order.qty;
+                    arena.note_sell_closed(order.npc_idx, order.qty);
                 }
             }
             if level.is_empty() {
@@ -379,9 +627,10 @@ struct FillStats<'a> {
 }
 
 /// 单笔成交结算（自由函数，避免 self 与 maker 的借用冲突）：
-/// maker（挂单方）与 inc（在途方）互换现金/持仓。
+/// maker（挂单方）与 inc（在途方）互换现金/持仓。外部槽位的账户变更
+/// 同步产生 FillReceipt（家端权威记账走回执；席位镜像仅供簿内校验）。
 fn settle_fill(
-    npcs: &mut [Npc],
+    arena: &mut Arena,
     maker: &mut Order,
     inc: &mut Order,
     q: u32,
@@ -390,6 +639,25 @@ fn settle_fill(
 ) -> Result<(), ProtoError> {
     let price = maker.price;
     let value = mul_price_qty(price, q)?;
+    if crate::xdbg() {
+        eprintln!(
+            "[settle] stock={} maker(slot={},side={:?},id={},p={},qty_left={}) inc(slot={},side={:?},id={},p={},qty_left={}) q={} maker_acct_cash={} inc_acct_cash={}",
+            arena.stock_idx,
+            maker.npc_idx,
+            maker.side,
+            maker.id,
+            maker.price,
+            maker.qty,
+            inc.npc_idx,
+            inc.side,
+            inc.id,
+            inc.price,
+            inc.qty,
+            q,
+            arena.accounts[maker.npc_idx as usize].cash,
+            arena.accounts[inc.npc_idx as usize].cash
+        );
+    }
     if maker.npc_idx == inc.npc_idx {
         // 工作单对齐后理论不可达；显式失败暴露实现 bug（铁律二）。
         return Err(ProtoError::InvalidConfig(format!(
@@ -416,16 +684,19 @@ fn settle_fill(
     };
     let stamp = fees.stamp_tax(value)?;
 
-    let (sell_order, buy_order_is_maker) = if maker.side == Side::Sell {
-        ((maker.npc_idx), true)
+    // 结算对手方解析：maker.side==Sell ⇒ maker 卖、inc 买；反之为 inc 卖、maker 买。
+    // （修复记录：本段曾把买腿错算到卖方账户——两腿同账户时现金/股票守恒
+    // 恰好仍成立（费用进 sink、股数自相抵消），按股私有臂的审计对此失明；
+    // 跨股臂的外部席位（escrow 实体）使该错误以负现金形式显式暴露。）
+    let (sell_order, buy_order) = if maker.side == Side::Sell {
+        (maker.npc_idx, inc.npc_idx)
     } else {
-        ((inc.npc_idx), false)
+        (inc.npc_idx, maker.npc_idx)
     };
-    let buy_order = if buy_order_is_maker { maker.npc_idx } else { inc.npc_idx };
 
     // 卖方结算。
     {
-        let sell_npc = &mut npcs[sell_order as usize];
+        let sell_npc = &mut arena.accounts[sell_order as usize];
         sell_npc.qty = sell_npc
             .qty
             .checked_sub(q)
@@ -441,15 +712,32 @@ fn settle_fill(
         sell_npc.cash += net;
         if sell_npc.cash < 0 {
             return Err(ProtoError::NegativeCash {
-                code: format!("npc-{}", sell_order),
+                code: format!(
+                    "npc-{} sell@{} q={} net={} desk_cash={} desk_res={} inc(id={},fv={},fc={},rc={}) maker(id={},fv={},fc={},rc={})",
+                    sell_order,
+                    price,
+                    q,
+                    net,
+                    sell_npc.cash,
+                    sell_npc.reserved_cash,
+                    inc.id,
+                    inc.filled_value,
+                    inc.fee_charged,
+                    inc.reserved_cash,
+                    maker.id,
+                    maker.filled_value,
+                    maker.fee_charged,
+                    maker.reserved_cash
+                ),
                 npc: sell_order,
                 cash: sell_npc.cash,
             });
         }
     }
+    arena.note_sell_fill(sell_order, q, value - sell_fee_delta - stamp);
     // 买方结算。
     {
-        let buy_npc = &mut npcs[buy_order as usize];
+        let buy_npc = &mut arena.accounts[buy_order as usize];
         buy_npc.qty += q; // 总持仓增加（T+1：当日冻结）
         buy_npc.frozen_today += q;
         let charge = value
@@ -458,12 +746,29 @@ fn settle_fill(
         buy_npc.cash -= charge;
         if buy_npc.cash < 0 {
             return Err(ProtoError::NegativeCash {
-                code: format!("npc-{}", buy_order),
+                code: format!(
+                    "npc-{} buy@{} q={} charge={} desk_cash={} desk_res={} inc(id={},fv={},fc={},rc={}) maker(id={},fv={},fc={},rc={})",
+                    buy_order,
+                    price,
+                    q,
+                    charge,
+                    buy_npc.cash,
+                    buy_npc.reserved_cash,
+                    inc.id,
+                    inc.filled_value,
+                    inc.fee_charged,
+                    inc.reserved_cash,
+                    maker.id,
+                    maker.filled_value,
+                    maker.fee_charged,
+                    maker.reserved_cash
+                ),
                 npc: buy_order,
                 cash: buy_npc.cash,
             });
         }
     }
+    arena.note_buy_fill(buy_order, q, value + buy_fee_delta);
     // 摊销状态与冻结释放回写到对应 order。
     if maker.side == Side::Sell {
         maker.filled_value += value;
@@ -472,7 +777,7 @@ fn settle_fill(
         inc.fee_charged += buy_fee_delta;
         let release = inc.reserved_cash.min(value + buy_fee_delta);
         inc.reserved_cash -= release;
-        npcs[inc.npc_idx as usize].reserved_cash -= release;
+        arena.accounts[inc.npc_idx as usize].reserved_cash -= release;
     } else {
         inc.filled_value += value;
         inc.fee_charged += sell_fee_delta;
@@ -480,7 +785,7 @@ fn settle_fill(
         maker.fee_charged += buy_fee_delta;
         let release = maker.reserved_cash.min(value + buy_fee_delta);
         maker.reserved_cash -= release;
-        npcs[maker.npc_idx as usize].reserved_cash -= release;
+        arena.accounts[maker.npc_idx as usize].reserved_cash -= release;
     }
     *stats.fee_sink += buy_fee_delta + sell_fee_delta + stamp;
     Ok(())

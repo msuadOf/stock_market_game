@@ -159,6 +159,9 @@ pub fn run_benchmark(
             minute_prices: Vec::new(),
             rel_volume: 1.0,
             expected_volume: (spec.float_shares as f64) * 2e-4,
+            best_bid: None,
+            best_ask: None,
+            imbalance: 0.0,
         })
         .collect();
 
@@ -185,6 +188,10 @@ pub fn run_benchmark(
                 .map_err(|_| ProtoError::ChannelClosed("done_rx".into()))?;
             let st = &mut public[done.stock_idx];
             st.last_price = done.last_price;
+            // 盘口快照安装（跨股臂外股视图读取；本臂填充但不消费）。
+            st.best_bid = done.best_bid;
+            st.best_ask = done.best_ask;
+            st.imbalance = done.imbalance;
             st.recent_prices.push(done.last_price);
             if st.recent_prices.len() > 20 {
                 st.recent_prices.remove(0);

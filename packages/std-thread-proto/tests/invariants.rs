@@ -5,7 +5,7 @@
 //! 2. 股票守恒：每股 Σ持仓 + float_remainder ≡ 流通股总数；
 //! 3. 结构不变量：cash ≥ 0、qty = sellable + reserved + frozen_today、整手、价格带。
 
-use std_thread_proto::{run_benchmark, ProtoConfig, RunMode};
+use std_thread_proto::{run_benchmark, run_cross_benchmark, ProtoConfig, RunMode};
 
 /// 小世界 fixture：2 股、每股 40 retail + 1 inst、hot 2 只放前两股、60 tick。
 /// 目标是让每条 case 在 10 秒硬上限内完成（含小规模撮合压力）。
@@ -87,4 +87,76 @@ fn persist模式吞吐与spawn同数量级() {
     assert!(persist.ticks_per_sec > spawn.ticks_per_sec * 0.1,
         "persist 吞吐异常低：{:.1} vs spawn {:.1}",
         persist.ticks_per_sec, spawn.ticks_per_sec);
+}
+
+/// 跨股臂守恒：账户跨股持仓 + intent 路由 + escrow + 回执记账下，
+/// 现金/股票守恒与结构不变量必须闭合（Drain 清空在途 escrow 后审计）。
+#[test]
+fn 跨股臂_现金与股票守恒() {
+    let report = run_cross_benchmark(&small(7), 0, 50).expect("跨股臂运行必须成功");
+    assert_eq!(
+        report.audit.initial_total_cash_cents, report.audit.final_total_cash_cents,
+        "跨股臂现金守恒破坏：initial={} final={}",
+        report.audit.initial_total_cash_cents, report.audit.final_total_cash_cents
+    );
+    for stock in &report.audit.stocks {
+        assert_eq!(
+            stock.held_shares + stock.float_remainder_shares,
+            stock.float_total_shares,
+            "跨股臂股票 {} 守恒破坏：held={} remainder={} total={}",
+            stock.code,
+            stock.held_shares,
+            stock.float_remainder_shares,
+            stock.float_total_shares
+        );
+        if stock.trade_count > 0 {
+            assert!(
+                stock.min_trade_price_cents >= stock.lower_limit_cents
+                    && stock.max_trade_price_cents <= stock.upper_limit_cents,
+                "跨股臂股票 {} 成交价越界：[{}, {}] 不在 [{}, {}]",
+                stock.code,
+                stock.min_trade_price_cents,
+                stock.max_trade_price_cents,
+                stock.lower_limit_cents,
+                stock.upper_limit_cents
+            );
+        }
+    }
+    assert_eq!(report.audit.negative_cash_accounts, 0, "跨股臂出现负现金账户");
+    assert_eq!(report.audit.t1_violations, 0, "跨股臂 T+1 结构破坏");
+    assert_eq!(report.audit.lot_violations, 0, "跨股臂出现非整手持仓");
+}
+
+/// 跨股臂流量健全性：构造 50% 跨股持仓时必须真的产生跨股路由、
+/// 成交回执与次级仓买卖（否则测试空转）。
+#[test]
+fn 跨股臂_路由流量与次级仓活动() {
+    let report = run_cross_benchmark(&small(11), 0, 50).expect("跨股臂运行必须成功");
+    assert!(report.trades > 0, "跨股臂必须产生真实成交");
+    assert!(report.routed_places > 0, "跨股臂必须产生跨股路由下单");
+    let receipts: u64 = report.receipts_applied.iter().sum();
+    assert!(receipts > 0, "跨股臂必须产生成交/终结回执");
+    assert!(
+        report.receipts_applied[0] > 0 && report.receipts_applied[1] > 0,
+        "跨股臂必须同时出现买/卖回执（BuyFill={} SellFill={}）",
+        report.receipts_applied[0],
+        report.receipts_applied[1]
+    );
+    assert!(
+        report.cross_fraction > 0.2,
+        "50% 构造参数下实际跨股持仓率异常低：{:.3}",
+        report.cross_fraction
+    );
+}
+
+/// 跨股臂零跨股对照（协议空载）：相位结构存在但不路由时守恒仍闭合。
+#[test]
+fn 跨股臂_零跨股对照() {
+    let report = run_cross_benchmark(&small(13), 0, 0).expect("零跨股对照必须成功");
+    assert_eq!(
+        report.audit.initial_total_cash_cents, report.audit.final_total_cash_cents,
+        "零跨股对照现金守恒破坏"
+    );
+    assert_eq!(report.routed_places, 0, "零跨股对照不应产生路由下单");
+    assert!(report.trades > 0, "零跨股对照仍应产生本股成交");
 }
