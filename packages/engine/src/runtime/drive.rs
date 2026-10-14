@@ -145,3 +145,26 @@ impl RuntimeDriver {
         Ok(())
     }
 }
+
+impl RuntimeDriver {
+    /// 组装 TickFrame 形状的事件帧（批 8h：TickFrame 组装串联）。
+    ///
+    /// 把已映射的引擎事件（Trade/受理/撤单/拒收/竞价）按 seq 排序输出，
+    /// 附带时序快照（MarketSnap/ContinuousPoint/DailyCandle）——这是
+    /// `step_frame_and_commit` 管线调用替换件的产物面。稳定键
+    /// （EventStableKey 的 local_event_index 语义）尚未复刻（登记），
+    /// 因此返回 `Event` 列表而非 `EventFact`——翻转的最后一关。
+    pub fn step_with_frame(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<super::event_bridge::FrameProjection, String> {
+        let events = self.step(session)?;
+        let views: Vec<super::protocol::StockPublic> = self.world_public_views().to_vec();
+        Ok(super::event_bridge::FrameProjection { events, views })
+    }
+
+    /// 公共视图只读（组装面）。
+    pub fn world_public_views(&self) -> &[super::protocol::StockPublic] {
+        self.world.public_views()
+    }
+}

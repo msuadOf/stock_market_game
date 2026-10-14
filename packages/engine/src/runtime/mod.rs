@@ -45,6 +45,8 @@ mod bridge_tests;
 mod day_end_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod decision_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod equivalence_tests;
 pub mod fees;
 pub mod group;
 pub mod plans;

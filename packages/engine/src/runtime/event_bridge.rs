@@ -258,3 +258,15 @@ pub fn project_auction_events(facts: &[DeskAuctionFact], next_seq: &mut u64) -> 
     }
     events
 }
+
+/// TickFrame 组装产物（批 8h：事件+时序快照串联面）。
+///
+/// `events`：已映射引擎事件（seq 单调）；`views`：本收束点公共态
+/// （MarketSnap/ContinuousPoint/DailyCandle 映射输入）。稳定键/
+/// EventFact 化留翻转最后一关（登记）。
+pub struct FrameProjection {
+    /// 引擎事件（seq 单调序）。
+    pub events: Vec<Event>,
+    /// 全股公共态（时序映射输入）。
+    pub views: Vec<super::protocol::StockPublic>,
+}
