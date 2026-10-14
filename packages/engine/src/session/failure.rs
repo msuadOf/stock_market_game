@@ -107,6 +107,14 @@ impl GameSession {
     }
 
 
+    /// runtime 驱动器翻转面（批 8h）：披露 observer 注册透传。
+    pub fn add_disclosure_observer_for_runtime(
+        &mut self,
+        observer: fn(crate::calendar::CivilInstant),
+    ) {
+        self.state.civil_clock.add_disclosure_observer(observer);
+    }
+
     /// runtime 驱动器翻转面（批 8h）：行情直改入口（X1 标记）。
     pub fn market_mut_for_runtime(
         &mut self,
