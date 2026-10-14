@@ -163,8 +163,47 @@ impl RuntimeDriver {
         Ok(super::event_bridge::FrameProjection { events, views })
     }
 
+    /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。
+    pub fn sever_world_for_test(&mut self) {
+        self.world.sever();
+    }
+
     /// 公共视图只读（组装面）。
     pub fn world_public_views(&self) -> &[super::protocol::StockPublic] {
         self.world.public_views()
+    }
+}
+
+impl RuntimeDriver {
+    /// 翻转缺口②（批 8h·部分3）：tick 计数与 poison 安装面。
+    ///
+    /// `step_frame_equivalent`：runtime 驱动 + 会话市场侧安装（tick 前进/
+    /// poison 语义）——对照旧管线 `step_frame_and_commit` 的安装段逐段
+    /// 迁移的**第一段**（tick 计数 + 失败 poison）：
+    /// - 成功：`session.state.tick` 前进（经直改标记入口）、事件返回；
+    /// - runtime 失败：映射为 `StepFatal` 并 poison 会话（旧管线
+    ///   `poison_failed_step` 语义：失败后 `require_healthy` 恒拒）。
+    /// 未迁移段（登记）：candidate 投影/observer 回调/事件 seq 写入
+    /// 会话权威（`state.seq`）/日界安装——这些与 envelope/公司域联动，
+    /// 属翻转最后一步的整合面。
+    pub fn step_frame_equivalent(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<Vec<Event>, crate::session::StepFatal> {
+        session.require_healthy()?;
+        let tick_after = session.tick() + 1;
+        match self.step(session) {
+            Ok(events) => {
+                session.set_runtime_tick(tick_after);
+                Ok(events)
+            }
+            Err(runtime_err) => {
+                let fatal = crate::session::StepFatal::InvariantViolation {
+                    location: "RuntimeDriver::step_frame_equivalent".to_owned(),
+                    description: runtime_err,
+                };
+                Err(session.poison_runtime_step(fatal))
+            }
+        }
     }
 }

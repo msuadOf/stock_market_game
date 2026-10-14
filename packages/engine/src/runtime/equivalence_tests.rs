@@ -197,3 +197,32 @@ fn event_facts_carry_unique_stable_keys_per_identity_bucket() {
         );
     }
 }
+
+#[test]
+fn step_frame_equivalent_advances_tick_and_poisons_on_failure() {
+    use super::drive::RuntimeDriver;
+    // 成功路径：tick 前进（安装段第一段）+ 会话可继续。
+    let mut session = GameSession::new(equiv_setup(), 21).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    for expected_tick in 1..=5u64 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("等价步进");
+        assert_eq!(session.tick(), expected_tick, "tick 安装前进");
+    }
+    assert!(session.require_healthy().is_ok(), "成功路径不 poison");
+
+    // 失败路径：poison 后 require_healthy 恒拒（旧管线语义）。
+    // 构造失败：关停世界通道（sever ⇒ 下一步发送失败 → StepFatal）。
+    driver.sever_world_for_test();
+    let err = driver
+        .step_frame_equivalent(&mut session)
+        .expect_err("sever 后须失败");
+    assert!(session.poison_reason().is_some(), "失败后 poison 生效");
+    let again = session.require_healthy();
+    assert!(
+        again.is_err(),
+        "poison 后 require_healthy 恒拒（旧管线语义）"
+    );
+    let _ = err;
+}

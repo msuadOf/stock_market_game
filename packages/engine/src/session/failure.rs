@@ -17,7 +17,7 @@ impl GameSession {
         self.poison.as_ref()
     }
 
-    pub(super) fn require_healthy(&self) -> Result<(), StepFatal> {
+    pub fn require_healthy(&self) -> Result<(), StepFatal> {
         match &self.poison {
             Some(fatal) => Err(fatal.clone()),
             None => Ok(()),
@@ -87,6 +87,17 @@ impl GameSession {
             });
         }
         Ok(())
+    }
+
+    /// runtime 驱动器翻转面（批 8h）：tick 前进（经直改标记）。
+    pub fn set_runtime_tick(&mut self, tick: u64) {
+        self.mark_external_mutation();
+        self.state.tick = tick;
+    }
+
+    /// runtime 驱动器翻转面（批 8h）：失败 poison（旧管线语义）。
+    pub fn poison_runtime_step(&mut self, fatal: StepFatal) -> StepFatal {
+        self.poison_failed_step(fatal)
     }
 
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
