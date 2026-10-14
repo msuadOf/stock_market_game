@@ -202,7 +202,7 @@ pub fn broadcast_start(
     let snapshot = Arc::new(TickSnapshot {
         tick,
         market_minute: (tick / 60) as u32,
-        stocks: stocks.to_vec(),
+        stocks: std::sync::Arc::new(stocks.to_vec()),
     });
     for tx in group_txs {
         tx.send(super::protocol::GroupIn::Start {

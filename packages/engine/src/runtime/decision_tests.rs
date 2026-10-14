@@ -23,7 +23,7 @@ fn snapshot_one_stock(last: i64, upper: i64) -> TickSnapshot {
     TickSnapshot {
         tick: 1,
         market_minute: 0,
-        stocks: vec![super::protocol::StockPublic {
+        stocks: std::sync::Arc::new(vec![super::protocol::StockPublic {
             last_price: last,
             best_bid: None,
             best_ask: None,
@@ -35,7 +35,7 @@ fn snapshot_one_stock(last: i64, upper: i64) -> TickSnapshot {
             volume_today: 0,
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
-        }],
+        }]),
     }
 }
 

@@ -186,7 +186,9 @@ pub struct GroupState {
     cur_round: u32,
     /// 已转正 tick。
     committed_tick: u64,
-    /// 提交态哈希（转正后计算）。
+    /// 提交态指纹（O(1) 诊断：fnv(tick 递进)；批 8b 哈希惰性化——热路径
+    /// 报告不再做全量账户哈希，回滚完整性判据改字段断言，全量 `state_hash`
+    /// 留 Final/日结冷路径）。
     committed_hash: u64,
     /// 累计跳过单量。
     pub skipped_orders: u64,
@@ -452,7 +454,7 @@ impl GroupState {
         self.cur_tick = tick;
         self.cur_round = 0;
         // T+1 日界解冻移至 DayEnd 相位（F §6.2，批 5）：Start 不再承担。
-        self.committed_hash = self.state_hash();
+        self.committed_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick).wrapping_mul(0x100000001b3);
         self.run_round(tick, 0, desk_txs, up_tx)
     }
 

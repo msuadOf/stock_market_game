@@ -182,7 +182,8 @@ pub struct StockPublic {
     pub order_book_imbalance: f64,
 }
 
-/// tick 广播快照（批 4：附带全股上一收束点公共态，组端只读）。
+/// tick 广播快照（批 4：附带全股上一收束点公共态，组端只读；批 8b 起
+/// stocks 经 Arc 共享——广播免逐组 clone）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct TickSnapshot {
     /// 当前 tick。
@@ -190,7 +191,7 @@ pub struct TickSnapshot {
     /// 市场分钟数。
     pub market_minute: u32,
     /// 全股公共态（下标=StockIdx）。
-    pub stocks: Vec<StockPublic>,
+    pub stocks: std::sync::Arc<Vec<StockPublic>>,
 }
 
 /// 公司域权益（日结 AdminBatch 条目；组端按可逆日志落账）。

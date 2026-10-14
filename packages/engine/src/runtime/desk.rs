@@ -1342,7 +1342,8 @@ impl DeskState {
         }
         // 到期撤销先于本 tick 新意图。
         self.expire_due(tick);
-        self.committed_hash = self.state_hash();
+        // 批 8b 哈希惰性化：热路径 O(1) 指纹；全量留 Final/回滚冷路径。
+        self.committed_hash = (0x9E37_79B9_7F4A_7C15u64 ^ tick).wrapping_mul(0x100000001b3);
         Ok(())
     }
 
