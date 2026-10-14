@@ -95,6 +95,18 @@ impl GameSession {
         self.state.tick = tick;
     }
 
+    /// runtime 驱动器翻转面（批 8h）：事件权威 seq 写回。
+    pub fn set_runtime_seq(&mut self, seq: u64) {
+        self.mark_external_mutation();
+        self.state.seq = seq;
+    }
+
+    /// 当前事件权威 seq（驱动器游标初始化）。
+    pub fn current_seq(&self) -> u64 {
+        self.state.seq
+    }
+
+
     /// runtime 驱动器翻转面（批 8h）：失败 poison（旧管线语义）。
     pub fn poison_runtime_step(&mut self, fatal: StepFatal) -> StepFatal {
         self.poison_failed_step(fatal)

@@ -195,6 +195,7 @@ impl RuntimeDriver {
         match self.step(session) {
             Ok(events) => {
                 session.set_runtime_tick(tick_after);
+                self.sync_seq_into_session(session);
                 Ok(events)
             }
             Err(runtime_err) => {
@@ -205,5 +206,23 @@ impl RuntimeDriver {
                 Err(session.poison_runtime_step(fatal))
             }
         }
+    }
+}
+
+impl RuntimeDriver {
+    /// 翻转缺口②余段（批 8h·部分4）：事件 seq 写入会话权威。
+    ///
+    /// 旧管线语义（`continuous_tick_finalizer.rs:244-246`）：事件经
+    /// `collect_events(facts, session.state.seq)` 从当前权威 seq 起单调
+    /// 分配，安装后 `state.seq = collected.next_seq`。runtime 等价：
+    /// driver 的全局 seq 游标在**构造时从 `session.state.seq` 初始化**、
+    /// 每步安装后写回——两端 seq 空间合一（单调续接，无重号无跳号）。
+    pub fn sync_seq_into_session(&mut self, session: &mut GameSession) {
+        session.set_runtime_seq(self.next_seq);
+    }
+
+    /// 从会话权威 seq 初始化驱动器游标（构造后、首步前调用一次）。
+    pub fn adopt_session_seq(&mut self, session: &GameSession) {
+        self.next_seq = session.current_seq();
     }
 }

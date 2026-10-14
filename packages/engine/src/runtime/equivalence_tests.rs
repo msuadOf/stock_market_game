@@ -226,3 +226,21 @@ fn step_frame_equivalent_advances_tick_and_poisons_on_failure() {
     );
     let _ = err;
 }
+
+#[test]
+fn seq_channel_unifies_runtime_cursor_with_session_authority() {
+    use super::drive::RuntimeDriver;
+    // 构造时权威 seq=0；驱动 5 步后 state.seq=driver.next_seq>0（单调续接）。
+    let mut session = GameSession::new(equiv_setup(), 33).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    assert_eq!(driver.next_seq(), session.current_seq(), "游标与权威合一");
+    let mut prev = session.current_seq();
+    for _ in 0..5 {
+        driver.step_frame_equivalent(&mut session).expect("步进");
+        let now = session.current_seq();
+        assert!(now >= prev, "seq 单调不回退");
+        assert_eq!(now, driver.next_seq(), "安装后与驱动器游标一致");
+        prev = now;
+    }
+}
