@@ -470,10 +470,7 @@ fn capture_two_retail_accounts_is_identical_with_one_or_four_workers() {
     }
     let run = |workers| {
         let mut shadow = source.clone_for_tick_shadow().unwrap();
-        let snapshot = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .build()
-            .unwrap()
+        let snapshot = crate::compute::ComputeContext::from_workers(workers)
             .install(|| capture_decision_snapshot(&mut shadow))
             .unwrap();
         let snapshot = &snapshot.snapshot;

@@ -281,10 +281,7 @@ mod tests {
         )
         .unwrap();
         let observe = |workers| {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .unwrap()
+            crate::compute::ComputeContext::from_workers(workers)
                 .install(|| {
                     (
                         serde_json::to_value(session.build_market_view()).unwrap(),
@@ -327,10 +324,7 @@ mod tests {
         );
 
         for workers in [1, 4] {
-            let error = rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .unwrap()
+            let error = crate::compute::ComputeContext::from_workers(workers)
                 .install(|| session.market_price_path_observations().unwrap_err());
             assert!(matches!(
                 error,

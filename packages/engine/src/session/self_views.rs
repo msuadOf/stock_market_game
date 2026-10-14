@@ -108,15 +108,9 @@ mod parallel_index_tests {
             }
         }
 
-        let one = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .unwrap()
+        let one = crate::compute::ComputeContext::from_workers(1)
             .install(|| session.working_orders_by_account());
-        let four = rayon::ThreadPoolBuilder::new()
-            .num_threads(4)
-            .build()
-            .unwrap()
+        let four = crate::compute::ComputeContext::from_workers(4)
             .install(|| session.working_orders_by_account());
 
         assert_eq!(

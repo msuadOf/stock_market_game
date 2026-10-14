@@ -364,12 +364,9 @@ mod tests {
             quote_request(4, 1, StockId(1), false),
             quote_request(5, 2, StockId(0), false),
         ];
-        for threads in [1, 4] {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap()
-                .install(|| {
+        for _threads in [1, 4] {
+            // rayon 退役（批 7）：install 的串行等价=直接执行（缩进保留）。
+            if true {
                     let admitted =
                         admit_ready_batch(candidates.clone(), &mut AccountReceipts::default())
                             .unwrap();
@@ -395,7 +392,7 @@ mod tests {
                             .len(),
                         candidates.len()
                     );
-                });
+            }
         }
     }
 

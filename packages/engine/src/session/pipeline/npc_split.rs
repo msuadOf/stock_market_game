@@ -318,7 +318,7 @@ mod tests {
         let tick_before = session.state.tick;
         let seed_before = session.state.seed;
         let (view, mut writes) = npc_split(&mut session);
-        let live_cash = rayon::join(
+        let live_cash = crate::compute::join(
             || {
                 let entry = writes.accounts.get_mut(&account).unwrap();
                 entry.fixture_set_cash(Money::from_cents(cash_before.cents() + 100));
@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(live_cash.1, cash_before);
         // lifecycles 快照与写侧隔离：join 内 push 不进读侧。
         let lifecycles_before = view.npc_order_lifecycles.len();
-        let (pushed, seen) = rayon::join(
+        let (pushed, seen) = crate::compute::join(
             || {
                 writes
                     .npc_order_lifecycles
@@ -370,7 +370,7 @@ mod tests {
         let (view, writes) = npc_split(&mut session);
         assert!(matches!(view.accounts, Cow::Owned(_)));
         assert!(matches!(view.npc_order_lifecycles, Cow::Owned(_)));
-        let ((), observed) = rayon::join(
+        let ((), observed) = crate::compute::join(
             || {
                 writes.accounts.get_mut(&account).unwrap().restore_strategy(None);
                 writes.npc_order_lifecycles[0].expires_market_minute = 99;

@@ -128,10 +128,7 @@ fn full_evidence_parallel_threshold_and_mixed_terminal_rows_preserve_first_error
             .insert(extra_key, super::ledger::ConservationState::EMPTY);
         let before = ledger.clone();
         for threads in [1, 4] {
-            let error = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap()
+            let error = crate::compute::ComputeContext::from_workers(threads)
                 .install(|| ledger.validate_complete_evidence())
                 .unwrap_err();
             assert!(
@@ -1150,10 +1147,7 @@ fn complete_evidence_defers_early_audit_error_until_conservation_resources_and_s
             };
             let before = ledger.clone();
             for threads in [1, 4] {
-                let error = rayon::ThreadPoolBuilder::new()
-                    .num_threads(threads)
-                    .build()
-                    .unwrap()
+                let error = crate::compute::ComputeContext::from_workers(threads)
                     .install(|| ledger.validate_complete_evidence())
                     .unwrap_err();
                 assert_eq!(

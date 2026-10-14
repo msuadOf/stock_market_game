@@ -241,45 +241,6 @@ mod tests {
     }
 
     #[test]
-    fn stock_input_work_starts_before_hydration_work_finishes() {
-        let game = fixture();
-        assert!(can_prepare(&game));
-        let started = AtomicBool::new(false);
-        let overlaps = AtomicBool::new(false);
-        let before = game.business_state_hash().unwrap();
-        let work = rayon::ThreadPoolBuilder::new()
-            .num_threads(4)
-            .build()
-            .unwrap()
-            .install(|| {
-                prepare_with_observer(&game, |stage| match stage {
-                    StartWork::ProjectedRow => {
-                        let until = Instant::now() + Duration::from_millis(200);
-                        while !started.load(Ordering::Acquire) && Instant::now() < until {
-                            std::thread::yield_now();
-                        }
-                        overlaps.store(started.load(Ordering::Acquire), Ordering::Release);
-                    }
-                    // stock input 的真实捕获与逐行数学已完成，才释放正在投影内部等待的行。
-                    StartWork::CapturedInputs => started.store(true, Ordering::Release),
-                    StartWork::Resources => {}
-                })
-            });
-        work.hydration.unwrap();
-        work.resources.unwrap();
-        assert!(work.stock_inputs.unwrap().is_empty());
-        assert_eq!(
-            work.stock_shards.as_ref().unwrap().as_ref().unwrap().len(),
-            1
-        );
-        assert!(
-            overlaps.load(Ordering::Acquire),
-            "只读 stock 输入不应等待 hydration 计算结束才启动"
-        );
-        assert_eq!(game.business_state_hash().unwrap(), before);
-    }
-
-    #[test]
     fn eligibility_excludes_hydration_writes_and_exactly_due_quotes() {
         let mut game = fixture();
         let code = StockId(0);
@@ -476,12 +437,9 @@ mod tests {
     #[test]
     fn one_and_four_workers_preserve_resources_and_complete_stock_inputs() {
         let game = fixture();
-        for threads in [1, 4] {
-            let prepared = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap()
-                .install(|| prepare(&game));
+        for _threads in [1, 4] {
+            // rayon 退役（批 7）：install 的串行等价=直接调用。
+            let prepared = prepare(&game);
             prepared.hydration.unwrap();
             assert_eq!(
                 prepared.resources.unwrap(),

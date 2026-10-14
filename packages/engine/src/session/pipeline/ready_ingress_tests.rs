@@ -12,10 +12,8 @@ use crate::{AccountId, Intent, Money, Side, StockId};
 #[test]
 fn capture_roots_closes_all_roots_before_stream_starts_with_one_or_several_workers() {
     for workers in [1, 3] {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .build()
-            .unwrap();
+        let pool_workers = workers;
+        let pool = crate::compute::ComputeContext::from_workers(pool_workers);
         // 空根形态：无计划账户（quote_setup 无 plan）——闭环平凡完成。
         let mut session =
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -33,12 +31,7 @@ fn capture_roots_closes_all_roots_before_stream_starts_with_one_or_several_worke
         });
         // 非空根形态：为账户 1 现建计划（execution_fixture 同构）后重跑——
         // capture 期真实计算+归并，返回后同步可取。
-        let fixture_pool = crate::compute::ComputeContext::from_pool(std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .unwrap(),
-        ));
+        let fixture_pool = crate::compute::ComputeContext::from_workers(workers);
         let (mut session, request) =
             crate::session::plan_chain_candidates_tests::execution_fixture_with_compute(
                 fixture_pool,
@@ -131,10 +124,8 @@ fn account_receipts_follow_request_time_and_plan_readiness_not_key_order() {
 #[test]
 fn same_stock_fifo_uses_receipt_time_across_player_and_npc_queues() {
     for workers in [1, 3] {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .build()
-            .unwrap();
+        let pool_workers = workers;
+        let pool = crate::compute::ComputeContext::from_workers(pool_workers);
         let admitted = pool.install(|| {
             let mut session =
                 GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42)
@@ -324,12 +315,7 @@ fn capture_boundary_asserts_drain_and_personal_merge_at_return() {
         // 空根形态：无计划账户——源排空平凡成立、无 personal install。
         // Sol 终裁二轮·2：构造即绑专用池（GameSession::new_with_compute）
         // ——session.compute 与排空同资源域（pool.install 不换绑定的盲区）。
-        let pool = crate::compute::ComputeContext::from_pool(std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .unwrap(),
-        ));
+        let pool = crate::compute::ComputeContext::from_workers(workers);
         let mut session = GameSession::new_with_compute(
             crate::session::npc_working_quote_tests::quote_setup(0),
             42,
@@ -355,12 +341,7 @@ fn capture_boundary_asserts_drain_and_personal_merge_at_return() {
         // 种子=账户 1 执行请求（已知身份，首批完整集合**精确**核对）。
         // 实测：无 allocation 授予时真实 root 自动产单不发生（如实登记，
         // 八十七「产物来源=计划链候选在场」表述过强——勘误见台账）。
-        let fixture_pool = crate::compute::ComputeContext::from_pool(std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .unwrap(),
-        ));
+        let fixture_pool = crate::compute::ComputeContext::from_workers(workers);
         let (mut session, request) =
             crate::session::plan_chain_candidates_tests::execution_fixture_with_compute(
                 fixture_pool,

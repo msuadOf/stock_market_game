@@ -81,26 +81,20 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
 fn complete_projection(auction_ticks: u64, seed: u64, ticks: u64) -> Vec<Vec<u8>> {
     // A single worker controls scheduling on the same production path. The
     // harness still runs the independent tests concurrently (ADR-0017).
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap()
-        .install(|| {
             let mut game = GameSession::new(setup(auction_ticks).unwrap(), seed).unwrap();
-            (0..ticks)
-                .map(|_| {
-                    let events = game.step().expect("healthy step");
-                    let save = game.save().expect("healthy save");
-                    assert!(save.setup.config.price_cage_enabled);
-                    assert!(save.resting_orders.values().all(Vec::is_empty));
-                    assert!(game.player_working_orders().is_empty());
-                    assert!(!events
-                        .iter()
-                        .any(|event| matches!(event, Event::Trade { .. })));
-                    serde_json::to_vec(&(events, game.snapshot(), save)).unwrap()
-                })
-                .collect()
-        })
+        (0..ticks)
+            .map(|_| {
+                let events = game.step().expect("healthy step");
+                let save = game.save().expect("healthy save");
+                assert!(save.setup.config.price_cage_enabled);
+                assert!(save.resting_orders.values().all(Vec::is_empty));
+                assert!(game.player_working_orders().is_empty());
+                assert!(!events
+                    .iter()
+                    .any(|event| matches!(event, Event::Trade { .. })));
+                serde_json::to_vec(&(events, game.snapshot(), save)).unwrap()
+            })
+            .collect()
 }
 
 fn projection_digest(projection: &[Vec<u8>]) -> u64 {

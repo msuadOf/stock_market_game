@@ -79,14 +79,9 @@ fn run(
     threads: usize,
     config: ExecutorPerturbation,
 ) -> Vec<ExecutorOrderRecord> {
-    let pool = std::sync::Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap(),
-    );
-    let compute = crate::compute::ComputeContext::from_pool(pool.clone());
-    pool.install(|| {
+    let pool_workers = threads;
+    let compute = crate::compute::ComputeContext::from_workers(pool_workers);
+    compute.install(|| {
         with_executor_perturbation(config, || {
             let mut game = prototype.clone_for_tick_shadow().unwrap();
             game.rebind_compute_for_verification(compute.clone());
@@ -288,7 +283,8 @@ fn compute_context_shared_host_sessions_keep_executor_controls_isolated() {
 fn compute_context_foreign_caller_preserves_real_executor_controls() {
     let mut game = fixture(false);
     game.rebind_compute_for_verification(crate::ComputeContext::with_workers(1).unwrap());
-    let foreign = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+    let foreign_workers = 3;
+    let foreign = crate::compute::ComputeContext::from_workers(foreign_workers);
     let (result, records) = foreign.install(|| with_executor_perturbation(
         ExecutorPerturbation { stock_shards: ExecutorPermutation::Reverse, ..Default::default() },
         || game.step(),

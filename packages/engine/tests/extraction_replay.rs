@@ -176,11 +176,8 @@ struct ReplayCapture {
 fn run_replay(seed: u64) -> ReplayCapture {
     // ADR-0017 允许并发跨实体受理顺序变化；字节锚仅约束同一路径的单 worker 调度。
     // 三个独立测试仍由多线程 harness 并行执行。
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap()
-        .install(|| run_replay_serial(seed))
+    // rayon 退役（批 7）：单 worker install 的串行等价=直接调用。
+    run_replay_serial(seed)
 }
 
 fn run_replay_serial(seed: u64) -> ReplayCapture {

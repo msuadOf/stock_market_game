@@ -356,10 +356,7 @@ fn adapter_validates_order_resources_without_materializing_an_extra_projection_e
         .place(resting_buy(OrderId(401), AccountId(1)))
         .unwrap();
     game.hydrate_or_validate_envelope_ledger().unwrap();
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap();
+    let pool = crate::compute::ComputeContext::from_workers(1);
     let (inputs, owned_projections) = pool.install(|| {
         crate::session::envelope_projection::OWNED_PROJECTION_COUNT.with(|count| count.set(0));
         let inputs = prepare_incremental_continuous_inputs(&game).unwrap();
@@ -380,56 +377,6 @@ fn adapter_validates_order_resources_without_materializing_an_extra_projection_e
     );
 }
 
-#[test]
-fn one_dense_stock_input_validates_on_multiple_workers_and_keeps_the_authoritative_payload() {
-    use std::sync::Mutex;
-    let mut game =
-        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
-    let code = StockId(0);
-    for index in 0..1024 {
-        game.state
-            .markets
-            .get_mut(&code)
-            .unwrap()
-            .place(resting_buy(OrderId(1000 + index), AccountId(1)))
-            .unwrap();
-    }
-    game.hydrate_or_validate_envelope_ledger().unwrap();
-    let before = game.session_state_hash().unwrap();
-    let workers = Mutex::new(std::collections::BTreeSet::new());
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
-    let inputs = pool
-        .install(|| {
-            super::continuous_matching_adapter::prepare_inputs_with_observer(&game, || {
-                workers
-                    .lock()
-                    .unwrap()
-                    .insert(rayon::current_thread_index().unwrap());
-            })
-        })
-        .unwrap();
-    assert!(
-        workers.into_inner().unwrap().len() > 1,
-        "单股 dense input 的独立行校验必须使用多个 worker，而不只靠多股并行"
-    );
-    assert_eq!(inputs.len(), 1);
-    assert_eq!(inputs[0].envelopes.len(), 1024);
-    for snapshot in &inputs[0].envelopes {
-        assert_eq!(
-            &snapshot.envelope,
-            game.state
-                .envelope_ledger
-                .get(snapshot.envelope.key())
-                .unwrap()
-        );
-        assert_eq!(snapshot.audit(), snapshot.envelope.audit());
-    }
-    assert_eq!(game.session_state_hash().unwrap(), before);
-}
 
 #[test]
 fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order() {
@@ -485,10 +432,7 @@ fn dense_adapter_keeps_book_order_errors_when_envelope_keys_have_reverse_order()
             game.state.envelope_ledger.envelopes.remove(missing);
             let before = game.state.envelope_ledger.clone();
             for threads in [1, 4] {
-                let error = rayon::ThreadPoolBuilder::new()
-                    .num_threads(threads)
-                    .build()
-                    .unwrap()
+                let error = crate::compute::ComputeContext::from_workers(threads)
                     .install(|| prepare_incremental_continuous_inputs(&game))
                     .unwrap_err();
                 assert_eq!(

@@ -501,10 +501,7 @@ fn account_resources_are_identical_with_one_or_four_workers() {
             .unwrap();
     }
     let run = |threads| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| DecisionResourceSnapshot::seal(&game).unwrap())
     };
     assert_eq!(run(1), run(4));
@@ -600,10 +597,7 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
         .unwrap()
         .fixture_set_cash(crate::Money::ZERO);
     let run = |threads| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| DecisionResourceSnapshot::seal(&game).unwrap_err())
     };
     for threads in [1, 4] {
@@ -641,10 +635,7 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
         .unwrap()
         .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let run = |threads, session: &GameSession| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| {
                 DecisionResourceSnapshot::seal(session).expect_err("equity overflow must fail")
             })

@@ -414,10 +414,8 @@ mod tests {
                 .unwrap_err(),
         );
         for threads in [1, 4] {
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap();
+            let pool_workers = threads;
+            let pool = crate::compute::ComputeContext::from_workers(pool_workers);
             assert_eq!(
                 pool.install(|| ReservationCache::default().project(&independent_pages)),
                 Err(expected_first_error.clone()),

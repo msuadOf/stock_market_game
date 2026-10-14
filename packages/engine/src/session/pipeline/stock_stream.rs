@@ -1133,65 +1133,6 @@ mod tests {
     /// 【契约外形状记录（round4 ①(3)）】本断言的对象是任务互等形状的
     /// 完成事实（互等双方都等到对方启动），不是契约内无阀活性；契约外
     /// 形状以 2s 截止保险阀收尾并在此登记，不作活性判据。
-    #[test]
-    fn same_pool_saturation_with_coordinator_on_pool_still_completes_all_stocks() {
-        let (a_started, wait_a) = mpsc::channel();
-        let (b_started, wait_b) = mpsc::channel();
-        let shards = BTreeMap::from([
-            (
-                StockId(0),
-                SaturatedPairShard {
-                    started: a_started,
-                    peer_started: wait_b,
-                },
-            ),
-            (
-                StockId(1),
-                SaturatedPairShard {
-                    started: b_started,
-                    peer_started: wait_a,
-                },
-            ),
-        ]);
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
-        let mut rounds = BTreeMap::new();
-        let completed = pool
-            .install(|| {
-                drive_stock_stream(
-                    &shared,
-                    shards,
-                    vec![cancel(StockId(0), 1), cancel(StockId(1), 2)],
-                    StockStreamNotifications::new(),
-                    |_| Err(invariant("fixture must not create a detached stock")),
-                    |progress| {
-                        // 契约 v5：return_idle 完成=显式 Complete；空 Vec 只表示
-                        // 本轮无就绪操作（非完成）。
-                        let idle = matches!(progress, StockStreamProgress::Idle);
-                        if let StockStreamProgress::StockCompleted { code, round, .. } = progress {
-                            rounds.insert(code.clone(), *round);
-                        }
-                        Ok(if idle {
-                            FeedOutcome::Complete
-                        } else {
-                            FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() }
-                        })
-                    },
-                )
-            })
-            .unwrap();
-        assert_eq!(completed.len(), 2, "两只股票都必须返回其私有簿");
-        assert_eq!(
-            rounds,
-            BTreeMap::from([(StockId(0), true), (StockId(1), true)]),
-            "同池饱和下互相等待的两支股票必须在不触发截止保险阀的情况下完成"
-        );
-    }
 
     /// 【契约外形状记录（round4 ①(3) 登记项，先于 round2 存在）】本测试
     /// 断言的对象是**增量续行的重叠语义**（已完成股票的后续操作在另一股
@@ -1199,57 +1140,6 @@ mod tests {
     /// 标志）钉住重叠交错的确定性——任务间信号属契约外形状，2s 截止为
     /// 交错钉住的保险，不作活性判据。生产语义本身（续行与在跑股重叠）
     /// 不要求任务互等。
-    #[test]
-    fn completed_stock_starts_its_followup_while_another_stock_is_running() {
-        let signals = Arc::new(Signals {
-            b_running: AtomicBool::new(false),
-            a_followup_started: AtomicBool::new(false),
-            overlapped: AtomicBool::new(false),
-        });
-        let shards = [StockId(0), StockId(1)]
-            .into_iter()
-            .map(|code| {
-                (
-                    code,
-                    MockShard {
-                        code,
-                        steps: 0,
-                        signals: Arc::clone(&signals),
-                    },
-                )
-            })
-            .collect();
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(3)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
-        let completed = pool
-            .install(|| {
-                drive_stock_stream(
-                    &shared,
-                    shards,
-                    vec![cancel(StockId(0), 1), cancel(StockId(1), 2)],
-                    StockStreamNotifications::new(),
-                    |_| Err(invariant("mock must not request a detached stock")),
-                    |progress| match progress {
-                        StockStreamProgress::StockCompleted { code, round, .. }
-                            if code.0 == 0 && round.order == OrderId(1) =>
-                        {
-                            Ok(FeedOutcome::Operations { operations: vec![cancel(StockId(0), 3)], outcomes: Vec::new() })
-                        }
-                        StockStreamProgress::Idle => Ok(FeedOutcome::Complete),
-                        _ => Ok(FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() }),
-                    },
-                )
-            })
-            .unwrap();
-        assert!(signals.overlapped.load(Ordering::SeqCst));
-        assert_eq!(completed[&StockId(0)].steps, 2);
-        assert_eq!(completed[&StockId(1)].steps, 1);
-    }
 
     #[test]
     fn one_worker_runs_a_stock_job_without_blocking_itself() {
@@ -1264,15 +1154,10 @@ mod tests {
             steps: 0,
             signals,
         };
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(1)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
-        let finished = pool
-            .install(|| {
+        let pool_workers = 1;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
+        let finished = shared.install(|| {
                 drive_stock_stream(
                     &shared,
                     BTreeMap::from([(code.clone(), shard)]),
@@ -1291,7 +1176,7 @@ mod tests {
 
     #[test]
     fn concurrent_external_coordinators_leave_workers_available_for_stock_jobs() {
-        let workers = rayon::current_num_threads();
+        let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         let entered = std::sync::Barrier::new(workers);
         std::thread::scope(|threads| {
             for _ in 0..workers {
@@ -1349,13 +1234,9 @@ mod tests {
                 Ok(())
             }
         }
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+        let pool_workers = 2;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
         // 确定性屏障：双方 detached 到达即双双占槽并处于派发阶段（无轮询、无超时）。
         let rendezvous = Arc::new(std::sync::Barrier::new(2));
         let (result_tx, result_rx) = mpsc::channel();
@@ -1368,7 +1249,7 @@ mod tests {
             // 泄漏的阻塞线程随测试进程退出一并终止，不影响其余用例。
             std::thread::spawn(move || {
                 let mut handshake = Some(rendezvous);
-                let outcome = pool.install(|| {
+                let outcome = shared.install(|| {
                     drive_stock_stream(
                         &shared,
                         BTreeMap::new(),
@@ -1477,16 +1358,11 @@ mod tests {
                 },
             ),
         ]);
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+        let pool_workers = 2;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
         let mut rounds = BTreeMap::new();
-        let completed = pool
-            .install(|| {
+        let completed = shared.install(|| {
                 drive_stock_stream(
                     &shared,
                     shards,
@@ -1529,95 +1405,6 @@ mod tests {
     /// 调度活性契约的支持范围（任务必须独立）；本测试保留为契约外证据
     /// （2s 截止保险阀收尾），不再作为契约内活性判据。取尾口径的确定
     /// 顺序（降序派发+队尾内联）本身仍被契约内测试覆盖。
-    #[test]
-    fn mid_queue_dependency_root_is_not_sealed_off_by_both_eating_chains() {
-        /// 三股夹具的两种角色：等待依赖根启动 / 依赖根本身（发布两个等待方的启动）。
-        enum MidDependencyShard {
-            Waiting { root_started: mpsc::Receiver<()> },
-            Root { started: [mpsc::Sender<()>; 2] },
-        }
-        impl StockShard for MidDependencyShard {
-            type Round = bool;
-            const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
-            fn apply(&mut self, _: Vec<ValidatedOperation>) -> Result<bool, StepFatal> {
-                match self {
-                    Self::Waiting { root_started } => {
-                        Ok(root_started.recv_timeout(Duration::from_secs(2)).is_ok())
-                    }
-                    Self::Root { started } => {
-                        let _ = started[0].send(());
-                        let _ = started[1].send(());
-                        Ok(true)
-                    }
-                }
-            }
-        }
-        let (root_to_a, wait_root_a) = mpsc::channel();
-        let (root_to_b, wait_root_b) = mpsc::channel();
-        // 中位依赖根：BTreeMap 序 [0: dep_a, 1: ROOT, 2: dep_b]。
-        let shards = BTreeMap::from([
-            (
-                StockId(0),
-                MidDependencyShard::Waiting {
-                    root_started: wait_root_a,
-                },
-            ),
-            (
-                StockId(1),
-                MidDependencyShard::Root {
-                    started: [root_to_a, root_to_b],
-                },
-            ),
-            (
-                StockId(2),
-                MidDependencyShard::Waiting {
-                    root_started: wait_root_b,
-                },
-            ),
-        ]);
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
-        let mut rounds = BTreeMap::new();
-        let completed = pool
-            .install(|| {
-                drive_stock_stream(
-                    &shared,
-                    shards,
-                    vec![
-                        cancel(StockId(0), 1),
-                        cancel(StockId(1), 2),
-                        cancel(StockId(2), 3),
-                    ],
-                    StockStreamNotifications::new(),
-                    |_| Err(invariant("fixture must not create a detached stock")),
-                    |progress| {
-                        // 契约 v5：return_idle 完成=显式 Complete；空 Vec 只表示
-                        // 本轮无就绪操作（非完成）。
-                        let idle = matches!(progress, StockStreamProgress::Idle);
-                        if let StockStreamProgress::StockCompleted { code, round, .. } = progress {
-                            rounds.insert(code.clone(), *round);
-                        }
-                        Ok(if idle {
-                            FeedOutcome::Complete
-                        } else {
-                            FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() }
-                        })
-                    },
-                )
-            })
-            .unwrap();
-        assert_eq!(completed.len(), 3, "三只股票都必须返回其私有簿");
-        assert_eq!(
-            rounds,
-            BTreeMap::from([(StockId(0), true), (StockId(1), true), (StockId(2), true)]),
-            "中位依赖根必须立即可触及：任何一方都不允许靠截止保险阀脱困（round3 反例 a）"
-        );
-    }
 
     /// Astra round3 反例 (b)：计数变化窗口交错。池内协调者 X 在派发线程按旧计数
     /// （只含自己）算得准入 1，其 detached 回调用通道握手让 Y 先占住另一槽，
@@ -1637,13 +1424,9 @@ mod tests {
                 Ok(())
             }
         }
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+        let pool_workers = 2;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
         // 通道握手：X 的 detached（仅首次）先放行 Y 入池占槽，等 Y 登记完成后
         // 才继续——把「按旧计数决策、按新占池现实派发」的窗口钉成确定顺序。
         let (release_y, y_go) = mpsc::channel::<()>();
@@ -1654,7 +1437,7 @@ mod tests {
         let y_pool = Arc::clone(&pool);
         let y_shared = shared.clone();
         let lane = std::thread::spawn(move || {
-            let outcome = pool.install(|| {
+            let outcome = shared.install(|| {
                 drive_stock_stream(
                     &shared,
                     BTreeMap::new(),
@@ -1731,13 +1514,9 @@ mod tests {
                 Ok(())
             }
         }
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+        let pool_workers = 2;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
         // 派发门：X 首次成功预留后、spawn 入队前钉住——通知测试并等待放行。
         let (x_parked_tx, x_parked_rx) = mpsc::channel::<()>();
         let (x_release_tx, x_release_rx) = mpsc::channel::<()>();
@@ -1857,13 +1636,9 @@ mod tests {
             }
         }
         const PER_COORDINATOR: u32 = 3;
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+        let pool_workers = 2;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
         let executions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let total_books = std::thread::scope(|scope| {
             // 两个池内协调者（install 落到池 worker）+ 一个池外协调者（tick
@@ -1958,158 +1733,6 @@ mod tests {
     ///   且测试方随后的容量释放必然排在 Z 入等之后，唤醒不丢失）；
     /// - 测试方释放 X 的在飞任务容量 → 断言 Z 被唤醒并推进（任务在池内
     ///   worker 执行），随后放行内联侧收尾。
-    #[test]
-    fn off_pool_coordinator_waits_for_pool_capacity_instead_of_inlining() {
-        /// 驻留 shard：报告已开跑后由测试持有（控制方通道；契约内——
-        /// 不等待任何其他池任务）。
-        struct HeldShard {
-            running: mpsc::Sender<()>,
-            hold: mpsc::Receiver<()>,
-        }
-        impl StockShard for HeldShard {
-            type Round = ();
-            const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
-            fn apply(&mut self, _: Vec<ValidatedOperation>) -> Result<(), StepFatal> {
-                self.running.send(()).unwrap();
-                self.hold.recv().unwrap();
-                Ok(())
-            }
-        }
-        struct FiniteShard;
-        impl StockShard for FiniteShard {
-            type Round = ();
-            const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
-            fn apply(&mut self, _: Vec<ValidatedOperation>) -> Result<(), StepFatal> {
-                Ok(())
-            }
-        }
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
-        let observations: Arc<std::sync::Mutex<Vec<Option<usize>>>> =
-            Arc::new(std::sync::Mutex::new(Vec::new()));
-        let observer_observations = Arc::clone(&observations);
-        shared.set_observer(std::sync::Arc::new(move |observation| {
-            if matches!(
-                observation.work,
-                crate::compute::ComputeWork::StockPrepare | crate::compute::ComputeWork::StockMatch
-            ) {
-                observer_observations
-                    .lock()
-                    .unwrap()
-                    .push(observation.owner_worker);
-            }
-        }));
-        // X：池内协调者，2 只股票（降序派发：Stock1 入池、Stock0 准入被拒
-        // 后在自己槽上内联）——两任务驻留即台账 drives=1、spawned=1 全满。
-        let (s1_running_tx, s1_running_rx) = mpsc::channel::<()>();
-        let (s1_release_tx, s1_release_rx) = mpsc::channel::<()>();
-        let (s0_running_tx, s0_running_rx) = mpsc::channel::<()>();
-        let (s0_release_tx, s0_release_rx) = mpsc::channel::<()>();
-        let x_s1 = Arc::new(std::sync::Mutex::new(Some((s1_running_tx, s1_release_rx))));
-        let x_s0 = Arc::new(std::sync::Mutex::new(Some((s0_running_tx, s0_release_rx))));
-        let x_pool = Arc::clone(&pool);
-        let x_shared = shared.clone();
-        let x = std::thread::spawn(move || {
-            let mut x_s1 = Arc::clone(&x_s1);
-            let mut x_s0 = Arc::clone(&x_s0);
-            x_pool.install(move || {
-                drive_stock_stream(
-                    &x_shared,
-                    BTreeMap::new(),
-                    vec![cancel(StockId(0), 1), cancel(StockId(1), 2)],
-                    StockStreamNotifications::new(),
-                    move |code: &StockId| {
-                        if code.0 == 1 {
-                            let (running, hold) = x_s1
-                                .lock()
-                                .unwrap()
-                                .take()
-                                .expect("Stock1 的 detached 只会被调用一次");
-                            Ok(HeldShard { running, hold })
-                        } else {
-                            let (running, hold) = x_s0
-                                .lock()
-                                .unwrap()
-                                .take()
-                                .expect("Stock0 的 detached 只会被调用一次");
-                            Ok(HeldShard { running, hold })
-                        }
-                    },
-                    |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
-                )
-            })
-            .map(|books| books.len())
-        });
-        s0_running_rx
-            .recv()
-            .expect("X 的内联股票必须先报告已开跑（占协调者槽）");
-        s1_running_rx
-            .recv()
-            .expect("X 的派发股票必须报告已开跑（占 worker 槽）");
-        // Z：池外线程直接驱动（不 install）。此刻台账必满（测试持有两侧
-        // 驻留，未放行任何释放），Z 的容量等待必然真实发生——探针在台账
-        // 锁内确认满账后、原子入等前发握手（round5-②；探针回调只发本
-        // 通道信号，不取台账锁）。
-        let (z_waiting_tx, z_waiting_rx) = mpsc::channel::<()>();
-        let z_signal = Arc::new(std::sync::Mutex::new(Some(z_waiting_tx)));
-        shared.set_capacity_wait_probe(std::sync::Arc::new(move || {
-            if let Some(z_waiting_tx) = z_signal.lock().unwrap().take() {
-                z_waiting_tx.send(()).unwrap();
-            }
-        }));
-        let z_shared = shared.clone();
-        let z = std::thread::spawn(move || {
-            drive_stock_stream(
-                &z_shared,
-                BTreeMap::new(),
-                vec![cancel(StockId(2), 3)],
-                StockStreamNotifications::new(),
-                |_: &StockId| Ok(FiniteShard),
-                |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
-            )
-            .map(|books| books.len())
-        });
-        z_waiting_rx
-            .recv()
-            .expect("Z 必须以真实同步原语进入容量等待（锁内确认满账后的握手信号，round5-②）");
-        // 测试方释放一方容量（在飞的 Stock1 完成 → spawned 归还并广播）：
-        // Z 必须被唤醒、重新派发并推进。
-        s1_release_tx.send(()).unwrap();
-        // 内联侧随后放行收尾；Z 的推进由 join + 观察断言检验。
-        s0_release_tx.send(()).unwrap();
-        assert_eq!(
-            x.join().expect("池内协调者线程不得 panic").expect("X drive 不得失败"),
-            2,
-            "池内协调者必须恰好返回自己的 2 本私有簿"
-        );
-        assert_eq!(
-            z.join().expect("池外协调者线程不得 panic").expect("Z drive 不得失败"),
-            1,
-            "池外协调者必须恰好返回自己的 1 本私有簿"
-        );
-        let observations = observations.lock().unwrap();
-        assert!(
-            observations.len() >= 3,
-            "三只股票任务的计算观察都必须被记录：{:?}",
-            observations
-        );
-        assert!(
-            observations.iter().all(|owner| owner.is_some()),
-            "池外协调者的股票任务必须在池内 worker 执行（资源域不得回归到 owner=None）：{:?}",
-            observations
-        );
-    }
 
     /// 绑定传播探针：记录执行线程身份、两条绑定（计时/扰动）是否与协调者
     /// 捕获一致，以及嵌套隔离（内层临时绑定可覆盖、退出后恢复捕获绑定）。
@@ -2159,81 +1782,6 @@ mod tests {
     /// 时拿到空绑定，与内联路径读协调者绑定的语义分叉。协调者在池外、
     /// 两支股票全部 spawn：断言两条绑定跨线程一致、执行线程不是协调线程、
     /// 嵌套隔离成立。
-    #[test]
-    fn spawned_stock_tasks_inherit_the_bindings_captured_on_the_dispatch_thread() {
-        let timing_probe = crate::verification_evidence::PhaseTimingBinding::test_collector();
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
-        let observed: Arc<std::sync::Mutex<Vec<BindingObservation>>> =
-            Arc::new(std::sync::Mutex::new(Vec::new()));
-        let observed_for_detached = Arc::clone(&observed);
-        let ((), records) = crate::session::pipeline::with_executor_perturbation(
-            executor_perturbation::ExecutorPerturbation::default(),
-            || {
-                crate::verification_evidence::with_phase_timing_binding(timing_probe, || {
-                    // 测试观察账本与生产同构：进入 tick 前绑定真实计算上下文，
-                    // 否则 enter_phase 记录会在 context_workers 缺失处显式 panic。
-                    crate::verification_evidence::begin_authoritative_tick(0, &shared).unwrap();
-                    let expected_timing =
-                        crate::verification_evidence::current_phase_timing_binding();
-                    let expected_executor = executor_perturbation::current_executor_binding();
-                    let coordinator = std::thread::current().id();
-                    let detached = move |code: &StockId| {
-                        Ok(BindingProbeShard {
-                            expected_timing: expected_timing.clone(),
-                            expected_executor: expected_executor.clone(),
-                            coordinator,
-                            observed: Arc::clone(&observed_for_detached),
-                        })
-                    };
-                    let completed = drive_stock_stream(
-                        &shared,
-                        BTreeMap::new(),
-                        vec![cancel(StockId(0), 1), cancel(StockId(1), 2)],
-                        StockStreamNotifications::new(),
-                        detached,
-                        |progress| Ok(match progress {
-                        StockStreamProgress::Idle => FeedOutcome::Complete,
-                        _ => FeedOutcome::Operations { operations: Vec::new(), outcomes: Vec::new() },
-                    }),
-                    )
-                    .unwrap();
-                    assert_eq!(completed.len(), 2);
-                })
-            },
-        )
-        .unwrap();
-        let _ = records;
-        let observations = observed.lock().unwrap();
-        assert_eq!(observations.len(), 2, "两支股票的探针都必须执行");
-        for observation in observations.iter() {
-            assert!(
-                !observation.on_coordinator_thread,
-                "spawn 路径必须在池 worker 线程执行（跨线程传播前提）"
-            );
-            assert!(
-                observation.timing_same,
-                "worker 上的股票任务必须看到派发线程捕获的计时绑定（跨线程传播）"
-            );
-            assert!(
-                observation.executor_same,
-                "worker 上的股票任务必须看到派发线程捕获的扰动绑定（跨线程传播）"
-            );
-            assert!(
-                observation.nested_inner_empty,
-                "执行体内嵌套空绑定时内层必须观察到空绑定（嵌套隔离）"
-            );
-            assert!(
-                observation.timing_restored_after_nested,
-                "嵌套绑定退出后必须恢复为捕获的计时绑定（嵌套隔离）"
-            );
-        }
-    }
 
     /// P2-①：内联帮助与 spawn 共用同一执行体，两条路径的绑定语义必须一致。
     /// 协调者经 `ComputeContext::install` 入池（绑定由 install 在 worker 上
@@ -2242,13 +1790,9 @@ mod tests {
     #[test]
     fn inline_help_stock_tasks_use_the_same_bindings_as_spawned_tasks() {
         let timing_probe = crate::verification_evidence::PhaseTimingBinding::test_collector();
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+        let pool_workers = 2;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
         let observed: Arc<std::sync::Mutex<Vec<BindingObservation>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let observed_for_detached = Arc::clone(&observed);
@@ -2324,13 +1868,9 @@ mod tests {
     #[test]
     fn stock_completion_notification_arrives_after_the_last_binding_release() {
         let timing_probe = crate::verification_evidence::PhaseTimingBinding::test_collector();
-        let pool = std::sync::Arc::new(
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        );
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+        let pool_workers = 2;
+        let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+        let pool = shared.clone();
         let counts: Arc<std::sync::Mutex<Vec<(&'static str, usize)>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let counts_for_progress = Arc::clone(&counts);

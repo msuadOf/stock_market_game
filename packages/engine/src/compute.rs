@@ -1,4 +1,6 @@
-//! 计算后端抽象（ADR-0008）：CPU(rayon) / GPU(wgpu) 统一接口。
+//! 计算后端抽象（ADR-0008）：批 7 起 rayon 全面退役——本文件是**串行垫片**
+//! （公共 API 保持，池/派发语义以串行立即执行实现；并行由 `runtime/` 组线程/
+//! 交易部所有权模型接管，GameSession 接线前的过渡形态）。
 //!
 //! 设计原则：
 //! - 只抽象「并行可独立」的工作（NPC decide）。
@@ -19,8 +21,8 @@ use crate::strategy::{Intent, MarketView, SelfView, StrategyData};
 /// 会话计算资源的唯一执行上下文；宿主可共享同一个 Arc，shadow 不另建池。
 /// 不承载交易权威状态、Tokio I/O 或旧状态析构。
 pub struct ComputeContext {
-    #[cfg(not(target_arch = "wasm32"))]
-    pool: std::sync::Arc<rayon::ThreadPool>,
+    /// 配置 worker 数（串行垫片：仅作宽度记账与部署合同读数，不建线程）。
+    workers: usize,
     /// 池准入台账：占池协调者数（drives）与已派发在飞预留数（spawned）共用
     /// 一把锁，使联合不变式「drives + spawned ≤ workers」在**入口登记与
     /// 派发预留两点**都原子成立、持续不破（round3 反例 b：旧实现先读计数再
@@ -273,16 +275,6 @@ mod context_tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn compute_context_rejects_unrepresentable_budget_without_clamping() {
-        assert!(matches!(
-            ComputeContext::with_workers(usize::MAX),
-            Err(ComputeInitError::UnsupportedWorkerCount {
-                requested: usize::MAX,
-                ..
-            })
-        ));
-    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
@@ -445,45 +437,26 @@ impl ComputeContext {
         if workers == 0 {
             return Err(ComputeInitError::InvalidWorkers);
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let maximum = rayon::max_num_threads();
-            if workers > maximum {
-                return Err(ComputeInitError::UnsupportedWorkerCount {
-                    requested: workers,
-                    maximum,
-                });
-            }
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .map_err(|error| ComputeInitError::PoolBuild {
-                    workers,
-                    os_code: std::error::Error::source(&error)
-                        .and_then(|source| source.downcast_ref::<std::io::Error>())
-                        .and_then(std::io::Error::raw_os_error),
-                })?;
-            Ok(Self::from_pool(std::sync::Arc::new(pool)))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            if workers != 1 {
-                return Err(ComputeInitError::ThreadsUnavailable { workers });
-            }
-            Ok(std::sync::Arc::new(Self {
-                active_width: std::sync::atomic::AtomicUsize::new(1),
-                admission: std::sync::Mutex::new(PoolAdmission::default()),
-                capacity_changed: std::sync::Condvar::new(),
-                #[cfg(any(test, feature = "verification-harness"))]
-                observer: std::sync::RwLock::new(None),
-                #[cfg(any(test, feature = "verification-harness"))]
-                dispatch_gate: std::sync::RwLock::new(None),
-                #[cfg(any(test, feature = "verification-harness"))]
-                capacity_wait_probe: std::sync::RwLock::new(None),
-                #[cfg(test)]
-                t1_probes: T1Probes::default(),
-            }))
-        }
+        Ok(std::sync::Arc::new(Self {
+            workers,
+            active_width: std::sync::atomic::AtomicUsize::new(workers),
+            admission: std::sync::Mutex::new(PoolAdmission::default()),
+            capacity_changed: std::sync::Condvar::new(),
+            #[cfg(any(test, feature = "verification-harness"))]
+            observer: std::sync::RwLock::new(None),
+            #[cfg(any(test, feature = "verification-harness"))]
+            dispatch_gate: std::sync::RwLock::new(None),
+            #[cfg(any(test, feature = "verification-harness"))]
+            capacity_wait_probe: std::sync::RwLock::new(None),
+            #[cfg(test)]
+            t1_probes: T1Probes::default(),
+        }))
+    }
+
+    /// 池等价构造（串行垫片）：按 worker 数直接构造（原 `from_pool` 的
+    /// 测试迁移面——rayon 池已退役）。
+    pub fn from_workers(workers: usize) -> std::sync::Arc<Self> {
+        Self::with_workers(workers).expect("from_workers：workers 必须为正")
     }
 
     /// 默认资源来自 OS 及进程亲和限制，不读取 caller 的 Rayon registry。
@@ -507,24 +480,7 @@ impl ComputeContext {
         DEFAULT.get_or_init(Self::available).clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_pool(pool: std::sync::Arc<rayon::ThreadPool>) -> std::sync::Arc<Self> {
-        let workers = pool.current_num_threads();
-        std::sync::Arc::new(Self {
-            pool,
-            active_width: std::sync::atomic::AtomicUsize::new(workers),
-            admission: std::sync::Mutex::new(PoolAdmission::default()),
-            capacity_changed: std::sync::Condvar::new(),
-            #[cfg(test)]
-            t1_probes: T1Probes::default(),
-            #[cfg(any(test, feature = "verification-harness"))]
-            observer: std::sync::RwLock::new(None),
-            #[cfg(any(test, feature = "verification-harness"))]
-            dispatch_gate: std::sync::RwLock::new(None),
-            #[cfg(any(test, feature = "verification-harness"))]
-            capacity_wait_probe: std::sync::RwLock::new(None),
-        })
-    }
+
 
     /// 尝试登记一个正在占用本池 worker 槽的协调循环；必须由已在本池内的
     /// 线程调用（`is_worker()` 为真），守卫存活期间协调者始终在该槽上。
@@ -637,56 +593,38 @@ impl ComputeContext {
         bound: impl FnOnce() -> R + Send + 'static,
         finish: impl FnOnce(R) + Send + 'static,
     ) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let timing = crate::verification_evidence::current_phase_timing_binding();
+        // 串行垫片：任务立即执行（绑定包装保持——计时/扰动继承语义不变）。
+        let timing = crate::verification_evidence::current_phase_timing_binding();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let executor = crate::session::pipeline::current_executor_binding();
+        let payload = crate::verification_evidence::with_phase_timing_binding(timing, move || {
             #[cfg(any(test, feature = "verification-harness"))]
-            let executor = crate::session::pipeline::current_executor_binding();
-            self.pool.spawn(move || {
-                let payload =
-                    crate::verification_evidence::with_phase_timing_binding(timing, move || {
-                        #[cfg(any(test, feature = "verification-harness"))]
-                        {
-                            crate::session::pipeline::with_executor_binding(executor, bound)
-                        }
-                        #[cfg(not(any(test, feature = "verification-harness")))]
-                        {
-                            bound()
-                        }
-                    });
-                finish(payload);
-            });
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            finish(bound());
-        }
+            {
+                crate::session::pipeline::with_executor_binding(executor, bound)
+            }
+            #[cfg(not(any(test, feature = "verification-harness")))]
+            {
+                bound()
+            }
+        });
+        finish(payload);
     }
 
     pub(crate) fn spawn(&self, work: impl FnOnce() + Send + 'static) {
-        // 任务边界继承调用线程的临时观察（计时/扰动）；同一捕获可被多个任务共享。
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let timing = crate::verification_evidence::current_phase_timing_binding();
+        // 串行垫片：立即执行（绑定继承语义保持）。
+        let timing = crate::verification_evidence::current_phase_timing_binding();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let executor = crate::session::pipeline::current_executor_binding();
+        crate::verification_evidence::with_phase_timing_binding(timing, move || {
             #[cfg(any(test, feature = "verification-harness"))]
-            let executor = crate::session::pipeline::current_executor_binding();
-            self.pool.spawn(move || {
-                crate::verification_evidence::with_phase_timing_binding(timing, move || {
-                    #[cfg(any(test, feature = "verification-harness"))]
-                    {
-                        crate::session::pipeline::with_executor_binding(executor, work)
-                    }
-                    #[cfg(not(any(test, feature = "verification-harness")))]
-                    {
-                        work()
-                    }
-                })
-            });
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            work();
-        }
+            {
+                crate::session::pipeline::with_executor_binding(executor, work)
+            }
+            #[cfg(not(any(test, feature = "verification-harness")))]
+            {
+                work()
+            }
+        });
     }
 
     /// 并行分支 burst：两个分支在本上下文池执行，协调逻辑留在调用线程。
@@ -695,14 +633,7 @@ impl ComputeContext {
         left: impl FnOnce() -> A + Send,
         right: impl FnOnce() -> B + Send,
     ) -> (A, B) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.install(|| rayon::join(left, right))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            (left(), right())
-        }
+        (left(), right())
     }
 
     /// scope burst：scope 体在本上下文池的一个 worker 上执行（含其 spawn）。
@@ -710,14 +641,7 @@ impl ComputeContext {
         &self,
         body: impl FnOnce(&crate::compute::Scope<'scope>) -> R + Send,
     ) -> R {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.install(|| rayon::scope(body))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            crate::compute::scope(body)
-        }
+        crate::compute::scope(body)
     }
 
     /// scope 体保留在协调调用线程；spawn 的借用任务只进入此池。
@@ -725,25 +649,11 @@ impl ComputeContext {
         &self,
         body: impl FnOnce(&crate::compute::Scope<'scope>) -> R,
     ) -> R {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.pool.in_place_scope(body)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            crate::compute::scope(body)
-        }
+        crate::compute::scope(body)
     }
 
     pub(crate) fn is_worker(&self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.pool.current_thread_index().is_some()
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            false
-        }
+        install_depth() > 0
     }
 
     /// 并行迭代 burst：整段 par 链在本上下文池执行后回到调用线程。
@@ -753,17 +663,10 @@ impl ComputeContext {
 
     /// 方向B·宽度封顶：读取实际参与宽度（恒在 [1, workers()]）。
     pub fn active_width(&self) -> usize {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let width = self
-                .active_width
-                .load(std::sync::atomic::Ordering::Relaxed);
-            width.clamp(1, self.workers())
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            1
-        }
+        let width = self
+            .active_width
+            .load(std::sync::atomic::Ordering::Relaxed);
+        width.clamp(1, self.workers())
     }
 
     /// 方向B·宽度封顶：设置实际参与宽度（钳制到 [1, workers()]；池宽=上限
@@ -771,16 +674,9 @@ impl ComputeContext {
     /// （drives+spawned ≤ workers 仍以全池为界——派发任务仍运行在全池上，
     /// 本值只收缩粒度成形的目标宽度）。
     pub fn set_active_width(&self, width: usize) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let clamped = width.clamp(1, self.workers());
-            self.active_width
-                .store(clamped, std::sync::atomic::Ordering::Relaxed);
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = width;
-        }
+        let clamped = width.clamp(1, self.workers());
+        self.active_width
+            .store(clamped, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// 方向B·宽度封顶·scatter-gather 原语：按 active_width 打包的并行 map。
@@ -972,14 +868,7 @@ impl ComputeContext {
     }
 
     pub fn workers(&self) -> usize {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.pool.current_num_threads()
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            1
-        }
+        self.workers.max(1)
     }
 
     /// 把整段计算工作放进本上下文的池执行；已在池内则原地进行。
@@ -998,32 +887,21 @@ impl ComputeContext {
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.pool.current_thread_index().is_some() {
-                work()
-            } else {
-                let timing = crate::verification_evidence::current_phase_timing_binding();
-                #[cfg(any(test, feature = "verification-harness"))]
-                let executor = crate::session::pipeline::current_executor_binding();
-                self.pool.install(|| {
-                    crate::verification_evidence::with_phase_timing_binding(timing, || {
-                        #[cfg(any(test, feature = "verification-harness"))]
-                        {
-                            crate::session::pipeline::with_executor_binding(executor, work)
-                        }
-                        #[cfg(not(any(test, feature = "verification-harness")))]
-                        {
-                            work()
-                        }
-                    })
-                })
+        // 串行垫片：直接执行（保留绑定包装；install 深度标记 is_worker）。
+        let timing = crate::verification_evidence::current_phase_timing_binding();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let executor = crate::session::pipeline::current_executor_binding();
+        let _guard = InstallDepth::enter();
+        crate::verification_evidence::with_phase_timing_binding(timing, move || {
+            #[cfg(any(test, feature = "verification-harness"))]
+            {
+                crate::session::pipeline::with_executor_binding(executor, work)
             }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            work()
-        }
+            #[cfg(not(any(test, feature = "verification-harness")))]
+            {
+                work()
+            }
+        })
     }
 
     #[cfg(any(test, feature = "verification-harness"))]
@@ -1088,13 +966,7 @@ impl ComputeContext {
             .expect("计算 observer 锁被 poison")
             .as_ref()
         {
-            #[cfg(not(target_arch = "wasm32"))]
-            let (executing_workers, owner_worker) = (
-                rayon::current_num_threads(),
-                self.pool.current_thread_index(),
-            );
-            #[cfg(target_arch = "wasm32")]
-            let (executing_workers, owner_worker) = (1, None);
+            let (executing_workers, owner_worker) = (self.workers(), None);
             observe(ComputeObservation {
                 work,
                 configured_workers: self.workers(),
@@ -1106,30 +978,18 @@ impl ComputeContext {
     }
 }
 
-/// native 复用 Rayon；无线程 WASM 明确使用相同输入/结果接口的顺序工作。
+/// 串行 join：先左后右（垫片语义；结果序确定）。
 pub(crate) fn join<A: Send, B: Send>(
     left: impl FnOnce() -> A + Send,
     right: impl FnOnce() -> B + Send,
 ) -> (A, B) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        rayon::join(left, right)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        (left(), right())
-    }
+    (left(), right())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use rayon::Scope;
-
-#[cfg(target_arch = "wasm32")]
+/// 串行 Scope：spawn 的借用任务立即执行，不建立队列或调度器。
 pub(crate) struct Scope<'scope>(std::marker::PhantomData<&'scope ()>);
 
-#[cfg(target_arch = "wasm32")]
 impl<'scope> Scope<'scope> {
-    /// 无线程能力时立即执行同一份任务，不建立队列或调度器。
     pub fn spawn<F>(&self, work: F)
     where
         F: FnOnce(&Scope<'scope>) + Send + 'scope,
@@ -1138,13 +998,36 @@ impl<'scope> Scope<'scope> {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) fn scope<'scope, R>(work: impl FnOnce(&Scope<'scope>) -> R) -> R {
     work(&Scope(std::marker::PhantomData))
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) use scope as in_place_scope;
+
+thread_local! {
+    /// install 深度（串行垫片的 is_worker 判据）。
+    static INSTALL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+fn install_depth() -> u32 {
+    INSTALL_DEPTH.with(|d| d.get())
+}
+
+/// install 深度守卫。
+struct InstallDepth;
+
+impl InstallDepth {
+    fn enter() -> Self {
+        INSTALL_DEPTH.with(|d| d.set(d.get() + 1));
+        InstallDepth
+    }
+}
+
+impl Drop for InstallDepth {
+    fn drop(&mut self) {
+        INSTALL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
 
 /// 方向A·任务粗化（宽度税治理，诊断见 .tmp/width-diagnosis/）：并行工作按
 /// worker 数对齐打包——返回 chunk 内最少元素数。目标 chunk 数 ≈
@@ -1163,18 +1046,11 @@ pub fn parallel_grain(len: usize, workers: usize) -> usize {
 }
 
 pub(crate) fn yield_work() {
-    #[cfg(not(target_arch = "wasm32"))]
-    if rayon::yield_now().is_none() {
-        std::thread::yield_now();
-    }
+    std::thread::yield_now();
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod parallel {
-    pub use rayon::prelude::*;
-}
-
-#[cfg(target_arch = "wasm32")]
+/// 串行 parallel 垫片（全平台；原 wasm 兼容层提升为唯一实现）：par_iter 等
+/// 解析为顺序迭代——消费面（pipeline 散点）零改动。
 pub(crate) mod parallel {
     /// WASM 不调用 Rayon 初始化或 spawn；只替换独立遍历的执行方式。
     pub trait IntoParallelIterator: IntoIterator + Sized {

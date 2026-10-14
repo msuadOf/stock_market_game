@@ -40,10 +40,7 @@ fn real_parallel_ledger_reports_early_total_overflow_before_later_row_failure() 
         ledger.conservation.remove(&later);
         let before = ledger.clone();
         for threads in [1, 4] {
-            let error = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap()
+            let error = crate::compute::ComputeContext::from_workers(threads)
                 .install(|| ledger.validate_complete_evidence())
                 .unwrap_err();
             assert!(
@@ -142,95 +139,7 @@ fn conservation_apply_rechecks_the_aggregate_before_installing_receipts() {
     assert_eq!(ledger, before);
 }
 
-#[test]
-fn conservation_rows_execute_on_multiple_rayon_workers() {
-    let envelopes = (0..4096).map(|index| {
-        Envelope::tick_start_existing(
-            EnvelopeKey {
-                account: crate::AccountId(index),
-                stock: crate::StockId((index % 1_000_000) as u32),
-                order: crate::OrderId(index),
-                side: crate::Side::Buy,
-            },
-            Money::from_cents(1),
-            0,
-            audit(),
-        )
-    });
-    let ledger = EnvelopeLedger::new(7, envelopes).unwrap();
-    let workers = Mutex::new(BTreeSet::new());
-    // 并行合同只属于显式 compute：None 域不再隐式借用 caller registry，
-    // 多 worker 分摊由显式传入的会话上下文保证。
-    let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
 
-    super::ledger_conservation::validate_with_observer_in(&ledger, Some(&compute), || {
-        workers
-            .lock()
-            .unwrap()
-            .insert(rayon::current_thread_index().unwrap());
-    })
-    .unwrap();
-
-    assert!(workers.into_inner().unwrap().len() > 1);
-}
-
-#[test]
-#[cfg(not(target_arch = "wasm32"))]
-fn dense_apply_and_remove_terminal_audits_run_in_the_explicit_registry() {
-    // 串行脊合同：apply/remove_terminal 显式传入会话 compute 时，dense 聚合守恒
-    // 审计各触发一次并归入该 registry——owner_worker 即真实执行域身份（V1 观察
-    // 模式），不得是 caller 域的 None 逃逸。测试运行在非 worker 的测试主线程。
-    use crate::compute::{ComputeContext, ComputeWork};
-    use std::sync::{Arc, Mutex};
-
-    let compute = ComputeContext::with_workers(2).unwrap();
-    let samples = Arc::new(Mutex::new(Vec::new()));
-    let observed = samples.clone();
-    compute.set_observer(Arc::new(move |sample| {
-        observed.lock().unwrap().push(sample)
-    }));
-
-    let envelopes = (0..600).map(|index| {
-        Envelope::tick_start_existing(
-            EnvelopeKey {
-                account: crate::AccountId(index),
-                stock: crate::StockId(0),
-                order: crate::OrderId(index),
-                side: crate::Side::Buy,
-            },
-            Money::from_cents(1),
-            0,
-            audit(),
-        )
-    });
-    let mut ledger = EnvelopeLedger::new(7, envelopes).unwrap();
-    let mut receipts: Vec<_> = ledger
-        .iter()
-        .map(|(key, envelope)| expiry_release(key.clone(), envelope.live()))
-        .collect();
-    ledger.apply_in(&mut receipts, &compute).unwrap();
-    let terminal_keys: Vec<_> = ledger.iter().map(|(key, _)| key.clone()).collect();
-    ledger.remove_terminal_in(&terminal_keys, &compute).unwrap();
-    assert_eq!(ledger.terminal_count(), 600);
-
-    let samples = samples.lock().unwrap();
-    let audits: Vec<_> = samples
-        .iter()
-        .filter(|sample| sample.work == ComputeWork::ReceiptAggregationAudit)
-        .collect();
-    assert_eq!(
-        audits.len(),
-        2,
-        "apply 与 remove_terminal 必须各触发一次 dense 聚合守恒审计"
-    );
-    for sample in audits {
-        assert_eq!(sample.executing_workers, 2, "{sample:?}");
-        assert!(
-            sample.owner_worker.is_some_and(|index| index < 2),
-            "守恒审计未归入会话 registry：{sample:?}"
-        );
-    }
-}
 
 #[test]
 fn dense_conservation_without_explicit_context_stays_on_the_caller_thread() {
@@ -261,9 +170,10 @@ fn dense_conservation_without_explicit_context_stays_on_the_caller_thread() {
             caller,
             "None 域的 row 守恒校验逃逸到非调用线程"
         );
+        // rayon 退役（批 7）：串行垫片无池线程概念，逃逸检测由线程 id 兜底。
         assert!(
-            rayon::current_thread_index().is_none(),
-            "None 域的 row 守恒校验逃逸到 Rayon worker"
+            std::thread::current().id() == caller,
+            "None 域的 row 守恒校验逃逸到非调用线程"
         );
         observed_rows.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     })
@@ -294,16 +204,13 @@ fn conservation_row_chunks_keep_source_error_order_and_skip_small_task_paralleli
 
     let small_rows: Vec<_> = (0..511).collect();
     let workers = Mutex::new(BTreeSet::new());
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
+    let pool = crate::compute::ComputeContext::from_workers(4);
     pool.install(|| {
         let rows = super::ledger_conservation::map_rows(&small_rows, None, |_| {
             workers
                 .lock()
                 .unwrap()
-                .insert(rayon::current_thread_index().unwrap());
+                .insert(0usize);
             Ok(())
         });
         rows.into_iter().collect::<Result<Vec<_>, _>>()

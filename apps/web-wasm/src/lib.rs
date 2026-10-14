@@ -19,10 +19,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 
-// Export the Rayon bootstrap itself; the Web Worker awaits its Promise before
-// constructing a session, so initialization errors cannot be silently lost.
-#[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen_rayon::init_thread_pool;
 
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
 /// 前端 host 适配器负责把 Map 规整为普通对象（Object.fromEntries）供 React/RTK 消费。

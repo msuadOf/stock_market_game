@@ -197,10 +197,9 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
             valid
         });
         drop(runtime);
-        // 仅此 fresh child 的最后一步允许初始化 global，随后立即退出，不影响任何其他 case。
-        let global_unused = rayon::ThreadPoolBuilder::new().num_threads(3).build_global().is_ok();
-        eprintln!("single_pool_actor workers={workers} actual_leaf_owner_valid={valid} global_was_unused={global_unused}");
-        std::process::exit(if valid && global_unused { 0 } else { 1 });
+        // rayon 退役（批 7）：global 池初始化断言随机制退役。
+        eprintln!("single_pool_actor workers={workers} actual_leaf_owner_valid={valid}");
+        std::process::exit(if valid { 0 } else { 1 });
     }
     let mut failures = Vec::new();
     for workers in [1, 2] {

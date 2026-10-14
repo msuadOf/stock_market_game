@@ -11,7 +11,7 @@ trait BaselineRegistryAccess {
 }
 impl BaselineRegistryAccess for SessionManager {
     fn compute_workers(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        Ok(rayon::current_num_threads())
+        Ok(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
     }
 }
 
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         handles.shutdown().await?;
         println!("{}", serde_json::json!({
             "path": "production_server_actor_fastest", "ticks": committed,
-            "rayon_threads": actual_workers, "requested_rayon_threads": threads, "tokio_threads": 2,
+            "compute_workers": actual_workers, "tokio_threads": 2,
             "wall_s": wall_s, "speed_x": committed as f64 / wall_s,
             "initialization_s": initialization_s, "events": events,
             "batches": batches, "civil_updates": civil_updates, "metrics": metrics,

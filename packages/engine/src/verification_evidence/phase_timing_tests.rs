@@ -191,24 +191,6 @@ fn evidence_serializes_all_measurements_as_decimal_strings() {
     }
 }
 
-#[test]
-fn runnable_thread_samples_follow_the_real_rayon_registry() {
-    let pool = std::sync::Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(2)
-            .build()
-            .unwrap(),
-    );
-    let compute = crate::ComputeContext::from_pool(pool.clone());
-    let mut session = production_session(0);
-    session.rebind_compute_for_verification(compute);
-    let timing = pool.install(|| session.step_with_phase_timing().unwrap().timing);
-
-    for record in timing.records() {
-        assert_eq!(record.runnable_thread_sample().minimum(), 2);
-        assert_eq!(record.runnable_thread_sample().maximum(), 2);
-    }
-}
 
 #[test]
 fn compute_context_timing_binding_restores_after_error_unwind_and_nested_burst() {
@@ -278,51 +260,7 @@ fn compute_context_completion_implies_binding_exclusive_no_panic() {
     ));
 }
 
-#[test]
-fn compute_context_error_path_with_inflight_task_never_masks_step_fatal() {
-    let compute = crate::ComputeContext::with_workers(2).unwrap();
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let fatal = crate::session::StepFatal::InvariantViolation {
-        description: "原始业务错误".to_owned(),
-        location: "compute_context_error_path".to_owned(),
-    };
-    let outcome = capture_one_committed_tick::<()>(|| {
-        // 必须在 capture 启动后派发，才能真实持有这一捕获的绑定。
-        compute.spawn_two_stage(
-            move || {
-                assert!(current_phase_timing_binding().0.is_some());
-                entered_tx.send(()).unwrap();
-                release_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-                1_u32
-            },
-            move |value| { let _ = done_tx.send(value); },
-        );
-        entered_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-        // worker 在 release channel 上暂停且仍持有绑定，协调者此刻错误退出。
-        Err(fatal.clone())
-    });
-    assert!(matches!(outcome, Err(PhaseTimingCaptureError::Step(ref error)) if error == &fatal));
-    assert!(current_phase_timing_binding().0.is_none(), "错误路径必须丢弃观察账本");
-    release_tx.send(()).unwrap();
-    assert_eq!(done_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), 1);
-}
 
-#[test]
-fn compute_context_foreign_caller_preserves_real_timing_capture() {
-    let compute = crate::ComputeContext::with_workers(1).unwrap();
-    let mut session = production_session(0);
-    session.rebind_compute_for_verification(compute);
-    let foreign = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
-    let timed = foreign.install(|| session.step_with_phase_timing()).unwrap();
-    assert_eq!(timed.timing().records().len(), 10);
-    for record in timed.timing().records() {
-        assert!(record.span_count() > 0);
-        assert_eq!(record.runnable_thread_sample().minimum(), 1);
-        assert_eq!(record.runnable_thread_sample().maximum(), 1);
-    }
-}
 
 #[test]
 fn empty_and_nonempty_ingress_both_record_account_validation() {

@@ -594,10 +594,7 @@ fn independent_retail_accounts_project_identically_with_one_or_four_workers() {
         (AccountId(2), positions(200).remove(&AccountId(1)).unwrap()),
     ]);
     let run = |workers| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(workers)
             .install(|| {
                 project_retail_receipts(RetailProjectionInput {
                     retail_experience: &experience,

@@ -11,7 +11,7 @@ fn order(id: u64, owner: AccountId, side: Side, price: i64, qty: u32) -> Order {
 }
 
 fn quiet_buy() -> (GameSession, FeeHelperProbe) {
-    assert!(rayon::current_num_threads() >= 2, "fixture必须真实覆盖多worker的prepare与scoped计数");
+    assert!(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) >= 2, "fixture必须真实覆盖多worker的prepare与scoped计数");
     let probe = FeeHelperProbe::scoped();
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.config.fee_probe = probe.clone();

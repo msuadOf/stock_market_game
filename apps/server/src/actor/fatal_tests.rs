@@ -31,11 +31,8 @@ fn compute_context_production_actor_does_not_follow_callers_pool() {
             deferred_drop_reported: false,
         };
         actor.run_protocol_batch(1);
-        let foreign = rayon::ThreadPoolBuilder::new()
-            .num_threads(3)
-            .build()
-            .unwrap();
-        foreign.install(|| actor.run_protocol_batch(1));
+        // rayon 退役（批 7）：foreign 池隔离路径的串行等价=直接调用。
+        actor.run_protocol_batch(1);
         assert!(actor.fatal_failure.is_none());
         assert_eq!(actor.game.tick(), 2);
         assert!(Arc::ptr_eq(actor.game.game().compute_context(), &compute));
@@ -67,8 +64,7 @@ fn compute_context_production_actor_does_not_follow_callers_pool() {
 #[test]
 fn compute_context_manager_reports_real_owned_registry_not_caller() {
     let manager = SessionManager::with_compute(1, engine::ComputeContext::with_workers(2).unwrap());
-    let foreign = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
-    assert_eq!(foreign.install(|| manager.compute_workers()).unwrap(), 2);
+    assert_eq!(manager.compute_workers().unwrap(), 2);
 }
 
 #[test]

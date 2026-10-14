@@ -91,10 +91,7 @@ fn continuous_initial_round_batches_independent_accounts_and_stocks() {
 #[test]
 fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_rejection() {
     let run = |threads| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| {
                 let (mut session, _, initial) = fixture();
                 session.state.setup.auction_ticks = 900;

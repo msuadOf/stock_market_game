@@ -38,10 +38,7 @@ fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
         ),
     ];
     let run = |threads| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| {
                 ReceiptSettlementPlan::from_receipts(&receipts)
                     .unwrap()

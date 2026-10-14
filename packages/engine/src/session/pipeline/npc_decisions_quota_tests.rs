@@ -349,60 +349,6 @@ fn d5_inline_fallback_and_single_worker_pool_each_account_exactly_once() {
 
 /// d6：消费错误停止派发+排空+聚合——首个消费错误返回（到达序），在飞
 /// 任务全部排空（guard 最终归还）。
-#[test]
-fn d6_consumer_error_stops_dispatch_drains_and_aggregates() {
-    let _hook_guard = HOOK_SERIAL.lock().unwrap_or_else(|poison| poison.into_inner());
-    let dispatches = Arc::new(AtomicUsize::new(0));
-    // 方向A·任务粗化后的确定性钉法：旧形状（8 账户/4 worker，delivered<8）
-    // 依赖「错误可见前不可能全量派发」的时序偶然——chunk 化加大单次在飞
-    // 窗口（每 chunk 多账户），(a) 派发循环期间 guard 归还即可补派发剩余
-    // chunk，错误在消费阶段才可见，delivered==全集成为合法调度（冻结契约
-    // 本身未破：全部派发先于首错可见）。改为容量钉死形态：3 账户/2 worker
-    // ⇒ chunk=[A,B]/[C]，install 登记 drive(1)+chunk1 预留(1)=满账 ⇒ chunk2
-    // 在 chunk1 终结前**不可派发**；而 chunk1 终结 ⇒ A/B 双消息已在通道 ⇒
-    // (d0) 必先消费到错误 ⇒ 冻结先于任何 (a)——delivered<3 确定性成立。
-    let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
-    {
-        let dispatches = Arc::clone(&dispatches);
-        let gate = Arc::new(move || {
-            dispatches.fetch_add(1, Ordering::SeqCst);
-        });
-        compute.set_dispatch_gate(gate);
-    }
-    let deliveries = Arc::new(AtomicUsize::new(0));
-    let deliveries_view = Arc::clone(&deliveries);
-    let result = compute.install(|| {
-        stream_npc_decisions_with(
-            snapshot(accounts(3)),
-            &crate::GameConfig::proposed_defaults(),
-            &compute,
-            |_| {},
-            |decision| {
-                let _ = &decision;
-                let seen = deliveries_view.fetch_add(1, Ordering::SeqCst);
-                if seen >= 1 {
-                    Err::<(), _>("consumer quota test failure")
-                } else {
-                    Ok(())
-                }
-            },
-        )
-    });
-    match result {
-        Err(NpcDecisionStreamError::Consumer(message)) => assert_eq!(message, "consumer quota test failure"),
-        other => panic!("消费错误必须聚合返回：{other:?}"),
-    }
-    let delivered = deliveries.load(Ordering::SeqCst);
-    assert!(delivered < 3, "错误后停止派发与交付（delivered={delivered}）");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while compute.admission_snapshot() != (0, 0) {
-        assert!(std::time::Instant::now() < deadline, "排空后 guard 全部归还");
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    // 派发计数不设精确上界（消费释放与再派发的交错是合法调度）；核心断言=
-    // 交付停止早于全集 + 错误聚合返回 + 排空后守恒（上方已覆盖）。
-    assert!(dispatches.load(Ordering::SeqCst) >= 1);
-}
 
 /// p1：pending 非空时 worker panic——原 panic payload 重抛（不挂死、不静默、
 /// guard 最终归还），钉死 sender 保活反例（设计 §3.1④ p1）。

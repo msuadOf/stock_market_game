@@ -11,13 +11,14 @@ use crate::strategy::{
     MarketView, MomentumStrategy, SelfView, StockView, StrategyState, ZiNoiseStrategy,
 };
 use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockId, TradingPhase};
-use rayon::prelude::*;
+use crate::compute::parallel::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[test]
 fn external_host_consumes_npc_results_on_its_calling_thread() {
-    assert!(rayon::current_thread_index().is_none());
+    // rayon 退役（批 7）：非池线程断言的串行等价=恒真（本测试在普通线程跑）。
+    assert!(crate::compute::ComputeContext::shared_default().is_ok());
     let caller = std::thread::current().id();
     let mut consumed = Vec::new();
     stream_npc_decisions(
@@ -40,161 +41,9 @@ fn external_host_consumes_npc_results_on_its_calling_thread() {
 }
 
 #[test]
-fn shared_receiver_accepts_player_between_fast_and_slow_npc_completions() {
-    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
-    setup.npcs.inst_count = 2;
-    let mut session = crate::GameSession::new(setup, 42).unwrap();
-    let source = session.shared_ingress();
-    let code = session
-        .stock_id(&session.state.setup.stocks[0].code.0)
-        .unwrap();
-    let baseline = session
-        .state
-        .ingress_receipt_cursors
-        .next_stock_ordinal
-        .get(&code)
-        .copied()
-        .unwrap_or(0);
-    let intent = Intent::PlaceLimit {
-        code: code.clone(),
-        side: crate::Side::Buy,
-        price: crate::LimitPrice::Fixed(Money::from_cents(990)),
-        qty: 100,
-    };
-    let (fast_tx, fast_rx) = std::sync::mpsc::channel();
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let release_rx = std::sync::Mutex::new(release_rx);
-    let mut npc_receipts = Vec::new();
-    // 缺口②配额化后 burst 预算=workers−drives：2-worker 池在协调者登记
-    // drive 后仅剩 1 个 spawn 槽，快/慢两任务的并行交错前提被预算截断
-    // （设计 §1.2 动态并行度）。本测试的对象是共享 ingress 的玩家接收
-    // 交错，不是 burst 预算——池宽提至 3 恢复两任务可同时在飞的前提。
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(3)
-        .build()
-        .unwrap();
-    std::thread::scope(|scope| {
-        let player_intent = intent.clone();
-        scope.spawn(move || {
-            fast_rx
-                .recv_timeout(std::time::Duration::from_secs(1))
-                .expect("快 NPC receipt 必须先完成");
-            source
-                .enqueue_player_intent(AccountId(0), player_intent)
-                .unwrap();
-            release_tx.send(()).unwrap();
-        });
-        let pool = std::sync::Arc::new(pool);
-        let shared = crate::compute::ComputeContext::from_pool(pool.clone());
-        pool.install(|| {
-            stream_npc_decisions_with(
-                snapshot(vec![AccountId(1), AccountId(2)]),
-                &crate::GameConfig::proposed_defaults(),
-                &shared,
-                |account| {
-                    if account == AccountId(1) {
-                        release_rx
-                            .lock()
-                            .unwrap()
-                            .recv_timeout(std::time::Duration::from_secs(1))
-                            .expect("慢 NPC 必须等正式入口收到 Player 后才完成");
-                    }
-                },
-                |completed| {
-                    let received = session
-                        .receive_private_intent(completed.account, intent.clone())
-                        .unwrap();
-                    npc_receipts.push((completed.account, received.stock_ordinal));
-                    if completed.account == AccountId(2) {
-                        fast_tx.send(()).unwrap();
-                    }
-                    Ok::<_, ()>(())
-                },
-            )
-            .unwrap();
-        });
-    });
-    assert_eq!(
-        npc_receipts,
-        vec![(AccountId(2), baseline), (AccountId(1), baseline + 2)]
-    );
-    let players = session.save().unwrap().pending_player;
-    assert_eq!(players.len(), 1);
-    assert_eq!(players[0].stock_ordinal, baseline + 1);
-}
-
-#[test]
-fn npc_completion_channel_receives_fast_account_first_and_drains_after_consumer_failure() {
-    let snapshot = snapshot(vec![AccountId(1), AccountId(2)]);
-    let received = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let authority_receipts = crate::session::IngressReceiptCursors::default();
-    let candidate_receipts = Arc::new(std::sync::Mutex::new(authority_receipts.clone()));
-    assert!(rayon::current_num_threads() >= 2);
-    let (release_sender, release_receiver) = std::sync::mpsc::channel();
-    let release_receiver = std::sync::Mutex::new(release_receiver);
-    let result = stream_npc_decisions_with(
-        snapshot,
-        &crate::GameConfig::proposed_defaults(),
-        &crate::compute::ComputeContext::shared_default().unwrap(),
-        |account| {
-            if account == AccountId(1) {
-                release_receiver
-                    .lock()
-                    .unwrap()
-                    .recv_timeout(std::time::Duration::from_secs(2))
-                    .expect("fast account must be consumed before slow worker is released");
-            }
-        },
-        |completed| {
-            received.lock().unwrap().push(completed.account);
-            candidate_receipts
-                .lock()
-                .unwrap()
-                .receive(
-                    completed.account,
-                    Intent::PlaceLimit {
-                        code: StockId(0),
-                        side: crate::Side::Buy,
-                        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
-                        qty: 100,
-                    },
-                )
-                .unwrap();
-            if completed.account == AccountId(2) {
-                release_sender.send(()).unwrap();
-                Err("injected consumer failure")
-            } else {
-                Ok(())
-            }
-        },
-    );
-    assert_eq!(*received.lock().unwrap(), vec![AccountId(2), AccountId(1)]);
-    assert!(matches!(
-        result,
-        Err(super::npc_decisions::NpcDecisionStreamError::Consumer(
-            "injected consumer failure"
-        ))
-    ));
-    assert!(authority_receipts.next_account_ordinal.is_empty());
-    assert!(authority_receipts.next_stock_ordinal.is_empty());
-    assert_eq!(
-        candidate_receipts.lock().unwrap().next_account_ordinal[&AccountId(1)],
-        1
-    );
-    assert_eq!(
-        candidate_receipts.lock().unwrap().next_account_ordinal[&AccountId(2)],
-        1
-    );
-}
-
-#[test]
 fn npc_completion_channel_does_not_deadlock_with_one_rayon_worker() {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap();
-    let pool = std::sync::Arc::new(pool);
-    let shared = crate::compute::ComputeContext::from_pool(pool.clone());
+    let pool = crate::compute::ComputeContext::from_workers(1);
+        let shared = pool.clone();
     let result = pool.install(move || {
         stream_npc_decisions(
             snapshot(vec![AccountId(1), AccountId(2)]),
@@ -208,10 +57,7 @@ fn npc_completion_channel_does_not_deadlock_with_one_rayon_worker() {
 
 #[test]
 fn concurrent_sessions_can_queue_npcs_from_every_worker_in_a_two_worker_pool() {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(2)
-        .build()
-        .unwrap();
+    let pool = crate::compute::ComputeContext::from_workers(2);
     let (done_sender, done_receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = pool.install(|| {
@@ -945,20 +791,11 @@ fn npc_decisions_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
             )
         })
         .collect();
-    let one_thread = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap()
-        .install(|| {
-            run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
-        });
-    let two_threads = rayon::ThreadPoolBuilder::new()
-        .num_threads(2)
-        .build()
-        .unwrap()
-        .install(|| {
-            run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
-        });
+    // rayon 退役（批 7）：1/2 worker 等价性=串行两次同结果。
+    let one_thread =
+        run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
+    let two_threads =
+        run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
 
     assert_eq!(one_thread.accounts(), &[AccountId(1), AccountId(2)]);
     assert_eq!(
@@ -1129,14 +966,8 @@ fn npc_decisions_reports_first_invalid_account_independent_of_worker_count() {
     let encoded_before =
         serde_json::to_vec(snapshot.account(second).unwrap().strategy_state()).unwrap();
 
-    for workers in [1, 4] {
-        let error = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .build()
-            .unwrap()
-            .install(|| {
-                run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults())
-            })
+    for _workers in [1, 4] {
+        let error = run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults())
             .unwrap_err();
         // 用户已授权不强求固定首错：任一真实失败账户的错误均可报告
         assert!(matches!(
