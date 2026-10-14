@@ -426,6 +426,25 @@ pub struct DeskTradeFact {
     pub taker_side: Side,
 }
 
+/// 集合竞价事实（批 8f：AuctionTick/AuctionCompleted 事件输入）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeskAuctionFact {
+    /// 股索引。
+    pub stock: StockIdx,
+    /// tick。
+    pub tick: u64,
+    /// 交易阶段（开盘 CallAuction/收盘 ClosingAuction）。
+    pub phase: crate::TradingPhase,
+    /// 指示价（竞价窗内虚拟撮合预演；无交叉 None）。
+    pub indicative_price: Option<i64>,
+    /// 配对量。
+    pub matched_volume: u64,
+    /// 是否为完成撮合（true=AuctionCompleted；false=竞价窗 AuctionTick）。
+    pub completed: bool,
+    /// 竞价失衡（买超减卖超，AuctionCompleted 携带）。
+    pub imbalance: u64,
+}
+
 /// 挂单生命周期事实（批 8e 事件契约：OrderAccepted/OrderCanceled 输入）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeskLifecycleFact {
@@ -495,6 +514,8 @@ pub struct DeskReport {
     pub lifecycle: Vec<DeskLifecycleFact>,
     /// 本轮回执明细（IntentRejected 映射输入）。
     pub receipts_out_list: Vec<DeskReceipt>,
+    /// 本轮竞价事实（拍卖窗 indicative/完成撮合）。
+    pub auction: Vec<DeskAuctionFact>,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

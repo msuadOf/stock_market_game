@@ -12,7 +12,9 @@
 
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
-use super::event_bridge::{collect_lifecycle, project_lifecycle_events, project_trade_events};
+use super::event_bridge::{
+    collect_lifecycle, project_auction_events, project_lifecycle_events, project_trade_events,
+};
 use super::world::World;
 use crate::money::Money;
 use crate::strategy::StrategyData;
@@ -98,9 +100,14 @@ impl RuntimeDriver {
             .as_ref()
             .map(|r| r.desk_receipts.clone())
             .unwrap_or_default();
+        let auction = rec
+            .as_ref()
+            .map(|r| r.desk_auction.clone())
+            .unwrap_or_default();
         let mut events = project_trade_events(&trades, &mut self.next_seq);
         let input = collect_lifecycle(&lifecycle, &receipts);
         events.extend(project_lifecycle_events(&input, &mut self.next_seq));
+        events.extend(project_auction_events(&auction, &mut self.next_seq));
         Ok(events)
     }
 

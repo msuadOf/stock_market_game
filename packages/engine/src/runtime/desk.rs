@@ -275,6 +275,8 @@ pub struct DeskState {
     trade_facts: Vec<super::protocol::DeskTradeFact>,
     /// 本 tick 生命周期事实缓冲（受理/撤单/到期）。
     lifecycle_facts: Vec<super::protocol::DeskLifecycleFact>,
+    /// 本 tick 竞价事实缓冲。
+    auction_facts: Vec<super::protocol::DeskAuctionFact>,
     /// 最近一次 Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 committed_hash；
     /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据）。
     rollback_hash: Option<u64>,
@@ -319,6 +321,7 @@ impl DeskState {
             opening_cleared: false,
             trade_facts: Vec::new(),
             lifecycle_facts: Vec::new(),
+            auction_facts: Vec::new(),
             rollback_hash: None,
         }
     }
@@ -458,6 +461,7 @@ impl DeskState {
         }
         self.trade_facts.clear();
         self.lifecycle_facts.clear();
+        self.auction_facts.clear();
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
         self.opening_cleared = false;
@@ -1306,6 +1310,15 @@ impl DeskState {
         };
         let price = sel.price.cents();
         self.execute_clearing_at(price, sel.volume)?;
+        self.auction_facts.push(super::protocol::DeskAuctionFact {
+            stock: self.setup.stock,
+            tick: self.cur_tick,
+            phase: crate::TradingPhase::CallAuction,
+            indicative_price: Some(price),
+            matched_volume: sel.volume,
+            completed: true,
+            imbalance: sel.imbalance,
+        });
         Ok(Some((price, sel.volume)))
     }
 
@@ -1411,6 +1424,45 @@ impl DeskState {
         Ok(())
     }
 
+    /// 竞价窗收束：产出指示价预演事实（AuctionTick——每轮虚拟撮合）。
+    fn note_auction_indicative(&mut self, tick: u64) {
+        let phase = self.setup.phase_at(tick);
+        if phase != DeskPhase::CallAuction && phase != DeskPhase::ClosingAuction {
+            return;
+        }
+        let orders: Vec<ClearingOrder> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .flat_map(|l| l.iter())
+            .map(|o| ClearingOrder {
+                side: o.side,
+                limit: Money::from_cents(o.price),
+                qty: o.qty as u64,
+            })
+            .collect();
+        let Ok(sel) = select_clearing(
+            &orders,
+            Money::from_cents(self.market.last_close),
+            self.setup.exchange,
+            Money::from_cents(1),
+        ) else {
+            return;
+        };
+        self.auction_facts.push(super::protocol::DeskAuctionFact {
+            stock: self.setup.stock,
+            tick,
+            phase: match phase {
+                DeskPhase::CallAuction => crate::TradingPhase::CallAuction,
+                _ => crate::TradingPhase::ClosingAuction,
+            },
+            indicative_price: sel.map(|s| s.price.cents()),
+            matched_volume: sel.map(|s| s.volume).unwrap_or(0),
+            completed: false,
+            imbalance: sel.map(|s| s.imbalance).unwrap_or(0),
+        });
+    }
+
     /// 本收束点公共态（协调者安装进下一 tick 广播）。
     fn build_public(&self, tick: u64) -> super::protocol::StockPublic {
         let (down, up_buy) = self
@@ -1469,6 +1521,8 @@ impl DeskState {
             volume: 0,
         });
         candle.close = last;
+        // 竞价窗：指示价预演上行（每轮 AuctionTick 事实）。
+        self.note_auction_indicative(tick);
         // tick 收盘价历史（容量裁剪）。
         self.market.recent_prices.push_back(last);
         if self.market.recent_prices.len() > self.setup.history_len {
@@ -1821,6 +1875,7 @@ fn process_msg(
                         trades: std::mem::take(&mut state.trade_facts),
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
                         receipts_out_list: receipts_detail,
+                        auction: std::mem::take(&mut state.auction_facts),
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {
                         RuntimeError::SendFailed {

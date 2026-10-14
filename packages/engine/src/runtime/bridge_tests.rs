@@ -339,10 +339,14 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
         for e in &events {
             let seq = match e {
                 crate::Event::Trade { seq, .. } => *seq,
-                // 批 8e：事件面扩全（受理/撤单/拒收），纵切允许全部类型。
+                // 批 8e/8f：事件面扩全（受理/撤单/拒收/竞价），纵切允许。
                 crate::Event::OrderAccepted { seq, .. }
                 | crate::Event::OrderCanceled { seq, .. }
-                | crate::Event::IntentRejected { seq, .. } => *seq,
+                | crate::Event::IntentRejected { seq, .. }
+                | crate::Event::AuctionTick { seq, .. }
+                | crate::Event::AuctionCompleted { seq, .. } => *seq,
+                // 纵切当前不产这些类型（PriceTick/日界/公司域留后续批）；
+                // 出现即断言失败（显式，不静默跳过）。
                 other => panic!("纵切事件面外的事件：{other:?}"),
             };
             if let Some(prev) = last_seq {

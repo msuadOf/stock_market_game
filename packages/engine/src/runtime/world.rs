@@ -141,6 +141,8 @@ pub struct TickRecord {
     pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// 本轮回执（拒收/不可撤；IntentRejected 映射输入）。
     pub desk_receipts: Vec<DeskReceipt>,
+    /// 本轮竞价事实（AuctionTick/Completed 输入）。
+    pub desk_auction: Vec<super::protocol::DeskAuctionFact>,
 }
 
 /// 关停报告（期末对账面）。
@@ -582,6 +584,7 @@ impl World {
             desk_trades: evidence.desk_trades,
             desk_lifecycle: evidence.desk_lifecycle,
             desk_receipts: evidence.desk_receipts,
+            desk_auction: evidence.desk_auction,
         });
     }
 

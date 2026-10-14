@@ -221,3 +221,40 @@ pub fn project_lifecycle_events(input: &LifecycleEvents, next_seq: &mut u64) -> 
     }
     events
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 批 8f：竞价事件映射（AuctionTick/AuctionCompleted）
+// ═══════════════════════════════════════════════════════════════════
+
+use super::protocol::DeskAuctionFact;
+
+/// 竞价事实 → 引擎事件（竞价窗每轮 AuctionTick；完成撮合 AuctionCompleted，
+/// clearing_price 显式携带）。seq 单调分配。
+pub fn project_auction_events(facts: &[DeskAuctionFact], next_seq: &mut u64) -> Vec<Event> {
+    let mut events = Vec::with_capacity(facts.len());
+    for f in facts {
+        let seq = *next_seq;
+        *next_seq = seq.checked_add(1).expect("事件 seq 溢出");
+        if f.completed {
+            events.push(Event::AuctionCompleted {
+                seq,
+                tick: f.tick,
+                phase: f.phase,
+                code: StockId(u32::from(f.stock)),
+                clearing_price: f.indicative_price.map(Money::from_cents),
+                matched_volume: f.matched_volume,
+            });
+        } else {
+            events.push(Event::AuctionTick {
+                seq,
+                tick: f.tick,
+                phase: f.phase,
+                code: StockId(u32::from(f.stock)),
+                indicative_price: f.indicative_price.map(Money::from_cents),
+                matched_volume: f.matched_volume,
+                imbalance: f.imbalance,
+            });
+        }
+    }
+    events
+}
