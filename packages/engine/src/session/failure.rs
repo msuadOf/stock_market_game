@@ -107,10 +107,19 @@ impl GameSession {
     }
 
 
+    /// runtime 驱动器翻转面（批 8h）：行情直改入口（X1 标记）。
+    pub fn market_mut_for_runtime(
+        &mut self,
+        code: &crate::StockId,
+    ) -> Option<&mut crate::Market> {
+        self.state.markets.get_mut(code)
+    }
+
     /// runtime 驱动器翻转面（批 8h）：失败 poison（旧管线语义）。
     pub fn poison_runtime_step(&mut self, fatal: StepFatal) -> StepFatal {
         self.poison_failed_step(fatal)
     }
+
 
     pub(super) fn poison_failed_step(&mut self, fatal: StepFatal) -> StepFatal {
         self.poison = Some(fatal.clone());

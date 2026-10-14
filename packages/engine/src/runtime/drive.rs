@@ -226,3 +226,36 @@ impl RuntimeDriver {
         self.next_seq = session.current_seq();
     }
 }
+
+impl RuntimeDriver {
+    /// 翻转缺口②第三段（批 8h·部分5）：行情安装（candidate 投影等价）。
+    ///
+    /// 旧管线 `commit_from` 以整 candidate 交换安装全部权威域；runtime
+    /// 等价的第一块是**行情域**：`restore_prices`（旧管线 `Market` 的
+    /// 恢复事实写入口，校验后安装 last/last_close）——driver 每步把
+    /// 收束点公共态写入会话 `markets`。逐步补齐其余域（登记）。
+    pub fn install_market_views(&mut self, session: &mut GameSession) -> Result<(), String> {
+        let views: Vec<super::protocol::StockPublic> = self.world_public_views().to_vec();
+        for (idx, view) in views.iter().enumerate() {
+            let code = crate::StockId(idx as u32);
+            if let Some(market) = session.market_mut_for_runtime(&code) {
+                market.restore_prices(
+                    Money::from_cents(view.last_price),
+                    Money::from_cents(view.last_price.max(1)),
+                );
+            } else {
+                return Err(format!("行情安装：股 {idx} 不在会话目录"));
+            }
+        }
+        Ok(())
+    }
+
+    /// 翻转缺口②第三段：日界安装（runtime DayEnd → 会话日界）。
+    /// `day_end_with_market` = `day_end`（既有编排）+ 行情安装收尾——
+    /// 旧管线日界的行情面（昨收翻转）由 `roll_day` 已在 runtime 侧完成、
+    /// 会话侧经 `end_civil_day` 权威推进，此处补行情同步。
+    pub fn day_end_with_market(&mut self, session: &mut GameSession) -> Result<(), String> {
+        self.day_end(session)?;
+        self.install_market_views(session)
+    }
+}
