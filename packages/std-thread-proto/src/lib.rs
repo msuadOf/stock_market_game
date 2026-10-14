@@ -6,6 +6,10 @@
 //! 次级仓回执记账），跨股 intent 经 coordinator 中转路由到目标股线程，
 //! 现金/持仓 escrow 用「交易部席位」资源实体（见各文件头注释）。
 //!
+//! 所有权转移臂（orun/oworker）：NPC 分组持线程，现金/股票以资源实体
+//! 在组线程与交易部线程间**实际 move**（非 escrow），数据面直发不经
+//! coordinator（见 oworker.rs 头注释）。
+//!
 //! 设计文档：`.tmp/std-thread-proto/design.md`。
 //! 决策逻辑直接复用 engine crate 的 `strategy::decide_data` 纯函数；
 //! 撮合为本原型实现的等价负载（价格优先/同价 FIFO/涨跌停带/T+1/费用），
@@ -13,6 +17,8 @@
 
 pub mod book;
 pub mod npc;
+pub mod orun;
+pub mod oworker;
 pub mod run;
 pub mod setup;
 pub mod worker;
@@ -20,6 +26,8 @@ pub mod xrun;
 pub mod xsetup;
 pub mod xworker;
 
+pub use orun::{run_own_benchmark, OwnAuditReport, OwnRunReport, OwnStockAudit};
+pub use oworker::EntCounters;
 pub use run::{run_benchmark, AuditReport, RunMode, RunReport, StockAudit};
 pub use setup::{ProtoConfig, StockSpec};
 pub use xrun::{run_cross_benchmark, XAuditReport, XRunReport, XStockAudit};
@@ -46,17 +54,9 @@ pub enum ProtoError {
         total: u64,
     },
     #[error("股票 {code} 持仓 T+1 结构破坏：qty={qty} sellable+reserved+frozen={parts}")]
-    T1Structure {
-        code: String,
-        qty: u32,
-        parts: u32,
-    },
+    T1Structure { code: String, qty: u32, parts: u32 },
     #[error("股票 {code} 账户 {npc} 现金为负：{cash}")]
-    NegativeCash {
-        code: String,
-        npc: u32,
-        cash: i64,
-    },
+    NegativeCash { code: String, npc: u32, cash: i64 },
     #[error("整数溢出：{op} {operand}")]
     Overflow { op: &'static str, operand: String },
     #[error("非法配置：{0}")]
