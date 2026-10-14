@@ -1638,6 +1638,27 @@ impl DeskState {
         Ok(None)
     }
 
+    /// K 线投影（回写 candle_book 用）。
+    fn candle_projection(
+        &self,
+    ) -> (
+        Vec<(i64, i64, i64, i64, i64, u64)>,
+        Option<(i64, i64, i64, i64, i64, u64)>,
+    ) {
+        let hist = self
+            .market
+            .candles
+            .iter()
+            .map(|c| (0i64, c.open, c.high, c.low, c.close, c.volume))
+            .collect();
+        let active = self
+            .market
+            .candle
+            .as_ref()
+            .map(|c| (0i64, c.open, c.high, c.low, c.close, c.volume));
+        (hist, active)
+    }
+
     /// 期末上交。
     fn final_state(&self) -> DeskFinalState {
         DeskFinalState {
@@ -1741,6 +1762,24 @@ pub fn desk_main(
                 break;
             }
         };
+        if matches!(msg, DeskMsg::EchoCandles) {
+            let candles = state.candle_projection();
+            if up_tx
+                .send(UpMsg::DeskCandles {
+                    stock: state.setup.stock,
+                    history: candles.0,
+                    active: candles.1,
+                })
+                .is_err()
+            {
+                abort.store(true, Ordering::SeqCst);
+                result = Err(RuntimeError::SendFailed {
+                    detail: format!("交易部 EchoCandles 发送失败"),
+                });
+                break;
+            }
+            continue;
+        }
         match &msg {
             DeskMsg::Shutdown => break,
             _ => {}
@@ -1917,6 +1956,8 @@ fn process_msg(
         }
         // Shutdown 由主循环拦截，此处防御保留（不可达）。
         DeskMsg::Shutdown => {}
+        // EchoCandles 由主循环拦截，此处防御保留（不可达）。
+        DeskMsg::EchoCandles => {}
     }
     Ok(())
 }

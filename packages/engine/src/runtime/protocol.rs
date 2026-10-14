@@ -273,6 +273,8 @@ pub enum GroupIn {
     Shutdown,
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAccounts,
+    /// K 线投影请求（驱动器回写 candle_book；轻量）。
+    EchoCandles,
 }
 
 /// 交易部收件消息。
@@ -300,6 +302,8 @@ pub enum DeskMsg {
     Drain,
     /// 关停：上交 `DeskFinal` 后退出。
     Shutdown,
+    /// K 线投影请求（驱动器回写 candle_book）。
+    EchoCandles,
 }
 
 /// worker → 协调者的上行消息（全部 worker 共用一个 mpsc）。
@@ -333,6 +337,15 @@ pub enum UpMsg {
     GroupFinal(Box<super::group::GroupFinalState>),
     /// 交易部期末上交。
     DeskFinal(Box<super::desk::DeskFinalState>),
+    /// 交易部 K 线投影回执（EchoCandles 应答：历史 K+活动 K）。
+    DeskCandles {
+        /// 股索引。
+        stock: StockIdx,
+        /// 已完成日 K（time, O, H, L, C, volume）。
+        history: Vec<(i64, i64, i64, i64, i64, u64)>,
+        /// 活动 K。
+        active: Option<(i64, i64, i64, i64, i64, u64)>,
+    },
     /// 组账户快照回执（EchoAccounts 应答）。
     GroupEcho {
         /// 组索引。
@@ -376,6 +389,7 @@ impl std::fmt::Debug for UpMsg {
             }
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
+            UpMsg::DeskCandles { stock, .. } => write!(f, "DeskCandles(stock={stock})"),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),
             UpMsg::TaskDied { who, .. } => write!(f, "TaskDied({who}, ..)"),
         }

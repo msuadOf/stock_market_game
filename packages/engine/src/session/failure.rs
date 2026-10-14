@@ -123,6 +123,26 @@ impl GameSession {
         self.state.markets.get_mut(code)
     }
 
+    /// runtime 驱动器翻转面（批 8 终点）：历史 K 回写。
+    pub fn push_historical_candle_for_runtime(
+        &mut self,
+        code: &crate::StockId,
+        candle: crate::session::DailyCandle,
+    ) {
+        self.mark_external_mutation();
+        self.state.candle_book.push_history(code, candle);
+    }
+
+    /// runtime 驱动器翻转面（批 8 终点）：活动 K 安装。
+    pub fn set_active_candle_for_runtime(
+        &mut self,
+        code: &crate::StockId,
+        candle: crate::session::DailyCandle,
+    ) {
+        self.mark_external_mutation();
+        self.state.candle_book.install_active(code.clone(), candle);
+    }
+
     /// runtime 驱动器翻转面（批 8h）：失败 poison（旧管线语义）。
     pub fn poison_runtime_step(&mut self, fatal: StepFatal) -> StepFatal {
         self.poison_failed_step(fatal)

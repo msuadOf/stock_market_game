@@ -406,6 +406,36 @@ impl World {
             .collect()
     }
 
+    /// K 线投影收集（驱动器 candle_book 回写）。
+    pub fn take_candle_projection(
+        &mut self,
+    ) -> Vec<(
+        super::StockIdx,
+        Vec<(i64, i64, i64, i64, i64, u64)>,
+        Option<(i64, i64, i64, i64, i64, u64)>,
+    )> {
+        for tx in &self.desk_txs {
+            let _ = tx.send(DeskMsg::EchoCandles);
+        }
+        let mut out = Vec::with_capacity(self.n_stocks);
+        let mut left = self.n_stocks;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog) {
+                Ok(UpMsg::DeskCandles {
+                    stock,
+                    history,
+                    active,
+                }) => {
+                    out.push((stock, history, active));
+                    left -= 1;
+                }
+                _ => break,
+            }
+        }
+        out.sort_by_key(|(s, _, _)| *s);
+        out
+    }
+
     /// 全局日历读取（驱动器对账面）。
     pub fn global_day(&self) -> u32 {
         self.global.day

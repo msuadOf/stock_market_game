@@ -259,3 +259,62 @@ impl RuntimeDriver {
         self.install_market_views(session)
     }
 }
+
+impl RuntimeDriver {
+    /// 翻转附带域补建（批 8 终点批）：candle/K 历史回写（history_reads
+    /// 的读侧数据源）。
+    ///
+    /// 旧管线：`candle_book`（会话权威）由 finalizer 每 tick 安装活动 K
+    /// 与历史；history_reads 在查询时记录（beliefs 经 BeliefBook 参与者
+    /// 集合由策略侧维护）。runtime 等价：desk 端 `market.candles`（日界
+    /// 入档）与活动 K 由收束点公共态承载——本方法把它们回写会话
+    /// `candle_book`（X1 标记），读侧查询/记录路径不变（旧管线单一代码
+    /// 路径 ⇒ 等价传递）。belief_participants：策略数据化（StrategyData）
+    /// 已承载参与者身份，BeliefBook 的会话侧镜像随账户面批（登记）。
+    pub fn install_candles(&mut self, session: &mut GameSession) -> Result<(), String> {
+        let finals = self.world_desk_finals_for_candles();
+        for (stock_idx, candles, active) in finals {
+            let code = crate::StockId(u32::from(stock_idx));
+            for candle in candles {
+                session.push_historical_candle_for_runtime(
+                    &code,
+                    crate::session::DailyCandle {
+                        time: candle.0,
+                        open: Money::from_cents(candle.1),
+                        high: Money::from_cents(candle.2),
+                        low: Money::from_cents(candle.3),
+                        close: Money::from_cents(candle.4),
+                        volume: candle.5,
+                        trade_stats: None,
+                    },
+                );
+            }
+            if let Some(a) = active {
+                session.set_active_candle_for_runtime(
+                    &code,
+                    crate::session::DailyCandle {
+                        time: a.0,
+                        open: Money::from_cents(a.1),
+                        high: Money::from_cents(a.2),
+                        low: Money::from_cents(a.3),
+                        close: Money::from_cents(a.4),
+                        volume: a.5,
+                        trade_stats: None,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// desk K 数据抽取（测试面通道；生产每步安装走 install_candles）。
+    fn world_desk_finals_for_candles(
+        &mut self,
+    ) -> Vec<(
+        super::StockIdx,
+        Vec<(i64, i64, i64, i64, i64, u64)>,
+        Option<(i64, i64, i64, i64, i64, u64)>,
+    )> {
+        self.world.take_candle_projection()
+    }
+}

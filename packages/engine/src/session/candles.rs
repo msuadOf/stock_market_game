@@ -129,6 +129,11 @@ impl SessionCandleBook {
 
     /// T4（ADR-0042 §6-T4 行情面）：安装股票 owner 收尾产出的活动日 K 终值
     /// （与 record_trade_or_mark 的 entry().or_insert() 语义一致：缺席即建立）。
+    /// 历史 K 追加（runtime 驱动器回写面）。
+    pub(crate) fn push_history(&mut self, code: &StockId, candle: DailyCandle) {
+        self.histories.entry(code.clone()).or_default().push(candle);
+    }
+
     pub(super) fn install_active(&mut self, code: StockId, candle: DailyCandle) {
         self.active.insert(code, candle);
     }

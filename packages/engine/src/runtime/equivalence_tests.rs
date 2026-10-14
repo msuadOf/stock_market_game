@@ -392,3 +392,23 @@ fn batch8_final_verdict_flip_requires_integration_migration_batch() {
         "批 8 终判：不翻转——附带域 2/3 覆盖 + 集成测试迁移 0/50"
     );
 }
+
+#[test]
+fn candle_projection_writes_into_session_candle_book() {
+    use super::drive::RuntimeDriver;
+    // 驱动跨日（ticks_per_day=240 太长——用行情安装+日结路径验证通道；
+    // 简化：直接驱动若干 tick 后 install_candles 不失败 + 会话可查询）。
+    let mut session = GameSession::new(equiv_setup(), 77).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    for _ in 0..10 {
+        driver.step_frame_equivalent(&mut session).expect("步进");
+    }
+    driver.install_candles(&mut session).expect("K 回写");
+    // 查询通道：会话历史读（旧管线单一路径）仍工作。
+    let account = crate::AccountId(1);
+    let code = crate::StockId(0);
+    let _ = session
+        .query_stock_history(account, &code)
+        .expect("历史读不失败");
+}

@@ -1014,6 +1014,13 @@ pub fn group_main(
                     break;
                 }
             }
+            GroupIn::EchoCandles => {
+                // K 线投影面向交易部（协调者直发 desk 通道）；组收到=
+                // 路由错误，显式失败。
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {} 收到 EchoCandles（路由错误）", state.group),
+                });
+            }
             GroupIn::Shutdown => {
                 state.observed.push(Observed::Shutdown);
                 // Drain 实体批次已先于 Shutdown 入队（FIFO）：期末名册须含全部回流。
