@@ -129,3 +129,71 @@ fn runtime_driver_cash_conservation_holds_across_session_writeback() {
         }
     }
 }
+
+#[test]
+fn event_facts_carry_unique_stable_keys_per_identity_bucket() {
+    use super::event_bridge::{event_facts_with_stable_keys, owner_to_account};
+    use crate::orderbook::Side;
+    use crate::StockId;
+    // 同股两笔 Trade + 同账户两次受理——桶内 index 0/1 递增、跨桶独立。
+    let events = vec![
+        crate::Event::Trade {
+            seq: 1,
+            code: StockId(0),
+            price: Money::from_cents(1000),
+            qty: 100,
+            maker: owner_to_account((0, 1)),
+            taker: owner_to_account((0, 2)),
+        },
+        crate::Event::Trade {
+            seq: 2,
+            code: StockId(0),
+            price: Money::from_cents(1005),
+            qty: 50,
+            maker: owner_to_account((0, 3)),
+            taker: owner_to_account((0, 4)),
+        },
+        crate::Event::OrderAccepted {
+            seq: 3,
+            account: owner_to_account((0, 1)),
+            code: StockId(0),
+            id: crate::orderbook::OrderId(9),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            remaining_qty: 200,
+        },
+        crate::Event::OrderAccepted {
+            seq: 4,
+            account: owner_to_account((0, 1)),
+            code: StockId(0),
+            id: crate::orderbook::OrderId(10),
+            side: Side::Buy,
+            price: Money::from_cents(990),
+            remaining_qty: 100,
+        },
+    ];
+    let facts = event_facts_with_stable_keys(events);
+    assert_eq!(facts.len(), 4);
+    // Trade 桶：0、1；受理桶（同账户同股）：0、1。
+    let trade_idx: Vec<u64> = facts
+        .iter()
+        .filter(|f| matches!(f.event, crate::Event::Trade { .. }))
+        .map(|f| f.key.local_event_index())
+        .collect();
+    assert_eq!(trade_idx, vec![0, 1], "Trade 身份域内单调");
+    let accept_idx: Vec<u64> = facts
+        .iter()
+        .filter(|f| matches!(f.event, crate::Event::OrderAccepted { .. }))
+        .map(|f| f.key.local_event_index())
+        .collect();
+    assert_eq!(accept_idx, vec![0, 1], "受理身份域内单调（跨桶独立）");
+    // 唯一性（validate_unique_keys 合同）。
+    let mut seen = std::collections::BTreeSet::new();
+    for f in &facts {
+        assert!(
+            seen.insert(format!("{:?}", f.key)),
+            "稳定键唯一：{:?}",
+            f.key
+        );
+    }
+}

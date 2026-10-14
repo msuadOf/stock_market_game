@@ -270,3 +270,48 @@ pub struct FrameProjection {
     /// 全股公共态（时序映射输入）。
     pub views: Vec<super::protocol::StockPublic>,
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 批 8h·部分2：EventFact 化（local_event_index 语义复刻）
+// ═══════════════════════════════════════════════════════════════════
+
+/// (phase_rank, entity, source) 三元分组键——`EventStableKey` 身份域。
+/// 旧管线的 sealed_index 是**受理序**（每账户单调）——runtime 的等价物
+/// 是 OrderRef.1（交易部本地单调序号，全局唯一）：同一身份域内单调递增，
+/// 满足稳定键唯一性合同（`validate_unique_keys`）。
+pub fn event_facts_with_stable_keys(
+    events: Vec<Event>,
+) -> Vec<crate::session::protocol::EventFact> {
+    use crate::session::pipeline::EventStableKey;
+    // 身份域内分配器；runtime 复刻口径：
+    let mut counters: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    events
+        .into_iter()
+        .map(|event| {
+            let bucket = identity_bucket(&event);
+            let index = counters.entry(bucket).or_insert(0);
+            let idx = *index;
+            *index += 1;
+            crate::session::protocol::EventFact {
+                key: EventStableKey::for_event(&event, idx),
+                event,
+            }
+        })
+        .collect()
+}
+
+/// 事件的身份域桶名（for_event 三元映射的手工复刻：Trade→股域 Sealed、
+/// 竞价/行情→股域 PriceTick、受理/撤单→账户域 Sealed、拒收→账户域）。
+fn identity_bucket(event: &Event) -> String {
+    match event {
+        Event::Trade { code, .. } => format!("trade:{code:?}"),
+        Event::AuctionTick { code, .. }
+        | Event::AuctionCompleted { code, .. }
+        | Event::PriceTick { code, .. } => format!("market:{code:?}"),
+        Event::OrderCanceled { account, code, .. } | Event::OrderAccepted { account, code, .. } => {
+            format!("order:{account:?}:{code:?}")
+        }
+        Event::IntentRejected { account, code, .. } => format!("intent:{account:?}:{code:?}"),
+        other => format!("other:{other:?}"),
+    }
+}
