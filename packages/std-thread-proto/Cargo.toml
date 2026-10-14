@@ -1,0 +1,19 @@
+[package]
+name = "std-thread-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+# 只复用 engine 的纯函数与类型（decide_data / Money / GameConfig / SplitMix64），
+# 本原型不调用 engine 的 rayon 路径。
+engine = { path = "../engine" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[[bin]]
+name = "std_thread_proto"
+path = "src/main.rs"
