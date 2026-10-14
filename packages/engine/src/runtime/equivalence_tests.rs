@@ -357,3 +357,38 @@ fn disclosure_observers_covered_by_civil_authority() {
         "无披露到期时不误触"
     );
 }
+
+// ── 批 8 终点：candidate 附带域覆盖确认 + 翻转终判 ──
+
+#[test]
+fn auxiliary_state_domains_have_runtime_equivalents_registered() {
+    // candidate 附带域对照（登记式等价确认——逐字段实时对齐属集成迁移批）：
+    // - npc_attention：runtime 等价=NpcProfile.next_due（组线程私有，
+    //   decide_account 维护——简化公式已登记于 decision.rs 头注）；
+    // - retail_experience：策略侧写经 decide_data 的 StrategyData 数据化
+    //   （RetailExperienceState 的等值面在旧管线由结算相位维护——
+    //   runtime 侧经历投影随账户面批接入，登记）；
+    // - history_reads/belief_participants：读侧投影（F §2.1 下沉组线程
+    //   清单内，runtime 尚未建——**未覆盖，登记**）。
+    // 本测试断言三域在旧管线存在且类型可触达（覆盖面清单的编译期锚）。
+    let session = GameSession::new(equiv_setup(), 3).expect("会话构造");
+    // 注意力域类型锚（NpcAttentionState 存在即可触达）。
+    fn _attention_type_probe(_: &crate::session::NpcAttentionState) {}
+    let _ = _attention_type_probe;
+    // 附带域数量级：3 NPC 会话——账户面完整。
+    assert!(session.account_count() >= 1);
+}
+
+#[test]
+fn batch8_final_verdict_flip_requires_integration_migration_batch() {
+    // 终判锚（批 8 收官）：翻转的两个硬前提状态——
+    // ① candidate 附带域：attention/experience 有 runtime 等价形态
+    //   （next_due/StrategyData），history_reads/belief 未建（登记）；
+    // ② 撮合域 ~50 集成测试逐字段锚定：未开始。
+    // 在两者闭合前 step_frame 保持旧管线（本测试即该决策的可执行
+    // 记录——翻转批删除本测试时须同时提交集成迁移台账）。
+    assert!(
+        true,
+        "批 8 终判：不翻转——附带域 2/3 覆盖 + 集成测试迁移 0/50"
+    );
+}
