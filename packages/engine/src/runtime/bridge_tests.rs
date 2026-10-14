@@ -217,3 +217,100 @@ fn world_reports_two_legged_trade_facts_end_to_end() {
     // 与映射器单测联测覆盖。
     assert_eq!(report.desk_finals[0].market.trade_count, 1, "一笔成交");
 }
+
+// ── 批 8c：时序快照映射 + 账户面投影 ──
+
+#[test]
+fn timeseries_mappers_project_runtime_views_to_engine_shapes() {
+    use super::event_bridge::{
+        project_continuous_point, project_daily_candle, project_market_snap,
+    };
+    use super::protocol::StockPublic;
+    let view = StockPublic {
+        last_price: 1005,
+        best_bid: Some(1000),
+        best_ask: Some(1010),
+        max_buy_price: 1020,
+        daily_upper_limit: 1100,
+        min_sell_price: 980,
+        recent_prices: vec![1000],
+        minute_closes: vec![],
+        volume_today: 12_345,
+        relative_volume: 1.0,
+        order_book_imbalance: 0.25,
+        depth_bids: vec![(1000, 500), (990, 300)],
+        depth_asks: vec![(1010, 400), (1020, 200)],
+    };
+    let snap = project_market_snap(&view, 999);
+    assert_eq!(snap.last_price.cents(), 1005);
+    assert_eq!(snap.last_close.cents(), 999);
+    assert_eq!(snap.best_bid.unwrap().cents(), 1000);
+    assert_eq!(snap.bids.len(), 2);
+    assert_eq!(snap.bids[0], (crate::money::Money::from_cents(1000), 500));
+    assert_eq!(snap.asks[1], (crate::money::Money::from_cents(1020), 200));
+    let point = project_continuous_point(&view, 7, crate::TradingPhase::Continuous);
+    assert_eq!(point.tick, 7);
+    assert_eq!(point.last_price.cents(), 1005);
+    assert_eq!(point.cumulative_volume, 12_345);
+    assert_eq!(point.bids.len(), 2);
+    let candle = super::desk::DeskCandle {
+        open: 1000,
+        high: 1010,
+        low: 995,
+        close: 1005,
+        volume: 800,
+    };
+    let daily = project_daily_candle(candle, 42);
+    assert_eq!(daily.time, 42);
+    assert_eq!(daily.open.cents(), 1000);
+    assert_eq!(daily.volume, 800);
+}
+
+#[test]
+fn desk_report_view_carries_five_level_depth() {
+    // 端到端：挂簿成交后 DeskReport.view 携带五档深度（MarketSnap 映射输入）。
+    use super::group::{GroupScript, PlaceSpec, TickPlan};
+    use crate::orderbook::Side;
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                plan.places.push(PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: Side::Sell,
+                    price: 1010,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: Side::Sell,
+                    price: 1005,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: Side::Buy,
+                    price: 1000,
+                    qty: 100,
+                });
+            }
+            plan
+        })
+    };
+    let mut world =
+        super::world::World::spawn(super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script)))
+            .expect("世界构造");
+    world.run_ticks(1).expect("收敛");
+    let views = world.public_views();
+    // 两档卖盘（1005/1010）挂在簿上；买方 1000 挂簿。
+    assert!(
+        !views[0].depth_asks.is_empty(),
+        "卖盘深度应可见：{:?}",
+        views[0].depth_asks
+    );
+    assert!(views[0].depth_bids.iter().any(|(p, _)| *p == 1000));
+    assert_eq!(views[0].depth_asks[0].0, 1005, "价低在前");
+}

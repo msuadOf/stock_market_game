@@ -382,6 +382,8 @@ impl World {
                     last_price: last,
                     best_bid: None,
                     best_ask: None,
+                    depth_bids: Vec::new(),
+                    depth_asks: Vec::new(),
                     max_buy_price: up.cents(),
                     daily_upper_limit: up.cents(),
                     min_sell_price: down.cents(),

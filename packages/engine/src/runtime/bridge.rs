@@ -97,3 +97,36 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
         attention_gap_ticks: 4,
     }
 }
+
+/// 账户面投影（批 8c：step_frame 切换前置）：会话账户 → WorldSpec 账户初值
+/// （现金/持仓按股数值矩阵）。经公开面 `account_strategy_profiles`（全 NPC id）
+/// + `account(id)`（现金/持仓）读取；玩家账户无策略侧写不在其中——玩家组
+/// 接线（F §6.3）时并入，登记。
+///
+/// 返回 (initial_cash_override, initial_shares, account_ids)：ids 供 AccountId
+/// ↔ Owner 映射对齐（批 8d 存档映射）。
+pub fn accounts_projection_from_session(
+    session: &crate::GameSession,
+    n_stocks: usize,
+) -> (Vec<i64>, Vec<Vec<u32>>, Vec<crate::AccountId>) {
+    let profiles = session.account_strategy_profiles();
+    let mut cash = Vec::with_capacity(profiles.len());
+    let mut shares = Vec::with_capacity(profiles.len());
+    let mut ids = Vec::with_capacity(profiles.len());
+    for (id, _profile) in profiles {
+        let Some(account) = session.account(id) else {
+            continue;
+        };
+        let mut row = vec![0u32; n_stocks];
+        for (code, position) in account.positions() {
+            let idx = code.0 as usize;
+            if idx < n_stocks {
+                row[idx] = position.qty();
+            }
+        }
+        cash.push(account.cash().cents());
+        shares.push(row);
+        ids.push(id);
+    }
+    (cash, shares, ids)
+}

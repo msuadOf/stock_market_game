@@ -1383,6 +1383,19 @@ impl DeskState {
             volume_today: self.market.volume_today,
             relative_volume: 1.0,
             order_book_imbalance: self.top5_imbalance(),
+            depth_bids: self
+                .bids
+                .iter()
+                .rev()
+                .take(5)
+                .map(|(price, level)| (*price, count_qty(level)))
+                .collect(),
+            depth_asks: self
+                .asks
+                .iter()
+                .take(5)
+                .map(|(price, level)| (*price, count_qty(level)))
+                .collect(),
         }
     }
 

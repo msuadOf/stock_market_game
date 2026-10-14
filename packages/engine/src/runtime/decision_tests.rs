@@ -35,6 +35,8 @@ fn snapshot_one_stock(last: i64, upper: i64) -> TickSnapshot {
             volume_today: 0,
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
+            depth_bids: Vec::new(),
+            depth_asks: Vec::new(),
         }]),
     }
 }

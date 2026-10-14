@@ -180,6 +180,10 @@ pub struct StockPublic {
     pub relative_volume: f64,
     /// 前五档买卖失衡 [-1,1]。
     pub order_book_imbalance: f64,
+    /// 买盘深度前五档（价高→低，每价聚合总量；TickFrame MarketSnap 映射）。
+    pub depth_bids: Vec<(i64, u64)>,
+    /// 卖盘深度前五档（价低→高）。
+    pub depth_asks: Vec<(i64, u64)>,
 }
 
 /// tick 广播快照（批 4：附带全股上一收束点公共态，组端只读；批 8b 起
