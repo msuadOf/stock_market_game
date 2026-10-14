@@ -393,6 +393,25 @@ pub struct GroupReport {
     pub committed_hash: u64,
 }
 
+/// 双腿成交事实（批 8b 撮合域接线地基）：单笔成交的 maker/taker 双方身份
+/// ——`FillFact` 是单腿视角（计划续行），本事实是事件域（TickFrame
+/// `Event::Trade` 需要 maker+taker）与守恒审计的输入。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeskTradeFact {
+    /// 股索引。
+    pub stock: StockIdx,
+    /// 成交价（分）。
+    pub price: i64,
+    /// 成交量（股）。
+    pub qty: u32,
+    /// 被动方（maker）所有者。
+    pub maker: Owner,
+    /// 主动方（taker）所有者。
+    pub taker: Owner,
+    /// taker 方向（成交方向=taker side）。
+    pub taker_side: Side,
+}
+
 /// 交易部本轮报告。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeskReport {
@@ -426,6 +445,8 @@ pub struct DeskReport {
     pub fee_sink: i64,
     /// 本收束点公共态（协调者安装进下一 tick 广播快照）。
     pub view: StockPublic,
+    /// 本轮双腿成交事实（TickFrame 事件映射输入；按成交序）。
+    pub trades: Vec<DeskTradeFact>,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

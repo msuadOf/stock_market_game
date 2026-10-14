@@ -18,7 +18,7 @@ fn idle_script() -> GroupScript {
 
 /// 基础世界：给定组/股数与脚本工厂，账户现金 1_000_000 分、每账户各股 1000 股。
 /// 全天连续竞价形态（auction_ticks=0，测试专用简化），股 @1000 分。
-pub(super) fn basic_spec(
+pub(crate) fn basic_spec(
     n_groups: usize,
     n_stocks: usize,
     accounts_per_group: usize,

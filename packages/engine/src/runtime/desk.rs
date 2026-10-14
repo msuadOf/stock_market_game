@@ -271,6 +271,8 @@ pub struct DeskState {
     pub resting_count: u64,
     /// 本 tick 是否已执行开盘清算（防御：一次）。
     opening_cleared: bool,
+    /// 本 tick 双腿成交事实缓冲（出口随 DeskReport；Abort 清空）。
+    trade_facts: Vec<super::protocol::DeskTradeFact>,
     /// 最近一次 Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 committed_hash；
     /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据）。
     rollback_hash: Option<u64>,
@@ -313,6 +315,7 @@ impl DeskState {
             cancelled_orders: 0,
             resting_count: 0,
             opening_cleared: false,
+            trade_facts: Vec::new(),
             rollback_hash: None,
         }
     }
@@ -450,6 +453,7 @@ impl DeskState {
         for f in &mut self.flushed {
             *f = false;
         }
+        self.trade_facts.clear();
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
         self.opening_cleared = false;
@@ -930,6 +934,21 @@ impl DeskState {
             + charged.transfer_fee.cents();
         self.fee_sink += fees_total;
         self.undo.push(DeskUndo::FeeSink(fees_total));
+        // 双腿成交事实（事件域输入：maker+taker 身份与成交序）。
+        let taker_side = taker.side;
+        let (maker_id, taker_id) = if taker_side == Side::Buy {
+            (maker.owner, taker.owner)
+        } else {
+            (taker.owner, maker.owner)
+        };
+        self.trade_facts.push(super::protocol::DeskTradeFact {
+            stock: self.setup.stock,
+            price,
+            qty,
+            maker: maker_id,
+            taker: taker_id,
+            taker_side,
+        });
         // 实体互换：买方得股票、卖方得净额。
         let bg = buy_owner.0 as usize;
         self.out[bg].push(Entity::BoughtShares {
@@ -1736,6 +1755,7 @@ fn process_msg(
                         trade_count: state.market.trade_count,
                         fee_sink: state.fee_sink,
                         view: state.build_public(tick),
+                        trades: std::mem::take(&mut state.trade_facts),
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {
                         RuntimeError::SendFailed {

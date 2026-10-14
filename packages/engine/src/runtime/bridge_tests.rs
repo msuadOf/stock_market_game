@@ -131,3 +131,89 @@ fn default_retail_decision_is_seed_distinct() {
     assert_eq!(d.profiles.len(), 3);
     assert_ne!(d.profiles[0].seed, d.profiles[1].seed);
 }
+
+// ── 撮合域事件桥（批 8b 项 2）──
+
+#[test]
+fn trade_facts_project_to_event_trade_with_monotonic_seq() {
+    use super::event_bridge::{owner_to_account, project_trade_events};
+    use super::protocol::DeskTradeFact;
+    use crate::orderbook::Side;
+    let trades = vec![
+        DeskTradeFact {
+            stock: 0,
+            price: 1005,
+            qty: 100,
+            maker: (2, 7),
+            taker: (1, 3),
+            taker_side: Side::Buy,
+        },
+        DeskTradeFact {
+            stock: 0,
+            price: 1005,
+            qty: 50,
+            maker: (2, 7),
+            taker: (0, 9),
+            taker_side: Side::Buy,
+        },
+    ];
+    let mut seq = 42u64;
+    let events = project_trade_events(&trades, &mut seq);
+    assert_eq!(events.len(), 2);
+    for (i, e) in events.iter().enumerate() {
+        let crate::Event::Trade {
+            seq,
+            code,
+            price,
+            qty,
+            maker,
+            taker,
+        } = e
+        else {
+            panic!("应为 Trade 事件");
+        };
+        assert_eq!(*seq, 42 + i as u64, "seq 单调分配");
+        assert_eq!(code, &crate::StockId(0), "code=StockId 路由");
+        assert_eq!(price.cents(), 1005);
+        assert_eq!(*qty, trades[i].qty);
+        assert_eq!(*maker, owner_to_account(trades[i].maker));
+        assert_eq!(*taker, owner_to_account(trades[i].taker));
+    }
+    assert_eq!(seq, 44, "返回推进后的 next_seq");
+}
+
+#[test]
+fn world_reports_two_legged_trade_facts_end_to_end() {
+    // 端到端：世界成交 → DeskReport.trades 携带双腿身份（按成交序）。
+    use super::group::{GroupScript, PlaceSpec, TickPlan};
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                plan.places.push(PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: crate::orderbook::Side::Sell,
+                    price: 1000,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: crate::orderbook::Side::Buy,
+                    price: 1005,
+                    qty: 100,
+                });
+            }
+            plan
+        })
+    };
+    let mut spec = super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script));
+    spec.decision = None;
+    let mut world = super::world::World::spawn(spec).expect("世界构造");
+    world.run_ticks(1).expect("收敛");
+    let report = world.shutdown().expect("关停");
+    // DeskReport.trades 在收束时出口（协调者路径）；Final 侧由成交计数
+    // 与映射器单测联测覆盖。
+    assert_eq!(report.desk_finals[0].market.trade_count, 1, "一笔成交");
+}
