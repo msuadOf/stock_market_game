@@ -32,10 +32,13 @@ mod entities;
 mod facts;
 mod protocol;
 
+pub mod bridge;
 pub mod coordinator;
 pub mod decision;
 pub mod desk;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod bridge_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod day_end_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
