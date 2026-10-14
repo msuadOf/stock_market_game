@@ -161,3 +161,26 @@ fn desk_batch_aggregates_entities_fills_receipts() {
     assert_eq!(batch.tick, 100);
     assert_eq!(batch.round, 0);
 }
+
+#[test]
+fn desk_batch_verify_tick_round_is_group_side_check() {
+    // 组端核对（组无法预知发方交易部）：只核对 tick/轮归属。
+    let batch = sample_batch(9, 100, 2);
+    assert_eq!(batch.verify_tick_round(100, 2), Ok(()));
+    assert_eq!(
+        batch.verify_tick_round(101, 2),
+        Err(DeskBatchMismatch::Tick {
+            expected: 101,
+            actual: 100
+        })
+    );
+    assert_eq!(
+        batch.verify_tick_round(100, 3),
+        Err(DeskBatchMismatch::Round {
+            expected: 3,
+            actual: 2
+        })
+    );
+    // 与全量 verify 的分工：stock 由发送面已知的拓扑用全量，组端共享收件箱用本方法。
+    assert_eq!(batch.verify(9, 100, 2), Ok(()));
+}

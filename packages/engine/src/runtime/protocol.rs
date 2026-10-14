@@ -129,3 +129,266 @@ impl DeskBatch {
         Ok(())
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 批 2：线程拓扑消息面（协调者 / 组线程 / 交易部线程）
+// ═══════════════════════════════════════════════════════════════════
+
+use super::GroupIdx;
+use std::sync::mpsc::Sender;
+use std::time::Duration;
+
+/// worker 身份（错误上报与 Final 对账用）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WorkerId {
+    /// NPC 组线程。
+    Group(GroupIdx),
+    /// 交易部线程。
+    Desk(StockIdx),
+}
+
+impl std::fmt::Display for WorkerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkerId::Group(g) => write!(f, "group-{g}"),
+            WorkerId::Desk(s) => write!(f, "desk-{s}"),
+        }
+    }
+}
+
+/// tick 广播快照（骨架档：全市场公共态视图随批 4 引擎化接入）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TickSnapshot {
+    /// 当前 tick。
+    pub tick: u64,
+    /// 市场分钟数。
+    pub market_minute: u32,
+}
+
+/// 组线程收件消息（coordinator 的控制消息与交易部的实体批次共用一个 mpsc；
+/// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
+pub enum GroupIn {
+    /// tick 开始：隐式转正上一 tick（落账 staging 后丢弃可逆日志）+ 本轮决策。
+    Start {
+        /// tick 编号。
+        tick: u64,
+        /// 广播快照。
+        snapshot: std::sync::Arc<TickSnapshot>,
+    },
+    /// 同 tick 续行轮：组先落账本轮实体（记逆操作，Abort 可冲回）再续行决策。
+    Continue {
+        /// tick 编号。
+        tick: u64,
+        /// 轮次。
+        round: u32,
+    },
+    /// 交易部实体批次（进 staging，Start/Continue 时落账）。
+    Batch(DeskBatch),
+    /// 撤销 working overlay，回到上一收敛态（可逆日志逆序回放 + 清 staging）。
+    Abort {
+        /// 被撤销的 tick。
+        tick: u64,
+    },
+    /// 关停：上交 `GroupFinal` 后退出。
+    Shutdown,
+}
+
+/// 交易部收件消息。
+pub enum DeskMsg {
+    /// 一组本轮的一批操作。`final_flush` = 该组本轮最后一批（可空——提交完成标记）；
+    /// 交易部收齐全部组的 final_flush 即本轮撮合输入完毕（先 flush 实体批次再上报）。
+    Ops {
+        /// tick 编号。
+        tick: u64,
+        /// 轮次。
+        round: u32,
+        /// 发方组索引。
+        group: GroupIdx,
+        /// 操作批次。
+        ops: Vec<DeskIn>,
+        /// 本组本轮提交标记。
+        final_flush: bool,
+    },
+    /// 撤销 working overlay（撤销日志逆序回放 + 清实体出口缓冲）。
+    Abort {
+        /// 被撤销的 tick。
+        tick: u64,
+    },
+    /// 日终清簿：强撤全部挂单、实体回流、上交清簿后状态。
+    Drain,
+    /// 关停：上交 `DeskFinal` 后退出。
+    Shutdown,
+}
+
+/// worker → 协调者的上行消息（全部 worker 共用一个 mpsc）。
+/// 手写 Debug：panic payload 不透明，只报告变体名与身份。
+pub enum UpMsg {
+    /// 组线程本轮报告（每轮一条）。
+    GroupReport(GroupReport),
+    /// 交易部本轮报告（每轮一条，实体批次已先于此发出）。
+    DeskReport(DeskReport),
+    /// 日终清簿完成。
+    DeskDrained {
+        /// 完成清簿的交易部。
+        stock: StockIdx,
+    },
+    /// 组线程期末上交。
+    GroupFinal(Box<super::group::GroupFinalState>),
+    /// 交易部期末上交。
+    DeskFinal(Box<super::desk::DeskFinalState>),
+    /// worker 显式失败上抛（铁律二：不静默；尽力发送，通道已断由看门狗兜底）。
+    Failed {
+        /// 失败 worker。
+        who: WorkerId,
+        /// 失败详情。
+        error: RuntimeError,
+    },
+    /// worker panic 运输：payload 原样上抛，协调者收齐 Final 后 `resume_unwind`。
+    TaskDied {
+        /// panic 的 worker（已回滚自身 overlay 并上交 Final 后退出）。
+        who: WorkerId,
+        /// 原 panic payload（不吞、不改写）。
+        payload: Box<dyn std::any::Any + Send>,
+    },
+}
+
+impl std::fmt::Debug for UpMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpMsg::GroupReport(r) => write!(
+                f,
+                "GroupReport(group={}, tick={}, round={})",
+                r.group, r.tick, r.round
+            ),
+            UpMsg::DeskReport(r) => write!(
+                f,
+                "DeskReport(stock={}, tick={}, round={})",
+                r.stock, r.tick, r.round
+            ),
+            UpMsg::DeskDrained { stock } => write!(f, "DeskDrained(stock={stock})"),
+            UpMsg::GroupFinal(x) => write!(f, "GroupFinal(group={})", x.group),
+            UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
+            UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),
+            UpMsg::TaskDied { who, .. } => write!(f, "TaskDied({who}, ..)"),
+        }
+    }
+}
+
+/// 组线程本轮报告。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroupReport {
+    /// 组索引。
+    pub group: GroupIdx,
+    /// tick 编号。
+    pub tick: u64,
+    /// 轮次。
+    pub round: u32,
+    /// 本轮发出的操作数（含对齐撤单）。
+    pub ops_sent: u64,
+    /// 严格所有权下被跳过的单量（资金/可卖不足，显式计数不静默）。
+    pub skipped: u64,
+    /// 本组是否还有续行需求（计划续行；协调者据此决定 Continue）。
+    pub continuation: bool,
+    /// 提交态哈希（Start 转正后立即计算；回滚后 Final 哈希应与之相等）。
+    pub committed_hash: u64,
+}
+
+/// 交易部本轮报告。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeskReport {
+    /// 股索引。
+    pub stock: StockIdx,
+    /// tick 编号。
+    pub tick: u64,
+    /// 轮次。
+    pub round: u32,
+    /// 挂单数（本收束点）。
+    pub resting_count: u64,
+    /// 本轮实体流出条数。
+    pub entities_out: u64,
+    /// 本轮回执数。
+    pub receipts_out: u64,
+    /// 提交态哈希（隐式转正后立即计算；回滚后 Final 哈希应与之相等）。
+    pub committed_hash: u64,
+}
+
+/// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum RuntimeError {
+    /// 看门狗超时（携带相位上下文——相位感知，不静默放大全局阈值）。
+    #[error("看门狗超时：phase={phase:?}, waited={waited:?}：{detail}")]
+    Watchdog {
+        /// 超时相位。
+        phase: super::watchdog::Phase,
+        /// 等待时长。
+        waited: Duration,
+        /// 上下文详情。
+        detail: String,
+    },
+    /// 通道断连（worker 过早退出或收束期收到非期望消息）。
+    #[error("通道断连：who={who:?}, stage={stage}")]
+    Disconnected {
+        /// 断连关联 worker（None=无法定位）。
+        who: Option<WorkerId>,
+        /// 发生阶段。
+        stage: String,
+    },
+    /// worker 显式失败上抛。
+    #[error("worker {who} 显式失败：{error}")]
+    WorkerFailed {
+        /// 失败 worker。
+        who: WorkerId,
+        /// 失败详情。
+        error: Box<RuntimeError>,
+    },
+    /// tick 收束前校验失败（PreCommit 注入点）→ Abort。
+    #[error("tick {tick} 第 {round} 轮校验失败：{detail}")]
+    TickValidation {
+        /// 失败 tick。
+        tick: u64,
+        /// 失败轮次。
+        round: u32,
+        /// 失败详情。
+        detail: String,
+    },
+    /// 同 tick 续行轮数超上限（计划链异常形状，显式登记不静默）。
+    #[error("tick {tick} 续行轮数超上限 {rounds_cap}（计划链异常形状）")]
+    RoundsExceeded {
+        /// 失败 tick。
+        tick: u64,
+        /// 轮数上限。
+        rounds_cap: u32,
+    },
+    /// 消息发送失败（对端已退出）。
+    #[error("发送失败：{detail}")]
+    SendFailed {
+        /// 失败详情。
+        detail: String,
+    },
+    /// 协议不变量破坏（tick/轮次错序、防御字段错配等结构性 bug）。
+    #[error("协议不变量破坏：{detail}")]
+    ProtocolInvariant {
+        /// 破坏详情。
+        detail: String,
+    },
+}
+
+impl DeskBatch {
+    /// 组端防御核对（组无法预知发方交易部，只核对 tick/轮归属）：批次必须属于
+    /// `(tick, round)`，错配即显式失败。
+    pub fn verify_tick_round(&self, tick: u64, round: u32) -> Result<(), DeskBatchMismatch> {
+        if self.tick != tick {
+            return Err(DeskBatchMismatch::Tick {
+                expected: tick,
+                actual: self.tick,
+            });
+        }
+        if self.round != round {
+            return Err(DeskBatchMismatch::Round {
+                expected: round,
+                actual: self.round,
+            });
+        }
+        Ok(())
+    }
+}
