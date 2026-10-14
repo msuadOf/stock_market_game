@@ -178,6 +178,8 @@ pub struct DeskMarket {
     pub minute_closes: Vec<(u64, i64)>,
     /// tick 收盘价历史（容量 history_len）。
     pub recent_prices: VecDeque<i64>,
+    /// 已完成交易日 K 历史（日界时活动 K 入列）。
+    pub candles: Vec<DeskCandle>,
 }
 
 /// 行情快照（撤销日志条目）。
@@ -192,6 +194,7 @@ struct MarketSnapshot {
     candle: Option<DeskCandle>,
     minute_len: usize,
     recent_len: usize,
+    candles_len: usize,
 }
 
 /// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
@@ -286,6 +289,7 @@ impl DeskState {
             candle: None,
             minute_closes: Vec::new(),
             recent_prices: VecDeque::new(),
+            candles: Vec::new(),
         };
         DeskState {
             setup,
@@ -386,6 +390,7 @@ impl DeskState {
             candle: m.candle,
             minute_len: m.minute_closes.len(),
             recent_len: m.recent_prices.len(),
+            candles_len: m.candles.len(),
         }));
     }
 
@@ -429,6 +434,7 @@ impl DeskState {
                     m.candle = s.candle;
                     m.minute_closes.truncate(s.minute_len);
                     m.recent_prices.truncate(s.recent_len);
+                    m.candles.truncate(s.candles_len);
                 }
             }
         }
@@ -1297,13 +1303,33 @@ impl DeskState {
         Ok(())
     }
 
-    /// 新 tick 起点：隐式转正 → 行情快照 → 开盘清算（若跨申报窗）→ 到期撤销。
+    /// 日界重置：昨收=最新价、日内高低/量清零、活动 K 入历史（F §6.2 步骤 5
+    /// 的下一交易日视图；撤销日志的 Market 快照覆盖本重置——Abort 可回退）。
+    fn roll_day(&mut self) {
+        let m = &mut self.market;
+        m.last_close = m.last_price;
+        m.day_high = m.last_price;
+        m.day_low = m.last_price;
+        m.volume_today = 0;
+        m.trade_count = 0;
+        if let Some(candle) = m.candle.take() {
+            m.candles.push(candle);
+        }
+        m.minute_closes.clear();
+    }
+
+    /// 新 tick 起点：隐式转正 → （日界重置）→ 行情快照 → 开盘清算 → 到期撤销。
     fn begin_tick(&mut self, tick: u64) -> Result<(), RuntimeError> {
         // 下一 tick 首批 Ops(N) = tick N−1 隐式转正。
         self.undo.clear();
+        let day_before = self.committed_tick / self.setup.ticks_per_day.max(1);
+        let day_after = tick / self.setup.ticks_per_day.max(1);
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
+        if day_after > day_before {
+            self.roll_day();
+        }
         self.snapshot_market();
         // 开盘清算：上一 tick 还在申报窗、本 tick 已离开 → 09:25 一次撮合。
         let prev_phase = self.setup.phase_at(tick.saturating_sub(1));
@@ -1731,12 +1757,18 @@ fn process_msg(
             state.rollback_hash = Some(state.state_hash());
         }
         DeskMsg::Drain => {
+            // 隐式转正上一 tick（日终已收敛）：清簿进独立撤销日志，
+            // Abort 只恢复清簿前簿态（回到上一交易日收敛态）。
+            state.undo.clear();
+            state.committed_tick = state.cur_tick;
             state.drain_all()?;
             state.finish_round(state.cur_tick)?;
             state.flush_batches(group_txs, state.cur_tick, state.cur_round)?;
             up_tx
                 .send(UpMsg::DeskDrained {
                     stock: state.setup.stock,
+                    fee_sink: state.fee_sink,
+                    last_price: state.market.last_price,
                 })
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),

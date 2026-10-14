@@ -12,7 +12,8 @@ use super::decision::{decide_account, NpcProfile};
 use super::fees::buy_purse_limit;
 use super::protocol::TickSnapshot;
 use super::protocol::{
-    DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
+    AdminRight, DayEndDirective, DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice,
+    RuntimeError, UpMsg, WorkerId,
 };
 use super::watchdog::{worker_recv, WatchdogConfig};
 use super::{Entity, GroupIdx, LocalIdx, StockIdx};
@@ -141,6 +142,8 @@ pub enum Observed {
     Continue(u64, u32),
     /// 收到 Abort（携带 tick）。
     Abort(u64),
+    /// 收到 DayEnd（携带交易日）。
+    DayEnd(u32),
     /// 收到 Shutdown。
     Shutdown,
 }
@@ -437,27 +440,110 @@ impl GroupState {
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
-        // T+1 日界解冻：跨交易日首 tick（对齐"当日买入下一交易日日界解锁"，
-        // DayEnd 相位接线前以 Start 为等价可见点，记逆操作可冲回）。
-        let day_before = (self.committed_tick.saturating_sub(1)) / self.ticks_per_day.max(1);
-        let day_after = (tick.saturating_sub(1)) / self.ticks_per_day.max(1);
-        if day_after > day_before {
-            for local in 0..self.accounts.len() as LocalIdx {
-                let frozen = self.accounts[local as usize].frozen_today.clone();
-                for (stock, &f) in frozen.iter().enumerate() {
-                    if f > 0 {
-                        self.accounts[local as usize].frozen_today[stock] = 0;
-                        self.undo.push(GroupUndo::Frozen {
-                            local,
-                            stock: stock as StockIdx,
-                            delta: -(f as i32),
-                        });
-                    }
+        // T+1 日界解冻移至 DayEnd 相位（F §6.2，批 5）：Start 不再承担。
+        self.committed_hash = self.state_hash();
+        self.run_round(tick, 0, desk_txs, up_tx)
+    }
+
+    /// 日结相位（F §6.2 步骤 2/3）：Drain 回流落账 → T+1 解冻 → AdminBatch
+    /// 权益落账——全部进可逆日志（日结校验失败 ⇒ Abort 整体冲回上一交易日
+    /// 收敛态）；成功则由下一 `Start` 隐式转正（可逆日志退役=窗口关闭）。
+    fn handle_day_end(&mut self, directive: &DayEndDirective) -> Result<(), RuntimeError> {
+        if directive.tick != self.cur_tick {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {} DayEnd tick 错配：{} != {}",
+                    self.group, directive.tick, self.cur_tick
+                ),
+            });
+        }
+        // ⓪ 隐式转正上一 tick（日终 tick 已收敛——DayEnd 只在收束后发生）：
+        // 隔离日结可逆日志，Abort 只冲回日结变更（回到上一交易日收敛态）。
+        self.undo.clear();
+        self.committed_tick = self.cur_tick;
+        // ① Drain 回流落账（清空在途）。
+        self.apply_staging(self.cur_tick, self.cur_round)?;
+        // ② T+1 日界解冻（当日买入进入可卖）。
+        for local in 0..self.accounts.len() as LocalIdx {
+            let frozen = self.accounts[local as usize].frozen_today.clone();
+            for (stock, &f) in frozen.iter().enumerate() {
+                if f > 0 {
+                    self.accounts[local as usize].frozen_today[stock] = 0;
+                    self.undo.push(GroupUndo::Frozen {
+                        local,
+                        stock: stock as StockIdx,
+                        delta: -(f as i32),
+                    });
                 }
             }
         }
-        self.committed_hash = self.state_hash();
-        self.run_round(tick, 0, desk_txs, up_tx)
+        // ③ AdminBatch 权益落账（可逆）。
+        for right in &directive.rights {
+            self.apply_right(*right)?;
+        }
+        Ok(())
+    }
+
+    /// 单条权益落账（记逆操作）。
+    fn apply_right(&mut self, right: AdminRight) -> Result<(), RuntimeError> {
+        let group = self.group;
+        match right {
+            AdminRight::CashDividend {
+                local,
+                stock,
+                amount,
+            } => {
+                let acct = self.acct_mut(local)?;
+                acct.cash = acct.cash.checked_add(amount).ok_or_else(|| {
+                    RuntimeError::ProtocolInvariant {
+                        detail: format!("股利入账溢出：local={local}, stock={stock}"),
+                    }
+                })?;
+                self.undo.push(GroupUndo::Cash {
+                    local,
+                    delta: amount,
+                });
+            }
+            AdminRight::ShareSplit {
+                local,
+                stock,
+                bonus_qty,
+            } => {
+                let acct = self.acct_mut(local)?;
+                let slot = &mut acct.shares[stock as usize];
+                *slot =
+                    slot.checked_add(bonus_qty)
+                        .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: format!("送转股溢出：local={local}, stock={stock}"),
+                        })?;
+                self.undo.push(GroupUndo::Shares {
+                    local,
+                    stock,
+                    delta: bonus_qty as i32,
+                });
+            }
+            AdminRight::WithholdingTax {
+                local,
+                stock,
+                amount,
+            } => {
+                let acct = self.acct_mut(local)?;
+                if acct.cash < amount {
+                    return Err(RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "组 {group} 扣税现金不足：local={local}, stock={stock}, cash={}, tax={amount}",
+                            acct.cash
+                        ),
+                    });
+                }
+                acct.cash -= amount;
+                self.undo.push(GroupUndo::Cash {
+                    local,
+                    delta: -amount,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// 处理 `Continue{tick, round}`：落账本轮实体（进可逆日志，不转正）→ 续行决策。
@@ -841,6 +927,44 @@ pub fn group_main(
             GroupIn::Abort { tick } => {
                 state.observed.push(Observed::Abort(tick));
                 state.rollback();
+            }
+            GroupIn::DayEnd(directive) => {
+                state.observed.push(Observed::DayEnd(directive.day));
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    state.handle_day_end(&directive)
+                }));
+                match outcome {
+                    Ok(Ok(())) => {
+                        let done = UpMsg::GroupDayDone {
+                            group: state.group,
+                            day: directive.day,
+                            accounts: state.accounts.clone(),
+                            state_hash: state.state_hash(),
+                        };
+                        if up_tx.send(done).is_err() {
+                            abort.store(true, Ordering::SeqCst);
+                            result = Err(RuntimeError::SendFailed {
+                                detail: format!("组 {who} GroupDayDone 发送失败"),
+                            });
+                            break;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed {
+                            who,
+                            error: e.clone(),
+                        });
+                        result = Err(e);
+                        break;
+                    }
+                    Err(payload) => {
+                        state.rollback();
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::TaskDied { who, payload });
+                        break;
+                    }
+                }
             }
             GroupIn::Shutdown => {
                 state.observed.push(Observed::Shutdown);

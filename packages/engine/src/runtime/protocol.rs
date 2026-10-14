@@ -134,7 +134,7 @@ impl DeskBatch {
 // 批 2：线程拓扑消息面（协调者 / 组线程 / 交易部线程）
 // ═══════════════════════════════════════════════════════════════════
 
-use super::GroupIdx;
+use super::{GroupIdx, LocalIdx};
 use std::time::Duration;
 
 /// worker 身份（错误上报与 Final 对账用）。
@@ -193,6 +193,50 @@ pub struct TickSnapshot {
     pub stocks: Vec<StockPublic>,
 }
 
+/// 公司域权益（日结 AdminBatch 条目；组端按可逆日志落账）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AdminRight {
+    /// 现金股利入账（除权除息后；单位分）。
+    CashDividend {
+        /// 组内名册下标。
+        local: LocalIdx,
+        /// 来源股（诊断面）。
+        stock: StockIdx,
+        /// 派息金额（分，正）。
+        amount: i64,
+    },
+    /// 送转股到账（可卖——A 股送转股上市日可卖，不入 T+1 冻结；登记简化）。
+    ShareSplit {
+        /// 组内名册下标。
+        local: LocalIdx,
+        /// 来源股。
+        stock: StockIdx,
+        /// 送转股数（正）。
+        bonus_qty: u32,
+    },
+    /// 权益扣税（现金扣减，如送转个税差别化扣缴）。
+    WithholdingTax {
+        /// 组内名册下标。
+        local: LocalIdx,
+        /// 来源股。
+        stock: StockIdx,
+        /// 扣税额（分，正）。
+        amount: i64,
+    },
+}
+
+/// 日结指令（F §6.2 步骤 2/3）：组端 Drain 回流落账 → T+1 解冻 → 权益落账
+/// （全部记逆操作，日结失败可整体冲回）→ 回执 GroupDayDone。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DayEndDirective {
+    /// 日终 tick（本交易日最后一 tick）。
+    pub tick: u64,
+    /// 交易日序号。
+    pub day: u32,
+    /// 本组权益批次（公司域事务产出）。
+    pub rights: Vec<AdminRight>,
+}
+
 /// 组线程收件消息（coordinator 的控制消息与交易部的实体批次共用一个 mpsc；
 /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
 pub enum GroupIn {
@@ -217,6 +261,9 @@ pub enum GroupIn {
         /// 被撤销的 tick。
         tick: u64,
     },
+    /// 日结相位（F §6.2）：Drain 回流落账 → T+1 解冻 → AdminBatch 权益落账
+    /// （全部进可逆日志）→ GroupDayDone 回执。
+    DayEnd(Box<DayEndDirective>),
     /// 关停：上交 `GroupFinal` 后退出。
     Shutdown,
 }
@@ -255,10 +302,25 @@ pub enum UpMsg {
     GroupReport(GroupReport),
     /// 交易部本轮报告（每轮一条，实体批次已先于此发出）。
     DeskReport(DeskReport),
-    /// 日终清簿完成。
+    /// 日终清簿完成（fee_sink 日结上交 + 行情快照供候选投影）。
     DeskDrained {
         /// 完成清簿的交易部。
         stock: StockIdx,
+        /// 费用桶累计（守恒审计：日结上交）。
+        fee_sink: i64,
+        /// 日终最新价（昨收基准）。
+        last_price: i64,
+    },
+    /// 组日结完成（权益落账后的账户投影）。
+    GroupDayDone {
+        /// 组索引。
+        group: GroupIdx,
+        /// 交易日序号。
+        day: u32,
+        /// 落账后账户投影（候选组装输入）。
+        accounts: Vec<super::group::GroupAccount>,
+        /// 落账后态哈希。
+        state_hash: u64,
     },
     /// 组线程期末上交。
     GroupFinal(Box<super::group::GroupFinalState>),
@@ -293,8 +355,11 @@ impl std::fmt::Debug for UpMsg {
                 "DeskReport(stock={}, tick={}, round={})",
                 r.stock, r.tick, r.round
             ),
-            UpMsg::DeskDrained { stock } => write!(f, "DeskDrained(stock={stock})"),
+            UpMsg::DeskDrained { stock, .. } => write!(f, "DeskDrained(stock={stock})"),
             UpMsg::GroupFinal(x) => write!(f, "GroupFinal(group={})", x.group),
+            UpMsg::GroupDayDone { group, day, .. } => {
+                write!(f, "GroupDayDone(group={group}, day={day})")
+            }
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),
             UpMsg::TaskDied { who, .. } => write!(f, "TaskDied({who}, ..)"),
@@ -408,6 +473,14 @@ pub enum RuntimeError {
         tick: u64,
         /// 轮数上限。
         rounds_cap: u32,
+    },
+    /// 日结校验失败（候选组装/对账失败 → Abort 冲回，日历不推进）。
+    #[error("日结 {day} 校验失败：{detail}")]
+    DayEndValidation {
+        /// 失败交易日。
+        day: u32,
+        /// 失败详情。
+        detail: String,
     },
     /// 消息发送失败（对端已退出）。
     #[error("发送失败：{detail}")]

@@ -17,6 +17,7 @@ use super::decision::DecisionSetup;
 use super::desk::{desk_main, DeskFinalState, DeskSetup};
 use super::group::{group_main, GroupAccount, GroupFinalState, GroupScript};
 use super::protocol::StockPublic;
+use super::protocol::{AdminRight, DayEndDirective};
 use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
 use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
 use super::{GroupIdx, StockIdx};
@@ -89,7 +90,33 @@ pub struct WorldSpec {
     pub history_len: usize,
     /// 内联决策装配（Some=decide_data 路径；None=测试脚本路径）。
     pub decision: Option<DecisionSetup>,
+    /// 公司域权益产出（日结 AdminBatch 注入；None=无权益）。
+    pub rights_computer: Option<Box<dyn Fn(u32, GroupIdx) -> Vec<AdminRight> + Send>>,
+    /// 按账户现金重建（存档候选往返；None=用 initial_cash 均一初始化）。
+    pub initial_cash_override: Option<Vec<Vec<i64>>>,
 }
+
+/// 日结候选投影（F §6.2 步骤 4：组投影 + 交易部清簿态 + 全局域 + 费用上交；
+/// 全部可失败校验成功后才提交日结——候选即"不可变存档输入"，宿主写盘失败
+/// ≠ 市场回滚）。
+#[derive(Clone, Debug)]
+pub struct DayEndCandidate {
+    /// 交易日序号。
+    pub day: u32,
+    /// 日终 tick。
+    pub tick: u64,
+    /// 各组权益落账后账户投影。
+    pub groups: Vec<(GroupIdx, Vec<GroupAccount>)>,
+    /// 各组落账后态哈希。
+    pub group_hashes: Vec<(GroupIdx, u64)>,
+    /// 各交易部日终态（fee_sink 上交、昨收基准）。
+    pub desks: Vec<(StockIdx, i64, i64)>,
+    /// 全局域快照。
+    pub global: GlobalState,
+}
+
+/// 日结候选校验器（注入点：对账/守恒/哈希等全部可失败校验）。
+pub type DayEndValidator = Box<dyn FnMut(&DayEndCandidate) -> Result<(), String> + Send>;
 
 /// 每个已收敛 tick 的记录（测试与审计面）。
 #[derive(Clone, Debug)]
@@ -138,6 +165,14 @@ pub struct World {
     dead_reason: Option<String>,
     /// 全股上一收束点公共态（决策观察基；DeskReport 安装更新）。
     public_views: Vec<StockPublic>,
+    /// 公司域权益产出（日结注入）。
+    rights_computer: Option<Box<dyn Fn(u32, GroupIdx) -> Vec<AdminRight> + Send>>,
+    /// 每交易日 tick 数（日界判定）。
+    ticks_per_day: u64,
+    /// 日结候选校验器（F §6.2 步骤 4：候选组装与全部可失败校验成功后才提交）。
+    day_end_validator: DayEndValidator,
+    /// 最近一次成功日结的不可变候选（宿主写盘失败 ≠ 市场回滚：显式报错保留）。
+    pub last_day_end_candidate: Option<DayEndCandidate>,
 }
 
 impl World {
@@ -184,6 +219,8 @@ impl World {
             order_ttl_ticks,
             history_len,
             decision,
+            rights_computer,
+            initial_cash_override,
         } = spec;
         let n_stocks = stocks.len();
         let abort = Arc::new(AtomicBool::new(false));
@@ -206,7 +243,13 @@ impl World {
         for g in 0..n_groups as GroupIdx {
             let mut accounts = Vec::with_capacity(accounts_per_group);
             for l in 0..accounts_per_group {
-                let mut acct = GroupAccount::new(initial_cash, n_stocks);
+                let cash = initial_cash_override
+                    .as_ref()
+                    .and_then(|by_group| by_group.get(g as usize))
+                    .and_then(|by_local| by_local.get(l))
+                    .copied()
+                    .unwrap_or(initial_cash);
+                let mut acct = GroupAccount::new(cash, n_stocks);
                 if let Some(shares) = initial_shares
                     .get(g as usize)
                     .and_then(|by_group| by_group.get(l))
@@ -304,6 +347,10 @@ impl World {
             dead_finals: None,
             dead_reason: None,
             public_views: Self::initial_views(&stocks_specs, cage_on),
+            rights_computer,
+            ticks_per_day,
+            day_end_validator: Box::new(|_| Ok(())),
+            last_day_end_candidate: None,
         })
     }
 
@@ -357,6 +404,11 @@ impl World {
         }
         for _ in 0..n {
             let tick = self.global.committed_tick + 1;
+            // 日界：上一交易日末 tick 之后、新日首 tick 之前跑 DayEnd 序列
+            // （F §6.2：Drain → 组日翻转/权益 → 候选校验 → 本 Start 即隐式提交）。
+            if tick > 1 && (tick - 1) % self.ticks_per_day == 0 {
+                self.run_day_end(tick - 1)?;
+            }
             broadcast_start(&self.group_txs, tick, &self.public_views)?;
             let mut rounds = 0u32;
             loop {
@@ -482,6 +534,121 @@ impl World {
             desk_hashes: evidence.desk_hashes,
             desk_resting: evidence.desk_resting,
         });
+    }
+
+    /// 日结序列（F §6.2）：
+    /// ① Drain 交易部（强撤+实体回流+fee_sink 上交）→ 收 DeskDrained×N；
+    /// ② 组 DayEnd（Drain 回流落账 → T+1 解冻 → AdminBatch 权益可逆落账）
+    ///    → 收 GroupDayDone×G（实体批次先于 DayEnd 入队——FIFO 保证回流入投影）；
+    /// ③ 组装日结候选跑全部可失败校验——失败 ⇒ Abort 广播（组/部按可逆日志
+    ///    整体冲回上一交易日收敛态，日历不推进）；成功 ⇒ 保存不可变候选，
+    ///    下一 Start 即隐式提交（可逆日志退役、Abort 窗口关闭）。
+    fn run_day_end(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {
+        let day = ((day_final_tick - 1) / self.ticks_per_day) as u32;
+        // ① Drain。
+        for tx in &self.desk_txs {
+            tx.send(DeskMsg::Drain)
+                .map_err(|_| RuntimeError::SendFailed {
+                    detail: "DayEnd Drain 广播失败".to_owned(),
+                })?;
+        }
+        let mut desks: Vec<(StockIdx, i64, i64)> = Vec::with_capacity(self.n_stocks);
+        let mut drained = 0usize;
+        while drained < self.n_stocks {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::DeskDrained {
+                    stock,
+                    fee_sink,
+                    last_price,
+                } => {
+                    desks.push((stock, fee_sink, last_price));
+                    drained += 1;
+                }
+                UpMsg::Failed { who, error } => {
+                    self.abort_tick(day_final_tick);
+                    return Err(RuntimeError::WorkerFailed {
+                        who,
+                        error: Box::new(error),
+                    });
+                }
+                other => {
+                    self.abort_tick(day_final_tick);
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("DayEnd Drain 期望 DeskDrained，收到 {other:?}"),
+                    });
+                }
+            }
+        }
+        // ② 组日翻转 + 权益落账（可逆）。
+        for g in 0..self.n_groups as GroupIdx {
+            let rights = self
+                .rights_computer
+                .as_ref()
+                .map(|f| f(day, g))
+                .unwrap_or_default();
+            self.group_txs[g as usize]
+                .send(GroupIn::DayEnd(Box::new(DayEndDirective {
+                    tick: day_final_tick,
+                    day,
+                    rights,
+                })))
+                .map_err(|_| RuntimeError::SendFailed {
+                    detail: "DayEnd 广播失败".to_owned(),
+                })?;
+        }
+        let mut groups: Vec<(GroupIdx, Vec<GroupAccount>)> = Vec::with_capacity(self.n_groups);
+        let mut group_hashes: Vec<(GroupIdx, u64)> = Vec::with_capacity(self.n_groups);
+        let mut done = 0usize;
+        while done < self.n_groups {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupDayDone {
+                    group,
+                    accounts,
+                    state_hash,
+                    ..
+                } => {
+                    groups.push((group, accounts));
+                    group_hashes.push((group, state_hash));
+                    done += 1;
+                }
+                UpMsg::Failed { who, error } => {
+                    self.abort_tick(day_final_tick);
+                    return Err(RuntimeError::WorkerFailed {
+                        who,
+                        error: Box::new(error),
+                    });
+                }
+                other => {
+                    self.abort_tick(day_final_tick);
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("DayEnd 期望 GroupDayDone，收到 {other:?}"),
+                    });
+                }
+            }
+        }
+        // ③ 候选组装 + 全部可失败校验。
+        let candidate = DayEndCandidate {
+            day,
+            tick: day_final_tick,
+            groups,
+            group_hashes,
+            desks,
+            global: self.global,
+        };
+        if let Err(detail) = (self.day_end_validator)(&candidate) {
+            self.abort_tick(day_final_tick);
+            return Err(RuntimeError::DayEndValidation { day, detail });
+        }
+        // 成功：候选不可变交出；下一 Start 隐式提交（Abort 窗口关闭）。
+        self.last_day_end_candidate = Some(candidate);
+        Ok(())
+    }
+
+    /// 注入日结候选校验器（测试/存档接线点）。
+    pub fn set_day_end_validator(&mut self, v: DayEndValidator) {
+        self.day_end_validator = v;
     }
 
     /// 关停序列（对齐原型 orun.rs:373-453）：
