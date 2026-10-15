@@ -2211,3 +2211,46 @@ fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
         "撤销后子单身份清空（Closed→release 路径）"
     );
 }
+
+// D3b 件 5 红证：个人态注入通道——注入的 watchlist 经组权威个人态
+// 上行（collect_belief→BeliefParticipantBelief 读面）可见。
+#[test]
+fn d3b5_install_personal_updates_group_authority() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 1;
+    setup.auction_ticks = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.strategy_params.retail.order_size_mean = 100;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 61).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    // 组内 belief 位 = local 2（id_map=[玩家, retail, inst]）。
+    let collected = driver.collect_belief().expect("belief 读面");
+    let original = collected[0].1[2].clone().expect("belief 位在");
+    // 注入：watchlist 加一股（其余保持）。
+    let mut patched = original.clone();
+    patched
+        .watchlist
+        .record_attention(&crate::StockId(1), 0, 0)
+        .expect("watchlist 登记");
+    driver.install_personal_for_test(2, patched.clone());
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("注入后步进（消费）");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let collected = driver.collect_belief().expect("再读面");
+    let after = collected[0].1[2].clone().expect("belief 位在");
+    assert!(
+        after.watchlist.stocks.contains_key(&crate::StockId(1)),
+        "注入的个人态经组权威生效（watchlist 读面可见）"
+    );
+    let _ = original;
+}

@@ -674,6 +674,18 @@ impl World {
         }
     }
 
+    /// D3b 件 5：个人态注入下行组 0（cfg(test)——组权威覆盖+可逆）。
+    #[cfg(test)]
+    pub fn install_personal_for_test(
+        &mut self,
+        local: super::LocalIdx,
+        snapshot: super::world::BeliefParticipantSnapshot,
+    ) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::InstallPersonal { local, snapshot });
+        }
+    }
+
     /// D3b 复审注入通道（cfg(test)）：计划事件直接下行组 0（组簿
     /// apply 权威+可逆——Abort 冲回后指令失效需重发）。
     #[cfg(test)]

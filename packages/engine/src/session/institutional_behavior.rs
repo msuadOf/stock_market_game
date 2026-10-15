@@ -72,7 +72,7 @@ pub(super) struct InstitutionBehavior {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::session) fn assess_institution_behavior(
+pub(crate) fn assess_institution_behavior(
     policy: &InstitutionExperiencePolicy,
     experience: &RetailExperienceState,
     code: &StockId,

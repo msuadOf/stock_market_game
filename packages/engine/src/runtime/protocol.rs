@@ -329,6 +329,16 @@ pub enum GroupIn {
         /// desk 本地序号（OrderRef.1——身份合成输入）。
         order_serial: u64,
     },
+    /// D3b 件 5：个人态注入通道（cfg(test)）——restructure fixture 的
+    /// 组内等价（session 版 personal.install 的下行面；组权威个人态
+    /// 覆盖+Personal undo 可逆，Abort 冲回后需重发）。
+    #[cfg(test)]
+    InstallPersonal {
+        /// 组内名册下标。
+        local: super::LocalIdx,
+        /// 完整个人态快照（六件）。
+        snapshot: super::world::BeliefParticipantSnapshot,
+    },
     /// D3b 复审注入通道（cfg(test)）：直接向组簿施加计划事件
     ///（Paused/Revised/Terminated 等——restructure fixture 的组内
     /// 等价；PlanEvent 语义由 plan_book.apply 权威承载，可逆日志覆盖）。

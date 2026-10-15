@@ -1085,6 +1085,17 @@ impl RuntimeDriver {
         self.world.set_day_end_validator(v);
     }
 
+    /// D3b 件 5：个人态注入（cfg(test)）——restructure fixture 的组内
+    /// 等价（session 版 personal.install 的下行面）。
+    #[cfg(test)]
+    pub fn install_personal_for_test(
+        &mut self,
+        local: super::LocalIdx,
+        snapshot: super::world::BeliefParticipantSnapshot,
+    ) {
+        self.world.install_personal_for_test(local, snapshot);
+    }
+
     /// D3b 复审注入通道（cfg(test)）：计划事件下行组 0（restructure
     /// fixture 的组内等价——session 版 commit_injected_plan_roots 的
     /// 计划事件面）。

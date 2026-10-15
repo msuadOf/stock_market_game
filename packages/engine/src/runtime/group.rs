@@ -3137,6 +3137,35 @@ pub fn group_main(
                 }
             }
             #[cfg(test)]
+            GroupIn::InstallPersonal { local, snapshot } => {
+                // D3b 件 5：个人态注入——组权威覆盖（Personal undo 可逆；
+                /// Abort 冲回后需重发）。缺位/越界=注入面漂移，显式失败。
+                let prev = state.belief_states.get(local as usize).cloned().flatten();
+                match prev {
+                    Some(prev) => {
+                        state.undo.push(GroupUndo::Personal {
+                            local,
+                            prev: Box::new(prev),
+                        });
+                        if let Some(slot) = state.belief_states.get_mut(local as usize) {
+                            *slot = Some(snapshot);
+                        }
+                    }
+                    None => {
+                        abort.store(true, Ordering::SeqCst);
+                        let e = RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "组 {} 个人态注入目标位 {local} 缺信念态（非机构位或越界）",
+                                state.group
+                            ),
+                        };
+                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                        result = Err(e);
+                        break;
+                    }
+                }
+            }
+            #[cfg(test)]
             GroupIn::ApplyPlanEvents { events } => {
                 // D3b 复审注入通道：逐条 apply 到组簿（权威语义由
                 // plan_book.apply 承载；簿快照 undo 可逆——Abort 冲回后
