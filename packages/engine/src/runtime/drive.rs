@@ -1085,6 +1085,17 @@ impl RuntimeDriver {
         self.world.set_day_end_validator(v);
     }
 
+    /// D3b 复审注入通道（cfg(test)）：计划事件下行组 0（restructure
+    /// fixture 的组内等价——session 版 commit_injected_plan_roots 的
+    /// 计划事件面）。
+    #[cfg(test)]
+    pub fn apply_plan_events_for_test(
+        &mut self,
+        events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
+    ) {
+        self.world.apply_plan_events_for_test(events);
+    }
+
     /// 公共视图只读（组装面）。
     pub fn world_public_views(&self) -> &[super::protocol::StockPublic] {
         self.world.public_views()

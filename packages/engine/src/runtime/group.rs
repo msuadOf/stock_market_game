@@ -1628,6 +1628,7 @@ impl GroupState {
         (
             super::world::OpenDerivationRecord,
             Vec<super::decision::PendingOp>,
+            Vec<(LocalIdx, StockIdx, u64)>,
         ),
         RuntimeError,
     > {
@@ -1797,7 +1798,7 @@ impl GroupState {
         // 首子单报价（D3a-3 件4b——生产路径；读面不算子单）。existing=
         // 本轮开仓前计划集合（Sol 整改 3b：预算新旧分类——采集点在开仓
         // 循环之前，见上方 Sol 二审修复集 1 注记）。
-        let child_ops = if write_back {
+        let (child_ops, cancels_out) = if write_back {
             self.chain_quote_children(
                 local,
                 account,
@@ -1807,7 +1808,7 @@ impl GroupState {
                 &existing_before,
             )?
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         // 组态写回（生产路径：个人态六件入可逆日志后演进）。
         if write_back {
@@ -1836,6 +1837,7 @@ impl GroupState {
                 opens,
             },
             child_ops,
+            cancels_out,
         ))
     }
 
@@ -1865,12 +1867,19 @@ impl GroupState {
         personal: &crate::session::PlanPersonalState,
         snapshot: &std::sync::Arc<TickSnapshot>,
         existing_before: &[crate::plans::PlanId],
-    ) -> Result<Vec<super::decision::PendingOp>, RuntimeError> {
+    ) -> Result<(Vec<super::decision::PendingOp>, Vec<(LocalIdx, StockIdx, u64)>), RuntimeError>
+    {
         let group = self.group;
         let mut ops = Vec::new();
+        // D3b 件 3：定向撤单目标（local, stock, desk serial）——
+        // QuoteAction::Cancel 的路由产物（票留待 Closed 实体释放——
+        /// identity 匹配路径已有）。
+        let mut cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
+        // D3b 件 3：撤买终止目标（循环外 apply——借用隔离）。
+        let mut withdrawals: Vec<crate::plans::PlanId> = Vec::new();
         let plan_ids = self.plan_book.active_plan_ids_for_account(account);
         if plan_ids.is_empty() {
-            return Ok(ops);
+            return Ok((ops, cancels));
         }
         let Some(group_account) = self.accounts.get(local as usize) else {
             return Err(RuntimeError::ProtocolInvariant {
@@ -1897,10 +1906,17 @@ impl GroupState {
                 .plan_book
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
-            if !matches!(plan.status(), crate::plans::PlanStatus::Active)
-                || self
+            // D3b 件 3：Paused 计划放行到报价决策（共享 decide_plan_quote
+            /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+            /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+            /// Cancel 的触发形态，不得跳过。
+            if matches!(
+                plan.status(),
+                crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
+            ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
+                && self
                     .child_in_flight
-                    .contains_key(&(account, plan.code().clone()))
+                    .contains_key(&(account, plan.code().clone())))
             {
                 continue;
             }
@@ -2000,10 +2016,17 @@ impl GroupState {
                 .plan_book
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
-            if !matches!(plan.status(), crate::plans::PlanStatus::Active)
-                || self
+            // D3b 件 3：Paused 计划放行到报价决策（共享 decide_plan_quote
+            /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+            /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+            /// Cancel 的触发形态，不得跳过。
+            if matches!(
+                plan.status(),
+                crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
+            ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
+                && self
                     .child_in_flight
-                    .contains_key(&(account, plan.code().clone()))
+                    .contains_key(&(account, plan.code().clone())))
             {
                 continue;
             }
@@ -2017,6 +2040,40 @@ impl GroupState {
             else {
                 continue;
             };
+            // D3b 件 3：暂停/撤买前置分支（session generate_next_plan_quote
+            /// 头段的组内等价——共享 decide_plan_quote 不含该面）：Paused
+            /// 或（买方向且非反手信号 ≤0）→ Cancel/Keep/Wait + 撤买终止。
+            let code = plan.code();
+            {
+                let cancellable_now = phase_is_continuous(
+                    snapshot.tick,
+                    self.ticks_per_day,
+                    projection.auction_ticks,
+                    projection.closing_auction_ticks,
+                );
+                let reversing_to_sell = plan.direction() == Side::Buy
+                    && plan.opinion().signal_score_bp
+                        <= -(plan_book_policy_reverse_threshold(self) as i32);
+                let withdraw = plan.direction() == Side::Buy
+                    && plan.opinion().signal_score_bp <= 0
+                    && !reversing_to_sell;
+                let paused = matches!(plan.status(), crate::plans::PlanStatus::Paused { .. });
+                if paused || withdraw {
+                    match plan.active_child_order_id() {
+                        Some(order_id) if cancellable_now => {
+                            let serial = order_id.0 & 0x0000_FFFF_FFFF_FFFF;
+                            cancels.push((local, code.0 as StockIdx, serial));
+                        }
+                        _ => {}
+                    }
+                    if withdraw {
+                        // 撤买终止（session 的 Terminate 动作组内等价）——
+                        /// 借用冲突，收集后循环外 apply。
+                        withdrawals.push(plan_id);
+                    }
+                    continue;
+                }
+            }
             let code = plan.code();
             let stock_idx = code.0 as usize;
             let view = snapshot
@@ -2095,19 +2152,41 @@ impl GroupState {
             let Some(decision) = decision else {
                 continue;
             };
-            if let crate::plans::QuoteAction::Submit { price, qty } = decision.action {
-                if qty == 0 {
-                    continue;
+            match decision.action {
+                crate::plans::QuoteAction::Submit { price, qty } => {
+                    if qty == 0 {
+                        continue;
+                    }
+                    submits.push((
+                        plan_id,
+                        code.clone(),
+                        stock_idx as StockIdx,
+                        plan.direction(),
+                        price,
+                        qty,
+                    ));
                 }
-                submits.push((
-                    plan_id,
-                    code.clone(),
-                    stock_idx as StockIdx,
-                    plan.direction(),
-                    price,
-                    qty,
-                ));
+                crate::plans::QuoteAction::Cancel { order_id } => {
+                    // D3b 件 3：定向撤单路由（OrderRef 合成逆——serial=
+                    // 低 48 位；票保留至 Closed 释放）。
+                    let serial = order_id.0 & 0x0000_FFFF_FFFF_FFFF;
+                    eprintln!("[cancel-route] plan={plan_id:?} order={order_id:?} stock={stock_idx}");
+                    cancels.push((local, stock_idx as StockIdx, serial));
+                }
+                _ => {}
             }
+        }
+        // D3b 件 3：撤买终止（session Terminate 动作的组内等价——
+        // 撤信号 ≤0 的买计划终止；子单 Cancel 已入 cancels）。
+        for plan_id in withdrawals {
+            self.save_plan_book_undo();
+            let _ = self.plan_book.apply(
+                plan_id,
+                crate::plans::PlanEvent::Terminated {
+                    reason: crate::plans::TerminationReason::Cancelled,
+                    trading_day: snapshot.tick / self.ticks_per_day,
+                },
+            );
         }
         // 执行腿登记（借用外——D3a-3：挂出即登记，execution 腿在=后续轮
         // 报价跳过——同计划不重复挂子单；remaining 校验/成交推进见
@@ -2159,7 +2238,7 @@ impl GroupState {
                 qty,
             });
         }
-        Ok(ops)
+        Ok((ops, cancels))
     }
 
     /// 执行一轮：脚本计划 → 实体扣除（记逆操作）→ 分段 flush → GroupReport。
@@ -2189,6 +2268,8 @@ impl GroupState {
         let mut cancel_intents_skipped = 0u64;
         let mut panic_payload: Option<String> = None;
         let mut stall: Option<Duration> = None;
+        // D3b 件 3：belief 链定向撤单目标（决策块内收集，缓冲创建后下发）。
+        let mut chain_cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
         if let Some((profiles, gap)) = &mut self.decision {
             // Continue 轮跳过普通 due 筛选（F §4.3）——只推进计划链；
             // 测试脚本路径不受限（脚本按轮定义行为，是续行注入面）。
@@ -2267,11 +2348,14 @@ impl GroupState {
                     self.undo.push(GroupUndo::NextDue { local, prev: prev_due });
                 }
                 for local in chain_due {
-                    let (_record, child_ops) = self.run_chain_decision(local, tick, true)?;
+                    let (_record, child_ops, cancels) =
+                        self.run_chain_decision(local, tick, true)?;
                     for op in child_ops {
                         pendings.push(Pending::Op(op));
                     }
+                    chain_cancels.extend(cancels);
                 }
+
             }
         } else {
             let plan = (self.script)(tick, round);
@@ -2322,6 +2406,15 @@ impl GroupState {
         let group = self.group;
         let n_stocks = self.accounts.first().map(|a| a.shares.len()).unwrap_or(0);
         let mut buffers: Vec<Vec<DeskIn>> = vec![Vec::new(); n_stocks];
+        // D3b 件 3：定向撤单路由（DeskIn::Cancel{owner, order}——与本轮
+        /// 下单共用分段 flush 缓冲；票保留至 Closed 实体释放——identity
+        /// 匹配的 release 路径已有）。
+        for (local, stock, serial) in chain_cancels {
+            buffers[stock as usize].push(DeskIn::Cancel {
+                owner: (group, local),
+                order: (stock, serial),
+            });
+        }
         let mut buffered = 0usize;
         let mut ops_sent = 0u64;
         // D4 相位计时：账户校验段（purse/持仓扣除+在途登记）。
@@ -2525,6 +2618,11 @@ fn equity_cents(
             .unwrap_or_else(|error| panic!("组内权益累加失败：{error:?}"));
     }
     equity
+}
+
+/// 组簿反手阈值（D3b 件 3 辅助——plan_book.policy() 的只读便捷）。
+fn plan_book_policy_reverse_threshold(state: &GroupState) -> i32 {
+    state.plan_book.policy().reverse_revision_threshold_bp
 }
 
 /// 相位判定（与 session `phase()` 同式：申报窗=竞价窗前 2/3、盘前=竞价窗
@@ -3039,6 +3137,28 @@ pub fn group_main(
                 }
             }
             #[cfg(test)]
+            GroupIn::ApplyPlanEvents { events } => {
+                // D3b 复审注入通道：逐条 apply 到组簿（权威语义由
+                // plan_book.apply 承载；簿快照 undo 可逆——Abort 冲回后
+                // 指令失效需重发）。
+                for (plan_id, event) in events {
+                    state.save_plan_book_undo();
+                    let applied = state.plan_book.apply(plan_id, event);
+                    if let Err(error) = applied {
+                        abort.store(true, Ordering::SeqCst);
+                        let e = RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "组 {} 注入计划事件失败 {plan_id:?}：{error:?}",
+                                state.group
+                            ),
+                        };
+                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                        result = Err(e);
+                        break;
+                    }
+                }
+            }
+            #[cfg(test)]
             GroupIn::ForceDue { locals, tick } => {
                 // Sol 整改注入通道（cfg(test) 语义）：显式强制到期——组
                 // 验证目标 tick 晚于已转正 tick 后登记待办；效果延迟到
@@ -3102,7 +3222,7 @@ pub fn group_main(
                                 continue;
                             }
                             match state.run_chain_decision(local, snapshot.tick, false) {
-                                Ok((record, _)) => derivations.push(record),
+                                Ok((record, _, _)) => derivations.push(record),
                                 Err(e) => {
                                     abort.store(true, Ordering::SeqCst);
                                     let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
@@ -3866,7 +3986,7 @@ mod sol_recheck1_tests {
             .active_plan(account, &crate::StockId(0))
             .expect("计划 A")
             .plan_id();
-        let ops = correct
+        let (ops, _) = correct
             .chain_quote_children(0, account, &projection, &personal(account), &snapshot, &[a])
             .expect("报价");
         assert!(
@@ -3882,7 +4002,7 @@ mod sol_recheck1_tests {
             .active_plan(account, &crate::StockId(1))
             .expect("计划 B")
             .plan_id();
-        let ops = buggy
+        let (ops, _) = buggy
             .chain_quote_children(0, account, &projection, &personal(account), &snapshot, &[a, b])
             .expect("报价");
         assert!(

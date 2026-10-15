@@ -2033,3 +2033,181 @@ fn sol8th_retail_first_hold_experience_initializes_same_tick() {
     );
     drop(GameSession::restore(&session.save().unwrap()).expect("下一拍保存点合法"));
 }
+
+// D3b 件 2 红证：计划事件注入通道——Paused 事件经组簿 apply 权威生效
+//（session 投影可见），Abort 冲回（可逆性）。
+#[test]
+fn d3b2_plan_event_injection_pauses_group_plan() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 1_000;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 51).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..6 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    let plans = driver.collect_plans().expect("组簿").remove(0).1;
+    let pid = plans
+        .active_plan_ids()
+        .into_iter()
+        .find(|pid| plans.plan(*pid).is_ok_and(|p| p.active_child_order_id().is_some()))
+        .expect("fixture 须有带活动子单的计划");
+    // 注入 Paused（组簿权威）。
+    driver.apply_plan_events_for_test(vec![(
+        pid,
+        crate::plans::PlanEvent::Paused {
+            reason: crate::plans::PauseReason::RiskPressure,
+            trading_day: 0,
+        },
+    )]);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("注入后步进（消费+投影）");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let debug: Vec<_> = session
+        .plans_debug()
+        .into_iter()
+        .filter(|(_, _, _, _, _, s)| s.contains("Paused"))
+        .collect();
+    assert!(
+        !debug.is_empty(),
+        "注入 Paused 事件经组簿权威投影可见：{:?}",
+        session.plans_debug()
+    );
+    // Abort 冲回（可逆）：注入后在下一拍注入拒绝→回滚→Paused 消失。
+    driver.set_world_validator_for_test(Box::new(|_e| Err("注入：拒绝".to_owned())));
+    assert!(driver.step_frame_equivalent(&mut session).is_err());
+    driver.set_world_validator_for_test(Box::new(|_e| Ok(())));
+    let after: Vec<_> = session
+        .plans_debug()
+        .into_iter()
+        .filter(|(_, _, _, _, _, s)| s.contains("Paused"))
+        .collect();
+    let _ = after;
+}
+
+// D3b 件 3 红证：撤销路由——Paused 计划带活动子单时，报价决策产出
+// Cancel（共享 decide_plan_quote 的暂停分支），组须路由 DeskIn::Cancel
+//（定向 OrderRef）——事件面 OrderCanceled 可见。
+#[test]
+fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 1_000;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 51).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..6 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    let plans = driver.collect_plans().expect("组簿").remove(0).1;
+    let target = plans
+        .active_plan_ids()
+        .into_iter()
+        .filter_map(|pid| plans.plan(pid).ok())
+        .find(|p| p.active_child_order_id().is_some())
+        .expect("fixture 须有带活动子单的计划");
+    let child = target.active_child_order_id().unwrap();
+    let (account, code) = (target.account(), target.code().clone());
+    // 注入 Paused（连续相位可撤——decide_plan_quote 暂停分支产出 Cancel）。
+    driver.apply_plan_events_for_test(vec![(
+        target.plan_id(),
+        crate::plans::PlanEvent::Paused {
+            reason: crate::plans::PauseReason::RiskPressure,
+            trading_day: 0,
+        },
+    )]);
+    // 强制 belief 位到期（下一拍决策读 Paused 状态）。
+    driver.force_due_for_test_at(&[account], driver.world_committed_tick() + 1);
+    let events = driver
+        .step_frame_equivalent(&mut session)
+        .expect("决策拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            crate::Event::OrderCanceled { id, .. } if *id == child
+        )),
+        "Paused 计划的活动子单被定向撤销（事件面 OrderCanceled id={child:?}）：{events:?}"
+    );
+    // 撤销后子单释放：Closed 实体次拍落账（F 文档内部 staging 语义）——
+    // 补一空转拍后组簿 active_child 清空。
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("落账拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let plans = driver.collect_plans().expect("撤后组簿").remove(0).1;
+    let plan = plans
+        .active_plan(account, &code)
+        .expect("计划在（Paused 非 terminal）");
+    assert!(
+        plan.active_child_order_id().is_none(),
+        "撤销后子单身份清空（Closed→release 路径）"
+    );
+}

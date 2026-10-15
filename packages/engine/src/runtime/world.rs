@@ -674,6 +674,18 @@ impl World {
         }
     }
 
+    /// D3b 复审注入通道（cfg(test)）：计划事件直接下行组 0（组簿
+    /// apply 权威+可逆——Abort 冲回后指令失效需重发）。
+    #[cfg(test)]
+    pub fn apply_plan_events_for_test(
+        &mut self,
+        events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
+    ) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::ApplyPlanEvents { events });
+        }
+    }
+
     /// 外部计划广播（D2 玩家意图路由：组 0 消费——玩家惯例位）。
     pub fn broadcast_external_plan(&mut self, ops: Vec<super::decision::PendingOp>) {
         if let Some(tx) = self.group_txs.first() {

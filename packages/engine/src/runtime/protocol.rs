@@ -329,6 +329,14 @@ pub enum GroupIn {
         /// desk 本地序号（OrderRef.1——身份合成输入）。
         order_serial: u64,
     },
+    /// D3b 复审注入通道（cfg(test)）：直接向组簿施加计划事件
+    ///（Paused/Revised/Terminated 等——restructure fixture 的组内
+    /// 等价；PlanEvent 语义由 plan_book.apply 权威承载，可逆日志覆盖）。
+    #[cfg(test)]
+    ApplyPlanEvents {
+        /// (计划 id, 事件) 序列——逐条 apply，失败显式上报。
+        events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
+    },
     /// 测试控制面（Sol 中点整改注入通道——cfg(test) 语义）：显式强制
     /// 到期指令（账户位+目标 tick；组线程验证目标晚于已转正 tick 后
     /// 前移 next_due——不每 tick 偷用 session 镜像；效果入可逆日志，
