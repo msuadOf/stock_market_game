@@ -8,11 +8,10 @@
 use engine::money::Money;
 use engine::runtime::drive::RuntimeDriver;
 use engine::session::{NpcSetup, SessionSetup};
-use engine::{SecurityCategory, StockCode, StockSpec};
 use engine::{
-    Event, FloatAllocation, GameSession, StockExchange, TradingPhase,
-    SIMULATION_POLICY_ID,
+    Event, FloatAllocation, GameSession, StockExchange, TradingPhase, SIMULATION_POLICY_ID,
 };
+use engine::{SecurityCategory, StockCode, StockSpec};
 
 fn setup_1stock() -> SessionSetup {
     SessionSetup {
@@ -110,7 +109,10 @@ fn batch1_event_types_within_engine_vocabulary() {
 // 2. seq 单调（两路径各自）。
 #[test]
 fn batch1_seq_monotonic_both_paths() {
-    for (name, events) in [("runtime", runtime_events(30, 2).1), ("pipeline", pipeline_events(30, 2).1)] {
+    for (name, events) in [
+        ("runtime", runtime_events(30, 2).1),
+        ("pipeline", pipeline_events(30, 2).1),
+    ] {
         let mut prev: Option<u64> = None;
         for e in &events {
             let seq = match e {
@@ -146,11 +148,17 @@ fn batch1_player_cash_untouched_both_paths() {
     let (rt_session, _) = runtime_events(20, 4);
     let (pipe_session, _) = pipeline_events(20, 4);
     let initial = GameSession::new(setup_1stock(), 4).expect("基线构造");
-    let player_cash = |s: &GameSession| {
-        s.account(engine::AccountId(0)).expect("玩家").cash()
-    };
-    assert_eq!(player_cash(&rt_session), player_cash(&initial), "runtime 玩家现金不变");
-    assert_eq!(player_cash(&pipe_session), player_cash(&initial), "旧管线玩家现金不变");
+    let player_cash = |s: &GameSession| s.account(engine::AccountId(0)).expect("玩家").cash();
+    assert_eq!(
+        player_cash(&rt_session),
+        player_cash(&initial),
+        "runtime 玩家现金不变"
+    );
+    assert_eq!(
+        player_cash(&pipe_session),
+        player_cash(&initial),
+        "旧管线玩家现金不变"
+    );
 }
 
 // 5. 账户数一致（两路径不丢账户）。
@@ -166,7 +174,9 @@ fn batch1_account_count_matches() {
 fn batch1_runtime_emits_auction_window_events() {
     let (_, events) = runtime_events(20, 6);
     assert!(
-        events.iter().any(|e| matches!(e, Event::AuctionTick { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::AuctionTick { .. })),
         "竞价窗内应有 AuctionTick：{} 事件",
         events.len()
     );
@@ -177,7 +187,9 @@ fn batch1_runtime_emits_auction_window_events() {
 fn batch1_pipeline_emits_auction_window_events() {
     let (_, events) = pipeline_events(20, 6);
     assert!(
-        events.iter().any(|e| matches!(e, Event::AuctionTick { .. })),
+        events
+            .iter()
+            .any(|e| matches!(e, Event::AuctionTick { .. })),
         "旧管线竞价窗事件对照面"
     );
 }
@@ -191,14 +203,20 @@ fn batch1_trade_event_fields_wellformed() {
         .filter(|e| matches!(e, Event::Trade { .. }))
         .collect();
     for t in trades {
-        let Event::Trade { price, qty, maker, taker, code, .. } = t else {
+        let Event::Trade {
+            price,
+            qty,
+            maker,
+            taker,
+            code,
+            ..
+        } = t
+        else {
             unreachable!()
         };
         assert!(price.cents() > 0, "价格正");
         assert!(*qty > 0, "数量正");
-        // 已知差异候选（登记）：runtime 骨架允许同账户对手腿形态——
-        // 旧管线的账户内竞争校验（资金竞争后另一腿被拒）不同。
-        // 真实语义差异需在翻转前裁决（自成交政策）。
+        assert_ne!(maker, taker, "对手方不同（自成交限制已修）");
         assert_eq!(code, &engine::StockId(0), "单股 setup 路由");
     }
 }
@@ -208,14 +226,22 @@ fn batch1_trade_event_fields_wellformed() {
 fn batch1_cash_never_increases() {
     let initial = GameSession::new(setup_1stock(), 8).expect("基线");
     let base: i64 = (0..initial.account_count() as u64)
-        .filter_map(|i| initial.account(engine::AccountId(i)).map(|a| a.cash().cents()))
+        .filter_map(|i| {
+            initial
+                .account(engine::AccountId(i))
+                .map(|a| a.cash().cents())
+        })
         .sum();
     for (name, (session, _)) in [
         ("runtime", runtime_events(20, 8)),
         ("pipeline", pipeline_events(20, 8)),
     ] {
         let total: i64 = (0..session.account_count() as u64)
-            .filter_map(|i| session.account(engine::AccountId(i)).map(|a| a.cash().cents()))
+            .filter_map(|i| {
+                session
+                    .account(engine::AccountId(i))
+                    .map(|a| a.cash().cents())
+            })
             .sum();
         assert!(
             total <= base + 5_670_000_000,
@@ -229,8 +255,17 @@ fn batch1_cash_never_increases() {
 #[test]
 fn batch1_phase_window_consistency() {
     let (_, events) = runtime_events(30, 9);
-    let call = events.iter().any(|e| matches!(e,
-        Event::AuctionTick { phase: TradingPhase::CallAuction, .. }
-            | Event::AuctionCompleted { phase: TradingPhase::CallAuction, .. }));
+    let call = events.iter().any(|e| {
+        matches!(
+            e,
+            Event::AuctionTick {
+                phase: TradingPhase::CallAuction,
+                ..
+            } | Event::AuctionCompleted {
+                phase: TradingPhase::CallAuction,
+                ..
+            }
+        )
+    });
     assert!(call, "前 15 tick 应有开盘竞价事件");
 }

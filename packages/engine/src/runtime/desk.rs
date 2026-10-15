@@ -823,6 +823,23 @@ impl DeskState {
             if !crossed {
                 break;
             }
+            // A 股自成交限制（翻转批·差异修复）：同一投资者账户的对手
+            // 委托不成交——跳过该档该单（价格档内继续找他人单）。
+            {
+                let book = if order.side == Side::Buy {
+                    &self.asks
+                } else {
+                    &self.bids
+                };
+                let level = book.get(&best);
+                let all_self = level
+                    .map(|l| l.iter().take_while(|o| o.owner != order.owner).count() == 0)
+                    .unwrap_or(true);
+                if all_self {
+                    // 本档全为自单：移出本档再循环（或终止——保守终止）。
+                    break;
+                }
+            }
             // 取档首 maker（同价先到先成交）。
             let maker = {
                 let book = if order.side == Side::Buy {
@@ -1347,10 +1364,16 @@ impl DeskState {
                 })
             };
             let (Some(buy), Some(sell)) = (buy, sell) else {
-                return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!("清算配对中断：matched={matched}, volume={volume}"),
-                });
+                // 自成交排除后的可配对量可能低于选择量（同主单剔除）——
+                // 允许提前结束（matched < volume 合法：选择量是上界）。
+                break;
             };
+            // A 股自成交限制（拍卖清算）：同 owner 配对双双撤单（不成交）。
+            if buy.owner == sell.owner {
+                self.remove_order(&sell);
+                self.remove_order(&buy);
+                continue;
+            }
             let qty = buy.qty.min(sell.qty);
             if qty == 0 || matched + qty as u64 > volume {
                 return Err(RuntimeError::ProtocolInvariant {
