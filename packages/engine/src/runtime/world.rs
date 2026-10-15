@@ -676,6 +676,17 @@ impl World {
         self.run_day_end(day_final_tick)
     }
 
+    /// 撤销一次**已成功**的日结（Sol 二审修复集 2）：广播 Abort——组按
+    /// 日结隔离日志冲回（解冻/权益/Drain 落账），部冲回清簿撤单，回到
+    /// 上一交易日收敛态；日结候选一并作废。仅在"日结成功但编排后续
+    /// 步骤（如 civil 推进）失败"时调用——此时组/部可逆日志仍存活
+    /// （下一 Start 前的 Abort 窗口内），冲回后可重跑日结。
+    pub fn abort_day_end(&mut self) {
+        let tick = self.global.committed_tick;
+        self.abort_tick(tick);
+        self.last_day_end_candidate = None;
+    }
+
     fn run_day_end(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {
         let day = ((day_final_tick - 1) / self.ticks_per_day) as u32;
         // ① Drain。

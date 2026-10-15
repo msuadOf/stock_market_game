@@ -140,3 +140,51 @@ fn batch4_second_day_auction_window() {
         "第二日开盘竞价窗（tick 241+）：{day2_auction:?}"
     );
 }
+
+// 11. Sol 二审修复集 2：civil 日结失败全量回滚（World Abort、driver
+//     seq/事件缓冲、会话 day/seq），修复后重试恰一次成功。
+#[test]
+fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
+    use std::collections::BTreeSet;
+    let mut session = GameSession::new(setup_1stock(), 310).expect("会话");
+    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    for _ in 1..=240 {
+        driver.step_frame_equivalent(&mut session).expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    // 制造 civil 失败：交易日计数偏离时钟期望（advance 后 5+1 ≠ 期望 1，
+    // end_civil_day 在同步校验处显式失败且不改动会话/时钟）。
+    let seq_before = session.current_seq();
+    session.rollback_runtime_day_end(5, seq_before);
+    let driver_seq_before = driver.next_seq();
+    let err = driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect_err("civil 失败必须显式报错");
+    eprintln!("civil 失败：{err}");
+    // 全量回滚断言（Sol 二审）：会话两字段 + driver seq + 事件缓冲。
+    assert_eq!(session.day(), 5, "会话 day 回滚到基线");
+    assert_eq!(session.current_seq(), seq_before, "会话 seq 回滚");
+    assert_eq!(driver.next_seq(), driver_seq_before, "driver seq 回滚");
+    assert!(
+        driver.take_drained_events().is_empty(),
+        "失败尝试不得残留清簿事件"
+    );
+    // 修复基线后重试恰一次：成功、day 恰 +1、清簿事件恰一批（无重复）。
+    session.rollback_runtime_day_end(0, session.current_seq());
+    driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect("重试日结成功");
+    assert_eq!(session.day(), 1, "重试后 day 恰推进一日");
+    let drained = driver.take_drained_events();
+    let mut canceled_ids = BTreeSet::new();
+    for e in &drained {
+        if let Event::OrderCanceled { id, .. } = e {
+            assert!(canceled_ids.insert(*id), "清簿撤单不得重复（重试恰一次）：{id:?}");
+        }
+    }
+    assert!(!drained.is_empty(), "撤销 World 日结后重放可再产清簿事件");
+    // 重试后世界可继续步进（Abort 已收敛、无死锁）。
+    driver.step_frame_equivalent(&mut session).expect("日结后可续跑");
+}

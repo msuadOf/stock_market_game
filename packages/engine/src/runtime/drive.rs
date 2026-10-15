@@ -137,22 +137,57 @@ impl RuntimeDriver {
     ///   ⇒ 两侧各自回滚（runtime Abort 可逆日志冲回、会话 candidate
     ///   丢弃），日历不推进。
     pub fn day_end(&mut self, session: &mut GameSession) -> Result<(), String> {
+        // 基线（Sol 二审修复集 2）：civil 失败时全量回滚——World 日结
+        // （Abort 冲回）、driver seq/事件缓冲、会话 day/seq。
+        let day_before = session.day();
+        let seq_before = session.current_seq();
+        let next_seq_before = self.next_seq;
+        let drained_len_before = self.drained_events.len();
         // runtime 侧日结：Drain→组日翻转→候选校验（失败=内部已 Abort 冲回）。
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败（内部已 Abort 冲回）：{e:?}"))?;
-        // 清簿撤单事实转事件（seq 分配），并入待取缓冲。
+        self.collect_drained_events();
+        // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
+        if let Err(e) = session.end_civil_day() {
+            self.rollback_day_end(
+                session,
+                day_before,
+                seq_before,
+                next_seq_before,
+                drained_len_before,
+            );
+            return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
+        }
+        Ok(())
+    }
+
+    /// 清簿撤单事实转事件（seq 分配），并入待取缓冲。
+    fn collect_drained_events(&mut self) {
         let drained = std::mem::take(&mut self.world.drained_lifecycle);
         if !drained.is_empty() {
             let input = collect_lifecycle(&drained, &[]);
             self.drained_events
                 .extend(project_lifecycle_events(&input, &mut self.next_seq));
         }
-        // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
-        session.end_civil_day().map_err(|e| {
-            format!("自然日推进失败（runtime 已日结、会话 candidate 已丢弃）：{e:?}")
-        })?;
-        Ok(())
+    }
+
+    /// 日结失败全量回滚（Sol 二审修复集 2）：撤销 World 日结（Abort——
+    /// 组/部按可逆日志冲回上一交易日收敛态）、恢复 driver seq 与事件
+    /// 缓冲、恢复会话 day/seq 基线。调用后可原样重跑日结（恰一次语义
+    /// 由缓冲截断保证——失败尝试不残留事件、不消耗 seq）。
+    fn rollback_day_end(
+        &mut self,
+        session: &mut GameSession,
+        day_before: u32,
+        seq_before: u64,
+        next_seq_before: u64,
+        drained_len_before: usize,
+    ) {
+        session.rollback_runtime_day_end(day_before, seq_before);
+        self.world.abort_day_end();
+        self.next_seq = next_seq_before;
+        self.drained_events.truncate(drained_len_before);
     }
 
     /// 取日终清簿事件（清空式——调用方拼进 tick 帧或日结帧）。
@@ -167,22 +202,26 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
     ) -> Result<(), String> {
+        // 基线（Sol 二审修复集 2，扩展 P1-7）：civil 失败时除会话
+        // day/seq 外，同步撤销 World 日结与 driver seq/事件缓冲。
+        let day_before = session.day();
+        let seq_before = session.current_seq();
+        let next_seq_before = self.next_seq;
+        let drained_len_before = self.drained_events.len();
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败：{e:?}"))?;
-        let drained = std::mem::take(&mut self.world.drained_lifecycle);
-        if !drained.is_empty() {
-            let input = collect_lifecycle(&drained, &[]);
-            self.drained_events
-                .extend(project_lifecycle_events(&input, &mut self.next_seq));
-        }
-        // P1-7（Sol）：日结失败原子性——day/seq 基线回滚。
-        let day_before = session.day();
-        let seq_before = session.current_seq();
+        self.collect_drained_events();
         session.advance_runtime_market_day();
         if let Err(e) = session.end_civil_day() {
-            session.rollback_runtime_day_end(day_before, seq_before);
-            return Err(format!("自然日推进失败（day/seq 已回滚）：{e:?}"));
+            self.rollback_day_end(
+                session,
+                day_before,
+                seq_before,
+                next_seq_before,
+                drained_len_before,
+            );
+            return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
         }
         Ok(())
     }
