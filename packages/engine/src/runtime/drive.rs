@@ -285,7 +285,13 @@ impl RuntimeDriver {
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::SettlementShadow,
         );
-        // 账户回写（直改入口——X1 标记外部直改）。
+        // 账户回写（直改入口——X1 标记外部直改）。组快照不含在途票——
+        // 在途持仓口径（旧管线=在手+在途卖余量）由组侧读面承担
+        //（RootReadContext 投影含在途；回写 qty=组 shares——qty 口径差
+        // 登记项的回写侧：session 域 qty>0 假设依赖非零面，在途卖单
+        // 期间 qty=0 条目由 ever_held 保留观察面，权益/目标量读面已含
+        // 在途（Sol 整改 3 组侧收口——回写侧不再加回，避免 session 旧
+        // 管线代码读到双计）。
         let snapshots = self
             .world
             .snapshot_accounts()
@@ -304,7 +310,14 @@ impl RuntimeDriver {
                     .account(id)
                     .map(|a| a.positions().clone())
                     .unwrap_or_default();
-                for (idx, &qty) in acct.shares.iter().enumerate() {
+                for (idx, &qty_raw) in acct.shares.iter().enumerate() {
+                    // Sol 整改 3：qty 含在途卖余量（旧管线口径=在手+在途
+                    /// ——qty 口径差收口；session 域 cost_price/权益观察
+                    /// 因此与组读面同源）。
+                    let qty = qty_raw
+                        .saturating_add(
+                            acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
+                        );
                     let code = crate::StockId(idx as u32);
                     // 零持仓不新增条目：会话持仓语义=（曾）持有才有条目
                     //（经历账/存档校验 fault2038 依赖该不变量）；已有条目

@@ -51,6 +51,9 @@ pub struct GroupAccount {
     /// ——观察面 held 集成员（sample_discovery_stock 持仓优先采样）；
     /// 组侧 qty=0 无条目概念，以独立位承载。清仓置位、再持有复位）。
     pub ever_held: Vec<bool>,
+    /// 每股在途卖单余量（Sol 整改 3：child_in_flight 卖票的镜像——
+    /// 回写/读面口径"在手+在途"对齐旧管线；挂出加、成交/终结减）。
+    pub pending_sell_qty: Vec<u32>,
 }
 
 impl GroupAccount {
@@ -64,6 +67,7 @@ impl GroupAccount {
             invested_cents: vec![0; n_stocks],
             recovered_cents: vec![0; n_stocks],
             ever_held: vec![false; n_stocks],
+            pending_sell_qty: vec![0; n_stocks],
         }
     }
 
@@ -164,14 +168,117 @@ impl ObservationInputs {
     }
 }
 
-/// 计划子单在途票（Sol 整改 2：挂出量+受理身份——adopt 后身份在）。
+/// 计划子单在途票（Sol 整改 2/3：挂出量+方向+挂出限价+受理身份）。
 #[derive(Clone, Debug)]
 struct ChildTicket {
     /// 挂出量（完整子单数量——PendingOp.qty，adopt 的数量输入）。
     qty: u32,
+    /// 挂出方向（Sol 整改 3：在途资产读面——卖单量加回持仓、买单
+    /// purse 加回现金）。
+    side: Side,
+    /// 挂出限价（i64 分——买单 purse 重算的输入）。
+    price: i64,
     /// 受理身份（fill 首见时自 FillFact.order 确定性合成；None=挂出
     /// 未受理——desk 尚未成交/拒收）。
     order_id: Option<crate::OrderId>,
+}
+
+/// Sol 整改 3：含在途的权益（现金含在途买 purse；持仓含在途卖余量
+/// ×最新价——对齐旧管线权益观察口径）。
+fn equity_cents_with_pending(
+    group_account: &GroupAccount,
+    child_in_flight: &std::collections::BTreeMap<
+        (crate::AccountId, crate::StockId),
+        ChildTicket,
+    >,
+    account_ids: &[crate::AccountId],
+    local: LocalIdx,
+    config: &std::sync::Arc<crate::config::GameConfig>,
+    market: &crate::strategy::MarketView,
+) -> crate::money::Money {
+    let mut equity = crate::money::Money::from_cents(cash_with_pending_at(
+        group_account,
+        child_in_flight,
+        account_ids,
+        local,
+        config,
+    ));
+    for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
+        let qty = held_qty_with_pending_at(
+            &group_account.shares,
+            child_in_flight,
+            account_ids,
+            local,
+            stock,
+        );
+        if qty == 0 && qty_raw == 0 {
+            continue;
+        }
+        let price = market
+            .stocks
+            .get(&crate::StockId(stock as u32))
+            .map(|view| view.last_price)
+            .unwrap_or_else(|| panic!("组内权益计算缺股 {stock:?} 市场视图"));
+        equity = equity
+            .add(price.mul_shares(qty).unwrap_or_else(|error| {
+                panic!("组内权益持仓估值失败 {stock:?}: {error:?}");
+            }))
+            .unwrap_or_else(|error| panic!("组内权益累加失败：{error:?}"));
+    }
+    equity
+}
+
+/// Sol 整改 3：含在途的持仓读面（旧管线口径=在手+在途卖单余量——组
+/// shares 已扣在途；本 (账户,股) 唯一在途票为卖时加回其量）。
+fn held_qty_with_pending_at(
+    shares: &[u32],
+    child_in_flight: &std::collections::BTreeMap<
+        (crate::AccountId, crate::StockId),
+        ChildTicket,
+    >,
+    account_ids: &[crate::AccountId],
+    local: LocalIdx,
+    stock: usize,
+) -> u32 {
+    let mut qty = shares.get(stock).copied().unwrap_or(0);
+    if let Some(&account_id) = account_ids.get(local as usize) {
+        if let Some(ticket) = child_in_flight.get(&(account_id, crate::StockId(stock as u32))) {
+            if matches!(ticket.side, Side::Sell) {
+                qty = qty.saturating_add(ticket.qty);
+            }
+        }
+    }
+    qty
+}
+
+/// Sol 整改 3：含在途的现金读面（在途买 purse 加回——挂单期间权益
+/// 观察不缩水；purse 按挂出限价重算，与挂出时同口径）。
+fn cash_with_pending_at(
+    group_account: &GroupAccount,
+    child_in_flight: &std::collections::BTreeMap<
+        (crate::AccountId, crate::StockId),
+        ChildTicket,
+    >,
+    account_ids: &[crate::AccountId],
+    local: LocalIdx,
+    config: &std::sync::Arc<crate::config::GameConfig>,
+) -> i64 {
+    let mut cash = group_account.cash;
+    if let Some(&account_id) = account_ids.get(local as usize) {
+        for ((owner, _code), ticket) in child_in_flight {
+            if *owner == account_id && matches!(ticket.side, Side::Buy) {
+                if let Ok(purse) = super::fees::buy_purse_limit(
+                    config,
+                    Money::from_cents(ticket.price.max(1)),
+                    ticket.qty,
+                    Money::ZERO,
+                ) {
+                    cash = cash.saturating_add(purse.cents());
+                }
+            }
+        }
+    }
+    cash
 }
 
 /// FillFact.order 的确定性身份合成（Sol 整改 2：不另造计数器——
@@ -242,6 +349,12 @@ enum GroupUndo {
         account: crate::AccountId,
         code: crate::StockId,
         prev: Option<ChildTicket>,
+    },
+    /// 在途卖余量镜像回滚（Sol 整改 3：挂出加/成交终结减的逆增量）。
+    PendingSell {
+        local: LocalIdx,
+        stock: StockIdx,
+        delta: i64,
     },
 }
 
@@ -526,6 +639,8 @@ impl GroupState {
             h = fnv(h, u64::from(account.0));
             h = fnv(h, u64::from(code.0));
             h = fnv(h, u64::from(ticket.qty));
+            h = fnv(h, ticket.price as u64);
+            h = fnv(h, matches!(ticket.side, Side::Buy) as u64);
             h = fnv(h, ticket.order_id.map_or(0, |o| o.0));
         }
         h
@@ -593,6 +708,11 @@ impl GroupState {
                     if let Some(acct) = self.accounts.get_mut(local as usize) {
                         acct.ever_held[stock as usize] = prev;
                     }
+                }
+                GroupUndo::PendingSell { local, stock, delta } => {
+                    let acct = &mut self.accounts[local as usize];
+                    let slot = &mut acct.pending_sell_qty[stock as usize];
+                    *slot = (*slot as i64 - delta).max(0) as u32;
                 }
                 GroupUndo::ChildInFlight { account, code, prev } => {
                     // Sol 整改 2：恢复变更前票值（None=原本不在途）。
@@ -782,6 +902,8 @@ impl GroupState {
                 code: code.clone(),
                 prev: Some(ChildTicket {
                     qty: ticket.qty,
+                    side: ticket.side,
+                    price: ticket.price,
                     order_id: None,
                 }),
             });
@@ -808,6 +930,18 @@ impl GroupState {
                 detail: format!(
                     "组 {group} 成交事实未被计划消费：account={account:?}, code={code:?}, order={order_id:?}, remaining={remaining}"
                 ),
+            });
+        }
+        // Sol 整改 3：卖票成交——在途卖余量镜像减（部分/全成统一）。
+        if matches!(fill.side, Side::Sell) {
+            let acct = &mut self.accounts[fill.owner.1 as usize];
+            let before = acct.pending_sell_qty[stock as usize];
+            let after = before.saturating_sub(fill.qty);
+            acct.pending_sell_qty[stock as usize] = after;
+            self.undo.push(GroupUndo::PendingSell {
+                local: fill.owner.1,
+                stock,
+                delta: -i64::from(before - after),
             });
         }
         // 部分成交推进（票保留）或全成清除（下一轮可再报价）。
@@ -848,6 +982,26 @@ impl GroupState {
             code: code.clone(),
             prev: Some(ticket.clone()),
         });
+        // Sol 整改 3：卖票终结——剩余未成交量从镜像减（fill 已减过
+        /// 成交部分；此处=未成交余量）。
+        if matches!(ticket.side, Side::Sell) {
+            let remaining_pending = {
+                let plan = self.plan_book.active_plan(account, &code);
+                plan.and_then(|p| p.active_child_remaining_qty())
+                    .unwrap_or(ticket.qty)
+            };
+            let acct = &mut self.accounts[local as usize];
+            let before = acct.pending_sell_qty[stock as usize];
+            let after = before.saturating_sub(remaining_pending);
+            acct.pending_sell_qty[stock as usize] = after;
+            if before != after {
+                self.undo.push(GroupUndo::PendingSell {
+                    local,
+                    stock,
+                    delta: -i64::from(before - after),
+                });
+            }
+        }
         if let Some(order_id) = ticket.order_id {
             let day = self.cur_tick / self.ticks_per_day;
             self.save_plan_book_undo();
@@ -1219,6 +1373,8 @@ impl GroupState {
             &projection,
             &self.library,
             &self.plan_book,
+            &self.child_in_flight,
+            &self.config,
             snapshot.tick,
             self.ticks_per_day,
             &snapshot,
@@ -1267,7 +1423,15 @@ impl GroupState {
             let Some(group_account) = self.accounts.get(local as usize) else {
                 continue;
             };
-            let held_qty = group_account.shares[code.0 as usize];
+            // Sol 整改 3：开仓消费的持仓/权益读面含在途（挂单期间目标
+            // 量与权益观察不因所有权转移缩水——qty 口径差收口）。
+            let held_qty = held_qty_with_pending_at(
+                &group_account.shares,
+                &self.child_in_flight,
+                &projection.account_ids,
+                local,
+                code.0 as usize,
+            );
             let price = observation
                 .market
                 .stocks
@@ -1291,7 +1455,14 @@ impl GroupState {
                 code,
                 price,
                 held_qty,
-                equity_cents(group_account, &observation.market),
+                equity_cents_with_pending(
+                    group_account,
+                    &self.child_in_flight,
+                    &projection.account_ids,
+                    local,
+                    &self.config,
+                    &observation.market,
+                ),
                 score,
                 fundamental_ready,
                 &out.belief,
@@ -1327,9 +1498,20 @@ impl GroupState {
                 opens.push(open);
             }
         }
-        // 首子单报价（D3a-3 件4b——生产路径；读面不算子单）。
+        // 首子单报价（D3a-3 件4b——生产路径；读面不算子单）。existing=
+        // 本轮开仓前计划集合（Sol 整改 3b：预算新旧分类）。
+        let existing_before: Vec<crate::plans::PlanId> = self
+            .plan_book
+            .active_plan_ids_for_account(account);
         let child_ops = if write_back {
-            self.chain_quote_children(local, account, &projection, &out, &snapshot)?
+            self.chain_quote_children(
+                local,
+                account,
+                &projection,
+                &out,
+                &snapshot,
+                &existing_before,
+            )?
         } else {
             Vec::new()
         };
@@ -1388,6 +1570,7 @@ impl GroupState {
         projection: &std::sync::Arc<super::world::RootProjection>,
         personal: &crate::session::PlanPersonalState,
         snapshot: &std::sync::Arc<TickSnapshot>,
+        existing_before: &[crate::plans::PlanId],
     ) -> Result<Vec<super::decision::PendingOp>, RuntimeError> {
         let group = self.group;
         let mut ops = Vec::new();
@@ -1405,9 +1588,13 @@ impl GroupState {
             .get(local as usize)
             .and_then(|slot| *slot)
             .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
+        // Sol 整改 3：预算现金=可用（已扣在途 purse——所有权口径；frozen
+        /// 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
+        /// 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
+        /// NewOpportunity 不可达）。
         let cash = crate::money::Money::from_cents(group_account.cash);
         let existing: std::collections::BTreeSet<crate::plans::PlanId> =
-            plan_ids.iter().copied().collect();
+            existing_before.iter().copied().collect();
         // 软预算请求（与 session prepare_classified_plan_quotes 同源纯
         // 函数：买入按涨停预留、卖出按可卖量收敛）。
         let mut requests = Vec::new();
@@ -1635,8 +1822,23 @@ impl GroupState {
         for (plan_id, code, stock, side, price, qty) in submits {
             let prev = self.child_in_flight.insert(
                 (account, code.clone()),
-                ChildTicket { qty, order_id: None },
+                ChildTicket {
+                    qty,
+                    side,
+                    price: price.cents(),
+                    order_id: None,
+                },
             );
+            // Sol 整改 3：卖票挂出——在途卖余量镜像加。
+            if matches!(side, Side::Sell) {
+                let acct = &mut self.accounts[local as usize];
+                acct.pending_sell_qty[stock as usize] += qty;
+                self.undo.push(GroupUndo::PendingSell {
+                    local,
+                    stock,
+                    delta: i64::from(qty),
+                });
+            }
             // 防御：同键重复置入=上游跳过条件失效（显式失败，铁律二）。
             assert!(
                 prev.is_none(),
@@ -2087,6 +2289,11 @@ fn build_root_read_context(
     projection: &std::sync::Arc<super::world::RootProjection>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
     plans: &crate::plans::PlanBook,
+    child_in_flight: &std::collections::BTreeMap<
+        (crate::AccountId, crate::StockId),
+        ChildTicket,
+    >,
+    config: &std::sync::Arc<crate::config::GameConfig>,
     tick: u64,
     ticks_per_day: u64,
     snapshot: &TickSnapshot,
@@ -2100,17 +2307,32 @@ fn build_root_read_context(
             continue;
         };
         let group_account = &accounts[local];
+        // Sol 整改 3：含在途现金（买 purse 加回——挂单期间权益观察不
+        /// 缩水，对齐旧管线 escrow 口径）。
         let mut account = crate::account::Account::new(
             account_id,
             crate::account::AccountKind::Inst,
-            crate::money::Money::from_cents(group_account.cash),
+            crate::money::Money::from_cents(cash_with_pending_at(
+                group_account,
+                child_in_flight,
+                &projection.account_ids,
+                local as LocalIdx,
+                config,
+            )),
         );
         let mut positions = std::collections::BTreeMap::new();
-        for (stock, &qty) in group_account.shares.iter().enumerate() {
-            // 零持仓仅在曾持有时建条目（D3a-3 收口：对齐 session 清仓保留
-            // 零量条目——held 集成员参与发现采样；qty=0 时派生面
-            // （cost_price=None）等价，成本基数值无消费者）。
-            if qty == 0 && !group_account.ever_held[stock] {
+        for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
+            // Sol 整改 3：持仓含在途卖单余量（旧管线口径=在手+在途——
+            /// 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
+            /// 卖时建条目（held 集成员参与发现采样）。
+            let qty = held_qty_with_pending_at(
+                &group_account.shares,
+                child_in_flight,
+                &projection.account_ids,
+                local as LocalIdx,
+                stock,
+            );
+            if qty == 0 && qty_raw == 0 && !group_account.ever_held[stock] {
                 continue;
             }
             positions.insert(
