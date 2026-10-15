@@ -1848,6 +1848,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     let r0 = target
         .active_child_remaining_qty()
         .expect("活动子单有余量");
+    let f0 = target.filled_qty();
     // 外来单（同账户+股+**同方向**、不同订单）：吃掉簿上对手档成交——
     // 身份不匹配活动子单（方向取计划方向，同向才构成同键干扰形态）。
     let foreign_side = target.direction();
@@ -1877,26 +1878,19 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
         .expect("外来成交拍");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
-    // R1（同拍投影——**被测对象=session 投影簿** plans_debug，非组权威
-    /// 簿：Sol 七审修复 3——此前读 driver.collect_plans()=组簿，测错对象）。
-    let session_plans = session.plans_debug();
-    let r1 = session_plans
-        .iter()
+    // R1（同拍投影——**被测对象=session 投影簿** plans_debug，直接断言
+    /// filled_qty：Sol 八审——此前只断言 Active+余量读组簿，误推进后
+    /// 照样 Active、下一拍组权威又抹掉，判别力为零。投影 filled 未被
+    /// 外来成交推进=身份核生效的直接证据）。
+    let session_filled = session
+        .plans_debug()
+        .into_iter()
         .find(|(a, c, ..)| *a == account && *c == code)
-        .and_then(|(_, _, _, _, _, status)| (status == "Active").then_some(()))
-        .expect("session 投影簿中计划 Active");
-    let _ = r1;
-    // plans_debug 无余量字段——余量断言经组簿对照承载（R2），投影簿断言
-    // 计划仍在册且状态未因外来成交漂移（terminal/消失=误推进的可观测面）。
-    let plans_authority = driver.collect_plans().expect("同拍组簿").remove(0).1;
-    let r1_remaining = plans_authority
-        .active_plan(account, &code)
-        .expect("计划在")
-        .active_child_remaining_qty()
-        .expect("子单仍在途");
+        .map(|(.., filled, _)| filled)
+        .expect("session 投影簿中计划在册");
     assert_eq!(
-        r1_remaining, r0,
-        "同拍：外来同键成交不推进计划子单（身份核）"
+        session_filled, f0,
+        "同拍投影 filled_qty 不被外来同键成交推进（身份核——误推进则 +100 显红）"
     );
     // R2（下一拍组权威落账）：同为身份核——两值相等。
     driver
