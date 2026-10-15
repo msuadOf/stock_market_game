@@ -1088,40 +1088,55 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
     // 也满足，断言空转），并匹配独立成交事实（desk_trades 该 (账户,方向)
     // 聚合 ≥ child_qty−remaining；desk_trades 无单号，同键聚合为包含当前
     // 子单成交的下界）。
-    let mut same_child_partial: Option<(crate::AccountId, crate::orderbook::Side, u32, u32)> =
-        None;
+    let mut same_child_partial: Option<(
+        crate::AccountId,
+        crate::StockId,
+        crate::orderbook::Side,
+        u32,
+        u32,
+    )> = None;
     for pid in plans.active_plan_ids() {
         let Ok(plan) = plans.plan(pid) else { continue };
         let Some(leg) = plan.execution() else { continue };
         if let Some(remaining) = leg.active_child_remaining_qty() {
             if remaining > 0 && remaining < leg.child_qty() {
-                same_child_partial =
-                    Some((plan.account(), plan.direction(), leg.child_qty(), remaining));
+                same_child_partial = Some((
+                    plan.account(),
+                    plan.code().clone(),
+                    plan.direction(),
+                    leg.child_qty(),
+                    remaining,
+                ));
             }
         }
     }
-    let Some((partial_account, partial_direction, child_qty, remaining)) = same_child_partial
+    let Some((partial_account, partial_code, partial_direction, child_qty, remaining)) =
+        same_child_partial
     else {
         panic!("fixture 须有同子单部分成交腿（0<remaining<child_qty）——零成交/全成腿不满足");
     };
-    // 独立源：desk_trades 全程聚合（maker≡卖方/taker≡买方——desk 产出侧
-    // 两方向统一，同既有 expect 映射）。同键聚合为下界（含该账户同方向
-    // 其他子单的成交——当前子单的已成交部分必然包含在内）。
+    // 独立源：desk_trades **按同键（账户+股+方向）**统计（maker≡卖方/
+    // taker≡买方——desk 产出侧两方向统一，同既有 expect 映射）。同键
+    // 聚合为下界（含该账户同股同方向其他子单的成交——当前子单的已成交
+    // 部分必然包含在内）；Sol 四审修复 1：此前只按 owner.1>=2 全 belief
+    // 账户同方向累加、目标键只进报错文案——非同键统计。
     let mut traded: u32 = 0;
     for rec in driver.world_report_log() {
         for tr in &rec.desk_trades {
-            let (owner, _) = match partial_direction {
-                Side::Buy => (tr.taker, true),
-                Side::Sell => (tr.maker, false),
+            let owner = match partial_direction {
+                Side::Buy => tr.taker,
+                Side::Sell => tr.maker,
             };
-            if owner.1 >= 2 {
+            let same_key = tr.stock == partial_code.0 as super::StockIdx
+                && driver.id_map.get(owner.1 as usize) == Some(&partial_account);
+            if same_key {
                 traded = traded.saturating_add(tr.qty);
             }
         }
     }
     assert!(
         u64::from(traded) >= u64::from(child_qty - remaining),
-        "独立成交事实覆盖子单已成交部分：聚合 {traded} ≥ {}（账户 {partial_account:?} 方向 {partial_direction:?}）",
+        "独立成交事实（同键 {partial_account:?}/{partial_code:?}/{partial_direction:?}）覆盖子单已成交部分：聚合 {traded} ≥ {}",
         child_qty - remaining
     );
     // (b) 读面幂等：两次 collect_plans 逐字段相等。

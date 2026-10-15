@@ -199,6 +199,62 @@ mod t1_account_task_tests {
         );
     }
 
+
+    /// Sol 四审修复 2：构造消费**零推进**直接断言（真实 due=1 边界——
+    /// 不手改调度）：queue 后镜像 due=1；消费 staged（含注入意图的取走）
+    /// 后组权威 next_due 仍==镜像值（消费本身不推进 due/RNG——seed 恢复
+    /// 自镜像由 sol5_from_session_restores_attention_state 覆盖）；首步
+    /// 恰一次决策重排（due ∈ [2,6)——组模型轮 0 到期检查恰一次，二次
+    /// 决策在该模型下结构性不可达）。
+    #[test]
+    fn sol5th_queue_consumption_does_not_advance_attention() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = due_session(1, 311, true);
+        super::queue_npc_for_next_tick(&mut session).unwrap();
+        let mirror_due = session
+            .state
+            .npc_attention
+            .get(&crate::AccountId(1))
+            .unwrap()
+            .next_attention_candidate_tick;
+        assert_eq!(mirror_due, 1, "fixture 前提：重排落在消费拍（概率 1.0 恒成立）");
+        // 消费（与 step_via_runtime 同一入口；intents 取走即消费完成）。
+        let intents = crate::session::pipeline::take_staged_intents_for_runtime(&mut session)
+            .expect("staged 批在场");
+        assert!(!intents.is_empty(), "fixture 须产生 staged intents");
+        let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&session)
+            .expect("驱动器构造（消费已完成，无二次消费）");
+        let collected = driver.collect_attention().expect("组注意力收集");
+        // retail 位=local 1（id_map=[玩家, retail]；玩家恒 u64::MAX 不到期）。
+        let retail_due = collected[0]
+            .1
+            .iter()
+            .find(|(local, _)| *local == 1)
+            .map(|(_, due)| *due)
+            .expect("retail 位在组名册");
+        assert_eq!(
+            retail_due, mirror_due,
+            "构造消费零推进：组 next_due==queue 后镜像值 {mirror_due}"
+        );
+        // 首步恰一次决策：due 推进到 [2,6)（一次重排；未决策则仍=1）。
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("首步");
+        let collected = driver.collect_attention().expect("再收集");
+        let due_after = collected[0]
+            .1
+            .iter()
+            .find(|(local, _)| *local == 1)
+            .map(|(_, due)| *due)
+            .expect("retail 位在组名册");
+        assert!(
+            (2..6).contains(&due_after),
+            "首步恰一次决策重排：due={due_after} ∈ [2,6)（仍=1=未决策；组模型轮 0 恰一次）"
+        );
+    }
+
     /// Sol 二审修复集 5 红证：queue 的全名册到期在 runtime 真实生效——
     /// 此前 force_all_due_via_runtime 传 u64::MAX，被组端 `next_due > MAX`
     /// 守卫钳成 no-op（queue 语义没真承载）。首步后（驱动器在位→分流）
@@ -761,12 +817,13 @@ mod t1_account_task_tests {
 /// - intents 按产出序转交驱动器注入（归并序已固化依赖边语义）；
 /// - attention 已由 produce 写回会话镜像**恰一次**（构造器恢复即组
 ///   next_due——消费不再推进；镜像值即组权威起点）。
-/// 登记边界（消费拍不抑制）：旧消费 seam 在消费 tick 抑制再决策
-///（staged 早返），但 queue 的 belief 链产物（计划 root）不在 handover
-/// 结构内且组簿无注入通道（D3b）——抑制而不交付会使 belief 位在消费拍
-/// 既无 staged 结果也无自然决策（实测连坐 institution_observation 族）。
-/// 故消费拍保持自然调度：belief 位照常到期决策；零售 intents 由消费
-/// 执行（恰一次——A 红证第二拍零新增）。
+/// 消费拍语义（两面分开，Sol 四审落字）：
+/// - **已交付面（retail intents）**：消费拍执行、不重放（02 红绿的第二
+///   拍零新增断言）；对齐旧 seam 的"消费 tick 不重复决策"。
+/// - **未交付面（belief 链计划 root）**：不在 handover 结构内、组簿无
+///   注入通道（D3b）——消费拍**保持自然调度，不抑制**。抑制而不交付会
+///   使 belief 位在消费拍既无 staged 结果也无自然决策（双失——实测连坐
+///   institution_observation 族，d34fbc76 提交记录的回退实验）。
 /// 失败边界：注入后首步失败（Abort）时 staged 已消费——指令失效需
 /// 重发（与 ForceDue 承诺同语义）。
 #[cfg(test)]

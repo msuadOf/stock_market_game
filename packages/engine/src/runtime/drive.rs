@@ -360,14 +360,15 @@ impl RuntimeDriver {
                             acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
                         );
                     let code = crate::StockId(idx as u32);
-                    // 零持仓不新增条目：会话持仓语义=（曾）持有才有条目
-                    //（经历账/存档校验 fault2038 依赖该不变量）；已有条目
-                    // 同步数量（清零保留——在途卖单期间 session 条目 qty=0
-                    // 而旧管线口径=在手+在途余量，qty 口径差登记：D3b
-                    // urgency 域收口——session 域 qty>0 假设在 Active 复审
-                    // 面被 runtime 触发时处理）。组侧"曾持有"观察面由
+                    // 清仓条目删除（Sol 四审修复 4，单列的清仓持仓回写差）：
+                    // qty 已含在途卖余量（pending_sell_qty 镜像），0=真清仓
+                    // 且无在途——对齐旧管线 apply_sell 清仓删条目语义。
+                    // 此前"清零保留"（qty 口径差时代在途期间条目清零）——
+                    // 余量入 qty 后保留语义只剩清仓残留条目（旧管线会删除，
+                    // completed_sell 场景断言红）。组侧"曾持有"观察面由
                     // ever_held 位承载（held 集等价不依赖 session 条目）。
-                    if qty == 0 && !merged.contains_key(&code) {
+                    if qty == 0 {
+                        merged.remove(&code);
                         continue;
                     }
                     let is_new_hold = qty > 0 && !merged.contains_key(&code);
