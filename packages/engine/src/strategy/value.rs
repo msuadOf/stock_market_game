@@ -56,6 +56,18 @@ pub struct BeliefInstitutionStrategy {
 }
 
 impl BeliefInstitutionStrategy {
+    /// 个体参数全集投影（runtime 决策对等用——D3 台账收口）。
+    pub(crate) fn strategy_data(&self) -> StrategyData {
+        let mut data = StrategyData::inst(
+            crate::strategy::TargetPolicy::Fixed(crate::money::Money::ZERO),
+            self.margin,
+            self.order_size,
+        );
+        data.position_step_bp = self.position_step_bp;
+        data.base_observation_probability = self.base_observation_probability;
+        data
+    }
+
     pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
         Self::new(self.margin, self.order_size)
             .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;

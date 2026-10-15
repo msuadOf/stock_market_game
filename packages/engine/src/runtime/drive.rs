@@ -32,6 +32,31 @@ pub struct RuntimeDriver {
 }
 
 impl RuntimeDriver {
+    /// 个体策略投影（D3 台账收口）：账户已采样策略 → 三族 StrategyData
+    /// 全参数（含风格修饰——与旧管线决策输入逐字段同源）。
+    pub fn individual_strategy_data(
+        strategy: &crate::account::StoredStrategy,
+    ) -> Result<StrategyData, String> {
+        let state = strategy
+            .production_state()
+            .map_err(|e| format!("策略状态提取失败：{e:?}"))?;
+        Ok(match state {
+            crate::strategy::StrategyState::ZiNoise(s) => s.strategy_data(),
+            crate::strategy::StrategyState::Momentum(s) => s.strategy_data(),
+            crate::strategy::StrategyState::BeliefInstitution(s) => s.strategy_data(),
+        })
+    }
+
+    /// 基线回退（无策略账户/玩家）：族基线参数（setup 配置面）。
+    fn baseline_strategy_data(setup: &SessionSetup, _i: usize) -> StrategyData {
+        let params = &setup.strategy_params;
+        StrategyData::retail(
+            params.retail.arrival_rate,
+            params.retail.order_size_mean,
+            params.retail.chase_prob,
+        )
+    }
+
     /// 从会话构造驱动器（配置面+账户面投影；全 retail 决策缺省装配）。
     /// Sol 二审修复集 5：决策档案恢复会话 attention 真实状态——
     /// `next_due` ← 会话下次候选 tick、`seed` ← 注意力 RNG 状态
@@ -47,45 +72,37 @@ impl RuntimeDriver {
             .into_iter()
             .map(|(id, due, rng)| (id, (due, rng)))
             .collect();
-        // D1 策略对等：策略面从会话真实状态读取——族=账户 kind、参数=
-        // setup.strategy_params（此前合成 retail(0.30,200,0.35) 恒定，
-        // 参数不同的会话行为不分叉）。个体风格/阈值采样（旧管线
-        // StrategyFactory 的 RNG 个性）为登记差异：runtime 用基线参数
-        // （见 .tmp/multi-tick-design.md D1 节）。
-        let params = &setup.strategy_params;
+        // D3 台账收口（D1 登记差异→闭合）：策略面直接投影账户的**已采样
+        // 个体策略**（StrategyState::from_strategy → 三族 strategy_data()
+        // ——含风格修饰后的到达率/阈值/步幅/观察概率），族基线参数仅作
+        // 无策略账户的回退。此前用 setup 基线参数，个体风格 RNG 采样
+        // 差异已登记（.tmp/multi-tick-design.md D1 节），本批收口。
         let profiles: Vec<NpcProfile> = (0..npcs.max(1))
             .map(|i| {
                 let id = ids.get(i).copied();
                 let attention_entry = id.and_then(|id| attention.get(&id)).copied();
-                let kind = id.and_then(|id| session.account(id).map(|a| a.kind()));
                 // 玩家不经组线程自主决策（意图只走 ExternalPlan——D2 路由）；
                 // next_due=u64::MAX 显式永不到期。
-                let (strategy, fallback_due) = match kind {
-                    Some(crate::account::AccountKind::Retail) => (
-                        StrategyData::retail(
-                            params.retail.arrival_rate,
-                            params.retail.order_size_mean,
-                            params.retail.chase_prob,
-                        ),
-                        (i % 8) as u64,
-                    ),
-                    Some(crate::account::AccountKind::Inst) => (
-                        StrategyData::inst(
-                            crate::strategy::TargetPolicy::Fixed(Money::ZERO),
-                            params.inst.margin,
-                            params.inst.order_size,
-                        ),
-                        (i % 8) as u64,
-                    ),
-                    Some(crate::account::AccountKind::Hot) => (
-                        StrategyData::hot(
-                            params.hot.lookback,
-                            params.hot.trend_threshold,
-                            params.hot.order_size,
-                        ),
-                        (i % 8) as u64,
-                    ),
-                    _ => (StrategyData::retail(0.0, 0, 0.0), u64::MAX),
+                let strategy = match id.map(|id| session.account(id).map(|a| a.strategy())) {
+                    Some(Some(Some(strategy))) => {
+                        Self::individual_strategy_data(strategy).unwrap_or_else(|e| {
+                            // 个体策略不可投影=数据面缺失，显式失败（不静默
+                            // 回退基线——两路径决策分歧不可解释）。
+                            panic!("个体策略投影失败：{e}")
+                        })
+                    }
+                    _ => Self::baseline_strategy_data(&setup, i),
+                };
+                let fallback_due = if matches!(
+                    id.map(|id| session.account(id).map(|a| a.kind())),
+                    Some(Some(crate::account::AccountKind::Player)) | None
+                ) && id.map(|id| session.account(id).map(|a| a.kind())) != Some(Some(crate::account::AccountKind::Retail))
+                    && id.map(|id| session.account(id).map(|a| a.kind())) != Some(Some(crate::account::AccountKind::Inst))
+                    && id.map(|id| session.account(id).map(|a| a.kind())) != Some(Some(crate::account::AccountKind::Hot))
+                {
+                    u64::MAX
+                } else {
+                    (i % 8) as u64
                 };
                 match attention_entry {
                     Some((due, rng)) => NpcProfile {
@@ -156,6 +173,41 @@ impl RuntimeDriver {
         self.world
             .run_ticks(1)
             .map_err(|e| format!("runtime tick 失败：{e:?}"))?;
+        // D3 台账收口（入场参考价近似→闭合）：新持仓经历入场参考用本
+        // tick 买入腿成交 VWAP（旧管线以真实成交成本为基准；此前近似
+        // 现价）。后续加仓的 experience 迁移仍近似（登记——D5 经历域）。
+        let buy_vwap: std::collections::BTreeMap<
+            (super::GroupIdx, super::LocalIdx, super::StockIdx),
+            i64,
+        > = {
+            let trades: Vec<_> = self
+                .world
+                .report_log
+                .last()
+                .map(|r| r.desk_trades.clone())
+                .unwrap_or_default();
+            let mut sums: std::collections::BTreeMap<_, (i128, u64)> = Default::default();
+            for fact in &trades {
+                let legs = [
+                    (fact.maker, fact.taker_side == crate::orderbook::Side::Sell),
+                    (fact.taker, fact.taker_side == crate::orderbook::Side::Buy),
+                ];
+                for ((g, local), is_buy) in legs {
+                    if is_buy {
+                        let slot = sums.entry((g, local, fact.stock)).or_default();
+                        slot.0 += i128::from(fact.price) * i128::from(fact.qty);
+                        slot.1 += u64::from(fact.qty);
+                    }
+                }
+            }
+            sums.into_iter()
+                .filter_map(|(k, (value, qty))| {
+                    (qty > 0).then(|| {
+                        (k, i64::try_from(value / i128::from(qty)).unwrap_or(1).max(1))
+                    })
+                })
+                .collect()
+        };
         // D4 相位：结算影子段（账户/持仓回写）。
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::SettlementShadow,
@@ -193,9 +245,13 @@ impl RuntimeDriver {
                         .map(|p| (p.invested_cents(), p.recovered_cents()))
                         .unwrap_or((0, 0));
                     if is_new_hold {
-                        let price = last_prices.get(idx).copied().unwrap_or(1);
+                        let entry = buy_vwap
+                                .get(&(0, local as super::LocalIdx, idx as super::StockIdx))
+                                .copied()
+                                .or_else(|| last_prices.get(idx).copied())
+                                .unwrap_or(1);
                         session
-                            .runtime_hold_experience_init(&id, &code, qty, price)
+                            .runtime_hold_experience_init(&id, &code, qty, entry)
                             .map_err(|e| format!("持仓回写配套失败：{e}"))?;
                     }
                     merged.insert(

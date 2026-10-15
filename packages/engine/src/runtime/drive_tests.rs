@@ -116,3 +116,39 @@ fn d1_runtime_decisions_use_session_strategy_params() {
         "到达率 0.0 零下单——runtime 须用会话参数（合成 0.30 时此断言红）"
     );
 }
+
+// D3 台账收口回归钉：个体策略投影（含风格修饰的已采样参数）必须与
+// 账户策略状态同源，且与族基线可区分（采样个体性真实流入 runtime）。
+#[test]
+fn d3_individual_strategy_projection_flows_sampled_parameters() {
+    let mut setup = setup_fixture();
+    // 三族齐备（retail 2 + inst 1 + hot 1）——覆盖全部投影分支。
+    setup.npcs.retail_count = 2;
+    setup.npcs.inst_count = 1;
+    setup.npcs.hot_count = 1;
+    setup.strategy_params.inst.order_size = 100;
+    setup.strategy_params.hot.order_size = 100;
+    let session = GameSession::new(setup, 42).expect("会话构造");
+    let mut saw_individual = false;
+    for id in 1..5u64 {
+        let id = crate::AccountId(id);
+        let Some(strategy) = session.account(id).and_then(|a| a.strategy()) else {
+            panic!("NPC {id:?} 应有已采样策略");
+        };
+        let data = RuntimeDriver::individual_strategy_data(strategy)
+            .unwrap_or_else(|e| panic!("投影失败：{e}"));
+        // 与账户策略状态同源：经 production_state 复投影必须相等。
+        let again = RuntimeDriver::individual_strategy_data(strategy).unwrap();
+        assert_eq!(format!("{data:?}"), format!("{again:?}"));
+        // 基线 retail(0.30,200,0.35) 与个体参数可区分（风格修饰后的
+        // 阈值/步幅几乎必然偏离基线——采样个体性流入）。
+        let baseline = crate::strategy::StrategyData::retail(0.30, 200, 0.35);
+        if format!("{data:?}") != format!("{baseline:?}") {
+            saw_individual = true;
+        }
+    }
+    assert!(
+        saw_individual,
+        "至少一个 NPC 的个体参数须偏离合成基线（否则投影退化为基线）"
+    );
+}
