@@ -121,6 +121,122 @@ fn prepare_npc_projection(
 mod t1_account_task_tests {
     use super::*;
 
+    /// Sol 三审修复 2 红证：首步前 queue 接通——staged handover 由驱动器
+    /// 构造期**恰一次**消费（intents 进入 runtime 世界执行；attention 已由
+    /// produce 写回镜像、构造器恢复即组 next_due——不重复推进）。此前首步
+    /// 前驱动器不在位，queue 走旧 staged 通道：runtime 世界永不消费（死端）。
+    /// 孪生会话经旧 produce 消费同种子 staged 批取 intents 数（独立预期，
+    /// 不消费被测输出）。
+    #[test]
+    fn sol4th_queue_before_first_step_executes_intents_exactly_once() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        // fixture 安排：观察概率 1.0 下 queue 重排恒落在 tick+1（探针实测
+        // seed 311..316 全为 1）——长重排种子不可得，改为 queue 后把镜像
+        // next_due 顶到 3（确定性"第二拍无自然决策"——恰一次断言可判定；
+        // 安排的是调度面，被测的是 staged 消费）。
+        let seed = 311u64;
+        let mut session = due_session(1, seed, true);
+        super::queue_npc_for_next_tick(&mut session).unwrap();
+        session
+            .state
+            .npc_attention
+            .get_mut(&crate::AccountId(1))
+            .unwrap()
+            .next_attention_candidate_tick = 3;
+        // 孪生：同种子 queue 后走旧 produce 消费 staged 批——intents 数
+        // 即独立预期（imbalance 注入下为确定性同股买单）。
+        let mut twin = due_session(1, seed, true);
+        super::queue_npc_for_next_tick(&mut twin).unwrap();
+        let handover = super::produce_decision_output(&mut twin).expect("孪生 staged 消费");
+        let expected = handover.intents().len();
+        assert!(expected >= 1, "fixture 须产生 staged intents（否则断言空转）");
+        // (i) 首步：staged intents 经构造期消费进入 runtime 世界。
+        let events = session.step().expect("首步");
+        // 只计 retail（AccountId(1)）的受理——fixture 的玩家对手种子经
+        /// 构造期迁移同样受理（不过滤则与 staged 数巧合相等）。
+        let accepted1 = events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                crate::Event::OrderAccepted {
+                    account: crate::AccountId(1),
+                    ..
+                }
+            ))
+            .count();
+        assert_eq!(
+            accepted1, expected,
+            "staged intents 恰一次进入 runtime 世界（预期 {expected} 条 retail 受理）"
+        );
+        // (ii) 不重复：第二拍无自然决策（next_due=3>2）⇒ 零新增受理。
+        let events2 = session.step().expect("第二拍");
+        let accepted2 = events2
+            .iter()
+            .filter(|event| matches!(
+                event,
+                crate::Event::OrderAccepted {
+                    account: crate::AccountId(1),
+                    ..
+                }
+            ))
+            .count();
+        assert_eq!(
+            accepted2, 0,
+            "queue 的决策不重复执行（attention 已由 produce 推进、构造器恢复）"
+        );
+    }
+
+    /// Sol 三审修复 2 红证（消费拍抑制）：queue 重排落在下一拍
+    /// （next_due==1）时，构造期消费须抑制消费拍的重复决策（对齐旧
+    /// staged 消费 seam 的"消费 tick 不再决策"语义）——否则首拍出现
+    /// staged intents+新决策双份受理。
+    #[test]
+    fn sol4th_queue_consumption_tick_suppresses_redecision() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let seed = 311u64;
+        let mut session = due_session(1, seed, true);
+        super::queue_npc_for_next_tick(&mut session).unwrap();
+        let due_after = session
+            .state
+            .npc_attention
+            .get(&crate::AccountId(1))
+            .unwrap()
+            .next_attention_candidate_tick;
+        assert_eq!(due_after, 1, "fixture 前提：重排落在消费拍（概率 1.0 恒成立）");
+        let mut twin = due_session(1, seed, true);
+        super::queue_npc_for_next_tick(&mut twin).unwrap();
+        let handover = super::produce_decision_output(&mut twin).expect("孪生 staged 消费");
+        let expected = handover.intents().len();
+        let events = session.step().expect("首步（消费拍）");
+        let accepted1 = events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                crate::Event::OrderAccepted {
+                    account: crate::AccountId(1),
+                    ..
+                }
+            ))
+            .count();
+        assert_eq!(
+            accepted1, expected,
+            "消费拍只执行 staged intents（抑制重复决策：预期 {expected}，超出=消费拍重复决策）"
+        );
+        // 抑制锚：构造期消费把 next_due 顶到消费拍之后（1→2），首拍同步
+        /// 回镜像即该值——不因消费拍决策重排而漂移。
+        let mirror = session
+            .state
+            .npc_attention
+            .get(&crate::AccountId(1))
+            .unwrap()
+            .next_attention_candidate_tick;
+        assert_eq!(mirror, 2, "消费拍抑制：next_due 顶到 2（不重复推进）");
+    }
+
     /// Sol 二审修复集 5 红证：queue 的全名册到期在 runtime 真实生效——
     /// 此前 force_all_due_via_runtime 传 u64::MAX，被组端 `next_due > MAX`
     /// 守卫钳成 no-op（queue 语义没真承载）。首步后（驱动器在位→分流）
