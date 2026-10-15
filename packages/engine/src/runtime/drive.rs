@@ -130,6 +130,22 @@ impl RuntimeDriver {
     /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。
     /// 会话 tick 由调用方（或批 8e 的 step_frame 本体）推进。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        // D4 相位计时：挂当前捕获绑定（组/部 worker 读取安装）；世界运行
+        // 结束必摘（槽内克隆持 Arc，不清则捕获收尾 try_unwrap 失败）。
+        self.world.set_tick_capture(
+            crate::verification_evidence::current_phase_timing_binding(),
+        );
+        let outcome = self.step_with_capture(session);
+        self.world.clear_tick_capture();
+        outcome
+    }
+
+    /// step 本体（D4：捕获绑定已挂）——驱动器侧相位对齐旧管线 10 相。
+    fn step_with_capture(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        // D4 相位：密封分配快照段（tick 起点，组/部广播前）。
+        crate::verification_evidence::enter_phase(
+            crate::session::pipeline::TickPhase::SealAllocationSnapshot,
+        );
         // D1：新增持仓补经历条目（fault2038 存档校验依赖）——在快照
         // 回写前取现价。
         let last_prices: Vec<i64> = self
@@ -140,6 +156,10 @@ impl RuntimeDriver {
         self.world
             .run_ticks(1)
             .map_err(|e| format!("runtime tick 失败：{e:?}"))?;
+        // D4 相位：结算影子段（账户/持仓回写）。
+        crate::verification_evidence::enter_phase(
+            crate::session::pipeline::TickPhase::SettlementShadow,
+        );
         // 账户回写（直改入口——X1 标记外部直改）。
         let snapshots = self
             .world
@@ -212,11 +232,21 @@ impl RuntimeDriver {
             .as_ref()
             .map(|r| r.desk_auction.clone())
             .unwrap_or_default();
+        // D4 相位：回执聚合段（事件/回执投影）。
+        crate::verification_evidence::enter_phase(
+            crate::session::pipeline::TickPhase::ReceiptAggregation,
+        );
         let mut events = project_trade_events(&trades, &mut self.next_seq);
         let input = collect_lifecycle(&lifecycle, &receipts);
         events.extend(project_lifecycle_events(&input, &mut self.next_seq));
         events.extend(project_auction_events(&auction, &mut self.next_seq));
-        Ok(events)
+        let outcome = Ok(events);
+        // D4 相位：派生审计段（回写后对账面——本批为标记位，D3 候选
+        // 校验接入后承载实质校验计时）。
+        crate::verification_evidence::enter_phase(
+            crate::session::pipeline::TickPhase::DerivationAudit,
+        );
+        outcome
     }
 
     /// 事件 seq 游标（诊断）。
@@ -477,10 +507,25 @@ impl RuntimeDriver {
     ) -> Result<Vec<Event>, crate::session::StepFatal> {
         session.require_healthy()?;
         let tick_after = session.tick() + 1;
+        // D4 相位计时：tick 界登记（context_workers 采样真实池容量）。
+        crate::verification_evidence::begin_authoritative_tick(
+            session.tick(),
+            session.compute_context(),
+        )?;
         match self.step(session) {
             Ok(events) => {
+                // D4 相位：提交前校验段（相位完整性——缺相=显式失败）。
+                crate::verification_evidence::enter_phase(
+                    crate::session::pipeline::TickPhase::PreCommitValidation,
+                );
+                crate::verification_evidence::validate_precommit()?;
                 session.set_runtime_tick(tick_after);
+                // D4 相位：提交段（权威 tick/seq 写回）。
+                crate::verification_evidence::enter_phase(
+                    crate::session::pipeline::TickPhase::CommitTick,
+                );
                 self.sync_seq_into_session(session);
+                crate::verification_evidence::mark_committed(tick_after);
                 Ok(events)
             }
             Err(runtime_err) => {

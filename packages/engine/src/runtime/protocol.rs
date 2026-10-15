@@ -283,6 +283,13 @@ pub enum GroupIn {
 
 /// 交易部收件消息。
 pub enum DeskMsg {
+    /// tick 起点（D4：协调者在组 Start 前广播——交易部每 tick 必推进
+    /// begin_tick：到期撤销/开盘清算/行情快照不再依赖"本 tick 恰有 Ops
+    /// 到达"，相位计时（ExpiryShadow/StockProcessing）每 tick 有 span）。
+    Start {
+        /// tick 编号。
+        tick: u64,
+    },
     /// 一组本轮的一批操作。`final_flush` = 该组本轮最后一批（可空——提交完成标记）；
     /// 交易部收齐全部组的 final_flush 即本轮撮合输入完毕（先 flush 实体批次再上报）。
     Ops {

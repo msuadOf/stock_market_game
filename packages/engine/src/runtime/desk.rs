@@ -1918,7 +1918,19 @@ pub fn desk_main(
     up_tx: Sender<UpMsg>,
     abort: Arc<AtomicBool>,
     watchdog: WatchdogConfig,
+    capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
 ) -> Result<(), RuntimeError> {
+    /// D4：消息处理期安装捕获绑定（无捕获零开销；上报在绑定释放后）。
+    fn with_capture<R>(
+        capture: &Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+        work: impl FnOnce() -> R,
+    ) -> R {
+        let binding = capture
+            .lock()
+            .expect("capture 槽锁被 poison")
+            .clone();
+        crate::verification_evidence::with_phase_timing_binding(binding, work)
+    }
     let who = WorkerId::Desk(setup.stock);
     let mut state = DeskState::new(setup, n_groups, config);
     let mut result = Ok(());
@@ -1959,7 +1971,7 @@ pub fn desk_main(
             _ => {}
         }
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            process_msg(&mut state, &group_txs, &up_tx, msg)
+            with_capture(&capture, || process_msg(&mut state, &group_txs, &up_tx, msg))
         }));
         match outcome {
             Ok(Ok(())) => {}
@@ -1999,6 +2011,28 @@ fn process_msg(
     msg: DeskMsg,
 ) -> Result<(), RuntimeError> {
     match msg {
+        DeskMsg::Start { tick } => {
+            // D4：tick 起点（先于同 tick Ops，FIFO）——每 tick 必推进
+            // begin_tick：到期/清算/快照不再依赖 Ops 到达。
+            if tick > state.cur_tick {
+                if tick != state.cur_tick + 1 {
+                    return Err(RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "交易部 {} Start tick 跳变：tick={tick}, 上一执行 tick={}",
+                            state.setup.stock, state.cur_tick
+                        ),
+                    });
+                }
+                crate::verification_evidence::enter_phase(
+                    crate::session::pipeline::TickPhase::ExpiryShadow,
+                );
+                state.begin_tick(tick)?;
+                crate::verification_evidence::enter_phase(
+                    crate::session::pipeline::TickPhase::StockProcessing,
+                );
+            }
+            // tick == cur_tick：Ops 已自行 begin（防御路径），无操作。
+        }
         DeskMsg::Ops {
             tick,
             round,
@@ -2015,6 +2049,10 @@ fn process_msg(
                         ),
                     });
                 }
+                // D4 相位：到期撤销段（begin_tick 内 expire_due/清算/快照）。
+                crate::verification_evidence::enter_phase(
+                    crate::session::pipeline::TickPhase::ExpiryShadow,
+                );
                 state.begin_tick(tick)?;
             } else if tick < state.cur_tick {
                 return Err(RuntimeError::ProtocolInvariant {
@@ -2045,6 +2083,10 @@ fn process_msg(
                     detail: format!("交易部 {} 收到越界组索引：{group}", state.setup.stock),
                 });
             }
+            // D4 相位：撮合处理段（ops 应用+清算收尾）。
+            crate::verification_evidence::enter_phase(
+                crate::session::pipeline::TickPhase::StockProcessing,
+            );
             state.apply_ops(tick, ops)?;
             if final_flush {
                 if state.flushed[g] {

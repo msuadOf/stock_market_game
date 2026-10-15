@@ -189,6 +189,9 @@ pub struct World {
     /// 最近一次已成功日结的收尾 tick（D0：手动/自动日结显式互斥——
     /// 同一交易日只日结一次；abort_day_end 回滚时清空）。
     last_day_end_tick: Option<u64>,
+    /// D4 相位计时捕获槽：驱动器在 world 运行期挂当前捕获绑定，组/部
+    /// worker 每 tick 读取并在线程本地安装（无捕获时恒 None——零开销）。
+    capture_slot: std::sync::Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
     /// 最近一次成功日结的不可变候选（宿主写盘失败 ≠ 市场回滚：显式报错保留）。
     pub last_day_end_candidate: Option<DayEndCandidate>,
     /// 日终清簿撤单事实（驱动器事件拼装读取）。
@@ -246,6 +249,11 @@ impl World {
         } = spec;
         let n_stocks = stocks.len();
         let abort = Arc::new(AtomicBool::new(false));
+        let capture_slot: std::sync::Arc<
+            std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>,
+        > = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::verification_evidence::PhaseTimingBinding::empty(),
+        ));
         let (up_tx, up_rx) = channel::<UpMsg>();
         let mut group_rxs = Vec::with_capacity(n_groups);
         let mut group_txs = Vec::with_capacity(n_groups);
@@ -310,7 +318,8 @@ impl World {
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
                     let watchdog = watchdog;
-                    move || group_main(state, desk_txs, rx, up_tx, abort, watchdog)
+                    let capture = std::sync::Arc::clone(&capture_slot);
+                    move || group_main(state, desk_txs, rx, up_tx, abort, watchdog, capture)
                 })
                 .map_err(|e| RuntimeError::SendFailed {
                     detail: format!("spawn rt-group-{g} 失败：{e}"),
@@ -344,9 +353,11 @@ impl World {
                     let abort = Arc::clone(&abort);
                     let watchdog = watchdog;
                     let config = Arc::clone(&config);
+                    let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
                         desk_main(
                             setup, n_groups, config, rx, group_txs, up_tx, abort, watchdog,
+                            capture,
                         )
                     }
                 })
@@ -381,6 +392,7 @@ impl World {
             ticks_per_day,
             day_end_validator: Box::new(|_| Ok(())),
             last_day_end_tick: None,
+            capture_slot,
             last_day_end_candidate: None,
             drained_lifecycle: Vec::new(),
         })
@@ -495,6 +507,21 @@ impl World {
         }
     }
 
+    /// D4：挂当前相位计时捕获（world 运行期组/部 worker 读取安装）。
+    pub fn set_tick_capture(
+        &mut self,
+        binding: crate::verification_evidence::PhaseTimingBinding,
+    ) {
+        *self.capture_slot.lock().expect("capture 槽锁被 poison") = binding;
+    }
+
+    /// D4：摘除捕获（world 运行结束必调——槽内克隆持有 Arc，不清则
+    /// take_capture 的 try_unwrap 失败=CaptureStillBound）。
+    pub fn clear_tick_capture(&mut self) {
+        *self.capture_slot.lock().expect("capture 槽锁被 poison") =
+            crate::verification_evidence::PhaseTimingBinding::empty();
+    }
+
     /// 组注意力调度收集（P1-10：逐账户 next_due 上行——驱动器写回
     /// 会话 npc_attention 的真实状态源）。
     pub fn collect_group_attention(
@@ -594,6 +621,14 @@ impl World {
             {
                 // D0 互斥：该交易日尚未日结才自动跑（手动已日结则跳过）。
                 self.run_day_end(tick - 1)?;
+            }
+            // D4：tick 起点先达交易部（FIFO 保证先于同 tick Ops）——
+            // 每 tick 必推进 begin_tick（到期/清算/快照不再依赖 Ops 到达）。
+            for tx in &self.desk_txs {
+                tx.send(DeskMsg::Start { tick })
+                    .map_err(|_| RuntimeError::SendFailed {
+                        detail: format!("DeskMsg::Start(tick={tick}) 广播失败（部已退出）"),
+                    })?;
             }
             broadcast_start(&self.group_txs, tick, &self.public_views)?;
             let mut rounds = 0u32;

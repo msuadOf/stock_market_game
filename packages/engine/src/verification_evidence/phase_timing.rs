@@ -458,6 +458,14 @@ pub(crate) fn phase_timing_binding_installed_on_this_thread() -> bool {
     COLLECTOR.with_borrow(|slot| slot.is_some())
 }
 
+impl PhaseTimingBinding {
+    /// 空绑定（等价于从未进入捕获线程的 TLS；D4 runtime worker 槽的
+    /// 初值/清除态——生产使用，不限于测试）。
+    pub(crate) fn empty() -> Self {
+        Self(None)
+    }
+}
+
 #[cfg(test)]
 impl PhaseTimingBinding {
     /// 跨线程传播测试用：以全新观察账本构造可识别绑定（与生产捕获同构）。
@@ -465,11 +473,6 @@ impl PhaseTimingBinding {
         Self(Some(std::sync::Arc::new(std::sync::Mutex::new(
             Collector::new(),
         ))))
-    }
-
-    /// 跨线程传播测试用：空绑定（等价于从未进入捕获线程的 TLS）。
-    pub(crate) fn empty() -> Self {
-        Self(None)
     }
 
     pub(crate) fn is_empty(&self) -> bool {

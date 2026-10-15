@@ -648,6 +648,10 @@ impl GroupState {
             Op(PendingOp),
             CancelAll { local: LocalIdx, stock: StockIdx },
         }
+        // D4 相位计时：决策段（decide_data 内联/测试脚本产计划）。
+        crate::verification_evidence::enter_phase(
+            crate::session::pipeline::TickPhase::DecisionAndContinuation,
+        );
         let mut pendings: Vec<Pending> = Vec::new();
         let mut continuation = false;
         let mut due_npcs = 0u64;
@@ -753,6 +757,10 @@ impl GroupState {
         let mut buffers: Vec<Vec<DeskIn>> = vec![Vec::new(); n_stocks];
         let mut buffered = 0usize;
         let mut ops_sent = 0u64;
+        // D4 相位计时：账户校验段（purse/持仓扣除+在途登记）。
+        crate::verification_evidence::enter_phase(
+            crate::session::pipeline::TickPhase::AccountValidation,
+        );
         // 对齐撤单先于下单（同批次 FIFO；脚本顺序保证）。
         for c in pendings.iter().filter_map(|p| match p {
             Pending::CancelAll { local, stock } => Some((*local, *stock)),
@@ -940,7 +948,20 @@ pub fn group_main(
     up_tx: Sender<UpMsg>,
     abort: Arc<AtomicBool>,
     watchdog: WatchdogConfig,
+    capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
 ) -> Result<(), RuntimeError> {
+    /// D4：每条消息处理期安装当前捕获绑定（无捕获=None 零开销；完成
+    /// 信号在作用域退出（绑定释放）后发出——沿用旧协议保证）。
+    fn with_capture<R>(
+        capture: &Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+        work: impl FnOnce() -> R,
+    ) -> R {
+        let binding = capture
+            .lock()
+            .expect("capture 槽锁被 poison")
+            .clone();
+        crate::verification_evidence::with_phase_timing_binding(binding, work)
+    }
     let who = WorkerId::Group(state.group);
     let mut state = state;
     let mut result = Ok(());
@@ -979,7 +1000,7 @@ pub fn group_main(
                 }
                 state.snapshot = Some(snapshot);
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    state.handle_start(tick, &desk_txs, &up_tx)
+                    with_capture(&capture, || state.handle_start(tick, &desk_txs, &up_tx))
                 }));
                 match outcome {
                     Ok(Ok(())) => {}
@@ -1004,7 +1025,9 @@ pub fn group_main(
             GroupIn::Continue { tick, round } => {
                 state.observed.push(Observed::Continue(tick, round));
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    state.handle_continue(tick, round, &desk_txs, &up_tx)
+                    with_capture(&capture, || {
+                        state.handle_continue(tick, round, &desk_txs, &up_tx)
+                    })
                 }));
                 match outcome {
                     Ok(Ok(())) => {}
