@@ -630,6 +630,15 @@ mod t1_account_task_tests {
 pub(in crate::session) fn queue_npc_for_next_tick(
     session: &mut GameSession,
 ) -> Result<(), StepFatal> {
+    // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时决策权威
+    /// 在组——不生产/暂存旧管线产物（take 个人态的副作用同样跳过）；
+    /// 测试意图（下一 tick 全部 NPC 决策）经显式 ForceDue 指令承载
+    ///（全部 belief 位+retail 位到期）。
+    #[cfg(test)]
+    if session.runtime_driver.is_some() {
+        session.force_all_due_via_runtime();
+        return Ok(());
+    }
     if staged_decision::has_any() {
         return Err(invariant(
             "next-tick NPC queue still contains an unconsumed batch",

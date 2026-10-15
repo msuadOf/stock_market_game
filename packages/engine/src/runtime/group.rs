@@ -957,6 +957,53 @@ impl GroupState {
         Ok(())
     }
 
+    /// Sol 整改受理通道：受理事实的票身份登记（Accepted lifecycle 下行
+    /// ——OrderRef 合成+挂出量 adopt；fill 首见时票已有身份直接推进）。
+    fn adopt_child_on_accepted(
+        &mut self,
+        stock: StockIdx,
+        local: LocalIdx,
+        order_serial: u64,
+    ) -> Result<(), RuntimeError> {
+        let Some(&account) = self
+            .root_projection
+            .as_ref()
+            .and_then(|projection| projection.account_ids.get(local as usize))
+        else {
+            return Ok(());
+        };
+        let code = crate::StockId(u32::from(stock));
+        let Some(mut ticket) = self.child_in_flight.get(&(account, code)).cloned() else {
+            return Ok(());
+        };
+        if ticket.order_id.is_some() {
+            return Ok(());
+        }
+        let side = ticket.side;
+        let qty = ticket.qty;
+        let order_id = order_id_of(&(stock, order_serial));
+        let day = self.cur_tick / self.ticks_per_day;
+        self.save_plan_book_undo();
+        self.plan_book
+            .record_child_submitted(account, &code, side, order_id, qty, day)
+            .unwrap_or_else(|error| {
+                panic!("组内受理身份登记失败 {account:?} {code:?}: {error}")
+            });
+        ticket.order_id = Some(order_id);
+        self.undo.push(GroupUndo::ChildInFlight {
+            account,
+            code: code.clone(),
+            prev: Some(ChildTicket {
+                qty,
+                side,
+                price: ticket.price,
+                order_id: None,
+            }),
+        });
+        self.child_in_flight.insert((account, code), ticket);
+        Ok(())
+    }
+
     /// Sol 整改 2：子单终结（Closed 实体——到期、日终清簿、撤销与
     /// 失败释放的统一信号）。已受理（有身份）→record_child_released；
     /// 未受理→票清除（执行腿留待下次挂出覆盖——install 对 order=None
@@ -2716,6 +2763,53 @@ pub fn group_main(
                         detail: "GroupBelief 上行失败".to_owned(),
                     });
                     break;
+                }
+            }
+            GroupIn::ChildAccepted {
+                stock,
+                owner,
+                order_serial,
+            } => {
+                // Sol 整改受理通道：受理即身份（OrderRef 合成——不等首笔
+                // fill；adopt 数量=挂出量）。非本组/非计划链单（无票）跳过。
+                if owner.0 == state.group {
+                    if let Err(e) = state.adopt_child_on_accepted(stock, owner.1, order_serial) {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                        result = Err(e);
+                        break;
+                    }
+                }
+            }
+            #[cfg(test)]
+            GroupIn::ForceDue { locals, tick } => {
+                // Sol 整改注入通道（cfg(test) 语义）：显式强制到期——组
+                // 验证目标 tick 晚于已转正 tick 后前移 next_due（可逆
+                /// 日志——Abort 冲回，指令失效需重发）。
+                if tick <= state.committed_tick {
+                    abort.store(true, Ordering::SeqCst);
+                    let e = RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "组 {} ForceDue 目标 tick {tick} 不晚于已转正 {}（过期指令拒绝）",
+                            state.group, state.committed_tick
+                        ),
+                    };
+                    let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                    result = Err(e);
+                    break;
+                }
+                if let Some((profiles, _)) = &mut state.decision {
+                    for local in locals {
+                        if let Some(p) = profiles.get_mut(local as usize) {
+                            if p.next_due > tick {
+                                state.undo.push(GroupUndo::NextDue {
+                                    local,
+                                    prev: p.next_due,
+                                });
+                                p.next_due = tick;
+                            }
+                        }
+                    }
                 }
             }
             GroupIn::EchoPlans => {

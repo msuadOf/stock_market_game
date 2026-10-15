@@ -318,6 +318,28 @@ pub enum GroupIn {
     },
     /// 计划簿读面（D3a-2c 件5：组内 PlanBook 上行——plans_debug 投影源）。
     EchoPlans,
+    /// 受理事实下行（Sol 整改注入通道配套：desk 的 Accepted lifecycle
+    /// 经协调者转发组——受理即身份（OrderRef 合成），不等首笔 fill；
+    /// 生产通道非测试面）。
+    ChildAccepted {
+        /// 股索引。
+        stock: StockIdx,
+        /// 挂单所有者。
+        owner: Owner,
+        /// desk 本地序号（OrderRef.1——身份合成输入）。
+        order_serial: u64,
+    },
+    /// 测试控制面（Sol 中点整改注入通道——cfg(test) 语义）：显式强制
+    /// 到期指令（账户位+目标 tick；组线程验证目标晚于已转正 tick 后
+    /// 前移 next_due——不每 tick 偷用 session 镜像；效果入可逆日志，
+    /// Abort 冲回后指令失效需重发）。
+    #[cfg(test)]
+    ForceDue {
+        /// 组内名册下标。
+        locals: Vec<super::LocalIdx>,
+        /// 目标 tick（组验证 > 已转正 tick）。
+        tick: u64,
+    },
     /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
     /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
     EchoOpenDerivation,

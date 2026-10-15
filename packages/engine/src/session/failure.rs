@@ -58,6 +58,68 @@ impl GameSession {
     /// runtime 驱动器翻转面（D2）：失败回灌玩家意图（旧管线 ready
     /// ingress 语义——失败 tick 不消费外部队列，权威 pending_player
     /// 原样保留给下一次尝试；世界侧已随失败回滚/毒化，不构成双权威）。
+    /// Sol 整改注入通道（cfg(test)）：显式 ForceDue 指令下行（调度权威
+    /// 在组——组验证目标 tick 后前移 next_due；Abort 冲回后指令失效
+    /// 需重发）。
+    /// 个人态生产交付投影（Sol 整改注入通道配套：runtime 模式下 observe
+    /// 演进的组权威个人态经 Belief 读面上行→驱动器交付点回写——
+    /// session 侧 belief/experience/watchlist/attention 镜像随组演进；
+    /// X1 直改标记外部直改）。
+    pub fn set_runtime_personal_state(
+        &mut self,
+        id: crate::AccountId,
+        snapshot: &crate::runtime::world::BeliefParticipantSnapshot,
+    ) {
+        use super::decision_chain::personal_state::BeliefParticipantState;
+        // attention（调度域 candidate 保持组权威值——P1-10 链路回写的
+        /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
+        /// 覆盖为组快照，两域同源）。
+        self.state.npc_attention.insert(id, snapshot.attention.clone());
+        if let Some(mut previous) = self.state.belief_participants.remove(&id) {
+            // 保留 participant 结构语义：以组快照重建（BeliefParticipantState
+            // 的字段面=快照四件+attention/history 由各自容器承载）。
+            let _ = &mut previous;
+        }
+        self.state.belief_participants.insert(
+            id,
+            BeliefParticipantState::new(
+                snapshot.watchlist.clone(),
+                snapshot.price_memory.clone(),
+                snapshot.information.clone(),
+                snapshot.belief.clone(),
+            ),
+        );
+        self.state
+            .history_reads
+            .insert(id, snapshot.history_reads.clone());
+    }
+
+    /// Sol 整改注入通道（cfg(test)）：queue_npc 语义的 runtime 承载——
+    /// 全名册（belief+retail 位）下一 tick 到期。
+    #[cfg(test)]
+    pub(crate) fn force_all_due_via_runtime(&mut self) {
+        let ids: Vec<crate::AccountId> = {
+            let driver = self
+                .runtime_driver
+                .as_ref()
+                .and_then(|cell| cell.lock().ok())
+                .expect("runtime 驱动器在位（调用方已判）");
+            driver.id_map.clone()
+        };
+        self.force_due_via_runtime(&ids, u64::MAX);
+    }
+
+    #[cfg(test)]
+    pub(super) fn force_due_via_runtime(&mut self, ids: &[crate::AccountId], tick: u64) {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        // 目标 tick 取 max(指令, 世界下一 tick)——世界游标可能已领先。
+        driver.force_due_for_test_at(ids, tick);
+    }
+
     fn restore_runtime_player_intents(
         &mut self,
         intents: Vec<crate::session::ReceiptBearingIntent>,

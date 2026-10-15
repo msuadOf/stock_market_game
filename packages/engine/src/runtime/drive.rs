@@ -389,6 +389,28 @@ impl RuntimeDriver {
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::DerivationAudit,
         );
+        // Sol 整改个人态交付投影：组权威个人态（observe 演进）上行→
+        // session 镜像回写（reference/peak equity 等读面；Belief-1b 的
+        // information 域投递回写保持——整态覆盖与其同源）。
+        let belief_states = self
+            .world
+            .collect_group_belief()
+            .map_err(|e| format!("个人态交付投影失败：{e:?}"));
+        match belief_states {
+            Ok(collected) => {
+                for (_group, states) in collected {
+                    for (local, snapshot) in states.iter().enumerate() {
+                        let Some(&id) = self.id_map.get(local) else {
+                            continue;
+                        };
+                        if let Some(snapshot) = snapshot {
+                            session.set_runtime_personal_state(id, snapshot);
+                        }
+                    }
+                }
+            }
+            Err(projection_error) => return Err(projection_error),
+        }
         // D3a-2c 件5：组内计划簿交付点投影（plans_debug 等读面源——组
         // 线程权威，X1 直改）。**空簿不覆盖**：迁移期 session 侧仍承载
         // 测试注入/旧管线场景的计划（组内尚未接管注入路由——D3a-3），
@@ -627,6 +649,22 @@ impl RuntimeDriver {
     /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。
     pub fn sever_world_for_test(&mut self) {
         self.world.sever();
+    }
+
+    /// 测试控制面（Sol 整改注入通道）：按 AccountId 强制到期（显式
+    /// 目标 tick——指令表达账户+目标，组验证执行；Abort 冲回后指令
+    /// 失效需重发）。
+    #[cfg(test)]
+    pub fn force_due_for_test_at(&mut self, ids: &[crate::AccountId], tick: u64) {
+        let locals: Vec<super::LocalIdx> = self
+            .id_map
+            .iter()
+            .enumerate()
+            .filter_map(|(local, id)| ids.contains(id).then_some(local as super::LocalIdx))
+            .collect();
+        // 目标不早于世界下一 tick（游标领先时对齐——组验证拒绝过期）。
+        let target = tick.max(self.world.global.committed_tick + 1);
+        self.world.force_due_for_test(locals, target);
     }
 
     /// 组注意力调度收集（Sol 二审修复集 5：构造器恢复断言/对账面——

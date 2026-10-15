@@ -665,6 +665,15 @@ impl World {
         &self.public_views
     }
 
+    /// 测试控制面（Sol 整改注入通道）：显式强制到期指令下行（组 0——
+    /// 惯例单组；组验证目标 tick 后前移 next_due）。
+    #[cfg(test)]
+    pub fn force_due_for_test(&mut self, locals: Vec<super::LocalIdx>, tick: u64) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::ForceDue { locals, tick });
+        }
+    }
+
     /// 外部计划广播（D2 玩家意图路由：组 0 消费——玩家惯例位）。
     pub fn broadcast_external_plan(&mut self, ops: Vec<super::decision::PendingOp>) {
         if let Some(tx) = self.group_txs.first() {
@@ -1048,7 +1057,26 @@ impl World {
                     broadcast_continue(&self.group_txs, tick, next)?;
                     rounds = next;
                 } else {
+                    // Sol 整改受理通道：本 tick 的 Accepted lifecycle 下行
+                    // 组（受理即身份——挂出确认不等首笔 fill）。
+                    let accepted: Vec<(super::StockIdx, super::Owner, u64)> = evidence
+                        .desk_lifecycle
+                        .iter()
+                        .filter(|fact| {
+                            matches!(fact.kind, super::protocol::LifecycleKind::Accepted)
+                        })
+                        .map(|fact| (fact.stock, fact.owner, fact.order_serial))
+                        .collect();
                     self.install_tick(tick, rounds, evidence);
+                    for (stock, owner, order_serial) in accepted {
+                        for tx in &self.group_txs {
+                            let _ = tx.send(GroupIn::ChildAccepted {
+                                stock,
+                                owner,
+                                order_serial,
+                            });
+                        }
+                    }
                     break;
                 }
             }

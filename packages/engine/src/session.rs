@@ -3869,6 +3869,44 @@ impl GameSession {
         events: &mut Vec<Event>,
         auction: bool,
     ) {
+        // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时挂单
+        /// 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
+        /// session book 在 runtime 模式下不可见——裁决"book fixture
+        /// 分别适配"）。事件面：runtime 模式的受理事件由下一 step 产出
+        ///（seed 调用方的 events 缓冲不在此伪造就地事件——如实空）。
+        #[cfg(test)]
+        if self.runtime_driver.is_some() {
+            let mut intents = vec![crate::session::ReceiptBearingIntent {
+                owner: account,
+                intent: intent.clone(),
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }];
+            let _ = &mut intents;
+            let upper: Vec<i64> = {
+                let driver = self
+                    .runtime_driver
+                    .as_ref()
+                    .and_then(|cell| cell.lock().ok())
+                    .expect("runtime 驱动器在位（上方已判）");
+                driver
+                    .world_public_views()
+                    .iter()
+                    .map(|v| v.daily_upper_limit)
+                    .collect()
+            };
+            let mut driver = self
+                .runtime_driver
+                .as_mut()
+                .and_then(|cell| cell.lock().ok())
+                .expect("runtime 驱动器在位（上方已判）");
+            driver
+                .inject_player_intents(&intents, &upper)
+                .expect("runtime 意图注入（seed_order 分流）");
+            intents.clear();
+            let _ = events;
+            return;
+        }
         match intent {
             Intent::PlaceLimit {
                 code,
@@ -4317,6 +4355,15 @@ mod npc_working_quote_tests {
         account: AccountId,
         tick: u64,
     ) {
+        // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时调度
+        /// 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
+        /// session 镜像）。旧管线（无驱动器）路径不变。
+        #[cfg(test)]
+        if session.runtime_driver.is_some() {
+            let target = tick.max(session.state.tick + 1);
+            session.force_due_via_runtime(&[account], target);
+            return;
+        }
         let attention = session.state.npc_attention.get_mut(&account).unwrap();
         attention.base_probability = 1.0;
         attention.next_attention_candidate_tick = tick;
