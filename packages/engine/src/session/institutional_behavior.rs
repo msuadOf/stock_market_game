@@ -65,7 +65,7 @@ impl crate::GameSession {
     }
 }
 
-pub(super) struct InstitutionBehavior {
+pub(crate) struct InstitutionBehavior {
     pub cost_signal: SignalContribution,
     pub risk_pressure_pause: Option<bool>,
     pub adverse_selection_pause: bool,

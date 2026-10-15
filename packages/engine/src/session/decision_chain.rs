@@ -61,6 +61,8 @@ mod urgency;
 pub(crate) use personal_state::PlanPersonalState;
 // D3a-2c 件4：开仓派生共享函数（lifecycle 提取——组线程消费同源）。
 pub(crate) use lifecycle::open_position_action;
+pub(crate) use lifecycle::PlanReviewHost;
+pub(crate) use lifecycle::PlanLifecycleReview;
 pub(crate) use roots::{InstitutionDecisionRoot, RootReadContext};
 
 /// 同批账户 root 使用同一市场、路径、技术、时刻与曝光观察。
@@ -464,6 +466,97 @@ pub(crate) fn decide_plan_quote(inputs: PlanQuoteInputs<'_>) -> Option<crate::pl
         }
     }
     Some(decision)
+}
+
+/// D3b 件 4：session 宿主（PlanReviewHost 的会话实现——全部委托
+/// 既有方法，行为不变）。
+struct SessionReviewHost<'a> {
+    session: &'a GameSession,
+    account: AccountId,
+}
+
+impl lifecycle::PlanReviewHost for SessionReviewHost<'_> {
+    fn urgency_at_view(
+        &self,
+        plan: &TradingPlan,
+        return_30min_bp: Option<i32>,
+        return_1min_bp: Option<i32>,
+    ) -> (
+        crate::plans::UrgencyAssessment,
+        crate::plans::urgency::risk::RiskUrgencyAssessment,
+    ) {
+        self.session.plan_execution_urgency_at_view(
+            plan,
+            return_30min_bp,
+            return_1min_bp,
+            &self.session.build_market_view(),
+        )
+    }
+    fn review_facts(&self, account: AccountId, code: &StockId) -> (Money, u32) {
+        self.session
+            .plan_review_facts(account, code, &self.session.build_market_view())
+    }
+    fn review_resources(
+        &self,
+        account: AccountId,
+        code: &StockId,
+    ) -> crate::plans::ReviewResources {
+        self.session.plan_review_resources(account, code)
+    }
+    fn child_cancellable_now(&self) -> bool {
+        self.session.plan_child_is_cancellable_now()
+    }
+    fn initial_urgency(&self, direction: Side, confidence_bp: u32, horizon: u32) -> Urgency {
+        self.session
+            .initial_plan_urgency(self.account, direction, confidence_bp, horizon)
+    }
+    fn minute_closes(&self, code: &StockId) -> &[crate::observation::MarketMinuteClose] {
+        self.session
+            .state
+            .market_minute_closes
+            .get(code)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+    fn belief_style(&self) -> Option<crate::strategy::InstitutionStyle> {
+        self.session.belief_style(self.account)
+    }
+    fn phase_continuous(&self) -> bool {
+        self.session.phase() == TradingPhase::Continuous
+    }
+    fn urgency_policy(&self) -> &crate::plans::UrgencyPolicy {
+        &self.session.state.urgency_policy
+    }
+    fn institution_behavior(
+        &self,
+        belief: &crate::strategy::BeliefBook,
+        code: &StockId,
+        paused: Option<crate::plans::PauseReason>,
+    ) -> super::institutional_behavior::InstitutionBehavior {
+        self.session.institution_behavior(
+            self.account,
+            belief,
+            code,
+            &self.session.build_market_view(),
+            paused,
+        )
+    }
+    fn max_holdable_shares(&self, code: &StockId) -> u64 {
+        let code_str = self
+            .session
+            .state
+            .stocks
+            .code(*code)
+            .expect("candidate stock must be cataloged");
+        self.session
+            .state
+            .setup
+            .stocks
+            .iter()
+            .find(|stock| stock.code.0 == *code_str)
+            .map(|stock| stock.total_shares.min(u64::from(u32::MAX)))
+            .unwrap_or(0)
+    }
 }
 
 pub(crate) fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u32) -> Option<u32> {
@@ -1171,8 +1264,12 @@ impl GameSession {
         market_view: &MarketView,
         plans: &PlanBook,
     ) -> Vec<PlanLifecycleAction> {
-        lifecycle::PlanLifecycleReview::capture(self, id, market_view, plans)
-            .map_or_else(Vec::new, |review| review.collect(assessments))
+        lifecycle::PlanLifecycleReview::capture(self, id, market_view, plans).map_or_else(
+            Vec::new,
+            |review| {
+                review.collect(&SessionReviewHost { session: self, account: id }, assessments)
+            },
+        )
     }
 
     /// 平静观察（信息/风险/约束无变化）：仅推进最近事件日。

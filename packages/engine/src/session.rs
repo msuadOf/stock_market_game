@@ -135,6 +135,12 @@ pub(crate) use decision_chain::{
     decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty, next_routable_sell_qty,
     open_position_action,
 };
+// D3b 件 4：组线程复审宿主的共享类型面（trait+行为结构——两宿主实现
+// 同一 trait，行为不得分叉）。
+pub(crate) use institutional_behavior::InstitutionBehavior;
+pub(crate) use institutional_behavior::assess_institution_behavior;
+// 转发 decision_chain 的 re-export（组线程经 crate::session 使用）。
+pub(crate) use decision_chain::{PlanLifecycleReview, PlanReviewHost};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,

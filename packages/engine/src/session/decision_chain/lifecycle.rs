@@ -95,18 +95,61 @@ pub(crate) fn open_position_action(
     Some(open)
 }
 
+/// D3b 件 4：复核宿主面（session/组线程共用的回调集——assess_one 的
+/// 会话依赖参数化；两宿主实现同一 trait，行为不得分叉）。
+pub(crate) trait PlanReviewHost {
+    /// 报价期紧迫度+风险评估（plan_execution_urgency_at_view 等价）。
+    fn urgency_at_view(
+        &self,
+        plan: &TradingPlan,
+        return_30min_bp: Option<i32>,
+        return_1min_bp: Option<i32>,
+    ) -> (
+        crate::plans::UrgencyAssessment,
+        crate::plans::urgency::risk::RiskUrgencyAssessment,
+    );
+    /// 复审事实（price, acquired 数——information 记录计数）。
+    fn review_facts(&self, account: AccountId, code: &StockId) -> (Money, u32);
+    /// 复审资源（现金/冻结/持仓/T+1）。
+    fn review_resources(&self, account: AccountId, code: &StockId)
+        -> crate::plans::ReviewResources;
+    /// 当前相位可撤（连续段）。
+    fn child_cancellable_now(&self) -> bool;
+    /// 初始紧迫度（开仓分支输入）。
+    fn initial_urgency(&self, direction: Side, confidence_bp: u32, horizon: u32) -> Urgency;
+    /// 分钟收盘序列（价格路径观察输入）。
+    fn minute_closes(&self, code: &StockId) -> &[crate::observation::MarketMinuteClose];
+    /// DeepValue 风格位（开仓分支 style 输入）。
+    fn belief_style(&self) -> Option<crate::strategy::InstitutionStyle>;
+    /// 连续相位判定（开仓分支）。
+    fn phase_continuous(&self) -> bool;
+    /// 紧迫度策略（recovery 评估输入）。
+    fn urgency_policy(&self) -> &crate::plans::UrgencyPolicy;
+    /// 机构行为评估（暂停恢复分支——risk_pressure_pause 面；两宿主
+    /// 各自组装 assess_institution_behavior 输入）。
+    fn institution_behavior(
+        &self,
+        belief: &BeliefBook,
+        code: &StockId,
+        paused: Option<crate::plans::PauseReason>,
+    ) -> super::super::institutional_behavior::InstitutionBehavior;
+    /// 每股可持有上限（发行总股本，u32 收敛——宿主权威）。
+    fn max_holdable_shares(&self, code: &StockId) -> u64;
+}
+
 /// 复核只拥有本次派生事实；PlanBook、母单与个人状态仍由私有 candidate 持有。
-pub(super) struct PlanLifecycleReview<'a> {
-    session: &'a GameSession,
-    account: AccountId,
-    market: &'a MarketView,
-    plans: &'a PlanBook,
-    held_by_code: BTreeMap<StockId, u32>,
-    equity: Money,
-    belief: &'a BeliefBook,
-    chain_params: crate::strategy::BeliefChainParams,
-    trading_day: u64,
-    lot: u32,
+/// D3b 件 4：session 依赖收敛为 `total_shares` 回调——结构 pub(crate)
+/// 化供组线程直接组装（两宿主共用 assess_one 决策核）。
+pub(crate) struct PlanLifecycleReview<'a> {
+    pub(crate) account: AccountId,
+    pub(crate) market: &'a MarketView,
+    pub(crate) plans: &'a PlanBook,
+    pub(crate) held_by_code: BTreeMap<StockId, u32>,
+    pub(crate) equity: Money,
+    pub(crate) belief: &'a BeliefBook,
+    pub(crate) chain_params: crate::strategy::BeliefChainParams,
+    pub(crate) trading_day: u64,
+    pub(crate) lot: u32,
 }
 
 impl<'a> PlanLifecycleReview<'a> {
@@ -131,27 +174,28 @@ impl<'a> PlanLifecycleReview<'a> {
         if equity.cents() <= 0 {
             return None;
         }
+        let belief = session
+            .state
+            .belief_participants
+            .get(&account)
+            .map(|participant| participant.belief())
+            .unwrap_or_else(|| panic!("belief account {account:?} must have a belief book"));
         Some(Self {
-            session,
             account,
             market,
             plans,
             held_by_code,
             equity,
-            belief: session
-                .state
-                .belief_participants
-                .get(&account)
-                .map(|participant| participant.belief())
-                .unwrap_or_else(|| panic!("belief account {account:?} must have a belief book")),
+            belief,
             chain_params: session.chain_strategy_params(account),
             trading_day: u64::from(session.state.day),
             lot: session.state.setup.config.lot_size,
         })
     }
 
-    pub(super) fn collect(
+    pub(crate) fn collect(
         &self,
+        host: &dyn PlanReviewHost,
         assessments: &BTreeMap<StockId, CandidateAssessment>,
     ) -> Vec<PlanLifecycleAction> {
         let mut actions = Vec::with_capacity(assessments.len());
@@ -159,13 +203,14 @@ impl<'a> PlanLifecycleReview<'a> {
             return actions;
         }
         for (code, assessment) in assessments {
-            actions.extend(self.assess_one(code, assessment));
+            actions.extend(self.assess_one(host, code, assessment));
         }
         actions
     }
 
     fn compute_target_qty(
         &self,
+        host: &dyn PlanReviewHost,
         code: &StockId,
         current_weight_bp: u32,
         score: crate::plans::SignalScore,
@@ -177,7 +222,7 @@ impl<'a> PlanLifecycleReview<'a> {
             self.chain_params.position_step_bp,
             self.equity,
             price,
-            self.max_holdable_shares(code),
+            host.max_holdable_shares(code),
             self.lot,
         )
         .map(|proposal| proposal.target_qty())
@@ -193,26 +238,11 @@ impl<'a> PlanLifecycleReview<'a> {
         })
     }
 
-    /// 每股可持有上限（发行总股本，u32 收敛——session setup 权威）。
-    fn max_holdable_shares(&self, code: &StockId) -> u64 {
-        let code_str = self
-            .session
-            .state
-            .stocks
-            .code(*code)
-            .expect("candidate stock must be cataloged");
-        self.session
-            .state
-            .setup
-            .stocks
-            .iter()
-            .find(|stock| stock.code.0 == *code_str)
-            .map(|stock| stock.total_shares.min(u64::from(u32::MAX)))
-            .unwrap_or(0)
-    }
+
 
     fn assess_one(
         &self,
+        host: &dyn PlanReviewHost,
         code: &StockId,
         assessment: &CandidateAssessment,
     ) -> Vec<PlanLifecycleAction> {
@@ -264,7 +294,9 @@ impl<'a> PlanLifecycleReview<'a> {
             _ => None,
         };
         let target_qty = match (score, fundamental_ready) {
-            (Some(score), true) => self.compute_target_qty(code, current_weight_bp, score, price),
+            (Some(score), true) => {
+                self.compute_target_qty(host, code, current_weight_bp, score, price)
+            }
             _ => 0,
         };
         let active = plans.active_plan(id, code).cloned();
@@ -275,22 +307,17 @@ impl<'a> PlanLifecycleReview<'a> {
                     return actions; // 日终扫描负责到期终止
                 }
                 let path = crate::observation::build_price_path_observation(
-                    self.session
-                        .state
-                        .market_minute_closes
-                        .get(code)
-                        .expect("plan stock has minute history"),
+                    host.minute_closes(code),
                     &[],
                     None,
                 )
                 .unwrap_or_else(|error| {
                     panic!("plan urgency path failed for {id:?} {code:?}: {error}")
                 });
-                let (urgency, _risk) = self.session.plan_execution_urgency_at_view(
+                let (urgency, _risk) = host.urgency_at_view(
                     &plan,
                     ratio_to_bp(path.thirty_minute.return_ratio),
                     ratio_to_bp(path.one_minute.return_ratio),
-                    market_view,
                 );
                 let reversing_to_sell = plan.direction() == Side::Buy
                     && direction == Some(Side::Sell)
@@ -327,7 +354,7 @@ impl<'a> PlanLifecycleReview<'a> {
                         });
                     }
                     let child_order_id = plan.active_child_order_id();
-                    if child_order_id.is_none() || self.session.plan_child_is_cancellable_now() {
+                    if child_order_id.is_none() || host.child_cancellable_now() {
                         actions.push(PlanLifecycleAction::Terminate {
                             plan_id,
                             code: code.clone(),
@@ -370,13 +397,7 @@ impl<'a> PlanLifecycleReview<'a> {
                                 });
                                 return actions;
                             }
-                            let behavior = self.session.institution_behavior(
-                                id,
-                                belief,
-                                code,
-                                market_view,
-                                Some(reason),
-                            );
+                            let behavior = host.institution_behavior(belief, code, Some(reason));
                             let pause = if reason == crate::plans::PauseReason::RiskPressure
                                 && behavior.risk_pressure_pause.is_none()
                             {
@@ -395,7 +416,7 @@ impl<'a> PlanLifecycleReview<'a> {
                                         pause,
                                         signal_score_bp: score.value(),
                                     },
-                                    &self.session.state.urgency_policy,
+                                    host.urgency_policy(),
                                 )
                                 .unwrap_or_else(|error| {
                                     panic!("plan recovery failed for {plan_id:?}: {error}")
@@ -446,7 +467,7 @@ impl<'a> PlanLifecycleReview<'a> {
                                         if withdraw_buy {
                                             let child_order_id = plan.active_child_order_id();
                                             if child_order_id.is_none()
-                                                || self.session.plan_child_is_cancellable_now()
+                                                || host.child_cancellable_now()
                                             {
                                                 actions.push(PlanLifecycleAction::Terminate {
                                                     plan_id,
@@ -508,18 +529,17 @@ impl<'a> PlanLifecycleReview<'a> {
                     .map(|entry| u32::from(entry.confidence_bp))
                     .unwrap_or(5_000);
                 let reviewed_plan = plan.review_preview(new_direction, confidence);
-                let (reviewed_urgency, _) = self.session.plan_execution_urgency_at_view(
+                let (reviewed_urgency, _) = host.urgency_at_view(
                     &reviewed_plan,
                     ratio_to_bp(path.thirty_minute.return_ratio),
                     ratio_to_bp(path.one_minute.return_ratio),
-                    market_view,
                 );
                 let opinion = PlanOpinion {
                     signal_score_bp: score.value(),
                     source: OpinionSource::Blended,
                 };
                 let same_direction = !flip;
-                let (_, acquired_count) = self.session.plan_review_facts(id, code, market_view);
+                let (_, acquired_count) = host.review_facts(id, code);
                 let price_shift_bp = plan.review().last_review_price.map(|reviewed| {
                     (i128::from(price.cents()) - i128::from(reviewed.cents())).abs() * 10_000
                         / i128::from(reviewed.cents())
@@ -532,7 +552,7 @@ impl<'a> PlanLifecycleReview<'a> {
                     })
                     && acquired_count == plan.review().last_review_acquired_count
                     && plan.review().last_review_resources
-                        == Some(self.session.plan_review_resources(id, code))
+                        == Some(host.review_resources(id, code))
                     && plan.confidence_bp() == confidence
                     && plan.urgency() == reviewed_urgency.urgency;
                 if quiet {
@@ -580,7 +600,7 @@ impl<'a> PlanLifecycleReview<'a> {
                             > delta
                     });
                 if will_terminate || flip || child_would_exceed_new_target {
-                    if child_order_id.is_some() && !self.session.plan_child_is_cancellable_now() {
+                    if child_order_id.is_some() && !host.child_cancellable_now() {
                         actions.push(PlanLifecycleAction::Observe {
                             plan_id,
                             trading_day,
@@ -613,18 +633,13 @@ impl<'a> PlanLifecycleReview<'a> {
                     belief,
                     plans.policy().reverse_revision_threshold_bp,
                     &self.chain_params,
-                    self.session.belief_style(id),
-                    self.session.phase() == TradingPhase::Continuous,
+                    host.belief_style(),
+                    host.phase_continuous(),
                     trading_day,
                     lot,
-                    self.max_holdable_shares(code),
+                    host.max_holdable_shares(code),
                     |direction, confidence_bp, horizon_trading_days| {
-                        self.session.initial_plan_urgency(
-                            id,
-                            direction,
-                            confidence_bp,
-                            horizon_trading_days,
-                        )
+                        host.initial_urgency(direction, confidence_bp, horizon_trading_days)
                     },
                 );
                 if let Some(open) = open {
