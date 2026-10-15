@@ -491,14 +491,16 @@ fn odd_lot_sell_allowed_only_as_full_remainder() {
     assert_eq!(a1.shares[0], 1_050, "买方得 1050（部分成交）");
 }
 
-// ── Sol P1-1/P1-2（拍卖自成交双撤闭合+实际成交量）红→绿 ──
+// ── Sol P1-1/P1-2（拍卖自成交资源闭合+实际成交量）红→绿 ──
+// 注：P1-1 语义为**只撤卖侧自单**（买侧续找第三方流动性）——早期
+// "双撤"措辞已过时，资源闭合结论不变（卖侧皆自单时循环自然结束）。
 
 #[test]
 fn p1_auction_self_trade_double_cancel_refunds_and_reports_actual_volume() {
     use super::group::{GroupScript, PlaceSpec, TickPlan};
     // 拍卖窗（auction_ticks=15 ⇒ 申报 tick<10）内：acct0 挂买+挂卖同价
-    // （同主交叉）+acct1 挂第三方卖。开盘清算：自单对双撤（退款退股+
-    // Closed×2+Cancelled×2），第三方配对按实际量。
+    // （同主交叉）+acct1 挂第三方卖。开盘清算：自卖单撤回（退款退股+
+    // Closed/Cancelled），acct0 买与 acct1 第三方卖按实际量配对。
     let script = |_g: super::GroupIdx| -> GroupScript {
         Box::new(|tick, _round| {
             let mut plan = TickPlan::default();

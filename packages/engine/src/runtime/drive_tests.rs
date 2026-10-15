@@ -59,3 +59,27 @@ fn sol5_from_session_restores_attention_state() {
     }
     assert!(checked > 0, "至少核对一个 NPC（玩家惯例位无 attention 态）");
 }
+
+// Sol 二审修复集 6：history_len 配置贯通 World 构造（此前 bridge 硬编码
+// 16——会话设 32 时 desk 最多给 16 条）。
+#[test]
+fn sol6_history_len_flows_from_session_setup() {
+    let mut setup = setup_fixture();
+    setup.history_len = 32;
+    let mut session = GameSession::new(setup, 99).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 越过竞价窗（15 tick）后连续 32 tick：价格历史应装满 32 条。
+    for _ in 0..(15 + 32) {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    assert_eq!(
+        session.runtime_price_history_len(&crate::StockId(0)),
+        32,
+        "history_len=32 贯通 desk 价格窗（硬编码 16 时只有 16 条）"
+    );
+}

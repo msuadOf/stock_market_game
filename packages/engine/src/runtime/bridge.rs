@@ -76,7 +76,9 @@ pub fn world_spec_from_setup(
         auction_ticks: setup.auction_ticks,
         closing_auction_ticks: setup.closing_auction_ticks,
         order_ttl_ticks: 1_000_000,
-        history_len: 16,
+        // Sol 二审修复集 6：history_len 从会话 setup 贯通（此前硬编码
+        // 16——会话设 32 时 desk 价格窗只给 16 条，恢复校验即失败）。
+        history_len: setup.history_len,
         decision,
         rights_computer: None,
         initial_cash_override: None,
