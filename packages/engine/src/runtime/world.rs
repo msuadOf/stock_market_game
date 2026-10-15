@@ -143,6 +143,8 @@ pub struct RootProjection {
     pub max_order_qty_limit: std::collections::BTreeMap<crate::StockId, u32>,
     /// D3a-3 复核收口：每股最小报价单位（tick——报价取整口径，setup 权威）。
     pub tick_size_cents: std::collections::BTreeMap<crate::StockId, i64>,
+    /// Sol 整改 5：(发行代码, 数值 id) 序列——曝光面共享函数的输入。
+    pub stock_codes: Vec<(crate::account::StockCode, crate::StockId)>,
 }
 
 /// 世界构造参数。

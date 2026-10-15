@@ -175,6 +175,7 @@ impl RuntimeDriver {
                 total_shares,
                 max_order_qty_limit: session.runtime_max_order_qty_limit(),
                 tick_size_cents: session.runtime_tick_size_cents(),
+                stock_codes: session.runtime_stock_codes(),
             }));
         }
         // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——

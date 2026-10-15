@@ -152,37 +152,29 @@ impl DecisionChainObservation {
         Self::exposed_stocks_on(&session.read_view(), now)
     }
 
-    /// 读视图版本。
+    /// 读视图版本（Sol 整改 5：改调共享 exposed_stocks_shared——组线程
+    /// 组装同一函数）。
     fn exposed_stocks_on(
         view: &crate::session::pipeline::npc_split::SessionReadView,
         now: crate::calendar::CivilInstant,
     ) -> BTreeSet<StockId> {
-        let mut threshold = now.date();
-        for _ in 0..EXPOSURE_FRESHNESS_DAYS {
-            threshold = threshold
-                .prev()
-                .expect("runtime window stays above the civil floor");
-        }
-        let mut exposed = BTreeSet::new();
-        for stock in &view.setup.stocks {
-            let Some(company) = view.company_registry.issuer_of(&stock.code) else {
-                continue;
-            };
-            let fresh = view
-                .library
-                .reports_for_company(&company, now)
-                .iter()
-                .any(|report| report.published_at.date() >= threshold)
-                || view
-                    .library
-                    .announcements_for_company(&company, now)
-                    .iter()
-                    .any(|announcement| announcement.published_at.date() >= threshold);
-            if fresh {
-                exposed.insert(view.stocks.id(&stock.code.0).expect("配置股票必须已入目录"));
-            }
-        }
-        exposed
+        let codes: Vec<(crate::account::StockCode, crate::StockId)> = view
+            .setup
+            .stocks
+            .iter()
+            .map(|stock| {
+                (
+                    stock.code.clone(),
+                    view.stocks.id(&stock.code.0).expect("配置股票必须已入目录"),
+                )
+            })
+            .collect();
+        exposed_stocks_shared(
+            view.library,
+            view.company_registry,
+            &codes,
+            now,
+        )
     }
 }
 
@@ -283,6 +275,42 @@ pub(super) fn derived_stream(seed: u64, tag: &str, id: AccountId) -> u64 {
 /// 公告曝光新鲜度窗口（自然日）：公布日落在本窗口内的股票获得发现权重
 /// 公告发现加成（版本化游戏假设；消费 ANNOUNCEMENT_BOOST）。
 const EXPOSURE_FRESHNESS_DAYS: u32 = 2;
+
+/// 曝光股票集合（Sol 中点整改 5 提取共享：session 读视图与组线程
+/// DecisionChainObservation 组装同一函数——发现权重的披露曝光面
+/// 不得分叉）。输入：公开库、发行人注册表、(发行代码→数值 id) 映射、
+/// 观察时刻。
+pub(crate) fn exposed_stocks_shared(
+    library: &std::sync::Arc<crate::information::PublicLibrary>,
+    company_registry: &std::sync::Arc<crate::company::CompanyRegistry>,
+    codes: &[(crate::account::StockCode, crate::StockId)],
+    now: crate::calendar::CivilInstant,
+) -> BTreeSet<StockId> {
+    let mut threshold = now.date();
+    for _ in 0..EXPOSURE_FRESHNESS_DAYS {
+        threshold = threshold
+            .prev()
+            .expect("runtime window stays above the civil floor");
+    }
+    let mut exposed = BTreeSet::new();
+    for (code, id) in codes {
+        let Some(company) = company_registry.issuer_of(code) else {
+            continue;
+        };
+        let fresh = library
+            .reports_for_company(&company, now)
+            .iter()
+            .any(|report| report.published_at.date() >= threshold)
+            || library
+                .announcements_for_company(&company, now)
+                .iter()
+                .any(|announcement| announcement.published_at.date() >= threshold);
+        if fresh {
+            exposed.insert(*id);
+        }
+    }
+    exposed
+}
 
 /// 决策链只读诊断（验收测试面）。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]

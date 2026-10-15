@@ -1385,6 +1385,9 @@ impl GroupState {
             self.ticks_per_day,
             projection.auction_ticks,
             projection.closing_auction_ticks,
+            &self.library,
+            &projection.company_registry,
+            &projection.stock_codes,
         );
         let personal = crate::session::PlanPersonalState {
             attention: snap.attention.clone(),
@@ -2389,6 +2392,9 @@ fn build_chain_observation(
     ticks_per_day: u64,
     auction_ticks: u64,
     closing_auction_ticks: u64,
+    library: &std::sync::Arc<crate::information::PublicLibrary>,
+    company_registry: &std::sync::Arc<crate::company::CompanyRegistry>,
+    stock_codes: &[(crate::account::StockCode, crate::StockId)],
 ) -> crate::session::DecisionChainObservation {
     let market = super::decision::build_market_view(snapshot);
     let mut paths = std::collections::BTreeMap::new();
@@ -2407,12 +2413,16 @@ fn build_chain_observation(
     );
     let now = crate::calendar::CivilInstant::new(snapshot.civil_date, second)
         .expect("快照自然日与日内秒构成合法 CivilInstant");
+    // Sol 整改 5：曝光面收口（此前空集——生产发现路径丢披露曝光权重；
+    /// 与 session 版同一共享函数 exposed_stocks_shared）。
+    let exposed =
+        crate::session::exposed_stocks_shared(library, company_registry, stock_codes, now);
     crate::session::DecisionChainObservation {
         market,
         paths,
         technical,
         now,
-        exposed: std::collections::BTreeSet::new(),
+        exposed,
     }
 }
 

@@ -526,12 +526,22 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
         }
         (p, t)
     };
+    // Sol 整改 5：曝光面同输入（共享 exposed_stocks_shared——组内与
+    // session 版同一函数；此前两侧空集）。
+    let (catalog, registry, operations) = session.runtime_company_handles();
+    let codes = session.runtime_stock_codes();
+    let exposed = crate::session::exposed_stocks_shared(
+        &session.runtime_library_handle().1,
+        &registry,
+        &codes,
+        *derivation_now,
+    );
     let observation = crate::session::DecisionChainObservation {
         market: derivation_market.clone(),
         paths,
         technical,
         now: *derivation_now,
-        exposed: std::collections::BTreeSet::new(),
+        exposed,
     };
     let context = RootReadContext::capture(&session).expect("session 上下文捕获");
     for record in records {
@@ -776,9 +786,14 @@ fn d3a3_group_first_child_quote_matches_shared_decide_plan_quote() {
             active_child: None,
             cancellable_now: false,
             tick_size: crate::money::Money::from_cents(1),
-            allocation_cash: view.daily_upper_limit
-                .mul_shares(*qty)
-                .expect("预留金额"),
+            // Sol 整改 5：allocation_cash 从预算纯函数独立推导（requests
+            // 自 plan 投影+涨停预留组装→allocate_child_quote_budgets→
+            // grant——**不反构造受理量**：期待值不受被测输出影响）。
+            allocation_cash: independent_allocation_cash(
+                plan,
+                view,
+                &session_config(),
+            ),
             config: &session_config(),
         });
         let Some(decision) = decision else {
@@ -809,6 +824,48 @@ fn d3a3_group_first_child_quote_matches_shared_decide_plan_quote() {
 
 fn session_setup_lot() -> u32 {
     crate::config::GameConfig::proposed_defaults().lot_size
+}
+
+/// Sol 整改 5：4b 红证的独立预算推导（与组内 chain_quote_children 同
+/// 源纯函数——requests 单计划组装+allocate_child_quote_budgets；
+/// 期待值不消费被测输出）。
+fn independent_allocation_cash(
+    plan: &crate::plans::TradingPlan,
+    view: &crate::strategy::StockView,
+    config: &crate::config::GameConfig,
+) -> crate::money::Money {
+    let remaining = plan.remaining_share_qty().expect("ShareCount 有 remaining");
+    let request = crate::session::buy_allocation_request(
+        config,
+        plan.plan_id(),
+        plan.code().clone(),
+        plan.confidence_bp(),
+        view.daily_upper_limit,
+        remaining,
+        100,
+        config.lot_size,
+        1_000_000,
+    );
+    let request = match request {
+        Some(r) => r,
+        None => return crate::money::Money::ZERO,
+    };
+    let requests = vec![request];
+    let result = crate::plans::allocate_child_quote_budgets(
+        &crate::plans::AllocationFunds {
+            cash: crate::money::Money::from_cents(i64::MAX / 2),
+            frozen_cash: crate::money::Money::ZERO,
+        },
+        &requests,
+        config.commission_min,
+    )
+    .expect("独立预算推导");
+    result
+        .grants
+        .iter()
+        .find(|g| g.plan_id == plan.plan_id())
+        .map(|g| g.allocated_cash)
+        .unwrap_or(crate::money::Money::ZERO)
 }
 
 fn session_config() -> crate::config::GameConfig {

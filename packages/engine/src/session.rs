@@ -132,7 +132,8 @@ pub(crate) use observation_clock::intraday_observation_second;
 pub(crate) use decision_chain::{
     DecisionChainObservation, InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState,
     PlanQuoteInputs, PlanRootDiagnostics, RootReadContext, buy_allocation_request,
-    decide_plan_quote, next_routable_buy_qty, next_routable_sell_qty, open_position_action,
+    decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty, next_routable_sell_qty,
+    open_position_action,
 };
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,

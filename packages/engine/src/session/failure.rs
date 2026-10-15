@@ -508,6 +508,21 @@ impl GameSession {
             .collect()
     }
 
+    /// (发行代码, 数值 id) 序列投影（Sol 整改 5：曝光面共享函数输入）。
+    pub fn runtime_stock_codes(&self) -> Vec<(crate::account::StockCode, crate::StockId)> {
+        self.state
+            .setup
+            .stocks
+            .iter()
+            .map(|stock| {
+                (
+                    stock.code.clone(),
+                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
+                )
+            })
+            .collect()
+    }
+
     /// 每股最小报价单位投影（D3a-3 复核收口：组内报价取整口径——
     /// setup 权威，与 session stock.tick 同源）。
     pub fn runtime_tick_size_cents(
