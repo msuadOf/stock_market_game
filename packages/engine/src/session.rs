@@ -1369,6 +1369,10 @@ pub struct GameSession {
     injected_failure: Option<StepFatal>,
     #[cfg(test)]
     post_shadow_failure: Option<StepFatal>,
+    /// 测试注入：runtime 步进成功后强制安装失败（Sol 二审修复集 3——
+    /// 与 inject_post_shadow_failure 同型的安装面失败注入）。
+    #[cfg(test)]
+    runtime_install_failure: bool,
     state: CommittableSessionState,
 }
 
@@ -1754,6 +1758,8 @@ impl GameSession {
             injected_failure: None,
             #[cfg(test)]
             post_shadow_failure: None,
+            #[cfg(test)]
+            runtime_install_failure: false,
             state: self.state.clone_for_shadow()?,
         })
     }
@@ -1901,6 +1907,8 @@ impl GameSession {
             injected_failure: None,
             #[cfg(test)]
             post_shadow_failure: None,
+            #[cfg(test)]
+            runtime_install_failure: false,
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),

@@ -296,6 +296,13 @@ impl RuntimeDriver {
         self.world.sever();
     }
 
+    /// 测试面：注入 tick 级校验器（构造 step 失败路径——Sol 二审
+    /// 修复集 3 的 fail-fast 断言用；step_via_runtime 每次构造驱动器，
+    /// 测试只能经独立驱动器注入）。
+    pub fn set_world_validator_for_test(&mut self, v: super::coordinator::Validator) {
+        self.world.set_validator(v);
+    }
+
     /// 公共视图只读（组装面）。
     pub fn world_public_views(&self) -> &[super::protocol::StockPublic] {
         self.world.public_views()
@@ -448,7 +455,9 @@ impl RuntimeDriver {
     /// 路径 ⇒ 等价传递）。belief_participants：策略数据化（StrategyData）
     /// 已承载参与者身份，BeliefBook 的会话侧镜像随账户面批（登记）。
     pub fn install_candles(&mut self, session: &mut GameSession) -> Result<(), String> {
-        let finals = self.world_desk_finals_for_candles();
+        let finals = self
+            .world_desk_finals_for_candles()
+            .map_err(|e| format!("K 投影收集失败：{e:?}"))?;
         for (stock_idx, candles, active) in finals {
             let code = crate::StockId(u32::from(stock_idx));
             for candle in candles {
@@ -495,13 +504,17 @@ impl RuntimeDriver {
     }
 
     /// desk K 数据抽取（测试面通道；生产每步安装走 install_candles）。
+    /// Sol 二审修复集 3：收集错误全传播（不吞发送失败/异常消息）。
     fn world_desk_finals_for_candles(
         &mut self,
-    ) -> Vec<(
-        super::StockIdx,
-        Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-        Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-    )> {
+    ) -> Result<
+        Vec<(
+            super::StockIdx,
+            Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+            Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+        )>,
+        super::protocol::RuntimeError,
+    > {
         self.world.take_candle_projection()
     }
 }

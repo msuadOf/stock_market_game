@@ -38,6 +38,8 @@ impl GameSession {
                 injected_failure: _,
             #[cfg(test)]
                 post_shadow_failure: _,
+            #[cfg(test)]
+                runtime_install_failure: _,
             revision: _,
         } = self;
         let super::CommittableSessionState {

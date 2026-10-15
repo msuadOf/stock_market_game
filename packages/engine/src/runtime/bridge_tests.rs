@@ -9,7 +9,7 @@ use crate::session::SessionSetup;
 use crate::StockExchange;
 use crate::{SecurityCategory, StockCode, StockSpec};
 
-fn setup_fixture() -> SessionSetup {
+pub(crate) fn setup_fixture() -> SessionSetup {
     let stocks = vec![
         StockSpec {
             code: StockCode("600000".to_owned()),

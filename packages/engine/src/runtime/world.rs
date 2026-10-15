@@ -409,34 +409,46 @@ impl World {
             .collect()
     }
 
-    /// K 线投影收集（驱动器 candle_book 回写）。
+    /// K 线投影收集（驱动器 candle_book 回写）。Sol 二审修复集 3：发送
+    /// 失败与异常消息显式传播（此前 `let _ = send` + `_ => break` 吞错
+    /// 并返回部分数据——部分 K 安装=静默语义丢失）。
     pub fn take_candle_projection(
         &mut self,
-    ) -> Vec<(
-        super::StockIdx,
-        Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-        Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
-    )> {
+    ) -> Result<
+        Vec<(
+            super::StockIdx,
+            Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+            Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+        )>,
+        RuntimeError,
+    > {
         for tx in &self.desk_txs {
-            let _ = tx.send(DeskMsg::EchoCandles);
+            tx.send(DeskMsg::EchoCandles).map_err(|_| RuntimeError::SendFailed {
+                detail: "EchoCandles 广播失败".to_owned(),
+            })?;
         }
         let mut out = Vec::with_capacity(self.n_stocks);
         let mut left = self.n_stocks;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog) {
-                Ok(UpMsg::DeskCandles {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::DeskCandles {
                     stock,
                     history,
                     active,
-                }) => {
+                } => {
                     out.push((stock, history, active));
                     left -= 1;
                 }
-                _ => break,
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("take_candle_projection 期望 DeskCandles，收到 {other:?}"),
+                    });
+                }
             }
         }
         out.sort_by_key(|(s, _, _)| *s);
-        out
+        Ok(out)
     }
 
     /// 全局日历读取（驱动器对账面）。

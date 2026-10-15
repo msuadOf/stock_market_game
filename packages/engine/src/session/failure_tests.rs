@@ -167,3 +167,84 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
     assert_eq!(game.step().unwrap_err(), fatal);
     assert_eq!(game.save().unwrap_err(), fatal);
 }
+
+// ── Sol 二审修复集 3：runtime 步进失败立即停止安装 + 安装失败撤销已推进状态 ──
+
+#[test]
+fn sol3_runtime_step_failure_stops_install() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&game).unwrap();
+    driver.adopt_session_seq(&game);
+    // 注入 tick1 校验失败（世界 Abort——step 层失败）。
+    driver.set_world_validator_for_test(Box::new(|ev| {
+        if ev.tick == 1 {
+            Err("sol3 step 注入".to_owned())
+        } else {
+            Ok(())
+        }
+    }));
+    // 同时注入安装失败：fail-fast 下返回的一定是 **step 错误**（安装
+    // 根本不执行）；旧行为（无条件安装）会返回安装错误——用安装失败
+    // 掩盖 tick 失败的真实原因。
+    game.inject_runtime_install_failure();
+    let err = game.runtime_step_with_install(&mut driver).unwrap_err();
+    assert!(
+        err.to_string().contains("sol3 step 注入"),
+        "step 失败必须先于安装报告（不掩盖）：{err}"
+    );
+    assert!(
+        !err.to_string().contains("安装失败注入"),
+        "不得以安装失败掩盖 step 失败：{err}"
+    );
+    assert_eq!(game.poison_reason(), Some(&err), "失败 poison");
+    // fail-fast：安装未执行（tick 0 已回滚世界本就无可安装内容——
+    // 控制面判据即上面的错误身份断言）。
+    assert_eq!(game.tick(), 0, "tick 不推进");
+}
+
+#[test]
+fn sol3_runtime_install_failure_rolls_back_advanced_state() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&game).unwrap();
+    driver.adopt_session_seq(&game);
+    let tick_before = game.tick();
+    let seq_before = game.current_seq();
+    let accounts_before = game.runtime_accounts_snapshot();
+    // 注入安装失败（step 成功后、安装前——真实安装失败经 install_* 的
+    // Result 走同一回滚分支）。
+    game.inject_runtime_install_failure();
+    let err = game.runtime_step_with_install(&mut driver).unwrap_err();
+    assert!(
+        err.to_string().contains("安装失败注入"),
+        "安装失败可辨识：{err}"
+    );
+    // 撤销已推进状态：tick/seq/账户全量回到基线（此前残留半安装会话）。
+    assert_eq!(game.tick(), tick_before, "tick 回滚到基线");
+    assert_eq!(game.current_seq(), seq_before, "seq 回滚到基线");
+    let accounts_after = game.runtime_accounts_snapshot();
+    assert_eq!(
+        accounts_after.len(),
+        accounts_before.len(),
+        "账户面完整回滚（名册不变）"
+    );
+    for (id, cash, positions) in &accounts_before {
+        let (_, cash_after, positions_after) = accounts_after
+            .iter()
+            .find(|(i, _, _)| i == id)
+            .expect("账户仍在名册");
+        assert_eq!(cash_after, cash, "账户 {id:?} 现金回滚");
+        // Position 无 PartialEq——按键集+股数比对（回滚是整值替换，
+        // 键集与股数一致即整表一致）。
+        let keys_after: Vec<_> = positions_after.keys().collect();
+        let keys_before: Vec<_> = positions.keys().collect();
+        assert_eq!(keys_after, keys_before, "账户 {id:?} 持仓键集回滚");
+        for (code, pos) in positions {
+            assert_eq!(
+                positions_after.get(code).expect("键集已比对").qty(),
+                pos.qty(),
+                "账户 {id:?} 股 {code:?} 股数回滚"
+            );
+        }
+    }
+    assert_eq!(game.poison_reason(), Some(&err), "安装失败 poison");
+}

@@ -166,7 +166,6 @@ impl Account {
         self.restore_strategy(strategy);
     }
 
-    #[cfg(test)]
     pub(crate) fn fixture_set_positions(&mut self, positions: BTreeMap<StockId, Position>) {
         Arc::make_mut(&mut self.state).positions = positions;
     }
