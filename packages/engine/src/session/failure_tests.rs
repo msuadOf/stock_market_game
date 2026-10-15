@@ -248,3 +248,28 @@ fn sol3_runtime_install_failure_rolls_back_advanced_state() {
     }
     assert_eq!(game.poison_reason(), Some(&err), "安装失败 poison");
 }
+
+// Sol 二审修复集 5：candidate 写回与 attention_scheduler heap 同步。
+#[test]
+fn sol5_set_runtime_attention_syncs_scheduler_heap() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let id = crate::AccountId(1);
+    game.set_runtime_attention(&[(id, 999_999)]);
+    // candidate 已更新。
+    assert_eq!(
+        game.state
+            .npc_attention
+            .get(&id)
+            .expect("NPC 有 attention 状态")
+            .next_attention_candidate_tick,
+        999_999,
+        "candidate 写回"
+    );
+    // heap 同步：新候选入堆（pop_due 由候选核对去陈旧项——堆可含旧项，
+    // 但必须含新候选，否则调度面永远看不到它）。
+    let heap: Vec<_> = game.state.attention_scheduler.iter().copied().collect();
+    assert!(
+        heap.contains(&(999_999, id)),
+        "新候选必须入 attention_scheduler 堆：{heap:?}"
+    );
+}

@@ -88,6 +88,13 @@ enum GroupUndo {
         stock: StockIdx,
         delta: i32,
     },
+    /// attention 重排（decide 后 next_due 前移；`prev`=重排前值）。
+    /// Sol 二审修复集 5：不记则失败 tick Abort 后 NPC 已被排到未来，
+    /// 重跑同 tick 时少一次决策。
+    NextDue {
+        local: LocalIdx,
+        prev: u64,
+    },
 }
 
 /// 决策脚本注入的下单规格（组端换算为 `DeskIn`， purse=对价，费用上限随批 3 补）。
@@ -276,6 +283,13 @@ impl GroupState {
                 h = fnv(h, f as u64);
             }
         }
+        // Sol 二审修复集 5：attention 调度态（next_due）入全量哈希——
+        // Abort 回滚等价判据覆盖"决策已重排但未回放"的漂移。
+        if let Some((profiles, _)) = &self.decision {
+            for p in profiles {
+                h = fnv(h, p.next_due);
+            }
+        }
         h
     }
 
@@ -309,6 +323,15 @@ impl GroupState {
                 } => {
                     let slot = &mut self.accounts[local as usize].frozen_today[stock as usize];
                     *slot = (*slot as i64 - delta as i64) as u32;
+                }
+                GroupUndo::NextDue { local, prev } => {
+                    // Sol 二审修复集 5：回放恢复重排前 due——重跑同 tick
+                    // 时该 NPC 仍到期（决策次数不少一次）。
+                    if let Some((profiles, _)) = &mut self.decision {
+                        if let Some(p) = profiles.get_mut(local as usize) {
+                            p.next_due = prev;
+                        }
+                    }
                 }
             }
         }
@@ -622,6 +645,9 @@ impl GroupState {
                 let group_mix = (self.group as u64).wrapping_mul(0x9E3779B9);
                 for local in 0..profiles.len() as LocalIdx {
                     let account = &self.accounts[local as usize];
+                    // Sol 二审修复集 5：决策前捕获 next_due——重排入
+                    // 可逆日志（Abort 回放恢复，重跑不少一次决策）。
+                    let prev_due = profiles[local as usize].next_due;
                     let (ops, decided, cancels) = decide_account(
                         &mut profiles[local as usize],
                         group_mix,
@@ -636,6 +662,10 @@ impl GroupState {
                         due_npcs += 1;
                         decide_calls += 1;
                         self.decide_calls_total += 1;
+                        self.undo.push(GroupUndo::NextDue {
+                            local,
+                            prev: prev_due,
+                        });
                     }
                     cancel_intents_skipped += cancels as u64;
                     self.cancel_intents_total += cancels as u64;

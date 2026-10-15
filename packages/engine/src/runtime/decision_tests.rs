@@ -350,3 +350,66 @@ fn t1_frozen_unfreezes_at_day_boundary_in_group_thread() {
         "当日卖出显式 skip"
     );
 }
+
+// ── Sol 二审修复集 5：next_due 入可逆日志（Abort 回放不少一次决策） ──
+
+#[test]
+fn sol5_abort_rolls_back_next_due_reschedule() {
+    // 失败 tick 的决策重排（next_due 前移）必须随 Abort 回滚——否则
+    // 重跑同 tick 时 NPC 已被排到未来，少一次决策。
+    let setup = DecisionSetup {
+        profiles: vec![
+            NpcProfile {
+                strategy: StrategyData::retail(1.0, 100, 1.0),
+                seed: 11,
+                next_due: 0,
+            },
+            NpcProfile {
+                strategy: StrategyData::retail(1.0, 100, 1.0),
+                seed: 22,
+                next_due: 1,
+            },
+        ],
+        attention_gap_ticks: 4,
+    };
+    let mut spec = basic_spec(
+        1,
+        1,
+        2,
+        Box::new(|_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) }),
+    );
+    spec.decision = Some(setup);
+    let mut world = World::spawn(spec).expect("世界构造");
+    let fail: super::coordinator::Validator = Box::new(|ev| {
+        if ev.tick == 1 {
+            Err("sol5 注入".to_owned())
+        } else {
+            Ok(())
+        }
+    });
+    world.set_validator(fail);
+    assert!(world.run_ticks(1).is_err(), "tick1 注入失败（Abort）");
+    // Abort 后 attention 恢复初始 due（0/1）——不回滚则已被重排到 ≥2。
+    let collected = world.collect_group_attention().expect("注意力收集");
+    let entries = &collected[0].1;
+    let due0 = entries
+        .iter()
+        .find(|(l, _)| *l == 0)
+        .expect("local0 在名册")
+        .1;
+    let due1 = entries
+        .iter()
+        .find(|(l, _)| *l == 1)
+        .expect("local1 在名册")
+        .1;
+    assert_eq!(due0, 0, "local0 next_due 回滚到初始 0（Sol 二审：否则 ≥2）");
+    assert_eq!(due1, 1, "local1 next_due 回滚到初始 1");
+    // 重跑同 tick：两 NPC 再次到期决策（决策次数不少一次）。
+    world.set_validator(Box::new(|_| Ok(())));
+    world.run_ticks(1).expect("tick1 重跑");
+    let report = world.shutdown().expect("关停");
+    assert_eq!(
+        report.group_finals[0].decide_calls_total, 4,
+        "两次 tick1 各 2 次 NPC 决策（第一次失败+回滚+重跑）"
+    );
+}

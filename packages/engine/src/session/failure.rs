@@ -197,6 +197,9 @@ impl GameSession {
 
     /// runtime 驱动器翻转面（P1-10）：逐账户注意力候选真实写回
     /// （组线程 next_due 是调度权威——替换"推到 tick"的假迁移）。
+    /// Sol 二审修复集 5：candidate 与 attention_scheduler heap 同步
+    /// （heap 是旧管线 pop_due 的驱动面——只更 candidate 不入堆，
+    /// 调度面看不到新候选；陈旧堆项由 pop_due 的候选核对自然跳过）。
     pub fn set_runtime_attention(
         &mut self,
         entries: &[(crate::AccountId, u64)],
@@ -205,9 +208,22 @@ impl GameSession {
         let tick = self.state.tick;
         for (id, next_due) in entries {
             if let Some(state) = self.state.npc_attention.get_mut(id) {
-                state.next_attention_candidate_tick = (*next_due).max(tick);
+                let due = (*next_due).max(tick);
+                state.next_attention_candidate_tick = due;
+                self.state.attention_scheduler.enqueue(due, *id);
             }
         }
+    }
+
+    /// runtime 驱动器翻转面（Sol 二审修复集 5）：attention 状态只读投影
+    /// `(AccountId, 下次候选 tick, 注意力 RNG 状态)`——驱动器构造器
+    /// 恢复会话真实调度态用（不合成固定 seed/初始 due）。
+    pub fn runtime_attention_state(&self) -> Vec<(crate::AccountId, u64, u64)> {
+        self.state
+            .npc_attention
+            .iter()
+            .map(|(id, s)| (*id, s.next_attention_candidate_tick, s.rng_state))
+            .collect()
     }
 
     /// runtime 驱动器翻转面（P1-7）：日结失败回滚 day/seq。

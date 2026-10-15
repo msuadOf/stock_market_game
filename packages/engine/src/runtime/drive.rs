@@ -33,16 +33,32 @@ pub struct RuntimeDriver {
 
 impl RuntimeDriver {
     /// 从会话构造驱动器（配置面+账户面投影；全 retail 决策缺省装配）。
+    /// Sol 二审修复集 5：决策档案恢复会话 attention 真实状态——
+    /// `next_due` ← 会话下次候选 tick、`seed` ← 注意力 RNG 状态
+    /// （此前合成固定 seed/`i%8` 初始 due，恢复前后行为不同）。
+    /// 无 attention 状态的账户（玩家惯例位）保留合成缺省。
     pub fn from_session(session: &GameSession) -> Result<Self, String> {
         let setup: SessionSetup = session.export_setup_for_runtime();
         let n_stocks = setup.stocks.len();
         let (cash, shares, ids) = accounts_projection_from_session(session, n_stocks);
         let npcs = ids.len();
+        let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
+            .runtime_attention_state()
+            .into_iter()
+            .map(|(id, due, rng)| (id, (due, rng)))
+            .collect();
         let profiles: Vec<NpcProfile> = (0..npcs.max(1))
-            .map(|i| NpcProfile {
-                strategy: StrategyData::retail(0.30, 200, 0.35),
-                seed: 0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
-                next_due: (i % 8) as u64,
+            .map(|i| match ids.get(i).and_then(|id| attention.get(id)) {
+                Some(&(due, rng)) => NpcProfile {
+                    strategy: StrategyData::retail(0.30, 200, 0.35),
+                    seed: rng,
+                    next_due: due,
+                },
+                None => NpcProfile {
+                    strategy: StrategyData::retail(0.30, 200, 0.35),
+                    seed: 0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
+                    next_due: (i % 8) as u64,
+                },
             })
             .collect();
         let decision = DecisionSetup {
@@ -294,6 +310,16 @@ impl RuntimeDriver {
     /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。
     pub fn sever_world_for_test(&mut self) {
         self.world.sever();
+    }
+
+    /// 组注意力调度收集（Sol 二审修复集 5：构造器恢复断言/对账面——
+    /// 组线程 next_due 是 runtime 调度权威的真实状态源）。
+    pub fn collect_attention(
+        &mut self,
+    ) -> Result<Vec<(super::GroupIdx, Vec<(super::LocalIdx, u64)>)>, String> {
+        self.world
+            .collect_group_attention()
+            .map_err(|e| format!("注意力收集失败：{e:?}"))
     }
 
     /// 测试面：注入 tick 级校验器（构造 step 失败路径——Sol 二审
