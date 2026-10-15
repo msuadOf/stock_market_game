@@ -131,7 +131,8 @@ pub(crate) use observation_clock::intraday_observation_second;
 // crate 内可见——runtime 组线程组装/直调）。
 pub(crate) use decision_chain::{
     DecisionChainObservation, InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState,
-    PlanRootDiagnostics, RootReadContext, open_position_action,
+    PlanQuoteInputs, PlanRootDiagnostics, RootReadContext, buy_allocation_request,
+    decide_plan_quote, next_routable_buy_qty, next_routable_sell_qty, open_position_action,
 };
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,

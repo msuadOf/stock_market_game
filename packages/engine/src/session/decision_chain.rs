@@ -314,6 +314,130 @@ fn ratio_to_bp(ratio: Option<f64>) -> Option<i32> {
 
 /// 方向目标 → 净变动股数。买入按整手向下取整（不足一手无动作）；卖出
 /// 允许零股（路由守卫按 A 股零股规则校验）。无净变动 ⇒ None。
+/// 报价决策输入（D3a-3 件4b 提取共享：session `generate_next_plan_quote`
+/// 与组线程首子单报价组装同一结构——字段不得分叉）。
+pub(crate) struct PlanQuoteInputs<'a> {
+    pub account: AccountId,
+    pub plan: &'a TradingPlan,
+    pub price: Money,
+    pub best_bid: Option<Money>,
+    pub best_ask: Option<Money>,
+    /// 竞价/收盘竞价空簿回退（book_top 双侧空时以最新价充当——调用方
+    /// 相位判定）。
+    pub auction_book_fallback: bool,
+    pub band_up: Money,
+    pub band_down: Money,
+    pub legal_bound: Money,
+    pub apply_price_cage: bool,
+    pub per_share: Option<&'a crate::strategy::PerShareRange>,
+    pub urgency: Urgency,
+    pub pause: PauseAssessment,
+    pub remaining: u32,
+    pub order_size: u32,
+    pub lot: u32,
+    pub max_order_qty: u32,
+    pub sellable: u32,
+    pub active_child: Option<ActiveQuote>,
+    pub cancellable_now: bool,
+    pub tick_size: Money,
+    pub allocation_cash: Money,
+    pub config: &'a crate::config::GameConfig,
+}
+
+/// 报价决策共享核心（D3a-3 件4b）：book_top 组装（含竞价回退）→
+/// protection_limit（个人每股区间 ∩ 合法界）→ 可路由数量 → decide_quote
+/// → 买入 affordable 复核。`None`=无子单（desired_qty 为零）。
+pub(crate) fn decide_plan_quote(inputs: PlanQuoteInputs<'_>) -> Option<crate::plans::QuoteDecision> {
+    let PlanQuoteInputs {
+        account,
+        plan,
+        price,
+        best_bid,
+        best_ask,
+        auction_book_fallback,
+        band_up,
+        band_down,
+        legal_bound,
+        apply_price_cage,
+        per_share,
+        urgency,
+        pause,
+        remaining,
+        order_size,
+        lot,
+        max_order_qty,
+        sellable,
+        active_child,
+        cancellable_now,
+        tick_size,
+        allocation_cash,
+        config,
+    } = inputs;
+    let mut book_top = BookTop { best_bid, best_ask };
+    if book_top.best_bid.is_none() && book_top.best_ask.is_none() && auction_book_fallback {
+        book_top.best_bid = Some(price);
+        book_top.best_ask = Some(price);
+    }
+    let cage_bound = apply_price_cage.then_some(legal_bound);
+    let protection_limit = match plan.direction() {
+        Side::Buy => per_share.map_or(legal_bound, |range| range.optimistic.min(legal_bound)),
+        Side::Sell => per_share.map_or(legal_bound, |range| range.pessimistic.max(legal_bound)),
+    };
+    let desired_qty = match plan.direction() {
+        Side::Buy => next_routable_buy_qty(remaining, order_size, lot, max_order_qty)
+            .unwrap_or_default(),
+        Side::Sell => next_routable_sell_qty(remaining, sellable, lot, max_order_qty)
+            .unwrap_or_default(),
+    };
+    if desired_qty == 0 {
+        return None;
+    }
+    let mut quote_inputs = QuoteDecisionInputs {
+        side: plan.direction(),
+        urgency,
+        pause,
+        book: book_top,
+        protection_limit,
+        band_down,
+        band_up,
+        tick: tick_size,
+        cage_bound,
+        desired_qty,
+        lot_size: lot,
+        max_order_qty,
+        available_sell_qty: sellable,
+        active_order: active_child,
+        cancellable_now,
+    };
+    let mut decision = decide_quote(&quote_inputs)
+        .unwrap_or_else(|error| panic!("quote decision failed for {account:?}: {error}"));
+    if plan.direction() == Side::Buy {
+        if let crate::plans::QuoteAction::Submit { price, qty }
+        | crate::plans::QuoteAction::Replace { price, qty, .. } = decision.action
+        {
+            match crate::strategy::affordable_buy_qty(qty, price, allocation_cash, config) {
+                Some(funded_qty) => {
+                    quote_inputs.desired_qty = funded_qty;
+                    decision = decide_quote(&quote_inputs)
+                        .unwrap_or_else(|error| panic!("funded quote decision failed for {account:?}: {error}"));
+                }
+                None => {
+                    decision = crate::plans::QuoteDecision {
+                        action: match active_child {
+                            Some(active) => crate::plans::QuoteAction::Keep {
+                                order_id: active.order_id,
+                            },
+                            None => crate::plans::QuoteAction::Wait,
+                        },
+                        reason: crate::plans::QuoteReason::InsufficientBudget,
+                    };
+                }
+            }
+        }
+    }
+    Some(decision)
+}
+
 pub(crate) fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u32) -> Option<u32> {
     let delta = match direction {
         Side::Buy => target_qty.saturating_sub(held_qty),
@@ -1406,7 +1530,7 @@ impl GameSession {
     clippy::too_many_arguments,
     reason = "keeps the existing child-order cash calculation explicit without changing plan routing"
 )]
-fn buy_allocation_request(
+pub(crate) fn buy_allocation_request(
     config: &crate::config::GameConfig,
     plan_id: PlanId,
     code: StockId,
@@ -1440,7 +1564,7 @@ fn buy_allocation_request(
     })
 }
 
-pub(in crate::session) fn next_routable_buy_qty(
+pub(crate) fn next_routable_buy_qty(
     remaining: u32,
     order_size: u32,
     lot_size: u32,
@@ -1460,7 +1584,7 @@ pub(in crate::session) fn next_routable_buy_qty(
 /// Returns the next legal A-share sell child.  A partial reduction cannot split or carry an
 /// odd-lot remainder; the sole exception is an order that disposes of the entire available
 /// sellable balance, which may carry its odd lot exactly once.
-pub(in crate::session) fn next_routable_sell_qty(
+pub(crate) fn next_routable_sell_qty(
     remaining: u32,
     sellable: u32,
     lot_size: u32,

@@ -71,6 +71,7 @@ pub fn world_spec_from_setup(
         // 无会话来源的世界从零起）。
         initial_invested: Vec::new(),
         initial_recovered: Vec::new(),
+        initial_ever_held: Vec::new(),
         script_for,
         chunk: 512,
         watchdog: WatchdogConfig {
@@ -132,6 +133,7 @@ pub fn accounts_projection_from_session(
     Vec<Vec<u32>>,
     Vec<Vec<i64>>,
     Vec<Vec<i64>>,
+    Vec<Vec<bool>>,
     Vec<crate::AccountId>,
 ) {
     let profiles = session.account_strategy_profiles();
@@ -139,24 +141,28 @@ pub fn accounts_projection_from_session(
     let mut shares = Vec::with_capacity(profiles.len() + 1);
     let mut invested = Vec::with_capacity(profiles.len() + 1);
     let mut recovered = Vec::with_capacity(profiles.len() + 1);
+    let mut ever_held = Vec::with_capacity(profiles.len() + 1);
     let mut ids = Vec::with_capacity(profiles.len() + 1);
     // 玩家并入（F §6.3 资源持有者同构）：AccountId(0) 惯例位先行。
     if let Some(player) = session.account(crate::AccountId(0)) {
         let mut row = vec![0u32; n_stocks];
         let mut row_inv = vec![0i64; n_stocks];
         let mut row_rec = vec![0i64; n_stocks];
+        let mut row_ever = vec![false; n_stocks];
         for (code, position) in player.positions() {
             let idx = code.0 as usize;
             if idx < n_stocks {
                 row[idx] = position.qty();
                 row_inv[idx] = position.invested_cents();
                 row_rec[idx] = position.recovered_cents();
+                row_ever[idx] = position.qty() == 0;
             }
         }
         cash.push(player.cash().cents());
         shares.push(row);
         invested.push(row_inv);
         recovered.push(row_rec);
+        ever_held.push(row_ever);
         ids.push(crate::AccountId(0));
     }
     for (id, _profile) in profiles {
@@ -166,19 +172,22 @@ pub fn accounts_projection_from_session(
         let mut row = vec![0u32; n_stocks];
         let mut row_inv = vec![0i64; n_stocks];
         let mut row_rec = vec![0i64; n_stocks];
+        let mut row_ever = vec![false; n_stocks];
         for (code, position) in account.positions() {
             let idx = code.0 as usize;
             if idx < n_stocks {
                 row[idx] = position.qty();
                 row_inv[idx] = position.invested_cents();
                 row_rec[idx] = position.recovered_cents();
+                row_ever[idx] = position.qty() == 0;
             }
         }
         cash.push(account.cash().cents());
         shares.push(row);
         invested.push(row_inv);
         recovered.push(row_rec);
+        ever_held.push(row_ever);
         ids.push(id);
     }
-    (cash, shares, invested, recovered, ids)
+    (cash, shares, invested, recovered, ever_held, ids)
 }

@@ -67,7 +67,7 @@ impl RuntimeDriver {
     pub fn from_session(session: &GameSession) -> Result<Self, String> {
         let setup: SessionSetup = session.export_setup_for_runtime();
         let n_stocks = setup.stocks.len();
-        let (cash, shares, invested, recovered, ids) =
+        let (cash, shares, invested, recovered, ever_held, ids) =
             accounts_projection_from_session(session, n_stocks);
         let npcs = ids.len();
         let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
@@ -173,6 +173,7 @@ impl RuntimeDriver {
                     .collect(),
                 urgency_policy: session.runtime_urgency_policy(),
                 total_shares,
+                max_order_qty_limit: session.runtime_max_order_qty_limit(),
             }));
         }
         // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——
@@ -199,6 +200,9 @@ impl RuntimeDriver {
         // 权威自此起步，D1 登记"成本基保留会话侧"差异就此闭合）。
         spec.initial_invested = vec![invested];
         spec.initial_recovered = vec![recovered];
+        // D3a-3：曾持有位投影（session positions 零量条目面——清仓后
+        // 观察面 held 集成员）。
+        spec.initial_ever_held = vec![ever_held];
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         Ok(Self {
             world,
@@ -302,9 +306,12 @@ impl RuntimeDriver {
                 for (idx, &qty) in acct.shares.iter().enumerate() {
                     let code = crate::StockId(idx as u32);
                     // 零持仓不新增条目：会话持仓语义=（曾）持有才有条目
-                    //（经历账/存档校验 fault2038 依赖该不变量）；已有
-                    // 条目则同步数量（清零保留条目——与旧管线全卖后
-                    // 条目留存的语义一致）。
+                    //（经历账/存档校验 fault2038 依赖该不变量）；已有条目
+                    // 同步数量（清零保留——在途卖单期间 session 条目 qty=0
+                    // 而旧管线口径=在手+在途余量，qty 口径差登记：D3b
+                    // urgency 域收口——session 域 qty>0 假设在 Active 复审
+                    // 面被 runtime 触发时处理）。组侧"曾持有"观察面由
+                    // ever_held 位承载（held 集等价不依赖 session 条目）。
                     if qty == 0 && !merged.contains_key(&code) {
                         continue;
                     }

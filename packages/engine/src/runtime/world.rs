@@ -138,6 +138,9 @@ pub struct RootProjection {
     pub urgency_policy: crate::plans::UrgencyPolicy,
     /// D3a-2c 件4：每股发行总股本（CandidateTargetProposal 上限——setup 权威）。
     pub total_shares: std::collections::BTreeMap<crate::StockId, u64>,
+    /// D3a-3 件4b：每股限价单笔上限（category.max_order_qty(false)——
+    /// 预算请求与报价数量输入）。
+    pub max_order_qty_limit: std::collections::BTreeMap<crate::StockId, u32>,
 }
 
 /// 世界构造参数。
@@ -155,6 +158,9 @@ pub struct WorldSpec {
     pub initial_invested: Vec<Vec<Vec<i64>>>,
     /// D3a-2c 件1：初始成本基 recovered `[group][local][stock]`（i64 分）。
     pub initial_recovered: Vec<Vec<Vec<i64>>>,
+    /// D3a-3：初始曾持有位 `[group][local][stock]`（session positions 的
+    /// 零量条目面投影——清仓后观察面 held 集成员）。
+    pub initial_ever_held: Vec<Vec<Vec<bool>>>,
     /// 组决策脚本工厂。
     pub script_for: Box<dyn Fn(GroupIdx) -> GroupScript>,
     /// 组端分段 flush 粒度（op 数）。
@@ -332,6 +338,7 @@ impl World {
             initial_shares,
             initial_invested,
             initial_recovered,
+            initial_ever_held,
             script_for,
             chunk,
             watchdog,
@@ -415,6 +422,14 @@ impl World {
                     .and_then(|by_group| by_group.get(l))
                 {
                     for (slot, &v) in acct.recovered_cents.iter_mut().zip(recovered) {
+                        *slot = v;
+                    }
+                }
+                if let Some(ever) = initial_ever_held
+                    .get(g as usize)
+                    .and_then(|by_group| by_group.get(l))
+                {
+                    for (slot, &v) in acct.ever_held.iter_mut().zip(ever) {
                         *slot = v;
                     }
                 }

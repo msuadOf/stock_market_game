@@ -201,8 +201,9 @@ fn d3a2_group_observations_match_session_read_face() {
     }
 }
 
-// D3a-2b Belief-1：信念个人态构造投影同源校验（day 1 内——披露驱动
-// 未下沉前，跨日披露会使 session 侧演进、组侧静止——登记至 Belief-1b）。
+// D3a-2b Belief-1：信念个人态构造投影同源校验（**构造期**等价——D3a-3
+// 生产接线后组态由 observe 链自演进（组权威）、session 侧静止，静止相等
+// 只在构造点成立；运行期同源由 D3a-2c 红证的同输入对拍承担）。
 #[test]
 fn d3a2b_group_belief_states_match_session_projection() {
     let mut setup = setup_fixture();
@@ -212,14 +213,6 @@ fn d3a2b_group_belief_states_match_session_projection() {
     let mut session = GameSession::new(setup, 11).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
-    // 数步（day 1 内，无披露）。
-    for _ in 0..5 {
-        driver
-            .step_frame_equivalent(&mut session)
-            .expect("步进");
-        driver.install_market_views(&mut session).expect("行情安装");
-        driver.install_candles(&mut session).expect("K 安装");
-    }
     let collected = driver.collect_belief().expect("信念态收集");
     assert_eq!(collected.len(), 1, "单组");
     let states = &collected[0].1;
@@ -492,7 +485,9 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
     let mut session = GameSession::new(setup, 17).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
-    for _ in 0..5 {
+    // 首开仓轮（1 tick：due 位 observe+开仓+首子单；无既有计划——多轮
+    // 复审/加仓的同源红证属 D3a-3 后半/D3b）。
+    for _ in 0..1 {
         driver
             .step_frame_equivalent(&mut session)
             .expect("步进");
@@ -592,39 +587,13 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
             "账户 {:?} history_reads 演进同源",
             record.account
         );
-        // D3a-2c 件4 红证：组内 Lifecycle 开仓消费（提取共享
-        // open_position_action 落组内 PlanBook）== session 版
-        // collect_plan_lifecycle_actions 的 Create——PlanOpen 逐字段。
-        // 语义序对齐旧管线：observe → install（个人态演进入权威）→ collect
-        //（消费已 install 的 belief——组内消费读 personal_out.belief 同位）。
-        // 旧管线原序：take（移出权威）→ observe → install（演进入权威）。
-        // 红证的 observe 输入用组上行的 personal_in（同输入锚），take 仅
-        // 恢复 install 的先决（避免二次安装断言）。
-        let _ = crate::session::PlanPersonalState::take(&mut session, record.account);
-        session_out.install(&mut session, record.account);
-        let by_code: std::collections::BTreeMap<_, _> =
-            record.assessments.iter().cloned().collect();
-        // session 版计划面=派生前组内簿（与组内 observe 消费同一时点）。
-        let session_plans = plans_before.clone();
-        let session_actions = session.collect_plan_lifecycle_actions(
-            record.account,
-            &by_code,
-            derivation_market,
-            &session_plans,
-        );
-        let session_opens: Vec<_> = session_actions
-            .iter()
-            .filter_map(|action| match action {
-                crate::session::PlanLifecycleAction::Create { open } => Some(open.clone()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            format!("{:?}", record.opens),
-            format!("{session_opens:?}"),
-            "账户 {:?} 开仓 PlanOpen 逐字段同源（组内 PlanBook 落地==session 版派生）",
-            record.account
-        );
+        // D3a-2c 件4 红证（生产接线后收窄）：开仓 PlanOpen 的字段同源由
+        // **共享函数**结构性保证（open_position_action 两端同一函数——
+        // 机制红=组内投影破坏显红，见 D3a-2c 提交记录）；读面轮的 opens
+        // 对拍随生产接线退役（生产轮已消费开仓，读面 observe 的输入是
+        // 演进后组态——与 session 版"空簿首开仓"不再同输入。多轮复审/
+        // 加仓的同源红证属 D3a-3 后半/D3b）。
+        let _ = plans_before;
     }
 }
 
@@ -679,6 +648,174 @@ fn d3a2c_plans_debug_projects_group_plan_book_at_delivery() {
             "开仓 ({account:?}, {code:?}) 须在 plans_debug 读面可见：{debug:?}"
         );
     }
+}
+
+// D3a-3 件4b 红证：组内生产首子单（run_round due → observe → 开仓 →
+// 预算+报价 → PendingOp → desk 受理）与**共享 decide_plan_quote** 的
+// session 版直调对拍——(price, qty) 逐字段同源。输入取交付投影面
+// （plans/观察/belief 读面——与生产同源）。
+#[test]
+fn d3a3_group_first_child_quote_matches_shared_decide_plan_quote() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 31).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 首轮（tick1：竞价申报窗内——挂单受理不即撮合，子单可观察）。
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进");
+    driver.install_market_views(&mut session).expect("行情安装");
+    driver.install_candles(&mut session).expect("K 安装");
+    // 组内计划簿（交付投影源——生产开仓产物）。
+    let plans = driver
+        .collect_plans()
+        .expect("计划簿收集")
+        .into_iter()
+        .next()
+        .map(|(_, plans)| plans)
+        .expect("组簿");
+    let plan_ids = plans.active_plan_ids();
+    // 生产子单事实：desk lifecycle 的 belief 位 Accepted 挂单。
+    let Some(rec) = driver.world_report_log().last() else {
+        panic!("tick 记录缺失");
+    };
+    let mut accepted: Vec<(
+        super::LocalIdx,
+        super::StockIdx,
+        crate::orderbook::Side,
+        i64,
+        u32,
+    )> = Vec::new();
+    for fact in &rec.desk_lifecycle {
+        if matches!(fact.kind, super::protocol::LifecycleKind::Accepted) {
+            accepted.push((
+                fact.owner.1,
+                fact.stock,
+                fact.side,
+                fact.price,
+                fact.remaining,
+            ));
+        }
+    }
+    assert!(
+        !plan_ids.is_empty() || !accepted.is_empty(),
+        "场景须产生开仓计划或受理子单（due 位 observe 链）"
+    );
+    // 对拍：每个受理子单 (price, qty) == 共享函数（session 版输入面=
+    // 交付投影 belief 读面 + 组观察 + 投影 plan；sellable/上限取组快照
+    // 与类别真实值——与生产组装同源）。
+    let group_accounts = driver
+        .world_accounts_snapshot()
+        .expect("组快照")
+        .remove(0)
+        .1;
+    let collected = driver.collect_open_derivations().expect("开仓派生读面");
+    let (_g, market, now, records) = &collected[0];
+    let observations = driver.collect_observations().expect("观察基收集");
+    let mut paths = std::collections::BTreeMap::new();
+    let mut technical = std::collections::BTreeMap::new();
+    for (stock, (path, tech)) in observations[0].1.iter().enumerate() {
+        paths.insert(crate::StockId(stock as u32), path.clone());
+        technical.insert(crate::StockId(stock as u32), tech.clone());
+    }
+    for (local, stock, side, price, qty) in &accepted {
+        use crate::orderbook::Side;
+        let Some(record) = records.iter().find(|r| {
+            driver
+                .id_map
+                .get(*local as usize)
+                .is_some_and(|id| *id == r.account)
+        }) else {
+            continue;
+        };
+        // 找该股的 plan（组簿——生产开仓产物）。
+        let Some(plan) = plans.active_plan(record.account, &crate::StockId(u32::from(*stock)))
+        else {
+            panic!(
+                "受理子单缺对应计划：account={:?} stock={stock}",
+                record.account
+            );
+        };
+        let view = market
+            .stocks
+            .get(&crate::StockId(u32::from(*stock)))
+            .expect("市场视图");
+        let per_share = record.personal_in.belief.entry(&crate::StockId(u32::from(*stock)))
+            .and_then(|entry| match &entry.valuation {
+                crate::strategy::ValuationOutcome::Available { per_share, .. } => Some(*per_share),
+                crate::strategy::ValuationOutcome::Unavailable { .. } => None,
+            });
+        let decision = crate::session::decide_plan_quote(crate::session::PlanQuoteInputs {
+            account: record.account,
+            plan,
+            price: view.last_price,
+            best_bid: view.best_bid,
+            best_ask: view.best_ask,
+            auction_book_fallback: true,
+            band_up: view.daily_upper_limit,
+            band_down: view.min_sell_price,
+            legal_bound: match plan.direction() {
+                Side::Buy => view.max_buy_price,
+                Side::Sell => view.min_sell_price,
+            },
+            apply_price_cage: false,
+            per_share: per_share.as_ref(),
+            urgency: plan.urgency(),
+            pause: crate::plans::PauseAssessment::Unavailable {
+                reason: "红证：组内首子单的 initial urgency 口径".to_owned(),
+            },
+            remaining: plan.remaining_share_qty().expect("ShareCount 计划有 remaining"),
+            order_size: 100,
+            lot: session_setup_lot(),
+            // 类别差异（股 0=主板 100 万；股 1=创业板 30 万——与生产
+            // RootProjection.max_order_qty_limit 同源）。
+            max_order_qty: if *stock == 0 { 1_000_000 } else { 300_000 },
+            // 受理后快照的可卖已被在途扣除——还原挂单前口径（+受理量；
+            // 首子单全额在途）。
+            sellable: group_accounts[*local as usize].sellable(*stock) + qty,
+            active_child: None,
+            cancellable_now: false,
+            tick_size: crate::money::Money::from_cents(1),
+            allocation_cash: view.daily_upper_limit
+                .mul_shares(*qty)
+                .expect("预留金额"),
+            config: &session_config(),
+        });
+        let Some(decision) = decision else {
+            panic!("共享报价对拍返回 None（输入面与生产不一致）");
+        };
+        match decision.action {
+            crate::plans::QuoteAction::Submit {
+                price: expect_price,
+                qty: expect_qty,
+            } => {
+                assert_eq!(side, &plan.direction(), "方向同源");
+                assert_eq!(
+                    price, &expect_price.cents(),
+                    "子单价格==共享函数（account={:?} stock={stock}）",
+                    record.account
+                );
+                assert_eq!(
+                    qty, &expect_qty,
+                    "子单数量==共享函数（account={:?} stock={stock}）",
+                    record.account
+                );
+            }
+            other => panic!("共享函数非 Submit（{other:?}）——生产子单与对拍输入面分歧"),
+        }
+    }
+    let _ = (now, paths, technical);
+}
+
+fn session_setup_lot() -> u32 {
+    crate::config::GameConfig::proposed_defaults().lot_size
+}
+
+fn session_config() -> crate::config::GameConfig {
+    crate::config::GameConfig::proposed_defaults()
 }
 
 // Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——

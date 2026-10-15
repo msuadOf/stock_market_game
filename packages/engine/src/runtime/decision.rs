@@ -82,6 +82,7 @@ pub fn decide_account(
         return (Vec::new(), false, 0);
     }
     // 独立 RNG：seed ^ tick ^ local（F §2.2；组混合因子防跨组同种子）。
+    // 重排与决策共用同一实例流（重排消耗一次 next_range 后决策继续）。
     let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
     // 重排下次到期（先排再决策：本轮必决策）。
     profile.next_due =
@@ -148,6 +149,22 @@ fn symbol_routed(price: LimitPrice) -> RoutedPrice {
         LimitPrice::Lowest => RoutedPrice::Lowest,
         LimitPrice::Fixed(_) => unreachable!("仅符号价走此分支"),
     }
+}
+
+/// D3a-3：到期重排提取（retail 与 belief 链位同一公式——next_due 演进
+/// 是组内调度权威 P1-10；Sol 二审修复集 5 的 undo 语义由调用方承接）。
+pub fn reschedule_due(
+    profile: &mut NpcProfile,
+    group_seed_mix: u64,
+    tick: u64,
+    local: LocalIdx,
+    attention_gap: u32,
+) {
+    // 独立 RNG：seed ^ tick ^ local（F §2.2；组混合因子防跨组同种子）。
+    let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
+    // 重排下次到期（先排再决策：本轮必决策）。
+    profile.next_due =
+        tick + 1 + u64::from(rng.next_range_u32(0, attention_gap_max(attention_gap)));
 }
 
 fn attention_gap_max(gap: u32) -> u32 {

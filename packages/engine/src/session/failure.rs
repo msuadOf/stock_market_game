@@ -490,6 +490,24 @@ impl GameSession {
         }
     }
 
+    /// 每股限价单笔上限投影（D3a-3 件4b：组内报价/预算输入——category
+    /// 差异显式建模的主板/创业板上限）。
+    pub fn runtime_max_order_qty_limit(
+        &self,
+    ) -> std::collections::BTreeMap<crate::StockId, u32> {
+        self.state
+            .setup
+            .stocks
+            .iter()
+            .map(|stock| {
+                (
+                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
+                    stock.category.max_order_qty(false),
+                )
+            })
+            .collect()
+    }
+
     /// 组内计划簿安装（D3a-2c 件5：交付点投影——runtime 模式下 session
     /// plans 的唯一来源；X1 直改标记外部直改。plans_debug 等读面消费）。
     pub fn set_runtime_plans(&mut self, plans: crate::plans::PlanBook) {
@@ -557,7 +575,10 @@ impl GameSession {
     }
 
     /// 完整个人态只读投影（D3a-2c 件2：PlanPersonalState 六件——含 attention
-    /// 与 history_reads，observe 直调的组内承载/同源红证源）。
+    /// 与 history_reads，observe 直调的组内承载/同源红证源）。过滤面对齐
+    /// `capture_decision_chain_roots` 的能力探针：只有暴露链参数的信念
+    /// 机构策略进链（retail 位无 frozen policy——误投影导致 observe
+    /// panic，D3a-3 接线显红后收口）。
     pub fn runtime_personal_states(
         &self,
     ) -> std::collections::BTreeMap<
@@ -567,7 +588,15 @@ impl GameSession {
         self.state
             .npc_attention
             .iter()
-            .filter(|(id, _)| self.state.belief_participants.contains_key(id))
+            .filter(|(id, _)| {
+                self.state.belief_participants.contains_key(id)
+                    && self
+                        .state
+                        .accounts
+                        .get(id)
+                        .and_then(|account| account.strategy())
+                        .is_some_and(|strategy| strategy.belief_chain_params().is_some())
+            })
             .map(|(id, attention)| {
                 let participant = &self.state.belief_participants[id];
                 (
