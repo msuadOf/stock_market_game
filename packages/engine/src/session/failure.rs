@@ -9,6 +9,29 @@ pub enum StepFatal {
     },
 }
 
+/// 安装失败回滚基线（Sol 三审 (b)）：step 推进与安装面写入的全部
+/// 会话域整值快照（见 `GameSession::runtime_install_baseline`）。
+pub(crate) struct RuntimeInstallBaseline {
+    tick: u64,
+    seq: u64,
+    accounts: Vec<(
+        crate::AccountId,
+        i64,
+        std::collections::BTreeMap<crate::StockId, crate::account::Position>,
+    )>,
+    markets: std::collections::BTreeMap<crate::StockId, crate::Market>,
+    price_history:
+        std::collections::BTreeMap<crate::StockId, std::collections::VecDeque<crate::money::Money>>,
+    minute_closes: std::collections::BTreeMap<
+        crate::StockId,
+        Vec<crate::observation::MarketMinuteClose>,
+    >,
+    candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
+    candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
+    npc_attention: super::AccountPagedMap<super::attention::NpcAttentionState>,
+    attention_scheduler: super::attention::NpcAttentionScheduler,
+}
+
 impl GameSession {
     pub fn publication_ids(&self) -> Vec<crate::information::PublicationId> {
         self.state.library.publication_ids()
@@ -81,7 +104,9 @@ impl GameSession {
     /// 驱动器（`step_via_runtime` 每次构造驱动器，测试无法在其内部注入
     /// tick 级失败）。三段语义：
     /// - **step 失败：立即停止安装**（不把已回滚世界的状态安装进会话）；
-    /// - **安装失败：撤销已推进的 tick/seq/账户基线**（不残留半安装会话）；
+    /// - **安装失败：撤销已推进的 tick/seq/账户+安装面写入的行情/历史/
+    ///   注意力基线**（Sol 三审 (b)：market_views 成功、candles 失败时
+    ///   前半已写入——只回滚 tick/seq/账户会残留半安装会话）；
     /// - 全部成功：返回事件。
     /// 任一失败都 poison（旧管线 `poison_failed_step` 语义）。
     pub(in crate::session) fn runtime_step_with_install(
@@ -94,13 +119,13 @@ impl GameSession {
             .t1_probes
             .queue_attempt_seq
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let tick_before = self.tick();
-        let seq_before = self.current_seq();
-        let accounts_before = self.runtime_accounts_snapshot();
+        let baseline = self.runtime_install_baseline();
         // step 失败即停（此前先存 Result 再无条件安装——已 Abort 的
         // 世界状态会被写进会话）。
         let events = driver.step_frame_equivalent(self)?;
         // 安装失败注入（测试面——与真实安装失败走同一回滚分支）。
+        // Sol 三审 (b)：注入点在 install_market_views **之后**——复现
+        // 真实缺口路径"前半安装已写入、后半失败"。
         #[cfg(test)]
         let install_injected = self.runtime_install_failure;
         #[cfg(not(test))]
@@ -108,20 +133,45 @@ impl GameSession {
         // 安装错误传播（不吞）——失败即撤销已推进状态并 poison，
         // 不返回部分成功。
         let install_outcome = if install_injected {
-            Err("安装失败注入（Sol 二审修复集 3 测试面）".to_owned())
+            match driver.install_market_views(self) {
+                Ok(()) => Err(
+                    "安装失败注入（Sol 三审 (b) 测试面——行情已写入后失败）".to_owned(),
+                ),
+                // market_views 自身失败同样走注入描述（注入场景聚焦后半）。
+                Err(e) => Err(format!("{e}（注入点：market_views）")),
+            }
         } else {
             driver
                 .install_market_views(self)
                 .and_then(|()| driver.install_candles(self))
         };
         if let Err(install_err) = install_outcome {
-            self.rollback_runtime_step(tick_before, seq_before, accounts_before);
+            self.rollback_runtime_step(baseline);
             return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
                 location: "GameSession::step_via_runtime::install".to_owned(),
                 description: install_err,
             }));
         }
         Ok(events)
+    }
+
+    /// 安装失败回滚基线（Sol 三审 (b)）：step 推进+安装面可能写入的
+    /// 全部会话域快照。candle 域当前为防御性覆盖（install_candles 的
+    /// 写入循环不产生中途失败——收集失败时不写任何条目；若后续写入
+    /// 面变为可失败，此快照即回滚依据）。
+    fn runtime_install_baseline(&self) -> RuntimeInstallBaseline {
+        RuntimeInstallBaseline {
+            tick: self.tick(),
+            seq: self.current_seq(),
+            accounts: self.runtime_accounts_snapshot(),
+            markets: self.state.markets.clone(),
+            price_history: self.state.price_history.clone(),
+            minute_closes: self.state.market_minute_closes.clone(),
+            candle_histories: self.state.candle_book.histories().clone(),
+            candle_active: self.state.candle_book.active().clone(),
+            npc_attention: self.state.npc_attention.clone(),
+            attention_scheduler: self.state.attention_scheduler.clone(),
+        }
     }
 
     /// 所有市场工作运行在私有 tick shadow；失败候选被丢弃。
@@ -251,18 +301,22 @@ impl GameSession {
             .collect()
     }
 
-    /// runtime 驱动器翻转面（Sol 二审修复集 3）：安装失败撤销已推进的
-    /// tick/seq/账户基线（经直改标记——回滚也是外部直改）。
-    pub fn rollback_runtime_step(
-        &mut self,
-        tick: u64,
-        seq: u64,
-        accounts: Vec<(
-            crate::AccountId,
-            i64,
-            std::collections::BTreeMap<crate::StockId, crate::account::Position>,
-        )>,
-    ) {
+    /// runtime 驱动器翻转面（Sol 二审修复集 3 + 三审 (b)）：安装失败
+    /// 撤销已推进的 tick/seq/账户基线**及安装面已写入的行情/历史/
+    /// 注意力域**（经直改标记——回滚也是外部直改；不残留半安装会话）。
+    pub fn rollback_runtime_step(&mut self, baseline: RuntimeInstallBaseline) {
+        let RuntimeInstallBaseline {
+            tick,
+            seq,
+            accounts,
+            markets,
+            price_history,
+            minute_closes,
+            candle_histories,
+            candle_active,
+            npc_attention,
+            attention_scheduler,
+        } = baseline;
         self.mark_external_mutation();
         self.state.tick = tick;
         self.state.seq = seq;
@@ -272,6 +326,13 @@ impl GameSession {
                 acct.fixture_set_positions(positions);
             }
         }
+        self.state.markets = markets;
+        self.state.price_history = price_history;
+        self.state.market_minute_closes = minute_closes;
+        self.state.candle_book.replace_histories(candle_histories);
+        self.state.candle_book.replace_active(candle_active);
+        self.state.npc_attention = npc_attention;
+        self.state.attention_scheduler = attention_scheduler;
     }
 
     /// runtime 驱动器翻转面（Sol 二审修复集 3）：价格历史长度只读

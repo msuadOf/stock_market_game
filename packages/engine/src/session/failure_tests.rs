@@ -273,3 +273,50 @@ fn sol5_set_runtime_attention_syncs_scheduler_heap() {
         "新候选必须入 attention_scheduler 堆：{heap:?}"
     );
 }
+
+// Sol 三审 (b)：安装失败回滚缺口——market_views 已写入行情/历史/
+// 注意力后失败，回滚必须覆盖安装面写入（此前只恢复 tick/seq/账户，
+// 半安装会话残留）。
+#[test]
+fn sol3b_install_failure_rolls_back_market_view_writes() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&game).unwrap();
+    driver.adopt_session_seq(&game);
+    let hist_before = game.runtime_price_history_len(&crate::StockId(0));
+    let attention_before = game.runtime_attention_state();
+    let markets_before: Vec<_> = [0u32]
+        .iter()
+        .map(|&i| {
+            let id = crate::StockId(i);
+            let m = game.market_mut_for_runtime(&id).expect("市场在册");
+            (id, m.last_price(), m.last_close())
+        })
+        .collect();
+    game.inject_runtime_install_failure();
+    let err = game.runtime_step_with_install(&mut driver).unwrap_err();
+    assert!(
+        err.to_string().contains("安装失败注入"),
+        "安装失败可辨识：{err}"
+    );
+    // 注入点在 market_views 之后：行情/历史/注意力已被写入——回滚后
+    // 必须全部回到基线（Sol 三审：此前残留半安装状态）。
+    assert_eq!(
+        game.runtime_price_history_len(&crate::StockId(0)),
+        hist_before,
+        "价格历史回滚（market_views 已写入）"
+    );
+    assert_eq!(
+        game.runtime_attention_state(),
+        attention_before,
+        "attention candidate/RNG 回滚（market_views 已写入）"
+    );
+    for (id, last, close) in &markets_before {
+        let m = game.market_mut_for_runtime(id).expect("市场在册");
+        assert_eq!(
+            (m.last_price(), m.last_close()),
+            (*last, *close),
+            "市场权威价回滚：{id:?}"
+        );
+    }
+    assert_eq!(game.tick(), 0, "tick 回滚");
+}

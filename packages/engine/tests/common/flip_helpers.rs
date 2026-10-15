@@ -101,17 +101,23 @@ pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     (session, all)
 }
 
-/// 逐订单终结闭环（Sol 二审修复集 4）：事件面可判定的真实闭环——
+/// 逐订单终结闭环（Sol 二审修复集 4 + 三审漏检修复）：事件面可判定的
+/// 真实闭环——
 /// (1) 每条 OrderCanceled 的 (account, code, id) 必须先有同键
 ///     OrderAccepted，且撤销余量 ≤ 受理余量；
 /// (2) 受理 id 全程不重复；
-/// (3) 每账户+股的（受理总量−撤销总量）≤ 该账户该股被 Trade 触碰
+/// (3) **同一受理 id 的撤单事件恰一条**（Sol 三审反例：同账户受理
+///     A/B 各 100、撤 A 两次、B 未终结——按账户聚合 200−200=0 恒过；
+///     逐单去重后第二次撤 A 即红，B 漏终结由 (4) 的聚合差暴露）；
+/// (4) 每账户+股的（受理总量−撤销总量）≤ 该账户该股被 Trade 触碰
 ///     的总量（挂簿量的成交消耗必有 Trade 腿触碰持有人——立即成
 ///     交腿只增不减触碰量，不等号方向恒安全）。
 pub fn assert_order_lifecycle_closure(events: &[Event]) {
     use std::collections::BTreeMap;
     // (account, code, id) → 受理余量。
     let mut accepted: BTreeMap<(u64, u32, u64), u32> = BTreeMap::new();
+    // (account, code, id) → 已见撤单（恰一条）。
+    let mut canceled: BTreeMap<(u64, u32, u64), ()> = BTreeMap::new();
     // (account, code) → (受理总量, 撤销总量)。
     let mut per_acct: BTreeMap<(u64, u32), (u64, u64)> = BTreeMap::new();
     // (account, code) → Trade 触碰总量。
@@ -147,6 +153,10 @@ pub fn assert_order_lifecycle_closure(events: &[Event]) {
                     *remaining_qty <= acc_rem,
                     "撤销余量超受理余量：{key:?} cancel={remaining_qty} accept={acc_rem}"
                 );
+                assert!(
+                    canceled.insert(key, ()).is_none(),
+                    "同一受理 id 的撤单事件必须恰一条（Sol 三审反例——逐单终结不重复）：{key:?}"
+                );
                 per_acct.entry((account.0, code.0)).or_default().1 += u64::from(*remaining_qty);
             }
             Event::Trade {
@@ -169,5 +179,69 @@ pub fn assert_order_lifecycle_closure(events: &[Event]) {
             "账户/股 {key:?} 闭环破裂：受理{acc_sum}−撤销{canc_sum}={} 超过成交触碰{touch}",
             acc_sum - canc_sum
         );
+    }
+}
+
+#[cfg(test)]
+mod closure_tests {
+    use super::assert_order_lifecycle_closure;
+    use engine::{Event, Money, OrderId, StockId, AccountId};
+    use engine::orderbook::Side;
+
+    fn accept(seq: u64, id: u64, rem: u32) -> Event {
+        Event::OrderAccepted {
+            seq,
+            account: AccountId(1),
+            code: StockId(0),
+            id: OrderId(id),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            remaining_qty: rem,
+        }
+    }
+
+    fn cancel(seq: u64, id: u64, rem: u32) -> Event {
+        Event::OrderCanceled {
+            seq,
+            account: AccountId(1),
+            code: StockId(0),
+            id: OrderId(id),
+            remaining_qty: rem,
+        }
+    }
+
+    // Sol 三审反例：同账户受理 A、B 各 100 股，撤 A 两次、B 完全未
+    // 终结——按账户聚合的旧口径掩盖（200−200=0 ≤ touch 0 恒过）。
+    // 逐订单口径必须红：同一 id 的撤单事件不得重复。
+    #[test]
+    fn sol3r_double_cancel_same_id_is_rejected() {
+        let events = vec![
+            accept(1, 1, 100),
+            accept(2, 2, 100),
+            cancel(3, 1, 100),
+            cancel(4, 1, 100),
+        ];
+        let result = std::panic::catch_unwind(|| assert_order_lifecycle_closure(&events));
+        assert!(result.is_err(), "同 id 双撤单必须被闭环断言拒绝（Sol 反例）");
+    }
+
+    // 正例：每张受理单恰一条撤单（无成交场景）——聚合差 0 ≤ 触碰 0。
+    #[test]
+    fn sol3r_one_cancel_per_order_passes() {
+        let events = vec![
+            accept(1, 1, 100),
+            accept(2, 2, 100),
+            cancel(3, 1, 100),
+            cancel(4, 2, 100),
+        ];
+        assert_order_lifecycle_closure(&events);
+    }
+
+    // 反例变体：撤单余量按单不超受理（A 撤 150 > 受理 100）。
+    #[test]
+    fn sol3r_cancel_exceeding_accept_is_rejected() {
+        let events = vec![accept(1, 1, 100), cancel(2, 1, 150)];
+        let result = std::panic::catch_unwind(|| assert_order_lifecycle_closure(&events));
+        assert!(result.is_err(), "撤单余量超受理必须被拒绝");
     }
 }
