@@ -508,6 +508,24 @@ impl GameSession {
             .collect()
     }
 
+    /// 每股最小报价单位投影（D3a-3 复核收口：组内报价取整口径——
+    /// setup 权威，与 session stock.tick 同源）。
+    pub fn runtime_tick_size_cents(
+        &self,
+    ) -> std::collections::BTreeMap<crate::StockId, i64> {
+        self.state
+            .setup
+            .stocks
+            .iter()
+            .map(|stock| {
+                (
+                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
+                    stock.tick.cents(),
+                )
+            })
+            .collect()
+    }
+
     /// 组内计划簿安装（D3a-2c 件5：交付点投影——runtime 模式下 session
     /// plans 的唯一来源；X1 直改标记外部直改。plans_debug 等读面消费）。
     pub fn set_runtime_plans(&mut self, plans: crate::plans::PlanBook) {

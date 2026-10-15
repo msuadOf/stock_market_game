@@ -818,10 +818,11 @@ fn session_config() -> crate::config::GameConfig {
     crate::config::GameConfig::proposed_defaults()
 }
 
-// D3a-3 执行腿闭环红证：多轮内同计划不重复挂子单（execution 腿在=报价
-// 跳过）+成交推进（FillFact→ChildOrderFilled——filled_qty 真实前进）。
+// D3a-3 执行腿红证：多轮内同计划不重复挂子单（在途位/execution 腿）
+// ——成交推进（FillFact→ChildOrderFilled）的场景红证登记延后（见
+// 台账：成交 fixture 与注入通道）。
 #[test]
-fn d3a3_execution_leg_no_duplicate_children_and_fills_advance() {
+fn d3a3_execution_leg_registers_and_prevents_duplicate_children() {
     let mut setup = setup_fixture();
     setup.npcs.retail_count = 0;
     setup.npcs.inst_count = 3;

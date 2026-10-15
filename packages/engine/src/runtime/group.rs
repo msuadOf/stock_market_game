@@ -220,6 +220,13 @@ enum GroupUndo {
         stock: StockIdx,
         prev: bool,
     },
+    /// 计划子单在途位回滚（D3a-3 复核收口：挂出置入/全成清除——
+    /// Abort 逆序恢复；撤销/到期终结的清除随撤销路径补，登记）。
+    ChildInFlight {
+        account: crate::AccountId,
+        code: crate::StockId,
+        inserted: bool,
+    },
 }
 
 /// 决策脚本注入的下单规格（组端换算为 `DeskIn`， purse=对价，费用上限随批 3 补）。
@@ -363,6 +370,10 @@ pub struct GroupState {
     /// D3a-3：组内子单身份合成计数器（engine OrderId 域——组内私有，
     /// 交付投影面不依赖）。
     next_child_order_id: u64,
+    /// D3a-3 复核收口：计划子单在途键（挂出置入/全成清除——执行腿的
+    /// "挂出未受理"与"全成"在腿结构同形（order=None+remaining=None），
+    /// 组内以独立集区分；撤销/到期终结的清除随撤销路径补，登记）。
+    child_in_flight: std::collections::BTreeSet<(crate::AccountId, crate::StockId)>,
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
@@ -446,6 +457,7 @@ impl GroupState {
             library: library_seed,
             root_projection,
             next_child_order_id: 0,
+            child_in_flight: Default::default(),
             plan_book: crate::plans::PlanBook::default(),
             script,
         }
@@ -539,6 +551,17 @@ impl GroupState {
                 GroupUndo::EverHeld { local, stock, prev } => {
                     if let Some(acct) = self.accounts.get_mut(local as usize) {
                         acct.ever_held[stock as usize] = prev;
+                    }
+                }
+                GroupUndo::ChildInFlight {
+                    account,
+                    code,
+                    inserted,
+                } => {
+                    if inserted {
+                        self.child_in_flight.insert((account, code));
+                    } else {
+                        self.child_in_flight.remove(&(account, code));
                     }
                 }
             }
@@ -729,6 +752,15 @@ impl GroupState {
                 ),
             });
         }
+        // 子单全成：在途位清除（下一轮可再报价——加仓路径；撤销/到期
+        // 终结的清除随撤销路径补，登记）。
+        if fill.qty == remaining && self.child_in_flight.remove(&(account, code.clone())) {
+            self.undo.push(GroupUndo::ChildInFlight {
+                account,
+                code,
+                inserted: false,
+            });
+        }
         Ok(())
     }
 
@@ -825,12 +857,15 @@ impl GroupState {
                         ),
                     })?;
                 if qty > 0 {
-                    acct.ever_held[stock as usize] = false;
-                    self.undo.push(GroupUndo::EverHeld {
-                        local,
-                        stock,
-                        prev: true,
-                    });
+                    let prev_ever = acct.ever_held[stock as usize];
+                    if prev_ever {
+                        acct.ever_held[stock as usize] = false;
+                        self.undo.push(GroupUndo::EverHeld {
+                            local,
+                            stock,
+                            prev: prev_ever,
+                        });
+                    }
                 }
                 self.undo.push(GroupUndo::Shares {
                     local,
@@ -1265,7 +1300,7 @@ impl GroupState {
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
             if !matches!(plan.status(), crate::plans::PlanStatus::Active)
-                || plan.active_child_order_id().is_some()
+                || self.child_in_flight.contains(&(account, plan.code().clone()))
             {
                 continue;
             }
@@ -1366,7 +1401,7 @@ impl GroupState {
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
             if !matches!(plan.status(), crate::plans::PlanStatus::Active)
-                || plan.execution().is_some()
+                || self.child_in_flight.contains(&(account, plan.code().clone()))
             {
                 continue;
             }
@@ -1421,9 +1456,15 @@ impl GroupState {
                         crate::money::Money::from_cents(view.min_sell_price.max(1))
                     }
                 },
-                // 价格笼子：公共态 max_buy/min_sell 已含笼子交集（desk 侧
-                // 解析）——此处不再二次应用，cage 关闭。
-                apply_price_cage: false,
+                // 价格笼子：与 session 同判（连续相位 ∧ config 开启）——
+                // decide_quote 的笼子分支（chase 限制）需要信号（复核
+                // 发现收口：legal_bound 已含交集但信号不得丢）。
+                apply_price_cage: phase_is_continuous(
+                    snapshot.tick,
+                    self.ticks_per_day,
+                    projection.auction_ticks,
+                    projection.closing_auction_ticks,
+                ) && self.config.price_cage_enabled,
                 per_share: per_share.as_ref(),
                 urgency: plan.urgency(),
                 pause: crate::plans::PauseAssessment::Unavailable {
@@ -1443,7 +1484,9 @@ impl GroupState {
                     projection.auction_ticks,
                     projection.closing_auction_ticks,
                 ),
-                tick_size: crate::money::Money::from_cents(1),
+                tick_size: crate::money::Money::from_cents(
+                    projection.tick_size_cents.get(code).copied().unwrap_or(1),
+                ),
                 allocation_cash: grant.allocated_cash,
                 config: &self.config,
             });
@@ -1469,6 +1512,13 @@ impl GroupState {
         // apply_staging 的 fills 段）。expires 近似=当日市场分钟上限
         //（挂单 TTL 域登记——撤销/到期释放的腿清理随撤销路径补）。
         for (plan_id, code, stock, side, price, qty) in submits {
+            if self.child_in_flight.insert((account, code.clone())) {
+                self.undo.push(GroupUndo::ChildInFlight {
+                    account,
+                    code: code.clone(),
+                    inserted: true,
+                });
+            }
             self.plan_book
                 .install_execution(
                     plan_id,

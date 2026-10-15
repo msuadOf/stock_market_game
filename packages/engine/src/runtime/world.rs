@@ -141,6 +141,8 @@ pub struct RootProjection {
     /// D3a-3 件4b：每股限价单笔上限（category.max_order_qty(false)——
     /// 预算请求与报价数量输入）。
     pub max_order_qty_limit: std::collections::BTreeMap<crate::StockId, u32>,
+    /// D3a-3 复核收口：每股最小报价单位（tick——报价取整口径，setup 权威）。
+    pub tick_size_cents: std::collections::BTreeMap<crate::StockId, i64>,
 }
 
 /// 世界构造参数。
