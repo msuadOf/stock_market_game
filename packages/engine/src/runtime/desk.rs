@@ -490,7 +490,8 @@ impl DeskState {
     fn remove_by_ref(&mut self, order_ref: &OrderRef) {
         let mut removed: Option<DeskOrder> = None;
         for book in [&mut self.bids, &mut self.asks] {
-            for level in book.values_mut() {
+            let mut hit_price: Option<i64> = None;
+            for (price, level) in book.iter_mut() {
                 let mut drain_at: Option<usize> = None;
                 for (i, o) in level.iter().enumerate() {
                     if o.order_ref == *order_ref {
@@ -500,10 +501,18 @@ impl DeskState {
                 }
                 if let Some(i) = drain_at {
                     removed = level.remove(i);
+                    hit_price = Some(*price);
                     break;
                 }
             }
-            if removed.is_some() {
+            if let Some(price) = hit_price {
+                // Sol 二审修复集 1：回放删除同步清空价档（与 remove_order/
+                // apply_maker_fill 同口径）。空档残留会让拍卖清算的
+                // keys().next()/next_back() 踩空档提前零成交——
+                // best_bid/best_ask 的跳空防御只护连续撮合路径。
+                if book.get(&price).is_some_and(|l| l.is_empty()) {
+                    book.remove(&price);
+                }
                 break;
             }
         }

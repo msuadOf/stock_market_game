@@ -601,3 +601,87 @@ fn p1_6_second_day_minute_keys_not_doubled() {
     }
     let _ = world.shutdown();
 }
+
+// ── Sol 二审修复集 1（回放删除清空价档）反例红→绿 ──
+
+#[test]
+fn sol2_abort_replay_empty_level_does_not_break_auction_clearing() {
+    // 反例（Sol 二审）：挂卖 900 → tick 注入失败 Abort（Inserted 回放
+    // 删除）→ 若 remove_by_ref 不删空档，空卖档 900 残留 → 重跑第三方
+    // 卖 1000/买 1000：选价面只见有效单（可选 100 股），但清算循环
+    // asks.keys().next() 先踩空档 900（front=None）提前结束——零成交。
+    use super::group::{GroupScript, PlaceSpec, TickPlan};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let first_run = Arc::new(AtomicBool::new(false));
+    let fr = Arc::clone(&first_run);
+    let script = move |_g: super::GroupIdx| -> GroupScript {
+        let fr = Arc::clone(&fr);
+        Box::new(move |tick: u64, _round: u32| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                if !fr.swap(true, Ordering::SeqCst) {
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 900,
+                        qty: 100,
+                    });
+                } else {
+                    plan.places.push(PlaceSpec {
+                        local: 1,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    });
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Buy,
+                        price: 1000,
+                        qty: 100,
+                    });
+                }
+            }
+            plan
+        })
+    };
+    let mut spec = super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    // auction_ticks=6 ⇒ day_tick 0..3 申报窗、4..5 盘前：tick4 触发开盘清算。
+    spec.auction_ticks = 6;
+    spec.closing_auction_ticks = 3;
+    let mut world = super::world::World::spawn(spec).expect("世界构造");
+    let fail: super::coordinator::Validator = Box::new(|ev: &super::coordinator::TickEvidence| {
+        if ev.tick == 1 {
+            Err("注入失败".to_owned())
+        } else {
+            Ok(())
+        }
+    });
+    world.set_validator(fail);
+    assert!(world.run_ticks(1).is_err(), "tick1 注入失败（Abort 回放删 900 档）");
+    world.set_validator(Box::new(|_| Ok(())));
+    world.run_ticks(4).expect("tick1-4 重跑+开盘清算");
+    // 开盘清算事实（completed）：实际成交量必须 100（空档残留时为 0）。
+    let clearing = world
+        .report_log
+        .iter()
+        .flat_map(|r| r.desk_auction.iter())
+        .find(|f| f.completed)
+        .expect("开盘清算事实存在");
+    assert_eq!(
+        clearing.matched_volume, 100,
+        "清算实际成交 100 股（空卖档不得截断清算）"
+    );
+    let report = world.shutdown().expect("关停");
+    assert_eq!(
+        report.desk_finals[0].market.volume_today, 100,
+        "成交量口径与清算一致"
+    );
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_100, "买入入账");
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.shares[0], 900, "第三方卖出扣股");
+}
