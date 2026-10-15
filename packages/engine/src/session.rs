@@ -4476,6 +4476,129 @@ mod npc_working_quote_tests {
         );
     }
 
+    // Sol 五审修复 1/2 红证：同拍完整结算——step() 返回时本拍成交的
+    // 持仓/T+1/现金/成本已在公开 session 面（ADR-0017；此前买腿持仓/现金
+    // 迟一拍）。**不许多跑一拍让断言通过**（Sol 点名）——全部断言在本拍
+    // 返回值上；随后仅验证下一拍不双计、失败拍不泄漏。
+    #[test]
+    fn sol6th_same_tick_settlement_full_projection() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        use crate::orderbook::Side;
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 1;
+        let mut session = GameSession::new(setup, 71).unwrap();
+        let seller = AccountId(1);
+        let buyer = AccountId(0);
+        let code = StockId(0);
+        let price = session.state.markets[&code].last_price();
+        session
+            .fixture_account_mut(&seller)
+            .unwrap()
+            .grant_position(code.clone(), 100, price)
+            .unwrap();
+        session.seed_order_for_test(
+            seller,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(price),
+                qty: 100,
+            },
+            &mut Vec::new(),
+        );
+        let seller_cash = session.state.accounts[&seller].cash();
+        let buyer_cash = session.state.accounts[&buyer].cash();
+        let gross = price.mul_shares(100).unwrap();
+        let config = &session.state.setup.config;
+        let seller_net = gross
+            .sub(config.commission(gross).unwrap())
+            .unwrap()
+            .sub(config.stamp_tax(gross).unwrap())
+            .unwrap()
+            .sub(config.transfer_fee(gross).unwrap())
+            .unwrap();
+        let buyer_total = crate::session::buy_order_reservation(
+            config,
+            price,
+            100,
+            Money::ZERO,
+        )
+        .unwrap();
+        session
+            .enqueue_player_intent(
+                buyer,
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Fixed(price),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let events = session.step().expect("healthy step");
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::Trade {
+                    maker: AccountId(1),
+                    taker: AccountId(0),
+                    qty: 100,
+                    ..
+                }
+            )),
+            "fixture 前提：本拍成交发生"
+        );
+        // 同拍全面断言（本拍返回值——不补拍）。
+        let buyer_pos = session.state.accounts[&buyer].positions();
+        assert_eq!(buyer_pos[&code].qty(), 100, "同拍：买方持仓入账");
+        assert_eq!(
+            buyer_pos[&code].t1_locked(),
+            100,
+            "同拍：T+1 冻结入账（买入当日不可卖）"
+        );
+        assert_eq!(
+            session.state.accounts[&buyer].sellable_qty(&code),
+            0,
+            "同拍：可卖量=0（T+1）"
+        );
+        assert_eq!(
+            buyer_pos[&code].invested_cents(),
+            gross.cents(),
+            "同拍：买方成本基（成交额）"
+        );
+        assert_eq!(
+            session.state.accounts[&buyer].cash(),
+            buyer_cash.sub(buyer_total).unwrap(),
+            "同拍：买方现金扣全额预留（限价=成交价，全额成交）"
+        );
+        assert!(
+            !session.state.accounts[&seller].positions().contains_key(&code),
+            "同拍：卖方清仓条目删除"
+        );
+        assert_eq!(
+            session.state.accounts[&seller].cash(),
+            seller_cash.add(seller_net).unwrap(),
+            "同拍：卖方现金净得入账"
+        );
+        // 下一拍不双计（整值回写对齐——值保持）。
+        session.step().expect("下一拍（无成交）");
+        assert_eq!(
+            session.state.accounts[&buyer].positions()[&code].qty(),
+            100,
+            "下一拍不双计：持仓保持"
+        );
+        assert_eq!(
+            session.state.accounts[&buyer].cash(),
+            buyer_cash.sub(buyer_total).unwrap(),
+            "下一拍不双计：现金保持"
+        );
+        // Abort 不泄漏部分见 drive_tests::sol6th_same_tick_abort_leaks_nothing
+        // （驱动器直连持有——世界校验器注入口在驱动器面）。
+    }
+
     #[test]
     fn accepted_retail_observation_persists_an_unheld_watchlist_stock() {
         let code = StockId(0);

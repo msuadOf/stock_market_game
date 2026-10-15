@@ -590,6 +590,11 @@ pub struct DeskTradeFact {
     pub taker: Owner,
     /// taker 方向（成交方向=taker side）。
     pub taker_side: Side,
+    /// maker 腿本笔实收费用合计（分；买腿=佣金+过户，卖腿=佣金+印花+
+    /// 过户——Sol 五审同拍公开期末投影的现金推导源）。
+    pub maker_fees_cents: i64,
+    /// taker 腿本笔实收费用合计（分）。
+    pub taker_fees_cents: i64,
 }
 
 /// 集合竞价事实（批 8f：AuctionTick/AuctionCompleted 事件输入）。

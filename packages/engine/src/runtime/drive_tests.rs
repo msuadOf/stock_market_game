@@ -1513,3 +1513,83 @@ fn belief1b_delivery_advances_information_domain_only() {
         .expect("再投递");
     assert_eq!(again, 0, "版本未变——稀疏跳过");
 }
+
+// Sol 五审修复 2：Abort 不泄漏——失败拍（含成交）不产生任何公开投影
+// （持仓/现金保持拒绝前值；投影点在安装成功后，失败早退不触达）。
+#[test]
+fn sol6th_same_tick_abort_leaks_nothing() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 83).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let seller = crate::AccountId(1);
+    let buyer = crate::AccountId(0);
+    let code = crate::StockId(0);
+    let price = crate::money::Money::from_cents(1_000);
+    session
+        .fixture_account_mut(&seller)
+        .unwrap()
+        .grant_position(code.clone(), 100, price)
+        .unwrap();
+    // 卖方挂单（驱动器在位→注入世界）。
+    let intents = vec![crate::session::ReceiptBearingIntent {
+        owner: seller,
+        intent: crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: crate::strategy::LimitPrice::Fixed(price),
+            qty: 100,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    }];
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver.inject_player_intents(&intents, &upper).expect("注入");
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("挂单拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let cash_before = session.account(buyer).unwrap().cash();
+    // 买方拍注入拒绝 → 本拍成交不泄漏。
+    let buy = vec![crate::session::ReceiptBearingIntent {
+        owner: buyer,
+        intent: crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: crate::strategy::LimitPrice::Fixed(price),
+            qty: 100,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    }];
+    driver.inject_player_intents(&buy, &upper).expect("买方注入");
+    driver.set_world_validator_for_test(Box::new(|_e| Err("注入：拒绝".to_owned())));
+    assert!(
+        driver.step_frame_equivalent(&mut session).is_err(),
+        "注入拒绝的拍必须失败"
+    );
+    driver.set_world_validator_for_test(Box::new(|_e| Ok(())));
+    assert!(
+        session
+            .account(buyer)
+            .unwrap()
+            .positions()
+            .get(&code)
+            .is_none(),
+        "失败拍不泄漏：买方持仓条目不存在"
+    );
+    assert_eq!(
+        session.account(buyer).unwrap().cash(),
+        cash_before,
+        "失败拍不泄漏：买方现金不变"
+    );
+}

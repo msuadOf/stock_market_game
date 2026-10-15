@@ -1111,6 +1111,17 @@ impl DeskState {
         } else {
             (taker.owner, maker.owner)
         };
+        // 双腿实收费用（Sol 五审同拍投影源）：买腿=charge−value（佣金+
+        // 过户边际）；卖腿=封顶分配合计。
+        let buy_fees = charge - value;
+        let sell_fees = charged.commission.cents()
+            + charged.stamp_tax.cents()
+            + charged.transfer_fee.cents();
+        let (maker_fees, taker_fees) = if taker_side == Side::Buy {
+            (sell_fees, buy_fees)
+        } else {
+            (buy_fees, sell_fees)
+        };
         self.trade_facts.push(super::protocol::DeskTradeFact {
             stock: self.setup.stock,
             price,
@@ -1118,6 +1129,8 @@ impl DeskState {
             maker: maker_id,
             taker: taker_id,
             taker_side,
+            maker_fees_cents: maker_fees,
+            taker_fees_cents: taker_fees,
         });
         // 实体互换：买方得股票、卖方得净额。
         let bg = buy_owner.0 as usize;

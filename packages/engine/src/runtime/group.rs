@@ -54,6 +54,11 @@ pub struct GroupAccount {
     /// 每股在途卖单余量（Sol 整改 3：child_in_flight 卖票的镜像——
     /// 回写/读面口径"在手+在途"对齐旧管线；挂出加、成交/终结减）。
     pub pending_sell_qty: Vec<u32>,
+    /// 在途买单 desk 占用累计（分；账户级——**全部**在途买单，不限计划
+    /// 链票：挂出 +purse、买腿成交 −实付、CashRefund −退款）。Sol 五审：
+    /// 公开现金=组现金+此值（挂出不减、成交实付减、终结不变——旧管线
+    /// reservation 观同口径；价优差额自动保留至退款）。
+    pub buy_purse_held_cents: i64,
 }
 
 impl GroupAccount {
@@ -68,6 +73,7 @@ impl GroupAccount {
             recovered_cents: vec![0; n_stocks],
             ever_held: vec![false; n_stocks],
             pending_sell_qty: vec![0; n_stocks],
+            buy_purse_held_cents: 0,
         }
     }
 
@@ -384,6 +390,11 @@ enum GroupUndo {
         stock: StockIdx,
         delta: i64,
     },
+    /// 在途买占用累计回滚（Sol 五审：挂出加/买腿实付减/退款减的逆增量）。
+    BuyPurseHeld {
+        local: LocalIdx,
+        delta: i64,
+    },
 }
 
 /// 决策脚本注入的下单规格（组端换算为 `DeskIn`， purse=对价，费用上限随批 3 补）。
@@ -646,6 +657,11 @@ impl GroupState {
             for &f in &a.foreign_active {
                 h = fnv(h, f as u64);
             }
+            // Sol 五审：在途镜像入哈希（Abort 回滚等价判据覆盖镜像漂移）。
+            for &p in &a.pending_sell_qty {
+                h = fnv(h, p as u64);
+            }
+            h = fnv(h, a.buy_purse_held_cents as u64);
         }
         // Sol 二审修复集 5：attention 调度态（next_due）入全量哈希——
         // Abort 回滚等价判据覆盖"决策已重排但未回放"的漂移。
@@ -755,6 +771,9 @@ impl GroupState {
                     let slot = &mut acct.pending_sell_qty[stock as usize];
                     *slot = (*slot as i64 - delta).max(0) as u32;
                 }
+                GroupUndo::BuyPurseHeld { local, delta } => {
+                    self.accounts[local as usize].buy_purse_held_cents -= delta;
+                }
                 GroupUndo::ChildInFlight { account, code, prev } => {
                     // Sol 整改 2：恢复变更前票值（None=原本不在途）。
                     match prev {
@@ -817,6 +836,34 @@ impl GroupState {
                 self.apply_fill_plan_progress(stock as StockIdx, fill)?;
                 if !touched.contains(&(fill.owner.1, stock as StockIdx)) {
                     touched.push((fill.owner.1, stock as StockIdx));
+                }
+                // Sol 五审：在途镜像统一按 fill 推进（不限计划链票——
+                // 外部/retail 单同口径）：卖腿余量减；买腿占用减实付
+                //（gross+佣金+过户=desk buyer_charge 同式）。
+                let gross = i64::from(fill.price) * i64::from(fill.qty);
+                match fill.side {
+                    Side::Sell => {
+                        let acct = &mut self.accounts[fill.owner.1 as usize];
+                        let before = acct.pending_sell_qty[stock as usize];
+                        let after = before.saturating_sub(fill.qty);
+                        acct.pending_sell_qty[stock as usize] = after;
+                        if before != after {
+                            self.undo.push(GroupUndo::PendingSell {
+                                local: fill.owner.1,
+                                stock: stock as StockIdx,
+                                delta: -i64::from(before - after),
+                            });
+                        }
+                    }
+                    Side::Buy => {
+                        let charge = gross + fill.commission + fill.transfer_fee;
+                        let acct = &mut self.accounts[fill.owner.1 as usize];
+                        acct.buy_purse_held_cents -= charge;
+                        self.undo.push(GroupUndo::BuyPurseHeld {
+                            local: fill.owner.1,
+                            delta: -charge,
+                        });
+                    }
                 }
             }
             // Sol 整改 2：拒收回执=失败释放（未受理票清除——desk 拒收
@@ -1034,18 +1081,8 @@ impl GroupState {
             });
             self.child_in_flight.insert((account, code.clone()), ticket.clone());
         }
-        // Sol 整改 3：卖票成交——在途卖余量镜像减（部分/全成统一）。
-        if matches!(fill.side, Side::Sell) {
-            let acct = &mut self.accounts[fill.owner.1 as usize];
-            let before = acct.pending_sell_qty[stock as usize];
-            let after = before.saturating_sub(fill.qty);
-            acct.pending_sell_qty[stock as usize] = after;
-            self.undo.push(GroupUndo::PendingSell {
-                local: fill.owner.1,
-                stock,
-                delta: -i64::from(before - after),
-            });
-        }
+        // 在途卖余量镜像已上移至 apply_staging 统一 fill 段（Sol 五审：
+        // 外部/retail 卖单同口径——票域减法会造成外部单双计/漏计）。
         // 部分成交推进（票保留）或全成清除（下一轮可再报价）。
         if fill.qty >= remaining {
             if self.child_in_flight.remove(&(account, code)).is_some() {
@@ -1146,23 +1183,8 @@ impl GroupState {
             code: code.clone(),
             prev: Some(ticket.clone()),
         });
-        // Sol 整改 3：卖票终结——剩余未成交量从镜像减（fill 已减过
-        /// 成交部分；此处=未成交余量——Sol 二审修复集 2：票实时余量为
-        /// 唯一来源，与 fill 推进同口径）。
-        if matches!(ticket.side, Side::Sell) {
-            let remaining_pending = ticket.remaining;
-            let acct = &mut self.accounts[local as usize];
-            let before = acct.pending_sell_qty[stock as usize];
-            let after = before.saturating_sub(remaining_pending);
-            acct.pending_sell_qty[stock as usize] = after;
-            if before != after {
-                self.undo.push(GroupUndo::PendingSell {
-                    local,
-                    stock,
-                    delta: -i64::from(before - after),
-                });
-            }
-        }
+        // 在途卖余量镜像改由 RefundedShares 实体驱动（apply_staging 统一
+        // 段——Sol 五审：票域减法与实体退款双计）。
         if let Some(order_id) = ticket.order_id {
             let day = self.cur_tick / self.ticks_per_day;
             self.save_plan_book_undo();
@@ -1230,7 +1252,7 @@ impl GroupState {
     fn apply_entity(&mut self, stock: StockIdx, e: Entity) -> Result<(), RuntimeError> {
         let group = self.group;
         match e {
-            Entity::CashProceeds { local, amount } | Entity::CashRefund { local, amount } => {
+            Entity::CashProceeds { local, amount } => {
                 let acct = self.acct_mut(local)?;
                 acct.cash = acct.cash.checked_add(amount).ok_or_else(|| {
                     RuntimeError::ProtocolInvariant {
@@ -1240,6 +1262,26 @@ impl GroupState {
                 self.undo.push(GroupUndo::Cash {
                     local,
                     delta: amount,
+                });
+            }
+            Entity::CashRefund { local, amount } => {
+                // 买单 purse 余额退款：现金入账 + 在途买占用同步减
+                ///（Sol 五审：实体驱动——全额终结后占用归零；卖腿现金走
+                /// CashProceeds）。
+                let acct = self.acct_mut(local)?;
+                acct.cash = acct.cash.checked_add(amount).ok_or_else(|| {
+                    RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {group} 现金落账溢出：local={local}, amount={amount}"),
+                    }
+                })?;
+                acct.buy_purse_held_cents -= amount;
+                self.undo.push(GroupUndo::Cash {
+                    local,
+                    delta: amount,
+                });
+                self.undo.push(GroupUndo::BuyPurseHeld {
+                    local,
+                    delta: -amount,
                 });
             }
             Entity::BoughtShares { local, qty } => {
@@ -1267,7 +1309,22 @@ impl GroupState {
             }
             Entity::RefundedShares { local, qty } => {
                 // 卖单余股回流：恢复可卖（不新增冻结）；曾持有位复位
-                // （再次实际持有——session 条目 qty>0）。
+                // （再次实际持有——session 条目 qty>0）。Sol 五审：在途卖
+                // 余量镜像同步减（退款量=未成交余量——实体驱动，票/外部
+                // 单统一）。
+                {
+                    let acct = self.acct_mut(local)?;
+                    let before = acct.pending_sell_qty[stock as usize];
+                    let after = before.saturating_sub(qty);
+                    acct.pending_sell_qty[stock as usize] = after;
+                    if before != after {
+                        self.undo.push(GroupUndo::PendingSell {
+                            local,
+                            stock: stock as StockIdx,
+                            delta: -i64::from(before - after),
+                        });
+                    }
+                }
                 let acct = self.acct_mut(local)?;
                 let slot = &mut acct.shares[stock as usize];
                 *slot = slot
@@ -2018,16 +2075,8 @@ impl GroupState {
                     charged_cents: 0,
                 },
             );
-            // Sol 整改 3：卖票挂出——在途卖余量镜像加。
-            if matches!(side, Side::Sell) {
-                let acct = &mut self.accounts[local as usize];
-                acct.pending_sell_qty[stock as usize] += qty;
-                self.undo.push(GroupUndo::PendingSell {
-                    local,
-                    stock,
-                    delta: i64::from(qty),
-                });
-            }
+            // 在途卖余量镜像由 run_round 挂出臂统一维护（Sol 五审：
+            // 计划链子单与外部/retail 单同口径——此处再加会双计）。
             // 防御：同键重复置入=上游跳过条件失效（显式失败，铁律二）。
             assert!(
                 prev.is_none(),
@@ -2269,9 +2318,16 @@ impl GroupState {
                     }
                     acct.cash -= purse;
                     acct.foreign_active[p.stock as usize] += 1;
+                    // Sol 五审：在途买占用镜像（全部买单——公开现金口径
+                    // 的加回面；成交/退款由 apply_staging 实体驱动减）。
+                    acct.buy_purse_held_cents += purse;
                     self.undo.push(GroupUndo::Cash {
                         local: p.local,
                         delta: -purse,
+                    });
+                    self.undo.push(GroupUndo::BuyPurseHeld {
+                        local: p.local,
+                        delta: purse,
                     });
                     self.undo.push(GroupUndo::ForeignActive {
                         local: p.local,
@@ -2317,6 +2373,9 @@ impl GroupState {
                         }
                     }
                     acct.foreign_active[p.stock as usize] += 1;
+                    // Sol 五审：在途卖余量镜像（全部卖单——公开持仓
+                    // "在手+在途"口径；成交/退款实体驱动减）。
+                    acct.pending_sell_qty[p.stock as usize] += p.qty;
                     self.undo.push(GroupUndo::Shares {
                         local: p.local,
                         stock: p.stock,
@@ -2326,6 +2385,11 @@ impl GroupState {
                         local: p.local,
                         stock: p.stock,
                         delta: 1,
+                    });
+                    self.undo.push(GroupUndo::PendingSell {
+                        local: p.local,
+                        stock: p.stock,
+                        delta: i64::from(p.qty),
                     });
                     if let Some(prev) = ever_flip {
                         self.undo.push(GroupUndo::EverHeld {
@@ -3079,6 +3143,8 @@ pub fn group_main(
                 }
             }
             GroupIn::EchoAccounts => {
+                // 在途买占用为账户级维护字段（Sol 五审：run_round 挂出/
+                // apply_staging 成交与退款驱动——全部买单，不限计划链票）。
                 let echo = UpMsg::GroupEcho {
                     group: state.group,
                     accounts: state.accounts.clone(),
@@ -3505,12 +3571,23 @@ mod sol_recheck3_tests {
             .order_id = None;
         state.accounts[0].foreign_active[0] = 1;
         state.accounts[0].pending_sell_qty[0] = 200;
+        // desk 真实形态：卖单终结 Closed 与余股回流 RefundedShares 成对
+        //（镜像回收由 RefundedShares 实体驱动——Sol 五审统一口径）。
         state
             .staging
-            .push(batch(vec![Entity::Closed {
-                local: 0,
-                order_serial: 42,
-            }], Vec::new()));
+            .push(batch(
+                vec![
+                    Entity::RefundedShares {
+                        local: 0,
+                        qty: 200,
+                    },
+                    Entity::Closed {
+                        local: 0,
+                        order_serial: 42,
+                    },
+                ],
+                Vec::new(),
+            ));
         state
             .apply_staging(1, 0)
             .expect("未受理票的 Closed 正常释放");
@@ -3531,11 +3608,22 @@ mod sol_recheck3_tests {
             .order_id = None;
         state.accounts[0].foreign_active[0] = 1;
         state.accounts[0].pending_sell_qty[0] = 200;
+        // desk 拒收形态：RefundedShares（卖单原路退回）+ Closed 与回执
+        // 同批（reject() 三件套）。
         state.staging.push(DeskBatch {
             stock: 0,
             tick: 1,
             round: 0,
-            entities: Vec::new(),
+            entities: vec![
+                Entity::RefundedShares {
+                    local: 0,
+                    qty: 200,
+                },
+                Entity::Closed {
+                    local: 0,
+                    order_serial: 43,
+                },
+            ],
             fills: Vec::new(),
             receipts: vec![crate::runtime::DeskReceipt {
                 order: (0, 43),

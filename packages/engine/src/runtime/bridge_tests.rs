@@ -147,6 +147,8 @@ fn trade_facts_project_to_event_trade_with_monotonic_seq() {
             maker: (2, 7),
             taker: (1, 3),
             taker_side: Side::Buy,
+            maker_fees_cents: 0,
+            taker_fees_cents: 0,
         },
         DeskTradeFact {
             stock: 0,
@@ -155,6 +157,8 @@ fn trade_facts_project_to_event_trade_with_monotonic_seq() {
             maker: (2, 7),
             taker: (0, 9),
             taker_side: Side::Buy,
+            maker_fees_cents: 0,
+            taker_fees_cents: 0,
         },
     ];
     let mut seq = 42u64;
