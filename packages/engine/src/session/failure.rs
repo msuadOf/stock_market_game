@@ -24,12 +24,39 @@ impl GameSession {
         }
     }
 
+    /// runtime 驱动翻转入口（翻转批）：环境变量 ENGINE_STEP_RUNTIME=1
+    /// 时 `step()` 走 RuntimeDriver（常驻 World+安装面），否则旧管线。
+    /// `step_frame_and_commit`（candidate 投影契约/Escrow 验证）恒走
+    /// 旧管线为 fallback——翻转范围=生产便捷入口。
+    pub fn step_via_runtime(&mut self) -> Result<Vec<Event>, StepFatal> {
+        // 翻转形态（正确性优先）：每次构造驱动器（World 线程 spawn）。
+        // 每步 World 重建是已知开销——性能敏感路径由调用方直接持有
+        // RuntimeDriver（step_frame_equivalent 常驻形态）承载；
+        /// 本入口服务"默认翻转"的正确性验证。
+        let mut driver = crate::runtime::drive::RuntimeDriver::from_session(self)
+            .map_err(|e| StepFatal::InvariantViolation {
+                location: "GameSession::step_via_runtime".to_owned(),
+                description: e,
+            })?;
+        driver.adopt_session_seq(self);
+        let events = driver.step_frame_equivalent(self);
+        let _ = driver.install_market_views(self);
+        let _ = driver.install_candles(self);
+        let _ = driver; // World 析构（线程 join）
+        events
+    }
+
     /// 所有市场工作运行在私有 tick shadow；失败候选被丢弃。
     /// 权威状态只接收最终不会失败的 CommitTick 状态交换。
     ///
     /// 返回的事件数组是从已提交事实记录批次投影出的交付视图（架构项 #6）：
     /// 会话内部不保留第二份事件权威，身份仍只存在于 `EventFact` 记录中。
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
+        // 翻转批：生产便捷入口默认走 runtime（ENGINE_STEP_RUNTIME=0
+        /// 显式退回旧管线——fallback 保留）。
+        if crate::runtime::step_runtime_enabled() {
+            return self.step_via_runtime();
+        }
         self.step_inner(false)
             .map(|committed| committed.facts.into_iter().map(|fact| fact.event).collect())
     }

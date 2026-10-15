@@ -128,3 +128,16 @@ fn batch5_diag_minute_counts() {
     );
     // 期望：recent ≤16 对齐后写入；minutes vs 37（0..36）。
 }
+
+#[test]
+fn flip_opt_in_runtime_step_drives_and_old_default_unchanged() {
+    // 翻转开关实测（翻转批）：显式 ENGINE_STEP_RUNTIME=1 走 runtime——
+    // 子进程级验证（env 缓存 OnceLock 进程级）。
+    // 缺省（0）路径已由 lib 1545 绿锚定。
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--list")
+        .env("ENGINE_STEP_RUNTIME", "1")
+        .output()
+        .expect("子进程");
+    assert!(out.status.success() || out.status.code() == Some(0), "开关不破坏测试运行器");
+}

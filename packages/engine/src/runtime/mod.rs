@@ -70,3 +70,15 @@ mod facts_tests;
 mod protocol_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod skeleton_tests;
+
+/// 生产入口翻转开关（翻转批·实测后回退为 opt-in）：ENGINE_STEP_RUNTIME=1
+/// 显式走 runtime，**缺省 0=旧管线**。实测（翻转批）：step() 全量翻转
+/// 使 106 个 session 侧测试失败——全局域（envelope/attention/candidate
+/// 投影）演进仍锚定旧管线，runtime step 未承载 ⇒ 硬翻=静默语义丢失
+/// （铁律二）。翻转的最后一步=全局域迁移完成后再改缺省。
+pub fn step_runtime_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(
+        || std::env::var("ENGINE_STEP_RUNTIME").map(|v| v == "1").unwrap_or(false),
+    )
+}
