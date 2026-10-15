@@ -69,6 +69,10 @@ pub fn runtime_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
             .step_frame_equivalent(&mut session)
             .expect("runtime tick（含安装）");
         all.extend(events);
+        driver
+            .install_market_views(&mut session)
+            .expect("行情/价格历史安装");
+        driver.install_candles(&mut session).expect("K 安装");
         // 日界：runtime DayEnd（清簿/组日翻转）+ 会话交易日推进 +
         // 自然日推进（编排）+清簿撤单事件。
         if t % tpd == 0 {

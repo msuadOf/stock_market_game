@@ -169,6 +169,8 @@ pub struct DeskMarket {
     pub day_low: i64,
     /// 日累计成交量（股）。
     pub volume_today: u64,
+    /// 日累计成交额（分）——活动 K trade_stats 口径。
+    pub turnover_today: i64,
     /// 日累计成交笔数。
     pub trade_count: u64,
     /// 活动日 K。
@@ -296,6 +298,7 @@ impl DeskState {
             day_high: setup.initial_price,
             day_low: setup.initial_price,
             volume_today: 0,
+            turnover_today: 0,
             trade_count: 0,
             candle: None,
             minute_closes: Vec::new(),
@@ -1074,6 +1077,7 @@ impl DeskState {
         m.day_high = m.day_high.max(price);
         m.day_low = m.day_low.min(price);
         m.volume_today += qty as u64;
+        m.turnover_today += value;
         m.trade_count += 1;
         let candle = m.candle.get_or_insert(DeskCandle {
             open: price,
@@ -1474,6 +1478,7 @@ impl DeskState {
         m.day_high = m.last_price;
         m.day_low = m.last_price;
         m.volume_today = 0;
+        m.turnover_today = 0;
         m.trade_count = 0;
         if let Some(candle) = m.candle.take() {
             m.candles.push(candle);
@@ -1619,8 +1624,10 @@ impl DeskState {
             let continuous = self.setup.continuous_ticks_per_day();
             if continuous > 0 {
                 let day = tick / self.setup.ticks_per_day;
+                // 存档校验口径（persistence.rs）：completed = day×连续窗 +
+                // (tick%tpd − auction).min(连续窗)——无 +1（完成 tick 语义）。
                 let elapsed =
-                    (tick % self.setup.ticks_per_day).saturating_sub(self.setup.auction_ticks) + 1;
+                    (tick % self.setup.ticks_per_day).saturating_sub(self.setup.auction_ticks);
                 let completed =
                     completed_market_minute_count(elapsed, continuous).map_err(|e| {
                         RuntimeError::ProtocolInvariant {
@@ -1729,20 +1736,27 @@ impl DeskState {
     fn candle_projection(
         &self,
     ) -> (
-        Vec<(i64, i64, i64, i64, i64, u64)>,
-        Option<(i64, i64, i64, i64, i64, u64)>,
+        Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+        Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     ) {
         let hist = self
             .market
             .candles
             .iter()
-            .map(|c| (0i64, c.open, c.high, c.low, c.close, c.volume))
+            .map(|c| (0i64, c.open, c.high, c.low, c.close, c.volume, 0, 0))
             .collect();
-        let active = self
-            .market
-            .candle
-            .as_ref()
-            .map(|c| (0i64, c.open, c.high, c.low, c.close, c.volume));
+        let active = self.market.candle.as_ref().map(|c| {
+            (
+                0i64,
+                c.open,
+                c.high,
+                c.low,
+                c.close,
+                c.volume,
+                self.market.turnover_today,
+                self.market.trade_count,
+            )
+        });
         (hist, active)
     }
 

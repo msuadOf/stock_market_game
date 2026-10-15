@@ -414,8 +414,8 @@ impl World {
         &mut self,
     ) -> Vec<(
         super::StockIdx,
-        Vec<(i64, i64, i64, i64, i64, u64)>,
-        Option<(i64, i64, i64, i64, i64, u64)>,
+        Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+        Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     )> {
         for tx in &self.desk_txs {
             let _ = tx.send(DeskMsg::EchoCandles);

@@ -344,9 +344,9 @@ pub enum UpMsg {
         /// 股索引。
         stock: StockIdx,
         /// 已完成日 K（time, O, H, L, C, volume）。
-        history: Vec<(i64, i64, i64, i64, i64, u64)>,
+        history: Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
         /// 活动 K。
-        active: Option<(i64, i64, i64, i64, i64, u64)>,
+        active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     },
     /// 组账户快照回执（EchoAccounts 应答）。
     GroupEcho {

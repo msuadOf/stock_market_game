@@ -149,6 +149,51 @@ impl GameSession {
         self.state.candle_book.install_active(code.clone(), candle);
     }
 
+    /// runtime 驱动器翻转面（翻转批）：价格历史整值替换。
+    pub fn set_runtime_price_history(
+        &mut self,
+        code: &crate::StockId,
+        prices: Vec<crate::money::Money>,
+    ) {
+        self.mark_external_mutation();
+        self.state
+            .price_history
+            .insert(code.clone(), prices.into_iter().collect());
+    }
+
+    /// runtime 驱动器翻转面（翻转批）：市场分钟收盘整值替换。
+    pub fn set_runtime_minute_closes(
+        &mut self,
+        code: &crate::StockId,
+        closes: Vec<crate::observation::MarketMinuteClose>,
+    ) {
+        self.mark_external_mutation();
+        self.state.market_minute_closes.insert(code.clone(), closes);
+    }
+
+    /// runtime 驱动器翻转面（翻转批）：注意力候选推进。
+    pub fn advance_runtime_attention_candidates(&mut self) {
+        self.mark_external_mutation();
+        let tick = self.state.tick;
+        let ids: Vec<crate::AccountId> = self
+            .state
+            .npc_attention
+            .iter()
+            .filter(|(_, s)| s.next_attention_candidate_tick < tick)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            if let Some(state) = self.state.npc_attention.get_mut(&id) {
+                state.next_attention_candidate_tick = tick;
+            }
+        }
+    }
+
+    /// runtime 驱动器翻转面（翻转批）：活动 K 自然日时间戳。
+    pub fn candle_date_time_for_runtime(&self) -> i64 {
+        crate::session::candles::candle_date_time(self.state.civil_clock.current_date())
+    }
+
     /// runtime 驱动器翻转面（批 8h）：失败 poison（旧管线语义）。
     pub fn poison_runtime_step(&mut self, fatal: StepFatal) -> StepFatal {
         self.poison_failed_step(fatal)

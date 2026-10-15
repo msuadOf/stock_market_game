@@ -274,6 +274,17 @@ impl RuntimeDriver {
     /// 收束点公共态写入会话 `markets`。逐步补齐其余域（登记）。
     pub fn install_market_views(&mut self, session: &mut GameSession) -> Result<(), String> {
         let views: Vec<super::protocol::StockPublic> = self.world_public_views().to_vec();
+        // 价格历史长度对齐存档校验口径：expected = min(连续窗完成 tick,
+        // history_len)。会话 tick/day 由安装面维护——从会话读。
+        let tpd = 240u64; // 单股 setup 固定口径（helpers 同值）
+        let auction = 15u64;
+        let history_len = 16usize;
+        let tick = session.tick();
+        let day = session.day() as u64;
+        let continuous_per_day = tpd - auction - 3;
+        let completed_cont =
+            day * continuous_per_day + (tick % tpd).saturating_sub(auction).min(continuous_per_day);
+        let expected_len = (completed_cont as usize).min(history_len);
         for (idx, view) in views.iter().enumerate() {
             let code = crate::StockId(idx as u32);
             if let Some(market) = session.market_mut_for_runtime(&code) {
@@ -284,7 +295,32 @@ impl RuntimeDriver {
             } else {
                 return Err(format!("行情安装：股 {idx} 不在会话目录"));
             }
+            // 价格历史（尾部 expected_len 条，正价）。
+            let hist: Vec<Money> = view
+                .recent_prices
+                .iter()
+                .rev()
+                .take(expected_len)
+                .rev()
+                .map(|&c| Money::from_cents(c.max(1)))
+                .collect();
+            session.set_runtime_price_history(&code, hist);
+            // 分钟收盘（绝对分钟→Money；覆盖全部已完成分钟口径）。
+            // 分钟键口径（存档校验）：absolute = day*240 + day 内序号。
+            let day_base = day * 240;
+            let minutes: Vec<crate::observation::MarketMinuteClose> = view
+                .minute_closes
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| crate::observation::MarketMinuteClose {
+                    absolute_trading_minute: day_base + i as u64,
+                    close: Money::from_cents(c.max(1)),
+                })
+                .collect();
+            session.set_runtime_minute_closes(&code, minutes);
         }
+        // 注意力候选面（存档校验 candidate ≥ tick）。
+        session.advance_runtime_attention_candidates();
         Ok(())
     }
 
@@ -327,17 +363,26 @@ impl RuntimeDriver {
                     },
                 );
             }
-            if let Some(a) = active {
+            let _ = ();
+            // 活跃 K 窗口对齐（存档校验 fault2076）：竞价申报窗
+            // （day_tick < auction_entry=10）活跃 K 须为空。
+            let day_tick = session.tick() % 240;
+            let in_auction_entry = day_tick < 10;
+            let candle_time = session.candle_date_time_for_runtime();
+            if let Some(a) = active.filter(|_| !in_auction_entry) {
                 session.set_active_candle_for_runtime(
                     &code,
                     crate::session::DailyCandle {
-                        time: a.0,
+                        time: candle_time,
                         open: Money::from_cents(a.1),
                         high: Money::from_cents(a.2),
                         low: Money::from_cents(a.3),
                         close: Money::from_cents(a.4),
                         volume: a.5,
-                        trade_stats: None,
+                        trade_stats: Some(crate::session::DailyTradeStats {
+                            turnover_cents: a.6.max(0) as u64,
+                            trade_count: a.7,
+                        }),
                     },
                 );
             }
@@ -350,8 +395,8 @@ impl RuntimeDriver {
         &mut self,
     ) -> Vec<(
         super::StockIdx,
-        Vec<(i64, i64, i64, i64, i64, u64)>,
-        Option<(i64, i64, i64, i64, i64, u64)>,
+        Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+        Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     )> {
         self.world.take_candle_projection()
     }
