@@ -1569,6 +1569,11 @@ impl GroupState {
             .and_then(|slot| *slot)
             .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         let mut opens = Vec::new();
+        // Sol 二审修复集 1：existing=**本轮开仓前**计划集合——采集点必须
+        // 在开仓循环之前（此前在循环之后采集：同轮新开的计划全被归入
+        // existing → 预算分类全成 ExistingPlan，NewOpportunity 不可达）。
+        let existing_before: Vec<crate::plans::PlanId> =
+            self.plan_book.active_plan_ids_for_account(account);
         // Sol 整改 1：读面（write_back=false）不消费开仓——纯观察（此前
         // 仅跳过 undo 快照仍 create，第二次读取因 active 分流产生不同
         // 结果——违反只读/幂等承诺，红证 solmid_echo_* 显红）。
@@ -1656,10 +1661,8 @@ impl GroupState {
             }
         }
         // 首子单报价（D3a-3 件4b——生产路径；读面不算子单）。existing=
-        // 本轮开仓前计划集合（Sol 整改 3b：预算新旧分类）。
-        let existing_before: Vec<crate::plans::PlanId> = self
-            .plan_book
-            .active_plan_ids_for_account(account);
+        // 本轮开仓前计划集合（Sol 整改 3b：预算新旧分类——采集点在开仓
+        // 循环之前，见上方 Sol 二审修复集 1 注记）。
         let child_ops = if write_back {
             self.chain_quote_children(
                 local,
@@ -3389,6 +3392,203 @@ mod sol_recheck3_tests {
         assert!(
             !state.child_in_flight.contains_key(&key),
             "本单的 Closed 释放在途票"
+        );
+    }
+}
+
+#[cfg(test)]
+mod sol_recheck1_tests {
+    use super::*;
+
+    /// 双买计划预算竞争 fixture：两股同价 1000（涨停 1100）、各余 100 股
+    /// （order_size=100）、现金恰够一条腿（约 11.1 万）——预算分类的
+    /// 优先级决定谁挂出子单（NewOpportunity=2 让位 ExistingPlan=1，
+    /// 平手按信心倒序）。
+    fn competing_plans_state() -> GroupState {
+        let mut state = GroupState::new(
+            0,
+            vec![GroupAccount::new(120_000, 2)],
+            8,
+            100,
+            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+            240,
+            None,
+            Vec::new(),
+            Box::new(|_t, _r| TickPlan::default()),
+        );
+        state.cur_tick = 1;
+        state.cur_round = 0;
+        let account = crate::AccountId(9);
+        let chain_params = crate::strategy::BeliefChainParams {
+            position_step_bp: 1_000,
+            margin: 0.05,
+            order_size: 100,
+            daily_plan_review: false,
+        };
+        state.root_projection = Some(std::sync::Arc::new(
+            crate::runtime::world::RootProjection {
+                catalog: crate::stock::StockCatalog::from_metas(vec![
+                    crate::stock::StockMeta::new("600000"),
+                    crate::stock::StockMeta::new("600001"),
+                ])
+                .expect("目录构造"),
+                company_registry: std::sync::Arc::new(
+                    crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
+                ),
+                operations: std::sync::Arc::new(
+                    crate::company::operations::CompanyOperations::new(
+                        crate::company::operations::CompanyOperationsConfig {
+                            seed: 1,
+                            shock_params:
+                                crate::company::events::ShockParams::current_default_parameters(),
+                            catalog: crate::company::CompanyCatalog::from_codes(&[])
+                                .expect("空公司目录"),
+                            companies: Vec::new(),
+                        },
+                        crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
+                    )
+                    .expect("空经营"),
+                ),
+                account_ids: vec![account],
+                auction_ticks: 2,
+                closing_auction_ticks: 3,
+                chain_params: vec![Some((chain_params, None))],
+                urgency_policy: crate::plans::UrgencyPolicy::default(),
+                total_shares: Default::default(),
+                max_order_qty_limit: [
+                    (crate::StockId(0), 1_000_000),
+                    (crate::StockId(1), 1_000_000),
+                ]
+                .into_iter()
+                .collect(),
+                tick_size_cents: [
+                    (crate::StockId(0), 1),
+                    (crate::StockId(1), 1),
+                ]
+                .into_iter()
+                .collect(),
+                stock_codes: Vec::new(),
+            },
+        ));
+        // 计划 A（股 0，信心 3000）与计划 B（股 1，信心 9000）。
+        for (stock, confidence) in [(0u32, 3_000u32), (1, 9_000)] {
+            state
+                .plan_book
+                .create(crate::plans::PlanOpen {
+                    account,
+                    code: crate::StockId(stock),
+                    direction: Side::Buy,
+                    target: crate::plans::PlanTarget::ShareCount(100),
+                    opinion: crate::plans::PlanOpinion {
+                        signal_score_bp: 5_000,
+                        source: crate::plans::OpinionSource::Blended,
+                    },
+                    confidence_bp: confidence,
+                    urgency: crate::plans::Urgency::Normal,
+                    horizon_trading_days: 5,
+                    created_trading_day: 0,
+                })
+                .expect("计划创建");
+        }
+        state
+    }
+
+    fn snapshot_arc() -> std::sync::Arc<TickSnapshot> {
+        let stock = |last: i64| super::super::protocol::StockPublic {
+            last_price: last,
+            best_bid: None,
+            best_ask: None,
+            max_buy_price: last * 11 / 10,
+            daily_upper_limit: last * 11 / 10,
+            min_sell_price: last * 9 / 10,
+            recent_prices: Vec::new(),
+            minute_closes: Vec::new(),
+            daily_bars: Vec::new(),
+            daily_active: None,
+            daily_total_completed: 0,
+            daily_total_traded: 0,
+            volume_today: 0,
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
+            depth_bids: Vec::new(),
+            depth_asks: Vec::new(),
+        };
+        std::sync::Arc::new(TickSnapshot {
+            // tick 0 < auction_ticks=2 ⇒ 竞价相位（空簿回退 last 价——
+            // decide_plan_quote 可 Submit，无需估值条目）。
+            tick: 0,
+            market_minute: 0,
+            civil_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
+            stocks: std::sync::Arc::new(vec![stock(1_000), stock(1_000)]),
+        })
+    }
+
+    fn personal(account: crate::AccountId) -> crate::session::PlanPersonalState {
+        let mut rng = crate::session::SplitMix64::new(7);
+        let profile =
+            crate::strategy::StrategyProfile::Institution(crate::strategy::InstitutionStyle::Balanced);
+        let analysis =
+            crate::strategy::derive_analysis_profile(&profile, account, &mut rng).unwrap();
+        crate::session::PlanPersonalState {
+            attention: crate::session::NpcAttentionState {
+                information_cadence: crate::session::notices::NpcInformationCadence::Immediate,
+                next_information_check: crate::calendar::CivilInstant::new(
+                    crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
+                    0,
+                )
+                .expect("午夜有效"),
+                base_probability: 1.0,
+                next_attention_candidate_tick: 0,
+                rng_state: 1,
+            },
+            watchlist: crate::experience::PersonalWatchlist::new(),
+            price_memory: crate::experience::PersonalPriceMemory::default(),
+            history_reads: crate::experience::PersonalHistoryReadLedger::default(),
+            information: crate::information::NpcInformationState::new(account),
+            belief: crate::strategy::BeliefBook::new(account, profile, analysis, &mut rng),
+        }
+    }
+
+    // Sol 二审修复集 1：existing_before 成员在现金受限时优先获预算——
+    // 同轮新开（不在集合内）=NewOpportunity 让位；若同轮新开被错误归入
+    // existing（修复前调用点的实际行为——采集点在开仓循环之后），平手
+    // 按信心倒序，高信心新计划抢走既有计划的预算。固化"分类→优先级→
+    // 资金→挂出股"的可观察链（调用点采集时点见 run_chain_decision 注记）。
+    #[test]
+    fn sol1_quote_classification_prefers_pre_existing_under_budget_constraint() {
+        let account = crate::AccountId(9);
+        let snapshot = snapshot_arc();
+        // 正确输入：existing=[A]（B=同轮新开不在集合内）。
+        let mut correct = competing_plans_state();
+        let projection = correct.root_projection.clone().expect("投影在");
+        let a = correct
+            .plan_book
+            .active_plan(account, &crate::StockId(0))
+            .expect("计划 A")
+            .plan_id();
+        let ops = correct
+            .chain_quote_children(0, account, &projection, &personal(account), &snapshot, &[a])
+            .expect("报价");
+        assert!(
+            !ops.is_empty() && ops.iter().all(|op| op.stock == 0),
+            "现金受限时既有计划（ExistingPlan 优先级 1）获预算挂出；NewOpportunity 让位（实际挂出 {:?}）",
+            ops.iter().map(|op| op.stock).collect::<Vec<_>>()
+        );
+        // 错误输入（修复前行为）：existing=[A,B]——同轮新开 B 同类平手，
+        // 信心 9000>3000 抢先获预算 → 股 1 挂出、股 0 无子单。
+        let mut buggy = competing_plans_state();
+        let b = buggy
+            .plan_book
+            .active_plan(account, &crate::StockId(1))
+            .expect("计划 B")
+            .plan_id();
+        let ops = buggy
+            .chain_quote_children(0, account, &projection, &personal(account), &snapshot, &[a, b])
+            .expect("报价");
+        assert!(
+            !ops.is_empty() && ops.iter().all(|op| op.stock == 1),
+            "同轮新开被归入 existing 时信心序抢占预算（NewOpportunity 不可达的旧形态——股 1 挂出 {:?}）",
+            ops.iter().map(|op| op.stock).collect::<Vec<_>>()
         );
     }
 }
