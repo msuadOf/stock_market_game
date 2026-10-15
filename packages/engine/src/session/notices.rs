@@ -115,6 +115,153 @@ impl NpcAttentionState {
     }
 }
 
+/// D3a-2b Belief-1b 提取：单 NPC 信息投递更新（纯函数——组线程与
+/// session 侧同输入同演进的等价基座；fault 码与原内联实现逐字一致）。
+pub(crate) fn deliver_information_for_npc(
+    id: AccountId,
+    now: CivilInstant,
+    day: u64,
+    attention_in: &crate::session::attention::NpcAttentionState,
+    information_in: &NpcInformationState,
+    belief_in: &BeliefBook,
+    codes: BTreeSet<StockId>,
+    issuer_of_stock: &dyn Fn(StockId) -> Option<crate::company::CompanyId>,
+    operations: &crate::company::operations::CompanyOperations,
+    library: &crate::information::PublicLibrary,
+    market: &crate::strategy::MarketView,
+) -> Result<
+    Option<(
+        AccountId,
+        NpcInformationState,
+        BeliefBook,
+        crate::session::attention::NpcAttentionState,
+    )>,
+    SessionError,
+> {
+        let mut attention = attention_in.clone();
+        if !attention.information_check_due(now) {
+            return Ok(None);
+        }
+                        let mut information = information_in.clone();
+        let mut belief = belief_in.clone();
+        for code in &codes {
+            let Some(company) = issuer_of_stock(*code) else {
+                continue;
+            };
+            let mut new_reports = false;
+            let mut corrections = Vec::new();
+            let mut defaults = Vec::new();
+            for publication in
+                crate::information::discovery_candidates(library, &company, now)
+            {
+                if information.observed_at_of(publication).is_some() {
+                    continue;
+                }
+                information
+                    .record_acquisition(id, library, publication, now)
+                    .map_err(|_error| {
+                        // fault1200: NPC 公告送达（信息获取登记）失败。
+                        // ctx[0] = 账户 id；槽1 待 C 批数值化（原文本为内层 AcquisitionError 文本）。
+                        SessionError::InvalidSave(ValidationFault::new(1200, vec![id.0, 0]))
+                    })?;
+                match information
+                    .records_for_company(&company)
+                    .iter()
+                    .find(|record| record.id == publication)
+                    .expect("刚登记的本人材料存在")
+                    .kind
+                {
+                    AcquiredKind::Report => {
+                        new_reports = true;
+                        if matches!(
+                            library
+                                .report(publication, now)
+                                .expect("刚获知报告可读取")
+                                .origin,
+                            PublicationOrigin::Correction
+                        ) {
+                            corrections.push(publication);
+                        }
+                    }
+                    AcquiredKind::Announcement => {
+                        if let Some(cause) =
+                            credit_default_cause(library, publication, now)
+                                .map_err(|error| {
+                                    SessionError::Information(Box::new(error))
+                                })?
+                        {
+                            defaults.push(cause);
+                        }
+                    }
+                }
+            }
+            let ctx =
+                NpcObservationContext::new(id, &information, library, &market)
+                    .map_err(|_error| {
+                        // fault1201: NPC 观察上下文构造失败。槽0 待 C 批数值化（原文本为内层错误文本）。
+                        SessionError::InvalidSave(ValidationFault::new(1201, vec![0]))
+                    })?;
+            let spec = operations
+                .company(&company)
+                .expect("发行人经营配置存在")
+                .spec();
+            let inputs = BeliefInputs {
+                ctx: &ctx,
+                company,
+                kind: spec.kind,
+                total_issued_shares: spec.issued_shares,
+                as_of_trading_day: day,
+            };
+            if new_reports {
+                let report = crate::strategy::preferred_own_report(&ctx, &company)
+                    .map_err(|_error| {
+                        // fault1202: NPC 无本人已获知的定期报告可选（公告重估取材失败）。
+                        // 槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
+                        SessionError::InvalidSave(ValidationFault::new(1202, vec![0]))
+                    })?
+                    .expect("新获知报告存在");
+                belief
+                    .apply_cause(
+                        code,
+                        material_cause(library, report, now)
+                            .map_err(|error| SessionError::Information(Box::new(error)))?,
+                        &inputs,
+                    )
+                    .map_err(|_error| {
+                        // fault1203: NPC 新公告重估失败。ctx[0] = 账户 id，
+                        // ctx[1] = StockId；槽2 待 C 批数值化（原文本为内层 BeliefError 文本，
+                        // 如 NoOwnAnnualMaterial 的 "no own-known annual material"）。
+                        SessionError::InvalidSave(ValidationFault::new(
+                            1203,
+                            vec![id.0, u64::from(code.0), 0],
+                        ))
+                    })?;
+            }
+            for report in corrections {
+                // fault1204: NPC 更正公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
+                belief
+                    .apply_cause(code, BeliefCause::Correction { report }, &inputs)
+                    .map_err(|_error| {
+                        SessionError::InvalidSave(ValidationFault::new(1204, vec![0]))
+                    })?;
+            }
+            for cause in defaults {
+                if belief.entry(code).is_some() {
+                    // fault1205: NPC 违约公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
+                    belief.apply_cause(code, cause, &inputs).map_err(|_error| {
+                        SessionError::InvalidSave(ValidationFault::new(1205, vec![0]))
+                    })?;
+                }
+            }
+        }
+        attention.record_information_check(now).map_err(|_error| {
+            // fault1206: NPC 信息检查节奏推进失败（CivilDateError）。
+            // 槽0 待 C 批数值化（原文本为内层 CivilDateError 文本）。
+            SessionError::InvalidSave(ValidationFault::new(1206, vec![0]))
+        })?;
+        Ok::<_, SessionError>(Some((id, information, belief, attention)))
+}
+
 pub(super) fn material_cause(
     library: &PublicLibrary,
     report: PublicationId,
@@ -167,8 +314,6 @@ impl GameSession {
                     return Ok(None);
                 }
                 let participant = &self.state.belief_participants[&id];
-                let mut information = participant.information().clone();
-                let mut belief = participant.belief().clone();
                 let mut codes: BTreeSet<_> = self.state.accounts[&id]
                     .positions()
                     .keys()
@@ -176,126 +321,20 @@ impl GameSession {
                     .collect();
                 codes.extend(participant.watchlist().stocks.keys().cloned());
                 codes.extend(self.state.plans.active_codes(id).cloned());
-                for code in &codes {
-                    let Some(company) = self.state.issuer_of_stock(*code) else {
-                        continue;
-                    };
-                    let mut new_reports = false;
-                    let mut corrections = Vec::new();
-                    let mut defaults = Vec::new();
-                    for publication in
-                        crate::information::discovery_candidates(&self.state.library, &company, now)
-                    {
-                        if information.observed_at_of(publication).is_some() {
-                            continue;
-                        }
-                        information
-                            .record_acquisition(id, &self.state.library, publication, now)
-                            .map_err(|_error| {
-                                // fault1200: NPC 公告送达（信息获取登记）失败。
-                                // ctx[0] = 账户 id；槽1 待 C 批数值化（原文本为内层 AcquisitionError 文本）。
-                                SessionError::InvalidSave(ValidationFault::new(1200, vec![id.0, 0]))
-                            })?;
-                        match information
-                            .records_for_company(&company)
-                            .iter()
-                            .find(|record| record.id == publication)
-                            .expect("刚登记的本人材料存在")
-                            .kind
-                        {
-                            AcquiredKind::Report => {
-                                new_reports = true;
-                                if matches!(
-                                    self.state
-                                        .library
-                                        .report(publication, now)
-                                        .expect("刚获知报告可读取")
-                                        .origin,
-                                    PublicationOrigin::Correction
-                                ) {
-                                    corrections.push(publication);
-                                }
-                            }
-                            AcquiredKind::Announcement => {
-                                if let Some(cause) =
-                                    credit_default_cause(&self.state.library, publication, now)
-                                        .map_err(|error| {
-                                            SessionError::Information(Box::new(error))
-                                        })?
-                                {
-                                    defaults.push(cause);
-                                }
-                            }
-                        }
-                    }
-                    let ctx =
-                        NpcObservationContext::new(id, &information, &self.state.library, &market)
-                            .map_err(|_error| {
-                                // fault1201: NPC 观察上下文构造失败。槽0 待 C 批数值化（原文本为内层错误文本）。
-                                SessionError::InvalidSave(ValidationFault::new(1201, vec![0]))
-                            })?;
-                    let spec = self
-                        .state
-                        .operations
-                        .company(&company)
-                        .expect("发行人经营配置存在")
-                        .spec();
-                    let inputs = BeliefInputs {
-                        ctx: &ctx,
-                        company,
-                        kind: spec.kind,
-                        total_issued_shares: spec.issued_shares,
-                        as_of_trading_day: u64::from(self.state.day),
-                    };
-                    if new_reports {
-                        let report = crate::strategy::preferred_own_report(&ctx, &company)
-                            .map_err(|_error| {
-                                // fault1202: NPC 无本人已获知的定期报告可选（公告重估取材失败）。
-                                // 槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
-                                SessionError::InvalidSave(ValidationFault::new(1202, vec![0]))
-                            })?
-                            .expect("新获知报告存在");
-                        belief
-                            .apply_cause(
-                                code,
-                                material_cause(&self.state.library, report, now)
-                                    .map_err(|error| SessionError::Information(Box::new(error)))?,
-                                &inputs,
-                            )
-                            .map_err(|_error| {
-                                // fault1203: NPC 新公告重估失败。ctx[0] = 账户 id，
-                                // ctx[1] = StockId；槽2 待 C 批数值化（原文本为内层 BeliefError 文本，
-                                // 如 NoOwnAnnualMaterial 的 "no own-known annual material"）。
-                                SessionError::InvalidSave(ValidationFault::new(
-                                    1203,
-                                    vec![id.0, u64::from(code.0), 0],
-                                ))
-                            })?;
-                    }
-                    for report in corrections {
-                        // fault1204: NPC 更正公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
-                        belief
-                            .apply_cause(code, BeliefCause::Correction { report }, &inputs)
-                            .map_err(|_error| {
-                                SessionError::InvalidSave(ValidationFault::new(1204, vec![0]))
-                            })?;
-                    }
-                    for cause in defaults {
-                        if belief.entry(code).is_some() {
-                            // fault1205: NPC 违约公告重估失败。槽0 待 C 批数值化（原文本为内层 BeliefError 文本）。
-                            belief.apply_cause(code, cause, &inputs).map_err(|_error| {
-                                SessionError::InvalidSave(ValidationFault::new(1205, vec![0]))
-                            })?;
-                        }
-                    }
-                }
-                let mut attention = attention.clone();
-                attention.record_information_check(now).map_err(|_error| {
-                    // fault1206: NPC 信息检查节奏推进失败（CivilDateError）。
-                    // 槽0 待 C 批数值化（原文本为内层 CivilDateError 文本）。
-                    SessionError::InvalidSave(ValidationFault::new(1206, vec![0]))
-                })?;
-                Ok::<_, SessionError>(Some((id, information, belief, attention)))
+                let issuer_of = |code: StockId| self.state.issuer_of_stock(code);
+                deliver_information_for_npc(
+                    id,
+                    now,
+                    u64::from(self.state.day),
+                    attention,
+                    participant.information(),
+                    participant.belief(),
+                    codes,
+                    &issuer_of,
+                    self.state.operations.as_ref(),
+                    self.state.library.as_ref(),
+                    &market,
+                )
             })
             .collect::<Vec<_>>()
             .into_iter()
