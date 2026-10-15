@@ -310,6 +310,8 @@ pub struct GroupState {
     /// D3a-2b 信念个人态（逐组内下标；None=非机构位）——构造期投影，
     /// Belief-1b 起承接披露驱动的组内自演进。
     belief_states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
+    /// 公开库（Belief-1b·下：Arc 共享——投递消息稀疏刷新）。
+    library: std::sync::Arc<crate::information::PublicLibrary>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
@@ -335,6 +337,7 @@ impl GroupState {
             group,
             accounts,
             Vec::new(),
+            std::sync::Arc::new(crate::information::PublicLibrary::default()),
             chunk,
             lot,
             config,
@@ -354,6 +357,7 @@ impl GroupState {
         #[allow(clippy::too_many_arguments)] belief_states_seed: Vec<
             Option<super::world::BeliefParticipantSnapshot>,
         >,
+        library_seed: std::sync::Arc<crate::information::PublicLibrary>,
         chunk: usize,
         lot: u32,
         config: Arc<GameConfig>,
@@ -388,6 +392,7 @@ impl GroupState {
             external_pending: Vec::new(),
             observation_inputs: vec![ObservationInputs::default(); n_stocks],
             belief_states: belief_states_seed,
+            library: library_seed,
             script,
         }
     }
@@ -1206,6 +1211,87 @@ pub fn group_main(
             GroupIn::ExternalPlan(ops) => {
                 // 玩家意图路由（D2 批）：外部计划存缓冲，run_round 消费。
                 state.external_pending.extend(ops);
+            }
+            GroupIn::InformationDelivery {
+                now,
+                day,
+                library,
+                attentions,
+                issuer_map,
+                company_specs,
+            } => {
+                // Belief-1b·下：组内纯函数推进（与 session 版同输入同
+                // 演进）。codes=当前持仓∪watchlist（组账户无"曾持有"
+                // 零量条目面——差异登记）。快照缺席（未跑 tick 即投递）
+                // 如实上行空更新。
+                state.library = library;
+                let mut updates = Vec::new();
+                if let Some(snapshot) = state.snapshot.clone() {
+                    let market = super::decision::build_market_view(&snapshot);
+                    for (local, account_id, attention) in attentions {
+                        let li = local as usize;
+                        let Some(snap) = state.belief_states.get_mut(li).and_then(|s| s.as_mut()) else {
+                            continue;
+                        };
+                        let mut codes: std::collections::BTreeSet<crate::StockId> =
+                            state.accounts[li]
+                                .shares
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, &q)| q > 0)
+                                .map(|(idx, _)| crate::StockId(idx as u32))
+                                .collect();
+                        codes.extend(snap.watchlist.stocks.keys().copied());
+                        let issuer_of =
+                            |code: crate::StockId| issuer_map.get(&code).copied();
+                        let spec_of =
+                            |company: &crate::company::CompanyId| company_specs.get(company).copied();
+                        match crate::session::notices::deliver_information_for_npc(
+                            account_id,
+                            now,
+                            day,
+                            &attention,
+                            &snap.information,
+                            &snap.belief,
+                            codes,
+                            &issuer_of,
+                            &spec_of,
+                            &state.library,
+                            &market,
+                        ) {
+                            Ok(Some((_, information, belief, attention))) => {
+                                snap.information = information;
+                                snap.belief = belief;
+                                updates.push((local, attention));
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                abort.store(true, Ordering::SeqCst);
+                                let detail = format!("组内信息投递失败：{e:?}");
+                                let _ = up_tx.send(UpMsg::Failed {
+                                    who,
+                                    error: RuntimeError::ProtocolInvariant {
+                                        detail: detail.clone(),
+                                    },
+                                });
+                                result = Err(RuntimeError::ProtocolInvariant { detail });
+                                break;
+                            }
+                        }
+                    }
+                }
+                if up_tx
+                    .send(UpMsg::GroupDeliveryDone {
+                        group: state.group,
+                        updates,
+                    })
+                    .is_err()
+                {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "GroupDeliveryDone 上行失败".to_owned(),
+                    });
+                    break;
+                }
             }
             GroupIn::EchoBelief => {
                 let states = state.belief_states.clone();

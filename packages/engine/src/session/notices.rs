@@ -126,7 +126,11 @@ pub(crate) fn deliver_information_for_npc(
     belief_in: &BeliefBook,
     codes: BTreeSet<StockId>,
     issuer_of_stock: &dyn Fn(StockId) -> Option<crate::company::CompanyId>,
-    operations: &crate::company::operations::CompanyOperations,
+    // 发行人 spec 快照查表（Belief-1b·下：组内以快照承载——session
+    // 侧闭包经 operations.company().spec() 等价供数）。
+    company_spec: &dyn Fn(
+        &crate::company::CompanyId,
+    ) -> Option<(crate::company::CompanyKind, u64)>,
     library: &crate::information::PublicLibrary,
     market: &crate::strategy::MarketView,
 ) -> Result<
@@ -201,15 +205,13 @@ pub(crate) fn deliver_information_for_npc(
                         // fault1201: NPC 观察上下文构造失败。槽0 待 C 批数值化（原文本为内层错误文本）。
                         SessionError::InvalidSave(ValidationFault::new(1201, vec![0]))
                     })?;
-            let spec = operations
-                .company(&company)
-                .expect("发行人经营配置存在")
-                .spec();
+            let (spec_kind, spec_issued) =
+                company_spec(&company).expect("发行人经营配置存在");
             let inputs = BeliefInputs {
                 ctx: &ctx,
                 company,
-                kind: spec.kind,
-                total_issued_shares: spec.issued_shares,
+                kind: spec_kind,
+                total_issued_shares: spec_issued,
                 as_of_trading_day: day,
             };
             if new_reports {
@@ -300,6 +302,13 @@ impl GameSession {
         &mut self,
         now: CivilInstant,
     ) -> Result<(), SessionError> {
+        // Belief-1b·下 权威调和：runtime 驱动器在位时投递计算下沉组内
+        //（驱动器在日结编排后稀疏下行——见 RuntimeDriver::deliver_
+        // information）；session 侧停跑防双权威漂移。旧管线（无驱动器）
+        // 路径不变。
+        if self.runtime_driver.is_some() {
+            return Ok(());
+        }
         let market = self.build_market_view();
         let ids: Vec<_> = self.state.belief_participants.keys().copied().collect();
         let compute = self.compute.clone();
@@ -331,7 +340,11 @@ impl GameSession {
                     participant.belief(),
                     codes,
                     &issuer_of,
-                    self.state.operations.as_ref(),
+                    &|company: &crate::company::CompanyId| {
+                        self.state.operations.company(company).map(|operating| {
+                            (operating.spec().kind, operating.spec().issued_shares)
+                        })
+                    },
                     self.state.library.as_ref(),
                     &market,
                 )

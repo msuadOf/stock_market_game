@@ -43,6 +43,13 @@ pub struct PublicLibrary {
 const CONTENT_DIGEST_SEED: u64 = 0xcbf29ce484222325;
 const CONTENT_DIGEST_PRIME: u64 = 0x100000001b3;
 
+impl PublicLibrary {
+    /// 内容版本（next_seq——Belief-1b·下 驱动器稀疏刷新判据）。
+    pub fn version(&self) -> u32 {
+        self.next_seq
+    }
+}
+
 impl Default for PublicLibrary {
     fn default() -> Self {
         Self {

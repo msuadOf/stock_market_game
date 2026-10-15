@@ -64,6 +64,23 @@ impl DeskStockSpec {
     }
 }
 
+/// 信息投递载荷（Belief-1b·下：驱动器组装——库 Arc+镜像快照+映射）。
+pub struct GroupInformationPayload {
+    pub now: crate::calendar::CivilInstant,
+    pub day: u64,
+    pub library: std::sync::Arc<crate::information::PublicLibrary>,
+    pub attentions: Vec<(
+        super::LocalIdx,
+        crate::AccountId,
+        crate::session::NpcAttentionState,
+    )>,
+    pub issuer_map: std::collections::BTreeMap<crate::StockId, crate::company::CompanyId>,
+    pub company_specs: std::collections::BTreeMap<
+        crate::company::CompanyId,
+        (crate::company::CompanyKind, u64),
+    >,
+}
+
 /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
 /// ——crate 纯类型直载；构造期自 session 投影进组，读面上行同源校验）。
 #[derive(Clone, Debug, PartialEq)]
@@ -120,6 +137,8 @@ pub struct WorldSpec {
     /// D3a-2b：信念个人态种子（组 0 按下标承接——None=非机构位；
     /// 构造期一次性投影，日结披露驱动随 Belief-1b 下沉）。
     pub belief_seeds: Vec<Option<super::world::BeliefParticipantSnapshot>>,
+    /// Belief-1b·下：公开库初始 Arc（缺省空库——投递消息稀疏刷新）。
+    pub library: Option<std::sync::Arc<crate::information::PublicLibrary>>,
 }
 
 /// 日结候选投影（F §6.2 步骤 4：组投影 + 交易部清簿态 + 全局域 + 费用上交；
@@ -266,7 +285,10 @@ impl World {
             initial_cash_override,
             plan_factory,
             belief_seeds,
+            library,
         } = spec;
+        let library_seed: std::sync::Arc<crate::information::PublicLibrary> =
+            library.unwrap_or_default();
         let mut stock_seed_bars: Vec<Vec<(i64, i64, i64, i64, u64)>> = stocks
             .iter()
             .map(|spec| spec.initial_daily_bars.clone())
@@ -330,6 +352,7 @@ impl World {
                 g,
                 accounts,
                 belief_states,
+                std::sync::Arc::clone(&library_seed),
                 chunk,
                 config.lot_size,
                 Arc::clone(&config),
@@ -584,6 +607,51 @@ impl World {
                         stage: format!(
                             "collect_group_observations 期望 GroupObservations，收到 {other:?}"
                         ),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
+    /// 信息投递编排（Belief-1b·下：稀疏——由驱动器在披露版本变化时
+    /// 调用；广播→收齐 GroupDeliveryDone）。
+    pub fn deliver_information(
+        &mut self,
+        payload: GroupInformationPayload,
+    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, crate::session::NpcAttentionState)>)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: "deliver_information 通道面与组数不一致（世界已断连）".to_owned(),
+            });
+        }
+        for tx in &self.group_txs {
+            tx.send(GroupIn::InformationDelivery {
+                now: payload.now,
+                day: payload.day,
+                library: std::sync::Arc::clone(&payload.library),
+                attentions: payload.attentions.clone(),
+                issuer_map: payload.issuer_map.clone(),
+                company_specs: payload.company_specs.clone(),
+            })
+            .map_err(|_| RuntimeError::SendFailed {
+                detail: "InformationDelivery 广播失败".to_owned(),
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupDeliveryDone { group, updates } => {
+                    out.push((group, updates));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("deliver_information 期望 GroupDeliveryDone，收到 {other:?}"),
                     });
                 }
             }

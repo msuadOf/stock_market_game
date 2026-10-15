@@ -425,6 +425,71 @@ impl GameSession {
         self.state.attention_scheduler = attention_scheduler;
     }
 
+    /// 注意力镜像全量只读（Belief-1b·下：投递下行快照源——candidate
+    /// 域=上一 tick 组同步值）。
+    pub fn runtime_attention_full_states(&self) -> Vec<(crate::AccountId, crate::session::NpcAttentionState)> {
+        self.state
+            .npc_attention
+            .iter()
+            .map(|(id, s)| (*id, s.clone()))
+            .collect()
+    }
+
+    /// 公开库版本（Belief-1b·下：稀疏刷新判据）+当前 Arc。
+    pub fn runtime_library_handle(
+        &self,
+    ) -> (u32, std::sync::Arc<crate::information::PublicLibrary>) {
+        (self.state.library.version(), std::sync::Arc::clone(&self.state.library))
+    }
+
+    /// 股→发行人映射只读（投递载荷组装）。
+    pub fn runtime_issuer_map(
+        &self,
+    ) -> std::collections::BTreeMap<crate::StockId, crate::company::CompanyId> {
+        self.state
+            .markets
+            .keys()
+            .filter_map(|code| Some((*code, self.state.issuer_of_stock(*code)?)))
+            .collect()
+    }
+
+    /// 发行人 spec 快照（投递载荷组装——(kind, issued_shares)）。
+    pub fn runtime_company_specs(
+        &self,
+    ) -> std::collections::BTreeMap<crate::company::CompanyId, (crate::company::CompanyKind, u64)> {
+        let mut out: std::collections::BTreeMap<
+            crate::company::CompanyId,
+            (crate::company::CompanyKind, u64),
+        > = Default::default();
+        for company in self.runtime_issuer_map().values().copied() {
+            if let Some(op) = self.state.operations.company(&company) {
+                out.insert(company, (op.spec().kind, op.spec().issued_shares));
+            }
+        }
+        out
+    }
+
+    /// 观察时刻（投递载荷——披露相位 instant）。
+    pub fn runtime_observation_instant(&self) -> crate::calendar::CivilInstant {
+        self.observation_civil_instant()
+    }
+
+    /// Belief-1b·下：投递回写——**仅 information 域**（cadence/
+    /// next_information_check），不触碰 candidate（组权威）/RNG——
+    /// 权威调和注记见 .tmp/multi-tick-design.md。
+    pub fn set_runtime_information_checks(
+        &mut self,
+        updates: &[(crate::AccountId, crate::session::NpcAttentionState)],
+    ) {
+        self.mark_external_mutation();
+        for (id, updated) in updates {
+            if let Some(state) = self.state.npc_attention.get_mut(id) {
+                state.information_cadence = updated.information_cadence;
+                state.next_information_check = updated.next_information_check;
+            }
+        }
+    }
+
     /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。
     pub fn runtime_belief_states(
         &self,

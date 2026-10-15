@@ -287,6 +287,32 @@ pub enum GroupIn {
     EchoObservations,
     /// 信念个人态读面（D3a-2b：构造投影同源校验/后续驱动面）。
     EchoBelief,
+    /// 信息投递（Belief-1b·下：稀疏——仅披露 tick 下行。携带库 Arc
+    /// 刷新+per-NPC 注意力**镜像快照**（candidate 域=组权威值，见
+    /// 设计注记）+issuer/spec 快照+时刻。组内纯函数推进，上行仅
+    /// information 域回写）。
+    InformationDelivery {
+        /// 观察时刻（披露相位）。
+        now: crate::calendar::CivilInstant,
+        /// 交易日。
+        day: u64,
+        /// 库刷新（Arc 共享——稀疏）。
+        library: std::sync::Arc<crate::information::PublicLibrary>,
+        /// per-NPC（组内下标, AccountId, 注意力镜像快照——AccountId
+        /// 供纯函数的获知登记/错误上下文；id_map 在驱动器侧）。
+        attentions: Vec<(
+            LocalIdx,
+            crate::AccountId,
+            crate::session::NpcAttentionState,
+        )>,
+        /// 股→发行人。
+        issuer_map: std::collections::BTreeMap<crate::StockId, crate::company::CompanyId>,
+        /// 发行人→(spec.kind, issued_shares)。
+        company_specs: std::collections::BTreeMap<
+            crate::company::CompanyId,
+            (crate::company::CompanyKind, u64),
+        >,
+    },
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
     EchoAccounts,
@@ -372,6 +398,14 @@ pub enum UpMsg {
         /// 活动 K。
         active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     },
+    /// 投递完成回执（Belief-1b·下：组内纯函数推进后的注意力态——
+    /// 驱动器**仅回写 information 域**，不触碰 candidate/heap）。
+    GroupDeliveryDone {
+        /// 组索引。
+        group: GroupIdx,
+        /// 逐组内下标的更新后注意力态。
+        updates: Vec<(LocalIdx, crate::session::NpcAttentionState)>,
+    },
     /// 信念个人态回执（EchoBelief 应答——逐组内下标；None=非机构位）。
     GroupBelief {
         /// 组索引。
@@ -443,6 +477,9 @@ impl std::fmt::Debug for UpMsg {
             }
             UpMsg::GroupBelief { group, states } => {
                 write!(f, "GroupBelief(group={group}, n={})", states.len())
+            }
+            UpMsg::GroupDeliveryDone { group, updates } => {
+                write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())
             }
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),

@@ -121,7 +121,7 @@ use decision_chain::personal_state::BeliefParticipantState;
 use persistence::{validate_save_slot, validate_saved_order_state};
 
 pub use attention::NpcAttentionState;
-mod notices;
+pub(crate) mod notices;
 pub use civil_clock::{CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase};
 pub use company_groups::{GroupHolding, GroupStructure};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};

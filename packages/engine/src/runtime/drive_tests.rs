@@ -243,3 +243,65 @@ fn d3a2b_group_belief_states_match_session_projection() {
     }
     assert!(checked > 0, "至少一个机构位信念态被核对（{checked}）");
 }
+
+// Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——
+// (a) 组内推进+仅 information 域回写（cadence/next_check 前进）；
+// (b) candidate 域回写前后不变（权威调和锚：快照取点/回写覆写错即红）。
+#[test]
+fn belief1b_delivery_advances_information_domain_only() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 2;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 13).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..3 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    // 基线：镜像 candidate（=组同步值）+人为把信息检查置到期。
+    let now = session.runtime_observation_instant();
+    let mut candidates_before = std::collections::BTreeMap::new();
+    for (id, state) in session.runtime_attention_full_states() {
+        candidates_before.insert(id, state.next_attention_candidate_tick);
+    }
+    // 直接用公开直改面把 next_information_check 置到期（载荷即会算）。
+    for (id, state) in session.runtime_attention_full_states() {
+        let mut due = state;
+        due.next_information_check = now;
+        // 机构缺省 Immediate 节奏 next_after(now)=now 不前进——机制
+        // 验证用 Daily{checks:2}（推进可观测）。
+        due.information_cadence =
+            crate::session::notices::NpcInformationCadence::Daily { checks: 2 };
+        session.set_runtime_information_checks(&[(id, due)]);
+    }
+    let n = driver
+        .deliver_information_for_test(&mut session)
+        .expect("投递编排");
+    assert!(n >= 2, "两机构位都应推进（{n}）");
+    // (a) information 域前进：next_check > now（record 推进节奏）。
+    for (id, state) in session.runtime_attention_full_states() {
+        assert!(
+            state.next_information_check > now,
+            "NPC {id:?} 信息检查节奏前进（{:?} > {now:?}）",
+            state.next_information_check
+        );
+    }
+    // (b) 权威调和锚：candidate 域不变。
+    for (id, state) in session.runtime_attention_full_states() {
+        assert_eq!(
+            state.next_attention_candidate_tick,
+            candidates_before[&id],
+            "NPC {id:?} candidate 域不得被投递回写触碰"
+        );
+    }
+    // 稀疏判据：同版本再投递=零回写。
+    let again = driver
+        .deliver_information(&mut session)
+        .expect("再投递");
+    assert_eq!(again, 0, "版本未变——稀疏跳过");
+}

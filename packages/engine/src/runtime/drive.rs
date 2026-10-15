@@ -29,6 +29,8 @@ pub struct RuntimeDriver {
     next_seq: u64,
     /// 日终清簿事件缓冲（take_drained_events 取走）。
     drained_events: Vec<Event>,
+    /// 已投递的库版本（Belief-1b·下：稀疏判据）。
+    last_library_version: Option<u32>,
 }
 
 impl RuntimeDriver {
@@ -172,6 +174,7 @@ impl RuntimeDriver {
             id_map: ids,
             next_seq: 0,
             drained_events: Vec::new(),
+            last_library_version: None,
         })
     }
 
@@ -555,6 +558,73 @@ impl RuntimeDriver {
         self.world
             .collect_group_attention()
             .map_err(|e| format!("注意力收集失败：{e:?}"))
+    }
+
+    /// 信息投递（Belief-1b·下：稀疏——披露版本变化才下行；组内纯函数
+    /// 推进；回写**仅 information 域**——权威调和见设计注记）。
+    /// 返回回写条数。
+    pub fn deliver_information(&mut self, session: &mut GameSession) -> Result<usize, String> {
+        let (version, library) = session.runtime_library_handle();
+        if Some(version) == self.last_library_version {
+            return Ok(0);
+        }
+        let updates = self.collect_delivery(session, library)?;
+        self.last_library_version = Some(version);
+        session.set_runtime_information_checks(&updates);
+        Ok(updates.len())
+    }
+
+    /// 测试面：跳过版本判据强制投递（机制验证用）。
+    pub fn deliver_information_for_test(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<usize, String> {
+        let (version, library) = session.runtime_library_handle();
+        let updates = self.collect_delivery(session, library)?;
+        self.last_library_version = Some(version);
+        session.set_runtime_information_checks(&updates);
+        Ok(updates.len())
+    }
+
+    /// 不可变会话相：组装载荷→组内推进→收更新（借用隔离——回写在
+    /// 调用方可变相执行）。
+    fn collect_delivery(
+        &mut self,
+        session: &GameSession,
+        library: std::sync::Arc<crate::information::PublicLibrary>,
+    ) -> Result<Vec<(crate::AccountId, crate::session::NpcAttentionState)>, String> {
+        let now = session.runtime_observation_instant();
+        let day = u64::from(session.day());
+        let attentions_full = session.runtime_attention_full_states();
+        let by_id: std::collections::BTreeMap<crate::AccountId, _> =
+            attentions_full.into_iter().collect();
+        let mut attentions = Vec::new();
+        for (local, id) in self.id_map.iter().enumerate() {
+            if let Some(state) = by_id.get(id) {
+                attentions.push((local as super::LocalIdx, *id, state.clone()));
+            }
+        }
+        let payload = super::world::GroupInformationPayload {
+            now,
+            day,
+            library,
+            attentions,
+            issuer_map: session.runtime_issuer_map(),
+            company_specs: session.runtime_company_specs(),
+        };
+        let collected = self
+            .world
+            .deliver_information(payload)
+            .map_err(|e| format!("信息投递编排失败：{e:?}"))?;
+        let mut updates = Vec::new();
+        for (_g, group_updates) in collected {
+            for (local, state) in group_updates {
+                if let Some(id) = self.id_map.get(local as usize).copied() {
+                    updates.push((id, state));
+                }
+            }
+        }
+        Ok(updates)
     }
 
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面）。
