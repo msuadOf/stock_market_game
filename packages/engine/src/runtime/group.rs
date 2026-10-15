@@ -186,9 +186,10 @@ struct ChildTicket {
     /// 实时未成交余量（Sol 二审修复集 2：挂出=qty、fill 递减——在途
     /// 持仓/ purse 读面与 session 镜像同口径）。
     remaining: u32,
-    /// 累计成交额（i64 分，Σ price×qty——买单 purse 重算的边际费用
-    /// 口径输入，desk buy_purse_limit 同式）。
-    filled_value_cents: i64,
+    /// desk 实际扣减累计（Sol 四审修复 1：买腿 Σ(price×qty+佣金+过户费)
+    /// ——live purse=挂出全额 purse−此值，价优差额不漏计；与 desk 逐笔
+    /// buyer_charge 扣减同口径）。
+    charged_cents: i64,
 }
 
 /// Sol 整改 3：含在途的权益（现金含在途买 purse；持仓含在途卖余量
@@ -262,9 +263,13 @@ fn held_qty_with_pending_at(
 }
 
 /// Sol 整改 3：含在途的现金读面（在途买 purse 加回——挂单期间权益
-/// 观察不缩水）。Sol 二审修复集 2：purse 按**真实余量+累计成交额**的
-/// 边际费用口径重算（desk buy_purse_limit 同式——部分成交后 desk 实际
-/// 在途预留≥此保守下界；此前按原挂出量全额加回，部分成交后高估）。
+/// 观察不缩水）。Sol 四审修复 1：**desk 实际占用**口径——加回=挂出全额
+/// purse−票上累计 desk 扣减（Σ buyer_charge：成交额+边际佣金+过户费）。
+/// 三层现金语义：`GroupAccount.cash`=可分配预算（严格所有权，在途已扣
+/// ——报价预算消费）；本读面=总现金观察（权益观察消费）；价优部分成交
+/// 的差额仍在 desk（此前按余量重算 buy_purse_limit 下界——漏计价优
+/// 差额，三审反例：限价 1000 挂 200、100 股以 900 成交，desk 余额
+/// 110001 vs 下界 100001）。
 fn cash_with_pending_at(
     group_account: &GroupAccount,
     child_in_flight: &std::collections::BTreeMap<
@@ -282,10 +287,21 @@ fn cash_with_pending_at(
                 if let Ok(purse) = super::fees::buy_purse_limit(
                     config,
                     Money::from_cents(ticket.price.max(1)),
-                    ticket.remaining,
-                    Money::from_cents(ticket.filled_value_cents),
+                    ticket.qty,
+                    Money::ZERO,
                 ) {
-                    cash = cash.saturating_add(purse.cents());
+                    // desk 占用扣减（票上累计 buyer_charge；超挂出全额=
+                    /// desk 扣减溢出——票/簿推进失同步，显式失败）。
+                    let occupancy = purse
+                        .cents()
+                        .checked_sub(ticket.charged_cents)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "在途 purse 占用下穿：price={} qty={} charged={}",
+                                ticket.price, ticket.qty, ticket.charged_cents
+                            )
+                        });
+                    cash = cash.saturating_add(occupancy);
                 }
             }
         }
@@ -666,7 +682,7 @@ impl GroupState {
             // Sol 二审修复集 2：实时余量/累计成交额入哈希（Abort 回滚等价
             // 判据覆盖票推进漂移）。
             h = fnv(h, u64::from(ticket.remaining));
-            h = fnv(h, ticket.filled_value_cents as u64);
+            h = fnv(h, ticket.charged_cents as u64);
         }
         h
     }
@@ -938,7 +954,7 @@ impl GroupState {
                     price: ticket.price,
                     order_id: None,
                     remaining: ticket.remaining,
-                    filled_value_cents: ticket.filled_value_cents,
+                    charged_cents: ticket.charged_cents,
                 }),
             });
             self.child_in_flight.insert((account, code.clone()), ticket.clone());
@@ -978,9 +994,9 @@ impl GroupState {
                 ),
             });
         }
-        // Sol 二审修复集 2：票的实时余量/累计成交额随 fill 推进（组读面
-        // 三面统一：观察/开仓/session 投影消费真实未成交余量）。余量下穿
-        // 或成交额溢出=票/簿推进失同步，显式失败（铁律二）。
+        // Sol 二审修复集 2：票的实时余量随 fill 推进（组读面三面统一）；
+        // Sol 四审修复 1：买腿同步累计 desk 实际扣减。余量下穿/扣减溢出
+        /// =票/簿推进失同步，显式失败（铁律二）。
         {
             let prev_ticket = ticket.clone();
             ticket.remaining = ticket.remaining.checked_sub(fill.qty).unwrap_or_else(|| {
@@ -995,12 +1011,22 @@ impl GroupState {
                     panic!("组 {group} 在途票成交额溢出：{error:?}")
                 })
                 .cents();
-            ticket.filled_value_cents = ticket
-                .filled_value_cents
-                .checked_add(gross)
-                .unwrap_or_else(|| {
-                    panic!("组 {group} 在途票累计成交额溢出：account={account:?}, code={code:?}")
-                });
+            // Sol 四审修复 1：desk 实际扣减累计（买腿 buyer_charge=成交额
+            // +边际佣金+过户费；卖腿收方不占 purse——StampTax 由净得扣）。
+            if matches!(fill.side, Side::Buy) {
+                let charge = gross
+                    .checked_add(fill.commission)
+                    .and_then(|v| v.checked_add(fill.transfer_fee))
+                    .unwrap_or_else(|| {
+                        panic!("组 {group} 在途票 desk 扣减溢出：account={account:?}, code={code:?}")
+                    });
+                ticket.charged_cents = ticket
+                    .charged_cents
+                    .checked_add(charge)
+                    .unwrap_or_else(|| {
+                        panic!("组 {group} 在途票 desk 扣减累计溢出：account={account:?}, code={code:?}")
+                    });
+            }
             self.undo.push(GroupUndo::ChildInFlight {
                 account,
                 code: code.clone(),
@@ -1075,7 +1101,7 @@ impl GroupState {
                 price: ticket.price,
                 order_id: None,
                 remaining: ticket.remaining,
-                filled_value_cents: ticket.filled_value_cents,
+                charged_cents: ticket.charged_cents,
             }),
         });
         self.child_in_flight.insert((account, code), ticket);
@@ -1987,9 +2013,9 @@ impl GroupState {
                     side,
                     price: price.cents(),
                     order_id: None,
-                    // Sol 二审修复集 2：实时余量/累计成交额起步值。
+                    // Sol 二审修复集 2/四审修复 1：实时余量/desk 扣减起步值。
                     remaining: qty,
-                    filled_value_cents: 0,
+                    charged_cents: 0,
                 },
             );
             // Sol 整改 3：卖票挂出——在途卖余量镜像加。
@@ -3190,7 +3216,7 @@ mod sol_recheck3_tests {
                 price: 1_000,
                 order_id: Some(order_id),
                 remaining: 200,
-                filled_value_cents: 0,
+                charged_cents: 0,
             },
         );
         state
@@ -3289,7 +3315,8 @@ mod sol_recheck3_tests {
             .get(&(crate::AccountId(9), crate::StockId(0)))
             .expect("部分成交票保留");
         assert_eq!(ticket.remaining, 100, "票实时余量=挂出−成交");
-        assert_eq!(ticket.filled_value_cents, 100_000, "累计成交额=100×1000");
+        // Sol 四审修复 1：卖腿不占 purse（charged 仅买腿累计）。
+        assert_eq!(ticket.charged_cents, 0, "卖腿无 desk purse 扣减累计");
     }
 
     // Sol 四审修复 1 红证：live purse 按 **desk 实际占用** 维护——价优
