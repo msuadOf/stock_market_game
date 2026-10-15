@@ -3292,13 +3292,20 @@ mod sol_recheck3_tests {
         assert_eq!(ticket.filled_value_cents, 100_000, "累计成交额=100×1000");
     }
 
-    // 2：买单 purse 读面=按真实余量+累计成交额的边际费用口径（desk
-    // buy_purse_limit 同式保守下界）——不再按原挂出量全额加回。
+    // Sol 四审修复 1 红证：live purse 按 **desk 实际占用** 维护——价优
+    // 部分成交后 desk 仍持有价优差额（三审反例：限价 1000 挂 200、100 股
+    // 以 900 成交：purse0=200502、desk 扣减=90000+500+1=90501、desk 余额
+    // =110001；重算下界=100001，漏计 10000）。预期全部由字面 desk 扣减
+    // 语义推导（总现金−Σcharge 与 加回值= purse0−Σcharge），不复用实现
+    // 的费用 helper。
     #[test]
-    fn sol2_cash_read_face_tracks_remaining_purse_after_partial_fill() {
+    fn sol4th_buy_purse_tracks_desk_occupancy_with_price_improvement() {
         let mut state = chain_harness(Side::Buy);
-        // purse 全额扣出（挂单在途）：在手现金 0。
-        state.accounts[0].cash = 0;
+        // 挂出扣款：总现金 1_000_000，purse0=200000 对价+500 最低佣金
+        // +2 过户费=200502（desk 余额语义独立推导）。
+        const PURSE0: i64 = 200_000 + 500 + 2;
+        const CHARGE: i64 = 90_000 + 500 + 1;
+        state.accounts[0].cash = 1_000_000 - PURSE0;
         state.staging.push(batch(
             Vec::new(),
             vec![FillFact {
@@ -3315,38 +3322,36 @@ mod sol_recheck3_tests {
         state
             .apply_staging(1, 0)
             .expect("本单部分成交正常推进");
-        let cash = cash_with_pending_at(
+        let face = cash_with_pending_at(
             &state.accounts[0],
             &state.child_in_flight,
             &[crate::AccountId(9)],
             0,
             &state.config,
         );
-        // 独立推导：限价 1000、余量 100、已成交额 900×100=90_000。
-        let expect = super::super::fees::buy_purse_limit(
-            &state.config,
-            Money::from_cents(1_000),
-            100,
-            Money::from_cents(90_000),
-        )
-        .expect("purse 独立推导")
-        .cents();
         assert_eq!(
-            cash, expect,
-            "现金读面=在途余量 purse（累计成交额边际费用口径）"
+            face,
+            1_000_000 - CHARGE,
+            "总现金读面=总现金−desk 实际扣减（价优差额仍在 desk）"
         );
-        // 且与按原挂出量全额加回的旧口径可区分（余量口径必然更小）。
-        let stale = super::super::fees::buy_purse_limit(
+        assert_eq!(
+            face - state.accounts[0].cash,
+            PURSE0 - CHARGE,
+            "在途 purse 加回=desk 余额 110001（价优差额不漏计——重算下界=100001 显红）"
+        );
+        // Abort 验证：票占用随 undo 冲回——读面恢复挂出全额。
+        state.rollback();
+        let face_after = cash_with_pending_at(
+            &state.accounts[0],
+            &state.child_in_flight,
+            &[crate::AccountId(9)],
+            0,
             &state.config,
-            Money::from_cents(1_000),
-            200,
-            Money::ZERO,
-        )
-        .expect("旧口径推导")
-        .cents();
-        assert!(
-            expect < stale,
-            "部分成交后余量口径({expect})须小于原挂出量口径({stale})"
+        );
+        assert_eq!(
+            face_after - state.accounts[0].cash,
+            PURSE0,
+            "Abort 冲回 charged——在途 purse 恢复挂出全额"
         );
     }
 
