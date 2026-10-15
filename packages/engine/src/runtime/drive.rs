@@ -500,6 +500,21 @@ impl RuntimeDriver {
             }
             Err(projection_error) => return Err(projection_error),
         }
+        // D3b 件 1：成交触达账户的个人记忆裁剪（同拍——组内 prune 在下一
+        // Start 落账；个人态同步在上方用组镜像整态覆盖，裁剪必须在其后；
+        // 下一拍组镜像已裁剪同值，双写不漂移）。
+        if !trades.is_empty() {
+            let mut touched: Vec<crate::AccountId> = trades
+                .iter()
+                .flat_map(|tr| [tr.maker, tr.taker])
+                .filter_map(|owner| self.id_map.get(owner.1 as usize).copied())
+                .collect();
+            touched.sort();
+            touched.dedup();
+            for account in touched {
+                session.runtime_prune_personal_memory(account);
+            }
+        }
         outcome
     }
 

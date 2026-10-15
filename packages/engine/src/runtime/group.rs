@@ -891,6 +891,12 @@ impl GroupState {
             // 清仓清零（实体落账后按期末 shares 判定：对齐 session 清仓删除
             // 条目——下次买入从零新建，避免再持有后 cost_price 漂移）。
             self.clear_flat_cost_basis(&touched);
+            // Sol D3b 件 1：fill 触达账户的个人记忆裁剪（对齐 session
+            /// candidate_commit 的逐账户 prune_plan_personal_memory——
+            /// completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
+            for (local, _) in &touched {
+                self.prune_personal_memory_after_completion(*local);
+            }
         }
         Ok(())
     }
@@ -1091,6 +1097,54 @@ impl GroupState {
             }
         }
         Ok(())
+    }
+
+    /// D3b 件 1：计划完成后的个人记忆裁剪（session 版语义的组内等价——
+    /// 保护集外的 watchlist/price_memory 按 MAX_UNHELD_WATCHLIST_STOCKS
+    /// 驱逐；Personal undo 可逆）。
+    fn prune_personal_memory_after_completion(&mut self, local: LocalIdx) {
+        let Some(&account) = self
+            .root_projection
+            .as_ref()
+            .and_then(|projection| projection.account_ids.get(local as usize))
+        else {
+            return;
+        };
+        let Some(mut snap) = self.belief_states.get(local as usize).cloned().flatten() else {
+            return;
+        };
+        // 保护集：在手∪在途卖（session positions 键面等价——旧管线清仓
+        /// 删条目后售出股不在保护集；在途卖单期间条目保留=保护）∪活跃
+        /// 计划股。**不含**曾持有（ever_held 是组侧观察面位——清仓后
+        /// session 条目已删，误入保护集会使售出股永不被裁剪）。
+        let mut protected: std::collections::BTreeSet<crate::StockId> = self.accounts
+            [local as usize]
+            .shares
+            .iter()
+            .enumerate()
+            .filter(|(idx, &qty)| {
+                qty > 0 || self.accounts[local as usize].pending_sell_qty[*idx] > 0
+            })
+            .map(|(idx, _)| crate::StockId(idx as u32))
+            .collect();
+        protected.extend(self.plan_book.active_codes(account).copied());
+        // 与 session 相同的裁剪原语（共享类型 pub 方法）。
+        snap.watchlist.prune(&protected);
+        snap.price_memory.prune(&protected);
+        // 写回+undo（Personal 快照可逆）。
+        let prev = self
+            .belief_states
+            .get(local as usize)
+            .cloned()
+            .flatten()
+            .expect("上方已核在位");
+        self.undo.push(GroupUndo::Personal {
+            local,
+            prev: Box::new(prev),
+        });
+        if let Some(slot) = self.belief_states.get_mut(local as usize) {
+            *slot = Some(snap);
+        }
     }
 
     /// Sol 整改受理通道：受理事实的票身份登记（Accepted lifecycle 下行

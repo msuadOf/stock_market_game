@@ -693,6 +693,18 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
 }
 
 impl GameSession {
+    /// runtime 驱动器翻转面（D3b 件 1）：同拍成交后的个人记忆裁剪——
+    /// 复用 session 语义原语（保护集=positions∪活跃计划股；组内 prune
+    /// 在下一 Start 才落，同拍交付经此入口对齐旧管线时点）。
+    pub fn runtime_prune_personal_memory(&mut self, account: AccountId) {
+        // 无个人态的账户（玩家惯例位等）无裁剪面——跳过（不构成失败）。
+        if !self.state.belief_participants.contains_key(&account) {
+            return;
+        }
+        let plans = self.state.plans.clone();
+        self.prune_plan_personal_memory(account, &plans);
+    }
+
     pub(in crate::session) fn prune_plan_personal_memory(
         &mut self,
         account: AccountId,
