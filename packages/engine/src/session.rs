@@ -3872,8 +3872,11 @@ impl GameSession {
         // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时挂单
         /// 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
         /// session book 在 runtime 模式下不可见——裁决"book fixture
-        /// 分别适配"）。事件面：runtime 模式的受理事件由下一 step 产出
-        ///（seed 调用方的 events 缓冲不在此伪造就地事件——如实空）。
+        /// 分别适配"）。Sol 二审修复集 5：首步前（驱动器不在位）的注入
+        /// 走旧簿+构造期迁移（RuntimeDriver::adopt_session_resting_orders
+        /// ——免全局分流破坏旧管线 fixture 面）。事件面：runtime 模式的
+        /// 受理事件由下一 step 产出（seed 调用方的 events 缓冲不在此
+        /// 伪造就地事件——如实空）。
         #[cfg(test)]
         if self.runtime_driver.is_some() {
             let mut intents = vec![crate::session::ReceiptBearingIntent {
@@ -4357,7 +4360,9 @@ mod npc_working_quote_tests {
     ) {
         // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时调度
         /// 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
-        /// session 镜像）。旧管线（无驱动器）路径不变。
+        /// session 镜像）。旧管线（无驱动器）路径不变。Sol 二审修复集 5：
+        /// 首步前（驱动器不在位）走旧镜像路径——构造器自会话 attention
+        /// 恢复 next_due（镜像值即组权威起点）。
         #[cfg(test)]
         if session.runtime_driver.is_some() {
             let target = tick.max(session.state.tick + 1);
@@ -4368,6 +4373,33 @@ mod npc_working_quote_tests {
         attention.base_probability = 1.0;
         attention.next_attention_candidate_tick = tick;
         session.state.attention_scheduler.enqueue(tick, account);
+    }
+
+    // Sol 二审修复集 5 红证：首步前 seed 的挂单经**构造期迁移**进入
+    // runtime 世界（RuntimeDriver::adopt_session_resting_orders——组 0
+    // 下一 tick round 0 经 ExternalPlan 挂出）——首步的受理事件面可见。
+    // 此前首构造不迁入旧挂单：seed 只写 session 旧簿，runtime 世界不可见。
+    // 仅 runtime 翻转模式有意义（缺省走旧管线，seed 本就在旧簿生效）。
+    #[test]
+    fn sol5_seed_before_first_step_reaches_runtime_world() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = GameSession::new(retail_quote_setup(), 311).unwrap();
+        let code = StockId(0);
+        let mut events = Vec::new();
+        session.seed_order_for_test(AccountId(1), buy(&code, 900), &mut events);
+        let step_events = session.step().expect("healthy step");
+        assert!(
+            step_events.iter().any(|event| matches!(
+                event,
+                Event::OrderAccepted {
+                    account: AccountId(1),
+                    ..
+                }
+            )),
+            "首步前 seed 的挂单经构造期迁移进入 runtime 世界（首步即受理）"
+        );
     }
 
     #[test]

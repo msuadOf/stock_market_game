@@ -206,13 +206,53 @@ impl RuntimeDriver {
         // 观察面 held 集成员）。
         spec.initial_ever_held = vec![ever_held];
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
-        Ok(Self {
+        let mut driver = Self {
             world,
             id_map: ids,
             next_seq: 0,
             drained_events: Vec::new(),
             last_library_version: None,
-        })
+        };
+        // Sol 二审修复集 5：旧簿在途挂单迁入世界（构造期一次——组 0 在
+        // 下一 tick round 0 经 ExternalPlan 挂出）。此前首构造不迁入：
+        // 首步前 seed 的挂单只在 session 旧簿，runtime 世界不可见。
+        driver.adopt_session_resting_orders(session)?;
+        Ok(driver)
+    }
+
+    /// Sol 二审修复集 5：会话旧簿在途挂单迁入世界（ExternalPlan 路由——
+    /// 与玩家意图注入同一通道）。仅构造期调用：runtime 步进开始后 session
+    /// 旧簿不再新增挂单（写面在组/desk），无重复迁移。owner 不在名册=
+    /// 投影缺口，显式失败（不静默丢单）。
+    fn adopt_session_resting_orders(&mut self, session: &GameSession) -> Result<(), String> {
+        let mut ops = Vec::new();
+        for (code, orders) in session.runtime_resting_orders_snapshot() {
+            for order in orders {
+                let local = self
+                    .id_map
+                    .iter()
+                    .position(|id| *id == order.owner)
+                    .ok_or_else(|| {
+                        format!(
+                            "旧簿挂单 owner 不在世界名册（无法迁移）：{:?} {:?}",
+                            order.owner, code
+                        )
+                    })? as super::LocalIdx;
+                ops.push(super::decision::PendingOp {
+                    local,
+                    stock: code.0 as super::StockIdx,
+                    side: order.side,
+                    routed: super::protocol::RoutedPrice::Fixed(order.price.cents()),
+                    purse_reference: order.price.cents(),
+                    qty: order.qty,
+                });
+            }
+        }
+        if ops.is_empty() {
+            return Ok(());
+        }
+        self.world.broadcast_external_plan(ops);
+        Ok(())
     }
 
     /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。

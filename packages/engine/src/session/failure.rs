@@ -98,15 +98,18 @@ impl GameSession {
     /// 全名册（belief+retail 位）下一 tick 到期。
     #[cfg(test)]
     pub(crate) fn force_all_due_via_runtime(&mut self) {
-        let ids: Vec<crate::AccountId> = {
+        let (ids, world_next) = {
             let driver = self
                 .runtime_driver
                 .as_ref()
                 .and_then(|cell| cell.lock().ok())
                 .expect("runtime 驱动器在位（调用方已判）");
-            driver.id_map.clone()
+            (driver.id_map.clone(), driver.world_committed_tick() + 1)
         };
-        self.force_due_via_runtime(&ids, u64::MAX);
+        // Sol 二审修复集 5：此前传 u64::MAX——组端守卫 `next_due > tick`
+        // 对 MAX 恒假，正常调度下 no-op（queue 语义没真承载）。改传世界
+        // 下一 tick（全部名册下一 tick 到期）。
+        self.force_due_via_runtime(&ids, world_next);
     }
 
     #[cfg(test)]
@@ -425,6 +428,20 @@ impl GameSession {
             .npc_attention
             .iter()
             .map(|(id, s)| (*id, s.next_attention_candidate_tick, s.rng_state))
+            .collect()
+    }
+
+    /// runtime 驱动器翻转面（Sol 二审修复集 5）：会话旧簿在途挂单只读
+    /// 投影 `(StockId, Order 列表)`——驱动器构造期迁入世界（首步前
+    /// seed 的挂单此前只在旧簿、runtime 世界不可见——裁决点名的
+    /// "driver 首构造不迁入旧挂单"缺口）。
+    pub fn runtime_resting_orders_snapshot(
+        &self,
+    ) -> Vec<(crate::StockId, Vec<crate::orderbook::Order>)> {
+        self.state
+            .markets
+            .iter()
+            .map(|(code, market)| (code.clone(), market.resting_orders()))
             .collect()
     }
 

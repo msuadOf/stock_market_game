@@ -121,6 +121,64 @@ fn prepare_npc_projection(
 mod t1_account_task_tests {
     use super::*;
 
+    /// Sol 二审修复集 5 红证：queue 的全名册到期在 runtime 真实生效——
+    /// 此前 force_all_due_via_runtime 传 u64::MAX，被组端 `next_due > MAX`
+    /// 守卫钳成 no-op（queue 语义没真承载）。首步后（驱动器在位→分流）
+    /// queue+step：全部 retail 到期决策（订单受理或 attention 重排）。
+    /// 种子扫描保证：所选种子下**无任何账户**在下一 tick 自然到期
+    /// （不 force 则零决策——断言可判定）。
+    #[test]
+    fn sol5_queue_npc_all_due_takes_effect_in_runtime() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        for seed in 311..360u64 {
+            let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+            setup.npcs.retail_count = 5;
+            setup.strategy_params.retail.arrival_rate = 1.0;
+            let mut session = crate::GameSession::new(setup, seed).unwrap();
+            session.step().expect("首步（驱动器在位+镜像同步）");
+            let next_tick = session.state.tick + 1;
+            let dues: Vec<u64> = (1..=5)
+                .map(|i| {
+                    session
+                        .state
+                        .npc_attention
+                        .get(&crate::AccountId(i))
+                        .unwrap()
+                        .next_attention_candidate_tick
+                })
+                .collect();
+            if dues.iter().any(|&due| due <= next_tick) {
+                continue; // 有账户自然到期——换种子（断言不可判定）。
+            }
+            super::queue_npc_for_next_tick(&mut session).unwrap();
+            let events = session.step().expect("第二步");
+            let decided_by_order = events.iter().any(|event| matches!(
+                event,
+                crate::Event::OrderAccepted { .. }
+            ));
+            let dues_after: Vec<u64> = (1..=5)
+                .map(|i| {
+                    session
+                        .state
+                        .npc_attention
+                        .get(&crate::AccountId(i))
+                        .unwrap()
+                        .next_attention_candidate_tick
+                })
+                .collect();
+            let decided_by_attention = dues_after.iter().zip(dues.iter()).any(|(a, b)| a != b);
+            assert!(
+                decided_by_order || decided_by_attention,
+                "queue 的全名册到期须在 runtime 生效（种子 {seed}：{}→{dues_after:?}，MAX no-op 时零决策）",
+                dues[0]
+            );
+            return;
+        }
+        panic!("未找到无自然到期的种子（35 个种子全命中——fixture 失效）");
+    }
+
     /// 到期零售 fixture：base_probability 与策略 base_observation_probability
     /// 同步（save 校验 fault2210 与 due_retail 同款）；可选注入买入失衡分析
     /// 使决策必然产生同股 intents（顺序断言非空前提）。
@@ -633,7 +691,9 @@ pub(in crate::session) fn queue_npc_for_next_tick(
     // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时决策权威
     /// 在组——不生产/暂存旧管线产物（take 个人态的副作用同样跳过）；
     /// 测试意图（下一 tick 全部 NPC 决策）经显式 ForceDue 指令承载
-    ///（全部 belief 位+retail 位到期）。
+    ///（全部 belief 位+retail 位到期）。Sol 二审修复集 5：首步前（驱动器
+    /// 不在位）走旧 produce/stage——个人态经构造期投影接管（staged 批
+    /// 由旧管线语义持有，runtime 消费面=构造期 attention/挂单迁移）。
     #[cfg(test)]
     if session.runtime_driver.is_some() {
         session.force_all_due_via_runtime();
