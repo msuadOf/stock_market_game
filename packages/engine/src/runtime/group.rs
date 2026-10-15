@@ -1009,17 +1009,14 @@ impl GroupState {
         let Some(order_id) = ticket.order_id else {
             return Ok(());
         };
-        // Sol 二审修复集 3：票已有身份时成交必须同单——此前未验证即以
-        // 票身份推进**外来单的成交量**（同账户同股他单的 fill 静默吃掉
-        // 本票执行腿余量）。不一致=受理/成交关联漂移，显式失败（铁律二）。
-        let incoming_order = order_id_of(&fill.order);
-        if incoming_order != order_id {
-            return Err(RuntimeError::ProtocolInvariant {
-                detail: format!(
-                    "组 {group} 成交事实与在途票身份不符：account={account:?}, code={code:?}, ticket_order={order_id:?}, fill_order={incoming_order:?}, fill_qty={}",
-                    fill.qty
-                ),
-            });
+        // Sol 二审修复集 3（六审勘正）：票已有身份时成交**同单才推进**——
+        // 此前未验证即以票身份推进外来单的成交量（同账户同股他单的 fill
+        // 静默吃掉本票执行腿余量）。身份不符=外来同键单的成交（驱动器
+        /// 意图路由/测试注入的合法形态——ticket 只承载本单事实）：跳过
+        /// 不误挂（与 release 的身份关联语义一致；原"显式失败"形态会
+        /// 杀死合法外来单的拍——sol7th_foreign 红证实测）。
+        if order_id_of(&fill.order) != order_id {
+            return Ok(());
         }
         let remaining = {
             let Some(plan) = self.plan_book.active_plan(account, &code) else {
@@ -3381,13 +3378,12 @@ mod sol_recheck3_tests {
                 }],
             ),
         );
-        let err = state
+        // Sol 六审勘正：外来同键单成交=合法形态（意图路由/测试注入）——
+        /// 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
+        /// 杀死合法外来单的拍——sol7th_foreign 场景红证）。
+        state
             .apply_staging(1, 0)
-            .expect_err("外来单成交必须显式失败（不得推进本票执行腿）");
-        assert!(
-            format!("{err:?}").contains("身份不符"),
-            "错误须指明受理/成交关联漂移：{err:?}"
-        );
+            .expect("外来单成交跳过（不构成失败）");
         let plan = state
             .plan_book
             .active_plan(crate::AccountId(9), &crate::StockId(0))
@@ -3395,7 +3391,7 @@ mod sol_recheck3_tests {
         assert_eq!(
             plan.active_child_remaining_qty(),
             Some(200),
-            "执行腿余量不被外来单吃掉"
+            "执行腿余量不被外来单吃掉（跳过——原缺陷形态为静默吃掉 50）"
         );
     }
 

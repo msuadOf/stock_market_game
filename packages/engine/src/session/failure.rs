@@ -454,6 +454,20 @@ impl GameSession {
             .collect()
     }
 
+    /// 测试面（Sol 六审修复 3）：retail 经历条目存在性——同拍投影首买
+    /// 经历初始化的断言锚（fault2038 面）。
+    #[cfg(test)]
+    pub fn runtime_retail_experience_has(
+        &self,
+        id: crate::AccountId,
+        code: &crate::StockId,
+    ) -> bool {
+        self.state
+            .retail_experience
+            .get(&id)
+            .is_some_and(|exp| exp.stocks.contains_key(code))
+    }
+
     /// runtime 驱动器翻转面（Sol 二审修复集 5）：会话旧簿在途挂单只读
     /// 投影 `(StockId, Order 列表)`——驱动器构造期迁入世界（首步前
     /// seed 的挂单此前只在旧簿、runtime 世界不可见——裁决点名的

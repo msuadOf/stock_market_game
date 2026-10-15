@@ -410,7 +410,12 @@ impl RuntimeDriver {
         /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
         /// 权威随后对齐——下一拍回写为整值同步，天然不重复入账）。
         if let Some(rec) = &rec {
-            self.apply_same_tick_fill_projection(session, &rec.desk_trades)?;
+            self.apply_same_tick_fill_projection(
+                session,
+                &rec.desk_trades,
+                &buy_vwap,
+                &last_prices,
+            )?;
         }
         let trades = rec
             .as_ref()
@@ -487,7 +492,7 @@ impl RuntimeDriver {
                         /// 下一拍被组权威整值覆盖，不双计）。
                         if !trades.is_empty() {
                             let day = u64::from(session.day());
-                            self.apply_same_tick_plan_fills(&mut plans, &trades, day);
+                            self.apply_same_tick_plan_fills(&mut plans, &trades, day)?;
                         }
                         session.set_runtime_plans(plans);
                     }
@@ -507,9 +512,13 @@ impl RuntimeDriver {
         plans: &mut crate::plans::PlanBook,
         trades: &[super::protocol::DeskTradeFact],
         day: u64,
-    ) {
+    ) -> Result<(), String> {
         for tr in trades {
-            for (owner, is_buyer) in [(tr.maker, false), (tr.taker, true)] {
+            // maker≡卖方/taker≡买方（归一化身份——费用与订单序列同序）。
+            for (owner, is_buyer, order_serial) in [
+                (tr.maker, false, tr.maker_order_serial),
+                (tr.taker, true, tr.taker_order_serial),
+            ] {
                 let Some(&id) = self.id_map.get(owner.1 as usize) else {
                     continue;
                 };
@@ -519,16 +528,35 @@ impl RuntimeDriver {
                 } else {
                     crate::orderbook::Side::Sell
                 };
-                let Some(order_id) = plans
+                // Sol 六审修复 2：按**真实订单身份**推进——成交的 desk
+                // 序号必须等于计划活动子单身份（合成同式：OrderRef=
+                //（股, 序号）→OrderId 高位编码股）。外部/retail 单的同键
+                // 成交身份不匹配即跳过（此前按账户+股+方向套挂，把组内
+                // 已修好的身份关联漏洞带回投影层）。
+                let child_order = plans
                     .active_plan(id, &code)
                     .filter(|p| p.direction() == side)
-                    .and_then(|p| p.active_child_order_id())
-                else {
+                    .and_then(|p| p.active_child_order_id());
+                let Some(child_order) = child_order else {
                     continue;
                 };
-                let _ = plans.record_child_fill(id, &code, side, order_id, tr.qty, day);
+                if child_order.0 != ((u64::from(tr.stock) << 48) | (order_serial & 0x0000_FFFF_FFFF_FFFF))
+                {
+                    continue;
+                }
+                // 身份已核——record_child_fill 的 Ok(false)/Err 均为投影
+                // 数据不一致（身份匹配后计划不应拒收），显式失败。
+                let pushed = plans
+                    .record_child_fill(id, &code, side, child_order, tr.qty, day)
+                    .map_err(|e| format!("同拍执行腿投影推进失败 {id:?} {code:?}: {e:?}"))?;
+                if !pushed {
+                    return Err(format!(
+                        "同拍执行腿投影未被计划消费（身份已核）：{id:?} {code:?} order={child_order:?}"
+                    ));
+                }
             }
         }
+        Ok(())
     }
 
     /// 事件 seq 游标（诊断）。
@@ -748,6 +776,8 @@ impl RuntimeDriver {
         &mut self,
         session: &mut GameSession,
         trades: &[super::protocol::DeskTradeFact],
+        buy_vwap: &std::collections::BTreeMap<(super::GroupIdx, super::LocalIdx, super::StockIdx), i64>,
+        last_prices: &[i64],
     ) -> Result<(), String> {
         if trades.is_empty() {
             return Ok(());
@@ -802,8 +832,28 @@ impl RuntimeDriver {
             let Some(engine_acct) = session.fixture_account_mut(&id) else {
                 continue;
             };
+            let local = self
+                .id_map
+                .iter()
+                .position(|map_id| *map_id == id)
+                .expect("投影账户必在名册") as super::LocalIdx;
             let mut positions = engine_acct.positions().clone();
+            // Sol 六审修复 3：首买经历初始化（与回写路径同款——此前
+            /// 直接建条目，下一拍条目已在使 is_new_hold 永假，retail
+            /// 首次持有永久缺经历条目→fault2038 保存校验）。收集后在
+            /// 账户借用外执行。
+            let mut new_hold_inits: Vec<(crate::StockId, i64, u32)> = Vec::new();
             for (code, d) in &by_code {
+                let is_new_hold = d.qty > 0 && !positions.contains_key(code);
+                if is_new_hold {
+                    let entry = buy_vwap
+                        .get(&(0, local, code.0 as super::StockIdx))
+                        .copied()
+                        .or_else(|| last_prices.get(code.0 as usize).copied())
+                        .or_else(|| trades.iter().map(|t| t.price).min())
+                        .unwrap_or(1);
+                    new_hold_inits.push((code.clone(), entry, d.qty as u32));
+                }
                 let entry = positions
                     .entry(code.clone())
                     .or_insert_with(|| crate::account::Position::from_restored_parts(0, 0, 0, 0));
@@ -834,6 +884,12 @@ impl RuntimeDriver {
             let cash_delta: i64 = by_code.values().map(|d| d.cash).sum();
             let cash = engine_acct.cash().cents() + cash_delta;
             engine_acct.fixture_set_cash(crate::Money::from_cents(cash));
+            drop(engine_acct);
+            for (code, entry, qty) in new_hold_inits {
+                session
+                    .runtime_hold_experience_init(&id, &code, qty, entry)
+                    .map_err(|e| format!("同拍投影首买经历初始化失败：{e}"))?;
+            }
         }
         Ok(())
     }

@@ -1572,10 +1572,21 @@ fn sol6th_same_tick_abort_leaks_nothing() {
         stock_ordinal: 0,
     }];
     driver.inject_player_intents(&buy, &upper).expect("买方注入");
-    driver.set_world_validator_for_test(Box::new(|_e| Err("注入：拒绝".to_owned())));
+    // 成交前提锚（Sol 六审附带）：被拒 evidence 必须确有成交——空成交的
+    // 拒绝不能证明"投影不泄漏"。
+    let traded_qty = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+    let probe = std::sync::Arc::clone(&traded_qty);
+    driver.set_world_validator_for_test(Box::new(move |e| {
+        *probe.lock().unwrap() = e.desk_trades.iter().map(|t| t.qty).sum();
+        Err("注入：拒绝".to_owned())
+    }));
     assert!(
         driver.step_frame_equivalent(&mut session).is_err(),
         "注入拒绝的拍必须失败"
+    );
+    assert!(
+        *traded_qty.lock().unwrap() > 0,
+        "被拒拍须含真实成交（desk_trades 量为正——否则泄漏断言空转）"
     );
     driver.set_world_validator_for_test(Box::new(|_e| Ok(())));
     assert!(
@@ -1591,5 +1602,267 @@ fn sol6th_same_tick_abort_leaks_nothing() {
         session.account(buyer).unwrap().cash(),
         cash_before,
         "失败拍不泄漏：买方现金不变"
+    );
+}
+
+// Sol 六审自查矩阵（买/卖×主动/被动×首次/加仓——同拍投影组合面）：
+// 主动卖（retail 有世界持仓——taker=卖方，desk 归一化对调，费用分户
+// 修复的判定形态）+ 被动买（玩家首次持有：条目/T+1/成本/现金同拍）+
+// 加仓（条目累计）+ 合法保存点（restore=validate_save_slot，三面）。
+#[test]
+fn sol7th_projection_matrix_active_sell_passive_buy_and_add_on() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    let mut session = GameSession::new(setup, 97).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let player = crate::AccountId(0);
+    let retail = crate::AccountId(1);
+    let code = crate::StockId(0);
+    let price = crate::money::Money::from_cents(1_000);
+    let config = crate::config::GameConfig::proposed_defaults();
+    let gross = price.mul_shares(100).unwrap().cents();
+    let sell_fees = config
+        .stamp_tax(crate::money::Money::from_cents(gross))
+        .unwrap()
+        .add(config.commission(crate::money::Money::from_cents(gross)).unwrap())
+        .unwrap()
+        .add(config.transfer_fee(crate::money::Money::from_cents(gross)).unwrap())
+        .unwrap()
+        .cents();
+    let buy_fees = config
+        .commission(crate::money::Money::from_cents(gross))
+        .unwrap()
+        .add(config.transfer_fee(crate::money::Money::from_cents(gross)).unwrap())
+        .unwrap()
+        .cents();
+    let intent = |owner, side, qty| crate::session::ReceiptBearingIntent {
+        owner,
+        intent: crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side,
+            price: crate::strategy::LimitPrice::Fixed(price),
+            qty,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    };
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    // 场景一：被动买（玩家挂买）×主动卖（retail 卖入——归一化 maker=
+    // 卖方；费用分户修复的判定形态）。
+    let player_cash0 = session.account(player).unwrap().cash().cents();
+    let retail_cash0 = session.account(retail).unwrap().cash().cents();
+    let retail_qty0 = session.account(retail).unwrap().positions()[&code].qty();
+    driver
+        .inject_player_intents(
+            &[intent(player, Side::Buy, 100), intent(retail, Side::Sell, 100)],
+            &upper,
+        )
+        .expect("玩家挂买+retail 主动卖（同拍注入，后者 crossing）");
+    let events = driver.step_frame_equivalent(&mut session).expect("拍 1");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            crate::Event::Trade { qty: 100, .. }
+        )),
+        "场景一成交发生"
+    );
+    // 玩家（被动买=归一化 taker，首次持有）：条目/T+1/成本/现金。
+    let pos = session.account(player).unwrap().positions()[&code].clone();
+    assert_eq!(pos.qty(), 100, "被动买同拍条目（首持）");
+    assert_eq!(pos.t1_locked(), 100, "被动买同拍 T+1");
+    assert_eq!(pos.invested_cents(), gross, "被动买同拍成本");
+    assert_eq!(
+        session.account(player).unwrap().cash().cents(),
+        player_cash0 - gross - buy_fees,
+        "被动买同拍实付（买费用=佣金+过户）"
+    );
+    // retail（主动卖=归一化 maker）：清仓 100 股+净得（卖费用=印花+
+    // 佣金+过户——费用跟归一化身份走的判定；此前互换时本拍现金错）。
+    assert_eq!(
+        session.account(retail).unwrap().positions()[&code].qty(),
+        retail_qty0 - 100,
+        "主动卖同拍减仓"
+    );
+    assert_eq!(
+        session.account(retail).unwrap().cash().cents(),
+        retail_cash0 + gross - sell_fees,
+        "主动卖同拍净得（卖费用分户）"
+    );
+    // 保存点（三面之一）——restore 内部跑 validate_save_slot（fault2038）。
+    drop(GameSession::restore(&session.save().unwrap()).expect("同拍保存点合法（三面之一）"));
+    // 场景二：下一拍不双计（三面之二）。
+    driver.step_frame_equivalent(&mut session).expect("拍 2");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert_eq!(
+        session.account(player).unwrap().positions()[&code].qty(),
+        100,
+        "下一拍不双计：条目保持"
+    );
+    assert_eq!(
+        session.account(player).unwrap().cash().cents(),
+        player_cash0 - gross - buy_fees,
+        "下一拍不双计：现金保持"
+    );
+    // 场景三：加仓（玩家再被动买 100——条目/T+1 累计）。
+    driver
+        .inject_player_intents(
+            &[intent(player, Side::Buy, 100), intent(retail, Side::Sell, 100)],
+            &upper,
+        )
+        .expect("加仓：玩家再挂买+retail 再卖");
+    let events = driver.step_frame_equivalent(&mut session).expect("拍 3");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            crate::Event::Trade { qty: 100, .. }
+        )),
+        "场景三成交发生"
+    );
+    assert_eq!(
+        session.account(player).unwrap().positions()[&code].qty(),
+        200,
+        "加仓同拍累计"
+    );
+    assert_eq!(
+        session.account(player).unwrap().positions()[&code].t1_locked(),
+        200,
+        "加仓 T+1 累计"
+    );
+    drop(GameSession::restore(&session.save().unwrap()).expect("加仓后保存点合法（三面之三）"));
+}
+
+// Sol 六审修复 2 红证（身份核）：外来同键成交（同账户+股+方向、不同
+// 订单）不得推进计划子单——投影按真实 desk 序号核身份（与组内
+// apply_fill_plan_progress 同式）；组权威下一拍落账同为身份核，两值
+// 必须相等（R1==R0==R2——旧“按同键套挂”形态会多扣 R1）。
+#[test]
+fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    // 大子单（1000）：买入腿每拍被注入吃 ~200——小单在外来拍 Start 即被
+    // 前拍成交耗尽（测试前提失效）；1000 保证存活到外来拍之后。
+    setup.strategy_params.inst.order_size = 1_000;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 51).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..6 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    // 找一个有活动子单的**买入**计划（在簿挂单——本拍无对手成交）。
+    let plans = driver.collect_plans().expect("组簿").remove(0).1;
+    // 目标选择：**买入**计划、活动子单余量充足（>500——小单在外来拍
+    // Start 的落账中被前拍成交耗尽；外来买单与买计划同键同向=干扰形态，
+    // 且买单无持仓约束）。
+    let target = plans
+        .active_plan_ids()
+        .into_iter()
+        .filter_map(|pid| plans.plan(pid).ok())
+        .find(|p| {
+            p.direction() == Side::Buy
+                && p.active_child_order_id().is_some()
+                && p.active_child_remaining_qty().is_some_and(|r| r > 500)
+        })
+        .expect("fixture 须有大余量买入活动子单的计划");
+    let (account, code) = (target.account(), target.code().clone());
+    let r0 = target
+        .active_child_remaining_qty()
+        .expect("活动子单有余量");
+    // 外来单（同账户+股+**同方向**、不同订单）：吃掉簿上对手档成交——
+    // 身份不匹配活动子单（方向取计划方向，同向才构成同键干扰形态）。
+    let foreign_side = target.direction();
+    let views = driver.world_public_views().to_vec();
+    let cross_price = if foreign_side == Side::Buy {
+        views[code.0 as usize].last_price + 2
+    } else {
+        views[code.0 as usize].last_price - 2
+    };
+    let foreign = vec![crate::session::ReceiptBearingIntent {
+        owner: account,
+        intent: crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: foreign_side,
+            price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                cross_price,
+            )),
+            qty: 100,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    }];
+    let upper: Vec<i64> = views.iter().map(|v| v.last_price + 2).collect();
+    driver.inject_player_intents(&foreign, &upper).expect("外来注入");
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("外来成交拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    // R1（同拍投影）：身份核——外来成交不推进。
+    let plans = driver.collect_plans().expect("同拍组簿").remove(0).1;
+    let r1 = plans
+        .active_plan(account, &code)
+        .expect("计划在")
+        .active_child_remaining_qty()
+        .expect("子单仍在途");
+    assert_eq!(r1, r0, "同拍投影：外来同键成交不推进计划子单（身份核）");
+    // R2（下一拍组权威落账）：同为身份核——两值相等。
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("权威落账拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let plans = driver.collect_plans().expect("权威组簿").remove(0).1;
+    let r2 = plans
+        .active_plan(account, &code)
+        .expect("计划在")
+        .active_child_remaining_qty()
+        .expect("子单仍在途");
+    assert_eq!(
+        r2, r0,
+        "组权威落账与同拍投影一致（外来成交两拍都不推进——身份核）"
     );
 }
