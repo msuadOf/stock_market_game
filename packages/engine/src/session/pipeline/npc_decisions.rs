@@ -568,12 +568,18 @@ where
                             let bound = move || {
                                 // 注入点必须在 catch_unwind 运输区内：裸 panic（区外）
                                 // 不产生 TaskDied 终结信号，协调者将无限排空（p1 红）。
+                                // 锁守卫须在 panic 前释放（先取布尔再判）：守卫
+                                // 挂在 if 条件临时值上会跨 panic 体存活——故意
+                                // panic 将全局锁 poison，后续同进程测试在
+                                // expect("panic 注入锁被 poison") 处连锁失败
+                                // （全量并行跑序依赖型偶发红）。
                                 #[cfg(any(test, feature = "verification-harness"))]
-                                if DECIDE_PANIC_ACCOUNTS
+                                let injected_panic = DECIDE_PANIC_ACCOUNTS
                                     .lock()
                                     .expect("panic 注入锁被 poison")
-                                    .contains(&account)
-                                {
+                                    .contains(&account);
+                                #[cfg(any(test, feature = "verification-harness"))]
+                                if injected_panic {
                                     panic!("decide quota test panic {account:?}");
                                 }
                                 before_task(account);
