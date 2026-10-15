@@ -368,11 +368,14 @@ impl RuntimeDriver {
             crate::session::pipeline::TickPhase::DerivationAudit,
         );
         // D3a-2c 件5：组内计划簿交付点投影（plans_debug 等读面源——组
-        // 线程权威；session plans 在 runtime 模式恒空的不变量就此由
-        // 交付投影承载，X1 直改）。
+        // 线程权威，X1 直改）。**空簿不覆盖**：迁移期 session 侧仍承载
+        // 测试注入/旧管线场景的计划（组内尚未接管注入路由——D3a-3），
+        // 空簿覆盖会清空它们（env=1 plan_owner 回归显红后收口）。
         if let Ok(collected) = self.world.collect_plans() {
             if let Some((_, plans)) = collected.into_iter().next() {
-                session.set_runtime_plans(plans);
+                if !plans.active_plan_ids().is_empty() {
+                    session.set_runtime_plans(plans);
+                }
             }
         }
         outcome
