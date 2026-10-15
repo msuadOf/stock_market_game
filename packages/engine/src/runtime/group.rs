@@ -307,6 +307,9 @@ pub struct GroupState {
     pub observed: Vec<Observed>,
     /// 外部注入计划缓冲（玩家意图路由；run_round 消费一次即清）。
     external_pending: Vec<super::decision::PendingOp>,
+    /// D3a-2b 信念个人态（逐组内下标；None=非机构位）——构造期投影，
+    /// Belief-1b 起承接披露驱动的组内自演进。
+    belief_states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
@@ -331,6 +334,7 @@ impl GroupState {
         Self::new_with_initial_tick(
             group,
             accounts,
+            Vec::new(),
             chunk,
             lot,
             config,
@@ -347,6 +351,9 @@ impl GroupState {
     pub fn new_with_initial_tick(
         group: GroupIdx,
         accounts: Vec<GroupAccount>,
+        #[allow(clippy::too_many_arguments)] belief_states_seed: Vec<
+            Option<super::world::BeliefParticipantSnapshot>,
+        >,
         chunk: usize,
         lot: u32,
         config: Arc<GameConfig>,
@@ -380,6 +387,7 @@ impl GroupState {
             observed: Vec::new(),
             external_pending: Vec::new(),
             observation_inputs: vec![ObservationInputs::default(); n_stocks],
+            belief_states: belief_states_seed,
             script,
         }
     }
@@ -1198,6 +1206,21 @@ pub fn group_main(
             GroupIn::ExternalPlan(ops) => {
                 // 玩家意图路由（D2 批）：外部计划存缓冲，run_round 消费。
                 state.external_pending.extend(ops);
+            }
+            GroupIn::EchoBelief => {
+                let states = state.belief_states.clone();
+                if up_tx
+                    .send(UpMsg::GroupBelief {
+                        group: state.group,
+                        states,
+                    })
+                    .is_err()
+                {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "GroupBelief 上行失败".to_owned(),
+                    });
+                    break;
+                }
             }
             GroupIn::EchoObservations => {
                 // D3a-2：每股链观察（价格路径+技术面）——纯构建器与

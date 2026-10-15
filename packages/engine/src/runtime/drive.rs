@@ -128,6 +128,24 @@ impl RuntimeDriver {
             Box::new(|_g| Box::new(|_t, _r| super::group::TickPlan::default())),
         )?;
         spec.n_groups = 1;
+        // D3a-2b Belief-1：信念个人态构造期投影（id_map 序——None=
+        // 非机构位；披露驱动随 Belief-1b 下沉，跨日分歧登记至彼时）。
+        {
+            let beliefs = session.runtime_belief_states();
+            spec.belief_seeds = (0..npcs.max(1))
+                .map(|i| {
+                    let id = ids.get(i).copied()?;
+                    beliefs.get(&id).map(|(w, m, info, b)| {
+                        super::world::BeliefParticipantSnapshot {
+                            watchlist: w.clone(),
+                            price_memory: m.clone(),
+                            information: info.clone(),
+                            belief: b.clone(),
+                        }
+                    })
+                })
+                .collect();
+        }
         // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——
         // 此前 desk 从零起，观察面与 session 读面天然分歧）。
         {
@@ -537,6 +555,16 @@ impl RuntimeDriver {
         self.world
             .collect_group_attention()
             .map_err(|e| format!("注意力收集失败：{e:?}"))
+    }
+
+    /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面）。
+    pub fn collect_belief(
+        &mut self,
+    ) -> Result<Vec<(super::GroupIdx, Vec<Option<super::world::BeliefParticipantSnapshot>>)>, String>
+    {
+        self.world
+            .collect_group_belief()
+            .map_err(|e| format!("信念态收集失败：{e:?}"))
     }
 
     /// 观察基收集（D3a-1：组线程 price_paths 上行——计划链端口径/

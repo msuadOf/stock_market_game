@@ -64,6 +64,16 @@ impl DeskStockSpec {
     }
 }
 
+/// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
+/// ——crate 纯类型直载；构造期自 session 投影进组，读面上行同源校验）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct BeliefParticipantSnapshot {
+    pub watchlist: crate::experience::PersonalWatchlist,
+    pub price_memory: crate::experience::PersonalPriceMemory,
+    pub information: crate::information::NpcInformationState,
+    pub belief: crate::strategy::BeliefBook,
+}
+
 /// 世界构造参数。
 pub struct WorldSpec {
     /// 组数 G。
@@ -107,6 +117,9 @@ pub struct WorldSpec {
     pub initial_cash_override: Option<Vec<Vec<i64>>>,
     /// 计划链工厂（批 6：跨股多步计划经 Continue 轮排空）。
     pub plan_factory: Option<Box<dyn Fn(GroupIdx) -> Vec<Box<dyn PlanChain>> + Send>>,
+    /// D3a-2b：信念个人态种子（组 0 按下标承接——None=非机构位；
+    /// 构造期一次性投影，日结披露驱动随 Belief-1b 下沉）。
+    pub belief_seeds: Vec<Option<super::world::BeliefParticipantSnapshot>>,
 }
 
 /// 日结候选投影（F §6.2 步骤 4：组投影 + 交易部清簿态 + 全局域 + 费用上交；
@@ -252,6 +265,7 @@ impl World {
             rights_computer,
             initial_cash_override,
             plan_factory,
+            belief_seeds,
         } = spec;
         let mut stock_seed_bars: Vec<Vec<(i64, i64, i64, i64, u64)>> = stocks
             .iter()
@@ -267,6 +281,7 @@ impl World {
             crate::verification_evidence::PhaseTimingBinding::empty(),
         ));
         let (up_tx, up_rx) = channel::<UpMsg>();
+        let mut belief_seeds_clone = belief_seeds;
         let mut group_rxs = Vec::with_capacity(n_groups);
         let mut group_txs = Vec::with_capacity(n_groups);
         for _ in 0..n_groups {
@@ -310,9 +325,11 @@ impl World {
                 (d.profiles, d.attention_gap_ticks)
             });
             let group_plans = plan_factory.as_ref().map(|f| f(g)).unwrap_or_default();
+            let belief_states = std::mem::take(&mut belief_seeds_clone);
             let state = super::group::GroupState::new_with_initial_tick(
                 g,
                 accounts,
+                belief_states,
                 chunk,
                 config.lot_size,
                 Arc::clone(&config),
@@ -567,6 +584,41 @@ impl World {
                         stage: format!(
                             "collect_group_observations 期望 GroupObservations，收到 {other:?}"
                         ),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
+    /// 信念个人态收集（D3a-2b：EchoBelief 广播→收齐）。
+    pub fn collect_group_belief(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, Vec<Option<BeliefParticipantSnapshot>>)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: "collect_group_belief 通道面与组数不一致（世界已断连）".to_owned(),
+            });
+        }
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoBelief).map_err(|_| {
+                RuntimeError::SendFailed { detail: "EchoBelief 广播失败".to_owned() }
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupBelief { group, states } => {
+                    out.push((group, states));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("collect_group_belief 期望 GroupBelief，收到 {other:?}"),
                     });
                 }
             }

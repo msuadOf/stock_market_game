@@ -47,6 +47,7 @@ pub(crate) fn basic_spec(
         order_ttl_ticks: 1_000_000,
         history_len: 16,
         initial_committed_tick: 0,
+        belief_seeds: Vec::new(),
         decision: None,
         rights_computer: None,
         initial_cash_override: None,

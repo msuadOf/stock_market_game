@@ -88,6 +88,7 @@ pub fn world_spec_from_setup(
         rights_computer: None,
         initial_cash_override: None,
         plan_factory: None,
+        belief_seeds: Vec::new(),
     })
 }
 

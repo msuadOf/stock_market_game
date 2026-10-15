@@ -425,6 +425,35 @@ impl GameSession {
         self.state.attention_scheduler = attention_scheduler;
     }
 
+    /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。
+    pub fn runtime_belief_states(
+        &self,
+    ) -> std::collections::BTreeMap<
+        crate::AccountId,
+        (
+            crate::experience::PersonalWatchlist,
+            crate::experience::PersonalPriceMemory,
+            crate::information::NpcInformationState,
+            crate::strategy::BeliefBook,
+        ),
+    > {
+        self.state
+            .belief_participants
+            .iter()
+            .map(|(id, participant)| {
+                (
+                    *id,
+                    (
+                        participant.watchlist().clone(),
+                        participant.price_memory().clone(),
+                        participant.information().clone(),
+                        participant.belief().clone(),
+                    ),
+                )
+            })
+            .collect()
+    }
+
     /// runtime 日 K 种子投影（D3a-2）：每股（全量日 K (o,h,l,c,vol)，
     /// 累计 traded 日数）——desk 链观察日 K 权威的初始承载（bridge/
     /// 世界构造用；不过滤零成交日——行为路径与技术面口径在观察构建

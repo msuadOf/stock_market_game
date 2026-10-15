@@ -200,3 +200,46 @@ fn d3a2_group_observations_match_session_read_face() {
         );
     }
 }
+
+// D3a-2b Belief-1：信念个人态构造投影同源校验（day 1 内——披露驱动
+// 未下沉前，跨日披露会使 session 侧演进、组侧静止——登记至 Belief-1b）。
+#[test]
+fn d3a2b_group_belief_states_match_session_projection() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 3; // 机构位——belief_participants 在册
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 11).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 数步（day 1 内，无披露）。
+    for _ in 0..5 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    let collected = driver.collect_belief().expect("信念态收集");
+    assert_eq!(collected.len(), 1, "单组");
+    let states = &collected[0].1;
+    let session_beliefs = session.runtime_belief_states();
+    let mut checked = 0usize;
+    for (local, snapshot) in states.iter().enumerate() {
+        let Some(id) = driver.id_map.get(local).copied() else {
+            continue;
+        };
+        match (snapshot, session_beliefs.get(&id)) {
+            (Some(snap), Some((w, m, info, b))) => {
+                assert_eq!(snap.watchlist, *w, "NPC {id:?} watchlist 同源");
+                assert_eq!(snap.price_memory, *m, "NPC {id:?} 价格记忆同源");
+                assert_eq!(snap.information, *info, "NPC {id:?} 信息态同源");
+                assert_eq!(snap.belief, *b, "NPC {id:?} 信念书同源");
+                checked += 1;
+            }
+            (None, None) => {}
+            other => panic!("NPC {id:?} 在册性不一致：{other:?}",),
+        }
+    }
+    assert!(checked > 0, "至少一个机构位信念态被核对（{checked}）");
+}

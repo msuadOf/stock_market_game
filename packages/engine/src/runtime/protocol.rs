@@ -285,6 +285,8 @@ pub enum GroupIn {
     ExternalPlan(Vec<super::decision::PendingOp>),
     /// 观察基读面（D3a-1：price_paths 上行——计划链端口径/测试面）。
     EchoObservations,
+    /// 信念个人态读面（D3a-2b：构造投影同源校验/后续驱动面）。
+    EchoBelief,
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
     EchoAccounts,
@@ -370,6 +372,13 @@ pub enum UpMsg {
         /// 活动 K。
         active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     },
+    /// 信念个人态回执（EchoBelief 应答——逐组内下标；None=非机构位）。
+    GroupBelief {
+        /// 组索引。
+        group: GroupIdx,
+        /// 逐组内下标的信念个人态快照。
+        states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
+    },
     /// 观察基回执（D3a-2：每股链观察——价格路径+技术面）。
     GroupObservations {
         /// 组索引。
@@ -431,6 +440,9 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
             UpMsg::GroupObservations { group, .. } => {
                 write!(f, "GroupObservations(group={group})")
+            }
+            UpMsg::GroupBelief { group, states } => {
+                write!(f, "GroupBelief(group={group}, n={})", states.len())
             }
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
