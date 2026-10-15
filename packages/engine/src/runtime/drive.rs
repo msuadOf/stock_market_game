@@ -131,23 +131,41 @@ impl RuntimeDriver {
             Box::new(|_g| Box::new(|_t, _r| super::group::TickPlan::default())),
         )?;
         spec.n_groups = 1;
-        // D3a-2b Belief-1：信念个人态构造期投影（id_map 序——None=
-        // 非机构位；披露驱动随 Belief-1b 下沉，跨日分歧登记至彼时）。
+        // D3a-2b Belief-1 + D3a-2c 件2：完整个人态构造期投影（id_map 序
+        // ——None=非机构位；observe 直调的组内权威承载：六件全投影）。
         {
-            let beliefs = session.runtime_belief_states();
+            let personals = session.runtime_personal_states();
             spec.belief_seeds = (0..npcs.max(1))
                 .map(|i| {
                     let id = ids.get(i).copied()?;
-                    beliefs.get(&id).map(|(w, m, info, b)| {
-                        super::world::BeliefParticipantSnapshot {
-                            watchlist: w.clone(),
-                            price_memory: m.clone(),
-                            information: info.clone(),
-                            belief: b.clone(),
-                        }
+                    personals.get(&id).map(|p| super::world::BeliefParticipantSnapshot {
+                        watchlist: p.watchlist.clone(),
+                        price_memory: p.price_memory.clone(),
+                        information: p.information.clone(),
+                        belief: p.belief.clone(),
+                        attention: p.attention.clone(),
+                        history_reads: p.history_reads.clone(),
                     })
                 })
                 .collect();
+        }
+        // Belief-1b·下 补投影：公开库初始 Arc（组内 observe 的
+        // discovery_candidates 输入——此前构造期空库，红证
+        // d3a2c_group_open_derivation 显红：组内 belief 条目不创建）。
+        spec.library = Some(session.runtime_library_handle().1);
+        // D3a-2c 件2：决策链根组装投影（catalog 克隆、registry/operations
+        // Arc 共享、名册 AccountId、相位参数——observe 直调的组内输入面）。
+        {
+            let (catalog, registry, operations) = session.runtime_company_handles();
+            let setup_civil = session.export_setup_for_runtime();
+            spec.root_projection = Some(std::sync::Arc::new(super::world::RootProjection {
+                catalog,
+                company_registry: registry,
+                operations,
+                account_ids: ids.clone(),
+                auction_ticks: setup_civil.auction_ticks,
+                closing_auction_ticks: setup_civil.closing_auction_ticks,
+            }));
         }
         // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——
         // 此前 desk 从零起，观察面与 session 读面天然分歧）。
@@ -186,6 +204,9 @@ impl RuntimeDriver {
     /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。
     /// 会话 tick 由调用方（或批 8e 的 step_frame 本体）推进。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        // D3a-2c 件2：自然日同步（会话 civil clock 权威——快照 civil_date
+        // 的唯一来源；休市日跳变经此传导）。
+        self.world.set_civil_date(session.civil_date());
         // D4 相位计时：挂当前捕获绑定（组/部 worker 读取安装）；世界运行
         // 结束必摘（槽内克隆持 Arc，不清则捕获收尾 try_unwrap 失败）。
         self.world.set_tick_capture(
@@ -396,6 +417,8 @@ impl RuntimeDriver {
             );
             return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
         }
+        // D3a-2c 件2：日结后同步自然日（快照 civil_date 跟随 civil clock）。
+        self.world.set_civil_date(session.civil_date());
         // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
         session.clear_runtime_minute_history();
         Ok(())
@@ -637,6 +660,23 @@ impl RuntimeDriver {
         self.world
             .collect_group_belief()
             .map_err(|e| format!("信念态收集失败：{e:?}"))
+    }
+
+    /// 开仓派生读面收集（D3a-2c：组线程 observe 直调的派生——红证锚）。
+    pub fn collect_open_derivations(
+        &mut self,
+    ) -> Result<
+        Vec<(
+            super::GroupIdx,
+            crate::strategy::MarketView,
+            crate::calendar::CivilInstant,
+            Vec<super::world::OpenDerivationRecord>,
+        )>,
+        String,
+    > {
+        self.world
+            .collect_open_derivations()
+            .map_err(|e| format!("开仓派生收集失败：{e:?}"))
     }
 
     /// 观察基收集（D3a-1：组线程 price_paths 上行——计划链端口径/

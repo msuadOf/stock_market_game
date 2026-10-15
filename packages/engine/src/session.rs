@@ -110,7 +110,6 @@ mod reconciliation_plan_phase_tests;
 #[cfg(test)]
 mod reconciliation_plan_tests;
 
-use account_book::AccountBook;
 use account_paged_map::AccountPagedMap;
 use attention::NpcAttentionScheduler;
 use candles::{
@@ -125,6 +124,15 @@ pub(crate) mod notices;
 pub use civil_clock::{CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase};
 pub use company_groups::{GroupHolding, GroupStructure};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
+// D3a-2c 件2/3：组线程组装/直调的承载类型（AccountBook 投影 + 时间映射）。
+pub(crate) use account_book::AccountBook;
+pub(crate) use observation_clock::intraday_observation_second;
+// D3a-2c 件2/3：组线程直调 observe 的类型面（决策链深移植——方向 A；
+// crate 内可见——runtime 组线程组装/直调）。
+pub(crate) use decision_chain::{
+    DecisionChainObservation, InstitutionDecisionRoot, PlanPersonalState, PlanRootDiagnostics,
+    RootReadContext,
+};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,

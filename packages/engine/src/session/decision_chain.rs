@@ -58,16 +58,16 @@ mod quote;
 mod retail_analysis;
 mod roots;
 mod urgency;
-use personal_state::PlanPersonalState;
-pub(in crate::session) use roots::{InstitutionDecisionRoot, RootReadContext};
+pub(crate) use personal_state::PlanPersonalState;
+pub(crate) use roots::{InstitutionDecisionRoot, RootReadContext};
 
 /// 同批账户 root 使用同一市场、路径、技术、时刻与曝光观察。
-pub(in crate::session) struct DecisionChainObservation {
-    pub(in crate::session) market: MarketView,
-    pub(in crate::session) paths: BTreeMap<StockId, crate::observation::PricePathObservation>,
-    pub(in crate::session) technical: BTreeMap<StockId, TechnicalObservation>,
-    pub(in crate::session) now: crate::calendar::CivilInstant,
-    pub(in crate::session) exposed: BTreeSet<StockId>,
+pub(crate) struct DecisionChainObservation {
+    pub(crate) market: MarketView,
+    pub(crate) paths: BTreeMap<StockId, crate::observation::PricePathObservation>,
+    pub(crate) technical: BTreeMap<StockId, TechnicalObservation>,
+    pub(crate) now: crate::calendar::CivilInstant,
+    pub(crate) exposed: BTreeSet<StockId>,
 }
 
 impl DecisionChainObservation {
@@ -258,14 +258,14 @@ fn apply_personal_experience_feedback(
 }
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(in crate::session) struct PlanRootDiagnostics {
+pub(crate) struct PlanRootDiagnostics {
     facts: Vec<crate::diagnostics::causal::CausalFactKind>,
     reports: Vec<(StockId, PublicationId)>,
     candidates: BTreeSet<StockId>,
 }
 
 #[cfg(not(feature = "simulation-diagnostics"))]
-pub(in crate::session) struct PlanRootDiagnostics;
+pub(crate) struct PlanRootDiagnostics;
 
 /// FNV-1a(tag + account id) → 与 seed 混合的独立流种子（分析档案/信念假设等
 /// per-NPC 一次性抽样专用；绝不与 self.state.rng 或注意力流共用）。

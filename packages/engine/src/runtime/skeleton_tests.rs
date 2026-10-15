@@ -32,6 +32,8 @@ pub(crate) fn basic_spec(
         initial_shares: shares,
         initial_invested: Vec::new(),
         initial_recovered: Vec::new(),
+        root_projection: None,
+        civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         script_for,
         chunk: 8,
         watchdog: WatchdogConfig {

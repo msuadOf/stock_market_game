@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 
 fn snapshot_one_stock(last: i64, upper: i64) -> TickSnapshot {
     TickSnapshot {
+        civil_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         tick: 1,
         market_minute: 0,
         stocks: std::sync::Arc::new(vec![super::protocol::StockPublic {

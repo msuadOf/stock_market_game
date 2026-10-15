@@ -335,6 +335,9 @@ pub struct GroupState {
     /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
     /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
     observation_inputs: Vec<ObservationInputs>,
+    /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调
+    /// 不可用，读面上行空）。
+    root_projection: Option<std::sync::Arc<super::world::RootProjection>>,
     /// 决策脚本。
     script: GroupScript,
 }
@@ -364,18 +367,18 @@ impl GroupState {
             0,
             decision,
             plans,
+            None,
             script,
         )
     }
 
     /// 构造组状态（D0：从 initial_tick 起步——恢复/接管对齐；Start 的
     /// tick 连续性校验按绝对 tick 推导）。
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_initial_tick(
         group: GroupIdx,
         accounts: Vec<GroupAccount>,
-        #[allow(clippy::too_many_arguments)] belief_states_seed: Vec<
-            Option<super::world::BeliefParticipantSnapshot>,
-        >,
+        belief_states_seed: Vec<Option<super::world::BeliefParticipantSnapshot>>,
         library_seed: std::sync::Arc<crate::information::PublicLibrary>,
         chunk: usize,
         lot: u32,
@@ -384,6 +387,7 @@ impl GroupState {
         initial_tick: u64,
         decision: Option<(Vec<NpcProfile>, u32)>,
         plans: Vec<Box<dyn PlanChain>>,
+        root_projection: Option<std::sync::Arc<super::world::RootProjection>>,
         script: GroupScript,
     ) -> Self {
         let n_stocks = accounts.first().map(|a| a.shares.len()).unwrap_or(0);
@@ -412,6 +416,7 @@ impl GroupState {
             observation_inputs: vec![ObservationInputs::default(); n_stocks],
             belief_states: belief_states_seed,
             library: library_seed,
+            root_projection,
             script,
         }
     }
@@ -1135,6 +1140,122 @@ impl GroupState {
     }
 }
 
+/// D3a-2c 件2：组线程组装 RootReadContext（与 `RootReadContext::capture`
+/// 同一字段面——投影来源同源：组账户→AccountBook 保真投影（现金/持仓/
+/// T+1 冻结/成本基）、catalog/registry/operations 构造期 Arc、library=组内
+/// 共享、plans=组内空簿（runtime 模式 session plans 恒空）、时间面=快照
+/// tick 推导 + 快照 civil_date）。任何组装分叉在红证（组内派生==session
+/// 版派生）显红。
+#[allow(clippy::too_many_arguments)]
+fn build_root_read_context(
+    accounts: &[GroupAccount],
+    belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
+    projection: &std::sync::Arc<super::world::RootProjection>,
+    library: &std::sync::Arc<crate::information::PublicLibrary>,
+    tick: u64,
+    ticks_per_day: u64,
+    snapshot: &TickSnapshot,
+) -> crate::session::RootReadContext {
+    let mut book = crate::session::AccountBook::default();
+    for (local, slot) in belief_states.iter().enumerate() {
+        if slot.is_none() {
+            continue;
+        }
+        let Some(&account_id) = projection.account_ids.get(local) else {
+            continue;
+        };
+        let group_account = &accounts[local];
+        let mut account = crate::account::Account::new(
+            account_id,
+            crate::account::AccountKind::Inst,
+            crate::money::Money::from_cents(group_account.cash),
+        );
+        let mut positions = std::collections::BTreeMap::new();
+        for (stock, &qty) in group_account.shares.iter().enumerate() {
+            // 零持仓不建条目（组侧无"曾持有"零量条目面——登记差异：
+            // session positions 含之，qty=0 时派生（cost_price=None）等价）。
+            if qty == 0 {
+                continue;
+            }
+            positions.insert(
+                crate::StockId(stock as u32),
+                crate::account::Position::from_restored_parts(
+                    qty,
+                    group_account.frozen_today[stock],
+                    group_account.invested_cents[stock],
+                    group_account.recovered_cents[stock],
+                ),
+            );
+        }
+        account.fixture_set_positions(positions);
+        book.insert(account_id, account);
+    }
+    let day = u32::try_from(tick / ticks_per_day).expect("交易日序号超 u32");
+    let day_tick = tick % ticks_per_day;
+    let continuous = ticks_per_day
+        .saturating_sub(projection.auction_ticks)
+        .saturating_sub(projection.closing_auction_ticks);
+    // 市场分钟：与 session `current_market_minute` 同式（交易日×240 +
+    // 连续段完成分钟——completed_market_minute_count 为共享纯函数）。
+    let market_minute = u64::from(day) * u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
+        + u64::from(
+            crate::observation::completed_market_minute_count(
+                day_tick
+                    .saturating_sub(projection.auction_ticks)
+                    .min(continuous),
+                continuous,
+            )
+            .expect("相位配置映射市场分钟（与 session 同式）"),
+        );
+    crate::session::RootReadContext::from_parts(
+        book,
+        projection.catalog.clone(),
+        std::sync::Arc::clone(&projection.company_registry),
+        std::sync::Arc::clone(&projection.operations),
+        std::sync::Arc::clone(library),
+        crate::plans::PlanBook::default(),
+        snapshot.civil_date,
+        market_minute,
+        day,
+    )
+}
+
+/// D3a-2c 件2：组线程组装 DecisionChainObservation（market=广播快照视图、
+/// paths/technical=组内链观察纯构建器（D3a-2 同源）、now=共享秒映射、
+/// exposed=空集起步——公司披露曝光面登记差异，随披露载荷补）。
+fn build_chain_observation(
+    inputs: &[ObservationInputs],
+    snapshot: &TickSnapshot,
+    ticks_per_day: u64,
+    auction_ticks: u64,
+    closing_auction_ticks: u64,
+) -> crate::session::DecisionChainObservation {
+    let market = super::decision::build_market_view(snapshot);
+    let mut paths = std::collections::BTreeMap::new();
+    let mut technical = std::collections::BTreeMap::new();
+    for (stock, inputs) in inputs.iter().enumerate() {
+        let (path, tech) = inputs.build_observations();
+        paths.insert(crate::StockId(stock as u32), path);
+        technical.insert(crate::StockId(stock as u32), tech);
+    }
+    let day_tick = snapshot.tick % ticks_per_day;
+    let second = crate::session::intraday_observation_second(
+        day_tick,
+        ticks_per_day,
+        auction_ticks,
+        closing_auction_ticks,
+    );
+    let now = crate::calendar::CivilInstant::new(snapshot.civil_date, second)
+        .expect("快照自然日与日内秒构成合法 CivilInstant");
+    crate::session::DecisionChainObservation {
+        market,
+        paths,
+        technical,
+        now,
+        exposed: std::collections::BTreeSet::new(),
+    }
+}
+
 /// 分段 flush：非空缓冲直发目标交易部；`final` 时每股必发（空批=提交标记）。
 fn flush_buffers(
     buffers: &mut [Vec<DeskIn>],
@@ -1423,6 +1544,97 @@ pub fn group_main(
                 {
                     result = Err(RuntimeError::SendFailed {
                         detail: "GroupBelief 上行失败".to_owned(),
+                    });
+                    break;
+                }
+            }
+            GroupIn::EchoOpenDerivation => {
+                // D3a-2c：组线程直调 observe（任务即线程——不搬 rayon 调度/
+                // 探针）。投影或快照缺席=上行空（无会话来源世界/未跑 tick）。
+                let mut derivations = Vec::new();
+                let mut derivation_market = None;
+                let mut derivation_now = None;
+                if let (Some(projection), Some(snapshot)) = (
+                    state.root_projection.clone(),
+                    state.snapshot.clone(),
+                ) {
+                    let context = build_root_read_context(
+                        &state.accounts,
+                        &state.belief_states,
+                        &projection,
+                        &state.library,
+                        snapshot.tick,
+                        state.ticks_per_day,
+                        &snapshot,
+                    );
+                    let observation = build_chain_observation(
+                        &state.observation_inputs,
+                        &snapshot,
+                        state.ticks_per_day,
+                        projection.auction_ticks,
+                        projection.closing_auction_ticks,
+                    );
+                    derivation_market = Some(observation.market.clone());
+                    derivation_now = Some(observation.now);
+                    for local in 0..state.belief_states.len() {
+                        let Some(snap) = state.belief_states[local].clone() else {
+                            continue;
+                        };
+                        let Some(&account) = projection.account_ids.get(local) else {
+                            continue;
+                        };
+                        let personal = crate::session::PlanPersonalState {
+                            attention: snap.attention,
+                            watchlist: snap.watchlist,
+                            price_memory: snap.price_memory,
+                            history_reads: snap.history_reads,
+                            information: snap.information,
+                            belief: snap.belief,
+                        };
+                        let personal_in = personal.clone();
+                        let (_account, out, operations, _diagnostics) =
+                            crate::session::InstitutionDecisionRoot::new(account, personal)
+                                .observe(&context, &observation);
+                        let assessments = operations
+                            .lifecycle_assessments()
+                            .into_iter()
+                            .find(|(owner, _)| *owner == account)
+                            .map(|(_, by_code)| by_code.into_iter().collect())
+                            .unwrap_or_default();
+                        derivations.push(super::world::OpenDerivationRecord {
+                            account,
+                            personal_in,
+                            personal_out: out,
+                            assessments,
+                        });
+                    }
+                }
+                let (derivation_market, derivation_now) = (
+                    derivation_market.unwrap_or_else(|| crate::strategy::MarketView {
+                        stocks: Default::default(),
+                        tick: 0,
+                        market_minute: 0,
+                    }),
+                    derivation_now.unwrap_or_else(|| {
+                        crate::calendar::CivilInstant::new(
+                            crate::calendar::CivilDate::from_ymd(1970, 1, 1)
+                                .expect("纪元日合法"),
+                            0,
+                        )
+                        .expect("纪元零点合法")
+                    }),
+                );
+                if up_tx
+                    .send(UpMsg::GroupOpenDerivations {
+                        group: state.group,
+                        market: derivation_market,
+                        now: derivation_now,
+                        derivations,
+                    })
+                    .is_err()
+                {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "GroupOpenDerivations 上行失败".to_owned(),
                     });
                     break;
                 }

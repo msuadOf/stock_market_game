@@ -94,6 +94,10 @@ pub fn world_spec_from_setup(
         plan_factory: None,
         belief_seeds: Vec::new(),
         library: None,
+        // D3a-2c 件2：根组装投影与 civil 基线由 from_session 覆盖（bridge
+        // 缺省——无会话来源的世界 observe 直调不可用/自然日零点）。
+        root_projection: None,
+        civil_start_date: setup.start_date,
     })
 }
 

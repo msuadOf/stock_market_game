@@ -87,7 +87,7 @@ pub(in crate::session) struct QuotePlans {
     pub thirty_minute_bp: BTreeMap<StockId, Option<i32>>,
 }
 
-pub(in crate::session) struct PlanChainOperationBatch {
+pub(crate) struct PlanChainOperationBatch {
     roots: PlanRootCoordinator,
     operations: VecDeque<PlanChainOperation>,
     candidate_source: PlanChainCandidateSource,
@@ -1294,5 +1294,23 @@ impl PlanChainOperationBatch {
     #[cfg(test)]
     pub(in crate::session) fn len(&self) -> usize {
         self.operations.len()
+    }
+
+    /// D3a-2c 红证读面：本批全部 Lifecycle 操作携带的候选评估（账户序）。
+    /// 只读克隆——组内消费路径（件4）另行暴露操作队列。
+    pub(crate) fn lifecycle_assessments(
+        &self,
+    ) -> Vec<(AccountId, BTreeMap<StockId, CandidateAssessment>)> {
+        self.operations
+            .iter()
+            .filter_map(|operation| match operation {
+                PlanChainOperation::Lifecycle {
+                    account,
+                    assessments,
+                    ..
+                } => Some((*account, assessments.clone())),
+                _ => None,
+            })
+            .collect()
     }
 }

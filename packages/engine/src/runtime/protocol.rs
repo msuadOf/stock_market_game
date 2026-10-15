@@ -203,6 +203,9 @@ pub struct TickSnapshot {
     pub tick: u64,
     /// 市场分钟数。
     pub market_minute: u32,
+    /// 当前自然日（D3a-2c 件2：组线程组装 RootReadContext 的时间面——
+    /// 自然日与交易日计数分离，不能从 tick 推导，由协调者自会话同步）。
+    pub civil_date: crate::calendar::CivilDate,
     /// 全股公共态（下标=StockIdx）。
     pub stocks: std::sync::Arc<Vec<StockPublic>>,
 }
@@ -313,6 +316,9 @@ pub enum GroupIn {
             (crate::company::CompanyKind, u64),
         >,
     },
+    /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
+    /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
+    EchoOpenDerivation,
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
     EchoAccounts,
@@ -413,6 +419,19 @@ pub enum UpMsg {
         /// 逐组内下标的信念个人态快照。
         states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
     },
+    /// 开仓派生读面回执（D3a-2c：组线程直调 observe 的派生——红证/读面。
+    /// market/now=组内实际消费的观察输入（红证同输入锚——广播快照为
+    /// 本 tick Start 时刻的上一收束点，与驱动器最新公共态差一个 tick）。
+    GroupOpenDerivations {
+        /// 组索引。
+        group: GroupIdx,
+        /// 组内消费的市场视图（广播快照转换）。
+        market: crate::strategy::MarketView,
+        /// 组内消费的观察时刻。
+        now: crate::calendar::CivilInstant,
+        /// 每 belief 位的派生记录（观察输入+评估输出+个人态演进前后）。
+        derivations: Vec<super::world::OpenDerivationRecord>,
+    },
     /// 观察基回执（D3a-2：每股链观察——价格路径+技术面）。
     GroupObservations {
         /// 组索引。
@@ -470,6 +489,11 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupFinal(x) => write!(f, "GroupFinal(group={})", x.group),
             UpMsg::GroupDayDone { group, day, .. } => {
                 write!(f, "GroupDayDone(group={group}, day={day})")
+            }
+            UpMsg::GroupOpenDerivations {
+                group, derivations, ..
+            } => {
+                write!(f, "GroupOpenDerivations(group={group}, n={})", derivations.len())
             }
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
             UpMsg::GroupObservations { group, .. } => {

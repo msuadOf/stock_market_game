@@ -477,6 +477,115 @@ fn d3a2c_cost_basis_writes_back_to_session_positions() {
     }
 }
 
+// D3a-2c 件2/3 红证：同输入（同观察+同个人态+同成本基）下，组线程
+// observe 直调派生 == session 版直调派生，逐字段（候选评估 Lifecycle
+// assessments + 个人态六件演进）。组内 RootReadContext 组装（组账户
+// 投影/构造期 Arc/快照时间面）与 session capture 的任何分叉在此显红。
+#[test]
+fn d3a2c_group_open_derivation_matches_session_observe() {
+    use crate::session::{InstitutionDecisionRoot, RootReadContext};
+
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 17).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..5 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    let collected = driver.collect_open_derivations().expect("开仓派生收集");
+    assert_eq!(collected.len(), 1, "单组");
+    let (_group, derivation_market, derivation_now, records) = &collected[0];
+    assert!(
+        !records.is_empty(),
+        "3 机构位都应有派生记录（belief 位构造投影）"
+    );
+    // 同输入观察组装（红证同输入锚）：market/now=组上行的实际消费值
+    //（广播快照为本 tick Start 时刻的上一收束点——与最新公共态差一 tick，
+    // 用上行值而非重建）；paths/technical=组上行观察；exposed=空集。
+    let observations = driver.collect_observations().expect("观察基收集");
+    let (paths, technical): (
+        std::collections::BTreeMap<crate::StockId, _>,
+        std::collections::BTreeMap<crate::StockId, _>,
+    ) = {
+        let mut p = std::collections::BTreeMap::new();
+        let mut t = std::collections::BTreeMap::new();
+        for (stock, (path, tech)) in observations[0].1.iter().enumerate() {
+            p.insert(crate::StockId(stock as u32), path.clone());
+            t.insert(crate::StockId(stock as u32), tech.clone());
+        }
+        (p, t)
+    };
+    let observation = crate::session::DecisionChainObservation {
+        market: derivation_market.clone(),
+        paths,
+        technical,
+        now: *derivation_now,
+        exposed: std::collections::BTreeSet::new(),
+    };
+    let context = RootReadContext::capture(&session).expect("session 上下文捕获");
+    for record in records {
+        // session 版：同个人态输入 → observe → 逐字段比对。
+        let (_id, session_out, session_ops, _diag) =
+            InstitutionDecisionRoot::new(record.account, record.personal_in.clone())
+                .observe(&context, &observation);
+        let session_assessments: Vec<_> = session_ops
+            .lifecycle_assessments()
+            .into_iter()
+            .find(|(owner, _)| *owner == record.account)
+            .map(|(_, by_code)| by_code.into_iter().collect())
+            .unwrap_or_default();
+        assert_eq!(
+            format!("{:?}", record.assessments),
+            format!("{session_assessments:?}"),
+            "账户 {:?} 候选评估逐字段同源",
+            record.account
+        );
+        assert_eq!(
+            format!("{:?}", record.personal_out.attention),
+            format!("{:?}", session_out.attention),
+            "账户 {:?} attention 演进同源",
+            record.account
+        );
+        assert_eq!(
+            format!("{:?}", record.personal_out.watchlist),
+            format!("{:?}", session_out.watchlist),
+            "账户 {:?} watchlist 演进同源",
+            record.account
+        );
+        assert_eq!(
+            format!("{:?}", record.personal_out.price_memory),
+            format!("{:?}", session_out.price_memory),
+            "账户 {:?} price_memory 演进同源",
+            record.account
+        );
+        assert_eq!(
+            format!("{:?}", record.personal_out.information),
+            format!("{:?}", session_out.information),
+            "账户 {:?} information 演进同源",
+            record.account
+        );
+        assert_eq!(
+            format!("{:?}", record.personal_out.belief),
+            format!("{:?}", session_out.belief),
+            "账户 {:?} belief 演进同源",
+            record.account
+        );
+        assert_eq!(
+            format!("{:?}", record.personal_out.history_reads),
+            format!("{:?}", session_out.history_reads),
+            "账户 {:?} history_reads 演进同源",
+            record.account
+        );
+    }
+}
+
 // Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——
 // (a) 组内推进+仅 information 域回写（cadence/next_check 前进）；
 // (b) candidate 域回写前后不变（权威调和锚：快照取点/回写覆写错即红）。

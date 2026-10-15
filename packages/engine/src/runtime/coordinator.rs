@@ -217,11 +217,13 @@ pub fn converge_round(
 pub fn broadcast_start(
     group_txs: &[Sender<super::protocol::GroupIn>],
     tick: u64,
+    civil_date: crate::calendar::CivilDate,
     stocks: &[super::protocol::StockPublic],
 ) -> Result<Arc<TickSnapshot>, RuntimeError> {
     let snapshot = Arc::new(TickSnapshot {
         tick,
         market_minute: (tick / 60) as u32,
+        civil_date,
         stocks: std::sync::Arc::new(stocks.to_vec()),
     });
     for tx in group_txs {

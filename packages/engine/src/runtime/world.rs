@@ -82,13 +82,53 @@ pub struct GroupInformationPayload {
 }
 
 /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
-/// ——crate 纯类型直载；构造期自 session 投影进组，读面上行同源校验）。
+/// ——crate 纯类型直载；构造期自 session 投影进组，读面上行同源校验。
+/// D3a-2c 件2 增补 attention/history_reads（observe 直调的完整个人态承载
+/// ——组内权威，构造期投影）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct BeliefParticipantSnapshot {
     pub watchlist: crate::experience::PersonalWatchlist,
     pub price_memory: crate::experience::PersonalPriceMemory,
     pub information: crate::information::NpcInformationState,
     pub belief: crate::strategy::BeliefBook,
+    /// 注意力状态（D3a-2c：observe 的 discovery RNG 流承载——组内权威）。
+    pub attention: crate::session::NpcAttentionState,
+    /// 公共历史读账（observe 的 record_public_history_read 承载）。
+    pub history_reads: crate::experience::PersonalHistoryReadLedger,
+}
+
+/// 开仓派生记录（D3a-2c：组线程 observe 直调的输入/输出——红证同输入
+/// 比对载体）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenDerivationRecord {
+    /// 账户。
+    pub account: crate::AccountId,
+    /// observe 输入个人态（红证同输入锚）。
+    pub personal_in: crate::session::PlanPersonalState,
+    /// observe 输出个人态（演进后）。
+    pub personal_out: crate::session::PlanPersonalState,
+    /// Lifecycle 携带的候选评估（账户序单元素）。
+    pub assessments: Vec<(
+        crate::StockId,
+        crate::plans::CandidateAssessment,
+    )>,
+}
+
+/// 决策链根组装投影（D3a-2c 件2：构造期自 session 一次性投影——catalog
+/// 克隆、registry/operations Arc 共享、名册 AccountId、相位配置）。
+pub struct RootProjection {
+    /// 股票目录（id↔代码翻译层）。
+    pub catalog: crate::stock::StockCatalog,
+    /// 发行人注册表。
+    pub company_registry: Arc<crate::company::CompanyRegistry>,
+    /// 公司域经营。
+    pub operations: Arc<crate::company::operations::CompanyOperations>,
+    /// 组内名册的 AccountId（下标=LocalIdx；红证/session 映射）。
+    pub account_ids: Vec<crate::AccountId>,
+    /// 开盘集合竞价窗 tick 数（CivilInstant 秒映射输入）。
+    pub auction_ticks: u64,
+    /// 收盘集合竞价窗 tick 数。
+    pub closing_auction_ticks: u64,
 }
 
 /// 世界构造参数。
@@ -144,6 +184,11 @@ pub struct WorldSpec {
     pub belief_seeds: Vec<Option<super::world::BeliefParticipantSnapshot>>,
     /// Belief-1b·下：公开库初始 Arc（缺省空库——投递消息稀疏刷新）。
     pub library: Option<std::sync::Arc<crate::information::PublicLibrary>>,
+    /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调不可
+    /// 用，读面上行空）。
+    pub root_projection: Option<std::sync::Arc<RootProjection>>,
+    /// D3a-2c 件2：起始自然日（快照 civil_date 基线——驱动器每步同步）。
+    pub civil_start_date: crate::calendar::CivilDate,
 }
 
 /// 日结候选投影（F §6.2 步骤 4：组投影 + 交易部清簿态 + 全局域 + 费用上交；
@@ -239,6 +284,9 @@ pub struct World {
     pub last_day_end_candidate: Option<DayEndCandidate>,
     /// 日终清簿撤单事实（驱动器事件拼装读取）。
     pub drained_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
+    /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
+    /// 自然日权威在会话 civil clock）。
+    civil_date: crate::calendar::CivilDate,
 }
 
 impl World {
@@ -293,6 +341,8 @@ impl World {
             plan_factory,
             belief_seeds,
             library,
+            root_projection,
+            civil_start_date,
         } = spec;
         let library_seed: std::sync::Arc<crate::information::PublicLibrary> =
             library.unwrap_or_default();
@@ -372,6 +422,9 @@ impl World {
             });
             let group_plans = plan_factory.as_ref().map(|f| f(g)).unwrap_or_default();
             let belief_states = std::mem::take(&mut belief_seeds_clone);
+            let group_root = root_projection
+                .as_ref()
+                .map(std::sync::Arc::clone);
             let state = super::group::GroupState::new_with_initial_tick(
                 g,
                 accounts,
@@ -384,6 +437,7 @@ impl World {
                 initial_committed_tick,
                 group_decision,
                 group_plans,
+                group_root,
                 script_for(g),
             );
             let rx = group_rxs.remove(0);
@@ -473,6 +527,7 @@ impl World {
             capture_slot,
             last_day_end_candidate: None,
             drained_lifecycle: Vec::new(),
+            civil_date: civil_start_date,
         })
     }
 
@@ -587,6 +642,66 @@ impl World {
         if let Some(tx) = self.group_txs.first() {
             let _ = tx.send(GroupIn::ExternalPlan(ops));
         }
+    }
+
+    /// 自然日同步（D3a-2c：驱动器每步/日结后自会话 civil clock 同步——
+    /// 快照 civil_date 的唯一来源）。
+    pub fn set_civil_date(&mut self, date: crate::calendar::CivilDate) {
+        self.civil_date = date;
+    }
+
+    /// 开仓派生读面收集（D3a-2c：EchoOpenDerivation 广播→收齐）。
+    pub fn collect_open_derivations(
+        &mut self,
+    ) -> Result<
+        Vec<(
+            GroupIdx,
+            crate::strategy::MarketView,
+            crate::calendar::CivilInstant,
+            Vec<super::world::OpenDerivationRecord>,
+        )>,
+        RuntimeError,
+    > {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "collect_open_derivations 通道面与组数不一致（txs={} n_groups={}——世界已断连）",
+                    self.group_txs.len(),
+                    self.n_groups
+                ),
+            });
+        }
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoOpenDerivation).map_err(|_| {
+                RuntimeError::SendFailed { detail: "EchoOpenDerivation 广播失败".to_owned() }
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupOpenDerivations {
+                    group,
+                    market,
+                    now,
+                    derivations,
+                } => {
+                    out.push((group, market, now, derivations));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!(
+                            "collect_open_derivations 期望 GroupOpenDerivations，收到 {other:?}"
+                        ),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _, _, _)| *g);
+        Ok(out)
     }
 
     /// 观察基收集（D3a-1：EchoObservations 广播→收齐——计划链端读面）。
@@ -842,7 +957,7 @@ impl World {
                         detail: format!("DeskMsg::Start(tick={tick}) 广播失败（部已退出）"),
                     })?;
             }
-            broadcast_start(&self.group_txs, tick, &self.public_views)?;
+            broadcast_start(&self.group_txs, tick, self.civil_date, &self.public_views)?;
             let mut rounds = 0u32;
             loop {
                 let evidence = self.converge_or_die(tick, rounds)?;

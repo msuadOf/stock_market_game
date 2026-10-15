@@ -19,7 +19,7 @@ thread_local! {
 type PageGroup = BTreeMap<u64, Arc<AccountPage>>;
 
 #[derive(Clone, Default)]
-pub(super) struct AccountBook {
+pub(crate) struct AccountBook {
     groups: BTreeMap<u64, Arc<PageGroup>>,
     len: usize,
 }
@@ -222,7 +222,7 @@ impl AccountBook {
         }
     }
 
-    pub(super) fn insert(&mut self, id: AccountId, account: Account) -> Option<Account> {
+    pub(crate) fn insert(&mut self, id: AccountId, account: Account) -> Option<Account> {
         let group = Arc::make_mut(self.groups.entry(group_id(id)).or_default());
         let page = group.entry(page_id(id)).or_default();
         let page = Arc::make_mut(page);

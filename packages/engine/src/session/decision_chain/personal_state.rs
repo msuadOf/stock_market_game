@@ -72,13 +72,16 @@ impl BeliefParticipantState {
     }
 }
 
-pub(in crate::session) struct PlanPersonalState {
-    pub(super) attention: NpcAttentionState,
-    pub(super) watchlist: PersonalWatchlist,
-    pub(super) price_memory: PersonalPriceMemory,
-    pub(super) history_reads: crate::experience::PersonalHistoryReadLedger,
-    pub(super) information: NpcInformationState,
-    pub(super) belief: BeliefBook,
+/// 字段 pub(crate)（D3a-2c 件2）：组线程以纯数据包组装/读回（take/install
+/// 的组内等价——个人态是纯数据，无会话借用）。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlanPersonalState {
+    pub(crate) attention: NpcAttentionState,
+    pub(crate) watchlist: PersonalWatchlist,
+    pub(crate) price_memory: PersonalPriceMemory,
+    pub(crate) history_reads: crate::experience::PersonalHistoryReadLedger,
+    pub(crate) information: NpcInformationState,
+    pub(crate) belief: BeliefBook,
 }
 
 impl PlanPersonalState {

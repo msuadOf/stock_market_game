@@ -490,6 +490,51 @@ impl GameSession {
         }
     }
 
+    /// 公司域只读句柄（D3a-2c 件2：RootReadContext 组装的构造期 Arc 投影源
+    /// ——catalog 克隆、registry/operations Arc 共享，与 capture 同一对象面）。
+    pub fn runtime_company_handles(
+        &self,
+    ) -> (
+        crate::stock::StockCatalog,
+        std::sync::Arc<crate::company::CompanyRegistry>,
+        std::sync::Arc<crate::company::operations::CompanyOperations>,
+    ) {
+        (
+            self.state.stocks.clone(),
+            std::sync::Arc::clone(&self.state.company_registry),
+            std::sync::Arc::clone(&self.state.operations),
+        )
+    }
+
+    /// 完整个人态只读投影（D3a-2c 件2：PlanPersonalState 六件——含 attention
+    /// 与 history_reads，observe 直调的组内承载/同源红证源）。
+    pub fn runtime_personal_states(
+        &self,
+    ) -> std::collections::BTreeMap<
+        crate::AccountId,
+        crate::session::decision_chain::personal_state::PlanPersonalState,
+    > {
+        self.state
+            .npc_attention
+            .iter()
+            .filter(|(id, _)| self.state.belief_participants.contains_key(id))
+            .map(|(id, attention)| {
+                let participant = &self.state.belief_participants[id];
+                (
+                    *id,
+                    crate::session::decision_chain::personal_state::PlanPersonalState {
+                        attention: attention.clone(),
+                        watchlist: participant.watchlist().clone(),
+                        price_memory: participant.price_memory().clone(),
+                        history_reads: self.state.history_reads.get(id).cloned().unwrap_or_default(),
+                        information: participant.information().clone(),
+                        belief: participant.belief().clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+
     /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。
     pub fn runtime_belief_states(
         &self,

@@ -3,7 +3,7 @@
 use super::*;
 
 /// 同批 root 共享的只读事实；不包含市场簿、历史、个人状态 map 或委托游标。
-pub(in crate::session) struct RootReadContext {
+pub(crate) struct RootReadContext {
     accounts: account_book::AccountBook,
     stocks: crate::stock::StockCatalog,
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
@@ -26,7 +26,7 @@ impl RootReadContext {
             .issuer_of(&crate::account::StockCode(code.to_string()))
     }
 
-    pub(in crate::session) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
+    pub(crate) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
         let accounts = session.state.accounts.clone();
         Ok(Self {
             accounts,
@@ -39,6 +39,33 @@ impl RootReadContext {
             market_minute: session.current_market_minute(),
             day: session.state.day,
         })
+    }
+
+    /// D3a-2c 件2：组线程组装（与 [`Self::capture`] 同一字段面——投影来源
+    /// 由调用方保证同源：组账户投影/构造期 Arc/组内 PlanBook/快照时间面）。
+    /// 字段逐项显式，任何组装分叉在红证（组内派生==session 版派生）显红。
+    pub(crate) fn from_parts(
+        accounts: account_book::AccountBook,
+        stocks: crate::stock::StockCatalog,
+        company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
+        operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
+        library: std::sync::Arc<crate::information::PublicLibrary>,
+        plans: PlanBook,
+        civil_date: crate::CivilDate,
+        market_minute: u64,
+        day: u32,
+    ) -> Self {
+        Self {
+            accounts,
+            stocks,
+            company_registry,
+            operations,
+            library,
+            plans,
+            civil_date,
+            market_minute,
+            day,
+        }
     }
 
     fn institution_behavior(
@@ -197,17 +224,17 @@ impl RootReadContext {
 }
 
 /// 仅暂存一个账户的个人工作，输出 typed 操作增项；不预先决定生命周期动作。
-pub(in crate::session) struct InstitutionDecisionRoot {
+pub(crate) struct InstitutionDecisionRoot {
     account: AccountId,
     personal: PlanPersonalState,
 }
 
 impl InstitutionDecisionRoot {
-    pub(in crate::session) fn new(account: AccountId, personal: PlanPersonalState) -> Self {
+    pub(crate) fn new(account: AccountId, personal: PlanPersonalState) -> Self {
         Self { account, personal }
     }
 
-    pub(in crate::session) fn observe(
+    pub(crate) fn observe(
         mut self,
         context: &RootReadContext,
         observation: &DecisionChainObservation,
