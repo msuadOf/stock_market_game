@@ -322,6 +322,16 @@ impl RuntimeDriver {
             .map_err(|e| format!("注意力收集失败：{e:?}"))
     }
 
+    /// 组账户快照（Sol 二审修复集 4：T+1 冻结面断言/对账——
+    /// frozen_today 的权威在组线程，会话侧无镜像）。
+    pub fn world_accounts_snapshot(
+        &mut self,
+    ) -> Result<Vec<(super::GroupIdx, Vec<super::group::GroupAccount>)>, String> {
+        self.world
+            .snapshot_accounts()
+            .map_err(|e| format!("账户快照失败：{e:?}"))
+    }
+
     /// 测试面：注入 tick 级校验器（构造 step 失败路径——Sol 二审
     /// 修复集 3 的 fail-fast 断言用；step_via_runtime 每次构造驱动器，
     /// 测试只能经独立驱动器注入）。

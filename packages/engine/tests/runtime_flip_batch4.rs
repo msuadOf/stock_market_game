@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::flip_helpers::{pipeline_events, runtime_events, setup_1stock};
+use common::flip_helpers::{assert_order_lifecycle_closure, pipeline_events, runtime_events, setup_1stock};
 use engine::{Event, GameSession};
 
 // 1. 跨日驱动后会话 day 推进（runtime 市场侧 day 安装）。
@@ -19,19 +19,48 @@ fn batch4_pipeline_day_advances() {
     assert_eq!(session.day(), 1, "旧管线跨日 day 推进");
 }
 
-// 3. T+1 解冻：跨日后当日买入可卖（无冻结泄漏——账户面无负可卖）。
+// 3. T+1 解冻（Sol 二审修复集 4 重写）：`qty > 0 || qty == 0` 恒真——
+//    换真实断言：日结后 world 侧 frozen_today 全零（组线程是冻结权威，
+//    会话侧无镜像）；seed 199 首日有真实买入（冻结 5600>0——断言非
+//    空转），另保留现金非负（i64 可为负——真实断言）。
 #[test]
-fn batch4_t1_unfreeze_no_negative_sellable() {
-    // P1-9（Sol）：原断言只查现金非负（对 i64 恒弱）——补真实 T+1
-    // 断言：跨日后 frozen_today 清零（解冻生效）+ 持仓非负。
-    let (session, _) = runtime_events(245, 302);
+fn batch4_t1_unfreeze_clears_frozen_after_day_end() {
+    use engine::runtime::drive::RuntimeDriver;
+    let mut session = GameSession::new(setup_1stock(), 199).expect("会话");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    for _ in 1..=240 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    let frozen_before: u32 = driver
+        .world_accounts_snapshot()
+        .expect("日结前账户快照")
+        .into_iter()
+        .flat_map(|(_, accounts)| accounts)
+        .map(|a| a.frozen_today.iter().sum::<u32>())
+        .sum();
+    assert!(
+        frozen_before > 0,
+        "首日有当日买入（冻结 {frozen_before}>0——否则清零断言空转）"
+    );
+    driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect("日结");
+    let frozen_after: u32 = driver
+        .world_accounts_snapshot()
+        .expect("日结后账户快照")
+        .into_iter()
+        .flat_map(|(_, accounts)| accounts)
+        .map(|a| a.frozen_today.iter().sum::<u32>())
+        .sum();
+    assert_eq!(frozen_after, 0, "日结解冻：frozen_today 全零");
     for i in 0..session.account_count() as u64 {
         if let Some(a) = session.account(engine::AccountId(i)) {
             assert!(a.cash().cents() >= 0, "账户 {i} 现金非负");
-            for (code, pos) in a.positions() {
-                assert!(pos.qty() > 0 || pos.qty() == 0, "持仓合法");
-                let _ = code;
-            }
         }
     }
 }
@@ -94,13 +123,13 @@ fn batch4_seq_continuous_across_day_end() {
     }
 }
 
-// 8. 日结清簿后无悬挂挂单（撤单事件覆盖全部受理——受理≥撤单+成交消化）。
+// 8. 日结清簿后无悬挂挂单（Sol 二审修复集 4 重写：逐订单 id 闭环——
+//    撤销先受理/余量不超/id 不重/总量（受理−撤销）≤ 成交触碰；
+//    恰 240 tick = 日终点口径，无合法在簿豁免）。
 #[test]
 fn batch4_drain_closes_all_resting() {
-    let (_, events) = runtime_events(245, 307);
-    let accepts: u64 = events.iter().filter(|e| matches!(e, Event::OrderAccepted { .. })).count() as u64;
-    let cancels: u64 = events.iter().filter(|e| matches!(e, Event::OrderCanceled { .. })).count() as u64;
-    assert!(accepts >= cancels, "闭环：{accepts} ≥ {cancels}");
+    let (_, events) = runtime_events(240, 307);
+    assert_order_lifecycle_closure(&events);
 }
 
 // 9. 双路径现金守恒方向（跨日无注入）。

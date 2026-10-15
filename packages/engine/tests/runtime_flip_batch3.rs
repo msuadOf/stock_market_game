@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::flip_helpers::{pipeline_events, runtime_events};
+use common::flip_helpers::{assert_order_lifecycle_closure, pipeline_events, runtime_events};
 use engine::Event;
 
 // 1. 撤单事件（OrderCanceled）在 runtime 路径可见（TTL 到期路径）。
@@ -52,11 +52,18 @@ fn batch3_pipeline_emits_order_canceled() {
         *kinds.entry(k).or_insert(0) += 1;
     }
     eprintln!("pipeline 250 tick 事件分布：{kinds:?}");
-    // 旧管线的跨日清簿事件形态可能为"日界日终清簿后无 OrderCanceled
-    // 事件"（清簿退实体不发事件——只有实体回流）。对照面改为：
-    // 旧管线 250 tick 无崩溃 + 事件集合法即锚（撤单差异登记为
-    // 已知形态差：旧管线清簿=实体路径无事件，runtime=事件显式）。
-    assert!(!events.is_empty() || true, "对照锚");
+    // Sol 二审修复集 4：替换恒真断言（`|| true`）。真实对照锚：
+    // arrival_rate=0 的 fixture 下旧管线不产订单事件，但竞价/价格
+    // 事件面非空，且 seq 全局严格单调（权威游标不回退不重号）。
+    assert!(!events.is_empty(), "旧管线 250 tick 事件面非空");
+    let mut prev: Option<u64> = None;
+    for e in &events {
+        let seq = e.seq();
+        if let Some(p) = prev {
+            assert!(seq > p, "旧管线 seq 严格单调：{seq} <= {p}");
+        }
+        prev = Some(seq);
+    }
 }
 
 // 3. OrderCanceled 字段域合法（remaining_qty ≤ 初始量、id 正）。
@@ -74,17 +81,28 @@ fn batch3_cancel_fields_wellformed() {
     }
 }
 
-// 4. 拒收事件（IntentRejected）在 runtime 可见（竞价窗市价/非法申报）。
+// 4. 拒收事件（IntentRejected）在 runtime 可见且字段域合法（Sol 二审
+//    修复集 4：替换"只计数后丢弃"——seed 199 观测 250 tick 内存在拒收，
+//    缺省决策也会撞相位/整手/上限门禁）。
 #[test]
 fn batch3_runtime_emits_intent_rejected() {
-    let (_, events) = runtime_events(30, 203);
-    // 主动拒收需要非法申报注入；骨架缺省决策产生合法限价——本测试
-    // 断言"出现或零都合法"改为存在性（有成交即路径通）。改强断言：
-    // 至少不因拒收通道崩溃（无 panic 即过——通道存在性由字段域测试锚）。
-    let _ = events
+    let (session, events) = runtime_events(250, 199);
+    let count = session.account_count() as u64;
+    let rejects: Vec<&Event> = events
         .iter()
         .filter(|e| matches!(e, Event::IntentRejected { .. }))
-        .count();
+        .collect();
+    assert!(
+        !rejects.is_empty(),
+        "seed 199 观测存在拒收（缺省决策撞门禁）"
+    );
+    for r in rejects {
+        let Event::IntentRejected { account, code, .. } = r else {
+            unreachable!()
+        };
+        assert!(account.0 < count, "拒收账户在册（账户 id 连续稠密）：{account:?}");
+        assert_eq!(code.0, 0, "单股 fixture：{code:?}");
+    }
 }
 
 // 5. OrderAccepted 字段域（价格正/数量正/remaining>0）。
@@ -109,24 +127,18 @@ fn batch3_accept_fields_wellformed() {
     }
 }
 
-// 6. 受理→终结闭环：跨日驱动后无悬挂受理（每个 Accepted 最终 Canceled/
-//    由 Trade 消化——数量守恒口径：canceled+traded 覆盖 accepted）。
+// 6. 受理→终结闭环（Sol 二审修复集 4 重写）：逐订单 id 链路——撤销
+//    必先有同键受理且余量不超；受理 id 不重复；账户/股的（受理−撤销）
+//    差额 ≤ Trade 触碰量。替换"accepts>=cancels"（空事件集恒过的
+//    弱断言）。
 #[test]
 fn batch3_accept_terminal_closure() {
-    let (_, events) = runtime_events(250, 205);
-    let accepts: u64 = events
-        .iter()
-        .filter(|e| matches!(e, Event::OrderAccepted { .. }))
-        .count() as u64;
-    let cancels: u64 = events
-        .iter()
-        .filter(|e| matches!(e, Event::OrderCanceled { .. }))
-        .count() as u64;
-    // 日终清簿后挂簿为空 ⇒ 未成交受理全被撤；成交通过 Trade 消化。
-    assert!(
-        accepts >= cancels,
-        "受理数 ≥ 撤单数（成交消化差额）：{accepts} vs {cancels}"
-    );
+    // 恰 240 tick（日终点）：日终 Drain 清簿 ⇒ 无悬挂挂单——总量
+    // 闭环（受理−撤销 ≤ 成交触碰）在此口径下才无合法豁免。
+    // （250 tick 口径实测抓到"day-2 中途挂单在簿"的合法残留——
+    // 非闭环破裂，故锚定 drained horizon。）
+    let (_, events) = runtime_events(240, 205);
+    assert_order_lifecycle_closure(&events);
 }
 
 // 7. 双路径撤单事件都出现（跨日负载）。
@@ -143,12 +155,13 @@ fn batch3_both_paths_cancels_present() {
         .filter(|e| matches!(e, Event::OrderCanceled { .. }))
         .count();
     // 已知形态差（登记）：旧管线日终清簿走实体路径不发 OrderCanceled
-    // 事件；runtime 显式发。两路径撤单面各自成立即可（rt>0 锚 runtime；
-    // pipe 旧形态如实记录）。
+    // 事件；runtime 显式发。Sol 二审修复集 4：`p_c >= 0` 对 usize 恒真
+    // ——改为精确锚：arrival_rate=0 的 fixture 下旧管线不产单，撤单
+    // 事件数恰为 0。
     assert!(rt_c > 0, "runtime 撤单面：{rt_c}");
-    assert!(
-        p_c >= 0,
-        "旧管线形态如实：{p_c}（清簿实体路径无事件——登记）"
+    assert_eq!(
+        p_c, 0,
+        "旧管线 arrival_rate=0 无订单——撤单事件恰为 0（清簿实体路径形态差登记）"
     );
 }
 
@@ -181,8 +194,8 @@ fn batch3_cancel_accounts_in_range() {
     for e in &events {
         if let Event::OrderCanceled { account, .. } = e {
             assert!(
-                account.0 < (count << 32) + (1 << 32),
-                "账户投影域合法：{account:?}（count={count}）"
+                account.0 < count,
+                "账户 id 连续稠密（0..count）：{account:?}（count={count}）"
             );
         }
     }

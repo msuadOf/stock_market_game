@@ -687,3 +687,55 @@ fn sol2_abort_replay_empty_level_does_not_break_auction_clearing() {
     let a1 = &report.group_finals[0].accounts[1];
     assert_eq!(a1.shares[0], 900, "第三方卖出扣股");
 }
+
+// ── Sol 二审修复集 4：turnover 回滚（Abort 冲回日内累计口径） ──
+
+#[test]
+fn sol4_turnover_rolls_back_on_abort() {
+    // tick1 买卖交叉成交（turnover=100×1000）；注入失败 Abort——
+    // Market 快照回放须含 turnover_today；重跑同批单后终态 turnover
+    // 恰为 100_000（回滚缺失则残留翻倍 200_000）。
+    use super::group::{GroupScript, PlaceSpec, TickPlan};
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|tick: u64, _round: u32| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                plan.places.push(PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: Side::Sell,
+                    price: 1000,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: Side::Buy,
+                    price: 1005,
+                    qty: 100,
+                });
+            }
+            plan
+        })
+    };
+    let mut spec = super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 3;
+    let mut world = super::world::World::spawn(spec).expect("世界构造");
+    let fail: super::coordinator::Validator = Box::new(|ev| {
+        if ev.tick == 1 {
+            Err("sol4 注入".to_owned())
+        } else {
+            Ok(())
+        }
+    });
+    world.set_validator(fail);
+    assert!(world.run_ticks(1).is_err(), "tick1 注入失败（Abort）");
+    world.set_validator(Box::new(|_| Ok(())));
+    world.run_ticks(1).expect("tick1 重跑（同批单再成交）");
+    let report = world.shutdown().expect("关停");
+    let market = &report.desk_finals[0].market;
+    assert_eq!(market.turnover_today, 100_000, "turnover 回滚后恰一轮成交额");
+    assert_eq!(market.volume_today, 100, "成交量回滚后恰 100 股");
+    assert_eq!(market.trade_count, 1, "笔数回滚后恰 1 笔");
+}

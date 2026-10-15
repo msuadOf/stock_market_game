@@ -130,3 +130,39 @@ fn fill_fact_is_copy_for_batch_aggregation() {
     assert_eq!(fill.owner, (2, 33));
     assert_eq!(fill.side, Side::Buy);
 }
+
+// Sol 二审修复集 4：拍卖实际成交量的事件面投影（事实面的实际成交
+// matched_volume 逐字投影——选择量上界不得泄漏到公开口径）。
+// 事件批内一致性的世界级锚定见 desk_semantics_tests 的
+// p1_auction_self_trade…（实际 100 股）与 sol2_abort_replay…（空档
+// 修复后 100 股）——runtime 驱动器 fixture 的 NPC 不在竞价窗交叉，
+// 无 AuctionCompleted 事件，批量层无真实锚点（如实登记，不造空转断言）。
+#[test]
+fn sol4_auction_fact_projects_actual_volume() {
+    use super::protocol::DeskAuctionFact;
+    let fact = DeskAuctionFact {
+        stock: 0,
+        tick: 10,
+        phase: crate::TradingPhase::CallAuction,
+        indicative_price: Some(1000),
+        matched_volume: 100,
+        completed: true,
+        imbalance: 7,
+    };
+    let mut seq = 5u64;
+    let events = super::event_bridge::project_auction_events(&[fact], &mut seq);
+    match events.as_slice() {
+        [crate::Event::AuctionCompleted {
+            matched_volume,
+            clearing_price: Some(p),
+            seq: event_seq,
+            ..
+        }] => {
+            assert_eq!(*matched_volume, 100, "实际成交量逐字投影（P1-2 事件面）");
+            assert_eq!(p.cents(), 1000, "清算价投影");
+            assert_eq!(*event_seq, 5, "seq 从游标分配");
+        }
+        other => panic!("恰投影一条 AuctionCompleted：{other:?}"),
+    }
+    assert_eq!(seq, 6, "游标推进恰一次");
+}
