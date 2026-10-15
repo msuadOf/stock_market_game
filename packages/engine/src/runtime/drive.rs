@@ -302,10 +302,10 @@ impl RuntimeDriver {
                 .unwrap_or_default();
             let mut sums: std::collections::BTreeMap<_, (i128, u64)> = Default::default();
             for fact in &trades {
-                let legs = [
-                    (fact.maker, fact.taker_side == crate::orderbook::Side::Sell),
-                    (fact.taker, fact.taker_side == crate::orderbook::Side::Buy),
-                ];
+                // 归一化身份：maker≡卖方、taker≡买方（Sol 七审修复 2：
+                // 此前按原始 taker_side 判买腿——主动卖时把卖方当买方，
+                /// 真买方缺 VWAP 退用上一价，经历入场价错）。
+                let legs = [(fact.taker, true), (fact.maker, false)];
                 for ((g, local), is_buy) in legs {
                     if is_buy {
                         let slot = sums.entry((g, local, fact.stock)).or_default();

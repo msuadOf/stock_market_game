@@ -1701,7 +1701,7 @@ fn sol7th_projection_matrix_active_sell_passive_buy_and_add_on() {
     );
     // 保存点（三面之一）——restore 内部跑 validate_save_slot（fault2038）。
     drop(GameSession::restore(&session.save().unwrap()).expect("同拍保存点合法（三面之一）"));
-    // 场景二：下一拍不双计（三面之二）。
+    // 场景二：下一拍不双计（三面之二——买方+卖方两面）。
     driver.step_frame_equivalent(&mut session).expect("拍 2");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
@@ -1715,6 +1715,17 @@ fn sol7th_projection_matrix_active_sell_passive_buy_and_add_on() {
         player_cash0 - gross - buy_fees,
         "下一拍不双计：现金保持"
     );
+    assert_eq!(
+        session.account(retail).unwrap().cash().cents(),
+        retail_cash0 + gross - sell_fees,
+        "下一拍不双计：卖方净得保持（费用分户两拍一致）"
+    );
+    assert_eq!(
+        session.account(retail).unwrap().positions()[&code].qty(),
+        retail_qty0 - 100,
+        "下一拍不双计：卖方减仓保持"
+    );
+    drop(GameSession::restore(&session.save().unwrap()).expect("下一拍保存点合法"));
     // 场景三：加仓（玩家再被动买 100——条目/T+1 累计）。
     driver
         .inject_player_intents(
@@ -1743,6 +1754,31 @@ fn sol7th_projection_matrix_active_sell_passive_buy_and_add_on() {
         "加仓 T+1 累计"
     );
     drop(GameSession::restore(&session.save().unwrap()).expect("加仓后保存点合法（三面之三）"));
+    // 加仓后下一拍：全值保持（条目/T+1/双方现金——不双计）。
+    driver.step_frame_equivalent(&mut session).expect("拍 4");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert_eq!(
+        session.account(player).unwrap().positions()[&code].qty(),
+        200,
+        "加仓后下一拍：条目保持 200"
+    );
+    assert_eq!(
+        session.account(player).unwrap().positions()[&code].t1_locked(),
+        200,
+        "加仓后下一拍：T+1 保持 200"
+    );
+    assert_eq!(
+        session.account(player).unwrap().cash().cents(),
+        player_cash0 - 2 * (gross + buy_fees),
+        "加仓后下一拍：买方累计实付保持"
+    );
+    assert_eq!(
+        session.account(retail).unwrap().cash().cents(),
+        retail_cash0 + 2 * (gross - sell_fees),
+        "加仓后下一拍：卖方累计净得保持"
+    );
+    drop(GameSession::restore(&session.save().unwrap()).expect("加仓后下一拍保存点合法"));
 }
 
 // Sol 六审修复 2 红证（身份核）：外来同键成交（同账户+股+方向、不同
@@ -1841,14 +1877,27 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
         .expect("外来成交拍");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
-    // R1（同拍投影）：身份核——外来成交不推进。
-    let plans = driver.collect_plans().expect("同拍组簿").remove(0).1;
-    let r1 = plans
+    // R1（同拍投影——**被测对象=session 投影簿** plans_debug，非组权威
+    /// 簿：Sol 七审修复 3——此前读 driver.collect_plans()=组簿，测错对象）。
+    let session_plans = session.plans_debug();
+    let r1 = session_plans
+        .iter()
+        .find(|(a, c, ..)| *a == account && *c == code)
+        .and_then(|(_, _, _, _, _, status)| (status == "Active").then_some(()))
+        .expect("session 投影簿中计划 Active");
+    let _ = r1;
+    // plans_debug 无余量字段——余量断言经组簿对照承载（R2），投影簿断言
+    // 计划仍在册且状态未因外来成交漂移（terminal/消失=误推进的可观测面）。
+    let plans_authority = driver.collect_plans().expect("同拍组簿").remove(0).1;
+    let r1_remaining = plans_authority
         .active_plan(account, &code)
         .expect("计划在")
         .active_child_remaining_qty()
         .expect("子单仍在途");
-    assert_eq!(r1, r0, "同拍投影：外来同键成交不推进计划子单（身份核）");
+    assert_eq!(
+        r1_remaining, r0,
+        "同拍：外来同键成交不推进计划子单（身份核）"
+    );
     // R2（下一拍组权威落账）：同为身份核——两值相等。
     driver
         .step_frame_equivalent(&mut session)
@@ -1865,4 +1914,128 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
         r2, r0,
         "组权威落账与同拍投影一致（外来成交两拍都不推进——身份核）"
     );
+}
+
+// Sol 七审修复 3：真实 **retail** 首买经历初始化验证（矩阵首买账户是
+// 玩家——无 retail ledger，初始化空转不能证 fault2038 修复）。retail
+// fixture 只持股 0——对股 1 首买即真实首持：本拍条目+经历、下一拍保持、
+// restore（validate_save_slot=配对不变量）三面。
+#[test]
+fn sol8th_retail_first_hold_experience_initializes_same_tick() {
+    use crate::orderbook::Side;
+    // 种子扫描：random 配仓下股 1 的 NPC 持股不稳定——取卖方（retail 2）
+    // 持股 ≥100 的种子（fixture 可判定前提）。
+    let mut found: Option<(GameSession, RuntimeDriver)> = None;
+    for seed in 101..140u64 {
+        let mut setup = setup_fixture();
+        setup.npcs.retail_count = 2;
+        setup.npcs.inst_count = 0;
+        setup.auction_ticks = 0;
+        setup.strategy_params.retail.arrival_rate = 0.0;
+        let mut session = GameSession::new(setup, seed).expect("会话构造");
+        if session.account(crate::AccountId(2))
+            .unwrap()
+            .positions()
+            .get(&crate::StockId(1))
+            .is_none_or(|p| p.qty() < 100)
+        {
+            continue;
+        }
+        let retail = crate::AccountId(1);
+        let code = crate::StockId(1);
+        // 清仓**先于**驱动器构造（世界投影承载清后状态——构造后清会被
+        // 组权威回写整值覆盖，首买形态不成立）。
+        session.fixture_clear_holding_for_test(retail, &code);
+        let driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+        found = Some((session, driver));
+        break;
+    }
+    let Some((mut session, mut driver)) = found else {
+        panic!("40 个种子均无股 1 卖方（fixture 失效）");
+    };
+    driver.adopt_session_seq(&session);
+    let retail = crate::AccountId(1);
+    // 卖方=第二 retail（种子扫描保证持股 ≥100——玩家无 float、首买
+    // 账户已清）。
+    let seller = crate::AccountId(2);
+    let code = crate::StockId(1);
+    let price = crate::money::Money::from_cents(2_000);
+    assert!(
+        !session.account(retail).unwrap().positions().contains_key(&code),
+        "fixture 前提：retail 对股 1 无持仓（首买形态）"
+    );
+    assert!(
+        !session.runtime_retail_experience_has(retail, &code),
+        "fixture 前提：无经历条目"
+    );
+    let cash0 = session.account(retail).unwrap().cash().cents();
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    // 玩家挂卖（retail 主动买 crossing）。
+    driver
+        .inject_player_intents(
+            &[
+                crate::session::ReceiptBearingIntent {
+                    owner: seller,
+                    intent: crate::Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Sell,
+                        price: crate::strategy::LimitPrice::Fixed(price),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+                crate::session::ReceiptBearingIntent {
+                    owner: retail,
+                    intent: crate::Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        price: crate::strategy::LimitPrice::Fixed(price),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+            ],
+            &upper,
+        )
+        .expect("注入");
+    let events = driver.step_frame_equivalent(&mut session).expect("拍 1");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert!(
+        events.iter().any(|e| matches!(e, crate::Event::Trade { qty: 100, .. })),
+        "首买成交发生"
+    );
+    let pos = session.account(retail).unwrap().positions()[&code].clone();
+    assert_eq!(pos.qty(), 100, "retail 首买同拍条目");
+    assert_eq!(pos.t1_locked(), 100, "retail 首买同拍 T+1");
+    assert!(
+        session.runtime_retail_experience_has(retail, &code),
+        "retail 首买同拍经历初始化（fault2038 面——真 ledger）"
+    );
+    drop(GameSession::restore(&session.save().unwrap()).expect("首买保存点合法"));
+    // 下一拍保持。
+    driver.step_frame_equivalent(&mut session).expect("拍 2");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert_eq!(
+        session.account(retail).unwrap().positions()[&code].qty(),
+        100,
+        "下一拍条目保持"
+    );
+    assert_eq!(
+        session.account(retail).unwrap().cash().cents(),
+        cash0 - 200_000 - 500 - 2,
+        "下一拍现金保持（实付=200000+佣金 500+过户 2）"
+    );
+    assert!(
+        session.runtime_retail_experience_has(retail, &code),
+        "下一拍经历条目保持"
+    );
+    drop(GameSession::restore(&session.save().unwrap()).expect("下一拍保存点合法"));
 }

@@ -468,6 +468,23 @@ impl GameSession {
             .is_some_and(|exp| exp.stocks.contains_key(code))
     }
 
+    /// 测试编排面（Sol 七审修复 3）：构造"从未持有"首买形态——移除
+    /// 指定股的持仓条目与 retail 经历条目（float_allocation 默认全股
+    /// 配仓；被测对象是投影层初始化，非配仓面）。
+    #[cfg(test)]
+    pub fn fixture_clear_holding_for_test(&mut self, id: crate::AccountId, code: &crate::StockId) {
+        self.mark_external_mutation();
+        if let Some(acct) = self.state.accounts.get_mut(&id) {
+            acct.fixture_clear_position_for_test(code);
+        }
+        if let Some(exp) = self.state.retail_experience.get_mut(&id) {
+            // 两面同清（initialize_holding_dated 的守卫查 feedback.stocks
+            /// ——只清 stocks 会被 ActiveEntryAlreadyExists 拒绝）。
+            exp.stocks.remove(code);
+            exp.feedback.stocks.remove(code);
+        }
+    }
+
     /// runtime 驱动器翻转面（Sol 二审修复集 5）：会话旧簿在途挂单只读
     /// 投影 `(StockId, Order 列表)`——驱动器构造期迁入世界（首步前
     /// seed 的挂单此前只在旧簿、runtime 世界不可见——裁决点名的

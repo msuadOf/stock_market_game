@@ -166,6 +166,13 @@ impl Account {
         self.restore_strategy(strategy);
     }
 
+    /// 测试编排面（Sol 七审修复 3）：移除单股持仓条目（构造"从未持有"
+    /// 首买形态）。
+    #[cfg(test)]
+    pub fn fixture_clear_position_for_test(&mut self, code: &StockId) {
+        Arc::make_mut(&mut self.state).positions.remove(code);
+    }
+
     pub fn fixture_set_positions(&mut self, positions: BTreeMap<StockId, Position>) {
         Arc::make_mut(&mut self.state).positions = positions;
     }

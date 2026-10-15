@@ -1120,12 +1120,10 @@ impl DeskState {
             + charged.stamp_tax.cents()
             + charged.transfer_fee.cents();
         // 双腿订单身份（归一化同序——Sol 六审修复 2：同拍执行腿投影
-        // 按真实订单推进，外部单不得误挂计划子单）。
-        let (maker_order, taker_order) = if taker_side == Side::Buy {
-            (sell_ref, buy_ref)
-        } else {
-            (buy_ref, sell_ref)
-        };
+        // 按真实订单推进，外部单不得误挂计划子单。Sol 七审修复 1：两
+        // 方向统一 (sell_ref, buy_ref)——owner 已固定 (seller, buyer)，
+        // 序号按原始方向交换会使主动卖时身份核跳过合法计划成交）。
+        let (maker_order, taker_order) = (sell_ref, buy_ref);
         self.trade_facts.push(super::protocol::DeskTradeFact {
             stock: self.setup.stock,
             price,
