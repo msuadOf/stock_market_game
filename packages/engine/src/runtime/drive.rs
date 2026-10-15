@@ -67,7 +67,8 @@ impl RuntimeDriver {
     pub fn from_session(session: &GameSession) -> Result<Self, String> {
         let setup: SessionSetup = session.export_setup_for_runtime();
         let n_stocks = setup.stocks.len();
-        let (cash, shares, ids) = accounts_projection_from_session(session, n_stocks);
+        let (cash, shares, invested, recovered, ids) =
+            accounts_projection_from_session(session, n_stocks);
         let npcs = ids.len();
         let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
             .runtime_attention_state()
@@ -168,6 +169,10 @@ impl RuntimeDriver {
         spec.initial_cash = 0;
         spec.initial_cash_override = Some(vec![cash]);
         spec.initial_shares = vec![shares];
+        // D3a-2c 件1：成本基构造投影（开仓派生 cost_price 消费——组侧
+        // 权威自此起步，D1 登记"成本基保留会话侧"差异就此闭合）。
+        spec.initial_invested = vec![invested];
+        spec.initial_recovered = vec![recovered];
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         Ok(Self {
             world,
@@ -256,10 +261,11 @@ impl RuntimeDriver {
                 let Some(id) = self.id_map.get(local).copied() else {
                     continue;
                 };
-                // D1 持仓回写：数量与 T+1 冻结以组权威同步；成本基
-                // （invested/recovered）保留会话侧已有条目——runtime
-                // 世界不持成本账（登记差异，D3 结算域收口）。先只读
-                // 快照+经历补账，再单次可变写回（借用分离）。
+                // D3a-2c 件1：持仓回写全面以组权威同步——数量、T+1 冻结、
+                // 成本基（invested/recovered）均取组侧值（组侧由 FillFact
+                // 落账维护；清仓清零对齐 session 清仓删除条目语义）。此前
+                // "成本基保留会话侧"=runtime 模式下恒 0——D1 登记差异就此
+                // 闭合。先只读快照+经历补账，再单次可变写回（借用分离）。
                 let mut merged = session
                     .account(id)
                     .map(|a| a.positions().clone())
@@ -274,10 +280,6 @@ impl RuntimeDriver {
                         continue;
                     }
                     let is_new_hold = qty > 0 && !merged.contains_key(&code);
-                    let (invested, recovered) = merged
-                        .get(&code)
-                        .map(|p| (p.invested_cents(), p.recovered_cents()))
-                        .unwrap_or((0, 0));
                     if is_new_hold {
                         let entry = buy_vwap
                                 .get(&(0, local as super::LocalIdx, idx as super::StockIdx))
@@ -293,8 +295,8 @@ impl RuntimeDriver {
                         crate::account::Position::from_restored_parts(
                             qty,
                             acct.frozen_today.get(idx).copied().unwrap_or(0),
-                            invested,
-                            recovered,
+                            acct.invested_cents.get(idx).copied().unwrap_or(0),
+                            acct.recovered_cents.get(idx).copied().unwrap_or(0),
                         ),
                     );
                 }

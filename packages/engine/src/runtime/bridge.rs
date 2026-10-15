@@ -67,6 +67,10 @@ pub fn world_spec_from_setup(
         accounts_per_group: 0,
         initial_cash: 0,
         initial_shares: Vec::new(),
+        // D3a-2c 件1：成本基初值由 from_session 覆盖（bridge 缺省零——
+        // 无会话来源的世界从零起）。
+        initial_invested: Vec::new(),
+        initial_recovered: Vec::new(),
         script_for,
         chunk: 512,
         watchdog: WatchdogConfig {
@@ -108,31 +112,47 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
 }
 
 /// 账户面投影（批 8c：step_frame 切换前置）：会话账户 → WorldSpec 账户初值
-/// （现金/持仓按股数值矩阵）。经公开面 `account_strategy_profiles`（全 NPC id）
-/// + `account(id)`（现金/持仓）读取；玩家账户无策略侧写不在其中——玩家组
-/// 接线（F §6.3）时并入，登记。
+/// （现金/持仓/成本基按股数值矩阵）。经公开面 `account_strategy_profiles`
+/// （全 NPC id）+ `account(id)`（现金/持仓）读取；玩家账户无策略侧写不在
+/// 其中——玩家组接线（F §6.3）时并入，登记。
 ///
-/// 返回 (initial_cash_override, initial_shares, account_ids)：ids 供 AccountId
-/// ↔ Owner 映射对齐（批 8d 存档映射）。
+/// 返回 (initial_cash_override, initial_shares, initial_invested,
+/// initial_recovered, account_ids)：ids 供 AccountId ↔ Owner 映射对齐
+/// （批 8d 存档映射）。D3a-2c 件1：invested/recovered 自 session positions
+/// 累计器直取（零量条目也取数值——qty=0 时 cost_price=None，数值无消费者）。
 pub fn accounts_projection_from_session(
     session: &crate::GameSession,
     n_stocks: usize,
-) -> (Vec<i64>, Vec<Vec<u32>>, Vec<crate::AccountId>) {
+) -> (
+    Vec<i64>,
+    Vec<Vec<u32>>,
+    Vec<Vec<i64>>,
+    Vec<Vec<i64>>,
+    Vec<crate::AccountId>,
+) {
     let profiles = session.account_strategy_profiles();
     let mut cash = Vec::with_capacity(profiles.len() + 1);
     let mut shares = Vec::with_capacity(profiles.len() + 1);
+    let mut invested = Vec::with_capacity(profiles.len() + 1);
+    let mut recovered = Vec::with_capacity(profiles.len() + 1);
     let mut ids = Vec::with_capacity(profiles.len() + 1);
     // 玩家并入（F §6.3 资源持有者同构）：AccountId(0) 惯例位先行。
     if let Some(player) = session.account(crate::AccountId(0)) {
         let mut row = vec![0u32; n_stocks];
+        let mut row_inv = vec![0i64; n_stocks];
+        let mut row_rec = vec![0i64; n_stocks];
         for (code, position) in player.positions() {
             let idx = code.0 as usize;
             if idx < n_stocks {
                 row[idx] = position.qty();
+                row_inv[idx] = position.invested_cents();
+                row_rec[idx] = position.recovered_cents();
             }
         }
         cash.push(player.cash().cents());
         shares.push(row);
+        invested.push(row_inv);
+        recovered.push(row_rec);
         ids.push(crate::AccountId(0));
     }
     for (id, _profile) in profiles {
@@ -140,15 +160,21 @@ pub fn accounts_projection_from_session(
             continue;
         };
         let mut row = vec![0u32; n_stocks];
+        let mut row_inv = vec![0i64; n_stocks];
+        let mut row_rec = vec![0i64; n_stocks];
         for (code, position) in account.positions() {
             let idx = code.0 as usize;
             if idx < n_stocks {
                 row[idx] = position.qty();
+                row_inv[idx] = position.invested_cents();
+                row_rec[idx] = position.recovered_cents();
             }
         }
         cash.push(account.cash().cents());
         shares.push(row);
+        invested.push(row_inv);
+        recovered.push(row_rec);
         ids.push(id);
     }
-    (cash, shares, ids)
+    (cash, shares, invested, recovered, ids)
 }

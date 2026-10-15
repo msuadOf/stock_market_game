@@ -101,6 +101,11 @@ pub struct WorldSpec {
     pub initial_cash: i64,
     /// 初始持仓 `[group][local][stock]`（缺省零）。
     pub initial_shares: Vec<Vec<Vec<u32>>>,
+    /// D3a-2c 件1：初始成本基 invested `[group][local][stock]`（i64 分；
+    /// 构造投影自 session positions——开仓派生 cost_price 消费）。
+    pub initial_invested: Vec<Vec<Vec<i64>>>,
+    /// D3a-2c 件1：初始成本基 recovered `[group][local][stock]`（i64 分）。
+    pub initial_recovered: Vec<Vec<Vec<i64>>>,
     /// 组决策脚本工厂。
     pub script_for: Box<dyn Fn(GroupIdx) -> GroupScript>,
     /// 组端分段 flush 粒度（op 数）。
@@ -268,6 +273,8 @@ impl World {
             accounts_per_group,
             initial_cash,
             initial_shares,
+            initial_invested,
+            initial_recovered,
             script_for,
             chunk,
             watchdog,
@@ -334,6 +341,23 @@ impl World {
                     .and_then(|by_group| by_group.get(l))
                 {
                     acct.shares.copy_from_slice(shares);
+                }
+                // D3a-2c 件1：构造期成本基投影（session positions 累计器直取）。
+                if let Some(invested) = initial_invested
+                    .get(g as usize)
+                    .and_then(|by_group| by_group.get(l))
+                {
+                    for (slot, &v) in acct.invested_cents.iter_mut().zip(invested) {
+                        *slot = v;
+                    }
+                }
+                if let Some(recovered) = initial_recovered
+                    .get(g as usize)
+                    .and_then(|by_group| by_group.get(l))
+                {
+                    for (slot, &v) in acct.recovered_cents.iter_mut().zip(recovered) {
+                        *slot = v;
+                    }
                 }
                 accounts.push(acct);
             }

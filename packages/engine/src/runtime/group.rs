@@ -26,8 +26,13 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 组内账户：现金聚合额 + 每股持仓聚合额 + T+1 冻结 + 每股在途挂单登记。
+/// 组内账户：现金聚合额 + 每股持仓聚合额 + T+1 冻结 + 每股在途挂单登记
+/// + 每股成本基（invested/recovered 累计器）。
 /// 不变量（期末审计断言）：`shares == sellable + frozen_today`（sellable 派生）。
+/// 成本基口径（D3a-2c 件1，对齐 `Account::apply_buy_settlement` /
+/// `apply_sell_settlement`）：invested/recovered 只累计**成交额**
+/// （`price × qty`，佣金/过户费/印花税不入账）；清仓（shares 归零）后
+/// 成本基清零（对齐 session 清仓删除条目——下次买入从零新建）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupAccount {
     /// 现金聚合额（i64 分）。
@@ -38,16 +43,22 @@ pub struct GroupAccount {
     pub frozen_today: Vec<u32>,
     /// 每股在途挂单计数（下标=StockIdx；严格所有权口径的诊断面）。
     pub foreign_active: Vec<u16>,
+    /// 每股累计买入成交额（i64 分，仅成交额——开仓派生 cost_price 消费）。
+    pub invested_cents: Vec<i64>,
+    /// 每股累计卖出成交额（i64 分，仅成交额）。
+    pub recovered_cents: Vec<i64>,
 }
 
 impl GroupAccount {
-    /// 构造：给定现金与股数（持仓/冻结/在途清零）。
+    /// 构造：给定现金与股数（持仓/冻结/在途/成本基清零）。
     pub fn new(cash: i64, n_stocks: usize) -> Self {
         GroupAccount {
             cash,
             shares: vec![0; n_stocks],
             frozen_today: vec![0; n_stocks],
             foreign_active: vec![0; n_stocks],
+            invested_cents: vec![0; n_stocks],
+            recovered_cents: vec![0; n_stocks],
         }
     }
 
@@ -178,6 +189,14 @@ enum GroupUndo {
     NextDue {
         local: LocalIdx,
         prev: u64,
+    },
+    /// 成本基变动（D3a-2c 件1：FillFact 落账的 invested/recovered 增量，
+    /// 含清仓清零的负增量；回滚时逆序减回）。
+    CostBasis {
+        local: LocalIdx,
+        stock: StockIdx,
+        d_invested: i64,
+        d_recovered: i64,
     },
 }
 
@@ -464,6 +483,16 @@ impl GroupState {
                         }
                     }
                 }
+                GroupUndo::CostBasis {
+                    local,
+                    stock,
+                    d_invested,
+                    d_recovered,
+                } => {
+                    let acct = &mut self.accounts[local as usize];
+                    acct.invested_cents[stock as usize] -= d_invested;
+                    acct.recovered_cents[stock as usize] -= d_recovered;
+                }
             }
         }
         self.staging.clear();
@@ -502,11 +531,101 @@ impl GroupState {
             }
             // 成交事实进计划结果缓冲（信息回流：续行由 FillFact 驱动，F §4.3）。
             self.plan_fills.extend(batch.fills.iter().copied());
+            // D3a-2c 件1：成本基先行（FillFact 逐笔记 invested/recovered，
+            // 仅成交额——对齐 Account::apply_buy/apply_sell 口径）。
+            let mut touched: Vec<(LocalIdx, StockIdx)> = Vec::new();
+            for fill in &batch.fills {
+                self.apply_fill_cost_basis(stock as StockIdx, fill)?;
+                if !touched.contains(&(fill.owner.1, stock as StockIdx)) {
+                    touched.push((fill.owner.1, stock as StockIdx));
+                }
+            }
             for entity in batch.entities {
                 self.apply_entity(stock as StockIdx, entity)?;
             }
+            // 清仓清零（实体落账后按期末 shares 判定：对齐 session 清仓删除
+            // 条目——下次买入从零新建，避免再持有后 cost_price 漂移）。
+            self.clear_flat_cost_basis(&touched);
         }
         Ok(())
+    }
+
+    /// 单笔成交的成本基落账（买腿 invested += price×qty、卖腿 recovered
+    /// += price×qty；费用不入账）。记逆操作（Abort 冲回）。
+    fn apply_fill_cost_basis(
+        &mut self,
+        stock: StockIdx,
+        fill: &FillFact,
+    ) -> Result<(), RuntimeError> {
+        let group = self.group;
+        if fill.owner.0 != group {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} 批次收到外组成交事实 owner={:?}",
+                    fill.owner
+                ),
+            });
+        }
+        let local = fill.owner.1;
+        let amount = Money::from_cents(fill.price)
+            .mul_shares(fill.qty)
+            .map_err(|e| RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} 成本基金额溢出：local={local}, stock={stock}, price={}, qty={}：{e:?}",
+                    fill.price, fill.qty
+                ),
+            })?
+            .cents();
+        let (d_invested, d_recovered) = match fill.side {
+            Side::Buy => (amount, 0),
+            Side::Sell => (0, amount),
+        };
+        let acct = self.acct_mut(local)?;
+        let slot = &mut acct.invested_cents[stock as usize];
+        *slot = slot.checked_add(d_invested).ok_or_else(|| {
+            RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} invested 溢出：local={local}, stock={stock}, delta={d_invested}"
+                ),
+            }
+        })?;
+        let acct = self.acct_mut(local)?;
+        let slot = &mut acct.recovered_cents[stock as usize];
+        *slot = slot.checked_add(d_recovered).ok_or_else(|| {
+            RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} recovered 溢出：local={local}, stock={stock}, delta={d_recovered}"
+                ),
+            }
+        })?;
+        self.undo.push(GroupUndo::CostBasis {
+            local,
+            stock,
+            d_invested,
+            d_recovered,
+        });
+        Ok(())
+    }
+
+    /// 清仓清零（期末 shares==0 的 touched 槽位）：invested/recovered 归零，
+    /// 记逆操作。
+    fn clear_flat_cost_basis(&mut self, touched: &[(LocalIdx, StockIdx)]) {
+        for &(local, stock) in touched {
+            let s = stock as usize;
+            let acct = &mut self.accounts[local as usize];
+            if acct.shares[s] == 0 && (acct.invested_cents[s] != 0 || acct.recovered_cents[s] != 0)
+            {
+                let (d_invested, d_recovered) = (acct.invested_cents[s], acct.recovered_cents[s]);
+                acct.invested_cents[s] = 0;
+                acct.recovered_cents[s] = 0;
+                self.undo.push(GroupUndo::CostBasis {
+                    local,
+                    stock,
+                    d_invested: -d_invested,
+                    d_recovered: -d_recovered,
+                });
+            }
+        }
     }
 
     /// 落账单条实体（记逆操作）。

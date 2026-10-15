@@ -30,6 +30,8 @@ pub(crate) fn basic_spec(
         accounts_per_group,
         initial_cash: 1_000_000,
         initial_shares: shares,
+        initial_invested: Vec::new(),
+        initial_recovered: Vec::new(),
         script_for,
         chunk: 8,
         watchdog: WatchdogConfig {

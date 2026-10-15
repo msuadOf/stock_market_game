@@ -244,6 +244,239 @@ fn d3a2b_group_belief_states_match_session_projection() {
     assert!(checked > 0, "至少一个机构位信念态被核对（{checked}）");
 }
 
+// D3a-2c 件1：组账户成本基落账（仅成交额口径——佣金/过户费不入 invested/
+// recovered，对齐 Account::apply_buy_settlement / apply_sell_settlement）。
+// 脚本直连世界：同价对手成交 → 买腿 invested、卖腿 recovered 精确落账；
+// 清仓后成本基清零（对齐 session 清仓删除条目语义）；Abort 冲回本 tick 增量。
+#[test]
+fn d3a2c_cost_basis_ledger_tracks_fills_and_clears_on_flat() {
+    use super::group::{PlaceSpec, TickPlan};
+    use super::world::World;
+    use super::bridge::world_spec_from_setup;
+
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    let mut spec = world_spec_from_setup(&setup, None, Box::new(|_g| {
+        // 脚本：tick1 NPC0 卖 100@1000、NPC1 买 100@1000（成交批次 tick2
+        // 落账）；tick3 NPC0 清仓余股、NPC1 再买 100（批次 tick4 落账）。
+        Box::new(|tick: u64, _round: u32| {
+            let mut plan = TickPlan::default();
+            if tick == 1 || tick == 3 {
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: crate::orderbook::Side::Sell,
+                    price: 1000,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: crate::orderbook::Side::Buy,
+                    price: 1000,
+                    qty: 100,
+                });
+            }
+            plan
+        })
+    }))
+    .expect("投影");
+    spec.n_groups = 1;
+    spec.accounts_per_group = 2;
+    spec.initial_cash = 1_000_000;
+    spec.initial_shares = vec![vec![vec![200u32, 0], vec![0, 0]]];
+    // 全天连续形态（auction=0）：tick1 挂单即撮合——脚本时序按连续相位
+    // 断言（竞价窗内挂单要等竞价点才成交）。
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    // tick1 成交批次在 tick2 的 Start 落账（协议时序：FIFO + 收束因果序）。
+    world.run_ticks(2).expect("tick1 成交 + tick2 落账");
+    let accounts = world.snapshot_accounts().expect("快照")[0].1.clone();
+    // 部分卖出：recovered 记 100×1000；invested 不动。
+    assert_eq!(accounts[0].shares[0], 100, "NPC0 部分卖出后余 100 股");
+    assert_eq!(accounts[0].invested_cents[0], 0, "卖方 invested 不变");
+    assert_eq!(
+        accounts[0].recovered_cents[0],
+        1000 * 100,
+        "卖腿 recovered=成交额（费用不入账）"
+    );
+    // 买腿：invested 记 100×1000（当日冻结=T+1）。
+    assert_eq!(accounts[1].shares[0], 100, "NPC1 买入 100 股");
+    assert_eq!(
+        accounts[1].invested_cents[0],
+        1000 * 100,
+        "买腿 invested=成交额（费用不入账）"
+    );
+    assert_eq!(accounts[1].recovered_cents[0], 0);
+
+    // Abort 冲回：validator 恒拒 tick3 → 组回滚（staging 批次清空、可逆日志
+    // 逆序回放）→ 成本基恢复 tick2 末态。
+    world.set_validator(Box::new(|_e| Err("注入拒绝".to_owned())));
+    assert!(world.run_ticks(1).is_err(), "tick3 被校验拒绝");
+    let rolled = world.snapshot_accounts().expect("回滚后快照")[0].1.clone();
+    assert_eq!(rolled[0].shares[0], 100, "回滚恢复持仓");
+    assert_eq!(
+        rolled[0].recovered_cents[0],
+        1000 * 100,
+        "回滚冲回本 tick 成本增量（recovered 恢复 1000×100）"
+    );
+    assert_eq!(rolled[0].invested_cents[0], 0, "回滚后 invested 仍 0");
+
+    // 清仓清零：解除注入，重跑 tick3（NPC0 清仓）→ tick4 落账 → 成本基归零。
+    world.set_validator(Box::new(|_e| Ok(())));
+    world.run_ticks(2).expect("tick3 重跑收敛 + tick4 落账");
+    let flat = world.snapshot_accounts().expect("清仓后快照")[0].1.clone();
+    assert_eq!(flat[0].shares[0], 0, "NPC0 清仓");
+    assert_eq!(
+        flat[0].invested_cents[0] + flat[0].recovered_cents[0],
+        0,
+        "清仓后成本基清零（对齐 session 清仓删除条目语义）"
+    );
+    world.shutdown().expect("关停");
+}
+
+// D3a-2c 件1：driver 端到端——runtime 成交后组侧成本基为权威，回写
+// session 侧 invested/recovered（此前"保留会话侧已有"=runtime 模式下
+// 恒 0，成交后必红）；期望值从 desk_trades 双腿独立推算。成交由外部
+// 意图注入保证（同 tick 对手双方限价交叉——自然零售流在此 fixture 下
+// 不保证交叉）。
+#[test]
+fn d3a2c_cost_basis_writes_back_to_session_positions() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 2;
+    let mut session = GameSession::new(setup, 21).expect("会话构造");
+    // 卖方须有可卖持仓（开局分配）——选一个有持仓的 NPC 做卖腿。
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            session
+                .account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 0（float 分配）");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 独立期望值：开局成本基基线（构造投影正确性由初始快照隐含覆盖）
+    // + 逐 tick 累计买腿成交额。
+    fn local_of(id_map: &[crate::AccountId], id: crate::AccountId) -> super::LocalIdx {
+        id_map
+            .iter()
+            .position(|x| *x == id)
+            .expect("NPC 在名册") as super::LocalIdx
+    }
+    let buyer_local = local_of(&driver.id_map, buyer);
+    let mut expect_invested: i64 = session
+        .account(buyer)
+        .and_then(|a| a.positions().get(&crate::StockId(0)))
+        .map(|p| p.invested_cents())
+        .unwrap_or(0);
+    for _t in 1..=20u64 {
+        // 每 tick 注入对手双方（限价 1000=初始价；买卖交叉必成交）。
+        let intents = vec![
+            crate::session::ReceiptBearingIntent {
+                owner: buyer,
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            },
+            crate::session::ReceiptBearingIntent {
+                owner: seller,
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Sell,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            },
+        ];
+        let upper: Vec<i64> = driver
+            .world_public_views()
+            .iter()
+            .map(|v| v.daily_upper_limit)
+            .collect();
+        driver
+            .inject_player_intents(&intents, &upper)
+            .expect("意图注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    // 独立推算（全量）：desk_trades 逐笔买腿。DeskTradeFact 语义：maker≡
+    // 卖方、taker≡买方（desk 产出侧两种 taker_side 下统一如此，见 desk.rs
+    // trade_facts 构造——taker_side=Sell 时 maker/taker 字段对调填入）。
+    for rec in driver.world_report_log() {
+        for fact in &rec.desk_trades {
+            if fact.stock != 0 {
+                continue;
+            }
+            if fact.taker == (0, buyer_local) {
+                expect_invested += fact.price * i64::from(fact.qty);
+            }
+        }
+    }
+    assert!(
+        expect_invested > 0,
+        "场景须产生至少一笔买腿成交（意图交叉注入）"
+    );
+    // (a) 组侧成本基==独立推算（买腿 invested=成交额累计；若中途清仓
+    // 清零则期末值为 0——本场景买方持续买入不卖，期末必持仓）。
+    let snapshots = driver.world_accounts_snapshot().expect("组快照");
+    let group_accounts = &snapshots[0].1;
+    let buyer_account = &group_accounts[buyer_local as usize];
+    assert!(
+        buyer_account.shares[0] > 0,
+        "买方期末持有股 0（持续买入场景）"
+    );
+    assert_eq!(
+        buyer_account.invested_cents[0], expect_invested,
+        "买方组侧 invested==成交额累计（费用不入账）"
+    );
+    // (b) session 回写==组侧权威（runtime 模式下 session 无结算——回写
+    // 是唯一来源；保留会话侧旧值时此处恒 0 红）。
+    for (local, account) in group_accounts.iter().enumerate() {
+        let Some(&id) = driver.id_map.get(local) else {
+            continue;
+        };
+        let positions = session
+            .account(id)
+            .map(|a| a.positions().clone())
+            .unwrap_or_default();
+        for (stock, &qty) in account.shares.iter().enumerate() {
+            if qty == 0 {
+                continue;
+            }
+            let code = crate::StockId(stock as u32);
+            let position = positions
+                .get(&code)
+                .unwrap_or_else(|| panic!("NPC {id:?} 股 {code:?} 应有条目"));
+            assert_eq!(
+                position.invested_cents(),
+                account.invested_cents[stock],
+                "NPC {id:?} 股 {code:?} session invested==组侧权威"
+            );
+            assert_eq!(
+                position.recovered_cents(),
+                account.recovered_cents[stock],
+                "NPC {id:?} 股 {code:?} session recovered==组侧权威"
+            );
+        }
+    }
+}
+
 // Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——
 // (a) 组内推进+仅 information 域回写（cadence/next_check 前进）；
 // (b) candidate 域回写前后不变（权威调和锚：快照取点/回写覆写错即红）。
