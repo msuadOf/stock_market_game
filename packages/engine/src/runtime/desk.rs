@@ -277,6 +277,11 @@ pub struct DeskState {
     lifecycle_facts: Vec<super::protocol::DeskLifecycleFact>,
     /// 本 tick 竞价事实缓冲。
     auction_facts: Vec<super::protocol::DeskAuctionFact>,
+    /// 自成交快速索引：owner → 卖侧自单价集合（价→计数）。taker 到达先查
+    /// 索引（无交叉自单则零簿扫描走原快速路径）。
+    self_asks: std::collections::HashMap<Owner, std::collections::BTreeMap<i64, u32>>,
+    /// owner → 买侧自单价集合。
+    self_bids: std::collections::HashMap<Owner, std::collections::BTreeMap<i64, u32>>,
     /// 最近一次 Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 committed_hash；
     /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据）。
     rollback_hash: Option<u64>,
@@ -322,6 +327,8 @@ impl DeskState {
             trade_facts: Vec::new(),
             lifecycle_facts: Vec::new(),
             auction_facts: Vec::new(),
+            self_asks: std::collections::HashMap::new(),
+            self_bids: std::collections::HashMap::new(),
             rollback_hash: None,
         }
     }
@@ -412,6 +419,12 @@ impl DeskState {
                     self.remove_by_ref(&o.order_ref);
                 }
                 DeskUndo::Removed(o) => {
+                    let idx = if o.side == Side::Buy {
+                        &mut self.self_bids
+                    } else {
+                        &mut self.self_asks
+                    };
+                    *idx.entry(o.owner).or_default().entry(o.price).or_insert(0) += 1;
                     let level = if o.side == Side::Buy {
                         &mut self.bids
                     } else {
@@ -782,6 +795,15 @@ impl DeskState {
     fn rest(&mut self, order: DeskOrder) {
         self.next_serial += 1;
         self.undo.push(DeskUndo::Serial);
+        let idx = if order.side == Side::Buy {
+            &mut self.self_bids
+        } else {
+            &mut self.self_asks
+        };
+        *idx.entry(order.owner)
+            .or_default()
+            .entry(order.price)
+            .or_insert(0) += 1;
         let fact = super::protocol::DeskLifecycleFact {
             stock: self.setup.stock,
             owner: order.owner,
@@ -823,22 +845,24 @@ impl DeskState {
             if !crossed {
                 break;
             }
-            // A 股自成交限制（翻转批·差异修复）：同一投资者账户的对手
-            // 委托不成交——跳过该档该单（价格档内继续找他人单）。
-            {
-                let book = if order.side == Side::Buy {
-                    &self.asks
-                } else {
-                    &self.bids
-                };
-                let level = book.get(&best);
-                let all_self = level
-                    .map(|l| l.iter().take_while(|o| o.owner != order.owner).count() == 0)
-                    .unwrap_or(true);
-                if all_self {
-                    // 本档全为自单：移出本档再循环（或终止——保守终止）。
-                    break;
-                }
+            // A 股自成交限制（索引快速路径）：taker 先查自己在对手侧
+            // 有无 ≤/≥ 本档价的自单（O(log) 索引查，无自单零簿扫描）。
+            let has_self_at_or_better = match order.side {
+                Side::Buy => self
+                    .self_asks
+                    .get(&order.owner)
+                    .and_then(|m| m.range(..=best).next_back())
+                    .is_some(),
+                Side::Sell => self
+                    .self_bids
+                    .get(&order.owner)
+                    .and_then(|m| m.range(best..).next())
+                    .is_some(),
+            };
+            if has_self_at_or_better {
+                // 档首是自单（FIFO 档首即最早自单）——保守终止撮合。
+                // 语义与批 2 版一致：仅当交叉档存在自单竞争时终止。
+                break;
             }
             // 取档首 maker（同价先到先成交）。
             let maker = {
@@ -1093,6 +1117,25 @@ impl DeskState {
         }
         if after.qty == 0 {
             let removed = level.pop_front().expect("front 已核验");
+            // 自成交索引同步（全成移除路径——cancel/expire 之外的第三路径）。
+            {
+                let idx = if removed.side == Side::Buy {
+                    &mut self.self_bids
+                } else {
+                    &mut self.self_asks
+                };
+                if let Some(prices) = idx.get_mut(&removed.owner) {
+                    if let Some(cnt) = prices.get_mut(&removed.price) {
+                        *cnt -= 1;
+                        if *cnt == 0 {
+                            prices.remove(&removed.price);
+                        }
+                    }
+                    if prices.is_empty() {
+                        idx.remove(&removed.owner);
+                    }
+                }
+            }
             self.undo.push(DeskUndo::Removed(removed));
             self.resting_count -= 1;
             self.undo.push(DeskUndo::RestingCount(-1));
@@ -1150,6 +1193,25 @@ impl DeskState {
 
     /// 移除挂单（记 Removed）。
     fn remove_order(&mut self, order: &DeskOrder) {
+        // 自成交索引同步移除。
+        {
+            let idx = if order.side == Side::Buy {
+                &mut self.self_bids
+            } else {
+                &mut self.self_asks
+            };
+            if let Some(prices) = idx.get_mut(&order.owner) {
+                if let Some(cnt) = prices.get_mut(&order.price) {
+                    *cnt -= 1;
+                    if *cnt == 0 {
+                        prices.remove(&order.price);
+                    }
+                }
+                if prices.is_empty() {
+                    idx.remove(&order.owner);
+                }
+            }
+        }
         let book = if order.side == Side::Buy {
             &mut self.bids
         } else {
@@ -1368,7 +1430,8 @@ impl DeskState {
                 // 允许提前结束（matched < volume 合法：选择量是上界）。
                 break;
             };
-            // A 股自成交限制（拍卖清算）：同 owner 配对双双撤单（不成交）。
+            // A 股自成交限制（拍卖清算，索引判同主）：同 owner 配对
+            // 双双撤单（不成交）——索引 O(1) 比较，无簿扫描。
             if buy.owner == sell.owner {
                 self.remove_order(&sell);
                 self.remove_order(&buy);
