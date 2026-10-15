@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::flip_helpers::{assert_order_lifecycle_closure, pipeline_events, runtime_events, setup_1stock};
+use common::flip_helpers::{assert_order_event_invariants, pipeline_events, runtime_events, setup_1stock};
 use engine::{Event, GameSession};
 
 // 1. 跨日驱动后会话 day 推进（runtime 市场侧 day 安装）。
@@ -129,7 +129,7 @@ fn batch4_seq_continuous_across_day_end() {
 #[test]
 fn batch4_drain_closes_all_resting() {
     let (_, events) = runtime_events(240, 307);
-    assert_order_lifecycle_closure(&events);
+    assert_order_event_invariants(&events);
 }
 
 // 9. 双路径现金守恒方向（跨日无注入）。

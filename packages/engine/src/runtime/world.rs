@@ -422,6 +422,19 @@ impl World {
         )>,
         RuntimeError,
     > {
+        // Sol 三审阻断 2：通道面一致性守卫——sever/死亡后 txs 清空而
+        // 期望响应数不变，收集会空等 watchdog（30s）才失败。断连形态
+        // 立即显式报错（防御式：不静默等待）。
+        if self.desk_txs.len() != self.n_stocks {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "take_candle_projection 通道面与部数不一致（txs={} n_stocks={}——世界已断连）",
+                    self.desk_txs.len(),
+                    self.n_stocks
+                ),
+            });
+        }
         for tx in &self.desk_txs {
             tx.send(DeskMsg::EchoCandles).map_err(|_| RuntimeError::SendFailed {
                 detail: "EchoCandles 广播失败".to_owned(),
@@ -473,6 +486,16 @@ impl World {
     pub fn collect_group_attention(
         &mut self,
     ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64)>)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "collect_group_attention 通道面与组数不一致（txs={} n_groups={}——世界已断连）",
+                    self.group_txs.len(),
+                    self.n_groups
+                ),
+            });
+        }
         for tx in &self.group_txs {
             tx.send(GroupIn::EchoAttention).map_err(|_| {
                 RuntimeError::SendFailed { detail: "EchoAttention 广播失败".to_owned() }
@@ -503,6 +526,16 @@ impl World {
     pub fn snapshot_accounts(
         &mut self,
     ) -> Result<Vec<(GroupIdx, Vec<GroupAccount>)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "snapshot_accounts 通道面与组数不一致（txs={} n_groups={}——世界已断连）",
+                    self.group_txs.len(),
+                    self.n_groups
+                ),
+            });
+        }
         for tx in &self.group_txs {
             tx.send(GroupIn::EchoAccounts)
                 .map_err(|_| RuntimeError::SendFailed {

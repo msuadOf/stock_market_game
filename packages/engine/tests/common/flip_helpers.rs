@@ -101,18 +101,20 @@ pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     (session, all)
 }
 
-/// 逐订单终结闭环（Sol 二审修复集 4 + 三审漏检修复）：事件面可判定的
-/// 真实闭环——
+/// 订单事件不变量（Sol 四审措辞勘正）：逐单**局部**不变量 + 账户
+/// **聚合**口径——**不构成逐单终结完整性的证明**：
 /// (1) 每条 OrderCanceled 的 (account, code, id) 必须先有同键
 ///     OrderAccepted，且撤销余量 ≤ 受理余量；
 /// (2) 受理 id 全程不重复；
-/// (3) **同一受理 id 的撤单事件恰一条**（Sol 三审反例：同账户受理
-///     A/B 各 100、撤 A 两次、B 未终结——按账户聚合 200−200=0 恒过；
-///     逐单去重后第二次撤 A 即红，B 漏终结由 (4) 的聚合差暴露）；
+/// (3) 同一受理 id 的撤单事件恰一条；
 /// (4) 每账户+股的（受理总量−撤销总量）≤ 该账户该股被 Trade 触碰
-///     的总量（挂簿量的成交消耗必有 Trade 腿触碰持有人——立即成
-///     交腿只增不减触碰量，不等号方向恒安全）。
-pub fn assert_order_lifecycle_closure(events: &[Event]) {
+///     的总量。
+/// 已知界限（Sol 四审静态反例，如实登记）：Trade 事件无订单身份，
+/// 跨方向成交腿不可核销——同账户买单 B 未终结时，其卖单成交的
+/// 触碰量可抵消聚合差（受理买单 200−撤 100 ≤ 卖单成交触碰 100 恒过，
+/// 但卖腿不可能消耗买腿）。**逐单终结完整性由无成交 fixture 的精确
+/// 断言承载**（见 batch3 exact_closure 测试：键集相等+逐单余量相等）。
+pub fn assert_order_event_invariants(events: &[Event]) {
     use std::collections::BTreeMap;
     // (account, code, id) → 受理余量。
     let mut accepted: BTreeMap<(u64, u32, u64), u32> = BTreeMap::new();
@@ -184,7 +186,7 @@ pub fn assert_order_lifecycle_closure(events: &[Event]) {
 
 #[cfg(test)]
 mod closure_tests {
-    use super::assert_order_lifecycle_closure;
+    use super::assert_order_event_invariants;
     use engine::{Event, Money, OrderId, StockId, AccountId};
     use engine::orderbook::Side;
 
@@ -221,7 +223,7 @@ mod closure_tests {
             cancel(3, 1, 100),
             cancel(4, 1, 100),
         ];
-        let result = std::panic::catch_unwind(|| assert_order_lifecycle_closure(&events));
+        let result = std::panic::catch_unwind(|| assert_order_event_invariants(&events));
         assert!(result.is_err(), "同 id 双撤单必须被闭环断言拒绝（Sol 反例）");
     }
 
@@ -234,14 +236,14 @@ mod closure_tests {
             cancel(3, 1, 100),
             cancel(4, 2, 100),
         ];
-        assert_order_lifecycle_closure(&events);
+        assert_order_event_invariants(&events);
     }
 
     // 反例变体：撤单余量按单不超受理（A 撤 150 > 受理 100）。
     #[test]
     fn sol3r_cancel_exceeding_accept_is_rejected() {
         let events = vec![accept(1, 1, 100), cancel(2, 1, 150)];
-        let result = std::panic::catch_unwind(|| assert_order_lifecycle_closure(&events));
+        let result = std::panic::catch_unwind(|| assert_order_event_invariants(&events));
         assert!(result.is_err(), "撤单余量超受理必须被拒绝");
     }
 }

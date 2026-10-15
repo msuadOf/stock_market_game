@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::flip_helpers::{assert_order_lifecycle_closure, pipeline_events, runtime_events};
+use common::flip_helpers::{assert_order_event_invariants, pipeline_events, runtime_events};
 use engine::Event;
 
 // 1. 撤单事件（OrderCanceled）在 runtime 路径可见（TTL 到期路径）。
@@ -138,7 +138,7 @@ fn batch3_accept_terminal_closure() {
     // （250 tick 口径实测抓到"day-2 中途挂单在簿"的合法残留——
     // 非闭环破裂，故锚定 drained horizon。）
     let (_, events) = runtime_events(240, 205);
-    assert_order_lifecycle_closure(&events);
+    assert_order_event_invariants(&events);
 }
 
 // 7. 双路径撤单事件都出现（跨日负载）。
@@ -205,4 +205,45 @@ fn batch3_cancel_accounts_in_range() {
 #[test]
 fn batch3_cross_day_no_panic() {
     let _ = runtime_events(485, 209); // 两个交易日
+}
+
+// 11. 逐单终结完整性（Sol 四审）：确定无成交 fixture（seed 302 实测
+//     trades=0、accepts=25、cancels=25）上做精确断言——每张受理单
+//     恰被一条撤单终结（键集相等）、逐单余量分毫不差（无成交消耗）。
+//     聚合 helper 的已知界限（对手腿触碰量可抵消聚合差）在此不适用：
+//     无成交 ⇒ 键集/余量可精确核销。
+#[test]
+fn batch3_exact_closure_on_no_trade_fixture() {
+    use std::collections::BTreeMap;
+    let (_, events) = runtime_events(240, 302);
+    // (account, code, id) → (受理余量, 撤单次数, 撤单余量)
+    let mut orders: BTreeMap<(u64, u32, u64), (u32, u32, u32)> = BTreeMap::new();
+    let mut trades = 0u64;
+    for e in &events {
+        match e {
+            Event::OrderAccepted { account, code, id, remaining_qty, .. } => {
+                let slot = orders.entry((account.0, code.0, id.0)).or_default();
+                slot.0 += *remaining_qty;
+            }
+            Event::OrderCanceled { account, code, id, remaining_qty, .. } => {
+                let slot = orders.entry((account.0, code.0, id.0)).or_default();
+                slot.1 += 1;
+                slot.2 += *remaining_qty;
+            }
+            Event::Trade { .. } => trades += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(trades, 0u64, "前置：本 fixture 确定无成交（否则精确口径不适用）");
+    assert!(!orders.is_empty(), "前置：有受理单（非空转）");
+    for (key, (accepted_rem, cancel_count, canceled_rem)) in &orders {
+        assert_eq!(
+            cancel_count, &1,
+            "每张受理单恰一条终结撤单（Sol 四审逐单完整性）：{key:?}"
+        );
+        assert_eq!(
+            canceled_rem, accepted_rem,
+            "无成交 ⇒ 撤单余量必须等于受理余量（逐单核销分毫不差）：{key:?}"
+        );
+    }
 }

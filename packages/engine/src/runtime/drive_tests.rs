@@ -19,8 +19,8 @@ fn sol3_install_candles_propagates_collection_errors() {
         .install_candles(&mut session)
         .expect_err("K 投影收集失败必须传播（不吞发送错误）");
     assert!(
-        err.contains("K 投影收集失败"),
-        "错误面可辨识：{err}"
+        err.contains("K 投影收集失败") && err.contains("通道面"),
+        "错误面可辨识且为断连守卫即时报错（不空等 watchdog）：{err}"
     );
 }
 
