@@ -89,9 +89,14 @@ pub fn runtime_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
 pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     let mut session = GameSession::new(setup_1stock(), seed).expect("会话构造");
     let mut all = Vec::new();
-    for _ in 0..ticks {
+    for t in 1..=ticks {
         let frame = session.step_frame().expect("旧管线 tick");
         all.extend(frame.facts.into_iter().map(|f| f.event));
+        // 日界：旧管线的自然日推进是宿主责任（ADR-0025）——跨日驱动时
+        // 显式调用（与 runtime 编排自动日结对齐口径）。
+        if t % 240 == 0 {
+            session.end_civil_day().expect("旧管线自然日推进");
+        }
     }
     (session, all)
 }

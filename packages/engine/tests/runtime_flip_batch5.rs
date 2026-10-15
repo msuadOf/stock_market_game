@@ -57,12 +57,10 @@ fn batch5_company_registry_present_after_restore() {
 fn batch5_civil_date_advances() {
     let (rt, _) = runtime_events(245, 405);
     let (pipe, _) = pipeline_events(245, 405);
-    // 差异登记（翻转批）：30 tick 无日结时 pipeline civil 停 1/5（预期），
-    // runtime 侧推到 1/6——真实差异候选（无日结不应推自然日），待批 6
-    // 裁决。本测试先锚“两侧均为 2026-1 月内合法日”。
-    let (ry, rm) = (rt.civil_date().year(), rt.civil_date().month());
-    let (py, pm) = (pipe.civil_date().year(), pipe.civil_date().month());
-    assert_eq!((ry, rm), (py, pm), "年月一致（日差已登记待裁决）");
+    // 裁决（翻转批）：日历推进语义一致（两侧都在市场日完成后推自然日）；
+    // 差异仅在"谁调用"——runtime 编排自动 vs 旧管线宿主显式（ADR-0025
+    // 宿主责任）。helpers 对齐口径后严格断言一致。
+    assert_eq!(rt.civil_date(), pipe.civil_date(), "跨日后 civil date 双路径一致");
 }
 
 // 7. 驱动后查询股票历史（读侧通道）不失败。
