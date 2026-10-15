@@ -24,6 +24,14 @@ impl GameSession {
         }
     }
 
+    /// runtime 驱动器翻转面（D2）：玩家意图冻结取出。
+    pub fn take_runtime_player_intents(
+        &mut self,
+    ) -> Vec<crate::session::ReceiptBearingIntent> {
+        self.mark_external_mutation();
+        self.state.pending_player.drain(..).collect()
+    }
+
     /// runtime 驱动翻转入口（翻转批）：环境变量 ENGINE_STEP_RUNTIME=1
     /// 时 `step()` 走 RuntimeDriver（常驻 World+安装面），否则旧管线。
     /// `step_frame_and_commit`（candidate 投影契约/Escrow 验证）恒走
@@ -68,6 +76,15 @@ impl GameSession {
                 description: e,
             })?;
         driver.adopt_session_seq(self);
+        // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0。
+        let intents = self.take_runtime_player_intents();
+        if !intents.is_empty() {
+            let uppers: Vec<i64> = {
+                let views = driver.world_public_views();
+                views.iter().map(|v| v.daily_upper_limit).collect()
+            };
+            driver.inject_player_intents(&intents, &uppers);
+        }
         // 生产探针对齐（t3 契约：每 tick 恰一次"生产调用"）。
         #[cfg(test)]
         self.compute_context()

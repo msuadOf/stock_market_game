@@ -214,6 +214,8 @@ pub struct GroupState {
     plan_fills: Vec<FillFact>,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
+    /// 外部注入计划缓冲（玩家意图路由；run_round 消费一次即清）。
+    external_pending: Vec<super::decision::PendingOp>,
     /// 决策脚本。
     script: GroupScript,
 }
@@ -252,6 +254,7 @@ impl GroupState {
             plans,
             plan_fills: Vec::new(),
             observed: Vec::new(),
+            external_pending: Vec::new(),
             script,
         }
     }
@@ -663,6 +666,11 @@ impl GroupState {
                 }));
             }
         }
+        // 外部注入计划（玩家意图路由，D2）：并入扣除路径（一次消费即清）。
+        let external = std::mem::take(&mut self.external_pending);
+        for op in external {
+            pendings.push(Pending::Op(op));
+        }
         // 计划链推进（批 6）：轮 0=根命令（空结果输入）；轮 k=按本 tick 已见
         // FillFact 推进（Continue 轮先落账再续行——staging 已在 handle_continue
         // 应用，plan_fills 随落账收集）。跨股产物并入同一扣除路径。
@@ -1000,6 +1008,10 @@ pub fn group_main(
                         break;
                     }
                 }
+            }
+            GroupIn::ExternalPlan(ops) => {
+                // 玩家意图路由（D2 批）：外部计划存缓冲，run_round 消费。
+                state.external_pending.extend(ops);
             }
             GroupIn::EchoAttention => {
                 let attention = match &state.decision {

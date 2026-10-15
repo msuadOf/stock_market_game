@@ -449,6 +449,13 @@ impl World {
         &self.public_views
     }
 
+    /// 外部计划广播（D2 玩家意图路由：组 0 消费——玩家惯例位）。
+    pub fn broadcast_external_plan(&mut self, ops: Vec<super::decision::PendingOp>) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::ExternalPlan(ops));
+        }
+    }
+
     /// 组注意力调度收集（P1-10：逐账户 next_due 上行——驱动器写回
     /// 会话 npc_attention 的真实状态源）。
     pub fn collect_group_attention(

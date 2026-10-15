@@ -205,6 +205,53 @@ impl RuntimeDriver {
         Ok(super::event_bridge::FrameProjection { events, views })
     }
 
+    /// 玩家意图路由（D2）：Intent → PendingOp（PlaceLimit/PlaceMarket；
+    /// Cancel 需 OrderRef 跟踪——登记后续）。
+    fn route_player_intents(
+        intents: &[crate::session::ReceiptBearingIntent],
+        upper_limits: &[i64],
+    ) -> Vec<super::decision::PendingOp> {
+        let mut ops = Vec::new();
+        for r in intents {
+            let crate::Intent::PlaceLimit { code, side, price, qty } = &r.intent else {
+                // PlaceMarket/Cancel：登记（D2 首版限价面——其余变体补）。
+                continue;
+            };
+            let upper = upper_limits
+                .get(code.0 as usize)
+                .copied()
+                .unwrap_or(0);
+            let (routed, purse_reference) = match price {
+                crate::strategy::LimitPrice::Fixed(p) => {
+                    (super::protocol::RoutedPrice::Fixed(p.cents()), p.cents())
+                }
+                _ => (super::protocol::RoutedPrice::Highest, upper),
+            };
+            ops.push(super::decision::PendingOp {
+                local: 0, // 玩家=组 0 下标 0（id_map 首位惯例）
+                stock: code.0 as super::StockIdx,
+                side: *side,
+                routed,
+                purse_reference,
+                qty: *qty,
+            });
+        }
+        ops
+    }
+
+    /// 玩家意图注入世界（D2）：经 ExternalPlan 通道广播全部组（组 0 消费）。
+    pub fn inject_player_intents(
+        &mut self,
+        intents: &[crate::session::ReceiptBearingIntent],
+        upper_limits: &[i64],
+    ) {
+        let ops = Self::route_player_intents(intents, upper_limits);
+        if ops.is_empty() {
+            return;
+        }
+        self.world.broadcast_external_plan(ops);
+    }
+
     /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。
     pub fn sever_world_for_test(&mut self) {
         self.world.sever();

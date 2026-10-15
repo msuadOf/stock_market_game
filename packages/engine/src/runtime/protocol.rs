@@ -271,6 +271,9 @@ pub enum GroupIn {
     DayEnd(Box<DayEndDirective>),
     /// 关停：上交 `GroupFinal` 后退出。
     Shutdown,
+    /// 外部计划注入（翻转批玩家意图路由：协调者/驱动器向组注入本 tick
+    /// 计划——消费一次即清）。
+    ExternalPlan(Vec<super::decision::PendingOp>),
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
     EchoAccounts,
