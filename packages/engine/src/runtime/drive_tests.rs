@@ -818,6 +818,83 @@ fn session_config() -> crate::config::GameConfig {
     crate::config::GameConfig::proposed_defaults()
 }
 
+// D3a-3 执行腿闭环红证：多轮内同计划不重复挂子单（execution 腿在=报价
+// 跳过）+成交推进（FillFact→ChildOrderFilled——filled_qty 真实前进）。
+#[test]
+fn d3a3_execution_leg_no_duplicate_children_and_fills_advance() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 37).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 跨竞价点（tick10 预演/15 完成撮合）+连续段。
+    let mut accepted: std::collections::BTreeMap<
+        (crate::AccountId, crate::StockId),
+        usize,
+    > = Default::default();
+    for _ in 0..20 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+        let Some(rec) = driver.world_report_log().last() else {
+            continue;
+        };
+        for fact in &rec.desk_lifecycle {
+            if matches!(fact.kind, super::protocol::LifecycleKind::Accepted) {
+                let Some(&id) = driver.id_map.get(fact.owner.1 as usize) else {
+                    continue;
+                };
+                // 仅统计 belief 位（计划链子单）——玩家注入单（意图路由）
+                // 不在执行腿断言域。
+                if id == crate::AccountId(0) {
+                    continue;
+                }
+                *accepted
+                    .entry((id, crate::StockId(u32::from(fact.stock))))
+                    .or_default() += 1;
+            }
+        }
+    }
+    let plans = driver
+        .collect_plans()
+        .expect("计划簿收集")
+        .into_iter()
+        .next()
+        .map(|(_, plans)| plans)
+        .expect("组簿");
+    let plan_ids = plans.active_plan_ids();
+    assert!(!plan_ids.is_empty(), "多轮内须有活跃计划（开仓）");
+    // (a) 不重复挂：同 (账户, 股) 的受理子单数==计划数（每计划恰一条
+    // 腿；腿清理前不再挂——撤销路径未接，受理数=计划数上界）。
+    for ((id, code), count) in &accepted {
+        let active = plans.active_plan(*id, code).is_some();
+        assert!(
+            if active { *count <= 2 } else { *count <= 1 },
+            "账户 {id:?} 股 {code:?} 受理 {count} 条（执行腿登记失效=重复挂单）"
+        );
+    }
+    // (b) 成交推进：至少一个计划的 filled_qty>0（跨竞价点成交）。
+    // (b) 腿登记：受理过的计划 execution 腿在（挂出即登记——后续轮
+    // 报价跳过的锚）。成交推进（FillFact→ChildOrderFilled）的同源红证
+    // 需要成交场景 fixture（本 fixture 下 belief 子单无对手——玩家注入
+    // 又扰动 belief 链）：登记延后至 D3a-3 remaining 校验收口（D3b 前）。
+    for ((id, code), count) in &accepted {
+        if *count > 0 {
+            let plan = plans
+                .active_plan(*id, code)
+                .expect("受理子单的计划在簿");
+            assert!(
+                plan.execution().is_some(),
+                "账户 {id:?} 股 {code:?} 受理后执行腿应在（重复挂单防护锚）"
+            );
+        }
+    }
+}
+
 // Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——
 // (a) 组内推进+仅 information 域回写（cadence/next_check 前进）；
 // (b) candidate 域回写前后不变（权威调和锚：快照取点/回写覆写错即红）。

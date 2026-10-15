@@ -360,6 +360,9 @@ pub struct GroupState {
     /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调
     /// 不可用，读面上行空）。
     root_projection: Option<std::sync::Arc<super::world::RootProjection>>,
+    /// D3a-3：组内子单身份合成计数器（engine OrderId 域——组内私有，
+    /// 交付投影面不依赖）。
+    next_child_order_id: u64,
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
@@ -442,6 +445,7 @@ impl GroupState {
             belief_states: belief_states_seed,
             library: library_seed,
             root_projection,
+            next_child_order_id: 0,
             plan_book: crate::plans::PlanBook::default(),
             script,
         }
@@ -577,9 +581,11 @@ impl GroupState {
             self.plan_fills.extend(batch.fills.iter().copied());
             // D3a-2c 件1：成本基先行（FillFact 逐笔记 invested/recovered，
             // 仅成交额——对齐 Account::apply_buy/apply_sell 口径）。
+            // D3a-3：计划成交推进（执行腿——同股同方向唯一活跃计划）。
             let mut touched: Vec<(LocalIdx, StockIdx)> = Vec::new();
             for fill in &batch.fills {
                 self.apply_fill_cost_basis(stock as StockIdx, fill)?;
+                self.apply_fill_plan_progress(stock as StockIdx, fill)?;
                 if !touched.contains(&(fill.owner.1, stock as StockIdx)) {
                     touched.push((fill.owner.1, stock as StockIdx));
                 }
@@ -648,6 +654,81 @@ impl GroupState {
             d_invested,
             d_recovered,
         });
+        Ok(())
+    }
+
+    /// D3a-3：成交事实的计划推进（执行腿——首见 adopt 身份、后续
+    /// ChildOrderFilled；child_complete 后腿随事件转移）。登记：adopt 的
+    /// qty=首笔成交量（弱化——组内不知 desk 受理量；剩余量校验随
+    /// 撤销路径补）。
+    fn apply_fill_plan_progress(
+        &mut self,
+        stock: StockIdx,
+        fill: &FillFact,
+    ) -> Result<(), RuntimeError> {
+        let group = self.group;
+        let Some(&account) = self
+            .root_projection
+            .as_ref()
+            .and_then(|projection| projection.account_ids.get(fill.owner.1 as usize))
+        else {
+            return Ok(());
+        };
+        let code = crate::StockId(u32::from(stock));
+        let (direction, has_child) = {
+            let Some(plan) = self.plan_book.active_plan(account, &code) else {
+                return Ok(());
+            };
+            (plan.direction(), plan.active_child_order_id().is_some())
+        };
+        if direction != fill.side {
+            return Ok(());
+        }
+        let day = self.cur_tick / self.ticks_per_day;
+        // 首见 adopt（active_child_order_id 为空）或推进（在途）。
+        if !has_child {
+            let order_id = crate::OrderId(self.next_child_order_id + 1);
+            self.next_child_order_id += 1;
+            self.plan_book
+                .record_child_submitted(
+                    account,
+                    &code,
+                    fill.side,
+                    order_id,
+                    fill.qty,
+                    day,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("组内子单身份登记失败 {account:?} {code:?}: {error}")
+                });
+        }
+        let (order_id, remaining) = {
+            let Some(plan) = self.plan_book.active_plan(account, &code) else {
+                return Ok(());
+            };
+            let Some(order_id) = plan.active_child_order_id() else {
+                return Ok(());
+            };
+            let remaining = plan
+                .active_child_remaining_qty()
+                .unwrap_or_else(|| plan.execution().expect("在途腿存在").child_qty());
+            (order_id, remaining)
+        };
+        let pushed = self
+            .plan_book
+            .record_child_fill(account, &code, fill.side, order_id, fill.qty, day)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "组 {group} 计划成交推进失败 {account:?} {code:?}: {error}"
+                )
+            });
+        if !pushed {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} 成交事实未被计划消费：account={account:?}, code={code:?}, order={order_id:?}, remaining={remaining}"
+                ),
+            });
+        }
         Ok(())
     }
 
@@ -1271,13 +1352,21 @@ impl GroupState {
             )
         };
         // 逐计划报价（共享 decide_plan_quote——与 session 版同一函数）。
+        let mut submits: Vec<(
+            crate::plans::PlanId,
+            crate::StockId,
+            StockIdx,
+            crate::orderbook::Side,
+            crate::money::Money,
+            u32,
+        )> = Vec::new();
         for &plan_id in &plan_ids {
             let plan = self
                 .plan_book
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
             if !matches!(plan.status(), crate::plans::PlanStatus::Active)
-                || plan.active_child_order_id().is_some()
+                || plan.execution().is_some()
             {
                 continue;
             }
@@ -1365,15 +1454,39 @@ impl GroupState {
                 if qty == 0 {
                     continue;
                 }
-                ops.push(super::decision::PendingOp {
-                    local,
-                    stock: stock_idx as StockIdx,
-                    side: plan.direction(),
-                    routed: RoutedPrice::Fixed(price.cents()),
-                    purse_reference: price.cents(),
+                submits.push((
+                    plan_id,
+                    code.clone(),
+                    stock_idx as StockIdx,
+                    plan.direction(),
+                    price,
                     qty,
-                });
+                ));
             }
+        }
+        // 执行腿登记（借用外——D3a-3：挂出即登记，execution 腿在=后续轮
+        // 报价跳过——同计划不重复挂子单；remaining 校验/成交推进见
+        // apply_staging 的 fills 段）。expires 近似=当日市场分钟上限
+        //（挂单 TTL 域登记——撤销/到期释放的腿清理随撤销路径补）。
+        for (plan_id, code, stock, side, price, qty) in submits {
+            self.plan_book
+                .install_execution(
+                    plan_id,
+                    qty,
+                    price,
+                    u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("组内执行腿登记失败 {account:?} {code:?}: {error}")
+                });
+            ops.push(super::decision::PendingOp {
+                local,
+                stock,
+                side,
+                routed: RoutedPrice::Fixed(price.cents()),
+                purse_reference: price.cents(),
+                qty,
+            });
         }
         Ok(ops)
     }

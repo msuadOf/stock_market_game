@@ -464,7 +464,7 @@ impl PlanBook {
     }
 
     /// 按已发生的成交事实立即更新唯一 owner；完成后同步移出活跃索引。
-    pub(crate) fn record_child_fill(
+    pub fn record_child_fill(
         &mut self,
         account: AccountId,
         code: &StockId,
