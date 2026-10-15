@@ -338,6 +338,9 @@ pub struct GroupState {
     /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调
     /// 不可用，读面上行空）。
     root_projection: Option<std::sync::Arc<super::world::RootProjection>>,
+    /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
+    /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
+    plan_book: crate::plans::PlanBook,
     /// 决策脚本。
     script: GroupScript,
 }
@@ -417,6 +420,7 @@ impl GroupState {
             belief_states: belief_states_seed,
             library: library_seed,
             root_projection,
+            plan_book: crate::plans::PlanBook::default(),
             script,
         }
     }
@@ -1140,6 +1144,87 @@ impl GroupState {
     }
 }
 
+/// 组账户权益（现金+持仓×最新价——与 observe_personal 的 equity 口径同式：
+/// 溢出/缺视图 panic，不静默）。
+fn equity_cents(
+    account: &GroupAccount,
+    market: &crate::strategy::MarketView,
+) -> crate::money::Money {
+    let mut equity = crate::money::Money::from_cents(account.cash);
+    for (stock, &qty) in account.shares.iter().enumerate() {
+        if qty == 0 {
+            continue;
+        }
+        let price = market
+            .stocks
+            .get(&crate::StockId(stock as u32))
+            .map(|view| view.last_price)
+            .unwrap_or_else(|| {
+                panic!("组内权益计算缺股 {stock:?} 市场视图");
+            });
+        equity = equity
+            .add(price.mul_shares(qty).unwrap_or_else(|error| {
+                panic!("组内权益持仓估值失败 {stock:?}: {error:?}");
+            }))
+            .unwrap_or_else(|error| panic!("组内权益累加失败：{error:?}"));
+    }
+    equity
+}
+
+/// 相位判定（与 session `phase()` 同式：申报窗=竞价窗前 2/3、盘前=竞价窗
+/// 余量、收盘窗=尾部——Continuous ⟺ 连续段内）。
+fn phase_is_continuous(
+    tick: u64,
+    ticks_per_day: u64,
+    auction_ticks: u64,
+    closing_ticks: u64,
+) -> bool {
+    let day_tick = tick % ticks_per_day;
+    let auction_entry = auction_ticks - auction_ticks / 3;
+    let closing_start = ticks_per_day.saturating_sub(closing_ticks);
+    day_tick >= auction_ticks && day_tick < closing_start.max(auction_entry.max(auction_ticks))
+}
+
+/// 交易日序号（tick/tpd——与 RootReadContext 组装同式）。
+fn context_day(tick: u64, ticks_per_day: u64) -> u64 {
+    tick / ticks_per_day
+}
+
+/// 整手（世界配置——与 session setup.config.lot_size 同源投影）。
+fn self_lot(config: &std::sync::Arc<crate::config::GameConfig>) -> u32 {
+    config.lot_size
+}
+
+/// 组内初始紧迫度（与 session `initial_plan_urgency` 同一 `assess_urgency`
+/// 输入面——风格/策略为构造期投影）。
+fn initial_group_urgency(
+    direction: crate::orderbook::Side,
+    confidence_bp: u32,
+    horizon_trading_days: u32,
+    style: Option<crate::strategy::InstitutionStyle>,
+    policy: &crate::plans::UrgencyPolicy,
+) -> crate::plans::Urgency {
+    use crate::plans::{assess_urgency, PatienceStyle, UrgencyInputs};
+    let inputs = UrgencyInputs {
+        side: direction,
+        return_30min_bp: None,
+        return_1min_bp: None,
+        risk_pressure_pause: false,
+        adverse_selection_pause: false,
+        risk_reduction_active: false,
+        account_drawdown_bp: None,
+        remaining_trading_days: horizon_trading_days.saturating_sub(1),
+        confidence_bp,
+        style: match style {
+            Some(crate::strategy::InstitutionStyle::DeepValue) => PatienceStyle::DeepValue,
+            _ => PatienceStyle::Other,
+        },
+    };
+    assess_urgency(&inputs, policy)
+        .unwrap_or_else(|error| panic!("组内初始紧迫度失败：{error:?}"))
+        .urgency
+}
+
 /// D3a-2c 件2：组线程组装 RootReadContext（与 `RootReadContext::capture`
 /// 同一字段面——投影来源同源：组账户→AccountBook 保真投影（现金/持仓/
 /// T+1 冻结/成本基）、catalog/registry/operations 构造期 Arc、library=组内
@@ -1599,13 +1684,100 @@ pub fn group_main(
                             .lifecycle_assessments()
                             .into_iter()
                             .find(|(owner, _)| *owner == account)
-                            .map(|(_, by_code)| by_code.into_iter().collect())
+                            .map(|(_, by_code)| by_code.into_iter().collect::<Vec<_>>())
                             .unwrap_or_default();
+                        // D3a-2c 件4：Lifecycle 开仓消费（提取共享
+                        // open_position_action——与 session 版同一函数；
+                        // PlanOpen 落组内 PlanBook）。既有计划的复审/
+                        // 风险暂停（Active 分支）与 quiet review 记录
+                        // 为 D3b 域，登记暂缓。
+                        let mut opens = Vec::new();
+                        let (params, style) = projection
+                            .chain_params
+                            .get(local)
+                            .and_then(|slot| *slot)
+                            .unwrap_or_else(|| {
+                                panic!("组 {} belief 位 {local} 缺链参数投影", state.group)
+                            });
+                        for (code, assessment) in &assessments {
+                            let Some(group_account) = state.accounts.get(local) else {
+                                continue;
+                            };
+                            let held_qty = group_account.shares[code.0 as usize];
+                            let price = observation
+                                .market
+                                .stocks
+                                .get(code)
+                                .map(|view| view.last_price)
+                                .unwrap_or(crate::money::Money::ZERO);
+                            let score = match assessment {
+                                crate::plans::CandidateAssessment::Scored { score, .. } => {
+                                    Some(*score)
+                                }
+                                crate::plans::CandidateAssessment::InsufficientInformation {
+                                    ..
+                                } => None,
+                            };
+                            let weights = out.belief.analysis().weights();
+                            let fundamental_ready = weights.fundamental_bp() == 0
+                                || out.belief.entry(code).is_some_and(|entry| {
+                                    matches!(
+                                        entry.valuation,
+                                        crate::strategy::ValuationOutcome::Available { .. }
+                                    )
+                                });
+                            let open = crate::session::open_position_action(
+                                account,
+                                code,
+                                price,
+                                held_qty,
+                                equity_cents(group_account, &observation.market),
+                                score,
+                                fundamental_ready,
+                                &out.belief,
+                                state.plan_book.policy().reverse_revision_threshold_bp,
+                                &params,
+                                style,
+                                phase_is_continuous(
+                                    snapshot.tick,
+                                    state.ticks_per_day,
+                                    projection.auction_ticks,
+                                    projection.closing_auction_ticks,
+                                ),
+                                context_day(snapshot.tick, state.ticks_per_day),
+                                self_lot(&state.config),
+                                projection
+                                    .total_shares
+                                    .get(code)
+                                    .copied()
+                                    .unwrap_or(0),
+                                |direction, confidence_bp, horizon| {
+                                    initial_group_urgency(
+                                        direction,
+                                        confidence_bp,
+                                        horizon,
+                                        style,
+                                        &projection.urgency_policy,
+                                    )
+                                },
+                            );
+                            if let Some(open) = open {
+                                let plan_id = state
+                                    .plan_book
+                                    .create(open.clone())
+                                    .unwrap_or_else(|error| {
+                                        panic!("组内计划创建失败 {account:?} {code:?}: {error}")
+                                    });
+                                let _ = plan_id;
+                                opens.push(open);
+                            }
+                        }
                         derivations.push(super::world::OpenDerivationRecord {
                             account,
                             personal_in,
                             personal_out: out,
                             assessments,
+                            opens,
                         });
                     }
                 }

@@ -490,6 +490,50 @@ impl GameSession {
         }
     }
 
+    /// 信念链参数/机构风格投影（D3a-2c 件4：组线程 Lifecycle 消费的策略面
+    /// ——id→(链参数, 风格)；非信念机构 None）。
+    pub fn runtime_chain_params(
+        &self,
+    ) -> std::collections::BTreeMap<
+        crate::AccountId,
+        (
+            crate::strategy::BeliefChainParams,
+            Option<crate::strategy::InstitutionStyle>,
+        ),
+    > {
+        self.state
+            .accounts
+            .iter()
+            .filter_map(|(id, account)| {
+                let strategy = account.strategy()?;
+                let params = strategy.belief_chain_params()?;
+                Some((*id, (params, strategy.institution_style())))
+            })
+            .collect()
+    }
+
+    /// 紧迫度策略投影（D3a-2c 件4：组内 initial_urgency 输入——与 session
+    /// `state.urgency_policy` 同一对象）。
+    pub fn runtime_urgency_policy(&self) -> crate::plans::UrgencyPolicy {
+        self.state.urgency_policy.clone()
+    }
+
+    /// 每股发行总股本投影（D3a-2c 件4：CandidateTargetProposal 上限输入
+    /// ——session setup 权威，u32 收敛口径同 lifecycle）。
+    pub fn runtime_total_shares(&self) -> std::collections::BTreeMap<crate::StockId, u64> {
+        self.state
+            .setup
+            .stocks
+            .iter()
+            .map(|stock| {
+                (
+                    self.state.stocks.id(stock.code.0.as_str()).expect("setup 股在目录"),
+                    stock.total_shares.min(u64::from(u32::MAX)),
+                )
+            })
+            .collect()
+    }
+
     /// 公司域只读句柄（D3a-2c 件2：RootReadContext 组装的构造期 Arc 投影源
     /// ——catalog 克隆、registry/operations Arc 共享，与 capture 同一对象面）。
     pub fn runtime_company_handles(

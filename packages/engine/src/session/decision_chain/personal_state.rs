@@ -96,7 +96,7 @@ impl PlanPersonalState {
         &mut self.attention
     }
 
-    pub(in crate::session) fn take(session: &mut GameSession, account: AccountId) -> Self {
+    pub(crate) fn take(session: &mut GameSession, account: AccountId) -> Self {
         // 只需写组，不创建读视图（避免不必要的 lifecycles/accounts 克隆）。
         let mut writes = crate::session::pipeline::npc_split::npc_writes(session);
         Self::take_on(&mut writes, account)
@@ -130,7 +130,7 @@ impl PlanPersonalState {
         }
     }
 
-    pub(in crate::session) fn install(self, session: &mut GameSession, account: AccountId) {
+    pub(crate) fn install(self, session: &mut GameSession, account: AccountId) {
         // 同 take：只需写组，不创建读视图。
         let mut writes = crate::session::pipeline::npc_split::npc_writes(session);
         self.install_on(&mut writes, account);

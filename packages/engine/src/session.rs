@@ -130,8 +130,8 @@ pub(crate) use observation_clock::intraday_observation_second;
 // D3a-2c 件2/3：组线程直调 observe 的类型面（决策链深移植——方向 A；
 // crate 内可见——runtime 组线程组装/直调）。
 pub(crate) use decision_chain::{
-    DecisionChainObservation, InstitutionDecisionRoot, PlanPersonalState, PlanRootDiagnostics,
-    RootReadContext,
+    DecisionChainObservation, InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState,
+    PlanRootDiagnostics, RootReadContext, open_position_action,
 };
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,

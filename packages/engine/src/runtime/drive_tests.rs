@@ -583,6 +583,38 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
             "账户 {:?} history_reads 演进同源",
             record.account
         );
+        // D3a-2c 件4 红证：组内 Lifecycle 开仓消费（提取共享
+        // open_position_action 落组内 PlanBook）== session 版
+        // collect_plan_lifecycle_actions 的 Create——PlanOpen 逐字段。
+        // 语义序对齐旧管线：observe → install（个人态演进入权威）→ collect
+        //（消费已 install 的 belief——组内消费读 personal_out.belief 同位）。
+        // 旧管线原序：take（移出权威）→ observe → install（演进入权威）。
+        // 红证的 observe 输入用组上行的 personal_in（同输入锚），take 仅
+        // 恢复 install 的先决（避免二次安装断言）。
+        let _ = crate::session::PlanPersonalState::take(&mut session, record.account);
+        session_out.install(&mut session, record.account);
+        let by_code: std::collections::BTreeMap<_, _> =
+            record.assessments.iter().cloned().collect();
+        let session_plans = crate::plans::PlanBook::default();
+        let session_actions = session.collect_plan_lifecycle_actions(
+            record.account,
+            &by_code,
+            derivation_market,
+            &session_plans,
+        );
+        let session_opens: Vec<_> = session_actions
+            .iter()
+            .filter_map(|action| match action {
+                crate::session::PlanLifecycleAction::Create { open } => Some(open.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            format!("{:?}", record.opens),
+            format!("{session_opens:?}"),
+            "账户 {:?} 开仓 PlanOpen 逐字段同源（组内 PlanBook 落地==session 版派生）",
+            record.account
+        );
     }
 }
 

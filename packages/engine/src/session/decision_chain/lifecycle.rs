@@ -2,6 +2,99 @@
 
 use super::*;
 
+/// 开仓动作派生（D3a-2c 件4 提取共享）：`assess_one` 的无计划分支与组线程
+/// Lifecycle 消费（开仓路径）调用同一函数——PlanOpen 字段不得分叉。
+///
+/// 输入全部显式参数化（无会话借用）：评估面（价格/持仓/权益/信号）、信念面
+/// （entry/权重）、策略面（链参数/风格/相位）、计划面（迟滞阈值/交易日/lot/
+/// 可持有上限）；`initial_urgency` 由调用方包装（session 版=
+/// `initial_plan_urgency`；组内版=同一 `assess_urgency` 输入投影）。
+pub(crate) fn open_position_action(
+    account: AccountId,
+    code: &StockId,
+    price: Money,
+    held_qty: u32,
+    equity: Money,
+    score: Option<crate::plans::SignalScore>,
+    fundamental_ready: bool,
+    belief: &BeliefBook,
+    reverse_revision_threshold_bp: i32,
+    chain_params: &crate::strategy::BeliefChainParams,
+    style: Option<crate::strategy::InstitutionStyle>,
+    phase_continuous: bool,
+    trading_day: u64,
+    lot: u32,
+    max_holdable_shares: u64,
+    initial_urgency: impl FnOnce(Side, u32, u32) -> Urgency,
+) -> Option<PlanOpen> {
+    // ActiveTrader 仅连续相位开仓（日内风格）。
+    if style == Some(crate::strategy::InstitutionStyle::ActiveTrader) && !phase_continuous {
+        return None;
+    }
+    // 方向迟滞：阈值内不开仓。
+    let direction = match (fundamental_ready, score) {
+        (true, Some(score)) if score.value() >= reverse_revision_threshold_bp => Some(Side::Buy),
+        (true, Some(score)) if score.value() <= -reverse_revision_threshold_bp => Some(Side::Sell),
+        _ => None,
+    }?;
+    let target_qty = match (score, fundamental_ready) {
+        (Some(score), true) => {
+            let position_value = price
+                .mul_shares(held_qty)
+                .unwrap_or_else(|error| panic!("position value failed for {account:?}: {error}"));
+            let current_weight_bp = u32::try_from(
+                (i128::from(position_value.cents()) * 10_000 / i128::from(equity.cents()))
+                    .clamp(0, 10_000),
+            )
+            .expect("clamped weight fits u32");
+            crate::plans::CandidateTargetProposal::from_score(
+                current_weight_bp,
+                score,
+                chain_params.position_step_bp,
+                equity,
+                price,
+                max_holdable_shares,
+                lot,
+            )
+            .map(|proposal| proposal.target_qty())
+            .unwrap_or_else(|error| match error {
+                CandidateError::InvalidPositionFraction { .. } => panic!(
+                    "target weight failed for {account:?} {code:?}: {error}"
+                ),
+                _ => panic!("target quantity failed for {account:?} {code:?}: {error}"),
+            })
+        }
+        _ => 0,
+    };
+    let delta = desired_delta_shares(direction, target_qty, held_qty, lot)?;
+    let entry = belief.entry(code);
+    if entry.is_none() && belief.analysis().weights().fundamental_bp() > 0 {
+        return None;
+    }
+    let intraday = style == Some(crate::strategy::InstitutionStyle::ActiveTrader);
+    let mut open = PlanOpen {
+        account,
+        code: code.clone(),
+        direction,
+        target: PlanTarget::ShareCount(delta),
+        opinion: PlanOpinion {
+            signal_score_bp: score.map(|value| value.value()).unwrap_or_default(),
+            source: OpinionSource::Blended,
+        },
+        confidence_bp: entry.map_or(5_000, |value| u32::from(value.confidence_bp)),
+        urgency: Urgency::Normal,
+        horizon_trading_days: if intraday {
+            1
+        } else {
+            u32::from(entry.expect("fundamental plan has a belief entry").horizon_trading_days)
+                .max(1)
+        },
+        created_trading_day: trading_day,
+    };
+    open.urgency = initial_urgency(direction, open.confidence_bp, open.horizon_trading_days);
+    Some(open)
+}
+
 /// 复核只拥有本次派生事实；PlanBook、母单与个人状态仍由私有 candidate 持有。
 pub(super) struct PlanLifecycleReview<'a> {
     session: &'a GameSession,
@@ -78,28 +171,13 @@ impl<'a> PlanLifecycleReview<'a> {
         score: crate::plans::SignalScore,
         price: Money,
     ) -> u32 {
-        let code_str = self
-            .session
-            .state
-            .stocks
-            .code(*code)
-            .expect("candidate stock must be cataloged");
-        let max_holdable_shares = self
-            .session
-            .state
-            .setup
-            .stocks
-            .iter()
-            .find(|stock| stock.code.0 == *code_str)
-            .map(|stock| stock.total_shares.min(u64::from(u32::MAX)))
-            .unwrap_or(0);
         crate::plans::CandidateTargetProposal::from_score(
             current_weight_bp,
             score,
             self.chain_params.position_step_bp,
             self.equity,
             price,
-            max_holdable_shares,
+            self.max_holdable_shares(code),
             self.lot,
         )
         .map(|proposal| proposal.target_qty())
@@ -113,6 +191,24 @@ impl<'a> PlanLifecycleReview<'a> {
                 self.account
             ),
         })
+    }
+
+    /// 每股可持有上限（发行总股本，u32 收敛——session setup 权威）。
+    fn max_holdable_shares(&self, code: &StockId) -> u64 {
+        let code_str = self
+            .session
+            .state
+            .stocks
+            .code(*code)
+            .expect("candidate stock must be cataloged");
+        self.session
+            .state
+            .setup
+            .stocks
+            .iter()
+            .find(|stock| stock.code.0 == *code_str)
+            .map(|stock| stock.total_shares.min(u64::from(u32::MAX)))
+            .unwrap_or(0)
     }
 
     fn assess_one(
@@ -504,54 +600,36 @@ impl<'a> PlanLifecycleReview<'a> {
                 actions.push(PlanLifecycleAction::Revise { plan_id, revision });
             }
             None => {
-                if self.session.belief_style(id)
-                    == Some(crate::strategy::InstitutionStyle::ActiveTrader)
-                    && self.session.phase() != TradingPhase::Continuous
-                {
-                    return actions;
-                }
-                let Some(direction) = direction else {
-                    return actions;
-                };
-                let Some(delta) = desired_delta_shares(direction, target_qty, held_qty, lot) else {
-                    return actions;
-                };
-                let entry = belief.entry(code);
-                if entry.is_none() && belief.analysis().weights().fundamental_bp() > 0 {
-                    return actions;
-                }
-                let intraday = self.session.belief_style(id)
-                    == Some(crate::strategy::InstitutionStyle::ActiveTrader);
-                let mut open = PlanOpen {
-                    account: id,
-                    code: code.clone(),
-                    direction,
-                    target: PlanTarget::ShareCount(delta),
-                    opinion: PlanOpinion {
-                        signal_score_bp: score.map(|value| value.value()).unwrap_or_default(),
-                        source: OpinionSource::Blended,
-                    },
-                    confidence_bp: entry.map_or(5_000, |value| u32::from(value.confidence_bp)),
-                    urgency: Urgency::Normal,
-                    horizon_trading_days: if intraday {
-                        1
-                    } else {
-                        u32::from(
-                            entry
-                                .expect("fundamental plan has a belief entry")
-                                .horizon_trading_days,
-                        )
-                        .max(1)
-                    },
-                    created_trading_day: trading_day,
-                };
-                open.urgency = self.session.initial_plan_urgency(
+                // D3a-2c 件4：开仓分支提取共享（与组线程 Lifecycle 消费同一
+                // 函数）——行为保持（参数自本复核面提取）。
+                let open = open_position_action(
                     id,
-                    open.direction,
-                    open.confidence_bp,
-                    open.horizon_trading_days,
+                    code,
+                    price,
+                    held_qty,
+                    equity,
+                    score,
+                    fundamental_ready,
+                    belief,
+                    plans.policy().reverse_revision_threshold_bp,
+                    &self.chain_params,
+                    self.session.belief_style(id),
+                    self.session.phase() == TradingPhase::Continuous,
+                    trading_day,
+                    lot,
+                    self.max_holdable_shares(code),
+                    |direction, confidence_bp, horizon_trading_days| {
+                        self.session.initial_plan_urgency(
+                            id,
+                            direction,
+                            confidence_bp,
+                            horizon_trading_days,
+                        )
+                    },
                 );
-                actions.push(PlanLifecycleAction::Create { open });
+                if let Some(open) = open {
+                    actions.push(PlanLifecycleAction::Create { open });
+                }
             }
         }
         actions

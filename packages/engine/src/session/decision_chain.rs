@@ -59,6 +59,8 @@ mod retail_analysis;
 mod roots;
 mod urgency;
 pub(crate) use personal_state::PlanPersonalState;
+// D3a-2c 件4：开仓派生共享函数（lifecycle 提取——组线程消费同源）。
+pub(crate) use lifecycle::open_position_action;
 pub(crate) use roots::{InstitutionDecisionRoot, RootReadContext};
 
 /// 同批账户 root 使用同一市场、路径、技术、时刻与曝光观察。
@@ -312,7 +314,7 @@ fn ratio_to_bp(ratio: Option<f64>) -> Option<i32> {
 
 /// 方向目标 → 净变动股数。买入按整手向下取整（不足一手无动作）；卖出
 /// 允许零股（路由守卫按 A 股零股规则校验）。无净变动 ⇒ None。
-fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u32) -> Option<u32> {
+pub(crate) fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u32) -> Option<u32> {
     let delta = match direction {
         Side::Buy => target_qty.saturating_sub(held_qty),
         Side::Sell => held_qty.saturating_sub(target_qty),
@@ -370,7 +372,7 @@ fn plan_trace_state(plan: &TradingPlan) -> String {
 /// 生命周期决策在调用方应用前不写 PlanBook；当前调用方立即应用。
 /// 这些动作不携带状态 version。未来若跨越 AccountValidation/StockProcessing 边界，
 /// 必须重新观察当前事实并再次收集。
-pub(in crate::session) enum PlanLifecycleAction {
+pub(crate) enum PlanLifecycleAction {
     ExecutionState {
         plan_id: PlanId,
         event: PlanEvent,
@@ -998,7 +1000,7 @@ impl GameSession {
     ///
     /// 日中终止或反向修订前必须先真实撤销在途子单：
     /// 见 [`Self::cancel_in_flight_child_before_restructure`]。
-    pub(in crate::session) fn collect_plan_lifecycle_actions(
+    pub(crate) fn collect_plan_lifecycle_actions(
         &self,
         id: AccountId,
         assessments: &BTreeMap<StockId, CandidateAssessment>,

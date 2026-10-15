@@ -158,6 +158,8 @@ impl RuntimeDriver {
         {
             let (catalog, registry, operations) = session.runtime_company_handles();
             let setup_civil = session.export_setup_for_runtime();
+            let chain_params_by_id = session.runtime_chain_params();
+            let total_shares = session.runtime_total_shares();
             spec.root_projection = Some(std::sync::Arc::new(super::world::RootProjection {
                 catalog,
                 company_registry: registry,
@@ -165,6 +167,12 @@ impl RuntimeDriver {
                 account_ids: ids.clone(),
                 auction_ticks: setup_civil.auction_ticks,
                 closing_auction_ticks: setup_civil.closing_auction_ticks,
+                chain_params: ids
+                    .iter()
+                    .map(|id| chain_params_by_id.get(id).copied())
+                    .collect(),
+                urgency_policy: session.runtime_urgency_policy(),
+                total_shares,
             }));
         }
         // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——

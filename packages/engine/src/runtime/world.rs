@@ -112,6 +112,9 @@ pub struct OpenDerivationRecord {
         crate::StockId,
         crate::plans::CandidateAssessment,
     )>,
+    /// D3a-2c 件4：组内 Lifecycle 开仓消费产物（PlanOpen——红证锚；
+    /// 已落组内 PlanBook）。
+    pub opens: Vec<crate::plans::PlanOpen>,
 }
 
 /// 决策链根组装投影（D3a-2c 件2：构造期自 session 一次性投影——catalog
@@ -129,6 +132,12 @@ pub struct RootProjection {
     pub auction_ticks: u64,
     /// 收盘集合竞价窗 tick 数。
     pub closing_auction_ticks: u64,
+    /// D3a-2c 件4：信念链参数/机构风格（下标=LocalIdx；None=非信念机构）。
+    pub chain_params: Vec<Option<(crate::strategy::BeliefChainParams, Option<crate::strategy::InstitutionStyle>)>>,
+    /// D3a-2c 件4：紧迫度策略（组内 initial_urgency 输入——同 session 对象克隆）。
+    pub urgency_policy: crate::plans::UrgencyPolicy,
+    /// D3a-2c 件4：每股发行总股本（CandidateTargetProposal 上限——setup 权威）。
+    pub total_shares: std::collections::BTreeMap<crate::StockId, u64>,
 }
 
 /// 世界构造参数。
