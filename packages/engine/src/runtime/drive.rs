@@ -371,12 +371,21 @@ impl RuntimeDriver {
         // 线程权威，X1 直改）。**空簿不覆盖**：迁移期 session 侧仍承载
         // 测试注入/旧管线场景的计划（组内尚未接管注入路由——D3a-3），
         // 空簿覆盖会清空它们（env=1 plan_owner 回归显红后收口）。
-        if let Ok(collected) = self.world.collect_plans() {
-            if let Some((_, plans)) = collected.into_iter().next() {
-                if !plans.active_plan_ids().is_empty() {
-                    session.set_runtime_plans(plans);
+        // 收集失败显式上抛（铁律二：不静默丢——plans_debug 静默过期
+        // 不可接受；复核发现 1 收口）。
+        let plans_projection = self
+            .world
+            .collect_plans()
+            .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
+        match plans_projection {
+            Ok(collected) => {
+                if let Some((_, plans)) = collected.into_iter().next() {
+                    if !plans.active_plan_ids().is_empty() {
+                        session.set_runtime_plans(plans);
+                    }
                 }
             }
+            Err(projection_error) => return Err(projection_error),
         }
         outcome
     }

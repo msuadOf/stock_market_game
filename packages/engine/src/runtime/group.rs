@@ -616,13 +616,20 @@ impl GroupState {
         Ok(())
     }
 
-    /// 清仓清零（期末 shares==0 的 touched 槽位）：invested/recovered 归零，
-    /// 记逆操作。
+    /// 清仓清零（期末 shares==0 且**该股无在途挂单**的 touched 槽位）：
+    /// invested/recovered 归零，记逆操作。foreign_active 守卫（复核发现 2
+    /// 收口）：跨轮余量退款（轮 N 卖单全成 shares=0，轮 N+1 RefundedShares
+    /// 回升）不得永久丢失成本基——在途未终结即不清零，退款落账（shares
+    /// 回升）后自然跳过。登记残余边界：同 tick 卖光+同股新买单在途推迟
+    /// 清零，买单 Closed 时 shares>0（成交）则旧值残留（session 语义=删
+    /// 条目后新建零基）——罕见形态，D3a-3 注入路由统一时一并收口。
     fn clear_flat_cost_basis(&mut self, touched: &[(LocalIdx, StockIdx)]) {
         for &(local, stock) in touched {
             let s = stock as usize;
             let acct = &mut self.accounts[local as usize];
-            if acct.shares[s] == 0 && (acct.invested_cents[s] != 0 || acct.recovered_cents[s] != 0)
+            if acct.shares[s] == 0
+                && acct.foreign_active[s] == 0
+                && (acct.invested_cents[s] != 0 || acct.recovered_cents[s] != 0)
             {
                 let (d_invested, d_recovered) = (acct.invested_cents[s], acct.recovered_cents[s]);
                 acct.invested_cents[s] = 0;
@@ -1180,9 +1187,8 @@ fn phase_is_continuous(
     closing_ticks: u64,
 ) -> bool {
     let day_tick = tick % ticks_per_day;
-    let auction_entry = auction_ticks - auction_ticks / 3;
     let closing_start = ticks_per_day.saturating_sub(closing_ticks);
-    day_tick >= auction_ticks && day_tick < closing_start.max(auction_entry.max(auction_ticks))
+    day_tick >= auction_ticks && day_tick < closing_start
 }
 
 /// 交易日序号（tick/tpd——与 RootReadContext 组装同式）。
@@ -1719,7 +1725,9 @@ pub fn group_main(
                                 .stocks
                                 .get(code)
                                 .map(|view| view.last_price)
-                                .unwrap_or(crate::money::Money::ZERO);
+                                .unwrap_or_else(|| {
+                                    panic!("组内开仓消费缺股 {code:?} 市场视图")
+                                });
                             let score = match assessment {
                                 crate::plans::CandidateAssessment::Scored { score, .. } => {
                                     Some(*score)
