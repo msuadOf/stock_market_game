@@ -616,21 +616,8 @@ fn d3a2c_plans_debug_projects_group_plan_book_at_delivery() {
         driver.install_market_views(&mut session).expect("行情安装");
         driver.install_candles(&mut session).expect("K 安装");
     }
-    // 派生（组内 observe+开仓消费）→ 下一交付点投影。
-    let collected = driver.collect_open_derivations().expect("开仓派生收集");
-    let records = &collected[0].3;
-    assert!(!records.is_empty(), "有派生记录");
-    let mut expected: Vec<(crate::AccountId, crate::StockId)> = Vec::new();
-    for record in records {
-        for open in &record.opens {
-            expected.push((open.account, open.code.clone()));
-        }
-    }
-    assert!(
-        !expected.is_empty(),
-        "场景须产生至少一个开仓（PlanOpen 落组内 PlanBook）"
-    );
-    // 交付点投影（step 内同款路径——此处显式驱动一步后的读面断言）。
+    // 开仓产物=生产路径（run_round due 消费——Sol 整改 1 后读面不再
+    // 创建）；期望面=组簿的活跃计划（account, code）。
     let plans = driver
         .collect_plans()
         .expect("计划簿收集")
@@ -638,6 +625,16 @@ fn d3a2c_plans_debug_projects_group_plan_book_at_delivery() {
         .next()
         .map(|(_, plans)| plans)
         .unwrap_or_default();
+    let expected: Vec<(crate::AccountId, crate::StockId)> = plans
+        .active_plan_ids()
+        .iter()
+        .filter_map(|pid| plans.plan(*pid).ok())
+        .map(|plan| (plan.account(), plan.code().clone()))
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "场景须产生至少一个开仓（PlanOpen 落组内 PlanBook）"
+    );
     session.set_runtime_plans(plans);
     let debug = session.plans_debug();
     for (account, code) in &expected {
@@ -894,6 +891,34 @@ fn d3a3_execution_leg_registers_and_prevents_duplicate_children() {
             );
         }
     }
+}
+
+// Sol 中点整改 1 红证：Echo 读面只读/幂等——连续两次
+// collect_open_derivations 的派生记录（含 opens/评估/个人态）必须逐次
+// 相等（读面创建真实计划=第二次 active 分流差异→红）。
+#[test]
+fn solmid_echo_open_derivation_is_read_only_and_idempotent() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 43).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..3 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    let first = driver.collect_open_derivations().expect("第一次读面");
+    let second = driver.collect_open_derivations().expect("第二次读面");
+    assert_eq!(
+        format!("{first:?}"),
+        format!("{second:?}"),
+        "Echo 读面必须只读幂等（两次派生记录逐字段相等）"
+    );
 }
 
 // Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——

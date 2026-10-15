@@ -227,6 +227,10 @@ enum GroupUndo {
         code: crate::StockId,
         inserted: bool,
     },
+    /// 子单身份计数回滚（Sol 整改 1：next_child_order_id 的逆增量）。
+    ChildOrderSeq {
+        prev: u64,
+    },
 }
 
 /// 决策脚本注入的下单规格（组端换算为 `DeskIn`， purse=对价，费用上限随批 3 补）。
@@ -374,6 +378,9 @@ pub struct GroupState {
     /// "挂出未受理"与"全成"在腿结构同形（order=None+remaining=None），
     /// 组内以独立集区分；撤销/到期终结的清除随撤销路径补，登记）。
     child_in_flight: std::collections::BTreeSet<(crate::AccountId, crate::StockId)>,
+    /// Sol 整改 1：簿快照已保存标志（本 tick 内首个簿变更前保存一次；
+    /// 转正/回滚清 undo 时重置）。
+    plan_undo_saved: bool,
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
@@ -458,6 +465,7 @@ impl GroupState {
             root_projection,
             next_child_order_id: 0,
             child_in_flight: Default::default(),
+            plan_undo_saved: false,
             plan_book: crate::plans::PlanBook::default(),
             script,
         }
@@ -487,6 +495,30 @@ impl GroupState {
                 h = fnv(h, p.next_due);
             }
         }
+        // Sol 整改 1：计划域新状态入哈希（簿数值面+在途+身份计数——
+        // Abort 回滚等价判据覆盖计划/身份漂移）。
+        for plan_id in self.plan_book.plan_ids() {
+            if let Ok(plan) = self.plan_book.plan(plan_id) {
+                h = fnv(h, plan_id.0);
+                h = fnv(h, u64::from(plan.filled_qty()));
+                h = fnv(
+                    h,
+                    match plan.status() {
+                        crate::plans::PlanStatus::Active => 0,
+                        crate::plans::PlanStatus::Paused { .. } => 1,
+                        crate::plans::PlanStatus::Completed => 2,
+                        crate::plans::PlanStatus::Terminated { .. } => 3,
+                    },
+                );
+                h = fnv(h, plan.active_child_order_id().map_or(0, |o| o.0));
+            }
+        }
+        h = fnv(h, self.child_in_flight.len() as u64);
+        for (account, code) in &self.child_in_flight {
+            h = fnv(h, u64::from(account.0));
+            h = fnv(h, u64::from(code.0));
+        }
+        h = fnv(h, self.next_child_order_id);
         h
     }
 
@@ -558,16 +590,22 @@ impl GroupState {
                     code,
                     inserted,
                 } => {
+                    // Sol 整改 1：undo 逆操作（此前方向写反——挂出 Abort 后
+                    // 残留在途位，重跑跳过报价）。
                     if inserted {
-                        self.child_in_flight.insert((account, code));
-                    } else {
                         self.child_in_flight.remove(&(account, code));
+                    } else {
+                        self.child_in_flight.insert((account, code));
                     }
+                }
+                GroupUndo::ChildOrderSeq { prev } => {
+                    self.next_child_order_id = prev;
                 }
             }
         }
         self.staging.clear();
         self.plan_fills.clear();
+        self.plan_undo_saved = false;
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
     }
@@ -710,7 +748,11 @@ impl GroupState {
         let day = self.cur_tick / self.ticks_per_day;
         // 首见 adopt（active_child_order_id 为空）或推进（在途）。
         if !has_child {
+            self.save_plan_book_undo();
             let order_id = crate::OrderId(self.next_child_order_id + 1);
+            // Sol 整改 1：身份计数回滚（快照化——撤销用逆增量）。
+            let prev_orders = self.next_child_order_id;
+            self.undo.push(GroupUndo::ChildOrderSeq { prev: prev_orders });
             self.next_child_order_id += 1;
             self.plan_book
                 .record_child_submitted(
@@ -737,6 +779,7 @@ impl GroupState {
                 .unwrap_or_else(|| plan.execution().expect("在途腿存在").child_qty());
             (order_id, remaining)
         };
+        self.save_plan_book_undo();
         let pushed = self
             .plan_book
             .record_child_fill(account, &code, fill.side, order_id, fill.qty, day)
@@ -930,6 +973,7 @@ impl GroupState {
         self.apply_staging(self.cur_tick, self.cur_round)?;
         // 转正点：丢弃上一 tick 可逆日志；committed 推进到 N−1（旧 cur_tick）。
         self.undo.clear();
+        self.plan_undo_saved = false;
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
@@ -1146,9 +1190,12 @@ impl GroupState {
             .and_then(|slot| *slot)
             .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         let mut opens = Vec::new();
-        let mut plan_book_dirty = false;
+        // Sol 整改 1：读面（write_back=false）不消费开仓——纯观察（此前
+        // 仅跳过 undo 快照仍 create，第二次读取因 active 分流产生不同
+        // 结果——违反只读/幂等承诺，红证 solmid_echo_* 显红）。
+        let consume_open = write_back;
         for (code, assessment) in &assessments {
-            if self.plan_book.active_plan(account, code).is_some() {
+            if !consume_open || self.plan_book.active_plan(account, code).is_some() {
                 continue;
             }
             let Some(group_account) = self.accounts.get(local as usize) else {
@@ -1205,13 +1252,7 @@ impl GroupState {
                 },
             );
             if let Some(open) = open {
-                if write_back && !plan_book_dirty {
-                    // 首个创建前保存簿快照（可逆日志——Abort 恢复）。
-                    self.undo.push(GroupUndo::PlanBook {
-                        prev: Box::new(self.plan_book.clone()),
-                    });
-                    plan_book_dirty = true;
-                }
+                self.save_plan_book_undo();
                 self.plan_book
                     .create(open.clone())
                     .unwrap_or_else(|error| {
@@ -1254,6 +1295,16 @@ impl GroupState {
             },
             child_ops,
         ))
+    }
+
+    /// Sol 整改 1：簿变更前的可逆快照（本 tick 首次变更保存；后续复用）。
+    fn save_plan_book_undo(&mut self) {
+        if !self.plan_undo_saved {
+            self.undo.push(GroupUndo::PlanBook {
+                prev: Box::new(self.plan_book.clone()),
+            });
+            self.plan_undo_saved = true;
+        }
     }
 
     /// D3a-3 件4b：账户级首子单报价（预算+报价 → SubmitLimit →
@@ -1519,6 +1570,8 @@ impl GroupState {
                     inserted: true,
                 });
             }
+            // Sol 整改 1：簿快照覆盖全部簿变更（install/record 亦然）。
+            self.save_plan_book_undo();
             self.plan_book
                 .install_execution(
                     plan_id,
