@@ -154,15 +154,11 @@ fn batch3_both_paths_cancels_present() {
         .iter()
         .filter(|e| matches!(e, Event::OrderCanceled { .. }))
         .count();
-    // 已知形态差（登记）：旧管线日终清簿走实体路径不发 OrderCanceled
-    // 事件；runtime 显式发。Sol 二审修复集 4：`p_c >= 0` 对 usize 恒真
-    // ——改为精确锚：arrival_rate=0 的 fixture 下旧管线不产单，撤单
-    // 事件数恰为 0。
+    // D1 策略对等后 fixture 到达率 0.30——两路径都真实产单。撤单面
+    // 双侧存在性锚（此前 arrival=0 时旧管线恰 0 条是 fixture 现实，
+    // 不是形态差断言；Sol 二审修复的"`>=0` 恒真"问题以双侧>0 收口）。
     assert!(rt_c > 0, "runtime 撤单面：{rt_c}");
-    assert_eq!(
-        p_c, 0,
-        "旧管线 arrival_rate=0 无订单——撤单事件恰为 0（清簿实体路径形态差登记）"
-    );
+    assert!(p_c > 0, "旧管线撤单面（arrival 0.30 产单后撤单事件存在）：{p_c}");
 }
 
 // 8. 事件无重复 seq（runtime——稳定键唯一性的 seq 面）。

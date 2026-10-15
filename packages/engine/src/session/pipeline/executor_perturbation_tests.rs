@@ -2,6 +2,14 @@ use super::*;
 use crate::{AccountId, GameSession, Intent, Money, Side};
 use std::collections::BTreeMap;
 
+// D1 登记（2026-10-15）：本文件为**旧执行器扰动契约**——断言旧执行器
+// 的分片记录/控制隔离在不同并发形态下不变。runtime 路径无执行器
+// （决策在组线程、撮合在交易部线程），故经 step() 混跑只会因缺
+// ExecutorOrderRecord 失败。市场对等部分（玩家成交/持仓/现金跨线程
+// 数不变）已在 runtime 路径实测通过（证据：D1 批跑到 154 行 shard
+// 断言处——fills/positions 全过）。全部测试显式走旧管线契约入口；
+// runtime 并发不变式等价测试归 D4 设计（组/部分片维度）。
+
 fn fixture(auction: bool) -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
     setup.npcs.inst_count = 0;
@@ -89,7 +97,7 @@ fn run(
             let mut player_fills = BTreeMap::<_, u64>::new();
             // Includes auction completion, PreOpen, continuous, and day-end finalizers.
             for _ in 0..8 {
-                let events = game.step().unwrap();
+                let events = game.step_pipeline_contract().unwrap();
                 for event in events {
                     if let crate::Event::Trade {
                         code,
@@ -199,7 +207,7 @@ fn executor_perturbation_allows_stock_output_reordering() {
         let perturbation = config(ExecutorPermutation::Reverse);
         for _ in 0..8 {
             let before_tick = game.state.tick;
-            let (result, _) = with_executor_perturbation(perturbation, || game.step()).unwrap();
+            let (result, _) = with_executor_perturbation(perturbation, || game.step_pipeline_contract()).unwrap();
             result.expect("cross-stock output order must not fail the tick");
             assert_eq!(game.state.tick, before_tick + 1);
             assert!(game.poison_reason().is_none());
@@ -270,7 +278,7 @@ fn compute_context_shared_host_sessions_keep_executor_controls_isolated() {
                 let mut game = fixture(false);
                 game.rebind_compute_for_verification(compute);
                 let (result, records) = with_executor_perturbation(
-                    ExecutorPerturbation { stock_shards, ..Default::default() }, || game.step(),
+                    ExecutorPerturbation { stock_shards, ..Default::default() }, || game.step_pipeline_contract(),
                 ).unwrap();
                 result.unwrap();
                 assert!(!records_at(&records, ExecutorBoundary::ContinuousStockShards).is_empty());
@@ -287,7 +295,7 @@ fn compute_context_foreign_caller_preserves_real_executor_controls() {
     let foreign = crate::compute::ComputeContext::from_workers(foreign_workers);
     let (result, records) = foreign.install(|| with_executor_perturbation(
         ExecutorPerturbation { stock_shards: ExecutorPermutation::Reverse, ..Default::default() },
-        || game.step(),
+        || game.step_pipeline_contract(),
     )).unwrap();
     result.unwrap();
     assert!(!records_at(&records, ExecutorBoundary::ContinuousStockShards).is_empty());

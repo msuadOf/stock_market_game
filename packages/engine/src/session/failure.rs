@@ -142,7 +142,15 @@ impl GameSession {
                     let views = driver.world_public_views();
                     views.iter().map(|v| v.daily_upper_limit).collect()
                 };
-                driver.inject_player_intents(&intents, &uppers);
+                if let Err(route_err) = driver.inject_player_intents(&intents, &uppers) {
+                    drop(driver);
+                    self.restore_runtime_player_intents(intents);
+                    self.runtime_driver = Some(cell);
+                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime".to_owned(),
+                        description: route_err,
+                    }));
+                }
             }
             let stepped = self.runtime_step_with_install(&mut driver);
             if stepped.is_err() {
@@ -407,6 +415,33 @@ impl GameSession {
         self.state.candle_book.replace_active(candle_active);
         self.state.npc_attention = npc_attention;
         self.state.attention_scheduler = attention_scheduler;
+    }
+
+    /// runtime 持仓回写配套（D1）：runtime 新增持仓时补经历条目——存档
+    /// 校验 fault2038 依赖"持仓必有经历"。成本基近似=数量×现价（runtime
+    /// 世界不持成本账——登记差异，D3 结算域以 FillFact 精确收口）。
+    pub fn runtime_hold_experience_init(
+        &mut self,
+        id: &crate::AccountId,
+        code: &crate::StockId,
+        qty: u32,
+        price_cents: i64,
+    ) -> Result<(), String> {
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: self.state.civil_clock.current_date(),
+            market_minute: self.current_market_minute(),
+            trading_day: u64::from(self.state.day),
+        };
+        let Some(ledger) = self.state.retail_experience.get_mut(id) else {
+            // 无经历账的账户（玩家惯例位）无 fault2038 约束——跳过。
+            return Ok(());
+        };
+        // 入场参考=现价（fault2049 要求 peak≥entry；runtime 不持成交价
+        // 账——近似登记，D3 结算域以 FillFact 精确收口）。
+        let price = crate::money::Money::from_cents(price_cents.max(1));
+        ledger
+            .initialize_holding_dated(code, Some(price), price, moment)
+            .map_err(|e| format!("经历条目初始化失败：{e:?}"))
     }
 
     /// runtime 驱动器翻转面（Sol 二审修复集 3）：价格历史长度只读

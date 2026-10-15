@@ -47,18 +47,58 @@ impl RuntimeDriver {
             .into_iter()
             .map(|(id, due, rng)| (id, (due, rng)))
             .collect();
+        // D1 策略对等：策略面从会话真实状态读取——族=账户 kind、参数=
+        // setup.strategy_params（此前合成 retail(0.30,200,0.35) 恒定，
+        // 参数不同的会话行为不分叉）。个体风格/阈值采样（旧管线
+        // StrategyFactory 的 RNG 个性）为登记差异：runtime 用基线参数
+        // （见 .tmp/multi-tick-design.md D1 节）。
+        let params = &setup.strategy_params;
         let profiles: Vec<NpcProfile> = (0..npcs.max(1))
-            .map(|i| match ids.get(i).and_then(|id| attention.get(id)) {
-                Some(&(due, rng)) => NpcProfile {
-                    strategy: StrategyData::retail(0.30, 200, 0.35),
-                    seed: rng,
-                    next_due: due,
-                },
-                None => NpcProfile {
-                    strategy: StrategyData::retail(0.30, 200, 0.35),
-                    seed: 0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
-                    next_due: (i % 8) as u64,
-                },
+            .map(|i| {
+                let id = ids.get(i).copied();
+                let attention_entry = id.and_then(|id| attention.get(&id)).copied();
+                let kind = id.and_then(|id| session.account(id).map(|a| a.kind()));
+                // 玩家不经组线程自主决策（意图只走 ExternalPlan——D2 路由）；
+                // next_due=u64::MAX 显式永不到期。
+                let (strategy, fallback_due) = match kind {
+                    Some(crate::account::AccountKind::Retail) => (
+                        StrategyData::retail(
+                            params.retail.arrival_rate,
+                            params.retail.order_size_mean,
+                            params.retail.chase_prob,
+                        ),
+                        (i % 8) as u64,
+                    ),
+                    Some(crate::account::AccountKind::Inst) => (
+                        StrategyData::inst(
+                            crate::strategy::TargetPolicy::Fixed(Money::ZERO),
+                            params.inst.margin,
+                            params.inst.order_size,
+                        ),
+                        (i % 8) as u64,
+                    ),
+                    Some(crate::account::AccountKind::Hot) => (
+                        StrategyData::hot(
+                            params.hot.lookback,
+                            params.hot.trend_threshold,
+                            params.hot.order_size,
+                        ),
+                        (i % 8) as u64,
+                    ),
+                    _ => (StrategyData::retail(0.0, 0, 0.0), u64::MAX),
+                };
+                match attention_entry {
+                    Some((due, rng)) => NpcProfile {
+                        strategy,
+                        seed: rng,
+                        next_due: due,
+                    },
+                    None => NpcProfile {
+                        strategy,
+                        seed: 0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
+                        next_due: fallback_due,
+                    },
+                }
             })
             .collect();
         let decision = DecisionSetup {
@@ -90,6 +130,13 @@ impl RuntimeDriver {
     /// 驱动一个 tick：runtime 收束 → 账户/行情回写会话 → 事件产出。
     /// 会话 tick 由调用方（或批 8e 的 step_frame 本体）推进。
     pub fn step(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        // D1：新增持仓补经历条目（fault2038 存档校验依赖）——在快照
+        // 回写前取现价。
+        let last_prices: Vec<i64> = self
+            .world_public_views()
+            .iter()
+            .map(|v| v.last_price.max(1))
+            .collect();
         self.world
             .run_ticks(1)
             .map_err(|e| format!("runtime tick 失败：{e:?}"))?;
@@ -103,8 +150,47 @@ impl RuntimeDriver {
                 let Some(id) = self.id_map.get(local).copied() else {
                     continue;
                 };
+                // D1 持仓回写：数量与 T+1 冻结以组权威同步；成本基
+                // （invested/recovered）保留会话侧已有条目——runtime
+                // 世界不持成本账（登记差异，D3 结算域收口）。先只读
+                // 快照+经历补账，再单次可变写回（借用分离）。
+                let mut merged = session
+                    .account(id)
+                    .map(|a| a.positions().clone())
+                    .unwrap_or_default();
+                for (idx, &qty) in acct.shares.iter().enumerate() {
+                    let code = crate::StockId(idx as u32);
+                    // 零持仓不新增条目：会话持仓语义=（曾）持有才有条目
+                    //（经历账/存档校验 fault2038 依赖该不变量）；已有
+                    // 条目则同步数量（清零保留条目——与旧管线全卖后
+                    // 条目留存的语义一致）。
+                    if qty == 0 && !merged.contains_key(&code) {
+                        continue;
+                    }
+                    let is_new_hold = qty > 0 && !merged.contains_key(&code);
+                    let (invested, recovered) = merged
+                        .get(&code)
+                        .map(|p| (p.invested_cents(), p.recovered_cents()))
+                        .unwrap_or((0, 0));
+                    if is_new_hold {
+                        let price = last_prices.get(idx).copied().unwrap_or(1);
+                        session
+                            .runtime_hold_experience_init(&id, &code, qty, price)
+                            .map_err(|e| format!("持仓回写配套失败：{e}"))?;
+                    }
+                    merged.insert(
+                        code,
+                        crate::account::Position::from_restored_parts(
+                            qty,
+                            acct.frozen_today.get(idx).copied().unwrap_or(0),
+                            invested,
+                            recovered,
+                        ),
+                    );
+                }
                 if let Some(engine_acct) = session.fixture_account_mut(&id) {
                     engine_acct.fixture_set_cash(Money::from_cents(acct.cash));
+                    engine_acct.fixture_set_positions(merged);
                 }
             }
         }
@@ -273,18 +359,31 @@ impl RuntimeDriver {
         Ok(super::event_bridge::FrameProjection { events, views })
     }
 
-    /// 玩家意图路由（D2）：Intent → PendingOp（PlaceLimit/PlaceMarket；
-    /// Cancel 需 OrderRef 跟踪——登记后续）。
-    fn route_player_intents(
+    /// 外部意图路由（D1 修正）：Intent → PendingOp。local 按**意图
+    /// owner 在 id_map 的下标**路由（此前硬编码 local:0——经
+    /// pending_player 暂存的 NPC 意图会被误当玩家单，同 owner 撞
+    /// 自成交零成交）。PlaceMarket/Cancel 需 OrderRef 跟踪——登记后续。
+    fn route_external_intents(
+        &self,
         intents: &[crate::session::ReceiptBearingIntent],
         upper_limits: &[i64],
-    ) -> Vec<super::decision::PendingOp> {
+    ) -> Result<Vec<super::decision::PendingOp>, String> {
         let mut ops = Vec::new();
         for r in intents {
             let crate::Intent::PlaceLimit { code, side, price, qty } = &r.intent else {
-                // PlaceMarket/Cancel：登记（D2 首版限价面——其余变体补）。
+                // PlaceMarket/Cancel：登记（首版限价面——其余变体补）。
                 continue;
             };
+            let local = self
+                .id_map
+                .iter()
+                .position(|id| *id == r.owner)
+                .ok_or_else(|| {
+                    format!(
+                        "外部意图 owner 不在世界名册（无法路由到组内账户）：{:?}",
+                        r.owner
+                    )
+                })? as super::LocalIdx;
             let upper = upper_limits
                 .get(code.0 as usize)
                 .copied()
@@ -296,7 +395,7 @@ impl RuntimeDriver {
                 _ => (super::protocol::RoutedPrice::Highest, upper),
             };
             ops.push(super::decision::PendingOp {
-                local: 0, // 玩家=组 0 下标 0（id_map 首位惯例）
+                local,
                 stock: code.0 as super::StockIdx,
                 side: *side,
                 routed,
@@ -304,20 +403,22 @@ impl RuntimeDriver {
                 qty: *qty,
             });
         }
-        ops
+        Ok(ops)
     }
 
-    /// 玩家意图注入世界（D2）：经 ExternalPlan 通道广播全部组（组 0 消费）。
+    /// 外部意图注入世界（D2/D1）：经 ExternalPlan 通道广播全部组（组 0
+    /// 消费）。owner 不在名册=显式失败（不静默丢单）。
     pub fn inject_player_intents(
         &mut self,
         intents: &[crate::session::ReceiptBearingIntent],
         upper_limits: &[i64],
-    ) {
-        let ops = Self::route_player_intents(intents, upper_limits);
+    ) -> Result<(), String> {
+        let ops = self.route_external_intents(intents, upper_limits)?;
         if ops.is_empty() {
-            return;
+            return Ok(());
         }
         self.world.broadcast_external_plan(ops);
+        Ok(())
     }
 
     /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。

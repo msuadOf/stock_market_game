@@ -32,7 +32,10 @@ pub fn setup_1stock() -> SessionSetup {
         config: engine::config::GameConfig::proposed_defaults(),
         strategy_params: engine::strategy::StrategyParams {
             retail: engine::strategy::RetailParams {
-                arrival_rate: 0.0,
+                // D1 策略对等后 runtime 读会话参数：0.0=两路径都零下单
+                // （此前 runtime 侧靠合成 0.30 幽灵决策撑起事件面断言）。
+                // fixture 显式给 0.30——NPC 在两路径真实交易。
+                arrival_rate: 0.30,
                 order_size_mean: 100,
                 chase_prob: 0.0,
             },

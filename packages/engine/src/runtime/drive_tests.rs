@@ -83,3 +83,36 @@ fn sol6_history_len_flows_from_session_setup() {
         "history_len=32 贯通 desk 价格窗（硬编码 16 时只有 16 条）"
     );
 }
+
+// D1 策略对等：runtime 决策必须读会话 strategy_params（此前合成
+// retail(0.30,200,0.35) 恒定——参数不同的两份会话行为不分叉）。
+#[test]
+fn d1_runtime_decisions_use_session_strategy_params() {
+    fn accepted_with(arrival: f64) -> usize {
+        let mut setup = setup_fixture();
+        setup.strategy_params.retail.arrival_rate = arrival;
+        let mut session = GameSession::new(setup, 5).expect("会话构造");
+        let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+        driver.adopt_session_seq(&session);
+        let mut accepted = 0usize;
+        for _ in 0..20 {
+            let ev = driver
+                .step_frame_equivalent(&mut session)
+                .expect("步进");
+            driver.install_market_views(&mut session).expect("行情安装");
+            driver.install_candles(&mut session).expect("K 安装");
+            accepted += ev
+                .iter()
+                .filter(|e| matches!(e, crate::Event::OrderAccepted { .. }))
+                .count();
+        }
+        accepted
+    }
+    let hot = accepted_with(1.0);
+    let cold = accepted_with(0.0);
+    assert!(hot > 0, "到达率 1.0 必产受理单（{hot}）");
+    assert_eq!(
+        cold, 0,
+        "到达率 0.0 零下单——runtime 须用会话参数（合成 0.30 时此断言红）"
+    );
+}
