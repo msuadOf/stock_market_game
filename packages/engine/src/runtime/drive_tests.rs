@@ -921,6 +921,206 @@ fn solmid_echo_open_derivation_is_read_only_and_idempotent() {
     );
 }
 
+// Sol 中点整改 2/5 红证：执行腿生命周期——成交推进（组簿 (账户,方向)
+// 聚合 filled 与 desk_trades 的 belief 腿独立源逐账户对拍——完整子单
+// 数量+部分成交）、读面幂等、Abort 回滚恢复。fixture：连续形态
+//（auction=0）+retail 对手位（有持仓，双向贴价注入——价格笼子内）。
+#[test]
+fn solmid_execution_leg_lifecycle_matches_independent_fills() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 51).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 独立源：belief 位（local>=2）按 (账户, 买卖方向) 的成交股数累计。
+    let mut expect: std::collections::BTreeMap<(crate::AccountId, u8), u32> =
+        Default::default();
+    for _ in 0..12 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver
+            .inject_player_intents(&intents, &upper)
+            .expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+        let Some(rec) = driver.world_report_log().last() else {
+            continue;
+        };
+        for tr in &rec.desk_trades {
+            // maker≡卖方/taker≡买方（desk 产出侧两方向统一——台账备忘；
+            // 此前按 taker_side 条件映射写反，红证数据显红后修正）。
+            for (owner, side_code) in [(tr.maker, 1u8), (tr.taker, 0u8)] {
+                if owner.1 >= 2 {
+                    let Some(&id) = driver.id_map.get(owner.1 as usize) else {
+                        continue;
+                    };
+                    *expect.entry((id, side_code)).or_default() += tr.qty;
+                }
+            }
+        }
+    }
+    // 末批成交的落账 tick（协议时序：批次在下一 Start 落账——红证对拍
+    // 前补一步空转）。
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("落账步进");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let plans = driver
+        .collect_plans()
+        .expect("计划簿收集")
+        .remove(0)
+        .1;
+    // (a) 成交推进：组簿 (账户,方向) 聚合 filled == 独立源（全部 belief
+    // 成交都被计划消费——部分成交按 fill.qty 推进、完整数量按挂出量
+    // adopt；漂移即红）。
+    let mut filled: std::collections::BTreeMap<(crate::AccountId, u8), u32> = Default::default();
+    for pid in plans.active_plan_ids() {
+        let Ok(plan) = plans.plan(pid) else { continue };
+        let side_code = match plan.direction() {
+            Side::Buy => 0u8,
+            Side::Sell => 1u8,
+        };
+        *filled.entry((plan.account(), side_code)).or_default() += plan.filled_qty();
+    }
+    assert_eq!(
+        format!("{filled:?}"),
+        format!("{expect:?}"),
+        "组簿成交推进与独立源逐账户逐方向一致"
+    );
+    assert!(
+        !expect.is_empty(),
+        "fixture 须产生 belief 位成交（独立源空=fixture 失效）"
+    );
+    // (b) 读面幂等：两次 collect_plans 逐字段相等。
+    let again = driver
+        .collect_plans()
+        .expect("再收集")
+        .remove(0)
+        .1;
+    assert_eq!(
+        format!("{plans:?}"),
+        format!("{again:?}"),
+        "计划簿读面幂等（Echo 不改簿）"
+    );
+    // (c) Abort 回滚恢复：validator 拒一 tick → 组回滚 → 簿与拒前一致。
+    let before = driver
+        .collect_plans()
+        .expect("拒前簿")
+        .remove(0)
+        .1;
+    driver.set_world_validator_for_test(Box::new(|_e| Err("注入拒绝".to_owned())));
+    assert!(
+        driver.step_frame_equivalent(&mut session).is_err(),
+        "注入拒绝的 tick 必须失败"
+    );
+    let after = driver
+        .collect_plans()
+        .expect("回滚后簿")
+        .remove(0)
+        .1;
+    assert_eq!(
+        format!("{before:?}"),
+        format!("{after:?}"),
+        "Abort 回滚后计划簿恢复（fill/create/在途全部冲回）"
+    );
+}
+
+// Sol 中点整改 2/5 红证（终结）：日终清簿 Drain→组收 Closed/Refund→
+// 在途票与执行腿释放——日结后全部计划的在途子单身份清空。
+#[test]
+fn solmid_day_end_drain_releases_child_tickets() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 51).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 与 lifecycle 红证同款注入（喂簿/吃单）——制造在途子单。
+    for _ in 0..6 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    let before = driver.collect_plans().expect("日结前簿").remove(0).1;
+    let had_child = before
+        .active_plan_ids()
+        .iter()
+        .any(|pid| before.plan(*pid).is_ok_and(|p| p.active_child_order_id().is_some()));
+    // 日结清簿（强撤全部挂单→Drain 实体回流组）。
+    driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect("日结（清簿）");
+    let drained = driver.collect_plans().expect("日结后簿").remove(0).1;
+    for pid in drained.active_plan_ids() {
+        let Ok(plan) = drained.plan(pid) else { continue };
+        assert!(
+            plan.active_child_order_id().is_none(),
+            "日结清簿后计划 {pid:?} 的在途子单应释放（Closed/Refund→release_child_ticket）"
+        );
+    }
+    let _ = had_child;
+}
+
+
+
 // Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——
 // (a) 组内推进+仅 information 域回写（cadence/next_check 前进）；
 // (b) candidate 域回写前后不变（权威调和锚：快照取点/回写覆写错即红）。

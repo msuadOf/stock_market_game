@@ -17,7 +17,7 @@ use super::protocol::{
     RuntimeError, UpMsg, WorkerId,
 };
 use super::watchdog::{worker_recv, WatchdogConfig};
-use super::{Entity, FillFact, GroupIdx, LocalIdx, StockIdx};
+use super::{Entity, FillFact, GroupIdx, LocalIdx, OrderRef, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
 use crate::orderbook::Side;
@@ -164,6 +164,22 @@ impl ObservationInputs {
     }
 }
 
+/// 计划子单在途票（Sol 整改 2：挂出量+受理身份——adopt 后身份在）。
+#[derive(Clone, Debug)]
+struct ChildTicket {
+    /// 挂出量（完整子单数量——PendingOp.qty，adopt 的数量输入）。
+    qty: u32,
+    /// 受理身份（fill 首见时自 FillFact.order 确定性合成；None=挂出
+    /// 未受理——desk 尚未成交/拒收）。
+    order_id: Option<crate::OrderId>,
+}
+
+/// FillFact.order 的确定性身份合成（Sol 整改 2：不另造计数器——
+/// OrderRef=(股, desk 本地序号) → OrderId 高位编码股索引）。
+fn order_id_of(order: &OrderRef) -> crate::OrderId {
+    crate::OrderId((u64::from(order.0) << 48) | (order.1 & 0x0000_FFFF_FFFF_FFFF))
+}
+
 /// 组端可逆日志条目：记录“已施加的增量”，回滚时逆序施加 `-delta`。
 /// 覆盖：决策期扣除（purse/股票）、实体落账、`foreign_active` 增减。
 #[derive(Clone, Debug)]
@@ -220,16 +236,12 @@ enum GroupUndo {
         stock: StockIdx,
         prev: bool,
     },
-    /// 计划子单在途位回滚（D3a-3 复核收口：挂出置入/全成清除——
-    /// Abort 逆序恢复；撤销/到期终结的清除随撤销路径补，登记）。
+    /// 计划子单在途票回滚（Sol 整改 2：prev=变更前值——Abort 逆序恢复；
+    /// 覆盖挂出置入/身份合成/全成与终结清除）。
     ChildInFlight {
         account: crate::AccountId,
         code: crate::StockId,
-        inserted: bool,
-    },
-    /// 子单身份计数回滚（Sol 整改 1：next_child_order_id 的逆增量）。
-    ChildOrderSeq {
-        prev: u64,
+        prev: Option<ChildTicket>,
     },
 }
 
@@ -371,13 +383,11 @@ pub struct GroupState {
     /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调
     /// 不可用，读面上行空）。
     root_projection: Option<std::sync::Arc<super::world::RootProjection>>,
-    /// D3a-3：组内子单身份合成计数器（engine OrderId 域——组内私有，
-    /// 交付投影面不依赖）。
-    next_child_order_id: u64,
-    /// D3a-3 复核收口：计划子单在途键（挂出置入/全成清除——执行腿的
-    /// "挂出未受理"与"全成"在腿结构同形（order=None+remaining=None），
-    /// 组内以独立集区分；撤销/到期终结的清除随撤销路径补，登记）。
-    child_in_flight: std::collections::BTreeSet<(crate::AccountId, crate::StockId)>,
+    /// D3a-3 复核收口+Sol 整改 2：计划子单在途票（挂出量+受理身份）——
+    /// 身份=FillFact.order 的确定性合成（不另造计数器）；部分成交推进、
+    /// 全成/终结（Closed/到期/日终清簿/拒收）清除。
+    child_in_flight:
+        std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     /// Sol 整改 1：簿快照已保存标志（本 tick 内首个簿变更前保存一次；
     /// 转正/回滚清 undo 时重置）。
     plan_undo_saved: bool,
@@ -463,7 +473,6 @@ impl GroupState {
             belief_states: belief_states_seed,
             library: library_seed,
             root_projection,
-            next_child_order_id: 0,
             child_in_flight: Default::default(),
             plan_undo_saved: false,
             plan_book: crate::plans::PlanBook::default(),
@@ -513,12 +522,12 @@ impl GroupState {
                 h = fnv(h, plan.active_child_order_id().map_or(0, |o| o.0));
             }
         }
-        h = fnv(h, self.child_in_flight.len() as u64);
-        for (account, code) in &self.child_in_flight {
+        for ((account, code), ticket) in &self.child_in_flight {
             h = fnv(h, u64::from(account.0));
             h = fnv(h, u64::from(code.0));
+            h = fnv(h, u64::from(ticket.qty));
+            h = fnv(h, ticket.order_id.map_or(0, |o| o.0));
         }
-        h = fnv(h, self.next_child_order_id);
         h
     }
 
@@ -585,21 +594,16 @@ impl GroupState {
                         acct.ever_held[stock as usize] = prev;
                     }
                 }
-                GroupUndo::ChildInFlight {
-                    account,
-                    code,
-                    inserted,
-                } => {
-                    // Sol 整改 1：undo 逆操作（此前方向写反——挂出 Abort 后
-                    // 残留在途位，重跑跳过报价）。
-                    if inserted {
-                        self.child_in_flight.remove(&(account, code));
-                    } else {
-                        self.child_in_flight.insert((account, code));
+                GroupUndo::ChildInFlight { account, code, prev } => {
+                    // Sol 整改 2：恢复变更前票值（None=原本不在途）。
+                    match prev {
+                        Some(ticket) => {
+                            self.child_in_flight.insert((account, code), ticket);
+                        }
+                        None => {
+                            self.child_in_flight.remove(&(account, code));
+                        }
                     }
-                }
-                GroupUndo::ChildOrderSeq { prev } => {
-                    self.next_child_order_id = prev;
                 }
             }
         }
@@ -649,6 +653,21 @@ impl GroupState {
                 self.apply_fill_plan_progress(stock as StockIdx, fill)?;
                 if !touched.contains(&(fill.owner.1, stock as StockIdx)) {
                     touched.push((fill.owner.1, stock as StockIdx));
+                }
+            }
+            // Sol 整改 2：拒收回执=失败释放（未受理票清除——desk 拒收
+            // 的挂单从未成交，票 order_id=None 走未受理释放路径）。
+            for receipt in &batch.receipts {
+                let rejected = matches!(
+                    receipt.kind,
+                    crate::runtime::ReceiptKind::PriceOutOfBand
+                        | crate::runtime::ReceiptKind::NotRoundLot
+                        | crate::runtime::ReceiptKind::ExceedsOrderCap
+                        | crate::runtime::ReceiptKind::PhaseRejected
+                        | crate::runtime::ReceiptKind::AuctionLimitOrderRequired
+                );
+                if rejected {
+                    self.release_child_ticket(stock as StockIdx, receipt.owner.1)?;
                 }
             }
             for entity in batch.entities {
@@ -718,10 +737,9 @@ impl GroupState {
         Ok(())
     }
 
-    /// D3a-3：成交事实的计划推进（执行腿——首见 adopt 身份、后续
-    /// ChildOrderFilled；child_complete 后腿随事件转移）。登记：adopt 的
-    /// qty=首笔成交量（弱化——组内不知 desk 受理量；剩余量校验随
-    /// 撤销路径补）。
+    /// Sol 整改 2：成交事实的计划推进。身份=FillFact.order 确定性合成
+    ///（首见 adopt，数量=**挂出量**——完整子单数量）；部分成交推进
+    /// remaining；全成清在途票（下一轮可再报价——加仓）。
     fn apply_fill_plan_progress(
         &mut self,
         stock: StockIdx,
@@ -736,57 +754,54 @@ impl GroupState {
             return Ok(());
         };
         let code = crate::StockId(u32::from(stock));
-        let (direction, has_child) = {
-            let Some(plan) = self.plan_book.active_plan(account, &code) else {
-                return Ok(());
-            };
-            (plan.direction(), plan.active_child_order_id().is_some())
+        // 在途票（本 (账户, 股) 唯一）——无票=非计划链子单（retail/注入）。
+        let Some(mut ticket) = self.child_in_flight.get(&(account, code)).cloned() else {
+            return Ok(());
         };
-        if direction != fill.side {
+        if self
+            .plan_book
+            .active_plan(account, &code)
+            .is_none_or(|plan| plan.direction() != fill.side)
+        {
             return Ok(());
         }
         let day = self.cur_tick / self.ticks_per_day;
-        // 首见 adopt（active_child_order_id 为空）或推进（在途）。
-        if !has_child {
-            self.save_plan_book_undo();
-            let order_id = crate::OrderId(self.next_child_order_id + 1);
-            // Sol 整改 1：身份计数回滚（快照化——撤销用逆增量）。
-            let prev_orders = self.next_child_order_id;
-            self.undo.push(GroupUndo::ChildOrderSeq { prev: prev_orders });
-            self.next_child_order_id += 1;
+        self.save_plan_book_undo();
+        // 首见 adopt（身份=FillFact.order 合成；数量=挂出量——完整）。
+        if ticket.order_id.is_none() {
+            let order_id = order_id_of(&fill.order);
+            let child_qty = ticket.qty;
             self.plan_book
-                .record_child_submitted(
-                    account,
-                    &code,
-                    fill.side,
-                    order_id,
-                    fill.qty,
-                    day,
-                )
+                .record_child_submitted(account, &code, fill.side, order_id, child_qty, day)
                 .unwrap_or_else(|error| {
                     panic!("组内子单身份登记失败 {account:?} {code:?}: {error}")
                 });
+            ticket.order_id = Some(order_id);
+            self.undo.push(GroupUndo::ChildInFlight {
+                account,
+                code: code.clone(),
+                prev: Some(ChildTicket {
+                    qty: ticket.qty,
+                    order_id: None,
+                }),
+            });
+            self.child_in_flight.insert((account, code.clone()), ticket.clone());
         }
-        let (order_id, remaining) = {
+        let Some(order_id) = ticket.order_id else {
+            return Ok(());
+        };
+        let remaining = {
             let Some(plan) = self.plan_book.active_plan(account, &code) else {
                 return Ok(());
             };
-            let Some(order_id) = plan.active_child_order_id() else {
-                return Ok(());
-            };
-            let remaining = plan
-                .active_child_remaining_qty()
-                .unwrap_or_else(|| plan.execution().expect("在途腿存在").child_qty());
-            (order_id, remaining)
+            plan.active_child_remaining_qty()
+                .unwrap_or_else(|| plan.execution().expect("在途腿存在").child_qty())
         };
-        self.save_plan_book_undo();
         let pushed = self
             .plan_book
             .record_child_fill(account, &code, fill.side, order_id, fill.qty, day)
             .unwrap_or_else(|error| {
-                panic!(
-                    "组 {group} 计划成交推进失败 {account:?} {code:?}: {error}"
-                )
+                panic!("组 {group} 计划成交推进失败 {account:?} {code:?}: {error}")
             });
         if !pushed {
             return Err(RuntimeError::ProtocolInvariant {
@@ -795,14 +810,62 @@ impl GroupState {
                 ),
             });
         }
-        // 子单全成：在途位清除（下一轮可再报价——加仓路径；撤销/到期
-        // 终结的清除随撤销路径补，登记）。
-        if fill.qty == remaining && self.child_in_flight.remove(&(account, code.clone())) {
-            self.undo.push(GroupUndo::ChildInFlight {
-                account,
-                code,
-                inserted: false,
-            });
+        // 部分成交推进（票保留）或全成清除（下一轮可再报价）。
+        if fill.qty >= remaining {
+            if self.child_in_flight.remove(&(account, code)).is_some() {
+                self.undo.push(GroupUndo::ChildInFlight {
+                    account,
+                    code,
+                    prev: Some(ticket),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Sol 整改 2：子单终结（Closed 实体——到期、日终清簿、撤销与
+    /// 失败释放的统一信号）。已受理（有身份）→record_child_released；
+    /// 未受理→票清除（执行腿留待下次挂出覆盖——install 对 order=None
+    /// 可重入）。
+    fn release_child_ticket(
+        &mut self,
+        stock: StockIdx,
+        local: LocalIdx,
+    ) -> Result<(), RuntimeError> {
+        let Some(&account) = self
+            .root_projection
+            .as_ref()
+            .and_then(|projection| projection.account_ids.get(local as usize))
+        else {
+            return Ok(());
+        };
+        let code = crate::StockId(u32::from(stock));
+        let Some(ticket) = self.child_in_flight.remove(&(account, code)) else {
+            return Ok(());
+        };
+        self.undo.push(GroupUndo::ChildInFlight {
+            account,
+            code: code.clone(),
+            prev: Some(ticket.clone()),
+        });
+        if let Some(order_id) = ticket.order_id {
+            let day = self.cur_tick / self.ticks_per_day;
+            self.save_plan_book_undo();
+            let released = self
+                .plan_book
+                .record_child_released(account, &code, order_id, day)
+                .unwrap_or_else(|error| {
+                    panic!("组内子单释放失败 {account:?} {code:?}: {error}")
+                });
+            if !released {
+                // 已受理身份与计划不符=实现漂移，显式失败（铁律二）。
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "组 {} 子单释放未被计划消费：account={account:?}, code={code:?}, order={order_id:?}",
+                        self.group
+                    ),
+                });
+            }
         }
         Ok(())
     }
@@ -917,6 +980,9 @@ impl GroupState {
                 });
             }
             Entity::Closed { local } => {
+                // Sol 整改 2：子单终结信号（撤销/到期/日终清簿——组侧
+                // 在途票与执行腿释放）。
+                self.release_child_ticket(stock, local)?;
                 let acct = self.acct_mut(local)?;
                 let slot = &mut acct.foreign_active[stock as usize];
                 if *slot == 0 {
@@ -1351,7 +1417,9 @@ impl GroupState {
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
             if !matches!(plan.status(), crate::plans::PlanStatus::Active)
-                || self.child_in_flight.contains(&(account, plan.code().clone()))
+                || self
+                    .child_in_flight
+                    .contains_key(&(account, plan.code().clone()))
             {
                 continue;
             }
@@ -1452,7 +1520,9 @@ impl GroupState {
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("组内计划读取失败 {plan_id:?}: {error}"));
             if !matches!(plan.status(), crate::plans::PlanStatus::Active)
-                || self.child_in_flight.contains(&(account, plan.code().clone()))
+                || self
+                    .child_in_flight
+                    .contains_key(&(account, plan.code().clone()))
             {
                 continue;
             }
@@ -1563,13 +1633,20 @@ impl GroupState {
         // apply_staging 的 fills 段）。expires 近似=当日市场分钟上限
         //（挂单 TTL 域登记——撤销/到期释放的腿清理随撤销路径补）。
         for (plan_id, code, stock, side, price, qty) in submits {
-            if self.child_in_flight.insert((account, code.clone())) {
-                self.undo.push(GroupUndo::ChildInFlight {
-                    account,
-                    code: code.clone(),
-                    inserted: true,
-                });
-            }
+            let prev = self.child_in_flight.insert(
+                (account, code.clone()),
+                ChildTicket { qty, order_id: None },
+            );
+            // 防御：同键重复置入=上游跳过条件失效（显式失败，铁律二）。
+            assert!(
+                prev.is_none(),
+                "组内子单在途票重复置入：{account:?} {code:?}"
+            );
+            self.undo.push(GroupUndo::ChildInFlight {
+                account,
+                code: code.clone(),
+                prev: None,
+            });
             // Sol 整改 1：簿快照覆盖全部簿变更（install/record 亦然）。
             self.save_plan_book_undo();
             self.plan_book
