@@ -418,6 +418,44 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
     let _ = world.shutdown().expect("关停对账");
 }
 
+// ── 5c. 续行轮受理事实完整传递（Sol 二审修复集 3）──
+
+// 多轮 tick 的**续行轮**里受理的挂单，其 Accepted 事实必须在该轮收束后
+// 即下行组（先于 Continue——身份在续行轮落账/再报价前就位）。此前只在
+// 最终收束轮转发：续行轮受理的单在组内身份迟到（无 fill 即永不 adopt，
+// 后续 Closed 释放走未受理路径——执行腿悬挂）。
+#[test]
+fn sol3_continuation_round_acceptance_reaches_group_before_continue() {
+    use super::group::Observed;
+    // tick1 轮 0 挂买（挂簿受理）+声明续行；轮 1 空收口。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, round| {
+            let mut plan = TickPlan::default();
+            if tick == 1 && round == 0 {
+                plan.places.push(buy(0, 0, 1000, 100));
+                plan.continuation = true;
+            }
+            plan
+        })
+    };
+    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    world.run_ticks(1).expect("多轮 tick 收敛");
+    let report = world.shutdown().expect("关停对账");
+    let observed = &report.group_finals[0].observed;
+    let continue_at = observed
+        .iter()
+        .position(|o| matches!(o, Observed::Continue(1, 1)))
+        .expect("应有 Continue(1,1)（轮 0 声明续行）");
+    let accepted_at = observed
+        .iter()
+        .position(|o| matches!(o, Observed::ChildAccepted(..)))
+        .expect("轮 0 挂单受理事实应下行组（终轮转发也应有）");
+    assert!(
+        accepted_at < continue_at,
+        "续行轮受理事实必须先于 Continue 下行（受理@{accepted_at} ≥ Continue@{continue_at}）"
+    );
+}
+
 // ── 6. panic 运输（resume_unwind 原 payload）──
 
 #[test]

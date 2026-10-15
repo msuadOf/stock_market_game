@@ -413,6 +413,9 @@ pub enum Observed {
     Abort(u64),
     /// 收到 DayEnd（携带交易日）。
     DayEnd(u32),
+    /// 收到受理事实下行（Sol 二审修复集 3：股，所有者，desk 序号——
+    /// 续行轮受理完整传递的时序锚）。
+    ChildAccepted(StockIdx, (GroupIdx, LocalIdx), u64),
     /// 收到 Shutdown。
     Shutdown,
 }
@@ -495,7 +498,7 @@ pub struct GroupState {
     observation_inputs: Vec<ObservationInputs>,
     /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调
     /// 不可用，读面上行空）。
-    root_projection: Option<std::sync::Arc<super::world::RootProjection>>,
+    root_projection: Option<std::sync::Arc<crate::runtime::world::RootProjection>>,
     /// D3a-3 复核收口+Sol 整改 2：计划子单在途票（挂出量+受理身份）——
     /// 身份=FillFact.order 的确定性合成（不另造计数器）；部分成交推进、
     /// 全成/终结（Closed/到期/日终清簿/拒收）清除。
@@ -561,7 +564,7 @@ impl GroupState {
         initial_tick: u64,
         decision: Option<(Vec<NpcProfile>, u32)>,
         plans: Vec<Box<dyn PlanChain>>,
-        root_projection: Option<std::sync::Arc<super::world::RootProjection>>,
+        root_projection: Option<std::sync::Arc<crate::runtime::world::RootProjection>>,
         script: GroupScript,
     ) -> Self {
         let n_stocks = accounts.first().map(|a| a.shares.len()).unwrap_or(0);
@@ -796,7 +799,11 @@ impl GroupState {
                         | crate::runtime::ReceiptKind::AuctionLimitOrderRequired
                 );
                 if rejected {
-                    self.release_child_ticket(stock as StockIdx, receipt.owner.1)?;
+                    self.release_child_ticket(
+                        stock as StockIdx,
+                        receipt.owner.1,
+                        receipt.order.1,
+                    )?;
                 }
             }
             for entity in batch.entities {
@@ -921,6 +928,18 @@ impl GroupState {
         let Some(order_id) = ticket.order_id else {
             return Ok(());
         };
+        // Sol 二审修复集 3：票已有身份时成交必须同单——此前未验证即以
+        // 票身份推进**外来单的成交量**（同账户同股他单的 fill 静默吃掉
+        // 本票执行腿余量）。不一致=受理/成交关联漂移，显式失败（铁律二）。
+        let incoming_order = order_id_of(&fill.order);
+        if incoming_order != order_id {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} 成交事实与在途票身份不符：account={account:?}, code={code:?}, ticket_order={order_id:?}, fill_order={incoming_order:?}, fill_qty={}",
+                    fill.qty
+                ),
+            });
+        }
         let remaining = {
             let Some(plan) = self.plan_book.active_plan(account, &code) else {
                 return Ok(());
@@ -1016,11 +1035,14 @@ impl GroupState {
     /// Sol 整改 2：子单终结（Closed 实体——到期、日终清簿、撤销与
     /// 失败释放的统一信号）。已受理（有身份）→record_child_released；
     /// 未受理→票清除（执行腿留待下次挂出覆盖——install 对 order=None
-    /// 可重入）。
+    /// 可重入）。Sol 二审修复集 3：按订单身份关联释放——终结单号与票
+    /// 已受理身份不符时**不释放**（同账户同股他单的终结不得放错票；
+    /// 资源实体/在途计数照常落账）。
     fn release_child_ticket(
         &mut self,
         stock: StockIdx,
         local: LocalIdx,
+        order_serial: u64,
     ) -> Result<(), RuntimeError> {
         let Some(&account) = self
             .root_projection
@@ -1030,6 +1052,16 @@ impl GroupState {
             return Ok(());
         };
         let code = crate::StockId(u32::from(stock));
+        if let Some(known) = self
+            .child_in_flight
+            .get(&(account, code))
+            .and_then(|ticket| ticket.order_id)
+        {
+            if known != order_id_of(&(stock, order_serial)) {
+                // 终结的是他单（票不归属本单）——保留本票，仅落资源实体。
+                return Ok(());
+            }
+        }
         let Some(ticket) = self.child_in_flight.remove(&(account, code)) else {
             return Ok(());
         };
@@ -1189,10 +1221,10 @@ impl GroupState {
                     delta: qty as i32,
                 });
             }
-            Entity::Closed { local } => {
+            Entity::Closed { local, order_serial } => {
                 // Sol 整改 2：子单终结信号（撤销/到期/日终清簿——组侧
-                // 在途票与执行腿释放）。
-                self.release_child_ticket(stock, local)?;
+                // 在途票与执行腿释放；order_serial=订单身份关联，二审修复 3）。
+                self.release_child_ticket(stock, local, order_serial)?;
                 let acct = self.acct_mut(local)?;
                 let slot = &mut acct.foreign_active[stock as usize];
                 if *slot == 0 {
@@ -1645,7 +1677,7 @@ impl GroupState {
         &mut self,
         local: LocalIdx,
         account: crate::AccountId,
-        projection: &std::sync::Arc<super::world::RootProjection>,
+        projection: &std::sync::Arc<crate::runtime::world::RootProjection>,
         personal: &crate::session::PlanPersonalState,
         snapshot: &std::sync::Arc<TickSnapshot>,
         existing_before: &[crate::plans::PlanId],
@@ -2364,7 +2396,7 @@ fn initial_group_urgency(
 fn build_root_read_context(
     accounts: &[GroupAccount],
     belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
-    projection: &std::sync::Arc<super::world::RootProjection>,
+    projection: &std::sync::Arc<crate::runtime::world::RootProjection>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
     plans: &crate::plans::PlanBook,
     child_in_flight: &std::collections::BTreeMap<
@@ -2801,6 +2833,9 @@ pub fn group_main(
                 // Sol 整改受理通道：受理即身份（OrderRef 合成——不等首笔
                 // fill；adopt 数量=挂出量）。非本组/非计划链单（无票）跳过。
                 if owner.0 == state.group {
+                    state
+                        .observed
+                        .push(Observed::ChildAccepted(stock, owner, order_serial));
                     if let Err(e) = state.adopt_child_on_accepted(stock, owner.1, order_serial) {
                         abort.store(true, Ordering::SeqCst);
                         let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
@@ -3011,4 +3046,192 @@ pub fn group_main(
         }
     }
     result
+}
+
+/// Sol 二审修复集 3 红证（受理身份关联）：组内最小决策链态直调
+/// apply_staging——外来单的成交/终结事实不得触碰本票执行腿。
+#[cfg(test)]
+mod sol_recheck3_tests {
+    use super::*;
+
+    /// 最小组态：单账户单股，手工置入计划+执行腿+已受理在途票
+    /// （身份=order_id_of((0, 5))——serial 5 为本票，他单用其他 serial）。
+    fn chain_harness(side: Side) -> GroupState {
+        let mut state = GroupState::new(
+            0,
+            vec![GroupAccount::new(10_000_000, 1)],
+            8,
+            100,
+            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+            240,
+            None,
+            Vec::new(),
+            Box::new(|_t, _r| TickPlan::default()),
+        );
+        state.cur_tick = 1;
+        state.cur_round = 0;
+        state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
+            catalog: crate::stock::StockCatalog::from_metas(vec![crate::stock::StockMeta::new(
+                "600000",
+            )])
+            .expect("目录构造"),
+            company_registry: std::sync::Arc::new(
+                crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
+            ),
+            operations: std::sync::Arc::new(
+                crate::company::operations::CompanyOperations::new(
+                    crate::company::operations::CompanyOperationsConfig {
+                        seed: 1,
+                        shock_params: crate::company::events::ShockParams::current_default_parameters(),
+                        catalog: crate::company::CompanyCatalog::from_codes(&[])
+                            .expect("空公司目录"),
+                        companies: Vec::new(),
+                    },
+                    crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
+                )
+                .expect("空经营"),
+            ),
+            account_ids: vec![crate::AccountId(9)],
+            auction_ticks: 0,
+            closing_auction_ticks: 3,
+            chain_params: vec![None],
+            urgency_policy: crate::plans::UrgencyPolicy::default(),
+            total_shares: Default::default(),
+            max_order_qty_limit: Default::default(),
+            tick_size_cents: Default::default(),
+            stock_codes: Vec::new(),
+        }));
+        let account = crate::AccountId(9);
+        let code = crate::StockId(0);
+        let order_id = order_id_of(&(0, 5));
+        let pid = state
+            .plan_book
+            .create(crate::plans::PlanOpen {
+                account,
+                code: code.clone(),
+                direction: side,
+                target: crate::plans::PlanTarget::ShareCount(200),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .expect("计划创建");
+        state
+            .plan_book
+            .install_execution(pid, 200, crate::money::Money::from_cents(1_000), 240)
+            .expect("执行腿登记");
+        state
+            .plan_book
+            .record_child_submitted(account, &code, side, order_id, 200, 0)
+            .expect("子单身份登记");
+        state.child_in_flight.insert(
+            (account, code),
+            ChildTicket {
+                qty: 200,
+                side,
+                price: 1_000,
+                order_id: Some(order_id),
+            },
+        );
+        state
+    }
+
+    fn batch(entities: Vec<Entity>, fills: Vec<FillFact>) -> DeskBatch {
+        DeskBatch {
+            stock: 0,
+            tick: 1,
+            round: 0,
+            entities,
+            fills,
+            receipts: Vec::new(),
+        }
+    }
+
+    // 3b：票已有身份（serial 5）时，外来单（serial 77）的成交事实必须
+    // 显式失败——此前以票身份推进外来单的成交量（执行腿被静默吃掉）。
+    #[test]
+    fn sol3_fill_with_foreign_order_fails_instead_of_eating_the_leg() {
+        let mut state = chain_harness(Side::Buy);
+        state.staging.push(
+            batch(
+                Vec::new(),
+                vec![FillFact {
+                    order: (0, 77),
+                    owner: (0, 0),
+                    side: Side::Buy,
+                    price: 1_000,
+                    qty: 50,
+                    commission: 0,
+                    stamp_tax: 0,
+                    transfer_fee: 0,
+                }],
+            ),
+        );
+        let err = state
+            .apply_staging(1, 0)
+            .expect_err("外来单成交必须显式失败（不得推进本票执行腿）");
+        assert!(
+            format!("{err:?}").contains("身份不符"),
+            "错误须指明受理/成交关联漂移：{err:?}"
+        );
+        let plan = state
+            .plan_book
+            .active_plan(crate::AccountId(9), &crate::StockId(0))
+            .expect("计划仍在簿");
+        assert_eq!(
+            plan.active_child_remaining_qty(),
+            Some(200),
+            "执行腿余量不被外来单吃掉"
+        );
+    }
+
+    // 3c：Closed 按订单身份关联释放——他单（serial 88）的终结不释放本票
+    // （serial 5）；本单的 Closed 正常释放（票+执行腿）。
+    #[test]
+    fn sol3_closed_with_foreign_order_keeps_the_ticket() {
+        let mut state = chain_harness(Side::Sell);
+        state.accounts[0].foreign_active[0] = 1;
+        state
+            .staging
+            .push(batch(vec![Entity::Closed {
+                local: 0,
+                order_serial: 88,
+            }], Vec::new()));
+        state
+            .apply_staging(1, 0)
+            .expect("他单终结不构成失败（资源实体照常落账）");
+        let key = (crate::AccountId(9), crate::StockId(0));
+        assert!(
+            state.child_in_flight.contains_key(&key),
+            "他单的 Closed 不得释放本票（订单身份关联）"
+        );
+        let plan = state
+            .plan_book
+            .active_plan(crate::AccountId(9), &crate::StockId(0))
+            .expect("计划仍在簿");
+        assert!(
+            plan.active_child_order_id().is_some(),
+            "他单的 Closed 不得释放执行腿"
+        );
+        // 对照：本单（serial 5）的 Closed 正常释放。
+        state.accounts[0].foreign_active[0] = 1;
+        state
+            .staging
+            .push(batch(vec![Entity::Closed {
+                local: 0,
+                order_serial: 5,
+            }], Vec::new()));
+        state
+            .apply_staging(1, 0)
+            .expect("本单终结正常释放");
+        assert!(
+            !state.child_in_flight.contains_key(&key),
+            "本单的 Closed 释放在途票"
+        );
+    }
 }

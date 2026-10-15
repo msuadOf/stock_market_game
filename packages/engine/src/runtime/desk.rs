@@ -1241,6 +1241,7 @@ impl DeskState {
             }
             self.out[g].push(Entity::Closed {
                 local: after.owner.1,
+                order_serial: after.order_ref.1,
             });
         } else {
             *front = after;
@@ -1272,6 +1273,7 @@ impl DeskState {
         }
         self.out[g].push(Entity::Closed {
             local: order.owner.1,
+            order_serial: order.order_ref.1,
         });
     }
 
@@ -1416,7 +1418,12 @@ impl DeskState {
                 });
             }
         }
-        self.out[g].push(Entity::Closed { local: owner.1 });
+        // 被拒单与回执共用同一 desk 序号（Closed 携带——组端按订单身份
+        // 关联释放，Sol 二审修复集 3）。
+        self.out[g].push(Entity::Closed {
+            local: owner.1,
+            order_serial: self.next_serial,
+        });
         let order = (self.setup.stock, self.next_serial);
         self.next_serial += 1;
         self.undo.push(DeskUndo::Serial);

@@ -39,9 +39,12 @@ pub enum Entity {
         qty: u32,
     },
     /// 挂单终结标记：闭合组端在途登记（foreign_active 递减）。**零额终结也必须发**，
-    /// 否则在途计数泄漏。
+    /// 否则在途计数泄漏。Sol 二审修复集 3：携带终结单的 desk 序号——组端按
+    /// 订单身份关联释放在途票（不只按账户+股票）。
     Closed {
         /// 终结挂单所属账户的组内名册下标。
         local: LocalIdx,
+        /// 终结挂单的 desk 本地序号（OrderRef.1）。
+        order_serial: u64,
     },
 }

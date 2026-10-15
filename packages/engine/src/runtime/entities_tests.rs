@@ -44,8 +44,17 @@ fn bought_and_refunded_shares_carry_local_and_qty() {
 #[test]
 fn closed_is_zero_value_marker_for_inflight_registry() {
     // 零额终结也必须发 Closed，否则组端在途登记（foreign_active）泄漏。
-    let e = Entity::Closed { local: 11 };
-    assert_eq!(e, Entity::Closed { local: 11 });
+    let e = Entity::Closed {
+        local: 11,
+        order_serial: 5,
+    };
+    assert_eq!(
+        e,
+        Entity::Closed {
+            local: 11,
+            order_serial: 5,
+        }
+    );
     // Copy 契约：实体可随批次缓冲复制（报告/审计路径）。
     let copied = e;
     assert_eq!(copied, e);
@@ -65,7 +74,10 @@ fn entity_distinguishes_all_five_variants() {
         },
         Entity::BoughtShares { local: 0, qty: 1 },
         Entity::RefundedShares { local: 0, qty: 1 },
-        Entity::Closed { local: 0 },
+        Entity::Closed {
+            local: 0,
+            order_serial: 0,
+        },
     ];
     for (i, a) in variants.iter().enumerate() {
         for (j, b) in variants.iter().enumerate() {

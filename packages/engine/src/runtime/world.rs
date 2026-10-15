@@ -1045,6 +1045,27 @@ impl World {
                         detail,
                     });
                 }
+                // Sol 二审修复集 3：受理事实**逐轮**下行组（先于 Continue——
+                // 身份在续行轮落账/再报价前就位；此前只在最终收束轮转发，
+                // 而最终轮 evidence 已不含早轮受理——续行轮受理永不传达，
+                // 无 fill 即永不 adopt，后续 Closed 释放走未受理路径）。
+                let accepted: Vec<(super::StockIdx, super::Owner, u64)> = evidence
+                    .desk_lifecycle
+                    .iter()
+                    .filter(|fact| {
+                        matches!(fact.kind, super::protocol::LifecycleKind::Accepted)
+                    })
+                    .map(|fact| (fact.stock, fact.owner, fact.order_serial))
+                    .collect();
+                for (stock, owner, order_serial) in accepted {
+                    for tx in &self.group_txs {
+                        let _ = tx.send(GroupIn::ChildAccepted {
+                            stock,
+                            owner,
+                            order_serial,
+                        });
+                    }
+                }
                 if evidence.continuation_any {
                     let next = rounds + 1;
                     if next > self.rounds_cap {
@@ -1057,26 +1078,7 @@ impl World {
                     broadcast_continue(&self.group_txs, tick, next)?;
                     rounds = next;
                 } else {
-                    // Sol 整改受理通道：本 tick 的 Accepted lifecycle 下行
-                    // 组（受理即身份——挂出确认不等首笔 fill）。
-                    let accepted: Vec<(super::StockIdx, super::Owner, u64)> = evidence
-                        .desk_lifecycle
-                        .iter()
-                        .filter(|fact| {
-                            matches!(fact.kind, super::protocol::LifecycleKind::Accepted)
-                        })
-                        .map(|fact| (fact.stock, fact.owner, fact.order_serial))
-                        .collect();
                     self.install_tick(tick, rounds, evidence);
-                    for (stock, owner, order_serial) in accepted {
-                        for tx in &self.group_txs {
-                            let _ = tx.send(GroupIn::ChildAccepted {
-                                stock,
-                                owner,
-                                order_serial,
-                            });
-                        }
-                    }
                     break;
                 }
             }

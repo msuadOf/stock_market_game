@@ -153,7 +153,10 @@ fn order_ref_orders_by_stock_then_serial() {
 fn desk_batch_aggregates_entities_fills_receipts() {
     // 批次为聚合 Vec（不逐条发消息），三个通道分立：资源转移 / 成交事实 / 回执。
     let mut batch = sample_batch(7, 100, 0);
-    batch.entities.push(super::Entity::Closed { local: 1 });
+    batch.entities.push(super::Entity::Closed {
+        local: 1,
+        order_serial: 3,
+    });
     assert_eq!(batch.entities.len(), 1);
     assert_eq!(batch.fills.len(), 0);
     assert_eq!(batch.receipts.len(), 0);
