@@ -923,6 +923,12 @@ fn d3a3_execution_leg_registers_and_prevents_duplicate_children() {
         .expect("组簿");
     let plan_ids = plans.active_plan_ids();
     assert!(!plan_ids.is_empty(), "多轮内须有活跃计划（开仓）");
+    // Sol 二审修复集 6（断言补强）：受理面非空——空受理时下方循环
+    // 全空转（恒绿），断言失去意义。
+    assert!(
+        !accepted.is_empty(),
+        "fixture 须产生 belief 位受理子单（空受理=断言空转）"
+    );
     // (a) 不重复挂：同 (账户, 股) 的受理子单数==计划数（每计划恰一条
     // 腿；腿清理前不再挂——撤销路径未接，受理数=计划数上界）。
     for ((id, code), count) in &accepted {
@@ -1076,6 +1082,17 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
     assert!(
         !expect.is_empty(),
         "fixture 须产生 belief 位成交（独立源空=fixture 失效）"
+    );
+    // Sol 二审修复集 6（断言补强）：明确部分成交证据——至少一条执行腿
+    // 留有未成交余量（挂出量未被完全消耗），全成形态下该断言红。
+    let has_partial = plans.active_plan_ids().iter().any(|pid| {
+        plans
+            .plan(*pid)
+            .is_ok_and(|p| p.execution().is_some_and(|leg| leg.active_child_remaining_qty().is_some()))
+    });
+    assert!(
+        has_partial,
+        "fixture 须留有未成交余量的执行腿（部分成交/在途余量证据）"
     );
     // (b) 读面幂等：两次 collect_plans 逐字段相等。
     let again = driver
@@ -1368,6 +1385,13 @@ fn solmid_plan_projection_carries_terminal_records() {
     let group_ids: std::collections::BTreeSet<_> =
         group_plans.plan_ids().collect();
     assert!(!group_ids.is_empty(), "fixture 须产生计划记录");
+    // Sol 二审修复集 6（断言补强，如实登记）：原测试名承诺"含 terminal"
+    // 但 fixture 在 belief 链下无法产生 terminal 计划记录——完成需
+    // filled==target（目标量级巨大）、终止/暂停走复审撤销路径（D3b 未
+    // 迁移）。强化断言实测红后按事实收敛：本测试覆盖投影机制（组簿记录
+    // →session plans_debug 可见）；真实终结（子单层 Closed/拒收/日结
+    // 清簿）由 sol4_day_end_*/sol3_closed_* 承载，计划层 terminal 记录
+    // 的覆盖随 D3b 复审路径迁移补。
     // 交付投影后：session plans 读面（debug）覆盖组簿全部记录——
     // 含 terminal（Completed/Terminated 的 (账户,股) 对仍在册——
     // 最后计划结束后旧镜像不残留的等价读面）。
