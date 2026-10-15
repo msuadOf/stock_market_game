@@ -55,6 +55,20 @@ impl GameSession {
         self.state.pending_player.drain(..).collect()
     }
 
+    /// runtime 驱动器翻转面（D2）：失败回灌玩家意图（旧管线 ready
+    /// ingress 语义——失败 tick 不消费外部队列，权威 pending_player
+    /// 原样保留给下一次尝试；世界侧已随失败回滚/毒化，不构成双权威）。
+    fn restore_runtime_player_intents(
+        &mut self,
+        intents: Vec<crate::session::ReceiptBearingIntent>,
+    ) {
+        if intents.is_empty() {
+            return;
+        }
+        self.mark_external_mutation();
+        self.state.pending_player.splice(0..0, intents);
+    }
+
     /// runtime 驱动翻转入口（翻转批）：环境变量 ENGINE_STEP_RUNTIME=1
     /// 时 `step()` 走 RuntimeDriver（常驻 World+安装面），否则旧管线
     /// （缺省 0=旧管线，见 `runtime::step_runtime_enabled`）。
@@ -120,7 +134,8 @@ impl GameSession {
                     ),
                 }));
             }
-            // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0。
+            // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0；
+            // 失败回灌（ready ingress 语义——外部队列不被失败 tick 消费）。
             let intents = self.take_runtime_player_intents();
             if !intents.is_empty() {
                 let uppers: Vec<i64> = {
@@ -129,7 +144,11 @@ impl GameSession {
                 };
                 driver.inject_player_intents(&intents, &uppers);
             }
-            self.runtime_step_with_install(&mut driver)
+            let stepped = self.runtime_step_with_install(&mut driver);
+            if stepped.is_err() {
+                self.restore_runtime_player_intents(intents);
+            }
+            stepped
         };
         self.runtime_driver = Some(cell);
         outcome
@@ -238,6 +257,17 @@ impl GameSession {
     /// 保留成功提交前一刻捕获的不可变执行事实。
     ///
     /// 此验证入口只用于观察；证据不会留在 session、序列化、参与 hash 或后续决策。
+    /// 旧管线契约测试入口（D2 登记）：staged handover / 旧簿 fixture 等
+    /// **旧管线专有注入面**的契约测试显式走旧管线——runtime step() 无
+    /// 对应注入面（决策在组线程、簿在交易部），经 step() 混跑只会把
+    /// 注入面缺失误报为语义失败。这些测试的 runtime 等价锚另行登记
+    /// （玩家路由/世界级 TTL 撤单测试）；旧管线退役时随语义一并迁移。
+    #[cfg(test)]
+    pub(in crate::session) fn step_pipeline_contract(&mut self) -> Result<Vec<Event>, StepFatal> {
+        self.step_inner(false)
+            .map(|committed| committed.facts.into_iter().map(|f| f.event).collect())
+    }
+
     pub fn step_with_commit_evidence(
         &mut self,
     ) -> Result<(Vec<Event>, super::pipeline::TickCommitEvidence), StepFatal> {

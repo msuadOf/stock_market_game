@@ -121,7 +121,9 @@ fn quote_expiry_releases_buy_resources_and_defers_authority_until_commit() {
     );
 
     drop(plan);
-    let events = game.step().unwrap();
+    // D2 登记：旧簿 fixture（session.markets 挂单）为旧管线专有注入面——
+    // runtime 等价锚=desk orders_expire_at_ttl_with_entity_refund+翻转批撤单面。
+    let events = game.step_pipeline_contract().unwrap();
     assert!(matches!(
         events.as_slice(),
         [crate::Event::OrderCanceled { account: event_account, code: event_code, id, remaining_qty: 100, .. }, _]

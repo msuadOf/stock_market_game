@@ -260,7 +260,8 @@ mod tests {
             source
                 .enqueue_player_intent(AccountId(0), buy(&game, 0))
                 .unwrap();
-            let events = game.step().unwrap();
+            // D2 登记：staged handover 注入面为旧管线专有——显式走旧管线契约入口。
+            let events = game.step_pipeline_contract().unwrap();
             accepted.extend(
                 events
                     .iter()
@@ -467,7 +468,8 @@ mod tests {
                 receipt
             };
             crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.tick(), Vec::new(), vec![receipt], Vec::new()));
-            let events = game.step().unwrap();
+            // D2 登记：staged handover 注入面为旧管线专有——显式走旧管线契约入口。
+            let events = game.step_pipeline_contract().unwrap();
             let accepted = events
                 .iter()
                 .filter_map(|event| match event {
@@ -510,7 +512,8 @@ mod tests {
                 received
             };
             crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.tick(), Vec::new(), vec![received], Vec::new()));
-            let events = game.step().unwrap();
+            // D2 登记：staged handover 注入面为旧管线专有——显式走旧管线契约入口。
+            let events = game.step_pipeline_contract().unwrap();
             let accepted = events
                 .iter()
                 .filter_map(|event| match event {
