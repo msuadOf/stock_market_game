@@ -490,3 +490,114 @@ fn odd_lot_sell_allowed_only_as_full_remainder() {
     let a1 = &report.group_finals[0].accounts[1];
     assert_eq!(a1.shares[0], 1_050, "买方得 1050（部分成交）");
 }
+
+// ── Sol P1-1/P1-2（拍卖自成交双撤闭合+实际成交量）红→绿 ──
+
+#[test]
+fn p1_auction_self_trade_double_cancel_refunds_and_reports_actual_volume() {
+    use super::group::{GroupScript, PlaceSpec, TickPlan};
+    // 拍卖窗（auction_ticks=15 ⇒ 申报 tick<10）内：acct0 挂买+挂卖同价
+    // （同主交叉）+acct1 挂第三方卖。开盘清算：自单对双撤（退款退股+
+    // Closed×2+Cancelled×2），第三方配对按实际量。
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Buy, price: 1000, qty: 100 });
+                plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
+                plan.places.push(PlaceSpec { local: 1, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
+            }
+            plan
+        })
+    };
+    let mut spec = super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 15;
+    spec.closing_auction_ticks = 3;
+    let mut world = super::world::World::spawn(spec).expect("世界构造");
+    world.run_ticks(11).expect("跨申报窗触发开盘清算");
+    let report = world.shutdown().expect("关停");
+    // P1-1+P1-2 修正后语义：acct0 买 × acct1 卖成交 100（非自单配对——
+    // 第三方流动性不被消耗）；acct0 自卖单撤回（资源闭合）。
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.cash, 1_000_000 - 100_501, "买成交实扣（1000×100+佣金500+过户1）");
+    assert_eq!(a0.shares[0], 1_100, "买入 100 股入账（T+1 冻结）");
+    assert_eq!(a0.frozen_today[0], 100, "当日买入冻结");
+    assert!(a0.foreign_active.iter().all(|&x| x == 0), "在途全闭合（P1-1）");
+    // 自卖撤回：acct1 卖 100 给 acct0 ⇒ acct1 shares=900；acct0 自卖
+    // 单 Cancelled（资源退回已含在上列）。
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.shares[0], 900, "第三方卖成交扣股");
+    // P1-2：实际成交量 100（选择量 200 含自单对——剔除后按实际）。
+    assert_eq!(report.desk_finals[0].market.volume_today, 100, "实际成交量（P1-2）");
+}
+
+
+// ── Sol P1-3/P1-4/P1-6 反例红→绿 ──
+
+#[test]
+fn p1_3_undo_replay_clears_self_trade_index() {
+    // 反例（Sol）：A 卖单挂簿→Abort（Inserted 回放）→重跑 A 买第三方
+    // 卖单——若回放不清自成交索引，A 买被"幽灵自单"阻断。
+    use super::group::{GroupScript, PlaceSpec, TickPlan};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let first_run = Arc::new(AtomicBool::new(false));
+    let fr = Arc::clone(&first_run);
+    let script = move |_g: super::GroupIdx| -> GroupScript {
+        let fr = Arc::clone(&fr);
+        Box::new(move |tick: u64, _round: u32| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                if !fr.swap(true, Ordering::SeqCst) {
+                    plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
+                } else {
+                    plan.places.push(PlaceSpec { local: 1, stock: 0, side: Side::Sell, price: 1000, qty: 100 });
+                    plan.places.push(PlaceSpec { local: 0, stock: 0, side: Side::Buy, price: 1000, qty: 100 });
+                }
+            }
+            plan
+        })
+    };
+    let mut spec = super::skeleton_tests::basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 3;
+    let mut world = super::world::World::spawn(spec).expect("世界构造");
+    let fail: super::coordinator::Validator =
+        Box::new(|ev: &super::coordinator::TickEvidence| {
+            if ev.tick == 1 { Err("注入失败".to_owned()) } else { Ok(()) }
+        });
+    world.set_validator(fail);
+    assert!(world.run_ticks(1).is_err(), "tick1 注入失败");
+    world.set_validator(Box::new(|_| Ok(())));
+    world.run_ticks(1).expect("tick1 重跑成功");
+    let report = world.shutdown().expect("关停");
+    assert_eq!(report.desk_finals[0].market.volume_today, 100, "P1-3 回放清索引");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_100, "买入入账");
+}
+
+#[test]
+fn p1_6_second_day_minute_keys_not_doubled() {
+    // 反例（Sol）：第二日 tick 255 连续分钟为零——不应填出 240 条偏移记录。
+    // 经 desk 状态直达验证（世界跨日后的公共态分钟键域）。
+    use super::group::{GroupScript, TickPlan};
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|_t, _r| TickPlan::default())
+    };
+    let mut spec = super::skeleton_tests::basic_spec(1, 1, 1, Box::new(script));
+    spec.ticks_per_day = 240;
+    spec.auction_ticks = 15;
+    spec.closing_auction_ticks = 3;
+    let mut world = super::world::World::spawn(spec).expect("世界构造");
+    world.run_ticks(255).expect("跨日");
+    let views = world.public_views();
+    for (minute, _) in &views[0].minute_closes {
+        // 第二日（tick 241-255 ⇒ day=1）连续分钟=255-240-15=0——
+        // 键域不应出现第二日偏移记录（240+）。
+        if *minute >= 240 {
+            panic!("P1-6 第二日零连续分钟却出现偏移键 {minute}");
+        }
+    }
+    let _ = world.shutdown();
+}

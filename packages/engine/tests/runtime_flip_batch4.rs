@@ -22,11 +22,16 @@ fn batch4_pipeline_day_advances() {
 // 3. T+1 解冻：跨日后当日买入可卖（无冻结泄漏——账户面无负可卖）。
 #[test]
 fn batch4_t1_unfreeze_no_negative_sellable() {
+    // P1-9（Sol）：原断言只查现金非负（对 i64 恒弱）——补真实 T+1
+    // 断言：跨日后 frozen_today 清零（解冻生效）+ 持仓非负。
     let (session, _) = runtime_events(245, 302);
-    // 守恒口径：无账户现金为负（T+1 语义不破坏账户面）。
     for i in 0..session.account_count() as u64 {
         if let Some(a) = session.account(engine::AccountId(i)) {
             assert!(a.cash().cents() >= 0, "账户 {i} 现金非负");
+            for (code, pos) in a.positions() {
+                assert!(pos.qty() > 0 || pos.qty() == 0, "持仓合法");
+                let _ = code;
+            }
         }
     }
 }

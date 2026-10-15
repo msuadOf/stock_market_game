@@ -172,8 +172,8 @@ pub struct StockPublic {
     pub min_sell_price: i64,
     /// 最近 N 个 tick 收盘价（分）。
     pub recent_prices: Vec<i64>,
-    /// 当日已完成标准交易分钟收盘（分）。
-    pub minute_closes: Vec<i64>,
+    /// 已完成标准交易分钟收盘（绝对分钟, 分）——P1-6 起带绝对键。
+    pub minute_closes: Vec<(u64, i64)>,
     /// 日累计成交量（股）。
     pub volume_today: u64,
     /// 相对历史同期预期量倍率（骨架 1.0，预期量基线随批 5 接入）。
@@ -272,6 +272,7 @@ pub enum GroupIn {
     /// 关停：上交 `GroupFinal` 后退出。
     Shutdown,
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
+    EchoAttention,
     EchoAccounts,
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
     EchoCandles,
@@ -348,6 +349,13 @@ pub enum UpMsg {
         /// 活动 K。
         active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     },
+    /// 组注意力调度回执（P1-10：逐账户 next_due 上行）。
+    GroupAttention {
+        /// 组索引。
+        group: GroupIdx,
+        /// 逐账户（组内下标, next_due tick）。
+        attention: Vec<(LocalIdx, u64)>,
+    },
     /// 组账户快照回执（EchoAccounts 应答）。
     GroupEcho {
         /// 组索引。
@@ -390,6 +398,7 @@ impl std::fmt::Debug for UpMsg {
                 write!(f, "GroupDayDone(group={group}, day={day})")
             }
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
+            UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
             UpMsg::DeskCandles { stock, .. } => write!(f, "DeskCandles(stock={stock})"),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),

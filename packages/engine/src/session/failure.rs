@@ -28,21 +28,63 @@ impl GameSession {
     /// 时 `step()` 走 RuntimeDriver（常驻 World+安装面），否则旧管线。
     /// `step_frame_and_commit`（candidate 投影契约/Escrow 验证）恒走
     /// 旧管线为 fallback——翻转范围=生产便捷入口。
+    /// P1-8（Sol）：runtime 路径复用旧管线的步进前置校验——缺策略
+    /// 等结构缺陷必须与旧路径同判（不静默放行）。
+    fn require_runtime_step_preconditions(&self) -> Result<(), StepFatal> {
+        for (id, account) in self.state.accounts.iter() {
+            if id.0 != 0 && account.strategy().is_none() {
+                return Err(StepFatal::InvariantViolation {
+                    description: "non-player account has no authoritative strategy".to_owned(),
+                    location: "GameSession::step".to_owned(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn step_via_runtime(&mut self) -> Result<Vec<Event>, StepFatal> {
         // 翻转形态（正确性优先）：每次构造驱动器（World 线程 spawn）。
         // 每步 World 重建是已知开销——性能敏感路径由调用方直接持有
         // RuntimeDriver（step_frame_equivalent 常驻形态）承载；
         /// 本入口服务"默认翻转"的正确性验证。
+        // P1-8（Sol）：(a) 每步重建 World 会把市场拉回 tick 1——非首
+        // tick 会话上运行=状态不一致 ⇒ 显式拒绝（不静默重放）；常驻
+        // 形态由调用方直接持有 RuntimeDriver。
+        if let Err(fatal) = self.require_runtime_step_preconditions() {
+            return Err(self.poison_runtime_step(fatal));
+        }
+        if self.tick() != 0 {
+            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "GameSession::step_via_runtime".to_owned(),
+                description: format!(
+                    "opt-in 入口仅支持首 tick 会话（每步重建 World 不恢复市场态；当前 tick={}——常驻形态用 RuntimeDriver）",
+                    self.tick()
+                ),
+            }));
+        }
         let mut driver = crate::runtime::drive::RuntimeDriver::from_session(self)
             .map_err(|e| StepFatal::InvariantViolation {
                 location: "GameSession::step_via_runtime".to_owned(),
                 description: e,
             })?;
         driver.adopt_session_seq(self);
+        // 生产探针对齐（t3 契约：每 tick 恰一次"生产调用"）。
+        #[cfg(test)]
+        self.compute_context()
+            .t1_probes
+            .queue_attempt_seq
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let events = driver.step_frame_equivalent(self);
-        let _ = driver.install_market_views(self);
-        let _ = driver.install_candles(self);
-        let _ = driver; // World 析构（线程 join）
+        // (b) 安装错误传播（不吞）——失败即 poison，不返回部分成功。
+        if let Err(install_err) = driver
+            .install_market_views(self)
+            .and_then(|()| driver.install_candles(self))
+        {
+            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "GameSession::step_via_runtime::install".to_owned(),
+                description: install_err,
+            }));
+        }
         events
     }
 
@@ -114,6 +156,28 @@ impl GameSession {
             });
         }
         Ok(())
+    }
+
+    /// runtime 驱动器翻转面（P1-10）：逐账户注意力候选真实写回
+    /// （组线程 next_due 是调度权威——替换"推到 tick"的假迁移）。
+    pub fn set_runtime_attention(
+        &mut self,
+        entries: &[(crate::AccountId, u64)],
+    ) {
+        self.mark_external_mutation();
+        let tick = self.state.tick;
+        for (id, next_due) in entries {
+            if let Some(state) = self.state.npc_attention.get_mut(id) {
+                state.next_attention_candidate_tick = (*next_due).max(tick);
+            }
+        }
+    }
+
+    /// runtime 驱动器翻转面（P1-7）：日结失败回滚 day/seq。
+    pub fn rollback_runtime_day_end(&mut self, day: u32, seq: u64) {
+        self.mark_external_mutation();
+        self.state.day = day;
+        self.state.seq = seq;
     }
 
     /// runtime 驱动器翻转面（翻转批）：交易日计数推进。

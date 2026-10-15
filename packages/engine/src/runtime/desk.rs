@@ -197,6 +197,7 @@ struct MarketSnapshot {
     minute_len: usize,
     recent_len: usize,
     candles_len: usize,
+    turnover_today: i64,
 }
 
 /// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
@@ -342,6 +343,7 @@ impl DeskState {
         h = fnv(h, self.setup.stock as u64);
         h = fnv(h, self.next_serial);
         h = fnv(h, self.resting_count);
+        h = fnv(h, self.market.turnover_today as u64);
         h = fnv(h, self.fee_sink as u64);
         let m = &self.market;
         for v in [
@@ -410,6 +412,7 @@ impl DeskState {
             minute_len: m.minute_closes.len(),
             recent_len: m.recent_prices.len(),
             candles_len: m.candles.len(),
+            turnover_today: m.turnover_today,
         }));
     }
 
@@ -460,6 +463,7 @@ impl DeskState {
                     m.minute_closes.truncate(s.minute_len);
                     m.recent_prices.truncate(s.recent_len);
                     m.candles.truncate(s.candles_len);
+                    m.turnover_today = s.turnover_today;
                 }
             }
         }
@@ -484,9 +488,43 @@ impl DeskState {
     }
 
     fn remove_by_ref(&mut self, order_ref: &OrderRef) {
+        let mut removed: Option<DeskOrder> = None;
         for book in [&mut self.bids, &mut self.asks] {
             for level in book.values_mut() {
-                level.retain(|o| o.order_ref != *order_ref);
+                let mut drain_at: Option<usize> = None;
+                for (i, o) in level.iter().enumerate() {
+                    if o.order_ref == *order_ref {
+                        drain_at = Some(i);
+                        break;
+                    }
+                }
+                if let Some(i) = drain_at {
+                    removed = level.remove(i);
+                    break;
+                }
+            }
+            if removed.is_some() {
+                break;
+            }
+        }
+        // P1-3（Sol）：回放移除同步自成交索引（此前漏——自单残留
+        // 阻断后续第三方配对）。
+        if let Some(o) = removed {
+            let idx = if o.side == Side::Buy {
+                &mut self.self_bids
+            } else {
+                &mut self.self_asks
+            };
+            if let Some(prices) = idx.get_mut(&o.owner) {
+                if let Some(cnt) = prices.get_mut(&o.price) {
+                    *cnt = cnt.saturating_sub(1);
+                    if *cnt == 0 {
+                        prices.remove(&o.price);
+                    }
+                }
+                if prices.is_empty() {
+                    idx.remove(&o.owner);
+                }
             }
         }
     }
@@ -556,11 +594,20 @@ impl DeskState {
     }
 
     fn best_bid(&self) -> Option<i64> {
-        self.bids.keys().next_back().copied()
+        // 防御：跳过空档（键残留而队列空的中间态——remove 路径清理
+        // 不完全时的兜底显式化，不静默成交错价）。
+        self.bids
+            .iter()
+            .rev()
+            .find(|(_, level)| !level.is_empty())
+            .map(|(price, _)| *price)
     }
 
     fn best_ask(&self) -> Option<i64> {
-        self.asks.keys().next().copied()
+        self.asks
+            .iter()
+            .find(|(_, level)| !level.is_empty())
+            .map(|(price, _)| *price)
     }
 
     /// 连续竞价限价申报基准价（上交所规则 3.3.14：对手一档→本方一档→最新价）。
@@ -1392,21 +1439,23 @@ impl DeskState {
             return Ok(None);
         };
         let price = sel.price.cents();
-        self.execute_clearing_at(price, sel.volume)?;
+        // P1-2（Sol）：公开成交量=实际成交量（内部选择量只是上界——
+        // 自单剔除后可配对量可低于选择量）。
+        let actual = self.execute_clearing_at(price, sel.volume)?;
         self.auction_facts.push(super::protocol::DeskAuctionFact {
             stock: self.setup.stock,
             tick: self.cur_tick,
             phase: crate::TradingPhase::CallAuction,
             indicative_price: Some(price),
-            matched_volume: sel.volume,
+            matched_volume: actual,
             completed: true,
             imbalance: sel.imbalance,
         });
-        Ok(Some((price, sel.volume)))
+        Ok(Some((price, actual)))
     }
 
     /// 按清算价配对成交（买卖双方都从最优价 FIFO 取，eligible 按清算价过滤）。
-    fn execute_clearing_at(&mut self, price: i64, volume: u64) -> Result<(), RuntimeError> {
+    fn execute_clearing_at(&mut self, price: i64, volume: u64) -> Result<u64, RuntimeError> {
         let mut matched = 0u64;
         while matched < volume {
             let buy = {
@@ -1437,8 +1486,13 @@ impl DeskState {
             // A 股自成交限制（拍卖清算，索引判同主）：同 owner 配对
             // 双双撤单（不成交）——索引 O(1) 比较，无簿扫描。
             if buy.owner == sell.owner {
+                // P1-1（Sol）：同主配对闭合资源。修正常次序问题：
+                // 只撤卖侧自单（让买侧继续找下一非自卖单——双撤会把
+                // 买侧可配对的第三方流动性一并消耗）；卖侧皆自单时买侧
+                // 无对手，循环自然结束（等价双撤，资源全闭合）。
+                self.note_terminated(&sell, super::protocol::LifecycleKind::Cancelled);
                 self.remove_order(&sell);
-                self.remove_order(&buy);
+                self.close_order_entities(&sell);
                 continue;
             }
             let qty = buy.qty.min(sell.qty);
@@ -1456,7 +1510,7 @@ impl DeskState {
             self.write_back_taker(&taker)?;
             matched += qty as u64;
         }
-        Ok(())
+        Ok(matched)
     }
 
     /// taker（簿内单）成交后写回：全成移除（slack 退回），否则原位更新。
@@ -1567,7 +1621,7 @@ impl DeskState {
             daily_upper_limit: self.up_stop().unwrap_or(self.market.last_close),
             min_sell_price: down,
             recent_prices: self.market.recent_prices.iter().copied().collect(),
-            minute_closes: self.market.minute_closes.iter().map(|(_, c)| *c).collect(),
+            minute_closes: self.market.minute_closes.clone(),
             volume_today: self.market.volume_today,
             relative_volume: 1.0,
             order_book_imbalance: self.top5_imbalance(),
@@ -1634,11 +1688,14 @@ impl DeskState {
                             detail: format!("分钟映射失败：{e:?}"),
                         }
                     })?;
-                let target = day * 240 + completed as u64;
-                while (self.market.minute_closes.len() as u64) < target {
-                    // 中间缺口以当前最新价补齐（无成交分钟沿用当时最新价的简化）。
+                // P1-6（Sol）：键=绝对分钟（day×240+日内序），容量口径=
+                // 日内 completed（跨日 roll_day 已清空 ⇒ 第二日从 0 重数，
+                // 键重新带当日偏移——修复"绝对键当日内长度"的双计）。
+                let day_base = day * 240;
+                let target_local = completed as u64;
+                while (self.market.minute_closes.len() as u64) < target_local {
                     let idx = self.market.minute_closes.len() as u64;
-                    self.market.minute_closes.push((idx, last));
+                    self.market.minute_closes.push((day_base + idx, last));
                 }
             }
         }
@@ -1712,8 +1769,8 @@ impl DeskState {
             })?;
             if let Some(sel) = selection {
                 let price = sel.price.cents();
-                self.execute_clearing_at(price, sel.volume)?;
-                return Ok(Some((price, sel.volume)));
+                let actual = self.execute_clearing_at(price, sel.volume)?;
+                return Ok(Some((price, actual)));
             }
             return Ok(None);
         }

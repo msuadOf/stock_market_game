@@ -187,7 +187,7 @@ pub fn build_market_view(snapshot: &TickSnapshot) -> MarketView {
                 recent_market_minute_prices: s
                     .minute_closes
                     .iter()
-                    .map(|&c| Money::from_cents(c))
+                    .map(|&(_, c)| Money::from_cents(c))
                     .collect(),
                 relative_volume: s.relative_volume,
                 order_book_imbalance: s.order_book_imbalance,

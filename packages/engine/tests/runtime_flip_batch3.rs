@@ -68,8 +68,8 @@ fn batch3_cancel_fields_wellformed() {
             id, remaining_qty, ..
         } = e
         {
-            assert!(*remaining_qty > 0 || true, "余量域存在");
-            assert!(id.0 > 0 || true, "订单 id 域存在");
+            assert!(*remaining_qty > 0, "撤单余量必须为正（P1-9）");
+            assert!(id.0 > 0, "订单 id 必须为正（serial 从 1 起，P1-9）");
         }
     }
 }

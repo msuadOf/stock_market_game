@@ -1001,6 +1001,27 @@ pub fn group_main(
                     }
                 }
             }
+            GroupIn::EchoAttention => {
+                let attention = match &state.decision {
+                    Some((profiles, _)) => profiles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (i as LocalIdx, p.next_due))
+                        .collect(),
+                    None => Vec::new(),
+                };
+                let msg = UpMsg::GroupAttention {
+                    group: state.group,
+                    attention,
+                };
+                if up_tx.send(msg).is_err() {
+                    abort.store(true, Ordering::SeqCst);
+                    result = Err(RuntimeError::SendFailed {
+                        detail: format!("组 {who} GroupAttention 发送失败"),
+                    });
+                    break;
+                }
+            }
             GroupIn::EchoAccounts => {
                 let echo = UpMsg::GroupEcho {
                     group: state.group,

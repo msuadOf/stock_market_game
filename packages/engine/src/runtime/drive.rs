@@ -176,10 +176,14 @@ impl RuntimeDriver {
             self.drained_events
                 .extend(project_lifecycle_events(&input, &mut self.next_seq));
         }
+        // P1-7（Sol）：日结失败原子性——day/seq 基线回滚。
+        let day_before = session.day();
+        let seq_before = session.current_seq();
         session.advance_runtime_market_day();
-        session
-            .end_civil_day()
-            .map_err(|e| format!("自然日推进失败：{e:?}"))?;
+        if let Err(e) = session.end_civil_day() {
+            session.rollback_runtime_day_end(day_before, seq_before);
+            return Err(format!("自然日推进失败（day/seq 已回滚）：{e:?}"));
+        }
         Ok(())
     }
 }
@@ -274,14 +278,15 @@ impl RuntimeDriver {
     /// 收束点公共态写入会话 `markets`。逐步补齐其余域（登记）。
     pub fn install_market_views(&mut self, session: &mut GameSession) -> Result<(), String> {
         let views: Vec<super::protocol::StockPublic> = self.world_public_views().to_vec();
-        // 价格历史长度对齐存档校验口径：expected = min(连续窗完成 tick,
-        // history_len)。会话 tick/day 由安装面维护——从会话读。
-        let tpd = 240u64; // 单股 setup 固定口径（helpers 同值）
-        let auction = 15u64;
-        let history_len = 16usize;
+        // P1-5（Sol）：配置从会话真实 setup 读——不硬编码。
+        let setup = session.export_setup_for_runtime();
+        let tpd = setup.ticks_per_day.max(1);
+        let auction = setup.auction_ticks;
+        let closing = setup.closing_auction_ticks;
+        let history_len = setup.history_len;
         let tick = session.tick();
         let day = session.day() as u64;
-        let continuous_per_day = tpd - auction - 3;
+        let continuous_per_day = tpd.saturating_sub(auction).saturating_sub(closing);
         let completed_cont =
             day * continuous_per_day + (tick % tpd).saturating_sub(auction).min(continuous_per_day);
         let expected_len = (completed_cont as usize).min(history_len);
@@ -306,21 +311,32 @@ impl RuntimeDriver {
                 .collect();
             session.set_runtime_price_history(&code, hist);
             // 分钟收盘（绝对分钟→Money；覆盖全部已完成分钟口径）。
-            // 分钟键口径（存档校验）：absolute = day*240 + day 内序号。
-            let day_base = day * 240;
+            // 分钟键：desk 已带绝对偏移（P1-6 修复后）——直接透传。
             let minutes: Vec<crate::observation::MarketMinuteClose> = view
                 .minute_closes
                 .iter()
-                .enumerate()
-                .map(|(i, &c)| crate::observation::MarketMinuteClose {
-                    absolute_trading_minute: day_base + i as u64,
+                .map(|&(minute, c)| crate::observation::MarketMinuteClose {
+                    absolute_trading_minute: minute,
                     close: Money::from_cents(c.max(1)),
                 })
                 .collect();
             session.set_runtime_minute_closes(&code, minutes);
         }
-        // 注意力候选面（存档校验 candidate ≥ tick）。
-        session.advance_runtime_attention_candidates();
+        // P1-10（Sol）：注意力候选真实写回——组线程 next_due 是调度
+        // 权威（替换"推到 tick"的假迁移）。
+        let collected = self
+            .world
+            .collect_group_attention()
+            .map_err(|e| format!("注意力收集失败：{e:?}"))?;
+        let mut entries = Vec::new();
+        for (_g, attention) in collected {
+            for (local, next_due) in attention {
+                if let Some(id) = self.id_map.get(local as usize).copied() {
+                    entries.push((id, next_due));
+                }
+            }
+        }
+        session.set_runtime_attention(&entries);
         Ok(())
     }
 
@@ -366,8 +382,10 @@ impl RuntimeDriver {
             let _ = ();
             // 活跃 K 窗口对齐（存档校验 fault2076）：竞价申报窗
             // （day_tick < auction_entry=10）活跃 K 须为空。
-            let day_tick = session.tick() % 240;
-            let in_auction_entry = day_tick < 10;
+            let s = session.export_setup_for_runtime();
+            let day_tick = session.tick() % s.ticks_per_day.max(1);
+            let auction_entry = s.auction_ticks - s.auction_ticks / 3;
+            let in_auction_entry = day_tick < auction_entry;
             let candle_time = session.candle_date_time_for_runtime();
             if let Some(a) = active.filter(|_| !in_auction_entry) {
                 session.set_active_candle_for_runtime(

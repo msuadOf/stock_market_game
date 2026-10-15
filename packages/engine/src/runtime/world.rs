@@ -449,6 +449,36 @@ impl World {
         &self.public_views
     }
 
+    /// 组注意力调度收集（P1-10：逐账户 next_due 上行——驱动器写回
+    /// 会话 npc_attention 的真实状态源）。
+    pub fn collect_group_attention(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64)>)>, RuntimeError> {
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoAttention).map_err(|_| {
+                RuntimeError::SendFailed { detail: "EchoAttention 广播失败".to_owned() }
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupAttention { group, attention } => {
+                    out.push((group, attention));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("collect_group_attention 期望 GroupAttention，收到 {other:?}"),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
     /// 组账户快照（驱动器纵切/测试面：向全部组发 EchoAccounts 并收齐）。
     /// 生产热路径不调用（账户上行是调试口径开销）。
     pub fn snapshot_accounts(
