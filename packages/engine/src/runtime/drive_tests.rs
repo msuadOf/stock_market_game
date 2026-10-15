@@ -2212,6 +2212,78 @@ fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
     );
 }
 
+// D3b 件 4 红证：复审接线——组内决策拍对既有计划执行复审（session
+// Lifecycle operation 等价），每个既有计划动作 apply 前先 record_review
+// 写入簿内基线（quiet 门控依赖该面——组内缺失则每拍修订/计划身份漂移）。
+// 红=未接线（决策拍不跑复审，review 基线恒 None）；绿=接线后 due 拍复审
+// 至少产出 Observe（quiet/unchanged 吸收）并记录复审事实。
+#[test]
+fn d3b4_review_records_facts_in_group_book() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 1_000;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 52).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..6 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    let plans = driver.collect_plans().expect("组簿").remove(0).1;
+    let (pid, account) = plans
+        .active_plan_ids()
+        .into_iter()
+        .filter_map(|pid| plans.plan(pid).ok().map(|plan| (pid, plan.account())))
+        .next()
+        .expect("fixture 须有活跃计划");
+    // 强制该账户 belief 位到期：复审随决策拍执行。
+    driver.force_due_for_test_at(&[account], driver.world_committed_tick() + 1);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("复审拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let plans = driver.collect_plans().expect("复审后组簿").remove(0).1;
+    // 终止计划仍留簿可读（PlanBook 按 id 查不筛状态）——无论复审产物
+    // 是 Observe/Revise/Terminate，record_review 都先于动作写入基线。
+    let plan = plans.plan(pid).expect("计划仍在簿");
+    assert!(
+        plan.review().last_review_price.is_some(),
+        "复审动作前 record_review 写入簿内基线（quiet 门控面）：{:?}",
+        plan.review()
+    );
+}
+
 // D3b 件 5 红证：个人态注入通道——注入的 watchlist 经组权威个人态
 // 上行（collect_belief→BeliefParticipantBelief 读面）可见。
 #[test]
