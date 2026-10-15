@@ -64,8 +64,89 @@ impl GroupAccount {
     }
 }
 
-/// D3a-1 观察基路径容量（防无界增长；计划链回看窗远小于此）。
-const OBSERVATION_PATH_CAP: usize = 512;
+/// D3a-2 观察基输入（每股）：desk 权威分钟收盘+日 K 条（尾部 250——
+/// desk 侧已按行为窗口截断，组侧不二次截断）。
+#[derive(Clone, Default)]
+struct ObservationInputs {
+    minutes: Vec<(u64, i64)>,
+    /// 已完成日（尾部 250，不过滤零成交日）。
+    daily_bars: Vec<(i64, i64, i64, i64, u64)>,
+    /// 当日活动 K。
+    daily_active: Option<(i64, i64, i64, i64, u64)>,
+    /// 已完成日总数（绝对索引基）。
+    daily_total_completed: u64,
+    /// 历史累计 traded 日数。
+    daily_total_traded: u64,
+}
+
+impl ObservationInputs {
+    /// 链观察构建（与 session 读面同源纯函数——字段不得分叉）。
+    fn build_observations(
+        &self,
+    ) -> (
+        crate::observation::PricePathObservation,
+        crate::observation::TechnicalObservation,
+    ) {
+        let minute_closes: Vec<crate::observation::MarketMinuteClose> = self
+            .minutes
+            .iter()
+            .map(|&(minute, c)| crate::observation::MarketMinuteClose {
+                absolute_trading_minute: minute,
+                close: crate::money::Money::from_cents(c.max(1)),
+            })
+            .collect();
+        // 行为路径口径：已完成日**不过滤**（含零成交日）——绝对索引
+        // trading_day = total_completed − kept + offset（同
+        // retained_behavior_daily_closes_history）。
+        let kept = self.daily_bars.len();
+        let start = self.daily_total_completed.saturating_sub(kept as u64);
+        let completed_days: Vec<crate::observation::CompletedDayClose> = self
+            .daily_bars
+            .iter()
+            .enumerate()
+            .map(|(offset, bar)| crate::observation::CompletedDayClose {
+                trading_day: u32::try_from(start + offset as u64)
+                    .expect("行为日索引超 u32"),
+                close: crate::money::Money::from_cents(bar.3.max(1)),
+            })
+            .collect();
+        let current_day_open = self
+            .daily_active
+            .filter(|bar| bar.4 > 0)
+            .map(|bar| crate::money::Money::from_cents(bar.0.max(1)));
+        let price_path = crate::observation::build_price_path_observation(
+            &minute_closes,
+            &completed_days,
+            current_day_open,
+        )
+        .unwrap_or_else(|e| panic!("组内价格路径观察构建失败：{e:?}"));
+        // 技术面口径：traded（volume>0）**含活动 K**，窗 SMA_LONG_WINDOW
+        // （60）滚动；valid_sample_count=历史累计 traded 总数（同
+        // session traded_count()）。
+        let mut bars: Vec<crate::strategy::TechnicalDailyBar> = Vec::new();
+        let mut all: Vec<&(i64, i64, i64, i64, u64)> =
+            self.daily_bars.iter().collect();
+        if let Some(active) = &self.daily_active {
+            all.push(active);
+        }
+        for bar in all.into_iter().filter(|bar| bar.4 > 0) {
+            bars.push(crate::strategy::TechnicalDailyBar {
+                high: crate::money::Money::from_cents(bar.1.max(1)),
+                low: crate::money::Money::from_cents(bar.2.max(1)),
+                close: crate::money::Money::from_cents(bar.3.max(1)),
+            });
+        }
+        let technical_window = crate::strategy::SMA_LONG_WINDOW;
+        if bars.len() > technical_window {
+            bars.drain(..bars.len() - technical_window);
+        }
+        let technical = crate::observation::build_technical_observation_from_recent_trades(
+            &bars,
+            self.daily_total_traded as usize,
+        );
+                (price_path, technical)
+    }
+}
 
 /// 组端可逆日志条目：记录“已施加的增量”，回滚时逆序施加 `-delta`。
 /// 覆盖：决策期扣除（purse/股票）、实体落账、`foreign_active` 增减。
@@ -226,10 +307,10 @@ pub struct GroupState {
     pub observed: Vec<Observed>,
     /// 外部注入计划缓冲（玩家意图路由；run_round 消费一次即清）。
     external_pending: Vec<super::decision::PendingOp>,
-    /// D3a-1 观察基：逐 tick 每股最新价路径（快照 last_price 追加——
-    /// 计划链的 price_paths 观察源；开仓/复审路径的 opinion/confidence
-    /// 由此派生，字段不得造假）。容量上限 history_len×4（链回看窗）。
-    price_paths: Vec<Vec<i64>>,
+    /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
+    /// 纯输入（与 session 读面同源：desk 权威 minute_closes/daily_bars；
+    /// 观察对象每 tick 由纯构建器现算，不累积不缓存——口径不可能漂移）。
+    observation_inputs: Vec<ObservationInputs>,
     /// 决策脚本。
     script: GroupScript,
 }
@@ -298,7 +379,7 @@ impl GroupState {
             plan_fills: Vec::new(),
             observed: Vec::new(),
             external_pending: Vec::new(),
-            price_paths: vec![Vec::new(); n_stocks],
+            observation_inputs: vec![ObservationInputs::default(); n_stocks],
             script,
         }
     }
@@ -509,14 +590,19 @@ impl GroupState {
                 ),
             });
         }
-        // D3a-1：观察基——本 tick 快照的每股最新价追加进路径（决策/
-        // 计划链的 price_paths 源；容量滚动上限防无界增长）。
+        // D3a-2：观察基——快照即权威（desk 的 minute_closes/daily_bars
+        /// 每 tick 整值刷新，无累积无窗口截断——与 session 读面同源）。
         if let Some(snapshot) = &self.snapshot {
-            for (path, stock) in self.price_paths.iter_mut().zip(snapshot.stocks.iter()) {
-                path.push(stock.last_price);
-                if path.len() > OBSERVATION_PATH_CAP {
-                    path.remove(0);
-                }
+            for (inputs, stock) in self
+                .observation_inputs
+                .iter_mut()
+                .zip(snapshot.stocks.iter())
+            {
+                inputs.minutes = stock.minute_closes.clone();
+                inputs.daily_bars = stock.daily_bars.clone();
+                inputs.daily_active = stock.daily_active;
+                inputs.daily_total_completed = stock.daily_total_completed;
+                inputs.daily_total_traded = stock.daily_total_traded;
             }
         }
         // 先落账上一 tick 最后一轮的实体批次（tick/round=上一执行位）。
@@ -1114,8 +1200,24 @@ pub fn group_main(
                 state.external_pending.extend(ops);
             }
             GroupIn::EchoObservations => {
-                let paths = state.price_paths.clone();
-                if up_tx.send(UpMsg::GroupObservations { group: state.group, paths }).is_err() {
+                // D3a-2：每股链观察（价格路径+技术面）——纯构建器与
+                // session 读面同源（build_price_path_observation /
+                /// build_technical_observation_from_recent_trades）。
+                let observations: Vec<(
+                    crate::observation::PricePathObservation,
+                    crate::observation::TechnicalObservation,
+                )> = state
+                    .observation_inputs
+                    .iter()
+                    .map(|inputs| inputs.build_observations())
+                    .collect();
+                if up_tx
+                    .send(UpMsg::GroupObservations {
+                        group: state.group,
+                        observations,
+                    })
+                    .is_err()
+                {
                     result = Err(RuntimeError::SendFailed {
                         detail: "GroupObservations 上行失败".to_owned(),
                     });

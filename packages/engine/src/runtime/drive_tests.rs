@@ -153,40 +153,50 @@ fn d3_individual_strategy_projection_flows_sampled_parameters() {
     );
 }
 
-// D3a-1 观察基：组线程逐 tick 累积每股最新价路径（计划链 price_paths
-// 源——开仓/复审路径的 opinion/confidence 派生基，字段不得造假）。
+// D3a-2 观察基同源校验：组线程链观察（价格路径+技术面）必须与 session
+// 读面逐字段相等（同一纯构建器+同一 desk 权威输入——口径不可能漂移；
+// v1 的 tick last_price 路径口径与链实际输入不符，已勘正为
+// minute_closes+daily_bars）。
 #[test]
-fn d3a_group_price_paths_accumulate_per_tick() {
+fn d3a2_group_observations_match_session_read_face() {
     let mut session = GameSession::new(setup_fixture(), 7).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
-    for expected_len in 1..=5u64 {
+    // 跨日：日 K 入档+次日分钟累积——观察面非平凡（有 completed days
+    // 与 current day open）。
+    for t in 1..=245u64 {
         driver
             .step_frame_equivalent(&mut session)
             .expect("步进");
         driver.install_market_views(&mut session).expect("行情安装");
         driver.install_candles(&mut session).expect("K 安装");
-        let observations = driver.collect_observations().expect("观察基收集");
-        assert_eq!(observations.len(), 1, "单组");
-        let paths = &observations[0].1;
-        assert_eq!(
-            paths.len(),
-            2,
-            "setup_fixture 双股：{:?}",
-            paths.len()
-        );
-        for (stock, path) in paths.iter().enumerate() {
-            assert_eq!(
-                path.len() as u64,
-                expected_len,
-                "股 {stock} 路径逐 tick 累积（{} tick 后 {} 条）",
-                expected_len,
-                path.len()
-            );
-            assert!(
-                path.iter().all(|&p| p > 0),
-                "路径价为正（快照 last_price）：{path:?}"
-            );
+        if t % 240 == 0 {
+            driver
+                .day_end_with_runtime_market_day(&mut session)
+                .expect("日结");
         }
+    }
+    let observations = driver.collect_observations().expect("观察基收集");
+    assert_eq!(observations.len(), 1, "单组");
+    let runtime = &observations[0].1;
+    // session 读面（同一构建器）。
+    let session_paths = session
+        .market_price_path_observations()
+        .expect("session 价格路径");
+    let session_technical = session
+        .technical_observations_read()
+        .expect("session 技术面");
+    for (stock, (path, technical)) in runtime.iter().enumerate() {
+        let code = crate::StockId(stock as u32);
+        let expect_path = session_paths.get(&code).expect("session 路径在册");
+        let expect_tech = session_technical.get(&code).expect("session 技术面在册");
+        assert_eq!(
+            path, expect_path,
+            "股 {code:?} 价格路径观察与 session 读面逐字段相等"
+        );
+        assert_eq!(
+            technical, expect_tech,
+            "股 {code:?} 技术面观察与 session 读面逐字段相等"
+        );
     }
 }

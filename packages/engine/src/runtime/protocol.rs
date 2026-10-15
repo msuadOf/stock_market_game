@@ -174,6 +174,15 @@ pub struct StockPublic {
     pub recent_prices: Vec<i64>,
     /// 已完成标准交易分钟收盘（绝对分钟, 分）——P1-6 起带绝对键。
     pub minute_closes: Vec<(u64, i64)>,
+    /// D3a-2 观察基：已完成日 K（**不过滤**——行为路径口径同
+    /// retained_behavior_daily_closes_history；尾部 250 窗）。不含活动 K。
+    pub daily_bars: Vec<(i64, i64, i64, i64, u64)>,
+    /// 当日活动 K（存在即有；volume>0 时供 current_day_open/技术面样本）。
+    pub daily_active: Option<(i64, i64, i64, i64, u64)>,
+    /// 已完成日总数（绝对索引基——trading_day = total−kept+offset）。
+    pub daily_total_completed: u64,
+    /// 历史累计 traded 日数（volume>0——技术面 valid_sample_count 口径）。
+    pub daily_total_traded: u64,
     /// 日累计成交量（股）。
     pub volume_today: u64,
     /// 相对历史同期预期量倍率（骨架 1.0，预期量基线随批 5 接入）。
@@ -361,12 +370,15 @@ pub enum UpMsg {
         /// 活动 K。
         active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     },
-    /// 观察基回执（D3a-1：每股 price_paths 上行）。
+    /// 观察基回执（D3a-2：每股链观察——价格路径+技术面）。
     GroupObservations {
         /// 组索引。
         group: GroupIdx,
-        /// 每股逐 tick 最新价路径。
-        paths: Vec<Vec<i64>>,
+        /// 每股 (PricePathObservation, TechnicalObservation)。
+        observations: Vec<(
+            crate::observation::PricePathObservation,
+            crate::observation::TechnicalObservation,
+        )>,
     },
     /// 组注意力调度回执（P1-10：逐账户 next_due 上行）。
     GroupAttention {

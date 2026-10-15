@@ -55,6 +55,10 @@ pub fn world_spec_from_setup(
                 // 单笔上限按证券类别（主板/创业板 × 限价/市价差异，F §7 行 4）。
                 max_order_qty_limit: s.category.max_order_qty(false),
                 max_order_qty_market: s.category.max_order_qty(true),
+                // D3a-2：种子日 K 由 from_session 覆盖（bridge 默认空——
+                // 无会话来源的世界从零起）。
+                initial_daily_bars: Vec::new(),
+                initial_traded_days: 0,
             })
         })
         .collect::<Result<_, _>>()?;

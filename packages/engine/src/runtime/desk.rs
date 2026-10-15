@@ -62,6 +62,12 @@ pub struct DeskSetup {
     /// D0：起始已转正 tick（恢复/接管对齐——Ops 的 tick 连续性按绝对
     /// tick 推导）。
     pub initial_tick: u64,
+    /// D3a-2：种子日 K（会话预置历史投影——(open, high, low, close,
+    /// volume)，不过滤；desk 为链观察的日 K 权威承载）。
+    pub initial_daily_bars: Vec<(i64, i64, i64, i64, u64)>,
+    /// D3a-2：种子历史之外的累计 traded 日数（种子内的 traded 由
+    /// initial_daily_bars 自行统计——避免双计）。
+    pub initial_traded_days: u64,
 }
 
 /// 交易相位（照搬 `session.rs TradingPhase` 的 tick 推导）。
@@ -185,6 +191,8 @@ pub struct DeskMarket {
     pub recent_prices: VecDeque<i64>,
     /// 已完成交易日 K 历史（日界时活动 K 入列）。
     pub candles: Vec<DeskCandle>,
+    /// 历史累计 traded 日数（volume>0；D3a-2 技术面 valid_sample_count）。
+    pub traded_days_total: u64,
 }
 
 /// 行情快照（撤销日志条目）。
@@ -308,7 +316,19 @@ impl DeskState {
             candle: None,
             minute_closes: Vec::new(),
             recent_prices: VecDeque::new(),
-            candles: Vec::new(),
+            candles: setup.initial_daily_bars.iter().map(|&(o, h, l, c, v)| DeskCandle {
+                open: o,
+                high: h,
+                low: l,
+                close: c,
+                volume: v,
+            }).collect(),
+            traded_days_total: setup.initial_traded_days
+                + setup
+                    .initial_daily_bars
+                    .iter()
+                    .filter(|&&(_, _, _, _, v)| v > 0)
+                    .count() as u64,
         };
         DeskState {
             setup,
@@ -1585,6 +1605,9 @@ impl DeskState {
         m.turnover_today = 0;
         m.trade_count = 0;
         if let Some(candle) = m.candle.take() {
+            if candle.volume > 0 {
+                m.traded_days_total = m.traded_days_total.saturating_add(1);
+            }
             m.candles.push(candle);
         }
         m.minute_closes.clear();
@@ -1672,6 +1695,27 @@ impl DeskState {
             min_sell_price: down,
             recent_prices: self.market.recent_prices.iter().copied().collect(),
             minute_closes: self.market.minute_closes.clone(),
+            // D3a-2 观察基：已完成日 K 尾部 250（不过滤）+绝对计数。
+            daily_bars: {
+                let mut bars: Vec<(i64, i64, i64, i64, u64)> = self
+                    .market
+                    .candles
+                    .iter()
+                    .map(|c| (c.open, c.high, c.low, c.close, c.volume))
+                    .collect();
+                let len = bars.len();
+                if len > 250 {
+                    bars.drain(..len - 250);
+                }
+                bars
+            },
+            daily_active: self
+                .market
+                .candle
+                .as_ref()
+                .map(|c| (c.open, c.high, c.low, c.close, c.volume)),
+            daily_total_completed: self.market.candles.len() as u64,
+            daily_total_traded: self.market.traded_days_total,
             volume_today: self.market.volume_today,
             relative_volume: 1.0,
             order_book_imbalance: self.top5_imbalance(),

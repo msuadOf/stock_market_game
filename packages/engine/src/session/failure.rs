@@ -425,6 +425,38 @@ impl GameSession {
         self.state.attention_scheduler = attention_scheduler;
     }
 
+    /// runtime 日 K 种子投影（D3a-2）：每股（全量日 K (o,h,l,c,vol)，
+    /// 累计 traded 日数）——desk 链观察日 K 权威的初始承载（bridge/
+    /// 世界构造用；不过滤零成交日——行为路径与技术面口径在观察构建
+    /// 侧分流）。
+    pub fn runtime_daily_histories(
+        &self,
+    ) -> std::collections::BTreeMap<
+        crate::StockId,
+        (Vec<(i64, i64, i64, i64, u64)>, u64),
+    > {
+        self.state
+            .candle_book
+            .histories()
+            .iter()
+            .map(|(code, history)| {
+                let bars: Vec<(i64, i64, i64, i64, u64)> = history
+                    .iter()
+                    .map(|candle| {
+                        (
+                            candle.open.cents(),
+                            candle.high.cents(),
+                            candle.low.cents(),
+                            candle.close.cents(),
+                            candle.volume,
+                        )
+                    })
+                    .collect();
+                (*code, (bars, history.traded_count() as u64))
+            })
+            .collect()
+    }
+
     /// runtime 分钟历史只读（D4·t4 位置合并的前缀源）。
     pub fn runtime_minute_history(
         &self,
@@ -521,6 +553,17 @@ impl GameSession {
         code: &crate::StockId,
     ) -> Option<&mut crate::Market> {
         self.state.markets.get_mut(code)
+    }
+
+    /// runtime 日 K 历史长度只读（D3a-2：install_candles 位置合并——
+    /// desk 含种子历史时跳过会话已有天数，防重复入档）。
+    pub fn runtime_candle_history_len(&self, code: &crate::StockId) -> usize {
+        self.state
+            .candle_book
+            .histories()
+            .get(code)
+            .map(|h| h.len())
+            .unwrap_or(0)
     }
 
     /// runtime 驱动器翻转面（批 8 终点）：历史 K 回写。

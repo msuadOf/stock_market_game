@@ -43,6 +43,10 @@ pub struct DeskStockSpec {
     pub max_order_qty_limit: u32,
     /// 市价单笔上限（主板 1_000_000 / 创业板 150_000）。
     pub max_order_qty_market: u32,
+    /// D3a-2：种子日 K（会话预置历史——desk 为链观察日 K 权威）。
+    pub initial_daily_bars: Vec<(i64, i64, i64, i64, u64)>,
+    /// D3a-2：种子外累计 traded 日数（0=全新）。
+    pub initial_traded_days: u64,
 }
 
 impl DeskStockSpec {
@@ -54,6 +58,8 @@ impl DeskStockSpec {
             limit_bps: 1000,
             max_order_qty_limit: 1_000_000,
             max_order_qty_market: 1_000_000,
+        initial_daily_bars: Vec::new(),
+        initial_traded_days: 0,
         }
     }
 }
@@ -247,6 +253,12 @@ impl World {
             initial_cash_override,
             plan_factory,
         } = spec;
+        let mut stock_seed_bars: Vec<Vec<(i64, i64, i64, i64, u64)>> = stocks
+            .iter()
+            .map(|spec| spec.initial_daily_bars.clone())
+            .collect();
+        let mut stock_seed_traded: Vec<u64> =
+            stocks.iter().map(|spec| spec.initial_traded_days).collect();
         let n_stocks = stocks.len();
         let abort = Arc::new(AtomicBool::new(false));
         let capture_slot: std::sync::Arc<
@@ -344,6 +356,8 @@ impl World {
                 order_ttl_ticks,
                 history_len,
                 initial_tick: initial_committed_tick,
+                initial_daily_bars: stock_seed_bars.remove(0),
+                initial_traded_days: stock_seed_traded.remove(0),
             };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))
@@ -427,6 +441,10 @@ impl World {
                     min_sell_price: down.cents(),
                     recent_prices: vec![last],
                     minute_closes: Vec::new(),
+                daily_bars: Vec::new(),
+                daily_active: None,
+                daily_total_completed: 0,
+                daily_total_traded: 0,
                     volume_today: 0,
                     relative_volume: 1.0,
                     order_book_imbalance: 0.0,
@@ -510,7 +528,16 @@ impl World {
     /// 观察基收集（D3a-1：EchoObservations 广播→收齐——计划链端读面）。
     pub fn collect_group_observations(
         &mut self,
-    ) -> Result<Vec<(GroupIdx, Vec<Vec<i64>>)>, RuntimeError> {
+    ) -> Result<
+        Vec<(
+            GroupIdx,
+            Vec<(
+                crate::observation::PricePathObservation,
+                crate::observation::TechnicalObservation,
+            )>,
+        )>,
+        RuntimeError,
+    > {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -530,8 +557,8 @@ impl World {
         let mut left = self.n_groups;
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
-                UpMsg::GroupObservations { group, paths } => {
-                    out.push((group, paths));
+                UpMsg::GroupObservations { group, observations } => {
+                    out.push((group, observations));
                     left -= 1;
                 }
                 other => {

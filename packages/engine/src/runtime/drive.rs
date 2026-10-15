@@ -128,6 +128,19 @@ impl RuntimeDriver {
             Box::new(|_g| Box::new(|_t, _r| super::group::TickPlan::default())),
         )?;
         spec.n_groups = 1;
+        // D3a-2：会话预置日 K 历史投影进 desk（链观察的日 K 权威——
+        // 此前 desk 从零起，观察面与 session 读面天然分歧）。
+        {
+            let histories = session.runtime_daily_histories();
+            for (idx, stock) in spec.stocks.iter_mut().enumerate() {
+                if let Some((bars, _traded)) = histories.get(&crate::StockId(idx as u32)) {
+                    // 全量种子投影：traded 由种子条自计（initial=0——
+                    // 传入 session.traded_count 会双计）。
+                    stock.initial_daily_bars = bars.clone();
+                    stock.initial_traded_days = 0;
+                }
+            }
+        }
         // D0：世界从会话当前 tick 起步（锁步不变量的构造期对齐——
         // 全新会话即 0；恢复/接管场景相位按绝对 tick 推导）。
         spec.initial_committed_tick = session.tick();
@@ -530,7 +543,16 @@ impl RuntimeDriver {
     /// 测试面）。
     pub fn collect_observations(
         &mut self,
-    ) -> Result<Vec<(super::GroupIdx, Vec<Vec<i64>>)>, String> {
+    ) -> Result<
+        Vec<(
+            super::GroupIdx,
+            Vec<(
+                crate::observation::PricePathObservation,
+                crate::observation::TechnicalObservation,
+            )>,
+        )>,
+        String,
+    > {
         self.world
             .collect_group_observations()
             .map_err(|e| format!("观察基收集失败：{e:?}"))
@@ -776,7 +798,13 @@ impl RuntimeDriver {
             .map_err(|e| format!("K 投影收集失败：{e:?}"))?;
         for (stock_idx, candles, active) in finals {
             let code = crate::StockId(u32::from(stock_idx));
-            for candle in candles {
+            // D3a-2：位置合并——desk 含种子历史（会话预置已入档），仅
+            // 追加会话长度之后的新天（防种子重复入档）。
+            let skip = session.runtime_candle_history_len(&code);
+            for (day, candle) in candles.into_iter().enumerate() {
+                if day < skip {
+                    continue;
+                }
                 session.push_historical_candle_for_runtime(
                     &code,
                     crate::session::DailyCandle {

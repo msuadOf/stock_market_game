@@ -852,6 +852,14 @@ impl GameSession {
         DecisionChainObservation::build_technical(self)
     }
 
+    /// 技术面观察只读（D3a-2：runtime 组线程观察同源校验用——与
+    /// build_chain_technical_observations 同一构建器）。
+    pub(crate) fn technical_observations_read(
+        &self,
+    ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {
+        DecisionChainObservation::build_technical(self)
+    }
+
     #[cfg(test)]
     fn chain_observation_instant(&self) -> crate::calendar::CivilInstant {
         self.observation_civil_instant()
