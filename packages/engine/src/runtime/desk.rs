@@ -1448,8 +1448,42 @@ impl DeskState {
         .map_err(|e| RuntimeError::ProtocolInvariant {
             detail: format!("开盘清算选价失败：{e:?}"),
         })?;
+        // D4（t4 事件面对等）：完结 tick 先产末次指示价事实——
+        // AuctionTick 先于 AuctionCompleted（旧管线在竞价窗每 tick
+        // 产指示价，完结 tick 含末次；空簿=无交叉，量价如实为零/None）。
+        self.auction_facts.push(super::protocol::DeskAuctionFact {
+            stock: self.setup.stock,
+            tick: self.cur_tick,
+            phase: crate::TradingPhase::CallAuction,
+            indicative_price: selection.as_ref().map(|s| s.price.cents()),
+            matched_volume: selection.as_ref().map(|s| s.volume).unwrap_or(0),
+            completed: false,
+            imbalance: selection.as_ref().map(|s| s.imbalance).unwrap_or(0),
+        });
         let Some(sel) = selection else {
-            return Ok(None);
+            // 空簿清算也产 Completed 事实（清算发生、量恰为零）+ 标记
+            // 活动 K（close=最新价、量=0——与旧管线"无成交以收盘价标记"
+            // 对齐；此前空簿既无事件也无 K 标记）。
+            self.auction_facts.push(super::protocol::DeskAuctionFact {
+                stock: self.setup.stock,
+                tick: self.cur_tick,
+                phase: crate::TradingPhase::CallAuction,
+                indicative_price: None,
+                matched_volume: 0,
+                completed: true,
+                imbalance: 0,
+            });
+            if self.market.candle.is_none() {
+                let last = self.market.last_price;
+                self.market.candle = Some(super::desk::DeskCandle {
+                    open: last,
+                    high: last,
+                    low: last,
+                    close: last,
+                    volume: 0,
+                });
+            }
+            return Ok(Some((self.market.last_price, 0)));
         };
         let price = sel.price.cents();
         // P1-2（Sol）：公开成交量=实际成交量（内部选择量只是上界——

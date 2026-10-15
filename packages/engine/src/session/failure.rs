@@ -134,6 +134,14 @@ impl GameSession {
                     ),
                 }));
             }
+            // D4（t3 对等）：ingress 截取时刻——宿主经 shared ingress
+            // 绑定入队的玩家意图搬运进 pending_player（旧管线 cutoff
+            // 同口径；无绑定为 no-op）。
+            if let Err(fatal) = self.freeze_shared_ingress() {
+                drop(driver);
+                self.runtime_driver = Some(cell);
+                return Err(self.poison_runtime_step(fatal));
+            }
             // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0；
             // 失败回灌（ready ingress 语义——外部队列不被失败 tick 消费）。
             let intents = self.take_runtime_player_intents();
@@ -415,6 +423,27 @@ impl GameSession {
         self.state.candle_book.replace_active(candle_active);
         self.state.npc_attention = npc_attention;
         self.state.attention_scheduler = attention_scheduler;
+    }
+
+    /// runtime 分钟历史只读（D4·t4 位置合并的前缀源）。
+    pub fn runtime_minute_history(
+        &self,
+        code: &crate::StockId,
+    ) -> &[crate::observation::MarketMinuteClose] {
+        self.state
+            .market_minute_closes
+            .get(code)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// runtime 日结：清会话分钟历史（D4——旧管线 day_end 清、desk
+    /// roll_day 清；位置合并的跨日对齐前提）。
+    pub fn clear_runtime_minute_history(&mut self) {
+        self.mark_external_mutation();
+        for history in self.state.market_minute_closes.values_mut() {
+            history.clear();
+        }
     }
 
     /// runtime 持仓回写配套（D1）：runtime 新增持仓时补经历条目——存档

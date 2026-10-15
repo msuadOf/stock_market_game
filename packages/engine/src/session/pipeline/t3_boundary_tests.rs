@@ -109,7 +109,9 @@ fn staged_injection_is_not_counted_as_production() {
         Vec::new(),
         Vec::new(),
     ));
-    session.step().expect("staged 批消费的 tick");
+    // D4 登记：staged_decision=测试适配注入面（runtime 决策在组线程，
+    // 无 session 侧 handover）——显式走旧管线契约入口。
+    session.step_pipeline_contract().expect("staged 批消费的 tick");
     assert_eq!(
         attempt_seq(&session),
         before,
@@ -425,7 +427,9 @@ fn nonempty_root_handover_pairs_completion_with_delivery_per_tick() {
         .root_handover_seq
         .store(0, std::sync::atomic::Ordering::SeqCst);
     for _ in 0..4 {
-        session.step().expect("机构 due+到期报价的健康 tick");
+        // D4 登记：seed_order_for_test=旧簿注入面（见上注释）——显式走旧
+    // 管线契约入口。
+    session.step_pipeline_contract().expect("机构 due+到期报价的健康 tick");
     }
     let trace = session
         .compute_context()

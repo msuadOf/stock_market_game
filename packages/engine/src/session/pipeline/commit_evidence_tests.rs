@@ -18,7 +18,10 @@ fn ordinary_tick_skips_commit_evidence_replay_but_diagnostic_tick_captures_it() 
     let (mut diagnostic, _) = continuous_trade_session();
     let before = super::commit_evidence::capture_count_for_test();
 
-    ordinary.step().unwrap();
+    // D4 登记：step_with_commit_evidence 恒走旧管线（TickCommitEvidence
+    // 为旧管线证据结构）——对照两侧须同路径；普通侧显式走旧管线契约
+    // 入口（runtime 证据面=D3/D5 域）。
+    ordinary.step_pipeline_contract().unwrap();
     assert_eq!(super::commit_evidence::capture_count_for_test(), before);
 
     let (_, evidence) = diagnostic.step_with_commit_evidence().unwrap();

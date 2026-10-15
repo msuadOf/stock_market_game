@@ -171,7 +171,9 @@ fn quote_expiry_retail_cancellation_diagnostic_survives_commit() {
     })
     .unwrap();
     drop(plan);
-    game.step().unwrap();
+    // D4 登记：expiring_retail_order 经 seed_order_for_test=旧簿注入面
+    // ——显式走旧管线契约入口（runtime 等价锚=世界级 TTL 撤单面）。
+    game.step_pipeline_contract().unwrap();
 
     assert!(matches!(
         game.last_retail_order_events(),
@@ -207,7 +209,9 @@ fn quote_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
     })
     .unwrap();
     drop(plan);
-    game.step().unwrap();
+    // D4 登记：expiring_retail_order 经 seed_order_for_test=旧簿注入面
+    // ——显式走旧管线契约入口（runtime 等价锚=世界级 TTL 撤单面）。
+    game.step_pipeline_contract().unwrap();
 
     assert!(matches!(
         game.last_retail_order_events(),

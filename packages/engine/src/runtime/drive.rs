@@ -304,6 +304,8 @@ impl RuntimeDriver {
             );
             return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
         }
+        // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
+        session.clear_runtime_minute_history();
         Ok(())
     }
 
@@ -368,6 +370,8 @@ impl RuntimeDriver {
             );
             return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
         }
+        // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
+        session.clear_runtime_minute_history();
         Ok(())
     }
 }
@@ -526,6 +530,53 @@ impl RuntimeDriver {
                 );
                 self.sync_seq_into_session(session);
                 crate::verification_evidence::mark_committed(tick_after);
+                // D4（t3 读面对等）：root 完成交接见证——runtime 的等价
+                // 交付点=本 tick 事件即将返回（收束完成→交付）。计数域/
+                // 序数/反捕获栈逻辑与旧写入者（ready_ingress）逐字对齐：
+                // 完成序号恒奇数位（fetch+1 先于交付 fetch），同 tick 重
+                // 捕获首例抓栈。roots 非空标记=本 tick 事件非空（生产
+                // 产物面——映射登记）。
+                #[cfg(test)]
+                {
+                    let probes = &session.compute_context().t1_probes;
+                    let handover_seq = probes
+                        .root_handover_seq
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        + 1;
+                    // 交付槽消费（同计数域：完成=奇数位、交付=紧邻偶数位
+                    // ——旧管线交付侧 fetch；runtime 交付即事件返回本身，
+                    // 槽位仍须成对推进以保奇偶语义）。
+                    let _delivery_slot = probes
+                        .root_handover_seq
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                        + 1;
+                    let attempt =
+                        probes.queue_attempt_seq.load(std::sync::atomic::Ordering::SeqCst);
+                    let roots = usize::from(!events.is_empty());
+                    let mut trace = probes
+                        .root_handover_trace
+                        .lock()
+                        .expect("root 交接见证锁被 poison");
+                    let capture_ordinal =
+                        trace.iter().filter(|r| r.tick == tick_after).count() as u32 + 1;
+                    let backtrace = if capture_ordinal >= 2
+                        && trace.iter().all(|r| r.backtrace.is_none())
+                    {
+                        Some(format!("{:?}", std::backtrace::Backtrace::force_capture()))
+                    } else {
+                        None
+                    };
+                    trace.push(crate::compute::RootHandoverRecord {
+                        // 旧口径：记录 tick=消费 tick（步进前值——交接
+                        // 发生在被消费 tick 的执行相位）。
+                        tick: tick_after - 1,
+                        attempt,
+                        roots,
+                        handover_seq,
+                        capture_ordinal,
+                        backtrace,
+                    });
+                }
                 Ok(events)
             }
             Err(runtime_err) => {
@@ -598,17 +649,21 @@ impl RuntimeDriver {
                 .map(|&c| Money::from_cents(c.max(1)))
                 .collect();
             session.set_runtime_price_history(&code, hist);
-            // 分钟收盘（绝对分钟→Money；覆盖全部已完成分钟口径）。
-            // 分钟键：desk 已带绝对偏移（P1-6 修复后）——直接透传。
-            let minutes: Vec<crate::observation::MarketMinuteClose> = view
-                .minute_closes
-                .iter()
-                .map(|&(minute, c)| crate::observation::MarketMinuteClose {
+            // 分钟收盘（D4·t4 对等）：**位置合并**保留会话先验前缀、
+            // 追加 desk 本日新增段（旧管线=owner 补丁"先验逐字节保留+
+            // 追加段=本 tick 收盘价"；此前整值替换丢先验）。跨日由
+            // 日结清会话侧历史对齐（desk roll_day 清、键带当日偏移）。
+            let mut merged: Vec<crate::observation::MarketMinuteClose> = session
+                .runtime_minute_history(&code)
+                .to_vec();
+            let skip = merged.len();
+            for &(minute, c) in view.minute_closes.iter().skip(skip) {
+                merged.push(crate::observation::MarketMinuteClose {
                     absolute_trading_minute: minute,
                     close: Money::from_cents(c.max(1)),
-                })
-                .collect();
-            session.set_runtime_minute_closes(&code, minutes);
+                });
+            }
+            session.set_runtime_minute_closes(&code, merged);
         }
         // P1-10（Sol）：注意力候选真实写回——组线程 next_due 是调度
         // 权威（替换"推到 tick"的假迁移）。
