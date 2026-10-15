@@ -73,31 +73,66 @@ impl GameSession {
         // 形态由调用方直接持有 RuntimeDriver。
         self.check_step_start()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
-        if self.tick() != 0 {
-            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                location: "GameSession::step_via_runtime".to_owned(),
-                description: format!(
-                    "opt-in 入口仅支持首 tick 会话（每步重建 World 不恢复市场态；当前 tick={}——常驻形态用 RuntimeDriver）",
-                    self.tick()
-                ),
-            }));
+        // D0 常驻 driver：首次调用惰性构造（initial_committed_tick 对齐
+        // 当前 session.tick——全新会话即 0；此前每步重建 World 丢失
+        // 簿/冻结/行情态，非首 tick 门禁即由此而来，已移除）。
+        if self.runtime_driver.is_none() {
+            let mut driver = crate::runtime::drive::RuntimeDriver::from_session(self)
+                .map_err(|e| StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime".to_owned(),
+                    description: e,
+                })?;
+            driver.adopt_session_seq(self);
+            self.runtime_driver = Some(std::sync::Mutex::new(driver));
         }
-        let mut driver = crate::runtime::drive::RuntimeDriver::from_session(self)
-            .map_err(|e| StepFatal::InvariantViolation {
-                location: "GameSession::step_via_runtime".to_owned(),
-                description: e,
-            })?;
-        driver.adopt_session_seq(self);
-        // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0。
-        let intents = self.take_runtime_player_intents();
-        if !intents.is_empty() {
-            let uppers: Vec<i64> = {
-                let views = driver.world_public_views();
-                views.iter().map(|v| v.daily_upper_limit).collect()
+        // 取出锁单元（避免 &mut self 与 guard 交叉借用）；失败/成功都
+        // 放回——Abort 语义下 worker 存活，driver 可重跑。
+        let cell = self
+            .runtime_driver
+            .take()
+            .expect("runtime_driver 刚构造或在位");
+        let outcome = {
+            let guard = cell.lock();
+            let poisoned = guard.is_err();
+            let mut driver = if poisoned {
+                // 锁被 poison=前次持有期 panic——显式失败，不静默复用
+                // （不 into_inner：poison 期状态未知）。
+                drop(guard);
+                self.runtime_driver = Some(cell);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime".to_owned(),
+                    description: "常驻驱动器锁被 poison（前次持有期 panic）".to_owned(),
+                }));
+            } else {
+                guard.expect("is_err 已排阴")
             };
-            driver.inject_player_intents(&intents, &uppers);
-        }
-        self.runtime_step_with_install(&mut driver)
+            // 锁步不变量：world 已转正 tick 必须 == session.tick
+            // （失配=两权威漂移，显式拒绝——不静默重放）。
+            let world_tick = driver.world_committed_tick();
+            if world_tick != self.tick() {
+                drop(driver);
+                self.runtime_driver = Some(cell);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime".to_owned(),
+                    description: format!(
+                        "锁步失配：world 已转正 tick={world_tick} 而 session.tick={}（两权威漂移——不得静默重放）",
+                        self.tick()
+                    ),
+                }));
+            }
+            // 玩家意图路由（D2）：冻结取出→ExternalPlan 注入组 0。
+            let intents = self.take_runtime_player_intents();
+            if !intents.is_empty() {
+                let uppers: Vec<i64> = {
+                    let views = driver.world_public_views();
+                    views.iter().map(|v| v.daily_upper_limit).collect()
+                };
+                driver.inject_player_intents(&intents, &uppers);
+            }
+            self.runtime_step_with_install(&mut driver)
+        };
+        self.runtime_driver = Some(cell);
+        outcome
     }
 
     /// runtime 步进+安装本体（Sol 二审修复集 3）：独立成方法供测试注入
@@ -123,6 +158,15 @@ impl GameSession {
         // step 失败即停（此前先存 Result 再无条件安装——已 Abort 的
         // 世界状态会被写进会话）。
         let events = driver.step_frame_equivalent(self)?;
+        // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
+        // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
+        // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
+        // 首 tick 门禁掩盖）。
+        #[cfg(test)]
+        if let Some(fatal) = self.post_shadow_failure.take() {
+            self.rollback_runtime_step(baseline);
+            return Err(self.poison_runtime_step(fatal));
+        }
         // 安装失败注入（测试面——与真实安装失败走同一回滚分支）。
         // Sol 三审 (b)：注入点在 install_market_views **之后**——复现
         // 真实缺口路径"前半安装已写入、后半失败"。

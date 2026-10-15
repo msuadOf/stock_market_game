@@ -228,7 +228,7 @@ pub struct GroupState {
 }
 
 impl GroupState {
-    /// 构造组状态。
+    /// 构造组状态（全新世界：tick 0 起步）。
     pub fn new(
         group: GroupIdx,
         accounts: Vec<GroupAccount>,
@@ -240,14 +240,42 @@ impl GroupState {
         plans: Vec<Box<dyn PlanChain>>,
         script: GroupScript,
     ) -> Self {
+        Self::new_with_initial_tick(
+            group,
+            accounts,
+            chunk,
+            lot,
+            config,
+            ticks_per_day,
+            0,
+            decision,
+            plans,
+            script,
+        )
+    }
+
+    /// 构造组状态（D0：从 initial_tick 起步——恢复/接管对齐；Start 的
+    /// tick 连续性校验按绝对 tick 推导）。
+    pub fn new_with_initial_tick(
+        group: GroupIdx,
+        accounts: Vec<GroupAccount>,
+        chunk: usize,
+        lot: u32,
+        config: Arc<GameConfig>,
+        ticks_per_day: u64,
+        initial_tick: u64,
+        decision: Option<(Vec<NpcProfile>, u32)>,
+        plans: Vec<Box<dyn PlanChain>>,
+        script: GroupScript,
+    ) -> Self {
         GroupState {
             group,
             accounts,
             undo: Vec::new(),
             staging: Vec::new(),
-            cur_tick: 0,
+            cur_tick: initial_tick,
             cur_round: 0,
-            committed_tick: 0,
+            committed_tick: initial_tick,
             committed_hash: 0,
             skipped_orders: 0,
             decide_calls_total: 0,

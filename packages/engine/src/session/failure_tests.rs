@@ -320,3 +320,70 @@ fn sol3b_install_failure_rolls_back_market_view_writes() {
     }
     assert_eq!(game.tick(), 0, "tick 回滚");
 }
+
+// ── D0（常驻 driver）：非首 tick 门禁移除 + 锁步不变量 ──
+
+#[test]
+fn d0_step_via_runtime_continues_across_ticks_and_keeps_book() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    // 玩家现金置充足 + 挂跌停价买单（900=带下限，闭区间合法；无对手
+    // 档 ⇒ 确定性挂簿不成交——inst NPC 报价围绕 1000±5%，不会到 900）。
+    game.fixture_account_mut(&crate::AccountId(0))
+        .unwrap()
+        .fixture_set_cash(crate::money::Money::from_cents(100_000_000));
+    game.enqueue_player_intent(
+        crate::AccountId(0),
+        crate::strategy::Intent::PlaceLimit {
+            code: crate::StockId(0),
+            side: crate::orderbook::Side::Buy,
+            price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(900)),
+            qty: 100,
+        },
+    )
+    .expect("玩家意图入队");
+    // 第一步：挂单受理（OrderAccepted 事件）。
+    let ev1 = game.step_via_runtime().expect("第一步 step");
+    assert!(
+        ev1.iter().any(|e| matches!(
+            e,
+            Event::OrderAccepted { account, .. } if account.0 == 0
+        )),
+        "玩家挂单受理：{ev1:?}"
+    );
+    assert_eq!(game.tick(), 1);
+    // 第二步：不再被首 tick 门禁拒绝（D0 前红：仅支持首 tick）。
+    game.step_via_runtime().expect("第二步 step（门禁移除）");
+    assert_eq!(game.tick(), 2);
+    // 第三步：常驻 driver——report_log 连续累积（每步重建则新世界
+    // 只有 1 条记录），玩家挂单仍在簿（desk_resting ≥ 1）。
+    game.step_via_runtime().expect("第三步 step");
+    assert_eq!(game.tick(), 3);
+    let driver = game
+        .runtime_driver
+        .as_ref()
+        .expect("常驻驱动器")
+        .lock()
+        .expect("常驻驱动器锁");
+    assert_eq!(driver.world_report_log().len(), 3, "单一世界连续三 tick");
+    assert_eq!(driver.world_committed_tick(), 3, "锁步：world==session");
+    let last = driver.world_report_log().last().expect("三条记录");
+    assert!(
+        last.desk_resting.iter().any(|(s, r)| *s == 0 && *r >= 1),
+        "挂单跨步保持（tick3 仍在簿）：{:?}",
+        last.desk_resting
+    );
+}
+
+#[test]
+fn d0_lockstep_violation_fails_explicitly() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.step_via_runtime().expect("第一步");
+    // 人为破坏锁步（直改入口）——下一步必须显式报锁步失配，
+    // 不静默重放也不误报为门禁。
+    game.set_runtime_tick(50);
+    let err = game.step_via_runtime().expect_err("锁步失配必须显式失败");
+    assert!(
+        err.to_string().contains("锁步"),
+        "错误须指明锁步失配：{err}"
+    );
+}

@@ -46,6 +46,7 @@ pub(crate) fn basic_spec(
         closing_auction_ticks: 3,
         order_ttl_ticks: 1_000_000,
         history_len: 16,
+        initial_committed_tick: 0,
         decision: None,
         rights_computer: None,
         initial_cash_override: None,
@@ -596,4 +597,40 @@ fn drain_shutdown_final_leaves_no_inflight_entities() {
         "股份守恒：{:?}",
         shares_by_stock
     );
+}
+
+// D0：World 线程回收——Drop 兜底关停（显式 shutdown 之外的丢弃路径
+// 不得泄漏组/部线程）。
+#[test]
+fn d0_world_drop_shuts_down_workers() {
+    fn task_count() -> usize {
+        std::fs::read_dir("/proc/self/task").map(|d| d.count()).unwrap_or(0)
+    }
+    let before = task_count();
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|_t, _r| TickPlan::default())
+    };
+    let world = World::spawn(basic_spec(1, 2, 1, Box::new(script))).expect("世界构造");
+    // 等线程注册（≤2s）。
+    let spawned = loop {
+        let c = task_count();
+        if c >= before + 3 {
+            break c;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    drop(world);
+    // 等线程退出回落（≤2s）——Drop 兜底须发 Shutdown 并 join。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let c = task_count();
+        if c <= before {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Drop 后线程未回收：before={before} spawned={spawned} now={c}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }

@@ -59,6 +59,9 @@ pub struct DeskSetup {
     pub order_ttl_ticks: u64,
     /// tick 内价格历史容量。
     pub history_len: usize,
+    /// D0：起始已转正 tick（恢复/接管对齐——Ops 的 tick 连续性按绝对
+    /// tick 推导）。
+    pub initial_tick: u64,
 }
 
 /// 交易相位（照搬 `session.rs TradingPhase` 的 tick 推导）。
@@ -293,6 +296,7 @@ pub struct DeskState {
 impl DeskState {
     /// 构造交易部状态。
     pub fn new(setup: DeskSetup, n_groups: usize, config: Arc<GameConfig>) -> Self {
+        let initial_tick = setup.initial_tick;
         let market = DeskMarket {
             last_price: setup.initial_price,
             last_close: setup.initial_price,
@@ -317,9 +321,9 @@ impl DeskState {
             fills_out: vec![Vec::new(); n_groups],
             receipts_out: vec![Vec::new(); n_groups],
             flushed: vec![false; n_groups],
-            cur_tick: 0,
+            cur_tick: initial_tick,
             cur_round: 0,
-            committed_tick: 0,
+            committed_tick: initial_tick,
             committed_hash: 0,
             market,
             fee_sink: 0,

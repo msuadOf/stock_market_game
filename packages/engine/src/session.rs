@@ -1373,6 +1373,11 @@ pub struct GameSession {
     /// 与 inject_post_shadow_failure 同型的安装面失败注入）。
     #[cfg(test)]
     runtime_install_failure: bool,
+    /// D0 常驻 runtime 驱动器：step_via_runtime 惰性构造、跨 step 复用
+    /// （world tick 与 session.tick 锁步）。不进 CommittableSessionState
+    /// ——线程句柄不是可提交状态；shadow 置 None、commit_tick_shadow
+    /// 只换 ingress/state ⇒ 常驻实例穿越日结不被覆盖。
+    runtime_driver: Option<std::sync::Mutex<crate::runtime::drive::RuntimeDriver>>,
     state: CommittableSessionState,
 }
 
@@ -1760,6 +1765,7 @@ impl GameSession {
             post_shadow_failure: None,
             #[cfg(test)]
             runtime_install_failure: false,
+            runtime_driver: None,
             state: self.state.clone_for_shadow()?,
         })
     }
@@ -1909,6 +1915,7 @@ impl GameSession {
             post_shadow_failure: None,
             #[cfg(test)]
             runtime_install_failure: false,
+            runtime_driver: None,
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),

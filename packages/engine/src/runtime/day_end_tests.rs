@@ -289,3 +289,37 @@ fn splitmix_stays_deterministic_for_rights_scheduling() {
     }
     let _ = StrategyData::retail(1.0, 100, 0.0);
 }
+
+// D0：手动日结与自动日结显式互斥（同一天只日结一次）。
+#[test]
+fn d0_manual_and_auto_day_end_are_mutually_exclusive() {
+    use super::skeleton_tests::basic_spec;
+    use super::world::World;
+    use crate::orderbook::Side;
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|_t, _r| TickPlan::default())
+    };
+    let mut spec = basic_spec(1, 1, 1, Box::new(script));
+    spec.ticks_per_day = 4; // day0=tick1..4；自动日结在 tick5 开头判定
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(4).expect("day0 四 tick");
+    world.run_day_end_public().expect("手动日结（tick4）");
+    // 同日重复日结必须显式拒绝（D0 前红：第二次空转成功）。
+    let err = world.run_day_end_public().expect_err("重复日结显式拒绝");
+    assert!(
+        format!("{err:?}").contains("已日结"),
+        "错误须指明已日结：{err:?}"
+    );
+    // 手动得手后，tick5 开头的自动日结须跳过——组恰见一次 DayEnd。
+    world.run_ticks(1).expect("tick5 步进（自动日结跳过）");
+    let report = world.shutdown().expect("关停");
+    let day_ends = report.group_finals[0]
+        .observed
+        .iter()
+        .filter(|o| matches!(o, super::group::Observed::DayEnd(_)))
+        .count();
+    assert_eq!(day_ends, 1, "组恰见一次 DayEnd（手动得手、自动跳过）");
+    let _ = Side::Buy;
+}

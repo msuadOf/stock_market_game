@@ -90,6 +90,9 @@ pub struct WorldSpec {
     pub order_ttl_ticks: u64,
     /// tick 收盘价历史容量。
     pub history_len: usize,
+    /// D0：世界起始已转正 tick（恢复/接管对齐——组/部/全局域从此起步，
+    /// 相位按绝对 tick 推导；0=全新世界）。
+    pub initial_committed_tick: u64,
     /// 内联决策装配（Some=decide_data 路径；None=测试脚本路径）。
     pub decision: Option<DecisionSetup>,
     /// 公司域权益产出（日结 AdminBatch 注入；None=无权益）。
@@ -183,6 +186,9 @@ pub struct World {
     ticks_per_day: u64,
     /// 日结候选校验器（F §6.2 步骤 4：候选组装与全部可失败校验成功后才提交）。
     day_end_validator: DayEndValidator,
+    /// 最近一次已成功日结的收尾 tick（D0：手动/自动日结显式互斥——
+    /// 同一交易日只日结一次；abort_day_end 回滚时清空）。
+    last_day_end_tick: Option<u64>,
     /// 最近一次成功日结的不可变候选（宿主写盘失败 ≠ 市场回滚：显式报错保留）。
     pub last_day_end_candidate: Option<DayEndCandidate>,
     /// 日终清簿撤单事实（驱动器事件拼装读取）。
@@ -232,6 +238,7 @@ impl World {
             closing_auction_ticks,
             order_ttl_ticks,
             history_len,
+            initial_committed_tick,
             decision,
             rights_computer,
             initial_cash_override,
@@ -283,13 +290,14 @@ impl World {
                 (d.profiles, d.attention_gap_ticks)
             });
             let group_plans = plan_factory.as_ref().map(|f| f(g)).unwrap_or_default();
-            let state = super::group::GroupState::new(
+            let state = super::group::GroupState::new_with_initial_tick(
                 g,
                 accounts,
                 chunk,
                 config.lot_size,
                 Arc::clone(&config),
                 ticks_per_day,
+                initial_committed_tick,
                 group_decision,
                 group_plans,
                 script_for(g),
@@ -326,6 +334,7 @@ impl World {
                 closing_auction_ticks,
                 order_ttl_ticks,
                 history_len,
+                initial_tick: initial_committed_tick,
             };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))
@@ -349,7 +358,11 @@ impl World {
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
         drop(up_tx);
         Ok(World {
-            global: GlobalState::new(),
+            global: GlobalState {
+                committed_tick: initial_committed_tick,
+                day: (initial_committed_tick / ticks_per_day) as u32,
+                events_installed: 0,
+            },
             report_log: Vec::new(),
             group_txs,
             desk_txs,
@@ -367,6 +380,7 @@ impl World {
             rights_computer,
             ticks_per_day,
             day_end_validator: Box::new(|_| Ok(())),
+            last_day_end_tick: None,
             last_day_end_candidate: None,
             drained_lifecycle: Vec::new(),
         })
@@ -574,7 +588,11 @@ impl World {
             let tick = self.global.committed_tick + 1;
             // 日界：上一交易日末 tick 之后、新日首 tick 之前跑 DayEnd 序列
             // （F §6.2：Drain → 组日翻转/权益 → 候选校验 → 本 Start 即隐式提交）。
-            if tick > 1 && (tick - 1) % self.ticks_per_day == 0 {
+            if tick > 1
+                && (tick - 1) % self.ticks_per_day == 0
+                && self.last_day_end_tick != Some(tick - 1)
+            {
+                // D0 互斥：该交易日尚未日结才自动跑（手动已日结则跳过）。
                 self.run_day_end(tick - 1)?;
             }
             broadcast_start(&self.group_txs, tick, &self.public_views)?;
@@ -718,6 +736,12 @@ impl World {
     /// 日结公开入口（驱动器编排：tick 参数由调用方给定）。
     pub fn run_day_end_public(&mut self) -> Result<(), RuntimeError> {
         let day_final_tick = self.global.committed_tick;
+        // D0 互斥：同一交易日重复日结显式拒绝（自动路径已日结会跳过）。
+        if self.last_day_end_tick == Some(day_final_tick) {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("交易日已日结（收尾 tick={day_final_tick}）——不得重复日结"),
+            });
+        }
         self.run_day_end(day_final_tick)
     }
 
@@ -730,6 +754,7 @@ impl World {
         let tick = self.global.committed_tick;
         self.abort_tick(tick);
         self.last_day_end_candidate = None;
+        self.last_day_end_tick = None;
     }
 
     fn run_day_end(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {
@@ -834,6 +859,7 @@ impl World {
         }
         // 成功：候选不可变交出；下一 Start 隐式提交（Abort 窗口关闭）。
         self.last_day_end_candidate = Some(candidate);
+        self.last_day_end_tick = Some(day_final_tick);
         Ok(())
     }
 
@@ -993,5 +1019,23 @@ impl World {
     pub fn sever(&mut self) {
         self.group_txs.clear();
         self.desk_txs.clear();
+    }
+}
+
+impl Drop for World {
+    /// D0 兜底关停：显式 shutdown 之外的丢弃路径（如 session 析构带走
+    /// 常驻 driver）也必须回收组/部线程——发 Shutdown（失败=已退出）并
+    /// join（结果忽略：worker 错误本经上行通道报告，Drop 期无处报告，
+    /// 此处只保证线程回收）。
+    fn drop(&mut self) {
+        for tx in &self.group_txs {
+            let _ = tx.send(GroupIn::Shutdown);
+        }
+        for tx in &self.desk_txs {
+            let _ = tx.send(DeskMsg::Shutdown);
+        }
+        for (_, handle) in std::mem::take(&mut self.handles) {
+            let _ = handle.join();
+        }
     }
 }

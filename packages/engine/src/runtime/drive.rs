@@ -71,6 +71,9 @@ impl RuntimeDriver {
             Box::new(|_g| Box::new(|_t, _r| super::group::TickPlan::default())),
         )?;
         spec.n_groups = 1;
+        // D0：世界从会话当前 tick 起步（锁步不变量的构造期对齐——
+        // 全新会话即 0；恢复/接管场景相位按绝对 tick 推导）。
+        spec.initial_committed_tick = session.tick();
         spec.accounts_per_group = npcs.max(1);
         spec.initial_cash = 0;
         spec.initial_cash_override = Some(vec![cash]);
@@ -138,6 +141,16 @@ impl RuntimeDriver {
     /// runtime 全局日历读取（诊断/对账面）。
     pub fn world_global_day(&self) -> u32 {
         self.world.global_day()
+    }
+
+    /// world 已转正 tick（D0 锁步不变量的驱动器侧读数）。
+    pub fn world_committed_tick(&self) -> u64 {
+        self.world.global.committed_tick
+    }
+
+    /// world tick 记录只读（D0 常驻断言：单一世界连续累积）。
+    pub fn world_report_log(&self) -> &[super::world::TickRecord] {
+        &self.world.report_log
     }
 }
 

@@ -79,6 +79,7 @@ pub fn world_spec_from_setup(
         // Sol 二审修复集 6：history_len 从会话 setup 贯通（此前硬编码
         // 16——会话设 32 时 desk 价格窗只给 16 条，恢复校验即失败）。
         history_len: setup.history_len,
+        initial_committed_tick: 0,
         decision,
         rights_computer: None,
         initial_cash_override: None,

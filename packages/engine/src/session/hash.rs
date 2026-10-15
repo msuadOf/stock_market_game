@@ -40,6 +40,7 @@ impl GameSession {
                 post_shadow_failure: _,
             #[cfg(test)]
                 runtime_install_failure: _,
+            runtime_driver: _,
             revision: _,
         } = self;
         let super::CommittableSessionState {

@@ -106,7 +106,7 @@ pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
 /// (1) 每条 OrderCanceled 的 (account, code, id) 必须先有同键
 ///     OrderAccepted，且撤销余量 ≤ 受理余量；
 /// (2) 受理 id 全程不重复；
-/// (3) 同一受理 id 的撤单事件恰一条；
+/// (3) 同一受理 id 的撤单事件至多一条（不重复——完整性不在本口径）；
 /// (4) 每账户+股的（受理总量−撤销总量）≤ 该账户该股被 Trade 触碰
 ///     的总量。
 /// 已知界限（Sol 四审静态反例，如实登记）：Trade 事件无订单身份，
