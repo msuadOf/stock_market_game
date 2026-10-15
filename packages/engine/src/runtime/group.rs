@@ -168,7 +168,9 @@ impl ObservationInputs {
     }
 }
 
-/// 计划子单在途票（Sol 整改 2/3：挂出量+方向+挂出限价+受理身份）。
+/// 计划子单在途票（Sol 整改 2/3：挂出量+方向+挂出限价+受理身份；
+/// Sol 二审修复集 2：实时未成交余量+累计成交额——组观察/开仓/session
+/// 投影三面统一消费**真实余量**，不再按原挂出量）。
 #[derive(Clone, Debug)]
 struct ChildTicket {
     /// 挂出量（完整子单数量——PendingOp.qty，adopt 的数量输入）。
@@ -181,6 +183,12 @@ struct ChildTicket {
     /// 受理身份（fill 首见时自 FillFact.order 确定性合成；None=挂出
     /// 未受理——desk 尚未成交/拒收）。
     order_id: Option<crate::OrderId>,
+    /// 实时未成交余量（Sol 二审修复集 2：挂出=qty、fill 递减——在途
+    /// 持仓/ purse 读面与 session 镜像同口径）。
+    remaining: u32,
+    /// 累计成交额（i64 分，Σ price×qty——买单 purse 重算的边际费用
+    /// 口径输入，desk buy_purse_limit 同式）。
+    filled_value_cents: i64,
 }
 
 /// Sol 整改 3：含在途的权益（现金含在途买 purse；持仓含在途卖余量
@@ -230,6 +238,8 @@ fn equity_cents_with_pending(
 
 /// Sol 整改 3：含在途的持仓读面（旧管线口径=在手+在途卖单余量——组
 /// shares 已扣在途；本 (账户,股) 唯一在途票为卖时加回其量）。
+/// Sol 二审修复集 2：加回**实时未成交余量**（此前按原挂出量——挂 200
+/// 成 100 后组加回 200、session 镜像只见 100，两口径分叉）。
 fn held_qty_with_pending_at(
     shares: &[u32],
     child_in_flight: &std::collections::BTreeMap<
@@ -244,7 +254,7 @@ fn held_qty_with_pending_at(
     if let Some(&account_id) = account_ids.get(local as usize) {
         if let Some(ticket) = child_in_flight.get(&(account_id, crate::StockId(stock as u32))) {
             if matches!(ticket.side, Side::Sell) {
-                qty = qty.saturating_add(ticket.qty);
+                qty = qty.saturating_add(ticket.remaining);
             }
         }
     }
@@ -252,7 +262,9 @@ fn held_qty_with_pending_at(
 }
 
 /// Sol 整改 3：含在途的现金读面（在途买 purse 加回——挂单期间权益
-/// 观察不缩水；purse 按挂出限价重算，与挂出时同口径）。
+/// 观察不缩水）。Sol 二审修复集 2：purse 按**真实余量+累计成交额**的
+/// 边际费用口径重算（desk buy_purse_limit 同式——部分成交后 desk 实际
+/// 在途预留≥此保守下界；此前按原挂出量全额加回，部分成交后高估）。
 fn cash_with_pending_at(
     group_account: &GroupAccount,
     child_in_flight: &std::collections::BTreeMap<
@@ -270,8 +282,8 @@ fn cash_with_pending_at(
                 if let Ok(purse) = super::fees::buy_purse_limit(
                     config,
                     Money::from_cents(ticket.price.max(1)),
-                    ticket.qty,
-                    Money::ZERO,
+                    ticket.remaining,
+                    Money::from_cents(ticket.filled_value_cents),
                 ) {
                     cash = cash.saturating_add(purse.cents());
                 }
@@ -651,6 +663,10 @@ impl GroupState {
             h = fnv(h, ticket.price as u64);
             h = fnv(h, matches!(ticket.side, Side::Buy) as u64);
             h = fnv(h, ticket.order_id.map_or(0, |o| o.0));
+            // Sol 二审修复集 2：实时余量/累计成交额入哈希（Abort 回滚等价
+            // 判据覆盖票推进漂移）。
+            h = fnv(h, u64::from(ticket.remaining));
+            h = fnv(h, ticket.filled_value_cents as u64);
         }
         h
     }
@@ -921,6 +937,8 @@ impl GroupState {
                     side: ticket.side,
                     price: ticket.price,
                     order_id: None,
+                    remaining: ticket.remaining,
+                    filled_value_cents: ticket.filled_value_cents,
                 }),
             });
             self.child_in_flight.insert((account, code.clone()), ticket.clone());
@@ -959,6 +977,36 @@ impl GroupState {
                     "组 {group} 成交事实未被计划消费：account={account:?}, code={code:?}, order={order_id:?}, remaining={remaining}"
                 ),
             });
+        }
+        // Sol 二审修复集 2：票的实时余量/累计成交额随 fill 推进（组读面
+        // 三面统一：观察/开仓/session 投影消费真实未成交余量）。余量下穿
+        // 或成交额溢出=票/簿推进失同步，显式失败（铁律二）。
+        {
+            let prev_ticket = ticket.clone();
+            ticket.remaining = ticket.remaining.checked_sub(fill.qty).unwrap_or_else(|| {
+                panic!(
+                    "组 {group} 在途票余量下穿：account={account:?}, code={code:?}, remaining={}, fill_qty={}",
+                    ticket.remaining, fill.qty
+                )
+            });
+            let gross = crate::money::Money::from_cents(fill.price)
+                .mul_shares(fill.qty)
+                .unwrap_or_else(|error| {
+                    panic!("组 {group} 在途票成交额溢出：{error:?}")
+                })
+                .cents();
+            ticket.filled_value_cents = ticket
+                .filled_value_cents
+                .checked_add(gross)
+                .unwrap_or_else(|| {
+                    panic!("组 {group} 在途票累计成交额溢出：account={account:?}, code={code:?}")
+                });
+            self.undo.push(GroupUndo::ChildInFlight {
+                account,
+                code: code.clone(),
+                prev: Some(prev_ticket),
+            });
+            self.child_in_flight.insert((account, code.clone()), ticket.clone());
         }
         // Sol 整改 3：卖票成交——在途卖余量镜像减（部分/全成统一）。
         if matches!(fill.side, Side::Sell) {
@@ -1026,6 +1074,8 @@ impl GroupState {
                 side,
                 price: ticket.price,
                 order_id: None,
+                remaining: ticket.remaining,
+                filled_value_cents: ticket.filled_value_cents,
             }),
         });
         self.child_in_flight.insert((account, code), ticket);
@@ -1071,13 +1121,10 @@ impl GroupState {
             prev: Some(ticket.clone()),
         });
         // Sol 整改 3：卖票终结——剩余未成交量从镜像减（fill 已减过
-        /// 成交部分；此处=未成交余量）。
+        /// 成交部分；此处=未成交余量——Sol 二审修复集 2：票实时余量为
+        /// 唯一来源，与 fill 推进同口径）。
         if matches!(ticket.side, Side::Sell) {
-            let remaining_pending = {
-                let plan = self.plan_book.active_plan(account, &code);
-                plan.and_then(|p| p.active_child_remaining_qty())
-                    .unwrap_or(ticket.qty)
-            };
+            let remaining_pending = ticket.remaining;
             let acct = &mut self.accounts[local as usize];
             let before = acct.pending_sell_qty[stock as usize];
             let after = before.saturating_sub(remaining_pending);
@@ -1937,6 +1984,9 @@ impl GroupState {
                     side,
                     price: price.cents(),
                     order_id: None,
+                    // Sol 二审修复集 2：实时余量/累计成交额起步值。
+                    remaining: qty,
+                    filled_value_cents: 0,
                 },
             );
             // Sol 整改 3：卖票挂出——在途卖余量镜像加。
@@ -3136,6 +3186,8 @@ mod sol_recheck3_tests {
                 side,
                 price: 1_000,
                 order_id: Some(order_id),
+                remaining: 200,
+                filled_value_cents: 0,
             },
         );
         state
@@ -3187,6 +3239,111 @@ mod sol_recheck3_tests {
             plan.active_child_remaining_qty(),
             Some(200),
             "执行腿余量不被外来单吃掉"
+        );
+    }
+
+    // 2：挂 200 成 100 后——组持仓读面加回**真实未成交余量**（100），
+    // 不再按原挂出量（200）——与 session 镜像（pending_sell_qty）同口径。
+    #[test]
+    fn sol2_held_read_face_tracks_remaining_after_partial_fill() {
+        let mut state = chain_harness(Side::Sell);
+        // 卖出扣除后（挂单在途）：在手 0；挂出时镜像加 200。
+        state.accounts[0].shares[0] = 0;
+        state.accounts[0].pending_sell_qty[0] = 200;
+        state.staging.push(batch(
+            Vec::new(),
+            vec![FillFact {
+                order: (0, 5),
+                owner: (0, 0),
+                side: Side::Sell,
+                price: 1_000,
+                qty: 100,
+                commission: 0,
+                stamp_tax: 50,
+                transfer_fee: 1,
+            }],
+        ));
+        state
+            .apply_staging(1, 0)
+            .expect("本单部分成交正常推进");
+        // session 镜像口径（fill 推进减 fill.qty）。
+        assert_eq!(state.accounts[0].pending_sell_qty[0], 100, "镜像减成交部分");
+        // 组读面必须同口径：在手(0)+在途余量(100)=100——原挂出量口径=200。
+        let held = held_qty_with_pending_at(
+            &state.accounts[0].shares,
+            &state.child_in_flight,
+            &[crate::AccountId(9)],
+            0,
+            0,
+        );
+        assert_eq!(
+            held, 100,
+            "组持仓读面=在手+真实未成交余量（与 session 镜像一致）"
+        );
+        // 票余量与镜像一致（三面统一）。
+        let ticket = state
+            .child_in_flight
+            .get(&(crate::AccountId(9), crate::StockId(0)))
+            .expect("部分成交票保留");
+        assert_eq!(ticket.remaining, 100, "票实时余量=挂出−成交");
+        assert_eq!(ticket.filled_value_cents, 100_000, "累计成交额=100×1000");
+    }
+
+    // 2：买单 purse 读面=按真实余量+累计成交额的边际费用口径（desk
+    // buy_purse_limit 同式保守下界）——不再按原挂出量全额加回。
+    #[test]
+    fn sol2_cash_read_face_tracks_remaining_purse_after_partial_fill() {
+        let mut state = chain_harness(Side::Buy);
+        // purse 全额扣出（挂单在途）：在手现金 0。
+        state.accounts[0].cash = 0;
+        state.staging.push(batch(
+            Vec::new(),
+            vec![FillFact {
+                order: (0, 5),
+                owner: (0, 0),
+                side: Side::Buy,
+                price: 900,
+                qty: 100,
+                commission: 500,
+                stamp_tax: 0,
+                transfer_fee: 1,
+            }],
+        ));
+        state
+            .apply_staging(1, 0)
+            .expect("本单部分成交正常推进");
+        let cash = cash_with_pending_at(
+            &state.accounts[0],
+            &state.child_in_flight,
+            &[crate::AccountId(9)],
+            0,
+            &state.config,
+        );
+        // 独立推导：限价 1000、余量 100、已成交额 900×100=90_000。
+        let expect = super::super::fees::buy_purse_limit(
+            &state.config,
+            Money::from_cents(1_000),
+            100,
+            Money::from_cents(90_000),
+        )
+        .expect("purse 独立推导")
+        .cents();
+        assert_eq!(
+            cash, expect,
+            "现金读面=在途余量 purse（累计成交额边际费用口径）"
+        );
+        // 且与按原挂出量全额加回的旧口径可区分（余量口径必然更小）。
+        let stale = super::super::fees::buy_purse_limit(
+            &state.config,
+            Money::from_cents(1_000),
+            200,
+            Money::ZERO,
+        )
+        .expect("旧口径推导")
+        .cents();
+        assert!(
+            expect < stale,
+            "部分成交后余量口径({expect})须小于原挂出量口径({stale})"
         );
     }
 
