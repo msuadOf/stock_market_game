@@ -4744,7 +4744,6 @@ mod chain_restructure_tests {
 
     fn seeded_buy_plan_with_child_events() -> (GameSession, Vec<Event>) {
         let mut session = probe_session();
-        force_attention(&mut session, AccountId(1));
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
             AccountId(0),
@@ -4757,7 +4756,28 @@ mod chain_restructure_tests {
             &mut seed_events,
         );
         crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
-        let events = session.step().expect("healthy step");
+        // (a) 形态适配（Sol 三审裁定：多拍+逐拍 force，不加生产 Continue
+        // 触发面）：runtime 下迁移种子自**第二拍**决策快照起可见（首拍
+        // 决策读上一收束点空簿），belief 子单在后续拍挂出；旧管线首拍即
+        // 满足（循环首轮 break，行为不变——force 仍走旧镜像路径）。
+        let mut events = Vec::new();
+        for _round in 0..6 {
+            if session.runtime_driver.is_some() {
+                session.force_due_via_runtime(&[AccountId(1)], session.state.tick + 1);
+            } else {
+                force_attention(&mut session, AccountId(1));
+            }
+            events = session.step().expect("healthy step");
+            let in_flight = session
+                .state
+                .plans
+                .active_plan(AccountId(1), &session.stock_id("000812").unwrap())
+                .and_then(|plan| plan.active_child_order_id())
+                .is_some();
+            if in_flight {
+                break;
+            }
+        }
         // 场景断言：计划 + 在途子单确实就位（后续测试依赖）。
         let plans = session.plans_debug();
         assert!(
