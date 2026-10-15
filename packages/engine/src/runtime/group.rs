@@ -504,6 +504,11 @@ pub struct GroupState {
     /// Sol 整改 1：簿快照已保存标志（本 tick 内首个簿变更前保存一次；
     /// 转正/回滚清 undo 时重置）。
     plan_undo_saved: bool,
+    /// Sol 二审修复集 4：Start 间窗口收到的 ForceDue 待办——延迟到下一
+    /// Start 应用（指令效果归下一 tick 的日志域：tick Abort 冲回强制前
+    /// 值、指令失效需重发——代码承诺语义；此前收到即入账，undo 被
+    /// Start 的 undo.clear() 清除）。仅 cfg(test) 注入通道写入。
+    pending_force_due: Vec<(LocalIdx, u64)>,
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
@@ -588,6 +593,7 @@ impl GroupState {
             root_projection,
             child_in_flight: Default::default(),
             plan_undo_saved: false,
+            pending_force_due: Vec::new(),
             plan_book: crate::plans::PlanBook::default(),
             script,
         }
@@ -730,6 +736,9 @@ impl GroupState {
         self.staging.clear();
         self.plan_fills.clear();
         self.plan_undo_saved = false;
+        // Sol 二审修复集 4：未消费的 ForceDue 待办一并作废（指令失效
+        /// 需重发）；已入日志域的由上方 undo 逆序回放冲回。
+        self.pending_force_due.clear();
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
     }
@@ -1241,6 +1250,21 @@ impl GroupState {
         // 转正点：丢弃上一 tick 可逆日志；committed 推进到 N−1（旧 cur_tick）。
         self.undo.clear();
         self.plan_undo_saved = false;
+        // Sol 二审修复集 4：Start 间窗口收到的 ForceDue 在此应用——效果
+        // 归本 tick 日志域（Abort 冲回强制前值、指令失效需重发）。
+        for (local, target) in std::mem::take(&mut self.pending_force_due) {
+            if let Some((profiles, _)) = &mut self.decision {
+                if let Some(p) = profiles.get_mut(local as usize) {
+                    if p.next_due > target {
+                        self.undo.push(GroupUndo::NextDue {
+                            local,
+                            prev: p.next_due,
+                        });
+                        p.next_due = target;
+                    }
+                }
+            }
+        }
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
@@ -1263,7 +1287,11 @@ impl GroupState {
         }
         // ⓪ 隐式转正上一 tick（日终 tick 已收敛——DayEnd 只在收束后发生）：
         // 隔离日结可逆日志，Abort 只冲回日结变更（回到上一交易日收敛态）。
+        // Sol 二审修复集 4：快照标志随日志一并复位——此前保留 true 时，
+        // 日结相位的簿变更（Drain Closed→release_child_ticket）不再保存
+        // 新快照，Abort 恢复在途票但不恢复执行腿（票/簿分裂）。
         self.undo.clear();
+        self.plan_undo_saved = false;
         self.committed_tick = self.cur_tick;
         // ① Drain 回流落账（清空在途）。
         self.apply_staging(self.cur_tick, self.cur_round)?;
@@ -2784,8 +2812,9 @@ pub fn group_main(
             #[cfg(test)]
             GroupIn::ForceDue { locals, tick } => {
                 // Sol 整改注入通道（cfg(test) 语义）：显式强制到期——组
-                // 验证目标 tick 晚于已转正 tick 后前移 next_due（可逆
-                /// 日志——Abort 冲回，指令失效需重发）。
+                // 验证目标 tick 晚于已转正 tick 后登记待办；效果延迟到
+                // 下一 Start 应用（Sol 二审修复集 4：归下一 tick 的日志
+                // 域——Abort 冲回强制前值，指令失效需重发）。
                 if tick <= state.committed_tick {
                     abort.store(true, Ordering::SeqCst);
                     let e = RuntimeError::ProtocolInvariant {
@@ -2798,18 +2827,8 @@ pub fn group_main(
                     result = Err(e);
                     break;
                 }
-                if let Some((profiles, _)) = &mut state.decision {
-                    for local in locals {
-                        if let Some(p) = profiles.get_mut(local as usize) {
-                            if p.next_due > tick {
-                                state.undo.push(GroupUndo::NextDue {
-                                    local,
-                                    prev: p.next_due,
-                                });
-                                p.next_due = tick;
-                            }
-                        }
-                    }
+                for local in locals {
+                    state.pending_force_due.push((local, tick));
                 }
             }
             GroupIn::EchoPlans => {

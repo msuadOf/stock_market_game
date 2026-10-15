@@ -1178,6 +1178,147 @@ fn solmid_day_end_drain_releases_child_tickets() {
 
 
 
+// Sol 二审修复集 4 红证：日结快照标志事务边界——handle_day_end 清日志
+// 须同步清 plan_undo_saved（此前保留 → 日结相位的簿变更（Drain Closed→
+// release_child_ticket→record_child_released）不保存新快照 → 日结 Abort
+// 恢复在途票但不恢复执行腿——票/簿分裂）。附带裁决要求的 Abort 后完整
+// 状态与重跑比较。
+#[test]
+fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 51).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 与 lifecycle 红证同款注入（喂簿/吃单）——制造在途子单。
+    for _ in 0..6 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    // 末 tick 强制全部 belief 位到期（保证日结前最后一 tick 的 round 0
+    // 内有簿变更——开仓/报价使 plan_undo_saved 置位；无簿变更时日结相位
+    // 会保存新快照，掩盖标志残留缺陷）。
+    let belief_ids: Vec<crate::AccountId> =
+        driver.id_map.iter().skip(2).copied().collect();
+    driver.force_due_for_test_at(&belief_ids, driver.world_committed_tick() + 1);
+    {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("强制决策 tick");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    // 日结前完整状态：簿+账户（Abort 等价比较基线）。
+    let before = driver.collect_plans().expect("日结前簿").remove(0).1;
+    let accounts_before = driver
+        .world_accounts_snapshot()
+        .expect("日结前账户")
+        .remove(0)
+        .1;
+    let had_child = before
+        .active_plan_ids()
+        .iter()
+        .any(|pid| before.plan(*pid).is_ok_and(|p| p.active_child_order_id().is_some()));
+    assert!(
+        had_child,
+        "fixture 须有带在途子单的计划（否则日结 Abort 冲回无可观察簿变更）"
+    );
+    // 日结候选校验注入拒绝 → 世界广播 Abort → 组冲回日结日志。
+    driver.set_day_end_validator_for_test(Box::new(|_c| {
+        Err("注入：日结候选拒绝".to_owned())
+    }));
+    assert!(
+        driver.day_end_with_runtime_market_day(&mut session).is_err(),
+        "注入拒绝的日结必须失败"
+    );
+    // Abort 后完整状态：簿与账户均恢复日结前（票与执行腿同冲回）。
+    let after = driver.collect_plans().expect("Abort 后簿").remove(0).1;
+    assert_eq!(
+        format!("{before:?}"),
+        format!("{after:?}"),
+        "Abort 后计划簿恢复（在途票与执行腿一致冲回）"
+    );
+    let accounts_after = driver
+        .world_accounts_snapshot()
+        .expect("Abort 后账户")
+        .remove(0)
+        .1;
+    assert_eq!(
+        format!("{accounts_before:?}"),
+        format!("{accounts_after:?}"),
+        "Abort 后组账户恢复（Drain 回流/解冻/权益冲回）"
+    );
+    // 重跑比较：撤注入 → 日结成功 → 在途子单真正释放（清簿语义保持）。
+    driver.set_day_end_validator_for_test(Box::new(|_c| Ok(())));
+    driver
+        .day_end_with_runtime_market_day(&mut session)
+        .expect("重跑日结成功");
+    let drained = driver.collect_plans().expect("重跑后簿").remove(0).1;
+    for pid in drained.active_plan_ids() {
+        let Ok(plan) = drained.plan(pid) else { continue };
+        assert!(
+            plan.active_child_order_id().is_none(),
+            "重跑日结后计划 {pid:?} 的在途子单应释放"
+        );
+    }
+}
+
+
 // Sol 中点整改 4 红证：完整计划投影——组簿的全部计划记录（含
 // terminal/Completed）经交付点覆盖 session 读面（最后计划结束后旧
 // Active 镜像不得残留）。

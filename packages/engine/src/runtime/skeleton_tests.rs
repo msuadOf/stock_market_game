@@ -366,6 +366,58 @@ fn failed_tick_can_be_rerun_after_abort() {
     );
 }
 
+// ── 5b. ForceDue 事务边界（Sol 二审修复集 4）──
+
+// Start 间窗口收到的 ForceDue 指令效果必须属于**下一 tick 的日志域**：
+// tick Abort 冲回强制前值（指令失效需重发——代码承诺语义），重跑同 tick
+// 不重发则 NPC 不到期。此前指令在收到时立即入账，undo 被 Start 的
+// undo.clear() 清除——Abort 后 next_due 停在强制后目标（承诺违背）。
+#[test]
+fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
+    // 决策档案：local 0 到期=100（远期——本测试窗口内自然调度永不触发），
+    // retail 到达率 0（决策无订单副作用，纯调度面断言）。
+    let mut spec = basic_spec(1, 1, 1, Box::new(|_| idle_script()));
+    spec.decision = Some(super::decision::DecisionSetup {
+        profiles: vec![super::decision::NpcProfile {
+            strategy: crate::strategy::StrategyData::retail(0.0, 100, 0.0),
+            seed: 7,
+            next_due: 100,
+        }],
+        attention_gap_ticks: 4,
+    });
+    let mut world = World::spawn(spec).expect("世界构造");
+    // 强制 local 0 在 tick 1 到期（Start 间窗口——world 未跑任何 tick）。
+    world.force_due_for_test(vec![0], 1);
+    // tick 1 校验注入失败 → Abort（组回滚本 tick 日志域）。
+    world.set_validator(Box::new(|ev| {
+        if ev.tick == 1 {
+            Err("注入：tick1 拒绝".to_owned())
+        } else {
+            Ok(())
+        }
+    }));
+    assert!(world.run_ticks(1).is_err(), "注入拒绝的 tick 1 必须失败");
+    // Abort 后完整状态：next_due 恢复强制前值 100（指令失效）。
+    let attention = world.collect_group_attention().expect("注意力收集");
+    assert_eq!(
+        attention[0].1,
+        vec![(0, 100)],
+        "Abort 冲回强制前 next_due（指令失效需重发）"
+    );
+    // 重跑比较：不重发指令 → 同 tick 重跑成功但 NPC 不到期（next_due 保持
+    // 100——若指令残留，重跑轮会再次决策并重排 next_due）。decide_calls_
+    // total 为单调计数（Abort 不冲回），不作为事务性判据。
+    world.set_validator(no_op_validator());
+    world.run_ticks(1).expect("Abort 后重跑 tick1 成功");
+    let attention = world.collect_group_attention().expect("再收集");
+    assert_eq!(
+        attention[0].1,
+        vec![(0, 100)],
+        "未重发的指令不生效——重跑轮 NPC 不到期"
+    );
+    let _ = world.shutdown().expect("关停对账");
+}
+
 // ── 6. panic 运输（resume_unwind 原 payload）──
 
 #[test]

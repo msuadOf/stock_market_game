@@ -815,6 +815,13 @@ impl RuntimeDriver {
         self.world.set_validator(v);
     }
 
+    /// 测试控制面（Sol 二审修复集 4）：注入日结候选校验器（构造日结
+    /// 失败路径——组日结日志 Abort 冲回的等价断言用）。
+    #[cfg(test)]
+    pub fn set_day_end_validator_for_test(&mut self, v: super::world::DayEndValidator) {
+        self.world.set_day_end_validator(v);
+    }
+
     /// 公共视图只读（组装面）。
     pub fn world_public_views(&self) -> &[super::protocol::StockPublic] {
         self.world.public_views()
