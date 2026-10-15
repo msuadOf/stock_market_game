@@ -1702,6 +1702,102 @@ impl GroupState {
             .get(local as usize)
             .and_then(|slot| *slot)
             .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
+        // D3b 件 4：复审消费（session Lifecycle operation 等价——observe
+        // 之后、开仓循环之前；record_review/quiet 门控在 apply_lifecycle_
+        // action 内——每动作前记录簿内基线）。读面（write_back=false）不
+        // 消费复审（纯观察——EchoOpenDerivation 同式幂等承诺）。
+        let mut review_cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
+        // 复审/开仓后复评共用输入（交易日/分钟收盘预转换/复审时刻——
+        // 组装一次；分钟转换与 build_observations 同式 c.max(1)，时刻与
+        // RootReadContext 共用 market_minute_at——字段不得分叉）。
+        let trading_day = snapshot.tick / self.ticks_per_day;
+        let minutes_by_code: std::collections::BTreeMap<
+            crate::StockId,
+            Vec<crate::observation::MarketMinuteClose>,
+        > = self
+            .observation_inputs
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| assessments_map.contains_key(&crate::StockId(*idx as u32)))
+            .map(|(idx, inputs)| {
+                (
+                    crate::StockId(idx as u32),
+                    inputs
+                        .minutes
+                        .iter()
+                        .map(|&(minute, c)| crate::observation::MarketMinuteClose {
+                            absolute_trading_minute: minute,
+                            close: crate::money::Money::from_cents(c.max(1)),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: snapshot.civil_date,
+            market_minute: market_minute_at(
+                snapshot.tick,
+                self.ticks_per_day,
+                projection.auction_ticks,
+                projection.closing_auction_ticks,
+            ),
+            trading_day,
+        };
+        if write_back {
+            let group_account = self
+                .accounts
+                .get(local as usize)
+                .unwrap_or_else(|| panic!("组 {group} 复审位 {local} 账户缺失"));
+            let held_by_code: std::collections::BTreeMap<crate::StockId, u32> = group_account
+                .shares
+                .iter()
+                .enumerate()
+                .map(|(idx, &qty)| (crate::StockId(idx as u32), qty))
+                .collect();
+            let equity = equity_cents_with_pending(
+                group_account,
+                &self.child_in_flight,
+                &projection.account_ids,
+                local,
+                &self.config,
+                &observation.market,
+            );
+            // equity<=0 不复审（session PlanLifecycleReview::capture 同式
+            // 早退——权益耗尽的账户无修订面）。
+            if equity.cents() > 0 {
+                let review = crate::session::PlanLifecycleReview {
+                    account,
+                    market: &observation.market,
+                    plans: &self.plan_book,
+                    held_by_code,
+                    equity,
+                    belief: &out.belief,
+                    chain_params: params,
+                    trading_day,
+                    lot: self.config.lot_size,
+                };
+                let host = GroupReviewHost {
+                    state: &*self,
+                    local,
+                    account,
+                    market: observation.market.clone(),
+                    // 开仓后复评共用同一份预转换（host 拥有副本——分离
+                    /// 字段借用下的生命周期独立）。
+                    minutes_by_code: minutes_by_code.clone(),
+                    moment,
+                };
+                let actions = review.collect(&host, &assessments_map);
+                for action in actions {
+                    self.apply_lifecycle_action(
+                        action,
+                        &observation.market,
+                        local,
+                        trading_day,
+                        &mut review_cancels,
+                    );
+                }
+            }
+        }
         let mut opens: Vec<crate::plans::PlanOpen> = Vec::new();
         // Sol 二审修复集 1：existing=**本轮开仓前**计划集合——采集点必须
         // 在开仓循环之前（此前在循环之后采集：同轮新开的计划全被归入
@@ -1786,18 +1882,76 @@ impl GroupState {
             );
             if let Some(open) = open {
                 self.save_plan_book_undo();
-                self.plan_book
+                let plan_id = self
+                    .plan_book
                     .create(open.clone())
-                    .unwrap_or_else(|error| {
-                        panic!("组内计划创建失败 {account:?} {code:?}: {error}")
-                    });
+                    .unwrap_or_else(|error| panic!("组内计划创建失败 {account:?} {code:?}: {error}"));
+                // D3b 件 4：新建计划复审基线+报价前 urgency 复评（session
+                /// Create 动作同式：record_review/record_resource_review 后
+                /// 按 PauseAssessment 判停——组内此前缺失，quiet 首拍无基线）。
+                let price = observation
+                    .market
+                    .stocks
+                    .get(code)
+                    .map(|v| v.last_price)
+                    .unwrap_or_else(|| panic!("组内新计划复审缺股 {code:?} 行情"));
+                let idx = code.0 as usize;
+                let resources = {
+                    let acct = &self.accounts[local as usize];
+                    crate::plans::ReviewResources {
+                        cash: crate::money::Money::from_cents(acct.cash),
+                        frozen_cash: crate::money::Money::ZERO,
+                        held_qty: acct.shares.get(idx).copied().unwrap_or(0),
+                        t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
+                    }
+                };
+                self.plan_book
+                    .record_review(plan_id, trading_day, price, 0)
+                    .unwrap_or_else(|e| panic!("组内新计划复审事实记录失败 {plan_id:?}: {e:?}"));
+                self.plan_book
+                    .record_resource_review(plan_id, resources)
+                    .unwrap_or_else(|e| panic!("组内新计划复审资源记录失败 {plan_id:?}: {e:?}"));
+                // 报价前 urgency 复评（session Create 分支同式：分钟路径
+                /// return + 组内 urgency 面共享函数——判停即 Paused）。
+                let minutes = minutes_by_code.get(code).cloned().unwrap_or_default();
+                let path = crate::observation::build_price_path_observation(&minutes, &[], None)
+                    .unwrap_or_else(|e| panic!("组内新计划价格路径失败 {plan_id:?}: {e:?}"));
+                let plan = self
+                    .plan_book
+                    .plan(plan_id)
+                    .unwrap_or_else(|e| panic!("组内新计划读取失败 {plan_id:?}: {e:?}"))
+                    .clone();
+                let (assessment, _) = group_urgency_at_view(
+                    &self.accounts,
+                    &self.belief_states,
+                    &self.child_in_flight,
+                    &projection,
+                    &self.config,
+                    local,
+                    &observation.market,
+                    &moment,
+                    &plan,
+                    crate::session::ratio_to_bp(path.thirty_minute.return_ratio),
+                    crate::session::ratio_to_bp(path.one_minute.return_ratio),
+                );
+                if let crate::plans::PauseAssessment::PauseAndRequestCancel(reason) =
+                    assessment.pause
+                {
+                    self.save_plan_book_undo();
+                    self.plan_book
+                        .apply(
+                            plan_id,
+                            crate::plans::PlanEvent::Paused { reason, trading_day },
+                        )
+                        .unwrap_or_else(|e| panic!("组内新计划判停失败 {plan_id:?}: {e:?}"));
+                }
                 opens.push(open);
             }
         }
         // 首子单报价（D3a-3 件4b——生产路径；读面不算子单）。existing=
         // 本轮开仓前计划集合（Sol 整改 3b：预算新旧分类——采集点在开仓
         // 循环之前，见上方 Sol 二审修复集 1 注记）。
-        let (child_ops, cancels_out) = if write_back {
+        let (child_ops, chain_cancels) = if write_back {
             self.chain_quote_children(
                 local,
                 account,
@@ -1809,6 +1963,11 @@ impl GroupState {
         } else {
             (Vec::new(), Vec::new())
         };
+        // D3b 件 4：复审撤单（Terminate/Restructure 的在途子单）在前、
+        // 报价撤单（件 3 前置分支/QuoteAction::Cancel）在后——复审先于
+        // 报价执行的同序（session Lifecycle operation → QuotePlans）。
+        let mut cancels_out = review_cancels;
+        cancels_out.extend(chain_cancels);
         // 组态写回（生产路径：个人态六件入可逆日志后演进）。
         if write_back {
             self.undo.push(GroupUndo::Personal {
@@ -1840,16 +1999,68 @@ impl GroupState {
         ))
     }
 
-    /// D3b 件 4：复审动作施加（接线暂缓——见 GroupReviewHost 注记；方法
-    /// 保留为就绪基建）。
-    #[allow(dead_code)]
+    /// D3b 件 4：复审动作施加（session `apply_plan_lifecycle_actions` 的
+    /// 组内等价）。既有计划动作 apply 前先 record_review/record_resource_
+    /// review——quiet 门控的簿内基线（session 同式：决策核比对 last_review_*
+    /// 与本次事实；组内缺失则每拍修订/计划身份漂移，第 9 任定位的共同
+    /// 根因）。Terminate/Restructure 的在途子单定向撤单并入 cancels
+    /// （session 版 push_termination/push_restructure 执行链的路由面——
+    /// 否则子单搁置市场成交到日终）。Create 由开仓循环承载（复审不重复
+    /// 创建；session Create 分支的 record+报价前 urgency 复评组内缺——
+    /// 首拍复审非 quiet 由 unchanged 吸收，登记差异）。
     fn apply_lifecycle_action(
         &mut self,
         action: crate::session::PlanLifecycleAction,
-        _snapshot: &Arc<TickSnapshot>,
-        _projection: &Arc<super::world::RootProjection>,
+        market: &crate::strategy::MarketView,
+        local: LocalIdx,
+        trading_day: u64,
+        cancels: &mut Vec<(LocalIdx, StockIdx, u64)>,
     ) {
         use crate::session::PlanLifecycleAction as A;
+        // 既有计划动作先记复审事实（session apply_plan_lifecycle_actions
+        // 同式——每个动作独立记录，同一计划的连续动作各自刷新基线）。
+        let existing = match &action {
+            A::ExecutionState { plan_id, .. }
+            | A::Terminate { plan_id, .. }
+            | A::Observe { plan_id, .. }
+            | A::Revise { plan_id, .. }
+            | A::Restructure { plan_id, .. } => Some(*plan_id),
+            A::Create { .. } => None,
+        };
+        if let Some(plan_id) = existing {
+            let code = {
+                let plan = self.plan_book.plan(plan_id).unwrap_or_else(|e| {
+                    panic!("组内复审动作计划读取失败 {plan_id:?}: {e:?}")
+                });
+                plan.code().clone()
+            };
+            // 复审事实：price=快照行情；acquired=0（belief information 的
+            // 公司记录计数近似——与 GroupReviewHost.review_facts 同式登记）。
+            let price = market
+                .stocks
+                .get(&code)
+                .map(|v| v.last_price)
+                .unwrap_or_else(|| panic!("组内复审缺股 {code:?} 行情"));
+            let idx = code.0 as usize;
+            let resources = {
+                let acct = &self.accounts[local as usize];
+                crate::plans::ReviewResources {
+                    cash: crate::money::Money::from_cents(acct.cash),
+                    // 组内所有权模型：现金已扣在途（chain_quote_children
+                    /// frozen=ZERO 同式——保守预算，登记差异）。
+                    frozen_cash: crate::money::Money::ZERO,
+                    held_qty: acct.shares.get(idx).copied().unwrap_or(0),
+                    t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
+                }
+            };
+            self.save_plan_book_undo();
+            self.plan_book
+                .record_review(plan_id, trading_day, price, 0)
+                .unwrap_or_else(|e| panic!("组内复审事实记录失败 {plan_id:?}: {e:?}"));
+            self.plan_book
+                .record_resource_review(plan_id, resources)
+                .unwrap_or_else(|e| panic!("组内复审资源记录失败 {plan_id:?}: {e:?}"));
+        }
         match action {
             A::ExecutionState { plan_id, event } => {
                 self.save_plan_book_undo();
@@ -1872,7 +2083,23 @@ impl GroupState {
                     )
                     .unwrap_or_else(|e| panic!("组内复审观察失败 {plan_id:?}: {e:?}"));
             }
-            A::Terminate { plan_id, reason, trading_day, .. } => {
+            A::Terminate {
+                plan_id,
+                code,
+                child_order_id,
+                reason,
+                trading_day,
+                ..
+            } => {
+                // 在途子单先真实撤销（票留待 Closed 实体释放——件 3 的
+                // release 路径同源）。
+                if let Some(order_id) = child_order_id {
+                    cancels.push((
+                        local,
+                        code.0 as StockIdx,
+                        order_id.0 & 0x0000_FFFF_FFFF_FFFF,
+                    ));
+                }
                 self.save_plan_book_undo();
                 self.plan_book
                     .apply(
@@ -1881,7 +2108,22 @@ impl GroupState {
                     )
                     .unwrap_or_else(|e| panic!("组内复审终止失败 {plan_id:?}: {e:?}"));
             }
-            A::Restructure { plan_id, revision, .. } => {
+            A::Restructure {
+                plan_id,
+                code,
+                child_order_id,
+                revision,
+                ..
+            } => {
+                // 重构同撤（session push_restructure：终止/反向/超额时
+                // 先撤在途子单再 apply 修订——生命周期约束，决策核注记）。
+                if let Some(order_id) = child_order_id {
+                    cancels.push((
+                        local,
+                        code.0 as StockIdx,
+                        order_id.0 & 0x0000_FFFF_FFFF_FFFF,
+                    ));
+                }
                 self.save_plan_book_undo();
                 self.plan_book
                     .apply(plan_id, crate::plans::PlanEvent::Revised { revision })
@@ -2085,16 +2327,12 @@ impl GroupState {
             let Some(remaining) = plan.remaining_share_qty() else {
                 continue;
             };
-            let Some(grant) = grants
-                .as_ref()
-                .and_then(|result| result.grants.iter().find(|g| g.plan_id == plan_id))
-                .cloned()
-            else {
-                continue;
-            };
             // D3b 件 3：暂停/撤买前置分支（session generate_next_plan_quote
             /// 头段的组内等价——共享 decide_plan_quote 不含该面）：Paused
             /// 或（买方向且非反手信号 ≤0）→ Cancel/Keep/Wait + 撤买终止。
+            /// 位置在预算查找**之前**（撤单不是下单——不依赖软预算分配；
+            /// Sell 计划 sellable 不足时无 grant，暂停撤单不得被预算挡住，
+            /// session 头段同序）。
             let code = plan.code();
             {
                 let cancellable_now = phase_is_continuous(
@@ -2126,6 +2364,13 @@ impl GroupState {
                     continue;
                 }
             }
+            let Some(grant) = grants
+                .as_ref()
+                .and_then(|result| result.grants.iter().find(|g| g.plan_id == plan_id))
+                .cloned()
+            else {
+                continue;
+            };
             let code = plan.code();
             let stock_idx = code.0 as usize;
             let view = snapshot
@@ -2222,7 +2467,6 @@ impl GroupState {
                     // D3b 件 3：定向撤单路由（OrderRef 合成逆——serial=
                     // 低 48 位；票保留至 Closed 释放）。
                     let serial = order_id.0 & 0x0000_FFFF_FFFF_FFFF;
-                    eprintln!("[cancel-route] plan={plan_id:?} order={order_id:?} stock={stock_idx}");
                     cancels.push((local, stock_idx as StockIdx, serial));
                 }
                 _ => {}
@@ -2674,19 +2918,17 @@ fn equity_cents(
 
 /// D3b 件 4：组线程复审宿主（PlanReviewHost 的组内实现——输入全部
 /// 组权威：账户（成本基/T+1/在途）、belief 簿（experience/policy）、
-/// 快照行情、观察基分钟序列、投影策略面）。**接线暂缓登记**：run_chain_
-/// decision 的消费块已起草但回归 2 例（d3b3 暂停路由被复审撤买分支
-/// 抢先终止；lifecycle 独立源对拍多出新计划）——缺 record_review/quiet
-/// 门控校准（session 每动作前 record_review，组内未做→每拍修订），
-/// 待下轮校准后接线；宿主保留为就绪基建。
-#[allow(dead_code)]
+/// 快照行情、观察基分钟序列、投影策略面）。接线于 run_chain_decision
+/// （observe 之后、开仓循环之前）；quiet 门控校准=apply_lifecycle_action
+/// 内的 record_review（session 每动作前同式记录，比对 last_review_* 基线）。
 struct GroupReviewHost<'a> {
     state: &'a GroupState,
     local: LocalIdx,
     account: crate::AccountId,
     market: crate::strategy::MarketView,
-    /// 复审时刻的分钟收盘（observation_inputs——价格路径输入）。
-    minutes: &'a [(u64, i64)],
+    /// 复审时刻的分钟收盘（observation_inputs 预转换——run_chain_decision
+    /// 组装时映射复审候选股；价格路径观察输入）。
+    minutes_by_code: std::collections::BTreeMap<crate::StockId, Vec<crate::observation::MarketMinuteClose>>,
     /// 复审时刻（ExperienceMoment 组装——快照 civil+市场分钟）。
     moment: crate::experience::ExperienceMoment,
 }
@@ -2701,157 +2943,19 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         crate::plans::UrgencyAssessment,
         crate::plans::urgency::risk::RiskUrgencyAssessment,
     ) {
-        use crate::plans::urgency::risk::{
-            assess_existing_reduction_urgency, RiskUrgencyAssessment,
-        };
-        use crate::plans::UrgencyInputs;
-        let acct = &self.state.accounts[self.local as usize];
-        let belief = &self
-            .state
-            .belief_states
-            .get(self.local as usize)
-            .and_then(|s| s.as_ref())
-            .expect("复审位 belief 态在")
-            .belief;
-        let experience = belief.experience();
-        let risk = match experience.peak_equity {
-            None => RiskUrgencyAssessment::Unavailable {
-                reason: "no own-observed institution equity peak".to_owned(),
-            },
-            Some(peak) => {
-                // 权益观察（含在途口径——组读面）。
-                let equity = equity_cents_with_pending(
-                    acct,
-                    &self.state.child_in_flight,
-                    &self
-                        .state
-                        .root_projection
-                        .as_ref()
-                        .expect("复审位投影在")
-                        .account_ids,
-                    self.local,
-                    &self.state.config,
-                    &self.market,
-                );
-                let mut positions: std::collections::BTreeMap<
-                    crate::StockId,
-                    crate::observation::RiskPositionInput,
-                > = std::collections::BTreeMap::new();
-                for (idx, &qty) in acct.shares.iter().enumerate() {
-                    // 零量条目不入风险观察（RiskPositionInput 要求 qty>0
-                    /// ——组侧曾持有/清仓面在 shares 中为 0）。
-                    if qty == 0 {
-                        continue;
-                    }
-                    let price = self
-                        .market
-                        .stocks
-                        .get(&crate::StockId(idx as u32))
-                        .map(|v| v.last_price)
-                        .unwrap_or(crate::money::Money::from_cents(1));
-                    let code = crate::StockId(idx as u32);
-                    positions.insert(
-                        code,
-                        crate::observation::RiskPositionInput {
-                            qty,
-                            cost_price: crate::account::Position::from_restored_parts(
-                                qty,
-                                acct.frozen_today[idx],
-                                acct.invested_cents[idx],
-                                acct.recovered_cents[idx],
-                            )
-                            .cost_price()
-                            .filter(|c| c.cents() > 0),
-                            last_price: price,
-                            peak_price_since_entry: experience
-                                .stocks
-                                .get(&code)
-                                .and_then(|s| s.peak_price_since_entry)
-                                .map(|observed| observed.max(price)),
-                        },
-                    );
-                }
-                let observed = crate::observation::build_account_risk_observation(
-                    crate::money::Money::from_cents(
-                        cash_with_pending_at(
-                            acct,
-                            &self.state.child_in_flight,
-                            &self
-                                .state
-                                .root_projection
-                                .as_ref()
-                                .expect("复审位投影在")
-                                .account_ids,
-                            self.local,
-                            &self.state.config,
-                        ),
-                    ),
-                    &positions,
-                    experience.reference_equity,
-                    Some(peak.max(equity)),
-                )
-                .expect("组内机构风险观察构建失败");
-                let reducing = plan.direction() == Side::Sell
-                    && plan.remaining_share_qty().is_some_and(|qty| qty > 0)
-                    && acct.shares.get(plan.code().0 as usize).is_some_and(|q| *q > 0);
-                assess_existing_reduction_urgency(
-                    reducing,
-                    &observed,
-                    &self
-                        .state
-                        .root_projection
-                        .as_ref()
-                        .expect("复审位投影在")
-                        .urgency_policy,
-                )
-                .expect("组内计划风险紧迫度失败")
-            }
-        };
-        let (risk_reduction_active, account_drawdown_bp) = match &risk {
-            RiskUrgencyAssessment::Assessed {
-                risk_reduction_active,
-                account_drawdown_bp,
-                ..
-            } => (*risk_reduction_active, *account_drawdown_bp),
-            RiskUrgencyAssessment::Unavailable { .. } => (false, None),
-        };
-        let behavior = self.institution_behavior_shared_host(belief, plan.code(), {
-            match plan.status() {
-                crate::plans::PlanStatus::Paused { reason } => Some(reason),
-                _ => None,
-            }
-        });
-        let policy = &self
-            .state
-            .root_projection
-            .as_ref()
-            .expect("复审位投影在")
-            .urgency_policy;
-        let inputs = UrgencyInputs {
-            side: plan.direction(),
+        group_urgency_at_view(
+            &self.state.accounts,
+            &self.state.belief_states,
+            &self.state.child_in_flight,
+            self.state.root_projection.as_ref().expect("复审位投影在"),
+            &self.state.config,
+            self.local,
+            &self.market,
+            &self.moment,
+            plan,
             return_30min_bp,
             return_1min_bp,
-            risk_pressure_pause: plan.direction() == Side::Buy
-                && behavior.risk_pressure_pause == Some(true),
-            adverse_selection_pause: plan.direction() == Side::Buy
-                && behavior.adverse_selection_pause,
-            risk_reduction_active,
-            account_drawdown_bp,
-            remaining_trading_days: u32::try_from(
-                plan.last_valid_trading_day().saturating_sub(self.moment.trading_day),
-            )
-            .expect("live plan remaining days fit its u32 horizon"),
-            confidence_bp: plan.confidence_bp(),
-            style: match self.belief_style() {
-                Some(crate::strategy::InstitutionStyle::DeepValue) => {
-                    crate::plans::PatienceStyle::DeepValue
-                }
-                _ => crate::plans::PatienceStyle::Other,
-            },
-        };
-        let urgency = crate::plans::assess_urgency(&inputs, policy)
-            .expect("组内计划紧迫度评估失败");
-        (urgency, risk)
+        )
     }
     fn review_facts(&self, _account: crate::AccountId, code: &crate::StockId) -> (Money, u32) {
         let price = self
@@ -2913,10 +3017,14 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
                 .urgency_policy,
         )
     }
-    fn minute_closes(&self, _code: &crate::StockId) -> &[crate::observation::MarketMinuteClose] {
-        // 复审宿主持有预转换切片（run_chain_decision 组装时从
-        /// observation_inputs 映射——空切片为非目标股兜底）。
-        &[]
+    fn minute_closes(&self, code: &crate::StockId) -> &[crate::observation::MarketMinuteClose] {
+        // 组内等价：observation_inputs 的分钟序列预转换（与 build_
+        /// observations 同式 c.max(1)——字段不得分叉）；非候选股兜底
+        /// 空切片（session 版 get().unwrap_or(&[]) 同式）。
+        self.minutes_by_code
+            .get(code)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
     fn belief_style(&self) -> Option<crate::strategy::InstitutionStyle> {
         match self
@@ -2949,7 +3057,15 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         code: &crate::StockId,
         paused: Option<crate::plans::PauseReason>,
     ) -> crate::session::InstitutionBehavior {
-        self.institution_behavior_shared_host(belief, code, paused)
+        group_institution_behavior(
+            &self.state.accounts,
+            self.local,
+            &self.market,
+            &self.moment,
+            belief,
+            code,
+            paused,
+        )
     }
     fn max_holdable_shares(&self, code: &crate::StockId) -> u64 {
         self.state
@@ -2961,50 +3077,213 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
     }
 }
 
-impl GroupReviewHost<'_> {
-    /// 机构行为评估（组内输入组装：policy/experience/成本基/现价/时刻）。
-    fn institution_behavior_shared_host(
-        &self,
-        belief: &crate::strategy::BeliefBook,
-        code: &crate::StockId,
-        paused: Option<crate::plans::PauseReason>,
-    ) -> crate::session::InstitutionBehavior {
-        let policy = belief
-            .institution_policy()
-            .expect("机构 belief 簿有冻结行为策略");
-        let experience = belief.experience();
-        let acct = &self.state.accounts[self.local as usize];
-        let idx = code.0 as usize;
-        let cost = crate::account::Position::from_restored_parts(
-            acct.shares.get(idx).copied().unwrap_or(0),
-            acct.frozen_today.get(idx).copied().unwrap_or(0),
-            acct.invested_cents.get(idx).copied().unwrap_or(0),
-            acct.recovered_cents.get(idx).copied().unwrap_or(0),
+/// 机构行为评估（组内输入组装：policy/experience/成本基/现价/时刻——
+/// 复审宿主与开仓后复评共用；与 session `institution_behavior` 同式：
+/// cost_price 自组账目推导（D3a-2c 件1 投影对账背书）、account_risk 面
+/// 同式 belief 权威。参数=组账户切片（开仓循环在簿可变借用旁调用）。
+fn group_institution_behavior(
+    accounts: &[GroupAccount],
+    local: LocalIdx,
+    market: &crate::strategy::MarketView,
+    moment: &crate::experience::ExperienceMoment,
+    belief: &crate::strategy::BeliefBook,
+    code: &crate::StockId,
+    paused: Option<crate::plans::PauseReason>,
+) -> crate::session::InstitutionBehavior {
+    let policy = belief
+        .institution_policy()
+        .expect("机构 belief 簿有冻结行为策略");
+    let experience = belief.experience();
+    let acct = &accounts[local as usize];
+    let idx = code.0 as usize;
+    let cost = crate::account::Position::from_restored_parts(
+        acct.shares.get(idx).copied().unwrap_or(0),
+        acct.frozen_today.get(idx).copied().unwrap_or(0),
+        acct.invested_cents.get(idx).copied().unwrap_or(0),
+        acct.recovered_cents.get(idx).copied().unwrap_or(0),
+    )
+    .cost_price()
+    .filter(|c| c.cents() > 0);
+    let price = market
+        .stocks
+        .get(code)
+        .map(|v| v.last_price)
+        .unwrap_or_else(|| panic!("组内行为评估缺股 {code:?} 行情"));
+    crate::session::assess_institution_behavior(
+        policy,
+        experience,
+        code,
+        cost,
+        price,
+        *moment,
+        paused,
+        if belief.institution_account_risk_paused() {
+            Some(true)
+        } else {
+            experience.peak_equity.map(|_| false)
+        },
+    )
+    .expect("组内机构行为评估失败")
+}
+
+/// 组内报价/复审期紧迫度+风险评估（session `plan_execution_urgency_at_
+/// view` 的组内等价——字段级显式参数：开仓后复评在簿可变借用旁调用，
+/// 经宿主委托或直接传字段）。
+#[allow(clippy::too_many_arguments)]
+fn group_urgency_at_view(
+    accounts: &[GroupAccount],
+    belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
+    child_in_flight: &std::collections::BTreeMap<
+        (crate::AccountId, crate::StockId),
+        ChildTicket,
+    >,
+    projection: &std::sync::Arc<super::world::RootProjection>,
+    config: &std::sync::Arc<crate::config::GameConfig>,
+    local: LocalIdx,
+    market: &crate::strategy::MarketView,
+    moment: &crate::experience::ExperienceMoment,
+    plan: &crate::plans::TradingPlan,
+    return_30min_bp: Option<i32>,
+    return_1min_bp: Option<i32>,
+) -> (
+    crate::plans::UrgencyAssessment,
+    crate::plans::urgency::risk::RiskUrgencyAssessment,
+) {
+    use crate::plans::urgency::risk::{
+        assess_existing_reduction_urgency, RiskUrgencyAssessment,
+    };
+    use crate::plans::UrgencyInputs;
+    let acct = &accounts[local as usize];
+    let belief = &belief_states
+        .get(local as usize)
+        .and_then(|s| s.as_ref())
+        .expect("复审位 belief 态在")
+        .belief;
+    let experience = belief.experience();
+    let risk = match experience.peak_equity {
+        None => RiskUrgencyAssessment::Unavailable {
+            reason: "no own-observed institution equity peak".to_owned(),
+        },
+        Some(peak) => {
+            // 权益观察（含在途口径——组读面）。
+            let equity = equity_cents_with_pending(
+                acct,
+                child_in_flight,
+                &projection.account_ids,
+                local,
+                config,
+                market,
+            );
+            let mut positions: std::collections::BTreeMap<
+                crate::StockId,
+                crate::observation::RiskPositionInput,
+            > = std::collections::BTreeMap::new();
+            for (idx, &qty) in acct.shares.iter().enumerate() {
+                // 零量条目不入风险观察（RiskPositionInput 要求 qty>0
+                /// ——组侧曾持有/清仓面在 shares 中为 0）。
+                if qty == 0 {
+                    continue;
+                }
+                let price = market
+                    .stocks
+                    .get(&crate::StockId(idx as u32))
+                    .map(|v| v.last_price)
+                    .unwrap_or(crate::money::Money::from_cents(1));
+                let code = crate::StockId(idx as u32);
+                positions.insert(
+                    code,
+                    crate::observation::RiskPositionInput {
+                        qty,
+                        cost_price: crate::account::Position::from_restored_parts(
+                            qty,
+                            acct.frozen_today[idx],
+                            acct.invested_cents[idx],
+                            acct.recovered_cents[idx],
+                        )
+                        .cost_price()
+                        .filter(|c| c.cents() > 0),
+                        last_price: price,
+                        peak_price_since_entry: experience
+                            .stocks
+                            .get(&code)
+                            .and_then(|s| s.peak_price_since_entry)
+                            .map(|observed| observed.max(price)),
+                    },
+                );
+            }
+            let observed = crate::observation::build_account_risk_observation(
+                crate::money::Money::from_cents(cash_with_pending_at(
+                    acct,
+                    child_in_flight,
+                    &projection.account_ids,
+                    local,
+                    config,
+                )),
+                &positions,
+                experience.reference_equity,
+                Some(peak.max(equity)),
+            )
+            .expect("组内机构风险观察构建失败");
+            let reducing = plan.direction() == Side::Sell
+                && plan.remaining_share_qty().is_some_and(|qty| qty > 0)
+                && acct.shares.get(plan.code().0 as usize).is_some_and(|q| *q > 0);
+            assess_existing_reduction_urgency(
+                reducing,
+                &observed,
+                &projection.urgency_policy,
+            )
+            .expect("组内计划风险紧迫度失败")
+        }
+    };
+    let (risk_reduction_active, account_drawdown_bp) = match &risk {
+        RiskUrgencyAssessment::Assessed {
+            risk_reduction_active,
+            account_drawdown_bp,
+            ..
+        } => (*risk_reduction_active, *account_drawdown_bp),
+        RiskUrgencyAssessment::Unavailable { .. } => (false, None),
+    };
+    let behavior = group_institution_behavior(
+        accounts,
+        local,
+        market,
+        moment,
+        belief,
+        plan.code(),
+        match plan.status() {
+            crate::plans::PlanStatus::Paused { reason } => Some(reason),
+            _ => None,
+        },
+    );
+    let style = match belief.profile() {
+        crate::strategy::StrategyProfile::Institution(style) => Some(style),
+        _ => None,
+    };
+    let inputs = UrgencyInputs {
+        side: plan.direction(),
+        return_30min_bp,
+        return_1min_bp,
+        risk_pressure_pause: plan.direction() == Side::Buy
+            && behavior.risk_pressure_pause == Some(true),
+        adverse_selection_pause: plan.direction() == Side::Buy && behavior.adverse_selection_pause,
+        risk_reduction_active,
+        account_drawdown_bp,
+        remaining_trading_days: u32::try_from(
+            plan.last_valid_trading_day().saturating_sub(moment.trading_day),
         )
-        .cost_price()
-        .filter(|c| c.cents() > 0);
-        let price = self
-            .market
-            .stocks
-            .get(code)
-            .map(|v| v.last_price)
-            .unwrap_or_else(|| panic!("组内行为评估缺股 {code:?} 行情"));
-        crate::session::assess_institution_behavior(
-            policy,
-            experience,
-            code,
-            cost,
-            price,
-            self.moment,
-            paused,
-            if belief.institution_account_risk_paused() {
-                Some(true)
-            } else {
-                experience.peak_equity.map(|_| false)
-            },
-        )
-        .expect("组内机构行为评估失败")
-    }
+        .expect("live plan remaining days fit its u32 horizon"),
+        confidence_bp: plan.confidence_bp(),
+        style: match style {
+            Some(crate::strategy::InstitutionStyle::DeepValue) => {
+                crate::plans::PatienceStyle::DeepValue
+            }
+            _ => crate::plans::PatienceStyle::Other,
+        },
+    };
+    let urgency =
+        crate::plans::assess_urgency(&inputs, &projection.urgency_policy)
+            .expect("组内计划紧迫度评估失败");
+    (urgency, risk)
 }
 
 /// 组簿反手阈值（D3b 件 3 辅助——plan_book.policy() 的只读便捷）。
@@ -3138,22 +3417,7 @@ fn build_root_read_context(
         book.insert(account_id, account);
     }
     let day = u32::try_from(tick / ticks_per_day).expect("交易日序号超 u32");
-    let day_tick = tick % ticks_per_day;
-    let continuous = ticks_per_day
-        .saturating_sub(projection.auction_ticks)
-        .saturating_sub(projection.closing_auction_ticks);
-    // 市场分钟：与 session `current_market_minute` 同式（交易日×240 +
-    // 连续段完成分钟——completed_market_minute_count 为共享纯函数）。
-    let market_minute = u64::from(day) * u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
-        + u64::from(
-            crate::observation::completed_market_minute_count(
-                day_tick
-                    .saturating_sub(projection.auction_ticks)
-                    .min(continuous),
-                continuous,
-            )
-            .expect("相位配置映射市场分钟（与 session 同式）"),
-        );
+    let market_minute = market_minute_at(tick, ticks_per_day, projection.auction_ticks, projection.closing_auction_ticks);
     crate::session::RootReadContext::from_parts(
         book,
         projection.catalog.clone(),
@@ -3167,6 +3431,25 @@ fn build_root_read_context(
         market_minute,
         day,
     )
+}
+
+/// 市场分钟（与 session `current_market_minute` 同式：交易日×240 +
+/// 连续段完成分钟——completed_market_minute_count 为共享纯函数；复审
+/// 时刻 ExperienceMoment 与 RootReadContext 共用此式，字段不得分叉）。
+fn market_minute_at(tick: u64, ticks_per_day: u64, auction_ticks: u64, closing_ticks: u64) -> u64 {
+    let day = u32::try_from(tick / ticks_per_day).expect("交易日序号超 u32");
+    let day_tick = tick % ticks_per_day;
+    let continuous = ticks_per_day
+        .saturating_sub(auction_ticks)
+        .saturating_sub(closing_ticks);
+    u64::from(day) * u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
+        + u64::from(
+            crate::observation::completed_market_minute_count(
+                day_tick.saturating_sub(auction_ticks).min(continuous),
+                continuous,
+            )
+            .expect("相位配置映射市场分钟（与 session 同式）"),
+        )
 }
 
 /// D3a-2c 件2：组线程组装 DecisionChainObservation（market=广播快照视图、

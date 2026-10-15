@@ -140,7 +140,7 @@ pub(crate) use decision_chain::{
 pub(crate) use institutional_behavior::InstitutionBehavior;
 pub(crate) use institutional_behavior::assess_institution_behavior;
 // 转发 decision_chain 的 re-export（组线程经 crate::session 使用）。
-pub(crate) use decision_chain::{PlanLifecycleReview, PlanReviewHost};
+pub(crate) use decision_chain::{PlanLifecycleReview, PlanReviewHost, ratio_to_bp};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,

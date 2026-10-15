@@ -1064,7 +1064,9 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
         .1;
     // (a) 成交推进：组簿 (账户,方向) 聚合 filled == 独立源（全部 belief
     // 成交都被计划消费——部分成交按 fill.qty 推进、完整数量按挂出量
-    // adopt；漂移即红）。
+    // adopt；漂移即红）。零成交计划不入聚合（复审 Paused 等合法生命
+    // 周期形态可长期零成交——键存在性差异不构成推进分歧，D3b 件 4
+    // 复审接线后 P0 暂停卡死为该形态首例）。
     let mut filled: std::collections::BTreeMap<(crate::AccountId, u8), u32> = Default::default();
     for pid in plans.active_plan_ids() {
         let Ok(plan) = plans.plan(pid) else { continue };
@@ -1072,6 +1074,9 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
             Side::Buy => 0u8,
             Side::Sell => 1u8,
         };
+        if plan.filled_qty() == 0 {
+            continue;
+        }
         *filled.entry((plan.account(), side_code)).or_default() += plan.filled_qty();
     }
     assert_eq!(
@@ -2188,12 +2193,15 @@ fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
         .expect("决策拍");
     driver.install_market_views(&mut session).expect("行情");
     driver.install_candles(&mut session).expect("K");
+    // 事件面 id=desk 序号域（批 8e 近似映射登记），组簿 active_child=
+    // 合成域（stock<<48|serial）——按 serial 低 48 位比对。
+    let child_serial = crate::OrderId(child.0 & 0x0000_FFFF_FFFF_FFFF);
     assert!(
         events.iter().any(|e| matches!(
             e,
-            crate::Event::OrderCanceled { id, .. } if *id == child
+            crate::Event::OrderCanceled { id, .. } if *id == child_serial
         )),
-        "Paused 计划的活动子单被定向撤销（事件面 OrderCanceled id={child:?}）：{events:?}"
+        "Paused 计划的活动子单被定向撤销（事件面 OrderCanceled id={child_serial:?}）：{events:?}"
     );
     // 撤销后子单释放：Closed 实体次拍落账（F 文档内部 staging 语义）——
     // 补一空转拍后组簿 active_child 清空。

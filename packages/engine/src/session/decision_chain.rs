@@ -337,8 +337,9 @@ pub struct BeliefDebugSummary {
     pub unavailable_reason: Option<String>,
 }
 
-/// f64 收益率 → 整数 bp（None 透传）。
-fn ratio_to_bp(ratio: Option<f64>) -> Option<i32> {
+/// f64 收益率 → 整数 bp（None 透传）。D3b 件 4 起组线程复评共用
+///（session/组两侧价格路径→紧迫度输入的字段等式，不得分叉）。
+pub(crate) fn ratio_to_bp(ratio: Option<f64>) -> Option<i32> {
     ratio.map(|value| (value * 10_000.0).round() as i32)
 }
 
