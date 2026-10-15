@@ -64,6 +64,9 @@ impl GroupAccount {
     }
 }
 
+/// D3a-1 观察基路径容量（防无界增长；计划链回看窗远小于此）。
+const OBSERVATION_PATH_CAP: usize = 512;
+
 /// 组端可逆日志条目：记录“已施加的增量”，回滚时逆序施加 `-delta`。
 /// 覆盖：决策期扣除（purse/股票）、实体落账、`foreign_active` 增减。
 #[derive(Clone, Copy, Debug)]
@@ -223,6 +226,10 @@ pub struct GroupState {
     pub observed: Vec<Observed>,
     /// 外部注入计划缓冲（玩家意图路由；run_round 消费一次即清）。
     external_pending: Vec<super::decision::PendingOp>,
+    /// D3a-1 观察基：逐 tick 每股最新价路径（快照 last_price 追加——
+    /// 计划链的 price_paths 观察源；开仓/复审路径的 opinion/confidence
+    /// 由此派生，字段不得造假）。容量上限 history_len×4（链回看窗）。
+    price_paths: Vec<Vec<i64>>,
     /// 决策脚本。
     script: GroupScript,
 }
@@ -268,6 +275,7 @@ impl GroupState {
         plans: Vec<Box<dyn PlanChain>>,
         script: GroupScript,
     ) -> Self {
+        let n_stocks = accounts.first().map(|a| a.shares.len()).unwrap_or(0);
         GroupState {
             group,
             accounts,
@@ -290,6 +298,7 @@ impl GroupState {
             plan_fills: Vec::new(),
             observed: Vec::new(),
             external_pending: Vec::new(),
+            price_paths: vec![Vec::new(); n_stocks],
             script,
         }
     }
@@ -499,6 +508,16 @@ impl GroupState {
                     self.group, self.cur_tick
                 ),
             });
+        }
+        // D3a-1：观察基——本 tick 快照的每股最新价追加进路径（决策/
+        // 计划链的 price_paths 源；容量滚动上限防无界增长）。
+        if let Some(snapshot) = &self.snapshot {
+            for (path, stock) in self.price_paths.iter_mut().zip(snapshot.stocks.iter()) {
+                path.push(stock.last_price);
+                if path.len() > OBSERVATION_PATH_CAP {
+                    path.remove(0);
+                }
+            }
         }
         // 先落账上一 tick 最后一轮的实体批次（tick/round=上一执行位）。
         self.apply_staging(self.cur_tick, self.cur_round)?;
@@ -1093,6 +1112,15 @@ pub fn group_main(
             GroupIn::ExternalPlan(ops) => {
                 // 玩家意图路由（D2 批）：外部计划存缓冲，run_round 消费。
                 state.external_pending.extend(ops);
+            }
+            GroupIn::EchoObservations => {
+                let paths = state.price_paths.clone();
+                if up_tx.send(UpMsg::GroupObservations { group: state.group, paths }).is_err() {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "GroupObservations 上行失败".to_owned(),
+                    });
+                    break;
+                }
             }
             GroupIn::EchoAttention => {
                 let attention = match &state.decision {

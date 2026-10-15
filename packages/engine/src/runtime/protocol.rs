@@ -274,6 +274,8 @@ pub enum GroupIn {
     /// 外部计划注入（翻转批玩家意图路由：协调者/驱动器向组注入本 tick
     /// 计划——消费一次即清）。
     ExternalPlan(Vec<super::decision::PendingOp>),
+    /// 观察基读面（D3a-1：price_paths 上行——计划链端口径/测试面）。
+    EchoObservations,
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
     EchoAccounts,
@@ -359,6 +361,13 @@ pub enum UpMsg {
         /// 活动 K。
         active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
     },
+    /// 观察基回执（D3a-1：每股 price_paths 上行）。
+    GroupObservations {
+        /// 组索引。
+        group: GroupIdx,
+        /// 每股逐 tick 最新价路径。
+        paths: Vec<Vec<i64>>,
+    },
     /// 组注意力调度回执（P1-10：逐账户 next_due 上行）。
     GroupAttention {
         /// 组索引。
@@ -408,6 +417,9 @@ impl std::fmt::Debug for UpMsg {
                 write!(f, "GroupDayDone(group={group}, day={day})")
             }
             UpMsg::DeskFinal(x) => write!(f, "DeskFinal(stock={})", x.stock),
+            UpMsg::GroupObservations { group, .. } => {
+                write!(f, "GroupObservations(group={group})")
+            }
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
             UpMsg::DeskCandles { stock, .. } => write!(f, "DeskCandles(stock={stock})"),

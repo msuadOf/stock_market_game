@@ -526,6 +526,16 @@ impl RuntimeDriver {
             .map_err(|e| format!("注意力收集失败：{e:?}"))
     }
 
+    /// 观察基收集（D3a-1：组线程 price_paths 上行——计划链端口径/
+    /// 测试面）。
+    pub fn collect_observations(
+        &mut self,
+    ) -> Result<Vec<(super::GroupIdx, Vec<Vec<i64>>)>, String> {
+        self.world
+            .collect_group_observations()
+            .map_err(|e| format!("观察基收集失败：{e:?}"))
+    }
+
     /// 组账户快照（Sol 二审修复集 4：T+1 冻结面断言/对账——
     /// frozen_today 的权威在组线程，会话侧无镜像）。
     pub fn world_accounts_snapshot(

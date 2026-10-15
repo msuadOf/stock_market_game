@@ -507,6 +507,47 @@ impl World {
         }
     }
 
+    /// 观察基收集（D3a-1：EchoObservations 广播→收齐——计划链端读面）。
+    pub fn collect_group_observations(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, Vec<Vec<i64>>)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "collect_group_observations 通道面与组数不一致（txs={} n_groups={}——世界已断连）",
+                    self.group_txs.len(),
+                    self.n_groups
+                ),
+            });
+        }
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoObservations).map_err(|_| {
+                RuntimeError::SendFailed { detail: "EchoObservations 广播失败".to_owned() }
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupObservations { group, paths } => {
+                    out.push((group, paths));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!(
+                            "collect_group_observations 期望 GroupObservations，收到 {other:?}"
+                        ),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
     /// D4：挂当前相位计时捕获（world 运行期组/部 worker 读取安装）。
     pub fn set_tick_capture(
         &mut self,

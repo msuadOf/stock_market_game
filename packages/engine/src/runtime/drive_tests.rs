@@ -152,3 +152,41 @@ fn d3_individual_strategy_projection_flows_sampled_parameters() {
         "至少一个 NPC 的个体参数须偏离合成基线（否则投影退化为基线）"
     );
 }
+
+// D3a-1 观察基：组线程逐 tick 累积每股最新价路径（计划链 price_paths
+// 源——开仓/复审路径的 opinion/confidence 派生基，字段不得造假）。
+#[test]
+fn d3a_group_price_paths_accumulate_per_tick() {
+    let mut session = GameSession::new(setup_fixture(), 7).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for expected_len in 1..=5u64 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+        let observations = driver.collect_observations().expect("观察基收集");
+        assert_eq!(observations.len(), 1, "单组");
+        let paths = &observations[0].1;
+        assert_eq!(
+            paths.len(),
+            2,
+            "setup_fixture 双股：{:?}",
+            paths.len()
+        );
+        for (stock, path) in paths.iter().enumerate() {
+            assert_eq!(
+                path.len() as u64,
+                expected_len,
+                "股 {stock} 路径逐 tick 累积（{} tick 后 {} 条）",
+                expected_len,
+                path.len()
+            );
+            assert!(
+                path.iter().all(|&p| p > 0),
+                "路径价为正（快照 last_price）：{path:?}"
+            );
+        }
+    }
+}
