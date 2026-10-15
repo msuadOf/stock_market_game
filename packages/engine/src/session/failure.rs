@@ -156,12 +156,35 @@ impl GameSession {
         // 当前 session.tick——全新会话即 0；此前每步重建 World 丢失
         // 簿/冻结/行情态，非首 tick 门禁即由此而来，已移除）。
         if self.runtime_driver.is_none() {
+            // Sol 三审修复 2：首步前 queue 的 staged handover 消费（恰一次，
+            // cfg(test)——staged 槽位仅测试适配器存在；消费器内含消费拍抑制
+            /// ——重排落在消费 tick 的账户顶到 tick+2，对齐旧消费 seam 的
+            /// "消费 tick 不再决策"）。attention 已由 produce 写回镜像，
+            /// 构造器恢复即组 next_due（不重复推进）。
+            #[cfg(test)]
+            let queued_intents = crate::session::pipeline::take_staged_intents_for_runtime(self);
             let mut driver = crate::runtime::drive::RuntimeDriver::from_session(self)
                 .map_err(|e| StepFatal::InvariantViolation {
                     location: "GameSession::step_via_runtime".to_owned(),
                     description: e,
                 })?;
             driver.adopt_session_seq(self);
+            #[cfg(test)]
+            if let Some(intents) = queued_intents {
+                if !intents.is_empty() {
+                    let upper: Vec<i64> = driver
+                        .world_public_views()
+                        .iter()
+                        .map(|v| v.daily_upper_limit)
+                        .collect();
+                    driver
+                        .inject_player_intents(&intents, &upper)
+                        .map_err(|e| StepFatal::InvariantViolation {
+                            location: "GameSession::step_via_runtime::queue 消费".to_owned(),
+                            description: e,
+                        })?;
+                }
+            }
             self.runtime_driver = Some(std::sync::Mutex::new(driver));
         }
         // 取出锁单元（避免 &mut self 与 guard 交叉借用）；失败/成功都

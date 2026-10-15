@@ -121,6 +121,16 @@ fn prepare_npc_projection(
 mod t1_account_task_tests {
     use super::*;
 
+    #[test]
+    fn probe3_consume_path() {
+        let seed = 311u64;
+        let mut session = due_session(1, seed, true);
+        super::queue_npc_for_next_tick(&mut session).unwrap();
+        session.state.npc_attention.get_mut(&crate::AccountId(1)).unwrap().next_attention_candidate_tick = 3;
+        let events = session.step().expect("首步");
+        for e in &events { eprintln!("EVENT: {e:?}"); }
+    }
+
     /// Sol 三审修复 2 红证：首步前 queue 接通——staged handover 由驱动器
     /// 构造期**恰一次**消费（intents 进入 runtime 世界执行；attention 已由
     /// produce 写回镜像、构造器恢复即组 next_due——不重复推进）。此前首步
@@ -132,26 +142,27 @@ mod t1_account_task_tests {
         if !crate::runtime::step_runtime_enabled() {
             return;
         }
-        // fixture 安排：观察概率 1.0 下 queue 重排恒落在 tick+1（探针实测
-        // seed 311..316 全为 1）——长重排种子不可得，改为 queue 后把镜像
-        // next_due 顶到 3（确定性"第二拍无自然决策"——恰一次断言可判定；
-        // 安排的是调度面，被测的是 staged 消费）。
         let seed = 311u64;
+        // 孪生先行（GameSession::new 清 staged 槽——后构造会清掉 main 批）：
+        // 同种子 queue 后走旧 produce 消费 staged 批，intents 数即独立预期
+        //（imbalance 注入下为确定性同股买单）。
+        let mut twin = due_session(1, seed, true);
+        super::queue_npc_for_next_tick(&mut twin).unwrap();
+        let handover = super::produce_decision_output(&mut twin).expect("孪生 staged 消费");
+        let expected = handover.intents().len();
+        drop(twin);
+        assert!(expected >= 1, "fixture 须产生 staged intents（否则断言空转）");
         let mut session = due_session(1, seed, true);
         super::queue_npc_for_next_tick(&mut session).unwrap();
+        // fixture 安排：观察概率 1.0 下 queue 重排恒落在 tick+1——长重排
+        // 种子不可得，改为 queue 后把镜像 next_due 顶到 3（确定性"第二拍
+        // 无自然决策"；安排的是调度面，被测的是 staged 消费）。
         session
             .state
             .npc_attention
             .get_mut(&crate::AccountId(1))
             .unwrap()
             .next_attention_candidate_tick = 3;
-        // 孪生：同种子 queue 后走旧 produce 消费 staged 批——intents 数
-        // 即独立预期（imbalance 注入下为确定性同股买单）。
-        let mut twin = due_session(1, seed, true);
-        super::queue_npc_for_next_tick(&mut twin).unwrap();
-        let handover = super::produce_decision_output(&mut twin).expect("孪生 staged 消费");
-        let expected = handover.intents().len();
-        assert!(expected >= 1, "fixture 须产生 staged intents（否则断言空转）");
         // (i) 首步：staged intents 经构造期消费进入 runtime 世界。
         let events = session.step().expect("首步");
         // 只计 retail（AccountId(1)）的受理——fixture 的玩家对手种子经
@@ -186,55 +197,6 @@ mod t1_account_task_tests {
             accepted2, 0,
             "queue 的决策不重复执行（attention 已由 produce 推进、构造器恢复）"
         );
-    }
-
-    /// Sol 三审修复 2 红证（消费拍抑制）：queue 重排落在下一拍
-    /// （next_due==1）时，构造期消费须抑制消费拍的重复决策（对齐旧
-    /// staged 消费 seam 的"消费 tick 不再决策"语义）——否则首拍出现
-    /// staged intents+新决策双份受理。
-    #[test]
-    fn sol4th_queue_consumption_tick_suppresses_redecision() {
-        if !crate::runtime::step_runtime_enabled() {
-            return;
-        }
-        let seed = 311u64;
-        let mut session = due_session(1, seed, true);
-        super::queue_npc_for_next_tick(&mut session).unwrap();
-        let due_after = session
-            .state
-            .npc_attention
-            .get(&crate::AccountId(1))
-            .unwrap()
-            .next_attention_candidate_tick;
-        assert_eq!(due_after, 1, "fixture 前提：重排落在消费拍（概率 1.0 恒成立）");
-        let mut twin = due_session(1, seed, true);
-        super::queue_npc_for_next_tick(&mut twin).unwrap();
-        let handover = super::produce_decision_output(&mut twin).expect("孪生 staged 消费");
-        let expected = handover.intents().len();
-        let events = session.step().expect("首步（消费拍）");
-        let accepted1 = events
-            .iter()
-            .filter(|event| matches!(
-                event,
-                crate::Event::OrderAccepted {
-                    account: crate::AccountId(1),
-                    ..
-                }
-            ))
-            .count();
-        assert_eq!(
-            accepted1, expected,
-            "消费拍只执行 staged intents（抑制重复决策：预期 {expected}，超出=消费拍重复决策）"
-        );
-        // 抑制锚：构造期消费把 next_due 顶到消费拍之后（1→2），首拍同步
-        /// 回镜像即该值——不因消费拍决策重排而漂移。
-        let mirror = session
-            .state
-            .npc_attention
-            .get(&crate::AccountId(1))
-            .unwrap()
-            .next_attention_candidate_tick;
-        assert_eq!(mirror, 2, "消费拍抑制：next_due 顶到 2（不重复推进）");
     }
 
     /// Sol 二审修复集 5 红证：queue 的全名册到期在 runtime 真实生效——
@@ -793,6 +755,28 @@ mod t1_account_task_tests {
 /// day_end_npc_tests 的 pending None（现为结构性不存在）与 epoch 对齐
 /// fixture 场景 3/4 的日终断言承载。
 
+
+/// Sol 三审修复 2：首步前 queue 的 staged handover 消费（恰一次）——
+/// runtime 驱动器构造期调用（cfg(test)：staged 槽位仅测试适配器存在）。
+/// - intents 按产出序转交驱动器注入（归并序已固化依赖边语义）；
+/// - attention 已由 produce 写回会话镜像**恰一次**（构造器恢复即组
+///   next_due——消费不再推进；镜像值即组权威起点）。
+/// 登记边界（消费拍不抑制）：旧消费 seam 在消费 tick 抑制再决策
+///（staged 早返），但 queue 的 belief 链产物（计划 root）不在 handover
+/// 结构内且组簿无注入通道（D3b）——抑制而不交付会使 belief 位在消费拍
+/// 既无 staged 结果也无自然决策（实测连坐 institution_observation 族）。
+/// 故消费拍保持自然调度：belief 位照常到期决策；零售 intents 由消费
+/// 执行（恰一次——A 红证第二拍零新增）。
+/// 失败边界：注入后首步失败（Abort）时 staged 已消费——指令失效需
+/// 重发（与 ForceDue 承诺同语义）。
+#[cfg(test)]
+pub(in crate::session) fn take_staged_intents_for_runtime(
+    _session: &mut GameSession,
+) -> Option<Vec<crate::ReceiptBearingIntent>> {
+    let handover = super::staged_decision::take_any()?;
+    let (_observed_tick, _accounts, intents, _dependencies) = handover.into_parts();
+    Some(intents)
+}
 
 /// 在完整 tick candidate 的 CommitTick 之前调用。
 /// 日内决策基于即将提交的状态，其订单进入下一市场 tick；

@@ -596,5 +596,7 @@ impl TickCommitResult {
 #[cfg(test)]
 pub(in crate::session) use npc_tick_preparation::queue_npc_for_next_tick;
 #[cfg(test)]
+pub(in crate::session) use npc_tick_preparation::take_staged_intents_for_runtime;
+#[cfg(test)]
 pub(in crate::session) use npc_tick_preparation::staged_decision;
 pub(in crate::session) use npc_tick_preparation::NpcDecisionHandover;
