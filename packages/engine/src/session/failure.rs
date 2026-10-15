@@ -490,6 +490,12 @@ impl GameSession {
         }
     }
 
+    /// 组内计划簿安装（D3a-2c 件5：交付点投影——runtime 模式下 session
+    /// plans 的唯一来源；X1 直改标记外部直改。plans_debug 等读面消费）。
+    pub fn set_runtime_plans(&mut self, plans: crate::plans::PlanBook) {
+        self.state.plans = plans;
+    }
+
     /// 信念链参数/机构风格投影（D3a-2c 件4：组线程 Lifecycle 消费的策略面
     /// ——id→(链参数, 风格)；非信念机构 None）。
     pub fn runtime_chain_params(

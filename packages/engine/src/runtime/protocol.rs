@@ -316,6 +316,8 @@ pub enum GroupIn {
             (crate::company::CompanyKind, u64),
         >,
     },
+    /// 计划簿读面（D3a-2c 件5：组内 PlanBook 上行——plans_debug 投影源）。
+    EchoPlans,
     /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
     /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
     EchoOpenDerivation,
@@ -419,6 +421,13 @@ pub enum UpMsg {
         /// 逐组内下标的信念个人态快照。
         states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
     },
+    /// 计划簿回执（D3a-2c 件5：组内 PlanBook 克隆——交付点投影源）。
+    GroupPlans {
+        /// 组索引。
+        group: GroupIdx,
+        /// 组内计划簿。
+        plans: crate::plans::PlanBook,
+    },
     /// 开仓派生读面回执（D3a-2c：组线程直调 observe 的派生——红证/读面。
     /// market/now=组内实际消费的观察输入（红证同输入锚——广播快照为
     /// 本 tick Start 时刻的上一收束点，与驱动器最新公共态差一个 tick）。
@@ -489,6 +498,9 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupFinal(x) => write!(f, "GroupFinal(group={})", x.group),
             UpMsg::GroupDayDone { group, day, .. } => {
                 write!(f, "GroupDayDone(group={group}, day={day})")
+            }
+            UpMsg::GroupPlans { group, .. } => {
+                write!(f, "GroupPlans(group={group})")
             }
             UpMsg::GroupOpenDerivations {
                 group, derivations, ..

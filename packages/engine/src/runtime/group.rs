@@ -1237,6 +1237,7 @@ fn build_root_read_context(
     belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
     projection: &std::sync::Arc<super::world::RootProjection>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
+    plans: &crate::plans::PlanBook,
     tick: u64,
     ticks_per_day: u64,
     snapshot: &TickSnapshot,
@@ -1298,7 +1299,9 @@ fn build_root_read_context(
         std::sync::Arc::clone(&projection.company_registry),
         std::sync::Arc::clone(&projection.operations),
         std::sync::Arc::clone(library),
-        crate::plans::PlanBook::default(),
+        // 组内计划簿（D3a-2c 件4 起承载开仓产物——与 session 投影同源；
+        // 此前恒空簿的起点形态在件4 落地后退役）。
+        plans.clone(),
         snapshot.civil_date,
         market_minute,
         day,
@@ -1648,6 +1651,7 @@ pub fn group_main(
                         &state.belief_states,
                         &projection,
                         &state.library,
+                        &state.plan_book,
                         snapshot.tick,
                         state.ticks_per_day,
                         &snapshot,
@@ -1700,6 +1704,12 @@ pub fn group_main(
                                 panic!("组 {} belief 位 {local} 缺链参数投影", state.group)
                             });
                         for (code, assessment) in &assessments {
+                            // Active 分支（既有计划复审/风险暂停）为 D3b 域——
+                            // 登记暂缓：已活跃的股不重复开仓（session 语义：
+                            // active plan 走复审分支，不重复 Create）。
+                            if state.plan_book.active_plan(account, code).is_some() {
+                                continue;
+                            }
                             let Some(group_account) = state.accounts.get(local) else {
                                 continue;
                             };
@@ -1807,6 +1817,23 @@ pub fn group_main(
                 {
                     result = Err(RuntimeError::SendFailed {
                         detail: "GroupOpenDerivations 上行失败".to_owned(),
+                    });
+                    break;
+                }
+            }
+            GroupIn::EchoPlans => {
+                // D3a-2c 件5：组内计划簿上行（驱动器交付点回写 session
+                // plans_debug 投影源——D4 模式）。
+                let plans = state.plan_book.clone();
+                if up_tx
+                    .send(UpMsg::GroupPlans {
+                        group: state.group,
+                        plans,
+                    })
+                    .is_err()
+                {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "GroupPlans 上行失败".to_owned(),
                     });
                     break;
                 }

@@ -653,6 +653,45 @@ impl World {
         }
     }
 
+    /// 计划簿收集（D3a-2c 件5：EchoPlans 广播→收齐——交付点投影源）。
+    pub fn collect_plans(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "collect_plans 通道面与组数不一致（txs={} n_groups={}——世界已断连）",
+                    self.group_txs.len(),
+                    self.n_groups
+                ),
+            });
+        }
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoPlans).map_err(|_| {
+                RuntimeError::SendFailed { detail: "EchoPlans 广播失败".to_owned() }
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupPlans { group, plans } => {
+                    out.push((group, plans));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("collect_plans 期望 GroupPlans，收到 {other:?}"),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
     /// 自然日同步（D3a-2c：驱动器每步/日结后自会话 civil clock 同步——
     /// 快照 civil_date 的唯一来源）。
     pub fn set_civil_date(&mut self, date: crate::calendar::CivilDate) {

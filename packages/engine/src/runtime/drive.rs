@@ -367,6 +367,14 @@ impl RuntimeDriver {
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::DerivationAudit,
         );
+        // D3a-2c 件5：组内计划簿交付点投影（plans_debug 等读面源——组
+        // 线程权威；session plans 在 runtime 模式恒空的不变量就此由
+        // 交付投影承载，X1 直改）。
+        if let Ok(collected) = self.world.collect_plans() {
+            if let Some((_, plans)) = collected.into_iter().next() {
+                session.set_runtime_plans(plans);
+            }
+        }
         outcome
     }
 
@@ -668,6 +676,14 @@ impl RuntimeDriver {
         self.world
             .collect_group_belief()
             .map_err(|e| format!("信念态收集失败：{e:?}"))
+    }
+
+    /// 计划簿收集（D3a-2c 件5：组内 PlanBook 上行——测试/红证面；生产
+    /// 交付点投影在 step 内）。
+    pub fn collect_plans(
+        &mut self,
+    ) -> Result<Vec<(super::GroupIdx, crate::plans::PlanBook)>, String> {
+        self.world.collect_plans().map_err(|e| format!("计划簿收集失败：{e:?}"))
     }
 
     /// 开仓派生读面收集（D3a-2c：组线程 observe 直调的派生——红证锚）。

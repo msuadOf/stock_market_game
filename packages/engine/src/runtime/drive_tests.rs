@@ -499,6 +499,15 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
         driver.install_market_views(&mut session).expect("行情安装");
         driver.install_candles(&mut session).expect("K 安装");
     }
+    // 前簿（派生前组内状态——session 版 collect 的计划面输入，与组内
+    // observe 消费的簿同一时点）。
+    let plans_before = driver
+        .collect_plans()
+        .expect("前簿收集")
+        .into_iter()
+        .next()
+        .map(|(_, plans)| plans)
+        .unwrap_or_default();
     let collected = driver.collect_open_derivations().expect("开仓派生收集");
     assert_eq!(collected.len(), 1, "单组");
     let (_group, derivation_market, derivation_now, records) = &collected[0];
@@ -595,7 +604,8 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
         session_out.install(&mut session, record.account);
         let by_code: std::collections::BTreeMap<_, _> =
             record.assessments.iter().cloned().collect();
-        let session_plans = crate::plans::PlanBook::default();
+        // session 版计划面=派生前组内簿（与组内 observe 消费同一时点）。
+        let session_plans = plans_before.clone();
         let session_actions = session.collect_plan_lifecycle_actions(
             record.account,
             &by_code,
@@ -614,6 +624,59 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
             format!("{session_opens:?}"),
             "账户 {:?} 开仓 PlanOpen 逐字段同源（组内 PlanBook 落地==session 版派生）",
             record.account
+        );
+    }
+}
+
+// D3a-2c 件5：组内计划簿交付点投影——session plans_debug 读面（D4
+// 模式：交付点回写投影源，X1 直改）。开仓产物（PlanOpen）经投影对
+// session 读面可见；断言投影后 debug 面与组内 opens 一致。
+#[test]
+fn d3a2c_plans_debug_projects_group_plan_book_at_delivery() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 23).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..5 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    // 派生（组内 observe+开仓消费）→ 下一交付点投影。
+    let collected = driver.collect_open_derivations().expect("开仓派生收集");
+    let records = &collected[0].3;
+    assert!(!records.is_empty(), "有派生记录");
+    let mut expected: Vec<(crate::AccountId, crate::StockId)> = Vec::new();
+    for record in records {
+        for open in &record.opens {
+            expected.push((open.account, open.code.clone()));
+        }
+    }
+    assert!(
+        !expected.is_empty(),
+        "场景须产生至少一个开仓（PlanOpen 落组内 PlanBook）"
+    );
+    // 交付点投影（step 内同款路径——此处显式驱动一步后的读面断言）。
+    let plans = driver
+        .collect_plans()
+        .expect("计划簿收集")
+        .into_iter()
+        .next()
+        .map(|(_, plans)| plans)
+        .unwrap_or_default();
+    session.set_runtime_plans(plans);
+    let debug = session.plans_debug();
+    for (account, code) in &expected {
+        assert!(
+            debug
+                .iter()
+                .any(|(a, c, ..)| a == account && c == code),
+            "开仓 ({account:?}, {code:?}) 须在 plans_debug 读面可见：{debug:?}"
         );
     }
 }
