@@ -1121,6 +1121,70 @@ fn solmid_day_end_drain_releases_child_tickets() {
 
 
 
+// Sol 中点整改 4 红证：完整计划投影——组簿的全部计划记录（含
+// terminal/Completed）经交付点覆盖 session 读面（最后计划结束后旧
+// Active 镜像不得残留）。
+#[test]
+fn solmid_plan_projection_carries_terminal_records() {
+    use crate::orderbook::Side;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 3;
+    setup.strategy_params.inst.order_size = 100;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 51).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for _ in 0..12 {
+        let views = driver.world_public_views().to_vec();
+        let mut intents = Vec::new();
+        for (stock, view) in views.iter().enumerate() {
+            for (side, price) in [
+                (Side::Buy, view.last_price + 1),
+                (Side::Sell, view.last_price - 1),
+            ] {
+                intents.push(crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(stock as u32),
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            price,
+                        )),
+                        qty: 200,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                });
+            }
+        }
+        let upper: Vec<i64> = views.iter().map(|v| v.last_price + 1).collect();
+        driver.inject_player_intents(&intents, &upper).expect("注入");
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    let group_plans = driver.collect_plans().expect("组簿").remove(0).1;
+    let group_ids: std::collections::BTreeSet<_> =
+        group_plans.plan_ids().collect();
+    assert!(!group_ids.is_empty(), "fixture 须产生计划记录");
+    // 交付投影后：session plans 读面（debug）覆盖组簿全部记录——
+    // 含 terminal（Completed/Terminated 的 (账户,股) 对仍在册——
+    // 最后计划结束后旧镜像不残留的等价读面）。
+    let debug = session.plans_debug();
+    for pid in &group_ids {
+        let Ok(plan) = group_plans.plan(*pid) else { continue };
+        assert!(
+            debug
+                .iter()
+                .any(|(a, c, ..)| *a == plan.account() && c == plan.code()),
+            "组簿计划 {pid:?}（含 terminal）经投影须在 session plans_debug 可见"
+        );
+    }
+}
+
 // Belief-1b·下 机制验证：稀疏投递（合成载荷——空库+到期注意力）——
 // (a) 组内推进+仅 information 域回写（cadence/next_check 前进）；
 // (b) candidate 域回写前后不变（权威调和锚：快照取点/回写覆写错即红）。

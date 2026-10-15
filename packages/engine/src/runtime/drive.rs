@@ -401,7 +401,11 @@ impl RuntimeDriver {
         match plans_projection {
             Ok(collected) => {
                 if let Some((_, plans)) = collected.into_iter().next() {
-                    if !plans.active_plan_ids().is_empty() {
+                    // Sol 整改 4：权威状态控制的完整投影——组簿有任何
+                    // 计划记录（含 terminal：最后计划结束的事实必须覆盖
+                    /// session 旧镜像）即安装；空簿不覆盖（迁移期注入面
+                    /// 保护——组从未开仓时保留 session 侧测试注入）。
+                    if plans.plan_ids().next().is_some() {
                         session.set_runtime_plans(plans);
                     }
                 }
