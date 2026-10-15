@@ -1718,6 +1718,7 @@ impl DeskState {
             .cloned()
             .collect();
         for o in targets {
+            self.note_terminated(&o, super::protocol::LifecycleKind::Cancelled);
             self.remove_order(&o);
             self.close_order_entities(&o);
         }
@@ -2035,6 +2036,7 @@ fn process_msg(
                     stock: state.setup.stock,
                     fee_sink: state.fee_sink,
                     last_price: state.market.last_price,
+                    drained_lifecycle: std::mem::take(&mut state.lifecycle_facts),
                 })
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),

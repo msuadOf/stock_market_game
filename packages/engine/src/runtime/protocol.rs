@@ -321,6 +321,8 @@ pub enum UpMsg {
         fee_sink: i64,
         /// 日终最新价（昨收基准）。
         last_price: i64,
+        /// 清簿撤单事实（OrderCanceled 映射输入）。
+        drained_lifecycle: Vec<DeskLifecycleFact>,
     },
     /// 组日结完成（权益落账后的账户投影）。
     GroupDayDone {

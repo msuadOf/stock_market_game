@@ -4,7 +4,10 @@
 use engine::money::Money;
 use engine::runtime::drive::RuntimeDriver;
 use engine::session::{NpcSetup, SessionSetup};
-use engine::{Event, FloatAllocation, GameSession, SecurityCategory, StockCode, StockExchange, StockSpec, SIMULATION_POLICY_ID};
+use engine::{
+    Event, FloatAllocation, GameSession, SecurityCategory, StockCode, StockExchange, StockSpec,
+    SIMULATION_POLICY_ID,
+};
 
 pub fn setup_1stock() -> SessionSetup {
     SessionSetup {
@@ -60,11 +63,20 @@ pub fn runtime_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
     driver.adopt_session_seq(&session);
     let mut all = Vec::new();
-    for _ in 0..ticks {
+    let tpd = 240u64;
+    for t in 1..=ticks {
         let events = driver
             .step_frame_equivalent(&mut session)
             .expect("runtime tick（含安装）");
         all.extend(events);
+        // 日界：runtime DayEnd（清簿/组日翻转）+ 会话交易日推进 +
+        // 自然日推进（编排）+清簿撤单事件。
+        if t % tpd == 0 {
+            driver
+                .day_end_with_runtime_market_day(&mut session)
+                .unwrap_or_else(|e| panic!("日结编排失败（t={t}）：{e}"));
+            all.extend(driver.take_drained_events());
+        }
     }
     (session, all)
 }
@@ -79,4 +91,3 @@ pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     }
     (session, all)
 }
-

@@ -89,6 +89,12 @@ impl GameSession {
         Ok(())
     }
 
+    /// runtime 驱动器翻转面（翻转批）：交易日计数推进。
+    pub fn advance_runtime_market_day(&mut self) {
+        self.mark_external_mutation();
+        self.state.day += 1;
+    }
+
     /// runtime 驱动器翻转面（批 8h）：tick 前进（经直改标记）。
     pub fn set_runtime_tick(&mut self, tick: u64) {
         self.mark_external_mutation();

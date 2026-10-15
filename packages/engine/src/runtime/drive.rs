@@ -27,6 +27,8 @@ pub struct RuntimeDriver {
     pub id_map: Vec<AccountId>,
     /// 事件 seq（协调者全局单调）。
     next_seq: u64,
+    /// 日终清簿事件缓冲（take_drained_events 取走）。
+    drained_events: Vec<Event>,
 }
 
 impl RuntimeDriver {
@@ -62,6 +64,7 @@ impl RuntimeDriver {
             world,
             id_map: ids,
             next_seq: 0,
+            drained_events: Vec::new(),
         })
     }
 
@@ -138,10 +141,45 @@ impl RuntimeDriver {
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败（内部已 Abort 冲回）：{e:?}"))?;
+        // 清簿撤单事实转事件（seq 分配），并入待取缓冲。
+        let drained = std::mem::take(&mut self.world.drained_lifecycle);
+        if !drained.is_empty() {
+            let input = collect_lifecycle(&drained, &[]);
+            self.drained_events
+                .extend(project_lifecycle_events(&input, &mut self.next_seq));
+        }
         // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         session.end_civil_day().map_err(|e| {
             format!("自然日推进失败（runtime 已日结、会话 candidate 已丢弃）：{e:?}")
         })?;
+        Ok(())
+    }
+
+    /// 取日终清簿事件（清空式——调用方拼进 tick 帧或日结帧）。
+    pub fn take_drained_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.drained_events)
+    }
+
+    /// 日结编排（runtime 市场侧 day 同步版）：runtime DayEnd → 会话
+    /// 交易日计数推进（直改标记——旧管线 commit_from 的 day 域等价）
+    /// → 自然日推进（end_civil_day 时钟校验通过）→ 清簿事件。
+    pub fn day_end_with_runtime_market_day(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<(), String> {
+        self.world
+            .run_day_end_public()
+            .map_err(|e| format!("runtime 日结失败：{e:?}"))?;
+        let drained = std::mem::take(&mut self.world.drained_lifecycle);
+        if !drained.is_empty() {
+            let input = collect_lifecycle(&drained, &[]);
+            self.drained_events
+                .extend(project_lifecycle_events(&input, &mut self.next_seq));
+        }
+        session.advance_runtime_market_day();
+        session
+            .end_civil_day()
+            .map_err(|e| format!("自然日推进失败：{e:?}"))?;
         Ok(())
     }
 }

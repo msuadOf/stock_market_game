@@ -185,6 +185,8 @@ pub struct World {
     day_end_validator: DayEndValidator,
     /// 最近一次成功日结的不可变候选（宿主写盘失败 ≠ 市场回滚：显式报错保留）。
     pub last_day_end_candidate: Option<DayEndCandidate>,
+    /// 日终清簿撤单事实（驱动器事件拼装读取）。
+    pub drained_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
 }
 
 impl World {
@@ -366,6 +368,7 @@ impl World {
             ticks_per_day,
             day_end_validator: Box::new(|_| Ok(())),
             last_day_end_candidate: None,
+            drained_lifecycle: Vec::new(),
         })
     }
 
@@ -653,8 +656,10 @@ impl World {
                     stock,
                     fee_sink,
                     last_price,
+                    drained_lifecycle,
                 } => {
                     desks.push((stock, fee_sink, last_price));
+                    self.drained_lifecycle.extend(drained_lifecycle);
                     drained += 1;
                 }
                 UpMsg::Failed { who, error } => {
