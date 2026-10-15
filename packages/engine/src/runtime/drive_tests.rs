@@ -1083,16 +1083,46 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
         !expect.is_empty(),
         "fixture 须产生 belief 位成交（独立源空=fixture 失效）"
     );
-    // Sol 二审修复集 6（断言补强）：明确部分成交证据——至少一条执行腿
-    // 留有未成交余量（挂出量未被完全消耗），全成形态下该断言红。
-    let has_partial = plans.active_plan_ids().iter().any(|pid| {
-        plans
-            .plan(*pid)
-            .is_ok_and(|p| p.execution().is_some_and(|leg| leg.active_child_remaining_qty().is_some()))
-    });
+    // Sol 三审修复 3（断言补强）：部分成交绑定**同一子单**——
+    // 0 < remaining < child_qty（此前只查 remaining=Some——零成交在途腿
+    // 也满足，断言空转），并匹配独立成交事实（desk_trades 该 (账户,方向)
+    // 聚合 ≥ child_qty−remaining；desk_trades 无单号，同键聚合为包含当前
+    // 子单成交的下界）。
+    let mut same_child_partial: Option<(crate::AccountId, crate::orderbook::Side, u32, u32)> =
+        None;
+    for pid in plans.active_plan_ids() {
+        let Ok(plan) = plans.plan(pid) else { continue };
+        let Some(leg) = plan.execution() else { continue };
+        if let Some(remaining) = leg.active_child_remaining_qty() {
+            if remaining > 0 && remaining < leg.child_qty() {
+                same_child_partial =
+                    Some((plan.account(), plan.direction(), leg.child_qty(), remaining));
+            }
+        }
+    }
+    let Some((partial_account, partial_direction, child_qty, remaining)) = same_child_partial
+    else {
+        panic!("fixture 须有同子单部分成交腿（0<remaining<child_qty）——零成交/全成腿不满足");
+    };
+    // 独立源：desk_trades 全程聚合（maker≡卖方/taker≡买方——desk 产出侧
+    // 两方向统一，同既有 expect 映射）。同键聚合为下界（含该账户同方向
+    // 其他子单的成交——当前子单的已成交部分必然包含在内）。
+    let mut traded: u32 = 0;
+    for rec in driver.world_report_log() {
+        for tr in &rec.desk_trades {
+            let (owner, _) = match partial_direction {
+                Side::Buy => (tr.taker, true),
+                Side::Sell => (tr.maker, false),
+            };
+            if owner.1 >= 2 {
+                traded = traded.saturating_add(tr.qty);
+            }
+        }
+    }
     assert!(
-        has_partial,
-        "fixture 须留有未成交余量的执行腿（部分成交/在途余量证据）"
+        u64::from(traded) >= u64::from(child_qty - remaining),
+        "独立成交事实覆盖子单已成交部分：聚合 {traded} ≥ {}（账户 {partial_account:?} 方向 {partial_direction:?}）",
+        child_qty - remaining
     );
     // (b) 读面幂等：两次 collect_plans 逐字段相等。
     let again = driver

@@ -3136,6 +3136,12 @@ mod sol_recheck3_tests {
     /// 最小组态：单账户单股，手工置入计划+执行腿+已受理在途票
     /// （身份=order_id_of((0, 5))——serial 5 为本票，他单用其他 serial）。
     fn chain_harness(side: Side) -> GroupState {
+        chain_harness_target(side, 200)
+    }
+
+    /// 同 chain_harness，但计划目标/执行腿/子单量可变（terminal fixture
+    /// 用小目标 100——全额成交即 Completed，不依赖巨量成交）。
+    fn chain_harness_target(side: Side, target: u32) -> GroupState {
         let mut state = GroupState::new(
             0,
             vec![GroupAccount::new(10_000_000, 1)],
@@ -3189,7 +3195,7 @@ mod sol_recheck3_tests {
                 account,
                 code: code.clone(),
                 direction: side,
-                target: crate::plans::PlanTarget::ShareCount(200),
+                target: crate::plans::PlanTarget::ShareCount(target),
                 opinion: crate::plans::PlanOpinion {
                     signal_score_bp: 3_000,
                     source: crate::plans::OpinionSource::Blended,
@@ -3202,24 +3208,80 @@ mod sol_recheck3_tests {
             .expect("计划创建");
         state
             .plan_book
-            .install_execution(pid, 200, crate::money::Money::from_cents(1_000), 240)
+            .install_execution(pid, target, crate::money::Money::from_cents(1_000), 240)
             .expect("执行腿登记");
         state
             .plan_book
-            .record_child_submitted(account, &code, side, order_id, 200, 0)
+            .record_child_submitted(account, &code, side, order_id, target, 0)
             .expect("子单身份登记");
         state.child_in_flight.insert(
             (account, code),
             ChildTicket {
-                qty: 200,
+                qty: target,
                 side,
                 price: 1_000,
                 order_id: Some(order_id),
-                remaining: 200,
+                remaining: target,
                 charged_cents: 0,
             },
         );
         state
+    }
+
+    // Sol 三审修复 3：terminal 记录小型确定性 fixture——target=100 的买
+    // 计划经**全额成交**（filled==target）到 Completed（不依赖巨量成交或
+    // D3b 复审终止路径）；腿清空、在途票释放（EchoPlans 的组簿内容面）。
+    #[test]
+    fn sol4th_full_fill_completes_plan_to_terminal() {
+        let mut state = chain_harness_target(Side::Buy, 100);
+        state.accounts[0].cash = 1_000_000;
+        state.staging.push(batch(
+            Vec::new(),
+            vec![FillFact {
+                order: (0, 5),
+                owner: (0, 0),
+                side: Side::Buy,
+                price: 900,
+                qty: 100,
+                commission: 500,
+                stamp_tax: 0,
+                transfer_fee: 1,
+            }],
+        ));
+        state
+            .apply_staging(1, 0)
+            .expect("全额成交正常推进");
+        // terminal 记录不再出现在 active 面——按 id 直查（记录保留在簿）。
+        let plan = state
+            .plan_book
+            .plan_ids()
+            .find_map(|pid| {
+                state
+                    .plan_book
+                    .plan(pid)
+                    .ok()
+                    .filter(|p| p.account() == crate::AccountId(9))
+            })
+            .expect("terminal 计划记录仍在簿");
+        assert!(
+            matches!(plan.status(), crate::plans::PlanStatus::Completed),
+            "filled==target ⇒ Completed（实际 {:?}）",
+            plan.status()
+        );
+        assert!(
+            plan.execution().is_none(),
+            "terminal 后执行腿清空（无悬挂在途）"
+        );
+        assert!(
+            plan.active_child_order_id().is_none(),
+            "terminal 后在途子单身份清空"
+        );
+        assert!(
+            !state
+                .child_in_flight
+                .contains_key(&(crate::AccountId(9), crate::StockId(0))),
+            "全成票释放（下一轮可再报价）"
+        );
     }
 
     fn batch(entities: Vec<Entity>, fills: Vec<FillFact>) -> DeskBatch {
@@ -3426,7 +3488,75 @@ mod sol_recheck3_tests {
             "本单的 Closed 释放在途票"
         );
     }
+// Sol 三审修复 4：未受理票（order_id=None）的终结关联边界——同
+    // (账户,股) 唯一挂出守卫下，未受理票的 Closed/拒收回执即本票的终结
+    //（desk 对被拒单的 Closed 与回执共用同一 serial；票尚无受理身份可比
+    // 对，(账户,股) 释放是唯一可判定关联）。固化现状语义：释放+卖量镜像
+    // 回收；若实测发现错误语义即修（本测试为守卫锚）。
+    #[test]
+    fn sol4th_unaccepted_ticket_releases_on_closed_and_rejection() {
+        // Closed 路径（未受理票）。
+        let mut state = chain_harness(Side::Sell);
+        let key = (crate::AccountId(9), crate::StockId(0));
+        state
+            .child_in_flight
+            .get_mut(&key)
+            .expect("票在")
+            .order_id = None;
+        state.accounts[0].foreign_active[0] = 1;
+        state.accounts[0].pending_sell_qty[0] = 200;
+        state
+            .staging
+            .push(batch(vec![Entity::Closed {
+                local: 0,
+                order_serial: 42,
+            }], Vec::new()));
+        state
+            .apply_staging(1, 0)
+            .expect("未受理票的 Closed 正常释放");
+        assert!(
+            !state.child_in_flight.contains_key(&key),
+            "未受理票的 Closed 释放在途票（唯一挂出守卫下即本票终结）"
+        );
+        assert_eq!(
+            state.accounts[0].pending_sell_qty[0], 0,
+            "卖量镜像随释放回收（余量=挂出全额）"
+        );
+        // 拒收回执路径（未受理票——被拒单从未受理，serial 无身份可比）。
+        let mut state = chain_harness(Side::Sell);
+        state
+            .child_in_flight
+            .get_mut(&key)
+            .expect("票在")
+            .order_id = None;
+        state.accounts[0].foreign_active[0] = 1;
+        state.accounts[0].pending_sell_qty[0] = 200;
+        state.staging.push(DeskBatch {
+            stock: 0,
+            tick: 1,
+            round: 0,
+            entities: Vec::new(),
+            fills: Vec::new(),
+            receipts: vec![crate::runtime::DeskReceipt {
+                order: (0, 43),
+                owner: (0, 0),
+                kind: crate::runtime::ReceiptKind::PriceOutOfBand,
+            }],
+        });
+        state
+            .apply_staging(1, 0)
+            .expect("未受理票的拒收回执正常释放");
+        assert!(
+            !state.child_in_flight.contains_key(&key),
+            "拒收回执释放在途票（被拒单即本票）"
+        );
+        assert_eq!(
+            state.accounts[0].pending_sell_qty[0], 0,
+            "卖量镜像随拒收释放回收"
+        );
+    }
 }
+
 
 #[cfg(test)]
 mod sol_recheck1_tests {

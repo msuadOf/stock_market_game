@@ -4402,6 +4402,80 @@ mod npc_working_quote_tests {
         );
     }
 
+    // Sol 三审修复 3：terminal 投影覆盖旧 Active 镜像——小型确定性
+    // fixture（组簿 terminal 记录经 set_runtime_plans 交付点覆盖 session
+    // 侧残留的旧 Active 镜像；不依赖巨量成交——全额成交即 Completed）。
+    #[test]
+    fn sol4th_terminal_projection_overwrites_stale_active_mirror() {
+        let mut session = GameSession::new(quote_setup(0), 71).unwrap();
+        let account = AccountId(1);
+        let code = StockId(0);
+        // session 侧残留旧 Active 镜像（迁移期注入面保护语义的对照起点）。
+        session
+            .state
+            .plans
+            .create(crate::plans::PlanOpen {
+                account,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(100),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .expect("旧镜像计划创建");
+        assert!(
+            session.plans_debug().iter().any(|(.., status)| status == "Active"),
+            "前置：session 侧旧 Active 镜像在册"
+        );
+        // 组簿权威：同键计划的 terminal 记录（全额成交 ⇒ Completed）。
+        let mut book = crate::plans::PlanBook::default();
+        let pid = book
+            .create(crate::plans::PlanOpen {
+                account,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(100),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .expect("组簿计划创建");
+        book.install_execution(pid, 100, Money::from_cents(1_000), 240)
+            .expect("执行腿登记");
+        book.record_child_submitted(account, &code, Side::Buy, crate::OrderId(7), 100, 0)
+            .expect("子单身份登记");
+        book.record_child_fill(account, &code, Side::Buy, crate::OrderId(7), 100, 0)
+            .expect("全额成交推进");
+        assert!(
+            matches!(
+                book.plan(pid).unwrap().status(),
+                crate::plans::PlanStatus::Completed
+            ),
+            "前置：组簿记录为 terminal（Completed）"
+        );
+        session.set_runtime_plans(book);
+        let debug = session.plans_debug();
+        assert!(
+            debug.iter().any(|(.., status)| status == "Completed"),
+            "terminal 记录经交付点投影可见：{debug:?}"
+        );
+        assert!(
+            debug.iter().all(|(.., status)| status != "Active"),
+            "旧 Active 镜像不残留（最后计划结束后被 terminal 覆盖）：{debug:?}"
+        );
+    }
+
     #[test]
     fn accepted_retail_observation_persists_an_unheld_watchlist_stock() {
         let code = StockId(0);
