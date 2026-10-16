@@ -1,0 +1,20 @@
+
+running 1 test
+test runtime::group::sol_recheck3_tests::sol4th_buy_purse_tracks_desk_occupancy_with_price_improvement ... FAILED
+
+failures:
+
+---- runtime::group::sol_recheck3_tests::sol4th_buy_purse_tracks_desk_occupancy_with_price_improvement stdout ----
+
+thread 'runtime::group::sol_recheck3_tests::sol4th_buy_purse_tracks_desk_occupancy_with_price_improvement' (1736267) panicked at packages/engine/src/runtime/group.rs:3332:9:
+assertion `left == right` failed: 总现金读面=总现金−desk 实际扣减（价优差额仍在 desk）
+  left: 899499
+ right: 909499
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::group::sol_recheck3_tests::sol4th_buy_purse_tracks_desk_occupancy_with_price_improvement
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1598 filtered out; finished in 0.00s
+

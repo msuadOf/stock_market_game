@@ -1,0 +1,52 @@
+# Sol 复审请求：翻转批 P1 整改（5412fd10）
+
+日期：2026-10-15。请求人：协调者。这是对你上一轮终裁（原文见
+`.tmp/sol-flip-review-verdict.md`，先读它）的整改复审。只读复核：不写文件、
+不构建；允许 rg/cat/sed/git show/git diff 读操作与复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model
+branch=exp/std-thread-model。整改范围=单提交 `5412fd10`（11 文件 +370/−53），
+基线=62ff4c9b。
+
+## 实现方声称的整改对照（逐项核真伪）
+
+- P1-1 拍卖自成交资源闭合：**注意——策略从"同 owner 配对双双撤单"改为
+  "撤卖侧自单（退款退股+在途标记+终结事实），保留买侧继续找非自对手"**。
+  这是语义变更，你上轮未裁决此形态。需终裁：该形态是否符合登记的游戏简化
+  口径（trading-rules.md 是否同步修订）、资源闭合是否完备（买卖两侧、
+  恰一次、seq）。
+- P1-2 matched_volume 上报实际成交量（选择量只作内部上界）。
+- P1-3 Inserted 回放同步 self_bids/self_asks（幽灵自单反例红→绿）。
+- P1-4 turnover 入 MarketSnapshot/回滚/state_hash。
+- P1-5 配置去硬编码（export_setup 真实参数投影）。
+- P1-6 分钟键日偏移双计修复（键控元组）。
+- P1-7 日结失败 day/seq 原子回滚。
+- P1-8 前置校验同判：你给的进程级对照 case
+  `public_step_rejects_and_poisons_a_missing_npc_strategy` 声称已转绿
+  （两路径同判）；非首 tick 显式拒绝；安装 Result 不再被吞。
+- P1-9 无效断言全换真实断言（batch3 恒真/无符号>=0/只计数/现金非负/
+  accepted>=canceled）。
+- P1-10 attention candidate 改真实迁移（EchoAttention 逐账户 next_due 上行，
+  组线程=调度权威）——核：是否真是状态演进而非又一层校验修补。
+- 附：trading-rules 修订（深交所版本矛盾撤回、"终止撮合"登记为游戏额外
+  限制、删除"等价旧管线"）；best_bid/ask 空档防御（性能来源）。
+
+## 声称的验证状态（交叉核验）
+
+- runtime 97/97；batch1-5 52/52；lib 1548/0/11
+- 性能 627.3 t/s（声称同正式口径：3000 tick/10 组×2000 NPC/5 股全语义、
+  守恒全绿；+97% 来源=空档防御消除无效交叉检查）——核：口径是否与
+  318.0 t/s 那次一致，性能跃升是否可疑（有没有漏掉事件域上行）
+- 106 盘点重做（`.tmp/flip-failures-after-p1.txt`）：消除 7/新增 7/总数仍 106
+  ——核：结论修正是否成立
+
+## 终裁问题
+
+1. P1-1..P1-10 逐项：修复真实/表面/未修复？
+2. 拍卖"撤卖侧保买侧"策略：维持/推翻+理由。
+3. 翻转批（含整改）可否宣告完成（范围仍不含全局域迁移）？
+4. 若不通过：剩余最小修复集是什么？
+
+## 输出要求
+
+逐项回答，终裁给"通过/不通过+理由"。有效发现将修复后再审。

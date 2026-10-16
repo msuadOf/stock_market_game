@@ -1,0 +1,2 @@
+c8b6c263 工作树 + 本轮修复（= 7106eb79e35ceb789b6a79bd69a879060d009bfe 提交态）；fixture 同红（twin 先行同构造序）。
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib sol4th_queue

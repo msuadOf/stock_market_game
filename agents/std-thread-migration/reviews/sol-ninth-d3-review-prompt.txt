@@ -1,0 +1,35 @@
+# Sol 第九轮复审请求：D3a 八审收官件（单提交 a7d18a2f）——D3a 闭合终审
+
+日期：2026-10-16。请求人：协调者。这是你八审判决的唯一阻断收口复审
+（八审要点：序号✓/buy_vwap✓/矩阵与 retail 首买✓；剩=R1 投影身份核断言
+缺口）。只读复核：不写文件、不构建；允许读文件/git/复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净，HEAD=a7d18a2f。
+证据目录 .tmp/sol-mid-d3-red-evidence-r3/（新增 06-identity-* 行）。
+
+## 收官件声称（核真伪）
+
+**R1 重写**：外来同键成交测试改为直接断言 **session 投影簿的 filled_qty**
+（plans_debug 第 5 字段）——目标计划在目标读点记 f0，外来成交拍后断言
+投影 filled==f0；余量>500 目标子单+外来量 100 组合下，误推进直接显红
+（此前 Active 断言零判别力、组簿读数被下一拍权威抹掉的问题消除）。
+
+**红绿证据**（06-identity-*，基准 85ce0ed7 工作树）：guard 移除突变→
+**left=500 right=400**（外来 100 股误推进投影 filled）；恢复→绿。
+
+## 声称数字
+
+默认 1599/0/11；翻转批 10/13/14/14/15；env=1=40（名单与五审末逐条一致；
+本轮 diff 出的 npc_decisions_reports_first 为同族 flake，单跑复跑均绿，
+已登记台账）。
+
+## 终裁问题
+
+1. R1 断言与红绿证据：真实/表面。
+2. **终裁：D3a 可否宣告闭合（九轮整改），正式进入 D3b**。
+   若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。

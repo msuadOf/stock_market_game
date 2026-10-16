@@ -1,0 +1,2 @@
+a7d18a2feb4b777109865fc2d8937b82134557b0（同拍+组内双裁剪完整态）。
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib completed_sell

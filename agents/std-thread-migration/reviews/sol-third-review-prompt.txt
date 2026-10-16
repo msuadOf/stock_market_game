@@ -1,0 +1,65 @@
+# Sol 第三轮复审请求：二审六项整改（d6dcfd16..HEAD，共 8 提交）
+
+日期：2026-10-15。请求人：协调者。这是对你第二轮终裁（原文
+`.tmp/sol-recheck-verdict.md`，先读它）的整改复审，第三轮。只读复核：
+不写文件、不构建；允许 rg/cat/sed/git show/git diff 与复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净。整改范围=8 提交（自旧及新）：
+`d6dcfd16`（前任 D2 WIP 存档，非整改内容，知悉即可）、`e78fa6f5`（空价档）、
+`17529ec2`（civil 全量回滚）、`38a5eb76`（前置校验共用）、`a6a1e5e1`（配置贯通）、
+`b45d72f8`（next_due 入回滚）、`451dbfaa`（断言翻新）、`54c42c14`（额外：NPC 决策
+panic 注入锁守卫先释放，消跑序依赖型连锁红，非六项内）。
+
+## 实现方声称（第 7 任 agent，逐项核真伪，证据可复验）
+
+1. **空价档**：remove_by_ref 删空档；反例红（matched_volume=0）→绿（100）。
+2. **civil 全量回滚**：新增 World::abort_day_end；两日结变体共用 rollback_day_end
+   （seq/事件缓冲截断）。红证据：driver seq 157 vs 基线 105；重试恰一次（撤单无重复）。
+3. **前置校验共用**：check_step_start 真共用（ENGINE_STEP_RUNTIME=1 下
+   injected_failure_runs_before_missing_npc_strategy_validation 红→绿，
+   failure_tests 9/9）；step 失败 ? 即停（双注入下错误身份红→绿）；安装失败回滚
+   tick/seq/账户（红：tick 残留 1）；take_candle_projection 改 Result
+   （断开世界红→绿）。
+4. **断言翻新**：batch3 #2/#4/#6/#7/#9、batch4 #3/#8 恒真/只计数全换真实断言；
+   新增逐订单闭环 helper、T+1 冻结清零（红：5600 vs 0）、turnover 回滚
+   （红：200000 vs 100000）、拍卖量投影。声称做了"生产面破坏+断言翻转"双重红验证。
+5. **next_due 入 undo/hash**：GroupUndo::NextDue + state_hash；candidate/heap 同步；
+   构造器恢复会话 attention 态。三测各自翻转红→绿。
+6. **配置贯通**：history_len 从 setup 贯通（红 16→绿 32）；"双撤"注释修正；
+   106 归因勘误（抽检 3 项全被非首 tick 门禁拒绝：tick=599/1/8099，
+   登记于 .tmp/flip-106-failures.txt 与 .tmp/flip-failures-after-p1.txt）。
+
+声称数字：lib 全量 1558/0/11（连跑两轮稳定）；翻转批 batch1-5 全绿
+10/10/10/11/12。
+
+## 实现方如实登记的遗留（需你裁定可接受性，不裁过就列进剩余修复集）
+
+(a) 54c42c14 六项外顺手修了 npc_decisions 全局锁 poison 跑序依赖型偶发红；
+(b) 拍卖实际成交量无批量层锚点（runtime NPC 竞价窗不交叉）——世界级+投影单测覆盖；
+(c) item 5 的 attention seed 恢复仅结构性验证（due 有行为断言）；
+(d) 归因勘误只在 .tmp 工作文件未入 docs。
+
+## 重点核查方向（上两轮的教训）
+
+1. 断言翻新是否真的等强度——不是把恒真换成弱断言（对照旧管线语义查每条新断言
+   是否锚定具体值/集合/恰一次，而非"存在即过"）。
+2. 双重红验证声明抽查：任选 2-3 条新断言，用 git show 看红证据提交是否真红。
+3. rollback_day_end 与 abort_day_end 是否覆盖全部日结侧效应（你二审列的：
+   World 日结、清簿事实、driver.next_seq、drained_events——现在还有漏吗）。
+4. 非首 tick 门禁：现在仍是"显式拒绝"形态。这是已知的下一步（多 tick 会话
+   状态接续）范围，不在本批复核范围，但请确认它没有被偷偷放宽成静默通过。
+5. d6dcfd16 WIP 存档放在链上是否引入编译/测试风险（HEAD 全绿即可接受，
+   但如果该提交本身编译不过请标注，影响将来 bisect）。
+
+## 终裁问题
+
+1. 六项逐项：修复真实/表面/未修复？
+2. 遗留 (a)-(d) 各自可接受/需补？
+3. 翻转批（含两轮整改）可否宣告完成（范围仍不含多 tick 会话接续与全局域迁移）？
+4. 若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。你的结论直接决定是否解锁下一阶段
+（106 失败的域迁移与默认翻转），请严格。

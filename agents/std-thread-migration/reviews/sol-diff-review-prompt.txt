@@ -1,0 +1,14 @@
+对迁移方案文档修订做Sol轻量 diff 复核（你终审说"落完最小修改集即可开工，无需重新终审，一次轻量 diff 复核即可"）。只读；不写/不构建/不跑测试。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model
+修订对象=.tmp/migration-design/F-converged-architecture.md + G-batch-plan.md
+
+你终审最小修改集四项 vs 实现方声称的修订位置：
+1.F§5/§3.3/§3.2/§4.3 多轮原子性（组端可逆日志+Continue落账逆操作+转正措辞"下一tick"+foreign_active+desk撤销覆盖面）
+2.F§6.2/§7 AdminBatch入组端可逆日志（等价现日结candidate）
+3.G 批5接DayEnd三项判据+批3补五项+批2 Abort回滚快照+风险12/13
+4.G 批0 20文件归桶+orderbook去留+DeskBatch防御字段
+
+复核两点：
+1. 四项是否逐项闭合（对照你终审原文要求）。
+2. 终裁：修订后方案可否正式开工（明确是/否）。

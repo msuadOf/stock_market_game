@@ -1,0 +1,61 @@
+# Sol 复审请求：D3a 中点整改批+注入通道（adba7383^..7e2c25a3 + 798455d6）
+
+日期：2026-10-15。请求人：协调者。这是你 D3a 中点终裁（原文
+`.tmp/sol-mid-d3-verdict.md`，先读它）的整改复审。只读复核：不写文件、
+不构建；允许读文件/git/复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净。整改范围=adba7383^..7e2c25a3
+（五项整改）+798455d6（注入通道）。**本轮红证据已存档**：
+`.tmp/sol-mid-d3-red-evidence/01-05`（你上轮点名"红产物不可独立核验"，
+本次逐项抽查红日志与绿断言同源性）。
+
+## 五项整改声称（逐项核真伪）
+
+1. **Echo 只读+undo 完整**：读面不消费开仓（幂等红证 solmid_echo 两次读面
+   逐字段相等）；child_in_flight undo 方向反转修复；簿快照覆盖全部变更
+   （install/adopt/fill）；state_hash 补计划域。
+2. **真实身份+完整数量+终结**：身份=FillFact.order 确定性合成（order_id_of，
+   不另造计数器）；adopt 数量=挂出量（ChildTicket）——你裁定的阻断 4 收口；
+   部分成交推进；终结全覆盖（Closed/到期/日终清簿/拒收→release_child_ticket）。
+   独立预期红证：组簿 filled==desk_trades belief 腿独立源（修复中暴露
+   独立源方向映射反+末批落账时序两处，均修）+日终清簿释放。
+3. **在途读面+预算分类**：投影/开仓/回写统一"在手+在途卖余量"
+   （pending_sell_qty 镜像）、现金含在途买 purse——qty 口径差收口（红证
+   显红驱动）；existing=本轮开仓前集合（NewOpportunity 可达）。
+4. **完整投影**：plan_ids 非空即装（terminal 覆盖；空簿保护保持）。
+5. **exposed+独立 fixture**：exposed_stocks_shared 共享（组内不再空集）；
+   4b 红证 allocation_cash 独立推导（不反构造）。
+
+## 注入通道声称（按你裁定的方向与条件）
+
+ForceDue 指令（cfg(test)+组验证+可逆）+三类 session 分流+ChildAccepted
+受理通道（**受理即身份**）+个人态交付投影（observe 演进六件回写 session
+镜像）。核对你的四条件：cfg(test) 显式指令/三类分别适配/生产走正式
+ingress/Abort 重放语义确定+组仍权威。
+
+## 27 例重新归因声称
+
+env=1=54（institution_observation 转绿）。剩余三类：
+(a) seed 场景时序差一拍（external 单与 belief 决策同轮、快照旧→Wait→
+无子单身份断言红；登记 D3a-3 收尾首件）；(b) retail_analysis=retail
+belief 链未迁移（D5）；(c) 复审族=D3b 既有边界。
+请抽查 2-3 例验证归因与登记的批次归属是否成立。
+
+## 声称数字（交叉核验）
+
+默认 lib 1578/0/11；翻转批 10/13/14/14/15；env=1=54。
+
+## 终裁问题
+
+1. 八项阻断逐项：真实修复/表面/未修复（重点抽查 4：部分成交+身份；
+   2：undo 逆操作）。
+2. 红证据 01-05 抽查：红态是否绿断言的取反（同源）。
+3. 注入通道：是否符合你裁定的四条件。
+4. 重新归因是否成立。
+5. 终裁：D3a 可否宣告闭合（含整改），进入 D3a-3 收尾（时序差一拍）
+   →D3b→D3c。若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。

@@ -1,0 +1,42 @@
+# Sol 第八轮复审请求：D3a 七审四点收尾（单提交 85ce0ed7）
+
+日期：2026-10-16。请求人：协调者。这是你七审判决的收尾复审（七审要点：
+费用归户✓、Err→跳过✓；剩=双腿序号/buy_vwap 方向/测试面三处/证据两处）。
+只读复核：不写文件、不构建；允许读文件/git/复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净，HEAD=85ce0ed7。
+证据目录 .tmp/sol-mid-d3-red-evidence-r3/（05/03bc 重出+MANIFEST 更正）。
+
+## 四点收尾声称（逐项核真伪）
+
+1. **双腿序号**：desk 两方向统一 (sell_ref, buy_ref)——owner 已固定
+   (seller,buyer)。
+2. **buy_vwap 买腿**：改归一化身份（taker 恒买方）——主动卖时不再把卖方
+   当买方、真买方不再退用上一价。
+3. **测试面三处**：矩阵补卖方下一拍净得/减仓断言+加仓后下一拍全值（条目/
+   T+1/双方现金）+新增下一拍与加仓后共 4 处 restore；身份核测试 R1 增读
+   session 投影簿 plans_debug（被测对象；余量断言经组簿对照）；真实 retail
+   首买测试 sol8th_retail_first_hold（清仓先行于构造+种子扫描卖方前提；
+   编排面双面清 stocks+feedback.stocks——守卫查后者）——本拍条目/经历/
+   下一拍保持/restore 三面断言。
+4. **证据重出**：05-foreign-red=guard 回 Err 突变（WorkerFailed
+   "ticket=OrderId(10) fill=(0,15)"——Err 杀合法外来单拍实证）；03bc-red=
+   无守卫突变（余量被吃 150 vs 200）。MANIFEST 两行更正。
+
+实现方口径勘正已登记（上轮"矩阵全覆盖"不实——实际两处 restore 无下一拍/
+加仓后检查；本轮起只列断言到的面）。
+
+## 声称数字
+
+默认 1599/0/11；翻转批 10/13/14/14/15；env=1=40（名单同五审末）。
+
+## 终裁问题
+
+1. 四点逐项：真实修复/表面/未修复。
+2. **终裁：D3a 可否宣告闭合（八轮整改），正式进入 D3b**。
+   若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。

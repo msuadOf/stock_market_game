@@ -1,0 +1,50 @@
+# Sol 第四轮复审请求：续审两阻断的修复（单提交 f526e086）
+
+日期：2026-10-15。请求人：协调者。这是你续审终裁（原文要点：六项大部分真实、
+安装回滚完整、红证据同源合格、剩两阻断）的收口复审，范围仅限单提交 `f526e086`。
+只读复核：不写文件、不构建；允许读文件/git/复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净，HEAD=f526e086。
+红绿证据补档：`.tmp/sol3-red-evidence/blocker-fixes-red-green.md`。
+
+## 阻断 1 修复声称（逐单闭环）
+
+- 聚合 helper 改名 `assert_order_event_invariants`，doc 如实登记口径界限：
+  Trade 事实无订单身份、对手腿触碰量可抵消聚合差——你的静态反例成立且
+  该口径不可消除（不再宣称逐单闭环）。
+- 逐单完整性改由**确定无成交 fixture**（seed 302：trades=0/accepts=25/
+  cancels=25 实测）精确断言：每单恰一条撤单+逐单余量分毫不差。
+- 红验证：投影丢一条撤单即红（left:0 right:1）→恢复绿。
+
+## 阻断 2 修复声称（K 错误传播测试 10 秒门禁）
+
+- 根因：sever 后 txs 清空而期望响应数不变，收集空等 watchdog 30s
+  （修复前实测 31.41s）。
+- 修法：三个收集面（candle/attention/accounts）加通道面一致性守卫，
+  断连即时 Disconnected；drive_tests 全 3 case 合计 **1.71s**；断言增强
+  （错误信息含"通道面"）。
+
+## 声称复跑状态
+
+lib 全量 1559/0/11；翻转批 1-5 全绿（10/13/14/14/15）；
+ENGINE_STEP_RUNTIME=1 failure_tests 10/10。
+
+## 核验要点
+
+1. 阻断 1：确定无成交 fixture 是否真无成交（核 seed 与断言）；逐单断言是否
+   恰一条/余量精确；聚合 helper 措辞是否如实降级。
+2. 阻断 2：守卫是否覆盖三个收集面；单独复跑 drive_tests 确认 <10s；
+   断连路径错误是否即时（不再等 watchdog）。
+3. 顺带抽查复跑：batch1-5 与 failure_tests。
+
+## 终裁问题
+
+1. 两阻断：真实修复/表面/未修复。
+2. 翻转批（含全部四轮整改）可否宣告完成（范围仍不含 D0 多 tick 接续与
+   全局域迁移；默认翻转不在本批授权内）。
+3. 若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。

@@ -1,0 +1,97 @@
+# Sol 里程碑复核请求：std-thread 翻转批（自成交规则+50 测试迁移+翻转实测回退）
+
+日期：2026-10-15。请求人：迁移员工（worktree=.worktree/std-thread-model，
+branch=exp/std-thread-model）。复核范围：提交 76c26e22..62ff4c9b（8 个提交）。
+基线：旧 pipeline=语义基线（裁决原则，已获协调者批准）。
+
+## 一、复核 diff 清单（按提交序）
+
+1. `76c26e22` fix(engine): A 股自成交限制——撮合+拍卖清算排除同 owner 对手腿
+   - 连续竞价 `match_incoming`：taker 交叉档存在本人自单时终止撮合（保守）
+   - 拍卖清算 `execute_clearing_at`：同 owner 配对双双撤单不成交；自单剔除后
+     可配对量允许低于选择量（选择量=上界语义，非合同下界）
+   - 语义来源：批 1 迁移测试发现 Trade 事件 maker==taker（同账户对手腿）
+     ——旧管线由账户内资金/持仓竞争涌现拒单；新实现显式化
+2. `856b6c3f` perf(engine): 自成交索引快速路径——124.4→346.6 t/s
+   - per-owner 自单索引（self_bids/self_asks：Owner→BTreeMap<价,计数>）
+   - rest/remove/maker 全成移除/undo 回放四路径同步
+   - 修复索引遗漏：apply_maker_fill 全成移除（pop_front）未同步索引
+     （t1 测试咬住——红→绿）
+   - trading-rules.md 登记自成交限制（含依据与游戏简化声明）
+3. `dead199e`/`6e2d66b7`/`fcb06889`/`79549733` 翻转迁移批 2-5（50 测试）
+   - 台账文件：packages/engine/tests/runtime_flip_batch{1..5}.rs
+   - 公共构造：packages/engine/tests/common/flip_helpers.rs
+   - 批 3 附带：日终清簿撤单事实上行（DeskDrained.drained_lifecycle）
+     + 日界编排闭合（day_end_with_runtime_market_day）
+   - 批 5 附带：存档校验面五项对齐（价格历史/分钟收盘绝对键/注意力候选
+     ≥tick/活动 K 三面/desk daily_turnover）——均为真实差异修复非测试放宽
+4. `f6200f80` 两处登记差异裁决
+   - civil date：runtime 30 tick 不推（诊断测试证实）；原差异源于 245 tick
+     跨日测试——两侧日历语义一致（市场日完成后推），差异仅"谁调用"
+     （runtime 编排自动 vs 旧管线宿主显式=ADR-0025 宿主责任）；
+     helpers 对齐口径（pipeline_events 跨日显式 end_civil_day）后严格断言一致
+   - 清簿事件：pipeline market.clear() 静默（无事件）vs runtime 显式
+     OrderCanceled——裁决=有意分歧，登记 trading-rules.md（依据：日终
+     未成交单失效是真实交易制度、显式呈现铁律；资源语义等价）
+5. `62ff4c9b` step() 翻转实测——106 失败证据回退 opt-in
+   - step_via_runtime 入口落地（RuntimeDriver 构造+等价步进+行情/K 安装
+     +poison 语义）
+   - 缺省翻 runtime ⇒ lib 106 个 session 侧测试失败 ⇒ 回退 opt-in
+     （ENGINE_STEP_RUNTIME=1 显式开、缺省 0=旧管线）
+   - 回退理由：envelope/attention/candidate 投影域演进仍锚定旧管线，
+     runtime step 未承载 ⇒ 硬翻=静默语义丢失（铁律二）
+
+## 二、trading-rules.md 两处新登记（Sol 需核 A 股依据可靠性）
+
+1. **自成交限制**（2026-10-15 登记）：同一投资者账户买卖委托不互相成交。
+   声明依据：上交所《交易规则（2026 年修订）》防范市场风险条款精神与
+   深交所《交易规则（2025 年修订）》自成交防范相关监管要求（同一投资者
+   账户对倒属重点监控异常交易行为——真实市场由监控/警示机制处理，
+   竞价撮合引擎本身不做硬拦截）。**游戏简化（如实标注）**：把监管口径
+   的"监控防范"实现为撮合引擎硬排除。**Sol 需核**：条款援引是否可靠、
+   游戏简化声明是否充分、连续竞价"终止撮合"（保守——跨过自单后不再
+   找更优价对）vs"跳过自单继续"哪个更贴近监管意图。
+2. **日终未成交单失效**（2026-10-15 登记，裁决 2）：收盘竞价撮合后全部
+   未成交委托失效。旧管线静默 clear（资源经 envelope 退回、无事件）；
+   runtime 显式发 OrderCanceled 事件（有意分歧——依据：失效是真实交易
+   制度事件，用户可见性符合显式呈现铁律；资源语义两侧等价）。
+   **Sol 需核**：有意分歧的依据是否成立（vs 应修 runtime 对齐 pipeline
+   静默形态）。
+
+## 三、复核问题清单
+
+A. **语义符合性**：
+   1. 自成交两条规则（连续竞价终止/拍卖双撤+上界语义）是否符合现行
+      沪深规则精神？游戏简化声明是否遗漏边界？
+   2. 日终失效事件（有意分歧）裁决是否成立？
+   3. 存档校验面五项对齐（批 5）是否引入语义漂移（尤其 desk 分钟公式
+      +1 偏移修正、注意力候选推到 tick）？
+B. **最小范围**：翻转批 8 提交是否混入与自成交/迁移无关的改动？
+C. **边界遗漏**：
+   1. 自成交：市价单保护价路径是否也被覆盖？CancelAll 后索引清理？
+   2. 索引维护正确性：**maker 全成移除（pop_front）同步**是否完备
+      （已修一处——还有其他移除路径吗：undo 回放的 Inserted 分支、
+      Drain 清簿、拍卖双撤）？
+   3. 上界语义（拍卖可配对量<选择量）：守恒审计是否仍闭合？
+D. **106 失败回退是否掩盖问题**：opt-in 回退是否把真实语义缺陷藏进
+   环境变量？回退决策的证据链（106 失败属"测试锚定旧域"还是
+   "runtime 语义错"）是否充分？
+E. **终裁问题**：翻转批可否宣告完成（范围=自成交规则+50 测试迁移+
+   两裁决+翻转实测回退；**不含**全局域迁移——envelope/attention/
+   candidate 投影迁移为下一阶段）？
+
+## 四、验证状态（供交叉核验）
+
+- batch1-5：52/52 绿（含自成交严格断言 maker≠taker）
+- runtime 单测：94/94 绿
+- lib 全量：1545/0/11 绿（缺省=旧管线口径）
+- 性能：318.0 t/s（runtime 路径正式口径：3000 tick/10组×2000 NPC/
+  5 股全语义、守恒全绿）；对照原型 962 t/s（简化口径，无 FillFact/
+  回执/撤销日志上行）
+- 复现命令：cargo test -p engine --test runtime_flip_batch{1..5}；
+  ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib（复现 106 失败）
+
+## 五、Sol 输出要求
+
+逐项回答 §三 A-E（语义/范围/边界/回退正当性/终裁），有效发现将修复
+后复核；无法修复的明确报告。裁决类（A2/D/E）给出"维持/推翻+理由"。

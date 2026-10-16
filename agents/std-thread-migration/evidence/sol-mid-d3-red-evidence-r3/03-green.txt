@@ -1,0 +1,11 @@
+
+running 6 tests
+test runtime::group::sol_recheck3_tests::sol3_closed_with_foreign_order_keeps_the_ticket ... ok
+test runtime::group::sol_recheck3_tests::sol3_fill_with_foreign_order_fails_instead_of_eating_the_leg ... ok
+test runtime::skeleton_tests::sol3_continuation_round_acceptance_reaches_group_before_continue ... ok
+test session::failure_tests::sol3_runtime_step_failure_stops_install ... ok
+test session::failure_tests::sol3_runtime_install_failure_rolls_back_advanced_state ... ok
+test runtime::drive_tests::sol3_install_candles_propagates_collection_errors ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1588 filtered out; finished in 31.42s
+

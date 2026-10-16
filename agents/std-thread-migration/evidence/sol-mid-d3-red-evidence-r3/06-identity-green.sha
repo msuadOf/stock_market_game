@@ -1,0 +1,2 @@
+85ce0ed7c7ebacc678147375fb0f17bd6dfc3a39 工作树（=本轮提交态；guard 完整）。
+命令：cargo test -p engine --lib sol7th_foreign

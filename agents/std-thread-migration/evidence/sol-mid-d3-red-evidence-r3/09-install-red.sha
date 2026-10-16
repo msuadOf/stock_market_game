@@ -1,0 +1,3 @@
+e83f091e00e5d55007842004a1709bcedf1f9e86 工作树 + 突变：InstallPersonal handler 丢弃注入（no-op）。
+命令：cargo test -p engine --lib d3b5_install
+红：watchlist 读面不可见断言失败（panic 原文"注入的个人态经组权威生效"）

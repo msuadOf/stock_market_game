@@ -1,0 +1,20 @@
+
+running 1 test
+test session::pipeline::npc_tick_preparation::t1_account_task_tests::sol4th_queue_before_first_step_executes_intents_exactly_once ... FAILED
+
+failures:
+
+---- session::pipeline::npc_tick_preparation::t1_account_task_tests::sol4th_queue_before_first_step_executes_intents_exactly_once stdout ----
+
+thread 'session::pipeline::npc_tick_preparation::t1_account_task_tests::sol4th_queue_before_first_step_executes_intents_exactly_once' (2043165) panicked at packages/engine/src/session/pipeline/npc_tick_preparation.rs:180:9:
+assertion `left == right` failed: staged intents 恰一次进入 runtime 世界（预期 1 条 retail 受理）
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::pipeline::npc_tick_preparation::t1_account_task_tests::sol4th_queue_before_first_step_executes_intents_exactly_once
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 0.40s
+

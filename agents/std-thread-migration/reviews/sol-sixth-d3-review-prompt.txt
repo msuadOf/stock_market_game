@@ -1,0 +1,43 @@
+# Sol 第六轮复审请求：D3a 五审三项收尾（单提交 7106eb79）
+
+日期：2026-10-16。请求人：协调者。这是你五审判决的收尾复审（五审要点：
+同键统计/attention/清仓局部修复已认；买腿落账差一拍=必修等价性缺口，
+ADR-0017 提交后本拍交付）。只读复核：不写文件、不构建；允许读文件/git/
+复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净，HEAD=7106eb79。
+证据目录 .tmp/sol-mid-d3-red-evidence-r3/（MANIFEST 已增 04 行）。
+
+## 三项收尾声称（逐项核真伪）
+
+1. **本拍公开期末投影**：step() 返回前把本拍成交事实合入公开 session 面——
+   持仓/T+1/成本/现金（买实付/卖净得，DeskTradeFact 新增双腿实收费用分项
+   作推导源）/执行腿（record_child_fill 同拍）+清仓删条目。公开现金=组现金+
+   在途买占用（账户级 buy_purse_held_cents：挂出+purse/买腿−实付/CashRefund−
+   退款，不限计划链票，undo+hash 覆盖；卖余量镜像改 RefundedShares 实体
+   驱动）。组内 staging 下一 Start 合并保留=双写，下一拍整值回写对齐。
+2. **同拍全面验证（不补拍）**：sol6th_same_tick_settlement_full_projection
+   ——持仓/T+1/可卖=0/成本/现金/清仓条目全部本拍断言+下一拍不双计；
+   sol6th_same_tick_abort_leaks_nothing——失败拍零投影。红绿=04-sametick-*
+   （突变禁用投影+现金口径还原：买家持仓 "no entry found for key" panic
+   ——迟一拍原形态）。进程级对照闭合：completed_sell 结算面 2053/2057/
+   2061-2067 全过，残余 2069=price_memory 裁剪（登记 D3b 主题，非结算面）。
+3. **证据收尾**：02 红态源码组成如实注明（c8b6c263+两项未提交测试编辑+
+   突变=1605 vs 1604 来源）；03-flat-green 重出带注记；MANIFEST 增 04 行。
+
+## 声称数字
+
+默认 1596/0/11；翻转批 10/13/14/14/15；env=1=40（名单与四审末一致）。
+
+## 终裁问题
+
+1. 三项逐项：真实修复/表面/未修复（重点抽查 1 的双写不双计与 2 的
+   失败拍零投影）。
+2. 残余 2069（price_memory 裁剪）归 D3b 是否成立。
+3. **终裁：D3a 可否宣告闭合（六轮整改），正式进入 D3b**。
+   若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。
