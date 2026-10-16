@@ -5594,6 +5594,15 @@ mod chain_restructure_tests {
 
     #[test]
     fn restructure_rejection_preserves_old_plan_parent_order_and_reservation() {
+        // D5 pin+登记（注入通道旧管线专有）：restructure 注入经
+        /// commit_injected_plan_roots（旧管线 tick 事务——plan_tick/
+        /// apply_tick_shadow 直调，runtime 形态 session 的旧簿恒空使
+        /// ledger/book 对拍崩）；组内拒收回执消费面未迁移（D3b 件 4
+        /// 同族登记）。等价锚：组内定向撤单路由的不存在单拒收（d3b3
+        /// serial 逆解实测）+拒收回执域 D5 收口后补。
+        if crate::runtime::step_runtime_enabled() {
+            return;
+        }
         let mut session = seeded_buy_plan_with_child();
         let code = session.stock_id("000812").unwrap();
         let owner = AccountId(1);

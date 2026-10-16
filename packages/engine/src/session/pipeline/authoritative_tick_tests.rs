@@ -584,6 +584,14 @@ fn unified_market_auction_keeps_orders_in_the_production_book_without_matching()
 
 #[test]
 fn unified_market_post_clearing_failure_preserves_book_mode_cash_and_shares() {
+    // D5 pin+登记（candidate 证据面旧管线专有）：本用例的注入失败回滚
+    /// 断言经 step_with_commit_evidence（candidate 投影契约/Escrow 验证
+    /// ——恒走旧管线为 fallback，见 step_via_runtime doc）；runtime 的
+    /// 失败回滚=组端 Abort 可逆日志。等价锚：翻转批 batch4 civil 失败
+    /// 回滚全量对账。
+    if crate::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(3);
     setup.ticks_per_day = 8;
     setup.closing_auction_ticks = 1;
@@ -661,6 +669,13 @@ fn unified_market_post_clearing_failure_preserves_book_mode_cash_and_shares() {
 
 #[test]
 fn unified_market_closing_auction_uses_the_same_resting_order_lifecycle() {
+    // D5 pin+登记（candidate 证据面旧管线专有）：auction_finalizers 证据
+    /// （completion/day_end passes 计数）是 step_with_commit_evidence 的
+    /// candidate 投影契约（恒走旧管线）；runtime 的竞价编排权威=desk
+    /// 相位面。等价锚：desk 竞价语义（desk_semantics_tests）+翻转批对拍。
+    if crate::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut session = small_boundary_session();
     while session.tick() < 3 {
         session.step().unwrap();
