@@ -105,9 +105,14 @@ pub fn step_runtime_enabled() -> bool {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // 翻转批：缺省=runtime（std-thread 生产缺省）；显式
+        // ENGINE_STEP_RUNTIME=0 为临时逃生门回旧管线（批 9 外部清理时
+        // 移除）。OnceLock 首读缓存——同进程不可中途切换。
         static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ENABLED.get_or_init(
-            || std::env::var("ENGINE_STEP_RUNTIME").map(|v| v == "1").unwrap_or(false),
-        )
+        *ENABLED.get_or_init(|| {
+            std::env::var("ENGINE_STEP_RUNTIME")
+                .map(|v| v != "0")
+                .unwrap_or(true)
+        })
     }
 }
