@@ -358,6 +358,43 @@ pub enum GroupIn {
         /// 目标 tick（组验证 > 已转正 tick）。
         tick: u64,
     },
+    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选注入——chain_
+    /// restructure 测试的 drive_once(人工 assessments) 组内等价
+    ///（session 版 collect_plan_lifecycle_actions 直调的输入面；组内
+    /// 复审块+开仓循环用注入值替代 observe 产物，一次消费即清）。
+    #[cfg(test)]
+    InjectReviewAssessments {
+        /// 目标账户（组侧经投影名册映射位）。
+        account: crate::AccountId,
+        /// 注入候选（与 observe 的 lifecycle_assessments 同构）。
+        assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
+    },
+    /// D3b 件 4 fixture 通道（cfg(test))：组簿测试变换——session 侧
+    /// restore_child_remaining_qty/record_child_fill 等手工簿推进的组内
+    /// 等价（镜像簿写入组权威不感知；变换经簿快照 undo 可逆）。
+    #[cfg(test)]
+    MutatePlanBookForTest(Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>),
+    /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入——
+    /// set_urgency_minutes 的组内等价（组观察基=observation_inputs，
+    /// session 侧分钟缓存组内不感知；直改 session tick 会与世界权威
+    /// 锁步漂移）。
+    #[cfg(test)]
+    InjectObservationMinutes {
+        /// 股下标。
+        stock: u16,
+        /// 分钟序列（绝对分钟, 收盘分）。
+        minutes: Vec<(u64, i64)>,
+    },
+    /// D3b 件 4 fixture 通道（cfg(test)）：belief 簿测试变换——session
+    /// 侧 observe_equity 等手工 belief 面直改的组内等价（account→local
+    /// 组侧经投影名册映射）。
+    #[cfg(test)]
+    MutateBeliefForTest {
+        /// 目标账户。
+        account: crate::AccountId,
+        /// belief 簿变换（experience/policy 等面的闭包直施）。
+        mutate: Box<dyn FnOnce(&mut crate::strategy::BeliefBook) + Send>,
+    },
     /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
     /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
     EchoOpenDerivation,

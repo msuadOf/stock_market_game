@@ -123,6 +123,85 @@ impl GameSession {
         driver.force_due_for_test_at(ids, tick);
     }
 
+    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选注入下行（组内
+    /// run_chain_decision 的复审块+开仓循环消费——chain_restructure
+    /// 测试 drive_once 的 runtime 等价输入面）。
+    #[cfg(test)]
+    pub(super) fn inject_review_assessments_via_runtime(
+        &mut self,
+        account: crate::AccountId,
+        assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
+    ) {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        driver.inject_review_assessments_for_test(account, assessments);
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换下行（手工簿
+    /// 推进的组内等价——镜像簿写入组权威不感知）。
+    #[cfg(test)]
+    pub(super) fn mutate_plan_book_via_runtime(
+        &mut self,
+        mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
+    ) {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        driver.mutate_plan_book_for_test(mutate);
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行
+    ///（set_urgency_minutes 的组内等价——session 侧分钟缓存组内不感知）。
+    #[cfg(test)]
+    pub(super) fn inject_observation_minutes_via_runtime(
+        &mut self,
+        stock: u16,
+        minutes: Vec<(u64, i64)>,
+    ) {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        driver.inject_observation_minutes_for_test(stock, minutes);
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：计划事件下行（组簿权威 apply
+    ///——镜像簿直改组权威不感知）。
+    #[cfg(test)]
+    pub(super) fn apply_plan_events_via_runtime(
+        &mut self,
+        events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
+    ) {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        driver.apply_plan_events_for_test(events);
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：belief 簿测试变换下行
+    ///（observe_equity 等手工 belief 面直改的组内等价）。
+    #[cfg(test)]
+    pub(super) fn mutate_belief_via_runtime(
+        &mut self,
+        account: crate::AccountId,
+        mutate: Box<dyn FnOnce(&mut crate::strategy::BeliefBook) + Send>,
+    ) {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        driver.mutate_belief_for_test(account, mutate);
+    }
+
     fn restore_runtime_player_intents(
         &mut self,
         intents: Vec<crate::session::ReceiptBearingIntent>,

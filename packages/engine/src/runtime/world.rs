@@ -698,6 +698,61 @@ impl World {
         }
     }
 
+    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选注入下行组 0（组内
+    /// run_chain_decision 的复审块+开仓循环用注入值替代 observe 产物
+    /// ——一次消费即清；chain_restructure 测试的 drive_once 等价面）。
+    #[cfg(test)]
+    pub fn inject_review_assessments_for_test(
+        &mut self,
+        account: crate::AccountId,
+        assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
+    ) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::InjectReviewAssessments {
+                account,
+                assessments,
+            });
+        }
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换下行组 0（手工
+    /// 簿推进的组内等价——restore/record 等 API 以闭包直施组权威簿）。
+    #[cfg(test)]
+    pub fn mutate_plan_book_for_test(
+        &mut self,
+        mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
+    ) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::MutatePlanBookForTest(mutate));
+        }
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行组 0
+    ///（set_urgency_minutes 的组内等价——组观察基=observation_inputs）。
+    #[cfg(test)]
+    pub fn inject_observation_minutes_for_test(
+        &mut self,
+        stock: u16,
+        minutes: Vec<(u64, i64)>,
+    ) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::InjectObservationMinutes { stock, minutes });
+        }
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：belief 簿测试变换下行组 0
+    ///（observe_equity 等手工 belief 面直改的组内等价）。
+    #[cfg(test)]
+    pub fn mutate_belief_for_test(
+        &mut self,
+        account: crate::AccountId,
+        mutate: Box<dyn FnOnce(&mut crate::strategy::BeliefBook) + Send>,
+    ) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::MutateBeliefForTest { account, mutate });
+        }
+    }
+
     /// 外部计划广播（D2 玩家意图路由：组 0 消费——玩家惯例位）。
     pub fn broadcast_external_plan(&mut self, ops: Vec<super::decision::PendingOp>) {
         if let Some(tx) = self.group_txs.first() {

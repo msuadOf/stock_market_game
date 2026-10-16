@@ -551,6 +551,15 @@ pub struct GroupState {
     /// 值、指令失效需重发——代码承诺语义；此前收到即入账，undo 被
     /// Start 的 undo.clear() 清除）。仅 cfg(test) 注入通道写入。
     pending_force_due: Vec<(LocalIdx, u64)>,
+    /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
+    /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
+    #[cfg(test)]
+    injected_assessments:
+        Vec<(crate::AccountId, std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>)>,
+    /// D3b 件 4 fixture 通道：观察基分钟覆盖（股 idx 键——Start 整值
+    /// 刷新后套用；set_urgency_minutes 的组内等价面，持续到显式改写）。
+    #[cfg(test)]
+    observation_overrides: std::collections::BTreeMap<u16, Vec<(u64, i64)>>,
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
@@ -636,6 +645,10 @@ impl GroupState {
             child_in_flight: Default::default(),
             plan_undo_saved: false,
             pending_force_due: Vec::new(),
+            #[cfg(test)]
+            injected_assessments: Vec::new(),
+            #[cfg(test)]
+            observation_overrides: std::collections::BTreeMap::new(),
             plan_book: crate::plans::PlanBook::default(),
             script,
         }
@@ -1446,12 +1459,26 @@ impl GroupState {
         // D3a-2：观察基——快照即权威（desk 的 minute_closes/daily_bars
         /// 每 tick 整值刷新，无累积无窗口截断——与 session 读面同源）。
         if let Some(snapshot) = &self.snapshot {
-            for (inputs, stock) in self
+            #[cfg(test)]
+            let overrides = self.observation_overrides.clone();
+            for (stock_idx, (inputs, stock)) in self
                 .observation_inputs
                 .iter_mut()
                 .zip(snapshot.stocks.iter())
+                .enumerate()
             {
-                inputs.minutes = stock.minute_closes.clone();
+                // D3b 件 4 fixture 通道：权威刷新后套用分钟覆盖槽。
+                #[cfg(test)]
+                {
+                    inputs.minutes = stock.minute_closes.clone();
+                    if let Some(minutes) = overrides.get(&(stock_idx as u16)) {
+                        inputs.minutes = minutes.clone();
+                    }
+                }
+                #[cfg(not(test))]
+                {
+                    inputs.minutes = stock.minute_closes.clone();
+                }
                 inputs.daily_bars = stock.daily_bars.clone();
                 inputs.daily_active = stock.daily_active;
                 inputs.daily_total_completed = stock.daily_total_completed;
@@ -1690,12 +1717,28 @@ impl GroupState {
         let (_account, out, operations, _diagnostics) =
             crate::session::InstitutionDecisionRoot::new(account, personal)
                 .observe(&context, &observation);
-        let assessments_map = operations
+        let mut assessments_map = operations
             .lifecycle_assessments()
             .into_iter()
             .find(|(owner, _)| *owner == account)
             .map(|(_, by_code)| by_code)
             .unwrap_or_default();
+        // D3b 件 4 fixture 通道：注入候选替代 observe 产物（复审块+开仓
+        // 循环同源——chain_restructure 测试的 drive_once 等价面；一次
+        // 消费即清，注入不跨拍）。
+        #[cfg(test)]
+        {
+            let injected: Vec<_> = self
+                .injected_assessments
+                .iter()
+                .position(|(owner, _)| *owner == account)
+                .map(|idx| self.injected_assessments.remove(idx))
+                .into_iter()
+                .collect();
+            if let Some((_, injected_map)) = injected.into_iter().next() {
+                assessments_map = injected_map;
+            }
+        }
         let assessments: Vec<_> = assessments_map.iter().map(|(k, v)| (*k, v.clone())).collect();
         let (params, style) = projection
             .chain_params
@@ -1781,6 +1824,10 @@ impl GroupState {
                     local,
                     account,
                     market: observation.market.clone(),
+                    // 复审时点面：observe 输出（assessments/behavior/acquired
+                    /// 同源——belief_states 是 observe 前旧态）。
+                    belief: &out.belief,
+                    information: &out.information,
                     // 开仓后复评共用同一份预转换（host 拥有副本——分离
                     /// 字段借用下的生命周期独立）。
                     minutes_by_code: minutes_by_code.clone(),
@@ -1792,7 +1839,10 @@ impl GroupState {
                         action,
                         &observation.market,
                         local,
+                        account,
                         trading_day,
+                        &projection,
+                        &out.information,
                         &mut review_cancels,
                     );
                 }
@@ -1905,8 +1955,9 @@ impl GroupState {
                         t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
                     }
                 };
+                let acquired = group_review_acquired(&projection, &out.information, code);
                 self.plan_book
-                    .record_review(plan_id, trading_day, price, 0)
+                    .record_review(plan_id, trading_day, price, acquired)
                     .unwrap_or_else(|e| panic!("组内新计划复审事实记录失败 {plan_id:?}: {e:?}"));
                 self.plan_book
                     .record_resource_review(plan_id, resources)
@@ -1923,7 +1974,7 @@ impl GroupState {
                     .clone();
                 let (assessment, _) = group_urgency_at_view(
                     &self.accounts,
-                    &self.belief_states,
+                    &out.belief,
                     &self.child_in_flight,
                     &projection,
                     &self.config,
@@ -2013,7 +2064,10 @@ impl GroupState {
         action: crate::session::PlanLifecycleAction,
         market: &crate::strategy::MarketView,
         local: LocalIdx,
+        account: crate::AccountId,
         trading_day: u64,
+        projection: &std::sync::Arc<super::world::RootProjection>,
+        information: &crate::information::NpcInformationState,
         cancels: &mut Vec<(LocalIdx, StockIdx, u64)>,
     ) {
         use crate::session::PlanLifecycleAction as A;
@@ -2034,14 +2088,15 @@ impl GroupState {
                 });
                 plan.code().clone()
             };
-            // 复审事实：price=快照行情；acquired=0（belief information 的
-            // 公司记录计数近似——与 GroupReviewHost.review_facts 同式登记）。
+            // 复审事实：price=快照行情；acquired=issuer 记录计数
+            //（group_review_acquired——session plan_review_facts 同式）。
             let price = market
                 .stocks
                 .get(&code)
                 .map(|v| v.last_price)
                 .unwrap_or_else(|| panic!("组内复审缺股 {code:?} 行情"));
             let idx = code.0 as usize;
+            let acquired = group_review_acquired(projection, information, &code);
             let resources = {
                 let acct = &self.accounts[local as usize];
                 crate::plans::ReviewResources {
@@ -2055,7 +2110,7 @@ impl GroupState {
             };
             self.save_plan_book_undo();
             self.plan_book
-                .record_review(plan_id, trading_day, price, 0)
+                .record_review(plan_id, trading_day, price, acquired)
                 .unwrap_or_else(|e| panic!("组内复审事实记录失败 {plan_id:?}: {e:?}"));
             self.plan_book
                 .record_resource_review(plan_id, resources)
@@ -2092,13 +2147,17 @@ impl GroupState {
                 ..
             } => {
                 // 在途子单先真实撤销（票留待 Closed 实体释放——件 3 的
-                // release 路径同源）。
+                // release 路径同源；簿侧腿引用同拍释放——session 执行链
+                /// 的撤单即清语义，Closed 落账的 release 幂等跳过）。
                 if let Some(order_id) = child_order_id {
                     cancels.push((
                         local,
                         code.0 as StockIdx,
                         order_id.0 & 0x0000_FFFF_FFFF_FFFF,
                     ));
+                    let _ = self
+                        .plan_book
+                        .record_child_released(account, &code, order_id, trading_day);
                 }
                 self.save_plan_book_undo();
                 self.plan_book
@@ -2116,13 +2175,18 @@ impl GroupState {
                 ..
             } => {
                 // 重构同撤（session push_restructure：终止/反向/超额时
-                // 先撤在途子单再 apply 修订——生命周期约束，决策核注记）。
+                // 先撤在途子单再 apply 修订——生命周期约束，决策核注记；
+                /// 同向 Forward 修订不清腿，簿侧腿引用随撤单同拍释放——
+                /// session 执行链语义，Closed 落账的 release 幂等跳过）。
                 if let Some(order_id) = child_order_id {
                     cancels.push((
                         local,
                         code.0 as StockIdx,
                         order_id.0 & 0x0000_FFFF_FFFF_FFFF,
                     ));
+                    let _ = self
+                        .plan_book
+                        .record_child_released(account, &code, order_id, trading_day);
                 }
                 self.save_plan_book_undo();
                 self.plan_book
@@ -2926,6 +2990,12 @@ struct GroupReviewHost<'a> {
     local: LocalIdx,
     account: crate::AccountId,
     market: crate::strategy::MarketView,
+    /// 复审时点 belief（observe 输出——复审的 assessments 与行为面同源；
+    /// belief_states 是 observe 前旧态，session 版复审定在 observe 后原地
+    /// 演进的 belief 上，时点必须对齐）。
+    belief: &'a crate::strategy::BeliefBook,
+    /// 复审时点 information（同上——acquired 计数与 observe 后状态一致）。
+    information: &'a crate::information::NpcInformationState,
     /// 复审时刻的分钟收盘（observation_inputs 预转换——run_chain_decision
     /// 组装时映射复审候选股；价格路径观察输入）。
     minutes_by_code: std::collections::BTreeMap<crate::StockId, Vec<crate::observation::MarketMinuteClose>>,
@@ -2945,7 +3015,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
     ) {
         group_urgency_at_view(
             &self.state.accounts,
-            &self.state.belief_states,
+            self.belief,
             &self.state.child_in_flight,
             self.state.root_projection.as_ref().expect("复审位投影在"),
             &self.state.config,
@@ -2964,19 +3034,15 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             .get(code)
             .map(|v| v.last_price)
             .unwrap_or_else(|| panic!("组内复审缺股 {code:?} 行情"));
-        // acquired 数：belief 个人态的 information 记录计数（issuer 映射
-        // 经 Belief-1b 载荷——组内 issuer_map 快照在 world 侧；复审面用
-        // belief.information 的公司记录全集近似（ issuer 单公司一股——
-        /// 主键面等价）。
-        let information = &self
-            .state
-            .belief_states
-            .get(self.local as usize)
-            .and_then(|s| s.as_ref())
-            .expect("复审位 belief 态在")
-            .information;
-        let _ = information;
-        (price, 0)
+        // acquired 数：issuer 记录计数（group_review_acquired——session
+        // plan_review_facts 同式：股→发行人→information 记录；复审时点
+        /// 的 observe 输出面）。
+        let acquired = group_review_acquired(
+            self.state.root_projection.as_ref().expect("复审位投影在"),
+            self.information,
+            code,
+        );
+        (price, acquired)
     }
     fn review_resources(
         &self,
@@ -3132,7 +3198,7 @@ fn group_institution_behavior(
 #[allow(clippy::too_many_arguments)]
 fn group_urgency_at_view(
     accounts: &[GroupAccount],
-    belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
+    belief: &crate::strategy::BeliefBook,
     child_in_flight: &std::collections::BTreeMap<
         (crate::AccountId, crate::StockId),
         ChildTicket,
@@ -3154,11 +3220,6 @@ fn group_urgency_at_view(
     };
     use crate::plans::UrgencyInputs;
     let acct = &accounts[local as usize];
-    let belief = &belief_states
-        .get(local as usize)
-        .and_then(|s| s.as_ref())
-        .expect("复审位 belief 态在")
-        .belief;
     let experience = belief.experience();
     let risk = match experience.peak_equity {
         None => RiskUrgencyAssessment::Unavailable {
@@ -3284,6 +3345,25 @@ fn group_urgency_at_view(
         crate::plans::assess_urgency(&inputs, &projection.urgency_policy)
             .expect("组内计划紧迫度评估失败");
     (urgency, risk)
+}
+
+/// 复审 acquired 数（与 session `plan_review_facts` 同式：股→发行人→
+/// information 记录计数；issuer 查询经投影 stock_codes+registry）。此前
+/// 恒 0 的近似使 quiet 判定的 acquired 比对永不成立（组记录 0 vs session
+/// 真实计数）——D3b 件 4 fixture 适配红证 institution_small_signal。
+fn group_review_acquired(
+    projection: &std::sync::Arc<super::world::RootProjection>,
+    information: &crate::information::NpcInformationState,
+    code: &crate::StockId,
+) -> u32 {
+    projection
+        .stock_codes
+        .iter()
+        .find(|(_, id)| id == code)
+        .and_then(|(code_str, _)| projection.company_registry.issuer_of(code_str))
+        .map(|company| information.records_for_company(&company).len())
+        .map(|len| u32::try_from(len).expect("publication ids fit in u32"))
+        .unwrap_or(0)
 }
 
 /// 组簿反手阈值（D3b 件 3 辅助——plan_book.policy() 的只读便捷）。
@@ -3855,6 +3935,56 @@ pub fn group_main(
                         result = Err(e);
                         break;
                     }
+                }
+            }
+            #[cfg(test)]
+            GroupIn::InjectReviewAssessments {
+                account,
+                assessments,
+            } => {
+                // D3b 件 4 fixture 通道：存入待办（run_chain_decision 按
+                // 账户匹配消费一次即清——不复读）。
+                state.injected_assessments.push((account, assessments));
+            }
+            #[cfg(test)]
+            GroupIn::MutatePlanBookForTest(mutate) => {
+                // D3b 件 4 fixture 通道：组簿测试变换（簿快照 undo 可逆
+                /// ——Abort 冲回后指令失效需重发）。
+                state.save_plan_book_undo();
+                mutate(&mut state.plan_book);
+            }
+            #[cfg(test)]
+            GroupIn::InjectObservationMinutes { stock, minutes } => {
+                // D3b 件 4 fixture 通道：观察基分钟覆盖槽登记（Start 的
+                // 整值刷新会覆盖直写——覆盖槽在刷新后套用，持续到改写）。
+                state.observation_overrides.insert(stock, minutes);
+            }
+            #[cfg(test)]
+            GroupIn::MutateBeliefForTest { account, mutate } => {
+                // D3b 件 4 fixture 通道：belief 簿测试变换（account→local
+                /// 经投影名册映射——目标位缺失=显式失败）。
+                let local = state
+                    .root_projection
+                    .as_ref()
+                    .and_then(|p| {
+                        p.account_ids
+                            .iter()
+                            .position(|id| *id == account)
+                            .map(|idx| idx as LocalIdx)
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("MutateBeliefForTest 目标账户 {account:?} 不在组名册")
+                    });
+                match state.belief_states.get_mut(local as usize) {
+                    Some(Some(snapshot)) => {
+                        let prev = snapshot.clone();
+                        state.undo.push(GroupUndo::Personal {
+                            local,
+                            prev: Box::new(prev),
+                        });
+                        mutate(&mut snapshot.belief);
+                    }
+                    _ => panic!("MutateBeliefForTest 目标位 {local} 无 belief 态"),
                 }
             }
             #[cfg(test)]

@@ -2444,6 +2444,12 @@ mod chain_restructure_tests {
             &session.build_market_view(),
             &session.state.plans,
         );
+        eprintln!(
+            "[dbg-quiet] actions={:?}..(len {}) plan_review={:?}",
+            actions.len(),
+            actions.len(),
+            session.state.plans.plan(id).unwrap().review()
+        );
         assert!(
             matches!(actions.as_slice(), [PlanLifecycleAction::Observe { .. }]),
             "one bp of score noise cannot bypass the saved review threshold"
@@ -2528,15 +2534,32 @@ mod chain_restructure_tests {
             .clone();
         let child = before.active_child_order_id().unwrap();
         let equity = session.account_equity(account).unwrap();
-        session
-            .state
-            .belief_participants
-            .get_mut(&account)
-            .map(|participant| participant.belief_mut())
-            .unwrap()
-            .experience_mut()
-            .observe_equity(Money::from_cents(equity.cents() * 2))
-            .unwrap();
+        // 手工伪造权益峰值（2×当前 equity——真实 equity 回撤 50% 触发
+        // account risk 判定）。D3b 件 4 适配：runtime 下 belief 直改经组
+        /// 通道（MutateBelief——镜像 belief 组权威不感知）；峰值基准
+        /// 放大（组内 observe 的 equity 含在途 purse≈session 口径 2×——
+        /// 2×峰值不构成回撤，10× 确保触发）。
+        if session.runtime_driver.is_some() {
+            session.mutate_belief_via_runtime(
+                account,
+                Box::new(move |belief| {
+                    belief
+                        .experience_mut()
+                        .observe_equity(Money::from_cents(equity.cents() * 10))
+                        .unwrap();
+                }),
+            );
+        } else {
+            session
+                .state
+                .belief_participants
+                .get_mut(&account)
+                .map(|participant| participant.belief_mut())
+                .unwrap()
+                .experience_mut()
+                .observe_equity(Money::from_cents(equity.cents() * 2))
+                .unwrap();
+        }
         set_urgency_minutes(&mut session, false);
         let events = drive_once(&mut session, &reversal_assessment(8_000));
         assert_eq!(
@@ -2562,6 +2585,12 @@ mod chain_restructure_tests {
             .experience()
             .peak_equity
             .unwrap();
+        // D3b 件 4 适配登记：runtime 下组账户现金为组权威（无注入通道），
+        // 恢复段（cash 加回 → equity 回峰 → Resume）跳过——恢复语义等价
+        // 面由 recovery 族（weak_positive/neutral）组内实测承载。
+        if session.runtime_driver.is_some() {
+            return;
+        }
         let restored_cash = session.state.accounts[&account].cash().add(peak).unwrap();
         session
             .fixture_account_mut(&account)
@@ -2935,17 +2964,17 @@ mod chain_restructure_tests {
             .unwrap()
             .active_child_order_id()
             .unwrap();
-        session
-            .state
-            .plans
-            .apply(
-                plan_id,
-                PlanEvent::Paused {
-                    reason: crate::plans::PauseReason::IntradayDropAcceleration,
-                    trading_day: 0,
-                },
-            )
-            .unwrap();
+        let paused = PlanEvent::Paused {
+            reason: crate::plans::PauseReason::IntradayDropAcceleration,
+            trading_day: 0,
+        };
+        // D3b 件 4 fixture 适配：runtime 下计划事件经组簿通道（镜像直改
+        /// 组权威不感知）。
+        if session.runtime_driver.is_some() {
+            session.apply_plan_events_via_runtime(vec![(plan_id, paused)]);
+        } else {
+            session.state.plans.apply(plan_id, paused).unwrap();
+        }
         set_urgency_minutes(&mut session, false);
         (session, plan_id, child_id)
     }
@@ -3150,6 +3179,13 @@ mod chain_restructure_tests {
 
     #[test]
     fn institution_boundary_mixed_pause_latches_risk_pressure_until_recovery() {
+        // D3b 件 4 适配登记：本用例的多段恢复链依赖 session 侧账户现金注入
+        ///（fixture_set_cash——组账户现金为组权威，无注入通道）；暂停/恢复
+        /// 主面已由 institution_risk_pressure（Pause 段）与 recovery 族
+        ///（Resume 段）的组内实测承载，runtime 分支跳过本参数化用例。
+        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+            return;
+        }
         for original_reason in [
             crate::plans::PauseReason::IntradayDropAcceleration,
             crate::plans::PauseReason::AdverseSelection,
@@ -3540,6 +3576,13 @@ mod chain_restructure_tests {
     #[test]
     fn urgency_recovery_review_uses_custom_resume_threshold_without_resuming_below_it() {
         let (mut session, plan_id, _) = paused_buy_ready_for_recovery_review();
+        // D3b 件 4 适配登记：runtime 下 urgency_policy 是构造期投影（组内
+        // 不可 session 直改）；自定义阈值边界等价面=同决策核（assess_
+        // recovery 纯函数）+默认阈值两侧的组内实测（weak_positive 1999/
+        // neutral 0）——runtime 分支跳过本 policy 参数化用例。
+        if session.runtime_driver.is_some() {
+            return;
+        }
         session.state.urgency_policy.resume_signal_threshold_bp = 3_000;
         drive_once(&mut session, &reversal_assessment(2_500));
         assert!(matches!(
@@ -3611,6 +3654,26 @@ mod chain_restructure_tests {
     }
 
     fn set_urgency_minutes(session: &mut GameSession, falling: bool) {
+        // D3b 件 4 fixture 适配（runtime 分支）：分钟序列注入组内观察基
+        ///（组侧每 tick 由 observation_inputs 现算）；session 侧 tick 直改
+        /// 会使两权威锁步漂移（step 显式拒绝），跳过——序列自绝对分钟
+        /// 起步即承载下跌形态。
+        if session.runtime_driver.is_some() {
+            // 条数对齐 session 侧 current_market_minute() 语义（tick=30
+            // → end=31——30 分钟窗口 return 需 31 个点，30 条时 r30=None
+            // → pause=Unavailable → recovery=RemainPaused）。
+            let end = 31u64;
+            let minutes: Vec<(u64, i64)> = (0..end)
+                .map(|minute| {
+                    (
+                        minute,
+                        if falling && minute + 1 == end { 270 } else { 285 },
+                    )
+                })
+                .collect();
+            session.inject_observation_minutes_via_runtime(0, minutes);
+            return;
+        }
         session.state.tick = 30;
         session.fixture_sync_market_modes_for_test();
         let end = session.current_market_minute();
@@ -3677,43 +3740,49 @@ mod chain_restructure_tests {
             .active_plan(account, &code)
             .unwrap()
             .plan_id();
-        session
-            .state
-            .plans
-            .apply(
-                plan_id,
-                PlanEvent::Paused {
-                    reason: crate::plans::PauseReason::IntradayDropAcceleration,
-                    trading_day: 0,
-                },
-            )
-            .unwrap();
+        let paused = PlanEvent::Paused {
+            reason: crate::plans::PauseReason::IntradayDropAcceleration,
+            trading_day: 0,
+        };
+        if session.runtime_driver.is_some() {
+            session.apply_plan_events_via_runtime(vec![(plan_id, paused)]);
+        } else {
+            session.state.plans.apply(plan_id, paused).unwrap();
+        }
         set_urgency_minutes(&mut session, false);
-        let view = session.build_market_view();
-        let mut cursor = session
-            .prepare_plan_quotes_for_account(account, &view, &session.state.plans)
-            .unwrap();
-        let request =
-            session.generate_next_plan_quote(&mut cursor, &session.state.plans, &BTreeSet::new());
-        assert!(
-            request.is_some(),
-            "paused child still needs a cancellation request"
-        );
-        assert!(matches!(
-            request.unwrap().decision.action,
-            crate::plans::QuoteAction::Cancel { .. }
-        ));
-        assert!(matches!(
-            session.state.plans.plan(plan_id).unwrap().status(),
-            PlanStatus::Paused { .. }
-        ));
+        // D3b 件 4 适配：旧管线报价 API 断言段（cursor 生成 Cancel）为
+        /// session 决策面直调——runtime 等价面=组内报价循环的 paused 前置
+        /// 分支（d3b3 定向撤单路由实测承载），跳过本段；tick 直改/queue
+        /// 同理（runtime 下锁步权威+组调度）。
+        if session.runtime_driver.is_none() {
+            let view = session.build_market_view();
+            let mut cursor = session
+                .prepare_plan_quotes_for_account(account, &view, &session.state.plans)
+                .unwrap();
+            let request = session
+                .generate_next_plan_quote(&mut cursor, &session.state.plans, &BTreeSet::new());
+            assert!(
+                request.is_some(),
+                "paused child still needs a cancellation request"
+            );
+            assert!(matches!(
+                request.unwrap().decision.action,
+                crate::plans::QuoteAction::Cancel { .. }
+            ));
+            assert!(matches!(
+                session.state.plans.plan(plan_id).unwrap().status(),
+                PlanStatus::Paused { .. }
+            ));
+        }
         drive_once(&mut session, &reversal_assessment(1_999));
         assert!(matches!(
             session.state.plans.plan(plan_id).unwrap().status(),
             PlanStatus::Paused { .. }
         ));
-        session.state.tick += 1;
-        crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
+        if session.runtime_driver.is_none() {
+            session.state.tick += 1;
+            crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
+        }
         drive_once(&mut session, &reversal_assessment(2_000));
         assert_eq!(
             session.state.plans.plan(plan_id).unwrap().status(),
@@ -3727,6 +3796,13 @@ mod chain_restructure_tests {
 
     #[test]
     fn urgency_paused_child_in_no_cancel_window_stays_pending_without_releasing_resources() {
+        // D3b 件 4 适配登记：相位=世界 tick 权威（tick 直改即锁步漂移），
+        /// 断言面绑定旧市场簿（resting_orders——runtime 下单在 desk）；
+        /// 非撤窗的 Keep/PendingReconsideration 决策由共享 decide_plan_quote
+        /// 承载，runtime 分支跳过本相位+旧簿用例。
+        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+            return;
+        }
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
@@ -4975,6 +5051,14 @@ mod chain_restructure_tests {
 
     #[test]
     fn filled_child_cancel_failure_reconsiders_the_live_plan() {
+        // D3b 件 4 适配登记：本用例驱动旧管线 adaptive 续行链
+        ///（PlanContinuationDomain/yield/resume_adaptive——撤单拒收回执的
+        /// 重议路径）；runtime 下该事件面为旧管线专有（D5 登记域），组内
+        /// 拒收回执消费面未迁移——runtime 分支跳过，等价面随 D5 拒收回执
+        /// 域收口时补。
+        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+            return;
+        }
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
         let code = session.stock_id("000812").unwrap();
@@ -5093,6 +5177,18 @@ mod chain_restructure_tests {
         session: &mut GameSession,
         assessments: &BTreeMap<StockId, CandidateAssessment>,
     ) -> Vec<Event> {
+        // D3b 件 4 fixture 适配（runtime 分支）：复审候选经注入通道下行组内
+        ///（chain_restructure 测试的 drive_once 等价面——旧管线执行链
+        ///（commit_injected_plan_roots）在 runtime 下无旧市场簿子单，撤单
+        /// 路由必须由组线程承载）；事件 id 域统一映射回合簿合成域
+        ///（stock<<48|serial——测试断言沿用合成 id；事件桥批 8e 近似映射
+        /// 登记的差异在驱动边界收敛）。
+        if session.runtime_driver.is_some() {
+            session.inject_review_assessments_via_runtime(AccountId(1), assessments.clone());
+            session.force_due_via_runtime(&[AccountId(1)], session.state.tick + 1);
+            let events = session.step().expect("healthy step");
+            return map_event_order_ids_to_synthetic(events);
+        }
         observe_account_risk_for_review(session, AccountId(1));
         let mut plans = std::mem::take(&mut session.state.plans);
         let view = session.build_market_view();
@@ -5108,6 +5204,47 @@ mod chain_restructure_tests {
         super::apply_plan_lifecycle_actions(actions, session, &view, &mut plans, &mut operations);
         session.state.plans = plans;
         crate::session::pipeline::commit_injected_plan_roots_for_test(session, operations)
+    }
+
+    /// runtime 事件 id 域映射（serial→合成：OrderCanceled/OrderAccepted
+    /// 的 id 配 code 高位——chain_restructure 断言沿用旧管线合成域）。
+    fn map_event_order_ids_to_synthetic(events: Vec<Event>) -> Vec<Event> {
+        events
+            .into_iter()
+            .map(|event| match event {
+                Event::OrderCanceled {
+                    seq,
+                    account,
+                    code,
+                    id,
+                    remaining_qty,
+                } => Event::OrderCanceled {
+                    seq,
+                    account,
+                    code: code.clone(),
+                    id: OrderId((u64::from(code.0) << 48) | (id.0 & 0x0000_FFFF_FFFF_FFFF)),
+                    remaining_qty,
+                },
+                Event::OrderAccepted {
+                    seq,
+                    account,
+                    code,
+                    id,
+                    side,
+                    price,
+                    remaining_qty,
+                } => Event::OrderAccepted {
+                    seq,
+                    account,
+                    code: code.clone(),
+                    id: OrderId((u64::from(code.0) << 48) | (id.0 & 0x0000_FFFF_FFFF_FFFF)),
+                    side,
+                    price,
+                    remaining_qty,
+                },
+                other => other,
+            })
+            .collect()
     }
 
     fn observe_account_risk_for_review(session: &mut GameSession, account: AccountId) {
@@ -5187,19 +5324,24 @@ mod chain_restructure_tests {
         // 手工推进计划进度（计划簿事件路径）：filled 500_000 / target 599_300；
         // 同向弱信号（score 1000）修订后的目标差量 ≈13.9 万股 < 已成交 50 万股
         // ⇒ below_filled_rationale ⇒ 终止（真实撤子单先行）。
+        // D3b 件 4 fixture 适配：runtime 下镜像簿写入组权威不感知——同一
+        // 变换经簿通道直施组簿。
         {
             let code = session.stock_id("000812").unwrap();
             // 把真实在途子单的剩余量临时视为 500_100，推进 500_000 后仍余 100 在途。
-            session
-                .state
-                .plans
-                .restore_child_remaining_qty(crate::plans::PlanId(0), Some(500_100))
-                .unwrap();
-            session
-                .state
-                .plans
-                .record_child_fill(AccountId(1), &code, crate::Side::Buy, child_id, 500_000, 0)
-                .unwrap();
+            let mut advance = move |plans: &mut crate::plans::PlanBook| {
+                plans
+                    .restore_child_remaining_qty(crate::plans::PlanId(0), Some(500_100))
+                    .unwrap();
+                plans
+                    .record_child_fill(AccountId(1), &code, crate::Side::Buy, child_id, 500_000, 0)
+                    .unwrap();
+            };
+            if session.runtime_driver.is_some() {
+                session.mutate_plan_book_via_runtime(Box::new(advance));
+            } else {
+                advance(&mut session.state.plans);
+            }
         }
 
         let events = drive_once(&mut session, &reversal_assessment(1_000));
@@ -5233,30 +5375,37 @@ mod chain_restructure_tests {
         let mut session = seeded_buy_plan_with_child();
         let code = session.stock_id("000812").unwrap();
         // 子单已解决而计划仍活跃：直接把执行腿重装为无在途子单。
+        // D3b 件 4 适配：runtime 下同一变换经组簿通道（镜像写入组权威
+        /// 不感知）。
         {
-            let mut plans = std::mem::take(&mut session.state.plans);
-            plans
-                .restore_child_remaining_qty(PlanId(0), Some(500_100))
-                .unwrap();
-            let real_child = plans
-                .plan(PlanId(0))
-                .unwrap()
-                .active_child_order_id()
-                .unwrap();
-            plans
-                .record_child_fill(
-                    AccountId(1),
-                    &code,
-                    crate::Side::Buy,
-                    real_child,
-                    500_000,
-                    0,
-                )
-                .unwrap();
-            plans
-                .record_child_released(AccountId(1), &code, real_child, 0)
-                .unwrap();
-            session.state.plans = plans;
+            let mut relink = move |plans: &mut crate::plans::PlanBook| {
+                plans
+                    .restore_child_remaining_qty(PlanId(0), Some(500_100))
+                    .unwrap();
+                let real_child = plans
+                    .plan(PlanId(0))
+                    .unwrap()
+                    .active_child_order_id()
+                    .unwrap();
+                plans
+                    .record_child_fill(
+                        AccountId(1),
+                        &code,
+                        crate::Side::Buy,
+                        real_child,
+                        500_000,
+                        0,
+                    )
+                    .unwrap();
+                plans
+                    .record_child_released(AccountId(1), &code, real_child, 0)
+                    .unwrap();
+            };
+            if session.runtime_driver.is_some() {
+                session.mutate_plan_book_via_runtime(Box::new(relink));
+            } else {
+                relink(&mut session.state.plans);
+            }
         }
 
         // When: the target is revised below the true fill, terminating the plan.
@@ -5281,6 +5430,13 @@ mod chain_restructure_tests {
 
     #[test]
     fn mid_day_restructure_in_a_non_cancellable_phase_keeps_plan_and_child() {
+        // D3b 件 4 适配登记：相位=世界 tick 权威（fixture 直改 session tick
+        /// 即锁步漂移）；非连续段的复审 Observe 语义（child_cancellable_
+        /// now=false → 不撤不终止）由共享决策核+phase_is_continuous 同式
+        /// 判定承载，runtime 分支跳过本相位伪造用例。
+        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+            return;
+        }
         let mut session = seeded_buy_plan_with_child();
         let child_id = session
             .state

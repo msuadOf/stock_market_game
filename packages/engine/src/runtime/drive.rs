@@ -1107,6 +1107,49 @@ impl RuntimeDriver {
         self.world.apply_plan_events_for_test(events);
     }
 
+    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选注入下行组 0（组内
+    /// 复审块+开仓循环用注入值替代 observe 产物——一次消费即清）。
+    #[cfg(test)]
+    pub fn inject_review_assessments_for_test(
+        &mut self,
+        account: crate::AccountId,
+        assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
+    ) {
+        self.world.inject_review_assessments_for_test(account, assessments);
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换下行组 0（手工
+    /// 簿推进的组内等价——闭包直施组权威簿，undo 可逆）。
+    #[cfg(test)]
+    pub fn mutate_plan_book_for_test(
+        &mut self,
+        mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
+    ) {
+        self.world.mutate_plan_book_for_test(mutate);
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行组 0
+    ///（set_urgency_minutes 的组内等价）。
+    #[cfg(test)]
+    pub fn inject_observation_minutes_for_test(
+        &mut self,
+        stock: u16,
+        minutes: Vec<(u64, i64)>,
+    ) {
+        self.world.inject_observation_minutes_for_test(stock, minutes);
+    }
+
+    /// D3b 件 4 fixture 通道（cfg(test)）：belief 簿测试变换下行组 0
+    ///（observe_equity 等手工 belief 面直改的组内等价）。
+    #[cfg(test)]
+    pub fn mutate_belief_for_test(
+        &mut self,
+        account: crate::AccountId,
+        mutate: Box<dyn FnOnce(&mut crate::strategy::BeliefBook) + Send>,
+    ) {
+        self.world.mutate_belief_for_test(account, mutate);
+    }
+
     /// 公共视图只读（组装面）。
     pub fn world_public_views(&self) -> &[super::protocol::StockPublic] {
         self.world.public_views()
