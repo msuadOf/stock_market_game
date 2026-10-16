@@ -184,3 +184,5 @@ NPC 请求在上一 tick 的已提交状态上形成，下一 tick 受理；玩�
 ## 散户经历反馈的成交事件面（std-thread 迁移期简化，2026-10-16 登记）
 
 **游戏简化（迁移期）：** std-thread runtime（组线程决策）下，散户经历行的**成交事件面**——连续买入失败计数（`consecutive_failed_buys`）、退出后冷静期（`post_exit_cooldown`）、成交后的持仓峰值/参考权益反馈——暂不由组内决策链承载：旧管线的承载入口在结算投影（`retail_projection.rs`/`account_settlement.rs` 的 `record_fill` 家族），runtime 下该投影不运行；组内 `run_retail_decision` 已承载**观察面**（watchlist/belief/权益观察）与决策输入的 dated 快照，但成交事实→经历行的投影（受挫计数/冷静期推进）待后续件迁移。影响：runtime 形态下散户的受挫/冷静行为调整不演进（观察与决策其余面不受影响）。业务 hash 不含经历行域——翻转批对拍对该面结构性盲区，回归以专项测试承载。登记于 D5 第 11 任独立复核（Major 2）。
+
+**同族补充（desk 分段记账口径）：** std-thread runtime 的交易部按**每笔成交**计收并累计费用分项（charged=Σ分笔名义费用，部分成交的每笔可各自触发最低佣金下限），买腿 purse 扣减为最坏情况预留的**边际**口径——两者系统性背离（分段累计≥累计式名义费用）。实扣金额以 purse 口径为准；分段累计用于存档审计（fault2228 的下界校验+宽松上界）。旧管线 ledger 为累计式口径（nominal(Σ)）——口径差已在存档校验的分段形态中显式建模。

@@ -896,15 +896,22 @@ impl CumulativeFeeAudit {
             if !desk_staged {
                 return Ok(charged == nominal);
             }
-            // 分段计费上界：Σ分笔费用 ∈ [累计式 nominal, 成交额全额]
-            //（min 佣金下限的分段富余不可精确重建——笔数未存；stamp 买腿
-            // 恒零；commission/transfer 双边制度面均收）。
-            let upper = self.filled_value;
+            // 分段计费上界：Σ分笔费用 ∈ [累计式 nominal, nominal+成交额]
+            //（min 佣金下限的分段富余不可精确重建——笔数未存；每笔富余
+            // ≤最低佣金<费用额+该笔成交额，Σ上界以 nominal+总成交额承载
+            //——终审修正：此前 .max(upper) 写法恒真、上界零校验。stamp
+            // 买腿恒零；commission/transfer 双边制度面均收）。
+            let upper = |component: Money| -> Result<Money, SessionError> {
+                component.add(self.filled_value).map_err(|_| {
+                    // fault2229 同族：分段上界组装溢出（分量+成交额）。
+                    SessionError::InvalidSave(ValidationFault::bare(2229))
+                })
+            };
             return Ok(charged.stamp_tax == Money::ZERO
                 && charged.commission >= nominal.commission
-                && charged.commission <= charged.commission.max(upper)
+                && charged.commission <= upper(nominal.commission)?
                 && charged.transfer_fee >= nominal.transfer_fee
-                && charged.transfer_fee <= charged.transfer_fee.max(upper));
+                && charged.transfer_fee <= upper(nominal.transfer_fee)?);
         }
         let component_bounds_hold = charged.commission <= nominal.commission
             && charged.stamp_tax <= nominal.stamp_tax
