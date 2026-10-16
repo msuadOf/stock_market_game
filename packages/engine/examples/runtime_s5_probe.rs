@@ -28,6 +28,8 @@ fn main() {
             strategy: StrategyData::retail(0.30, 200, 0.35),
             seed: 0x9E37_79B9_7F4A_7C15u64 ^ (i as u64),
             next_due: (i % 8) as u64,
+            attention_base: 0.30,
+            retail_style: None,
         })
         .collect();
     let decision = DecisionSetup {
@@ -58,6 +60,11 @@ fn main() {
                 limit_bps: 1000,
                 max_order_qty_limit: 1_000_000,
                 max_order_qty_market: 1_000_000,
+                initial_daily_bars: Vec::new(),
+                initial_recent_prices: Vec::new(),
+                initial_traded_days: 0,
+                initial_market: None,
+                initial_public_cutoff: 0,
             })
             .collect(),
         config: Arc::clone(&config),
@@ -70,6 +77,18 @@ fn main() {
         rights_computer: None,
         initial_cash_override: None,
         plan_factory: None,
+        belief_seeds: Vec::new(),
+        library: None,
+        initial_desk_orders: Vec::new(),
+        root_projection: None,
+        civil_start_date: engine::calendar::CivilDate::from_ymd(2026, 1, 5)
+            .expect("探针日期合法"),
+        initial_committed_tick: 0,
+        initial_invested: Vec::new(),
+        initial_recovered: Vec::new(),
+        initial_ever_held: Vec::new(),
+        initial_frozen_today: Vec::new(),
+        initial_purse_held: Vec::new(),
     };
 
     let npcs = n_groups * per_group;
