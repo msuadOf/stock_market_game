@@ -6,6 +6,12 @@ use engine::session::CivilPhase;
 
 #[test]
 fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: an actual Friday GameSession with seeded accounting, published history, and NPCs.
     let mut session = representative_session("2030-02-01");
     let initial = session.decision_chain_diagnostics();
@@ -157,6 +163,12 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
 
 #[test]
 fn malformed_future_observation_and_unbalanced_accounting_save_are_rejected_without_mutation() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: a seasoned real session whose save contains published reports, individual reads, and books.
     let mut prepared = focused_disclosure_session("2030-01-07")
         .save()

@@ -150,7 +150,7 @@ fn only_matching_settled_child_advances_and_completion_retains_linked_parent() {
     let before = book.clone();
     assert!(!book.record_child_fill(AccountId(1), &StockId(0), Side::Sell, crate::OrderId(1), 10, 0).unwrap());
     assert!(!book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(2), 10, 0).unwrap());
-    assert!(!book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(2), 0).unwrap());
+    assert!(!book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(2), 0, false).unwrap());
     assert_eq!(book, before);
     book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 40, 0).unwrap();
     assert_eq!(book.plan(id).unwrap().filled_qty(), 40);
@@ -174,7 +174,7 @@ fn auction_invalid_transitions_preserve_candidate_parent() {
     assert!(book.record_child_submitted(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(2), 100, 0).is_err());
     assert!(book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(1), 101, 0).is_err());
     assert_eq!(book, before);
-    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(1), 0).unwrap();
+    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(1), 0, false).unwrap();
     assert_eq!(book.plan(id).unwrap().filled_qty(), 0);
     assert_eq!(book.plan(id).unwrap().active_child_order_id(), None);
 }
@@ -198,7 +198,7 @@ fn unlinked_parent_reverse_rebuilds_execution_from_the_new_target() {
     let (mut book, id) = owner_book(400);
     book.record_child_submitted(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(17), 100, 0).unwrap();
     book.record_child_fill(AccountId(1), &StockId(0), Side::Buy, crate::OrderId(17), 40, 0).unwrap();
-    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(17), 0).unwrap();
+    book.record_child_released(AccountId(1), &StockId(0), crate::OrderId(17), 0, false).unwrap();
     book.apply(id, crate::plans::PlanEvent::Revised { revision: crate::plans::PlanRevision {
         reason: crate::plans::RevisionReason::SignalShift, trading_day: 0,
         direction: Side::Sell, target: PlanTarget::ShareCount(800),

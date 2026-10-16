@@ -530,21 +530,10 @@ impl GameSession {
         /// 重建与旧管线"日终无在途"校验面同源；drained 撤单事件并入本拍
         /// 事件流。此前该编排面缺失（world_day_end_for_test 未接线）——
         /// 多日 step 的 ledger 残留使 session 日终校验显红）。
-        {
-            let ticks_per_day_pre = u64::from(self.state.setup.ticks_per_day);
-            if ticks_per_day_pre > 0 && self.tick() % ticks_per_day_pre == 0 {
-                if let Err(e) = driver.world_day_end_for_step() {
-                    self.rollback_runtime_step(baseline);
-                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::day_end_world".to_owned(),
-                        description: e,
-                    }));
-                }
-                // 清簿撤单事件并入（seq 分配与 drained 缓冲同式）。
-                let drained = driver.take_drained_events();
-                events.extend(drained);
-            }
-        }
+        let ends_day = {
+            let tpd = u64::from(self.state.setup.ticks_per_day);
+            tpd > 0 && self.tick() % tpd == 0
+        };
         // D5 envelope 投影：desk 在途单重建 session 信封账本（审计面——
         /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
         ///（与事件 id 一致）。下拍重建覆盖（权威在 desk）。
@@ -679,8 +668,7 @@ impl GameSession {
         /// 价格历史长度由 install 侧按 tick 推导，与本序无耦合）。
         /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
         /// 登记差异。
-        let ticks_per_day = u64::from(self.state.setup.ticks_per_day);
-        if ticks_per_day > 0 && self.tick() % ticks_per_day == 0 {
+        if ends_day {
             let facts = crate::session::pipeline::install_runtime_day_boundary(self)?;
             for fact in facts {
                 self.set_runtime_seq(self.current_seq().checked_add(1).expect("事件 seq 溢出"));
@@ -689,6 +677,63 @@ impl GameSession {
                     *seq = self.current_seq();
                 }
                 events.push(event);
+            }
+            // D5 日界·world 段在 session 日终迁移**之后**（组内/计划事件
+            /// 日历以 session day 为准——world 日结先跑会使组内事件落在
+            /// 新日而 session 迁移还携旧日，plan 事件序 precede 显红）。
+            /// desk 清簿后 envelope 重建为空集（下节），drained 撤单
+            /// 事件并入本拍事件流。
+            if let Err(e) = driver.world_day_end_for_step() {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::day_end_world".to_owned(),
+                    description: e,
+                }));
+            }
+            let drained = driver.take_drained_events();
+            events.extend(drained);
+            // D5 调序收尾：desk 清簿后重刷 mirror（此前刷新在 world 段前
+            /// ——旧在途残留使公开面/玩家在途读面跨日泄漏）。
+            {
+                let views: Vec<_> = driver
+                    .world_public_views()
+                    .iter()
+                    .map(|v| (v.last_price, v.public_cutoff_serial))
+                    .collect();
+                let mut mirror = std::collections::BTreeMap::new();
+                let facts = driver.collect_resting_facts().map_err(|e| {
+                    StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime::day_end_mirror".to_owned(),
+                        description: e,
+                    }
+                })?;
+                for (stock_idx, book) in facts.iter().enumerate() {
+                    let Some((last_price, cutoff)) = views.get(stock_idx).copied() else {
+                        continue;
+                    };
+                    let orders = book
+                        .iter()
+                        .filter_map(|fact| {
+                            Some((
+                                driver.account_by_owner(fact.owner)?,
+                                fact.side,
+                                crate::Money::from_cents(fact.price),
+                                fact.qty,
+                                fact.order_serial,
+                                fact.filled_value,
+                            ))
+                        })
+                        .collect::<Vec<_>>();
+                    mirror.insert(
+                        crate::StockId(u32::try_from(stock_idx).expect("股下标在 u32")),
+                        super::DeskBookMirror {
+                            orders,
+                            last_price: crate::Money::from_cents(last_price),
+                            public_cutoff_serial: cutoff,
+                        },
+                    );
+                }
+                self.state.desk_book_mirror = mirror;
             }
         }
         Ok(events)

@@ -5392,7 +5392,7 @@ mod chain_restructure_tests {
                     )
                     .unwrap();
                 plans
-                    .record_child_released(AccountId(1), &code, real_child, 0)
+                    .record_child_released(AccountId(1), &code, real_child, 0, false)
                     .unwrap();
             };
             if session.runtime_driver.is_some() {

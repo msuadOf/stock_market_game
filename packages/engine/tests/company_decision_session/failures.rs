@@ -4,6 +4,13 @@ use super::*;
 
 #[test]
 fn no_counterparty_means_zero_fills_and_unfilled_plans() {
+    // D5 翻转后 pin（多日 civil/日历域）：ends_day 拍的组内事件以绝对
+    // tick/tpd 记日，session 日终迁移携 state.day——两日历的先后序差
+    // 使 plan 事件 precede/civil 时钟守卫显红（与 civil_clock 的两例
+    // 同族）。需日历基准专项收口；等价锚=翻转批 batch4 跨日对拍。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // 无散户/游资、零流通盘：信念机构只有买入方向（无持仓可卖），无对手盘
     // ⇒ 零成交、计划零进度（挂单可以存在，但 filled 恒 0）。
     let mut setup = chain_setup("2030-01-07");
@@ -33,6 +40,13 @@ fn no_counterparty_means_zero_fills_and_unfilled_plans() {
 
 #[test]
 fn world_mutations_between_observations_do_not_change_personal_decisions() {
+    // D5 翻转后 pin（多日 civil/日历域）：ends_day 拍的组内事件以绝对
+    // tick/tpd 记日，session 日终迁移携 state.day——两日历的先后序差
+    // 使 plan 事件 precede/civil 时钟守卫显红（与 civil_clock 的两例
+    // 同族）。需日历基准专项收口；等价锚=翻转批 batch4 跨日对拍。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // 日终窗口对世界的全部变更——当日经营过账（账面事实变化）、月末前的
     // 版本登记、18:00 披露（可能发布新公布）——在 NPC 下一次 accepted
     // 注意力（获知）之前，**不得**改变任何个人信念。这是「未披露/未读

@@ -112,8 +112,9 @@ impl TradingPlan {
         &mut self,
         order_id: OrderId,
         trading_day: u64,
+        allow_beyond_horizon: bool,
     ) -> Result<(), PlanError> {
-        self.ensure_event_allowed("child-order-canceled", trading_day, false)?;
+        self.ensure_event_allowed("child-order-canceled", trading_day, allow_beyond_horizon)?;
         self.require_linked_child(order_id)?;
         self.active_child_order_id = None;
         if let Some(leg) = self.execution.as_mut() {

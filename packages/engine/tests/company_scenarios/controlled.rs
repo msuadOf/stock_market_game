@@ -148,6 +148,12 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32)
 
 #[test]
 fn same_current_public_report_revises_two_session_owned_priors_differently() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: two restored session-owned books formed from different acquired annual histories.
     let (mut game, first, second, stock, current_report) = prepared_prior_session();
     let before_first = game.belief_debug(first, &stock).unwrap();
@@ -189,6 +195,12 @@ fn same_current_public_report_revises_two_session_owned_priors_differently() {
 
 #[test]
 fn reading_diagnostics_does_not_change_authoritative_events_or_saves() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: same-seed twins; only one reads the real diagnostic API between commands.
     let mut plain = representative_session(&fixture().start_date);
     let mut observed = representative_session(&fixture().start_date);

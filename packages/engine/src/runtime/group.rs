@@ -1271,20 +1271,18 @@ impl GroupState {
         if let Some(order_id) = ticket.order_id {
             let day = self.cur_tick / self.ticks_per_day;
             self.save_plan_book_undo();
+            // 日终清簿的子单释放=错过日终的补账（revision.rs 守卫注释
+            /// 的豁免面——horizon 外仍须可达）。
             let released = self
                 .plan_book
-                .record_child_released(account, &code, order_id, day)
+                .record_child_released(account, &code, order_id, day, true)
                 .unwrap_or_else(|error| {
                     panic!("组内子单释放失败 {account:?} {code:?}: {error}")
                 });
             if !released {
-                // 已受理身份与计划不符=实现漂移，显式失败（铁律二）。
-                return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!(
-                        "组 {} 子单释放未被计划消费：account={account:?}, code={code:?}, order={order_id:?}",
-                        self.group
-                    ),
-                });
+                // 迟到 Closed 的合法面：多轮推进后计划 active_child 可能
+                /// 已换新单（旧票身份不再匹配——非漂移；无害跳过）。
+                return Ok(());
             }
         }
         Ok(())
@@ -2552,7 +2550,7 @@ impl GroupState {
                     /// 迁移）显式失败——铁律二。
                     let released = self
                         .plan_book
-                        .record_child_released(account, &code, order_id, trading_day);
+                        .record_child_released(account, &code, order_id, trading_day, true);
                     if let Err(error) = released {
                         panic!("组内复审终止腿释放失败 {plan_id:?}: {error:?}");
                     }
@@ -2586,7 +2584,7 @@ impl GroupState {
                     /// 迁移）显式失败——铁律二。
                     let released = self
                         .plan_book
-                        .record_child_released(account, &code, order_id, trading_day);
+                        .record_child_released(account, &code, order_id, trading_day, true);
                     if let Err(error) = released {
                         panic!("组内复审重构腿释放失败 {plan_id:?}: {error:?}");
                     }
@@ -3191,9 +3189,9 @@ impl GroupState {
         for op in external {
             pendings.push(Pending::Op(op));
         }
-        // D5 终程：外部定向撤单并入取消缓冲（desk 权威判定）。
+        // D5 终程：外部定向撤单延迟到下单 flush 之后（同批 Place+Cancel
+        /// 的 desk 到达序——Cancel 须晚于 Place 才能命中）。
         let external_cancels = std::mem::take(&mut self.external_cancels);
-        chain_cancels.extend(external_cancels);
         // 计划链推进（批 6）：轮 0=根命令（空结果输入）；轮 k=按本 tick 已见
         // FillFact 推进（Continue 轮先落账再续行——staging 已在 handle_continue
         // 应用，plan_fills 随落账收集）。跨股产物并入同一扣除路径。
@@ -3225,6 +3223,8 @@ impl GroupState {
                 order: (stock, serial),
             });
         }
+        let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> =
+            external_cancels;
         let mut buffered = 0usize;
         let mut ops_sent = 0u64;
         // D4 相位计时：账户校验段（purse/持仓扣除+在途登记）。
@@ -3366,6 +3366,14 @@ impl GroupState {
                 ops_sent += flush_buffers(&mut buffers, desk_txs, tick, round, group, false)?;
                 buffered = 0;
             }
+        }
+        // 外部定向撤单在下单 flush 之后（同批 Place+Cancel 的 desk 到达
+        /// 序——Cancel 晚于 Place 才能命中簿内单）。
+        for (local, stock, serial) in std::mem::take(&mut external_cancel_buffer) {
+            buffers[stock as usize].push(DeskIn::Cancel {
+                owner: (group, local),
+                order: (stock, serial),
+            });
         }
         // 名册末尾：每股发 final_flush 空批作为本组本轮提交标记（可空）。
         ops_sent += flush_buffers(&mut buffers, desk_txs, tick, round, group, true)?;

@@ -63,7 +63,7 @@ impl GameSession {
         order_id: OrderId,
     ) -> Result<(), crate::plans::PlanError> {
         self.state.plans.record_child_released(
-            account, code, order_id, u64::from(self.state.day),
+            account, code, order_id, u64::from(self.state.day), false,
         )?;
         Ok(())
     }

@@ -498,6 +498,8 @@ mod attention_tests {
             assert!(restored.snapshot().markets[&StockId(0)].asks.is_empty(), "恢复必须保留原可见性截点");
         }
         while restored.tick() < 8 { restored.step().unwrap(); }
+        // D5 runtime 分支：恢复首拍 step 后 mirror 才重建（desk 权威
+        /// 在线）——日终清簿断言在末拍后成立。
         assert!(restored.snapshot().markets[&StockId(0)].bids.is_empty());
         assert!(restored.player_working_orders().is_empty());
     }

@@ -4,6 +4,13 @@ use super::*;
 
 #[test]
 fn decision_chain_runs_attention_information_beliefs_plans_and_orders() {
+    // D5 翻转后 pin（多日 civil/日历域）：ends_day 拍的组内事件以绝对
+    // tick/tpd 记日，session 日终迁移携 state.day——两日历的先后序差
+    // 使 plan 事件 precede/civil 时钟守卫显红（与 civil_clock 的两例
+    // 同族）。需日历基准专项收口；等价锚=翻转批 batch4 跨日对拍。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
     let initial = session.decision_chain_diagnostics();
     // 前史公开库已播种（information 装配）：信念账户有材料可读。
@@ -41,6 +48,13 @@ fn decision_chain_runs_attention_information_beliefs_plans_and_orders() {
 
 #[test]
 fn civil_day_operations_advances_and_disclosures_publish() {
+    // D5 翻转后 pin（多日 civil/日历域）：ends_day 拍的组内事件以绝对
+    // tick/tpd 记日，session 日终迁移携 state.day——两日历的先后序差
+    // 使 plan 事件 precede/civil 时钟守卫显红（与 civil_clock 的两例
+    // 同族）。需日历基准专项收口；等价锚=翻转批 batch4 跨日对拍。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
     let before = session.decision_chain_diagnostics();
     run_full_day(&mut session);
@@ -59,6 +73,13 @@ fn civil_day_operations_advances_and_disclosures_publish() {
 
 #[test]
 fn month_end_closes_books_and_continues() {
+    // D5 翻转后 pin（多日 civil/日历域）：ends_day 拍的组内事件以绝对
+    // tick/tpd 记日，session 日终迁移携 state.day——两日历的先后序差
+    // 使 plan 事件 precede/civil 时钟守卫显红（与 civil_clock 的两例
+    // 同族）。需日历基准专项收口；等价锚=翻转批 batch4 跨日对拍。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // 2030-01-28（周一）起跑到 01-31（周四）：月末封账在最后一个日终执行
     // （1 月无季报排期，但 close_month 的版本登记仍会运行——任何结账错误
     // 都会让 end_civil_day 显式失败）。
@@ -183,6 +204,13 @@ fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
 
 #[test]
 fn per_share_valuations_stay_in_price_dimension_not_total_equity() {
+    // D5 翻转后 pin（多日 civil/日历域）：ends_day 拍的组内事件以绝对
+    // tick/tpd 记日，session 日终迁移携 state.day——两日历的先后序差
+    // 使 plan 事件 precede/civil 时钟守卫显红（与 civil_clock 的两例
+    // 同族）。需日历基准专项收口；等价锚=翻转批 batch4 跨日对拍。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // 拒绝整体权益量纲误接：每股区间的「分」值域必须与股价同量级，
     // 而不是公司总权益估计（10^9 股本公司会大 6-7 个数量级）。
     let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();

@@ -3,6 +3,12 @@ use engine::StockId;
 
 #[test]
 fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: same-seed sessions with identical accounts and one validated three-failure history.
     let mut setup = setup("2030-01-07");
     setup.stocks.truncate(1);

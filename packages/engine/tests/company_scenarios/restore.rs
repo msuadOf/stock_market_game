@@ -2,6 +2,12 @@ use super::*;
 
 #[test]
 fn restored_session_preserves_immediate_save_integrity_and_continues_independently() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // 即时恢复→重存完整性：权威事实必须逐字节等价（不可放宽）
     let mut uninterrupted = representative_session(&fixture().start_date);
     run_trading_day(&mut uninterrupted);

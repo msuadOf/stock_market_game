@@ -753,7 +753,7 @@ fn owner_batch_installs_nothing_when_a_later_fact_fails() {
         .unwrap();
     // 装腿后清空在途子单，使批内第二事实（超腿剩余的成交）在前项成功后失败。
     plans
-        .record_child_released(first.account(), first.code(), OrderId(1), 0)
+        .record_child_released(first.account(), first.code(), OrderId(1), 0, false)
         .unwrap();
     let plans_before = plans.clone();
 

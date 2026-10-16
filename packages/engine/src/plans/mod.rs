@@ -444,6 +444,7 @@ impl PlanBook {
         code: &StockId,
         order_id: OrderId,
         trading_day: u64,
+        allow_beyond_horizon: bool,
     ) -> Result<bool, PlanError> {
         let Some(plan_id) = self
             .by_account_stock
@@ -459,7 +460,7 @@ impl PlanBook {
         if plan.active_child_order_id() != Some(order_id) {
             return Ok(false);
         }
-        plan.record_child_order_canceled(order_id, trading_day)?;
+        plan.record_child_order_canceled(order_id, trading_day, allow_beyond_horizon)?;
         Ok(true)
     }
 
@@ -596,7 +597,7 @@ impl PlanBook {
             PlanEvent::ChildOrderCanceled {
                 order_id,
                 trading_day,
-            } => plan.record_child_order_canceled(order_id, trading_day)?,
+            } => plan.record_child_order_canceled(order_id, trading_day, false)?,
             PlanEvent::ChildOrderFilled {
                 order_id,
                 qty,

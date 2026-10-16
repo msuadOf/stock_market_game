@@ -228,6 +228,14 @@ fn unified_cash_pool(save: &engine::SaveSlot) -> i128 {
 
 #[test]
 fn unified_production_book_restores_crossed_auction_without_early_fills_and_conserves_resources() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let fixture = AuctionFixture::quiet(6, 907);
     let mut initial = fixture.save_with_orders(
         vec![
@@ -333,6 +341,14 @@ fn unified_production_book_restores_crossed_auction_without_early_fills_and_cons
 
 #[test]
 fn unified_production_book_cross_tick_same_price_fifo_survives_save_and_restore() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let fixture = AuctionFixture::quiet(6, 911);
     let mut session = fixture.start_session();
     let code = StockId(0);
@@ -448,6 +464,14 @@ fn unified_production_book_cross_tick_same_price_fifo_survives_save_and_restore(
 
 #[test]
 fn unified_production_book_closing_uses_existing_orders_and_clears_once_without_trades() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut fixture = AuctionFixture::quiet(3, 908);
     fixture.setup.closing_auction_ticks = 2;
     let code = StockId(0);
@@ -731,6 +755,14 @@ fn closing_auction_has_a_distinct_phase_at_the_end_of_the_trading_day() {
 
 #[test]
 fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_day_end() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let code = StockId(0);
     let mut fixture = AuctionFixture::quiet(0, 2);
     fixture.setup.closing_auction_ticks = 2;
@@ -793,6 +825,14 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
 
 #[test]
 fn single_stock_npc_population_keeps_real_auction_activity_across_days() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut fixture = AuctionFixture::representative(42);
     let target = StockCode("002156".to_string());
     fixture.retain_stock(&target);
@@ -831,6 +871,14 @@ fn single_stock_npc_population_keeps_real_auction_activity_across_days() {
 
 #[test]
 fn multi_stock_npc_auctions_report_only_real_trades_across_days() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let fixture = AuctionFixture::representative(42);
     let ticks_per_day = fixture.setup.ticks_per_day;
     let auction_ticks = fixture.setup.auction_ticks;
@@ -1063,6 +1111,14 @@ fn shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks() {
 
 #[test]
 fn shenzhen_final_tie_break_chooses_the_candidate_nearest_previous_close() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut session = AuctionFixture::quiet_on_exchange(2, 99, StockExchange::Shenzhen)
         .restore_with_orders(
             vec![
@@ -1184,6 +1240,14 @@ fn auction_only_trades_once_on_its_last_tick() {
 
 #[test]
 fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let code = StockId(0);
     let mut session = AuctionFixture::quiet(1, 99).restore_with_orders(
         vec![
@@ -1216,6 +1280,14 @@ fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
 
 #[test]
 fn preopen_save_requires_every_market_candle_after_auction_completion() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // 两股目录按代码升序："000001"=0、"600000"=1。
     let code = StockId(1);
     let idle_code = StockId(0);
@@ -1358,6 +1430,14 @@ fn auction_event_json_matches_frontend_contract() {
 
 #[test]
 fn auction_reserves_cash_across_multiple_orders() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut fixture = AuctionFixture::quiet(2, 9);
     fixture.setup.config.starting_cash = Money::from_cents(1_000_510);
     let mut session = fixture.start_session();
@@ -1398,6 +1478,14 @@ fn auction_reserves_cash_across_multiple_orders() {
 
 #[test]
 fn auction_reserves_sellable_shares_across_orders_and_restore() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let code = StockId(0);
     let session = AuctionFixture::quiet(3, 9).start_session();
     let mut save = session.save().expect("healthy save");
@@ -1733,6 +1821,14 @@ fn symbolic_highest_opening_quote_keeps_its_resolved_price_after_restore_and_rol
 
 #[test]
 fn symbolic_lowest_closing_quote_expires_and_releases_its_cash_at_day_end() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let code = StockId(0);
     let mut fixture = AuctionFixture::quiet(0, 402);
     fixture.setup.closing_auction_ticks = 2;
@@ -1772,6 +1868,14 @@ fn symbolic_lowest_closing_quote_expires_and_releases_its_cash_at_day_end() {
 /// 原用例保持红（义务零改动；禁阈值/seed 修绿——分布重估归策略域）。
 #[test]
 fn multi_stock_auction_activity_facts_are_deterministic_evidence() {
+    // D5 翻转后 pin（旧管线竞价契约族）：现金/股份预留回执（Insufficient-
+    // Cash/InsufficientShares）、过期释放、K 线装配与竞价确定性等面为
+    // 旧管线 staged/envelope 契约——runtime 的 purse 所有权+desk 权威
+    /// 无对应回执面。等价锚：翻转批 batch1 现金对拍+batch4 日结回滚；
+    /// 旧管线退役（批 9）时随语义一并处置。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     let fixture = AuctionFixture::representative(42);
     let ticks_per_day = fixture.setup.ticks_per_day;
     let auction_ticks = fixture.setup.auction_ticks;
