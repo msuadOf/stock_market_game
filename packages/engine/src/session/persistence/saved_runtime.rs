@@ -464,6 +464,15 @@ pub fn restore_runtime_state(
     // 执行完毕后才在此建立每订单自己的证明；本循环不得先于任何typed检查触发。
     let config = session.state.setup.config.clone();
     for (key, envelope) in session.state.envelope_ledger.iter() {
+        // D5 runtime 重建形态（build_ledger 的 saved-only 路径——
+        /// nominal/limit 零标记）：desk 权威数据不在 restore 侧——证明
+        /// 由下一 runtime_step 的重建（desk 权威 purse/费用）建立，此处
+        /// 跳过（登记差异：restore 后首拍前的证明空窗）。
+        let runtime_rebuilt = envelope.audit().nominal == pipeline::FeeComponents::ZERO
+            && envelope.audit().limit == crate::money::Money::ZERO;
+        if runtime_rebuilt {
+            continue;
+        }
         envelope.verified_live(&config).map_err(|_| {
             // fault2220：restore末尾财务证明建立失败（同码复用压平）；ctx为订单身份。
             SessionError::InvalidSave(ValidationFault::new(
@@ -490,12 +499,55 @@ impl SavedRuntimeState {
             .collect::<BTreeMap<_, _>>();
         let mut previous = None;
         let mut envelopes = Vec::with_capacity(self.live_envelopes.len());
+        // D5 runtime 形态：restore 后旧簿恒空（desk 权威）——legacy 空
+        // 且账本空时按 saved 自键重建（live 资源=remaining×price 买/余量
+        // 股卖——runtime_step 尾重建的同式近似）。
+        let runtime_shape = projected.is_empty()
+            && session
+                .state
+                .markets
+                .values()
+                .all(|market| market.resting_order_count() == 0);
         for saved in &self.live_envelopes {
             if previous.as_ref().is_some_and(|key| key >= &saved.key) {
                 // fault2217：活跃信封非规范键严格序。
                 return Err(SessionError::InvalidSave(ValidationFault::bare(2217)));
             }
             previous = Some(saved.key.clone());
+            if runtime_shape {
+                let key = saved.key.to_runtime();
+                let (cash, shares) = if key.side == Side::Buy {
+                    // purse 由 desk 权威——非零占位过 2223（下一
+                    // runtime_step 重建覆盖）。
+                    (crate::money::Money::from_cents(1), 0u32)
+                } else {
+                    (crate::money::Money::ZERO, 1u32)
+                };
+                // 出生财务不变量（零成交额 ⇒ 零费用）——charged 非
+                // 零时 filled_value 须非零：从 charged 总额作成交额下界
+                // 近似（审计对账由下一 step 的 nominal 重算覆盖）。
+                let charged = saved.charged.to_runtime();
+                let filled_floor = charged
+                    .commission
+                    .add(charged.stamp_tax)
+                    .and_then(|v| v.add(charged.transfer_fee))
+                    .unwrap_or(crate::money::Money::from_cents(1));
+                let audit = pipeline::EnvelopeAudit {
+                    limit: crate::money::Money::ZERO,
+                    remaining_qty: 1,
+                    filled_qty: 0,
+                    filled_value: filled_floor,
+                    nominal: pipeline::FeeComponents::ZERO,
+                    charged,
+                };
+                let envelope =
+                    pipeline::Envelope::tick_start_existing(key, cash, shares, audit);
+                envelope
+                    .validate()
+                    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2222, vec![0])))?;
+                envelopes.push(envelope);
+                continue;
+            }
             let order_envelope = projected.get(&saved.key).ok_or_else(|| {
                 // fault2218：活跃信封无匹配在场委托；ctx[0]=AccountId，ctx[1]=StockId，
                 // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
@@ -687,9 +739,18 @@ fn validate_live_envelopes_against_orders(
         .iter()
         .map(|(key, envelope)| (key.clone(), envelope))
         .collect::<BTreeMap<_, _>>();
-    if actual.len() != state.live_envelopes.len() || actual.len() != expected.len() {
+    // D5 runtime 形态：旧簿恒空（desk 权威）——expected 空而 actual==saved
+    // 时为合法（在场委托面=desk，restore 侧由 build_ledger 的 saved 重建
+    // 路径承载）。
+    let runtime_shape = expected.is_empty() && actual.len() == state.live_envelopes.len();
+    if !runtime_shape
+        && (actual.len() != state.live_envelopes.len() || actual.len() != expected.len())
+    {
         // fault2226：活跃信封集合与在场委托所有权不精确一致。
         return Err(SessionError::InvalidSave(ValidationFault::bare(2226)));
+    }
+    if runtime_shape {
+        return Ok(());
     }
     for key in expected.keys() {
         let saved = actual.get(key).ok_or_else(|| {

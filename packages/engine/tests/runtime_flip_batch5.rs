@@ -79,7 +79,7 @@ fn batch5_restore_then_drive() {
     let slot = session.save().expect("存档");
     let mut restored = GameSession::restore(&slot).expect("恢复");
     let mut driver =
-        engine::runtime::drive::RuntimeDriver::from_session(&restored).expect("恢复态驱动器");
+        engine::runtime::drive::RuntimeDriver::from_session(&mut restored).expect("恢复态驱动器");
     driver.adopt_session_seq(&restored);
     for _ in 0..5 {
         driver
@@ -114,7 +114,7 @@ fn batch5_publication_channel_alive_after_day_end() {
 fn batch5_diag_minute_counts() {
     use engine::runtime::drive::RuntimeDriver;
     let mut session = GameSession::new(setup_1stock(), 421).expect("会话");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for _ in 0..50 {
         driver.step_frame_equivalent(&mut session).expect("步进");

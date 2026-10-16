@@ -173,7 +173,7 @@ fn typed_private_plan_failure_is_poisoned_without_mutating_authority() {
 #[test]
 fn sol3_runtime_step_failure_stops_install() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&game).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
     driver.adopt_session_seq(&game);
     // 注入 tick1 校验失败（世界 Abort——step 层失败）。
     driver.set_world_validator_for_test(Box::new(|ev| {
@@ -205,7 +205,7 @@ fn sol3_runtime_step_failure_stops_install() {
 #[test]
 fn sol3_runtime_install_failure_rolls_back_advanced_state() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&game).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
     driver.adopt_session_seq(&game);
     let tick_before = game.tick();
     let seq_before = game.current_seq();
@@ -280,7 +280,7 @@ fn sol5_set_runtime_attention_syncs_scheduler_heap() {
 #[test]
 fn sol3b_install_failure_rolls_back_market_view_writes() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&game).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
     driver.adopt_session_seq(&game);
     let hist_before = game.runtime_price_history_len(&crate::StockId(0));
     let attention_before = game.runtime_attention_state();

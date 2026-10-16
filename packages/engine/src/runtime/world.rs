@@ -45,6 +45,9 @@ pub struct DeskStockSpec {
     pub max_order_qty_market: u32,
     /// D3a-2：种子日 K（会话预置历史——desk 为链观察日 K 权威）。
     pub initial_daily_bars: Vec<(i64, i64, i64, i64, u64)>,
+    /// D5 restore 等价：种子 tick 价格历史（restore/接管场景 desk 起步
+    /// 恢复会话历史——save 校验 fault2010 的长度面）。
+    pub initial_recent_prices: Vec<i64>,
     /// D3a-2：种子外累计 traded 日数（0=全新）。
     pub initial_traded_days: u64,
 }
@@ -59,6 +62,7 @@ impl DeskStockSpec {
             max_order_qty_limit: 1_000_000,
             max_order_qty_market: 1_000_000,
         initial_daily_bars: Vec::new(),
+            initial_recent_prices: Vec::new(),
         initial_traded_days: 0,
         }
     }
@@ -508,6 +512,7 @@ impl World {
                 initial_daily_bars: stock_seed_bars.remove(0),
                 initial_traded_days: stock_seed_traded.remove(0),
                 initial_orders: initial_desk_orders.get(s as usize).cloned().unwrap_or_default(),
+                initial_recent_prices: stock_spec.initial_recent_prices,
             };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))

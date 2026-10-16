@@ -78,7 +78,7 @@ fn old_pipeline_and_runtime_driver_both_drive_without_divergence() {
 
     // B：RuntimeDriver。
     let mut session_b = GameSession::new(equiv_setup(), 42).expect("会话 B 构造");
-    let mut driver = RuntimeDriver::from_session(&session_b).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session_b).expect("驱动器构造");
     let mut last_seq: Option<u64> = None;
     for _ in 0..ticks {
         let events = driver.step(&mut session_b).expect("runtime tick");
@@ -119,7 +119,7 @@ fn runtime_driver_cash_conservation_holds_across_session_writeback() {
         .keys()
         .copied()
         .collect();
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     for _ in 0..30 {
         driver.step(&mut session).expect("tick");
     }
@@ -203,7 +203,7 @@ fn step_frame_equivalent_advances_tick_and_poisons_on_failure() {
     use super::drive::RuntimeDriver;
     // 成功路径：tick 前进（安装段第一段）+ 会话可继续。
     let mut session = GameSession::new(equiv_setup(), 21).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     for expected_tick in 1..=5u64 {
         driver
             .step_frame_equivalent(&mut session)
@@ -232,7 +232,7 @@ fn seq_channel_unifies_runtime_cursor_with_session_authority() {
     use super::drive::RuntimeDriver;
     // 构造时权威 seq=0；驱动 5 步后 state.seq=driver.next_seq>0（单调续接）。
     let mut session = GameSession::new(equiv_setup(), 33).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     assert_eq!(driver.next_seq(), session.current_seq(), "游标与权威合一");
     let mut prev = session.current_seq();
@@ -251,7 +251,7 @@ fn market_views_install_into_session_markets() {
     // 驱动 20 tick（成交后 last_price 移动）→ install_market_views：
     // 会话每股 last_price 与 runtime 收束点一致。
     let mut session = GameSession::new(equiv_setup(), 55).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for _ in 0..20 {
         driver.step_frame_equivalent(&mut session).expect("步进");
@@ -306,7 +306,7 @@ fn envelope_conservation_equivalence_runtime_vs_pipeline() {
         .sum();
     // runtime。
     let mut session_b = GameSession::new(equiv_setup(), 42).expect("会话 B");
-    let mut driver = RuntimeDriver::from_session(&session_b).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session_b).expect("驱动器");
     driver.adopt_session_seq(&session_b);
     for _ in 0..ticks {
         driver
@@ -399,7 +399,7 @@ fn candle_projection_writes_into_session_candle_book() {
     // 驱动跨日（ticks_per_day=240 太长——用行情安装+日结路径验证通道；
     // 简化：直接驱动若干 tick 后 install_candles 不失败 + 会话可查询）。
     let mut session = GameSession::new(equiv_setup(), 77).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for _ in 0..10 {
         driver.step_frame_equivalent(&mut session).expect("步进");

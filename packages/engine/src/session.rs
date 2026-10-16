@@ -2024,7 +2024,7 @@ impl GameSession {
             })
     }
 
-    fn current_market_minute(&self) -> u64 {
+    pub fn current_market_minute(&self) -> u64 {
         let day_start = u64::from(self.state.day)
             .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
             .expect("u32 session day times 240 fits u64");

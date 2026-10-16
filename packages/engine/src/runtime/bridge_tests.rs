@@ -334,7 +334,7 @@ fn runtime_driver_steps_session_with_account_writeback_and_events() {
     use super::drive::RuntimeDriver;
     // 会话（2 股）→ 驱动器 → 3 tick：现金回写守恒、事件 seq 单调。
     let mut session = crate::GameSession::new(setup_fixture(), 7).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     assert!(
         driver.id_map.len() >= 1,
         "玩家并入投影（AccountId(0) 惯例位）"
@@ -462,7 +462,7 @@ fn driver_day_end_advances_runtime_and_civil_together() {
     // runtime 日结（组日翻转/清簿）+ 会话自然日推进（civil clock 前进）。
     let mut session = crate::GameSession::new(setup_fixture(), 11).expect("会话构造");
     let day_before = session.day();
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     for _ in 0..240 {
         driver.step(&mut session).expect("驱动 tick");
     }

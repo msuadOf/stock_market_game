@@ -63,7 +63,7 @@ pub fn setup_1stock() -> SessionSetup {
 /// 驱动 N tick 收集全部事件（runtime 路径）。
 pub fn runtime_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     let mut session = GameSession::new(setup_1stock(), seed).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     let mut all = Vec::new();
     let tpd = 240u64;

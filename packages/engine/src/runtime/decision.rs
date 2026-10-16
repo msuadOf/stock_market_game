@@ -93,7 +93,7 @@ pub fn evaluate_attention(
     );
     let prev_due = profile.next_due;
     profile.seed = rng.state();
-    profile.next_due = tick + wait;
+    profile.next_due = tick.saturating_add(wait);
     (observes, prev_due)
 }
 

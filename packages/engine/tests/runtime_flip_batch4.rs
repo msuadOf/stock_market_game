@@ -27,7 +27,7 @@ fn batch4_pipeline_day_advances() {
 fn batch4_t1_unfreeze_clears_frozen_after_day_end() {
     use engine::runtime::drive::RuntimeDriver;
     let mut session = GameSession::new(setup_1stock(), 199).expect("会话");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for _ in 1..=240 {
         driver
@@ -77,7 +77,7 @@ fn batch4_day_parity() {
 #[test]
 fn batch4_continue_after_day_end() {
     let mut session = GameSession::new(setup_1stock(), 304).expect("会话");
-    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for t in 1..=245 {
         driver.step_frame_equivalent(&mut session).expect("步进");
@@ -181,7 +181,7 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
     let mut driver = None;
     for seed in [310u64, 311, 312, 313, 314, 315, 316, 317] {
         let mut s = GameSession::new(setup_1stock(), seed).expect("会话");
-        let mut d = engine::runtime::drive::RuntimeDriver::from_session(&s).expect("驱动器");
+        let mut d = engine::runtime::drive::RuntimeDriver::from_session(&mut s).expect("驱动器");
         d.adopt_session_seq(&s);
         // 搜索判据含"末 8 拍内有受理"（提高日终在途单概率——清簿事件
         // 依赖日终时刻的挂单）。命中后弃用搜索 driver 重建（240 tick
@@ -206,7 +206,7 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
     }
     let mut session = session.expect("候选序内存在有受理单形态（清簿依赖日终在途）");
     let mut driver = driver.expect("驱动器");
-    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&session).expect("驱动器");
+    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
     for _ in 1..=240 {
         driver.step_frame_equivalent(&mut session).expect("步进");

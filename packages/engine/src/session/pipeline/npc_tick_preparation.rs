@@ -224,7 +224,7 @@ mod t1_account_task_tests {
         let intents = crate::session::pipeline::take_staged_intents_for_runtime(&mut session)
             .expect("staged 批在场");
         assert!(!intents.is_empty(), "fixture 须产生 staged intents");
-        let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&session)
+        let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session)
             .expect("驱动器构造（消费已完成，无二次消费）");
         let collected = driver.collect_attention().expect("组注意力收集");
         // retail 位=local 1（id_map=[玩家, retail]；玩家恒 u64::MAX 不到期）。

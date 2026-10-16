@@ -67,7 +67,7 @@ impl RuntimeDriver {
     /// `next_due` ← 会话下次候选 tick、`seed` ← 注意力 RNG 状态
     /// （此前合成固定 seed/`i%8` 初始 due，恢复前后行为不同）。
     /// 无 attention 状态的账户（玩家惯例位）保留合成缺省。
-    pub fn from_session(session: &GameSession) -> Result<Self, String> {
+    pub fn from_session(session: &mut GameSession) -> Result<Self, String> {
         let setup: SessionSetup = session.export_setup_for_runtime();
         let n_stocks = setup.stocks.len();
         let (cash, shares, invested, recovered, ever_held, ids) =
@@ -223,6 +223,12 @@ impl RuntimeDriver {
         // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
         // partial_fill 红证）。owner 不在名册=投影缺口，显式失败。
         spec.initial_desk_orders = resting_order_seeds_from_session(session, &ids)?;
+        // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）。
+        for (stock_spec, history) in spec.stocks.iter_mut().zip(session.runtime_price_histories()) {
+            stock_spec.initial_recent_prices = history;
+        }
+        // D5 adopt 收口：迁入后清旧簿（双域一致——save fault2226）。
+        session.runtime_clear_resting_for_adoption();
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let driver = Self {
             world,
@@ -1530,13 +1536,53 @@ fn resting_order_seeds_from_session(
     session: &GameSession,
     id_map: &[crate::AccountId],
 ) -> Result<Vec<Vec<super::desk::DeskRestingSeed>>, String> {
+    // D5 restore 等价：runtime 形态（旧簿空）下单权威=restore 重建的信封
+    // 账本（save 的 live_envelopes）——desk 种子从账本键恢复（purse 由
+    // buy_order_reservation 与 resource 占位同式；价格面以 charged 下界
+    // 无法精确——用 audit.limit==ZERO 的重建标记形态时退 1 分占位，
+    // 真实价格面由卖/买腿的 desk 撮合域重建（后续 step 覆盖））。
     let snapshot = session.runtime_resting_orders_snapshot();
+    let from_ledger = snapshot.iter().all(|(_, orders)| orders.is_empty());
+    let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = Vec::new();
+    if from_ledger {
+        for (key, envelope) in session.runtime_envelope_ledger_snapshot() {
+            let local = id_map
+                .iter()
+                .position(|id| *id == key.account)
+                .ok_or_else(|| {
+                    format!("账本挂单 owner 不在世界名册（无法迁移）：{:?}", key.account)
+                })? as super::LocalIdx;
+            let stock = key.stock.0 as usize;
+            if seeds.len() <= stock {
+                seeds.resize(stock + 1, Vec::new());
+            }
+            let price = if envelope.audit().limit.cents() > 0 {
+                envelope.audit().limit.cents()
+            } else {
+                1
+            };
+            let qty = envelope.audit().remaining_qty;
+            let purse = if key.side == crate::orderbook::Side::Buy {
+                price.saturating_mul(i64::from(qty))
+            } else {
+                0
+            };
+            seeds[stock].push(super::desk::DeskRestingSeed {
+                owner: (0, local),
+                side: key.side,
+                price,
+                qty,
+                purse,
+            });
+        }
+        return Ok(seeds);
+    }
     let n_stocks = snapshot
         .iter()
         .map(|(code, _)| code.0 as usize + 1)
         .max()
         .unwrap_or(0);
-    let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = vec![Vec::new(); n_stocks];
+    seeds = vec![Vec::new(); n_stocks];
     for (code, orders) in snapshot {
         for order in orders {
             let local = id_map
@@ -1548,11 +1594,19 @@ fn resting_order_seeds_from_session(
                         order.owner, code
                     )
                 })? as super::LocalIdx;
+            // 买腿 purse=全额预留（挂单价×量——desk 侧扣减权威；
+            /// envelope live 资源面）。
+            let purse = if order.side == crate::orderbook::Side::Buy {
+                order.price.cents() * i64::from(order.qty)
+            } else {
+                0
+            };
             seeds[code.0 as usize].push(super::desk::DeskRestingSeed {
                 owner: (0, local),
                 side: order.side,
                 price: order.price.cents(),
                 qty: order.qty,
+                purse,
             });
         }
     }

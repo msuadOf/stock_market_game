@@ -1053,43 +1053,97 @@ fn complete_restore_rejects_live_sell_when_edited_assets_cannot_cover_it() {
 fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation() {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // D5 自成交拍板 A：retail 位承接卖家（双账户）。
+    setup.npcs.retail_count = 1;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(10_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let code = StockId(0);
     let mut session = GameSession::new(setup, 42).expect("runtime_state fixture 必须有效");
-    session
-        .fixture_account_mut(&AccountId(0))
-        .expect("player must exist")
-        .grant_position(code.clone(), 200, Money::from_cents(1))
-        .expect("fixture holding must be valid");
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: LimitPrice::Fixed(Money::from_cents(1)),
-                qty: 100,
-            },
-        )
-        .unwrap();
-    session.step().expect("buyer order tick must commit");
-
-    let cash_before_fill = session.state.accounts[&AccountId(0)].cash();
-    session
-        .enqueue_player_intent(
-            AccountId(0),
+    // D5 自成交拍板 A（双轨）：runtime 分支双账户（retail 位承接卖家——
+    // desk 按 A 股自成交限制不撮同账户对手；旧管线缺口登记台账：旧管线
+    // 缺自成交限制，随退役消亡）；默认分支保留原单账户形态（旧管线
+    // 结算链的零售持仓 epoch 面对种子卖不适用——原序即原语义）。
+    let runtime_mode = std::env::var_os("ENGINE_STEP_RUNTIME").is_some();
+    let mut cash_before_fill;
+    if runtime_mode {
+        session
+            .fixture_account_mut(&AccountId(1))
+            .expect("retail seller must exist")
+            .grant_position(code.clone(), 100, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        let mut seed_events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
+                // 200 挂出、买 100——余 100 在途（"partially-filled seller
+                // envelope must remain live" 的 runtime 形态）。
                 qty: 200,
             },
-        )
-        .unwrap();
-    session.step().expect("partial-fill tick must commit");
+            &mut seed_events,
+        );
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        session.step().expect("buyer crosses seeded seller tick must commit");
+        cash_before_fill = session.state.accounts[&AccountId(0)].cash();
+        // 双账户下买方首拍即付（gross 断言的"卖拍后现金"基线=首拍后值）。
+        let gross_pre = Money::from_cents(100);
+        let pre_cost = gross_pre
+            .add(session.state.setup.config.commission(gross_pre).unwrap())
+            .unwrap()
+            .add(session.state.setup.config.transfer_fee(gross_pre).unwrap())
+            .unwrap();
+        cash_before_fill = session
+            .state
+            .accounts[&AccountId(0)]
+            .cash()
+            .add(pre_cost)
+            .unwrap();
+    } else {
+        session
+            .fixture_account_mut(&AccountId(0))
+            .expect("player must exist")
+            .grant_position(code.clone(), 200, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        session.step().expect("buyer order tick must commit");
+        cash_before_fill = session.state.accounts[&AccountId(0)].cash();
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 200,
+                },
+            )
+            .unwrap();
+        session.step().expect("partial-fill tick must commit");
+    }
+    // 默认分支后续断言的"卖拍后现金"——runtime 分支已推到等价基线。
     let gross = Money::from_cents(100);
     let expected_buy_cost = gross
         .add(session.state.setup.config.commission(gross).unwrap())
@@ -1152,28 +1206,51 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
 fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit() {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // D5 自成交拍板 A：retail 位承接卖家（双账户）。
+    setup.npcs.retail_count = 1;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let code = StockId(0);
     let mut session = GameSession::new(setup, 43).expect("runtime_state fixture 必须有效");
-    session
-        .fixture_account_mut(&AccountId(0))
-        .expect("player must exist")
-        .grant_position(code.clone(), 1_300, Money::from_cents(1))
-        .expect("fixture holding must be valid");
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
+    // D5 自成交拍板 A（双轨）：runtime=retail 位双账户种子卖（desk A 股
+    // 自成交限制；旧管线缺口登记台账）；默认=原玩家单账户 enqueue（旧
+    // 管线结算 epoch 面对种子卖不适用）。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        session
+            .fixture_account_mut(&AccountId(1))
+            .expect("retail seller must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        let mut seed_events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
             },
-        )
-        .unwrap();
+            &mut seed_events,
+        );
+    } else {
+        session
+            .fixture_account_mut(&AccountId(0))
+            .expect("player must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 1_300,
+                },
+            )
+            .unwrap();
+    }
     session.step().expect("resting seller tick must commit");
 
     for qty in [100, 1_000] {
@@ -1235,28 +1312,50 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
 fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // D5 自成交拍板 A：retail 位承接卖家（双账户）。
+    setup.npcs.retail_count = 1;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let code = StockId(0);
     let mut session = GameSession::new(setup, 44).expect("runtime_state fixture 必须有效");
-    session
-        .fixture_account_mut(&AccountId(0))
-        .expect("player must exist")
-        .grant_position(code.clone(), 1_300, Money::from_cents(1))
-        .expect("fixture holding must be valid");
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
+    // D5 自成交拍板 A（双轨）：runtime=retail 位双账户种子卖（同上登记）；
+    /// 默认=原玩家单账户（同拍三单——旧管线结算 epoch 面对种子卖不适用）。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        session
+            .fixture_account_mut(&AccountId(1))
+            .expect("retail seller must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        let mut seed_events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
             },
-        )
-        .unwrap();
+            &mut seed_events,
+        );
+    } else {
+        session
+            .fixture_account_mut(&AccountId(0))
+            .expect("player must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 1_300,
+                },
+            )
+            .unwrap();
+    }
     for qty in [100, 1_000] {
         session
             .enqueue_player_intent(

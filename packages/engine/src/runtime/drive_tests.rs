@@ -9,7 +9,7 @@ use crate::GameSession;
 #[test]
 fn sol3_install_candles_propagates_collection_errors() {
     let mut session = GameSession::new(setup_fixture(), 77).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     driver
         .step_frame_equivalent(&mut session)
@@ -40,7 +40,7 @@ fn sol5_from_session_restores_attention_state() {
         .map(|(id, due, rng)| (id, (due, rng)))
         .collect();
     assert!(!attention.is_empty(), "会话有 NPC attention 状态");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     let collected = driver.collect_attention().expect("注意力收集");
     let mut checked = 0usize;
     for (_g, entries) in collected {
@@ -67,7 +67,7 @@ fn sol6_history_len_flows_from_session_setup() {
     let mut setup = setup_fixture();
     setup.history_len = 32;
     let mut session = GameSession::new(setup, 99).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 越过竞价窗（15 tick）后连续 32 tick：价格历史应装满 32 条。
     for _ in 0..(15 + 32) {
@@ -92,7 +92,7 @@ fn d1_runtime_decisions_use_session_strategy_params() {
         let mut setup = setup_fixture();
         setup.strategy_params.retail.arrival_rate = arrival;
         let mut session = GameSession::new(setup, 5).expect("会话构造");
-        let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+        let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
         driver.adopt_session_seq(&session);
         let mut accepted = 0usize;
         for _ in 0..20 {
@@ -160,7 +160,7 @@ fn d3_individual_strategy_projection_flows_sampled_parameters() {
 #[test]
 fn d3a2_group_observations_match_session_read_face() {
     let mut session = GameSession::new(setup_fixture(), 7).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 跨日：日 K 入档+次日分钟累积——观察面非平凡（有 completed days
     // 与 current day open）。
@@ -211,7 +211,7 @@ fn d3a2b_group_belief_states_match_session_projection() {
     setup.npcs.inst_count = 3; // 机构位——belief_participants 在册
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 11).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     let collected = driver.collect_belief().expect("信念态收集");
     assert_eq!(collected.len(), 1, "单组");
@@ -352,7 +352,7 @@ fn d3a2c_cost_basis_writes_back_to_session_positions() {
     } else {
         crate::AccountId(1)
     };
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 独立期望值：开局成本基基线（构造投影正确性由初始快照隐含覆盖）
     // + 逐 tick 累计买腿成交额。
@@ -483,7 +483,7 @@ fn d3a2c_group_open_derivation_matches_session_observe() {
     setup.npcs.inst_count = 3;
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 17).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 首开仓轮（1 tick：due 位 observe+开仓+首子单；无既有计划——多轮
     // 复审/加仓的同源红证属 D3a-3 后半/D3b）。
@@ -617,7 +617,7 @@ fn d3a2c_plans_debug_projects_group_plan_book_at_delivery() {
     setup.npcs.inst_count = 3;
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 23).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..5 {
         driver
@@ -668,7 +668,7 @@ fn d3a3_group_first_child_quote_matches_shared_decide_plan_quote() {
     setup.npcs.inst_count = 3;
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 31).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 首轮（tick1：竞价申报窗内——挂单受理不即撮合，子单可观察）。
     driver
@@ -882,7 +882,7 @@ fn d3a3_execution_leg_registers_and_prevents_duplicate_children() {
     setup.npcs.inst_count = 3;
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 37).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 跨竞价点（tick10 预演/15 完成撮合）+连续段。
     let mut accepted: std::collections::BTreeMap<
@@ -966,7 +966,7 @@ fn solmid_echo_open_derivation_is_read_only_and_idempotent() {
     setup.npcs.inst_count = 3;
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 43).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..3 {
         driver
@@ -997,7 +997,7 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
     setup.strategy_params.inst.order_size = 100;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 独立源：belief 位（local>=2）按 (账户, 买卖方向) 的成交股数累计。
     let mut expect: std::collections::BTreeMap<(crate::AccountId, u8), u32> =
@@ -1189,7 +1189,7 @@ fn solmid_day_end_drain_releases_child_tickets() {
     setup.strategy_params.inst.order_size = 100;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 与 lifecycle 红证同款注入（喂簿/吃单）——制造在途子单。
     for _ in 0..6 {
@@ -1259,7 +1259,7 @@ fn sol4_day_end_abort_restores_execution_leg_with_tickets() {
     setup.strategy_params.inst.order_size = 100;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     // 与 lifecycle 红证同款注入（喂簿/吃单）——制造在途子单。
     for _ in 0..6 {
@@ -1398,7 +1398,7 @@ fn solmid_plan_projection_carries_terminal_records() {
     setup.strategy_params.inst.order_size = 100;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..12 {
         let views = driver.world_public_views().to_vec();
@@ -1467,7 +1467,7 @@ fn belief1b_delivery_advances_information_domain_only() {
     setup.npcs.inst_count = 2;
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 13).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..3 {
         driver
@@ -1529,7 +1529,7 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     setup.npcs.inst_count = 0;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 83).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     let seller = crate::AccountId(1);
     let buyer = crate::AccountId(0);
@@ -1623,7 +1623,7 @@ fn sol7th_projection_matrix_active_sell_passive_buy_and_add_on() {
     setup.auction_ticks = 0;
     setup.strategy_params.retail.arrival_rate = 0.0;
     let mut session = GameSession::new(setup, 97).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     let player = crate::AccountId(0);
     let retail = crate::AccountId(1);
@@ -1801,7 +1801,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     setup.strategy_params.inst.order_size = 1_000;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..6 {
         let views = driver.world_public_views().to_vec();
@@ -1945,7 +1945,7 @@ fn sol8th_retail_first_hold_experience_initializes_same_tick() {
         // 清仓**先于**驱动器构造（世界投影承载清后状态——构造后清会被
         // 组权威回写整值覆盖，首买形态不成立）。
         session.fixture_clear_holding_for_test(retail, &code);
-        let driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+        let driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
         found = Some((session, driver));
         break;
     }
@@ -2050,7 +2050,7 @@ fn d3b2_plan_event_injection_pauses_group_plan() {
     setup.strategy_params.inst.order_size = 1_000;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..6 {
         let views = driver.world_public_views().to_vec();
@@ -2136,7 +2136,7 @@ fn d3b3_paused_plan_with_child_routes_targeted_cancel() {
     setup.strategy_params.inst.order_size = 1_000;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..6 {
         let views = driver.world_public_views().to_vec();
@@ -2234,7 +2234,7 @@ fn d3b4_review_records_facts_in_group_book() {
     setup.strategy_params.inst.order_size = 1_000;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 52).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     for _ in 0..6 {
         let views = driver.world_public_views().to_vec();
@@ -2304,7 +2304,7 @@ fn d3b5_install_personal_updates_group_authority() {
     setup.strategy_params.retail.order_size_mean = 100;
     setup.strategy_params.inst.order_size = 100;
     let mut session = GameSession::new(setup, 61).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     driver
         .step_frame_equivalent(&mut session)
@@ -2345,7 +2345,7 @@ fn d5_zero_qty_intent_routes_rejection_event() {
     setup.npcs.inst_count = 0;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 71).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     let views = driver.world_public_views().to_vec();
     let upper: Vec<i64> = views.iter().map(|v| v.daily_upper_limit).collect();

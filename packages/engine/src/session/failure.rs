@@ -112,6 +112,43 @@ impl GameSession {
         self.force_due_via_runtime(&ids, world_next);
     }
 
+    /// D5 restore 等价：信封账本条目快照（desk 种子恢复——runtime 形态
+    /// 下旧簿空，restore 重建的账本承载单身份）。
+    pub fn runtime_envelope_ledger_snapshot(
+        &self,
+    ) -> Vec<(crate::session::pipeline::EnvelopeKey, crate::session::pipeline::Envelope)> {
+        self.state
+            .envelope_ledger
+            .iter()
+            .map(|(key, envelope)| (key.clone(), envelope.clone()))
+            .collect()
+    }
+
+    /// D5 restore 等价：逐股 tick 价格历史读面（组世界构造的 desk
+    /// recent_prices 种子——restore/接管场景长度与 save 校验一致）。
+    pub fn runtime_price_histories(&self) -> Vec<Vec<i64>> {
+        self.state
+            .price_history
+            .iter()
+            .map(|(_, history)| history.iter().map(|price| price.cents()).collect())
+            .collect()
+    }
+
+    /// D5 adopt 收口：旧簿在途单迁入 desk 后清空 session 侧（双域一致
+    /// ——save 的 project_live_envelopes 读旧簿，残留使 fault2226 集合
+    /// 失配；runtime 下旧簿不再权威）。
+    pub fn runtime_clear_resting_for_adoption(&mut self) {
+        self.mark_external_mutation();
+        let snapshot = self.state.markets.clone();
+        for (code, market) in snapshot.iter() {
+            for order in market.resting_orders() {
+                if let Some(m) = self.state.markets.get_mut(code) {
+                    let _ = m.cancel(order.id);
+                }
+            }
+        }
+    }
+
     /// D5 #2：个体基础观察概率读面（npc_attention 的个体采样值——组内
     /// evaluate 门输入；无 attention 态的位返回 None）。
     pub fn runtime_attention_base_for(&self, id: &crate::AccountId) -> Option<f64> {
@@ -385,6 +422,36 @@ impl GameSession {
         let install_injected = self.runtime_install_failure;
         #[cfg(not(test))]
         let install_injected = false;
+        // 安装错误传播（不吞）——失败即撤销已推进状态并 poison，
+        // 不返回部分成功。
+        let install_outcome = if install_injected {
+            match driver.install_market_views(self) {
+                Ok(()) => Err(
+                    "安装失败注入（Sol 三审 (b) 测试面——行情已写入后失败）".to_owned(),
+                ),
+                // market_views 自身失败同样走注入描述（注入场景聚焦后半）。
+                Err(e) => Err(format!("{e}（注入点：market_views）")),
+            }
+        } else {
+            driver
+                .install_market_views(self)
+                .and_then(|()| driver.install_candles(self))
+        };
+        if let Err(install_err) = install_outcome {
+            self.rollback_runtime_step(baseline);
+            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "GameSession::step_via_runtime::install".to_owned(),
+                description: install_err,
+            }));
+        }
+        // D5 诊断面派生：retail 拒收诊断（旧管线 continuous lifecycle
+        /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
+        /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
+        /// 仅派生已迁移的 Rejected）。
+        self.state.last_retail_order_events.clear();
+        for account in self.state.retail_experience.keys().copied().collect::<Vec<_>>() {
+            self.record_retail_intent_rejections(account, &events);
+        }
         // D5 envelope 投影：desk 在途单重建 session 信封账本（审计面——
         /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
         ///（与事件 id 一致）。下拍重建覆盖（权威在 desk）。
@@ -441,10 +508,16 @@ impl GameSession {
                         transfer_fee: crate::money::Money::from_cents(fact.charged_transfer_fee),
                     },
                 };
-                let cash = crate::money::Money::ZERO;
-                let shares = 0u32;
+                // live resources：买=purse（desk 预留）、卖=余量股数
+                //（ledger 校验 live 行须有资源——全零非法）。
+                let (cash, shares) = if fact.side == crate::orderbook::Side::Buy {
+                    (crate::money::Money::from_cents(fact.purse), 0u32)
+                } else {
+                    (crate::money::Money::ZERO, fact.qty)
+                };
+                // origin=TickStart（save quiet point 校验的 rebased 形态）。
                 envelopes.push(
-                    crate::session::pipeline::Envelope::created_at_validation(
+                    crate::session::pipeline::Envelope::tick_start_existing(
                         key, cash, shares, audit,
                     ),
                 );
@@ -465,49 +538,11 @@ impl GameSession {
                 return Err(self.poison_runtime_step(fatal));
             }
         };
-        // D5 日界·world 段（ends_day 拍，先于行情安装）：desk roll_day/
-        /// 组日翻（日 K 归档/清簿——install 的 candle/价格面取滚后权威；
-        /// civil 侧留给显式 end_civil_day，重复日结由 world D0 互斥拒绝）。
-        let ticks_per_day = u64::from(self.state.setup.ticks_per_day);
-        if ticks_per_day > 0 && self.tick() % ticks_per_day == 0 {
-            if let Err(e) = driver.world_day_end_for_step() {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::day_end".to_owned(),
-                    description: e,
-                }));
-            }
-        }
-        // 安装错误传播（不吞）——失败即撤销已推进状态并 poison，
-        // 不返回部分成功。
-        let install_outcome = if install_injected {
-            match driver.install_market_views(self) {
-                Ok(()) => Err(
-                    "安装失败注入（Sol 三审 (b) 测试面——行情已写入后失败）".to_owned(),
-                ),
-                // market_views 自身失败同样走注入描述（注入场景聚焦后半）。
-                Err(e) => Err(format!("{e}（注入点：market_views）")),
-            }
-        } else {
-            driver
-                .install_market_views(self)
-                .and_then(|()| driver.install_candles(self))
-        };
-        if let Err(install_err) = install_outcome {
-            self.rollback_runtime_step(baseline);
-            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                location: "GameSession::step_via_runtime::install".to_owned(),
-                description: install_err,
-            }));
-        }
-        // D5 诊断面派生：retail 拒收诊断（旧管线 continuous lifecycle
-        /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
-        /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
-        /// 仅派生已迁移的 Rejected）。
-        self.state.last_retail_order_events.clear();
-        for account in self.state.retail_experience.keys().copied().collect::<Vec<_>>() {
-            self.record_retail_intent_rejections(account, &events);
-        }
+        // D5 lifecycle 投影：runtime 下 NPC 报价生命周期权威=desk TTL
+        ///（save 的 2170 校验绑定旧簿在场委托——runtime 旧簿恒空，投影
+        /// 空集通过；TTL 到期撤销由 desk begin_tick 承载）。
+        self.mark_external_mutation();
+        self.state.npc_order_lifecycles = Vec::new();
         // D5 日界安装（ends_day 拍）：session 侧交易日终迁移（day 推进/
         /// candle 提交/T+1 解锁/DayBoundary——与旧管线 continuous_tick_
         /// finalizer 同一迁移；在行情安装**之后**（本拍 active candle 先

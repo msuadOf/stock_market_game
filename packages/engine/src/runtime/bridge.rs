@@ -58,6 +58,7 @@ pub fn world_spec_from_setup(
                 // D3a-2：种子日 K 由 from_session 覆盖（bridge 默认空——
                 // 无会话来源的世界从零起）。
                 initial_daily_bars: Vec::new(),
+                initial_recent_prices: Vec::new(),
                 initial_traded_days: 0,
             })
         })

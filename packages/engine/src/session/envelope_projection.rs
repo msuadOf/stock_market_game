@@ -35,6 +35,18 @@ struct LiveOrderProjection<'a> {
 
 impl GameSession {
     pub fn project_live_envelopes(&self) -> Result<Vec<pipeline::Envelope>, StepFatal> {
+        // D5 runtime 分支：信封权威=runtime_step 尾重建的 envelope_ledger
+        //（旧簿在 adopt 后不再持有在途单——desk 权威）。restore 后驱动器
+        // 不在位，但 runtime 存档的旧簿恒空——以「旧簿无在途单」判 runtime
+        // 形态（ledger 非空时直接投影）。
+        let legacy_resting_empty = self
+            .state
+            .markets
+            .values()
+            .all(|market| market.resting_order_count() == 0);
+        if legacy_resting_empty {
+            return Ok(self.state.envelope_ledger.iter().map(|(_, e)| e.clone()).collect());
+        }
         let mut envelopes = Vec::new();
         for (code, market) in &self.state.markets {
             for order in market.resting_orders() {

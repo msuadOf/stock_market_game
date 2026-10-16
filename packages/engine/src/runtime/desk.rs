@@ -43,6 +43,8 @@ pub struct DeskRestingSeed {
     pub side: Side,
     pub price: i64,
     pub qty: u32,
+    /// 买腿 purse（卖恒 0）——adopt 单的 live 资源面。
+    pub purse: i64,
 }
 
 /// 每股交易部构造参数（世界构造期确定，运行期不变）。
@@ -75,6 +77,8 @@ pub struct DeskSetup {
     pub initial_tick: u64,
     /// D5 adopt：构造期直入簿的会话旧簿在途单。
     pub initial_orders: Vec<DeskRestingSeed>,
+    /// D5 restore 等价：种子 tick 价格历史。
+    pub initial_recent_prices: Vec<i64>,
     /// D3a-2：种子日 K（会话预置历史投影——(open, high, low, close,
     /// volume)，不过滤；desk 为链观察的日 K 权威承载）。
     pub initial_daily_bars: Vec<(i64, i64, i64, i64, u64)>,
@@ -2062,8 +2066,16 @@ pub fn desk_main(
     }
     let who = WorkerId::Desk(setup.stock);
     let initial_orders = std::mem::take(&mut setup.initial_orders);
+    let initial_recent_prices = std::mem::take(&mut setup.initial_recent_prices);
     let initial_tick = setup.initial_tick;
     let mut state = DeskState::new(setup, n_groups, config);
+    // D5 restore 等价：种子 tick 价格历史（容量裁剪）。
+    for price in initial_recent_prices {
+        state.market.recent_prices.push_back(price.max(1));
+        if state.market.recent_prices.len() > state.setup.history_len {
+            state.market.recent_prices.pop_front();
+        }
+    }
     // D5 adopt：旧簿在途单直入初始簿（不撮合、不受理回执——已在旧
     /// 管线受理过；serial 序=构造期前段，与消息链首单同起 0）。
     for seed in initial_orders {
@@ -2074,7 +2086,7 @@ pub fn desk_main(
             side: seed.side,
             price: seed.price,
             qty: seed.qty,
-            purse: 0,
+            purse: seed.purse,
             filled_value: 0,
             charged_commission: 0,
             charged_stamp_tax: 0,
@@ -2172,6 +2184,7 @@ fn process_msg(
                             side,
                             price: order.price,
                             qty: order.qty,
+                            purse: order.purse,
                             filled_value: order.filled_value,
                             charged_commission: order.charged_commission,
                             charged_stamp_tax: order.charged_stamp_tax,

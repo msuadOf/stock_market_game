@@ -257,6 +257,7 @@ fn order_cap_differs_by_board() {
             max_order_qty_limit: 300_000,
             max_order_qty_market: 150_000,
             initial_daily_bars: Vec::new(),
+            initial_recent_prices: Vec::new(),
             initial_traded_days: 0,
         },
     ];
