@@ -171,6 +171,35 @@ impl GameSession {
             .map(|state| state.base_probability)
     }
 
+    /// D5 读面（cfg(test)）：desk 在途簿事实（owner/方向/价/量——旧管线
+    /// bid_depth/resting_orders_for 断言面的 runtime 等价源；desk 权威）。
+    #[cfg(test)]
+    pub(crate) fn runtime_resting_book_for_test(
+        &mut self,
+        code: &crate::StockId,
+    ) -> Vec<(crate::AccountId, crate::Side, crate::money::Money, u32)> {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        let facts = driver.collect_resting_facts().expect("在途簿收集");
+        let idx = code.0 as usize;
+        facts
+            .get(idx)
+            .map(|book| {
+                book.iter()
+                    .map(|fact| {
+                        let account = driver
+                            .account_by_local(u16::try_from(fact.owner.1).expect("local 下标"))
+                            .expect("owner 在名册");
+                        (account, fact.side, crate::money::Money::from_cents(fact.price), fact.qty)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// D5 #4 fixture 通道（cfg(test)）：推远名册账户的组内 next_due
     ///（"无 due tick"形态——t3 stale trace 面的 runtime 等价）。
     #[cfg(test)]

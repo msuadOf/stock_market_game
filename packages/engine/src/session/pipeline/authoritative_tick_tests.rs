@@ -222,22 +222,46 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
         ids,
         [OrderId(1), OrderId(2), OrderId(3)].into_iter().collect()
     );
-    assert_eq!(
-        session.state.markets[&code].bid_depth(),
-        vec![(Money::from_cents(900), 500)]
-    );
-    assert_eq!(
-        session.state.markets[&code].resting_orders_for(first)[0].qty,
-        200
-    );
-    assert_eq!(
-        session.state.markets[&code].resting_orders_for(second)[0].qty,
-        200
-    );
-    assert_eq!(
-        session.state.markets[&code].resting_orders_for(player)[0].qty,
-        100
-    );
+    // D5 读面适配：runtime 下簿权威在 desk（session 旧簿恒空）——
+    /// bid_depth/resting_orders_for 断言经 desk 簿事实读面承载。
+    if crate::runtime::step_runtime_enabled() {
+        let book = session.runtime_resting_book_for_test(&code);
+        let bid_total: u32 = book
+            .iter()
+            .filter(|(_, side, price, _)| {
+                *side == Side::Buy && *price == Money::from_cents(900)
+            })
+            .map(|(_, _, _, qty)| *qty)
+            .sum();
+        assert_eq!(bid_total, 500);
+        for (owner, expected) in [(first, 200u32), (second, 200), (player, 100)] {
+            assert_eq!(
+                book.iter()
+                    .find(|(account, side, _, _)| *account == owner && *side == Side::Buy)
+                    .map(|(_, _, _, qty)| *qty)
+                    .unwrap_or(0),
+                expected,
+                "desk 簿 {owner:?} 的买侧余量"
+            );
+        }
+    } else {
+        assert_eq!(
+            session.state.markets[&code].bid_depth(),
+            vec![(Money::from_cents(900), 500)]
+        );
+        assert_eq!(
+            session.state.markets[&code].resting_orders_for(first)[0].qty,
+            200
+        );
+        assert_eq!(
+            session.state.markets[&code].resting_orders_for(second)[0].qty,
+            200
+        );
+        assert_eq!(
+            session.state.markets[&code].resting_orders_for(player)[0].qty,
+            100
+        );
+    }
     assert!(session.state.pending_player.is_empty());
 }
 
