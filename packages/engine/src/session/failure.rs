@@ -411,18 +411,20 @@ impl GameSession {
                     order: crate::OrderId(fact.order_serial),
                     side: fact.side,
                 };
-                let nominal = crate::runtime::fees::FeeQuote::nominal(
+                let nominal = match crate::runtime::fees::FeeQuote::nominal(
                     &self.state.setup.config,
                     fact.side,
                     crate::money::Money::from_cents(fact.filled_value),
-                )
-                .map_err(|e| {
-                    StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::envelope".to_owned(),
-                        description: format!("名义费用重算失败：{e:?}"),
+                ) {
+                    Ok(nominal) => nominal,
+                    Err(e) => {
+                        self.rollback_runtime_step(baseline);
+                        return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                            location: "GameSession::step_via_runtime::envelope".to_owned(),
+                            description: format!("名义费用重算失败：{e:?}"),
+                        }));
                     }
-                })
-                .map_err(StepFatal::from)?;
+                };
                 let audit = crate::session::pipeline::EnvelopeAudit {
                     limit: crate::money::Money::from_cents(fact.price),
                     remaining_qty: fact.qty,

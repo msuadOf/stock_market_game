@@ -5088,6 +5088,11 @@ mod committable_state_tests {
     #[test]
     #[cfg(not(target_family = "wasm"))]
     fn successful_step_transfers_one_complete_old_state_and_releases_it_once() {
+        // D5 pin+登记（旧管线专有机制）：defer_swap/Job 计数=旧管线关键
+        // 路径的旧状态转移机制（runtime 无对应面——std-thread 所有权
+        // 模型无 tick shadow 交换）。等价锚：翻转批 batch1-5 的 tick/
+        // 账户/事件对拍承载权威等价；本机制面在 runtime 不存在，非
+        // 未迁移缺口。
         use std::cell::RefCell;
         use std::rc::Rc;
         use std::sync::Arc;
@@ -5152,6 +5157,11 @@ mod committable_state_tests {
     #[test]
     #[cfg(not(target_family = "wasm"))]
     fn failed_step_does_not_transfer_authority_to_drop_backend() {
+        // D5 pin+登记（旧管线专有机制）：defer_swap/Job 计数=旧管线关键
+        // 路径的旧状态转移机制（runtime 无对应面——std-thread 所有权
+        // 模型无 tick shadow 交换）。等价锚：翻转批 batch1-5 的 tick/
+        // 账户/事件对拍承载权威等价；本机制面在 runtime 不存在，非
+        // 未迁移缺口。
         use std::cell::RefCell;
         use std::rc::Rc;
         let mut session =

@@ -416,7 +416,6 @@ pub struct RestingFact {
     pub side: Side,
     pub price: i64,
     pub qty: u32,
-    pub original_qty: u32,
     pub filled_value: i64,
     pub charged_commission: i64,
     pub charged_stamp_tax: i64,

@@ -2172,7 +2172,6 @@ fn process_msg(
                             side,
                             price: order.price,
                             qty: order.qty,
-                            original_qty: order.qty,
                             filled_value: order.filled_value,
                             charged_commission: order.charged_commission,
                             charged_stamp_tax: order.charged_stamp_tax,

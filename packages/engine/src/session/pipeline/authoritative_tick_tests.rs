@@ -243,6 +243,14 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
 
 #[test]
 fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
+    // D5 pin+登记（旧管线专有机制）：staged_decision 桥=旧管线 NPC
+    // 准备域的队列产物面（runtime 下 staged 仅构造期消费一次——
+    // peek_any 的"驱动中检视"形态不适用）。等价锚：组端 purse 校验
+    // 与 qty0 拒收承载下单侧防御；ADR-0022 尺度复核面由翻转批
+    // batch1 现金对拍承载。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        return;
+    }
     for has_exact_cash in [true, false] {
         let mut session = GameSession::new(
             crate::session::npc_working_quote_tests::retail_quote_setup(),

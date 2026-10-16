@@ -184,8 +184,8 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
         let mut d = engine::runtime::drive::RuntimeDriver::from_session(&s).expect("驱动器");
         d.adopt_session_seq(&s);
         // 搜索判据含"末 8 拍内有受理"（提高日终在途单概率——清簿事件
-        // 依赖日终时刻的挂单；弃用首命中 driver 重跑 240 tick 的旧形态
-        // （双倍时长+注入点漂移），改为搜中保留 driver 直接续用）。
+        // 依赖日终时刻的挂单）。命中后弃用搜索 driver 重建（240 tick
+        // 重放——时长翻倍、civil 注入点落在第二日终，形态仍有效）。
         let mut has_accept = false;
         let mut recent_accept = false;
         for i in 1..=240 {

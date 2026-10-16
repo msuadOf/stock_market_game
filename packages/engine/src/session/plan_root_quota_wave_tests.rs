@@ -1215,6 +1215,14 @@ fn e2_inflight_roots_dead_zone_keeps_progressing_to_delivery() {
 /// F-proof 断言红。
 #[test]
 fn a1_stepfatal_form_atomicity_via_real_failing_tick() {
+    // D5 pin+登记（旧管线专有机制）：staged 注入事务原子性=旧管线
+    // staged handover 桥（runtime 首步消费面 take_staged_intents
+    // 为构造期一次性——注入中途失败重放面不适用）。等价锚：组端
+    // Abort/undo 可逆日志（翻转批 batch4 civil 回滚全量对账）承载
+    // 原子性语义。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        return;
+    }
     let (mut session, _) = execution_fixture_with_compute(dedicated_compute());
     let compute = session.compute.clone();
     let plan_root_entries = Arc::new(AtomicUsize::new(0));
