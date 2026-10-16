@@ -606,21 +606,32 @@ impl RuntimeDriver {
             .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
         match plans_projection {
             Ok(collected) => {
-                if let Some((_, mut plans)) = collected.into_iter().next() {
+                let group_has_plans = collected
+                    .iter()
+                    .any(|(_, plans)| plans.plan_ids().next().is_some());
+                if group_has_plans {
+                    let (_, mut plans) = collected
+                        .into_iter()
+                        .find(|(_, plans)| plans.plan_ids().next().is_some())
+                        .expect("上方已判非空");
                     // Sol 整改 4：权威状态控制的完整投影——组簿有任何
                     // 计划记录（含 terminal：最后计划结束的事实必须覆盖
-                    /// session 旧镜像）即安装；空簿不覆盖（迁移期注入面
-                    /// 保护——组从未开仓时保留 session 侧测试注入）。
-                    if plans.plan_ids().next().is_some() {
-                        // Sol 五审修复 1：本拍成交事实合入执行腿（组内
-                        /// staging 下一 Start 合并——公开计划读面同拍；
-                        /// 下一拍被组权威整值覆盖，不双计）。
-                        if !trades.is_empty() {
-                            let day = u64::from(session.day());
-                            self.apply_same_tick_plan_fills(&mut plans, &trades, day)?;
-                        }
-                        session.set_runtime_plans(plans);
+                    /// session 旧镜像）即安装。
+                    // Sol 五审修复 1：本拍成交事实合入执行腿（组内
+                    /// staging 下一 Start 合并——公开计划读面同拍；
+                    /// 下一拍被组权威整值覆盖，不双计）。
+                    if !trades.is_empty() {
+                        let day = u64::from(session.day());
+                        self.apply_same_tick_plan_fills(&mut plans, &trades, day)?;
                     }
+                    session.set_runtime_plans(plans);
+                } else if !trades.is_empty() {
+                    // D5 cross_stock 收口：组簿无计划（迁移期注入面——
+                    /// session 侧测试注入的计划）时，本拍成交事实对
+                    /// session plans 同拍合入（与组簿非空路径同式；
+                    /// 下一拍组权威接管后此分支自然失效）。
+                    let day = u64::from(session.day());
+                    self.apply_same_tick_plan_fills_for_session(session, &trades, day)?;
                 }
             }
             Err(projection_error) => return Err(projection_error),
@@ -647,11 +658,39 @@ impl RuntimeDriver {
     /// 匹配活跃计划的活动子单推进成交（record_child_fill 语义：余量/
     /// 全成收口）。组内权威下一 Start 落账同值，投影不构成双计；无
     /// 匹配子单的事实（外部单/非计划腿）自然跳过。
+    /// D5 cross_stock：session 侧计划簿的同拍成交合入（组簿空、迁移期
+    /// 注入面保护的计划——与组簿路径同式）。
+    fn apply_same_tick_plan_fills_for_session(
+        &mut self,
+        session: &mut GameSession,
+        trades: &[super::protocol::DeskTradeFact],
+        day: u64,
+    ) -> Result<(), String> {
+        let mut plans = session.take_runtime_plans();
+        // 身份核用低 48 位（迁移期注入面的计划子单持旧管线 OrderId 域
+        /// ——无 stock 高位编码；组内链子单为全等核，见下方 fn）。
+        let result = self.apply_same_tick_plan_fills_inner(&mut plans, trades, day, false);
+        session.set_runtime_plans(plans);
+        result
+    }
+
     fn apply_same_tick_plan_fills(
         &self,
         plans: &mut crate::plans::PlanBook,
         trades: &[super::protocol::DeskTradeFact],
         day: u64,
+    ) -> Result<(), String> {
+        self.apply_same_tick_plan_fills_inner(plans, trades, day, true)
+    }
+
+    /// `strict_identity`：true=OrderId 全等核（组内链——stock 高位编码
+    /// 域）；false=低 48 位核（迁移期 session 注入面的旧管线 OrderId 域）。
+    fn apply_same_tick_plan_fills_inner(
+        &self,
+        plans: &mut crate::plans::PlanBook,
+        trades: &[super::protocol::DeskTradeFact],
+        day: u64,
+        strict_identity: bool,
     ) -> Result<(), String> {
         for tr in trades {
             // maker≡卖方/taker≡买方（归一化身份——费用与订单序列同序）。
@@ -680,8 +719,12 @@ impl RuntimeDriver {
                 let Some(child_order) = child_order else {
                     continue;
                 };
-                if child_order.0 != ((u64::from(tr.stock) << 48) | (order_serial & 0x0000_FFFF_FFFF_FFFF))
-                {
+                let identity_ok = if strict_identity {
+                    child_order.0 == ((u64::from(tr.stock) << 48) | (order_serial & 0x0000_FFFF_FFFF_FFFF))
+                } else {
+                    child_order.0 & 0x0000_FFFF_FFFF_FFFF == order_serial & 0x0000_FFFF_FFFF_FFFF
+                };
+                if !identity_ok {
                     continue;
                 }
                 // 身份已核——record_child_fill 的 Ok(false)/Err 均为投影

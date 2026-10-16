@@ -1754,7 +1754,7 @@ fn cumulative_fee_audit_buyer_requires_every_nominal_component() {
         filled_value: gross,
         charged: nominal
     }
-    .validate(&config)
+    .validate(&config, false)
     .unwrap());
     for charged in [
         SavedFeeComponents {
@@ -1775,7 +1775,7 @@ fn cumulative_fee_audit_buyer_requires_every_nominal_component() {
             filled_value: gross,
             charged
         }
-        .validate(&config)
+        .validate(&config, false)
         .unwrap());
     }
 }
@@ -1793,7 +1793,7 @@ fn cumulative_fee_audit_zero_and_negative_gross_keep_existing_boundaries() {
             zero.nominal(&config).unwrap(),
             SavedFeeComponents::default()
         );
-        assert!(zero.validate(&config).unwrap());
+        assert!(zero.validate(&config, false).unwrap());
         let negative = CumulativeFeeAudit {
             side,
             filled_value: Money::from_cents(-1),

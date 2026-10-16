@@ -2023,31 +2023,37 @@ pub(super) fn validate_saved_order_state(
                     vec![order.seq, u64::from(code.0)],
                 )));
             }
-            reservations.validate_quantity(
-                session,
-                order.owner,
-                code,
-                SavedOrderQuantity {
-                    side: order.side,
-                    limit: order.price,
-                    remaining_qty: order.qty,
-                    original_qty,
-                    filled_qty: order.filled_qty,
-                    filled_value: order.filled_value,
-                },
-            )?;
+            // D5：desk 镜像档的卖量/现金预留校验跳过（desk/组权威
+            /// ——session sellable/cash 口径不可比对）。
+            if !save.desk_mirrored_resting {
+                reservations.validate_quantity(
+                    session,
+                    order.owner,
+                    code,
+                    SavedOrderQuantity {
+                        side: order.side,
+                        limit: order.price,
+                        remaining_qty: order.qty,
+                        original_qty,
+                        filled_qty: order.filled_qty,
+                        filled_value: order.filled_value,
+                    },
+                )?;
+            }
             max_order_id = max_order_id.max(order.id.0);
-            reservations.record(
-                &session.state.setup.config,
-                order.owner,
-                code,
-                ReservationOrder {
-                    side: order.side,
-                    price: order.price,
-                    qty: order.qty,
-                    filled_value: order.filled_value,
-                },
-            )?;
+            if !save.desk_mirrored_resting {
+                reservations.record(
+                    &session.state.setup.config,
+                    order.owner,
+                    code,
+                    ReservationOrder {
+                        side: order.side,
+                        price: order.price,
+                        qty: order.qty,
+                        filled_value: order.filled_value,
+                    },
+                )?;
+            }
         }
     }
 
@@ -2075,6 +2081,12 @@ pub(super) fn validate_saved_order_state(
         }
     }
     for ((owner, code), reserved) in &sells {
+        if save.desk_mirrored_resting {
+            // D5：desk 镜像档——卖量锁定的权威=组 pending_sell/desk
+            /// （runtime 回写口径 qty 含在途），session 侧 sellable 不可
+            /// 比对（镜像单不占 session 预留）。
+            continue;
+        }
         let sellable = session
             .state
             .accounts

@@ -1156,10 +1156,21 @@ impl DeskState {
         .map_err(|_| over("卖腿名义费用失败"))?;
         let charged = seller_charge(nominal_after, sell_charged_before, Money::from_cents(value))
             .map_err(|_| over("卖腿费用分配失败"))?;
+        // 买腿应收费用分项（D5 fault2228 收口：ledger 审计的 Buy
+        /// charged==nominal 契约——desk 此前只扣 purse 不记分项，买腿
+        /// RestingFact 的 charged 恒 0 使 restore 审计显红）。
+        let buy_fees = if taker.side == Side::Buy || maker.side == Side::Buy {
+            super::fees::FeeQuote::nominal(&self.config, Side::Buy, Money::from_cents(value))
+                .map_err(|_| over("买腿名义费用失败"))?
+        } else {
+            Default::default()
+        };
         // 应用到 taker/maker 副本（写回簿/订单）。
         if taker.side == Side::Buy {
             taker.filled_value += value;
             taker.purse = buy_purse_after;
+            taker.charged_commission += buy_fees.commission.cents();
+            taker.charged_transfer_fee += buy_fees.transfer_fee.cents();
             taker.qty -= qty;
         } else {
             taker.filled_value = sell_filled_after;
@@ -1173,6 +1184,8 @@ impl DeskState {
             if m.side == Side::Buy {
                 m.filled_value += value;
                 m.purse = buy_purse_after;
+                m.charged_commission += buy_fees.commission.cents();
+                m.charged_transfer_fee += buy_fees.transfer_fee.cents();
                 m.qty -= qty;
             } else {
                 m.filled_value = sell_filled_after;

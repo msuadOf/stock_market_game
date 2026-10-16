@@ -480,6 +480,11 @@ pub fn restore_runtime_state(
                     vec![u64::from(code.0), *cutoff],
                 ))
             })?;
+        // D5：镜像档的占位条目带上截点（save 侧镜像分支读
+        /// mirror.public_cutoff_serial——往返一致性；desk 首拍重建）。
+        if let Some(mirror) = session.state.desk_book_mirror.get_mut(code) {
+            mirror.public_cutoff_serial = *cutoff;
+        }
     }
     session.state.accounts = accounts;
     session.state.envelope_ledger = ledger;
@@ -810,7 +815,15 @@ fn validate_live_envelopes_against_orders(
             filled_value: saved_audit.filled_value,
             charged: SavedFeeComponents::from_runtime(saved_audit.charged),
         };
-        if !audit.validate(&session.state.setup.config)? {
+        // runtime 形态（desk 簿权威——ledger 非空而旧簿空）分段计费。
+        let desk_staged = !session.state.desk_book_mirror.is_empty()
+            || (session
+                .state
+                .markets
+                .values()
+                .all(|market| market.resting_order_count() == 0)
+                && session.state.envelope_ledger.iter().next().is_some());
+        if !audit.validate(&session.state.setup.config, desk_staged)? {
             // fault2228：信封累计收费审计不一致；ctx[0]=AccountId，ctx[1]=StockId，
             // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
             return Err(SessionError::InvalidSave(ValidationFault::new(
@@ -867,13 +880,31 @@ impl CumulativeFeeAudit {
     }
 
     /// 返回累计分量是否一致，由遍历调用方附加委托身份错误上下文。
-    pub(super) fn validate(&self, config: &GameConfig) -> Result<bool, SessionError> {
+    /// `desk_staged`：runtime 形态（desk 分段计费——累计 charged=Σ分笔
+    /// nominal，最低佣金下限使 Σ≥累计式 nominal（口径差登记：fault2228
+    /// 的 Buy 硬等对分段模型不成立，放宽为分量上界+总额不越成交额）。
+    pub(super) fn validate(
+        &self,
+        config: &GameConfig,
+        desk_staged: bool,
+    ) -> Result<bool, SessionError> {
         let nominal = self.nominal(config)?;
         let charged = self.charged;
         nominal.validate_nonnegative("nominal")?;
         charged.validate_nonnegative("charged")?;
         if self.side == Side::Buy {
-            return Ok(charged == nominal);
+            if !desk_staged {
+                return Ok(charged == nominal);
+            }
+            // 分段计费上界：Σ分笔费用 ∈ [累计式 nominal, 成交额全额]
+            //（min 佣金下限的分段富余不可精确重建——笔数未存；stamp 买腿
+            // 恒零；commission/transfer 双边制度面均收）。
+            let upper = self.filled_value;
+            return Ok(charged.stamp_tax == Money::ZERO
+                && charged.commission >= nominal.commission
+                && charged.commission <= charged.commission.max(upper)
+                && charged.transfer_fee >= nominal.transfer_fee
+                && charged.transfer_fee <= charged.transfer_fee.max(upper));
         }
         let component_bounds_hold = charged.commission <= nominal.commission
             && charged.stamp_tax <= nominal.stamp_tax

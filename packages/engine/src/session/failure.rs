@@ -1085,6 +1085,12 @@ impl GameSession {
         self.state.plans = plans;
     }
 
+    /// D5 cross_stock：session 侧计划簿 take/restore（迁移期注入面保护
+    /// 的计划——driver 段同拍成交合入用；组簿权威接管前）。
+    pub fn take_runtime_plans(&mut self) -> crate::plans::PlanBook {
+        std::mem::take(&mut self.state.plans)
+    }
+
     /// 信念链参数/机构风格投影（D3a-2c 件4：组线程 Lifecycle 消费的策略面
     /// ——id→(链参数, 风格)；非信念机构 None）。
     pub fn runtime_chain_params(

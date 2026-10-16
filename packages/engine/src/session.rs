@@ -493,6 +493,11 @@ pub struct SaveSlot {
     /// parser 共同维护，避免把策略私有结构扩成通用宿主命令。
     #[ts(type = "import(\"../../save/schema/runtime-state\").SavedRuntimeState")]
     pub runtime_state: SavedRuntimeState,
+    /// D5：desk 镜像档标记（runtime 形态的在场委托=desk 事实重建——
+    /// restore 侧旧簿装载跳过，desk 种子自 ledger 恢复；旧档缺省
+    /// false 走旧簿重建）。
+    #[serde(default)]
+    pub desk_mirrored_resting: bool,
     pub setup: SessionSetup,
     #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
     pub groups: Vec<GroupStructure>,
@@ -3192,18 +3197,66 @@ impl GameSession {
             setup: self.state.setup.clone(),
             seed: self.state.seed,
             snapshot: self.save_snapshot_projection(),
-            resting_orders: self
-                .state
-                .markets
-                .iter()
-                .map(|(code, market)| (code.clone(), market.resting_orders()))
-                .collect(),
-            book_next_sequences: self
-                .state
-                .markets
-                .iter()
-                .map(|(code, market)| (code.clone(), market.book_next_sequence()))
-                .collect(),
+            desk_mirrored_resting: !self.state.desk_book_mirror.is_empty(),
+            resting_orders: if self.state.desk_book_mirror.is_empty() {
+                self.state
+                    .markets
+                    .iter()
+                    .map(|(code, market)| (code.clone(), market.resting_orders()))
+                    .collect()
+            } else {
+                // D5 fault1042 收口：runtime 形态的在场委托=desk 镜像
+                ///（session 旧簿恒空——计划在途子单的重建校验需要）。
+                /// filled 面置零（镜像不承载 desk 成交累计——审计面由
+                /// ledger（desk 事实）承载；置零使 Order 出生校验自洽）。
+                self.state
+                    .desk_book_mirror
+                    .iter()
+                    .map(|(code, mirror)| {
+                        (
+                            code.clone(),
+                            mirror
+                                .orders
+                                .iter()
+                                .map(|(owner, side, price, qty, serial, _fv)| Order {
+                                    id: OrderId(*serial),
+                                    owner: *owner,
+                                    side: *side,
+                                    price: *price,
+                                    qty: *qty,
+                                    original_qty: *qty,
+                                    filled_qty: 0,
+                                    filled_value: Money::ZERO,
+                                    seq: *serial,
+                                })
+                                .collect::<Vec<Order>>(),
+                        )
+                    })
+                    .collect()
+            },
+            book_next_sequences: if self.state.desk_book_mirror.is_empty() {
+                self.state
+                    .markets
+                    .iter()
+                    .map(|(code, market)| (code.clone(), market.book_next_sequence()))
+                    .collect()
+            } else {
+                // D5：desk 镜像档的簿序=desk serial 域（max+1；fault2079/
+                /// 1038 的序域一致性与旧簿解耦）。
+                self.state
+                    .desk_book_mirror
+                    .iter()
+                    .map(|(code, mirror)| {
+                        let max_serial = mirror
+                            .orders
+                            .iter()
+                            .map(|(_, _, _, _, serial, _)| *serial)
+                            .max()
+                            .unwrap_or(0);
+                        (code.clone(), max_serial.saturating_add(1))
+                    })
+                    .collect()
+            },
             filled_orders: self
                 .state
                 .markets
@@ -3232,7 +3285,19 @@ impl GameSession {
             npc_order_lifecycles: self.state.npc_order_lifecycles.clone(),
             pending_player: self.state.pending_player.clone(),
             ingress_receipt_cursors: self.state.ingress_receipt_cursors.clone(),
-            next_order_id: self.state.next_order_id,
+            next_order_id: {
+                // D5 fault2079：desk 镜像档的在场委托 id=desk serial——
+                /// next_order_id 须严格大于全部（session 域与 desk serial
+                /// 域取 max）。
+                let mirror_max = self
+                    .state
+                    .desk_book_mirror
+                    .values()
+                    .flat_map(|mirror| mirror.orders.iter().map(|(_, _, _, _, serial, _)| *serial))
+                    .max()
+                    .unwrap_or(0);
+                self.state.next_order_id.max(mirror_max.saturating_add(1))
+            },
             civil_clock: self.state.civil_clock.save(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
             company_operations: self.state.operations.as_ref().clone(),
@@ -3349,6 +3414,28 @@ impl GameSession {
         // 保留原始时间排序键与历史游标；空簿也可能已有已撤/已成交委托。
         // 在私有订单簿内验证，不允许恢复过程产生新的成交。
         for (code, market) in &mut sess.state.markets {
+            if save.desk_mirrored_resting {
+                // D5：desk 镜像档——在场委托权威=desk（ledger 种子恢复），
+                /// 旧簿装载跳过（镜像单重建会与 desk 双载且交叉簿形态
+                /// 使 set_matching_mode 显红 fault1038）；簿序游标仍装载
+                /// （save 对拍的 book_next_sequences 域一致性）。
+                market
+                    .restore_resting_orders(&[], save.book_next_sequences[code])
+                    .map_err(|_error| {
+                        SessionError::InvalidSave(ValidationFault::new(
+                            1038,
+                            vec![u64::from(code.0), 0],
+                        ))
+                    })?;
+                // 镜像档标志回装（空条目占位——save 侧判定
+                /// !mirror.is_empty() 的往返一致性；desk 种子在首拍
+                /// install 重建真实镜像）。
+                sess.state
+                    .desk_book_mirror
+                    .entry(code.clone())
+                    .or_default();
+                continue;
+            }
             let orders = save
                 .resting_orders
                 .get(code)
