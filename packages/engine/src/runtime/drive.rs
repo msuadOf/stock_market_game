@@ -29,6 +29,9 @@ pub struct RuntimeDriver {
     next_seq: u64,
     /// 日终清簿事件缓冲（take_drained_events 取走）。
     drained_events: Vec<Event>,
+    /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
+    /// 事件组装时分配 seq 投影为 IntentRejected）。
+    pending_rejections: Vec<(crate::StockId, crate::AccountId)>,
     /// 已投递的库版本（Belief-1b·下：稀疏判据）。
     last_library_version: Option<u32>,
 }
@@ -211,6 +214,7 @@ impl RuntimeDriver {
             id_map: ids,
             next_seq: 0,
             drained_events: Vec::new(),
+            pending_rejections: Vec::new(),
             last_library_version: None,
         };
         // Sol 二审修复集 5：旧簿在途挂单迁入世界（构造期一次——组 0 在
@@ -441,6 +445,21 @@ impl RuntimeDriver {
         let input = collect_lifecycle(&lifecycle, &receipts);
         events.extend(project_lifecycle_events(&input, &mut self.next_seq));
         events.extend(project_auction_events(&auction, &mut self.next_seq));
+        // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
+        for (code, owner) in std::mem::take(&mut self.pending_rejections) {
+            events.push(Event::IntentRejected {
+                seq: {
+                    let seq = self.next_seq;
+                    self.next_seq = seq
+                        .checked_add(1)
+                        .expect("事件 seq 溢出");
+                    seq
+                },
+                account: owner,
+                code,
+                reason: crate::RejectionReason::InvalidQuantity,
+            });
+        }
         let outcome = Ok(events);
         // D4 相位：派生审计段（回写后对账面——本批为标记位，D3 候选
         // 校验接入后承载实质校验计时）。
@@ -725,7 +744,7 @@ impl RuntimeDriver {
     /// pending_player 暂存的 NPC 意图会被误当玩家单，同 owner 撞
     /// 自成交零成交）。PlaceMarket/Cancel 需 OrderRef 跟踪——登记后续。
     fn route_external_intents(
-        &self,
+        &mut self,
         intents: &[crate::session::ReceiptBearingIntent],
         upper_limits: &[i64],
     ) -> Result<Vec<super::decision::PendingOp>, String> {
@@ -755,6 +774,13 @@ impl RuntimeDriver {
                 }
                 _ => (super::protocol::RoutedPrice::Highest, upper),
             };
+            // D5 组端校验：qty=0 意图路由层拒收（desk 侧为防御性 panic
+            /// ——组端先验，拒收事件入本拍事件流——旧管线 InvalidQuantity
+            /// 回执的 runtime 等价）。
+            if *qty == 0 {
+                self.pending_rejections.push((*code, r.owner));
+                continue;
+            }
             ops.push(super::decision::PendingOp {
                 local,
                 stock: code.0 as super::StockIdx,

@@ -398,6 +398,14 @@ impl GameSession {
                 description: install_err,
             }));
         }
+        // D5 诊断面派生：retail 拒收诊断（旧管线 continuous lifecycle
+        /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
+        /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
+        /// 仅派生已迁移的 Rejected）。
+        self.state.last_retail_order_events.clear();
+        for account in self.state.retail_experience.keys().copied().collect::<Vec<_>>() {
+            self.record_retail_intent_rejections(account, &events);
+        }
         Ok(events)
     }
 
