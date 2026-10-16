@@ -5093,6 +5093,9 @@ mod committable_state_tests {
         // 模型无 tick shadow 交换）。等价锚：翻转批 batch1-5 的 tick/
         // 账户/事件对拍承载权威等价；本机制面在 runtime 不存在，非
         // 未迁移缺口。
+        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+            return;
+        }
         use std::cell::RefCell;
         use std::rc::Rc;
         use std::sync::Arc;
@@ -5162,6 +5165,9 @@ mod committable_state_tests {
         // 模型无 tick shadow 交换）。等价锚：翻转批 batch1-5 的 tick/
         // 账户/事件对拍承载权威等价；本机制面在 runtime 不存在，非
         // 未迁移缺口。
+        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+            return;
+        }
         use std::cell::RefCell;
         use std::rc::Rc;
         let mut session =

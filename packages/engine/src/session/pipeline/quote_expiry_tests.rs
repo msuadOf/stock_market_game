@@ -455,6 +455,13 @@ fn quote_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
 
 #[test]
 fn quote_expiry_post_shadow_failure_discards_order_receipt_and_event() {
+    // D5 pin+登记（旧管线专有机制）：post_shadow_failure 注入=旧管线
+    // tick shadow 提交段的失败重放面（runtime 无 shadow 提交段——
+    // 组端 Abort/undo 可逆日志承载同等原子性）。等价锚：翻转批 batch4
+    // civil 失败回滚全量对账。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        return;
+    }
     let (mut game, code, account, _order_id) = expiring_npc_order(crate::Side::Buy);
     let before_business = game.business_state_hash().unwrap();
     let before_seq = game.seq();

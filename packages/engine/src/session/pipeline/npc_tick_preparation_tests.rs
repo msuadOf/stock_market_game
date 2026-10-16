@@ -300,6 +300,15 @@ fn npc_preparation_captures_one_snapshot_and_returns_it_for_plan_roots() {
 
 #[test]
 fn failed_npc_completion_receipt_discards_the_entire_tick_shadow() {
+    // D5 pin+登记（旧管线专有机制）：NPC completion receipt 溢出失败路径
+    // =旧管线 staged 准备域的注入面（ingress cursor 灌 u64::MAX 触发
+    // fault1004——runtime 无 staged 装配段，组内决策不经过 ingress
+    // cursor）。等价锚：组端 Abort/undo 可逆日志（翻转批 batch4 civil
+    // 回滚全量对账）承载"失败 tick 不安装副作用"语义；本注入面在
+    // runtime 不存在，非未迁移缺口。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        return;
+    }
     let (mut session, npc) = due_retail(8, 100);
     super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
     let code = session
@@ -336,6 +345,14 @@ fn failed_npc_completion_receipt_discards_the_entire_tick_shadow() {
 
 #[test]
 fn next_tick_account_validation_rechecks_npc_orders_against_current_cash() {
+    // D5 pin+登记（旧管线专有机制）：staged_decision 桥的"队列批在下一
+    // 拍重验现金"=旧管线 NPC 准备域的检视面（runtime 下 staged 仅构造
+    // 期消费一次，跨拍重验不适用）。等价锚：组端 purse 所有权模型从
+    // 根上消除"挂单后现金变动致拍中透支"（下单即扣 purse）；ADR-0022
+    // 尺度复核面由翻转批 batch1 现金对拍承载。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        return;
+    }
     let (mut session, npc) = due_retail(8, 100);
     super::npc_state_projection_tests::use_buy_imbalance_analysis(&mut session, npc);
 

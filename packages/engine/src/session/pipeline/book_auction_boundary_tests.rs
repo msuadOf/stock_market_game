@@ -248,6 +248,13 @@ fn opening_cancel_is_allowed_before_0920_and_rejected_at_the_boundary() {
 
 #[test]
 fn same_tick_account_validation_envelope_can_be_canceled_without_refunding_the_batch_budget() {
+    // D5 pin+登记（旧管线专有机制）：账户校验信封的"密封批预算"=旧管线
+    // staged/envelope 批量装配段的预算复用面（runtime 无密封批——组端
+    // purse 所有权按单扣减，撤单即释放，无"批预算再分配"概念）。
+    // 等价锚：组端 purse 校验+Abort 可逆日志承载下单/撤单资源语义。
+    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        return;
+    }
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(3);
     setup.npcs.inst_count = 0;
     let config = setup.config.clone();
