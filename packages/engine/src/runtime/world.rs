@@ -50,6 +50,8 @@ pub struct DeskStockSpec {
     pub initial_recent_prices: Vec<i64>,
     /// D3a-2：种子外累计 traded 日数（0=全新）。
     pub initial_traded_days: u64,
+    /// D5 restore 链最后一层：日内行情聚合种子（None=构造零点）。
+    pub initial_market: Option<super::desk::DeskMarketSeed>,
 }
 
 impl DeskStockSpec {
@@ -61,9 +63,10 @@ impl DeskStockSpec {
             limit_bps: 1000,
             max_order_qty_limit: 1_000_000,
             max_order_qty_market: 1_000_000,
-        initial_daily_bars: Vec::new(),
+            initial_daily_bars: Vec::new(),
             initial_recent_prices: Vec::new(),
-        initial_traded_days: 0,
+            initial_traded_days: 0,
+            initial_market: None,
         }
     }
 }
@@ -169,6 +172,12 @@ pub struct WorldSpec {
     /// D3a-3：初始曾持有位 `[group][local][stock]`（session positions 的
     /// 零量条目面投影——清仓后观察面 held 集成员）。
     pub initial_ever_held: Vec<Vec<Vec<bool>>>,
+    /// D5 restore 链最后一层：初始 T+1 当日冻结 `[group][local][stock]`
+    /// （session positions t1_locked 投影；缺省零）。
+    pub initial_frozen_today: Vec<Vec<Vec<u32>>>,
+    /// D5 restore 链最后一层：初始在途买占用 `[group][local]`（i64 分
+    /// 聚合额——restore 形态的 ledger 买种子 purse 投影；缺省零）。
+    pub initial_purse_held: Vec<Vec<i64>>,
     /// 组决策脚本工厂。
     pub script_for: Box<dyn Fn(GroupIdx) -> GroupScript>,
     /// 组端分段 flush 粒度（op 数）。
@@ -349,6 +358,8 @@ impl World {
             initial_invested,
             initial_recovered,
             initial_ever_held,
+            initial_frozen_today,
+            initial_purse_held,
             script_for,
             chunk,
             watchdog,
@@ -444,6 +455,25 @@ impl World {
                         *slot = v;
                     }
                 }
+                // D5 restore 链最后一层：T+1 当日冻结投影（save 前买入的
+                /// 当日冻结面——组侧冻结权威自此起步）。
+                if let Some(frozen) = initial_frozen_today
+                    .get(g as usize)
+                    .and_then(|by_group| by_group.get(l))
+                {
+                    for (slot, &v) in acct.frozen_today.iter_mut().zip(frozen) {
+                        *slot = v;
+                    }
+                }
+                // D5 restore 链最后一层：在途买占用投影（ledger 买种子
+                /// purse——组现金已同步扣减，公开现金=组现金+占用口径
+                /// 因此成立）。
+                if let Some(&purse) = initial_purse_held
+                    .get(g as usize)
+                    .and_then(|by_group| by_group.get(l))
+                {
+                    acct.buy_purse_held_cents = purse;
+                }
                 accounts.push(acct);
             }
             let group_decision = decision.clone().map(|mut d| {
@@ -513,6 +543,7 @@ impl World {
                 initial_traded_days: stock_seed_traded.remove(0),
                 initial_orders: initial_desk_orders.get(s as usize).cloned().unwrap_or_default(),
                 initial_recent_prices: stock_spec.initial_recent_prices,
+                initial_market: stock_spec.initial_market,
             };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))

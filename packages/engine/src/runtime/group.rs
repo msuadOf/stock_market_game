@@ -4150,12 +4150,19 @@ pub fn group_main(
             }
             GroupIn::EchoAttention => {
                 // D5 #2：next_due+注意力 rng 续传态（evaluate 共享流——
-                /// session rng_state 同源写回）。
+                /// session rng_state 同源写回）。D5 restore 链最后一层：
+                /// 构造期组因子混入在回传时逆运算——session 面存纯值
+                ///（restore 再构造混入恰一次，不叠加）。
                 let attention = match &state.decision {
                     Some((profiles, _)) => profiles
                         .iter()
                         .enumerate()
-                        .map(|(i, p)| (i as LocalIdx, p.next_due, p.seed))
+                        .map(|(i, p)| {
+                            let mixed = (state.group as u64)
+                                .wrapping_mul(0x9E3779B97F4A7C15)
+                                .wrapping_add(i as u64);
+                            (i as LocalIdx, p.next_due, p.seed ^ mixed)
+                        })
                         .collect(),
                     None => Vec::new(),
                 };

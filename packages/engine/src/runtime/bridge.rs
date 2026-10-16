@@ -60,6 +60,9 @@ pub fn world_spec_from_setup(
                 initial_daily_bars: Vec::new(),
                 initial_recent_prices: Vec::new(),
                 initial_traded_days: 0,
+                // D5 restore 链最后一层：日内行情聚合种子由 from_session
+                // 覆盖（bridge 缺省 None——构造零点）。
+                initial_market: None,
             })
         })
         .collect::<Result<_, _>>()?;
@@ -74,6 +77,10 @@ pub fn world_spec_from_setup(
         initial_invested: Vec::new(),
         initial_recovered: Vec::new(),
         initial_ever_held: Vec::new(),
+        // D5 restore 链最后一层：T+1 冻结与在途买占用由 from_session
+        // 覆盖（bridge 缺省零——无会话来源的世界从零起）。
+        initial_frozen_today: Vec::new(),
+        initial_purse_held: Vec::new(),
         script_for,
         chunk: 512,
         watchdog: WatchdogConfig {
@@ -127,9 +134,12 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
 /// 其中——玩家组接线（F §6.3）时并入，登记。
 ///
 /// 返回 (initial_cash_override, initial_shares, initial_invested,
-/// initial_recovered, account_ids)：ids 供 AccountId ↔ Owner 映射对齐
-/// （批 8d 存档映射）。D3a-2c 件1：invested/recovered 自 session positions
-/// 累计器直取（零量条目也取数值——qty=0 时 cost_price=None，数值无消费者）。
+/// initial_recovered, initial_frozen_today, account_ids)：ids 供 AccountId ↔
+/// Owner 映射对齐（批 8d 存档映射）。D3a-2c 件1：invested/recovered 自
+/// session positions 累计器直取（零量条目也取数值——qty=0 时
+/// cost_price=None，数值无消费者）。D5 restore 链最后一层：t1_locked
+/// （T+1 当日冻结）投影——restore 后组侧冻结权威自此起步，否则回写
+/// 整值同步清零 save 前冻结。
 pub fn accounts_projection_from_session(
     session: &crate::GameSession,
     n_stocks: usize,
@@ -138,6 +148,7 @@ pub fn accounts_projection_from_session(
     Vec<Vec<u32>>,
     Vec<Vec<i64>>,
     Vec<Vec<i64>>,
+    Vec<Vec<u32>>,
     Vec<Vec<bool>>,
     Vec<crate::AccountId>,
 ) {
@@ -146,6 +157,7 @@ pub fn accounts_projection_from_session(
     let mut shares = Vec::with_capacity(profiles.len() + 1);
     let mut invested = Vec::with_capacity(profiles.len() + 1);
     let mut recovered = Vec::with_capacity(profiles.len() + 1);
+    let mut frozen = Vec::with_capacity(profiles.len() + 1);
     let mut ever_held = Vec::with_capacity(profiles.len() + 1);
     let mut ids = Vec::with_capacity(profiles.len() + 1);
     // 玩家并入（F §6.3 资源持有者同构）：AccountId(0) 惯例位先行。
@@ -153,6 +165,7 @@ pub fn accounts_projection_from_session(
         let mut row = vec![0u32; n_stocks];
         let mut row_inv = vec![0i64; n_stocks];
         let mut row_rec = vec![0i64; n_stocks];
+        let mut row_frozen = vec![0u32; n_stocks];
         let mut row_ever = vec![false; n_stocks];
         for (code, position) in player.positions() {
             let idx = code.0 as usize;
@@ -160,6 +173,7 @@ pub fn accounts_projection_from_session(
                 row[idx] = position.qty();
                 row_inv[idx] = position.invested_cents();
                 row_rec[idx] = position.recovered_cents();
+                row_frozen[idx] = position.t1_locked();
                 row_ever[idx] = position.qty() == 0;
             }
         }
@@ -167,6 +181,7 @@ pub fn accounts_projection_from_session(
         shares.push(row);
         invested.push(row_inv);
         recovered.push(row_rec);
+        frozen.push(row_frozen);
         ever_held.push(row_ever);
         ids.push(crate::AccountId(0));
     }
@@ -177,6 +192,7 @@ pub fn accounts_projection_from_session(
         let mut row = vec![0u32; n_stocks];
         let mut row_inv = vec![0i64; n_stocks];
         let mut row_rec = vec![0i64; n_stocks];
+        let mut row_frozen = vec![0u32; n_stocks];
         let mut row_ever = vec![false; n_stocks];
         for (code, position) in account.positions() {
             let idx = code.0 as usize;
@@ -184,6 +200,7 @@ pub fn accounts_projection_from_session(
                 row[idx] = position.qty();
                 row_inv[idx] = position.invested_cents();
                 row_rec[idx] = position.recovered_cents();
+                row_frozen[idx] = position.t1_locked();
                 row_ever[idx] = position.qty() == 0;
             }
         }
@@ -191,8 +208,9 @@ pub fn accounts_projection_from_session(
         shares.push(row);
         invested.push(row_inv);
         recovered.push(row_rec);
+        frozen.push(row_frozen);
         ever_held.push(row_ever);
         ids.push(id);
     }
-    (cash, shares, invested, recovered, ever_held, ids)
+    (cash, shares, invested, recovered, frozen, ever_held, ids)
 }

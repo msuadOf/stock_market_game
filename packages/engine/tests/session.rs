@@ -328,6 +328,15 @@ impl TestOrderSaveFixture {
                         side: order.side,
                     },
                     charged: nominal,
+                    remaining_qty: order.qty,
+                    filled_qty: order.filled_qty,
+                    filled_value: order.filled_value,
+                    limit: order.price,
+                    purse: if order.side == Side::Buy {
+                        Money::from_cents(order.price.cents() * i64::from(order.qty))
+                    } else {
+                        Money::ZERO
+                    },
                 });
             }
         }
@@ -4985,6 +4994,11 @@ fn unified_book_restores_call_auction_resting_orders_in_auction_mode() {
             side: Side::Buy,
         },
         charged: engine::SavedFeeComponents::default(),
+        remaining_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        limit: Money::from_cents(1000),
+        purse: Money::from_cents(100 * 100),
     });
     // 统一 book：集合竞价阶段的合法委托就在唯一 resting_orders 里。
     // 旧 fault2155（竞价存档不得含连续挂单）随双容器结构一并退役。

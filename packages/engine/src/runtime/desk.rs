@@ -45,6 +45,35 @@ pub struct DeskRestingSeed {
     pub qty: u32,
     /// 买腿 purse（卖恒 0）——adopt 单的 live 资源面。
     pub purse: i64,
+    /// D5 restore 链最后一层：受理事实已随此前世界交付（save 前的事件
+    /// 历史含 Accepted——restore 重放即重复）。true=直入不记 Accepted
+    /// 生命周期事实；false=live 构造期 adopt 形态（受理事实照记）。
+    pub accepted_delivered: bool,
+}
+
+/// D5 restore 链最后一层：日内行情聚合种子（save 点的 desk 行情权威
+/// 投影——活动 K/日内高低调/分钟收盘/昨收。此前 restore 后 desk 行情
+/// 从构造零点起，续拍把当日聚合覆盖回零起点，save 对拍显红）。
+#[derive(Clone, Debug)]
+pub struct DeskMarketSeed {
+    /// 最新价（活动 K close）。
+    pub last_price: i64,
+    /// 昨收（日 K 历史末条 close；首日=初始价）。
+    pub last_close: i64,
+    /// 日内最高。
+    pub day_high: i64,
+    /// 日内最低。
+    pub day_low: i64,
+    /// 日累计成交量（股）。
+    pub volume_today: u64,
+    /// 日累计成交额（分）。
+    pub turnover_today: i64,
+    /// 日累计成交笔数。
+    pub trade_count: u64,
+    /// 活动 K（o/h/l/c/v）。
+    pub candle: Option<(i64, i64, i64, i64, u64)>,
+    /// 分钟收盘（绝对交易分钟, 分）。
+    pub minute_closes: Vec<(u64, i64)>,
 }
 
 /// 每股交易部构造参数（世界构造期确定，运行期不变）。
@@ -85,6 +114,9 @@ pub struct DeskSetup {
     /// D3a-2：种子历史之外的累计 traded 日数（种子内的 traded 由
     /// initial_daily_bars 自行统计——避免双计）。
     pub initial_traded_days: u64,
+    /// D5 restore 链最后一层：日内行情聚合种子（save 点投影；None=
+    /// live 构造/无会话来源，desk 从构造零点起）。
+    pub initial_market: Option<DeskMarketSeed>,
 }
 
 /// 交易相位（照搬 `session.rs TradingPhase` 的 tick 推导）。
@@ -891,8 +923,20 @@ impl DeskState {
             });
     }
 
-    /// 挂簿（记撤销日志）。
+    /// 挂簿（记撤销日志+Accepted 生命周期事实）。
     fn rest(&mut self, order: DeskOrder) {
+        let fact = self.rest_inner(order);
+        self.lifecycle_facts.push(fact);
+    }
+
+    /// 挂簿（记撤销日志，不记 Accepted 事实——restore 形态种子直入：
+    /// 受理事件已随此前世界交付，重放即重复）。
+    fn rest_silent(&mut self, order: DeskOrder) {
+        self.rest_inner(order);
+    }
+
+    /// 挂簿共用段（返回本单的 Accepted 生命周期事实——调用方决定是否记录）。
+    fn rest_inner(&mut self, order: DeskOrder) -> super::protocol::DeskLifecycleFact {
         self.next_serial += 1;
         self.undo.push(DeskUndo::Serial);
         let idx = if order.side == Side::Buy {
@@ -924,7 +968,7 @@ impl DeskState {
         self.undo.push(DeskUndo::Inserted(order));
         self.resting_count += 1;
         self.undo.push(DeskUndo::RestingCount(1));
-        self.lifecycle_facts.push(fact);
+        fact
     }
 
     /// 连续竞价撮合：逐档吃对面最优（价格时间优先），成交价取 maker 价。
@@ -2067,6 +2111,7 @@ pub fn desk_main(
     let who = WorkerId::Desk(setup.stock);
     let initial_orders = std::mem::take(&mut setup.initial_orders);
     let initial_recent_prices = std::mem::take(&mut setup.initial_recent_prices);
+    let initial_market = setup.initial_market.take();
     let initial_tick = setup.initial_tick;
     let mut state = DeskState::new(setup, n_groups, config);
     // D5 restore 等价：种子 tick 价格历史（容量裁剪）。
@@ -2076,11 +2121,13 @@ pub fn desk_main(
             state.market.recent_prices.pop_front();
         }
     }
-    // D5 adopt：旧簿在途单直入初始簿（不撮合、不受理回执——已在旧
-    /// 管线受理过；serial 序=构造期前段，与消息链首单同起 0）。
+    // D5 adopt：旧簿在途单直入初始簿（不撮合；受理事实按种子标记——
+    /// live 构造期 adopt 照记 Accepted（对齐旧管线 enqueue 后首拍交付
+    /// 面），restore 形态不重放（save 前事件历史已含，重发即重复）；
+    /// serial 序=构造期前段，与消息链首单同起 0）。
     for seed in initial_orders {
         let order_ref = (state.setup.stock, state.next_serial);
-        state.rest(DeskOrder {
+        let order = DeskOrder {
             order_ref,
             owner: seed.owner,
             side: seed.side,
@@ -2092,7 +2139,34 @@ pub fn desk_main(
             charged_stamp_tax: 0,
             charged_transfer_fee: 0,
             expire_tick: initial_tick.saturating_add(state.setup.order_ttl_ticks),
-        });
+        };
+        if seed.accepted_delivered {
+            state.rest_silent(order);
+        } else {
+            state.rest(order);
+        }
+    }
+    // D5 restore 链最后一层：日内行情聚合种子装载（save 点权威——
+    /// 续拍在 save 聚合之上演进，不再从构造零点覆盖）。
+    if let Some(seed) = initial_market {
+        let m = &mut state.market;
+        m.last_price = seed.last_price;
+        m.last_close = seed.last_close;
+        m.day_high = seed.day_high;
+        m.day_low = seed.day_low;
+        m.volume_today = seed.volume_today;
+        m.turnover_today = seed.turnover_today;
+        m.trade_count = seed.trade_count;
+        m.candle = seed
+            .candle
+            .map(|(open, high, low, close, volume)| DeskCandle {
+                open,
+                high,
+                low,
+                close,
+                volume,
+            });
+        m.minute_closes = seed.minute_closes;
     }
     let mut result = Ok(());
     loop {

@@ -810,6 +810,11 @@ mod rollback_tests {
                     stamp_tax: crate::Money::ZERO,
                     transfer_fee: crate::Money::ZERO,
                 },
+                remaining_qty: 100,
+                filled_qty: 0,
+                filled_value: crate::Money::ZERO,
+                limit: crate::Money::ZERO,
+                purse: crate::Money::ZERO,
             });
         assert!(matches!(
             ProtocolSession::restore(&candidate),

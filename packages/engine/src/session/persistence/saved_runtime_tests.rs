@@ -611,9 +611,22 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
     let envelope = encoded["runtime_state"]["live_envelopes"][0]
         .as_object()
         .unwrap();
+    // D5 restore 链最后一层：remaining/filled/limit/purse 自"派生镜像"
+    // 升格为一等数值面（runtime 形态 desk 权威不在 restore 侧——旧簿
+    // 空时它们是唯一载体，remaining 退占位使续拍种子量错）。live 资源
+    // 与 nominal 仍是派生面不入档（restore 重建：live= purse/remaining
+    /// 组装、nominal=费用表重算）。
     assert_eq!(
         envelope.keys().cloned().collect::<Vec<_>>(),
-        ["charged", "key"]
+        [
+            "charged",
+            "filled_qty",
+            "filled_value",
+            "key",
+            "limit",
+            "purse",
+            "remaining_qty"
+        ]
     );
     assert_eq!(
         envelope["charged"]["commission"],
@@ -789,17 +802,18 @@ fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
 
 #[test]
 fn runtime_envelope_rejects_injected_derived_fields() {
-    for field in [
-        "live",
-        "limit",
-        "remaining_qty",
-        "filled_qty",
-        "filled_value",
-        "nominal",
-    ] {
+    // D5 restore 链最后一层后，仍属派生面（restore 重建，拒绝注入）的
+    /// 是 live 资源镜像与 nominal；remaining/filled/limit/purse 已升格
+    /// 一等数值面（runtime 形态 desk 权威的唯一载体），在字段集内。
+    for field in ["live", "nominal"] {
         let mut encoded = serde_json::json!({
             "key": { "account": 1, "stock": 0, "order": 1, "side": "Sell" },
-            "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" }
+            "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" },
+            "remaining_qty": 100,
+            "filled_qty": 0,
+            "filled_value": "0",
+            "limit": "1000",
+            "purse": "0"
         });
         serde_json::from_value::<SavedLiveEnvelope>(encoded.clone())
             .expect("完整当前 envelope 在注入派生字段前应可解码");

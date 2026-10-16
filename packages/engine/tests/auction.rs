@@ -189,6 +189,15 @@ impl AuctionFixture {
                         side: order.side,
                     },
                     charged: engine::SavedFeeComponents::default(),
+                    remaining_qty: order.qty,
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                    limit: order.price,
+                    purse: if order.side == Side::Buy {
+                        Money::from_cents(order.price.cents() * i64::from(order.qty))
+                    } else {
+                        Money::ZERO
+                    },
                 });
             }
         }
@@ -394,6 +403,11 @@ fn unified_production_book_cross_tick_same_price_fifo_survives_save_and_restore(
                 side: Side::Sell,
             },
             charged: engine::SavedFeeComponents::default(),
+            remaining_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            limit: Money::from_cents(10_000),
+            purse: Money::ZERO,
         });
     saved
         .runtime_state

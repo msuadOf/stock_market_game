@@ -1099,6 +1099,67 @@ impl GameSession {
             .unwrap_or(&[])
     }
 
+    /// D5 restore 链最后一层：日内行情聚合种子读面（每股——save 点的
+    /// desk 行情权威投影源）。活动 K 为空（日界空窗/竞价窗）→ None
+    /// （desk 从构造零点=昨收锚定起，恰为新日起点语义）。昨收=日 K
+    /// 历史末条 close，首日无历史时退初始价。
+    pub fn runtime_market_seeds(
+        &self,
+    ) -> std::collections::BTreeMap<crate::StockId, crate::runtime::desk::DeskMarketSeed> {
+        let mut seeds = std::collections::BTreeMap::new();
+        for (code, active) in self.state.candle_book.active() {
+            let last_close = self
+                .state
+                .candle_book
+                .histories()
+                .get(code)
+                .and_then(|h| h.iter_rev().next())
+                .map(|c| c.close.cents())
+                .or_else(|| {
+                    // 首日无历史：昨收=初始价（StockId=股序数值——setup
+                    /// stocks 的下标约定）。
+                    self.state
+                        .setup
+                        .stocks
+                        .get(code.0 as usize)
+                        .map(|s| s.initial_price.cents())
+                });
+            let Some(last_close) = last_close else {
+                continue;
+            };
+            let (turnover, trade_count) = active
+                .trade_stats
+                .as_ref()
+                .map(|s| (s.turnover_cents as i64, s.trade_count))
+                .unwrap_or((0, 0));
+            seeds.insert(
+                *code,
+                crate::runtime::desk::DeskMarketSeed {
+                    last_price: active.close.cents(),
+                    last_close,
+                    day_high: active.high.cents(),
+                    day_low: active.low.cents(),
+                    volume_today: active.volume,
+                    turnover_today: turnover,
+                    trade_count,
+                    candle: Some((
+                        active.open.cents(),
+                        active.high.cents(),
+                        active.low.cents(),
+                        active.close.cents(),
+                        active.volume,
+                    )),
+                    minute_closes: self
+                        .runtime_minute_history(code)
+                        .iter()
+                        .map(|m| (m.absolute_trading_minute, m.close.cents()))
+                        .collect(),
+                },
+            );
+        }
+        seeds
+    }
+
     /// runtime 日结：清会话分钟历史（D4——旧管线 day_end 清、desk
     /// roll_day 清；位置合并的跨日对齐前提）。
     pub fn clear_runtime_minute_history(&mut self) {

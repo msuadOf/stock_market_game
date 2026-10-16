@@ -29,6 +29,17 @@ pub struct SavedRuntimeState {
 pub struct SavedLiveEnvelope {
     pub key: SavedEnvelopeKey,
     pub charged: SavedFeeComponents,
+    /// D5 restore 链最后一层：desk 在途单的审计数值面（此前仅存 charged
+    /// ——restore 的 runtime_shape 路径无 desk 权威可查，remaining 退 1 股
+    /// 占位使续拍 desk 种子量错）。nominal 不存：由费用表+filled_value
+    /// 决定性重算（runtime_step 尾重建同式）。
+    pub remaining_qty: u32,
+    pub filled_qty: u32,
+    pub filled_value: Money,
+    pub limit: Money,
+    /// 买侧在途 purse（desk 权威占用；卖侧恒 0）——restore 的 live 资源
+    /// 真值（此前 1 分占位过 fault2223）。
+    pub purse: Money,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,29 +527,36 @@ impl SavedRuntimeState {
             previous = Some(saved.key.clone());
             if runtime_shape {
                 let key = saved.key.to_runtime();
+                // live 资源真值（买=purse 占用、卖=余量股数——与
+                /// runtime_step 尾重建的 EchoResting 同源；此前 1 股/1 分
+                /// 占位使 restore 后 desk 种子与公开口径失真）。
                 let (cash, shares) = if key.side == Side::Buy {
-                    // purse 由 desk 权威——非零占位过 2223（下一
-                    // runtime_step 重建覆盖）。
-                    (crate::money::Money::from_cents(1), 0u32)
+                    (saved.purse, 0u32)
                 } else {
-                    (crate::money::Money::ZERO, 1u32)
+                    (crate::money::Money::ZERO, saved.remaining_qty)
                 };
-                // 出生财务不变量（零成交额 ⇒ 零费用）——charged 非
-                // 零时 filled_value 须非零：从 charged 总额作成交额下界
-                // 近似（审计对账由下一 step 的 nominal 重算覆盖）。
-                let charged = saved.charged.to_runtime();
-                let filled_floor = charged
-                    .commission
-                    .add(charged.stamp_tax)
-                    .and_then(|v| v.add(charged.transfer_fee))
-                    .unwrap_or(crate::money::Money::from_cents(1));
+                // nominal 自费用表重算（决定性——与 runtime_step 尾重建
+                /// 同式；restore 尾的 verified_live 证明因此可建立，证明
+                /// 空窗登记就此闭合）。
+                let nominal = crate::runtime::fees::FeeQuote::nominal(
+                    &session.state.setup.config,
+                    key.side,
+                    saved.filled_value,
+                )
+                .map_err(|_| {
+                    SessionError::InvalidSave(ValidationFault::new(2219, vec![0]))
+                })?;
                 let audit = pipeline::EnvelopeAudit {
-                    limit: crate::money::Money::ZERO,
-                    remaining_qty: 1,
-                    filled_qty: 0,
-                    filled_value: filled_floor,
-                    nominal: pipeline::FeeComponents::ZERO,
-                    charged,
+                    limit: saved.limit,
+                    remaining_qty: saved.remaining_qty,
+                    filled_qty: saved.filled_qty,
+                    filled_value: saved.filled_value,
+                    nominal: pipeline::FeeComponents {
+                        commission: nominal.commission,
+                        stamp_tax: nominal.stamp_tax,
+                        transfer_fee: nominal.transfer_fee,
+                    },
+                    charged: saved.charged.to_runtime(),
                 };
                 let envelope =
                     pipeline::Envelope::tick_start_existing(key, cash, shares, audit);
@@ -581,9 +599,15 @@ impl SavedRuntimeState {
 
 impl SavedLiveEnvelope {
     fn from_envelope(envelope: &pipeline::Envelope) -> Self {
+        let audit = envelope.audit();
         Self {
             key: SavedEnvelopeKey::from_runtime(envelope.key()),
-            charged: SavedFeeComponents::from_runtime(envelope.audit().charged),
+            charged: SavedFeeComponents::from_runtime(audit.charged),
+            remaining_qty: audit.remaining_qty,
+            filled_qty: audit.filled_qty,
+            filled_value: audit.filled_value,
+            limit: audit.limit,
+            purse: envelope.live().cash,
         }
     }
 

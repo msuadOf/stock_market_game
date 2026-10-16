@@ -70,7 +70,7 @@ impl RuntimeDriver {
     pub fn from_session(session: &mut GameSession) -> Result<Self, String> {
         let setup: SessionSetup = session.export_setup_for_runtime();
         let n_stocks = setup.stocks.len();
-        let (cash, shares, invested, recovered, ever_held, ids) =
+        let (mut cash, mut shares, invested, recovered, frozen, ever_held, ids) =
             accounts_projection_from_session(session, n_stocks);
         let npcs = ids.len();
         let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
@@ -204,6 +204,55 @@ impl RuntimeDriver {
                 }
             }
         }
+        // D5 restore 链最后一层：restore 形态（旧簿空——desk 权威在
+        // ledger）下，desk 种子单的在途面补进组初始账户，与 live 轨
+        /// （构造期旧簿种子）演化同构：
+        /// · 卖种子余量 → initial_shares（「在手+在途卖」口径——live 轨
+        ///   的组 shares 演进天然含在途，restore 投影 positions 只含
+        ///   在手，不补则成交回写双计下穿）；
+        /// · 买种子 purse → 组现金扣减 + buy_purse_held 登记（公开现金
+        ///   =组现金+占用口径；构造期旧簿种子形态不补——grant 投影已
+        ///   含在途面，补则双计）。
+        {
+            let restore_shape = session
+                .runtime_resting_orders_snapshot()
+                .iter()
+                .all(|(_, orders)| orders.is_empty());
+            if restore_shape {
+                let mut purse_by_local = vec![0i64; ids.len()];
+                for (key, envelope) in session.runtime_envelope_ledger_snapshot() {
+                    let local = ids
+                        .iter()
+                        .position(|id| *id == key.account)
+                        .ok_or_else(|| {
+                            format!(
+                                "账本挂单 owner 不在世界名册（无法投影）：{:?}",
+                                key.account
+                            )
+                        })?;
+                    let stock = key.stock.0 as usize;
+                    if stock >= n_stocks {
+                        return Err(format!(
+                            "账本挂单股索引越界（无法投影）：{:?}",
+                            key.stock
+                        ));
+                    }
+                    let audit = envelope.audit();
+                    match key.side {
+                        crate::orderbook::Side::Sell => {
+                            shares[local][stock] =
+                                shares[local][stock].saturating_add(audit.remaining_qty);
+                        }
+                        crate::orderbook::Side::Buy => {
+                            let purse = envelope.live().cash.cents();
+                            purse_by_local[local] += purse;
+                            cash[local] -= purse;
+                        }
+                    }
+                }
+                spec.initial_purse_held = vec![purse_by_local];
+            }
+        }
         // D0：世界从会话当前 tick 起步（锁步不变量的构造期对齐——
         // 全新会话即 0；恢复/接管场景相位按绝对 tick 推导）。
         spec.initial_committed_tick = session.tick();
@@ -218,14 +267,27 @@ impl RuntimeDriver {
         // D3a-3：曾持有位投影（session positions 零量条目面——清仓后
         // 观察面 held 集成员）。
         spec.initial_ever_held = vec![ever_held];
+        // D5 restore 链最后一层：T+1 当日冻结投影。
+        spec.initial_frozen_today = vec![frozen];
         // D5 adopt 直入（Sol 二审修复集 5 的到簿序收口）：旧簿在途单
         // 构造期直入 desk 初始簿——先于本 tick 新单（此前经 ExternalPlan
         // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
         // partial_fill 红证）。owner 不在名册=投影缺口，显式失败。
         spec.initial_desk_orders = resting_order_seeds_from_session(session, &ids)?;
-        // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）。
-        for (stock_spec, history) in spec.stocks.iter_mut().zip(session.runtime_price_histories()) {
-            stock_spec.initial_recent_prices = history;
+        // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）+
+        /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
+        /// 续拍在 save 聚合之上演进）。
+        {
+            let market_seeds = session.runtime_market_seeds();
+            for (idx, (stock_spec, history)) in spec
+                .stocks
+                .iter_mut()
+                .zip(session.runtime_price_histories())
+                .enumerate()
+            {
+                stock_spec.initial_recent_prices = history;
+                stock_spec.initial_market = market_seeds.get(&crate::StockId(idx as u32)).cloned();
+            }
         }
         // D5 adopt 收口：迁入后清旧簿（双域一致——save fault2226）。
         session.runtime_clear_resting_for_adoption();
@@ -1556,6 +1618,8 @@ fn resting_order_seeds_from_session(
             if seeds.len() <= stock {
                 seeds.resize(stock + 1, Vec::new());
             }
+            // D5 restore 链最后一层：audit/ purse 数值面自 save 契约直取
+            /// （desk 权威——此前 remaining 退 1 股占位使续拍种子量错）。
             let price = if envelope.audit().limit.cents() > 0 {
                 envelope.audit().limit.cents()
             } else {
@@ -1563,7 +1627,7 @@ fn resting_order_seeds_from_session(
             };
             let qty = envelope.audit().remaining_qty;
             let purse = if key.side == crate::orderbook::Side::Buy {
-                price.saturating_mul(i64::from(qty))
+                envelope.live().cash.cents()
             } else {
                 0
             };
@@ -1573,6 +1637,9 @@ fn resting_order_seeds_from_session(
                 price,
                 qty,
                 purse,
+                // restore 形态：受理事件已随此前世界交付（save 前事件
+                // 历史），直入不重放 Accepted。
+                accepted_delivered: true,
             });
         }
         return Ok(seeds);
@@ -1607,6 +1674,9 @@ fn resting_order_seeds_from_session(
                 price: order.price.cents(),
                 qty: order.qty,
                 purse,
+                // live 构造期 adopt：受理事实照记（对齐旧管线 enqueue 后
+                // 首拍交付面）。
+                accepted_delivered: false,
             });
         }
     }
