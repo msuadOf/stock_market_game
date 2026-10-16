@@ -112,6 +112,15 @@ impl GameSession {
         self.force_due_via_runtime(&ids, world_next);
     }
 
+    /// D5 #2：个体基础观察概率读面（npc_attention 的个体采样值——组内
+    /// evaluate 门输入；无 attention 态的位返回 None）。
+    pub fn runtime_attention_base_for(&self, id: &crate::AccountId) -> Option<f64> {
+        self.state
+            .npc_attention
+            .get(id)
+            .map(|state| state.base_probability)
+    }
+
     #[cfg(test)]
     pub(super) fn force_due_via_runtime(&mut self, ids: &[crate::AccountId], tick: u64) {
         let mut driver = self
@@ -549,14 +558,17 @@ impl GameSession {
     /// 调度面看不到新候选；陈旧堆项由 pop_due 的候选核对自然跳过）。
     pub fn set_runtime_attention(
         &mut self,
-        entries: &[(crate::AccountId, u64)],
+        entries: &[(crate::AccountId, u64, u64)],
     ) {
         self.mark_external_mutation();
         let tick = self.state.tick;
-        for (id, next_due) in entries {
+        for (id, next_due, rng_state) in entries {
             if let Some(state) = self.state.npc_attention.get_mut(id) {
                 let due = (*next_due).max(tick);
                 state.next_attention_candidate_tick = due;
+                // D5 #2：注意力共享流续传写回（组内 evaluate 消费后的
+                // 权威——restore 双轨逐位等价依赖该面）。
+                state.rng_state = *rng_state;
                 self.state.attention_scheduler.enqueue(due, *id);
             }
         }

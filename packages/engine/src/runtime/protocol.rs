@@ -357,6 +357,9 @@ pub enum GroupIn {
         locals: Vec<super::LocalIdx>,
         /// 目标 tick（组验证 > 已转正 tick）。
         tick: u64,
+        /// D5 #2：强制观察（绕 observe 门仍消费 rng 续流+wait 采样——
+        /// fixture 的"到期即决策"语义；生产 force 无此面）。
+        ensure_observe: bool,
     },
     /// D3b 件 4 fixture 通道（cfg(test)）：复审候选注入——chain_
     /// restructure 测试的 drive_once(人工 assessments) 组内等价
@@ -532,8 +535,9 @@ pub enum UpMsg {
     GroupAttention {
         /// 组索引。
         group: GroupIdx,
-        /// 逐账户（组内下标, next_due tick）。
-        attention: Vec<(LocalIdx, u64)>,
+        /// 逐账户（组内下标, next_due tick, 注意力 rng 续传态——D5 #2
+        /// 起 evaluate 共享流写回 session rng_state 同源）。
+        attention: Vec<(LocalIdx, u64, u64)>,
     },
     /// 组账户快照回执（EchoAccounts 应答）。
     GroupEcho {

@@ -674,7 +674,13 @@ impl World {
     #[cfg(test)]
     pub fn force_due_for_test(&mut self, locals: Vec<super::LocalIdx>, tick: u64) {
         if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::ForceDue { locals, tick });
+            // D5 #2：ensure_observe=true——测试强制到期=决策语义（绕
+            /// observe 门——rng 续流照常）。
+            let _ = tx.send(GroupIn::ForceDue {
+                locals,
+                tick,
+                ensure_observe: true,
+            });
         }
     }
 
@@ -1012,7 +1018,7 @@ impl World {
     /// 会话 npc_attention 的真实状态源）。
     pub fn collect_group_attention(
         &mut self,
-    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64)>)>, RuntimeError> {
+    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,

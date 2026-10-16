@@ -383,6 +383,7 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
             strategy: crate::strategy::StrategyData::retail(0.0, 100, 0.0),
             seed: 7,
             next_due: 100,
+            attention_base: 0.30,
         }],
         attention_gap_ticks: 4,
     });
@@ -401,7 +402,7 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
     // Abort 后完整状态：next_due 恢复强制前值 100（指令失效）。
     let attention = world.collect_group_attention().expect("注意力收集");
     assert_eq!(
-        attention[0].1,
+        attention[0].1.iter().map(|(l, due, _)| (*l, *due)).collect::<Vec<_>>(),
         vec![(0, 100)],
         "Abort 冲回强制前 next_due（指令失效需重发）"
     );
@@ -412,7 +413,7 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
     world.run_ticks(1).expect("Abort 后重跑 tick1 成功");
     let attention = world.collect_group_attention().expect("再收集");
     assert_eq!(
-        attention[0].1,
+        attention[0].1.iter().map(|(l, due, _)| (*l, *due)).collect::<Vec<_>>(),
         vec![(0, 100)],
         "未重发的指令不生效——重跑轮 NPC 不到期"
     );

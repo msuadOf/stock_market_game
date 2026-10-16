@@ -141,6 +141,12 @@ pub(crate) use institutional_behavior::InstitutionBehavior;
 pub(crate) use institutional_behavior::assess_institution_behavior;
 // 转发 decision_chain 的 re-export（组线程经 crate::session 使用）。
 pub(crate) use decision_chain::{PlanLifecycleReview, PlanReviewHost, ratio_to_bp};
+// D5 #2：组线程 attention evaluate 共用面（signal 概率+observe 门+wait
+/// 采样——旧管线 evaluate_candidate_with_signal 同式，字段不得分叉）。
+pub(crate) use attention::{
+    attention_candidate_is_observation, market_attention_signal,
+    maximum_observation_probability, sample_attention_wait,
+};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,
@@ -156,8 +162,6 @@ pub use plan_execution::{
     PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport, PlanExecutionRequest,
 };
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
-
-use attention::{maximum_observation_probability, sample_attention_wait};
 
 use crate::account::{Account, AccountError, AccountKind, StockCode};
 #[cfg(test)]
@@ -203,6 +207,11 @@ pub struct SplitMix64 {
 impl SplitMix64 {
     pub fn new(seed: u64) -> Self {
         SplitMix64 { state: seed }
+    }
+    /// 流状态读面（D5 #2 组内 evaluate 续传写回——与 session rng_state
+    /// 同源投影，字段不得分叉）。
+    pub fn state(&self) -> u64 {
+        self.state
     }
     /// 标准 SplitMix64 算法（常量固定，确定性依赖）。
     pub fn next_u64(&mut self) -> u64 {

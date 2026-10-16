@@ -44,7 +44,7 @@ fn sol5_from_session_restores_attention_state() {
     let collected = driver.collect_attention().expect("注意力收集");
     let mut checked = 0usize;
     for (_g, entries) in collected {
-        for (local, next_due) in entries {
+        for (local, next_due, _rng) in entries {
             let Some(&id) = driver.id_map.get(local as usize) else {
                 continue;
             };

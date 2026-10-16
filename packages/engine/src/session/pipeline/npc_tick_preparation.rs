@@ -231,8 +231,8 @@ mod t1_account_task_tests {
         let retail_due = collected[0]
             .1
             .iter()
-            .find(|(local, _)| *local == 1)
-            .map(|(_, due)| *due)
+            .find(|(local, _, _)| *local == 1)
+            .map(|(_, due, _)| *due)
             .expect("retail 位在组名册");
         assert_eq!(
             retail_due, mirror_due,
@@ -246,8 +246,8 @@ mod t1_account_task_tests {
         let due_after = collected[0]
             .1
             .iter()
-            .find(|(local, _)| *local == 1)
-            .map(|(_, due)| *due)
+            .find(|(local, _, _)| *local == 1)
+            .map(|(_, due, _)| *due)
             .expect("retail 位在组名册");
         assert!(
             (2..6).contains(&due_after),

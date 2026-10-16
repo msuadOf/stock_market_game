@@ -254,7 +254,7 @@ fn sol3_runtime_install_failure_rolls_back_advanced_state() {
 fn sol5_set_runtime_attention_syncs_scheduler_heap() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let id = crate::AccountId(1);
-    game.set_runtime_attention(&[(id, 999_999)]);
+    game.set_runtime_attention(&[(id, 999_999, 7)]);
     // candidate 已更新。
     assert_eq!(
         game.state

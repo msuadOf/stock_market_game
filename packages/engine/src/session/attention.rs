@@ -26,7 +26,7 @@ pub struct NpcAttentionState {
     pub rng_state: u64,
 }
 
-pub(super) fn market_attention_signal(market: &MarketView) -> f64 {
+pub(crate) fn market_attention_signal(market: &MarketView) -> f64 {
     market.stocks.values().fold(0.0, |strongest, stock| {
         let price_move = stock
             .recent_prices
@@ -62,7 +62,7 @@ fn effective_observation_probability(kind: AccountKind, base_probability: f64, s
     (base_probability * (1.0 + sensitivity * signal)).min(1.0)
 }
 
-pub(super) fn maximum_observation_probability(kind: AccountKind, base_probability: f64) -> f64 {
+pub(crate) fn maximum_observation_probability(kind: AccountKind, base_probability: f64) -> f64 {
     let sensitivity = match kind {
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
@@ -72,7 +72,7 @@ pub(super) fn maximum_observation_probability(kind: AccountKind, base_probabilit
     (base_probability * (1.0 + sensitivity * 3.0)).min(1.0)
 }
 
-fn attention_candidate_is_observation(
+pub(crate) fn attention_candidate_is_observation(
     kind: AccountKind,
     base_probability: f64,
     signal: f64,
@@ -83,7 +83,7 @@ fn attention_candidate_is_observation(
     rng.next_f64() < current / maximum
 }
 
-pub(super) fn sample_attention_wait(probability: f64, rng: &mut dyn Rng) -> u64 {
+pub(crate) fn sample_attention_wait(probability: f64, rng: &mut dyn Rng) -> u64 {
     debug_assert!(probability.is_finite() && probability > 0.0 && probability <= 1.0);
     if probability >= 1.0 {
         return 1;

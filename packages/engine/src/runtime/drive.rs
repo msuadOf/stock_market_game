@@ -110,16 +110,26 @@ impl RuntimeDriver {
                 } else {
                     (i % 8) as u64
                 };
+                // D5 #2：个体基础观察概率投影（npc_attention 的个体采样
+                /// 值；无 attention 态的位（玩家惯例位）不消费 evaluate。
+                let attention_base = id
+                    .map(|id| session.runtime_attention_base_for(&id))
+                    .unwrap_or(None)
+                    // 玩家惯例位无 attention 态：base 不被 evaluate 消费
+                    //（next_due=MAX 恒不 due）——占位 1.0 非静默兜底。
+                    .unwrap_or(1.0);
                 match attention_entry {
                     Some((due, rng)) => NpcProfile {
                         strategy,
                         seed: rng,
                         next_due: due,
+                        attention_base,
                     },
                     None => NpcProfile {
                         strategy,
                         seed: 0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
                         next_due: fallback_due,
+                        attention_base,
                     },
                 }
             })
@@ -969,7 +979,7 @@ impl RuntimeDriver {
     /// 组线程 next_due 是 runtime 调度权威的真实状态源）。
     pub fn collect_attention(
         &mut self,
-    ) -> Result<Vec<(super::GroupIdx, Vec<(super::LocalIdx, u64)>)>, String> {
+    ) -> Result<Vec<(super::GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, String> {
         self.world
             .collect_group_attention()
             .map_err(|e| format!("注意力收集失败：{e:?}"))
@@ -1376,9 +1386,9 @@ impl RuntimeDriver {
             .map_err(|e| format!("注意力收集失败：{e:?}"))?;
         let mut entries = Vec::new();
         for (_g, attention) in collected {
-            for (local, next_due) in attention {
+            for (local, next_due, rng_state) in attention {
                 if let Some(id) = self.id_map.get(local as usize).copied() {
-                    entries.push((id, next_due));
+                    entries.push((id, next_due, rng_state));
                 }
             }
         }

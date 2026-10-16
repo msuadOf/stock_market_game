@@ -33,10 +33,14 @@ use std::collections::BTreeMap;
 pub struct NpcProfile {
     /// 策略参数（retail/inst/hot 三族数据驱动）。
     pub strategy: StrategyData,
-    /// 独立随机种子（组端与 `tick`/`local` 复合）。
+    /// 独立随机种子（D5 #2 起=注意力共享流续传——与 session rng_state
+    /// 同源；决策流另经 seed 派生，见 decide_account）。
     pub seed: u64,
     /// 下次到期 tick（attention 简化态）。
     pub next_due: u64,
+    /// 个体基础观察概率（session npc_attention.base_probability 构造期
+    /// 投影——个体采样值，非 strategy 的群体基准）。
+    pub attention_base: f64,
 }
 
 /// 组决策装配（世界构造期确定）。
@@ -68,25 +72,45 @@ pub struct PendingOp {
 /// 到期检查 + 决策 + 意图转换（单 NPC）。
 /// 返回 (ops, decided, cancel_skipped)：`decided=false` 表示本 tick 未到期。
 #[allow(clippy::too_many_arguments)]
+/// D5 #2：signal-based attention evaluate（旧管线 `evaluate_candidate_
+/// with_signal` 同式——共享流续传（profile.seed=注意力 rng_state 同源）+
+/// observe 门 + wait 采样；返回 (observe 判定, 排期前值)。每 due 恰一次。
+pub fn evaluate_attention(
+    profile: &mut NpcProfile,
+    snapshot: &TickSnapshot,
+    tick: u64,
+) -> (bool, u64) {
+    let market = build_market_view(snapshot);
+    let signal = crate::session::market_attention_signal(&market);
+    let kind = profile.strategy.kind;
+    let base = profile.attention_base;
+    let mut rng = crate::session::SplitMix64::new(profile.seed);
+    let observes =
+        crate::session::attention_candidate_is_observation(kind, base, signal, &mut rng);
+    let wait = crate::session::sample_attention_wait(
+        crate::session::maximum_observation_probability(kind, base),
+        &mut rng,
+    );
+    let prev_due = profile.next_due;
+    profile.seed = rng.state();
+    profile.next_due = tick + wait;
+    (observes, prev_due)
+}
+
 pub fn decide_account(
     profile: &mut NpcProfile,
     group_seed_mix: u64,
     tick: u64,
     local: LocalIdx,
-    attention_gap: u32,
     snapshot: &TickSnapshot,
     account: &GroupAccount,
     config: &GameConfig,
-) -> (Vec<PendingOp>, bool, usize) {
-    if tick < profile.next_due {
-        return (Vec::new(), false, 0);
-    }
-    // 独立 RNG：seed ^ tick ^ local（F §2.2；组混合因子防跨组同种子）。
-    // 重排与决策共用同一实例流（重排消耗一次 next_range 后决策继续）。
+) -> (Vec<PendingOp>, usize) {
+    // D5 #2：due/observe 门由调用方（run_round 的 evaluate 链）控制——
+    /// 本函数纯决策（此前内嵌 due 判在 evaluate 排期后恒假）。
+    // 决策 RNG：注意力流（evaluate 续传）经组混合因子派生——决策流与
+    /// 调度流分离（旧管线策略流独立于 attention rng；组内经派生确定化）。
     let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
-    // 重排下次到期（先排再决策：本轮必决策）。
-    profile.next_due =
-        tick + 1 + u64::from(rng.next_range_u32(0, attention_gap_max(attention_gap)));
     let market = build_market_view(snapshot);
     let own = build_self_view(account);
     let intents = decide_data(&profile.strategy, &market, &own, &mut rng, config);
@@ -99,7 +123,7 @@ pub fn decide_account(
             cancel_skipped += 1;
         }
     }
-    (ops, true, cancel_skipped)
+    (ops, cancel_skipped)
 }
 
 /// 单条 Intent → PendingOp（None=Cancel 意图：OrderRef 账户侧跟踪随批 6 计划
@@ -153,27 +177,7 @@ fn symbol_routed(price: LimitPrice) -> RoutedPrice {
 
 /// D3a-3：到期重排提取（retail 与 belief 链位同一公式——next_due 演进
 /// 是组内调度权威 P1-10；Sol 二审修复集 5 的 undo 语义由调用方承接）。
-pub fn reschedule_due(
-    profile: &mut NpcProfile,
-    group_seed_mix: u64,
-    tick: u64,
-    local: LocalIdx,
-    attention_gap: u32,
-) {
-    // 独立 RNG：seed ^ tick ^ local（F §2.2；组混合因子防跨组同种子）。
-    let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
-    // 重排下次到期（先排再决策：本轮必决策）。
-    profile.next_due =
-        tick + 1 + u64::from(rng.next_range_u32(0, attention_gap_max(attention_gap)));
-}
 
-fn attention_gap_max(gap: u32) -> u32 {
-    if gap == 0 {
-        1
-    } else {
-        gap
-    }
-}
 
 fn daily_upper(market: &MarketView, code: StockId) -> i64 {
     market

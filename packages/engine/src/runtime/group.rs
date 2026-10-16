@@ -550,7 +550,7 @@ pub struct GroupState {
     /// Start 应用（指令效果归下一 tick 的日志域：tick Abort 冲回强制前
     /// 值、指令失效需重发——代码承诺语义；此前收到即入账，undo 被
     /// Start 的 undo.clear() 清除）。仅 cfg(test) 注入通道写入。
-    pending_force_due: Vec<(LocalIdx, u64)>,
+    pending_force_due: Vec<(LocalIdx, u64, bool)>,
     /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
     /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
@@ -1492,7 +1492,7 @@ impl GroupState {
         self.plan_undo_saved = false;
         // Sol 二审修复集 4：Start 间窗口收到的 ForceDue 在此应用——效果
         // 归本 tick 日志域（Abort 冲回强制前值、指令失效需重发）。
-        for (local, target) in std::mem::take(&mut self.pending_force_due) {
+        for (local, target, ensure_observe) in std::mem::take(&mut self.pending_force_due) {
             if let Some((profiles, _)) = &mut self.decision {
                 if let Some(p) = profiles.get_mut(local as usize) {
                     if p.next_due > target {
@@ -1501,6 +1501,10 @@ impl GroupState {
                             prev: p.next_due,
                         });
                         p.next_due = target;
+                    }
+                    // D5 #2：强制观察登记（evaluate 门绕行——仍续流）。
+                    if ensure_observe {
+                        p.attention_base = 1.0;
                     }
                 }
             }
@@ -2672,43 +2676,56 @@ impl GroupState {
                             if tick < profiles[local as usize].next_due {
                                 continue;
                             }
-                            let prev_due = profiles[local as usize].next_due;
-                            super::decision::reschedule_due(
+                            // D5 #2：signal-based evaluate 门（旧管线
+                            /// evaluate_candidate_with_signal 同式：共享续流+
+                            /// observe 门+wait 采样；observe=false 只重排不
+                            /// 决策（链轮跳过——决策频率语义与旧管线对齐，
+                            /// 此前均匀 gap 近似使 epoch 双轨显红）。
+                            let (observes, prev_due) =
+                                super::decision::evaluate_attention(
+                                    &mut profiles[local as usize],
+                                    &snapshot,
+                                    tick,
+                                );
+                            due_npcs += 1;
+                            pending_next_due.push((local, prev_due));
+                            if observes {
+                                decide_calls += 1;
+                                chain_due.push(local);
+                            }
+                            continue;
+                        }
+                        // D5 #2：due 外判（decide_account 内判已随纯决策化
+                        /// 移除——调用方控制契约）。
+                        if tick < profiles[local as usize].next_due {
+                            continue;
+                        }
+                        let account = &self.accounts[local as usize];
+                        // D5 #2：retail 同式 evaluate 门（observe=false 只
+                        /// 重排不决策）。
+                        let (observes, prev_due) = super::decision::evaluate_attention(
+                            &mut profiles[local as usize],
+                            &snapshot,
+                            tick,
+                        );
+                        due_npcs += 1;
+                        pending_next_due.push((local, prev_due));
+                        if observes {
+                            decide_calls += 1;
+                            let (ops, cancels) = decide_account(
                                 &mut profiles[local as usize],
                                 group_mix,
                                 tick,
                                 local,
-                                *gap,
+                                &snapshot,
+                                account,
+                                &self.config,
                             );
-                            due_npcs += 1;
-                            decide_calls += 1;
-                            chain_due.push(local);
-                            // undo 与计数在借用内不便（&mut self 冲突）——
-                            // 转为待办：observe 轮统一入账。
-                            pending_next_due.push((local, prev_due));
-                            continue;
-                        }
-                        let account = &self.accounts[local as usize];
-                        let prev_due = profiles[local as usize].next_due;
-                        let (ops, decided, cancels) = decide_account(
-                            &mut profiles[local as usize],
-                            group_mix,
-                            tick,
-                            local,
-                            *gap,
-                            &snapshot,
-                            account,
-                            &self.config,
-                        );
-                        if decided {
-                            due_npcs += 1;
-                            decide_calls += 1;
-                            pending_next_due.push((local, prev_due));
-                        }
-                        cancel_intents_skipped += cancels as u64;
-                        self.cancel_intents_total += cancels as u64;
-                        for op in ops {
-                            pendings.push(Pending::Op(op));
+                            cancel_intents_skipped += cancels as u64;
+                            self.cancel_intents_total += cancels as u64;
+                            for op in ops {
+                                pendings.push(Pending::Op(op));
+                            }
                         }
                     }
                 }
@@ -3992,7 +4009,11 @@ pub fn group_main(
                 }
             }
             #[cfg(test)]
-            GroupIn::ForceDue { locals, tick } => {
+            GroupIn::ForceDue {
+                locals,
+                tick,
+                ensure_observe,
+            } => {
                 // Sol 整改注入通道（cfg(test) 语义）：显式强制到期——组
                 // 验证目标 tick 晚于已转正 tick 后登记待办；效果延迟到
                 // 下一 Start 应用（Sol 二审修复集 4：归下一 tick 的日志
@@ -4010,7 +4031,9 @@ pub fn group_main(
                     break;
                 }
                 for local in locals {
-                    state.pending_force_due.push((local, tick));
+                    state
+                        .pending_force_due
+                        .push((local, tick, ensure_observe));
                 }
             }
             GroupIn::EchoPlans => {
@@ -4126,11 +4149,13 @@ pub fn group_main(
                 }
             }
             GroupIn::EchoAttention => {
+                // D5 #2：next_due+注意力 rng 续传态（evaluate 共享流——
+                /// session rng_state 同源写回）。
                 let attention = match &state.decision {
                     Some((profiles, _)) => profiles
                         .iter()
                         .enumerate()
-                        .map(|(i, p)| (i as LocalIdx, p.next_due))
+                        .map(|(i, p)| (i as LocalIdx, p.next_due, p.seed))
                         .collect(),
                     None => Vec::new(),
                 };

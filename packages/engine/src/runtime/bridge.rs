@@ -111,6 +111,9 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
                 strategy: StrategyData::retail(0.30, 200, 0.35),
                 seed: seed_base.wrapping_add(i as u64),
                 next_due: (i % 8) as u64,
+                // 缺省装配无会话来源：base 用策略群体基准（D5 #2 起
+                /// evaluate 门消费；生产路径经 from_session 投影个体值）。
+                attention_base: 0.30,
             })
             .collect(),
         attention_gap_ticks: 4,

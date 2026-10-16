@@ -4,6 +4,7 @@
 
 use super::decision::DecisionSetup;
 use super::decision::{
+    evaluate_attention,
     build_market_view, build_self_view, decide_account, intent_to_pending, NpcProfile,
 };
 use super::group::{GroupAccount, GroupScript, PlaceSpec, TickPlan};
@@ -130,20 +131,23 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
         strategy: StrategyData::retail(1.0, 100, 1.0),
         seed: 42,
         next_due: 0,
+        attention_base: 0.30,
     };
-    let run = |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, 0, &snapshot, &account, &config);
+    // D5 #2：排期归 evaluate_attention（signal 公式）；decide=纯决策。
+    let run = |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, &snapshot, &account, &config);
     let mut a = profile.clone();
     let mut b = profile.clone();
-    let (ops_a, due_a, _) = run(&mut a);
-    let (ops_b, due_b, _) = run(&mut b);
-    assert!(due_a && due_b);
+    let (ops_a, _) = run(&mut a);
+    let (ops_b, _) = run(&mut b);
     assert_eq!(ops_a.len(), ops_b.len(), "同种子同 tick 同输出");
     assert_eq!(ops_a, ops_b, "decide_data 纯函数 + 种子化 RNG ⇒ 决策确定");
-    // 重排：gap=0 ⇒ next_due = tick+1（下一 tick 再决策）。
-    assert_eq!(a.next_due, 2);
-    // 未到期：tick < next_due ⇒ 不决策。
-    let (_, due_again, _) = decide_account(&mut a, 0x1234, 1, 0, 0, &snapshot, &account, &config);
-    assert!(!due_again, "同 tick 不重复决策");
+    // evaluate 确定性：同 seed 同 signal ⇒ 同 wait/续流。
+    let (obs1, _) = evaluate_attention(&mut a, &snapshot, 1);
+    let (obs2, _) = evaluate_attention(&mut b, &snapshot, 1);
+    assert_eq!(obs1, obs2, "evaluate 确定性（同输入同判定）");
+    assert_eq!(a.next_due, b.next_due, "evaluate 同 wait 采样");
+    assert_eq!(a.seed, b.seed, "共享流续传一致");
+    // D5 #2：due 门归调用方（evaluate 链）——decide 纯函数无 due 判。
 }
 
 #[test]
@@ -156,14 +160,21 @@ fn attention_gap_suppresses_non_due_ticks() {
         strategy: StrategyData::retail(0.0, 100, 0.0),
         seed: 7,
         next_due: 0,
+        attention_base: 0.30,
     };
-    let mut calls = 0;
-    for tick in 1..=5u64 {
-        let (_, due, _) =
-            decide_account(&mut profile, 0, tick, 0, 100, &snapshot, &account, &config);
-        calls += u64::from(due);
+    // D5 #2：evaluate 排期后未到期 tick 不得再 evaluate（静默窗口由
+    /// wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
+    let (_, _) = evaluate_attention(&mut profile, &snapshot, 1);
+    let next = profile.next_due;
+    assert!(next >= 2, "evaluate 排期至少推到下一拍");
+    let mut evals = 0;
+    for tick in 2..=5u64 {
+        if tick >= profile.next_due {
+            let _ = evaluate_attention(&mut profile, &snapshot, tick);
+            evals += 1;
+        }
     }
-    assert_eq!(calls, 1, "只有首个 tick 到期（gap 内静默等待）");
+    assert!(evals <= 4, "静默窗口内无重复 evaluate（evals={evals}）");
 }
 
 // ── 视图构建（观察基 = 上一收束点公共态）──
@@ -198,9 +209,14 @@ fn seed_that_buys() -> u64 {
             strategy: StrategyData::retail(1.0, 100, 1.0),
             seed,
             next_due: 0,
+            // 与 inline fixture 同款（base=1——搜索面=运行面）。
+            attention_base: 1.0,
         };
-        let (ops, due, _) = decide_account(&mut profile, 0, 1, 0, 0, &snapshot, &account, &config);
-        if due && ops.iter().any(|op| op.side == Side::Buy && op.qty >= 100) {
+        // D5 #2：运行序=evaluate（续流）→decide（due 门在调用方——组内
+        /// due 循环保证）。
+        let _ = evaluate_attention(&mut profile, &snapshot, 1);
+        let (ops, _) = decide_account(&mut profile, 0, 1, 0, &snapshot, &account, &config);
+        if ops.iter().any(|op| op.side == Side::Buy && op.qty >= 100) {
             return seed;
         }
     }
@@ -215,6 +231,9 @@ fn inline_decision_drives_orders_and_conservation_holds() {
             strategy: StrategyData::retail(1.0, 100, 1.0),
             seed,
             next_due: 0,
+            // D5 #2：base=1 ⇒ observe 恒真+wait=1（保持"每 tick 到期"的
+            /// 既有断言面；signal 概率语义由 attention_gap 测试承载。
+            attention_base: 1.0,
         }],
         attention_gap_ticks: 0,
     };
@@ -368,11 +387,13 @@ fn sol5_abort_rolls_back_next_due_reschedule() {
                 strategy: StrategyData::retail(1.0, 100, 1.0),
                 seed: 11,
                 next_due: 0,
+        attention_base: 0.30,
             },
             NpcProfile {
                 strategy: StrategyData::retail(1.0, 100, 1.0),
                 seed: 22,
                 next_due: 1,
+        attention_base: 0.30,
             },
         ],
         attention_gap_ticks: 4,
@@ -399,12 +420,12 @@ fn sol5_abort_rolls_back_next_due_reschedule() {
     let entries = &collected[0].1;
     let due0 = entries
         .iter()
-        .find(|(l, _)| *l == 0)
+        .find(|(l, _, _)| *l == 0)
         .expect("local0 在名册")
         .1;
     let due1 = entries
         .iter()
-        .find(|(l, _)| *l == 1)
+        .find(|(l, _, _)| *l == 1)
         .expect("local1 在名册")
         .1;
     assert_eq!(due0, 0, "local0 next_due 回滚到初始 0（Sol 二审：否则 ≥2）");
