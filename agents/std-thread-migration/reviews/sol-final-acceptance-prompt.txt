@@ -1,0 +1,128 @@
+# Sol 终验收请求：std-thread 迁移收官（缺省翻转+性能终测+全链终审）
+
+> 【送审前替换本文件全部 <…> 占位符，并删除本提示块】
+> 占位符共 15 个：REVIEW_DATE / REVIEW_HEAD_SHA / FLIP_COMMIT_RANGE /
+> FLIP_COMMIT_SHA / MIGRATION_COMMIT_COUNT / R1_R5_RESULTS / ENV1_FINAL /
+> PERF_REPORT_PATH / PERF_A_ROUNDS / PERF_A_MEDIAN / PERF_A_SHA /
+> PERF_B_ROUNDS / PERF_B_MEDIAN / PERF_B_SHA / WASM_CHECK_RESULT。
+
+日期：<REVIEW_DATE>。请求人：协调者。这是 std-thread 迁移的**终验收**
+（flip-runbook §4）：翻转批完成后送审，通过后方可宣称迁移完成、合并
+main、开工批 9。工作区=
+/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，送审 HEAD=<REVIEW_HEAD_SHA>。
+基线原则：旧 pipeline=语义基线（翻转批起既定裁决原则，协调者已批准）。
+
+## 一、复核范围
+
+1. **翻转批全部提交**：<FLIP_COMMIT_RANGE>
+   - 已知前置（起草时在案）：5c1f4cd7 翻转前置——15 处 pin 判定统一为
+     step_runtime_enabled（消除 var_os"存在即跳过"在 =0 时的静默语义差）。
+   - 翻转本体：<FLIP_COMMIT_SHA>——单一目的提交：runtime/mod.rs
+     step_runtime_enabled 缺省 false→true，doc 注释同步改写
+     （缺省=runtime；显式 ENGINE_STEP_RUNTIME=0=逃生门，批 9 清理前保留）。
+   - 翻转后回归矩阵（runbook §2.2，R1=默认 lib / R2=--tests 含
+     flip_batch1-5（10/13/14/14/15）/ R3=显式回旧管线 / R4=doctests /
+     R5=全 workspace 长验收）结果：<R1_R5_RESULTS>。
+2. **迁移全链 diff 摘要**：`git diff a6001494..HEAD --stat`（merge-base
+   a600149469a7d14be5b3dc682119ce07012af991，共 <MIGRATION_COMMIT_COUNT>
+   提交）+ 分域导览：packages/engine/src/runtime/ 新模块（desk/group/
+   world/coordinator/drive/decision/plans/bridge/event_bridge/fees/
+   watchdog）、session 侧接线（failure.rs step 分流、runtime_driver
+   挂载、投影回写群）、翻转批台账 packages/engine/tests/
+   runtime_flip_batch{1..5}.rs + tests/common/flip_helpers.rs、
+   multi-tick-design.md D0-D5 记录。
+3. **域迁移 106→0 批次表**（Sol 核对台账与实测一致性，逐批末态以
+   plans/multi-tick-design.md 与交接文件为准）：
+
+| 批 | 内容 | 末态 |
+|----|------|------|
+| 起点 | 62ff4c9b 缺省翻 runtime 实测 | 106 失败→回退 opt-in |
+| P2 | attention/事件 seq 等先行修复 | 101 失败（1457/101/11） |
+| D0 | 常驻 driver+锁步不变量+initial_committed_tick | 见台账 |
+| D2 | envelope/ingress/回执/到期边界面 | 见台账 |
+| D4 | 执行器绑定/相位计时 | 见台账 |
+| D3a/D3b | candidate/committable 语义翻译（Sol 一~九审） | 见台账 |
+| D1 | 决策链/计划域 | 见台账 |
+| D5 | 存档/恢复+desk 域收官（Sol 终审四轮） | 见台账 |
+| 翻转前置 | pin 判定式统一（5c1f4cd7） | 判定式归一 |
+| 翻转 | <FLIP_COMMIT_SHA> | env=1 全量 lib=<ENV1_FINAL>（runbook P1 要求 0 failed） |
+
+## 二、必查清单（逐项给"通过/不通过"+证据出处）
+
+1. **双口径性能数字与可比性声明**（报告=<PERF_REPORT_PATH>）：
+   - 口径 A（裸引擎探针 `cargo run -p engine --release --example
+     runtime_s5_probe -- 3000 10 2000`，直跑 World、20000 retail、
+     auction_ticks=0）：各轮 <PERF_A_ROUNDS>，中位 <PERF_A_MEDIAN>，
+     binary SHA <PERF_A_SHA>；对照 627-689（5412fd10 同命令同负载）。
+     守恒两断言（现金+费用/股份）必须 ✓，任一红=数字作废并升级正确性事故。
+   - 口径 B（driver 全语义 `max_speed_probe + default-setup.json`，
+     经 GameSession.step；注意 driver 现硬编码 1 组×20007，非字面
+     10×2000）：各轮 <PERF_B_ROUNDS>，中位 <PERF_B_MEDIAN>，binary SHA
+     <PERF_B_SHA>；**新建基准、无历史可比数字**，报告中须如实声明。
+   - 核验点：每口径 ≥3 轮同口径背靠背；独占基准窗口协变量（日期时间/
+     /proc/stat 快照/binary SHA）齐全；两口径分开陈述、未做跨口径换算；
+     原型 own-inline 962（简化口径）只作背景、未与两口径并列。
+2. **318/627 同源勘正的口径表述是否如实**：按
+   plans/flip-runbook-baseline-commands.md 重建：318.0 与 627-689 **同源
+   同命令**（同口径 A 探针），318.0 采于 P1 空档防御之前（62ff4c9b）；
+   runbook §3.3 原把 318.0 记为口径 B 对照系**误归属**。Sol 必须
+   Explicitly 裁决其 §1 矛盾登记（sol-recheck-verdict.md:38"不同口径"
+   表述 vs 提交链证据 #1-#5，两者必有一错），并核验终测报告引用 318.0
+   时是否携带同源勘正声明、"低于 318.0 属预期"类预警是否已随勘正撤除。
+3. **有意分歧 13 条+缺口 4 条+pin 锚登记完整性**（总账=
+   plans/intentional-divergences.md）：
+   - A1-A13 逐条裁定"维持（理由）/需修复"；已入 docs 8 项、待批 10
+     同步 9 项（A6-A13+B4）清点是否与总账计数一致；**分歧未在
+     trading-rules.md 或台账正式登记的一律视为漏项退回**。
+   - B1-B4 登记缺口 + 非语义债 4 项（simulation-diagnostics 失修、
+     Event.ts 重生成等待）是否如实登记、无静默吞项。
+   - pin 锚 C1-C11（11 组/15 站点）+ D2 登记 5 处：站点数以
+     `ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib -- --list`/实跑
+     名单为准（历史上交接计数与代码注记有出入）；判定式统一后 =0 时
+     pin 是否仍正确跳过、不再有"生产旧管线但 pin 静默跳过"语义差。
+4. **wasm 方向 A 行为**：c5bb4a0b（world wasm 门控移除+串行兜底）；
+   wasm32 上 session runtime_driver=None 走串行旧管线（Stage 1 Web 目标
+   形态，用户拍板方向 A）。核实 P4 结果 <WASM_CHECK_RESULT>
+   （`cargo check -p engine --target wasm32-unknown-unknown`）与
+   plans/wasm-gap-verification.md 登记一致；A12 是否已列入批 10 登记
+   候选（ADR-0005/0027 补记）。
+5. **分支冻结状态**：`git log <FLIP_COMMIT_SHA>..HEAD` 必须为空（或仅
+   .tmp 类不入库产物）——翻转 commit 后、Sol 验收前不得塞任何实现提交
+   （runbook §6.5）；发现冻结被破坏=程序违规，退回重审。
+6. **trading-rules 登记核验**：docs/trading-rules.md 分支内全部新增/
+   修改条目（至少：自成交限制含游戏简化声明、日终未成交单失效显式
+   OrderCanceled、desk 分段记账口径、散户经历反馈成交事件面）——官方
+   依据援引与适用日期是否可靠、简化/不支持标注是否如实。
+
+## 三、终裁问题
+
+1. **迁移可否宣告完成并合并 main？** 按标准三问回答：大 A 语义符合且
+   依据可靠 / 改动需求必需且最小 / 有无遗漏边界测试、跨层语义漂移、
+   不必要复杂度。
+2. 若不通过：给出剩余最小修复集与重审路径（修复走新提交+重审，不得
+   原地改翻转 commit）。
+3. 批 9（外部清理）/批 10（trading-rules 同步 9 项）开工前置是否满足。
+
+## 四、只读要求与证据指针
+
+- **只读复核**：不写文件、不构建、不跑测试/基准/探针；允许读文件、
+  git log/diff/show、grep。数字核验以归档报告与台账为准，不要求复测。
+- 证据指针（相对工作区根；agents/std-thread-migration/ 下）：
+  - plans/flip-runbook.md（§2 翻转步骤/§3 性能协议/§4 验收范围/§5 回滚）
+  - plans/flip-runbook-baseline-commands.md（318/627 同源勘正+矛盾登记）
+  - plans/intentional-divergences.md（分歧 13/缺口 4/pin 11 组总账）
+  - plans/multi-tick-design.md（D0-D5 全链台账）；plans/d5-triage.md；
+    plans/handoff-d5-finish.md 等 handoff-*
+  - plans/sol-flip-review-verdict.md、plans/sol-recheck-verdict.md 等
+    历代 Sol 裁决（口径勘正需对照）
+  - plans/wasm-gap-verification.md、plans/flip-106-domain-inventory.md、
+    plans/semantic-traceability.md
+  - docs/trading-rules.md；docs/decisions/0042-trade-maker-taker-leg-semantics.md
+  - 性能终测报告：<PERF_REPORT_PATH>（.tmp/）
+
+## 五、Sol 输出要求
+
+逐项回答 §二 1-6（每项"通过/不通过+证据出处"）；§三 终裁给
+"可宣告完成并合并 main / 不可+理由+最小修复集"。有效发现将修复后复核；
+无法修复的明确报告。**未过 Sol 不得宣称迁移完成，也不得开始批 9。**
