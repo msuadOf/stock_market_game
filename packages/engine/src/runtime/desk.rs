@@ -34,6 +34,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
+/// 构造期迁入的在途挂单种子（adopt：会话旧簿单直入 desk 初始簿——
+/// 先于本 tick 新单（到簿序对齐旧管线；此前经 ExternalPlan 消息链晚于
+/// 外部新单，maker/taker 身分颠倒）。
+#[derive(Clone, Copy, Debug)]
+pub struct DeskRestingSeed {
+    pub owner: Owner,
+    pub side: Side,
+    pub price: i64,
+    pub qty: u32,
+}
+
 /// 每股交易部构造参数（世界构造期确定，运行期不变）。
 #[derive(Clone, Debug)]
 pub struct DeskSetup {
@@ -62,6 +73,8 @@ pub struct DeskSetup {
     /// D0：起始已转正 tick（恢复/接管对齐——Ops 的 tick 连续性按绝对
     /// tick 推导）。
     pub initial_tick: u64,
+    /// D5 adopt：构造期直入簿的会话旧簿在途单。
+    pub initial_orders: Vec<DeskRestingSeed>,
     /// D3a-2：种子日 K（会话预置历史投影——(open, high, low, close,
     /// volume)，不过滤；desk 为链观察的日 K 权威承载）。
     pub initial_daily_bars: Vec<(i64, i64, i64, i64, u64)>,
@@ -1049,15 +1062,24 @@ impl DeskState {
         .map_err(|_| over("过户费边际失败"))?
         .cents();
         // purse 防御：不足=组端预留口径 bug（purse 应含费用上限），显式失败不静默负数。
-        let buy_purse_after = buy_purse_before - charge;
-        if buy_purse_after < 0 {
-            return Err(RuntimeError::ProtocolInvariant {
-                detail: format!(
-                    "交易部 {} 买腿 purse 不足：purse={buy_purse_before}, charge={charge}（组端预留口径 bug）",
-                    self.setup.stock
-                ),
-            });
-        }
+        // D5 adopt 例外：purse=0 的单=构造期迁入的旧簿在途单（无 purse
+        /// 预留——组端现金实扣走外来成交落账面，Sol 六/七审外来路径），
+        // purse 记账维持 0（不透支簿面）。
+        let adopt_foreign_buy = buy_purse_before == 0;
+        let buy_purse_after = if adopt_foreign_buy {
+            0
+        } else {
+            let after = buy_purse_before - charge;
+            if after < 0 {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "交易部 {} 买腿 purse 不足：purse={buy_purse_before}, charge={charge}（组端预留口径 bug）",
+                        self.setup.stock
+                    ),
+                });
+            }
+            after
+        };
         // 卖腿：名义费用 → 实收封顶分配（佣金→印花→过户费）；净得实体。
         let sell_filled_after = sell_filled_before + value;
         let nominal_after = FeeQuote::nominal(
@@ -2017,7 +2039,7 @@ fn fnv(state: u64, value: u64) -> u64 {
 
 /// 交易部主循环（批 3 引擎化）。
 pub fn desk_main(
-    setup: DeskSetup,
+    mut setup: DeskSetup,
     n_groups: usize,
     config: Arc<GameConfig>,
     rx: Receiver<DeskMsg>,
@@ -2039,7 +2061,27 @@ pub fn desk_main(
         crate::verification_evidence::with_phase_timing_binding(binding, work)
     }
     let who = WorkerId::Desk(setup.stock);
+    let initial_orders = std::mem::take(&mut setup.initial_orders);
+    let initial_tick = setup.initial_tick;
     let mut state = DeskState::new(setup, n_groups, config);
+    // D5 adopt：旧簿在途单直入初始簿（不撮合、不受理回执——已在旧
+    /// 管线受理过；serial 序=构造期前段，与消息链首单同起 0）。
+    for seed in initial_orders {
+        let order_ref = (state.setup.stock, state.next_serial);
+        state.rest(DeskOrder {
+            order_ref,
+            owner: seed.owner,
+            side: seed.side,
+            price: seed.price,
+            qty: seed.qty,
+            purse: 0,
+            filled_value: 0,
+            charged_commission: 0,
+            charged_stamp_tax: 0,
+            charged_transfer_fee: 0,
+            expire_tick: initial_tick.saturating_add(state.setup.order_ttl_ticks),
+        });
+    }
     let mut result = Ok(());
     loop {
         let msg = match worker_recv(&rx, &watchdog, &abort, who) {

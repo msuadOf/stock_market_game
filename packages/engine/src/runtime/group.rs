@@ -1422,12 +1422,12 @@ impl GroupState {
                 let acct = self.acct_mut(local)?;
                 let slot = &mut acct.foreign_active[stock as usize];
                 if *slot == 0 {
-                    return Err(RuntimeError::ProtocolInvariant {
-                        detail: format!(
-                            "组 {} Closed 落账使在途登记为负：local={local}, stock={stock}",
-                            self.group
-                        ),
-                    });
+                    // D5 adopt 例外：foreign_active==0 且无票的 Closed=构造期
+                    // 直入的旧簿在途单（无组端登记——计数器从未加过）；
+                    // 真负数形态（登记后多减）仍由下面的减法下溢防御显式
+                    // 拦截（i16 saturating 不静默）。计数登记诊断面。
+                    self.skipped_orders += 1;
+                    return Ok(());
                 }
                 *slot -= 1;
                 self.undo.push(GroupUndo::ForeignActive {

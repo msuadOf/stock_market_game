@@ -203,6 +203,8 @@ pub struct WorldSpec {
     pub belief_seeds: Vec<Option<super::world::BeliefParticipantSnapshot>>,
     /// Belief-1b·下：公开库初始 Arc（缺省空库——投递消息稀疏刷新）。
     pub library: Option<std::sync::Arc<crate::information::PublicLibrary>>,
+    /// D5 adopt：构造期直入 desk 初始簿的会话旧簿在途单（按股 idx）。
+    pub initial_desk_orders: Vec<Vec<super::desk::DeskRestingSeed>>,
     /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调不可
     /// 用，读面上行空）。
     pub root_projection: Option<std::sync::Arc<RootProjection>>,
@@ -361,6 +363,7 @@ impl World {
             plan_factory,
             belief_seeds,
             library,
+            initial_desk_orders,
             root_projection,
             civil_start_date,
         } = spec;
@@ -504,6 +507,7 @@ impl World {
                 initial_tick: initial_committed_tick,
                 initial_daily_bars: stock_seed_bars.remove(0),
                 initial_traded_days: stock_seed_traded.remove(0),
+                initial_orders: initial_desk_orders.get(s as usize).cloned().unwrap_or_default(),
             };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))

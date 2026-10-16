@@ -208,8 +208,13 @@ impl RuntimeDriver {
         // D3a-3：曾持有位投影（session positions 零量条目面——清仓后
         // 观察面 held 集成员）。
         spec.initial_ever_held = vec![ever_held];
+        // D5 adopt 直入（Sol 二审修复集 5 的到簿序收口）：旧簿在途单
+        // 构造期直入 desk 初始簿——先于本 tick 新单（此前经 ExternalPlan
+        // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
+        // partial_fill 红证）。owner 不在名册=投影缺口，显式失败。
+        spec.initial_desk_orders = resting_order_seeds_from_session(session, &ids)?;
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
-        let mut driver = Self {
+        let driver = Self {
             world,
             id_map: ids,
             next_seq: 0,
@@ -217,10 +222,6 @@ impl RuntimeDriver {
             pending_rejections: Vec::new(),
             last_library_version: None,
         };
-        // Sol 二审修复集 5：旧簿在途挂单迁入世界（构造期一次——组 0 在
-        // 下一 tick round 0 经 ExternalPlan 挂出）。此前首构造不迁入：
-        // 首步前 seed 的挂单只在 session 旧簿，runtime 世界不可见。
-        driver.adopt_session_resting_orders(session)?;
         Ok(driver)
     }
 
@@ -1190,6 +1191,7 @@ impl RuntimeDriver {
     }
 }
 
+
 impl RuntimeDriver {
     /// 翻转缺口②（批 8h·部分3）：tick 计数与 poison 安装面。
     ///
@@ -1495,4 +1497,40 @@ impl RuntimeDriver {
     > {
         self.world.take_candle_projection()
     }
+}
+
+/// D5 adopt 收集：会话旧簿在途单 → desk 初始簿种子（按股 idx——owner
+/// 名册映射组 0 位；直入形态不受理回执/不 purse——组内成交落账走外来
+/// 单路径，Sol 六/七审的外来面承载）。
+fn resting_order_seeds_from_session(
+    session: &GameSession,
+    id_map: &[crate::AccountId],
+) -> Result<Vec<Vec<super::desk::DeskRestingSeed>>, String> {
+    let snapshot = session.runtime_resting_orders_snapshot();
+    let n_stocks = snapshot
+        .iter()
+        .map(|(code, _)| code.0 as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = vec![Vec::new(); n_stocks];
+    for (code, orders) in snapshot {
+        for order in orders {
+            let local = id_map
+                .iter()
+                .position(|id| *id == order.owner)
+                .ok_or_else(|| {
+                    format!(
+                        "旧簿挂单 owner 不在世界名册（无法迁移）：{:?} {:?}",
+                        order.owner, code
+                    )
+                })? as super::LocalIdx;
+            seeds[code.0 as usize].push(super::desk::DeskRestingSeed {
+                owner: (0, local),
+                side: order.side,
+                price: order.price.cents(),
+                qty: order.qty,
+            });
+        }
+    }
+    Ok(seeds)
 }
