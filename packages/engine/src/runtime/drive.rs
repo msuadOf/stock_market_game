@@ -91,22 +91,53 @@ impl RuntimeDriver {
         /// 均分、尾组余位零填充；单组 n_groups=1 时与原全量单行等价）。
         let n_groups = n_groups.max(1);
         let per_group = npcs.div_ceil(n_groups);
-        fn split_rows<T: Default + Clone>(mut row: Vec<T>, n_groups: usize, per_group: usize) -> Vec<Vec<T>> {
+        fn split_rows<T: Clone>(
+            mut row: Vec<T>,
+            n_groups: usize,
+            per_group: usize,
+            pad: T,
+        ) -> Vec<Vec<T>> {
             let mut out = Vec::with_capacity(n_groups);
             for _ in 0..n_groups {
                 let take = row.drain(..per_group.min(row.len())).collect::<Vec<T>>();
                 let mut padded = take;
-                padded.resize(per_group, T::default());
+                padded.resize(per_group, pad.clone());
                 out.push(padded);
             }
             out
         }
-        let mut cash = split_rows(cash_raw, n_groups, per_group);
-        let mut shares = split_rows(shares_raw, n_groups, per_group);
-        let invested = split_rows(invested_raw, n_groups, per_group);
-        let recovered = split_rows(recovered_raw, n_groups, per_group);
-        let frozen = split_rows(frozen_raw, n_groups, per_group);
-        let ever_held = split_rows(ever_held_raw, n_groups, per_group);
+        // 尾组零位：Vec 行按股数定长（world 的 copy_from_slice 要求）。
+        let mut cash = split_rows(cash_raw, n_groups, per_group, 0i64);
+        let mut shares = split_rows(
+            shares_raw,
+            n_groups,
+            per_group,
+            vec![0u32; n_stocks],
+        );
+        let invested = split_rows(
+            invested_raw,
+            n_groups,
+            per_group,
+            vec![0i64; n_stocks],
+        );
+        let recovered = split_rows(
+            recovered_raw,
+            n_groups,
+            per_group,
+            vec![0i64; n_stocks],
+        );
+        let frozen = split_rows(
+            frozen_raw,
+            n_groups,
+            per_group,
+            vec![0u32; n_stocks],
+        );
+        let ever_held = split_rows(
+            ever_held_raw,
+            n_groups,
+            per_group,
+            vec![false; n_stocks],
+        );
         let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
             .runtime_attention_state()
             .into_iter()

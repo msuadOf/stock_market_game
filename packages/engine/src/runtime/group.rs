@@ -558,6 +558,9 @@ pub struct GroupState {
     /// 缓冲——驱动器段投影 session.last_retail_decisions；Start 清空
     /// 对齐旧管线「本 tick 最新」瞬态语义）。
     retail_traces: Vec<crate::session::RetailDecisionTrace>,
+    /// 翻转批组参数化：本组在全局名 roster 的偏移（RootProjection 的
+    /// per-local 向量按全局序——组内 local 访问需加偏移；单组=0）。
+    pub(crate) roster_offset: usize,
     /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
     /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
@@ -654,6 +657,7 @@ impl GroupState {
             plan_undo_saved: false,
             pending_force_due: Vec::new(),
             retail_traces: Vec::new(),
+            roster_offset: 0,
             #[cfg(test)]
             injected_assessments: Vec::new(),
             #[cfg(test)]
@@ -1128,7 +1132,9 @@ impl GroupState {
         let Some(&account) = self
             .root_projection
             .as_ref()
-            .and_then(|projection| projection.account_ids.get(local as usize))
+            .and_then(|projection| {
+                projection.account_ids.get(self.roster_offset + local as usize)
+            })
         else {
             return;
         };
@@ -1180,7 +1186,9 @@ impl GroupState {
         let Some(&account) = self
             .root_projection
             .as_ref()
-            .and_then(|projection| projection.account_ids.get(local as usize))
+            .and_then(|projection| {
+                projection.account_ids.get(self.roster_offset + local as usize)
+            })
         else {
             return Ok(());
         };
@@ -1233,7 +1241,9 @@ impl GroupState {
         let Some(&account) = self
             .root_projection
             .as_ref()
-            .and_then(|projection| projection.account_ids.get(local as usize))
+            .and_then(|projection| {
+                projection.account_ids.get(self.roster_offset + local as usize)
+            })
         else {
             return Ok(());
         };
@@ -1680,7 +1690,10 @@ impl GroupState {
                 })
             }
         };
-        let Some(&account) = projection.account_ids.get(local as usize) else {
+        let Some(&account) = projection
+            .account_ids
+            .get(self.roster_offset + local as usize)
+        else {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("组 {group} retail 位 {local} 无名册 AccountId"),
             });
@@ -2047,7 +2060,10 @@ impl GroupState {
                 })
             }
         };
-        let Some(&account) = projection.account_ids.get(local as usize) else {
+        let Some(&account) = projection
+            .account_ids
+            .get(self.roster_offset + local as usize)
+        else {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("组 {group} belief 位 {local} 无名册 AccountId"),
             });
@@ -3053,7 +3069,7 @@ impl GroupState {
                             .root_projection
                             .as_ref()
                             .is_some_and(|p| {
-                                p.chain_params.get(local as usize).is_some_and(|c| c.is_some())
+                                p.chain_params.get(self.roster_offset + local as usize).is_some_and(|c| c.is_some())
                             });
                         let chain_local = self.root_projection.is_some()
                             && belief_seeded

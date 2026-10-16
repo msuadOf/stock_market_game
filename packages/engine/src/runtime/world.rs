@@ -517,7 +517,7 @@ impl World {
             let group_root = root_projection
                 .as_ref()
                 .map(std::sync::Arc::clone);
-            let state = super::group::GroupState::new_with_initial_tick(
+            let mut state = super::group::GroupState::new_with_initial_tick(
                 g,
                 accounts,
                 belief_states,
@@ -532,6 +532,8 @@ impl World {
                 group_root,
                 script_for(g),
             );
+            // 翻转批组参数化：本组全局名 roster 偏移。
+            state.roster_offset = g as usize * accounts_per_group;
             let rx = group_rxs.remove(0);
             let handle = std::thread::Builder::new()
                 .name(format!("rt-group-{g}"))
