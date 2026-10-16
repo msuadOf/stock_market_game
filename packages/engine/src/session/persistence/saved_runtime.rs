@@ -183,12 +183,23 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
         poisoned: false,
         next_receipt_base: session.state.next_receipt_base,
         live_envelopes,
-        book_public_cutoff_sequences: session
-            .state
-            .markets
-            .iter()
-            .map(|(code, market)| (*code, market.auction_public_cutoff_sequence()))
-            .collect(),
+        book_public_cutoff_sequences: if session.state.desk_book_mirror.is_empty() {
+            session
+                .state
+                .markets
+                .iter()
+                .map(|(code, market)| (*code, market.auction_public_cutoff_sequence()))
+                .collect()
+        } else {
+            // D5 attention：runtime 形态（desk 镜像在位）——公开截点自
+            /// 镜像（desk 权威；session market 恒 0）。
+            session
+                .state
+                .desk_book_mirror
+                .iter()
+                .map(|(code, mirror)| (*code, mirror.public_cutoff_serial))
+                .collect()
+        },
         retail_projection_seen,
         strategy_states,
     };
@@ -247,7 +258,10 @@ pub fn validate_runtime_state(
     }
     for (code, cutoff) in &state.book_public_cutoff_sequences {
         let market = &session.state.markets[code];
-        if *cutoff > market.book_next_sequence()
+        // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
+        /// 空、next_sequence=0）——截点不与本簿序对拍（desk 恢复域接管）；
+        /// 相位面（连续/盘前=0 截点）仍按 session 相位判。
+        if (market.book_next_sequence() > 0 && *cutoff > market.book_next_sequence())
             || (matches!(
                 session.phase(),
                 TradingPhase::Continuous | TradingPhase::PreOpen

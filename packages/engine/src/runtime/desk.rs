@@ -117,6 +117,8 @@ pub struct DeskSetup {
     /// D5 restore 链最后一层：日内行情聚合种子（save 点投影；None=
     /// live 构造/无会话来源，desk 从构造零点起）。
     pub initial_market: Option<DeskMarketSeed>,
+    /// D5 attention：收盘竞价公开截点种子（restore 链）。
+    pub initial_public_cutoff: u64,
 }
 
 /// 交易相位（照搬 `session.rs TradingPhase` 的 tick 推导）。
@@ -317,6 +319,12 @@ pub struct DeskState {
     bids: BTreeMap<i64, VecDeque<DeskOrder>>,
     asks: BTreeMap<i64, VecDeque<DeskOrder>>,
     next_serial: u64,
+    /// D5 attention 公开可见性门禁：收盘竞价公开截点（连续→收盘竞价
+    /// 切换时点的 next_serial——老单（serial<截点）公开、竞价新单隐藏；
+    /// A 股收盘集合竞价时段不揭示新申报的真实制度面）。
+    public_cutoff_serial: u64,
+    /// 上拍相位（公开截点的切换检测）。
+    last_phase: Option<DeskPhase>,
     undo: Vec<DeskUndo>,
     out: Vec<Vec<Entity>>,
     fills_out: Vec<Vec<FillFact>>,
@@ -385,6 +393,8 @@ impl DeskState {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             next_serial: 1,
+            public_cutoff_serial: 0,
+            last_phase: None,
             undo: Vec::new(),
             out: vec![Vec::new(); n_groups],
             fills_out: vec![Vec::new(); n_groups],
@@ -1729,6 +1739,15 @@ impl DeskState {
         {
             self.execute_opening_clearing()?;
         }
+        // D5 attention 公开可见性门禁：连续→收盘竞价切换时点记公开截点
+        ///（老单公开、竞价新单隐藏——旧管线 set_matching_mode 的 cutoff
+        /// 语义等价，desk 权威域承载）。
+        if phase == DeskPhase::ClosingAuction
+            && self.last_phase.is_some_and(|p| p != DeskPhase::ClosingAuction)
+        {
+            self.public_cutoff_serial = self.next_serial;
+        }
+        self.last_phase = Some(phase);
         // 到期撤销先于本 tick 新意图。
         self.expire_due(tick);
         // 批 8b 哈希惰性化：热路径 O(1) 指纹；全量留 Final/回滚冷路径。
@@ -1780,10 +1799,49 @@ impl DeskState {
         let (down, up_buy) = self
             .price_bound_for(Side::Buy, tick, self.config.price_cage_enabled)
             .unwrap_or((1, self.market.last_price));
+        // D5 attention 公开可见性门禁（A 股制度面）：开盘集合竞价申报窗
+        /// 公开簿=空（不揭示买卖盘）；收盘竞价只揭示截点前老单；盘前/
+        /// 连续全公开（竞价清算后的揭示=簿全量）。desk 广播是组内观察
+        /// （signal/imbalance）与路由（best/depth）的输入——公开面与
+        /// 真实簿分离。
+        let phase = self.setup.phase_at(tick);
+        let public_orders: Vec<&DeskOrder> = match phase {
+            DeskPhase::CallAuction => Vec::new(),
+            DeskPhase::ClosingAuction => self
+                .bids
+                .values()
+                .chain(self.asks.values())
+                .flat_map(|level| level.iter())
+                .filter(|order| order.order_ref.1 < self.public_cutoff_serial)
+                .collect(),
+            DeskPhase::PreOpen | DeskPhase::Continuous => self
+                .bids
+                .values()
+                .chain(self.asks.values())
+                .flat_map(|level| level.iter())
+                .collect(),
+        };
+        let mut pub_bids: BTreeMap<i64, u64> = BTreeMap::new();
+        let mut pub_asks: BTreeMap<i64, u64> = BTreeMap::new();
+        for order in &public_orders {
+            let level = match order.side {
+                Side::Buy => &mut pub_bids,
+                Side::Sell => &mut pub_asks,
+            };
+            *level.entry(order.price).or_default() += u64::from(order.qty);
+        }
+        let pub_best_bid = pub_bids.keys().next_back().copied();
+        let pub_best_ask = pub_asks.keys().next().copied();
+        let imbalance_public = {
+            let bid: u64 = pub_bids.values().rev().take(5).sum();
+            let ask: u64 = pub_asks.values().take(5).sum();
+            let total = bid + ask;
+            if total == 0 { 0.0 } else { (bid as f64 - ask as f64) / total as f64 }
+        };
         super::protocol::StockPublic {
             last_price: self.market.last_price,
-            best_bid: self.best_bid(),
-            best_ask: self.best_ask(),
+            best_bid: pub_best_bid,
+            best_ask: pub_best_ask,
             max_buy_price: up_buy,
             daily_upper_limit: self.up_stop().unwrap_or(self.market.last_close),
             min_sell_price: down,
@@ -1812,19 +1870,18 @@ impl DeskState {
             daily_total_traded: self.market.traded_days_total,
             volume_today: self.market.volume_today,
             relative_volume: 1.0,
-            order_book_imbalance: self.top5_imbalance(),
-            depth_bids: self
-                .bids
+            order_book_imbalance: imbalance_public,
+            public_cutoff_serial: self.public_cutoff_serial,
+            depth_bids: pub_bids
                 .iter()
                 .rev()
                 .take(5)
-                .map(|(price, level)| (*price, count_qty(level)))
+                .map(|(price, qty)| (*price, *qty))
                 .collect(),
-            depth_asks: self
-                .asks
+            depth_asks: pub_asks
                 .iter()
                 .take(5)
-                .map(|(price, level)| (*price, count_qty(level)))
+                .map(|(price, qty)| (*price, *qty))
                 .collect(),
         }
     }
@@ -2112,6 +2169,7 @@ pub fn desk_main(
     let initial_orders = std::mem::take(&mut setup.initial_orders);
     let initial_recent_prices = std::mem::take(&mut setup.initial_recent_prices);
     let initial_market = setup.initial_market.take();
+    let initial_public_cutoff = setup.initial_public_cutoff;
     let initial_tick = setup.initial_tick;
     let mut state = DeskState::new(setup, n_groups, config);
     // D5 restore 等价：种子 tick 价格历史（容量裁剪）。
@@ -2146,6 +2204,8 @@ pub fn desk_main(
             state.rest(order);
         }
     }
+    // D5 attention：公开截点种子（restore 链——desk 权威自此起步）。
+    state.public_cutoff_serial = initial_public_cutoff;
     // D5 restore 链最后一层：日内行情聚合种子装载（save 点权威——
     /// 续拍在 save 聚合之上演进，不再从构造零点覆盖）。
     if let Some(seed) = initial_market {

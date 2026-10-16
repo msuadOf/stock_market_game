@@ -260,6 +260,7 @@ fn order_cap_differs_by_board() {
             initial_recent_prices: Vec::new(),
             initial_traded_days: 0,
             initial_market: None,
+            initial_public_cutoff: 0,
         },
     ];
     spec.initial_cash = 30_000_000_000;

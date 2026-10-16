@@ -250,6 +250,7 @@ fn timeseries_mappers_project_runtime_views_to_engine_shapes() {
         volume_today: 12_345,
         relative_volume: 1.0,
         order_book_imbalance: 0.25,
+        public_cutoff_serial: 0,
         depth_bids: vec![(1000, 500), (990, 300)],
         depth_asks: vec![(1010, 400), (1020, 200)],
     };

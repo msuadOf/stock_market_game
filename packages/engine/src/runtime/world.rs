@@ -52,6 +52,9 @@ pub struct DeskStockSpec {
     pub initial_traded_days: u64,
     /// D5 restore 链最后一层：日内行情聚合种子（None=构造零点）。
     pub initial_market: Option<super::desk::DeskMarketSeed>,
+    /// D5 attention：收盘竞价公开截点种子（restore 链——market 的
+    /// auction_public_cutoff_sequence 投影；0=全新世界）。
+    pub initial_public_cutoff: u64,
 }
 
 impl DeskStockSpec {
@@ -67,6 +70,7 @@ impl DeskStockSpec {
             initial_recent_prices: Vec::new(),
             initial_traded_days: 0,
             initial_market: None,
+            initial_public_cutoff: 0,
         }
     }
 }
@@ -550,6 +554,7 @@ impl World {
                 initial_orders: initial_desk_orders.get(s as usize).cloned().unwrap_or_default(),
                 initial_recent_prices: stock_spec.initial_recent_prices,
                 initial_market: stock_spec.initial_market,
+                initial_public_cutoff: stock_spec.initial_public_cutoff,
             };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))
@@ -641,6 +646,7 @@ impl World {
                     volume_today: 0,
                     relative_volume: 1.0,
                     order_book_imbalance: 0.0,
+                    public_cutoff_serial: 0,
                 }
             })
             .collect()

@@ -300,6 +300,10 @@ impl RuntimeDriver {
             {
                 stock_spec.initial_recent_prices = history;
                 stock_spec.initial_market = market_seeds.get(&crate::StockId(idx as u32)).cloned();
+                // D5 attention：收盘竞价公开截点投影（restore 链——market
+                // 域承载；desk 权威自此起步）。
+                stock_spec.initial_public_cutoff = session
+                    .runtime_public_cutoff_for(&crate::StockId(idx as u32));
             }
         }
         // D5 adopt 收口：迁入后清旧簿（双域一致——save fault2226）。

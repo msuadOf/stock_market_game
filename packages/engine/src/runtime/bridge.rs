@@ -63,6 +63,7 @@ pub fn world_spec_from_setup(
                 // D5 restore 链最后一层：日内行情聚合种子由 from_session
                 // 覆盖（bridge 缺省 None——构造零点）。
                 initial_market: None,
+                initial_public_cutoff: 0,
             })
         })
         .collect::<Result<_, _>>()?;

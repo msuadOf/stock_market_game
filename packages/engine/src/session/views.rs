@@ -10,10 +10,24 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
     let public_policy = pipeline::phase::PhasePolicy::capture_on(view);
     let apply_price_cage =
         view.phase() == TradingPhase::Continuous && view.setup.config.price_cage_enabled;
+    // D5 attention：runtime 形态——遍历面=desk 镜像键集（session
+    /// markets 恒空簿；market 读面（价格笼子等）经 Option 兜底）。
+    let runtime_mirrored = !view.desk_book_mirror.is_empty();
+    let mirror_ref = view.desk_book_mirror;
     let stocks = view.compute.parallel(|| {
-        view.markets
-            .par_iter()
-            .map(|(code, m)| {
+        (if runtime_mirrored {
+            mirror_ref
+                .iter()
+                .map(|(code, _)| (code, None))
+                .collect::<Vec<(&StockId, Option<&crate::Market>)>>()
+        } else {
+            view.markets
+                .iter()
+                .map(|(code, m)| (code, Some(m)))
+                .collect::<Vec<(&StockId, Option<&crate::Market>)>>()
+        })
+        .into_par_iter()
+        .map(|(code, m)| {
                 let hist: Vec<Money> = view
                     .price_history
                     .get(code)
@@ -58,7 +72,18 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
                 } else {
                     0.0
                 };
-                let public = public_policy.project_public_book(m);
+                // D5 attention：runtime 形态（desk 镜像在位）——公开面/
+                /// 最新价自镜像（相位+截点门禁；session market 恒空簿）。
+                let (public, mirror_last) = match view.desk_book_mirror.get(code) {
+                    Some(mirror) => (
+                        super::snapshot::project_mirror_public_book(view.phase(), mirror),
+                        Some(mirror.last_price),
+                    ),
+                    None => {
+                        let m = m.expect("旧管线形态必持市场");
+                        (public_policy.project_public_book(m), None)
+                    }
+                };
                 let bid_volume: u64 = public
                     .bids
                     .iter()
@@ -82,23 +107,34 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
                     StockView {
                         best_bid: public.best_bid,
                         best_ask: public.best_ask,
-                        last_price: m.last_price(),
-                        daily_upper_limit: m.up_stop().unwrap_or_else(|error| {
-                            panic!(
-                                "daily upper limit observation failed for {}: {error}",
-                                code.0
-                            )
+                        last_price: mirror_last.unwrap_or_else(|| {
+                            m.expect("旧管线形态必持市场").last_price()
                         }),
-                        max_buy_price: m
-                            .limit_order_price_bound(Side::Buy, apply_price_cage)
-                            .unwrap_or_else(|error| {
-                                panic!("buy limit observation failed for {}: {error}", code.0)
+                        daily_upper_limit: m.map_or_else(
+                            || bound_fallback(mirror_last),
+                            |mm| mm.up_stop().unwrap_or_else(|error| {
+                                panic!(
+                                    "daily upper limit observation failed for {}: {error}",
+                                    code.0
+                                )
                             }),
-                        min_sell_price: m
-                            .limit_order_price_bound(Side::Sell, apply_price_cage)
-                            .unwrap_or_else(|error| {
-                                panic!("sell limit observation failed for {}: {error}", code.0)
-                            }),
+                        ),
+                        max_buy_price: m.map_or_else(
+                            || bound_fallback(mirror_last),
+                            |mm| mm
+                                .limit_order_price_bound(Side::Buy, apply_price_cage)
+                                .unwrap_or_else(|error| {
+                                    panic!("buy limit observation failed for {}: {error}", code.0)
+                                }),
+                        ),
+                        min_sell_price: m.map_or_else(
+                            || bound_fallback_floor(mirror_last),
+                            |mm| mm
+                                .limit_order_price_bound(Side::Sell, apply_price_cage)
+                                .unwrap_or_else(|error| {
+                                    panic!("sell limit observation failed for {}: {error}", code.0)
+                                }),
+                        ),
                         recent_prices: hist,
                         recent_market_minute_prices: completed_minute_prices,
                         relative_volume,
@@ -335,4 +371,17 @@ mod tests {
             ));
         }
     }
+}
+
+
+/// D5 attention：runtime 镜像形态的价格带兜底（market 缺位时的观察面
+/// 近似——测试与决策的笼子断言面不涉及；desk 广播带精确值待后续投影）。
+fn bound_fallback(last: Option<Money>) -> Money {
+    let last = last.unwrap_or(Money::from_cents(1));
+    Money::from_cents((last.cents() * 11 / 10).max(1))
+}
+
+fn bound_fallback_floor(last: Option<Money>) -> Money {
+    let last = last.unwrap_or(Money::from_cents(1));
+    Money::from_cents((last.cents() * 9 / 10).max(1))
 }

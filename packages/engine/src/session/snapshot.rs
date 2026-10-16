@@ -139,43 +139,91 @@ impl GameSession {
         include_daily_candles: bool,
         include_npc_accounts: bool,
     ) -> Snapshot {
+        let runtime_mirrored = !self.state.desk_book_mirror.is_empty();
         let mut reservations = LiveOrderReservations::default();
-        for (code, market) in &self.state.markets {
-            for order in market
-                .resting_order_refs()
-                .filter(|order| include_npc_accounts || order.owner == AccountId(0))
-            {
-                reservations.record_order(
-                    order.owner,
-                    code,
-                    order.side,
-                    order.price,
-                    order.qty,
-                    order.filled_value,
-                    &self.state.setup.config,
-                );
+        if runtime_mirrored {
+            // D5 attention：desk 簿镜像承载（runtime 形态——公开面/预留
+            /// 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
+            for (code, mirror) in &self.state.desk_book_mirror {
+                for (owner, side, price, qty, _serial, filled_value) in &mirror.orders {
+                    if !include_npc_accounts && *owner != AccountId(0) {
+                        continue;
+                    }
+                    reservations.record_order(
+                        *owner,
+                        code,
+                        *side,
+                        *price,
+                        *qty,
+                        crate::Money::from_cents(*filled_value),
+                        &self.state.setup.config,
+                    );
+                }
+            }
+        } else {
+            for (code, market) in &self.state.markets {
+                for order in market
+                    .resting_order_refs()
+                    .filter(|order| include_npc_accounts || order.owner == AccountId(0))
+                {
+                    reservations.record_order(
+                        order.owner,
+                        code,
+                        order.side,
+                        order.price,
+                        order.qty,
+                        order.filled_value,
+                        &self.state.setup.config,
+                    );
+                }
             }
         }
         let public_policy = pipeline::phase::PhasePolicy::capture(self);
-        let markets = self
-            .state
-            .markets
-            .iter()
-            .map(|(code, m)| {
-                let public = public_policy.project_public_book(m);
-                (
-                    code.clone(),
-                    MarketSnap {
-                        last_price: m.last_price(),
-                        last_close: m.last_close(),
-                        best_bid: public.best_bid,
-                        best_ask: public.best_ask,
-                        bids: public.bids,
-                        asks: public.asks,
-                    },
-                )
-            })
-            .collect();
+        let markets = if runtime_mirrored {
+            self.state
+                .desk_book_mirror
+                .iter()
+                .map(|(code, mirror)| {
+                    let public = project_mirror_public_book(self.phase(), mirror);
+                    let last_close = self
+                        .state
+                        .markets
+                        .get(code)
+                        .map(|m| m.last_close())
+                        .unwrap_or(mirror.last_price);
+                    (
+                        code.clone(),
+                        MarketSnap {
+                            last_price: mirror.last_price,
+                            last_close,
+                            best_bid: public.best_bid,
+                            best_ask: public.best_ask,
+                            bids: public.bids,
+                            asks: public.asks,
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            self.state
+                .markets
+                .iter()
+                .map(|(code, m)| {
+                    let public = public_policy.project_public_book(m);
+                    (
+                        code.clone(),
+                        MarketSnap {
+                            last_price: m.last_price(),
+                            last_close: m.last_close(),
+                            best_bid: public.best_bid,
+                            best_ask: public.best_ask,
+                            bids: public.bids,
+                            asks: public.asks,
+                        },
+                    )
+                })
+                .collect()
+        };
         // 高频 protocol 只发布玩家账户；直接查找，避免每帧扫描全部 NPC 账户。
         let player = AccountId(0);
         let selected_accounts: Box<dyn Iterator<Item = (&AccountId, &Account)> + '_> =
@@ -453,5 +501,44 @@ mod tests {
                 &config,
             );
         }
+    }
+}
+
+
+/// D5 attention：镜像公开投影（desk 簿镜像+相位/截点门禁——与 desk
+/// build_public 的公开面同式：CallAuction 公开簿空、ClosingAuction 揭示
+/// 截点前老单、PreOpen/Continuous 全簿）。
+pub(super) fn project_mirror_public_book(
+    phase: crate::TradingPhase,
+    mirror: &super::DeskBookMirror,
+) -> pipeline::phase::PublicBookProjection {
+    use std::collections::BTreeMap;
+    let cutoff = mirror.public_cutoff_serial;
+    let visible: Box<dyn Iterator<Item = &(crate::AccountId, crate::Side, crate::Money, u32, u64, i64)>> =
+        match phase {
+            crate::TradingPhase::CallAuction => Box::new(std::iter::empty()),
+            crate::TradingPhase::ClosingAuction => {
+                Box::new(mirror.orders.iter().filter(|(_, _, _, _, serial, _)| *serial < cutoff))
+            }
+            crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
+                Box::new(mirror.orders.iter())
+            }
+        };
+    let mut bids: BTreeMap<crate::Money, u64> = BTreeMap::new();
+    let mut asks: BTreeMap<crate::Money, u64> = BTreeMap::new();
+    for (_, side, price, qty, _, _) in visible {
+        let level = match side {
+            crate::Side::Buy => &mut bids,
+            crate::Side::Sell => &mut asks,
+        };
+        *level.entry(*price).or_default() += u64::from(*qty);
+    }
+    let bids: Vec<(crate::Money, u64)> = bids.into_iter().rev().collect();
+    let asks: Vec<(crate::Money, u64)> = asks.into_iter().collect();
+    pipeline::phase::PublicBookProjection {
+        best_bid: bids.first().map(|(price, _)| *price),
+        best_ask: asks.first().map(|(price, _)| *price),
+        bids,
+        asks,
     }
 }

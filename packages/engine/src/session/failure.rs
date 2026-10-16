@@ -627,6 +627,42 @@ impl GameSession {
                 return Err(self.poison_runtime_step(fatal));
             }
         };
+        // D5 attention 公开可见性门禁：desk 簿镜像刷新（瞬态读面源——
+        /// snapshot 公开投影/玩家在途/预留；desk 权威事实+公开截点）。
+        {
+            let views = driver.world_public_views();
+            let mut mirror = std::collections::BTreeMap::new();
+            for (stock_idx, book) in resting_by_stock.iter().enumerate() {
+                let Some(view) = views.get(stock_idx) else {
+                    continue;
+                };
+                let mut orders = Vec::with_capacity(book.len());
+                for fact in book {
+                    let Some(owner) = driver.account_by_local(
+                        u16::try_from(fact.owner.1).expect("local 下标在 u16"),
+                    ) else {
+                        continue;
+                    };
+                    orders.push((
+                        owner,
+                        fact.side,
+                        crate::Money::from_cents(fact.price),
+                        fact.qty,
+                        fact.order_serial,
+                        fact.filled_value,
+                    ));
+                }
+                mirror.insert(
+                    crate::StockId(u32::try_from(stock_idx).expect("股下标在 u32")),
+                    super::DeskBookMirror {
+                        orders,
+                        last_price: crate::Money::from_cents(view.last_price),
+                        public_cutoff_serial: view.public_cutoff_serial,
+                    },
+                );
+            }
+            self.state.desk_book_mirror = mirror;
+        }
         // D5 lifecycle 投影：runtime 下 NPC 报价生命周期权威=desk TTL
         ///（save 的 2170 校验绑定旧簿在场委托——runtime 旧簿恒空，投影
         /// 空集通过；TTL 到期撤销由 desk begin_tick 承载）。
@@ -786,6 +822,24 @@ impl GameSession {
     /// runtime 驱动器翻转面（Sol 二审修复集 5）：attention 状态只读投影
     /// `(AccountId, 下次候选 tick, 注意力 RNG 状态)`——驱动器构造器
     /// 恢复会话真实调度态用（不合成固定 seed/初始 due）。
+    /// D5 attention：收盘竞价公开截点读面（restore 链的 desk 种子投影源）。
+    pub fn runtime_public_cutoff_for(&self, code: &crate::StockId) -> u64 {
+        // runtime 形态（desk 镜像在位）——截点权威在镜像；旧簿形态读 market。
+        if !self.state.desk_book_mirror.is_empty() {
+            self.state
+                .desk_book_mirror
+                .get(code)
+                .map(|mirror| mirror.public_cutoff_serial)
+                .unwrap_or(0)
+        } else {
+            self.state
+                .markets
+                .get(code)
+                .map(|m| m.auction_public_cutoff_sequence())
+                .unwrap_or(0)
+        }
+    }
+
     /// D5 #4 retail 链：会话种子读面（决策 rng 的 npc_seed_base 同源）。
     pub fn runtime_session_seed(&self) -> u64 {
         self.state.seed

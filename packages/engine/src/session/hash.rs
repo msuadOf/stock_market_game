@@ -58,6 +58,7 @@ impl GameSession {
             pending_player: _,
             ingress_receipt_cursors: _,
             npc_attention: _,
+            desk_book_mirror: _,
             retail_experience: _,
             npc_order_lifecycles: _,
             last_retail_decisions: _,

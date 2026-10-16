@@ -523,6 +523,10 @@ pub struct SaveSlot {
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
+    /// D5 attention 公开可见性门禁：desk 簿权威的瞬态镜像（runtime
+    /// install 段每拍刷新；不入档不入 hash——snapshot 公开投影/玩家
+    /// 在途/预留读面的源。旧管线读面（session markets 簿）在 runtime
+    /// 下恒空，公开面（A 股竞价隐藏/截点揭示）自此承载。
     /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
@@ -1434,6 +1438,11 @@ struct CommittableSessionState {
     /// 上一 tick 中实际观察并判断目标仓位与经历调整的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
     last_retail_decisions: Vec<RetailDecisionTrace>,
+    /// D5 attention 公开可见性门禁：desk 簿权威的瞬态镜像（runtime
+    /// install 段每拍刷新；不进入存档与业务 hash——snapshot 公开投影/
+    /// 玩家在途/预留读面的源。旧管线读面（session markets 簿）在
+    /// runtime 下恒空，公开面（A 股竞价隐藏/截点揭示）自此承载。
+    pub desk_book_mirror: BTreeMap<StockId, DeskBookMirror>,
     last_retail_order_events: Vec<RetailOrderDiagnosticEvent>,
     #[cfg(feature = "simulation-diagnostics")]
     npc_decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
@@ -1963,6 +1972,7 @@ impl GameSession {
                 ingress_receipt_cursors: IngressReceiptCursors::default(),
                 npc_attention: AccountPagedMap::default(),
                 retail_experience: AccountPagedMap::default(),
+                desk_book_mirror: BTreeMap::new(),
                 npc_order_lifecycles: Vec::new(),
                 last_retail_decisions: Vec::new(),
                 last_retail_order_events: Vec::new(),
@@ -4828,6 +4838,7 @@ impl CommittableSessionState {
             npc_order_lifecycles,
             last_retail_decisions,
             last_retail_order_events,
+            desk_book_mirror,
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces,
             #[cfg(feature = "simulation-diagnostics")]
@@ -4877,6 +4888,7 @@ impl CommittableSessionState {
             npc_order_lifecycles: npc_order_lifecycles.clone(),
             last_retail_decisions: last_retail_decisions.clone(),
             last_retail_order_events: last_retail_order_events.clone(),
+            desk_book_mirror: desk_book_mirror.clone(),
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces: npc_decision_traces.clone(),
             #[cfg(feature = "simulation-diagnostics")]
@@ -4927,6 +4939,7 @@ impl CommittableSessionState {
             npc_order_lifecycles,
             last_retail_decisions,
             last_retail_order_events,
+            desk_book_mirror,
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces,
             #[cfg(feature = "simulation-diagnostics")]
@@ -5456,4 +5469,15 @@ mod committable_state_tests {
             Some(DeferredDropDegradation::SpawnFailed { os_errno: Some(11) })
         );
     }
+}/// D5 attention：desk 簿镜像的单股条目（瞬态——install 段刷新）。
+#[derive(Clone, Debug, Default)]
+pub struct DeskBookMirror {
+    /// 在途单事实（owner/方向/价/余量/desk 序号/累计成交额）。
+    pub orders: Vec<(AccountId, Side, Money, u32, u64, i64)>,
+    /// 最新价（desk 广播）。
+    pub last_price: Money,
+    /// 收盘竞价公开截点（老单 serial<截点公开；连续段=0）。
+    pub public_cutoff_serial: u64,
 }
+
+

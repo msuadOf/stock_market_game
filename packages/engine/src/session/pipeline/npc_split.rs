@@ -55,6 +55,11 @@ pub(in crate::session) struct SessionReadView<'a> {
     pub(in crate::session) day: u32,
     /// npc_split 持有独立目录 snapshot，账户页/strategy 的写入由 COW 隔离。
     pub(in crate::session) accounts: Cow<'a, AccountBook>,
+    /// D5 attention：desk 簿镜像（runtime 形态的公开面源；空=旧管线）。
+    pub(in crate::session) desk_book_mirror: &'a std::collections::BTreeMap<
+        StockId,
+        crate::session::DeskBookMirror,
+    >,
 }
 
 impl GameSession {
@@ -80,6 +85,7 @@ impl GameSession {
             tick: self.state.tick,
             day: self.state.day,
             accounts: Cow::Borrowed(&self.state.accounts),
+            desk_book_mirror: &self.state.desk_book_mirror,
         }
     }
 }
@@ -130,6 +136,7 @@ pub(in crate::session) fn npc_split(
         tick: state.tick,
         day: state.day,
         accounts: Cow::Owned(state.accounts.clone()),
+        desk_book_mirror: &state.desk_book_mirror,
     };
     let write = NpcWriteFields {
         attention_scheduler: &mut state.attention_scheduler,

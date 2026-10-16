@@ -423,8 +423,15 @@ mod attention_tests {
         enqueue(&mut game, Side::Buy, 1_000, 100);
         let events = game.step().unwrap();
         assert!(!events.iter().any(|event| matches!(event, Event::Trade { .. })));
-        assert_eq!(game.state.markets[&StockId(0)].resting_order_count(), 1,
-            "真实活动单仍由唯一 book 拥有");
+        if crate::runtime::step_runtime_enabled() {
+            // D5 读面适配：私有真簿权威=desk（session markets 恒空）——
+            /// 镜像承载唯一 book 断言。
+            assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders.len(), 1,
+                "真实活动单仍由唯一 book 拥有（desk 镜像）");
+        } else {
+            assert_eq!(game.state.markets[&StockId(0)].resting_order_count(), 1,
+                "真实活动单仍由唯一 book 拥有");
+        }
         let public = game.snapshot();
         assert_eq!(public.markets[&StockId(0)].best_bid, None);
         assert_eq!(public.markets[&StockId(0)].best_ask, None);
@@ -446,15 +453,27 @@ mod attention_tests {
         game.step().unwrap();
         while game.tick() < 5 { game.step().unwrap(); }
         assert_eq!(game.phase(), TradingPhase::ClosingAuction);
-        let old_seq = game.state.markets[&StockId(0)].resting_orders()[0].seq;
+        let old_seq = if crate::runtime::step_runtime_enabled() {
+            // D5 读面适配：镜像首单的 desk 序号（身份跨档锚）。
+            game.state.desk_book_mirror[&StockId(0)].orders[0].4
+        } else {
+            game.state.markets[&StockId(0)].resting_orders()[0].seq
+        };
         let old_public = game.snapshot().markets[&StockId(0)].clone();
         let old_view = game.build_market_view();
         let old_probability = effective_observation_probability(AccountKind::Retail, 0.10, market_attention_signal(&old_view));
         enqueue(&mut game, Side::Sell, 1_100, 300);
         game.step().unwrap();
-        let market = &game.state.markets[&StockId(0)];
-        assert_eq!(market.resting_order_count(), 2);
-        assert_eq!(market.best_ask(), Some(Money::from_cents(1_100)), "私有真实 book 保留竞价新单");
+        if crate::runtime::step_runtime_enabled() {
+            assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders.len(), 2);
+            assert!(game.state.desk_book_mirror[&StockId(0)].orders.iter()
+                .any(|(_, side, price, _, _, _)| *side == Side::Sell && *price == Money::from_cents(1_100)),
+                "私有真实 book 保留竞价新单（desk 镜像）");
+        } else {
+            let market = &game.state.markets[&StockId(0)];
+            assert_eq!(market.resting_order_count(), 2);
+            assert_eq!(market.best_ask(), Some(Money::from_cents(1_100)), "私有真实 book 保留竞价新单");
+        }
         let public = game.snapshot();
         assert_eq!(public.markets[&StockId(0)].best_bid, old_public.best_bid);
         assert_eq!(public.markets[&StockId(0)].bids, old_public.bids);
@@ -466,9 +485,18 @@ mod attention_tests {
         assert_eq!(game.player_working_orders().len(), 2);
         assert_eq!(public.accounts[&AccountId(0)].reserved_sell_qty[&StockId(0)], 300);
         let mut restored = GameSession::restore(&game.save().unwrap()).unwrap();
-        assert_eq!(restored.state.markets[&StockId(0)].resting_orders()[0].seq, old_seq);
-        assert_eq!(restored.snapshot().markets[&StockId(0)].bids, old_public.bids);
-        assert!(restored.snapshot().markets[&StockId(0)].asks.is_empty(), "恢复必须保留原可见性截点");
+        if crate::runtime::step_runtime_enabled() {
+            // D5 断言面适配：镜像随首拍 desk 权威刷新（截点自档恢复——
+            /// 可见性截点跨档语义不变；恢复时点从静默读面变为一拍后）。
+            restored.step().unwrap();
+            assert_eq!(restored.state.desk_book_mirror[&StockId(0)].orders[0].4, old_seq);
+            assert_eq!(restored.snapshot().markets[&StockId(0)].bids, old_public.bids);
+            assert!(restored.snapshot().markets[&StockId(0)].asks.is_empty(), "恢复必须保留原可见性截点");
+        } else {
+            assert_eq!(restored.state.markets[&StockId(0)].resting_orders()[0].seq, old_seq);
+            assert_eq!(restored.snapshot().markets[&StockId(0)].bids, old_public.bids);
+            assert!(restored.snapshot().markets[&StockId(0)].asks.is_empty(), "恢复必须保留原可见性截点");
+        }
         while restored.tick() < 8 { restored.step().unwrap(); }
         assert!(restored.snapshot().markets[&StockId(0)].bids.is_empty());
         assert!(restored.player_working_orders().is_empty());
@@ -479,7 +507,14 @@ mod attention_tests {
         let mut game = visibility_game(6, 0);
         enqueue(&mut game, Side::Buy, 990, 100);
         game.step().unwrap();
-        let original = game.state.markets[&StockId(0)].resting_orders()[0].clone();
+        let runtime_mode = crate::runtime::step_runtime_enabled();
+        let (original, original_serial) = if runtime_mode {
+            let order = game.state.desk_book_mirror[&StockId(0)].orders[0];
+            ((order.2, order.3), order.4)
+        } else {
+            let order = game.state.markets[&StockId(0)].resting_orders()[0].clone();
+            ((order.price, order.qty), order.seq)
+        };
         assert!(game.snapshot().markets[&StockId(0)].bids.is_empty());
         let mut completed = 0;
         while game.tick() < 4 {
@@ -487,7 +522,16 @@ mod attention_tests {
         }
         assert_eq!(completed, 1);
         assert_eq!(game.phase(), TradingPhase::PreOpen);
-        assert_eq!(game.state.markets[&StockId(0)].resting_orders(), vec![original]);
+        if runtime_mode {
+            // D5 读面适配：镜像单序/价/量承载揭示后余单锚（desk 权威——
+            /// 原序不变、不重报价）。
+            let order = &game.state.desk_book_mirror[&StockId(0)].orders[0];
+            assert_eq!((order.2, order.3), (Money::from_cents(990), 100));
+            assert_eq!(order.4, original_serial);
+        } else {
+            let order = &game.state.markets[&StockId(0)].resting_orders()[0];
+            assert_eq!((order.price, order.qty, order.seq), (original.0, original.1, original_serial));
+        }
         assert_eq!(game.snapshot().markets[&StockId(0)].bids, vec![(Money::from_cents(990), 100)]);
         let view = game.build_market_view();
         assert_eq!(view.stocks[&StockId(0)].order_book_imbalance, 1.0);

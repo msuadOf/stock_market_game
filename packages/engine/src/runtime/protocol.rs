@@ -189,6 +189,9 @@ pub struct StockPublic {
     pub relative_volume: f64,
     /// 前五档买卖失衡 [-1,1]。
     pub order_book_imbalance: f64,
+    /// D5 attention 公开可见性门禁：收盘竞价公开截点（老单 serial<
+    /// 截点公开；连续段=0）——session 侧公开投影的截点源。
+    pub public_cutoff_serial: u64,
     /// 买盘深度前五档（价高→低，每价聚合总量；TickFrame MarketSnap 映射）。
     pub depth_bids: Vec<(i64, u64)>,
     /// 卖盘深度前五档（价低→高）。

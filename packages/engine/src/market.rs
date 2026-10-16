@@ -350,7 +350,10 @@ impl Market {
 
     /// 恢复受理时序事实；合法性在安装到 authority 之前由存档完整校验确认。
     pub(crate) fn restore_auction_public_cutoff_sequence(&mut self, cutoff: u64) -> Result<(), MarketError> {
-        if cutoff > self.book.next_sequence() {
+        // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
+        /// 恒空、next_sequence=0）——空簿时截点不与本簿对拍（desk 恢复
+        /// 域接管；旧簿单恢复后仍按原校验）。
+        if cutoff > self.book.next_sequence() && self.book.next_sequence() > 0 {
             return Err(MarketError::InvalidParams { reason: "公开可见性截点超过 book 下一受理序号".to_owned() });
         }
         self.auction_public_cutoff_sequence = cutoff;
