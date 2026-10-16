@@ -821,9 +821,13 @@ impl World {
     }
 
     /// 外部计划广播（D2 玩家意图路由：组 0 消费——玩家惯例位）。
-    pub fn broadcast_external_plan(&mut self, ops: Vec<super::decision::PendingOp>) {
+    pub fn broadcast_external_plan(
+        &mut self,
+        ops: Vec<super::decision::PendingOp>,
+        cancels: Vec<(super::LocalIdx, super::StockIdx, u64)>,
+    ) {
         if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::ExternalPlan(ops));
+            let _ = tx.send(GroupIn::ExternalPlan { ops, cancels });
         }
     }
 

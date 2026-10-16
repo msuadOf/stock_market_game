@@ -526,6 +526,9 @@ pub struct GroupState {
     pub observed: Vec<Observed>,
     /// 外部注入计划缓冲（玩家意图路由；run_round 消费一次即清）。
     external_pending: Vec<super::decision::PendingOp>,
+    /// D5 终程：外部定向撤单缓冲（玩家 Cancel 意图路由——run_round 直转
+    /// DeskIn::Cancel；desk 权威判定撤单窗/存在性）。
+    external_cancels: Vec<(LocalIdx, StockIdx, u64)>,
     /// D3a-2b 信念个人态（逐组内下标；None=非机构位）——构造期投影，
     /// Belief-1b 起承接披露驱动的组内自演进。
     belief_states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
@@ -642,6 +645,7 @@ impl GroupState {
             plan_fills: Vec::new(),
             observed: Vec::new(),
             external_pending: Vec::new(),
+            external_cancels: Vec::new(),
             observation_inputs: vec![ObservationInputs::default(); n_stocks],
             belief_states: belief_states_seed,
             library: library_seed,
@@ -3171,6 +3175,9 @@ impl GroupState {
         for op in external {
             pendings.push(Pending::Op(op));
         }
+        // D5 终程：外部定向撤单并入取消缓冲（desk 权威判定）。
+        let external_cancels = std::mem::take(&mut self.external_cancels);
+        chain_cancels.extend(external_cancels);
         // 计划链推进（批 6）：轮 0=根命令（空结果输入）；轮 k=按本 tick 已见
         // FillFact 推进（Continue 轮先落账再续行——staging 已在 handle_continue
         // 应用，plan_fills 随落账收集）。跨股产物并入同一扣除路径。
@@ -4188,9 +4195,10 @@ pub fn group_main(
                     }
                 }
             }
-            GroupIn::ExternalPlan(ops) => {
+            GroupIn::ExternalPlan { ops, cancels } => {
                 // 玩家意图路由（D2 批）：外部计划存缓冲，run_round 消费。
                 state.external_pending.extend(ops);
+                state.external_cancels.extend(cancels);
             }
             GroupIn::InformationDelivery {
                 now,

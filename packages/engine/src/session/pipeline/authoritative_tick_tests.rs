@@ -527,7 +527,11 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
             _ => None,
         })
         .expect("continuous public step must publish the accepted resting order");
-    assert_eq!(session.state.markets[&code].resting_order_count(), 1);
+    if crate::runtime::step_runtime_enabled() {
+        assert_eq!(session.state.desk_book_mirror[&code].orders.len(), 1);
+    } else {
+        assert_eq!(session.state.markets[&code].resting_order_count(), 1);
+    }
 
     session
         .enqueue_player_intent(
@@ -549,7 +553,11 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
             ..
         } if canceled_code == &code && *id == order_id
     )));
-    assert_eq!(session.state.markets[&code].resting_order_count(), 0);
+    if crate::runtime::step_runtime_enabled() {
+        assert_eq!(session.state.desk_book_mirror[&code].orders.len(), 0);
+    } else {
+        assert_eq!(session.state.markets[&code].resting_order_count(), 0);
+    }
 }
 
 #[test]

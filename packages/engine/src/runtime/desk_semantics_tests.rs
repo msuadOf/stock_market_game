@@ -342,18 +342,21 @@ fn preopen_rejects_and_auction_requires_limit_orders() {
     let script = |_g: GroupIdx| -> GroupScript {
         Box::new(|tick, _round| match tick {
             1 => place_at(1, vec![buy(0, 0, 1000, 100), sell(1, 0, 1000, 100)]),
-            4 => place_at(4, vec![buy(0, 0, 1000, 100)]),
+            // D5 off-by-one 对齐：受理相位基准=phase(tick-1)（旧管线
+            /// step(N) 的受理窗=N-1 相位——PreOpen 拒收的申报须在 tick5
+            // （phase(4)=PreOpen；tick4 申报按 phase(3)=CallAuction 受理）。
+            5 => place_at(5, vec![buy(0, 0, 1000, 100)]),
             _ => TickPlan::default(),
         })
     };
     let mut world = World::spawn(auction_spec(1, 1, 2, Box::new(script))).expect("世界构造");
-    world.run_ticks(4).expect("收敛");
+    world.run_ticks(5).expect("收敛");
     let report = world.shutdown().expect("关停");
     let desk = &report.desk_finals[0];
     // tick1..3 积累不撮合；tick4 开盘清算（100 股 @1000）。
     assert_eq!(desk.market.volume_today, 100, "开盘清算一次撮合");
     assert_eq!(desk.market.trade_count, 1);
-    assert_eq!(desk.skipped_orders, 1, "PreOpen 拒收 tick4 申报");
+    assert_eq!(desk.skipped_orders, 1, "PreOpen 拒收 tick5 申报（phase(4)=PreOpen）");
     let a0 = &report.group_finals[0].accounts[0];
     // 买方两单：清算成交 100 + PreOpen 拒单退款 ⇒ 持股 1100、现金扣一笔费用。
     assert_eq!(a0.shares[0], 1_100);

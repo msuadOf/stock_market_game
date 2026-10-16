@@ -349,10 +349,7 @@ impl RuntimeDriver {
                 });
             }
         }
-        if ops.is_empty() {
-            return Ok(());
-        }
-        self.world.broadcast_external_plan(ops);
+        self.world.broadcast_external_plan(ops, Vec::new());
         Ok(())
     }
 
@@ -881,11 +878,34 @@ impl RuntimeDriver {
         &mut self,
         intents: &[crate::session::ReceiptBearingIntent],
         upper_limits: &[i64],
-    ) -> Result<Vec<super::decision::PendingOp>, String> {
+    ) -> Result<
+        (
+            Vec<super::decision::PendingOp>,
+            Vec<(super::LocalIdx, super::StockIdx, u64)>,
+        ),
+        String,
+    > {
         let mut ops = Vec::new();
+        let mut cancels = Vec::new();
         for r in intents {
+            // D5 终程：Cancel 意图路由（OrderId 低 48 位=desk serial——
+            /// 组端直转 DeskIn::Cancel；撤单窗/存在性由 desk 权威判定）。
+            if let crate::Intent::Cancel { code, id } = &r.intent {
+                let local = self
+                    .id_map
+                    .iter()
+                    .position(|owner| *owner == r.owner)
+                    .ok_or_else(|| {
+                        format!(
+                            "外部撤单 owner 不在世界名册（无法路由）：{:?}",
+                            r.owner
+                        )
+                    })? as super::LocalIdx;
+                cancels.push((local, code.0 as super::StockIdx, id.0 & 0x0000_FFFF_FFFF_FFFF));
+                continue;
+            }
             let crate::Intent::PlaceLimit { code, side, price, qty } = &r.intent else {
-                // PlaceMarket/Cancel：登记（首版限价面——其余变体补）。
+                // PlaceMarket：登记（限价面先行——市价变体后续补）。
                 continue;
             };
             let local = self
@@ -924,7 +944,7 @@ impl RuntimeDriver {
                 qty: *qty,
             });
         }
-        Ok(ops)
+        Ok((ops, cancels))
     }
 
     /// 外部意图注入世界（D2/D1）：经 ExternalPlan 通道广播全部组（组 0
@@ -934,11 +954,11 @@ impl RuntimeDriver {
         intents: &[crate::session::ReceiptBearingIntent],
         upper_limits: &[i64],
     ) -> Result<(), String> {
-        let ops = self.route_external_intents(intents, upper_limits)?;
-        if ops.is_empty() {
+        let (ops, cancels) = self.route_external_intents(intents, upper_limits)?;
+        if ops.is_empty() && cancels.is_empty() {
             return Ok(());
         }
-        self.world.broadcast_external_plan(ops);
+        self.world.broadcast_external_plan(ops, cancels);
         Ok(())
     }
 

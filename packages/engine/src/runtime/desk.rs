@@ -807,7 +807,11 @@ impl DeskState {
         qty: u32,
         purse: i64,
     ) -> Result<(), RuntimeError> {
-        let phase = self.setup.phase_at(tick);
+        // D5 复核（off-by-one 对齐）：本拍处理的委托属上一收束点到本拍
+        // 的相位窗——旧管线 step(N) 的受理判定用 phase(N-1)（PreOpen 拒
+        // 收等门禁在边界拍生效）；desk 的 begin_tick 相位推导用 N，此处
+        // 与旧管线同基准取 N-1（开盘清算切换检测同用 prev_phase 式）。
+        let phase = self.setup.phase_at(tick.saturating_sub(1));
         let is_market = matches!(rp, RoutedPrice::Market);
         // 相位门禁：盘前拒收；竞价阶段只收限价。
         if phase == DeskPhase::PreOpen {
@@ -1420,7 +1424,8 @@ impl DeskState {
     /// 对齐撤单：撤该 owner 全部挂单（实体原路回流）。撤单窗口门禁在组端不知相位，
     /// 由交易部统一裁决。
     fn cancel_all_for(&mut self, tick: u64, owner: Owner) {
-        let allowed = self.setup.allows_cancel(tick);
+        // D5 off-by-one 对齐：撤单门禁与受理同窗（phase(tick-1)）。
+        let allowed = self.setup.allows_cancel(tick.saturating_sub(1));
         let targets: Vec<DeskOrder> = self
             .bids
             .values()
@@ -1458,6 +1463,18 @@ impl DeskState {
                 detail: format!("交易部 {} 收到他股撤单：order={order:?}", self.setup.stock),
             });
         }
+        // D5 off-by-one 对齐（含判定序）：撤单窗口门禁先于存在性判定
+        /// （旧管线相位门禁在路由层先拒——PreOpen 的 Cancel 不论单存否
+        /// 一律 NotCancelable；desk 先查存在会把窗口关闭误报成
+        /// OrderNotFound/已全成）。
+        if !self.setup.allows_cancel(tick.saturating_sub(1)) {
+            self.receipts_out[owner.0 as usize].push(DeskReceipt {
+                order,
+                owner,
+                kind: ReceiptKind::CancelWindowClosed,
+            });
+            return Ok(());
+        }
         let found: Option<DeskOrder> = self
             .bids
             .values()
@@ -1467,7 +1484,6 @@ impl DeskState {
             .cloned();
         let kind = match &found {
             Some(o) if o.owner != owner => Some(ReceiptKind::OrderNotFound),
-            Some(_) if !self.setup.allows_cancel(tick) => Some(ReceiptKind::CancelWindowClosed),
             _ => None,
         };
         if let Some(kind) = kind {

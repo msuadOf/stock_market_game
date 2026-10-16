@@ -288,7 +288,12 @@ pub enum GroupIn {
     Shutdown,
     /// 外部计划注入（翻转批玩家意图路由：协调者/驱动器向组注入本 tick
     /// 计划——消费一次即清）。
-    ExternalPlan(Vec<super::decision::PendingOp>),
+    /// 玩家外部意图路由（D2；D5 终程补 Cancel 面）：下单计划+定向撤单
+    ///（OrderId 低 48 位=desk serial——组端直转 DeskIn::Cancel）。
+    ExternalPlan {
+        ops: Vec<super::decision::PendingOp>,
+        cancels: Vec<(super::LocalIdx, super::StockIdx, u64)>,
+    },
     /// 观察基读面（D3a-1：price_paths 上行——计划链端口径/测试面）。
     EchoObservations,
     /// 信念个人态读面（D3a-2b：构造投影同源校验/后续驱动面）。
