@@ -3177,7 +3177,7 @@ mod chain_restructure_tests {
         ///（fixture_set_cash——组账户现金为组权威，无注入通道）；暂停/恢复
         /// 主面已由 institution_risk_pressure（Pause 段）与 recovery 族
         ///（Resume 段）的组内实测承载，runtime 分支跳过本参数化用例。
-        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        if crate::runtime::step_runtime_enabled() {
             return;
         }
         for original_reason in [
@@ -3794,7 +3794,7 @@ mod chain_restructure_tests {
         /// 断言面绑定旧市场簿（resting_orders——runtime 下单在 desk）；
         /// 非撤窗的 Keep/PendingReconsideration 决策由共享 decide_plan_quote
         /// 承载，runtime 分支跳过本相位+旧簿用例。
-        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        if crate::runtime::step_runtime_enabled() {
             return;
         }
         let mut session = seeded_buy_plan_with_child();
@@ -5050,7 +5050,7 @@ mod chain_restructure_tests {
         /// 重议路径）；runtime 下该事件面为旧管线专有（D5 登记域），组内
         /// 拒收回执消费面未迁移——runtime 分支跳过，等价面随 D5 拒收回执
         /// 域收口时补。
-        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        if crate::runtime::step_runtime_enabled() {
             return;
         }
         let mut session = seeded_buy_plan_with_child();
@@ -5428,7 +5428,7 @@ mod chain_restructure_tests {
         /// 即锁步漂移）；非连续段的复审 Observe 语义（child_cancellable_
         /// now=false → 不撤不终止）由共享决策核+phase_is_continuous 同式
         /// 判定承载，runtime 分支跳过本相位伪造用例。
-        if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+        if crate::runtime::step_runtime_enabled() {
             return;
         }
         let mut session = seeded_buy_plan_with_child();

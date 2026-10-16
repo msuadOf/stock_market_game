@@ -306,7 +306,7 @@ fn failed_npc_completion_receipt_discards_the_entire_tick_shadow() {
     // cursor）。等价锚：组端 Abort/undo 可逆日志（翻转批 batch4 civil
     // 回滚全量对账）承载"失败 tick 不安装副作用"语义；本注入面在
     // runtime 不存在，非未迁移缺口。
-    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+    if crate::runtime::step_runtime_enabled() {
         return;
     }
     let (mut session, npc) = due_retail(8, 100);
@@ -350,7 +350,7 @@ fn next_tick_account_validation_rechecks_npc_orders_against_current_cash() {
     // 期消费一次，跨拍重验不适用）。等价锚：组端 purse 所有权模型从
     // 根上消除"挂单后现金变动致拍中透支"（下单即扣 purse）；ADR-0022
     // 尺度复核面由翻转批 batch1 现金对拍承载。
-    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+    if crate::runtime::step_runtime_enabled() {
         return;
     }
     let (mut session, npc) = due_retail(8, 100);

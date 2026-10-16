@@ -1220,7 +1220,7 @@ fn a1_stepfatal_form_atomicity_via_real_failing_tick() {
     // 为构造期一次性——注入中途失败重放面不适用）。等价锚：组端
     // Abort/undo 可逆日志（翻转批 batch4 civil 回滚全量对账）承载
     // 原子性语义。
-    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+    if crate::runtime::step_runtime_enabled() {
         return;
     }
     let (mut session, _) = execution_fixture_with_compute(dedicated_compute());

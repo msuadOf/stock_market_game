@@ -272,7 +272,7 @@ fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
     // peek_any 的"驱动中检视"形态不适用）。等价锚：组端 purse 校验
     // 与 qty0 拒收承载下单侧防御；ADR-0022 尺度复核面由翻转批
     // batch1 现金对拍承载。
-    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+    if crate::runtime::step_runtime_enabled() {
         return;
     }
     for has_exact_cash in [true, false] {

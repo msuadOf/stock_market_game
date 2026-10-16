@@ -1078,7 +1078,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     // desk 按 A 股自成交限制不撮同账户对手；旧管线缺口登记台账：旧管线
     // 缺自成交限制，随退役消亡）；默认分支保留原单账户形态（旧管线
     // 结算链的零售持仓 epoch 面对种子卖不适用——原序即原语义）。
-    let runtime_mode = std::env::var_os("ENGINE_STEP_RUNTIME").is_some();
+    let runtime_mode = crate::runtime::step_runtime_enabled();
     let mut cash_before_fill;
     if runtime_mode {
         session
@@ -1230,7 +1230,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
     // D5 自成交拍板 A（双轨）：runtime=retail 位双账户种子卖（desk A 股
     // 自成交限制；旧管线缺口登记台账）；默认=原玩家单账户 enqueue（旧
     // 管线结算 epoch 面对种子卖不适用）。
-    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+    if crate::runtime::step_runtime_enabled() {
         session
             .fixture_account_mut(&AccountId(1))
             .expect("retail seller must exist")
@@ -1335,7 +1335,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     let mut session = GameSession::new(setup, 44).expect("runtime_state fixture 必须有效");
     // D5 自成交拍板 A（双轨）：runtime=retail 位双账户种子卖（同上登记）；
     /// 默认=原玩家单账户（同拍三单——旧管线结算 epoch 面对种子卖不适用）。
-    if std::env::var_os("ENGINE_STEP_RUNTIME").is_some() {
+    if crate::runtime::step_runtime_enabled() {
         session
             .fixture_account_mut(&AccountId(1))
             .expect("retail seller must exist")
