@@ -49,6 +49,10 @@ pub struct DeskRestingSeed {
     /// 历史含 Accepted——restore 重放即重复）。true=直入不记 Accepted
     /// 生命周期事实；false=live 构造期 adopt 形态（受理事实照记）。
     pub accepted_delivered: bool,
+    /// D5 复核修复（Major 1）：desk 本地序号（restore 形态=在途单原
+    /// serial（公开截点域延续——重编会使 cutoff 语义失真）；adopt
+    /// 形态=构造期自然序。
+    pub serial: u64,
 }
 
 /// D5 restore 链最后一层：日内行情聚合种子（save 点的 desk 行情权威
@@ -2184,7 +2188,10 @@ pub fn desk_main(
     /// 面），restore 形态不重放（save 前事件历史已含，重发即重复）；
     /// serial 序=构造期前段，与消息链首单同起 0）。
     for seed in initial_orders {
-        let order_ref = (state.setup.stock, state.next_serial);
+        // D5 复核修复（Major 1）：serial 域延续（restore=原值；adopt=
+        // 构造期自然序）——公开截点语义依赖 serial 单调连续。
+        let order_ref = (state.setup.stock, seed.serial);
+        state.next_serial = state.next_serial.max(seed.serial.saturating_add(1));
         let order = DeskOrder {
             order_ref,
             owner: seed.owner,

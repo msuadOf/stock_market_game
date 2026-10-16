@@ -112,17 +112,21 @@ impl GameSession {
         observe_projected_row: impl Fn() + Sync,
     ) -> Result<(), StepFatal> {
         verify_fee_config_unchanged(view)?;
-        // D5 restore 链最后一层连带：runtime 形态（旧簿恒空——desk 权威
-        /// 在 ledger）无 book 对拍面；ledger 行自身结构校验（validate+
-        /// 出生守恒）承载，book↔ledger 交叉核对不适用（空 book 对非空
-        /// ledger 会误报身份不一一对应）。verified_live 的 Buy 全额预留
-        /// 断言不适用——runtime 行 live=desk 实际 purse（成交扣减后的
-        /// 所有权模型），旧管线全额预留口径差已登记（D5 #3 purse 模型）。
-        let legacy_resting_empty = view
-            .markets
-            .iter()
-            .all(|(_code, market)| market.resting_order_count() == 0);
-        if legacy_resting_empty {
+        // D5 restore 链最后一层连带：runtime 形态无 book 对拍面；ledger
+        /// 行自身结构校验（validate+出生守恒）承载。复核 Minor 3 修复：
+        /// 形态判定用 desk 镜像/runtime 权威标志——旧管线合法空簿（开局
+        /// /全成交）不因行为推断被静默跳过交叉核对（空簿且 ledger 非空
+        /// =runtime 恢复形态；两者皆空=旧管线空集，走原交叉核对路径）。
+        /// verified_live 的 Buy 全额预留断言不适用——runtime 行 live=
+        /// desk 实际 purse（成交扣减后的所有权模型），旧管线全额预留
+        /// 口径差已登记（D5 #3 purse 模型）。
+        let runtime_shape = !view.desk_book_mirror.is_empty()
+            || (view
+                .markets
+                .iter()
+                .all(|(_code, market)| market.resting_order_count() == 0)
+                && view.envelope_ledger.iter().next().is_some());
+        if runtime_shape {
             for (_key, envelope) in view.envelope_ledger.iter() {
                 envelope.validate()?;
                 envelope.validate_financial_birth()?;

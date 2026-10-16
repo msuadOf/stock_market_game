@@ -1693,6 +1693,8 @@ fn resting_order_seeds_from_session(
                 // restore 形态：受理事件已随此前世界交付（save 前事件
                 // 历史），直入不重放 Accepted。
                 accepted_delivered: true,
+                // D5 复核修复（Major 1）：原 desk 序号（截点域延续）。
+                serial: key.order.0,
             });
         }
         return Ok(seeds);
@@ -1730,6 +1732,8 @@ fn resting_order_seeds_from_session(
                 // live 构造期 adopt：受理事实照记（对齐旧管线 enqueue 后
                 // 首拍交付面）。
                 accepted_delivered: false,
+                // adopt 形态：构造期自然序（desk 域从此起步）。
+                serial: 0,
             });
         }
     }
