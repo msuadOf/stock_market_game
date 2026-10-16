@@ -904,25 +904,31 @@ impl CumulativeFeeAudit {
             // 重复计——上界推导独立于 nominal 结构，直接用 rV+n_max·m）。
             // stamp 买腿恒零；commission/transfer 双边制度面均收。
             let cents = self.filled_value.cents();
-            let lot_value = i64::from(config.lot_size).max(1); // 每手最小额（分）
-            let n_max = cents / lot_value + 1; // 手数上界（整除截断+1 容差）
+            // 终审四轮修正：最小笔额=1 股×1 分（A 股零股卖出——零股
+            // 单部分成交笔额可至 1 股×最小 tick，docs/trading-rules.md
+            // 零股登记）；n 上界=V/1 分（每笔≥1 分）。
+            let n_max = u64::try_from(cents.max(1)).expect("成交额分值在 u64");
             let commission_min = config.commission_min;
             // 上界=r·V（nominal 的费率部分）+n_max·m：nominal=max(rV, m)，
             // 拆出费率部分（nominal−m 当 min 生效；否则 nominal 即 rV）
             // 后加 n_max 次 min——覆盖任意笔数/笔额的合法分段组合。
+            let n_max_i64 = n_max.min(i64::MAX as u64) as i64;
             let commission_upper_cents = nominal
                 .commission
                 .cents()
                 .saturating_sub(commission_min.cents())
                 .saturating_add(
-                    n_max.saturating_mul(commission_min.cents().max(1)),
+                    n_max_i64.saturating_mul(commission_min.cents().max(1)),
                 )
                 .max(nominal.commission.cents());
             return Ok(charged.stamp_tax == Money::ZERO
                 && charged.commission >= nominal.commission
                 && charged.commission <= Money::from_cents(commission_upper_cents)
-                // 过户费=纯费率（无最低下限）：Σ=费率×V=nominal，全等。
-                && charged.transfer_fee == nominal.transfer_fee);
+                // 过户费=纯费率（无最低下限）：desk 记 Σround(r·vᵢ)、
+                // nominal=round(r·V)——银行家舍入的累积差 ≤1 分/笔，
+                // 容差 ±n_max 分（终审四轮）。
+                && charged.transfer_fee.cents().abs_diff(nominal.transfer_fee.cents())
+                    <= n_max_i64 as u64);
         }
         let component_bounds_hold = charged.commission <= nominal.commission
             && charged.stamp_tax <= nominal.stamp_tax
