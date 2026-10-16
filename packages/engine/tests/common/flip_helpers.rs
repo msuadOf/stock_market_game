@@ -34,8 +34,12 @@ pub fn setup_1stock() -> SessionSetup {
             retail: engine::strategy::RetailParams {
                 // D1 策略对等后 runtime 读会话参数：0.0=两路径都零下单
                 // （此前 runtime 侧靠合成 0.30 幽灵决策撑起事件面断言）。
-                // fixture 显式给 0.30——NPC 在两路径真实交易。
-                arrival_rate: 0.30,
+                // D5 #4 retail 链 behavior 化后，到达门之上还有信号门
+                //（NoSignal 分支不产单）——0.30 到达不再保证"真实交易"
+                /// 前提（batch4_t1 的 frozen>0 断言空转显红）。fixture
+                // 显式 1.0：30 分钟窗口内的基础需求分支（rng<arrival）
+                // 恒过——observe 过的拍必产 TryBuy。
+                arrival_rate: 1.0,
                 order_size_mean: 100,
                 chase_prob: 0.0,
             },

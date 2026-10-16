@@ -386,6 +386,7 @@ fn sol4_force_due_abort_rolls_back_to_pre_force_and_requires_resend() {
             seed: 7,
             next_due: 100,
             attention_base: 0.30,
+            retail_style: None,
         }],
         attention_gap_ticks: 4,
     });

@@ -147,7 +147,7 @@ pub(in crate::session) enum NpcDecisionSourceError {
     MissingOutputState(AccountId),
 }
 
-pub(in crate::session) fn npc_rng_seed(base: u64, tick: u64, account: AccountId) -> u64 {
+pub(crate) fn npc_rng_seed(base: u64, tick: u64, account: AccountId) -> u64 {
     base ^ tick.wrapping_mul(0x9E3779B97F4A7C15) ^ account.0.wrapping_mul(0x6A09E667F3BCC908)
 }
 

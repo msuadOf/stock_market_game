@@ -551,6 +551,10 @@ pub struct GroupState {
     /// 值、指令失效需重发——代码承诺语义；此前收到即入账，undo 被
     /// Start 的 undo.clear() 清除）。仅 cfg(test) 注入通道写入。
     pending_force_due: Vec<(LocalIdx, u64, bool)>,
+    /// D5 #4 retail 链：本拍零售决策 trace（RetailDecisionTrace 的组内
+    /// 缓冲——驱动器段投影 session.last_retail_decisions；Start 清空
+    /// 对齐旧管线「本 tick 最新」瞬态语义）。
+    retail_traces: Vec<crate::session::RetailDecisionTrace>,
     /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
     /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
@@ -645,6 +649,7 @@ impl GroupState {
             child_in_flight: Default::default(),
             plan_undo_saved: false,
             pending_force_due: Vec::new(),
+            retail_traces: Vec::new(),
             #[cfg(test)]
             injected_assessments: Vec::new(),
             #[cfg(test)]
@@ -1512,6 +1517,9 @@ impl GroupState {
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
+        // D5 #4 retail 链：trace 瞬态语义（旧管线每 tick 入口清——
+        /// 本 tick 生产写入存活到提交，无新产出 tick 返回后读数为空）。
+        self.retail_traces.clear();
         // T+1 日界解冻移至 DayEnd 相位（F §6.2，批 5）：Start 不再承担。
         self.committed_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick).wrapping_mul(0x100000001b3);
         self.run_round(tick, 0, desk_txs, up_tx)
@@ -1642,6 +1650,364 @@ impl GroupState {
         self.apply_staging(self.cur_tick, self.cur_round)?;
         self.cur_round = round;
         self.run_round(tick, round, desk_txs, up_tx)
+    }
+
+    /// D5 #4 retail 链：零售位决策一轮（旧管线 A 类账户任务的组内化——
+    /// 观察（belief entry/watchlist/information/经验反馈）+ behavior 决策
+    /// （decide_retail_position_with_experience+个人分析应用）+ trace 收集
+    /// + 经验行演进）。决策流=npc_seed_base 同式派生（与旧管线 A 类一致）；
+    /// 个人态六件+经验行入可逆日志后写回组权威。
+    #[allow(clippy::too_many_arguments)]
+    fn run_retail_decision(
+        &mut self,
+        local: LocalIdx,
+        tick: u64,
+        snapshot: &super::protocol::TickSnapshot,
+        market: &crate::strategy::MarketView,
+    ) -> Result<Vec<super::decision::PendingOp>, RuntimeError> {
+        let group = self.group;
+        let (projection, snap) = match (self.root_projection.clone(), self.belief_states.get(local as usize).cloned().flatten()) {
+            (Some(p), Some(s)) => (p, s),
+            _ => {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "组 {group} retail 位 {local} 决策缺投影/个人态（无会话来源或未跑 tick）"
+                    ),
+                })
+            }
+        };
+        let Some(&account) = projection.account_ids.get(local as usize) else {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("组 {group} retail 位 {local} 无名册 AccountId"),
+            });
+        };
+        let Some((profiles, _)) = &self.decision else {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("组 {group} retail 位 {local} 缺决策档案"),
+            });
+        };
+        let profile = &profiles[local as usize];
+        let Some(retail_style) = profile.retail_style else {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("组 {group} retail 位 {local} 缺零售风格投影"),
+            });
+        };
+        let mut experience = snap
+            .retail_experience
+            .clone()
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!("组 {group} retail 位 {local} 缺经验行投影"),
+            })?;
+        // 组账户 → 零售分析 ctx（旧管线 view 依赖面的组内等价——
+        /// qty 口径=在手+在途卖（回写同式）；零量条目按曾持有位保留
+        /// （旧管线 positions 的清仓残留键语义）。
+        let acct = &self.accounts[local as usize];
+        let mut positions: std::collections::BTreeMap<crate::StockId, crate::Position> =
+            std::collections::BTreeMap::new();
+        for idx in 0..acct.shares.len() {
+            let qty = acct.shares[idx].saturating_add(
+                acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
+            );
+            let invested = acct.invested_cents.get(idx).copied().unwrap_or(0);
+            let recovered = acct.recovered_cents.get(idx).copied().unwrap_or(0);
+            if qty > 0 {
+                positions.insert(
+                    crate::StockId(idx as u32),
+                    crate::Position::from_restored_parts(
+                        qty,
+                        acct.frozen_today.get(idx).copied().unwrap_or(0),
+                        invested,
+                        recovered,
+                    ),
+                );
+            } else if *acct.ever_held.get(idx).unwrap_or(&false) {
+                positions.insert(
+                    crate::StockId(idx as u32),
+                    crate::Position::from_restored_parts(0, 0, invested, recovered),
+                );
+            }
+        }
+        let held: std::collections::BTreeSet<crate::StockId> = positions.keys().copied().collect();
+        let issuer_of: std::collections::BTreeMap<
+            crate::StockId,
+            Option<crate::company::CompanyId>,
+        > = projection
+            .stock_codes
+            .iter()
+            .map(|(code, id)| {
+                (
+                    *id,
+                    projection.company_registry.issuer_of(code),
+                )
+            })
+            .collect();
+        let minute = u64::from(snapshot.market_minute);
+        let day = tick / self.ticks_per_day.max(1);
+        let retail = crate::session::RetailStrategyInstance {
+            data: profile.strategy.clone(),
+            style: retail_style,
+        };
+        let ctx = crate::session::RetailAnalysisCtx {
+            account,
+            held: held.clone(),
+            cash: crate::Money::from_cents(acct.cash + acct.buy_purse_held_cents),
+            positions,
+            minute,
+            day,
+            civil_date: snapshot.civil_date,
+            seed: projection.session_seed,
+            tick,
+            library: &self.library,
+            issuer_of,
+            operations: &projection.operations,
+            retail,
+        };
+        // 观察（core——session 版同核）：belief entry/watchlist/information
+        /// 演进+候选评估。
+        let observation = build_chain_observation(
+            &self.observation_inputs,
+            snapshot,
+            self.ticks_per_day,
+            projection.auction_ticks,
+            projection.closing_auction_ticks,
+            &self.library,
+            &projection.company_registry,
+            &projection.stock_codes,
+        );
+        // 经验行 capture 演进（旧管线 decision_snapshot_capture 的
+        /// capture_from_row 等价——equity 观测/持仓 dated 演进/首建；
+        /// 观察 core 与决策消费演进后的行）。
+        {
+            let moment = crate::experience::ExperienceMoment {
+                civil_date: snapshot.civil_date,
+                market_minute: minute,
+                trading_day: day,
+            };
+            let mut equity = ctx.cash;
+            for (code, position) in &ctx.positions {
+                let Some(stock) = observation.market.stocks.get(code) else {
+                    continue;
+                };
+                let market_value = stock
+                    .last_price
+                    .mul_shares(position.qty())
+                    .map_err(|e| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {group} retail {account:?} 市值计算失败：{e}"),
+                    })?;
+                equity = equity
+                    .add(market_value)
+                    .map_err(|e| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {group} retail {account:?} 权益聚合失败：{e}"),
+                    })?;
+                let cost_price = position.cost_price().filter(|p| p.cents() > 0);
+                if !experience.feedback.stocks.contains_key(code) {
+                    experience
+                        .initialize_holding_dated(code, cost_price, stock.last_price, moment)
+                        .map_err(|e| RuntimeError::ProtocolInvariant {
+                            detail: format!("组 {group} retail {account:?} 首建经验失败：{e}"),
+                        })?;
+                }
+                experience
+                    .observe_position_dated(code, stock.last_price, moment)
+                    .map_err(|e| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {group} retail {account:?} 持仓经验失败：{e}"),
+                    })?;
+            }
+            if equity.cents() > 0 {
+                experience
+                    .observe_equity(equity)
+                    .map_err(|e| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {group} retail {account:?} 权益经验失败：{e}"),
+                    })?;
+            }
+        }
+        let returns = observation
+            .paths
+            .iter()
+            .map(|(stock, path)| (stock.clone(), path.thirty_minute.return_ratio))
+            .collect();
+        let thirty_minute_market =
+            crate::observation::build_equal_weight_market_observation(&returns).map_err(
+                |e| RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {group} retail 观察市场聚合失败：{e}"),
+                },
+            )?;
+        let mut personal = crate::session::PlanPersonalState {
+            attention: snap.attention.clone(),
+            watchlist: snap.watchlist.clone(),
+            price_memory: snap.price_memory.clone(),
+            history_reads: snap.history_reads.clone(),
+            information: snap.information.clone(),
+            belief: snap.belief.clone(),
+        };
+        let assessments = crate::GameSession::observe_retail_analysis_core(
+            &ctx,
+            &self.plan_book,
+            &experience,
+            &mut personal,
+            &observation,
+            &thirty_minute_market,
+        )
+        .map_err(|e| RuntimeError::ProtocolInvariant {
+            detail: format!("组 {group} retail {account:?} 观察失败：{e:?}"),
+        })?;
+        // 决策（旧管线 decide_with_experience+apply_personal_analysis 等价）：
+        /// behavior+risk+dated 经验输入；rng=npc_seed_base 同式派生。
+        // own 自 ctx.positions 同源组装（决策内核要求 own.positions ⊆
+        /// risk.positions——build_self_view 不过滤零量股，多股/零仓形态
+        /// 集合漂移即 panic）。
+        let own = crate::strategy::SelfView {
+            cash: ctx.cash,
+            positions: ctx
+                .positions
+                .iter()
+                .map(|(code, position)| {
+                    (
+                        *code,
+                        crate::strategy::PositionView {
+                            qty: position.qty(),
+                            sellable_qty: position.sellable(),
+                            cost_price: position.cost_price(),
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let behavior = crate::behavior::BehaviorMarketObservation {
+            price_paths: observation.paths.clone(),
+            thirty_minute_market,
+        };
+        let mut risk_inputs = std::collections::BTreeMap::new();
+        for (code, position) in &ctx.positions {
+            let stock = observation
+                .market
+                .stocks
+                .get(code)
+                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {group} retail {account:?} 持仓 {code:?} 无行情"),
+                })?;
+            risk_inputs.insert(
+                *code,
+                crate::observation::RiskPositionInput {
+                    qty: position.qty(),
+                    cost_price: position.cost_price(),
+                    last_price: stock.last_price,
+                    peak_price_since_entry: experience
+                        .stocks
+                        .get(code)
+                        .and_then(|row| row.peak_price_since_entry),
+                },
+            );
+        }
+        let risk = crate::observation::build_account_risk_observation(
+            ctx.cash,
+            &risk_inputs,
+            experience.reference_equity,
+            experience.peak_equity,
+        )
+        .map_err(|e| RuntimeError::ProtocolInvariant {
+            detail: format!("组 {group} retail {account:?} 风险观察失败：{e}"),
+        })?;
+        let mut dated = experience.clone();
+        dated.consecutive_failed_buys = dated
+            .failure_influence(&crate::experience::ExperienceMoment {
+                civil_date: snapshot.civil_date,
+                market_minute: minute,
+                trading_day: day,
+            })
+            .map_err(|e| RuntimeError::ProtocolInvariant {
+                detail: format!("组 {group} retail {account:?} 经验时刻失败：{e}"),
+            })?;
+        let npc_seed = crate::session::npc_rng_seed(
+            projection.session_seed,
+            tick,
+            account,
+        );
+        let mut rng = crate::session::SplitMix64::new(npc_seed);
+        let data = profile.strategy.clone();
+        // 决策组装（ZiNoiseStrategy::decide_with_experience 等价——
+        /// PositionDecision → intents/reviewed/trace 三面）。
+        let original = crate::behavior::decide_retail_position_with_experience(
+            &data,
+            retail_style,
+            market,
+            &own,
+            &behavior,
+            &risk,
+            &dated,
+            minute,
+            &mut rng,
+        );
+        let position = if data.arrival_rate == 0.0 {
+            original
+        } else {
+            // 个人分析应用（apply_personal_analysis 等价——分析驱动目标
+            /// 仓位修订）。
+            crate::behavior::apply_personal_analysis(
+                original.clone(),
+                &assessments,
+                &own,
+                market,
+                &risk,
+                &dated,
+                minute,
+                f64::from(data.position_step_bp) / 10_000.0,
+                &mut rng,
+            )
+        };
+        let intents = crate::strategy::retail_position_decision_to_intents(
+            &data,
+            &position,
+            market,
+            &own,
+            &self.config,
+        );
+        let reviewed_stocks: std::collections::BTreeSet<crate::StockId> =
+            position.code.iter().cloned().collect();
+        let urgency = crate::plans::urgency::risk::assess_personal_risk_urgency(
+            Some(&position),
+            Some(&risk),
+            &projection.urgency_policy,
+        )
+        .map_err(|e| RuntimeError::ProtocolInvariant {
+            detail: format!("组 {group} retail {account:?} 紧迫度评估失败：{e}"),
+        })?;
+        // 经验行演进（旧管线归并面：reviewed 股 observe_stock+未持仓修剪）。
+        for code in &reviewed_stocks {
+            experience.observe_stock(code, minute);
+        }
+        experience.prune_watchlist(&held);
+        // trace 收集（本拍缓冲——驱动器段投影 session）。
+        self.retail_traces.push(crate::session::RetailDecisionTrace {
+            account,
+            decision: position,
+            execution_urgency: urgency,
+        });
+        // 意图 → PendingOp。
+        let mut ops = Vec::with_capacity(intents.len());
+        for intent in intents {
+            if let Some(mut op) = super::decision::intent_to_pending(intent, market) {
+                op.local = local;
+                ops.push(op);
+            }
+        }
+        // 组态写回（个人态六件+经验行——undo 先记）。
+        self.undo.push(GroupUndo::Personal {
+            local,
+            prev: Box::new(snap.clone()),
+        });
+        if let Some(slot) = self.belief_states.get_mut(local as usize) {
+            *slot = Some(super::world::BeliefParticipantSnapshot {
+                watchlist: personal.watchlist.clone(),
+                price_memory: personal.price_memory.clone(),
+                information: personal.information.clone(),
+                belief: personal.belief.clone(),
+                attention: personal.attention.clone(),
+                history_reads: personal.history_reads.clone(),
+                retail_experience: Some(experience),
+            });
+        }
+        Ok(ops)
     }
 
     /// D3a-3：单 belief 位的决策链一轮（observe 直调 → 组态写回 →
@@ -2037,6 +2403,9 @@ impl GroupState {
                     belief: out.belief.clone(),
                     attention: out.attention.clone(),
                     history_reads: out.history_reads.clone(),
+                    // 经验行非 observe 产物——保留组内现值（retail 链
+                    /// 的决策段演进）。
+                    retail_experience: slot.as_ref().and_then(|s| s.retail_experience.clone()),
                 });
             }
         }
@@ -2665,14 +3034,31 @@ impl GroupState {
                 // 借用内完成（Sol 二审修复集 5 的 undo 语义），observe 链
                 // 在借用外执行（组态/簿的演进借用互斥）。
                 let mut chain_due: Vec<LocalIdx> = Vec::new();
+                // D5 #4 retail 链：retail 位（个人态在位+零售风格）的
+                /// 决策延后到借用释放（组态写回与决策档案借用互斥）。
+                let mut retail_due: Vec<LocalIdx> = Vec::new();
                 {
                     for local in 0..profiles.len() as LocalIdx {
+                        let belief_seeded = self
+                            .belief_states
+                            .get(local as usize)
+                            .is_some_and(|slot| slot.is_some());
+                        // D5 #4：链位判定加链参数面——retail 位个人态在位
+                        /// 但无机构链参数，走 retail 链（观察+behavior 决策）。
+                        let chain_params_seeded = self
+                            .root_projection
+                            .as_ref()
+                            .is_some_and(|p| {
+                                p.chain_params.get(local as usize).is_some_and(|c| c.is_some())
+                            });
                         let chain_local = self.root_projection.is_some()
-                            && self
-                                .belief_states
-                                .get(local as usize)
-                                .is_some_and(|slot| slot.is_some());
-                        if chain_local {
+                            && belief_seeded
+                            && chain_params_seeded;
+                        let retail_local = self.root_projection.is_some()
+                            && belief_seeded
+                            && !chain_params_seeded
+                            && profiles[local as usize].retail_style.is_some();
+                        if chain_local || retail_local {
                             if tick < profiles[local as usize].next_due {
                                 continue;
                             }
@@ -2691,7 +3077,11 @@ impl GroupState {
                             pending_next_due.push((local, prev_due));
                             if observes {
                                 decide_calls += 1;
-                                chain_due.push(local);
+                                if chain_local {
+                                    chain_due.push(local);
+                                } else {
+                                    retail_due.push(local);
+                                }
                             }
                             continue;
                         }
@@ -2741,6 +3131,16 @@ impl GroupState {
                         pendings.push(Pending::Op(op));
                     }
                     chain_cancels.extend(cancels);
+                }
+                // D5 #4 retail 链：观察+决策+trace+经验行（组内权威）。
+                {
+                    let market = super::decision::build_market_view(&snapshot);
+                    for local in retail_due {
+                        let ops = self.run_retail_decision(local, tick, &snapshot, &market)?;
+                        for op in ops {
+                            pendings.push(Pending::Op(op));
+                        }
+                    }
                 }
 
             }
@@ -4009,6 +4409,25 @@ pub fn group_main(
                 }
             }
             #[cfg(test)]
+            GroupIn::DeferDueForTest { locals, tick } => {
+                // D5 #4 fixture 通道（cfg(test)）：推远 next_due——"无 due
+                /// tick"形态构造（组权威调度面的测试控制；效果入可逆日志）。
+                for local in locals {
+                    if let Some((profiles, _)) = &mut state.decision {
+                        if let Some(p) = profiles.get_mut(local as usize) {
+                            let prev = p.next_due;
+                            if prev < tick {
+                                state.undo.push(GroupUndo::NextDue {
+                                    local,
+                                    prev,
+                                });
+                                p.next_due = tick;
+                            }
+                        }
+                    }
+                }
+            }
+            #[cfg(test)]
             GroupIn::ForceDue {
                 locals,
                 tick,
@@ -4178,6 +4597,21 @@ pub fn group_main(
                     break;
                 }
             }
+            GroupIn::EchoRetailTraces => {
+                // D5 #4 retail 链：本拍 trace 上行（瞬态读面——Start 清、
+                /// 生产写入存活到提交）。
+                let msg = UpMsg::RetailTraces {
+                    group: state.group,
+                    traces: state.retail_traces.clone(),
+                };
+                if up_tx.send(msg).is_err() {
+                    abort.store(true, Ordering::SeqCst);
+                    result = Err(RuntimeError::SendFailed {
+                        detail: format!("组 {who} RetailTraces 发送失败"),
+                    });
+                    break;
+                }
+            }
             GroupIn::EchoAccounts => {
                 // 在途买占用为账户级维护字段（Sol 五审：run_round 挂出/
                 // apply_staging 成交与退款驱动——全部买单，不限计划链票）。
@@ -4282,6 +4716,7 @@ mod sol_recheck3_tests {
             auction_ticks: 0,
             closing_auction_ticks: 3,
             chain_params: vec![None],
+            session_seed: 1,
             urgency_policy: crate::plans::UrgencyPolicy::default(),
             total_shares: Default::default(),
             max_order_qty_limit: Default::default(),
@@ -4738,6 +5173,7 @@ mod sol_recheck1_tests {
                 auction_ticks: 2,
                 closing_auction_ticks: 3,
                 chain_params: vec![Some((chain_params, None))],
+                session_seed: 1,
                 urgency_policy: crate::plans::UrgencyPolicy::default(),
                 total_shares: Default::default(),
                 max_order_qty_limit: [

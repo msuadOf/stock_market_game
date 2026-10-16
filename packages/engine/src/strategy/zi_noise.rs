@@ -277,7 +277,7 @@ impl Strategy for ZiNoiseStrategy {
     }
 }
 
-fn retail_position_decision_to_intents(
+pub(crate) fn retail_position_decision_to_intents(
     strategy: &StrategyData,
     decision: &PositionDecision,
     market: &MarketView,

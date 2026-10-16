@@ -132,6 +132,7 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
         seed: 42,
         next_due: 0,
         attention_base: 0.30,
+        retail_style: None,
     };
     // D5 #2：排期归 evaluate_attention（signal 公式）；decide=纯决策。
     let run = |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, &snapshot, &account, &config);
@@ -161,6 +162,7 @@ fn attention_gap_suppresses_non_due_ticks() {
         seed: 7,
         next_due: 0,
         attention_base: 0.30,
+        retail_style: None,
     };
     // D5 #2：evaluate 排期后未到期 tick 不得再 evaluate（静默窗口由
     /// wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
@@ -211,6 +213,7 @@ fn seed_that_buys() -> u64 {
             next_due: 0,
             // 与 inline fixture 同款（base=1——搜索面=运行面）。
             attention_base: 1.0,
+            retail_style: None,
         };
         // D5 #2：运行序=evaluate（续流）→decide（due 门在调用方——组内
         /// due 循环保证）。
@@ -234,6 +237,7 @@ fn inline_decision_drives_orders_and_conservation_holds() {
             // D5 #2：base=1 ⇒ observe 恒真+wait=1（保持"每 tick 到期"的
             /// 既有断言面；signal 概率语义由 attention_gap 测试承载。
             attention_base: 1.0,
+            retail_style: None,
         }],
         attention_gap_ticks: 0,
     };
@@ -388,12 +392,14 @@ fn sol5_abort_rolls_back_next_due_reschedule() {
                 seed: 11,
                 next_due: 0,
         attention_base: 0.30,
+        retail_style: None,
             },
             NpcProfile {
                 strategy: StrategyData::retail(1.0, 100, 1.0),
                 seed: 22,
                 next_due: 1,
         attention_base: 0.30,
+        retail_style: None,
             },
         ],
         attention_gap_ticks: 4,

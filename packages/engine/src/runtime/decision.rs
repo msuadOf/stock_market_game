@@ -41,6 +41,9 @@ pub struct NpcProfile {
     /// 个体基础观察概率（session npc_attention.base_probability 构造期
     /// 投影——个体采样值，非 strategy 的群体基准）。
     pub attention_base: f64,
+    /// D5 #4 retail 链：零售风格（retail 位 Some——decide_retail_position
+    /// 内核输入；非 retail 位 None）。
+    pub retail_style: Option<crate::strategy::RetailStyle>,
 }
 
 /// 组决策装配（世界构造期确定）。

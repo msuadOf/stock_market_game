@@ -122,6 +122,7 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
                 // 缺省装配无会话来源：base 用策略群体基准（D5 #2 起
                 /// evaluate 门消费；生产路径经 from_session 投影个体值）。
                 attention_base: 0.30,
+                retail_style: Some(crate::strategy::RetailStyle::Noise),
             })
             .collect(),
         attention_gap_ticks: 4,

@@ -32,6 +32,8 @@ pub struct RuntimeDriver {
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
     /// 事件组装时分配 seq 投影为 IntentRejected）。
     pending_rejections: Vec<(crate::StockId, crate::AccountId)>,
+    /// D5 #4：首买经历 init 待办（回写/投影段收集、个人态回写后执行）。
+    pending_hold_inits: Vec<(crate::AccountId, crate::StockId, u32, i64)>,
     /// 已投递的库版本（Belief-1b·下：稀疏判据）。
     last_library_version: Option<u32>,
 }
@@ -118,18 +120,24 @@ impl RuntimeDriver {
                     // 玩家惯例位无 attention 态：base 不被 evaluate 消费
                     //（next_due=MAX 恒不 due）——占位 1.0 非静默兜底。
                     .unwrap_or(1.0);
+                // D5 #4 retail 链：零售风格投影（retail 位决策内核输入）。
+                let retail_style = id.and_then(|id| session.account(id)).and_then(|a| {
+                    a.strategy().and_then(|s| s.retail_style())
+                });
                 match attention_entry {
                     Some((due, rng)) => NpcProfile {
                         strategy,
                         seed: rng,
                         next_due: due,
                         attention_base,
+                        retail_style,
                     },
                     None => NpcProfile {
                         strategy,
                         seed: 0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
                         next_due: fallback_due,
                         attention_base,
+                        retail_style,
                     },
                 }
             })
@@ -158,6 +166,9 @@ impl RuntimeDriver {
                         belief: p.belief.clone(),
                         attention: p.attention.clone(),
                         history_reads: p.history_reads.clone(),
+                        // D5 #4：零售经验行（retail 位 Some）。
+                        retail_experience: session
+                            .runtime_retail_experience_for(&id),
                     })
                 })
                 .collect();
@@ -184,6 +195,8 @@ impl RuntimeDriver {
                     .iter()
                     .map(|id| chain_params_by_id.get(id).copied())
                     .collect(),
+                // D5 #4 retail 链：决策流种子基（npc_seed_base 同源）。
+                session_seed: session.runtime_session_seed(),
                 urgency_policy: session.runtime_urgency_policy(),
                 total_shares,
                 max_order_qty_limit: session.runtime_max_order_qty_limit(),
@@ -298,6 +311,7 @@ impl RuntimeDriver {
             next_seq: 0,
             drained_events: Vec::new(),
             pending_rejections: Vec::new(),
+            pending_hold_inits: Vec::new(),
             last_library_version: None,
         };
         Ok(driver)
@@ -434,6 +448,8 @@ impl RuntimeDriver {
                     .account(id)
                     .map(|a| a.positions().clone())
                     .unwrap_or_default();
+                let mut pending_hold_inits: Vec<(crate::AccountId, crate::StockId, u32, i64)> =
+                    Vec::new();
                 for (idx, &qty_raw) in acct.shares.iter().enumerate() {
                     // Sol 整改 3：qty 含在途卖余量（旧管线口径=在手+在途
                     /// ——qty 口径差收口；session 域 cost_price/权益观察
@@ -461,9 +477,9 @@ impl RuntimeDriver {
                                 .copied()
                                 .or_else(|| last_prices.get(idx).copied())
                                 .unwrap_or(1);
-                        session
-                            .runtime_hold_experience_init(&id, &code, qty, entry)
-                            .map_err(|e| format!("持仓回写配套失败：{e}"))?;
+                        // D5 #4：首买经历 init 延后到个人态回写之后（组权威
+                        /// 经验行整态覆盖会冲掉先行写入——同拍投影段同式）。
+                        pending_hold_inits.push((id, code, qty, entry));
                     }
                     merged.insert(
                         code,
@@ -566,6 +582,16 @@ impl RuntimeDriver {
                 }
             }
             Err(projection_error) => return Err(projection_error),
+        }
+        // D5 #4：首买经历 init（回写/投影段收集——个人态整态回写之后
+        /// 执行，组权威经验行不冲掉首买条目）。
+        {
+            let mut inits = std::mem::take(&mut self.pending_hold_inits);
+            for (id, code, qty, entry) in inits.drain(..) {
+                session
+                    .runtime_hold_experience_init(&id, &code, qty, entry)
+                    .map_err(|e| format!("首买经历初始化失败：{e}"))?;
+            }
         }
         // D3a-2c 件5：组内计划簿交付点投影（plans_debug 等读面源——组
         // 线程权威，X1 直改）。**空簿不覆盖**：迁移期 session 侧仍承载
@@ -750,10 +776,13 @@ impl RuntimeDriver {
 
     /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
     /// 日翻；civil 侧不在内，生产显式 day_end 编排的 world 部分等价）。
+    /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
     pub fn world_day_end_for_step(&mut self) -> Result<(), String> {
         self.world
             .run_day_end_public()
-            .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))
+            .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))?;
+        self.collect_drained_events();
+        Ok(())
     }
 
     /// 清簿撤单事实转事件（seq 分配），并入待取缓冲。
@@ -1028,9 +1057,7 @@ impl RuntimeDriver {
             engine_acct.fixture_set_cash(crate::Money::from_cents(cash));
             drop(engine_acct);
             for (code, entry, qty) in new_hold_inits {
-                session
-                    .runtime_hold_experience_init(&id, &code, qty, entry)
-                    .map_err(|e| format!("同拍投影首买经历初始化失败：{e}"))?;
+                self.pending_hold_inits.push((id, code, qty, entry));
             }
         }
         Ok(())
@@ -1039,6 +1066,19 @@ impl RuntimeDriver {
     /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。
     pub fn sever_world_for_test(&mut self) {
         self.world.sever();
+    }
+
+    /// D5 #4 fixture 通道：推远名册账户 next_due（cfg(test)——组权威
+    /// 调度面的"无 due tick"形态构造）。
+    #[cfg(test)]
+    pub fn defer_due_for_test_at(&mut self, ids: &[crate::AccountId], tick: u64) {
+        let locals: Vec<super::LocalIdx> = self
+            .id_map
+            .iter()
+            .enumerate()
+            .filter_map(|(local, id)| ids.contains(id).then_some(local as super::LocalIdx))
+            .collect();
+        self.world.defer_due_for_test(locals, tick);
     }
 
     /// 测试控制面（Sol 整改注入通道）：按 AccountId 强制到期（显式
@@ -1059,6 +1099,15 @@ impl RuntimeDriver {
 
     /// 组注意力调度收集（Sol 二审修复集 5：构造器恢复断言/对账面——
     /// 组线程 next_due 是 runtime 调度权威的真实状态源）。
+    /// D5 #4 retail 链：本拍零售决策 trace 收集（world 通道面包装）。
+    pub fn collect_retail_traces(
+        &mut self,
+    ) -> Result<Vec<Vec<crate::session::RetailDecisionTrace>>, super::protocol::RuntimeError> {
+        self.world.collect_retail_traces().map(|collected| {
+            collected.into_iter().map(|(_, traces)| traces).collect()
+        })
+    }
+
     pub fn collect_attention(
         &mut self,
     ) -> Result<Vec<(super::GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, String> {

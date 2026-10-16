@@ -102,6 +102,9 @@ pub struct BeliefParticipantSnapshot {
     pub attention: crate::session::NpcAttentionState,
     /// 公共历史读账（observe 的 record_public_history_read 承载）。
     pub history_reads: crate::experience::PersonalHistoryReadLedger,
+    /// D5 #4 retail 链：零售经验行（retail 位 Some——观察/决策/经验反馈
+    /// 的组内权威载体；inst/玩家位 None）。
+    pub retail_experience: Option<crate::RetailExperienceState>,
 }
 
 /// 开仓派生记录（D3a-2c：组线程 observe 直调的输入/输出——红证同输入
@@ -141,6 +144,9 @@ pub struct RootProjection {
     pub closing_auction_ticks: u64,
     /// D3a-2c 件4：信念链参数/机构风格（下标=LocalIdx；None=非信念机构）。
     pub chain_params: Vec<Option<(crate::strategy::BeliefChainParams, Option<crate::strategy::InstitutionStyle>)>>,
+    /// D5 #4 retail 链：会话种子（决策 rng 的 npc_seed_base 同源输入——
+    /// retail 决策流与旧管线 A 类任务同式派生）。
+    pub session_seed: u64,
     /// D3a-2c 件4：紧迫度策略（组内 initial_urgency 输入——同 session 对象克隆）。
     pub urgency_policy: crate::plans::UrgencyPolicy,
     /// D3a-2c 件4：每股发行总股本（CandidateTargetProposal 上限——setup 权威）。
@@ -720,6 +726,15 @@ impl World {
         }
     }
 
+    /// D5 #4 fixture 通道：推远 next_due 下行组 0（cfg(test)——"无 due
+    /// tick"形态构造）。
+    #[cfg(test)]
+    pub fn defer_due_for_test(&mut self, locals: Vec<super::LocalIdx>, tick: u64) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::DeferDueForTest { locals, tick });
+        }
+    }
+
     /// D3b 件 5：个人态注入下行组 0（cfg(test)——组权威覆盖+可逆）。
     #[cfg(test)]
     pub fn install_personal_for_test(
@@ -1001,6 +1016,41 @@ impl World {
     }
 
     /// 信念个人态收集（D3a-2b：EchoBelief 广播→收齐）。
+    /// D5 #4 retail 链：本拍零售决策 trace 收集（全组——瞬态读面）。
+    pub fn collect_retail_traces(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, Vec<crate::session::RetailDecisionTrace>)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: "collect_retail_traces 通道面与组数不一致（世界已断连）".to_owned(),
+            });
+        }
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoRetailTraces).map_err(|_| {
+                RuntimeError::SendFailed { detail: "EchoRetailTraces 广播失败".to_owned() }
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::RetailTraces { group, traces } => {
+                    out.push((group, traces));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!("collect_retail_traces 期望 RetailTraces，收到 {other:?}"),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
     pub fn collect_group_belief(
         &mut self,
     ) -> Result<Vec<(GroupIdx, Vec<Option<BeliefParticipantSnapshot>>)>, RuntimeError> {

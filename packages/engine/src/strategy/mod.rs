@@ -23,6 +23,7 @@ mod state;
 mod technical;
 mod value;
 mod zi_noise;
+pub(crate) use zi_noise::retail_position_decision_to_intents;
 
 pub use analysis_profile::{
     AnalysisProfile, AnalysisProfileError, AnalysisWeights, FundamentalMethod,

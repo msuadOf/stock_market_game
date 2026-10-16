@@ -51,7 +51,7 @@ pub(in crate::session) use live_reservations::{
     LiveReservations, ReservationPage, RESERVATION_PAGE_SHIFT,
 };
 mod local_admission;
-mod npc_decisions;
+pub(crate) mod npc_decisions;
 pub(in crate::session) mod npc_split;
 mod npc_state_projection;
 mod npc_tick_preparation;

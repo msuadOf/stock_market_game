@@ -55,7 +55,7 @@ use crate::strategy::{BeliefBook, BeliefCause, BeliefInputs, PerShareRange, Valu
 mod lifecycle;
 pub(in crate::session) mod personal_state;
 mod quote;
-mod retail_analysis;
+pub(crate) mod retail_analysis;
 mod roots;
 mod urgency;
 pub(crate) use personal_state::PlanPersonalState;
@@ -265,7 +265,7 @@ pub(crate) struct PlanRootDiagnostics;
 
 /// FNV-1a(tag + account id) → 与 seed 混合的独立流种子（分析档案/信念假设等
 /// per-NPC 一次性抽样专用；绝不与 self.state.rng 或注意力流共用）。
-pub(super) fn derived_stream(seed: u64, tag: &str, id: AccountId) -> u64 {
+pub(crate) fn derived_stream(seed: u64, tag: &str, id: AccountId) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in tag.bytes().chain(id.0.to_le_bytes()) {
         hash ^= u64::from(byte);

@@ -124,6 +124,8 @@ pub(crate) mod notices;
 pub use civil_clock::{CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase};
 pub use company_groups::{GroupHolding, GroupStructure};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
+pub(crate) use decision_chain::retail_analysis::{RetailAnalysisCtx, RetailStrategyInstance};
+pub(crate) use pipeline::npc_decisions::npc_rng_seed;
 // D3a-2c 件2/3：组线程组装/直调的承载类型（AccountBook 投影 + 时间映射）。
 pub(crate) use account_book::AccountBook;
 pub(crate) use observation_clock::intraday_observation_second;

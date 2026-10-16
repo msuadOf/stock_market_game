@@ -116,6 +116,23 @@ pub struct RetailExperienceState {
 }
 
 impl RetailExperienceState {
+    /// D5 #4 retail 链：组权威行与镜像行合并（组行值权威；保留组行没有
+    /// 的股键——同拍投影段的首买 init 在组内观察接管前的承载面；组内
+    /// capture 的 initialize 同键幂等不双载）。
+    pub fn merged_with_group_authority(self, group: &Self) -> Self {
+        let mut stocks = group.stocks.clone();
+        for (code, entry) in self.stocks {
+            stocks.entry(code).or_insert(entry);
+        }
+        Self {
+            reference_equity: group.reference_equity,
+            peak_equity: group.peak_equity,
+            consecutive_failed_buys: group.consecutive_failed_buys,
+            stocks,
+            feedback: group.feedback.clone(),
+        }
+    }
+
     pub fn new(reference_equity: Money) -> Result<Self, ExperienceError> {
         require_positive("reference equity", reference_equity)?;
         Ok(Self {

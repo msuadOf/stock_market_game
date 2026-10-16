@@ -92,6 +92,16 @@ impl GameSession {
         self.state
             .history_reads
             .insert(id, snapshot.history_reads.clone());
+        // D5 #4 retail 链：经验行镜像随组演进——组行为权威基，**保留
+        /// 组外新增键**（同拍投影段的首买 init 在组内观察接管前由合并
+        /// 承载；组内下一 due 的 capture initialize 同键幂等，不双载）。
+        if let Some(row) = &snapshot.retail_experience {
+            let merged = match self.state.retail_experience.remove(&id) {
+                Some(existing) => existing.merged_with_group_authority(row),
+                None => row.clone(),
+            };
+            self.state.retail_experience.insert(id, merged);
+        }
     }
 
     /// Sol 整改注入通道（cfg(test)）：queue_npc 语义的 runtime 承载——
@@ -156,6 +166,18 @@ impl GameSession {
             .npc_attention
             .get(id)
             .map(|state| state.base_probability)
+    }
+
+    /// D5 #4 fixture 通道（cfg(test)）：推远名册账户的组内 next_due
+    ///（"无 due tick"形态——t3 stale trace 面的 runtime 等价）。
+    #[cfg(test)]
+    pub(crate) fn defer_due_via_runtime(&mut self, ids: &[crate::AccountId], tick: u64) {
+        let mut driver = self
+            .runtime_driver
+            .as_mut()
+            .and_then(|cell| cell.lock().ok())
+            .expect("runtime 驱动器在位（调用方已判）");
+        driver.defer_due_for_test_at(ids, tick);
     }
 
     #[cfg(test)]
@@ -452,6 +474,41 @@ impl GameSession {
         for account in self.state.retail_experience.keys().copied().collect::<Vec<_>>() {
             self.record_retail_intent_rejections(account, &events);
         }
+        // D5 #4 retail 链：决策 trace 投影（组内生产——本拍清+装，旧管线
+        /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
+        {
+            let traces = match driver.collect_retail_traces() {
+                Ok(collected) => collected.into_iter().flatten().collect::<Vec<_>>(),
+                Err(e) => {
+                    self.rollback_runtime_step(baseline);
+                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime::retail_traces".to_owned(),
+                        description: format!("零售决策 trace 收集失败：{e:?}"),
+                    }));
+                }
+            };
+            self.state.last_retail_decisions = traces;
+        }
+        // D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/
+        /// 组日翻，**先于**信封重建：日终清簿后的 desk 在途=空集，ledger
+        /// 重建与旧管线"日终无在途"校验面同源；drained 撤单事件并入本拍
+        /// 事件流。此前该编排面缺失（world_day_end_for_test 未接线）——
+        /// 多日 step 的 ledger 残留使 session 日终校验显红）。
+        {
+            let ticks_per_day_pre = u64::from(self.state.setup.ticks_per_day);
+            if ticks_per_day_pre > 0 && self.tick() % ticks_per_day_pre == 0 {
+                if let Err(e) = driver.world_day_end_for_step() {
+                    self.rollback_runtime_step(baseline);
+                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime::day_end_world".to_owned(),
+                        description: e,
+                    }));
+                }
+                // 清簿撤单事件并入（seq 分配与 drained 缓冲同式）。
+                let drained = driver.take_drained_events();
+                events.extend(drained);
+            }
+        }
         // D5 envelope 投影：desk 在途单重建 session 信封账本（审计面——
         /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
         ///（与事件 id 一致）。下拍重建覆盖（权威在 desk）。
@@ -692,6 +749,11 @@ impl GameSession {
     /// runtime 驱动器翻转面（Sol 二审修复集 5）：attention 状态只读投影
     /// `(AccountId, 下次候选 tick, 注意力 RNG 状态)`——驱动器构造器
     /// 恢复会话真实调度态用（不合成固定 seed/初始 due）。
+    /// D5 #4 retail 链：会话种子读面（决策 rng 的 npc_seed_base 同源）。
+    pub fn runtime_session_seed(&self) -> u64 {
+        self.state.seed
+    }
+
     pub fn runtime_attention_state(&self) -> Vec<(crate::AccountId, u64, u64)> {
         self.state
             .npc_attention
@@ -1001,13 +1063,16 @@ impl GameSession {
             .npc_attention
             .iter()
             .filter(|(id, _)| {
+                // D5 #4 retail 链：belief 位不限机构——retail 位同投影
+                // （观察/决策/经验反馈的组内权威；玩家无 strategy 自然
+                // 排除）。
                 self.state.belief_participants.contains_key(id)
                     && self
                         .state
                         .accounts
                         .get(id)
                         .and_then(|account| account.strategy())
-                        .is_some_and(|strategy| strategy.belief_chain_params().is_some())
+                        .is_some()
             })
             .map(|(id, attention)| {
                 let participant = &self.state.belief_participants[id];
@@ -1024,6 +1089,23 @@ impl GameSession {
                 )
             })
             .collect()
+    }
+
+    /// D5 #4 retail 链：零售经验行只读（构造投影源；非 retail 位 None）。
+    pub fn runtime_retail_experience_for(
+        &self,
+        id: &crate::AccountId,
+    ) -> Option<crate::RetailExperienceState> {
+        let is_retail = self
+            .state
+            .accounts
+            .get(id)
+            .is_some_and(|account| account.kind() == crate::account::AccountKind::Retail);
+        if is_retail {
+            self.state.retail_experience.get(id).cloned()
+        } else {
+            None
+        }
     }
 
     /// 信念个人态只读投影（D3a-2b Belief-1：构造投影/同源校验源）。

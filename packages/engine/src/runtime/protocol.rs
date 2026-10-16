@@ -347,6 +347,16 @@ pub enum GroupIn {
         /// (计划 id, 事件) 序列——逐条 apply，失败显式上报。
         events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
     },
+    /// D5 #4 fixture 通道（cfg(test)）：显式推远 next_due（组权威调度面
+    /// 的测试控制——"无 due tick"形态构造；效果入可逆日志，Abort 冲回
+    /// 后指令失效需重发）。
+    #[cfg(test)]
+    DeferDueForTest {
+        /// 组内名册下标。
+        locals: Vec<super::LocalIdx>,
+        /// 目标 tick（next_due=max(现值, 目标)——只推远不提前）。
+        tick: u64,
+    },
     /// 测试控制面（Sol 中点整改注入通道——cfg(test) 语义）：显式强制
     /// 到期指令（账户位+目标 tick；组线程验证目标晚于已转正 tick 后
     /// 前移 next_due——不每 tick 偷用 session 镜像；效果入可逆日志，
@@ -406,6 +416,9 @@ pub enum GroupIn {
     EchoAccounts,
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
     EchoCandles,
+    /// D5 #4 retail 链：本拍零售决策 trace 请求（组回 RetailTraces——
+    /// 驱动器投影 session.last_retail_decisions 的瞬态读面）。
+    EchoRetailTraces,
 }
 
 /// D5 envelope 投影：desk 在途单快照（owner/价格/量/费用累计——
@@ -563,6 +576,13 @@ pub enum UpMsg {
         /// 起 evaluate 共享流写回 session rng_state 同源）。
         attention: Vec<(LocalIdx, u64, u64)>,
     },
+    /// D5 #4 retail 链：本拍零售决策 trace 回执（瞬态——每拍清+装）。
+    RetailTraces {
+        /// 组索引。
+        group: GroupIdx,
+        /// 本拍 trace（账户序）。
+        traces: Vec<crate::session::RetailDecisionTrace>,
+    },
     /// 组账户快照回执（EchoAccounts 应答）。
     GroupEcho {
         /// 组索引。
@@ -626,6 +646,7 @@ impl std::fmt::Debug for UpMsg {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())
             }
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
+            UpMsg::RetailTraces { group, .. } => write!(f, "RetailTraces(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
             UpMsg::DeskCandles { stock, .. } => write!(f, "DeskCandles(stock={stock})"),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),

@@ -26,10 +26,56 @@ fn batch4_pipeline_day_advances() {
 #[test]
 fn batch4_t1_unfreeze_clears_frozen_after_day_end() {
     use engine::runtime::drive::RuntimeDriver;
-    let mut session = GameSession::new(setup_1stock(), 199).expect("会话");
+    let mut setup = setup_1stock();
+    // D5 #4 fixture 适配：retail 链 behavior 化后，构造期组内快照（空簿
+    // 起步）与 session 簿的观察面天然不同——NPC 到达不再保证成交
+    //（等价锚=restore 双轨对拍，不逐位对拍旧管线）。「首日当日买入」
+    // 前提改确定性注入（retail 位 float 持仓卖+玩家买，首拍成交）。
+    let mut session = GameSession::new(setup, 199).expect("会话");
+    let code = engine::StockId(0);
+    let price = engine::Money::from_cents(1_000);
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
-    for _ in 1..=240 {
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(
+            &[
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(1),
+                    intent: engine::Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: engine::Side::Sell,
+                        price: engine::strategy::LimitPrice::Fixed(price),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(0),
+                    intent: engine::Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: engine::Side::Buy,
+                        price: engine::strategy::LimitPrice::Fixed(price),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+            ],
+            &upper,
+        )
+        .expect("注入");
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("成交拍");
+    driver.install_market_views(&mut session).expect("行情安装");
+    driver.install_candles(&mut session).expect("K 安装");
+    for _ in 2..=240 {
         driver
             .step_frame_equivalent(&mut session)
             .expect("步进");

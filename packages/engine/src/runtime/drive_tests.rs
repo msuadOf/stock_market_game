@@ -88,6 +88,27 @@ fn sol6_history_len_flows_from_session_setup() {
 // retail(0.30,200,0.35) 恒定——参数不同的两份会话行为不分叉）。
 #[test]
 fn d1_runtime_decisions_use_session_strategy_params() {
+    fn accepted_buys_with(arrival: f64) -> usize {
+        let mut setup = setup_fixture();
+        setup.strategy_params.retail.arrival_rate = arrival;
+        let mut session = GameSession::new(setup, 5).expect("会话构造");
+        let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+        driver.adopt_session_seq(&session);
+        let mut buys = 0usize;
+        for _ in 0..20 {
+            let ev = driver
+                .step_frame_equivalent(&mut session)
+                .expect("步进");
+            driver.install_market_views(&mut session).expect("行情安装");
+            driver.install_candles(&mut session).expect("K 安装");
+            buys += ev
+                .iter()
+                .filter(|e| matches!(e, crate::Event::OrderAccepted { side: crate::Side::Buy, .. }))
+                .count();
+        }
+        buys
+    }
+
     fn accepted_with(arrival: f64) -> usize {
         let mut setup = setup_fixture();
         setup.strategy_params.retail.arrival_rate = arrival;
@@ -109,11 +130,11 @@ fn d1_runtime_decisions_use_session_strategy_params() {
         accepted
     }
     let hot = accepted_with(1.0);
-    let cold = accepted_with(0.0);
+    let cold_buys = accepted_buys_with(0.0);
     assert!(hot > 0, "到达率 1.0 必产受理单（{hot}）");
     assert_eq!(
-        cold, 0,
-        "到达率 0.0 零下单——runtime 须用会话参数（合成 0.30 时此断言红）"
+        cold_buys, 0,
+        "到达率 0.0 零主动买——runtime 须用会话参数（合成 0.30 时此断言红；D5 #4 retail 链 behavior 化后风控卖单不被到达门控，断言面收窄为买入受理）"
     );
 }
 
@@ -1529,17 +1550,19 @@ fn sol6th_same_tick_abort_leaks_nothing() {
     setup.npcs.inst_count = 0;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 83).expect("会话构造");
-    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
-    driver.adopt_session_seq(&session);
     let seller = crate::AccountId(1);
     let buyer = crate::AccountId(0);
     let code = crate::StockId(0);
     let price = crate::money::Money::from_cents(1_000);
+    // D5 #4 fixture 适配：grant 先于驱动器构造（组权威 shares 构造期
+    /// 投影——构造后 grant 组不感知，挂卖被组端 sellable 校验跳过）。
     session
         .fixture_account_mut(&seller)
         .unwrap()
         .grant_position(code.clone(), 100, price)
         .unwrap();
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
     // 卖方挂单（驱动器在位→注入世界）。
     let intents = vec![crate::session::ReceiptBearingIntent {
         owner: seller,
