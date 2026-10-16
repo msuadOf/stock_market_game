@@ -32,6 +32,9 @@ pub struct RuntimeDriver {
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
     /// 事件组装时分配 seq 投影为 IntentRejected）。
     pending_rejections: Vec<(crate::StockId, crate::AccountId)>,
+    /// 每组账户数（多组形态的 Owner(g,l)→全局名册映射基；单组=名册长，
+    /// owner.0 恒 0 时 g*k+l==l 兼容）。翻转批组参数化（探针负载用）。
+    accounts_per_group: usize,
     /// D5 #4：首买经历 init 待办（回写/投影段收集、个人态回写后执行）。
     pending_hold_inits: Vec<(crate::AccountId, crate::StockId, u32, i64)>,
     /// 已投递的库版本（Belief-1b·下：稀疏判据）。
@@ -70,11 +73,40 @@ impl RuntimeDriver {
     /// （此前合成固定 seed/`i%8` 初始 due，恢复前后行为不同）。
     /// 无 attention 状态的账户（玩家惯例位）保留合成缺省。
     pub fn from_session(session: &mut GameSession) -> Result<Self, String> {
+        Self::from_session_grouped(session, 1)
+    }
+
+    /// 多组构造（翻转批探针负载：组数参数化——账户按 id_map 序均分，
+    /// 尾组余位空槽；生产 from_session 保持单组）。
+    pub fn from_session_grouped(
+        session: &mut GameSession,
+        n_groups: usize,
+    ) -> Result<Self, String> {
         let setup: SessionSetup = session.export_setup_for_runtime();
         let n_stocks = setup.stocks.len();
-        let (mut cash, mut shares, invested, recovered, frozen, ever_held, ids) =
+        let (cash_raw, shares_raw, invested_raw, recovered_raw, frozen_raw, ever_held_raw, ids) =
             accounts_projection_from_session(session, n_stocks);
         let npcs = ids.len();
+        // 翻转批组参数化：账户矩阵按组切分（[group][local]——id_map 序
+        /// 均分、尾组余位零填充；单组 n_groups=1 时与原全量单行等价）。
+        let n_groups = n_groups.max(1);
+        let per_group = npcs.div_ceil(n_groups);
+        fn split_rows<T: Default + Clone>(mut row: Vec<T>, n_groups: usize, per_group: usize) -> Vec<Vec<T>> {
+            let mut out = Vec::with_capacity(n_groups);
+            for _ in 0..n_groups {
+                let take = row.drain(..per_group.min(row.len())).collect::<Vec<T>>();
+                let mut padded = take;
+                padded.resize(per_group, T::default());
+                out.push(padded);
+            }
+            out
+        }
+        let mut cash = split_rows(cash_raw, n_groups, per_group);
+        let mut shares = split_rows(shares_raw, n_groups, per_group);
+        let invested = split_rows(invested_raw, n_groups, per_group);
+        let recovered = split_rows(recovered_raw, n_groups, per_group);
+        let frozen = split_rows(frozen_raw, n_groups, per_group);
+        let ever_held = split_rows(ever_held_raw, n_groups, per_group);
         let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
             .runtime_attention_state()
             .into_iter()
@@ -151,7 +183,7 @@ impl RuntimeDriver {
             Some(decision),
             Box::new(|_g| Box::new(|_t, _r| super::group::TickPlan::default())),
         )?;
-        spec.n_groups = 1;
+        spec.n_groups = n_groups;
         // D3a-2b Belief-1 + D3a-2c 件2：完整个人态构造期投影（id_map 序
         // ——None=非机构位；observe 直调的组内权威承载：六件全投影）。
         {
@@ -232,7 +264,8 @@ impl RuntimeDriver {
                 .iter()
                 .all(|(_, orders)| orders.is_empty());
             if restore_shape {
-                let mut purse_by_local = vec![0i64; ids.len()];
+                // 组参数化：全局名册 local → (组, 组内 l) 寻址。
+                let mut purse_by_group = vec![vec![0i64; per_group]; n_groups];
                 for (key, envelope) in session.runtime_envelope_ledger_snapshot() {
                     let local = ids
                         .iter()
@@ -243,6 +276,7 @@ impl RuntimeDriver {
                                 key.account
                             )
                         })?;
+                    let (g, l) = (local / per_group, local % per_group);
                     let stock = key.stock.0 as usize;
                     if stock >= n_stocks {
                         return Err(format!(
@@ -253,35 +287,35 @@ impl RuntimeDriver {
                     let audit = envelope.audit();
                     match key.side {
                         crate::orderbook::Side::Sell => {
-                            shares[local][stock] =
-                                shares[local][stock].saturating_add(audit.remaining_qty);
+                            shares[g][l][stock] =
+                                shares[g][l][stock].saturating_add(audit.remaining_qty);
                         }
                         crate::orderbook::Side::Buy => {
                             let purse = envelope.live().cash.cents();
-                            purse_by_local[local] += purse;
-                            cash[local] -= purse;
+                            purse_by_group[g][l] += purse;
+                            cash[g][l] -= purse;
                         }
                     }
                 }
-                spec.initial_purse_held = vec![purse_by_local];
+                spec.initial_purse_held = purse_by_group;
             }
         }
         // D0：世界从会话当前 tick 起步（锁步不变量的构造期对齐——
         // 全新会话即 0；恢复/接管场景相位按绝对 tick 推导）。
         spec.initial_committed_tick = session.tick();
-        spec.accounts_per_group = npcs.max(1);
+        spec.accounts_per_group = per_group;
         spec.initial_cash = 0;
-        spec.initial_cash_override = Some(vec![cash]);
-        spec.initial_shares = vec![shares];
+        spec.initial_cash_override = Some(cash);
+        spec.initial_shares = shares;
         // D3a-2c 件1：成本基构造投影（开仓派生 cost_price 消费——组侧
         // 权威自此起步，D1 登记"成本基保留会话侧"差异就此闭合）。
-        spec.initial_invested = vec![invested];
-        spec.initial_recovered = vec![recovered];
+        spec.initial_invested = invested;
+        spec.initial_recovered = recovered;
         // D3a-3：曾持有位投影（session positions 零量条目面——清仓后
         // 观察面 held 集成员）。
-        spec.initial_ever_held = vec![ever_held];
+        spec.initial_ever_held = ever_held;
         // D5 restore 链最后一层：T+1 当日冻结投影。
-        spec.initial_frozen_today = vec![frozen];
+        spec.initial_frozen_today = frozen;
         // D5 adopt 直入（Sol 二审修复集 5 的到簿序收口）：旧簿在途单
         // 构造期直入 desk 初始簿——先于本 tick 新单（此前经 ExternalPlan
         // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
@@ -311,10 +345,11 @@ impl RuntimeDriver {
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let driver = Self {
             world,
-            id_map: ids,
+            id_map: ids.clone(),
             next_seq: 0,
             drained_events: Vec::new(),
             pending_rejections: Vec::new(),
+            accounts_per_group: per_group.max(1),
             pending_hold_inits: Vec::new(),
             last_library_version: None,
         };
@@ -435,9 +470,13 @@ impl RuntimeDriver {
             .world
             .snapshot_accounts()
             .map_err(|e| format!("账户快照失败：{e:?}"))?;
-        for (_g, accounts) in snapshots {
+        for (g, accounts) in snapshots {
             for (local, acct) in accounts.iter().enumerate() {
-                let Some(id) = self.id_map.get(local).copied() else {
+                let Some(id) = self
+                    .id_map
+                    .get(g as usize * self.accounts_per_group + local)
+                    .copied()
+                else {
                     continue;
                 };
                 // D3a-2c 件1：持仓回写全面以组权威同步——数量、T+1 冻结、
@@ -571,9 +610,12 @@ impl RuntimeDriver {
             .map_err(|e| format!("个人态交付投影失败：{e:?}"));
         match belief_states {
             Ok(collected) => {
-                for (_group, states) in collected {
+                for (group, states) in collected {
                     for (local, snapshot) in states.iter().enumerate() {
-                        let Some(&id) = self.id_map.get(local) else {
+                        let Some(&id) = self
+                            .id_map
+                            .get(group as usize * self.accounts_per_group + local)
+                        else {
                             continue;
                         };
                         if let Some(snapshot) = snapshot {
@@ -643,7 +685,7 @@ impl RuntimeDriver {
             let mut touched: Vec<crate::AccountId> = trades
                 .iter()
                 .flat_map(|tr| [tr.maker, tr.taker])
-                .filter_map(|owner| self.id_map.get(owner.1 as usize).copied())
+                .filter_map(|owner| self.id_map.get(self.global_index(owner)).copied())
                 .collect();
             touched.sort();
             touched.dedup();
@@ -698,7 +740,7 @@ impl RuntimeDriver {
                 (tr.maker, false, tr.maker_order_serial),
                 (tr.taker, true, tr.taker_order_serial),
             ] {
-                let Some(&id) = self.id_map.get(owner.1 as usize) else {
+                let Some(&id) = self.id_map.get(self.global_index(owner)) else {
                     continue;
                 };
                 let code = crate::StockId(tr.stock as u32);
@@ -807,6 +849,11 @@ impl RuntimeDriver {
     /// D5 envelope 投影：名册只读（组内下标→AccountId——envelope 键组装）。
     pub fn account_by_local(&self, local: u16) -> Option<crate::AccountId> {
         self.id_map.get(local as usize).copied()
+    }
+
+    /// Owner(g,l) → AccountId（多组映射；上行消费统一入口）。
+    pub fn account_by_owner(&self, owner: super::Owner) -> Option<crate::AccountId> {
+        self.id_map.get(self.global_index(owner)).copied()
     }
 
     /// D5 envelope 投影：desk 在途单收集（session 信封账本重建输入）。
@@ -1039,7 +1086,7 @@ impl RuntimeDriver {
                 (tr.maker, false, tr.maker_fees_cents),
                 (tr.taker, true, tr.taker_fees_cents),
             ] {
-                let Some(&id) = self.id_map.get(owner.1 as usize) else {
+                let Some(&id) = self.id_map.get(self.global_index(owner)) else {
                     continue;
                 };
                 let code = crate::StockId(tr.stock as u32);
@@ -1175,6 +1222,11 @@ impl RuntimeDriver {
         })
     }
 
+    /// Owner(g, l) → 全局名册下标（多组映射基；单组 g=0 时退化为 l）。
+    fn global_index(&self, owner: super::Owner) -> usize {
+        owner.0 as usize * self.accounts_per_group + owner.1 as usize
+    }
+
     pub fn collect_attention(
         &mut self,
     ) -> Result<Vec<(super::GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, String> {
@@ -1240,9 +1292,13 @@ impl RuntimeDriver {
             .deliver_information(payload)
             .map_err(|e| format!("信息投递编排失败：{e:?}"))?;
         let mut updates = Vec::new();
-        for (_g, group_updates) in collected {
+        for (g, group_updates) in collected {
             for (local, state) in group_updates {
-                if let Some(id) = self.id_map.get(local as usize).copied() {
+                if let Some(id) = self
+                    .id_map
+                    .get(g as usize * self.accounts_per_group + local as usize)
+                    .copied()
+                {
                     updates.push((id, state));
                 }
             }
@@ -1583,9 +1639,13 @@ impl RuntimeDriver {
             .collect_group_attention()
             .map_err(|e| format!("注意力收集失败：{e:?}"))?;
         let mut entries = Vec::new();
-        for (_g, attention) in collected {
+        for (g, attention) in collected {
             for (local, next_due, rng_state) in attention {
-                if let Some(id) = self.id_map.get(local as usize).copied() {
+                if let Some(id) = self
+                    .id_map
+                    .get(g as usize * self.accounts_per_group + local as usize)
+                    .copied()
+                {
                     entries.push((id, next_due, rng_state));
                 }
             }

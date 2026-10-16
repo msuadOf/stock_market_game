@@ -41,6 +41,7 @@ impl GameSession {
             #[cfg(test)]
                 runtime_install_failure: _,
             runtime_driver: _,
+            runtime_group_count: _,
             revision: _,
         } = self;
         let super::CommittableSessionState {

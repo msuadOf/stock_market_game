@@ -487,6 +487,14 @@ impl World {
                 accounts.push(acct);
             }
             let group_decision = decision.clone().map(|mut d| {
+                // 翻转批组参数化：每组取全局名册的第 g 段 profiles（组内
+                // local 与账户段对齐；单组 n_groups=1 时为全量，行为不变）。
+                let skip = (g as usize) * accounts_per_group;
+                if skip > 0 {
+                    let skip = skip.min(d.profiles.len());
+                    d.profiles.drain(..skip);
+                }
+                d.profiles.truncate(accounts_per_group);
                 // 组因子混入种子：防跨组同种子同输出。
                 for (i, p) in d.profiles.iter_mut().enumerate() {
                     p.seed ^= (g as u64)
@@ -496,7 +504,16 @@ impl World {
                 (d.profiles, d.attention_gap_ticks)
             });
             let group_plans = plan_factory.as_ref().map(|f| f(g)).unwrap_or_default();
-            let belief_states = std::mem::take(&mut belief_seeds_clone);
+            let belief_states = {
+                // 按组取段（flat 全局序 → 组内 per_group 段；尾组余位
+                // 补 None 空槽）。
+                let take = belief_seeds_clone
+                    .drain(..accounts_per_group.min(belief_seeds_clone.len()))
+                    .collect::<Vec<_>>();
+                let mut seeded = take;
+                seeded.resize(accounts_per_group, None);
+                seeded
+            };
             let group_root = root_projection
                 .as_ref()
                 .map(std::sync::Arc::clone);

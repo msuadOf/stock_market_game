@@ -342,7 +342,11 @@ impl GameSession {
             /// 构造器恢复即组 next_due（不重复推进）。
             #[cfg(test)]
             let queued_intents = crate::session::pipeline::take_staged_intents_for_runtime(self);
-            let mut driver = crate::runtime::drive::RuntimeDriver::from_session(self)
+            let mut driver =
+                crate::runtime::drive::RuntimeDriver::from_session_grouped(
+                    self,
+                    self.runtime_group_count,
+                )
                 .map_err(|e| StepFatal::InvariantViolation {
                     location: "GameSession::step_via_runtime".to_owned(),
                     description: e,

@@ -1415,6 +1415,9 @@ pub struct GameSession {
     /// ——线程句柄不是可提交状态；shadow 置 None、commit_tick_shadow
     /// 只换 ingress/state ⇒ 常驻实例穿越日结不被覆盖。
     runtime_driver: Option<std::sync::Mutex<crate::runtime::drive::RuntimeDriver>>,
+    /// 翻转批组参数化：runtime 世界的组数（探针负载用；生产默认 1——
+    /// from_session 单组语义不变）。
+    runtime_group_count: usize,
     state: CommittableSessionState,
 }
 
@@ -1808,6 +1811,7 @@ impl GameSession {
             #[cfg(test)]
             runtime_install_failure: false,
             runtime_driver: None,
+            runtime_group_count: 1,
             state: self.state.clone_for_shadow()?,
         })
     }
@@ -1831,6 +1835,23 @@ impl GameSession {
     }
 
     /// 宿主明确提供资源；整个会话、candidate 与读视图共享此上下文。
+    /// 翻转批组参数化：多组 runtime 世界构造（探针负载；生产默认单组）。
+    pub fn new_with_runtime_groups(
+        setup: SessionSetup,
+        seed: u64,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+        runtime_groups: usize,
+    ) -> Result<GameSession, SessionError> {
+        let mut session = Self::new_with_compute(setup, seed, compute)?;
+        if runtime_groups == 0 {
+            return Err(SessionError::InvalidSetup(crate::error::ValidationFault::bare(
+                1001,
+            )));
+        }
+        session.runtime_group_count = runtime_groups;
+        Ok(session)
+    }
+
     pub fn new_with_compute(
         setup: SessionSetup,
         seed: u64,
@@ -1958,6 +1979,7 @@ impl GameSession {
             #[cfg(test)]
             runtime_install_failure: false,
             runtime_driver: None,
+            runtime_group_count: 1,
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),
