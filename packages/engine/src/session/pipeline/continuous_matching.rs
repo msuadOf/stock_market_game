@@ -1148,30 +1148,25 @@ impl<'a> ContinuousFillReceiptProjection<'a> {
                 .price
                 .mul_shares(trade.qty)
                 .map_err(|error| invariant(&error.to_string()))?;
-            let (buyer, buyer_before, seller, seller_before) = match self.draft.side() {
-                Side::Buy => (
-                    self.draft.key().clone(),
-                    trade.taker_filled_value_before,
-                    EnvelopeKey {
-                        account: trade.maker,
-                        stock: self.draft.code().clone(),
-                        order: trade.maker_order_id,
-                        side: Side::Sell,
-                    },
-                    trade.maker_filled_value_before,
-                ),
-                Side::Sell => (
-                    EnvelopeKey {
-                        account: trade.maker,
-                        stock: self.draft.code().clone(),
-                        order: trade.maker_order_id,
-                        side: Side::Buy,
-                    },
-                    trade.maker_filled_value_before,
-                    self.draft.key().clone(),
-                    trade.taker_filled_value_before,
-                ),
-            };
+            // 腿方向语义（2026-10-16 契约）：maker≡卖腿/taker≡买腿——
+            // buyer/seller 推导与 draft.side（incoming 方向）解耦（旧
+            /// "taker=主动"假设退役；Trade 构造已按腿归一）。
+            let (buyer, buyer_before, seller, seller_before) = (
+                EnvelopeKey {
+                    account: trade.taker,
+                    stock: self.draft.code().clone(),
+                    order: trade.taker_order_id,
+                    side: Side::Buy,
+                },
+                trade.taker_filled_value_before,
+                EnvelopeKey {
+                    account: trade.maker,
+                    stock: self.draft.code().clone(),
+                    order: trade.maker_order_id,
+                    side: Side::Sell,
+                },
+                trade.maker_filled_value_before,
+            );
             let receipt = self.record_fill(buyer, buyer_before, trade.qty, gross)?;
             self.receipts.push(receipt);
             let receipt = self.record_fill(seller, seller_before, trade.qty, gross)?;

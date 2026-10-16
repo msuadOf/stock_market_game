@@ -500,10 +500,11 @@ fn cross_stock_plans_keep_independent_children_and_escrow_after_a_cancel() {
         )
         .unwrap();
     let events = authority.step().expect("healthy step fills plan B's child");
+    // 腿方向语义（2026-10-16 契约）：计划子单=买腿=taker。
     assert!(
         events.iter().any(|event| matches!(
             event,
-            Event::Trade { code: traded, qty: 100, maker: AccountId(1), .. } if *traded == StockId(1)
+            Event::Trade { code: traded, qty: 100, taker: AccountId(1), .. } if *traded == StockId(1)
         )),
         "plan B's child must really fill: {events:?}"
     );

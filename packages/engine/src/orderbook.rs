@@ -298,26 +298,33 @@ impl Order {
     }
 }
 
-/// 一笔成交。成交价取被动方（maker）的价格。
+/// 一笔成交。成交价取被动方（resting）挂单价（连续撮合）；集合竞价为
+/// 清算价（不隶属任何一方挂单价）。
+///
+/// **字段语义（2026-10-16 契约变更，与 runtime DeskTradeFact 统一）**：
+/// `maker`/`taker` 表达**腿方向**——maker≡卖腿、taker≡买腿（与到簿
+/// 先后无关）；A 股无 maker/taker 费差（佣金双边/印花卖方/过户双边），
+/// 腿方向无歧义且与费用归户一致。依据：`.tmp/maker-taker-consumer-scan.md`
+/// （前端消费面全部对称/透传，无主动被动假设）。
 ///
 /// 派生 `Eq`+`PartialEq` 便于测试整体比较与去重；可序列化供成交历史/存档。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Trade {
-    /// 成交价（= maker 挂单价）。
+    /// 成交价（连续撮合=resting 挂单价；集合竞价=清算价）。
     pub price: Money,
     /// 本次成交数量（股）。
     pub qty: u32,
-    /// 被动方（较早挂单、提供流动性）。
+    /// 卖腿账户（卖出方——与到簿先后无关，见结构体契约注记）。
     pub maker: AccountId,
-    /// 主动方（新进入、吃流动性）。
+    /// 买腿账户（买入方）。
     pub taker: AccountId,
-    /// 被动委托 id。
+    /// 卖腿委托 id。
     pub maker_order_id: OrderId,
-    /// 主动委托 id。
+    /// 买腿委托 id。
     pub taker_order_id: OrderId,
-    /// 本次成交前，被动委托的累计成交金额。
+    /// 本次成交前，卖腿委托的累计成交金额。
     pub maker_filled_value_before: Money,
-    /// 本次成交前，主动委托的累计成交金额。
+    /// 本次成交前，买腿委托的累计成交金额。
     pub taker_filled_value_before: Money,
 }
 
@@ -585,15 +592,22 @@ impl OrderBook {
             self.state
                 .apply_maker_fill(side, &maker, fill_qty, maker_filled_value_after)?;
 
+            // 腿方向语义（2026-10-16 契约）：maker≡卖腿/taker≡买腿——
+            // incoming=Sell 时 resting（maker 变量）为买方，成组互换。
+            let (sell_leg, buy_leg) = if side == Side::Buy {
+                ((maker.owner, maker.id, maker_filled_value_before), (taker, order.id, taker_filled_value_before))
+            } else {
+                ((taker, order.id, taker_filled_value_before), (maker.owner, maker.id, maker_filled_value_before))
+            };
             trades.push(Trade {
                 price: fill_price,
                 qty: fill_qty,
-                maker: maker.owner,
-                taker,
-                maker_order_id: maker.id,
-                taker_order_id: order.id,
-                maker_filled_value_before,
-                taker_filled_value_before,
+                maker: sell_leg.0,
+                taker: buy_leg.0,
+                maker_order_id: sell_leg.1,
+                taker_order_id: buy_leg.1,
+                maker_filled_value_before: sell_leg.2,
+                taker_filled_value_before: buy_leg.2,
             });
         }
 
@@ -703,20 +717,17 @@ impl OrderBook {
                 .apply_maker_fill(Side::Sell, &buy, qty, buy_after)?;
             self.state
                 .apply_maker_fill(Side::Buy, &sell, qty, sell_after)?;
-            let (maker, taker) = if buy.seq < sell.seq {
-                (&buy, &sell)
-            } else {
-                (&sell, &buy)
-            };
+            // 腿方向语义（2026-10-16 契约）：maker≡卖腿/taker≡买腿
+            //（此前按到簿 seq 取 maker——语义退役）。
             trades.push(Trade {
                 price: selection.price,
                 qty,
-                maker: maker.owner,
-                taker: taker.owner,
-                maker_order_id: maker.id,
-                taker_order_id: taker.id,
-                maker_filled_value_before: maker.filled_value,
-                taker_filled_value_before: taker.filled_value,
+                maker: sell.owner,
+                taker: buy.owner,
+                maker_order_id: sell.id,
+                taker_order_id: buy.id,
+                maker_filled_value_before: sell.filled_value,
+                taker_filled_value_before: buy.filled_value,
             });
             matched_volume = volume_after;
         }
@@ -1029,9 +1040,11 @@ mod matching_mode_tests {
             .unwrap();
         assert_eq!(result.matched_volume, 300);
         assert_eq!(result.trades.len(), 2);
-        assert_eq!(result.trades[1].maker_order_id, OrderId(1));
+        // 腿方向语义（2026-10-16）：maker=卖腿/taker=买腿——买单 1 恒
+        // taker（此前按 seq 先到簿取 maker）。
+        assert_eq!(result.trades[1].taker_order_id, OrderId(1));
         assert_eq!(
-            result.trades[1].maker_filled_value_before,
+            result.trades[1].taker_filled_value_before,
             Money::from_cents(100_000)
         );
         let remaining = book.resting_order_by_id(OrderId(1)).unwrap();

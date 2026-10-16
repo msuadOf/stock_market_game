@@ -378,8 +378,9 @@ fn same_price_auction_uses_stock_arrival_instead_of_order_id() {
     let finished = finish(&rows, opening(599)).unwrap();
     let worker = &finished.workers[0];
     assert_eq!(worker.trades.len(), 1);
-    assert_eq!(worker.trades[0].trade.maker_order_id, OrderId(100));
-    assert_eq!(worker.trades[0].trade.taker_order_id, OrderId(50));
+    // 腿方向语义（2026-10-16）：maker=卖腿/taker=买腿。
+    assert_eq!(worker.trades[0].trade.maker_order_id, OrderId(50));
+    assert_eq!(worker.trades[0].trade.taker_order_id, OrderId(100));
     assert_eq!(worker.market.resting_orders(), vec![rows[1].0.clone()]);
 }
 

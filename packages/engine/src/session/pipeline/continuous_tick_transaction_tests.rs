@@ -567,9 +567,11 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
             )
             .unwrap();
         let events = session.step().unwrap();
+        // 腿方向语义（2026-10-16 契约）：maker=卖腿（玩家）、taker=买腿
+        //（计划子单）——两管线统一后 runtime/restore 双轨同断言。
         assert!(events.iter().any(|event| matches!(
             event,
-            Event::Trade { code: traded, price, qty: 100, maker: AccountId(1), taker: AccountId(0), .. }
+            Event::Trade { code: traded, price, qty: 100, maker: AccountId(0), taker: AccountId(1), .. }
                 if traded == &code && *price == Money::from_cents(1_000)
         )));
         let saved = session.save().unwrap();
