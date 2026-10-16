@@ -283,7 +283,8 @@ pub enum TradingPhase {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum Event {
-    /// 成交：code 来自路由（orderbook.Trade 无 code 字段），maker/taker 双方结算。
+    /// 成交：code 来自路由（orderbook.Trade 无 code 字段）——maker=卖腿/
+    /// taker=买腿（ADR-0042 腿方向语义，2026-10-16）。
     Trade {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]

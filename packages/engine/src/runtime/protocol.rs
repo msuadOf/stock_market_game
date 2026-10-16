@@ -408,8 +408,26 @@ pub enum GroupIn {
     EchoCandles,
 }
 
+/// D5 envelope 投影：desk 在途单快照（owner/价格/量/费用累计——
+/// session 信封账本重建的输入）。
+#[derive(Clone, Debug)]
+pub struct RestingFact {
+    pub owner: Owner,
+    pub side: Side,
+    pub price: i64,
+    pub qty: u32,
+    pub original_qty: u32,
+    pub filled_value: i64,
+    pub charged_commission: i64,
+    pub charged_stamp_tax: i64,
+    pub charged_transfer_fee: i64,
+    pub order_serial: u64,
+}
+
 /// 交易部收件消息。
 pub enum DeskMsg {
+    /// D5 envelope 投影：在途单快照请求（desk 回 DeskResting）。
+    EchoResting,
     /// tick 起点（D4：协调者在组 Start 前广播——交易部每 tick 必推进
     /// begin_tick：到期撤销/开盘清算/行情快照不再依赖"本 tick 恰有 Ops
     /// 到达"，相位计时（ExpiryShadow/StockProcessing）每 tick 有 span）。
@@ -447,6 +465,11 @@ pub enum DeskMsg {
 /// worker → 协调者的上行消息（全部 worker 共用一个 mpsc）。
 /// 手写 Debug：panic payload 不透明，只报告变体名与身份。
 pub enum UpMsg {
+    /// D5 envelope 投影：在途单快照回执。
+    DeskResting {
+        stock: StockIdx,
+        orders: Vec<RestingFact>,
+    },
     /// 组线程本轮报告（每轮一条）。
     GroupReport(GroupReport),
     /// 交易部本轮报告（每轮一条，实体批次已先于此发出）。
@@ -565,6 +588,9 @@ pub enum UpMsg {
 impl std::fmt::Debug for UpMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            UpMsg::DeskResting { stock, orders } => {
+                write!(f, "DeskResting(stock={}, n={})", stock, orders.len())
+            }
             UpMsg::GroupReport(r) => write!(
                 f,
                 "GroupReport(group={}, tick={}, round={})",
@@ -643,9 +669,9 @@ pub struct DeskTradeFact {
     pub price: i64,
     /// 成交量（股）。
     pub qty: u32,
-    /// 被动方（maker）所有者。
+    /// 卖腿（maker）所有者（ADR-0042 腿方向语义——与到簿先后无关）。
     pub maker: Owner,
-    /// 主动方（taker）所有者。
+    /// 买腿（taker）所有者。
     pub taker: Owner,
     /// taker 方向（成交方向=taker side）。
     pub taker_side: Side,

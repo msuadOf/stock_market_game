@@ -2160,6 +2160,40 @@ fn process_msg(
     msg: DeskMsg,
 ) -> Result<(), RuntimeError> {
     match msg {
+        DeskMsg::EchoResting => {
+            // D5 envelope 投影：在途单快照（bids+asks 全量——费用
+            // 累计/余量直取 desk 权威）。
+            let mut orders = Vec::new();
+            for (side, book) in [(Side::Buy, &state.bids), (Side::Sell, &state.asks)] {
+                for (_price, level) in book.iter() {
+                    for order in level.iter() {
+                        orders.push(super::protocol::RestingFact {
+                            owner: order.owner,
+                            side,
+                            price: order.price,
+                            qty: order.qty,
+                            original_qty: order.qty,
+                            filled_value: order.filled_value,
+                            charged_commission: order.charged_commission,
+                            charged_stamp_tax: order.charged_stamp_tax,
+                            charged_transfer_fee: order.charged_transfer_fee,
+                            order_serial: order.order_ref.1,
+                        });
+                    }
+                }
+            }
+            if up_tx
+                .send(UpMsg::DeskResting {
+                    stock: state.setup.stock,
+                    orders,
+                })
+                .is_err()
+            {
+                return Err(RuntimeError::SendFailed {
+                    detail: "DeskResting 上行失败".to_owned(),
+                });
+            }
+        }
         DeskMsg::Start { tick } => {
             // D4：tick 起点（先于同 tick Ops，FIFO）——每 tick 必推进
             // begin_tick：到期/清算/快照不再依赖 Ops 到达。

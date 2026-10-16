@@ -183,14 +183,22 @@ fn batch4_civil_failure_rolls_back_day_end_fully_and_retries_once() {
         let mut s = GameSession::new(setup_1stock(), seed).expect("会话");
         let mut d = engine::runtime::drive::RuntimeDriver::from_session(&s).expect("驱动器");
         d.adopt_session_seq(&s);
+        // 搜索判据含"末 8 拍内有受理"（提高日终在途单概率——清簿事件
+        // 依赖日终时刻的挂单；弃用首命中 driver 重跑 240 tick 的旧形态
+        // （双倍时长+注入点漂移），改为搜中保留 driver 直接续用）。
         let mut has_accept = false;
-        for _ in 1..=240 {
+        let mut recent_accept = false;
+        for i in 1..=240 {
             let evs = d.step_frame_equivalent(&mut s).expect("步进");
-            has_accept |= evs.iter().any(|e| matches!(e, engine::Event::OrderAccepted { .. }));
+            let accepted = evs.iter().any(|e| matches!(e, engine::Event::OrderAccepted { .. }));
+            has_accept |= accepted;
+            if accepted && i > 232 {
+                recent_accept = true;
+            }
             d.install_market_views(&mut s).expect("行情安装");
             d.install_candles(&mut s).expect("K 安装");
         }
-        if has_accept {
+        if has_accept && recent_accept {
             session = Some(s);
             driver = Some(d);
             break;

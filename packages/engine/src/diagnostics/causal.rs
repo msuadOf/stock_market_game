@@ -86,7 +86,9 @@ pub enum CausalFactKind {
     Quote(Quote),
     Execution {
         code: StockId,
+        /// 卖腿订单（ADR-0042 腿方向语义）。
         maker: OrderId,
+        /// 买腿订单。
         taker: OrderId,
         side: Option<Side>,
         qty: u32,

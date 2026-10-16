@@ -385,6 +385,84 @@ impl GameSession {
         let install_injected = self.runtime_install_failure;
         #[cfg(not(test))]
         let install_injected = false;
+        // D5 envelope 投影：desk 在途单重建 session 信封账本（审计面——
+        /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
+        ///（与事件 id 一致）。下拍重建覆盖（权威在 desk）。
+        let resting_by_stock = match driver.collect_resting_facts() {
+            Ok(facts) => facts,
+            Err(e) => {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::envelope".to_owned(),
+                    description: e,
+                }));
+            }
+        };
+        let mut envelopes = Vec::new();
+        for (stock_idx, facts) in resting_by_stock.iter().enumerate() {
+            for fact in facts {
+                let Some(account) = driver.account_by_local(u16::try_from(fact.owner.1).expect("local 下标在 u16")) else {
+                    continue;
+                };
+                let code = crate::StockId(u32::from(stock_idx as u16));
+                let key = crate::session::pipeline::EnvelopeKey {
+                    account,
+                    stock: code,
+                    order: crate::OrderId(fact.order_serial),
+                    side: fact.side,
+                };
+                let nominal = crate::runtime::fees::FeeQuote::nominal(
+                    &self.state.setup.config,
+                    fact.side,
+                    crate::money::Money::from_cents(fact.filled_value),
+                )
+                .map_err(|e| {
+                    StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime::envelope".to_owned(),
+                        description: format!("名义费用重算失败：{e:?}"),
+                    }
+                })
+                .map_err(StepFatal::from)?;
+                let audit = crate::session::pipeline::EnvelopeAudit {
+                    limit: crate::money::Money::from_cents(fact.price),
+                    remaining_qty: fact.qty,
+                    filled_qty: 0,
+                    filled_value: crate::money::Money::from_cents(fact.filled_value),
+                    nominal: crate::session::pipeline::FeeComponents {
+                        commission: nominal.commission,
+                        stamp_tax: nominal.stamp_tax,
+                        transfer_fee: nominal.transfer_fee,
+                    },
+                    charged: crate::session::pipeline::FeeComponents {
+                        commission: crate::money::Money::from_cents(fact.charged_commission),
+                        stamp_tax: crate::money::Money::from_cents(fact.charged_stamp_tax),
+                        transfer_fee: crate::money::Money::from_cents(fact.charged_transfer_fee),
+                    },
+                };
+                let cash = crate::money::Money::ZERO;
+                let shares = 0u32;
+                envelopes.push(
+                    crate::session::pipeline::Envelope::created_at_validation(
+                        key, cash, shares, audit,
+                    ),
+                );
+            }
+        }
+        self.mark_external_mutation();
+        self.state.envelope_ledger = match crate::session::pipeline::EnvelopeLedger::new(
+            self.state.next_receipt_base,
+            envelopes,
+        ) {
+            Ok(ledger) => ledger,
+            Err(fatal) => {
+                let fatal = StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::envelope".to_owned(),
+                    description: format!("信封账本重建失败：{fatal:?}"),
+                };
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(fatal));
+            }
+        };
         // D5 日界·world 段（ends_day 拍，先于行情安装）：desk roll_day/
         /// 组日翻（日 K 归档/清簿——install 的 candle/价格面取滚后权威；
         /// civil 侧留给显式 end_civil_day，重复日结由 world D0 互斥拒绝）。

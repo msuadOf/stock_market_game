@@ -666,6 +666,20 @@ impl RuntimeDriver {
         Ok(())
     }
 
+    /// D5 envelope 投影：名册只读（组内下标→AccountId——envelope 键组装）。
+    pub fn account_by_local(&self, local: u16) -> Option<crate::AccountId> {
+        self.id_map.get(local as usize).copied()
+    }
+
+    /// D5 envelope 投影：desk 在途单收集（session 信封账本重建输入）。
+    pub fn collect_resting_facts(
+        &mut self,
+    ) -> Result<Vec<Vec<super::protocol::RestingFact>>, String> {
+        self.world
+            .collect_desk_resting()
+            .map_err(|e| format!("在途单快照收集失败：{e:?}"))
+    }
+
     /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
     /// 日翻；civil 侧不在内，生产显式 day_end 编排的 world 部分等价）。
     pub fn world_day_end_for_step(&mut self) -> Result<(), String> {

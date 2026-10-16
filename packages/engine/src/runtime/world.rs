@@ -1054,6 +1054,47 @@ impl World {
         Ok(out)
     }
 
+    /// D5 envelope 投影：在途单快照收集（向全部交易部发 EchoResting 并
+    /// 收齐——desk 权威的费用累计/余量）。
+    pub fn collect_desk_resting(
+        &mut self,
+    ) -> Result<Vec<Vec<super::protocol::RestingFact>>, RuntimeError> {
+        for tx in &self.desk_txs {
+            tx.send(DeskMsg::EchoResting).map_err(|_| {
+                RuntimeError::SendFailed {
+                    detail: "EchoResting 广播失败".to_owned(),
+                }
+            })?;
+        }
+        let mut out: Vec<Option<Vec<super::protocol::RestingFact>>> =
+            vec![None; self.desk_txs.len()];
+        let mut left = self.desk_txs.len();
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::DeskResting { stock, orders } => {
+                    if out[stock as usize].replace(orders).is_some() {
+                        return Err(RuntimeError::Disconnected {
+                            who: None,
+                            stage: format!(
+                                "collect_desk_resting 收到股 {stock} 重复快照"
+                            ),
+                        });
+                    }
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!(
+                            "collect_desk_resting 期望 DeskResting，收到 {other:?}"
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(out.into_iter().map(|slot| slot.unwrap_or_default()).collect())
+    }
+
     /// 组账户快照（驱动器纵切/测试面：向全部组发 EchoAccounts 并收齐）。
     /// 生产热路径不调用（账户上行是调试口径开销）。
     pub fn snapshot_accounts(
