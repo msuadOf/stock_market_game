@@ -1693,8 +1693,11 @@ fn resting_order_seeds_from_session(
                 // restore 形态：受理事件已随此前世界交付（save 前事件
                 // 历史），直入不重放 Accepted。
                 accepted_delivered: true,
-                // D5 复核修复（Major 1）：原 desk 序号（截点域延续）。
-                serial: key.order.0,
+                // D5 复核修复（Major 1，复审修正）：OrderId 编码低 48 位
+                // =desk 本地序号（高位为 stock 域——group.rs order_id_of
+                // 的编码式；直取整值会使 stock≥1 时 serial 跳天、截点
+                // 过滤反向失真）。
+                serial: key.order.0 & 0x0000_FFFF_FFFF_FFFF,
             });
         }
         return Ok(seeds);
@@ -1705,6 +1708,10 @@ fn resting_order_seeds_from_session(
         .max()
         .unwrap_or(0);
     seeds = vec![Vec::new(); n_stocks];
+    // D5 复核修复（Major 1，复审修正）：adopt 形态的 desk 序号=构造期
+    // 递增自然序（与 desk next_serial 起始衔接；0 字面量会使多单共享
+    // (stock, 0) 身份——组端 Cancel/释放按 order_serial 关联错乱）。
+    let mut adopt_serial: u64 = 1;
     for (code, orders) in snapshot {
         for order in orders {
             let local = id_map
@@ -1733,7 +1740,11 @@ fn resting_order_seeds_from_session(
                 // 首拍交付面）。
                 accepted_delivered: false,
                 // adopt 形态：构造期自然序（desk 域从此起步）。
-                serial: 0,
+                serial: {
+                    let serial = adopt_serial;
+                    adopt_serial += 1;
+                    serial
+                },
             });
         }
     }
