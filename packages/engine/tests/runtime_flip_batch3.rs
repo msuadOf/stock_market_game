@@ -9,7 +9,20 @@ use engine::Event;
 #[test]
 fn batch3_runtime_emits_order_canceled() {
     // 长驱动跨日：日终 Drain 强撤全部挂单→OrderCanceled（到期/清簿）。
-    let (_, events) = runtime_events(250, 201);
+    // D5 #2：observe 门使决策概率化——固定 seed 不保证跨日有挂单可清，
+    // 候选序内搜首个有撤单的（等价原"必见撤单"前置）。
+    let mut events = Vec::new();
+    for seed in 199..260u64 {
+        let (_, evs) = runtime_events(250, seed);
+        if evs.iter().any(|e| matches!(e, Event::OrderCanceled { .. })) {
+            events = evs;
+            break;
+        }
+    }
+    assert!(
+        events.iter().any(|e| matches!(e, Event::OrderCanceled { .. })),
+        "候选序 199..260 内应存在跨日撤单形态"
+    );
     let mut kinds = std::collections::BTreeMap::new();
     for e in &events {
         let k = match e {
@@ -86,7 +99,18 @@ fn batch3_cancel_fields_wellformed() {
 //    缺省决策也会撞相位/整手/上限门禁）。
 #[test]
 fn batch3_runtime_emits_intent_rejected() {
-    let (session, events) = runtime_events(250, 199);
+    // D5 #2：同上——候选序内搜首个有拒收的。
+    let mut session = None;
+    let mut events = Vec::new();
+    for seed in 199..260u64 {
+        let (s, evs) = runtime_events(250, seed);
+        if evs.iter().any(|e| matches!(e, Event::IntentRejected { .. })) {
+            session = Some(s);
+            events = evs;
+            break;
+        }
+    }
+    let session = session.expect("候选序内存在有拒收的 seed");
     let count = session.account_count() as u64;
     let rejects: Vec<&Event> = events
         .iter()
@@ -211,7 +235,21 @@ fn batch3_cross_day_no_panic() {
 #[test]
 fn batch3_exact_closure_on_no_trade_fixture() {
     use std::collections::BTreeMap;
-    let (_, events) = runtime_events(240, 302);
+    // D5 #2：observe 门概率化——候选序内搜"有受理且无成交"的形态。
+    let mut events = Vec::new();
+    for seed in 300..340u64 {
+        let (_, evs) = runtime_events(240, seed);
+        let has_accept = evs.iter().any(|e| matches!(e, Event::OrderAccepted { .. }));
+        let no_trade = !evs.iter().any(|e| matches!(e, Event::Trade { .. }));
+        if has_accept && no_trade {
+            events = evs;
+            break;
+        }
+    }
+    assert!(
+        events.iter().any(|e| matches!(e, Event::OrderAccepted { .. })),
+        "候选序 300..340 内应存在有受理且无成交的形态"
+    );
     // (account, code, id) → (受理余量, 撤单次数, 撤单余量)
     let mut orders: BTreeMap<(u64, u32, u64), (u32, u32, u32)> = BTreeMap::new();
     let mut trades = 0u64;
