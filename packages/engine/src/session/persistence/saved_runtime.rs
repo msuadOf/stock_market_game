@@ -896,22 +896,33 @@ impl CumulativeFeeAudit {
             if !desk_staged {
                 return Ok(charged == nominal);
             }
-            // 分段计费上界：Σ分笔费用 ∈ [累计式 nominal, nominal+成交额]
-            //（min 佣金下限的分段富余不可精确重建——笔数未存；每笔富余
-            // ≤最低佣金<费用额+该笔成交额，Σ上界以 nominal+总成交额承载
-            //——终审修正：此前 .max(upper) 写法恒真、上界零校验。stamp
-            // 买腿恒零；commission/transfer 双边制度面均收）。
-            let upper = |component: Money| -> Result<Money, SessionError> {
-                component.add(self.filled_value).map_err(|_| {
-                    // fault2229 同族：分段上界组装溢出（分量+成交额）。
-                    SessionError::InvalidSave(ValidationFault::bare(2229))
-                })
-            };
+            // 分段计费上界（终审三轮修正）：Σᵢ max(r·vᵢ, m) 的真上界=
+            // r·V + n·m，笔数 n 未存——按整手制度推导 n 的上界：每笔
+            // 成交 ≥1 手=lot_size 股×最小价（tick=1 分），故 n ≤
+            // V/(lot_size×1 分)。上界=nominal 的费率部分 + n_max×
+            // commission_min（nominal 自身含一次 min，计入 n_max 内不
+            // 重复计——上界推导独立于 nominal 结构，直接用 rV+n_max·m）。
+            // stamp 买腿恒零；commission/transfer 双边制度面均收。
+            let cents = self.filled_value.cents();
+            let lot_value = i64::from(config.lot_size).max(1); // 每手最小额（分）
+            let n_max = cents / lot_value + 1; // 手数上界（整除截断+1 容差）
+            let commission_min = config.commission_min;
+            // 上界=r·V（nominal 的费率部分）+n_max·m：nominal=max(rV, m)，
+            // 拆出费率部分（nominal−m 当 min 生效；否则 nominal 即 rV）
+            // 后加 n_max 次 min——覆盖任意笔数/笔额的合法分段组合。
+            let commission_upper_cents = nominal
+                .commission
+                .cents()
+                .saturating_sub(commission_min.cents())
+                .saturating_add(
+                    n_max.saturating_mul(commission_min.cents().max(1)),
+                )
+                .max(nominal.commission.cents());
             return Ok(charged.stamp_tax == Money::ZERO
                 && charged.commission >= nominal.commission
-                && charged.commission <= upper(nominal.commission)?
-                && charged.transfer_fee >= nominal.transfer_fee
-                && charged.transfer_fee <= upper(nominal.transfer_fee)?);
+                && charged.commission <= Money::from_cents(commission_upper_cents)
+                // 过户费=纯费率（无最低下限）：Σ=费率×V=nominal，全等。
+                && charged.transfer_fee == nominal.transfer_fee);
         }
         let component_bounds_hold = charged.commission <= nominal.commission
             && charged.stamp_tax <= nominal.stamp_tax
