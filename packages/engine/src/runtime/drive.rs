@@ -1313,7 +1313,11 @@ impl RuntimeDriver {
         let closing = setup.closing_auction_ticks;
         let history_len = setup.history_len;
         let tick = session.tick();
-        let day = session.day() as u64;
+        // D5 存档对齐：完成连续 tick 数按 tick 推导（tick/tpd 替代
+        /// state.day——日界安装序在 install 之后时 day 尚未推进，而 save
+        /// 校验口径（persistence.rs）以含日界的绝对 tick 计——两序下
+        /// tick 推导恒一致）。
+        let day = tick / tpd.max(1);
         let continuous_per_day = tpd.saturating_sub(auction).saturating_sub(closing);
         let completed_cont =
             day * continuous_per_day + (tick % tpd).saturating_sub(auction).min(continuous_per_day);

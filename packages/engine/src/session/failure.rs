@@ -359,7 +359,7 @@ impl GameSession {
         let baseline = self.runtime_install_baseline();
         // step 失败即停（此前先存 Result 再无条件安装——已 Abort 的
         // 世界状态会被写进会话）。
-        let events = driver.step_frame_equivalent(self)?;
+        let mut events = driver.step_frame_equivalent(self)?;
         // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
         // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
         // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
@@ -405,6 +405,25 @@ impl GameSession {
         self.state.last_retail_order_events.clear();
         for account in self.state.retail_experience.keys().copied().collect::<Vec<_>>() {
             self.record_retail_intent_rejections(account, &events);
+        }
+        // D5 日界安装（ends_day 拍）：session 侧交易日终迁移（day 推进/
+        /// candle 提交/T+1 解锁/DayBoundary——与旧管线 continuous_tick_
+        /// finalizer 同一迁移；在行情安装**之后**（本拍 active candle 先
+        /// 写入、日终提交清空——save 的 day_tick=0 期望空 active 对齐；
+        /// 价格历史长度由 install 侧按 tick 推导，与本序无耦合）。
+        /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
+        /// 登记差异。
+        let ticks_per_day = u64::from(self.state.setup.ticks_per_day);
+        if ticks_per_day > 0 && self.tick() % ticks_per_day == 0 {
+            let facts = crate::session::pipeline::install_runtime_day_boundary(self)?;
+            for fact in facts {
+                self.set_runtime_seq(self.current_seq().checked_add(1).expect("事件 seq 溢出"));
+                let mut event = fact.event;
+                if let Event::DayBoundary { seq, .. } = &mut event {
+                    *seq = self.current_seq();
+                }
+                events.push(event);
+            }
         }
         Ok(events)
     }

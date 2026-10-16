@@ -70,6 +70,8 @@ mod settlement;
 mod stock_execution_transaction;
 mod stock_stream;
 pub(in crate::session) use stock_stream::TickWorkReady;
+// D5 日界安装（runtime step 的 ends_day 拍——旧管线日终迁移复用）。
+pub(in crate::session) use day_end::install_runtime_day_boundary;
 mod transaction_error;
 pub mod transition;
 pub use account_validation::{

@@ -9,6 +9,16 @@ pub(super) struct TradingDayEndTransition<'candidate> {
     trading_day: u64,
 }
 
+/// D5 日界安装（runtime step 的 ends_day 拍）：复用同一交易日终迁移
+///（T+1 解锁/日终簿扫/candle 提交/day 推进/DayBoundary 事实——与旧管线
+/// continuous_tick_finalizer 的 ends_day 段同一函数；world/desk/组的
+/// 日终编排不在此，生产由 `RuntimeDriver::day_end` 承载，登记差异）。
+pub(in crate::session) fn install_runtime_day_boundary(
+    session: &mut GameSession,
+) -> Result<Vec<EventFact>, StepFatal> {
+    TradingDayEndTransition::new(session).apply()
+}
+
 impl<'candidate> TradingDayEndTransition<'candidate> {
     pub(super) fn new(candidate: &'candidate mut GameSession) -> Self {
         let trading_day = u64::from(candidate.state.day);
