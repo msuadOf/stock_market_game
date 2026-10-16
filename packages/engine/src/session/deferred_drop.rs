@@ -429,7 +429,9 @@ pub fn drain(timeout: std::time::Duration) -> Result<super::verify_metrics::Veri
     if snap.actor_producers == 0 && snap.all_ids_paired { Ok(snap) } else { Err(DrainFailure::ProducerStillActive) }
 }
 
-#[cfg(test)]
+// D5 wasm 方向 A：deferred_drop 测试面依赖专用线程 backend（wasm 宿主
+// 无 OS 线程）——wasm 下不编译。
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;

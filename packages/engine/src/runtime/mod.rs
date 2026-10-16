@@ -55,12 +55,29 @@ pub mod plans;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod plans_tests;
 pub mod watchdog;
-#[cfg(not(target_arch = "wasm32"))]
+// D5 wasm 方向 A：world 不再按 wasm 门控（session/bridge/drive 的类型
+// 引用面在 wasm 下编译必需）；wasm 宿主无 OS 线程——spawn 运行期
+// Err 由 session 侧显式处理（step_runtime_enabled 在 wasm 恒 false
+// ——串行管线兜底，见该函数注释）。
 pub mod world;
 
 pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
 pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, RoutedPrice};
+
+/// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
+/// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的
+/// 串行管线路径可达」；运行时验证由 CI 的 wasm 构建+Web 端冒烟承载）。
+#[cfg(all(test, target_arch = "wasm32"))]
+mod wasm_serial_smoke {
+    #[test]
+    fn runtime_step_disabled_on_wasm() {
+        assert!(
+            !crate::runtime::step_runtime_enabled(),
+            "wasm 宿主恒走串行管线（无 OS 线程——std-thread runtime 不可用）"
+        );
+    }
+}
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod desk_semantics_tests;
@@ -79,8 +96,18 @@ mod skeleton_tests;
 /// 投影）演进仍锚定旧管线，runtime step 未承载 ⇒ 硬翻=静默语义丢失
 /// （铁律二）。翻转的最后一步=全局域迁移完成后再改缺省。
 pub fn step_runtime_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(
-        || std::env::var("ENGINE_STEP_RUNTIME").map(|v| v == "1").unwrap_or(false),
-    )
+    // D5 wasm 方向 A：wasm 宿主无 OS 线程（std::thread::spawn 运行期
+    // Err）——恒 false 走串行管线（Web 优先的产品语义；native 缺省
+    /// 由翻转批编排切换，wasm 不随之翻转）。
+    #[cfg(target_arch = "wasm32")]
+    {
+        false
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ENABLED.get_or_init(
+            || std::env::var("ENGINE_STEP_RUNTIME").map(|v| v == "1").unwrap_or(false),
+        )
+    }
 }
