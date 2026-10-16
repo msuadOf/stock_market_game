@@ -1,0 +1,182 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a14698-b147-7971-a986-f48f0bd8f1c9).
+[codex] Turn started (01a14698-b73b-7f40-ae3b-0146f0e9cffe).
+[codex] Assistant message captured: 我会先核对项目约束、冻结点和已有测量产物，再沿 World 与 GameSession 两条调用链定位成本。全程只读，不构建；比例和恢复目标会区分实测依据与待验证估计。
+[codex] Running command: /bin/zsh -lc 'cat AGENTS.md docs/principles.md docs/open-questions.md docs/architecture.md'
+[codex] Command completed: /bin/zsh -lc 'cat AGENTS.md docs/principles.md docs/open-questions.md docs/architecture.md' (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat /home/baiyifan/.agents/skills/explain/SKILL.md'
+[codex] Command completed: /bin/zsh -lc 'cat /home/baiyifan/.agents/skills/explain/SKILL.md' (exit 0)
+[codex] Running command: /bin/zsh -lc 'pwd; git status --short; git log -6 --oneline'
+[codex] Command completed: /bin/zsh -lc 'pwd; git status --short; git log -6 --oneline' (exit 0)
+[codex] Running command: /bin/zsh -lc 'rg --files docs/decisions agents | head -180'
+[codex] Command completed: /bin/zsh -lc 'rg --files docs/decisions agents | head -180' (exit 0)
+[codex] Assistant message captured: 我会使用 explain skill 组织归因报告，并保留中文和代码术语。先核对一个关键口径：A 的 t/s 与 B 的 speed_x 是否按同一 tick 时长换算；这决定了“会话层...
+[codex] Running command: /bin/zsh -lc 'cat agents/std-thread-migration/evidence/bisect-summary.txt agents/std-thread-m...
+[codex] Command completed: /bin/zsh -lc 'cat agents/std-thread-migration/evidence/bisect-summary.txt agents/std-thread-m... (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat docs/decisions/0032-session-ingress-receipt-order.md docs/decisions/0012-re...
+[codex] Command completed: /bin/zsh -lc 'cat docs/decisions/0032-session-ingress-receipt-order.md docs/decisions/0012-re... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'speed_x|71\\.|87\\.9|4\\.3|5\\.02|runtime_groups|profile|elapsed' agents...
+[codex] Command completed: /bin/zsh -lc "rg -n 'speed_x|71\\.|87\\.9|4\\.3|5\\.02|runtime_groups|profile|elapsed' agents... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg --files | rg 'runtime_s5|runtime.*\\.rs"'$|session.*'"\\.rs"'$|world.*'"\\.r...
+[codex] Command completed: /bin/zsh -lc "rg --files | rg 'runtime_s5|runtime.*\\.rs"'$|session.*'"\\.rs"'$|world.*'"\\.r... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'runtime|World|step\\(' packages/engine/src/session.rs; rg -n 'runtime_gr...
+[codex] Command failed: /bin/zsh -lc "rg -n 'runtime|World|step\\(' packages/engine/src/session.rs; rg -n 'runtime_gr... (exit 2)
+[codex] Running command: /bin/zsh -lc 'cat agents/std-thread-migration/plans/adr-draft-std-thread-runtime.md; cat agen...
+[codex] Command completed: /bin/zsh -lc 'cat agents/std-thread-migration/plans/adr-draft-std-thread-runtime.md; cat agen... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n '"'^'"\\s*(pub.*)?fn |clone\\(|collect|Echo|mirror|attention' packages/en...
+[codex] Command completed: /bin/zsh -lc "rg -n '"'^'"\\s*(pub.*)?fn |clone\\(|collect|Echo|mirror|attention' packages/en... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/examples/runtime_s5_probe.rs | head -240; rg --files pac...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/examples/runtime_s5_probe.rs | head -240; rg --files pac... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/examples/driver_semantics_probe.rs | head -230; nl -ba p...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/examples/driver_semantics_probe.rs | head -230; nl -ba p... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n '"'^'"\\s*(pub.*)?fn |clone\\(|Echo|mirror|attention|projection' packages...
+[codex] Command completed: /bin/zsh -lc "rg -n '"'^'"\\s*(pub.*)?fn |clone\\(|Echo|mirror|attention|projection' packages... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'runtime|step\\(' packages/engine/src/session.rs | tail -95; rg -n '"'^'"...
+[codex] Command completed: /bin/zsh -lc "rg -n 'runtime|step\\(' packages/engine/src/session.rs | tail -95; rg -n '"'^'"... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '1250,1490p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '1250,1490p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'market_attention_signal|fn step|step_runtime|runtime_driver|install_runt...
+[codex] Command completed: /bin/zsh -lc "rg -n 'market_attention_signal|fn step|step_runtime|runtime_driver|install_runt... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'mirror|clone\\(|state_hash|fn |Echo|Resting' packages/engine/src/runtime...
+[codex] Command completed: /bin/zsh -lc "rg -n 'mirror|clone\\(|state_hash|fn |Echo|Resting' packages/engine/src/runtime... (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff --stat 5412fd10 ec5c04b5 -- packages/engine/src/runtime; git show 5412...
+[codex] Command completed: /bin/zsh -lc "git diff --stat 5412fd10 ec5c04b5 -- packages/engine/src/runtime; git show 5412... (exit 0)
+[codex] Assistant message captured: 已确认两点。第一，A 探针没有 belief seeds、RootProjection 或 InformationLibrary，因此 belief/完整 retail 链和 sessi...
+[codex] Running command: /bin/zsh -lc "rg -n 'install_market_views|deliver_information\\(|install_candles\\(|collect_o...
+[codex] Command completed: /bin/zsh -lc "rg -n 'install_market_views|deliver_information\\(|install_candles\\(|collect_o... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '325,550p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '325,550p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'runtime_install_baseline|set_runtime_attention|set_runtime_personal_stat...
+[codex] Command completed: /bin/zsh -lc "rg -n 'runtime_install_baseline|set_runtime_attention|set_runtime_personal_stat... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '3880,4035p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '3880,4035p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/desk.rs | sed -n '1830,1896p'; nl -ba packag...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/desk.rs | sed -n '1830,1896p'; nl -ba packag... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '1670,1805p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '1670,1805p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'struct NpcAttentionScheduler|fn enqueue|pop_due|attention_scheduler\\.' ...
+[codex] Command completed: /bin/zsh -lc "rg -n 'struct NpcAttentionScheduler|fn enqueue|pop_due|attention_scheduler\\.' ... (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat docs/decisions/0017-escrow-parallel-tick.md | head -125; cat docs/decisions...
+[codex] Command completed: /bin/zsh -lc 'cat docs/decisions/0017-escrow-parallel-tick.md | head -125; cat docs/decisions... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/desk.rs | sed -n '400,435p'; rg -n 'fn snaps...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/desk.rs | sed -n '400,435p'; rg -n 'fn snaps... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/attention.rs | sed -n '260,346p'; rg -n 'att...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/attention.rs | sed -n '260,346p'; rg -n 'att... (exit 0)
+[codex] Running command: /bin/zsh -lc "cat .tmp/driver-semantics-setup.json; cat .tmp/clean-measure/clean-final.txt | ...
+[codex] Command completed: /bin/zsh -lc "cat .tmp/driver-semantics-setup.json; cat .tmp/clean-measure/clean-final.txt | ... (exit 0)
+[codex] Assistant message captured: 发现了一个高优先级实现问题：runtime 每 tick 把全名册候选重新压入 session attention heap，而这条路径不消费该 heap；安装前又复制整个 heap。按...
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/desk.rs | sed -n '100,155p'; nl -ba packages...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/desk.rs | sed -n '100,155p'; nl -ba packages... (exit 0)
+[codex] Running command: /bin/zsh -lc "git show 5412fd10:packages/engine/src/runtime/decision.rs | sed -n '182,235p'; ...
+[codex] Command completed: /bin/zsh -lc "git show 5412fd10:packages/engine/src/runtime/decision.rs | sed -n '182,235p'; ... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'fee_sink|drained_fees|fees' packages/engine/src/runtime/world.rs | tail ...
+[codex] Command failed: /bin/zsh -lc "rg -n 'fee_sink|drained_fees|fees' packages/engine/src/runtime/world.rs | tail ... (exit 2)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session.rs | sed -n '2906,2960p'; rg -n 'fn next_ran...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session.rs | sed -n '2906,2960p'; rg -n 'fn next_ran... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '322,504p'; nl -ba package...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '322,504p'; nl -ba package... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/orderbook/auction_clearing.rs | sed -n '20,58p'; nl ...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/orderbook/auction_clearing.rs | sed -n '20,58p'; nl ... (exit 0)
+[codex] Assistant message captured: 归因范围已收敛。A 的重点是逐 NPC 重建公共 `MarketView`、attention 候选频率变化，以及 desk 全簿投影；B 还有全名册个人态复制/回写和不断增长的 hea...
+[codex] Assistant message captured: **判定：当前证据支持“优先修复实现，再复测”，不支持把落差判为 std-thread 方向的必要代价。** A 有明确的公共计算重复；B 有全量镜像搬运和 attention heap...
+[codex] Turn completed.
+**判定：当前证据支持“优先修复实现，再复测”，不支持把落差判为 std-thread 方向的必要代价。** A 有明确的公共计算重复；B 有全量镜像搬运和 attention heap 无界增长。以下贡献比例与恢复数字均为工程估计，尚无 profile 证明。
+
+本次只读检查了冻结代码、历史 diff 和已有产物；未写文件、未构建、未运行测量。
+
+**1．方案方向与实现：先修正归因口径**
+
+三个事实会改变结论：
+
+- **A 没有运行完整决策链。** [runtime_s5_probe.rs:76](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/examples/runtime_s5_probe.rs:76) 配置 `belief_seeds=[]`、`root_projection=None`、`library=None`，且 `retail_style=None`。因此，belief/完整 retail 链、session Echo 和安装链不能解释 A 的 7.5× 回退。
+- **B 的 `speed_x` 实际就是 t/s。** [driver_semantics_probe.rs:85](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/examples/driver_semantics_probe.rs:85) 使用 `ticks / wall_s`。但实际 [setup](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.tmp/driver-semantics-setup.json) 的 `auction_ticks=900`，申报窗为前 600 tick；本次 300 tick **全部处于开盘集合竞价申报窗**。它没有覆盖连续竞价成交、同拍成交结算和日界交付。4.3 与 71 的比值不能直接叫“会话包装成本”。
+- **A 的成交量不是全程累计量。** [runtime_s5_probe.rs:121](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/examples/runtime_s5_probe.rs:121) 汇总 `volume_today`，而 `roll_day` 会清零。3000 tick、240 tick/日下，输出主要反映最后一个未完成交易日。3661 万→644 万不能解释为全程成交量减少 5.7×。
+
+“成交更少但更慢”说明应优先检查非成交路径，但**不能证明成本都是固定开销**：未成交订单存量、attention 候选数、历史长度都可能增加成本。
+
+下面的贡献档位表示待验证的潜力：高＝可能回收对应口径 ≥20% wall time；中＝5–20%；低＝通常 <5%。各项有重叠，不能相加。
+
+| 嫌疑点与位置 | 机制与适用范围 | 贡献判断 |
+|---|---|---|
+| **逐候选重建 `MarketView`**：[decision.rs:86](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/decision.rs:86)、[decision.rs:117](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/decision.rs:117) | 每个 due NPC 为计算一个公共 signal，重建全市场 `BTreeMap`、复制价格/分钟历史；observe 成功后再次重建。signal 本身只读取公共行情。 | **A 首要嫌疑，高；机制确定** |
+| **attention 工作量变化**：[group.rs:3114](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/group.rs:3114)、[attention.rs:86](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/attention.rs:86) | 旧排期平均间隔 2.5 tick；新探针 `maximum_probability=0.975`，接近每 NPC 每 tick 都 evaluate。新增 RNG、几何分布采样和 undo 是真实工作，但不要求重复复制公共视图。 | 必要成本中；与上一项组合影响高 |
+| **公共观察按个人重复计算**：[group.rs:1782](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/group.rs:1782)、[group.rs:3990](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/group.rs:3990) | 每个 retail observation 重算全股 price paths、technical、exposure；随后重复市场收益聚合。旧 retail 批处理曾在账户循环外捕获公共 observation。 | **B 高；A 不走此链** |
+| **全名册 Echo 与个人态回写**：[drive.rs:500](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:500)、[drive.rs:638](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:638)、[failure.rs:71](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:71) | 每 tick 收全部账户、全部个人态，再串行安装；`EchoBelief` 深复制后，安装又复制多个字段，未变化账户也参与。独立 Echo 还形成多次同步收集。 | **B 高；机制确定** |
+| **attention heap 持续增长并被复制**：[failure.rs:853](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:853)、[failure.rs:746](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:746) | 每 tick 全名册 `enqueue`；runtime 路径不消费旧管线 heap，下一 tick baseline 又 clone 整堆。约 600 万新增项/300 tick、累计约 9 亿项复制，形成 **O(N·T²)** 累计工作。 | **首要结构性缺陷**；300 tick 占比暂估中，长跑会放大 |
+| **desk 公共簿全量重建**：[desk.rs:1831](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/desk.rs:1831) | 每轮枚举全部公开订单、重新聚合价档，最后只取 best/top5。公开截点语义必须保留，重新构造整张聚合表并非必要。 | A/B 中；取决于 live orders |
+| **resting→envelope→mirror 全量重建**：[failure.rs:540](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:540)、[failure.rs:623](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:623) | 每 tick 复制全部挂单、重算 nominal fees、重建 ledger 和 mirror。已有同一份 resting facts 复用，但没有跨 tick 增量维护。 | B 中；当前申报窗尤其应测存量增长 |
+| **逐笔 Accepted 广播全部组**：[world.rs:1297](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/world.rs:1297) | 每笔事实发 G 次，成本 O(Accepted×G)；只需目标 owner 组消费，可按组批发并保持先于 Continue 的因果顺序。 | A/B 中至低；低受理量时有限 |
+| **每账户重新扫描事件**：[failure.rs:510](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:510)、[session.rs:2914](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session.rs:2914) | 对每个 retail account 扫整个事件批，O(N×Events)；可单次扫描后按账户派发。 | 当前 B 低至中；事件密集时更高 |
+| **相位绑定及链上下文重建**：[group.rs:4084](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/group.rs:4084)、[group.rs:2074](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/group.rs:2074) | 未捕获时仍有 capture 槽锁/TLS 操作；机构链每个观察者重建组账户 `RootReadContext`。 | 相位绑定暂列低；全量 context 对机构密集负载可高，但 A/B 本次不能由此归因 |
+
+A 的公共计算放大有可核算依据：旧探针平均约 **0.4 次 MarketView 构造/NPC·tick**；新实现约为“候选 evaluate＋observe 后决策”，即 **1.275–1.95 次**。仅构造次数就放大约 **3.2–4.9×**，还没有计入新增采样、undo 和 desk 投影。这足以把它列为首个 A 优化实验。
+
+B 的 heap 问题不应直接宣布为 70 秒主因。按每项 16B 估算，累计复制约 14.4GB；实际时间取决于分配与内存带宽。**它的增长机制已经确定，当前 wall time 占比仍需测量。**
+
+**ADR 必要成本与可优化实现的边界**
+
+[ADR-0017](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/docs/decisions/0017-escrow-parallel-tick.md) 要求本拍成功后立即可见完整结算、失败不泄漏部分状态；计划依赖必须在同 tick 继续执行。这些必须保留。
+
+但它不要求：
+
+- 每 tick 深复制全部账户和个人态；
+- 每个 NPC 重算相同公共 observation；
+- 用不断增长的旧 scheduler 镜像维护查询；
+- 每次重建全部 ledger、mirror 和历史；
+- 将每笔 Accepted 广播给无关组。
+
+当前“组内 staging 下一 Start 落账＋session 本拍成交投影”的双写，是实现选择。[drive.rs:578](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:578) 的**本拍可见性必要**；整账户先同步、再施加成交 delta 的搬运方式可改为提交投影批次。最终增量必须恰一次消费，且不能把本拍释放提前用于本拍预算。
+
+**2．恢复路线图与可达范围**
+
+下面以各自当前口径为基线，列验证目标；收益不连乘、不直接相加。
+
+| 优先级 | 工作 | 预期回收与验收目标 |
+|---|---|---|
+| **P0** | 记录分段时间、heap 长度、复制量、live orders；建立相同 World 初态的配对口径 | 先让“B−World”成为可解释的安装成本；无吞吐收益承诺 |
+| **P1** | 修复 heap 重复入队/无消费增长；保持权威 candidate 与恢复合同 | B 300 tick 暂估回收 **5–25%**；更关键是消除随运行时长恶化 |
+| **P1** | 每 snapshot 共享 `MarketView` 和 attention signal；不改变 RNG 消费顺序 | A 暂估回收 **40–65%** 时间；首轮目标约 **150–250 t/s** |
+| **P2** | 将账户、个人态、attention、plans/trace 合并为提交投影；传 dirty rows/共享不可变页 | B 暂估回收 **30–60%** 时间；保持安装原子性与本拍查询 |
+| **P2** | 按 snapshot/library 版本共享公共 observation、technical、收益聚合和 issuer map | B 暂估回收 **15–40%**；个人 belief、risk、经验演进仍独立执行 |
+| **P3** | Accepted 按 owner 批发；事件单遍派发；book 聚合与 mirror/ledger 增量维护 | 对剩余时间争取 **10–30%**；按 profile 选择顺序 |
+| **P4** | 再标定组数、分片与 affinity，处理实际关键线程 | 当前 groups=10 只增 18%，不宜先投入大量调度调参 |
+
+我的恢复判断是：
+
+- **A：300–450 t/s 是合理的优化目标区间**，300+ 值得争取；现有证据不足以承诺恢复 664，更不足以承诺 1000。
+- **当前 B fixture：先争取 20–50 t/s，完成投影与公共计算优化后，以 60–150 t/s 为探索区间。** 置信度低于 A。
+- **同初态、同完整决策链的 World 与 GameSession 配对后，session/World 耗时比以 1.5–3× 为目标。** 不能拿轻量 A 直接证明此比例已经可达。
+
+1000× 若对应 1000 tick/s，就要求完整生产路径 **≤1ms/tick**。当前 B 约 200ms/tick，需要约 200× 改善。上述路线主要解决重复计算和复制，不能据此承诺达到 1000×。应以完整连续竞价路径的 50、100、300、1000 t/s 分级验收。
+
+**3．建议的测量分解**
+
+需要行为归一化，但不能只增加“每成交耗时”。建议分三层：
+
+1. **决策层固定输入。** 固定同一公共 snapshot、个人态和 RNG 输入，分别测 evaluate、公共 observation、个人 observe、strategy、意图转换。报告 ns/候选、ns/实际观察、ns/决策及分配字节。保持候选集合和 RNG 消费一致。
+2. **执行层固定受理事实。** 重放同一订单/撤单受理轨迹，分别测入簿、撮合、费用、回流、公共簿投影。报告 ns/受理、ns/fill、live orders 和价档数。撮合成本更接近笔数与簿状态，不能按股数简单归一化。
+3. **生产层同 fixture 配对。** 比较完整 World 与 GameSession，分别覆盖开盘申报、清算、连续竞价、收盘和日界。记录冷启动，另报稳态 p50/p95 与随 tick 序号的曲线。
+
+每 tick 至少分解为：
+
+`baseline → World 关键路径 → 账户/个人态投影 → 事件 → attention → candles → envelope/mirror`
+
+同时记录 heap 项数、dirty accounts、复制字节、候选/观察/决策数、Accepted 数、轮数、live orders、fill 数和累计成交量。跨线程 CPU time 与端到端 wall time 分别报告，不能把重叠 span 相加。
+
+已有相位标记不够细，部分安装发生在 `step_frame_equivalent` 的 Commit 标记之后；不能直接把现有十相时间当完整 `GameSession::step` 分解。未来正式吞吐运行关闭捕获，短诊断运行启用采样，并核对真实活跃线程；`threads=16` 只配置 ComputeContext，不证明 runtime 使用了 16 个决策组。
+
+另外，B 当前探针只断言股份相等及现金不增加，没有独立核对 desk fee sink 方程。因此“守恒全绿”应准确记为**该探针断言通过**，不等同 A 的现金＋费用严格对账。
+
+**最终比例估计**
+
+必须分开看，不能把 A/B 混成一个精确百分比：
+
+| 分母 | 语义必要成本 | 可回收浪费 |
+|---|---:|---:|
+| A 当前约 11.4ms/tick，以恢复 300–450 t/s 估计 | **20–30%** | **70–80%** |
+| A 相对历史约 1.51ms/tick 的新增落差 | **约 7–20%** | **约 80–93%** |
+| B 当前运行时间，低置信度规划估计 | **15–30%** | **70–85%** |
+
+这些是用于排序工作的先验估计，不是实测归因结果。**最可靠的结论是：存在足够明确、且不必削弱交易语义即可回收的实现浪费；应先做公共视图共享和提交投影修复，再决定 std-thread 方案的性能去留。**
+
+[exited with code 0]
