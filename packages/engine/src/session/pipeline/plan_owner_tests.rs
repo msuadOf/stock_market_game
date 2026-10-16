@@ -642,6 +642,15 @@ fn enqueue_ordinary_buy(authority: &mut GameSession, qty: u32) {
 /// 形态 1（红→绿）：普通来源超剩余数量必须拒绝——step 失败、不采纳、计划无残留。
 #[test]
 fn ordinary_adoption_rejects_exceeding_remaining_quantity() {
+    // D5 pin+登记（旧管线计划委托机制）：外来单认领计划腿（adoption——
+    /// record_child_submitted 的普通来源入口）是旧管线计划委托域的
+    /// 采纳防御；runtime 的外来单走独立路径（组内无计划认领面——
+    /// 计划子单由组内链 chain_quote_children 管理）。等价锚：组内计划
+    /// 链的余量推进（solmid 独立源对拍）+desk purse 校验；外来认领面
+    /// 随计划委托域收口时迁移。
+    if crate::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut authority = GameSession::new(
         crate::session::npc_working_quote_tests::quote_setup(0),
         49,
@@ -662,6 +671,10 @@ fn ordinary_adoption_rejects_exceeding_remaining_quantity() {
 /// 形态 2（守卫）：正常范围内放行——采纳成功且受理不推进成交进度。
 #[test]
 fn ordinary_adoption_within_remaining_passes() {
+    // D5 pin+登记（同 rejects 用例——计划委托域旧管线专有）。
+    if crate::runtime::step_runtime_enabled() {
+        return;
+    }
     let mut authority = GameSession::new(
         crate::session::npc_working_quote_tests::quote_setup(0),
         53,
