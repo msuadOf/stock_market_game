@@ -2334,3 +2334,90 @@ fn d3b5_install_personal_updates_group_authority() {
     );
     let _ = original;
 }
+
+// D5 qty=0 组端校验红证（复核阻断项补测）：路由层拒收在 step 事件流
+// 投影 IntentRejected(InvalidQuantity)——desk 防御性 panic 先于下发被
+// 组端校验拦截（旧管线 InvalidQuantity 回执的 runtime 等价）。
+#[test]
+fn d5_zero_qty_intent_routes_rejection_event() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 71).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let views = driver.world_public_views().to_vec();
+    let upper: Vec<i64> = views.iter().map(|v| v.daily_upper_limit).collect();
+    driver
+        .inject_player_intents(
+            &[crate::session::ReceiptBearingIntent {
+                owner: crate::AccountId(0),
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                        views[0].last_price,
+                    )),
+                    qty: 0,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &upper,
+        )
+        .expect("注入");
+    let events = driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            crate::Event::IntentRejected {
+                account: crate::AccountId(0),
+                code,
+                reason: crate::RejectionReason::InvalidQuantity,
+                ..
+            } if *code == crate::StockId(0)
+        )),
+        "qty=0 意图经组端校验拒收（事件面 InvalidQuantity）：{events:?}"
+    );
+}
+
+// D5 日界安装红证（复核阻断项补测）：ends_day 拍（tick%tpd==0）在
+// runtime step 内复用交易日终迁移——day 推进+DayBoundary 事件+T+1 解锁
+//（旧管线 continuous_tick_finalizer 的 ends_day 段等价；仅 runtime 模式
+// 生效——默认 env 跳过）。
+#[test]
+fn d5_runtime_step_installs_day_boundary() {
+    if !crate::runtime::step_runtime_enabled() {
+        return;
+    }
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    setup.ticks_per_day = 8;
+    let mut session = GameSession::new(setup, 72).expect("会话构造");
+    let day_before = session.day();
+    let mut saw_boundary = None;
+    for _ in 0..8 {
+        let events = session.step().expect("步进");
+        if let Some(event) = events
+            .iter()
+            .find(|e| matches!(e, crate::Event::DayBoundary { .. }))
+        {
+            saw_boundary = Some(event.clone());
+        }
+    }
+    assert!(
+        saw_boundary.is_some(),
+        "ends_day 拍必须产出 DayBoundary 事件（交易日终迁移安装）"
+    );
+    assert_eq!(
+        session.day(),
+        day_before + 1,
+        "日界安装推进 session day（civil 对齐）"
+    );
+    assert_eq!(session.tick(), 8);
+}

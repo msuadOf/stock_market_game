@@ -2155,9 +2155,14 @@ impl GroupState {
                         code.0 as StockIdx,
                         order_id.0 & 0x0000_FFFF_FFFF_FFFF,
                     ));
-                    let _ = self
+                    // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
+                    /// 迁移）显式失败——铁律二。
+                    let released = self
                         .plan_book
                         .record_child_released(account, &code, order_id, trading_day);
+                    if let Err(error) = released {
+                        panic!("组内复审终止腿释放失败 {plan_id:?}: {error:?}");
+                    }
                 }
                 self.save_plan_book_undo();
                 self.plan_book
@@ -2184,9 +2189,14 @@ impl GroupState {
                         code.0 as StockIdx,
                         order_id.0 & 0x0000_FFFF_FFFF_FFFF,
                     ));
-                    let _ = self
+                    // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
+                    /// 迁移）显式失败——铁律二。
+                    let released = self
                         .plan_book
                         .record_child_released(account, &code, order_id, trading_day);
+                    if let Err(error) = released {
+                        panic!("组内复审重构腿释放失败 {plan_id:?}: {error:?}");
+                    }
                 }
                 self.save_plan_book_undo();
                 self.plan_book
@@ -3093,15 +3103,9 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             .unwrap_or(&[])
     }
     fn belief_style(&self) -> Option<crate::strategy::InstitutionStyle> {
-        match self
-            .state
-            .belief_states
-            .get(self.local as usize)
-            .and_then(|s| s.as_ref())
-            .expect("复审位 belief 态在")
-            .belief
-            .profile()
-        {
+        // 复审时点面（observe 输出——与宿主其余面同源；profile 冻结故
+        /// 与 belief_states 旧态值恒同，时点统一消分叉面）。
+        match self.belief.profile() {
             crate::strategy::StrategyProfile::Institution(style) => Some(*style),
             _ => None,
         }

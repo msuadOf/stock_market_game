@@ -2444,12 +2444,6 @@ mod chain_restructure_tests {
             &session.build_market_view(),
             &session.state.plans,
         );
-        eprintln!(
-            "[dbg-quiet] actions={:?}..(len {}) plan_review={:?}",
-            actions.len(),
-            actions.len(),
-            session.state.plans.plan(id).unwrap().review()
-        );
         assert!(
             matches!(actions.as_slice(), [PlanLifecycleAction::Observe { .. }]),
             "one bp of score noise cannot bypass the saved review threshold"
