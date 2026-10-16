@@ -1792,14 +1792,19 @@ impl DeskState {
             self.market.recent_prices.pop_front();
         }
         // 分钟收盘：连续竞价相位按完成分钟回填（无成交分钟沿用当时最新价）。
-        if self.setup.phase_at(tick) == DeskPhase::Continuous {
+        // 收盘竞价段同填（存档口径 persistence.rs 把收盘段的连续窗算满
+        //——min(elapsed, 连续窗) 钳制；此前收盘段不填，tick7 save 的
+        // fault2018（缺末段分钟）显红）。
+        let phase_now = self.setup.phase_at(tick);
+        if phase_now == DeskPhase::Continuous || phase_now == DeskPhase::ClosingAuction {
             let continuous = self.setup.continuous_ticks_per_day();
             if continuous > 0 {
                 let day = tick / self.setup.ticks_per_day;
                 // 存档校验口径（persistence.rs）：completed = day×连续窗 +
                 // (tick%tpd − auction).min(连续窗)——无 +1（完成 tick 语义）。
-                let elapsed =
-                    (tick % self.setup.ticks_per_day).saturating_sub(self.setup.auction_ticks);
+                let elapsed = (tick % self.setup.ticks_per_day)
+                    .saturating_sub(self.setup.auction_ticks)
+                    .min(continuous);
                 let completed =
                     completed_market_minute_count(elapsed, continuous).map_err(|e| {
                         RuntimeError::ProtocolInvariant {

@@ -376,6 +376,19 @@ impl GameSession {
         let install_injected = self.runtime_install_failure;
         #[cfg(not(test))]
         let install_injected = false;
+        // D5 日界·world 段（ends_day 拍，先于行情安装）：desk roll_day/
+        /// 组日翻（日 K 归档/清簿——install 的 candle/价格面取滚后权威；
+        /// civil 侧留给显式 end_civil_day，重复日结由 world D0 互斥拒绝）。
+        let ticks_per_day = u64::from(self.state.setup.ticks_per_day);
+        if ticks_per_day > 0 && self.tick() % ticks_per_day == 0 {
+            if let Err(e) = driver.world_day_end_for_step() {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::day_end".to_owned(),
+                    description: e,
+                }));
+            }
+        }
         // 安装错误传播（不吞）——失败即撤销已推进状态并 poison，
         // 不返回部分成功。
         let install_outcome = if install_injected {
@@ -1074,6 +1087,14 @@ impl GameSession {
     ) {
         self.mark_external_mutation();
         self.state.candle_book.install_active(code.clone(), candle);
+    }
+
+    /// runtime 驱动器翻转面（D5 日界）：活动 K 清除（world 日结已把当日
+    /// K 归档进 histories——session 侧残留 active 会在 TradingDayEnd 的
+    /// commit 二次归档（save fault2064 双计显红））。
+    pub fn clear_active_candle_for_runtime(&mut self, code: &crate::StockId) {
+        self.mark_external_mutation();
+        self.state.candle_book.remove_active(code);
     }
 
     /// runtime 驱动器翻转面（翻转批）：价格历史整值替换。

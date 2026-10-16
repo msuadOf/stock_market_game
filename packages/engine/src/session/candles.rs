@@ -134,6 +134,10 @@ impl SessionCandleBook {
         self.histories.entry(code.clone()).or_default().push(candle);
     }
 
+    pub(super) fn remove_active(&mut self, code: &StockId) {
+        self.active.remove(code);
+    }
+
     pub(super) fn install_active(&mut self, code: StockId, candle: DailyCandle) {
         self.active.insert(code, candle);
     }

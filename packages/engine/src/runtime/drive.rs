@@ -655,6 +655,14 @@ impl RuntimeDriver {
         Ok(())
     }
 
+    /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
+    /// 日翻；civil 侧不在内，生产显式 day_end 编排的 world 部分等价）。
+    pub fn world_day_end_for_step(&mut self) -> Result<(), String> {
+        self.world
+            .run_day_end_public()
+            .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))
+    }
+
     /// 清簿撤单事实转事件（seq 分配），并入待取缓冲。
     fn collect_drained_events(&mut self) {
         let drained = std::mem::take(&mut self.world.drained_lifecycle);
@@ -1406,6 +1414,21 @@ impl RuntimeDriver {
             // D3a-2：位置合并——desk 含种子历史（会话预置已入档），仅
             // 追加会话长度之后的新天（防种子重复入档）。
             let skip = session.runtime_candle_history_len(&code);
+            // D5 日界归档：desk 日 K 的 time 为占位 0（desk 域无 civil
+            /// 日历）——追加段用 session 日历的当日 time 重写（save 校验
+            /// fault2065 非严格递增显红）。多日一次归档未支持（显式失败
+            /// ——生产一次 step 至多跨一日）。
+            let new_days = candles.len().saturating_sub(skip);
+            if new_days > 1 {
+                return Err(format!(
+                    "日界归档一次 {new_days} 日未支持（日历重写面待补）"
+                ));
+            }
+            let archive_time = if new_days == 1 {
+                Some(session.candle_date_time_for_runtime())
+            } else {
+                None
+            };
             for (day, candle) in candles.into_iter().enumerate() {
                 if day < skip {
                     continue;
@@ -1413,7 +1436,7 @@ impl RuntimeDriver {
                 session.push_historical_candle_for_runtime(
                     &code,
                     crate::session::DailyCandle {
-                        time: candle.0,
+                        time: archive_time.unwrap_or(candle.0),
                         open: Money::from_cents(candle.1),
                         high: Money::from_cents(candle.2),
                         low: Money::from_cents(candle.3),
@@ -1429,9 +1452,15 @@ impl RuntimeDriver {
             let s = session.export_setup_for_runtime();
             let day_tick = session.tick() % s.ticks_per_day.max(1);
             let auction_entry = s.auction_ticks - s.auction_ticks / 3;
-            let in_auction_entry = day_tick < auction_entry;
+            // 活动 K 空窗与存档校验 fault2076 同式：day_tick==0（日界拍）
+            // 或竞价申报窗——world 日结已把当日归档 histories，残留
+            // active 会二次归档（fault2064）。
+            let active_must_be_empty = day_tick == 0 || day_tick < auction_entry;
             let candle_time = session.candle_date_time_for_runtime();
-            if let Some(a) = active.filter(|_| !in_auction_entry) {
+            if active_must_be_empty {
+                session.clear_active_candle_for_runtime(&code);
+            }
+            if let Some(a) = active.filter(|_| !active_must_be_empty) {
                 session.set_active_candle_for_runtime(
                     &code,
                     crate::session::DailyCandle {
