@@ -29,7 +29,10 @@ pub(crate) struct RuntimeInstallBaseline {
     candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
     candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
     npc_attention: super::AccountPagedMap<super::attention::NpcAttentionState>,
-    attention_scheduler: super::attention::NpcAttentionScheduler,
+    attention_scheduler: super::attention::NpcAttentionScheduler,    /// D5 #4 retail 链：个人态写入面的回滚基线。
+    belief_participants: super::AccountPagedMap<super::decision_chain::personal_state::BeliefParticipantState>,
+    retail_experience: super::AccountPagedMap<crate::RetailExperienceState>,
+    history_reads: super::AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
 }
 
 impl GameSession {
@@ -638,6 +641,11 @@ impl GameSession {
             candle_active: self.state.candle_book.active().clone(),
             npc_attention: self.state.npc_attention.clone(),
             attention_scheduler: self.state.attention_scheduler.clone(),
+            // D5 #4 retail 链：个人态写入面（step_frame 内回写——失败回滚
+            /// 基线必须覆盖，否则失败拍泄漏个人态演进）。
+            belief_participants: self.state.belief_participants.clone(),
+            retail_experience: self.state.retail_experience.clone(),
+            history_reads: self.state.history_reads.clone(),
         }
     }
 
@@ -847,6 +855,9 @@ impl GameSession {
             candle_active,
             npc_attention,
             attention_scheduler,
+            belief_participants,
+            retail_experience,
+            history_reads,
         } = baseline;
         self.mark_external_mutation();
         self.state.tick = tick;
@@ -864,6 +875,9 @@ impl GameSession {
         self.state.candle_book.replace_active(candle_active);
         self.state.npc_attention = npc_attention;
         self.state.attention_scheduler = attention_scheduler;
+        self.state.belief_participants = belief_participants;
+        self.state.retail_experience = retail_experience;
+        self.state.history_reads = history_reads;
     }
 
     /// 注意力镜像全量只读（Belief-1b·下：投递下行快照源——candidate
