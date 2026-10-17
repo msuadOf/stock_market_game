@@ -1653,7 +1653,11 @@ impl World {
             }
         }
         self.global.committed_tick = tick;
-        self.global.day = (tick / 240) as u32;
+        // Sol 终审四审 A2：day 按 World 自身的 ticks_per_day 推导（此前
+        // 硬编码 240——非 240 配置（如 tpd=1 的存档契约 fixture）下组
+        // 侧日历超前，session 日终计划迁移的 TradingDayEnded 落后于
+        // plan 事件 day，precedes 校验显红（save_contract 38 败同根因）。
+        self.global.day = ((tick - 1) / self.ticks_per_day) as u32;
         self.global.events_installed += evidence.entities_out;
         self.report_log.push(TickRecord {
             tick,
@@ -1817,9 +1821,11 @@ impl World {
     /// 先于 Shutdown 入队——FIFO 保证期末名册含全部回流）→ 收 GroupFinal →
     /// Shutdown 交易部 → 收 DeskFinal → join。
     pub fn shutdown(mut self) -> Result<ShutdownReport, RuntimeError> {
-        // Sol 终审三审：显式关停也置永久标记（消息+标记双保险——
-        // 消息丢失/阻塞的 worker 由标记兜底回收）。
-        self.worker_shutdown.store(true, Ordering::SeqCst);
+        // Sol 终审四审 A1：正常关停**不置**永久标记——Drain/Shutdown/
+        /// Final 是完整消息协议（组在 Shutdown 消息处 apply_staging 后
+        /// 上交 Final）；标记驱退会旁路 Final 上交（空闲 worker 50ms
+        /// 提前退出，特定交错漏合入回流实体）。标记仅用于通道不可达
+        /// 场景（sever/Drop）。消息协议失败时 Drop 兜底仍回收。
         if let Some(report) = self.dead_finals.take() {
             // 已在失败撤退路径收齐 Final：只补 join。
             self.join_workers(report)

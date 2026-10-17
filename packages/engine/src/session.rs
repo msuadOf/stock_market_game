@@ -3320,16 +3320,28 @@ impl GameSession {
                             mirror
                                 .orders
                                 .iter()
-                                .map(|(owner, side, price, qty, serial, _fv)| Order {
-                                    id: OrderId(*serial),
-                                    owner: *owner,
-                                    side: *side,
-                                    price: *price,
-                                    qty: *qty,
-                                    original_qty: *qty,
-                                    filled_qty: 0,
-                                    filled_value: Money::ZERO,
-                                    seq: *serial,
+                                .map(|(owner, side, price, qty, serial, fv)| {
+                                    // Sol 终审四审 A3：original/filled 按
+                                    /// 事实推算（限价单恒价）——此前 original=
+                                    /// 余量、filled=0（部分成交的 100 存成 75，
+                                    /// 事实损失）。余量 qty+成交量 filled=
+                                    /// 原始委托量；成交额除价=量（限价单）。
+                                    let filled_qty = if price.cents() > 0 {
+                                        u32::try_from(fv / price.cents()).unwrap_or(0)
+                                    } else {
+                                        0
+                                    };
+                                    Order {
+                                        id: OrderId(*serial),
+                                        owner: *owner,
+                                        side: *side,
+                                        price: *price,
+                                        qty: *qty,
+                                        original_qty: qty.saturating_add(filled_qty),
+                                        filled_qty,
+                                        filled_value: Money::from_cents(*fv),
+                                        seq: *serial,
+                                    }
                                 })
                                 .collect::<Vec<Order>>(),
                         )

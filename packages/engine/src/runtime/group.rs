@@ -1064,7 +1064,10 @@ impl GroupState {
         {
             return Ok(());
         }
-        let day = self.cur_tick / self.ticks_per_day;
+        // Sol 终审四审 A2：日基准=(tick−1)/tpd（首拍属 day 0——与
+        /// session.day 同基；此前 tick/tpd 使组内日历超前 1，plan 事件
+        /// day 超前触发 session 日终迁移的 precedes 校验拒绝）。
+        let day = self.cur_tick.saturating_sub(1) / self.ticks_per_day;
         self.save_plan_book_undo();
         // 首见 adopt（身份=FillFact.order 合成；数量=挂出量——完整）。
         if ticket.order_id.is_none() {
@@ -1254,7 +1257,7 @@ impl GroupState {
         let side = ticket.side;
         let qty = ticket.qty;
         let order_id = order_id_of(&(stock, order_serial));
-        let day = self.cur_tick / self.ticks_per_day;
+        let day = self.cur_tick.saturating_sub(1) / self.ticks_per_day;
         self.save_plan_book_undo();
         self.plan_book
             .record_child_submitted(account, &code, side, order_id, qty, day)
@@ -1321,7 +1324,7 @@ impl GroupState {
         // 在途卖余量镜像改由 RefundedShares 实体驱动（apply_staging 统一
         // 段——Sol 五审：票域减法与实体退款双计）。
         if let Some(order_id) = ticket.order_id {
-            let day = self.cur_tick / self.ticks_per_day;
+            let day = self.cur_tick.saturating_sub(1) / self.ticks_per_day;
             self.save_plan_book_undo();
             // 日终清簿的子单释放=错过日终的补账（revision.rs 守卫注释
             /// 的豁免面——horizon 外仍须可达）。
@@ -1639,6 +1642,21 @@ impl GroupState {
         for right in &directive.rights {
             self.apply_right(*right)?;
         }
+        // 组内 PlanBook 是权威；session 镜像的日终迁移不能替代此处扫尾。
+        // Drain 已释放子单，最后有效日结束时终止计划，其余计划跨日保留。
+        self.save_plan_book_undo();
+        for plan_id in self.plan_book.active_plan_ids() {
+            self.plan_book
+                .apply(
+                    plan_id,
+                    crate::plans::PlanEvent::TradingDayEnded {
+                        trading_day: u64::from(directive.day),
+                    },
+                )
+                .map_err(|error| RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {} 日终计划 {plan_id:?} 迁移失败：{error}", self.group),
+                })?;
+        }
         Ok(())
     }
 
@@ -1852,7 +1870,7 @@ impl GroupState {
             })
             .collect();
         let minute = u64::from(snapshot.market_minute);
-        let day = tick / self.ticks_per_day.max(1);
+        let day = tick.saturating_sub(1) / self.ticks_per_day.max(1);
         let retail = crate::session::RetailStrategyInstance {
             data: profile.strategy.clone(),
             style: retail_style,
@@ -2218,7 +2236,7 @@ impl GroupState {
         // 复审/开仓后复评共用输入（交易日/分钟收盘预转换/复审时刻——
         // 组装一次；分钟转换与 build_observations 同式 c.max(1)，时刻与
         // RootReadContext 共用 market_minute_at——字段不得分叉）。
-        let trading_day = snapshot.tick / self.ticks_per_day;
+        let trading_day = snapshot.tick.saturating_sub(1) / self.ticks_per_day;
         let minutes_by_code: std::collections::BTreeMap<
             crate::StockId,
             Vec<crate::observation::MarketMinuteClose>,
@@ -2382,7 +2400,8 @@ impl GroupState {
                     projection.auction_ticks,
                     projection.closing_auction_ticks,
                 ),
-                snapshot.tick / self.ticks_per_day,
+                // Sol 终审四审 A2：开仓复审 trading_day 同 (tick−1)/tpd 基准。
+                snapshot.tick.saturating_sub(1) / self.ticks_per_day,
                 self.config.lot_size,
                 projection.total_shares.get(code).copied().unwrap_or(0),
                 |direction, confidence_bp, horizon| {
@@ -3026,7 +3045,7 @@ impl GroupState {
                 plan_id,
                 crate::plans::PlanEvent::Terminated {
                     reason: crate::plans::TerminationReason::Cancelled,
-                    trading_day: snapshot.tick / self.ticks_per_day,
+                    trading_day: snapshot.tick.saturating_sub(1) / self.ticks_per_day,
                 },
             );
         }
@@ -4026,9 +4045,11 @@ fn phase_is_continuous(
     day_tick >= auction_ticks && day_tick < closing_start
 }
 
-/// 交易日序号（tick/tpd——与 RootReadContext 组装同式）。
+/// 交易日序号（(tick−1)/tpd——首拍属 day 0，与 session.day 同基；
+/// Sol 终审四审 A2：此前 tick/tpd 使组内观察/经历时刻的 trading_day
+/// 超前 1，与复审 as_of 错位触发 AsOfBeforeLatestEvent）。
 fn context_day(tick: u64, ticks_per_day: u64) -> u64 {
-    tick / ticks_per_day
+    tick.saturating_sub(1) / ticks_per_day
 }
 
 /// 整手（世界配置——与 session setup.config.lot_size 同源投影）。
@@ -4138,7 +4159,7 @@ fn build_root_read_context(
         account.fixture_set_positions(positions);
         book.insert(account_id, account);
     }
-    let day = u32::try_from(tick / ticks_per_day).expect("交易日序号超 u32");
+    let day = u32::try_from(tick.saturating_sub(1) / ticks_per_day).expect("交易日序号超 u32");
     let market_minute = market_minute_at(tick, ticks_per_day, projection.auction_ticks, projection.closing_auction_ticks);
     crate::session::RootReadContext::from_parts(
         book,
@@ -4159,8 +4180,13 @@ fn build_root_read_context(
 /// 连续段完成分钟——completed_market_minute_count 为共享纯函数；复审
 /// 时刻 ExperienceMoment 与 RootReadContext 共用此式，字段不得分叉）。
 fn market_minute_at(tick: u64, ticks_per_day: u64, auction_ticks: u64, closing_ticks: u64) -> u64 {
-    let day = u32::try_from(tick / ticks_per_day).expect("交易日序号超 u32");
-    let day_tick = tick % ticks_per_day;
+    // Sol 终审四审 A2：day=(tick−1)/tpd；day_tick=(tick−1)%tpd（与 day
+    /// 同受理窗——跨日 minute 单调；曾试对齐 session 的 tick%tpd 异基
+    /// 式，institution 观察 clock（roots.rs 要求单调）跨日显红
+    /// "attempted 0 after last 236"——组内观察 clock 以同窗单调为先，
+    /// session 的异基式不适配组内，登记差异）。
+    let day = u32::try_from(tick.saturating_sub(1) / ticks_per_day).expect("交易日序号超 u32");
+    let day_tick = tick.saturating_sub(1) % ticks_per_day;
     let continuous = ticks_per_day
         .saturating_sub(auction_ticks)
         .saturating_sub(closing_ticks);

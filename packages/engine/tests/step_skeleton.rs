@@ -188,6 +188,16 @@ fn complete_projection_is_repeatable_and_distinguishes_seed_and_tick_order() {
     );
 }
 
+/// 收盘竞价截点不能残留到下一日 Continuous，也不能使 runtime 自产档被拒绝。
+#[test]
+fn runtime_save_resets_closing_cutoff_without_opening_auction() {
+    let mut game = GameSession::new(setup(0).unwrap(), 42).unwrap();
+    for _ in 0..20 {
+        game.step().expect("无委托的市场 tick 必须健康推进");
+        game.save().expect("每个 quiet point 的自产档必须通过校验");
+    }
+}
+
 #[test]
 fn healthy_step_returns_ok_and_advances_business_state() -> Result<(), Box<dyn std::error::Error>> {
     let mut game = GameSession::new(setup(0)?, 42)?;

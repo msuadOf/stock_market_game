@@ -255,6 +255,8 @@ pub struct DeskMarket {
 /// 行情快照（撤销日志条目）。
 #[derive(Clone, Debug)]
 struct MarketSnapshot {
+    public_cutoff_serial: u64,
+    last_phase: Option<DeskPhase>,
     last_price: i64,
     last_close: i64,
     day_high: i64,
@@ -491,6 +493,8 @@ impl DeskState {
     fn snapshot_market(&mut self) {
         let m = &self.market;
         self.undo.push(DeskUndo::Market(MarketSnapshot {
+            public_cutoff_serial: self.public_cutoff_serial,
+            last_phase: self.last_phase,
             last_price: m.last_price,
             last_close: m.last_close,
             day_high: m.day_high,
@@ -541,6 +545,8 @@ impl DeskState {
                 DeskUndo::Cancelled(d) => self.cancelled_orders -= d,
                 DeskUndo::FeeSink(d) => self.fee_sink -= d,
                 DeskUndo::Market(s) => {
+                    self.public_cutoff_serial = s.public_cutoff_serial;
+                    self.last_phase = s.last_phase;
                     let m = &mut self.market;
                     m.last_price = s.last_price;
                     m.last_close = s.last_close;
@@ -1811,6 +1817,10 @@ impl DeskState {
             && self.last_phase.is_some_and(|p| p != DeskPhase::ClosingAuction)
         {
             self.public_cutoff_serial = self.next_serial;
+        }
+        // Continuous 与 PreOpen 没有竞价隐藏委托；截点不能跨相位残留进存档。
+        if matches!(phase, DeskPhase::Continuous | DeskPhase::PreOpen) {
+            self.public_cutoff_serial = 0;
         }
         self.last_phase = Some(phase);
         // 到期撤销先于本 tick 新意图。

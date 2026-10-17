@@ -990,6 +990,17 @@ impl GameSession {
                 // Sol 四轮修复：游标会话级缓存（同上）。
                 self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
             }
+            // Sol 终审四审 A2：world 日结（上方）把当日 K 归档进 desk
+            /// 历史——但常规 install_candles 在其**之前**执行（当日条
+            /// 尚不可见，档少一条 fault2064 反截）。日结后补一次安装
+            ///（幂等：push 按 session 历史 skip，active 重装同值）。
+            if let Err(e) = driver.install_candles_with_mode(self, true) {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::day_end_candles".to_owned(),
+                    description: e,
+                }));
+            }
         }
         // 接轨件 4：尾清与基线交付由调用方承载（见方法注释）。
         Ok((events, baseline))
@@ -1971,6 +1982,17 @@ impl GameSession {
             .unwrap_or(0)
     }
 
+    /// 全股日 K 历史长度只读（Sol 终审四审 A2：驱动器构造期的归档
+    /// 上限基准）。
+    pub fn runtime_candle_histories(&self) -> Vec<(crate::StockId, usize)> {
+        self.state
+            .candle_book
+            .histories()
+            .iter()
+            .map(|(code, h)| (*code, h.len()))
+            .collect()
+    }
+
     /// runtime 驱动器翻转面（批 8 终点）：历史 K 回写。
     pub fn push_historical_candle_for_runtime(
         &mut self,
@@ -2136,7 +2158,13 @@ fn runtime_resting_envelope(
     )
     .map_err(|e| format!("名义费用重算失败：{e:?}"))?;
     let audit = crate::session::pipeline::EnvelopeAudit {
-        limit: crate::money::Money::from_cents(fact.price),
+        // Sol 终审四审 A2（fault2220 收口）：limit 置零=**重建标记形态**
+        ///（restore 侧 2220 校验按旧 escrow 预留式核对 live——runtime 的
+        /// purse 所有权口径（F §8 15/16 行有意分歧）在 restore 首拍前无
+        /// desk 权威，校验跳过通道以 nominal/limit 双零识别；价格面由
+        /// desk 撮合域在下一拍重建——与 save 的 resting seeds 同标记
+        /// 先例）。
+        limit: crate::money::Money::ZERO,
         remaining_qty: fact.qty,
         filled_qty: 0,
         filled_value: crate::money::Money::from_cents(fact.filled_value),

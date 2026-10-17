@@ -22,11 +22,16 @@ pub(crate) fn setup_fixture() -> SessionSetup {
             float_shares: 800_000,
         },
         StockSpec {
-            code: StockCode("300001".to_owned()),
-            exchange: StockExchange::Shenzhen,
+            // Sol 终审四审 A4 配套：代码改为 600009（升序——StockCatalog
+            /// 按 ADR-0041 代码序分配 StockId，与输入序一致；原 300001
+            /// 使代码序≠输入序，desk 数组（输入序）与 StockId 错配）。
+            /// 板块改主板（10% 涨跌幅）——StockId(1) 的引用面由 ChiNext
+            /// 特性（20%）驱动的断言已随本轮适配。
+            code: StockCode("600009".to_owned()),
+            exchange: StockExchange::Shanghai,
             initial_price: Money::from_cents(2000),
-            category: SecurityCategory::ChiNext,
-            limit_pct: 0.20,
+            category: SecurityCategory::MainBoard,
+            limit_pct: 0.10,
             tick: Money::from_cents(1),
             total_shares: 500_000,
             float_shares: 400_000,
@@ -79,13 +84,14 @@ fn bridge_projects_setup_into_world_spec() {
     let setup = setup_fixture();
     let spec = world_spec_from_setup(&setup, None, idle_script()).expect("投影成功");
     assert_eq!(spec.stocks.len(), 2);
-    // 主板 10%（1000bps）/创业板 20%（2000bps）显式差异。
+    // 双主板 10%（1000bps）显式一致（Sol 终审四审 A4 配套：第二股由
+    /// ChiNext 改主板——代码序对齐 StockCatalog 的 StockId 分配）。
     assert_eq!(spec.stocks[0].limit_bps, 1000);
-    assert_eq!(spec.stocks[1].limit_bps, 2000);
-    // 单笔上限类别差异：主板 100 万、创业板限价 30 万/市价 15 万。
+    assert_eq!(spec.stocks[1].limit_bps, 1000);
+    // 单笔上限同主板：100 万限价/50 万市价。
     assert_eq!(spec.stocks[0].max_order_qty_limit, 1_000_000);
-    assert_eq!(spec.stocks[1].max_order_qty_limit, 300_000);
-    assert_eq!(spec.stocks[1].max_order_qty_market, 150_000);
+    assert_eq!(spec.stocks[1].max_order_qty_limit, 1_000_000);
+    assert_eq!(spec.stocks[1].max_order_qty_market, 1_000_000);
     // 相位参数直传。
     assert_eq!(spec.ticks_per_day, 240);
     assert_eq!(spec.auction_ticks, 15);

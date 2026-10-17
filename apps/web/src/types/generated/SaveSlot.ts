@@ -29,6 +29,12 @@ export type SaveSlot = {
    * parser 共同维护，避免把策略私有结构扩成通用宿主命令。
    */
   runtime_state: import("../../save/schema/runtime-state").SavedRuntimeState;
+  /**
+   * D5：desk 镜像档标记（runtime 形态的在场委托=desk 事实重建——
+   * restore 侧旧簿装载跳过，desk 种子自 ledger 恢复；旧档缺省
+   * false 走旧簿重建）。
+   */
+  desk_mirrored_resting: boolean;
   setup: SessionSetup;
   groups: import("../../save/schema/company/groups").GroupStructure[];
   seed: string;
@@ -69,6 +75,10 @@ export type SaveSlot = {
    */
   retail_experience: { [key in AccountId]: RetailExperienceState };
   /**
+   * D5 attention 公开可见性门禁：desk 簿权威的瞬态镜像（runtime
+   * install 段每拍刷新；不入档不入 hash——snapshot 公开投影/玩家
+   * 在途/预留读面的源。旧管线读面（session markets 簿）在 runtime
+   * 下恒空，公开面（A 股竞价隐藏/截点揭示）自此承载。
    * NPC 连续竞价普通限价单的可恢复主动撤单时间。
    */
   npc_order_lifecycles: Array<NpcOrderLifecycle>;

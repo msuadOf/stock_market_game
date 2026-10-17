@@ -63,6 +63,11 @@ pub struct RuntimeDriver {
     /// P2-4b：上一拍在途单快照基线（信封账本增量维护的差分源——
     /// None=基线缺失，首拍全量重建后建立）。
     resting_echo_prev: Option<Vec<Vec<super::protocol::RestingFact>>>,
+    /// Sol 终审四审 A2：每股构造期日 K 历史长度（install_candles 的
+    /// 归档上限基准——desk 侧 roll_day 按绝对 tick 界自动归档，超前
+    /// 于 session 日终（session.day 未推进时档校验 fault2064 期望少
+    /// 一条）；push 上限=initial+session.day（归档不超前日历）。
+    initial_candle_history_len: std::collections::BTreeMap<crate::StockId, usize>,
     /// P2-4a→4b 红证旋钮（cfg(test)）：强制每拍全量重建信封账本
     ///（增量路径 A/B 等价守卫的对照臂）。
     #[cfg(test)]
@@ -110,7 +115,9 @@ impl RuntimeDriver {
         session: &mut GameSession,
         n_groups: usize,
     ) -> Result<Self, String> {
-        let setup: SessionSetup = session.export_setup_for_runtime();
+        let mut setup: SessionSetup = session.export_setup_for_runtime();
+        // StockId 按代码升序分配；交易部、账户矩阵与报价数组必须共用该顺序。
+        setup.stocks.sort_unstable_by(|a, b| a.code.0.cmp(&b.code.0));
         let n_stocks = setup.stocks.len();
         let (cash_raw, shares_raw, invested_raw, recovered_raw, frozen_raw, ever_held_raw, ids) =
             accounts_projection_from_session(session, n_stocks);
@@ -429,6 +436,18 @@ impl RuntimeDriver {
             pending_hold_inits: Vec::new(),
             last_library_version: None,
             resting_echo_prev: None,
+            // Sol 终审四审 A2 修正：initial 记**净预置史**（构造时长度−
+            /// 构造时 session.day）——restore 场景构造期长度已含已归档日
+            /// （361=360 预置+1 已归档），直接当 initial 会使归档上限
+            /// 双计（limit=361+day → push 超前一条，档校验 fault2064）。
+            initial_candle_history_len: session
+                .runtime_candle_histories()
+                .into_iter()
+                .map(|(code, len)| {
+                    let net = len.saturating_sub(session.day() as usize);
+                    (code, net)
+                })
+                .collect(),
             #[cfg(test)]
             force_full_envelope_rebuild: false,
         };
@@ -2218,6 +2237,17 @@ impl RuntimeDriver {
     /// 路径 ⇒ 等价传递）。belief_participants：策略数据化（StrategyData）
     /// 已承载参与者身份，BeliefBook 的会话侧镜像随账户面批（登记）。
     pub fn install_candles(&mut self, session: &mut GameSession) -> Result<(), String> {
+        self.install_candles_with_mode(session, false)
+    }
+
+    /// Sol 终审四审 A2：post_day_end=world 日结**之后**的补装（ends_day
+    /// 段尾）——desk roll 后新日 active 是起始占位，档校验（fault2076）
+    /// 期望日界静点 active 为空 ⇒ 强制清除；常规安装（false）不变。
+    pub fn install_candles_with_mode(
+        &mut self,
+        session: &mut GameSession,
+        post_day_end: bool,
+    ) -> Result<(), String> {
         let finals = self
             .world_desk_finals_for_candles()
             .map_err(|e| format!("K 投影收集失败：{e:?}"))?;
@@ -2230,19 +2260,36 @@ impl RuntimeDriver {
             /// 日历）——追加段用 session 日历的当日 time 重写（save 校验
             /// fault2065 非严格递增显红）。多日一次归档未支持（显式失败
             /// ——生产一次 step 至多跨一日）。
+            // Sol 终审四审 A2：归档上限=构造期历史+session.day（desk 的
+            /// roll_day 按绝对 tick 界自动归档，超前于 session 日终——
+            /// session.day 未计入的日不 push，留待日终后的下一拍归档
+            /// （档校验 fault2064 期望=预置+saved_day，归档不得超前）。
+            let initial = self
+                .initial_candle_history_len
+                .get(&code)
+                .copied()
+                .unwrap_or(0);
+            let tpd_now = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
+            // 日结拍前瞻：本拍步后 tick 为 tpd 倍数 ⇒ 日终迁移即将推进
+            /// day（install_candles 先于 ends_day 段执行——不前瞻会拦截
+            /// 本应归档的当日 K，mid-scenario 档少一条 fault2064 反截）。
+            let ends_day = session.tick() % tpd_now == 0;
+            let archive_limit = initial
+                + usize::try_from(session.day()).unwrap_or(0)
+                + usize::from(ends_day);
             let new_days = candles.len().saturating_sub(skip);
             if new_days > 1 {
                 return Err(format!(
                     "日界归档一次 {new_days} 日未支持（日历重写面待补）"
                 ));
             }
-            let archive_time = if new_days == 1 {
+            let archive_time = if new_days == 1 && candles.len() <= archive_limit {
                 Some(session.candle_date_time_for_runtime())
             } else {
                 None
             };
             for (day, candle) in candles.into_iter().enumerate() {
-                if day < skip {
+                if day < skip || day >= archive_limit {
                     continue;
                 }
                 session.push_historical_candle_for_runtime(
@@ -2264,10 +2311,13 @@ impl RuntimeDriver {
             let s = session.export_setup_for_runtime();
             let day_tick = session.tick() % s.ticks_per_day.max(1);
             let auction_entry = s.auction_ticks - s.auction_ticks / 3;
-            // 活动 K 空窗与存档校验 fault2076 同式：day_tick==0（日界拍）
-            // 或竞价申报窗——world 日结已把当日归档 histories，残留
-            // active 会二次归档（fault2064）。
-            let active_must_be_empty = day_tick == 0 || day_tick < auction_entry;
+            // 活动 K 空窗与存档校验 fault2076 同式：竞价申报窗——
+            // Sol 终审四审 A2：去掉原 day_tick==0（日界拍）分支——常规
+            /// install 在 world 日结**之前**执行（当日 active 必须装载，
+            /// session 日终迁移才能提交归档；原分支使 tpd=1 场景的当日
+            /// K 永不归档，档少一条 fault2064 反截）。日结后的第二次
+            /// install 时 desk roll 已清 active（None=清除，无残留）。
+            let active_must_be_empty = post_day_end || day_tick < auction_entry;
             let candle_time = session.candle_date_time_for_runtime();
             if active_must_be_empty {
                 session.clear_active_candle_for_runtime(&code);
