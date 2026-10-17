@@ -1,0 +1,17 @@
+# P2-3e 突变红证据
+# 基准：P2-3e 实现工作树（稀疏上行=演进位集）
+# 突变：稀疏上行恒空（演进位集被丢弃）
+# 命令：cargo test -p engine --lib p2_3e
+# 判别：NPC AccountId(2) next_due left=8（组权威）vs right=0（session 镜像停滞）
+#   ——镜像不变式守卫红（位置精确）。
+
+
+thread 'session::failure_tests::p2_3e_sparse_attention_uplink_keeps_session_mirror_equal' (1314497) panicked at packages/engine/src/session/failure_tests.rs:703:13:
+assertion `left == right` failed: NPC AccountId(2) next_due：组权威与 session 镜像一致（稀疏上行丢位=红）
+  left: 8
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+--
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1627 filtered out; finished in 0.20s
