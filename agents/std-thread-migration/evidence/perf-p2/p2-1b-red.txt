@@ -1,0 +1,9 @@
+=== P2-1b 突变红（账户回写 dirty 过滤移除=全量重写）===
+命令：cargo test -p engine --lib p2_1b_account
+基准：当前工作树（P2-1b 完整态）+ 突变=drive.rs 回写循环移除 dirty 过滤
+816cddb33fad44932d2a29f757eee4823d562a63
+thread 'runtime::drive_tests::p2_1b_account_writeback_respects_fact_dirty' (822196) panicked at packages/engine/src/runtime/drive_tests.rs:2527:5:
+assertion `left == right` failed: 第二拍写入增量==事实 dirty 并集（全量重装=回归）
+  left: 7
+ right: 0
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1620 filtered out; finished in 1.38s
