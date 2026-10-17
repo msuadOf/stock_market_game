@@ -4,7 +4,6 @@ import { WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
-import { resolveThreadCount } from "./thread-count.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { stockIdOf } from "../config/stock-ids.ts";
 import { shouldLoadDiagnosticsWasm } from "./wasm-build-mode.ts";
@@ -129,9 +128,8 @@ function respondOperationError(message: WorkerMessage, error: unknown): void {
   ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: describeWasmFailure(error) });
 }
 
-async function initialize(requestedThreads: unknown): Promise<void> {
+async function initialize(): Promise<void> {
   if (wasmModule !== null) return;
-  const threads = resolveThreadCount(navigator.hardwareConcurrency, requestedThreads);
   let diagnosticsWasm = false;
   let wasmUrl: URL;
   if (import.meta.env.DEV) {
@@ -154,8 +152,7 @@ async function initialize(requestedThreads: unknown): Promise<void> {
   const module = await WebAssembly.compile(await response.arrayBuffer());
   const exports = await wasmModule.default(module);
   ingressBridge = { module, memory: exports.memory, diagnostics: diagnosticsWasm };
-  await wasmModule.initThreadPool(threads);
-  ctx.postMessage({ type: "ready", threads });
+  ctx.postMessage({ type: "ready" });
 }
 
 ctx.addEventListener("message", (event) => {
@@ -164,7 +161,7 @@ ctx.addEventListener("message", (event) => {
     try {
       switch (message.type) {
         case "init":
-          await initialize(message.threads);
+          await initialize();
           return;
         case "create": {
           slot.create(message.setup, message.seed);

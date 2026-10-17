@@ -32,5 +32,4 @@ declare module "*wasm-pkg/web_wasm.js" {
   export function restore(slot: SaveSlot): number;
   export function restore_json(saveJson: string): number;
   export function drop_session(handle: number): void;
-  export function initThreadPool(threads: number): Promise<void>;
 }

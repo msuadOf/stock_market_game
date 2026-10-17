@@ -1,7 +1,7 @@
 //! engine → WASM 绑定（ADR-0007 §4）。
 //!
-//! 多核：wasm-bindgen-rayon 初始化线程池后，engine 内的 rayon par_iter
-//! 自动用满浏览器所有核心（SharedArrayBuffer + Atomics）。
+//! 多核：wasm 宿主无 OS 线程，native std::thread 运行时（ADR-0043）在 wasm 下
+//! 不可用，engine 恒走串行管线；wasm 侧多核方案待缺口核实结论后再另行登记。
 //!
 //! GameSession 不可序列化（含 `Box<dyn Strategy + Send + Sync>`），故存于 thread_local
 //! 句柄注册表；仅 `Snapshot`/`Event`/`Intent`/`SessionSetup` 经 serde-wasm-bindgen 跨界。

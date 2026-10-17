@@ -374,7 +374,7 @@ test("Given production or a missing injected capability, Worker E2E stepping is 
   assert.doesNotThrow(() => assertWorkerE2EStepAllowed(true, true));
 });
 
-test("Worker initialization passes the requested pool size and reports startup failure immediately", async () => {
+test("Worker initialization sends init without pool size and reports startup failure immediately", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class StartupWorker extends EventTarget {
     static current: StartupWorker;
@@ -389,11 +389,11 @@ test("Worker initialization passes the requested pool size and reports startup f
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: StartupWorker });
   try {
-    const pending = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n, { threadCount: 128 });
+    const pending = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = StartupWorker.current;
-    assert.deepEqual(worker.sent, [{ type: "init", threads: 128 }]);
-    worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "线程池启动失败" });
-    await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 线程池启动失败/);
+    assert.deepEqual(worker.sent, [{ type: "init" }]);
+    worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "初始化失败" });
+    await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 初始化失败/);
     assert.equal(worker.terminated, true);
   } finally {
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;

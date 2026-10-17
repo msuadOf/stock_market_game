@@ -1,3 +1,5 @@
-# WASM 多核 rustflags 与 build-std 统一定义在仓库根目录 `.cargo/config.toml`，并与
-# 当前固定的 wasm-bindgen-rayon 1.2.1 官方配置保持一致。Cargo 从本目录运行时会继续
-# 读取父级配置；此处禁止重复声明，避免数组合并后出现互相冲突的链接参数。
+# WASM 链接 rustflags 与 build-std 统一定义在仓库根目录 `.cargo/config.toml`；该组
+# 参数历史上对齐固定的 wasm-bindgen-rayon 1.2.1 官方配置，rayon 随 std-thread 迁移
+# （ADR-0043）退役后，当前仍为共享内存 ingress（SharedArrayBuffer）所需；是否随
+# wasm 缺口核实结论整体调整待 W 批裁定。Cargo 从本目录运行时会继续读取父级配置；
+# 此处禁止重复声明，避免数组合并后出现互相冲突的链接参数。
