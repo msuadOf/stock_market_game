@@ -747,3 +747,482 @@ fn sol4_turnover_rolls_back_on_abort() {
     assert_eq!(market.volume_today, 100, "成交量回滚后恰 100 股");
     assert_eq!(market.trade_count, 1, "笔数回滚后恰 1 笔");
 }
+
+// ═══ 语义单测细化批（sol-103）：零覆盖/弱面独立锚定（手算 oracle） ═══
+
+/// R21 草稿阶段容量约定（ADR-0019）：请求队列与未成交挂单不按固定条数
+/// 拒绝合法请求——单 tick 300 张同账户买单全部受理（超过任何合理固定
+/// 上限），资源校验仍逐单执行。
+///
+/// 手算 oracle（initial_cash=100_000_000，300 张买 100 股@900）：
+/// 每张 purse = 90_000（对价）+ 500（最低佣金——rated 22.5→银行家舍入 22
+/// <500 取下限）+ 1（过户 90_000×0.01‰=0.9→1）= 90_501 分；
+/// 在途现金合计 = 300×90_501 = 27_150_300 ⇒ 途中现金 72_849_700。
+#[test]
+fn r21_capacity_convention_no_fixed_count_rejection() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => {
+                let mut plan = TickPlan::default();
+                for _ in 0..300 {
+                    plan.places.push(buy(0, 0, 900, 100));
+                }
+                plan
+            }
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 1, Box::new(script));
+    spec.initial_cash = 100_000_000;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(1).expect("收敛");
+    // 途中（挂单在簿）：全量受理、无按条数拒收。
+    let accounts = world.snapshot_accounts().expect("账户快照");
+    let a0 = &accounts[0].1[0];
+    assert_eq!(a0.cash, 100_000_000 - 27_150_300, "300 张 purse 全额预留（容量内不拒）");
+    assert_eq!(a0.foreign_active[0], 300, "300 张在途");
+    let views = world.public_views().to_vec();
+    assert_eq!(
+        views[0].depth_bids,
+        vec![(900, 30_000)],
+        "同价聚合 30_000 股（300 张挂簿）"
+    );
+    // 关停 Drain 全量回流（容量场景的守恒闭合）。
+    let report = world.shutdown().expect("关停");
+    assert_eq!(report.desk_finals[0].skipped_orders, 0, "零拒收（不按条数拒）");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.cash, 100_000_000, "Drain 后全额回流");
+    assert_eq!(a0.foreign_active[0], 0);
+}
+
+/// R16 市价意图（游戏简化）：按涨跌停价保护逐档立即成交、未成交余量
+/// **不进簿**（原路退款）。手算 oracle（初始价 1000、主板 ±10% ⇒ 保护价
+/// =涨停 1100；对手盘=卖 100@1000）：
+/// - purse 预留 = 300×1100 + 500（最低佣金）+ 3（过户 330_000×0.01‰=3.3→3）
+///   = 330_503；
+/// - 实际成交 100@1000（maker 价）：实付 100_000+500+1=100_501，
+///   退款 230_002 ⇒ 期末现金 899_499；
+/// - 余量 200 不挂簿：买盘深度为空（限价对照组同场景 200 股挂簿）。
+#[test]
+fn r16_market_intent_fills_walks_book_and_refunds_remainder() {
+    use super::decision::PendingOp;
+    use super::protocol::RoutedPrice;
+    // 市价臂。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 1000, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.config = config_with_cage(false); // 隔离变量：band=涨跌停
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Market,
+            purse_reference: 1100,
+            qty: 300,
+        }],
+        vec![],
+    );
+    world.run_ticks(2).expect("收敛");
+    let views = world.public_views().to_vec();
+    assert!(
+        views[0].depth_bids.is_empty(),
+        "市价余量不进簿（买盘空）：{:?}",
+        views[0].depth_bids
+    );
+    assert!(views[0].depth_asks.is_empty(), "对手卖单已全量成交");
+    let report = world.shutdown().expect("关停");
+    let desk = &report.desk_finals[0];
+    assert_eq!(desk.market.volume_today, 100, "只成交对手盘 100 股");
+    assert_eq!(desk.market.trade_count, 1);
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_100, "得 100 股");
+    assert_eq!(a0.cash, 899_499, "实付 100_501（对价+最低佣金 500+过户 1），余量全额退款");
+
+    // 限价对照组（同场景 discriminator）：300@1000 限价 ⇒ 余量 200 挂簿。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 1000, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.config = config_with_cage(false);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Fixed(1000),
+            purse_reference: 1000,
+            qty: 300,
+        }],
+        vec![],
+    );
+    world.run_ticks(2).expect("收敛");
+    let views = world.public_views().to_vec();
+    assert_eq!(
+        views[0].depth_bids,
+        vec![(1000, 200)],
+        "限价对照：余量 200 挂簿（与市价不进簿形成判别）"
+    );
+    let _ = world.shutdown();
+}
+
+/// R19 最高/最低价格选项（ADR-0022）：符号价在交易部受理时解析为当前
+/// 合法边界——Highest 买=涨停（预留资金按解析价），Lowest 卖=跌停
+/// （卖单不占现金）。手算 oracle（初始 1000、±10%、笼子关）：
+/// - Highest 买 100@1100：purse = 110_000+500（rated 27.5→28<500）+1
+///   （过户 1.1→1）= 110_501 ⇒ 途中现金 889_499，买一=1100；
+/// - Lowest 卖 100@900：现金不动（1_000_000），持仓 1000→900+100 在途，
+///   卖一=900。
+#[test]
+fn r19_symbolic_prices_resolve_to_daily_band_edges() {
+    use super::decision::PendingOp;
+    use super::protocol::RoutedPrice;
+    // Highest 买臂。
+    let mut world = World::spawn({
+        let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+            Box::new(|_t, _r| TickPlan::default())
+        }));
+        spec.config = config_with_cage(false);
+        spec
+    })
+    .expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Highest,
+            purse_reference: 1100,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let views = world.public_views().to_vec();
+    assert_eq!(views[0].best_bid, Some(1100), "Highest 买解析=涨停价（挂簿价）");
+    let accounts = world.snapshot_accounts().expect("账户快照");
+    assert_eq!(
+        accounts[0].1[0].cash, 889_499,
+        "资金预留按解析价 1100（涨停价预留——ADR-0022）"
+    );
+    assert_eq!(accounts[0].1[0].foreign_active[0], 1);
+    let _ = world.shutdown();
+
+    // Lowest 卖臂。
+    let mut world = World::spawn({
+        let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+            Box::new(|_t, _r| TickPlan::default())
+        }));
+        spec.config = config_with_cage(false);
+        spec
+    })
+    .expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 1,
+            stock: 0,
+            side: Side::Sell,
+            routed: RoutedPrice::Lowest,
+            purse_reference: 900,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let views = world.public_views().to_vec();
+    assert_eq!(views[0].best_ask, Some(900), "Lowest 卖解析=跌停价（挂簿价）");
+    let accounts = world.snapshot_accounts().expect("账户快照");
+    let a1 = &accounts[0].1[1];
+    assert_eq!(a1.cash, 1_000_000, "卖单不占现金（R17 共享资源口径）");
+    assert_eq!(a1.shares[0], 900, "100 股转入在途");
+    assert_eq!(a1.pending_sell_qty[0], 100, "在途卖量镜像");
+    let _ = world.shutdown();
+}
+
+// ── R8 撤单窗 / R9 部分与全成撤单（sol-103 弱面独立锚定）──
+//
+// 经 world 级 ExternalPlan 通道（与驱动器 inject_player_intents 同一下游
+// 路径）注入玩家单：脚本 fixture 无 NPC 计划/报价干扰，成交面完全由
+// 确定性注入承载。回执与生命周期事实从 world.report_log 断言。
+
+use super::decision::PendingOp;
+use super::protocol::RoutedPrice;
+
+fn ext_buy(local: u32, price: i64, qty: u32) -> PendingOp {
+    PendingOp {
+        local,
+        stock: 0,
+        side: Side::Buy,
+        routed: RoutedPrice::Fixed(price),
+        purse_reference: price,
+        qty,
+    }
+}
+
+fn ext_cancel(local: u32, serial: u64) -> (u32, u16, u64) {
+    (local, 0, serial)
+}
+
+/// 从 report_log 取指定 tick 的（回执, 生命周期）切片。
+fn tick_facts(
+    world: &World,
+    tick: u64,
+) -> (Vec<super::DeskReceipt>, Vec<super::protocol::DeskLifecycleFact>) {
+    let rec = world
+        .report_log
+        .iter()
+        .find(|r| r.tick == tick)
+        .unwrap_or_else(|| panic!("tick {tick} 无收束记录"));
+    (rec.desk_receipts.clone(), rec.desk_lifecycle.clone())
+}
+
+/// R8 开盘竞价撤单窗（弱面强化——原 desk 测试现金复原无法区分拒撤/成功
+/// 撤单）：auction_ticks=9 ⇒ 可撤窗=前 1/3（day_tick<3）。
+/// - **窗内**（tick 2）撤买 ⇒ Cancelled 生命周期事实（余量 100 释放）；
+/// - **越窗**（tick 5）撤买 ⇒ CancelWindowClosed 回执（显式业务失败），
+///   挂单保留并参与开盘清算（tick 6 完成拍恰成交一笔）；
+/// - 窗内撤**他人**挂单 ⇒ OrderNotFound（身份防御）。
+/// 手算 oracle：双边同价 1000 ⇒ 清算价=1000（单候选，无中间价问题）；
+/// 买方实付 100_000+500+1=100_501；卖方净得 100_000−551（佣金 500+
+/// 印花 50+过户 1）。
+#[test]
+fn r08_cancel_window_partition_by_receipt_and_clearing_participation() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 1000, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 9; // 申报窗=day_tick<6、可撤窗=day_tick<3
+    spec.closing_auction_ticks = 3;
+    let mut world = World::spawn(spec).expect("世界构造");
+    // t1：卖方（acct1）+ 玩家买#1。
+    world.broadcast_external_plan(vec![ext_buy(0, 1000, 100)], vec![]);
+    world.run_ticks(1).expect("t1");
+    let (_, life1) = tick_facts(&world, 1);
+    let buy1 = life1
+        .iter()
+        .find(|f| matches!(f.kind, super::protocol::LifecycleKind::Accepted) && f.owner == (0, 0))
+        .map(|f| f.order_serial)
+        .expect("玩家买#1 受理（前置）");
+    let sell_serial = life1
+        .iter()
+        .find(|f| matches!(f.kind, super::protocol::LifecycleKind::Accepted) && f.owner == (0, 1))
+        .map(|f| f.order_serial)
+        .expect("卖方受理（前置）");
+    // t2：窗内撤自己的买#1（成功）+ 以玩家身份撤他人卖单（OrderNotFound）。
+    world.broadcast_external_plan(
+        vec![],
+        vec![ext_cancel(0, buy1), ext_cancel(0, sell_serial)],
+    );
+    world.run_ticks(1).expect("t2");
+    let (receipts2, life2) = tick_facts(&world, 2);
+    assert!(
+        life2.iter().any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Cancelled,
+                order_serial,
+                remaining: 100,
+                ..
+            } if *order_serial == buy1
+        )),
+        "窗内撤单成功：Cancelled 事实且余量=100（{life2:?}）"
+    );
+    assert!(
+        !receipts2
+            .iter()
+            .any(|r| r.kind == super::ReceiptKind::CancelWindowClosed),
+        "窗内撤单不得有窗口拒绝回执：{receipts2:?}"
+    );
+    assert!(
+        receipts2
+            .iter()
+            .any(|r| r.kind == super::ReceiptKind::OrderNotFound),
+        "撤他人挂单必须 OrderNotFound（身份防御）：{receipts2:?}"
+    );
+    // t3：玩家买#2（同价 1000，进入清算面）。
+    world.broadcast_external_plan(vec![ext_buy(0, 1000, 100)], vec![]);
+    world.run_ticks(1).expect("t3");
+    let (_, life3) = tick_facts(&world, 3);
+    let buy2 = life3
+        .iter()
+        .find(|f| matches!(f.kind, super::protocol::LifecycleKind::Accepted) && f.owner == (0, 0))
+        .map(|f| f.order_serial)
+        .expect("玩家买#2 受理");
+    // t5：越窗撤买#2（day_tick 5 ≥ 3 ⇒ CancelWindowClosed）。
+    world.run_ticks(1).expect("t4");
+    world.broadcast_external_plan(vec![], vec![ext_cancel(0, buy2)]);
+    world.run_ticks(1).expect("t5");
+    let (receipts5, life5) = tick_facts(&world, 5);
+    assert!(
+        receipts5
+            .iter()
+            .any(|r| r.kind == super::ReceiptKind::CancelWindowClosed),
+        "越窗撤单必须显式 CancelWindowClosed 回执：{receipts5:?}"
+    );
+    assert!(
+        !life2.iter().chain(life5.iter()).any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Cancelled,
+                order_serial,
+                ..
+            } if *order_serial == buy2
+        )),
+        "越窗撤单不得产生 Cancelled（挂单保留参与清算）"
+    );
+    // t6：开盘清算（离开申报窗首个 tick）——买#2 × 卖单恰一笔。
+    world.run_ticks(1).expect("t6 清算");
+    let report = world.shutdown().expect("关停");
+    let desk = &report.desk_finals[0];
+    assert_eq!(desk.market.volume_today, 100, "恰 100 股（被撤的买#1 不在清算面）");
+    assert_eq!(desk.market.trade_count, 1);
+    assert_eq!(desk.market.last_price, 1000, "清算价=双边同价申报（单候选）");
+    let a0 = &report.group_finals[0].accounts[0];
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a0.shares[0], 1_100, "买#2 成交 100 股");
+    assert_eq!(a0.cash, 1_000_000 - 100_501, "买方：对价+最低佣金 500+过户 1");
+    assert_eq!(a1.shares[0], 900, "卖方出 100 股");
+    assert_eq!(a1.cash, 1_000_000 + 100_000 - 551, "卖方净得：佣金 500+印花 50+过户 1");
+}
+
+/// R9 部分成交撤单（弱面强化——此前 rt 侧仅 ReceiptKind 枚举相等性）：
+/// 买 300 限价 1000 对手盘 100 ⇒ 同拍成交 100、余 200 挂簿；下一拍撤单
+/// ⇒ Cancelled 事实余量恰 200（只撤余量），余量 purse 全额退款。
+/// 手算 oracle：实付 100_000+500+1=100_501；撤单后买盘深度为空。
+#[test]
+fn r09_partial_fill_cancel_releases_remainder_only() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 1000, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0; // 全连续窗（tick 1 即撮合）
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(vec![ext_buy(0, 1000, 300)], vec![]);
+    world.run_ticks(1).expect("t1 成交拍");
+    let desk = &world.report_log[0];
+    assert_eq!(
+        desk.desk_trades.len(),
+        1,
+        "同拍部分成交 100（前置）：{:?}",
+        desk.desk_trades
+    );
+    let buy_serial = desk
+        .desk_lifecycle
+        .iter()
+        .find(|f| matches!(f.kind, super::protocol::LifecycleKind::Accepted) && f.owner == (0, 0))
+        .map(|f| f.order_serial)
+        .expect("玩家买单受理（余量 200 挂簿）");
+    let views = world.public_views().to_vec();
+    assert_eq!(views[0].depth_bids, vec![(1000, 200)], "撤单前余量 200 挂簿");
+    // t2：撤单——只撤余量。
+    world.broadcast_external_plan(vec![], vec![ext_cancel(0, buy_serial)]);
+    world.run_ticks(1).expect("t2 撤单拍");
+    let (_, life2) = tick_facts(&world, 2);
+    assert!(
+        life2.iter().any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Cancelled,
+                order_serial,
+                remaining: 200,
+                ..
+            } if *order_serial == buy_serial
+        )),
+        "部分成交撤单只撤余量 200：{life2:?}"
+    );
+    let views = world.public_views().to_vec();
+    assert!(views[0].depth_bids.is_empty(), "撤单后余量离簿");
+    // 期末（Drain 闭合）：已成交部分保持、余量全额退款。
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_100, "成交的 100 股保持");
+    assert_eq!(a0.cash, 1_000_000 - 100_501, "实付 100_501；余量 purse 全额退款");
+}
+
+/// R9 已全成撤单（弱面强化）：全成订单撤单=明确业务失败回执 AlreadyFilled
+/// （不产生 Cancelled、不动已结算账）；本主不存在的 serial 同样落
+/// AlreadyFilled（「已成交、无法撤单」近似——会话侧以 filled_orders
+/// 区分，desk 对本主不可分辨时按已全成反馈）。
+/// 手算 oracle：玩家 300 股、现金 1_000_000−300_503（佣金 500 单笔一次+
+/// 过户 1+2 逐笔）；卖方两笔净得 …−551−602。
+#[test]
+fn r09_fully_filled_cancel_returns_already_filled_receipt() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 1000, 100)]),
+            2 => place_at(
+                2,
+                vec![
+                    sell(1, 0, 1000, 200), // 吃掉买方余量 200 ⇒ 买方全成
+                    sell(1, 0, 1100, 100), // 在簿他人单（OrderNotFound 臂用）
+                ],
+            ),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(vec![ext_buy(0, 1000, 300)], vec![]);
+    world.run_ticks(2).expect("t1-t2：买方 300 股全成");
+    let buy_serial = world.report_log[0]
+        .desk_lifecycle
+        .iter()
+        .find(|f| matches!(f.kind, super::protocol::LifecycleKind::Accepted) && f.owner == (0, 0))
+        .map(|f| f.order_serial)
+        .expect("玩家买单 t1 受理（余量挂簿——此后被吃满）");
+    let resting_sell = world.report_log[1]
+        .desk_lifecycle
+        .iter()
+        .find(|f| matches!(f.kind, super::protocol::LifecycleKind::Accepted) && f.owner == (0, 1))
+        .map(|f| f.order_serial)
+        .expect("1100 卖单在簿（他人单）");
+    // t3：撤全成单（AlreadyFilled）+ 撤他人挂单（OrderNotFound）+
+    // 撤本主不存在 serial（AlreadyFilled 近似）。
+    world.broadcast_external_plan(
+        vec![],
+        vec![
+            ext_cancel(0, buy_serial),
+            ext_cancel(0, resting_sell),
+            ext_cancel(0, 99_999),
+        ],
+    );
+    world.run_ticks(1).expect("t3 回执拍");
+    let (receipts3, life3) = tick_facts(&world, 3);
+    let count = |k: super::ReceiptKind| receipts3.iter().filter(|r| r.kind == k).count();
+    assert_eq!(count(super::ReceiptKind::AlreadyFilled), 2, "全成+本主不存在 ⇒ AlreadyFilled：{receipts3:?}");
+    assert_eq!(count(super::ReceiptKind::OrderNotFound), 1, "他人挂单 ⇒ OrderNotFound：{receipts3:?}");
+    assert!(
+        !life3
+            .iter()
+            .any(|f| matches!(f.kind, super::protocol::LifecycleKind::Cancelled)),
+        "失败撤单不得产生 Cancelled：{life3:?}"
+    );
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_300, "全成 300 股保持");
+    assert_eq!(a0.cash, 1_000_000 - 300_503, "结算不被撤单触碰（佣金 500+过户 3）");
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.shares[0], 700, "卖 300（1100 挂单被 Drain 退回）");
+    assert_eq!(
+        a1.cash,
+        1_000_000 + 100_000 - 551 + 200_000 - 602,
+        "卖方净得两笔（500+50+1 与 500+100+2）"
+    );
+}
