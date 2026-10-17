@@ -83,6 +83,13 @@ pub fn recv_deadline<T>(
 /// worker 侧收件变体：超时但全局 abort 标记已置位 ⇒ 干净退出（对端失败引发的
 /// 全局撤退，不是本 worker 的挂死）；超时且无标记 ⇒ 显式失败上报。
 /// 断连 ⇒ 干净退出（协调者已释放通道，关停协议的一部分）。
+/// Sol 终审二审阻断 2：等待改**分片轮询**（50ms 步长）且**等待中**
+/// 响应全局 abort——sever（下行 sender 全 drop）后组↔部互持对方
+/// 通道 clone 形成断连互等（组等 desk 通道断、desk 等组通道断），
+/// Disconnected 分支不可达、各自等满看门狗档（bridge 缺省 30s 使
+/// sol3_install_candles 击穿 10s 硬上限）。分片后 World Drop 置位的
+/// abort 在 ≤50ms 内被空闲 worker 观察——回收即时；正常路径消息到达
+/// 即时唤醒无轮询税（空闲段每秒 20 次原子读）。断连检测语义不变。
 pub fn worker_recv<T>(
     rx: &Receiver<T>,
     cfg: &WatchdogConfig,
@@ -90,19 +97,26 @@ pub fn worker_recv<T>(
     who: WorkerId,
 ) -> Result<Option<T>, RuntimeError> {
     use std::sync::atomic::Ordering;
-    match rx.recv_timeout(cfg.limit_for(Phase::WorkerIdle)) {
-        Ok(msg) => Ok(Some(msg)),
-        Err(RecvTimeoutError::Timeout) => {
-            if abort.load(Ordering::SeqCst) {
-                Ok(None)
-            } else {
-                Err(RuntimeError::Watchdog {
-                    phase: Phase::WorkerIdle,
-                    waited: cfg.limit_for(Phase::WorkerIdle),
-                    detail: format!("worker {who} 空闲超时且无全局中止标记"),
-                })
+    let limit = cfg.limit_for(Phase::WorkerIdle);
+    let step = std::cmp::min(Duration::from_millis(50), limit);
+    let mut waited = Duration::ZERO;
+    loop {
+        match rx.recv_timeout(step) {
+            Ok(msg) => return Ok(Some(msg)),
+            Err(RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(RecvTimeoutError::Timeout) => {
+                waited += step;
+                if abort.load(Ordering::SeqCst) {
+                    return Ok(None);
+                }
+                if waited >= limit {
+                    return Err(RuntimeError::Watchdog {
+                        phase: Phase::WorkerIdle,
+                        waited: limit,
+                        detail: format!("worker {who} 空闲超时且无全局中止标记"),
+                    });
+                }
             }
         }
-        Err(RecvTimeoutError::Disconnected) => Ok(None),
     }
 }

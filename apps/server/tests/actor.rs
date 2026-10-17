@@ -219,8 +219,9 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
             }
         });
         drop(runtime);
-        // rayon 退役（批 7）：global 池初始化断言随机制退役。
-        eprintln!("single_pool_actor workers={workers} actual_leaf_owner_valid={valid}");
+        // rayon 退役（批 7）：global 池初始化断言随机制退役。exit 只由
+        // 分支内断言组决定（Sol 终审二审 §3：runtime 分支恒真贡献撤除
+        // ——valid 的语义=池归属验证，仅旧管线分支赋予）。
         std::process::exit(if valid { 0 } else { 1 });
     }
     let mut failures = Vec::new();

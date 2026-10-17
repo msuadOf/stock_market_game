@@ -2066,3 +2066,41 @@ fn sol4r_continue_round1_failure_retry_emits_facts_exactly_once() {
     assert_eq!(cancelled, 1, "轮 0 撤销事实恰一次（不丢不重）");
     assert_eq!(accepted, 1, "轮 0 受理事实恰一次（不丢不重）");
 }
+
+// Sol 终审二审阻断 2 探针：sever 后 World Drop 的线程回收计时。
+#[test]
+fn solfinal3_probe_sever_drop_timing() {
+    let script = |_g: super::GroupIdx| -> GroupScript {
+        Box::new(|_t, _r| TickPlan::default())
+    };
+    let mut world = World::spawn(basic_spec(1, 2, 1, Box::new(script))).expect("世界构造");
+    world.run_ticks(1).expect("一步");
+    world.sever();
+    let started = std::time::Instant::now();
+    drop(world);
+    eprintln!("sever 后 Drop 回收耗时：{:?}", started.elapsed());
+}
+
+// Sol 终审二审阻断 2 探针 2：sol3 同序列（step+install+sever+失败+drop）。
+#[test]
+fn solfinal3_probe_sol3_sequence_timing() {
+    use crate::runtime::bridge_tests::setup_fixture;
+    use crate::runtime::drive::RuntimeDriver;
+    use crate::GameSession;
+    let mut session = GameSession::new(setup_fixture(), 77).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进成功（安装前基线）");
+    driver
+        .install_market_views(&mut session)
+        .expect("行情安装（sever 前）");
+    driver.sever_world_for_test();
+    let err = driver.install_candles(&mut session);
+    eprintln!("install_candles 结果（预期 Err）：{}", err.is_err());
+    let started = std::time::Instant::now();
+    drop(driver);
+    eprintln!("sol3 序列 Drop 回收耗时：{:?}", started.elapsed());
+    let _ = session;
+}

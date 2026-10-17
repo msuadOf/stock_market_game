@@ -841,3 +841,132 @@ fn solfinal1c_multi_group_resting_projection_attributes_owner() {
         "撤单后信封必须删除组 1 账户键（增删键一致性）"
     );
 }
+
+// ═══ Sol 终审二审阻断 1：同拍投影组号换算（VWAP 查表错组） ═══
+
+/// 二审判决 §1：apply_same_tick_fill_projection 的 new_hold_inits 段
+///（drive.rs:1587）把全局名册下标当 local、:1602 查 buy_vwap[(0, local,
+/// stock)]——但 VWAP 按真实组建表。**组 1 普通终轮首买查不到 VWAP →
+/// 静默退步前价 → 经历入场参考价错**（fault2038/保存恢复链的面）。
+/// 本测试：双组世界、组 1 账户首买、成交价≠步前价（1100 vs 1000）——
+/// 断言经历条目入场价=成交价（红态=步前价 1000）且保存恢复链保持。
+#[test]
+fn solfinal3_same_tick_projection_group1_first_buy_uses_real_vwap() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    setup.npcs.retail_count = 2;
+    setup.npcs.retail_cash_median = crate::money::Money::from_cents(10_000_000);
+    let mut session = super::GameSession::new(setup, 21).expect("会话构造");
+    let code = crate::StockId(0);
+    // 卖家=AccountId(1)（组 0）：fixture 手动建仓+经历（quote_setup
+    // float=0 无开局持仓——parity 测试同式注入）。
+    let seller = crate::AccountId(1);
+    let buyer = crate::AccountId(2);
+    let mut positions = std::collections::BTreeMap::new();
+    positions.insert(
+        code,
+        crate::account::Position::from_restored_parts(1_000, 0, 1_000_000, 0),
+    );
+    session
+        .fixture_account_mut(&seller)
+        .expect("卖家在名册")
+        .fixture_set_positions(positions);
+    session
+        .runtime_hold_experience_init(&seller, &code, 1_000, 1_000)
+        .expect("卖家经历条目");
+    // 买家=组 1 账户（双组 per_group=2：AccountId(2)=组 1 local 0）；
+    // 清成"从未持有"首买形态。
+    session.fixture_clear_holding_for_test(buyer, &code);
+    // 步前价=初始价（首拍前无成交——quote_setup initial=1000）。
+    let step_price_before = 1_000i64;
+    let _ = &code;
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut session, 2)
+        .expect("双组驱动器");
+    driver.adopt_session_seq(&session);
+    // 对手单成交价 1010（≠步前价 1000；价笼子 ±2%=[980,1020] 内——
+    // 跨组到达序任意（并发不可复现裁决）下空簿/有对手两形态均受理；
+    // 1100 形态在"买单先到空簿"时被笼子拒收，偶发前置失败 1/10）。
+    let intents = vec![
+        crate::session::ReceiptBearingIntent {
+            owner: buyer,
+            intent: crate::Intent::PlaceLimit {
+                code,
+                side: crate::Side::Buy,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1010)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+        crate::session::ReceiptBearingIntent {
+            owner: seller,
+            intent: crate::Intent::PlaceLimit {
+                code,
+                side: crate::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1010)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+    ];
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(&intents, &upper)
+        .expect("意图注入");
+    session
+        .runtime_step_with_install(&mut driver)
+        .expect("步进+安装（同拍投影在内）");
+    // 前置：成交确实发生且买家持仓建立。
+    let rec = driver.world_report_log().last().expect("tick 记录");
+    assert!(
+        rec.desk_trades
+            .iter()
+            .any(|t| t.qty == 100 && t.price == 1010),
+        "前置：1010 价成交在场：{:?}",
+        rec.desk_trades
+    );
+    assert!(
+        session
+            .account(buyer)
+            .and_then(|a| a.positions().get(&code))
+            .is_some_and(|p| p.qty() == 100),
+        "前置：买家持仓建立"
+    );
+    // 判别面：经历条目在场且入场参考价=成交价 1100（红态=组 0 查表
+    /// miss → 静默退步前价 {step_price_before}）。
+    assert!(
+        session.runtime_retail_experience_has(buyer, &code),
+        "首买经历条目必须在场"
+    );
+    let save = session.save().expect("存档读面");
+    let experience_json =
+        serde_json::to_value(&save.retail_experience[&buyer]).expect("经历序列化");
+    let entry_price = experience_json
+        .pointer("/stocks/0/entry_reference_price")
+        .cloned()
+        .or_else(|| {
+            // 序列化键可能带 StockId 前缀——扫描 stocks 对象首个条目。
+            experience_json
+                .get("stocks")
+                .and_then(|s| s.as_object())
+                .and_then(|m| m.values().next())
+                .and_then(|v| v.get("entry_reference_price").cloned())
+        })
+        .unwrap_or_else(|| panic!("经历条目入场价可读：{experience_json}"));
+    assert_eq!(
+        entry_price,
+        serde_json::json!("1010"),
+        "组 1 首买的经历入场价必须=成交 VWAP 1010（红态=步前价 {step_price_before}——组 0 查表错组）"
+    );
+    // 保存恢复链：恢复后经历条目同价保持。
+    let restored = super::GameSession::restore(&save).expect("恢复");
+    assert!(
+        restored.runtime_retail_experience_has(buyer, &code),
+        "恢复后经历条目保持（fault2038 链）"
+    );
+}

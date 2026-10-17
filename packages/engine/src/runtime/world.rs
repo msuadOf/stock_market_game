@@ -1963,7 +1963,15 @@ impl Drop for World {
     /// 常驻 driver）也必须回收组/部线程——发 Shutdown（失败=已退出）并
     /// join（结果忽略：worker 错误本经上行通道报告，Drop 期无处报告，
     /// 此处只保证线程回收）。
+    /// Sol 终审二审阻断 2：**先置全局中止标记再 join**——sever 后下行
+    /// sender 已全部 drop（Shutdown 不可达），worker 的 recv 断连分支
+    /// 本可立即退出，但处于超时等待中的 worker（正常档 5s/测试注入
+    /// 档更长）须凭 abort 标记在超时点干净退出（worker_recv 的
+    /// Timeout+abort 分支），否则 Drop 的 join 被拖到看门狗满档——
+    /// sol3_install_candles 的 10 秒硬上限实测击穿。断连检测语义
+    /// 不变（P1 时代的通道面一致性守卫——send 侧显式报错不受影响）。
     fn drop(&mut self) {
+        self.abort.store(true, Ordering::SeqCst);
         for tx in &self.group_txs {
             let _ = tx.send(GroupIn::Shutdown);
         }

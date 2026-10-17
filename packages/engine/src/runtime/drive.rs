@@ -1584,11 +1584,19 @@ impl RuntimeDriver {
             let Some(engine_acct) = session.fixture_account_mut(&id) else {
                 continue;
             };
-            let local = self
+            // Sol 终审二审阻断 1：全局名册下标换算 (组, 组内 local)
+            ///（此前全局下标直接当 local——组 1 账户查错组；VWAP 表按
+            /// 真实组建，错组 miss 后静默退步前价使经历入场参考价错）。
+            let global = self
                 .id_map
                 .iter()
                 .position(|map_id| *map_id == id)
-                .expect("投影账户必在名册") as super::LocalIdx;
+                .expect("投影账户必在名册");
+            let per_group = self.accounts_per_group.max(1);
+            let (owner_group, local) = (
+                (global / per_group) as super::GroupIdx,
+                (global % per_group) as super::LocalIdx,
+            );
             let mut positions = engine_acct.positions().clone();
             // Sol 六审修复 3：首买经历初始化（与回写路径同款——此前
             /// 直接建条目，下一拍条目已在使 is_new_hold 永假，retail
@@ -1598,8 +1606,10 @@ impl RuntimeDriver {
             for (code, d) in &by_code {
                 let is_new_hold = d.qty > 0 && !positions.contains_key(code);
                 if is_new_hold {
+                    // Sol 终审二审阻断 1：VWAP 查表用真实组号（此前写死
+                    /// 组 0——组 1 首买 miss 后退步前价，经历入场价错）。
                     let entry = buy_vwap
-                        .get(&(0, local, code.0 as super::StockIdx))
+                        .get(&(owner_group, local, code.0 as super::StockIdx))
                         .copied()
                         .or_else(|| last_prices.get(code.0 as usize).copied())
                         .or_else(|| trades.iter().map(|t| t.price).min())
