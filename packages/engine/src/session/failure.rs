@@ -29,7 +29,13 @@ pub(crate) struct RuntimeInstallBaseline {
     candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
     candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
     npc_attention: super::AccountPagedMap<super::attention::NpcAttentionState>,
-    attention_scheduler: super::attention::NpcAttentionScheduler,    /// D5 #4 retail 链：个人态写入面的回滚基线。
+    // D5 #4 retail 链：个人态写入面的回滚基线。
+    // P1-C 修正：heap 仍随基线快照——回滚必须逐项还原（旧管线/混合
+    // 路径的基线 heap 可含陈旧项——"从权威重建"会丢陈旧项使
+    // business_state_hash 回滚对比显红，实测 compute_context_shared_
+    // sessions 用例）。无界增长由 set_runtime_attention 的镜像重建
+    // 消除（heap 恒 ≤名册——每 tick clone 成本 O(N) 恒定，不再 O(N·T)）。
+    attention_scheduler: super::attention::NpcAttentionScheduler,
     belief_participants: super::AccountPagedMap<super::decision_chain::personal_state::BeliefParticipantState>,
     retail_experience: super::AccountPagedMap<crate::RetailExperienceState>,
     history_reads: super::AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
@@ -754,9 +760,11 @@ impl GameSession {
             candle_histories: self.state.candle_book.histories().clone(),
             candle_active: self.state.candle_book.active().clone(),
             npc_attention: self.state.npc_attention.clone(),
+            // P1-C 修正：heap 随基线快照（回滚逐项还原——含旧管线陈旧项；
+            // 见结构体注释）。
             attention_scheduler: self.state.attention_scheduler.clone(),
             // D5 #4 retail 链：个人态写入面（step_frame 内回写——失败回滚
-            /// 基线必须覆盖，否则失败拍泄漏个人态演进）。
+            // 基线必须覆盖，否则失败拍泄漏个人态演进）。
             belief_participants: self.state.belief_participants.clone(),
             retail_experience: self.state.retail_experience.clone(),
             history_reads: self.state.history_reads.clone(),
@@ -850,6 +858,12 @@ impl GameSession {
     /// Sol 二审修复集 5：candidate 与 attention_scheduler heap 同步
     /// （heap 是旧管线 pop_due 的驱动面——只更 candidate 不入堆，
     /// 调度面看不到新候选；陈旧堆项由 pop_due 的候选核对自然跳过）。
+    /// P1-C（性能修复）：heap 改为从权威 npc_attention **全量重建镜像**——
+    /// 此前逐条 enqueue 且 runtime 路径永不 pop_due（pop 只在旧管线决策
+    /// 链），heap 每 tick +名册无界增长（O(N·T²) 累计复制，B 口径随时长
+    /// 恶化——Sol 终裁判定，见 .tmp/perf-p0-diff-profile.md）。重建后
+    /// 每账户恰一项、值=权威候选 tick（"新候选入堆"语义保持——新候选
+    /// 必然在堆；陈旧项消失，pop_due 的候选核对语义不受影响）。
     pub fn set_runtime_attention(
         &mut self,
         entries: &[(crate::AccountId, u64, u64)],
@@ -863,9 +877,16 @@ impl GameSession {
                 // D5 #2：注意力共享流续传写回（组内 evaluate 消费后的
                 // 权威——restore 双轨逐位等价依赖该面）。
                 state.rng_state = *rng_state;
-                self.state.attention_scheduler.enqueue(due, *id);
             }
         }
+        // 镜像重建：heap=权威候选的精确快照（含未被本批 entries 触及的
+        // 在册 NPC——与 restore 的 from_iter 重建同式）。
+        self.state.attention_scheduler = self
+            .state
+            .npc_attention
+            .iter()
+            .map(|(id, state)| (state.next_attention_candidate_tick, *id))
+            .collect();
     }
 
     /// runtime 驱动器翻转面（Sol 二审修复集 5）：attention 状态只读投影
@@ -1006,6 +1027,8 @@ impl GameSession {
         self.state.candle_book.replace_histories(candle_histories);
         self.state.candle_book.replace_active(candle_active);
         self.state.npc_attention = npc_attention;
+        // P1-C 修正：heap 快照逐项还原（不重建——基线可含旧管线陈旧项，
+        // 重建会丢项使回滚 hash 对比显红；见结构体注释）。
         self.state.attention_scheduler = attention_scheduler;
         self.state.belief_participants = belief_participants;
         self.state.retail_experience = retail_experience;

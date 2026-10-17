@@ -274,6 +274,51 @@ fn sol5_set_runtime_attention_syncs_scheduler_heap() {
     );
 }
 
+// P1-C 红证：runtime 路径 attention_scheduler heap **无消费增长**——
+// install_market_views 每 tick 经 set_runtime_attention 把全名册候选
+// enqueue 入堆，而 runtime 路径永不 pop_due（pop 只在旧管线决策链），
+// 安装基线又每 tick clone 整堆（O(N·T²) 累计复制——B 口径随时长恶化
+// 的结构性来源，Sol 终裁判定，见 .tmp/perf-p0-diff-profile.md）。
+// 修复合同：heap=权威 npc_attention 的**镜像**（每账户恰一项、值=权威
+// 候选 tick、不随 tick 增长；Sol 二审修复集 5 的"新候选入堆"语义保持
+// ——重建形态下新候选必然在堆）。
+#[test]
+fn runtime_attention_heap_mirror_does_not_grow_across_ticks() {
+    if !crate::runtime::step_runtime_enabled() {
+        // 缺省旧管线不走 runtime 安装链——本红证由 env=1 批次承载。
+        return;
+    }
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let roster = game.state.npc_attention.len();
+    for _ in 0..5 {
+        game.step().unwrap();
+    }
+    let heap_len = game.state.attention_scheduler.iter().count();
+    assert!(
+        heap_len <= roster,
+        "attention heap 不得随 tick 无界增长：heap={heap_len} 项 > 名册 {roster}（runtime 每 tick 全名册 enqueue 且永不 pop_due）"
+    );
+    // 镜像完整性：堆项=权威候选 tick 且每账户恰一项。
+    let mut per_id: std::collections::BTreeMap<crate::AccountId, usize> = Default::default();
+    for (heap_tick, id) in game.state.attention_scheduler.iter().copied() {
+        *per_id.entry(id).or_default() += 1;
+        let authority = game
+            .state
+            .npc_attention
+            .get(&id)
+            .expect("堆内 id 必在名册")
+            .next_attention_candidate_tick;
+        assert_eq!(
+            heap_tick, authority,
+            "堆项必须=权威候选 tick（镜像不陈旧）：{id:?}"
+        );
+    }
+    assert_eq!(per_id.len(), roster, "镜像覆盖全名册");
+    for (id, count) in per_id {
+        assert_eq!(count, 1, "每账户恰一项（镜像不重复）：{id:?}");
+    }
+}
+
 // Sol 三审 (b)：安装失败回滚缺口——market_views 已写入行情/历史/
 // 注意力后失败，回滚必须覆盖安装面写入（此前只恢复 tick/seq/账户，
 // 半安装会话残留）。
