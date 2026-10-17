@@ -439,6 +439,19 @@ pub enum GroupIn {
     /// 全量上行+逐位 get_mut 写是驱动线程 attention 面 ~10% 主源）。
     EchoAttentionSparse,
     EchoAccounts,
+    /// P2-4a：账户稀疏回声请求（生产回写段——只回 dirty 集指名的账户，
+    /// 驱动器按「本 tick 事实 owner ∪ 上一拍事实 owner」计算请求集；
+    /// 日结 force_full 走 EchoAccounts 全量）。全量读面/调试纵切用
+    /// EchoAccounts 不变。回执集与请求集的精确一致由收集端校验
+    /// （缺项=RuntimeError 不静默）。
+    EchoAccountsSparse {
+        /// 请求的组内下标（升序去重——驱动器 dirty 扫描天然有序）。
+        wanted: Vec<super::LocalIdx>,
+    },
+    /// P2-4a 红证通道（cfg(test)）：组端稀疏回执丢最后一项（缺项注入
+    /// ——收集端精确集校验的显式失败判别用）。
+    #[cfg(test)]
+    CorruptSparseEchoOmitLast,
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
     EchoCandles,
     /// D5 #4 retail 链：本拍零售决策 trace 请求（组回 RetailTraces——
@@ -619,6 +632,14 @@ pub enum UpMsg {
         /// 当前账户全量快照。
         accounts: Vec<super::group::GroupAccount>,
     },
+    /// P2-4a：组账户稀疏回声回执（EchoAccountsSparse 应答——只含请求
+    /// 指名的账户，(组内下标, 账户) 按请求序）。
+    GroupEchoSparse {
+        /// 组索引。
+        group: GroupIdx,
+        /// 请求指名的账户（序=请求序——收集端逐位核对）。
+        accounts: Vec<(super::LocalIdx, super::group::GroupAccount)>,
+    },
     /// worker 显式失败上抛（铁律二：不静默；尽力发送，通道已断由看门狗兜底）。
     Failed {
         /// 失败 worker。
@@ -677,6 +698,7 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::RetailTraces { group, .. } => write!(f, "RetailTraces(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
+            UpMsg::GroupEchoSparse { group, .. } => write!(f, "GroupEchoSparse(group={group})"),
             UpMsg::DeskCandles { stock, .. } => write!(f, "DeskCandles(stock={stock})"),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),
             UpMsg::TaskDied { who, .. } => write!(f, "TaskDied({who}, ..)"),

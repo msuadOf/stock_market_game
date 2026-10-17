@@ -526,10 +526,6 @@ impl RuntimeDriver {
         // 期间 qty=0 条目由 ever_held 保留观察面，权益/目标量读面已含
         // 在途（Sol 整改 3 组侧收口——回写侧不再加回，避免 session 旧
         // 管线代码读到双计）。
-        let snapshots = self
-            .world
-            .snapshot_accounts()
-            .map_err(|e| format!("账户快照失败：{e:?}"))?;
         // P2-1b：账户回写 dirty 过滤——只重写"本 tick 事实 owner ∪ 上一
         /// tick 事实 owner"（组端 staging 落账滞后一拍，两拍并集覆盖；
         /// 多装等值无害，漏装才会镜像陈旧）∪ 日结强制全量（Drain/T+1/
@@ -567,12 +563,60 @@ impl RuntimeDriver {
         } else {
             vec![true; roster]
         };
-        for (g, accounts) in snapshots {
-            for (local, acct) in accounts.iter().enumerate() {
-                let global = g as usize * self.accounts_per_group + local;
-                if skip_all && !dirty_union.get(global).copied().unwrap_or(false) {
+        // P2-4a：账户回声稀疏化——P2-1b 只稀疏化了**写回**，读面仍是
+        /// 每拍全名册回声（组端 20000×8 堆 Vec 克隆 + 主线程全量 drop
+        /// 的双热点：组线程 Vec::clone+memmove ≈17%、主线程
+        /// drop_in_place≈10% 样本）。非 force_full 拍只请求 dirty 账户
+        /// ——取回的恰是原来要写的同一批值，逐位等价由构造保证（守卫
+        /// p2_4a_sparse_account_writeback_matches_force_full_bitwise：
+        /// 稀疏 vs 每拍 force_full 全量两条运行期末哈希+事件序列逐位
+        /// 一致）；回执集与请求集的精确一致由收集端校验（缺项
+        /// =RuntimeError 不静默）。全量读面（调试纵切/日结）用
+        /// EchoAccounts 不变。
+        let snapshots: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> = if skip_all {
+            let n_groups = self.world.n_groups();
+            let mut wanted: Vec<Vec<super::LocalIdx>> = vec![Vec::new(); n_groups];
+            for (global, &dirty) in dirty_union.iter().enumerate() {
+                if !dirty {
                     continue;
                 }
+                // 与 mark 同式映射：global = g*accounts_per_group + local。
+                let g = global / self.accounts_per_group.max(1);
+                let local = global % self.accounts_per_group.max(1);
+                let Some(slot) = wanted.get_mut(g) else {
+                    return Err(format!(
+                        "账户回写 dirty 位越界：global={global} → 组 {g} 不存在（组数 {n_groups}，每组 {}）",
+                        self.accounts_per_group
+                    ));
+                };
+                slot.push(local as super::LocalIdx);
+            }
+            self.world
+                .snapshot_accounts_sparse(&wanted)
+                .map_err(|e| format!("稀疏账户回声收集失败：{e:?}"))?
+        } else {
+            // 日结/首拍全量（EchoAccounts 全量读面不变）——转 (组, 下标)
+            /// 对形态与稀疏路径共用回写循环。
+            let dense = self
+                .world
+                .snapshot_accounts()
+                .map_err(|e| format!("账户快照失败：{e:?}"))?;
+            let mut pairs = vec![Vec::new(); self.world.n_groups()];
+            for (g, accounts) in dense {
+                let slot = pairs
+                    .get_mut(g as usize)
+                    .ok_or_else(|| format!("全量账户快照组号越界：g={g}"))?;
+                *slot = accounts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(local, acct)| (local as super::LocalIdx, acct))
+                    .collect();
+            }
+            pairs
+        };
+        for (g, accounts) in snapshots.into_iter().enumerate() {
+            for (local, acct) in accounts {
+                let global = g * self.accounts_per_group + local as usize;
                 let Some(id) = self.id_map.get(global).copied() else {
                     continue;
                 };
@@ -1438,6 +1482,13 @@ impl RuntimeDriver {
     #[cfg(test)]
     pub fn account_writes_for_test(&self) -> u64 {
         self.account_writes
+    }
+
+    /// P2-4a 红证注入通道（cfg(test)）：组 0 稀疏账户回声回执丢最后
+    /// 一项——收集端精确集校验的显式失败判别用。
+    #[cfg(test)]
+    pub fn corrupt_sparse_echo_omit_last_for_test(&mut self) {
+        self.world.corrupt_sparse_echo_omit_last_for_test();
     }
 
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面——**全量语义**

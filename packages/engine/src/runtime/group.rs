@@ -577,6 +577,10 @@ pub struct GroupState {
     /// ForceDue 改排的位——稀疏上行源）。Start 清（上一 tick 的演进已在
     /// Drain 期上行消费；未消费即失效）。
     attention_evolved: Vec<LocalIdx>,
+    /// P2-4a 红证注入（cfg(test)）：稀疏账户回声回执丢最后一项——收集
+    /// 端精确集校验的显式失败判别用（生产恒 false）。
+    #[cfg(test)]
+    sparse_echo_omit_last: bool,
     /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
     /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
@@ -681,6 +685,8 @@ impl GroupState {
             retail_traces: Vec::new(),
             roster_offset: 0,
             attention_evolved: Vec::new(),
+            #[cfg(test)]
+            sparse_echo_omit_last: false,
             #[cfg(test)]
             injected_assessments: Vec::new(),
             #[cfg(test)]
@@ -4831,7 +4837,7 @@ pub fn group_main(
             }
             GroupIn::EchoAccounts => {
                 // 在途买占用为账户级维护字段（Sol 五审：run_round 挂出/
-                // apply_staging 成交与退款驱动——全部买单，不限计划链票）。
+                /// apply_staging 成交与退款驱动——全部买单，不限计划链票）。
                 let echo = UpMsg::GroupEcho {
                     group: state.group,
                     accounts: state.accounts.clone(),
@@ -4843,6 +4849,54 @@ pub fn group_main(
                     });
                     break;
                 }
+            }
+            GroupIn::EchoAccountsSparse { wanted } => {
+                // P2-4a：生产回写段稀疏上行——只回驱动器 dirty 集指名的
+                /// 账户（P2-1b 已把**写回**稀疏化，但全量回声仍是每拍
+                /// 全名册 20000×8 堆 Vec 克隆+主线程 drop 的双热点）。
+                /// 全量语义由驱动器 dirty 写回承载（等价构造：取回的恰是
+                /// 原来要写的同一批值）；全量读面用 EchoAccounts 不变。
+                /// 回执集与请求集的精确一致由收集端校验（缺项
+                /// =RuntimeError 不静默）。
+                let mut accounts: Vec<(LocalIdx, GroupAccount)> =
+                    Vec::with_capacity(wanted.len());
+                for &local in &wanted {
+                    let Some(account) = state.accounts.get(local as usize) else {
+                        result = Err(RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "组 {} 稀疏回声请求下标越界：local={local}，名册 {}",
+                                state.group,
+                                state.accounts.len()
+                            ),
+                        });
+                        break;
+                    };
+                    accounts.push((local, account.clone()));
+                }
+                if result.is_err() {
+                    abort.store(true, Ordering::SeqCst);
+                    break;
+                }
+                // cfg(test) 红证注入：丢最后一项（收集端必须显式失败）。
+                #[cfg(test)]
+                if state.sparse_echo_omit_last && !accounts.is_empty() {
+                    accounts.pop();
+                }
+                let msg = UpMsg::GroupEchoSparse {
+                    group: state.group,
+                    accounts,
+                };
+                if up_tx.send(msg).is_err() {
+                    abort.store(true, Ordering::SeqCst);
+                    result = Err(RuntimeError::SendFailed {
+                        detail: format!("组 {who} GroupEchoSparse 发送失败"),
+                    });
+                    break;
+                }
+            }
+            #[cfg(test)]
+            GroupIn::CorruptSparseEchoOmitLast => {
+                state.sparse_echo_omit_last = true;
             }
             GroupIn::EchoCandles => {
                 // K 线投影面向交易部（协调者直发 desk 通道）；组收到=

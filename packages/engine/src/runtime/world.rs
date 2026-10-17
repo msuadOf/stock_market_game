@@ -1256,8 +1256,8 @@ impl World {
         Ok(out.into_iter().map(|slot| slot.unwrap_or_default()).collect())
     }
 
-    /// 组账户快照（驱动器纵切/测试面：向全部组发 EchoAccounts 并收齐）。
-    /// 生产热路径不调用（账户上行是调试口径开销）。
+    /// 组账户快照（全量读面：调试纵切/日结 force_full——向全部组发
+    /// EchoAccounts 并收齐。生产每拍回写走 snapshot_accounts_sparse）。
     pub fn snapshot_accounts(
         &mut self,
     ) -> Result<Vec<(GroupIdx, Vec<GroupAccount>)>, RuntimeError> {
@@ -1295,6 +1295,86 @@ impl World {
         }
         out.sort_by_key(|(g, _)| *g);
         Ok(out)
+    }
+
+    /// P2-4a：组账户稀疏回声收集（生产回写段——按驱动器 dirty 集向各
+    /// 组请求指名账户并收齐；回执集与请求集逐位核对，缺项/错序/多项
+    /// =RuntimeError 显式失败，不静默丢账户）。请求集升序去重由调用方
+    /// 保证（dirty 扫描天然有序）。
+    pub fn snapshot_accounts_sparse(
+        &mut self,
+        wanted_per_group: &[Vec<super::LocalIdx>],
+    ) -> Result<Vec<Vec<(super::LocalIdx, GroupAccount)>>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "snapshot_accounts_sparse 通道面与组数不一致（txs={} n_groups={}——世界已断连）",
+                    self.group_txs.len(), self.n_groups
+                ),
+            });
+        }
+        if wanted_per_group.len() != self.group_txs.len() {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "snapshot_accounts_sparse 请求面与组数不一致（wanted={} txs={}）",
+                    wanted_per_group.len(),
+                    self.group_txs.len()
+                ),
+            });
+        }
+        for (g, tx) in self.group_txs.iter().enumerate() {
+            tx.send(GroupIn::EchoAccountsSparse {
+                wanted: wanted_per_group[g].clone(),
+            })
+            .map_err(|_| RuntimeError::SendFailed {
+                detail: format!("EchoAccountsSparse 组 {g} 发送失败"),
+            })?;
+        }
+        let mut out: Vec<Option<Vec<(super::LocalIdx, GroupAccount)>>> =
+            vec![None; self.group_txs.len()];
+        let mut left = self.group_txs.len();
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupEchoSparse { group, accounts } => {
+                    let wanted = &wanted_per_group[group as usize];
+                    validate_sparse_echo_reply(group, wanted, &accounts)?;
+                    if out[group as usize].replace(accounts).is_some() {
+                        return Err(RuntimeError::Disconnected {
+                            who: None,
+                            stage: format!("snapshot_accounts_sparse 收到组 {group} 重复回执"),
+                        });
+                    }
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!(
+                            "snapshot_accounts_sparse 期望 GroupEchoSparse，收到 {other:?}"
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(out
+            .into_iter()
+            .map(|slot| slot.expect("left==0 保证每组已回执"))
+            .collect())
+    }
+
+    /// P2-4a 红证注入通道（cfg(test)）：组 0 稀疏回执丢最后一项。
+    #[cfg(test)]
+    pub fn corrupt_sparse_echo_omit_last_for_test(&mut self) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::CorruptSparseEchoOmitLast);
+        }
+    }
+
+    /// P2-4a：组数读面（驱动器稀疏回声请求面构建——dirty 全局位 →
+    /// (组, 组内下标) 分桶）。
+    pub fn n_groups(&self) -> usize {
+        self.n_groups
     }
 
     /// 运行 n 个 tick（协调者逻辑在本调用线程执行）。
@@ -1796,4 +1876,38 @@ impl Drop for World {
             let _ = handle.join();
         }
     }
+}
+
+/// P2-4a：稀疏账户回声回执校验（自由函数——收集端逐位核对）。
+/// 回执必须与请求集**逐位一致**（同长、同序、同下标）：缺项=镜像静默
+/// 陈旧（铁律二禁止），多项/重复/乱序=协议漂移，一律 RuntimeError。
+pub(in crate::runtime) fn validate_sparse_echo_reply(
+    group: GroupIdx,
+    requested: &[super::LocalIdx],
+    reply: &[(super::LocalIdx, GroupAccount)],
+) -> Result<(), RuntimeError> {
+    if requested.len() != reply.len() {
+        let missing: Vec<super::LocalIdx> = requested
+            .iter()
+            .filter(|i| !reply.iter().any(|(r, _)| r == *i))
+            .copied()
+            .collect();
+        return Err(RuntimeError::ProtocolInvariant {
+            detail: format!(
+                "组 {group} 稀疏回声回执与请求集不一致：请求 {} 项，回执 {} 项，缺项 {missing:?}",
+                requested.len(),
+                reply.len()
+            ),
+        });
+    }
+    for (slot, (want, (got, _))) in requested.iter().zip(reply.iter()).enumerate() {
+        if want != got {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} 稀疏回声回执序错位：第 {slot} 位请求 {want} 回执 {got}"
+                ),
+            });
+        }
+    }
+    Ok(())
 }

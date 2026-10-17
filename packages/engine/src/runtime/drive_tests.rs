@@ -2711,3 +2711,231 @@ fn p2_3d_retail_slot_take_restores_on_abort() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// P2-4a：账户回声稀疏化（生产回写段——只回驱动器 dirty 集指名的账户；
+// 全量读面 EchoAccounts 不变）。
+// ---------------------------------------------------------------------------
+
+/// P2-4a 等价守卫辅助：同 fixture 同种子跑 N 拍（可选每拍 force_full
+/// 全量回声），返回期末 business_state_hash + 逐拍事件 Debug 串。
+fn p2_4a_run(force_full_every_tick: bool) -> (crate::session::StateHash, Vec<String>) {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 4;
+    // 集合竞价 1 tick（tick 2 起连续竞价——每拍 desk_trades 使 dirty 集
+    // 非空；默认 15 拍全程集合竞价、事实仅在 AuctionCompleted 落地，
+    // tick 2-9 dirty 恒空，稀疏回声路径无真实负载）。
+    setup.auction_ticks = 1;
+    let mut session = GameSession::new(setup, 21).expect("会话构造");
+    // 对手双方：一个开局有股 0 可卖、另一个有现金可买（float 分配）。
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            session
+                .account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 0（float 分配）");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    // 挂单腿账户：开局持有股 1（不同于成交腿股 0——避开「(账户,股)
+    // 唯一挂出」守卫对同腿叠加的拦截）。
+    let resting_owner = [crate::AccountId(1), crate::AccountId(2), crate::AccountId(3)]
+        .into_iter()
+        .find(|id| {
+            session
+                .account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(1)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 1（float 分配——挂单腿判别面）");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let mut digest = Vec::new();
+    for t in 1..=10u64 {
+        if force_full_every_tick {
+            driver.force_full_accounts = true;
+        }
+        // 每 tick 注入对手双方（限价 1000=初始价；买卖交叉必成交——
+        // dirty 集非空，稀疏/全量两条路径都真实走账）。t==3 一次性
+        // 追加一张**不交叉**的挂单卖（股 1 @2050：高于 touch 2000、
+        /// 低于涨停 2200，与成交腿不同股避开唯一挂出守卫）。挂出使
+        // pending_sell_qty 进 qty 面：该面只有回写承载（same_tick 成交
+        // 投影不覆盖受理/在途），写回缺失即期末 positions 漂移——
+        // 等价守卫的判别面，M1 空请求集突变显红依据）。
+        let mut intents = vec![
+            crate::session::ReceiptBearingIntent {
+                owner: buyer,
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            },
+            crate::session::ReceiptBearingIntent {
+                owner: seller,
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Sell,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            },
+        ];
+        if t == 3 {
+            intents.push(crate::session::ReceiptBearingIntent {
+                owner: resting_owner,
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(1),
+                    side: crate::orderbook::Side::Sell,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(2050)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            });
+        }
+        let upper: Vec<i64> = driver
+            .world_public_views()
+            .iter()
+            .map(|v| v.daily_upper_limit)
+            .collect();
+        driver
+            .inject_player_intents(&intents, &upper)
+            .expect("意图注入");
+        let events = driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+        // 事件摘要：去 seq 数字（股间事件序并发非确定——seq 随发射序
+        // 分配，跨运行不可比）+ 排序（内容集合确定性对比）。
+        digest.extend(events.iter().map(|e| {
+            let s = format!("{e:?}");
+            match s.find("seq: ") {
+                Some(start) => {
+                    let after = &s[start + 5..];
+                    let end = after.find(", ").map(|i| start + 5 + i).unwrap_or(s.len());
+                    format!("{}seq: _{}", &s[..start], &s[end..])
+                }
+                None => s,
+            }
+        }));
+        digest.sort();
+    }
+    // 判别面前置：挂单腿真实挂出（组端 pending_sell_qty>0——否则
+    // fixture 退化成 trade-only，same_tick 投影独立补齐、等价守卫零
+    // 判别——M1 突变下曾实证恒绿，此前置使退化显式失败）。
+    {
+        let snapshot = driver.world_accounts_snapshot().expect("组快照前置");
+        let local = driver
+            .id_map
+            .iter()
+            .position(|id| *id == resting_owner)
+            .expect("挂单腿账户在名册");
+        assert!(
+            snapshot[0].1[local].pending_sell_qty[1] > 0,
+            "挂单腿必须真实挂出（pending_sell_qty>0——等价守卫判别面前置）"
+        );
+    }
+    (
+        session.business_state_hash().expect("业务哈希"),
+        digest,
+    )
+}
+
+/// P2-4a 等价守卫（协调者点名）：生产稀疏回写路径 vs 每拍 force_full
+/// 全量回写路径——期末业务哈希与事件序列逐位一致。稀疏请求漏掉任何
+/// dirty 账户（组值≠会话镜像）或稀疏回写映射错位时显红。
+#[test]
+fn p2_4a_sparse_account_writeback_matches_force_full_bitwise() {
+    let (sparse_hash, sparse_events) = p2_4a_run(false);
+    let (full_hash, full_events) = p2_4a_run(true);
+    assert!(!sparse_events.is_empty(), "场景须产生事件（交叉成交）");
+    assert_eq!(sparse_hash, full_hash, "期末业务哈希必须逐位一致");
+    assert_eq!(sparse_events, full_events, "事件序列必须逐位一致");
+}
+
+/// P2-4a 显式失败守卫（铁律二）：组端稀疏回声回执缺项（红证注入通道
+/// 丢最后一项）时，生产步进必须以显式错误失败——不静默丢账户。
+#[test]
+fn p2_4a_sparse_echo_missing_item_fails_loud() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 4;
+    setup.auction_ticks = 1;
+    let mut session = GameSession::new(setup, 21).expect("会话构造");
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            session
+                .account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 0");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 走一拍建立基线（force_full 构造默认），再打开缺项注入。
+    let intents = || {
+        vec![
+            crate::session::ReceiptBearingIntent {
+                owner: buyer,
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            },
+            crate::session::ReceiptBearingIntent {
+                owner: seller,
+                intent: crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Sell,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            },
+        ]
+    };
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(&intents(), &upper)
+        .expect("意图注入");
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("首拍步进");
+    driver.install_market_views(&mut session).expect("行情安装");
+    driver.install_candles(&mut session).expect("K 安装");
+    // 打开组端缺项注入（丢稀疏回执最后一项）——下一拍 dirty 集非空
+    //（上一拍成交+本拍再成交），稀疏回声必然被请求。
+    driver.corrupt_sparse_echo_omit_last_for_test();
+    driver
+        .inject_player_intents(&intents(), &upper)
+        .expect("意图注入");
+    let outcome = driver.step_frame_equivalent(&mut session);
+    let err = outcome.expect_err("缺项回声必须显式失败（不静默丢账户）");
+    assert!(
+        format!("{err}").contains("稀疏回声"),
+        "错误必须指明稀疏回声缺项（got: {err}）"
+    );
+}
