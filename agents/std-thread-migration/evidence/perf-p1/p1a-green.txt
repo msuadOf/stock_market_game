@@ -33,3 +33,12 @@ wall（3000 tick）：30.16s → 5.62-5.98s
 context-switches/tick：4618 → 44-50（坍塌 ~93×）
 task-clock：118.7 CPU·s → 8.9-10.6 CPU·s
 行为等价：成交量 6438600 / 费用桶 647541185 / T+1 冻结 6438600 与修复前逐位一致
+
+---[归档补档 2026-10-17：复核修复轮]---
+全量回归真实汇总（此前段落中的裸 error 行为首次生成时命令笔误所致，
+如实保留并以此补档为准）：
+默认：test result: ok. 1608 passed; 0 failed; 11 ignored（复核轮实测）
+env=1：test result: ok. 1608 passed; 0 failed; 11 ignored（复核轮实测）
+复核员独立复跑另发现 env=1 全量偶发 flake：
+deferred_drop::disconnected_backend（线程时序敏感；隔离 3/3 绿、复跑全量绿；
+该面 P1 三提交未触碰）——登记为既有 flake，与 panic_transport 同类。

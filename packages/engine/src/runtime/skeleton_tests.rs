@@ -470,13 +470,17 @@ fn sol3_continuation_round_acceptance_reaches_group_before_continue() {
 #[test]
 fn accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group() {
     use super::group::Observed;
-    // 2 组：组 0 的 local 0 在 tick1 轮 0 挂买（受理归组 0 owner）+声明续行。
+    // 2 组、各组 local 0 都在 tick1 轮 0 挂买：组 0 声明续行（时序断言
+    /// 载体）、组 1 也产生自己的受理（定向断言载体——复核建议：组 1
+    /// 桶恒空时"无外来观察"近乎恒真，须有本组受理才能判别"只收自己的"）。
     let script = |g: GroupIdx| -> GroupScript {
         Box::new(move |tick, round| {
             let mut plan = TickPlan::default();
-            if g == 0 && tick == 1 && round == 0 {
+            if tick == 1 && round == 0 {
                 plan.places.push(buy(0, 0, 1000, 100));
-                plan.continuation = true;
+                if g == 0 {
+                    plan.continuation = true;
+                }
             }
             plan
         })
@@ -498,14 +502,29 @@ fn accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group()
         accepted_at < continue_at,
         "批发后受理仍须先于 Continue 到达 owner 组（受理@{accepted_at} ≥ Continue@{continue_at}）"
     );
-    // ② 非受理组观察面：无外来受理条目（owner 定向不产生跨组泄漏）。
-    assert!(
-        !report.group_finals[1]
+    // ② 双向定向：每组都**有**本组受理（空桶恒真的弱断言已废弃）——
+    /// 各组观察到的每条 ChildAccepted 的 owner 必属本组（外来泄漏即红），
+    /// 且两组都确实观察到受理（批发不丢非声明续行的组）。
+    for (g, final_) in report.group_finals.iter().enumerate() {
+        let accepted: Vec<_> = final_
             .observed
             .iter()
-            .any(|o| matches!(o, Observed::ChildAccepted(..))),
-        "组 1 不得观察到组 0 的受理（owner 过滤语义不变）"
-    );
+            .filter(|o| matches!(o, Observed::ChildAccepted(..)))
+            .collect();
+        assert!(
+            !accepted.is_empty(),
+            "组 {g} 本组挂单受理必须下行（批发不丢组）"
+        );
+        for o in accepted {
+            let Observed::ChildAccepted(_, owner, _) = o else {
+                unreachable!("已过滤 ChildAccepted");
+            };
+            assert_eq!(
+                owner.0 as usize, g,
+                "组 {g} 不得观察到外来受理（owner 定向语义）"
+            );
+        }
+    }
 }
 
 // ── 6. panic 运输（resume_unwind 原 payload）──

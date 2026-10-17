@@ -279,7 +279,7 @@ fn inline_decision_drives_orders_and_conservation_holds() {
 
 // ── P1-B 等价守卫：共享视图下决策序列黄金值 ──
 
-// golden 常量：P1-B 落地时实测锁定（临时占位 0——首跑填真值）。
+// golden 常量：P1-B 落地时实测锁定（单组确定性 fixture，RNG/视图漂移即红）。
 const SHARED_VIEW_GOLDEN_CASH: i64 = 1_000_000;
 const SHARED_VIEW_GOLDEN_FEES: i64 = 0;
 const SHARED_VIEW_GOLDEN_VOLUME: u64 = 0;
@@ -322,20 +322,13 @@ fn shared_view_decision_sequence_golden() {
     let cash = group.accounts[0].cash;
     let fees: i64 = report.desk_finals.iter().map(|d| d.fee_sink).sum();
     let volume: u64 = report.desk_finals.iter().map(|d| d.market.volume_today).sum();
-    println!(
-        "GOLDEN cash={cash} fees={fees} volume={volume} shares={:?} decides={} resting={resting_per_tick:?} purse_held={:?} foreign={:?}",
-        group.accounts[0].shares,
-        group.decide_calls_total,
-        group.accounts[0].buy_purse_held_cents,
-        group.accounts[0].foreign_active,
-    );
     assert_eq!(cash + fees, 1_000_000, "守恒（golden 前置）");
-    // golden 断言（P1-B 落地实测锁定——待填常量后此测试成为等价守卫）：
+    // golden 断言（决策/RNG 流漂移即红）：
     assert_eq!((cash, fees, volume), (SHARED_VIEW_GOLDEN_CASH, SHARED_VIEW_GOLDEN_FEES, SHARED_VIEW_GOLDEN_VOLUME),
         "共享视图决策序列等价守卫（决策/RNG 流漂移即红）");
     assert_eq!(group.accounts[0].shares, vec![SHARED_VIEW_GOLDEN_SHARES],
         "持仓终态 golden");
-    assert_eq!(group.decide_calls_total, 5, "每 tick due（base=1）——决策次数 golden");
+    assert_eq!(group.decide_calls_total, 5, "每 tick due（该种子 wait 采样恒 1）——决策次数 golden");
     let expected_resting: Vec<Vec<(u16, u64)>> = (0..5)
         .map(|i| vec![SHARED_VIEW_GOLDEN_RESTING[i]])
         .collect();
