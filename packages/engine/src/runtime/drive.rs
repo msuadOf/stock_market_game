@@ -574,6 +574,9 @@ impl RuntimeDriver {
                 let Some(id) = self.id_map.get(global).copied() else {
                     continue;
                 };
+                // P2-2b：首写前值入 undo（安装失败回滚源——替代 baseline
+                /// 全名册账户快照）。
+                session.runtime_record_account_undo(id);
                 #[cfg(test)]
                 {
                     self.account_writes += 1;
@@ -1229,6 +1232,8 @@ impl RuntimeDriver {
             }
         }
         for (id, by_code) in by_account {
+            // P2-2b：首写前值入 undo（同上）。
+            session.runtime_record_account_undo(id);
             let Some(engine_acct) = session.fixture_account_mut(&id) else {
                 continue;
             };

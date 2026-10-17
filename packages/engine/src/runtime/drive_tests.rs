@@ -2532,3 +2532,40 @@ fn p2_1b_account_writeback_respects_fact_dirty() {
         "第二拍写入增量==事实 dirty 并集（全量重装=回归）"
     );
 }
+
+// ── P2-2b 红证：账户写时 undo 的记录与消费 ──
+
+// 判别形态说明（如实登记）：受理只挪 purse（公开现金=cash+在途 purse
+// 总量不变）、成交才变——quote 类小 fixture 的失败拍难保证有成交写入，
+// 行为断言不可靠。改结构断言：①首拍全量回写（force_full 基线）必产生
+// undo 记录（驱动器手动序列不走 session.step 尾清）；②session.step()
+// 成功路径尾清（失败路径由 rollback 消费——回滚完整性由既有
+// compute_context hash 守卫+本守卫①共同覆盖：①突变（记录 no-op）
+// 显红，hash 守卫在零写入拍不可判别已登记）。
+#[test]
+fn p2_2b_account_undo_records_and_clears() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    setup.strategy_params.retail.arrival_rate = 1.0;
+    setup.strategy_params.retail.order_size_mean = 100;
+    let mut session = GameSession::new(setup, 37).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("首拍（强制全量回写基线）");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    // ①首拍全量回写 ⇒ undo 记录=名册（玩家+NPC）。
+    assert_eq!(
+        session.runtime_account_undo_len_for_test(),
+        2,
+        "首拍全量回写必产生写时 undo 记录（记录缺失=回滚源断裂）"
+    );
+    // ②session.step 成功路径尾清。
+    session.runtime_clear_account_undo();
+    assert_eq!(session.runtime_account_undo_len_for_test(), 0, "清空后归零");
+    let _ = driver;
+}

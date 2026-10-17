@@ -1457,6 +1457,11 @@ struct CommittableSessionState {
     #[cfg(feature = "simulation-diagnostics")]
     causal: crate::diagnostics::causal::CausalCollector,
     attention_scheduler: NpcAttentionScheduler,
+    /// P2-2b：账户写时 undo（runtime 安装基线的账户域回滚源——首写
+    /// 前值；瞬态不入存档/hash）。
+    runtime_account_undo:
+        Vec<(AccountId, i64, std::collections::BTreeMap<StockId, crate::account::Position>)>,
+    runtime_account_undo_ids: std::collections::HashSet<AccountId>,
     // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
     /// 发行人注册表（公司规格与开局账套）：股票 ↔ 公司映射与开局账套。
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
@@ -2007,6 +2012,8 @@ impl GameSession {
                 npc_decision_traces:
                     crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
                 attention_scheduler: NpcAttentionScheduler::default(),
+                runtime_account_undo: Vec::new(),
+                runtime_account_undo_ids: std::collections::HashSet::new(),
                 company_registry: std::sync::Arc::new(registry),
                 operations: std::sync::Arc::new(ops),
                 closing: std::sync::Arc::new(closing),
@@ -4953,6 +4960,8 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
+            runtime_account_undo: _,
+            runtime_account_undo_ids: _,
             company_registry,
             operations,
             groups,
@@ -5003,6 +5012,8 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
+            runtime_account_undo: Vec::new(),
+            runtime_account_undo_ids: std::collections::HashSet::new(),
             company_registry: company_registry.clone(),
             groups: groups.clone(),
             operations: operations.clone(),
@@ -5054,6 +5065,8 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
+            runtime_account_undo: _,
+            runtime_account_undo_ids: _,
             company_registry,
             operations,
             groups,

@@ -69,6 +69,8 @@ impl GameSession {
             #[cfg(feature = "simulation-diagnostics")]
                 causal: _,
             attention_scheduler: _,
+            runtime_account_undo: _,
+            runtime_account_undo_ids: _,
             company_registry: _,
             operations: _,
             closing: _,

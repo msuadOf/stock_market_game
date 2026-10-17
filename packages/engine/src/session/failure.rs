@@ -14,11 +14,10 @@ pub enum StepFatal {
 pub(crate) struct RuntimeInstallBaseline {
     tick: u64,
     seq: u64,
-    accounts: Vec<(
-        crate::AccountId,
-        i64,
-        std::collections::BTreeMap<crate::StockId, crate::account::Position>,
-    )>,
+    // P2-2b：accounts 全名册快照退役——改写时 undo（drive 两写入点经
+    // runtime_record_account_undo 记录首写前值，O(dirty)；回滚恢复。
+    // 原 O(名册) 每 tick 快照是驱动器侧 AccountBook::get 全名册遍历+
+    // positions 深拷贝的主要来源（P2-2a 后画像 19% 读写下的大项）。
     markets: std::collections::BTreeMap<crate::StockId, crate::Market>,
     price_history:
         std::collections::BTreeMap<crate::StockId, std::collections::VecDeque<crate::money::Money>>,
@@ -742,6 +741,8 @@ impl GameSession {
                 self.state.desk_book_mirror = mirror;
             }
         }
+        // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
+        self.runtime_clear_account_undo();
         Ok(events)
     }
 
@@ -753,7 +754,6 @@ impl GameSession {
         RuntimeInstallBaseline {
             tick: self.tick(),
             seq: self.current_seq(),
-            accounts: self.runtime_accounts_snapshot(),
             markets: self.state.markets.clone(),
             price_history: self.state.price_history.clone(),
             minute_closes: self.state.market_minute_closes.clone(),
@@ -977,6 +977,34 @@ impl GameSession {
 
     /// runtime 驱动器翻转面（Sol 二审修复集 3）：全账户基线快照
     /// （现金+持仓——安装失败回滚用）。
+    /// P2-2b：账户写时 undo 记录（首写幂等）——runtime 安装基线的账户
+    /// 域回滚源（drive 回写/同拍投影两写入点在写前调用；成功 step 尾
+    /// 清空、失败回滚消费）。O(step 内实际写入账户数)。
+    pub fn runtime_record_account_undo(&mut self, id: crate::AccountId) {
+        if self.state.runtime_account_undo_ids.contains(&id) {
+            return;
+        }
+        let Some(acct) = self.account(id) else {
+            return;
+        };
+        // 先取首写前值再入记录（借用分离）。
+        let prev = (id, acct.cash().cents(), acct.positions().clone());
+        self.state.runtime_account_undo_ids.insert(id);
+        self.state.runtime_account_undo.push(prev);
+    }
+
+    /// P2-2b 红证读面（cfg(test)）：写时 undo 当前记录数。
+    #[cfg(test)]
+    pub fn runtime_account_undo_len_for_test(&self) -> usize {
+        self.state.runtime_account_undo.len()
+    }
+
+    /// P2-2b：成功 step 尾清 undo（失败路径由 rollback 消费）。
+    pub fn runtime_clear_account_undo(&mut self) {
+        self.state.runtime_account_undo.clear();
+        self.state.runtime_account_undo_ids.clear();
+    }
+
     pub fn runtime_accounts_snapshot(
         &self,
     ) -> Vec<(
@@ -1000,7 +1028,6 @@ impl GameSession {
         let RuntimeInstallBaseline {
             tick,
             seq,
-            accounts,
             markets,
             price_history,
             minute_closes,
@@ -1015,12 +1042,15 @@ impl GameSession {
         self.mark_external_mutation();
         self.state.tick = tick;
         self.state.seq = seq;
-        for (id, cash, positions) in accounts {
+        // P2-2b：账户恢复改走写时 undo（首写前值——step 内全部账户写入
+        /// 的回滚等价；无记录=step 内未写=无需恢复）。
+        for (id, cash, positions) in std::mem::take(&mut self.state.runtime_account_undo) {
             if let Some(acct) = self.fixture_account_mut(&id) {
                 acct.fixture_set_cash(crate::money::Money::from_cents(cash));
                 acct.fixture_set_positions(positions);
             }
         }
+        self.state.runtime_account_undo_ids.clear();
         self.state.markets = markets;
         self.state.price_history = price_history;
         self.state.market_minute_closes = minute_closes;
