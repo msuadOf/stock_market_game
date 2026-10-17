@@ -539,6 +539,11 @@ pub struct GroupState {
     /// 等价不变式：非 dirty ⇒ 组端值==session 镜像值（构造期同源投影
     /// +两侧只经 dirty 通道同步）；Start 随 undo 一并清（新 tick 起）。
     belief_dirty: Vec<bool>,
+    /// P2-2a：跨 Start 存活的注入待上行位（InstallPersonal 在 Start 间
+    /// 窗口注入——belief_dirty 会被下一 Start 清，注入态须独立承载到
+    /// 下一次 EchoBelief 上行消费；对齐 pending_force_due 的"效果归
+    /// 下一拍日志域"模式）。
+    belief_pending_dirty: Vec<LocalIdx>,
     /// 公开库（Belief-1b·下：Arc 共享——投递消息稀疏刷新）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
@@ -663,6 +668,7 @@ impl GroupState {
             // P2-1a：dirty 掩码随名册长度初始化（构造期全 false——组端
             // 初值=会话投影同源，无需回装）。
             belief_dirty: vec![false; belief_roster],
+            belief_pending_dirty: Vec::new(),
             library: library_seed,
             root_projection,
             child_in_flight: Default::default(),
@@ -1570,7 +1576,8 @@ impl GroupState {
         // 日结相位的簿变更（Drain Closed→release_child_ticket）不再保存
         // 新快照，Abort 恢复在途票但不恢复执行腿（票/簿分裂）。
         self.undo.clear();
-        // P2-1a：日结转正同步清 dirty。
+        // P2-1a：日结转正同步清 dirty（日结后安装期消费的是日结相位
+        /// 的标记——留待下一 Start 前的正常安装轮完成）。
         self.belief_dirty.iter_mut().for_each(|f| *f = false);
         self.plan_undo_saved = false;
         self.committed_tick = self.cur_tick;
@@ -4347,15 +4354,24 @@ pub fn group_main(
                 }
             }
             GroupIn::EchoBelief => {
-                let states = state.belief_states.clone();
-                // P2-1a：随附本 tick dirty 掩码（驱动器只重装演进位——
-                /// 全量 states 保留给读面 collect_belief 的同源校验）。
-                let dirty = state.belief_dirty.clone();
+                // P2-2a：稀疏上行——只 clone 本 tick dirty 且在册的条目
+                //（省全名册深拷贝；驱动器增量缓存承载全量读面语义）。
+                let pending = std::mem::take(&mut state.belief_pending_dirty);
+                let states: Vec<(_, _)> = state
+                    .belief_states
+                    .iter()
+                    .zip(state.belief_dirty.iter())
+                    .enumerate()
+                    .filter_map(|(i, (slot, dirty))| {
+                        (*dirty || pending.contains(&(i as super::LocalIdx)))
+                            .then(|| slot.as_ref().map(|s| (i as super::LocalIdx, s.clone())))
+                            .flatten()
+                    })
+                    .collect();
                 if up_tx
                     .send(UpMsg::GroupBelief {
                         group: state.group,
                         states,
-                        dirty,
                     })
                     .is_err()
                 {
@@ -4418,10 +4434,9 @@ pub fn group_main(
                         if let Some(slot) = state.belief_states.get_mut(local as usize) {
                             *slot = Some(snapshot);
                         }
-                        // P2-1a：测试注入=dirty（注入后读面/安装面须可见）。
-                        if let Some(flag) = state.belief_dirty.get_mut(local as usize) {
-                            *flag = true;
-                        }
+                        // P2-2a：注入=跨 Start 待上行（Start 会清本 tick
+                        /// 的 belief_dirty——注入态由 pending 承载到上行消费）。
+                        state.belief_pending_dirty.push(local);
                     }
                     None => {
                         abort.store(true, Ordering::SeqCst);

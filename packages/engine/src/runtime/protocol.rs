@@ -551,17 +551,16 @@ pub enum UpMsg {
         /// 逐组内下标的更新后注意力态。
         updates: Vec<(LocalIdx, crate::session::NpcAttentionState)>,
     },
-    /// 信念个人态回执（EchoBelief 应答——逐组内下标；None=非机构位）。
-    /// P2-1a：随附本 tick dirty 掩码（生产演进面标记——驱动器只对
-    /// dirty 位重装 session 镜像，省全名册深拷贝安装；states 保持
-    /// 全量给读面 collect_belief 的同源校验）。
+    /// 信念个人态回执（EchoBelief 应答）。P2-2a：**稀疏上行**——只含
+    /// 本 tick dirty（生产演进面触碰）且在册的条目 `(组内下标, 快照)`；
+    /// 驱动器侧增量维护全量缓存（collect_belief 读面语义不变）。省组端
+    /// 全名册深拷贝上行（组线程 clone 族+缺页税的大头，见
+    /// .tmp/perf-p2-p0-breakdown.md 与 P2-1ab 后复采样）。
     GroupBelief {
         /// 组索引。
         group: GroupIdx,
-        /// 逐组内下标的信念个人态快照（全量）。
-        states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
-        /// 与 states 等长的 dirty 掩码（true=本 tick 生产演进触碰）。
-        dirty: Vec<bool>,
+        /// 本 tick 演进位快照（稀疏——组内下标+快照）。
+        states: Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>,
     },
     /// 计划簿回执（D3a-2c 件5：组内 PlanBook 克隆——交付点投影源）。
     GroupPlans {
@@ -664,13 +663,8 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupObservations { group, .. } => {
                 write!(f, "GroupObservations(group={group})")
             }
-            UpMsg::GroupBelief { group, states, dirty } => {
-                write!(
-                    f,
-                    "GroupBelief(group={group}, n={}, dirty={})",
-                    states.len(),
-                    dirty.iter().filter(|d| **d).count()
-                )
+            UpMsg::GroupBelief { group, states } => {
+                write!(f, "GroupBelief(group={group}, n={})", states.len())
             }
             UpMsg::GroupDeliveryDone { group, updates } => {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())

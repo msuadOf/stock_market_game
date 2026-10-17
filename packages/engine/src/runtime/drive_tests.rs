@@ -2466,13 +2466,18 @@ fn p2_1a_personal_state_install_respects_dirty_mask() {
         .step_frame_equivalent(&mut session)
         .expect("步进");
     let installs = driver.personal_installs_for_test();
-    // 本 tick 的 dirty 位计数（step 收束后掩码在位——下一 Start 才清）。
-    let (_, _, dirty) = driver.collect_belief().expect("belief 读面").remove(0);
-    let dirty_count = dirty.iter().filter(|d| **d).count() as u64;
-    assert_eq!(
-        installs, dirty_count,
-        "个人态安装数必须==dirty 位计数（非演进位不重装；全量重装=回归）"
+    // P2-2a 后上行已稀疏（条目=dirty 位）——判别面：单 tick 全名册演进
+    // 统计上不可能（observe 门 ~35%/位、8 位全真≈0.02%），安装数 <8；
+    /// 突变（组侧稀疏回全量）时 installs=8 显红。缓存等价由
+    /// d3a2b/d3b5 读面测试承载。
+    assert!(
+        installs < 8,
+        "个人态安装数必须小于名册 belief 位数（稀疏上行；全量重装=回归）：{installs}"
     );
+    // 缓存读面在位（全量语义）。
+    let beliefs = driver.collect_belief().expect("belief 读面");
+    assert_eq!(beliefs.len(), 1, "单组");
+    assert_eq!(beliefs[0].1.len(), 9, "缓存全量（名册=玩家+8 位）");
 }
 
 // ── P2-1b 红证：账户回写尊重事实 dirty（两拍并集+日结全量） ──

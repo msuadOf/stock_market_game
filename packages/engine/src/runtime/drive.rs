@@ -40,6 +40,9 @@ pub struct RuntimeDriver {
     /// P2-1b 红证计数（cfg(test)）：账户回写实际写入次数。
     #[cfg(test)]
     account_writes: u64,
+    /// P2-2a：信念全量缓存（全局名册序——稀疏上行增量合并；构造期
+    /// =belief_seeds 同源投影，collect_belief 读面由它承载全量语义）。
+    belief_cache: Vec<Option<super::world::BeliefParticipantSnapshot>>,
     /// 日终清簿事件缓冲（take_drained_events 取走）。
     drained_events: Vec<Event>,
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
@@ -386,6 +389,8 @@ impl RuntimeDriver {
         }
         // D5 adopt 收口：迁入后清旧簿（双域一致——save fault2226）。
         session.runtime_clear_resting_for_adoption();
+        // P2-2a：稀疏上行读面的全量缓存基线（构造期投影==组端初值）。
+        let belief_cache = spec.belief_seeds.clone();
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let driver = Self {
             world,
@@ -399,6 +404,7 @@ impl RuntimeDriver {
             force_full_accounts: true,
             #[cfg(test)]
             account_writes: 0,
+            belief_cache,
             drained_events: Vec::new(),
             pending_rejections: Vec::new(),
             accounts_per_group: per_group.max(1),
@@ -707,29 +713,25 @@ impl RuntimeDriver {
             .map_err(|e| format!("个人态交付投影失败：{e:?}"));
         match belief_states {
             Ok(collected) => {
-                for (group, states, dirty) in collected {
-                    for (local, snapshot) in states.iter().enumerate() {
-                        // P2-1a：只重装本 tick 生产演进位（dirty 掩码）。
-                        /// 非 dirty ⇒ 组端值==session 镜像值（构造期同源
-                        /// 投影+两侧只经 dirty 通道同步）——跳过重装省
-                        /// 全名册六件深拷贝/merge（B 口径 ≈58% CPU 大头，
-                        /// 见 .tmp/perf-p2-p0-breakdown.md）。
-                        if !dirty.get(local).copied().unwrap_or(false) {
-                            continue;
-                        }
-                        let Some(&id) = self
-                            .id_map
-                            .get(group as usize * self.accounts_per_group + local)
-                        else {
+                for (group, states) in collected {
+                    // P2-2a：稀疏条目=本 tick 生产演进位（组端已滤非
+                    /// dirty——上行即 dirty）。逐条重装 session 镜像并
+                    /// 增量维护全量缓存（读面语义）。等价不变式：
+                    /// 缓存/镜像与组端只在 dirty 通道同步、构造期同源。
+                    for (local, snapshot) in states {
+                        let global =
+                            group as usize * self.accounts_per_group + local as usize;
+                        let Some(&id) = self.id_map.get(global) else {
                             continue;
                         };
-                        if let Some(snapshot) = snapshot {
-                            #[cfg(test)]
-                            {
-                                self.personal_installs += 1;
-                            }
-                            session.set_runtime_personal_state(id, snapshot);
+                        #[cfg(test)]
+                        {
+                            self.personal_installs += 1;
                         }
+                        if let Some(slot) = self.belief_cache.get_mut(global) {
+                            *slot = Some(snapshot.clone());
+                        }
+                        session.set_runtime_personal_state(id, &snapshot);
                     }
                 }
             }
@@ -1431,20 +1433,24 @@ impl RuntimeDriver {
         self.account_writes
     }
 
-    /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面）。
+    /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面——**全量语义**
+    /// 读面；生产安装链的 dirty 过滤在 step 内部承载，不经此面。
+    /// P2-1a：随附 dirty 掩码（读面一般忽略；同源校验可用）。
     pub fn collect_belief(
-        &mut self,
-    ) -> Result<
-        Vec<(
-            super::GroupIdx,
-            Vec<Option<super::world::BeliefParticipantSnapshot>>,
-            Vec<bool>,
-        )>,
-        String,
-    > {
-        self.world
-            .collect_group_belief()
-            .map_err(|e| format!("信念态收集失败：{e:?}"))
+        &self,
+    ) -> Result<Vec<(super::GroupIdx, Vec<Option<super::world::BeliefParticipantSnapshot>>)>, String>
+    {
+        // P2-2a：读面不经组线程（上行已稀疏化）——由增量缓存承载
+        //（构造期投影基线+每 tick dirty 增量合并，与组端权威同源）。
+        let per = self.accounts_per_group.max(1);
+        Ok((0..self.id_map.len().div_ceil(per))
+            .map(|g| {
+                (
+                    g as super::GroupIdx,
+                    self.belief_cache[g * per..].iter().take(per).cloned().collect(),
+                )
+            })
+            .collect())
     }
 
     /// 计划簿收集（D3a-2c 件5：组内 PlanBook 上行——测试/红证面；生产
