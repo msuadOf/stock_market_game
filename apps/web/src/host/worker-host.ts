@@ -136,8 +136,6 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
 
 interface WorkerHostOptions {
   readonly enableE2EStepping?: boolean;
-  /** 可选 Rayon pool 大小，不限制市场请求或任务数量。 */
-  readonly threadCount?: number;
 }
 
 export function createWorkerHost(
@@ -323,9 +321,7 @@ export function createWorkerHost(
       }
     });
 
-    worker.postMessage(options.threadCount === undefined
-      ? { type: "init" }
-      : { type: "init", threads: options.threadCount });
+    worker.postMessage({ type: "init" });
 
     async function control(type: string, successType: string, payload: Record<string, unknown> = {}): Promise<void> {
       const requestedGeneration = currentGeneration;

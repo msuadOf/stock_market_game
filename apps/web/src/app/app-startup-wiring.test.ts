@@ -6,8 +6,9 @@ const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 const lifecycle = readFileSync(new URL("./useSessionHostLifecycle.ts", import.meta.url), "utf8");
 const controls = readFileSync(new URL("./session-control-commands.ts", import.meta.url), "utf8");
 
-test("受控浏览器验收每页面保留双线程，生产继续使用浏览器并发能力", { timeout: 10000 }, () => {
-  assert.match(lifecycle, /threadCount: tradingE2EMode \? 2 : undefined/);
+test("受控浏览器验收保留受控单步；WASM 线程池参数已随 rayon 退役移除", { timeout: 10000 }, () => {
+  assert.match(lifecycle, /enableE2EStepping: tradingE2EMode/);
+  assert.doesNotMatch(lifecycle, /threadCount/);
 });
 
 test("外层 App 先选择，再挂载游戏；一次读档源在外层生命周期共享", () => {

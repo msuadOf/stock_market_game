@@ -44,7 +44,6 @@ async function createFixture(
   const bindings = {
     default: async () => ({ memory: new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }) }),
     ingress_token: (current: number) => current,
-    initThreadPool: async (threads: number) => { calls.push(`threads:${threads}`); },
     create_session: () => { calls.push(`create:${handle}`); return handle; },
     civil_date: (current: number) => current === 7 ? "2030-01-02" : "2031-02-03",
     snapshot: (current: number) => { calls.push(`snapshot:${current}`); if (failing === "snapshot") throw new Error("snapshot failed"); return { handle: current }; },
@@ -59,7 +58,6 @@ async function createFixture(
   };
   replace(bindingsKey, bindings);
   replace("self", { postMessage: (message: Message) => { posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
-  replace("navigator", { hardwareConcurrency: 4 });
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0]).buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
   replace("clearTimeout", (id: number) => { timers.delete(id); });
@@ -87,9 +85,9 @@ async function createFixture(
   await import(`./wasm-worker.ts?owner-test=${id}`);
   assert.ok(listener);
   const send = (message: Message) => { listener!({ data: message }); };
-  send({ type: "init", threads: 2 });
+  send({ type: "init" });
   await ready;
-  assert.deepEqual(posted, [{ type: "ready", threads: 2 }]);
+  assert.deepEqual(posted, [{ type: "ready" }]);
   posted.length = 0;
   return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; } };
 }
