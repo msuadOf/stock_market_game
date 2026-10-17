@@ -1133,6 +1133,48 @@ impl World {
             crate::verification_evidence::PhaseTimingBinding::empty();
     }
 
+    /// P2-3e：组注意力稀疏上行（生产安装段——只回本 tick 演进位；全量
+    /// 读面 collect_group_attention 不变，构造恢复/Abort 测试锚）。
+    pub fn collect_group_attention_sparse(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, RuntimeError> {
+        if self.group_txs.len() != self.n_groups {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "collect_group_attention_sparse 通道面与组数不一致（txs={} n_groups={}——世界已断连）",
+                    self.group_txs.len(),
+                    self.n_groups
+                ),
+            });
+        }
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoAttentionSparse).map_err(|_| {
+                RuntimeError::SendFailed { detail: "EchoAttentionSparse 广播失败".to_owned() }
+            })?;
+        }
+        let mut out = Vec::with_capacity(self.n_groups);
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupAttention { group, attention } => {
+                    out.push((group, attention));
+                    left -= 1;
+                }
+                other => {
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!(
+                            "collect_group_attention_sparse 期望 GroupAttention，收到 {other:?}"
+                        ),
+                    });
+                }
+            }
+        }
+        out.sort_by_key(|(g, _)| *g);
+        Ok(out)
+    }
+
     /// 组注意力调度收集（P1-10：逐账户 next_due 上行——驱动器写回
     /// 会话 npc_attention 的真实状态源）。
     pub fn collect_group_attention(

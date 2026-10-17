@@ -433,6 +433,11 @@ pub enum GroupIn {
     EchoOpenDerivation,
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
+    /// P2-3e：稀疏注意力上行请求（生产安装段——只回本 tick 演进位
+    ///（evaluate 消费过 RNG/重排 next_due 的位）；全量读面用
+    /// EchoAttention 不变。B fixture due≈20-40/tick vs 名册 20000——
+    /// 全量上行+逐位 get_mut 写是驱动线程 attention 面 ~10% 主源）。
+    EchoAttentionSparse,
     EchoAccounts,
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
     EchoCandles,

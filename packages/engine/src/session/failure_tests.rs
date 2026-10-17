@@ -647,3 +647,69 @@ fn p2_3c_retail_rejection_dispatch_keeps_account_grouped_order() {
         "拒收诊断必须账户升序分组（单遍派发输出序等价）：{diagnostics:?}"
     );
 }
+
+// ── P2-3e 红证：注意力稀疏上行的镜像不变式 ──
+
+// 修复背景：生产安装段原每 tick 全名册上行+逐位 get_mut 写（B fixture
+// due≈20-40/tick vs 名册 20000——99.8% 写为幂等空转，驱动线程 attention
+// 面 ~10% 主源）。P2-3e 改稀疏：只上行本 tick 演进位（evaluate 消费 RNG/
+// 重排 next_due 或 ForceDue 改排），非演进位不变式 session 镜像==组权威
+//（同 belief P2-2a）。守卫：数拍稀疏安装后，组端全量读面（权威）与
+// session 镜像逐 NPC 逐字段一致（稀疏丢位/空上行突变即红）。
+#[test]
+fn p2_3e_sparse_attention_uplink_keeps_session_mirror_equal() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.retail_count = 32;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    setup.ticks_per_day = 64;
+    setup.strategy_params.retail.arrival_rate = 1.0;
+    setup.strategy_params.retail.order_size_mean = 100;
+    let mut game = GameSession::new(setup, 223).expect("会话构造");
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).expect("驱动器构造");
+    driver.adopt_session_seq(&game);
+    for _ in 0..3 {
+        game
+            .runtime_step_with_install(&mut driver)
+            .expect("步进+安装（稀疏注意力写回）");
+    }
+    // 前置：三拍内确有演进（attention Evolve 面——否则守卫空转）。用
+    // trace 证决策跑过（决策⊂演进）。
+    let traces = driver
+        .collect_retail_traces()
+        .expect("trace 读面")
+        .concat();
+    assert!(
+        !traces.is_empty(),
+        "三拍内必须有零售决策（演进面存在——守卫空转防护）"
+    );
+    // 组端全量读面（权威） vs session 镜像（runtime_attention_state）。
+    let authority = driver.collect_attention().expect("组端全量读面");
+    let mirror: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = game
+        .runtime_attention_state()
+        .into_iter()
+        .map(|(id, due, rng)| (id, (due, rng)))
+        .collect();
+    assert!(!mirror.is_empty(), "session 镜像非空（fixture 前提）");
+    let mut checked = 0usize;
+    for (_g, entries) in &authority {
+        for (local, next_due, rng_state) in entries {
+            let Some(&id) = driver.id_map.get(*local as usize) else {
+                continue;
+            };
+            let Some((m_due, m_rng)) = mirror.get(&id) else {
+                continue;
+            };
+            assert_eq!(
+                next_due, m_due,
+                "NPC {id:?} next_due：组权威与 session 镜像一致（稀疏上行丢位=红）"
+            );
+            assert_eq!(
+                rng_state, m_rng,
+                "NPC {id:?} rng_state：组权威与 session 镜像一致（稀疏上行丢位=红）"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "至少核对一个 NPC（读面接线防护）");
+}

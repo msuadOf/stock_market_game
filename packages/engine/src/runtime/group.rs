@@ -573,6 +573,10 @@ pub struct GroupState {
     /// 翻转批组参数化：本组在全局名 roster 的偏移（RootProjection 的
     /// per-local 向量按全局序——组内 local 访问需加偏移；单组=0）。
     pub(crate) roster_offset: usize,
+    /// P2-3e：本 tick 注意力演进位（evaluate 消费 RNG/重排 next_due 或
+    /// ForceDue 改排的位——稀疏上行源）。Start 清（上一 tick 的演进已在
+    /// Drain 期上行消费；未消费即失效）。
+    attention_evolved: Vec<LocalIdx>,
     /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
     /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
@@ -676,6 +680,7 @@ impl GroupState {
             pending_force_due: Vec::new(),
             retail_traces: Vec::new(),
             roster_offset: 0,
+            attention_evolved: Vec::new(),
             #[cfg(test)]
             injected_assessments: Vec::new(),
             #[cfg(test)]
@@ -1527,6 +1532,7 @@ impl GroupState {
         // P2-1a：dirty 掩码随新 tick 清（上一 tick 的 dirty 已在安装期
         /// 上行消费；新 tick 的演进面重新标记）。
         self.belief_dirty.iter_mut().for_each(|f| *f = false);
+        self.attention_evolved.clear();
         self.plan_undo_saved = false;
         // Sol 二审修复集 4：Start 间窗口收到的 ForceDue 在此应用——效果
         // 归本 tick 日志域（Abort 冲回强制前值、指令失效需重发）。
@@ -1539,6 +1545,8 @@ impl GroupState {
                             prev: p.next_due,
                         });
                         p.next_due = target;
+                        // P2-3e：ForceDue 改排=演进位（稀疏上行须携带）。
+                        self.attention_evolved.push(local);
                     }
                     // D5 #2：强制观察登记（evaluate 门绕行——仍续流）。
                     if ensure_observe {
@@ -1579,6 +1587,7 @@ impl GroupState {
         // P2-1a：日结转正同步清 dirty（日结后安装期消费的是日结相位
         /// 的标记——留待下一 Start 前的正常安装轮完成）。
         self.belief_dirty.iter_mut().for_each(|f| *f = false);
+        self.attention_evolved.clear();
         self.plan_undo_saved = false;
         self.committed_tick = self.cur_tick;
         // ① Drain 回流落账（清空在途）。
@@ -3145,6 +3154,9 @@ impl GroupState {
                                 );
                             due_npcs += 1;
                             pending_next_due.push((local, prev_due));
+                            // P2-3e：evaluate 消费过 RNG/重排 next_due——
+                            /// 稀疏上行演进位标记（observe=false 也演进）。
+                            self.attention_evolved.push(local);
                             if observes {
                                 decide_calls += 1;
                                 if chain_local {
@@ -3170,6 +3182,8 @@ impl GroupState {
                         );
                         due_npcs += 1;
                         pending_next_due.push((local, prev_due));
+                        // P2-3e：同上——稀疏上行演进位标记。
+                        self.attention_evolved.push(local);
                         if observes {
                             decide_calls += 1;
                             let (ops, cancels) = decide_account(
@@ -4764,6 +4778,38 @@ pub fn group_main(
                     abort.store(true, Ordering::SeqCst);
                     result = Err(RuntimeError::SendFailed {
                         detail: format!("组 {who} GroupAttention 发送失败"),
+                    });
+                    break;
+                }
+            }
+            GroupIn::EchoAttentionSparse => {
+                // P2-3e：生产安装段稀疏上行——只回本 tick 演进位
+                ///（evaluate 消费 RNG/重排 next_due，或 ForceDue 改排的位）。
+                /// 非演进位 session 镜像==组权威（构造期同源+只经本通道
+                /// 同步——不变式同 belief P2-2a），全量语义由驱动器缓存/
+                /// session 镜像承载。全量读面用 EchoAttention（构造恢复/
+                /// Abort 测试锚）不变。
+                let evolved = std::mem::take(&mut state.attention_evolved);
+                let attention = match &state.decision {
+                    Some((profiles, _)) => evolved
+                        .into_iter()
+                        .map(|i: LocalIdx| {
+                            let mixed = (state.group as u64)
+                                .wrapping_mul(0x9E3779B97F4A7C15)
+                                .wrapping_add(u64::from(i));
+                            (i, profiles[i as usize].next_due, profiles[i as usize].seed ^ mixed)
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                };
+                let msg = UpMsg::GroupAttention {
+                    group: state.group,
+                    attention,
+                };
+                if up_tx.send(msg).is_err() {
+                    abort.store(true, Ordering::SeqCst);
+                    result = Err(RuntimeError::SendFailed {
+                        detail: format!("组 {who} GroupAttention(稀疏) 发送失败"),
                     });
                     break;
                 }

@@ -1795,10 +1795,12 @@ impl RuntimeDriver {
             session.set_runtime_minute_closes(&code, merged);
         }
         // P1-10（Sol）：注意力候选真实写回——组线程 next_due 是调度
-        // 权威（替换"推到 tick"的假迁移）。
+        // 权威（替换"推到 tick"的假迁移）。P2-3e：生产安装段改稀疏上行
+        ///（只回本 tick 演进位；非演进位 session 镜像==组权威——不变式
+        /// 同 belief P2-2a。B fixture due≈20-40/tick vs 名册 20000）。
         let collected = self
             .world
-            .collect_group_attention()
+            .collect_group_attention_sparse()
             .map_err(|e| format!("注意力收集失败：{e:?}"))?;
         let mut entries = Vec::new();
         for (g, attention) in collected {
