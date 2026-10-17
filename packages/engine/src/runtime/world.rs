@@ -213,6 +213,11 @@ pub struct WorldSpec {
     /// D0：世界起始已转正 tick（恢复/接管对齐——组/部/全局域从此起步，
     /// 相位按绝对 tick 推导；0=全新世界）。
     pub initial_committed_tick: u64,
+    /// Sol 终审四审 A2（restore 重复日结）：恢复形态下上一拍若为日结
+    /// 拍（session.tick%tpd==0——session 日终迁移已跑），构造期即视为
+    /// 该交易日已日结——否则首拍 run_ticks 的自动日结判定会重复跑
+    /// 一次日结（desk 二次归档使日 K 多一条 fault2064）。
+    pub initial_last_day_end_tick: Option<u64>,
     /// 内联决策装配（Some=decide_data 路径；None=测试脚本路径）。
     pub decision: Option<DecisionSetup>,
     /// 公司域权益产出（日结 AdminBatch 注入；None=无权益）。
@@ -399,6 +404,7 @@ impl World {
             order_ttl_ticks,
             history_len,
             initial_committed_tick,
+            initial_last_day_end_tick,
             decision,
             rights_computer,
             initial_cash_override,
@@ -650,7 +656,7 @@ impl World {
             rights_computer,
             ticks_per_day,
             day_end_validator: Box::new(|_| Ok(())),
-            last_day_end_tick: None,
+            last_day_end_tick: spec.initial_last_day_end_tick,
             capture_slot,
             last_day_end_candidate: None,
             drained_lifecycle: Vec::new(),

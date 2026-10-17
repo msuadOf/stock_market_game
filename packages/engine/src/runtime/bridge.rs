@@ -91,7 +91,10 @@ pub fn world_spec_from_setup(
         },
         rounds_cap: 8,
         stocks,
-        config: Arc::new(GameConfig::proposed_defaults()),
+        // Sol 终审四审 A4 判决点：此前用默认 GameConfig 覆盖传入配置
+        /// ——价格笼子/费则/整手等会话级差异（如禁笼子 fixture）被静默
+        /// 丢弃，session 18 例价格规则族显红。改为透传 setup.config。
+        config: Arc::new(setup.config.clone()),
         ticks_per_day: setup.ticks_per_day,
         auction_ticks: setup.auction_ticks,
         closing_auction_ticks: setup.closing_auction_ticks,
@@ -100,6 +103,7 @@ pub fn world_spec_from_setup(
         // 16——会话设 32 时 desk 价格窗只给 16 条，恢复校验即失败）。
         history_len: setup.history_len,
         initial_committed_tick: 0,
+        initial_last_day_end_tick: None,
         decision,
         rights_computer: None,
         initial_cash_override: None,

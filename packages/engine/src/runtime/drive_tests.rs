@@ -2599,9 +2599,14 @@ fn p2_2b_account_undo_records_and_clears() {
 // 置漂移、聚合量稳定；撮合拍内任意政策见 memory/project_concurrent_
 // matching_policy）。聚合量（trace 数/成交量/现金守恒）7 轮实测稳定；
 // 逐位等价由 B 探针 events/fees（300/1000 tick）承载。
-const P2_3A_GOLDEN_TRACES: usize = 13; // 落地前实测锁定
-const P2_3A_GOLDEN_VOLUME: u64 = 100; // 落地前实测锁定
-const P2_3A_GOLDEN_CASH: i64 = 1_000_065_568_818; // 落地前实测锁定
+// 落地前实测锁定；Sol 终审四审 A4 配套重锚（fixture 第一股 600000→
+// 000001 深主板——desk/StockId 映射修复后 retail 选股与成交路径随
+// 名册-股目录派生流变化：traces 13 不变、成交 100→0（旧值来自股序
+// 错配形态下的跨股对手）、现金总量差=成交额+费。重锚为新实测；决策
+// 序列守卫的判别力（traces/现金逐位）保持。
+const P2_3A_GOLDEN_TRACES: usize = 13;
+const P2_3A_GOLDEN_VOLUME: u64 = 0;
+const P2_3A_GOLDEN_CASH: i64 = 1_000_065_569_869;
 
 #[test]
 fn p2_3a_retail_chain_shared_observation_golden() {
@@ -2736,6 +2741,11 @@ fn p2_3d_retail_slot_take_restores_on_abort() {
 fn p2_4a_run(force_full_every_tick: bool) -> (crate::session::StateHash, Vec<String>) {
     let mut setup = setup_fixture();
     setup.npcs.retail_count = 4;
+    // Sol 终审四审收尾：连续窗驱动（auction=0）——原 fixture 场景的
+    // 逐拍交叉/部分成交判别前提是连续段撮合；A4 股序修复后（desk
+    // 与 StockId 正确对应），t1-11 落在竞价申报窗（auction=15）使
+    // 全程无撮合、Changed 差分判别面前置失效。
+    setup.auction_ticks = 0;
     // 集合竞价 1 tick（tick 2 起连续竞价——每拍 desk_trades 使 dirty 集
     // 非空；默认 15 拍全程集合竞价、事实仅在 AuctionCompleted 落地，
     // tick 2-9 dirty 恒空，稀疏回声路径无真实负载）。

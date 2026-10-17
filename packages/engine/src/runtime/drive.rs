@@ -374,6 +374,16 @@ impl RuntimeDriver {
         // D0：世界从会话当前 tick 起步（锁步不变量的构造期对齐——
         // 全新会话即 0；恢复/接管场景相位按绝对 tick 推导）。
         spec.initial_committed_tick = session.tick();
+        // Sol 终审四审 A2（restore 重复日结）：恢复形态的上一拍若为
+        /// 日结拍（tick%tpd==0——session 日终迁移已完成）即视为该交易
+        /// 日已日结，防首拍 run_ticks 自动日结重复归档日 K。
+        let restore_tpd = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
+        spec.initial_last_day_end_tick =
+            if session.tick() > 0 && session.tick() % restore_tpd == 0 {
+                Some(session.tick())
+            } else {
+                None
+            };
         spec.accounts_per_group = per_group;
         spec.initial_cash = 0;
         spec.initial_cash_override = Some(cash);
@@ -2292,6 +2302,22 @@ impl RuntimeDriver {
                 if day < skip || day >= archive_limit {
                     continue;
                 }
+                // Sol 终审四审 A2 收口：world 日结后的补装**不 push**——desk
+                /// roll 归档的当日 K 与 session active（常规装已载）是同一
+                /// 份数据的两面，session 日终迁移（install_runtime_day_
+                /// boundary 的 commit_active）已归档一条；补装再 push 会
+                /// 双重归档（日 K 多一条 fault2064）。补装只承载 active
+                /// 清空（日界静点）。
+                // Sol 终审四审 A2 收口（统一归档点）：**日结拍一律不
+                /// push**——desk 的 roll（相位感知，在日末拍自身的
+                /// begin/match 已完成）使常规 install 时 desk hist 已含
+                /// 当日条，而 session 日终迁移（commit_active）也会归档
+                /// active——push 与 commit 是同一份数据的两面，并存即
+                /// 双重归档（A2PUSH/A2COMMIT 打点实证）。归档统一由
+                /// commit 承载（active 已装）；非日结拍 push 不变。
+                if post_day_end || ends_day {
+                    break;
+                }
                 session.push_historical_candle_for_runtime(
                     &code,
                     crate::session::DailyCandle {
@@ -2309,6 +2335,11 @@ impl RuntimeDriver {
             // 活跃 K 窗口对齐（存档校验 fault2076）：竞价申报窗
             // （day_tick < auction_entry=10）活跃 K 须为空。
             let s = session.export_setup_for_runtime();
+            // 相位基准维持步后 tick（曾试拍前 tick−1 对齐执行相位——
+            /// 修复日结拍误清，但与档校验 fault2076 的步后口径错位，
+            /// tick2/竞价标记族交替显红；两侧口径的完全对齐属"日 K
+            /// 相位状态机等价"专项，登记后置——本形态维持步后与档
+            /// 校验同侧）。
             let day_tick = session.tick() % s.ticks_per_day.max(1);
             let auction_entry = s.auction_ticks - s.auction_ticks / 3;
             // 活动 K 空窗与存档校验 fault2076 同式：竞价申报窗——
@@ -2321,6 +2352,31 @@ impl RuntimeDriver {
             let candle_time = session.candle_date_time_for_runtime();
             if active_must_be_empty {
                 session.clear_active_candle_for_runtime(&code);
+            }
+            // Sol 终审四审 A2 补齐：无成交日的**占位 K**（旧管线每
+            /// PriceTick 拍 mark_candle(None, time, last, 0) 的占位语义
+            /// ——日终 commit 归档占位 K，档校验期望=预置+day 不因无
+            /// 交易日缺条 fault2064）。desk active 仅在成交时建立——
+            /// 连续段缺席时以收束点 last_price 合成。
+            if active.is_none() && !active_must_be_empty && !post_day_end {
+                let last = self
+                    .world_public_views()
+                    .get(stock_idx as usize)
+                    .map(|v| v.last_price.max(1))
+                    .unwrap_or(1);
+                let placeholder = crate::money::Money::from_cents(last);
+                session.set_active_candle_for_runtime(
+                    &code,
+                    crate::session::DailyCandle {
+                        time: candle_time,
+                        open: placeholder,
+                        high: placeholder,
+                        low: placeholder,
+                        close: placeholder,
+                        volume: 0,
+                        trade_stats: Some(Default::default()),
+                    },
+                );
             }
             if let Some(a) = active.filter(|_| !active_must_be_empty) {
                 session.set_active_candle_for_runtime(
