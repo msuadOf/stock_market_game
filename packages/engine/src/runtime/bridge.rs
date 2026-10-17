@@ -69,6 +69,7 @@ pub fn world_spec_from_setup(
         .collect::<Result<_, _>>()?;
     Ok(WorldSpec {
         initial_desk_orders: Vec::new(),
+        initial_desk_next_serial: Vec::new(),
         n_groups: 1, // 缺省单组；组数按名册规模推导由账户面接线批补
         accounts_per_group: 0,
         initial_cash: 0,

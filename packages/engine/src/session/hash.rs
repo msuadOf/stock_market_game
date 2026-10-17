@@ -60,6 +60,7 @@ impl GameSession {
             ingress_receipt_cursors: _,
             npc_attention: _,
             desk_book_mirror: _,
+            runtime_desk_serial_cursors: _,
             retail_experience: _,
             npc_order_lifecycles: _,
             last_retail_decisions: _,

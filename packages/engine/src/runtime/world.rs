@@ -228,6 +228,9 @@ pub struct WorldSpec {
     pub library: Option<std::sync::Arc<crate::information::PublicLibrary>>,
     /// D5 adopt：构造期直入 desk 初始簿的会话旧簿在途单（按股 idx）。
     pub initial_desk_orders: Vec<Vec<super::desk::DeskRestingSeed>>,
+    /// 每股 desk 序号游标种子（恢复链——空簿也保留已耗序号；Sol 四轮
+    /// 修复：save 投影持久化真实 next_serial，恢复侧贯通到新 Desk）。
+    pub initial_desk_next_serial: Vec<u64>,
     /// D3a-2c 件2：决策链根组装投影（None=无会话来源——observe 直调不可
     /// 用，读面上行空）。
     pub root_projection: Option<std::sync::Arc<RootProjection>>,
@@ -391,6 +394,7 @@ impl World {
             belief_seeds,
             library,
             initial_desk_orders,
+            initial_desk_next_serial,
             root_projection,
             civil_start_date,
         } = spec;
@@ -578,6 +582,11 @@ impl World {
                 initial_recent_prices: stock_spec.initial_recent_prices,
                 initial_market: stock_spec.initial_market,
                 initial_public_cutoff: stock_spec.initial_public_cutoff,
+                // Sol 四轮修复：恢复链序号游标贯通（空簿保留已耗序号）。
+                initial_next_serial: initial_desk_next_serial
+                    .get(s as usize)
+                    .copied()
+                    .unwrap_or(0),
             };
             let handle = std::thread::Builder::new()
                 .name(format!("rt-desk-{s}"))
@@ -1224,7 +1233,7 @@ impl World {
     /// 收齐——desk 权威的费用累计/余量）。
     pub fn collect_desk_resting(
         &mut self,
-    ) -> Result<Vec<Vec<super::protocol::RestingFact>>, RuntimeError> {
+    ) -> Result<(Vec<Vec<super::protocol::RestingFact>>, Vec<u64>), RuntimeError> {
         for tx in &self.desk_txs {
             tx.send(DeskMsg::EchoResting).map_err(|_| {
                 RuntimeError::SendFailed {
@@ -1234,10 +1243,17 @@ impl World {
         }
         let mut out: Vec<Option<Vec<super::protocol::RestingFact>>> =
             vec![None; self.desk_txs.len()];
+        // Sol 四轮修复：每股 desk 真实 next_serial（空簿也保留已耗序号）。
+        let mut cursors = vec![0u64; self.desk_txs.len()];
         let mut left = self.desk_txs.len();
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
-                UpMsg::DeskResting { stock, orders } => {
+                UpMsg::DeskResting {
+                    stock,
+                    orders,
+                    next_serial,
+                } => {
+                    cursors[stock as usize] = next_serial;
                     if out[stock as usize].replace(orders).is_some() {
                         return Err(RuntimeError::Disconnected {
                             who: None,
@@ -1258,7 +1274,10 @@ impl World {
                 }
             }
         }
-        Ok(out.into_iter().map(|slot| slot.unwrap_or_default()).collect())
+        Ok((
+            out.into_iter().map(|slot| slot.unwrap_or_default()).collect(),
+            cursors,
+        ))
     }
 
     /// 组账户快照（全量读面：调试纵切/日结 force_full——向全部组发

@@ -1451,6 +1451,11 @@ struct CommittableSessionState {
     /// 玩家在途/预留读面的源。旧管线读面（session markets 簿）在
     /// runtime 下恒空，公开面（A 股竞价隐藏/截点揭示）自此承载。
     pub desk_book_mirror: BTreeMap<StockId, DeskBookMirror>,
+    /// runtime desk 序号游标的会话级缓存（Sol 四轮修复：save 投影权威
+    /// ——镜像瞬态（install 段刷新、特定相位拍后可能缺席），游标只增
+    /// 不减须持久于会话生命周期；不入 SaveSlot——save 落
+    /// book_next_sequences，restore 经旧簿游标回读）。
+    pub runtime_desk_serial_cursors: Vec<u64>,
     last_retail_order_events: Vec<RetailOrderDiagnosticEvent>,
     #[cfg(feature = "simulation-diagnostics")]
     npc_decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
@@ -2021,6 +2026,7 @@ impl GameSession {
                 npc_attention: AccountPagedMap::default(),
                 retail_experience: AccountPagedMap::default(),
                 desk_book_mirror: BTreeMap::new(),
+                runtime_desk_serial_cursors: Vec::new(),
                 npc_order_lifecycles: Vec::new(),
                 last_retail_decisions: Vec::new(),
                 last_retail_order_events: Vec::new(),
@@ -3307,28 +3313,27 @@ impl GameSession {
                     })
                     .collect()
             },
-            book_next_sequences: if self.state.desk_book_mirror.is_empty() {
-                self.state
+            // Sol 四轮修复：序号游标=三源逐股 max（只增不减——R26 空簿
+            /// 也保留已耗序号）：旧簿 book_next_sequence（旧管线/restore
+            /// 载入）、desk 镜像 next_serial（runtime 权威）、会话级
+            /// 缓存 runtime_desk_serial_cursors（镜像瞬态缺席的兜底）。
+            book_next_sequences: {
+                let mut out: std::collections::BTreeMap<StockId, u64> = self
+                    .state
                     .markets
                     .iter()
                     .map(|(code, market)| (code.clone(), market.book_next_sequence()))
-                    .collect()
-            } else {
-                // D5：desk 镜像档的簿序=desk serial 域（max+1；fault2079/
-                /// 1038 的序域一致性与旧簿解耦）。
-                self.state
-                    .desk_book_mirror
-                    .iter()
-                    .map(|(code, mirror)| {
-                        let max_serial = mirror
-                            .orders
-                            .iter()
-                            .map(|(_, _, _, _, serial, _)| *serial)
-                            .max()
-                            .unwrap_or(0);
-                        (code.clone(), max_serial.saturating_add(1))
-                    })
-                    .collect()
+                    .collect();
+                for (code, mirror) in &self.state.desk_book_mirror {
+                    let slot = out.entry(code.clone()).or_insert(0);
+                    *slot = (*slot).max(mirror.next_serial);
+                }
+                for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
+                    let code = StockId(idx as u32);
+                    let slot = out.entry(code).or_insert(0);
+                    *slot = (*slot).max(*cursor);
+                }
+                out
             },
             filled_orders: self
                 .state
@@ -4999,6 +5004,7 @@ impl CommittableSessionState {
             last_retail_decisions,
             last_retail_order_events,
             desk_book_mirror,
+            runtime_desk_serial_cursors,
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces,
             #[cfg(feature = "simulation-diagnostics")]
@@ -5060,6 +5066,7 @@ impl CommittableSessionState {
             last_retail_decisions: last_retail_decisions.clone(),
             last_retail_order_events: last_retail_order_events.clone(),
             desk_book_mirror: desk_book_mirror.clone(),
+            runtime_desk_serial_cursors: runtime_desk_serial_cursors.clone(),
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces: npc_decision_traces.clone(),
             #[cfg(feature = "simulation-diagnostics")]
@@ -5122,6 +5129,7 @@ impl CommittableSessionState {
             last_retail_decisions,
             last_retail_order_events,
             desk_book_mirror,
+            runtime_desk_serial_cursors,
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces,
             #[cfg(feature = "simulation-diagnostics")]
@@ -5671,6 +5679,9 @@ pub struct DeskBookMirror {
     pub last_price: Money,
     /// 收盘竞价公开截点（老单 serial<截点公开；连续段=0）。
     pub public_cutoff_serial: u64,
+    /// desk 序号游标（真实 next_serial——空簿也保留已耗序号；Sol 四轮
+    /// 修复：save 的 book_next_sequences 权威源，不再从存活单重算）。
+    pub next_serial: u64,
 }
 
 

@@ -552,10 +552,12 @@ pub enum DeskMsg {
 /// worker → 协调者的上行消息（全部 worker 共用一个 mpsc）。
 /// 手写 Debug：panic payload 不透明，只报告变体名与身份。
 pub enum UpMsg {
-    /// D5 envelope 投影：在途单快照回执。
+    /// D5 envelope 投影：在途单快照回执（附 desk 真实 next_serial——
+    /// Sol 四轮修复：序号游标贯通存档恢复，空簿也保留已耗序号）。
     DeskResting {
         stock: StockIdx,
         orders: Vec<RestingFact>,
+        next_serial: u64,
     },
     /// 组线程本轮报告（每轮一条）。
     GroupReport(GroupReport),
@@ -694,8 +696,18 @@ pub enum UpMsg {
 impl std::fmt::Debug for UpMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UpMsg::DeskResting { stock, orders } => {
-                write!(f, "DeskResting(stock={}, n={})", stock, orders.len())
+            UpMsg::DeskResting {
+                stock,
+                orders,
+                next_serial,
+            } => {
+                write!(
+                    f,
+                    "DeskResting(stock={}, n={}, next_serial={})",
+                    stock,
+                    orders.len(),
+                    next_serial
+                )
             }
             UpMsg::GroupReport(r) => write!(
                 f,

@@ -25,6 +25,9 @@ pub struct RuntimeDriver {
     world: World,
     /// Owner(组内下标) → 引擎 AccountId（玩家=0 惯例位）。
     pub id_map: Vec<AccountId>,
+    /// 每股 desk 序号游标缓存（最近在途快照收集时的权威值——Sol 四轮
+    /// 修复：save 投影/DeskBookMirror 的游标源）。
+    desk_next_serials: Vec<u64>,
     /// 事件 seq（协调者全局单调）。
     next_seq: u64,
     /// P2-1a 红证计数（cfg(test)）：set_runtime_personal_state 实际安装
@@ -240,6 +243,11 @@ impl RuntimeDriver {
             Box::new(|_g| Box::new(|_t, _r| super::group::TickPlan::default())),
         )?;
         spec.n_groups = n_groups;
+        // Sol 四轮修复：恢复链序号游标贯通——session 权威（save 的
+        // book_next_sequences 经 restore 载入旧簿游标；运行中镜像
+        // next_serial）投影为新 Desk 的起始 next_serial（空簿也保留
+        // 已耗序号——R26）。
+        spec.initial_desk_next_serial = session.runtime_book_next_sequences();
         // D3a-2b Belief-1 + D3a-2c 件2：完整个人态构造期投影（id_map 序
         // ——None=非机构位；observe 直调的组内权威承载：六件全投影）。
         {
@@ -404,6 +412,7 @@ impl RuntimeDriver {
         let driver = Self {
             world,
             id_map: ids.clone(),
+            desk_next_serials: Vec::new(),
             next_seq: 0,
             #[cfg(test)]
             personal_installs: 0,
@@ -1036,12 +1045,22 @@ impl RuntimeDriver {
     }
 
     /// D5 envelope 投影：desk 在途单收集（session 信封账本重建输入）。
+    /// 附带缓存每股 desk 真实 next_serial（Sol 四轮修复：save 投影/
+    /// DeskBookMirror 游标源——空簿也保留已耗序号）。
     pub fn collect_resting_facts(
         &mut self,
     ) -> Result<Vec<Vec<super::protocol::RestingFact>>, String> {
-        self.world
+        let (facts, cursors) = self
+            .world
             .collect_desk_resting()
-            .map_err(|e| format!("在途单快照收集失败：{e:?}"))
+            .map_err(|e| format!("在途单快照收集失败：{e:?}"))?;
+        self.desk_next_serials = cursors;
+        Ok(facts)
+    }
+
+    /// 每股 desk 序号游标（最近一次在途快照收集时的权威值）。
+    pub fn desk_next_serials(&self) -> &[u64] {
+        &self.desk_next_serials
     }
 
     /// P2-4b：对相邻两拍在途单快照差分（信封账本增量维护输入）。

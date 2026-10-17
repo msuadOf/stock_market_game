@@ -27,6 +27,7 @@ pub(crate) fn basic_spec(
     let shares = vec![vec![vec![1_000u32; n_stocks]; accounts_per_group]; n_groups];
     WorldSpec {
         initial_desk_orders: Vec::new(),
+        initial_desk_next_serial: Vec::new(),
         n_groups,
         accounts_per_group,
         initial_cash: 1_000_000,

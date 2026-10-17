@@ -123,6 +123,8 @@ pub struct DeskSetup {
     pub initial_market: Option<DeskMarketSeed>,
     /// D5 attention：收盘竞价公开截点种子（restore 链）。
     pub initial_public_cutoff: u64,
+    /// 序号游标种子（恢复链——空簿保留已耗序号；Sol 四轮修复）。
+    pub initial_next_serial: u64,
 }
 
 /// 交易相位（照搬 `session.rs TradingPhase` 的 tick 推导）。
@@ -2235,6 +2237,7 @@ pub fn desk_main(
     let initial_market = setup.initial_market.take();
     let initial_public_cutoff = setup.initial_public_cutoff;
     let initial_tick = setup.initial_tick;
+    let initial_next_serial = setup.initial_next_serial;
     let mut state = DeskState::new(setup, n_groups, config);
     // D5 restore 等价：种子 tick 价格历史（容量裁剪）。
     for price in initial_recent_prices {
@@ -2271,6 +2274,9 @@ pub fn desk_main(
             state.rest(order);
         }
     }
+    // Sol 四轮修复：恢复链序号游标贯通——initial_next_serial 与种子
+    // 单 max+1 取大（空簿也保留已消耗的序号——R26）。
+    state.next_serial = state.next_serial.max(initial_next_serial);
     // D5 attention：公开截点种子（restore 链——desk 权威自此起步）。
     state.public_cutoff_serial = initial_public_cutoff;
     // D5 restore 链最后一层：日内行情聚合种子装载（save 点权威——
@@ -2399,6 +2405,7 @@ fn process_msg(
                 .send(UpMsg::DeskResting {
                     stock: state.setup.stock,
                     orders,
+                    next_serial: state.next_serial,
                 })
                 .is_err()
             {

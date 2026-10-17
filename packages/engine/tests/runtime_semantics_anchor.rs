@@ -1098,3 +1098,64 @@ fn sol3r_multi_request_exact_receipt_counts_and_unique_ids() {
     );
     assert_ne!(cancel_ids[0], cancel_ids[1], "订单 ID 必须互异（序号推进）");
 }
+
+/// Sol 四轮修复（阻断）：序号游标贯通存档恢复——"空簿也保留已消耗的
+/// 序号"（trading-rules R26）。此前 save 投影从存活挂单重算（空簿得
+/// 0/1）、恢复侧新 Desk 不读 book_next_sequences ⇒ 即时单终结→
+/// save/restore→新单复用同 ID。走**生产路径** session.step()（镜像与
+/// 游标在 install 段构建；直驱不经该段——登记：driver-direct 存档不
+/// 含 desk 游标）。
+#[test]
+fn sol4r_serial_cursor_survives_save_restore_roundtrip() {
+    let market_intent = || engine::ReceiptBearingIntent {
+        owner: engine::AccountId(0),
+        intent: engine::Intent::PlaceMarket {
+            code: engine::StockId(0),
+            side: engine::Side::Buy,
+            qty: 100,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    };
+    // 第一段：连续相位空盘市价单（消耗 serial 并撤销）→ save 游标=已耗+1。
+    let mut setup = setup_1stock();
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 199).expect("会话");
+    // 越过构造期首拍（attention 装载后相位稳定），再入市价单。
+    session.step().expect("暖机拍");
+    session
+        .enqueue_player_intent(engine::AccountId(0), market_intent().intent)
+        .expect("入队");
+    let events = session.step().expect("市价拍");
+    let first_id = events
+        .iter()
+        .find_map(|e| match e {
+            Event::OrderCanceled { id, .. } => Some(id.0),
+            _ => None,
+        })
+        .expect("空盘市价撤销（前置）");
+    let save = session.save().expect("存档");
+    assert_eq!(
+        save.book_next_sequences[&engine::StockId(0)],
+        first_id + 1,
+        "save 游标=真实 next_serial（空簿也保留已耗序号——非存活单重算）"
+    );
+    // 第二段：restore → 生产路径再入市价单 → 新 ID 不复用。
+    let mut restored = GameSession::restore(&save).expect("恢复");
+    restored.step().expect("暖机拍");
+    restored
+        .enqueue_player_intent(engine::AccountId(0), market_intent().intent)
+        .expect("入队");
+    let events2 = restored.step().expect("市价拍");
+    let second_id = events2
+        .iter()
+        .find_map(|e| match e {
+            Event::OrderCanceled { id, .. } => Some(id.0),
+            _ => None,
+        })
+        .expect("恢复后空盘市价撤销（前置）");
+    assert!(
+        second_id > first_id,
+        "恢复后新单不得复用已耗 ID：first={first_id} second={second_id}（R26 空簿保留序号）"
+    );
+}

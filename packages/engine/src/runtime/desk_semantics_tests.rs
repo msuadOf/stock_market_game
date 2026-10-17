@@ -2006,3 +2006,63 @@ fn sol3r_closing_multi_level_settles_at_clearing_price() {
     let a1 = &report.group_finals[0].accounts[1];
     assert_eq!(a1.shares[0], 800, "卖 200（余 100 随清簿 Drain 退回）");
 }
+
+/// Sol 四轮补强：早轮事实已累积→Continue→**轮 1 失败**→重播——事实
+/// 恰一次进终轮 TickRecord（此前重跑测试在轮 0 就失败，未覆盖此序）。
+#[test]
+fn sol4r_continue_round1_failure_retry_emits_facts_exactly_once() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, round| {
+            let mut plan = TickPlan::default();
+            if tick == 1 && round == 0 {
+                plan.places.push(buy(0, 0, 1000, 100));
+                plan.continuation = true; // 轮 0 事实累积后进 Continue
+            }
+            plan
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    let inject = |w: &mut World| {
+        w.broadcast_external_plan(
+            vec![PendingOp {
+                local: 1,
+                stock: 0,
+                side: Side::Buy,
+                routed: RoutedPrice::Market,
+                purse_reference: 1100,
+                qty: 100,
+            }],
+            vec![],
+        );
+    };
+    inject(&mut world);
+    // 轮 0 收束成功（事实累积+Accepted 下行）→ Continue → 轮 1 注入失败。
+    let fail: super::coordinator::Validator = Box::new(|ev: &super::coordinator::TickEvidence| {
+        if ev.tick == 1 && ev.round >= 1 {
+            Err("注入：轮 1 失败（早轮事实已累积）".to_owned())
+        } else {
+            Ok(())
+        }
+    });
+    world.set_validator(fail);
+    assert!(world.run_ticks(1).is_err(), "轮 1 失败必须显式失败（Abort 回滚）");
+    world.set_validator(Box::new(|_| Ok(())));
+    inject(&mut world); // 重播（失败拍已消费注入）
+    world.run_ticks(1).expect("重跑成功");
+    assert_eq!(world.report_log.len(), 1, "重跑恰一条 TickRecord");
+    let rec = &world.report_log[0];
+    let cancelled = rec
+        .desk_lifecycle
+        .iter()
+        .filter(|f| matches!(f.kind, super::protocol::LifecycleKind::Cancelled))
+        .count();
+    let accepted = rec
+        .desk_lifecycle
+        .iter()
+        .filter(|f| matches!(f.kind, super::protocol::LifecycleKind::Accepted))
+        .count();
+    assert_eq!(cancelled, 1, "轮 0 撤销事实恰一次（不丢不重）");
+    assert_eq!(accepted, 1, "轮 0 受理事实恰一次（不丢不重）");
+}

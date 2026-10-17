@@ -712,12 +712,22 @@ impl GameSession {
                         orders,
                         last_price: crate::Money::from_cents(view.last_price),
                         public_cutoff_serial: view.public_cutoff_serial,
+                        // Sol 四轮修复：真实 desk 游标（空簿保留已耗序号
+                        //——save 投影权威源）。
+                        next_serial: driver
+                            .desk_next_serials()
+                            .get(stock_idx)
+                            .copied()
+                            .unwrap_or(0),
                     },
                 );
             }
             self.state.desk_book_mirror = mirror;
+            // Sol 四轮修复：游标会话级缓存（镜像瞬态不可靠——save
+            // 静止点可能落在镜像缺席的拍后）。
+            self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
         }
-        // D5 lifecycle 投影：runtime 下 NPC 报价生命周期权威=desk TTL
+        // D5 lifecycle 投影：runtime 下 NPC 投价生命周期权威=desk TTL
         ///（save 的 2170 校验绑定旧簿在场委托——runtime 旧簿恒空，投影
         /// 空集通过；TTL 到期撤销由 desk begin_tick 承载）。
         self.mark_external_mutation();
@@ -796,10 +806,18 @@ impl GameSession {
                             orders,
                             last_price: crate::Money::from_cents(last_price),
                             public_cutoff_serial: cutoff,
+                            // Sol 四轮修复：真实 desk 游标（同上映射点）。
+                            next_serial: driver
+                                .desk_next_serials()
+                                .get(stock_idx)
+                                .copied()
+                                .unwrap_or(0),
                         },
                     );
                 }
                 self.state.desk_book_mirror = mirror;
+                // Sol 四轮修复：游标会话级缓存（同上）。
+                self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
             }
         }
         // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
@@ -1061,6 +1079,37 @@ impl GameSession {
     /// 投影 `(StockId, Order 列表)`——驱动器构造期迁入世界（首步前
     /// seed 的挂单此前只在旧簿、runtime 世界不可见——裁决点名的
     /// "driver 首构造不迁入旧挂单"缺口）。
+    /// runtime 恢复链：每股序号游标（Sol 四轮修复——R26 空簿保留已耗
+    /// 序号）。取 desk 镜像 next_serial（运行中权威）与旧簿
+    /// book_next_sequence（restore 后镜像空、旧簿载 save 值）的逐股
+    /// max；输出按下标（StockId.0）索引。
+    pub fn runtime_book_next_sequences(&self) -> Vec<u64> {
+        let n = self
+            .state
+            .markets
+            .keys()
+            .map(|code| code.0 as usize + 1)
+            .max()
+            .unwrap_or(0);
+        let mut out = vec![0u64; n];
+        for (code, market) in &self.state.markets {
+            let idx = code.0 as usize;
+            out[idx] = out[idx].max(market.book_next_sequence());
+        }
+        for (code, mirror) in &self.state.desk_book_mirror {
+            let idx = code.0 as usize;
+            if idx < n {
+                out[idx] = out[idx].max(mirror.next_serial);
+            }
+        }
+        for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
+            if idx < n {
+                out[idx] = out[idx].max(*cursor);
+            }
+        }
+        out
+    }
+
     pub fn runtime_resting_orders_snapshot(
         &self,
     ) -> Vec<(crate::StockId, Vec<crate::orderbook::Order>)> {
