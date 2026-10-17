@@ -518,3 +518,161 @@ fn scheduling_invariants_hold_across_runs() {
         );
     }
 }
+
+/// sol-103 上报项 2（修复·红测试先行）：玩家 PlaceMarket 意图经
+/// step() 默认路径不得静默丢弃（铁律二）。竞价相位面：市价申报在
+/// 集合竞价只收限价 ⇒ 必须显式 IntentRejected(AuctionLimitOrderRequired)
+/// ——此前 route_external_intents 对 PlaceMarket 静默 continue（无事件、
+/// 无错误、无退款回执）。
+#[test]
+fn player_market_intent_is_never_silently_dropped_by_step() {
+    let mut session = GameSession::new(setup_1stock(), 701).expect("会话");
+    session
+        .enqueue_player_intent(
+            engine::AccountId(0),
+            engine::Intent::PlaceMarket {
+                code: engine::StockId(0),
+                side: engine::Side::Buy,
+                qty: 100,
+            },
+        )
+        .expect("入队");
+    let events = session.step().expect("步进（tick 1=开盘竞价申报窗）");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::IntentRejected {
+                account: engine::AccountId(0),
+                reason: engine::RejectionReason::AuctionLimitOrderRequired,
+                ..
+            }
+        )),
+        "竞价相位市价申报必须显式拒收回执（不静默丢弃）：{events:?}"
+    );
+}
+
+/// sol-103 上报项 2（修复·路由真接线）：连续相位玩家市价买入经
+/// route_external_intents 进入 runtime 世界——按涨跌停价保护、逐档
+/// 即成、余量不进簿（R16 玩家路径）。fixture：auction_ticks=0（tick 1
+/// 即连续相位、NPC 计划未启动——seed 199 前 12 拍实测安静），对手盘
+/// 与市价单**同批注入**（批内 FIFO：卖先挂、市价买随后吃单——确定性）。
+/// 手算 oracle（连续竞价成交价=maker 价 1000）：买方实付 100_000+500+1
+/// =100_501、余量 200 全额退款（买盘空）。附带锚定玩家符号价 Lowest
+/// 卖的正向路由（解析=跌停 900——此前同函数把 Lowest 误路由 Highest）。
+#[test]
+fn player_market_and_symbolic_intents_route_into_runtime_world() {
+    let mut setup = setup_1stock();
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 199).expect("会话");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    let player_cash0 = session
+        .account(engine::AccountId(0))
+        .expect("玩家")
+        .cash()
+        .cents();
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(
+            &[
+                // 对手盘：acct1（float 持仓充足）卖 100@1000。
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(1),
+                    intent: engine::Intent::PlaceLimit {
+                        code: engine::StockId(0),
+                        side: engine::Side::Sell,
+                        price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
+                            1_000,
+                        )),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+                // 玩家市价买 300：按涨停保护逐档即成、余量不进簿。
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(0),
+                    intent: engine::Intent::PlaceMarket {
+                        code: engine::StockId(0),
+                        side: engine::Side::Buy,
+                        qty: 300,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+            ],
+            &upper,
+        )
+        .expect("注入");
+    let events = driver
+        .step_frame_equivalent(&mut session)
+        .expect("市价拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Trade { price, qty, maker, taker, .. }
+                if price.cents() == 1_000 && *qty == 100
+                    && *maker == engine::AccountId(1) && *taker == engine::AccountId(0)
+        )),
+        "市价单必须真实路由成交（连续相位 maker 价 1000、taker=玩家）：{events:?}"
+    );
+    // 实体跨拍落账（R10 口径）：tick1 产 BoughtShares/CashRefund 实体，
+    // 下一拍 start 应用——账面断言在空拍后取（desk 面断言不受影响）。
+    let _ = driver
+        .step_frame_equivalent(&mut session)
+        .expect("落账拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    let accounts = driver.world_accounts_snapshot().expect("组快照");
+    let player = &accounts[0].1[0];
+    assert_eq!(player.shares[0], 100, "成交 100 股");
+    assert_eq!(
+        player.cash,
+        player_cash0 - 100_501,
+        "实付=对价+最低佣金 500+过户 1；余量 200 purse 全额退款"
+    );
+    let views = driver.world_public_views();
+    assert!(
+        views[0].depth_bids.is_empty(),
+        "市价余量不进簿（R16 玩家路径）：{:?}",
+        views[0].depth_bids
+    );
+    // 符号价正向路由（下一拍）：acct1 Lowest 卖解析=跌停 900 挂簿
+    // （玩家当日买入受 T+1 冻结不可卖，用 float 持仓账户承载）。
+    driver
+        .inject_player_intents(
+            &[engine::ReceiptBearingIntent {
+                owner: engine::AccountId(1),
+                intent: engine::Intent::PlaceLimit {
+                    code: engine::StockId(0),
+                    side: engine::Side::Sell,
+                    price: engine::strategy::LimitPrice::Lowest,
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &[],
+        )
+        .expect("注入符号卖");
+    let _ = driver
+        .step_frame_equivalent(&mut session)
+        .expect("符号卖拍");
+    driver.install_market_views(&mut session).expect("行情");
+    let views = driver.world_public_views();
+    // 手算：连续相位笼子生效（默认配置），参考价=本拍成交 1000 ⇒
+    // 卖方下限取 min(1000×98%, 1000−10 档)=980 与跌停 900 的较严者
+    // =980——Lowest 解析=**合法卖出下边界 980**（R13 笼子∧R19 带复合，
+    // 非裸跌停；误路由形态=涨停 1100 不得出现）。
+    assert_eq!(
+        views[0].best_ask,
+        Some(980),
+        "Lowest 卖解析=卖出下边界（笼子 980∧跌停 900 取严）；此前误路由 Highest=1100"
+    );
+}

@@ -1266,7 +1266,48 @@ impl RuntimeDriver {
                 continue;
             }
             let crate::Intent::PlaceLimit { code, side, price, qty } = &r.intent else {
-                // PlaceMarket：登记（限价面先行——市价变体后续补）。
+                // PlaceMarket（sol-103 上报项 2 修复）：此前此处静默
+                // continue——默认翻转后玩家市价单经 step() 被静默丢弃
+                // （铁律二违规）。desk 已完整支持 RoutedPrice::Market
+                // （涨跌停保护、逐档即成、余量不进簿）；竞价相位由
+                // desk 显式拒收（AuctionLimitOrderRequired 回执）。
+                let crate::Intent::PlaceMarket { code, side, qty } = &r.intent else {
+                    // 词表只剩以上三种（scope_boundary 编译期锚）——
+                    // 不可达；防御式显式失败不静默。
+                    return Err(format!(
+                        "外部意图词表外变体（无法路由）：{:?}",
+                        r.intent
+                    ));
+                };
+                let local = self
+                    .id_map
+                    .iter()
+                    .position(|id| *id == r.owner)
+                    .ok_or_else(|| {
+                        format!(
+                            "外部意图 owner 不在世界名册（无法路由到组内账户）：{:?}",
+                            r.owner
+                        )
+                    })? as super::LocalIdx;
+                let upper = upper_limits
+                    .get(code.0 as usize)
+                    .copied()
+                    .unwrap_or(0);
+                // D5 组端校验：qty=0 意图路由层拒收（同限价臂）。
+                if *qty == 0 {
+                    self.pending_rejections.push((*code, r.owner));
+                    continue;
+                }
+                // purse 最坏情况=日涨停（与 decision.rs intent_to_pending
+                /// 的 NPC 市价路径同口径，F §1.5）。
+                ops.push(super::decision::PendingOp {
+                    local,
+                    stock: code.0 as super::StockIdx,
+                    side: *side,
+                    routed: super::protocol::RoutedPrice::Market,
+                    purse_reference: upper,
+                    qty: *qty,
+                });
                 continue;
             };
             let local = self
@@ -1287,7 +1328,16 @@ impl RuntimeDriver {
                 crate::strategy::LimitPrice::Fixed(p) => {
                     (super::protocol::RoutedPrice::Fixed(p.cents()), p.cents())
                 }
-                _ => (super::protocol::RoutedPrice::Highest, upper),
+                // 符号价（sol-103 上报项 2 附带修复）：按变体正向路由——
+                // 此前 `_ =>` 把 Lowest 也折叠成 Highest（玩家 Lowest 卖
+                /// 会解析到涨停）。purse 最坏情况恒按日涨停（组端只有公共
+                /// 态，F §1.5；与 NPC 路径 symbol_routed 同口径）。
+                crate::strategy::LimitPrice::Highest => {
+                    (super::protocol::RoutedPrice::Highest, upper)
+                }
+                crate::strategy::LimitPrice::Lowest => {
+                    (super::protocol::RoutedPrice::Lowest, upper)
+                }
             };
             // D5 组端校验：qty=0 意图路由层拒收（desk 侧为防御性 panic
             /// ——组端先验，拒收事件入本拍事件流——旧管线 InvalidQuantity
