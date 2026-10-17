@@ -4339,6 +4339,26 @@ pub fn group_main(
                     }
                 }
             }
+            GroupIn::AcceptedBatch { entries } => {
+                // P1-A 受理按组批发：逐条走与 ChildAccepted 完全相同的
+                // 消费路径（Observed 记录+adopt——发送侧已按 owner 分桶，
+                // 过滤判定保留为防御不变式）。批内顺序=该轮 desk_lifecycle
+                // 原序；任一条失败即整轮失败（不静默跳过）。
+                for (stock, owner, order_serial) in entries {
+                    if owner.0 == state.group {
+                        state
+                            .observed
+                            .push(Observed::ChildAccepted(stock, owner, order_serial));
+                        if let Err(e) = state.adopt_child_on_accepted(stock, owner.1, order_serial)
+                        {
+                            abort.store(true, Ordering::SeqCst);
+                            let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                            result = Err(e);
+                            break;
+                        }
+                    }
+                }
+            }
             #[cfg(test)]
             GroupIn::InstallPersonal { local, snapshot } => {
                 // D3b 件 5：个人态注入——组权威覆盖（Personal undo 可逆；

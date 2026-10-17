@@ -337,6 +337,18 @@ pub enum GroupIn {
         /// desk 本地序号（OrderRef.1——身份合成输入）。
         order_serial: u64,
     },
+    /// 受理事实**按组批发**下行（P1-A 性能修复：逐笔×全组广播在
+    /// lifecycle≈数百条/tick×组数时产生数千次通道唤醒，协调者单线程
+    /// 满负荷成为 wall 关键路径——见 .tmp/perf-p0-diff-profile.md）。
+    /// 语义等价约定：entries 保持该轮 desk_lifecycle 原序、只含
+    /// owner.0==接收组的条目；组侧逐条走与 [`GroupIn::ChildAccepted`]
+    /// 完全相同的消费路径（Observed 记录+adopt）——"每轮受理在
+    /// Continue 前到达"的 Sol 三审时序裁决不变（D3a sol3_continuation
+    /// 守卫测试仍绿）。
+    AcceptedBatch {
+        /// 本组受理条目（股、所有者、desk 序号——同 ChildAccepted 载荷）。
+        entries: Vec<(StockIdx, Owner, u64)>,
+    },
     /// D3b 件 5：个人态注入通道（cfg(test)）——restructure fixture 的
     /// 组内等价（session 版 personal.install 的下行面；组权威个人态
     /// 覆盖+Personal undo 可逆，Abort 冲回后需重发）。

@@ -1294,22 +1294,30 @@ impl World {
                 // 身份在续行轮落账/再报价前就位；此前只在最终收束轮转发，
                 // 而最终轮 evidence 已不含早轮受理——续行轮受理永不传达，
                 // 无 fill 即永不 adopt，后续 Closed 释放走未受理路径）。
-                let accepted: Vec<(super::StockIdx, super::Owner, u64)> = evidence
-                    .desk_lifecycle
-                    .iter()
-                    .filter(|fact| {
-                        matches!(fact.kind, super::protocol::LifecycleKind::Accepted)
-                    })
-                    .map(|fact| (fact.stock, fact.owner, fact.order_serial))
-                    .collect();
-                for (stock, owner, order_serial) in accepted {
-                    for tx in &self.group_txs {
-                        let _ = tx.send(GroupIn::ChildAccepted {
-                            stock,
-                            owner,
-                            order_serial,
-                        });
+                // P1-A 性能修复（受理按组批发）：原逐笔×全组广播使每轮
+                // 消息量=Accepted×组数（组侧 90% 条目被 owner 过滤直接
+                // 丢弃），每条消息一次通道唤醒——协调者单线程满负荷成为
+                // wall 关键路径（1385 万次上下文切换/3000 tick，见
+                // .tmp/perf-p0-diff-profile.md）。改为按 owner 组分桶、
+                // 每组每轮**至多一条**批消息；entries 保持 desk_lifecycle
+                // 原序，组侧逐条走原 ChildAccepted 消费路径——时序裁决
+                //（先于 Continue）与内容不变。
+                let mut batches: Vec<Vec<(super::StockIdx, super::Owner, u64)>> =
+                    vec![Vec::new(); self.group_txs.len()];
+                for fact in &evidence.desk_lifecycle {
+                    if !matches!(fact.kind, super::protocol::LifecycleKind::Accepted) {
+                        continue;
                     }
+                    let bucket = fact.owner.0 as usize;
+                    if let Some(slot) = batches.get_mut(bucket) {
+                        slot.push((fact.stock, fact.owner, fact.order_serial));
+                    }
+                }
+                for (tx, entries) in self.group_txs.iter().zip(batches) {
+                    if entries.is_empty() {
+                        continue;
+                    }
+                    let _ = tx.send(GroupIn::AcceptedBatch { entries });
                 }
                 if evidence.continuation_any {
                     let next = rounds + 1;

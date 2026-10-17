@@ -461,6 +461,53 @@ fn sol3_continuation_round_acceptance_reaches_group_before_continue() {
     );
 }
 
+// ── 5c-2. 受理批发（P1-A）多组时序与定向守卫 ──
+
+// P1-A 把受理下行从"逐笔×全组广播"改为"按 owner 组分桶批发"后，
+// 必须同时守住两面：① Sol 三审时序裁决在**多组**形态下仍成立——
+// 受理 owner 组的 ChildAccepted 观察仍先于 Continue；② 非受理组
+// 的观察面不因批发出现外来受理（owner 过滤语义不变）。
+#[test]
+fn accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group() {
+    use super::group::Observed;
+    // 2 组：组 0 的 local 0 在 tick1 轮 0 挂买（受理归组 0 owner）+声明续行。
+    let script = |g: GroupIdx| -> GroupScript {
+        Box::new(move |tick, round| {
+            let mut plan = TickPlan::default();
+            if g == 0 && tick == 1 && round == 0 {
+                plan.places.push(buy(0, 0, 1000, 100));
+                plan.continuation = true;
+            }
+            plan
+        })
+    };
+    let mut world = World::spawn(basic_spec(2, 1, 1, Box::new(script))).expect("世界构造");
+    world.run_ticks(1).expect("多轮 tick 收敛");
+    let report = world.shutdown().expect("关停对账");
+    // ① owner 组时序：受理先于 Continue（批内逐条 Observed 记录保序）。
+    let observed0 = &report.group_finals[0].observed;
+    let continue_at = observed0
+        .iter()
+        .position(|o| matches!(o, Observed::Continue(1, 1)))
+        .expect("组 0 应见 Continue(1,1)（轮 0 声明续行）");
+    let accepted_at = observed0
+        .iter()
+        .position(|o| matches!(o, Observed::ChildAccepted(..)))
+        .expect("组 0 的受理事实必须下行（批发不丢条目）");
+    assert!(
+        accepted_at < continue_at,
+        "批发后受理仍须先于 Continue 到达 owner 组（受理@{accepted_at} ≥ Continue@{continue_at}）"
+    );
+    // ② 非受理组观察面：无外来受理条目（owner 定向不产生跨组泄漏）。
+    assert!(
+        !report.group_finals[1]
+            .observed
+            .iter()
+            .any(|o| matches!(o, Observed::ChildAccepted(..))),
+        "组 1 不得观察到组 0 的受理（owner 过滤语义不变）"
+    );
+}
+
 // ── 6. panic 运输（resume_unwind 原 payload）──
 
 #[test]
