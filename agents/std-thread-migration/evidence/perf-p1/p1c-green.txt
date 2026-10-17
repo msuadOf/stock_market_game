@@ -1,0 +1,45 @@
+=== P1-C 绿（完整态）===
+heap 守卫（env=1）：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1618 filtered out; finished in 0.20s
+Sol 二审语义守卫：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1618 filtered out; finished in 0.19s
+hash 回滚守卫（修正后）：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1618 filtered out; finished in 1.14s
+
+全量回归（默认/env=1）：
+error: test failed, to rerun pass `-p engine --lib`
+
+
+B 口径长跑对照（groups=1）：
+修复前 300 tick: 4.26-4.37（68.6-72.5s，基线）；修复后 300 tick: 5.02（59.7s）——P1-C 贡献 +16-21%
+修复前 1000 tick: 3.18（314.9s——300→1000 恶化 25% 实锤）
+修复后 1000 tick: 5.24（190.8s——不恶化，同长快 65%）
+events/fees 逐位一致（300:3336/0；1000:11119/5705 两态相同）
+--- P1-C 后 A 轮1
+结果：1307.8 t/s（3000 tick / 2.29s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          6,134.69 msec task-clock                                                            
+           144,949      context-switches                                                      
+--- P1-C 后 A 轮2
+结果：1391.6 t/s（3000 tick / 2.16s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          5,336.93 msec task-clock                                                            
+           134,206      context-switches                                                      
+--- P1-C 后 A 轮3
+结果：1374.4 t/s（3000 tick / 2.18s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          5,429.19 msec task-clock                                                            
+           134,047      context-switches                                                      
+
+=== B 3000 tick 长跑（修复后，P1-C 终验）===
+{"speed_x":4.675,"wall_s":641.70,"events":32135,"fees_paid":30693,"shares_ok":true}
+解读：1000→3000 tick 4.24→4.68 微降 11%（事件密度 11119→32135 自然负载；
+修复前恶化斜率外推 3000 tick 需 ~1250s，实际 641.7s——heap 型随时长恶化已消）。
+
+=== P1-C 后 A 探针 3 轮（终值）===
+1307.8 / 1391.6 / 1374.4 t/s（mean 1358，min 1307.8，max 1391.6）
+task-clock 5.3-6.1 CPU·s；ctx-switch ~45/tick；成交量/费用桶/冻结逐位一致（6438600/647541185/6438600）
+
+=== B 探针守恒断言弱项登记（任务书遗留项处理=注明）===
+B 探针（driver_semantics_probe）断言=股份精确等+现金=初始−费用（fees_paid≥0），
+无 desk fee_sink 强对账（fee_sink 为 desk 内部域，session/driver 无只读面——
+强对账需新增 Echo 协议消息或审计 API，超出本轮"顺手"范围）。间接等价证据：
+所有测量轮 events 与 fees_paid 修复前后逐位一致（300:3336/0；1000:11119/5705）。
+列为 P2 候选（fee_sink 审计读面）。

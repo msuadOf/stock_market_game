@@ -1,0 +1,22 @@
+=== P1-B 绿（完整态）===
+守卫测试：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1617 filtered out; finished in 0.01s
+
+全量回归（默认/env=1）：
+
+error: test failed, to rerun pass `-p engine --lib`
+
+A 探针 3 轮（P1-A+P1-B 叠加）：
+结果：1341.1 t/s（3000 tick / 2.24s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          6,034.48 msec task-clock                                                            
+           153,859      context-switches                                                      
+结果：1266.2 t/s（3000 tick / 2.37s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          6,355.87 msec task-clock                                                            
+           154,445      context-switches                                                      
+结果：1255.3 t/s（3000 tick / 2.39s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          6,586.15 msec task-clock                                                            
+           155,531      context-switches                                                      
+
+B 口径（driver_semantics_probe 300 tick）：
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3336,"runtime_groups":1,"speed_x":4.13968895191161,"threads":16,"ticks":300,"wall_s":72.469212901}
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3252,"runtime_groups":10,"speed_x":5.481632909882514,"threads":16,"ticks":300,"wall_s":54.728217838}

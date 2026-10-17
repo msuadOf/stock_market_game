@@ -1,0 +1,35 @@
+=== P1-A 绿（完整态）===
+命令：cargo test -p engine --lib accepted_batch_keeps && cargo test -p engine --lib sol3_continuation
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1616 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1616 filtered out; finished in 0.01s
+
+=== 全量回归（默认/env=1）===
+error: test failed, to rerun pass `-p engine --lib`
+error: test failed, to rerun pass `-p engine --lib`
+
+=== A 探针 3 轮（P1-A 后）===
+结果：526.3 t/s（3000 tick / 5.70s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          9,176.64 msec task-clock                                                            
+           139,690      context-switches                                                      
+结果：525.5 t/s（3000 tick / 5.71s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          9,453.22 msec task-clock                                                            
+           139,870      context-switches                                                      
+结果：521.9 t/s（3000 tick / 5.75s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+          9,372.57 msec task-clock                                                            
+           143,047      context-switches                                                      
+
+=== 全量回归 flake 对照（panic_transport 既有 flake 定性）===
+原代码（P1-A 移除，stash cc316db…/af2f29… 两次验证后 drop）env=1 全量 6 次：
+  2 次 FAILED（各 1 failed——panic_transport_resumes_original_payload_and_survivors_rollback，
+  left=899499 right=1000000"幸存者扣除已回滚"），4 次 ok 1605/0/11。
+P1-A 后 env=1 全量 6 次：6 次 ok 1606/0/11（0 失败）。
+单测隔离 panic_transport 12 次：原代码 12/12 绿、P1-A 12/12 绿。
+结论：该 flake 为既有（原代码 2/6 复现），与 P1-A 无关；P1-A 未引入新失败。
+（apps/web/src/types/generated/SaveSlot.ts 为 ts_rs 测试副作用生成物，非本任务改动，未纳入。）
+
+=== P1-A 性能 KPI（修复前→后）===
+t/s：71-105（3 轮 99.5/93.0/95.0）→ 501.7/517.4/534.2（mean 517.8）≈ 5.2×
+wall（3000 tick）：30.16s → 5.62-5.98s
+context-switches/tick：4618 → 44-50（坍塌 ~93×）
+task-clock：118.7 CPU·s → 8.9-10.6 CPU·s
+行为等价：成交量 6438600 / 费用桶 647541185 / T+1 冻结 6438600 与修复前逐位一致

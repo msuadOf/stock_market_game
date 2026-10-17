@@ -1,0 +1,6 @@
+=== P1-C 红（修复前：heap 无消费增长）===
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib runtime_attention_heap_mirror
+c7cd0eb7306e0fc5e233724785e98f2fc9e6f3cb
+thread 'session::failure_tests::runtime_attention_heap_mirror_does_not_grow_across_ticks' (564708) panicked at packages/engine/src/session/failure_tests.rs:297:5:
+attention heap 不得随 tick 无界增长：heap=6 项 > 名册 1（runtime 每 tick 全名册 enqueue 且永不 pop_due）
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1618 filtered out; finished in 0.20s
