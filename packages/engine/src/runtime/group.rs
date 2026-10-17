@@ -599,6 +599,11 @@ pub struct GroupState {
     /// 刷新后套用；set_urgency_minutes 的组内等价面，持续到显式改写）。
     #[cfg(test)]
     observation_overrides: std::collections::BTreeMap<u16, Vec<(u64, i64)>>,
+    /// step_frame 接轨前置约束① fixture 通道（cfg(test)）：下一次轮
+    /// 上报强制 `continuation=true`（一次消费即清——驱动 Continue 轮
+    /// 的确定性触发）。
+    #[cfg(test)]
+    force_continuation: bool,
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
@@ -707,6 +712,8 @@ impl GroupState {
             injected_assessments: Vec::new(),
             #[cfg(test)]
             observation_overrides: std::collections::BTreeMap::new(),
+            #[cfg(test)]
+            force_continuation: false,
             plan_book: crate::plans::PlanBook::default(),
             script,
         }
@@ -3339,6 +3346,13 @@ impl GroupState {
             plans_pending |= step.has_more_steps;
         }
         continuation |= plans_pending;
+        // step_frame 接轨前置约束① fixture 通道：一次性强制续行标记
+        ///（消费即清——仅驱动 Continue 轮的触发面，不改决策/落账语义）。
+        #[cfg(test)]
+        if self.force_continuation {
+            self.force_continuation = false;
+            continuation = true;
+        }
         if let Some(payload) = panic_payload {
             std::panic::panic_any(payload);
         }
@@ -4656,6 +4670,13 @@ pub fn group_main(
                     }
                     _ => panic!("MutateBeliefForTest 目标位 {local} 无 belief 态"),
                 }
+            }
+            #[cfg(test)]
+            GroupIn::ForceContinuationForTest => {
+                // step_frame 接轨前置约束① fixture 通道：下一次轮上报
+                // 强制 continuation=true（一次消费即清——Start 间窗口
+                // 注入则由下一次 run_round 消费，指令本身无状态残留）。
+                state.force_continuation = true;
             }
             #[cfg(test)]
             GroupIn::DeferDueForTest { locals, tick } => {

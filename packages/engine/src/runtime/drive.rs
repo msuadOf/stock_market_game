@@ -715,6 +715,15 @@ impl RuntimeDriver {
         self.force_full_accounts = false;
         // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
         let rec = fact_rec;
+        // step_frame 接轨前置约束①：同拍叠加类投影只消费**终轮未落账
+        /// 尾巴**（unsettled_trades——实体仍在组 staging）。Continue 链
+        /// 的早轮成交已随组 Continue 落账进组账户（上方快照回写已含），
+        /// 以全量 desk_trades 叠加会把早轮重复应用（现金/持仓双计）。
+        /// 事件流/buy_vwap/裁剪/dirty 面保持全量（非叠加面——事实不丢）。
+        let unsettled_trades = rec
+            .as_ref()
+            .map(|r| r.unsettled_trades.clone())
+            .unwrap_or_default();
         // Sol 五审修复 1：**本拍公开期末投影**——step() 返回前把本 tick
         // 已成交事实合入公开 session 账户（ADR-0017 完整结算同拍交付；
         /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
@@ -722,7 +731,7 @@ impl RuntimeDriver {
         if let Some(rec) = &rec {
             self.apply_same_tick_fill_projection(
                 session,
-                &rec.desk_trades,
+                &unsettled_trades,
                 &buy_vwap,
                 &last_prices,
             )?;
@@ -845,19 +854,21 @@ impl RuntimeDriver {
                     /// session 旧镜像）即安装。
                     // Sol 五审修复 1：本拍成交事实合入执行腿（组内
                     /// staging 下一 Start 合并——公开计划读面同拍；
-                    /// 下一拍被组权威整值覆盖，不双计）。
-                    if !trades.is_empty() {
+                    /// 下一拍被组权威整值覆盖，不双计）。前置约束①：
+                    /// 叠加输入=终轮未落账尾巴（早轮已随组 Continue
+                    /// 落账推进——组簿 collect 已含，全量输入双计）。
+                    if !unsettled_trades.is_empty() {
                         let day = u64::from(session.day());
-                        self.apply_same_tick_plan_fills(&mut plans, &trades, day)?;
+                        self.apply_same_tick_plan_fills(&mut plans, &unsettled_trades, day)?;
                     }
                     session.set_runtime_plans(plans);
-                } else if !trades.is_empty() {
+                } else if !unsettled_trades.is_empty() {
                     // D5 cross_stock 收口：组簿无计划（迁移期注入面——
                     /// session 侧测试注入的计划）时，本拍成交事实对
                     /// session plans 同拍合入（与组簿非空路径同式；
                     /// 下一拍组权威接管后此分支自然失效）。
                     let day = u64::from(session.day());
-                    self.apply_same_tick_plan_fills_for_session(session, &trades, day)?;
+                    self.apply_same_tick_plan_fills_for_session(session, &unsettled_trades, day)?;
                 }
             }
             Err(projection_error) => return Err(projection_error),
@@ -1564,6 +1575,13 @@ impl RuntimeDriver {
         // 目标不早于世界下一 tick（游标领先时对齐——组验证拒绝过期）。
         let target = tick.max(self.world.global.committed_tick + 1);
         self.world.force_due_for_test(locals, target);
+    }
+
+    /// step_frame 接轨前置约束① fixture 通道：强制下一次轮上报
+    /// continuation=true（cfg(test)——Continue 轮的确定性触发）。
+    #[cfg(test)]
+    pub fn force_continuation_for_test(&mut self) {
+        self.world.force_continuation_for_test();
     }
 
     /// 组注意力调度收集（Sol 二审修复集 5：构造器恢复断言/对账面——

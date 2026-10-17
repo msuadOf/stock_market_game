@@ -431,6 +431,12 @@ pub enum GroupIn {
         /// belief 簿变换（experience/policy 等面的闭包直施）。
         mutate: Box<dyn FnOnce(&mut crate::strategy::BeliefBook) + Send>,
     },
+    /// step_frame 接轨前置约束① fixture 通道（cfg(test)）：强制本组
+    /// 下一次轮上报 `continuation=true`（一次消费即清——驱动 Continue
+    /// 轮的确定性触发；生产 continuation 由组内计划链上报，测试通道
+    /// 只补触发面不改语义）。
+    #[cfg(test)]
+    ForceContinuationForTest,
     /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
     /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
     EchoOpenDerivation,

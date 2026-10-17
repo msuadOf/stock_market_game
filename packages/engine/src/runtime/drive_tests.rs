@@ -3183,3 +3183,132 @@ fn p2_4b_envelope_incremental_matches_full_rebuild() {
     assert_eq!(inc_hash, full_hash, "期末业务哈希（含信封投影）必须逐位一致");
     assert_eq!(inc_events, full_events, "事件序列必须逐位一致");
 }
+
+// ═══ step_frame 接轨前置约束①：Continue 早轮成交同拍投影恰一次落账 ═══
+
+/// prerequisites ①（agents/std-thread-migration/plans/
+/// step-frame-integration-prerequisites.md §1）红证：Continue 链上早轮
+/// desk_trades 已随组 Continue 落账（组账户快照回写已含早轮成交），
+/// drive 的同拍成交投影（`apply_same_tick_fill_projection`——"组回写后
+/// 叠加增量"口径）若以全量 `TickRecord.desk_trades` 为输入，会把早轮
+/// 成交**重复应用**（持仓/现金双计）。本测试经 ForceContinuationForTest
+/// 驱动 Continue 轮（成交产生于轮 0=早轮），断言成交恰一次反映进
+/// session 公开账户。
+#[test]
+fn prereq1_continue_early_round_fills_settle_exactly_once() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 2;
+    // 全天连续（首拍即可撮合——竞价窗只积累不成交）。
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 21).expect("会话构造");
+    // 卖方须有可卖持仓（开局分配）——选一个有持仓的 NPC 做卖腿。
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            session
+                .account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 0（float 分配）");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    let code = crate::StockId(0);
+    fn qty_of(session: &GameSession, code: &crate::StockId, id: crate::AccountId) -> u32 {
+        session
+            .account(id)
+            .and_then(|a| a.positions().get(code))
+            .map(|p| p.qty())
+            .unwrap_or(0)
+    }
+    fn cash_of(session: &GameSession, id: crate::AccountId) -> i64 {
+        session.account(id).map(|a| a.cash().cents()).unwrap_or(0)
+    }
+    let buyer_qty_before = qty_of(&session, &code, buyer);
+    let seller_qty_before = qty_of(&session, &code, seller);
+    let buyer_cash_before = cash_of(&session, buyer);
+    let seller_cash_before = cash_of(&session, seller);
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 轮 0 对手单（限价 1000 交叉必成交）+ 强制续行（轮 0 上报
+    // continuation=true → Continue 轮 1 空转收尾——成交事实在早轮）。
+    let intents = vec![
+        crate::session::ReceiptBearingIntent {
+            owner: buyer,
+            intent: crate::Intent::PlaceLimit {
+                code,
+                side: crate::orderbook::Side::Buy,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+        crate::session::ReceiptBearingIntent {
+            owner: seller,
+            intent: crate::Intent::PlaceLimit {
+                code,
+                side: crate::orderbook::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+    ];
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(&intents, &upper)
+        .expect("意图注入");
+    driver.force_continuation_for_test();
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进（含 Continue 轮）");
+    driver.install_market_views(&mut session).expect("行情安装");
+    driver.install_candles(&mut session).expect("K 安装");
+    // 前置：确实发生了一次 Continue 且早轮产生了恰一笔成交。
+    let rec = driver.world_report_log().last().expect("tick 记录");
+    assert_eq!(rec.rounds, 1, "前置：发生了一次 Continue（两轮）");
+    let trades: Vec<_> = rec
+        .desk_trades
+        .iter()
+        .filter(|t| t.stock == 0 && t.qty == 100)
+        .collect();
+    assert!(
+        trades.len() >= 1,
+        "前置：早轮产生了成交：{:?}",
+        rec.desk_trades
+    );
+    // 独立期望值（恰一次）：双腿费用分项来自 desk 事实（maker≡卖方
+    /// fees 恒卖腿、taker≡买方——desk 产出侧归一化）。
+    let gross = trades[0].price * i64::from(trades[0].qty);
+    let seller_net = gross - trades[0].maker_fees_cents;
+    let buyer_paid = gross + trades[0].taker_fees_cents;
+    // 判别面：持仓恰一次（双计形态=买方 +200/卖方 −200）。
+    assert_eq!(
+        qty_of(&session, &code, buyer),
+        buyer_qty_before + 100,
+        "买方持仓恰 +100（Continue 早轮成交不得双计）"
+    );
+    assert_eq!(
+        qty_of(&session, &code, seller),
+        seller_qty_before - 100,
+        "卖方持仓恰 −100（Continue 早轮成交不得双计）"
+    );
+    assert_eq!(
+        cash_of(&session, buyer),
+        buyer_cash_before - buyer_paid,
+        "买方现金恰扣一次（双计形态=−2×实付）"
+    );
+    assert_eq!(
+        cash_of(&session, seller),
+        seller_cash_before + seller_net,
+        "卖方现金恰入账一次（双计形态=+2×净得）"
+    );
+}

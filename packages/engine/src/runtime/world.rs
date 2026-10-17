@@ -273,8 +273,16 @@ pub struct TickRecord {
     pub desk_hashes: Vec<(StockIdx, u64)>,
     /// 各交易部本收束点挂单数（观察面）。
     pub desk_resting: Vec<(StockIdx, u64)>,
-    /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。
+    /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。Continue
+    /// 链下含**全轮**成交（早轮+终轮，每条恰一次——事实不丢）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
+    /// 终轮（最后一次 Continue 之后）成交——实体仍在组 staging、
+    /// **尚未随 Continue 落账**的尾巴。step_frame 接轨前置约束①：
+    /// 驱动器的同拍成交投影（"组回写后叠加增量"口径）必须只消费本
+    /// 尾巴——早轮成交已随组 Continue 落账进组账户（快照回写已含），
+    /// 以全量 desk_trades 叠加会把早轮重复应用（现金/持仓双计）。
+    /// rounds=0（无 Continue）时与 desk_trades 等值。
+    pub unsettled_trades: Vec<super::protocol::DeskTradeFact>,
     /// 本 tick 生命周期事实（受理/撤单/到期；事件映射输入）。
     pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// 本轮回执（拒收/不可撤；IntentRejected 映射输入）。
@@ -771,6 +779,15 @@ impl World {
     pub fn defer_due_for_test(&mut self, locals: Vec<super::LocalIdx>, tick: u64) {
         if let Some(tx) = self.group_txs.first() {
             let _ = tx.send(GroupIn::DeferDueForTest { locals, tick });
+        }
+    }
+
+    /// step_frame 接轨前置约束① fixture 通道：下行组 0 强制续行标记
+    /// （cfg(test)——下一次轮上报 continuation=true，一次消费即清）。
+    #[cfg(test)]
+    pub fn force_continuation_for_test(&mut self) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::ForceContinuationForTest);
         }
     }
 
@@ -1500,14 +1517,17 @@ impl World {
                     rounds = next;
                 } else {
                     // 终轮：以累积事实替换终轮单轮快照（恰一次进
-                    // TickRecord——含全部 Continue 轮）。
+                    // TickRecord——含全部 Continue 轮）。终轮原始成交
+                    // 在替换前抓取——它们的实体从未随 Continue 下行
+                    // 落账（前置约束①的 unsettled 尾巴）。
+                    let unsettled_trades = evidence.desk_trades.clone();
                     evidence.desk_trades = acc_trades;
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
                     evidence.group_rejections = acc_group_rejections;
                     evidence.desk_auction = acc_auction;
                     evidence.entities_out = acc_entities_out;
-                    self.install_tick(tick, rounds, evidence);
+                    self.install_tick(tick, rounds, evidence, unsettled_trades);
                     break;
                 }
             }
@@ -1590,7 +1610,15 @@ impl World {
     }
 
     /// 单点安装（唯一安装点语义保持：成功路径才触碰全局域权威）。
-    fn install_tick(&mut self, tick: u64, rounds: u32, evidence: TickEvidence) {
+    /// `unsettled_trades`：终轮原始成交（前置约束①——从未随 Continue
+    /// 落账的尾巴，同拍投影的合法输入面）。
+    fn install_tick(
+        &mut self,
+        tick: u64,
+        rounds: u32,
+        evidence: TickEvidence,
+        unsettled_trades: Vec<super::protocol::DeskTradeFact>,
+    ) {
         // tick 成功转正：清除可能残留的全局中止标记（上一次 Abort 已回滚收敛）。
         self.abort.store(false, Ordering::SeqCst);
         for (stock, view) in evidence.desk_views {
@@ -1608,6 +1636,7 @@ impl World {
             desk_hashes: evidence.desk_hashes,
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
+            unsettled_trades,
             desk_lifecycle: evidence.desk_lifecycle,
             desk_receipts: evidence.desk_receipts,
             group_rejections: evidence.group_rejections,
