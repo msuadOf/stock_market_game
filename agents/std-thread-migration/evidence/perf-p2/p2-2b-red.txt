@@ -1,0 +1,9 @@
+=== P2-2b 突变红（undo 记录 no-op）===
+命令：cargo test -p engine --lib p2_2b_account_undo
+基准：当前工作树（P2-2b 完整态）+ 突变=runtime_record_account_undo 直接 return
+1641cc7239e1eecf025804b475b7b9b734dd7c6c
+thread 'runtime::drive_tests::p2_2b_account_undo_records_and_clears' (940978) panicked at packages/engine/src/runtime/drive_tests.rs:2562:5:
+assertion `left == right` failed: 首拍全量回写必产生写时 undo 记录（记录缺失=回滚源断裂）
+  left: 0
+ right: 2
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1621 filtered out; finished in 1.36s
