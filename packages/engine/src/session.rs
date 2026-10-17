@@ -5232,6 +5232,17 @@ impl CommittableSessionState {
             last_retail_order_events,
             FieldId::LastRetailOrderEvents,
         );
+        // Sol 五轮修复：runtime 缓存域交接——desk 簿镜像与序号游标缓存
+        // 此前只解构不赋回（shadow 新值被丢弃、authority 保留旧值；
+        // runtime step 原地安装不经此边界故未显红——红证
+        // sol5th-red-commit.txt：left [5] right [9]）。直接赋值（与
+        // seed/tick 先例一致——不扩 FieldId/COMMIT_FIELD_EXPECTED 清单）。
+        // 缓存域清单核对（Sol 要求）：undo 槽位（account/attention/heap/
+        // belief/retail/history）为逐拍回滚产物、有意丢弃（`: _`）；
+        // retail_projection_seen/next_receipt_base 已有交接；镜像+游标
+        // 即全部需交接的 runtime 缓存域。
+        self.desk_book_mirror = desk_book_mirror;
+        self.runtime_desk_serial_cursors = runtime_desk_serial_cursors;
         #[cfg(feature = "simulation-diagnostics")]
         {
             defer_swap(
@@ -5284,6 +5295,54 @@ impl CommittableSessionState {
 #[cfg(test)]
 mod committable_state_tests {
     use super::*;
+
+    /// Sol 五轮修复：commit_from 游标/镜像交接——shadow 期间演进的
+    /// runtime 缓存域（desk 序号游标、簿镜像）提交时不得丢弃（此前
+    /// 只解构不赋回，authority 保留旧值；runtime step 原地安装不经此
+    /// 边界故未显红——shadow 边界的直接锚）。镜像缺席（瞬态缺席拍）
+    /// 时游标缓存仍须跨 shadow/commit 保留。
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn sol5r_commit_from_transfers_runtime_cache_domains() {
+        let mut session = GameSession::new(
+            npc_working_quote_tests::retail_quote_setup(),
+            4242,
+        )
+        .expect("会话构造");
+        // 基线：缓存游标=5，镜像缺席（瞬态缺席静止点形态）。
+        session.state.runtime_desk_serial_cursors = vec![5];
+        assert!(session.state.desk_book_mirror.is_empty());
+        let mut shadow = session.state.clone_for_shadow().expect("shadow 克隆");
+        // shadow 期间游标演进到 9、镜像建立（install 段形态）。
+        shadow.runtime_desk_serial_cursors = vec![9];
+        shadow.desk_book_mirror.insert(
+            StockId(0),
+            DeskBookMirror {
+                orders: Vec::new(),
+                last_price: crate::money::Money::from_cents(1000),
+                public_cutoff_serial: 0,
+                next_serial: 9,
+            },
+        );
+        session.state.commit_from(shadow);
+        assert_eq!(
+            session.state.runtime_desk_serial_cursors,
+            vec![9],
+            "游标缓存必须跨 shadow/commit 交接（不丢弃 shadow 新值）"
+        );
+        assert_eq!(
+            session.state.desk_book_mirror[&StockId(0)].next_serial,
+            9,
+            "镜像（含 next_serial）必须跨 shadow/commit 交接"
+        );
+        // save 静止点游标=缓存值（镜像缺席场景的兜底链）。
+        let save = session.save().expect("存档");
+        assert_eq!(
+            save.book_next_sequences[&StockId(0)],
+            9,
+            "镜像缺席时 save 游标由会话缓存承载"
+        );
+    }
 
     fn fatal(description: &str) -> StepFatal {
         StepFatal::InvariantViolation {
