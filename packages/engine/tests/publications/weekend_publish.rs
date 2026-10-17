@@ -77,16 +77,8 @@ impl WeekendScenario {
     }
 
     fn step_friday(&mut self) {
-        // std-thread 迁移登记（Sol 终审整改 2）：本场景是**旧管线披露域
-        // 契约**（周六投递零市场副作用断言锚定 session 侧 attention 的
-        // 休市静止面——runtime 的组内信息域投递演进属已知差异面）。显式
-        // 经恒旧管线入口驱动（runtime 等价锚由 Belief-1b 家族/翻转批
-        // 承载）。
         for _ in 0..TICKS_PER_DAY {
-            let _ = self
-                .session
-                .step_with_commit_evidence()
-                .expect("healthy step（旧管线披露契约入口）");
+            self.session.step().expect("healthy step");
         }
     }
 
