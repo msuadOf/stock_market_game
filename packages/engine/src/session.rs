@@ -2943,27 +2943,37 @@ impl GameSession {
         }
     }
 
-    fn record_retail_intent_rejections(&mut self, account: AccountId, events: &[Event]) {
-        if !self.state.retail_experience.contains_key(&account) {
-            return;
-        }
+    /// D5 诊断面派生：retail 拒收（Sol P3 单遍派发——原逐账户 × 全事件
+    /// O(名册×事件) 扫描+每 tick 全名册 keys collect；拒收事件通常 0-几条，
+    /// 只对事件涉及账户查 retail_experience）。**输出序逐位等价**：按
+    /// 账户升序分组（=原 retail_experience.keys() 迭代序）、组内事件序。
+    fn record_retail_intent_rejections(&mut self, events: &[Event]) {
+        let mut by_account: std::collections::BTreeMap<
+            AccountId,
+            Vec<(StockId, crate::RejectionReason)>,
+        > = std::collections::BTreeMap::new();
         for event in events {
             if let Event::IntentRejected {
-                account: rejected_account,
-                code,
-                reason,
-                ..
+                account, code, reason, ..
             } = event
             {
-                if *rejected_account == account {
-                    self.state.last_retail_order_events.push(
-                        RetailOrderDiagnosticEvent::Rejected {
-                            account,
-                            code: code.clone(),
-                            reason: reason.clone(),
-                        },
-                    );
+                if self.state.retail_experience.contains_key(account) {
+                    by_account
+                        .entry(*account)
+                        .or_default()
+                        .push((code.clone(), reason.clone()));
                 }
+            }
+        }
+        for (account, items) in by_account {
+            for (code, reason) in items {
+                self.state
+                    .last_retail_order_events
+                    .push(RetailOrderDiagnosticEvent::Rejected {
+                        account,
+                        code,
+                        reason,
+                    });
             }
         }
     }

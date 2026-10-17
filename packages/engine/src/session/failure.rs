@@ -530,11 +530,10 @@ impl GameSession {
         // D5 诊断面派生：retail 拒收诊断（旧管线 continuous lifecycle
         /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
         /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
-        /// 仅派生已迁移的 Rejected）。
+        /// 仅派生已迁移的 Rejected）。P2-3c：单遍派发（原逐账户×全事件
+        /// O(名册×事件)+全名册 keys collect——Sol P3）。
         self.state.last_retail_order_events.clear();
-        for account in self.state.retail_experience.keys().copied().collect::<Vec<_>>() {
-            self.record_retail_intent_rejections(account, &events);
-        }
+        self.record_retail_intent_rejections(&events);
         // D5 #4 retail 链：决策 trace 投影（组内生产——本拍清+装，旧管线
         /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
         {

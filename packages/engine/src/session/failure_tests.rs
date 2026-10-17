@@ -576,3 +576,74 @@ fn p2_3b_domain_undo_rolls_back_attention_personal_and_heap() {
         "history_reads 域回滚"
     );
 }
+
+// ── P2-3c 红证：retail 拒收诊断单遍派发的输出序等价 ──
+
+// 修复背景：step_via_runtime 事件投影段原为 O(名册×事件)——每 tick
+// retail_experience.keys() 全名册 collect（20000 AccountId）×逐账户扫全部
+// 事件匹配 IntentRejected。P2-3c 改单遍派发（只对事件涉及账户查
+// retail_experience）。守卫：同拍注入两个 NPC 账户的 qty=0 拒收意图，
+// 诊断面输出必须保持账户升序分组（=原 keys() 迭代序）+组内事件序——
+// 朴素事件序派发/跳过派发的突变均红。
+#[test]
+fn p2_3c_retail_rejection_dispatch_keeps_account_grouped_order() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.retail_count = 2;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    setup.ticks_per_day = 64;
+    let mut game = GameSession::new(setup, 173).expect("会话构造");
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game)
+        .expect("驱动器构造");
+    driver.adopt_session_seq(&game);
+    let views = driver.world_public_views().to_vec();
+    let upper: Vec<i64> = views.iter().map(|v| v.daily_upper_limit).collect();
+    let zero_qty = |owner: crate::AccountId, ordinal: u64| crate::session::ReceiptBearingIntent {
+        owner,
+        intent: crate::Intent::PlaceLimit {
+            code: crate::StockId(0),
+            side: crate::orderbook::Side::Buy,
+            price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                views[0].last_price,
+            )),
+            qty: 0,
+        },
+        account_ordinal: ordinal,
+        stock_ordinal: 0,
+    };
+    // 注入序倒置（账户 2 先、账户 1 后）——派发必须仍按账户升序分组。
+    driver
+        .inject_player_intents(&[zero_qty(crate::AccountId(2), 0), zero_qty(crate::AccountId(1), 1)], &upper)
+        .expect("注入");
+    let events = game
+        .runtime_step_with_install(&mut driver)
+        .expect("步进+安装");
+    // 前置：两拒收事件确已产出（否则守卫空转）。
+    let rejected_event_accounts: Vec<u64> = events
+        .iter()
+        .filter_map(|e| match e {
+            crate::Event::IntentRejected { account, .. } => Some(account.0),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        rejected_event_accounts.len(),
+        2,
+        "两笔 qty=0 意图必拒收（守卫空转防护）：{events:?}"
+    );
+    // 诊断面：两 NPC 账户各一条 Rejected，账户升序分组（跳过派发=0 条红；
+    // 朴素事件序派发=注入序 [2,1] 红）。
+    let diagnostics = game.last_retail_order_events();
+    let rejected_diag_accounts: Vec<u64> = diagnostics
+        .iter()
+        .filter_map(|d| match d {
+            crate::session::RetailOrderDiagnosticEvent::Rejected { account, .. } => Some(account.0),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        rejected_diag_accounts,
+        vec![1, 2],
+        "拒收诊断必须账户升序分组（单遍派发输出序等价）：{diagnostics:?}"
+    );
+}
