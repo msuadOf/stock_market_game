@@ -1709,12 +1709,37 @@ impl GroupState {
         behavior: &crate::behavior::BehaviorMarketObservation,
     ) -> Result<Vec<super::decision::PendingOp>, RuntimeError> {
         let group = self.group;
-        let (projection, snap) = match (self.root_projection.clone(), self.belief_states.get(local as usize).cloned().flatten()) {
-            (Some(p), Some(s)) => (p, s),
-            _ => {
+        let projection = match self.root_projection.clone() {
+            Some(p) => p,
+            None => {
                 return Err(RuntimeError::ProtocolInvariant {
                     detail: format!(
-                        "组 {group} retail 位 {local} 决策缺投影/个人态（无会话来源或未跑 tick）"
+                        "组 {group} retail 位 {local} 决策缺投影（无会话来源或未跑 tick）"
+                    ),
+                })
+            }
+        };
+        // P2-3d：槽 take 化——原「输入 clone + 决策尾 undo clone」双深拷贝
+        /// 归一（journal 先记拍前值再消费；错误/panic 路径 Abort 重放
+        /// GroupUndo::Personal 无条件恢复 Some(prev)，槽空窗仅函数内——
+        /// 组线程单线程，run_round 期无并发读面）。journal 相对序不变
+        ///（本函数此前唯一 undo 条目=Personal，前后无其他条目交错）。
+        let mut snap = match self
+            .belief_states
+            .get_mut(local as usize)
+            .and_then(Option::take)
+        {
+            Some(s) => {
+                self.undo.push(GroupUndo::Personal {
+                    local,
+                    prev: Box::new(s.clone()),
+                });
+                s
+            }
+            None => {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "组 {group} retail 位 {local} 决策缺个人态（无会话来源或未跑 tick）"
                     ),
                 })
             }
@@ -1738,9 +1763,10 @@ impl GroupState {
                 detail: format!("组 {group} retail 位 {local} 缺零售风格投影"),
             });
         };
+        // P2-3d：经验行自 snap 取走（journal 已持拍前副本——无需 clone）。
         let mut experience = snap
             .retail_experience
-            .clone()
+            .take()
             .ok_or_else(|| RuntimeError::ProtocolInvariant {
                 detail: format!("组 {group} retail 位 {local} 缺经验行投影"),
             })?;
@@ -1860,13 +1886,14 @@ impl GroupState {
         }
         // P2-3a：等权市场聚合为公共量——本轮共享（原每位各聚合一次）。
         let thirty_minute_market = behavior.thirty_minute_market;
+        // P2-3d：六件自 snap 取走（journal 已持拍前副本——构建零 clone）。
         let mut personal = crate::session::PlanPersonalState {
-            attention: snap.attention.clone(),
-            watchlist: snap.watchlist.clone(),
-            price_memory: snap.price_memory.clone(),
-            history_reads: snap.history_reads.clone(),
-            information: snap.information.clone(),
-            belief: snap.belief.clone(),
+            attention: snap.attention,
+            watchlist: snap.watchlist,
+            price_memory: snap.price_memory,
+            history_reads: snap.history_reads,
+            information: snap.information,
+            belief: snap.belief,
         };
         let assessments = crate::GameSession::observe_retail_analysis_core(
             &ctx,
@@ -2017,19 +2044,16 @@ impl GroupState {
                 ops.push(op);
             }
         }
-        // 组态写回（个人态六件+经验行——undo 先记）。
-        self.undo.push(GroupUndo::Personal {
-            local,
-            prev: Box::new(snap.clone()),
-        });
+        // 组态写回（个人态六件+经验行）。P2-3d：undo 已在 take 时记录；
+        /// 写回字段自 personal move（personal 此后无消费——六件 clone 归零）。
         if let Some(slot) = self.belief_states.get_mut(local as usize) {
             *slot = Some(super::world::BeliefParticipantSnapshot {
-                watchlist: personal.watchlist.clone(),
-                price_memory: personal.price_memory.clone(),
-                information: personal.information.clone(),
-                belief: personal.belief.clone(),
-                attention: personal.attention.clone(),
-                history_reads: personal.history_reads.clone(),
+                watchlist: personal.watchlist,
+                price_memory: personal.price_memory,
+                information: personal.information,
+                belief: personal.belief,
+                attention: personal.attention,
+                history_reads: personal.history_reads,
                 retail_experience: Some(experience),
             });
         }

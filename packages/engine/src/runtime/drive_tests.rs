@@ -2643,3 +2643,71 @@ fn p2_3a_retail_chain_shared_observation_golden() {
         "P2-3a 决策序列等价守卫（公共观察内容/时点/RNG 流漂移即红）"
     );
 }
+
+// ── P2-3d 红证：零售槽 take 化后 Abort 恢复完整性 ──
+
+// 修复背景：run_retail_decision 个人态消费原为「输入深拷贝+决策尾 undo
+// 克隆」双份；P2-3d 改槽 take（journal 在 take 时记拍前值，错误/panic/
+// Abort 经 GroupUndo::Personal 重放恢复 Some(prev)）。风险面=Abort 重放：
+// 若 take 时 undo 记录缺失，被拒拍的零售槽残留演进值（或 None）。守卫：
+// validator 拒一拍（零售决策已跑）→ Abort 重放 → belief 读面必须与拍前
+// 逐字段一致。
+#[test]
+fn p2_3d_retail_slot_take_restores_on_abort() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 32;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    setup.ticks_per_day = 64;
+    setup.strategy_params.retail.arrival_rate = 1.0;
+    setup.strategy_params.retail.order_size_mean = 100;
+    let mut session = GameSession::new(setup, 211).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("首拍");
+    let before = driver.collect_belief().expect("belief 读面");
+    // 下一拍装段拒绝（决策已跑——组先 run_round 后收敛装段校验）。
+    driver.set_world_validator_for_test(Box::new(|_e| Err("注入：装段拒".to_owned())));
+    let rejected = driver.step_frame_equivalent(&mut session);
+    assert!(rejected.is_err(), "validator 拒绝必须 Err");
+    // 前置：被拒拍确有零售决策跑过（守卫空转防护——trace 缓冲在下一
+    // Start 前保留被拒拍产出）。
+    let traces = driver
+        .collect_retail_traces()
+        .expect("trace 读面")
+        .concat();
+    assert!(
+        !traces.is_empty(),
+        "被拒拍必须已有零售决策（否则守卫空转）：{}",
+        traces.len()
+    );
+    // 组端真读面（稀疏=被拒拍演进位；collect_belief 是驱动器缓存——
+    /// Abort 不触安装、缓存不变，判别力为零，已登记）。
+    let sparse = driver
+        .collect_group_belief_for_test()
+        .expect("组端 belief 读面");
+    assert!(
+        !sparse.is_empty() && sparse.iter().any(|(_, v)| !v.is_empty()),
+        "前置：被拒拍的演进位上行非空（dirty 面+决策面双证）：{sparse:?}"
+    );
+    for (group, entries) in &sparse {
+        for (local, snapshot) in entries {
+            let cache_slot = &before
+                .get(*group as usize)
+                .expect("组在缓存名册")
+                .1
+                .get(*local as usize)
+                .expect("演进位在缓存名册");
+            let Some(pre) = cache_slot else {
+                panic!("演进位拍前必在缓存（fixture 前提破坏）");
+            };
+            assert_eq!(
+                format!("{snapshot:?}"),
+                format!("{pre:?}"),
+                "Abort 后组槽(local={local})必须恢复拍前值（take 化 undo 完整性）"
+            );
+        }
+    }
+}

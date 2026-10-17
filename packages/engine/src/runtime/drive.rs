@@ -1460,6 +1460,24 @@ impl RuntimeDriver {
             .collect())
     }
 
+    /// P2-3d 守卫读面（cfg(test)）：组端 EchoBelief 真读面（稀疏——本 tick
+    /// 演进位）。collect_belief 是驱动器缓存、不反映组槽——Abort 恢复
+    /// 完整性守卫须读组端权威槽。
+    #[cfg(test)]
+    pub fn collect_group_belief_for_test(
+        &mut self,
+    ) -> Result<
+        Vec<(
+            super::GroupIdx,
+            Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>,
+        )>,
+        String,
+    > {
+        self.world
+            .collect_group_belief()
+            .map_err(|e| format!("belief 组读面失败：{e:?}"))
+    }
+
     /// 计划簿收集（D3a-2c 件5：组内 PlanBook 上行——测试/红证面；生产
     /// 交付点投影在 step 内）。
     pub fn collect_plans(
