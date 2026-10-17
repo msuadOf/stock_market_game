@@ -42,6 +42,7 @@ impl GameSession {
                 runtime_install_failure: _,
             runtime_driver: _,
             runtime_group_count: _,
+            runtime_discard_driver_flag: _,
             revision: _,
         } = self;
         let super::CommittableSessionState {
@@ -81,6 +82,11 @@ impl GameSession {
             runtime_retail_undo_ids: _,
             runtime_history_undo: _,
             runtime_history_undo_ids: _,
+            runtime_mirror_undo: _,
+            runtime_plans_undo: _,
+            runtime_envelope_undo: _,
+            runtime_lifecycles_undo: _,
+            runtime_retail_diag_undo: _,
             company_registry: _,
             operations: _,
             closing: _,

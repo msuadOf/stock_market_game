@@ -983,6 +983,19 @@ impl RuntimeDriver {
         self.next_seq
     }
 
+    /// 分配一条事件 seq（先加后取——与事件流同一游标；调用方负责
+    /// 随后 `set_runtime_seq(driver.next_seq())` 同步会话权威）。
+    /// step_frame 接轨件 4：DayBoundary 等安装段事件此前直改
+    /// `state.seq` 而不推进驱动器游标——下一拍驱动器重复分配同一
+    /// seq（tick_frame_commit 的日结后首拍 coverage 显红）。
+    pub fn take_event_seq(&mut self) -> u64 {
+        self.next_seq = self
+            .next_seq
+            .checked_add(1)
+            .expect("事件 seq 溢出（u64 单调计数）");
+        self.next_seq
+    }
+
     /// step_frame 接轨件 3：连续相位行情事件生成（旧管线
     /// finish_market_data 的 runtime 等价）——每连续拍每股一条
     /// `Event::PriceTick`（客户端 timeseries 依赖；竞价相位由
@@ -994,7 +1007,24 @@ impl RuntimeDriver {
         session: &mut GameSession,
         events: &mut Vec<Event>,
     ) -> Result<(), String> {
-        if session.phase() != crate::TradingPhase::Continuous {
+        // 相位基准=本拍**开始时**相位（tick−1 的 day_tick——与旧管线
+        /// finish_market_data 的 boundary 政策同拍口径；用步后 tick 判
+        /// 会使转连续过渡拍早一拍产 PriceTick，parity 对照显红）。
+        let setup = session.export_setup_for_runtime();
+        let tpd = setup.ticks_per_day.max(1);
+        let day_tick_before = session.tick().saturating_sub(1) % tpd;
+        let entry = setup.auction_ticks - setup.auction_ticks / 3;
+        let closing_start = tpd.saturating_sub(setup.closing_auction_ticks);
+        let phase_before = if day_tick_before < entry {
+            crate::TradingPhase::CallAuction
+        } else if day_tick_before < setup.auction_ticks {
+            crate::TradingPhase::PreOpen
+        } else if day_tick_before >= closing_start && setup.closing_auction_ticks > 0 {
+            crate::TradingPhase::ClosingAuction
+        } else {
+            crate::TradingPhase::Continuous
+        };
+        if phase_before != crate::TradingPhase::Continuous {
             return Ok(());
         }
         let tick_after = session.tick();
@@ -1024,13 +1054,7 @@ impl RuntimeDriver {
                     trade_stats: Some(Default::default()),
                 },
             );
-            let seq = {
-                self.next_seq = self
-                    .next_seq
-                    .checked_add(1)
-                    .expect("事件 seq 溢出（u64 单调计数）");
-                self.next_seq
-            };
+            let seq = self.take_event_seq();
             events.push(Event::PriceTick {
                 seq,
                 tick: tick_after,
@@ -1961,6 +1985,11 @@ impl RuntimeDriver {
         session: &mut GameSession,
     ) -> Result<Vec<Event>, crate::session::StepFatal> {
         session.require_healthy()?;
+        // step_frame 接轨件 4：seq 权威=会话，每拍从权威重取游标——
+        /// civil 面（end_civil_day_update 走旧管线 candidate 的 session
+        /// 侧 seq 分配）推进 state.seq 后驱动器游标即过期，本拍重取
+        /// 保证分配续接（tick 的锁步校验同式：会话是唯一权威）。
+        self.adopt_session_seq(session);
         let tick_after = session.tick() + 1;
         // D4 相位计时：tick 界登记（context_workers 采样真实池容量）。
         crate::verification_evidence::begin_authoritative_tick(

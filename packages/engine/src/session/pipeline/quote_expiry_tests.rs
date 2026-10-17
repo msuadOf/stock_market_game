@@ -140,10 +140,12 @@ fn quote_expiry_releases_buy_resources_and_defers_authority_until_commit() {
 #[test]
 fn quote_expiry_frame_keeps_the_cancellation_fact_with_a_unique_key() {
     let (mut game, _code, account, order_id) = expiring_npc_order(crate::Side::Buy);
-    let frame = game.step_frame().unwrap();
-    frame.validate().unwrap();
-    let cancellation = frame
-        .facts
+    // D2 登记（与上一测试同 fixture）：旧簿挂单为旧管线专有注入面——
+    // step_frame 接轨件 4 后默认走 runtime 分叉（旧簿 TTL 撤单事实不在
+    // runtime 事件流），本契约测试显式经旧管线拿事实批（稳定键面锚定）。
+    let commit = super::execute_authoritative_tick(&mut game, false).unwrap();
+    let frame_facts = &commit.facts;
+    let cancellation = frame_facts
         .iter()
         .find(|fact| {
             matches!(

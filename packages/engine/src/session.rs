@@ -1418,6 +1418,11 @@ pub struct GameSession {
     /// 翻转批组参数化：runtime 世界的组数（探针负载用；生产默认 1——
     /// from_session 单组语义不变）。
     runtime_group_count: usize,
+    /// step_frame 接轨件 4：投影段失败后丢弃驱动器的标志（body 内设置、
+    /// 驱动器共用段消费——world tick 已转正而会话已回滚，锁步断裂的
+    /// 常驻实例不可复用；重试经 from_session 重建，等价旧管线"candidate
+    /// 丢弃+可重试"）。不进 state 克隆链（随 runtime_driver 同生命周期）。
+    pub(crate) runtime_discard_driver_flag: bool,
     state: CommittableSessionState,
 }
 
@@ -1483,6 +1488,17 @@ struct CommittableSessionState {
     runtime_history_undo:
         Vec<(AccountId, Option<crate::experience::PersonalHistoryReadLedger>)>,
     runtime_history_undo_ids: std::collections::HashSet<AccountId>,
+    /// step_frame 接轨件 4b：投影失败回滚面扩展（malformed_frame 契约
+    /// ——失败后 save==步前）。整值替换域的 move/clone-undo（幂等首写
+    /// get_or_insert；ledger clone 仅 step_frame 分叉路径记录——见
+    /// runtime_step_with_install_inner 的 capture_undo 门控）。瞬态不入
+    /// 存档/hash；shadow/commit 有意丢弃（与五域 undo 同生命周期）。
+    runtime_mirror_undo:
+        Option<(BTreeMap<StockId, DeskBookMirror>, Vec<u64>)>,
+    runtime_plans_undo: Option<crate::plans::PlanBook>,
+    runtime_envelope_undo: Option<pipeline::EnvelopeLedger>,
+    runtime_lifecycles_undo: Option<Vec<NpcOrderLifecycle>>,
+    runtime_retail_diag_undo: Option<(Vec<RetailOrderDiagnosticEvent>, Vec<RetailDecisionTrace>)>,
     // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
     /// 发行人注册表（公司规格与开局账套）：股票 ↔ 公司映射与开局账套。
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
@@ -1838,6 +1854,7 @@ impl GameSession {
             runtime_install_failure: false,
             runtime_driver: None,
             runtime_group_count: 1,
+            runtime_discard_driver_flag: false,
             state: self.state.clone_for_shadow()?,
         })
     }
@@ -2006,6 +2023,7 @@ impl GameSession {
             runtime_install_failure: false,
             runtime_driver: None,
             runtime_group_count: 1,
+            runtime_discard_driver_flag: false,
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),
@@ -2045,6 +2063,11 @@ impl GameSession {
                 runtime_retail_undo_ids: std::collections::HashSet::new(),
                 runtime_history_undo: Vec::new(),
                 runtime_history_undo_ids: std::collections::HashSet::new(),
+                runtime_mirror_undo: None,
+                runtime_plans_undo: None,
+                runtime_envelope_undo: None,
+                runtime_lifecycles_undo: None,
+                runtime_retail_diag_undo: None,
                 company_registry: std::sync::Arc::new(registry),
                 operations: std::sync::Arc::new(ops),
                 closing: std::sync::Arc::new(closing),
@@ -5021,6 +5044,11 @@ impl CommittableSessionState {
             runtime_retail_undo_ids: _,
             runtime_history_undo: _,
             runtime_history_undo_ids: _,
+            runtime_mirror_undo: _,
+            runtime_plans_undo: _,
+            runtime_envelope_undo: _,
+            runtime_lifecycles_undo: _,
+            runtime_retail_diag_undo: _,
             company_registry,
             operations,
             groups,
@@ -5083,6 +5111,11 @@ impl CommittableSessionState {
             runtime_retail_undo_ids: std::collections::HashSet::new(),
             runtime_history_undo: Vec::new(),
             runtime_history_undo_ids: std::collections::HashSet::new(),
+            runtime_mirror_undo: None,
+            runtime_plans_undo: None,
+            runtime_envelope_undo: None,
+            runtime_lifecycles_undo: None,
+            runtime_retail_diag_undo: None,
             company_registry: company_registry.clone(),
             groups: groups.clone(),
             operations: operations.clone(),
@@ -5146,6 +5179,11 @@ impl CommittableSessionState {
             runtime_retail_undo_ids: _,
             runtime_history_undo: _,
             runtime_history_undo_ids: _,
+            runtime_mirror_undo: _,
+            runtime_plans_undo: _,
+            runtime_envelope_undo: _,
+            runtime_lifecycles_undo: _,
+            runtime_retail_diag_undo: _,
             company_registry,
             operations,
             groups,

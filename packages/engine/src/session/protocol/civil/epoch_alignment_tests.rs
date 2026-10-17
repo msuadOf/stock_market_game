@@ -278,7 +278,7 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
     // 捕获；D(1) 的观察基 = S_1——首拍 step 后（第二拍前）捕获。
     let signal_at_epoch0 = frozen_signal(&session);
 
-    session.step_frame().unwrap();
+    session.step_frame_pipeline_contract().unwrap();
     let signal_at_epoch1 = frozen_signal(&session);
 
     let attention_after = snap_attention(&session);
@@ -362,7 +362,7 @@ fn epoch_alignment_first_call_records_entry_and_tail_epochs() {
         &attention_before,
         &[(0, signal_at_epoch0), (1, signal_at_epoch1)],
     );
-    session.step_frame().unwrap();
+    session.step_frame_pipeline_contract().unwrap();
     let after_a2 = snap_attention(&session)
         .iter()
         .find(|(x, _, _)| *x == a)
@@ -403,7 +403,7 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
     let b = AccountId(2);
     // 推进至 tick 5（0..5），期间注意力自然演化。
     for _ in 0..5 {
-        session.step_frame().unwrap();
+        session.step_frame_pipeline_contract().unwrap();
     }
     let a = *session.game().state.npc_attention.keys().min().unwrap();
     let b = *session.game().state.npc_attention.keys().max().unwrap();
@@ -424,7 +424,7 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
     let minute_at_epoch5 = session.game().current_market_minute();
     let signal_at_epoch5 = frozen_signal(&session);
 
-    session.step_frame().unwrap();
+    session.step_frame_pipeline_contract().unwrap();
     let signal_at_epoch6 = frozen_signal(&session);
 
     let attention_after = snap_attention(&session);
@@ -476,7 +476,7 @@ fn epoch_alignment_intraday_tick_consumes_one_epoch_and_produces_next() {
         &[(5, signal_at_epoch5), (6, signal_at_epoch6)],
     );
     let (_, state_b6) = probe_chain_from(&session, b, &attention_before, &[(6, signal_at_epoch6)]);
-    session.step_frame().unwrap();
+    session.step_frame_pipeline_contract().unwrap();
     let after2 = snap_attention(&session);
     let after_a2 = after2.iter().find(|(x, _, _)| *x == a).unwrap();
     let after_b2 = after2.iter().find(|(x, _, _)| *x == b).unwrap();
@@ -527,7 +527,7 @@ fn epoch_alignment_last_tick_does_not_execute_next_day_epoch() {
     let mut epoch_signals: Vec<(u64, f64)> = Vec::new();
     for tick in 0..4u64 {
         epoch_signals.push((tick, frozen_signal(&session)));
-        let frame = session.step_frame().unwrap();
+        let frame = session.step_frame_pipeline_contract().unwrap();
         npc_accepted_total += frame
             .events()
             .filter(|event| {
@@ -617,7 +617,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
         force_due_keep_base(&mut session, *account, 0, 3);
     }
     for _ in 0..4 {
-        session.step_frame().unwrap();
+        session.step_frame_pipeline_contract().unwrap();
     }
     let attention_before_civil = snap_attention(&session);
     session.end_civil_day_update().unwrap();
@@ -634,7 +634,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
     // A 类：失败回滚对照——首 tick 失败不消耗 NPC 随机流。
     let attention_at_restore = snap_attention(&restored);
     restored.malformed_frame = true;
-    assert!(restored.step_frame().is_err());
+    assert!(restored.step_frame_pipeline_contract().is_err());
     // A 类（收窄口径）：首 tick 失败**不消耗权威随机流**——attention（含
     // rng_state/next）与恢复时逐位不变。fixture note（实现期发现，登记
     // t3-epoch-fixture-notes）：共享 ingress 的 receive 事实跨失败 tick 持久
@@ -683,7 +683,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
         assert!(accepts4[0], "注入 rng 应使 epoch 4 接受（自校验）");
         oracle_states.push((*account, probed4));
     }
-    let resumed = restored.step_frame().unwrap();
+    let resumed = restored.step_frame_pipeline_contract().unwrap();
     let attention_after_day2_first = snap_attention(&restored);
     // B 类（新契约）：跨 tick 载体退役——首调用后 pending 恒 None。
     assert!(
@@ -731,7 +731,7 @@ fn epoch_alignment_after_civil_update_first_tick_evaluates_day_boundary_epoch() 
     // accepted 标志=生产自身受理判定）逐 (account, stock) 精确核对。
     // f(5)=第二拍前的权威分钟（D(5) 的冻结观察基）。
     let minute_at_epoch5_day2 = restored.game().current_market_minute();
-    let _ = restored.step_frame().unwrap();
+    let _ = restored.step_frame_pipeline_contract().unwrap();
     let trace_day2 = restored.game().compute_context().take_queue_attention_trace();
     assert!(
         trace_day2.iter().any(|record| record.tick == 5),
@@ -963,11 +963,11 @@ fn epoch_alignment_attention_call_trace_witnesses_one_eval_per_epoch_account() {
     }
     let mut window: Vec<(u64 /*call*/, Vec<crate::compute::AttentionCallRecord>)> = Vec::new();
     for call in 0..4 {
-        session.step_frame().unwrap();
+        session.step_frame_pipeline_contract().unwrap();
         window.push((call, session.game().compute_context().take_queue_attention_trace()));
     }
     session.end_civil_day_update().unwrap();
-    session.step_frame().unwrap();
+    session.step_frame_pipeline_contract().unwrap();
     // B 类（T3 已重登记）：交易日首次调用=唯一入口生产，单 attempt 单视界
     // {4}（旧形状同窗双 epoch {4,5} 的分组差已消除——t3-stop-register 冲突 1
     // 的形状；D(5) 移至下一调用，覆盖由 epoch 覆盖断言承载）。
@@ -1056,7 +1056,7 @@ fn epoch_alignment_rejected_account_rng_is_exact_at_evaluate_boundary() {
     force_due(&mut session, a, 0, 3);
     let b_rng = find_rejecting_rng(&session, b, 0, 0.1, 2);
     force_due_with_base(&mut session, b, 0, b_rng, 0.1);
-    session.step_frame().unwrap();
+    session.step_frame_pipeline_contract().unwrap();
     let trace = session.game().compute_context().take_queue_attention_trace();
     let record_b = trace
         .iter()
@@ -1120,7 +1120,7 @@ fn epoch_alignment_accepted_account_personal_rng_terminal_is_exact() {
         .find(|(account, _, _)| *account == a)
         .unwrap();
 
-    session.step_frame().unwrap();
+    session.step_frame_pipeline_contract().unwrap();
 
     // 1. 调用见证：恰一次 evaluate（trace 内 (A,0) 唯一），accepted，边界
     //    rng_before == step 前权威值。

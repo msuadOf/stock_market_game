@@ -87,12 +87,22 @@ impl GameSession {
     }
 
     /// 生产入口：基于同一版冻结 candidate 构造并验证 frame 后才安装权威状态。
+    /// step_frame 接轨件 4：runtime 分叉（与 `step()` 的 failure.rs:892
+    /// 分叉同开关同语义——缺省 runtime、ENGINE_STEP_RUNTIME=0 回旧管线）。
+    /// **Escrow verifier 面（capture_commit_evidence=true）恒走旧管线**：
+    /// TickCommitEvidence 的信封域证据（receipts/envelope chains）在
+    /// runtime 无等价承载（D4 登记、交接 §3.2——批 9 旧管线退役时再
+    /// 裁决映射或替代方案）；生产便捷入口（step_frame 经
+    /// ProtocolSession，capture=false）走 runtime 分叉。
     pub(in crate::session) fn step_frame_and_commit<P>(
         &mut self,
         capture_commit_evidence: bool,
         project: impl FnOnce(TickCandidateProjection<'_>, Vec<EventFact>) -> Result<P, StepFatal>,
     ) -> Result<(P, Option<crate::session::pipeline::TickCommitEvidence>), StepFatal> {
         self.check_step_start()?;
+        if !capture_commit_evidence && crate::runtime::step_runtime_enabled() {
+            return self.step_frame_and_commit_via_runtime(project);
+        }
         crate::session::pipeline::execute_authoritative_tick_with_projection(
             self,
             capture_commit_evidence,

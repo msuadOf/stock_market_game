@@ -18,6 +18,10 @@ pub use delta::{PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
 pub use facts::{EventFact, SessionFactCursor};
 pub use replay::*;
 
+#[cfg(test)]
+#[path = "stepframe_parity_tests.rs"]
+mod stepframe_parity_tests;
+
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct TickTimeseriesPayload {

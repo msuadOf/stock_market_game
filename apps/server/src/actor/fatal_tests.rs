@@ -44,12 +44,19 @@ fn compute_context_production_actor_does_not_follow_callers_pool() {
             assert_eq!(batch.frames.last().unwrap().tick, expected);
         }
         let samples = samples.lock().unwrap();
-        assert!(samples
-            .iter()
-            .any(|sample| sample.work == ComputeWork::CandidatePrepare));
-        for work in [ComputeWork::Observe, ComputeWork::Analyse, ComputeWork::Decide,
-            ComputeWork::Project, ComputeWork::StockPrepare, ComputeWork::StockMatch, ComputeWork::StockFinish] {
-            assert!(samples.iter().any(|sample| sample.work == work), "未覆盖生产任务 {work:?}");
+        if engine::runtime::step_runtime_enabled() {
+            // std-thread runtime 模型差异（step_frame 接轨件 4 登记）：
+            // 决策/撮合在组/交易部线程（不经 ComputeContext 池采样）——
+            // actor 与注入 compute 的绑定（上方 ptr_eq）与 tick 推进/
+            // TickBatch 交付已断言，池工作类型面仅旧管线存在。
+        } else {
+            assert!(samples
+                .iter()
+                .any(|sample| sample.work == ComputeWork::CandidatePrepare));
+            for work in [ComputeWork::Observe, ComputeWork::Analyse, ComputeWork::Decide,
+                ComputeWork::Project, ComputeWork::StockPrepare, ComputeWork::StockMatch, ComputeWork::StockFinish] {
+                assert!(samples.iter().any(|sample| sample.work == work), "未覆盖生产任务 {work:?}");
+            }
         }
         for sample in samples.iter() {
             assert_eq!(sample.executing_workers, workers, "{sample:?}");
@@ -204,6 +211,16 @@ fn assert_failed_cycle_preserves_business_and_ingress_facts(
         assert_eq!(
             after_cursors, before_cursors,
             "未执行成功 tick 时不得凭空登记 NPC receipt"
+        );
+    } else if engine::runtime::step_runtime_enabled() {
+        // std-thread runtime 模型差异（step_frame 接轨件 4 登记）：
+        // 失败拍=世界 Abort（组端决策/落账整体冲回）+玩家意图回灌
+        //（ready ingress——D2 语义），ingress ordinal **不消耗**——
+        // 重放重消费同号，游标自洽；旧管线的"receive 即 gap"是
+        // session 决策管线的防重放面（NPC receive 在 candidate 内）。
+        assert_eq!(
+            after_cursors, before_cursors,
+            "runtime 失败拍不消耗 NPC ordinal（整拍回滚+回灌重放语义）"
         );
     } else {
         assert_ne!(

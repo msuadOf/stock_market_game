@@ -39,6 +39,14 @@ pub(crate) fn open_position_action(
     }?;
     let target_qty = match (score, fundamental_ready) {
         (Some(score), true) => {
+            // 权益非正（零现金零市值——组内 belief 位可评估到达）时零
+            // 权重除零显式跳过：无权益账户无仓可开（语义正确且不静默
+            // ——开仓评估对无权益账户恒 None）。此前除零 panic 由组线程
+            // 运输杀死整个 tick（step_frame 接轨后 multi_stock fixture
+            // 显红——旧管线决策门不触达该账户，组内 belief 链触达）。
+            if equity.cents() <= 0 {
+                return None;
+            }
             let position_value = price
                 .mul_shares(held_qty)
                 .unwrap_or_else(|error| panic!("position value failed for {account:?}: {error}"));

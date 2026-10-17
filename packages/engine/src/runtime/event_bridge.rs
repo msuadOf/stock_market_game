@@ -314,17 +314,20 @@ pub fn event_facts_with_stable_keys(
 }
 
 /// 事件的身份域桶名（for_event 三元映射的手工复刻：Trade→股域 Sealed、
-/// 竞价/行情→股域 PriceTick、受理/撤单→账户域 Sealed、拒收→账户域）。
+/// 竞价/行情→股域 PriceTick、账户面四变体（受理/撤单/拒收/结算错误）→
+/// **账户域 Sealed**——域不含 code，同账户跨股事件共享局部序号链；
+/// 此前按 (account, code) 分桶使同账户跨股事件各自 idx=0 → 稳定键
+/// 重复（双股日结拍 drained 撤单显红））。
 fn identity_bucket(event: &Event) -> String {
     match event {
         Event::Trade { code, .. } => format!("trade:{code:?}"),
         Event::AuctionTick { code, .. }
         | Event::AuctionCompleted { code, .. }
         | Event::PriceTick { code, .. } => format!("market:{code:?}"),
-        Event::OrderCanceled { account, code, .. } | Event::OrderAccepted { account, code, .. } => {
-            format!("order:{account:?}:{code:?}")
-        }
-        Event::IntentRejected { account, code, .. } => format!("intent:{account:?}:{code:?}"),
+        Event::OrderCanceled { account, .. }
+        | Event::OrderAccepted { account, .. }
+        | Event::IntentRejected { account, .. }
+        | Event::SettlementError { account, .. } => format!("account_sealed:{account:?}"),
         other => format!("other:{other:?}"),
     }
 }

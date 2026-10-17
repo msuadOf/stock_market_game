@@ -283,6 +283,39 @@ impl ProtocolSession {
         self.step_frame_inner(false).map(|(frame, _)| frame)
     }
 
+    /// step_frame 接轨件 4 的契约测试入口（cfg(test)）：显式走**旧管线**
+    /// frame 路径——旧管线专有注入面/决策链契约（决策失败注入、epoch
+    /// 对齐见证、NPC 日界准备 seam、旧簿 fixture）的测试锚定在旧语义
+    /// 上，与 `GameSession::step_pipeline_contract` 同型登记（D2 先例：
+    /// runtime 无对应注入面，经 step_frame 混跑只会把注入面缺失误报为
+    /// 语义失败）。runtime 的等价锚由 flip 批/stepframe parity 承载。
+    #[cfg(test)]
+    pub fn step_frame_pipeline_contract(&mut self) -> Result<TickFrame, StepFatal> {
+        let malformed = std::mem::take(&mut self.malformed_frame);
+        let mut cursor = self.state.fact_cursor.clone();
+        let ((frame, retained), _evidence) =
+            crate::session::pipeline::execute_authoritative_tick_with_projection(
+                &mut self.state.game,
+                false,
+                |projection, facts| {
+                    let frame = projection.project_frame(facts)?;
+                    let frame = malformed_frame_if_requested(frame, malformed);
+                    frame.validate().map_err(protocol_fatal)?;
+                    cursor.begin_tick(frame.tick);
+                    cursor
+                        .record_committed_facts(&frame.facts)
+                        .map_err(protocol_fatal)?;
+                    let retained = std::sync::Arc::new(frame.clone());
+                    Ok((frame, retained))
+                },
+            )?;
+        self.state.fact_cursor = cursor;
+        self.state.intraday.push(retained);
+        // committed_runtime 不写（tick_batch 是 publication 面——契约
+        // 测试不消费）。
+        Ok(frame)
+    }
+
     /// 证据与 frame 来自同一 prepared candidate；提交前不外发任何事实。
     pub fn step_frame_with_commit_evidence(
         &mut self,
@@ -1143,7 +1176,7 @@ mod rollback_tests {
         let frozen = serde_json::to_value(&slot).unwrap();
         let before_failed_tick = serde_json::to_value(restored.state.game.save().unwrap()).unwrap();
         restored.malformed_frame = true;
-        assert!(restored.step_frame().is_err());
+        assert!(restored.step_frame_pipeline_contract().is_err());
         assert_eq!(
             serde_json::to_value(restored.state.game.save().unwrap()).unwrap(),
             before_failed_tick,
@@ -1168,8 +1201,8 @@ mod rollback_tests {
         let mut observed_npc_request = false;
         let mut diagnostics = Vec::new();
         for _ in 0..3 {
-            let continued = live.step_frame().unwrap();
-            let resumed = restored.step_frame().unwrap();
+            let continued = live.step_frame_pipeline_contract().unwrap();
+            let resumed = restored.step_frame_pipeline_contract().unwrap();
             diagnostics.push(format!(
                 "events={:?}; decisions={:?}",
                 continued.events().collect::<Vec<_>>(),
@@ -1244,14 +1277,14 @@ mod rollback_tests {
         );
 
         restored.malformed_frame = true;
-        assert!(restored.step_frame().is_err());
+        assert!(restored.step_frame_pipeline_contract().is_err());
         assert_eq!(
             serde_json::to_value(restored.state.game.save().unwrap()).unwrap(),
             before,
             "首 tick 后续失败必须回滚实际 NPC 观察及随机流"
         );
-        let continued = live.step_frame().unwrap();
-        let resumed = restored.step_frame().unwrap();
+        let continued = live.step_frame_pipeline_contract().unwrap();
+        let resumed = restored.step_frame_pipeline_contract().unwrap();
         assert_eq!(
             continued.events().collect::<Vec<_>>(),
             resumed.events().collect::<Vec<_>>()
@@ -1280,7 +1313,7 @@ mod rollback_tests {
     fn trading_day_archive_defers_active_npc_requests_and_restores_exactly() {
         let mut live = ProtocolSession::new(active_retail_day_end_setup("2030-01-02"), 8).unwrap();
         for _ in 0..11 {
-            live.step_frame().unwrap();
+            live.step_frame_pipeline_contract().unwrap();
         }
         let attention = live
             .state
@@ -1297,7 +1330,7 @@ mod rollback_tests {
             .state
             .attention_scheduler
             .enqueue(12, crate::AccountId(1));
-        live.step_frame().unwrap();
+        live.step_frame_pipeline_contract().unwrap();
         assert_day_end_npc_continuation(live);
     }
 

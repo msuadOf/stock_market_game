@@ -92,13 +92,17 @@ pub fn runtime_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     (session, all)
 }
 
-/// 旧管线同种子驱动。
+/// 旧管线同种子驱动（对照臂——step_frame 接轨件 4 后 `step_frame()`
+/// 默认走 runtime 分叉，本 helper 显式经恒旧管线的
+/// `step_with_commit_evidence` 入口保持对照语义）。
 pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     let mut session = GameSession::new(setup_1stock(), seed).expect("会话构造");
     let mut all = Vec::new();
     for t in 1..=ticks {
-        let frame = session.step_frame().expect("旧管线 tick");
-        all.extend(frame.facts.into_iter().map(|f| f.event));
+        let (events, _evidence) = session
+            .step_with_commit_evidence()
+            .expect("旧管线 tick（commit evidence 入口恒走旧管线）");
+        all.extend(events);
         // 日界：旧管线的自然日推进是宿主责任（ADR-0025）——跨日驱动时
         // 显式调用（与 runtime 编排自动日结对齐口径）。
         if t % 240 == 0 {

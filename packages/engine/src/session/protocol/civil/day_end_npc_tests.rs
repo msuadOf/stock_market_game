@@ -1,3 +1,7 @@
+// step_frame 接轨件 4 登记：本文件为旧管线决策链契约（queue_attention_
+// trace/epoch 评估见证——session 侧决策 seam 的 trace 面），与 D2 的
+// step_pipeline_contract 同型显式走旧管线；runtime 等价锚由组内稀疏
+// attention 上行/翻转批承载。
 use super::ProtocolSession;
 use crate::*;
 
@@ -40,7 +44,7 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
                 })
                 .collect();
             let receipt_cursors_before = session.game().save().unwrap().ingress_receipt_cursors;
-            let frame = session.step_frame().unwrap();
+            let frame = session.step_frame_pipeline_contract().unwrap();
             if tick_in_day == 3 {
                 let attention_after: Vec<_> = session
                     .game()
@@ -126,7 +130,7 @@ fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
         let baseline = initial.ingress_receipt_cursors;
         let initial_attention = initial.npc_attention;
         for expected_tick in 9..=11 {
-            let frame = branch.step_frame().unwrap();
+            let frame = branch.step_frame_pipeline_contract().unwrap();
             frame.validate().unwrap();
             assert_eq!(branch.tick(), expected_tick);
             let live = branch.game().save().unwrap();
