@@ -1278,3 +1278,70 @@ fn r07_continuous_self_cross_terminates_without_self_trade() {
     assert_eq!(a1.cash, 1_000_000, "现金不动（无成交）");
     assert_eq!(a1.shares[0], 1_000, "Drain 后持仓复原");
 }
+
+/// A 股制度级（sol-103 上报项 1 修复·红测试先行）：**集合竞价单一价格
+/// 原则**——所有成交按同一清算价结算（沪深交易规则：集合竞价以单一
+/// 价格撮合成交）。此前 runtime settle_fill 按 maker 申报价结算（与旧
+/// 管线 orderbook.rs execute_auction_clearing 按清算价不一致）。
+///
+/// fixture：买 1000 × 卖 900（不对称交叉）⇒ 候选 {900,1000} 同为最大
+/// 成交量 100 ⇒ 沪市取候选中间价 = 950（半进位无小数）。
+/// 手算 oracle（双方都按 950 结算）：
+/// - 买方实付 95_000+500（最低佣金；rated 23.75→24<500）+1（过户
+///   0.95→1）= 95_501 ⇒ 现金 904_499；
+/// - 卖方净得 95_000−549（佣金 500+印花 47.5→48 银行家舍入+过户 1）
+///   = 94_451 ⇒ 现金 1_094_451；
+/// - 成交事实价=950、last_price=950（=AuctionCompleted 清算价）。
+#[test]
+fn auction_fills_settle_at_single_clearing_price() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 900, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 9; // 申报窗 day_tick<6、完成拍=6
+    spec.closing_auction_ticks = 3;
+    spec.config = config_with_cage(false);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Fixed(1000),
+            purse_reference: 1000,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(6).expect("完成拍收敛");
+    let rec = world
+        .report_log
+        .iter()
+        .find(|r| !r.desk_trades.is_empty())
+        .expect("完成拍有成交事实");
+    assert_eq!(rec.desk_trades.len(), 1, "恰一笔");
+    assert_eq!(
+        rec.desk_trades[0].price, 950,
+        "成交价=清算价 950（单一价格原则——非 maker 申报价 900）"
+    );
+    let report = world.shutdown().expect("关停");
+    let desk = &report.desk_finals[0];
+    assert_eq!(desk.market.volume_today, 100);
+    assert_eq!(desk.market.last_price, 950, "最新价=清算价");
+    let a0 = &report.group_finals[0].accounts[0];
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a0.shares[0], 1_100, "买方得 100 股");
+    assert_eq!(
+        a0.cash, 904_499,
+        "买方按清算价实付：95_000+佣金 500+过户 1"
+    );
+    assert_eq!(a1.shares[0], 900, "卖方出 100 股");
+    assert_eq!(
+        a1.cash, 1_094_451,
+        "卖方按清算价净得：95_000−（佣金 500+印花 48+过户 1）"
+    );
+}

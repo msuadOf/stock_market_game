@@ -1038,19 +1038,26 @@ impl DeskState {
                     .expect("crossed => 档非空")
             };
             let fill_qty = order.qty.min(maker.qty);
-            self.settle_fill(order, maker, fill_qty)?;
+            // 连续竞价：成交价=maker 价（对手档申报价，价格改善归 taker）。
+            let maker_price = maker.price;
+            self.settle_fill(order, maker, fill_qty, maker_price)?;
         }
         Ok(())
     }
 
     /// 单笔成交结算：实体互换 + 费用 + FillFact 双边 + 行情更新（全部记撤销日志）。
+    /// `fill_price` 显式传入：连续竞价=maker 价（价格改善归 taker）；集合
+    /// 竞价=**清算价**（A 股单一价格原则——所有成交按同一清算价结算，
+    /// 沪深交易规则集合竞价撮合制度；对齐旧管线 orderbook.rs
+    /// execute_auction_clearing 的 selection.price 口径）。
     fn settle_fill(
         &mut self,
         taker: &mut DeskOrder,
         maker: DeskOrder,
         qty: u32,
+        fill_price: i64,
     ) -> Result<(), RuntimeError> {
-        let price = maker.price;
+        let price = fill_price;
         let value = Money::from_cents(price)
             .mul_shares(qty)
             .map_err(|_| over("成交额溢出"))?
@@ -1708,10 +1715,11 @@ impl DeskState {
                     detail: format!("清算数量超界：matched={matched}, qty={qty}, volume={volume}"),
                 });
             }
-            // 以买方为 taker、卖方为 maker 结算（费用按清算价双边计）。
+            // 以买方为 taker、卖方为 maker 结算；成交价=**清算价**（单一
+            // 价格原则——本函数的 price 形参），费用按成交价双边计。
             let mut taker = buy;
             let maker = sell;
-            self.settle_fill(&mut taker, maker, qty)?;
+            self.settle_fill(&mut taker, maker, qty, price)?;
             // taker 全成即闭合；部分成交写回簿（apply_maker_fill 只写 maker——
             // taker 也是簿内单，需对称写回）。
             self.write_back_taker(&taker)?;
