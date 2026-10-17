@@ -451,8 +451,10 @@ fn p2r1_day_end_step_failure_rolls_back_t1_unlock() {
     let mut session = GameSession::new(setup, 91).expect("会话构造");
     let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
-    // 前 4 拍正常推进（ends_day 判定基于 step 前 tick——第 5 拍 tick=4 时 4%4==0 触发日结段）。
-    for _ in 0..4 {
+    // 前 3 拍正常推进（复审返工：ends_day 判定读 step 后 tick——第 4 拍
+    // step 后 tick=4 触发日结段；4 次循环会使失败落在 run_ticks 自动日界
+    // 的 ? 路径而非 day_end_world——红证链路错位，复审突变实证）。
+    for _ in 0..3 {
         driver
             .step_frame_equivalent(&mut session)
             .expect("步进");

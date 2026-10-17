@@ -767,10 +767,12 @@ impl GameSession {
     /// 写入循环不产生中途失败——收集失败时不写任何条目；若后续写入
     /// 面变为可失败，此快照即回滚依据）。
     fn runtime_install_baseline(&self) -> RuntimeInstallBaseline {
-        // P2 复核阻断 1：ends_day 拍（与 runtime_step_with_install 的
-        // ends_day 判定同式同基准——step 前 tick）恢复全量账户快照。
+        // P2 复核阻断 1（复审返工：判定对齐 ends_day 的拍基准）：ends_day
+        // 判定读 **step 后** tick（set_runtime_tick 推进后），本基线在
+        // step 前构造——预测下一拍（tick+1）。原 step 前 tick 判定恒错
+        // 位一拍（日结拍基线恒 None=修复不生效，复审突变实证）。
         let tpd = u64::from(self.state.setup.ticks_per_day);
-        let day_end_tick = tpd > 0 && self.tick() % tpd == 0 && self.tick() > 0;
+        let day_end_tick = tpd > 0 && (self.tick() + 1) % tpd == 0;
         RuntimeInstallBaseline {
             tick: self.tick(),
             seq: self.current_seq(),
