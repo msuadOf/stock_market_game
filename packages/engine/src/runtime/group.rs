@@ -532,6 +532,13 @@ pub struct GroupState {
     /// D3a-2b 信念个人态（逐组内下标；None=非机构位）——构造期投影，
     /// Belief-1b 起承接披露驱动的组内自演进。
     belief_states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
+    /// P2-1a 个人态 dirty 追踪：本 tick 生产演进面（retail/chain 写回、
+    /// 信息投递、测试注入）触碰过的 local——EchoBelief 应答随附掩码，
+    /// 驱动器只对 dirty 条目重装 session 镜像（省全名册深拷贝安装，
+    /// B 口径 ≈58% CPU 的大头，见 .tmp/perf-p2-p0-breakdown.md）。
+    /// 等价不变式：非 dirty ⇒ 组端值==session 镜像值（构造期同源投影
+    /// +两侧只经 dirty 通道同步）；Start 随 undo 一并清（新 tick 起）。
+    belief_dirty: Vec<bool>,
     /// 公开库（Belief-1b·下：Arc 共享——投递消息稀疏刷新）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
     /// D3a-2 观察基：快照来源的每股（分钟收盘，日 K 条）——链观察的
@@ -626,6 +633,8 @@ impl GroupState {
         script: GroupScript,
     ) -> Self {
         let n_stocks = accounts.first().map(|a| a.shares.len()).unwrap_or(0);
+        // P2-1a：名册长度先于 seed move 记录（dirty 掩码初始化用）。
+        let belief_roster = belief_states_seed.len();
         GroupState {
             group,
             accounts,
@@ -651,6 +660,9 @@ impl GroupState {
             external_cancels: Vec::new(),
             observation_inputs: vec![ObservationInputs::default(); n_stocks],
             belief_states: belief_states_seed,
+            // P2-1a：dirty 掩码随名册长度初始化（构造期全 false——组端
+            // 初值=会话投影同源，无需回装）。
+            belief_dirty: vec![false; belief_roster],
             library: library_seed,
             root_projection,
             child_in_flight: Default::default(),
@@ -1506,6 +1518,9 @@ impl GroupState {
         self.apply_staging(self.cur_tick, self.cur_round)?;
         // 转正点：丢弃上一 tick 可逆日志；committed 推进到 N−1（旧 cur_tick）。
         self.undo.clear();
+        // P2-1a：dirty 掩码随新 tick 清（上一 tick 的 dirty 已在安装期
+        /// 上行消费；新 tick 的演进面重新标记）。
+        self.belief_dirty.iter_mut().for_each(|f| *f = false);
         self.plan_undo_saved = false;
         // Sol 二审修复集 4：Start 间窗口收到的 ForceDue 在此应用——效果
         // 归本 tick 日志域（Abort 冲回强制前值、指令失效需重发）。
@@ -1555,6 +1570,8 @@ impl GroupState {
         // 日结相位的簿变更（Drain Closed→release_child_ticket）不再保存
         // 新快照，Abort 恢复在途票但不恢复执行腿（票/簿分裂）。
         self.undo.clear();
+        // P2-1a：日结转正同步清 dirty。
+        self.belief_dirty.iter_mut().for_each(|f| *f = false);
         self.plan_undo_saved = false;
         self.committed_tick = self.cur_tick;
         // ① Drain 回流落账（清空在途）。
@@ -2022,6 +2039,10 @@ impl GroupState {
                 retail_experience: Some(experience),
             });
         }
+        // P2-1a：retail 位生产写回=dirty（EchoBelief 掩码+驱动器重装面）。
+        if let Some(flag) = self.belief_dirty.get_mut(local as usize) {
+            *flag = true;
+        }
         Ok(ops)
     }
 
@@ -2425,6 +2446,10 @@ impl GroupState {
                     /// 的决策段演进）。
                     retail_experience: slot.as_ref().and_then(|s| s.retail_experience.clone()),
                 });
+            }
+            // P2-1a：chain 位生产写回=dirty（EchoBelief 掩码+驱动器重装面）。
+            if let Some(flag) = self.belief_dirty.get_mut(local as usize) {
+                *flag = true;
             }
         }
         let _ = tick;
@@ -4285,6 +4310,11 @@ pub fn group_main(
                             Ok(Some((_, information, belief, attention))) => {
                                 snap.information = information;
                                 snap.belief = belief;
+                                // P2-1a：投递演进=dirty（EchoBelief 掩码+
+                                /// 驱动器重装面）。
+                                if let Some(flag) = state.belief_dirty.get_mut(li) {
+                                    *flag = true;
+                                }
                                 updates.push((local, attention));
                             }
                             Ok(None) => {}
@@ -4318,10 +4348,14 @@ pub fn group_main(
             }
             GroupIn::EchoBelief => {
                 let states = state.belief_states.clone();
+                // P2-1a：随附本 tick dirty 掩码（驱动器只重装演进位——
+                /// 全量 states 保留给读面 collect_belief 的同源校验）。
+                let dirty = state.belief_dirty.clone();
                 if up_tx
                     .send(UpMsg::GroupBelief {
                         group: state.group,
                         states,
+                        dirty,
                     })
                     .is_err()
                 {
@@ -4383,6 +4417,10 @@ pub fn group_main(
                         });
                         if let Some(slot) = state.belief_states.get_mut(local as usize) {
                             *slot = Some(snapshot);
+                        }
+                        // P2-1a：测试注入=dirty（注入后读面/安装面须可见）。
+                        if let Some(flag) = state.belief_dirty.get_mut(local as usize) {
+                            *flag = true;
                         }
                     }
                     None => {

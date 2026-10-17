@@ -552,11 +552,16 @@ pub enum UpMsg {
         updates: Vec<(LocalIdx, crate::session::NpcAttentionState)>,
     },
     /// 信念个人态回执（EchoBelief 应答——逐组内下标；None=非机构位）。
+    /// P2-1a：随附本 tick dirty 掩码（生产演进面标记——驱动器只对
+    /// dirty 位重装 session 镜像，省全名册深拷贝安装；states 保持
+    /// 全量给读面 collect_belief 的同源校验）。
     GroupBelief {
         /// 组索引。
         group: GroupIdx,
-        /// 逐组内下标的信念个人态快照。
+        /// 逐组内下标的信念个人态快照（全量）。
         states: Vec<Option<super::world::BeliefParticipantSnapshot>>,
+        /// 与 states 等长的 dirty 掩码（true=本 tick 生产演进触碰）。
+        dirty: Vec<bool>,
     },
     /// 计划簿回执（D3a-2c 件5：组内 PlanBook 克隆——交付点投影源）。
     GroupPlans {
@@ -659,8 +664,13 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupObservations { group, .. } => {
                 write!(f, "GroupObservations(group={group})")
             }
-            UpMsg::GroupBelief { group, states } => {
-                write!(f, "GroupBelief(group={group}, n={})", states.len())
+            UpMsg::GroupBelief { group, states, dirty } => {
+                write!(
+                    f,
+                    "GroupBelief(group={group}, n={}, dirty={})",
+                    states.len(),
+                    dirty.iter().filter(|d| **d).count()
+                )
             }
             UpMsg::GroupDeliveryDone { group, updates } => {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())

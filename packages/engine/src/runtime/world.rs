@@ -1082,7 +1082,10 @@ impl World {
 
     pub fn collect_group_belief(
         &mut self,
-    ) -> Result<Vec<(GroupIdx, Vec<Option<BeliefParticipantSnapshot>>)>, RuntimeError> {
+    ) -> Result<
+        Vec<(GroupIdx, Vec<Option<BeliefParticipantSnapshot>>, Vec<bool>)>,
+        RuntimeError,
+    > {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -1098,8 +1101,18 @@ impl World {
         let mut left = self.n_groups;
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
-                UpMsg::GroupBelief { group, states } => {
-                    out.push((group, states));
+                UpMsg::GroupBelief { group, states, dirty } => {
+                    // P2-1a：掩码与快照等长防御（失配=协议漂移，显式失败）。
+                    if dirty.len() != states.len() {
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "collect_group_belief 组 {group} 掩码长度 {} ≠ 快照长度 {}",
+                                dirty.len(),
+                                states.len()
+                            ),
+                        });
+                    }
+                    out.push((group, states, dirty));
                     left -= 1;
                 }
                 other => {
@@ -1110,7 +1123,7 @@ impl World {
                 }
             }
         }
-        out.sort_by_key(|(g, _)| *g);
+        out.sort_by_key(|(g, _, _)| *g);
         Ok(out)
     }
 

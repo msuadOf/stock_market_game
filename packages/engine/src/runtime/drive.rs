@@ -27,6 +27,10 @@ pub struct RuntimeDriver {
     pub id_map: Vec<AccountId>,
     /// 事件 seq（协调者全局单调）。
     next_seq: u64,
+    /// P2-1a 红证计数（cfg(test)）：set_runtime_personal_state 实际安装
+    /// 次数——守卫测试断言"安装数==dirty 位计数"（全量重装突变即红）。
+    #[cfg(test)]
+    personal_installs: u64,
     /// 日终清簿事件缓冲（take_drained_events 取走）。
     drained_events: Vec<Event>,
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
@@ -378,6 +382,8 @@ impl RuntimeDriver {
             world,
             id_map: ids.clone(),
             next_seq: 0,
+            #[cfg(test)]
+            personal_installs: 0,
             drained_events: Vec::new(),
             pending_rejections: Vec::new(),
             accounts_per_group: per_group.max(1),
@@ -641,8 +647,16 @@ impl RuntimeDriver {
             .map_err(|e| format!("个人态交付投影失败：{e:?}"));
         match belief_states {
             Ok(collected) => {
-                for (group, states) in collected {
+                for (group, states, dirty) in collected {
                     for (local, snapshot) in states.iter().enumerate() {
+                        // P2-1a：只重装本 tick 生产演进位（dirty 掩码）。
+                        /// 非 dirty ⇒ 组端值==session 镜像值（构造期同源
+                        /// 投影+两侧只经 dirty 通道同步）——跳过重装省
+                        /// 全名册六件深拷贝/merge（B 口径 ≈58% CPU 大头，
+                        /// 见 .tmp/perf-p2-p0-breakdown.md）。
+                        if !dirty.get(local).copied().unwrap_or(false) {
+                            continue;
+                        }
                         let Some(&id) = self
                             .id_map
                             .get(group as usize * self.accounts_per_group + local)
@@ -650,6 +664,10 @@ impl RuntimeDriver {
                             continue;
                         };
                         if let Some(snapshot) = snapshot {
+                            #[cfg(test)]
+                            {
+                                self.personal_installs += 1;
+                            }
                             session.set_runtime_personal_state(id, snapshot);
                         }
                     }
@@ -1337,11 +1355,23 @@ impl RuntimeDriver {
         Ok(updates)
     }
 
+    /// P2-1a 红证读面（cfg(test)）：个人态实际安装计数。
+    #[cfg(test)]
+    pub fn personal_installs_for_test(&self) -> u64 {
+        self.personal_installs
+    }
+
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面）。
     pub fn collect_belief(
         &mut self,
-    ) -> Result<Vec<(super::GroupIdx, Vec<Option<super::world::BeliefParticipantSnapshot>>)>, String>
-    {
+    ) -> Result<
+        Vec<(
+            super::GroupIdx,
+            Vec<Option<super::world::BeliefParticipantSnapshot>>,
+            Vec<bool>,
+        )>,
+        String,
+    > {
         self.world
             .collect_group_belief()
             .map_err(|e| format!("信念态收集失败：{e:?}"))

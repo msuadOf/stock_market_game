@@ -2444,3 +2444,33 @@ fn d5_runtime_step_installs_day_boundary() {
     );
     assert_eq!(session.tick(), 8);
 }
+
+// ── P2-1a 红证：个人态安装尊重 dirty 掩码 ──
+
+// 修复背景：此前驱动器每 tick 对**全名册**逐 NPC set_runtime_personal_state
+// （六件深拷贝/merge——B 口径 ≈58% CPU 的大头，见 .tmp/perf-p2-p0-breakdown.md）。
+// 修复后 EchoBelief 随附组端 dirty 掩码，驱动器只重装本 tick 生产演进位
+// （等价不变式：非 dirty ⇒ 组端值==session 镜像值——构造期同源投影+两侧
+// 只经 dirty 通道同步）。守卫：安装数==dirty 位计数（全量重装突变即红）。
+#[test]
+fn p2_1a_personal_state_install_respects_dirty_mask() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 8; // belief 位×8
+    setup.auction_ticks = 0;
+    setup.strategy_params.inst.order_size = 100;
+    let mut session = GameSession::new(setup, 83).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进");
+    let installs = driver.personal_installs_for_test();
+    // 本 tick 的 dirty 位计数（step 收束后掩码在位——下一 Start 才清）。
+    let (_, _, dirty) = driver.collect_belief().expect("belief 读面").remove(0);
+    let dirty_count = dirty.iter().filter(|d| **d).count() as u64;
+    assert_eq!(
+        installs, dirty_count,
+        "个人态安装数必须==dirty 位计数（非演进位不重装；全量重装=回归）"
+    );
+}
