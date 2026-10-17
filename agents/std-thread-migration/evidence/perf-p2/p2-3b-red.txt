@@ -1,0 +1,21 @@
+# P2-3b 突变红证据
+# 基准：P2-3b 实现工作树（五域写时 undo+heap move-undo）
+# 突变：runtime_record_attention_undo 记录 no-op（undo 源断裂）
+# 命令：cargo test -p engine --lib p2_3b
+# 判别：注入安装失败后 attention 域回滚断言红——AccountId(2) 
+#   next_attention_candidate_tick left=3(残留演进值) vs right=2(拍前值)、
+#   rng_state 漂移（位置精确锁定，非宽匹配）。
+
+
+thread 'session::failure_tests::p2_3b_domain_undo_rolls_back_attention_personal_and_heap' (1202402) panicked at packages/engine/src/session/failure_tests.rs:559:5:
+assertion `left == right` failed: attention 域回滚（写时 undo 完整性）
+  left: AccountPagedMap { groups: {0: {0: {AccountId(1): NpcAttentionState { information_cadence: EveryDays { days: 7 }, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.0030562056931826976, next_attention_candidate_tick: 86, rng_state: 7759432986489709624 }, AccountId(2): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.3237739882494509, next_attention_candidate_tick: 3, rng_state: 12672196219120528225 }, AccountId(3): NpcAttentionState { information_cadence: EveryDays { days: 4 }, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.02423846341156622, next_attention_candidate_tick: 19, rng_state: 4006864328068527688 }, AccountId(4): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.004518064418956667, next_attention_candidate_tick: 172, rng_state: 12506892301298696480 }, AccountId(5): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.22641980076539575, next_attention_candidate_tick: 5, rng_state: 10373589033066610754 }, AccountId(6): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.09654136573189095, next_attention_candidate_tick: 3, rng_state: 8754024852202623792 }}}}, len: 6 }
+ right: AccountPagedMap { groups: {0: {0: {AccountId(1): NpcAttentionState { information_cadence: EveryDays { days: 7 }, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.0030562056931826976, next_attention_candidate_tick: 86, rng_state: 7759432986489709624 }, AccountId(2): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.3237739882494509, next_attention_candidate_tick: 2, rng_state: 1271481399797329740 }, AccountId(3): NpcAttentionState { information_cadence: EveryDays { days: 4 }, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.02423846341156622, next_attention_candidate_tick: 19, rng_state: 4006864328068527688 }, AccountId(4): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.004518064418956667, next_attention_candidate_tick: 172, rng_state: 12506892301298696480 }, AccountId(5): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.22641980076539575, next_attention_candidate_tick: 5, rng_state: 10373589033066610754 }, AccountId(6): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2030, month: 1, day: 1 }, second_of_day: 0 }, base_probability: 0.09654136573189095, next_attention_candidate_tick: 3, rng_state: 8754024852202623792 }}}}, len: 6 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+--
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1624 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `-p engine --lib`

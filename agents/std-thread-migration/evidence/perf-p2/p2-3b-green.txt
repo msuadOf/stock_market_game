@@ -1,0 +1,62 @@
+# P2-3b 绿证据：安装基线五域写时 undo（cdef62b8）
+
+## 改动
+
+- RuntimeInstallBaseline 五域（npc_attention/attention_scheduler/
+  belief_participants/retail_experience/history_reads）clone 退役。
+- 写时 undo：四写入点（set_runtime_attention / set_runtime_information_checks
+  / set_runtime_personal_state / runtime_hold_experience_init）写前幂等记
+  首写前值；墓碑 None=拍前不在册（回滚移除）。
+- heap 整体替换域 move-undo：旧堆 std::mem::take 整值入槽（零拷贝），
+  回滚精确还原（P1-C 教训保持：不"从权威重建"——旧管线陈旧项会丢，
+  business_state_hash 回滚对比显红）。
+- runtime_clear_account_undo 扩为清全部 undo 槽；runtime_step_with_install
+  入口清（消除驱动器手动序列直调安装面的跨 step 记录残留）。
+- BeliefParticipantState 补 PartialEq/Debug 派生（四组件均已派生——纯
+  测试使能，无语义变更）。
+
+## 机制归因（数据先行）
+
+- 改动前画像（P2-3a 后）：驱动线程 AccountPagedMap::get_mut 8.59%+
+  get 3.66%+jemalloc 家族 ~19.7%（sdallocx/tcache_flush/arena_fill…）。
+- AccountPagedMap::get_mut 内三层 Arc::make_mut COW：baseline 每 tick
+  clone 五域（页 Arc 共享）→ set_runtime_attention 全名册写全部触发
+  页组深拷贝。
+- 废弃性实验（不提交）：baseline 五域换空默认 → 配对循环数 -10~12%
+  （4 轮中 3 轮 −10~12%、1 轮持平）——机制实证。
+
+## 守卫
+
+- 新守卫 p2_3b_domain_undo_rolls_back_attention_personal_and_heap
+  （failure_tests.rs）：注入安装失败（install_market_views 成功后——
+  attention 全名册已写、heap 已整体替换）→ 五域逐位回滚断言。
+- 突变红（p2-3b-red.txt）：undo 记录 no-op → AccountId(2)
+  next_attention_candidate_tick left=3（残留演进值）vs right=2（拍前值）
+  +rng_state 漂移——位置精确锁定。
+- 守卫判别力附加实证：开发期守卫首跑即抓到工作树残留的废弃实验
+  （baseline 五域空默认 → attention 空 map），当场显红。
+- 既有守卫全绿：sol3（安装失败回滚）/sol5（heap 同步）/p2_1a/p2_1b/
+  p2_2b/p2r1（日结 T+1 回滚）+全量回归双绿 1614/0/11。
+
+## 等价
+
+- B 探针 300 tick events=3336/fees=0、1000 tick events=11119/fees=5705
+  ——逐位一致。
+- A 探针抽查 1211 t/s（守恒逐位：6438600/647541185/6438600）——
+  变动全在 session/driver 层，裸 World 不受影响；单轮墙钟在既有噪声带内。
+
+## 性能
+
+- B 300 tick：85.8/91.1/75.5（mean 84.1）；1000 tick 84.1——长跑零衰减
+  （P2-3a 前同日基线 1000=77.5）。
+- perf stat 配对循环数（vs P2-3a 提交二进制，5 轮）：中位 −4.5%
+  （15.38→14.06/15.07→14.45/16.01→15.22 G）。
+- 账本累计（300 tick mean）：战役起点 4.3 → P2-2b 78.1 → P2-3a ~80 →
+  P2-3b 84.1。
+
+## 后续候选（登记）
+
+- 候选③：step_via_runtime 事件投影段 retail_experience.keys() 全名册
+  collect × record_retail_intent_rejections 逐账户扫全部事件（O(N×Events)）。
+- 驱动线程画像剩余：缺页 ~8%（匿名页增长）、AccountPagedMap::get 3.7%
+  归属（belief 读面/事件投影）待下轮画像复核。
