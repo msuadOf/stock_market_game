@@ -231,6 +231,8 @@ fn step_frame_equivalent_advances_tick_and_poisons_on_failure() {
 fn seq_channel_unifies_runtime_cursor_with_session_authority() {
     use super::drive::RuntimeDriver;
     // 构造时权威 seq=0；驱动 5 步后 state.seq=driver.next_seq>0（单调续接）。
+    // step_frame 接轨件 2：游标语义=最后已用 seq（分配器先加后取——
+    // 对齐旧管线 collect_events 的输入/返回游标同式；空拍不动）。
     let mut session = GameSession::new(equiv_setup(), 33).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);

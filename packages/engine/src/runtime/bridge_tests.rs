@@ -180,7 +180,7 @@ fn trade_facts_project_to_event_trade_with_monotonic_seq() {
         else {
             panic!("应为 Trade 事件");
         };
-        assert_eq!(*seq, 42 + i as u64, "seq 单调分配");
+        assert_eq!(*seq, 43 + i as u64, "seq 单调分配（先加后取——首条=游标+1）");
         assert_eq!(code, &crate::StockId(0), "code=StockId 路由");
         assert_eq!(price.cents(), 1005);
         assert_eq!(*qty, trades[i].qty);

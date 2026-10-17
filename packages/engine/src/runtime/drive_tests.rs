@@ -3312,3 +3312,153 @@ fn prereq1_continue_early_round_fills_settle_exactly_once() {
         "卖方现金恰入账一次（双计形态=+2×净得）"
     );
 }
+
+// ═══ step_frame 接轨件 2：runtime 事件 seq 分配起点对齐旧管线语义 ═══
+
+/// 旧管线 `collect_events(facts, session.state.seq)` 的契约：第一条事实
+/// 取得 `state.seq + 1`，帧覆盖半开区间 `(seq_from, seq_to]`（seq_from=
+/// 步前权威 seq）。runtime driver 的 `adopt_session_seq` 后第一条=adopt
+/// 值本身（先取后加）——比旧管线少 1，组 TickFrame 时首条 ≤ seq_from
+/// 必然违反 `validate_sequence`。本测试锚定：driver 首步事件的最小 seq
+/// 必须 = 步前 session seq + 1。
+#[test]
+fn stepframe2_runtime_event_seq_starts_at_legacy_cursor_plus_one() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 2;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 21).expect("会话构造");
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            session
+                .account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 0（float 分配）");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    let seq_before = session.current_seq();
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let intents = vec![
+        crate::session::ReceiptBearingIntent {
+            owner: buyer,
+            intent: crate::Intent::PlaceLimit {
+                code: crate::StockId(0),
+                side: crate::orderbook::Side::Buy,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+        crate::session::ReceiptBearingIntent {
+            owner: seller,
+            intent: crate::Intent::PlaceLimit {
+                code: crate::StockId(0),
+                side: crate::orderbook::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+    ];
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(&intents, &upper)
+        .expect("意图注入");
+    let events = driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进");
+    driver.install_market_views(&mut session).expect("行情安装");
+    driver.install_candles(&mut session).expect("K 安装");
+    assert!(
+        !events.is_empty(),
+        "前置：场景产生了事件（成交+受理）"
+    );
+    // 事件 seq 全体 ≥ 步前+1（首条恰=步前+1——对齐旧管线 collect_events
+    /// 的 (seq_from, seq_to] 契约；当前 adopt 直取导致全体少 1）。
+    let min_seq = events.iter().map(|e| event_seq(e)).min().expect("事件非空");
+    assert_eq!(
+        min_seq,
+        seq_before + 1,
+        "runtime 首条事件 seq 必须=步前权威 seq+1（旧管线 collect 语义；当前少 1）"
+    );
+    // 事件 seq 全体连续（无重号无跳号——两路径合一的 seq 空间）。
+    let mut seqs: Vec<u64> = events.iter().map(|e| event_seq(e)).collect();
+    seqs.sort();
+    seqs.dedup();
+    assert_eq!(seqs.len(), events.len(), "事件 seq 不得重号");
+    for pair in seqs.windows(2) {
+        assert_eq!(pair[1] - pair[0], 1, "事件 seq 连续（无跳号）：{seqs:?}");
+    }
+}
+
+fn event_seq(event: &crate::Event) -> u64 {
+    match event {
+        crate::Event::Trade { seq, .. }
+        | crate::Event::OrderCanceled { seq, .. }
+        | crate::Event::OrderAccepted { seq, .. }
+        | crate::Event::IntentRejected { seq, .. }
+        | crate::Event::AuctionTick { seq, .. }
+        | crate::Event::AuctionCompleted { seq, .. }
+        | crate::Event::PriceTick { seq, .. }
+        | crate::Event::DayBoundary { seq, .. }
+        | crate::Event::CivilDateAdvanced { seq, .. }
+        | crate::Event::CompanyDisclosurePublished { seq, .. }
+        | crate::Event::SettlementError { seq, .. } => *seq,
+    }
+}
+
+// ═══ step_frame 接轨件 3：runtime 事件流补连续相位 PriceTick ═══
+
+/// 旧管线每连续拍每股产一条 `Event::PriceTick`（客户端 timeseries 与
+/// server 集成"PriceTick 每 step 一定出"的依赖面；bridge_tests.rs:362
+/// 自认纵切缺此类型）。runtime 事件流当前无 PriceTick——本测试锚定：
+/// 连续相位（auction_ticks=0 fixture）每拍每股恰一条 PriceTick，竞价
+/// 窗（CallAuction）不产（由 desk_auction facts 承载 AuctionTick）。
+#[test]
+fn stepframe3_continuous_phase_emits_price_tick_per_stock() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 2;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 21).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let mut events = driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进");
+    driver.install_market_views(&mut session).expect("行情安装");
+    driver.install_candles(&mut session).expect("K 安装");
+    // 生产挂点=runtime_step_with_install 的 install 段之后（failure.rs）
+    //——本测试直调组件同序（session 模块外不可见 install 聚合方法）。
+    driver
+        .emit_price_tick_events(&mut session, &mut events)
+        .expect("PriceTick 生成");
+    let price_ticks: Vec<&crate::Event> = events
+        .iter()
+        .filter(|e| matches!(e, crate::Event::PriceTick { .. }))
+        .collect();
+    assert_eq!(
+        price_ticks.len(),
+        2,
+        "连续相位每拍每股恰一条 PriceTick（fixture 两股）：{:?}",
+        events
+    );
+    let tick_after = session.tick();
+    for event in &price_ticks {
+        let crate::Event::PriceTick { tick, code, .. } = event else {
+            unreachable!();
+        };
+        assert_eq!(*tick, tick_after, "PriceTick 携带步进后 tick");
+        assert!(*code == crate::StockId(0) || *code == crate::StockId(1));
+    }
+}

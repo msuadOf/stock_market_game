@@ -14,8 +14,9 @@ use super::protocol::DeskTradeFact;
 use crate::Event;
 use crate::StockId;
 
-/// 把一批双腿成交事实映射为 `Event::Trade`（按事实序；seq 从
-/// `next_seq` 起单调分配）。返回 (events, next_seq_after)。
+/// 把一批双腿成交事实映射为 `Event::Trade`（按事实序；seq 分配器
+/// **先加后取**——第一条取得 `next_seq+1`，与旧管线 `collect_events`
+/// 同式，游标语义=最后已用 seq）。返回 (events, next_seq_after)。
 ///
 /// maker/taker 的 runtime `Owner=(组,名册下标)` → 引擎 `AccountId`：
 /// 批 8c 账户面接线前的映射缺省为 `AccountId(组<<32|下标)` 复合——
@@ -24,8 +25,7 @@ use crate::StockId;
 pub fn project_trade_events(trades: &[DeskTradeFact], next_seq: &mut u64) -> Vec<Event> {
     let mut events = Vec::with_capacity(trades.len());
     for t in trades {
-        let seq = *next_seq;
-        *next_seq = seq.checked_add(1).expect("事件 seq 溢出（u64 单调计数）");
+        let seq = take_seq(next_seq);
         events.push(Event::Trade {
             seq,
             code: StockId(u32::from(t.stock)),
@@ -36,6 +36,17 @@ pub fn project_trade_events(trades: &[DeskTradeFact], next_seq: &mut u64) -> Vec
         });
     }
     events
+}
+
+/// seq 分配原语（step_frame 接轨件 2）：**先加后取**——第一条取得
+/// 游标+1，终值=最后已用 seq（对齐旧管线 `collect_events(facts,
+/// state.seq)` 的契约——TickFrame 半开区间 `(seq_from, seq_to]`，
+/// 空批游标不动）。此前"先取后加"使 runtime 事件全体比旧管线少 1。
+fn take_seq(next_seq: &mut u64) -> u64 {
+    *next_seq = next_seq
+        .checked_add(1)
+        .expect("事件 seq 溢出（u64 单调计数）");
+    *next_seq
 }
 
 /// runtime Owner → 引擎 AccountId（复合投影；账户面对齐留批 8c）。
@@ -188,10 +199,10 @@ pub fn rejection_reason(kind: super::ReceiptKind) -> RejectionReason {
 /// OrderId 空间对齐属存档映射批）。
 pub fn project_lifecycle_events(input: &LifecycleEvents, next_seq: &mut u64) -> Vec<Event> {
     let mut events = Vec::new();
+    // step_frame 接轨件 2：先加后取（同 take_seq——对齐旧管线 collect 语义）。
     let take = |next_seq: &mut u64| -> u64 {
-        let seq = *next_seq;
-        *next_seq = seq.checked_add(1).expect("事件 seq 溢出");
-        seq
+        *next_seq = next_seq.checked_add(1).expect("事件 seq 溢出");
+        *next_seq
     };
     for (owner, stock, serial, remaining) in &input.cancels {
         events.push(Event::OrderCanceled {
@@ -231,12 +242,12 @@ pub fn project_lifecycle_events(input: &LifecycleEvents, next_seq: &mut u64) -> 
 use super::protocol::DeskAuctionFact;
 
 /// 竞价事实 → 引擎事件（竞价窗每轮 AuctionTick；完成撮合 AuctionCompleted，
-/// clearing_price 显式携带）。seq 单调分配。
+/// clearing_price 显式携带）。seq 分配先加后取（同 take_seq——旧管线
+/// collect 语义）。
 pub fn project_auction_events(facts: &[DeskAuctionFact], next_seq: &mut u64) -> Vec<Event> {
     let mut events = Vec::with_capacity(facts.len());
     for f in facts {
-        let seq = *next_seq;
-        *next_seq = seq.checked_add(1).expect("事件 seq 溢出");
+        let seq = take_seq(next_seq);
         if f.completed {
             events.push(Event::AuctionCompleted {
                 seq,

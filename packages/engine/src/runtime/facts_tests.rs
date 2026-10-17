@@ -160,9 +160,11 @@ fn sol4_auction_fact_projects_actual_volume() {
         }] => {
             assert_eq!(*matched_volume, 100, "实际成交量逐字投影（P1-2 事件面）");
             assert_eq!(p.cents(), 1000, "清算价投影");
-            assert_eq!(*event_seq, 5, "seq 从游标分配");
+            // step_frame 接轨件 2：先加后取（对齐旧管线 collect_events
+            //——第一条取得游标+1，游标语义=最后已用）。
+            assert_eq!(*event_seq, 6, "seq 从游标+1 分配（先加后取）");
         }
         other => panic!("恰投影一条 AuctionCompleted：{other:?}"),
     }
-    assert_eq!(seq, 6, "游标推进恰一次");
+    assert_eq!(seq, 6, "游标推进至最后已用");
 }

@@ -766,15 +766,14 @@ impl RuntimeDriver {
         events.extend(project_lifecycle_events(&input, &mut self.next_seq));
         events.extend(project_auction_events(&auction, &mut self.next_seq));
         // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
+        // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
         for (code, owner) in std::mem::take(&mut self.pending_rejections) {
+            self.next_seq = self
+                .next_seq
+                .checked_add(1)
+                .expect("事件 seq 溢出");
             events.push(Event::IntentRejected {
-                seq: {
-                    let seq = self.next_seq;
-                    self.next_seq = seq
-                        .checked_add(1)
-                        .expect("事件 seq 溢出");
-                    seq
-                },
+                seq: self.next_seq,
                 account: owner,
                 code,
                 reason: crate::RejectionReason::InvalidQuantity,
@@ -982,6 +981,75 @@ impl RuntimeDriver {
     /// 事件 seq 游标（诊断）。
     pub fn next_seq(&self) -> u64 {
         self.next_seq
+    }
+
+    /// step_frame 接轨件 3：连续相位行情事件生成（旧管线
+    /// finish_market_data 的 runtime 等价）——每连续拍每股一条
+    /// `Event::PriceTick`（客户端 timeseries 依赖；竞价相位由
+    /// desk_auction facts 承载 AuctionTick/AuctionCompleted，PreOpen/
+    /// 日结拍不产——与旧管线同判）。seq 经驱动器游标分配（先加后取
+    /// ——与事件流同一空间），随后同步会话权威。
+    pub fn emit_price_tick_events(
+        &mut self,
+        session: &mut GameSession,
+        events: &mut Vec<Event>,
+    ) -> Result<(), String> {
+        if session.phase() != crate::TradingPhase::Continuous {
+            return Ok(());
+        }
+        let tick_after = session.tick();
+        let candle_time = session.candle_date_time_for_runtime();
+        // 逐字段借用（不 clone 整个 StockPublic——recent/minute 等大面无关）。
+        let views: Vec<(i64, Vec<(i64, u64)>, Vec<(i64, u64)>)> = self
+            .world_public_views()
+            .iter()
+            .map(|v| (v.last_price, v.depth_bids.clone(), v.depth_asks.clone()))
+            .collect();
+        for (idx, (last_price, bids, asks)) in views.into_iter().enumerate() {
+            let code = crate::StockId(u32::try_from(idx).map_err(|_| {
+                format!("PriceTick 生成：股下标 {idx} 超 u32（世界规模越界）")
+            })?);
+            let last = crate::money::Money::from_cents(last_price.max(1));
+            // 活动 K：session 侧（install_candles 已装，含 stats）优先；
+            // 空拍缺席合成零成交占位（o=h=l=c=last——对齐旧管线
+            // checked_mark_candle(None, time, last, 0) 的占位语义）。
+            let daily_candle = session.runtime_active_candle(&code).unwrap_or(
+                crate::session::DailyCandle {
+                    time: candle_time,
+                    open: last,
+                    high: last,
+                    low: last,
+                    close: last,
+                    volume: 0,
+                    trade_stats: Some(Default::default()),
+                },
+            );
+            let seq = {
+                self.next_seq = self
+                    .next_seq
+                    .checked_add(1)
+                    .expect("事件 seq 溢出（u64 单调计数）");
+                self.next_seq
+            };
+            events.push(Event::PriceTick {
+                seq,
+                tick: tick_after,
+                code,
+                last_price: last,
+                daily_candle,
+                bids: bids
+                    .into_iter()
+                    .map(|(p, q)| (crate::money::Money::from_cents(p), q))
+                    .collect(),
+                asks: asks
+                    .into_iter()
+                    .map(|(p, q)| (crate::money::Money::from_cents(p), q))
+                    .collect(),
+            });
+        }
+        // 会话权威与驱动器游标保持合一（PriceTick 分配推进了游标）。
+        session.set_runtime_seq(self.next_seq);
+        Ok(())
     }
 
     /// runtime 全局日历读取（诊断/对账面）。
@@ -1986,6 +2054,10 @@ impl RuntimeDriver {
     }
 
     /// 从会话权威 seq 初始化驱动器游标（构造后、首步前调用一次）。
+    /// step_frame 接轨件 2：游标语义=**最后已用 seq**（与旧管线
+    /// `collect_events(facts, state.seq)` 的输入/返回游标同式——分配
+    /// 器先加后取，第一条取得 state.seq+1，TickFrame `(seq_from,
+    /// seq_to]` 契约；空拍游标不动=权威 seq 不变）。
     pub fn adopt_session_seq(&mut self, session: &GameSession) {
         self.next_seq = session.current_seq();
     }

@@ -527,6 +527,17 @@ impl GameSession {
                 description: install_err,
             }));
         }
+        // step_frame 接轨件 3：连续相位行情事件（每连续拍每股一条
+        /// PriceTick——旧管线 finish_market_data 的 runtime 等价；竞价
+        /// 相位由 desk_auction facts 承载）。安装在 install_candles 之后
+        ///（daily_candle 读 session 活动 K）。
+        if let Err(emit_err) = driver.emit_price_tick_events(self, &mut events) {
+            self.rollback_runtime_step(baseline);
+            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                location: "GameSession::step_via_runtime::price_tick".to_owned(),
+                description: emit_err,
+            }));
+        }
         // D5 诊断面派生：retail 拒收诊断（旧管线 continuous lifecycle
         /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
         /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
@@ -1837,6 +1848,13 @@ impl GameSession {
     /// runtime 驱动器翻转面（翻转批）：活动 K 自然日时间戳。
     pub fn candle_date_time_for_runtime(&self) -> i64 {
         crate::session::candles::candle_date_time(self.state.civil_clock.current_date())
+    }
+
+    /// runtime 驱动器翻转面（step_frame 接轨件 3）：本股活动 K 只读
+    /// （PriceTick.daily_candle 的 session 侧来源——install_candles 已装；
+    /// 空拍缺席由调用方合成占位，对齐旧管线 mark_candle(None, ..)）。
+    pub fn runtime_active_candle(&self, code: &crate::StockId) -> Option<crate::session::DailyCandle> {
+        self.state.candle_book.active().get(code).cloned()
     }
 
     /// runtime 驱动器翻转面（批 8h）：失败 poison（旧管线语义）。
