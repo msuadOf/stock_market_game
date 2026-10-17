@@ -31,6 +31,15 @@ pub struct RuntimeDriver {
     /// 次数——守卫测试断言"安装数==dirty 位计数"（全量重装突变即红）。
     #[cfg(test)]
     personal_installs: u64,
+    /// P2-1b 账户回写 dirty 状态：上一 tick 事实 owner 集（组端 staging
+    /// 落账滞后一拍——fill owner 的整值同步发生在下一拍，两拍并集覆盖）。
+    account_dirty_prev: Vec<bool>,
+    /// P2-1b：日结（Drain/T+1/AdminBatch 改账户但无逐账户事实事件）后
+    /// 置 true——下一 step 全量回写一次（低频路径，语义安全优先）。
+    force_full_accounts: bool,
+    /// P2-1b 红证计数（cfg(test)）：账户回写实际写入次数。
+    #[cfg(test)]
+    account_writes: u64,
     /// 日终清簿事件缓冲（take_drained_events 取走）。
     drained_events: Vec<Event>,
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
@@ -384,6 +393,12 @@ impl RuntimeDriver {
             next_seq: 0,
             #[cfg(test)]
             personal_installs: 0,
+            account_dirty_prev: Vec::new(),
+            // 首拍全量（初始镜像同步——构造后首 step 建立 session 侧
+            /// 组权威镜像基线；此后按事实 dirty 增量）。
+            force_full_accounts: true,
+            #[cfg(test)]
+            account_writes: 0,
             drained_events: Vec::new(),
             pending_rejections: Vec::new(),
             accounts_per_group: per_group.max(1),
@@ -507,15 +522,56 @@ impl RuntimeDriver {
             .world
             .snapshot_accounts()
             .map_err(|e| format!("账户快照失败：{e:?}"))?;
+        // P2-1b：账户回写 dirty 过滤——只重写"本 tick 事实 owner ∪ 上一
+        /// tick 事实 owner"（组端 staging 落账滞后一拍，两拍并集覆盖；
+        /// 多装等值无害，漏装才会镜像陈旧）∪ 日结强制全量（Drain/T+1/
+        /// AdminBatch 无逐账户事实事件）。等价不变式：非 dirty ⇒ 组端
+        /// 账户==session 镜像（首拍全量建立基线后，两侧只经事实通道
+        /// 同步）。省每 tick 全名册 positions 深拷贝回写。
+        let fact_rec = self.world.report_log.last().cloned();
+        let roster = self.id_map.len();
+        let mut dirty_now: Vec<bool> = vec![false; roster];
+        let mark = |dirty: &mut Vec<bool>, owner: crate::runtime::Owner| {
+            let idx = owner.0 as usize * self.accounts_per_group + owner.1 as usize;
+            if let Some(flag) = dirty.get_mut(idx) {
+                *flag = true;
+            }
+        };
+        if let Some(rec) = &fact_rec {
+            for fact in &rec.desk_trades {
+                mark(&mut dirty_now, fact.maker);
+                mark(&mut dirty_now, fact.taker);
+            }
+            for fact in &rec.desk_lifecycle {
+                mark(&mut dirty_now, fact.owner);
+            }
+            for fact in &rec.desk_receipts {
+                mark(&mut dirty_now, fact.owner);
+            }
+        }
+        let skip_all = !self.force_full_accounts;
+        let dirty_union: Vec<bool> = if skip_all {
+            dirty_now
+                .iter()
+                .zip(self.account_dirty_prev.iter().chain(std::iter::repeat(&false)))
+                .map(|(a, b)| *a || *b)
+                .collect()
+        } else {
+            vec![true; roster]
+        };
         for (g, accounts) in snapshots {
             for (local, acct) in accounts.iter().enumerate() {
-                let Some(id) = self
-                    .id_map
-                    .get(g as usize * self.accounts_per_group + local)
-                    .copied()
-                else {
+                let global = g as usize * self.accounts_per_group + local;
+                if skip_all && !dirty_union.get(global).copied().unwrap_or(false) {
+                    continue;
+                }
+                let Some(id) = self.id_map.get(global).copied() else {
                     continue;
                 };
+                #[cfg(test)]
+                {
+                    self.account_writes += 1;
+                }
                 // D3a-2c 件1：持仓回写全面以组权威同步——数量、T+1 冻结、
                 // 成本基（invested/recovered）均取组侧值（组侧由 FillFact
                 // 落账维护；清仓清零对齐 session 清仓删除条目语义）。此前
@@ -579,8 +635,12 @@ impl RuntimeDriver {
                 }
             }
         }
+        // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
+        // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
+        self.account_dirty_prev = dirty_now;
+        self.force_full_accounts = false;
         // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
-        let rec = self.world.report_log.last().cloned();
+        let rec = fact_rec;
         // Sol 五审修复 1：**本拍公开期末投影**——step() 返回前把本 tick
         // 已成交事实合入公开 session 账户（ADR-0017 完整结算同拍交付；
         /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
@@ -892,6 +952,10 @@ impl RuntimeDriver {
         self.world.set_civil_date(session.civil_date());
         // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
         session.clear_runtime_minute_history();
+        // P2-1b：日结改账户（Drain 回流/T+1 解冻/AdminBatch 权益）但无
+        // 逐账户事实事件——置强制全量回写标记（下一 step 全名册同步
+        // 一次；低频路径语义安全优先）。
+        self.force_full_accounts = true;
         Ok(())
     }
 
@@ -1359,6 +1423,12 @@ impl RuntimeDriver {
     #[cfg(test)]
     pub fn personal_installs_for_test(&self) -> u64 {
         self.personal_installs
+    }
+
+    /// P2-1b 红证读面（cfg(test)）：账户回写实际写入计数。
+    #[cfg(test)]
+    pub fn account_writes_for_test(&self) -> u64 {
+        self.account_writes
     }
 
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面）。

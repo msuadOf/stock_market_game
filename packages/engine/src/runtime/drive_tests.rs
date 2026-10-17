@@ -2474,3 +2474,56 @@ fn p2_1a_personal_state_install_respects_dirty_mask() {
         "个人态安装数必须==dirty 位计数（非演进位不重装；全量重装=回归）"
     );
 }
+
+// ── P2-1b 红证：账户回写尊重事实 dirty（两拍并集+日结全量） ──
+
+// 修复背景：此前每 tick 对全名册逐 NPC positions 深拷贝回写（第二大头，
+// 见 .tmp/perf-p2-p0-breakdown.md）。修复后只写"本 tick 事实 owner ∪
+// 上一 tick 事实 owner"（组端 staging 落账滞后一拍的整值同步在下一拍），
+// 日结后强制全量一次（Drain/T+1/AdminBatch 无逐账户事实）。守卫：
+// 首拍全量建立基线后，第二拍写入数==第二拍 dirty 并集数（全量重装
+// 突变即红）。
+#[test]
+fn p2_1b_account_writeback_respects_fact_dirty() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 6;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 29).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("首拍（强制全量基线）");
+    let after_first = driver.account_writes_for_test();
+    assert_eq!(after_first, 7, "首拍全量（玩家+6 NPC 名册基线）");
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("第二拍");
+    let after_second = driver.account_writes_for_test();
+    // 第二拍写入增量 == 该拍 dirty 并集（本拍事实 ∪ 上拍事实 owner 数）。
+    let rec = driver.world_report_log().last().expect("第二拍记录");
+    let prev = driver
+        .world_report_log()
+        .get(driver.world_report_log().len() - 2)
+        .expect("首拍记录");
+    let mut owners = std::collections::BTreeSet::new();
+    for rec in [prev, rec] {
+        for f in &rec.desk_trades {
+            owners.insert(f.maker);
+            owners.insert(f.taker);
+        }
+        for f in &rec.desk_lifecycle {
+            owners.insert(f.owner);
+        }
+        for f in &rec.desk_receipts {
+            owners.insert(f.owner);
+        }
+    }
+    let dirty_count = owners.len() as u64;
+    assert_eq!(
+        after_second - after_first,
+        dirty_count,
+        "第二拍写入增量==事实 dirty 并集（全量重装=回归）"
+    );
+}
