@@ -2569,3 +2569,77 @@ fn p2_2b_account_undo_records_and_clears() {
     assert_eq!(session.runtime_account_undo_len_for_test(), 0, "清空后归零");
     let _ = driver;
 }
+
+// ── P2-3a 等价守卫：零售链公共观察每轮共享后决策序列黄金值 ──
+
+// 修复背景：此前每个零售位决策各自 build_chain_observation（全市场
+// MarketView 重建+每股价格路径/技术面观察重建+曝光面+等权市场聚合——
+// 全是本 tick 公共量的纯函数，B 口径画像组线程 Vec::clone 12.8%+
+// memmove 9.4% 的主源）。P2-3a 上移为每轮一次共享（P1-B 同式等价
+// 论证：纯 snapshot 函数，RNG 不消费——决策序列逐位不变）。守卫：
+// 确定性零售链 fixture 的决策输出聚合黄金值（公共观察内容/时点漂移
+// 即红）。
+//
+// 观测面登记（如实）：逐 tick 挂簿节奏**不参与 golden**——驱动器路径
+// 下订单跨拍边界落簿存在跨线程竞态（同策略同种子多轮运行实测节奏位
+// 置漂移、聚合量稳定；撮合拍内任意政策见 memory/project_concurrent_
+// matching_policy）。聚合量（trace 数/成交量/现金守恒）7 轮实测稳定；
+// 逐位等价由 B 探针 events/fees（300/1000 tick）承载。
+const P2_3A_GOLDEN_TRACES: usize = 13; // 落地前实测锁定
+const P2_3A_GOLDEN_VOLUME: u64 = 100; // 落地前实测锁定
+const P2_3A_GOLDEN_CASH: i64 = 1_000_065_568_818; // 落地前实测锁定
+
+#[test]
+fn p2_3a_retail_chain_shared_observation_golden() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 32;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    // 决策密度面：arrival_rate=1.0 走 apply_personal_analysis 分支（RNG
+    // 消费面全开——共享观察漂移更易显红）。
+    setup.strategy_params.retail.arrival_rate = 1.0;
+    setup.strategy_params.retail.order_size_mean = 100;
+    // 不跨日结（日结面本刀不动；跨日结等价由 B 探针 1000 tick 承载）。
+    setup.ticks_per_day = 64;
+    let mut session = GameSession::new(setup, 157).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let mut traces_total = 0usize;
+    for _ in 0..5 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        // 每拍读 trace（下一拍 Start 清空——漏读即丢拍）。
+        let traces = driver
+            .collect_retail_traces()
+            .expect("零售 trace 读面")
+            .concat();
+        traces_total += traces.len();
+    }
+    // 前置：零售链决策必须真实执行（trace=0 ⇒ run_retail_decision 未跑、
+    // 守卫空转——fixture 失效而非实现正确）。
+    assert!(
+        traces_total > 0,
+        "零售链 trace 必须非零（守卫空转=fixture 失效）：{traces_total}"
+    );
+    let volume: u64 = driver
+        .world_report_log()
+        .iter()
+        .flat_map(|r| r.desk_trades.iter())
+        .map(|t| u64::from(t.qty))
+        .sum();
+    let cash: i64 = (0..session.account_count() as u64)
+        .map(|i| {
+            session
+                .account(crate::AccountId(i))
+                .expect("名册账户必在")
+                .cash()
+                .cents()
+        })
+        .sum();
+    assert_eq!(
+        (traces_total, volume, cash),
+        (P2_3A_GOLDEN_TRACES, P2_3A_GOLDEN_VOLUME, P2_3A_GOLDEN_CASH),
+        "P2-3a 决策序列等价守卫（公共观察内容/时点/RNG 流漂移即红）"
+    );
+}

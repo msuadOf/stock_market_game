@@ -1693,6 +1693,11 @@ impl GroupState {
     /// （decide_retail_position_with_experience+个人分析应用）+ trace 收集
     /// + 经验行演进）。决策流=npc_seed_base 同式派生（与旧管线 A 类一致）；
     /// 个人态六件+经验行入可逆日志后写回组权威。
+    ///
+    /// P2-3a：`chain`/`behavior` 为本轮共享公共观察（调用方 run_round 每
+    /// 轮构造一次——纯 snapshot 函数，与旧管线 T1"捕获一次共享只读"同式；
+    /// 此前每位各自 build_chain_observation+等权聚合+paths 克隆，是组线程
+    /// 拷贝放大主源）。等价论证同 P1-B：同轮各 NPC 的输入逐位相同。
     #[allow(clippy::too_many_arguments)]
     fn run_retail_decision(
         &mut self,
@@ -1700,6 +1705,8 @@ impl GroupState {
         tick: u64,
         snapshot: &super::protocol::TickSnapshot,
         market: &crate::strategy::MarketView,
+        chain: &crate::session::DecisionChainObservation,
+        behavior: &crate::behavior::BehaviorMarketObservation,
     ) -> Result<Vec<super::decision::PendingOp>, RuntimeError> {
         let group = self.group;
         let (projection, snap) = match (self.root_projection.clone(), self.belief_states.get(local as usize).cloned().flatten()) {
@@ -1802,17 +1809,8 @@ impl GroupState {
             retail,
         };
         // 观察（core——session 版同核）：belief entry/watchlist/information
-        /// 演进+候选评估。
-        let observation = build_chain_observation(
-            &self.observation_inputs,
-            snapshot,
-            self.ticks_per_day,
-            projection.auction_ticks,
-            projection.closing_auction_ticks,
-            &self.library,
-            &projection.company_registry,
-            &projection.stock_codes,
-        );
+        /// 演进+候选评估。P2-3a：公共观察=本轮共享（调用方一次构造）。
+        let observation = chain;
         // 经验行 capture 演进（旧管线 decision_snapshot_capture 的
         /// capture_from_row 等价——equity 观测/持仓 dated 演进/首建；
         /// 观察 core 与决策消费演进后的行）。
@@ -1860,17 +1858,8 @@ impl GroupState {
                     })?;
             }
         }
-        let returns = observation
-            .paths
-            .iter()
-            .map(|(stock, path)| (stock.clone(), path.thirty_minute.return_ratio))
-            .collect();
-        let thirty_minute_market =
-            crate::observation::build_equal_weight_market_observation(&returns).map_err(
-                |e| RuntimeError::ProtocolInvariant {
-                    detail: format!("组 {group} retail 观察市场聚合失败：{e}"),
-                },
-            )?;
+        // P2-3a：等权市场聚合为公共量——本轮共享（原每位各聚合一次）。
+        let thirty_minute_market = behavior.thirty_minute_market;
         let mut personal = crate::session::PlanPersonalState {
             attention: snap.attention.clone(),
             watchlist: snap.watchlist.clone(),
@@ -1884,7 +1873,7 @@ impl GroupState {
             &self.plan_book,
             &experience,
             &mut personal,
-            &observation,
+            observation,
             &thirty_minute_market,
         )
         .map_err(|e| RuntimeError::ProtocolInvariant {
@@ -1912,10 +1901,8 @@ impl GroupState {
                 })
                 .collect(),
         };
-        let behavior = crate::behavior::BehaviorMarketObservation {
-            price_paths: observation.paths.clone(),
-            thirty_minute_market,
-        };
+        // P2-3a：behavior 观察面=本轮共享引用（原每位 paths BTreeMap 克隆
+        /// 一次——下游 decide_* 直接消费共享引用）。
         let mut risk_inputs = std::collections::BTreeMap::new();
         for (code, position) in &ctx.positions {
             let stock = observation
@@ -3194,10 +3181,54 @@ impl GroupState {
                 // D5 #4 retail 链：观察+决策+trace+经验行（组内权威）。
                 // P1-B：复用本轮共享公共视图（原每轮零售位再建一次——
                 /// 同 snapshot 纯函数，逐位等价）。
-                {
+                // P2-3a：链观察/等权聚合/behavior 价径面同样上移每轮一次
+                ///（原每位 build_chain_observation+聚合+paths 克隆——组线程
+                /// 拷贝放大主源；同轮输入逐位相同 ⇒ 等价论证同 P1-B）。
+                if !retail_due.is_empty() {
+                    let projection = self.root_projection.as_ref().ok_or_else(|| {
+                        RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "组 {} 零售公共观察缺投影（retail 位分类前置已要求投影在位——结构性不可达）",
+                                self.group
+                            ),
+                        }
+                    })?;
+                    let chain = build_chain_observation(
+                        &self.observation_inputs,
+                        &snapshot,
+                        self.ticks_per_day,
+                        projection.auction_ticks,
+                        projection.closing_auction_ticks,
+                        &self.library,
+                        &projection.company_registry,
+                        &projection.stock_codes,
+                    );
+                    let returns: std::collections::BTreeMap<crate::StockId, Option<f64>> = chain
+                        .paths
+                        .iter()
+                        .map(|(stock, path)| (*stock, path.thirty_minute.return_ratio))
+                        .collect();
+                    let thirty_minute_market =
+                        crate::observation::build_equal_weight_market_observation(&returns)
+                            .map_err(|e| RuntimeError::ProtocolInvariant {
+                                detail: format!(
+                                    "组 {} 零售公共观察市场聚合失败：{e}",
+                                    self.group
+                                ),
+                            })?;
+                    let behavior = crate::behavior::BehaviorMarketObservation {
+                        price_paths: chain.paths.clone(),
+                        thirty_minute_market,
+                    };
                     for local in retail_due {
-                        let ops =
-                            self.run_retail_decision(local, tick, &snapshot, &shared_market)?;
+                        let ops = self.run_retail_decision(
+                            local,
+                            tick,
+                            &snapshot,
+                            &shared_market,
+                            &chain,
+                            &behavior,
+                        )?;
                         for op in ops {
                             pendings.push(Pending::Op(op));
                         }
