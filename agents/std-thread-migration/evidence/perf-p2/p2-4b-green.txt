@@ -1,0 +1,45 @@
+P2-4b 信封账本增量维护——绿态证据（2026-10-17，第 14 任）
+====================================================================
+HEAD：244ae360（基于 569c09e3）
+
+守卫（cargo test -p engine --lib p2_4）：
+  p2_4a_sparse_account_writeback_matches_force_full_bitwise ... ok
+  p2_4a_sparse_echo_missing_item_fails_loud ... ok
+  p2_4b_envelope_incremental_matches_full_rebuild ... ok
+
+突变红（施加后同命令显红，随后还原；无独立提交）：
+  M1 跳过 Changed 应用 → 期末业务哈希红：
+    StateHash(15602104991814064052) != StateHash(11135194116726688999)
+  M2 跳过 Removed 应用 → 期末业务哈希红：
+    StateHash(13691699594278479683) != ...
+
+判别力建设过程（如实登记，两次零判别由前置断言抓出）：
+  1. 首版守卫经 driver.step_frame_equivalent 直调——信封段在
+     session.step_via_runtime 内从未运行，恒绿；改 session 级步进。
+  2. 二版场景的 Changed 面单期末已清空（瞬时部分成交单）——中间态
+     被期末对账吞掉，M1 下仍绿；改 800 股限价买逐拍部分成交且期末
+     仍在册（余量 100<qty<800 前置断言）后 M1 显红。
+  3. 差分三面（Added/Removed/Changed）计数前置（cfg(test) 面计数器）
+     +期末在册前置——fixture 退化显式失败。
+
+实现过程红证（已打回重做，如实登记）：
+  首版差分逐项线性扫 O(n²)——resting ~4700 时每股每拍 ~2200 万次比较，
+  1000 tick 长跑 271.6→135.5 显著回退（300 tick 255-259 也略降）；
+  改 (Owner, Side, order_serial) HashMap 键控 O(n) 后恢复并反超。
+
+全量回归双绿：
+  cargo test -p engine --lib → 1620/0/11（31.6s）
+  ENGINE_STEP_RUNTIME=1 → 1620/0/11（31.5s）
+  （基线 1619→1620=+1 守卫；另有两轮各 1 次未复现单测失败、
+   失败名未捕获、后续 3+2 轮全绿——既有 flake 家族形态，如实登记）
+
+B 口径（driver_semantics_probe 300 16 1；events/fees 逐位）：
+  r1 t/s=312.3 events=3336 fees=0
+  r2 t/s=314.8 events=3336 fees=0
+  r3 t/s=300.2 events=3336 fees=0
+  mean=309.1 min=300.2 max=314.8（P2-4a 后 263.1 → +17.5%）
+  1000 tick：t/s=489.7 events=11119 fees=5705（271.6 → +80.3%——
+  resting 存量随时长增长，全量重建成本被差分彻底消除，长跑反超短跑）
+  测量窗：机器 load ~6（净机窗口）。
+
+A 口径抽查：见 p2-4b 终测轮（perf-phase1-final）。
