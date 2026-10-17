@@ -963,10 +963,30 @@ fn solfinal3_same_tick_projection_group1_first_buy_uses_real_vwap() {
         serde_json::json!("1010"),
         "组 1 首买的经历入场价必须=成交 VWAP 1010（红态=步前价 {step_price_before}——组 0 查表错组）"
     );
-    // 保存恢复链：恢复后经历条目同价保持。
+    // 保存恢复链：恢复后经历条目**同价**保持（Sol 三审附带①——
+    /// 只查条目存在不锁数值面，入场价漂移不可见）。
     let restored = super::GameSession::restore(&save).expect("恢复");
     assert!(
         restored.runtime_retail_experience_has(buyer, &code),
         "恢复后经历条目保持（fault2038 链）"
+    );
+    let restored_save = restored.save().expect("恢复后再存档");
+    let restored_json =
+        serde_json::to_value(&restored_save.retail_experience[&buyer]).expect("经历序列化");
+    let restored_price = restored_json
+        .pointer("/stocks/0/entry_reference_price")
+        .cloned()
+        .or_else(|| {
+            restored_json
+                .get("stocks")
+                .and_then(|s| s.as_object())
+                .and_then(|m| m.values().next())
+                .and_then(|v| v.get("entry_reference_price").cloned())
+        })
+        .expect("恢复后入场价可读");
+    assert_eq!(
+        restored_price,
+        serde_json::json!("1010"),
+        "恢复后经历入场价==成交 VWAP 1010（数值面锁定）"
     );
 }

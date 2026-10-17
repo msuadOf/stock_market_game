@@ -80,20 +80,22 @@ pub fn recv_deadline<T>(
     }
 }
 
-/// worker 侧收件变体：超时但全局 abort 标记已置位 ⇒ 干净退出（对端失败引发的
-/// 全局撤退，不是本 worker 的挂死）；超时且无标记 ⇒ 显式失败上报。
-/// 断连 ⇒ 干净退出（协调者已释放通道，关停协议的一部分）。
-/// Sol 终审二审阻断 2：等待改**分片轮询**（50ms 步长）且**等待中**
-/// 响应全局 abort——sever（下行 sender 全 drop）后组↔部互持对方
-/// 通道 clone 形成断连互等（组等 desk 通道断、desk 等组通道断），
-/// Disconnected 分支不可达、各自等满看门狗档（bridge 缺省 30s 使
-/// sol3_install_candles 击穿 10s 硬上限）。分片后 World Drop 置位的
-/// abort 在 ≤50ms 内被空闲 worker 观察——回收即时；正常路径消息到达
-/// 即时唤醒无轮询税（空闲段每秒 20 次原子读）。断连检测语义不变。
+/// worker 侧收件变体：等待中响应**永久关停标记**（shutdown——sever/
+/// Drop/显式 shutdown 置位）⇒ 分片窗口内干净退出；超时且无关停 ⇒ 显式
+/// 失败上报；断连 ⇒ 干净退出（协调者已释放通道，关停协议的一部分）。
+/// Sol 终审三审终阻断：退出判定**不复用 abort 标记**——abort_tick 置
+/// 位后仅成功 install_tick 才清，可重试 tick 的 Abort（回滚存活契约）
+/// 窗口内 worker 不得退出；此前 50ms 分片轮询读到 abort 即退出，使
+/// "Abort 后稍等再重试"撞通道断连（worker 已亡）。永久关停与可重试
+/// Abort 是两个正交信号：shutdown=进程级回收（sever/Drop）；
+/// abort=tick 级回滚语义（组内 GroupIn::Abort 消息驱动回滚）。
+/// 分片轮询（50ms 步长）保持：sever 后组↔部互持对方通道 clone 形成
+/// 断连互等（Disconnected 互不可达），shutdown 在 ≤50ms 内被空闲
+/// worker 观察——回收即时；正常路径消息到达即时唤醒无轮询税。
 pub fn worker_recv<T>(
     rx: &Receiver<T>,
     cfg: &WatchdogConfig,
-    abort: &std::sync::atomic::AtomicBool,
+    shutdown: &std::sync::atomic::AtomicBool,
     who: WorkerId,
 ) -> Result<Option<T>, RuntimeError> {
     use std::sync::atomic::Ordering;
@@ -106,14 +108,14 @@ pub fn worker_recv<T>(
             Err(RecvTimeoutError::Disconnected) => return Ok(None),
             Err(RecvTimeoutError::Timeout) => {
                 waited += step;
-                if abort.load(Ordering::SeqCst) {
+                if shutdown.load(Ordering::SeqCst) {
                     return Ok(None);
                 }
                 if waited >= limit {
                     return Err(RuntimeError::Watchdog {
                         phase: Phase::WorkerIdle,
                         waited: limit,
-                        detail: format!("worker {who} 空闲超时且无全局中止标记"),
+                        detail: format!("worker {who} 空闲超时且无永久关停标记"),
                     });
                 }
             }

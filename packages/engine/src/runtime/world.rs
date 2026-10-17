@@ -315,6 +315,10 @@ pub struct World {
     up_rx: Receiver<UpMsg>,
     handles: Vec<(WorkerId, std::thread::JoinHandle<Result<(), RuntimeError>>)>,
     abort: Arc<AtomicBool>,
+    /// Sol 终审三审：永久关停标记（sever/Drop/显式 shutdown 置位）——
+    /// worker_recv 的退出判定源（与 abort 正交：abort=tick 级回滚语义，
+    /// 可重试 Abort 窗口内 worker 存活）。
+    worker_shutdown: Arc<AtomicBool>,
     watchdog: WatchdogConfig,
     validator: Validator,
     rounds_cap: u32,
@@ -416,6 +420,7 @@ impl World {
             stocks.iter().map(|spec| spec.initial_traded_days).collect();
         let n_stocks = stocks.len();
         let abort = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::new(AtomicBool::new(false));
         let capture_slot: std::sync::Arc<
             std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>,
         > = std::sync::Arc::new(std::sync::Mutex::new(
@@ -557,9 +562,10 @@ impl World {
                     let desk_txs = desk_txs.clone();
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
+                    let shutdown = Arc::clone(&worker_shutdown);
                     let watchdog = watchdog;
                     let capture = std::sync::Arc::clone(&capture_slot);
-                    move || group_main(state, desk_txs, rx, up_tx, abort, watchdog, capture)
+                    move || group_main(state, desk_txs, rx, up_tx, abort, shutdown, watchdog, capture)
                 })
                 .map_err(|e| RuntimeError::SendFailed {
                     detail: format!("spawn rt-group-{g} 失败：{e}"),
@@ -602,13 +608,14 @@ impl World {
                     let group_txs = group_txs.clone();
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
+                    let shutdown = Arc::clone(&worker_shutdown);
                     let watchdog = watchdog;
                     let config = Arc::clone(&config);
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
                         desk_main(
-                            setup, n_groups, config, rx, group_txs, up_tx, abort, watchdog,
-                            capture,
+                            setup, n_groups, config, rx, group_txs, up_tx, abort, shutdown,
+                            watchdog, capture,
                         )
                     }
                 })
@@ -631,6 +638,7 @@ impl World {
             up_rx,
             handles,
             abort,
+            worker_shutdown,
             watchdog,
             validator: no_op_validator(),
             rounds_cap,
@@ -1809,6 +1817,9 @@ impl World {
     /// 先于 Shutdown 入队——FIFO 保证期末名册含全部回流）→ 收 GroupFinal →
     /// Shutdown 交易部 → 收 DeskFinal → join。
     pub fn shutdown(mut self) -> Result<ShutdownReport, RuntimeError> {
+        // Sol 终审三审：显式关停也置永久标记（消息+标记双保险——
+        // 消息丢失/阻塞的 worker 由标记兜底回收）。
+        self.worker_shutdown.store(true, Ordering::SeqCst);
         if let Some(report) = self.dead_finals.take() {
             // 已在失败撤退路径收齐 Final：只补 join。
             self.join_workers(report)
@@ -1953,6 +1964,9 @@ impl World {
 
     /// 切断协调者下行通道（断连显式失败测试面）：worker 见 Disconnected 退出。
     pub fn sever(&mut self) {
+        // Sol 终审三审：置永久关停（worker_recv 分片窗口内观察退出）——
+        /// sever 后下行断连互等（组↔部互持 clone），消息不可达只能走标记。
+        self.worker_shutdown.store(true, Ordering::SeqCst);
         self.group_txs.clear();
         self.desk_txs.clear();
     }
@@ -1971,7 +1985,7 @@ impl Drop for World {
     /// sol3_install_candles 的 10 秒硬上限实测击穿。断连检测语义
     /// 不变（P1 时代的通道面一致性守卫——send 侧显式报错不受影响）。
     fn drop(&mut self) {
-        self.abort.store(true, Ordering::SeqCst);
+        self.worker_shutdown.store(true, Ordering::SeqCst);
         for tx in &self.group_txs {
             let _ = tx.send(GroupIn::Shutdown);
         }

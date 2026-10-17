@@ -801,3 +801,38 @@ fn d0_world_drop_shuts_down_workers() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
+
+/// Sol 终审三审终阻断：**Abort 后延迟重试丢 worker**（存活契约回归）。
+/// abort_tick 置 abort=true（成功 install_tick 才清）；worker_recv 的
+/// 分片轮询在 ~50ms 空闲后读到标记即退出——Abort（可重试 tick 回滚）
+/// 与永久关停共用同一标记，调用方稍等再重试即发送失败。红证=Abort 后
+/// 睡 >50ms 再重跑：必须仍成功（红态=worker 已退出，通道断连）。
+#[test]
+fn solfinal4_abort_retry_after_delay_keeps_workers_alive() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|_t, _r| TickPlan::default())
+    };
+    let mut world = World::spawn(basic_spec(1, 1, 1, Box::new(script))).expect("世界构造");
+    let fail_once: Validator = Box::new(|ev| {
+        if ev.tick == 1 {
+            Err("注入：tick1 首次失败（可重试 Abort）".to_owned())
+        } else {
+            Ok(())
+        }
+    });
+    world.set_validator(fail_once);
+    assert!(world.run_ticks(1).is_err(), "tick1 首次失败（Abort 回滚）");
+    // 关键间隔：> 分片轮询步长（50ms）——复现"延迟重试撞 worker 退出"。
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    world.set_validator(no_op_validator());
+    let committed = world
+        .run_ticks(1)
+        .expect("Abort 后延迟重试必须成功（worker 存活契约——回滚后可重跑）");
+    assert_eq!(committed, 1);
+    assert_eq!(world.report_log.len(), 1, "重跑恰一条 TickRecord");
+    let report = world.shutdown().expect("关停对账正常");
+    assert!(
+        report.worker_results.iter().all(|(_, r)| r.is_ok()),
+        "全部 worker 正常退出"
+    );
+}

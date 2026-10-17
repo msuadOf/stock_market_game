@@ -2217,6 +2217,7 @@ pub fn desk_main(
     group_txs: Vec<Sender<super::protocol::GroupIn>>,
     up_tx: Sender<UpMsg>,
     abort: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
     watchdog: WatchdogConfig,
     capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
 ) -> Result<(), RuntimeError> {
@@ -2303,7 +2304,9 @@ pub fn desk_main(
     }
     let mut result = Ok(());
     loop {
-        let msg = match worker_recv(&rx, &watchdog, &abort, who) {
+        // Sol 终审三审：退出判定用 shutdown（永久关停）；abort 只管
+        // 本 tick 回滚语义（本 worker 失败时置位通知对端）。
+        let msg = match worker_recv(&rx, &watchdog, &shutdown, who) {
             Ok(Some(m)) => m,
             Ok(None) => break,
             Err(e) => {
