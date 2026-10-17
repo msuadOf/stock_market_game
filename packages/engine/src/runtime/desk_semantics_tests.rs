@@ -196,7 +196,7 @@ fn price_band_is_closed_interval_and_cage_only_continuous() {
     assert_eq!(a0.shares[0], 1_100, "边界买单成交");
     assert_eq!(a0.cash, 1_000_000 - 110_501, "买方付 maker 价+费用");
     let a1 = &report.group_finals[0].accounts[1];
-    assert_eq!(a1.cash, 1_000_000 + 109_444, "卖方净得（110_000−551）");
+    assert_eq!(a1.cash, 1_000_000 + 109_444, "卖方净得（110_000−556=佣金 500+印花 55+过户 1）");
 }
 
 #[test]

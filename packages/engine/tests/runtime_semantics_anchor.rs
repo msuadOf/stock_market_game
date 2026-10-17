@@ -13,7 +13,9 @@
 //! - 日结 #20 → `second_day_auction_window_resumes`
 //! - 竞价 #21-#25（+#26 收盘相位）→ `auction_window_gates_…`
 //! - 自成交 #6 → `trades_never_self_cross`
-//! - 费用 #3/#4/#5 → `fee_settlement_formulas_…`
+//! - 费用 #3/#4/#5 → `fee_settlement_formulas_…`（#3/#4 原场景为同
+//!   卖方同拍累计审计；此处以买方单多腿累计补差换向承载同一
+//!   「每单累计+下限一次」机制，卖方分腿费用同断言面覆盖）
 //! - 生命周期 #12（执行序无关性·runtime 形态）→
 //!   `scheduling_invariants_hold_across_runs`
 //! （#2/#7/#8/#10/#11 已由常驻测试独立承载：desk_semantics_tests
@@ -110,16 +112,15 @@ fn t1_today_buy_frozen_and_day_end_unfreeze() {
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
-    let frozen_before: u32 = driver
-        .world_accounts_snapshot()
-        .expect("日结前快照")
-        .into_iter()
-        .flat_map(|(_, accounts)| accounts)
-        .map(|a| a.frozen_today.iter().sum::<u32>())
+    // 玩家账户口径（local 0）：注入对归属确定，NPC 有机买入（他账户）
+    // 不影响本 oracle——并发调度下不闪红。
+    let frozen_before: u32 = driver.world_accounts_snapshot().expect("日结前快照")[0].1[0]
+        .frozen_today
+        .iter()
         .sum();
     assert_eq!(
         frozen_before, 100,
-        "首日当日买入 100 股 ⇒ 冻结恰 100（手算；>0 前置防空转）"
+        "玩家首日当日买入 100 股 ⇒ 冻结恰 100（手算；>0 前置防空转）"
     );
     driver
         .day_end_with_runtime_market_day(&mut session)
@@ -471,10 +472,13 @@ fn fee_settlement_formulas_with_minimum_commission_and_marginal_split() {
     );
     // #3/#4：成交事实的逐腿实收费用（挂单费用审计的事件面；跨记录
     // 检索注入对的两腿——qty 100/2900 组合在本 fixture 唯一）。
+    // 以 taker=玩家（local 0）过滤本注入对的两腿——NPC 有机成交
+    // （qty 碰撞）不会误配（并发调度下不闪红）。
     let legs: Vec<(u32, i64, i64)> = driver
         .world_report_log()
         .iter()
         .flat_map(|r| r.desk_trades.iter())
+        .filter(|f| f.taker == (0, 0))
         .map(|f| (f.qty, f.maker_fees_cents, f.taker_fees_cents))
         .collect();
     let leg_100 = legs
