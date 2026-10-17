@@ -1,0 +1,12 @@
+commit 6dcc25b4174a112fca053a933affe5d1ec05a47a
+Author:     msuad <1445617868@qq.com>
+AuthorDate: Sat Oct 17 20:56:39 2026 +0800
+Commit:     msuad <1445617868@qq.com>
+CommitDate: Sat Oct 17 20:56:39 2026 +0800
+
+    fix(engine): 补 P2-4b 漏提交的 protocol 差分类型 re-export
+    
+    244ae360 引用 crate::runtime::RestingDeltaEntry/RestingFact 但漏掉
+    本文件的三类型 pub use——该提交单独不可编译（工作树掩盖）。
+    
+    Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>

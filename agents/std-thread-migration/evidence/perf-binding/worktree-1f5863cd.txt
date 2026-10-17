@@ -1,0 +1,2 @@
+Preparing worktree (detached HEAD 1f5863cd)
+fatal: could not create directory of '/data1/baiyifan/workplace/stock_market_game/.git/worktrees/perf-bind-1f5863cd': Read-only file system
