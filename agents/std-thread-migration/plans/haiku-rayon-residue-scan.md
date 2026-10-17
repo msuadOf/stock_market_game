@@ -1,0 +1,301 @@
+# Rayon / ComputeContext 残留终扫
+
+范围：`packages/`、`apps/`、`docs/`、`.github/`，以及根目录构建/工具配置文件（含 `.cargo/config.toml`）。
+方法：`rg --hidden -n`；`rayon` 使用词边界 `\brayon\b`；第三组按题给正则 `RAYON_NUM_THREADS|wasm.bindgen.rayon|initThreadPool` 执行（点为正则通配符）。
+计数口径：按唯一 `文件:行号` 命中行计数；同一行多关键词只计一次，明细标出命中项。测试路径和 Rust `#[cfg(test)]` / `#[test]` 项归测试；文档与注释归注释文档。
+
+唯一命中行：284
+按命中项计数：rayon（词边界） 57；ComputeContext 215；RAYON_NUM_THREADS 13；wasm.bindgen.rayon（按给定正则，点为通配符） 8；initThreadPool 0
+
+## 生产代码：76 行
+- apps/server/examples/server_max_speed_probe.rs:30 [RAYON_NUM_THREADS] —     env::set_var("RAYON_NUM_THREADS", threads.to_string());
+- apps/server/src/actor.rs:981 [ComputeContext] —     compute: Result<Arc<engine::ComputeContext>, crate::HostComputeInitError>,
+- apps/server/src/actor.rs:996 [ComputeContext] —     pub fn with_compute(base_ms: u64, compute: Arc<engine::ComputeContext>) -> Self {
+- apps/server/src/actor.rs:1007 [ComputeContext] —         compute: Result<Arc<engine::ComputeContext>, crate::HostComputeInitError>,
+- apps/server/src/lib.rs:148 [RAYON_NUM_THREADS] —     #[error("RAYON_NUM_THREADS 必须是正整数")]
+- apps/server/src/lib.rs:150 [RAYON_NUM_THREADS] —     #[error("RAYON_NUM_THREADS 必须是 Unicode 文本")]
+- apps/server/src/lib.rs:169 [ComputeContext] — pub fn host_compute_context() -> Result<std::sync::Arc<engine::ComputeContext>, HostComputeInitError>
+- apps/server/src/lib.rs:172 [ComputeContext] —         Result<std::sync::Arc<engine::ComputeContext>, HostComputeInitError>,
+- apps/server/src/lib.rs:176 [RAYON_NUM_THREADS] —             let value = match std::env::var("RAYON_NUM_THREADS") {
+- apps/server/src/lib.rs:184 [ComputeContext] —                 Some(workers) => engine::ComputeContext::with_workers(workers)?,
+- apps/server/src/lib.rs:185 [ComputeContext] —                 None => engine::ComputeContext::shared_default()?,
+- packages/engine/examples/driver_semantics_probe.rs:30 [ComputeContext] —     let compute = engine::ComputeContext::with_workers(threads)?;
+- packages/engine/examples/escrow_performance_endpoint.rs:91 [rayon（词边界）] —         .ok_or("invalid actual rayon thread request")?;
+- packages/engine/examples/escrow_performance_endpoint.rs:100 [ComputeContext] —         engine::ComputeContext::with_workers(threads).map_err(|error| error.to_string())?;
+- packages/engine/examples/escrow_verification_harness/committed.rs:54 [ComputeContext] —     let compute = engine::ComputeContext::with_workers(config.budget.thread_count()?)
+- packages/engine/examples/escrow_verification_harness/committed.rs:87 [ComputeContext] —     compute: std::sync::Arc<engine::ComputeContext>,
+- packages/engine/examples/escrow_verification_harness/committed.rs:201 [ComputeContext] —     compute: std::sync::Arc<engine::ComputeContext>,
+- packages/engine/examples/escrow_verification_harness/committed.rs:481 [ComputeContext] —     compute: std::sync::Arc<engine::ComputeContext>,
+- packages/engine/examples/escrow_verification_harness/committed.rs:489 [ComputeContext] —     compute: std::sync::Arc<engine::ComputeContext>,
+- packages/engine/examples/max_speed_probe.rs:17 [ComputeContext] —     let compute = engine::ComputeContext::with_workers(threads)?;
+- packages/engine/examples/production_entry_performance.rs:99 [ComputeContext] —         engine::ComputeContext::with_workers(threads).map_err(|error| error.to_string())?;
+- packages/engine/examples/production_entry_performance.rs:245 [rayon（词边界）] —         return Err("usage: production_entry_performance <workload.json> <rayon-threads>".into());
+- packages/engine/examples/production_entry_performance.rs:257 [rayon（词边界）] —         positive_usize(threads, "rayon-threads")?,
+- packages/engine/src/compute.rs:23 [ComputeContext] — pub struct ComputeContext {
+- packages/engine/src/compute.rs:184 [ComputeContext] —     context: std::sync::Arc<ComputeContext>,
+- packages/engine/src/compute.rs:204 [ComputeContext] —     context: Option<std::sync::Arc<ComputeContext>>,
+- packages/engine/src/compute.rs:361 [ComputeContext] — impl ComputeContext {
+- packages/engine/src/compute.rs:478 [ComputeContext] —             Result<std::sync::Arc<ComputeContext>, ComputeInitError>,
+- packages/engine/src/indicators.rs:243 [ComputeContext] —     compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/lib.rs:69 [ComputeContext] —     create_backend, ComputeBackend, ComputeContext, ComputeError, ComputeInitError, ComputeMode,
+- packages/engine/src/session.rs:1397 [ComputeContext] —     compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session.rs:1854 [ComputeContext] —             crate::compute::ComputeContext::shared_default()?,
+- packages/engine/src/session.rs:1863 [ComputeContext] —         compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session.rs:1879 [ComputeContext] —         compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session.rs:1888 [ComputeContext] —     pub fn compute_context(&self) -> &std::sync::Arc<crate::compute::ComputeContext> {
+- packages/engine/src/session.rs:1897 [ComputeContext] —         compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session.rs:1913 [ComputeContext] —             crate::compute::ComputeContext::shared_default()?,
+- packages/engine/src/session.rs:1921 [ComputeContext] —         compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session.rs:3402 [ComputeContext] —         Self::restore_with_compute(save, crate::compute::ComputeContext::shared_default()?)
+- packages/engine/src/session.rs:3408 [ComputeContext] —         compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/account_book.rs:92 [ComputeContext] —         compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/account_settlement.rs:165 [ComputeContext] —     compute: &crate::ComputeContext,
+- packages/engine/src/session/pipeline/institutional_experience_projection.rs:10 [ComputeContext] —     compute: &crate::ComputeContext,
+- packages/engine/src/session/pipeline/ledger.rs:184 [ComputeContext] —         compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/ledger.rs:213 [ComputeContext] —         compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/session/pipeline/ledger.rs:261 [ComputeContext] —         compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/ledger.rs:273 [ComputeContext] —         compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/session/pipeline/ledger.rs:598 [ComputeContext] —         compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/ledger.rs:606 [ComputeContext] —     compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/session/pipeline/ledger.rs:628 [ComputeContext] —     compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/session/pipeline/ledger_conservation.rs:68 [ComputeContext] —     compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/session/pipeline/ledger_conservation.rs:85 [ComputeContext] —     compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/session/pipeline/ledger_conservation.rs:209 [ComputeContext] —     compute: Option<&std::sync::Arc<crate::compute::ComputeContext>>,
+- packages/engine/src/session/pipeline/market_tick_transaction.rs:237 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/npc_decisions.rs:321 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/npc_decisions.rs:346 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/npc_decisions.rs:389 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/npc_split.rs:34 [ComputeContext] —     pub(in crate::session) compute: &'a std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/receipt_aggregation.rs:55 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/receipt_aggregation.rs:78 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/retail_projection.rs:341 [ComputeContext] —     compute: &crate::ComputeContext,
+- packages/engine/src/session/pipeline/retail_projection.rs:355 [ComputeContext] —     compute: &crate::ComputeContext,
+- packages/engine/src/session/pipeline/retail_projection.rs:375 [ComputeContext] —     compute: &crate::ComputeContext,
+- packages/engine/src/session/pipeline/settlement.rs:136 [ComputeContext] —         compute: &crate::ComputeContext,
+- packages/engine/src/session/pipeline/stock_stream.rs:268 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/stock_stream.rs:332 [ComputeContext] —     compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/stock_stream.rs:358 [ComputeContext] —         compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/stock_stream.rs:814 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/plan_chain_candidates.rs:476 [ComputeContext] —         compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/protocol/civil/session.rs:101 [ComputeContext] —         Self::restore_with_compute(slot, crate::ComputeContext::shared_default()?)
+- packages/engine/src/session/protocol/civil/session.rs:107 [ComputeContext] —         compute: Arc<crate::ComputeContext>,
+- packages/engine/src/session/protocol/civil/session.rs:153 [ComputeContext] —         Self::new_with_compute(setup, seed, crate::ComputeContext::shared_default()?)
+- packages/engine/src/session/protocol/civil/session.rs:160 [ComputeContext] —         compute: Arc<crate::ComputeContext>,
+- packages/engine/src/session/protocol/civil/session.rs:174 [ComputeContext] —             crate::ComputeContext::shared_default()?,
+- packages/engine/src/session/protocol/civil/session.rs:182 [ComputeContext] —         compute: Arc<crate::ComputeContext>,
+- packages/engine/src/verification_evidence/phase_timing.rs:550 [ComputeContext] —     compute: &crate::ComputeContext,
+
+## 测试代码：135 行
+- apps/server/src/actor/fatal_tests.rs:5 [ComputeContext] —     use engine::{ComputeContext, ComputeWork};
+- apps/server/src/actor/fatal_tests.rs:8 [ComputeContext] —         let compute = ComputeContext::with_workers(workers).unwrap();
+- apps/server/src/actor/fatal_tests.rs:66 [ComputeContext] —     let manager = SessionManager::with_compute(1, engine::ComputeContext::with_workers(2).unwrap());
+- apps/server/tests/actor.rs:125 [ComputeContext] —             let compute = engine::ComputeContext::with_workers(workers).unwrap();
+- apps/web/src/app/app-startup-wiring.test.ts:9 [rayon（词边界）] — test("受控浏览器验收保留受控单步；WASM 线程池参数已随 rayon 退役移除", { timeout: 10000 }, () => {
+- packages/engine/examples/escrow_verification_harness/committed.rs:221 [ComputeContext] —         engine::ComputeContext::shared_default().map_err(|error| error.to_string())?,
+- packages/engine/examples/escrow_verification_harness/committed.rs:642 [ComputeContext] —         let mut session = initial_session(17, engine::ComputeContext::shared_default().unwrap())
+- packages/engine/examples/escrow_verification_harness/runtime.rs:1095 [ComputeContext] —             engine::ComputeContext::shared_default()
+- packages/engine/src/compute.rs:272 [ComputeContext] —             ComputeContext::with_workers(0),
+- packages/engine/src/compute.rs:283 [ComputeContext] —             ComputeContext::shared_default().unwrap().workers(),
+- packages/engine/src/compute.rs:296 [ComputeContext] —         let compute = ComputeContext::with_workers(4).unwrap();
+- packages/engine/src/compute.rs:323 [ComputeContext] —         let compute = ComputeContext::with_workers(4).unwrap();
+- packages/engine/src/compute.rs:354 [ComputeContext] —             ComputeContext::with_workers(2),
+- packages/engine/src/compute.rs:357 [ComputeContext] —         assert_eq!(ComputeContext::with_workers(1).unwrap().install(|| 7), 7);
+- packages/engine/src/indicators.rs:564 [ComputeContext] —         let context = crate::compute::ComputeContext::with_workers(8).unwrap();
+- packages/engine/src/session/account_book.rs:295 [ComputeContext] —     fn test_compute() -> std::sync::Arc<crate::compute::ComputeContext> {
+- packages/engine/src/session/account_book.rs:296 [ComputeContext] —         static SHARED: std::sync::OnceLock<std::sync::Arc<crate::compute::ComputeContext>> =
+- packages/engine/src/session/account_book.rs:299 [ComputeContext] —             .get_or_init(|| crate::compute::ComputeContext::with_workers(2).unwrap())
+- packages/engine/src/session/pipeline/account_settlement.rs:78 [ComputeContext] —         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
+- packages/engine/src/session/pipeline/account_settlement.rs:91 [ComputeContext] —     compute: &crate::ComputeContext,
+- packages/engine/src/session/pipeline/account_settlement.rs:153 [ComputeContext] —         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
+- packages/engine/src/session/pipeline/account_settlement_tests.rs:382 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/account_settlement_tests.rs:415 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/account_settlement_tests.rs:441 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/account_settlement_tests.rs:482 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/account_settlement_tests.rs:528 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/account_settlement_tests.rs:545 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/account_settlement_tests.rs:1141 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/authoritative_tick_tests.rs:17 [ComputeContext] —     let compute = crate::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs:359 [ComputeContext] —     let pool = crate::compute::ComputeContext::from_workers(1);
+- packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs:435 [ComputeContext] —                 let error = crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/continuous_matching_tests.rs:1901 [ComputeContext] —                 let error = crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/decision_resources_tests.rs:504 [ComputeContext] —         crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/decision_resources_tests.rs:600 [ComputeContext] —         crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/decision_resources_tests.rs:638 [ComputeContext] —         crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs:473 [ComputeContext] —         let snapshot = crate::compute::ComputeContext::from_workers(workers)
+- packages/engine/src/session/pipeline/executor_perturbation_tests.rs:91 [ComputeContext] —     let compute = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/executor_perturbation_tests.rs:273 [ComputeContext] —     let compute = crate::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/executor_perturbation_tests.rs:293 [ComputeContext] —     game.rebind_compute_for_verification(crate::ComputeContext::with_workers(1).unwrap());
+- packages/engine/src/session/pipeline/executor_perturbation_tests.rs:295 [ComputeContext] —     let foreign = crate::compute::ComputeContext::from_workers(foreign_workers);
+- packages/engine/src/session/pipeline/executor_perturbation_tests.rs:307 [ComputeContext] —     let left = crate::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/executor_perturbation_tests.rs:308 [ComputeContext] —     let right = crate::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/fill_fact_tests.rs:54 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/fill_fact_tests.rs:77 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/fill_fact_tests.rs:85 [ComputeContext] —             &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/fill_fact_tests.rs:93 [ComputeContext] —             &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/initial_candidate_round_tests.rs:94 [ComputeContext] —         crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/ledger_conservation_tests.rs:43 [ComputeContext] —             let error = crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/ledger_conservation_tests.rs:207 [ComputeContext] —     let pool = crate::compute::ComputeContext::from_workers(4);
+- packages/engine/src/session/pipeline/ledger_state_tests.rs:131 [ComputeContext] —             let error = crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/ledger_state_tests.rs:1150 [ComputeContext] —                 let error = crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/live_reservations.rs:418 [ComputeContext] —             let pool = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/npc_decisions.rs:771 [ComputeContext] —         crate::compute::ComputeContext::shared_default().expect("测试适配器默认上下文初始化失败");
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:73 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:115 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:173 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(3).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:219 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:259 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:328 [ComputeContext] —     let single = crate::compute::ComputeContext::with_workers(1).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:358 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:397 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:441 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:549 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(4).unwrap();
+- packages/engine/src/session/pipeline/npc_decisions_tests.rs:21 [ComputeContext] —     assert!(crate::compute::ComputeContext::shared_default().is_ok());
+- packages/engine/src/session/pipeline/npc_decisions_tests.rs:27 [ComputeContext] —         &crate::compute::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/npc_decisions_tests.rs:45 [ComputeContext] —     let pool = crate::compute::ComputeContext::from_workers(1);
+- packages/engine/src/session/pipeline/npc_decisions_tests.rs:60 [ComputeContext] —     let pool = crate::compute::ComputeContext::from_workers(2);
+- packages/engine/src/session/pipeline/npc_tick_preparation.rs:324 [ComputeContext] —             crate::compute::ComputeContext::with_workers(4).unwrap(),
+- packages/engine/src/session/pipeline/npc_tick_preparation.rs:424 [ComputeContext] —                 crate::compute::ComputeContext::with_workers(workers).unwrap(),
+- packages/engine/src/session/pipeline/npc_tick_preparation.rs:734 [ComputeContext] —             crate::compute::ComputeContext::with_workers(4).unwrap(),
+- packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:30 [ComputeContext] — fn dedicated_compute() -> Arc<crate::compute::ComputeContext> {
+- packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:31 [ComputeContext] —     crate::compute::ComputeContext::with_workers(3).unwrap()
+- packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:38 [ComputeContext] — fn assert_guards_returned(compute: &Arc<crate::compute::ComputeContext>) {
+- packages/engine/src/session/pipeline/ready_ingress_tests.rs:16 [ComputeContext] —         let pool = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/ready_ingress_tests.rs:34 [ComputeContext] —         let fixture_pool = crate::compute::ComputeContext::from_workers(workers);
+- packages/engine/src/session/pipeline/ready_ingress_tests.rs:128 [ComputeContext] —         let pool = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/ready_ingress_tests.rs:318 [ComputeContext] —         let pool = crate::compute::ComputeContext::from_workers(workers);
+- packages/engine/src/session/pipeline/ready_ingress_tests.rs:344 [ComputeContext] —         let fixture_pool = crate::compute::ComputeContext::from_workers(workers);
+- packages/engine/src/session/pipeline/ready_ingress_tests.rs:433 [ComputeContext] —             let tight = crate::compute::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/pipeline/receipt_aggregation_tests.rs:12 [ComputeContext] — fn audit_compute() -> std::sync::Arc<crate::compute::ComputeContext> {
+- packages/engine/src/session/pipeline/receipt_aggregation_tests.rs:13 [ComputeContext] —     crate::compute::ComputeContext::with_workers(2).unwrap()
+- packages/engine/src/session/pipeline/retail_projection.rs:334 [ComputeContext] —         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
+- packages/engine/src/session/pipeline/retail_projection_tests.rs:597 [ComputeContext] —         crate::compute::ComputeContext::from_workers(workers)
+- packages/engine/src/session/pipeline/retail_projection_tests.rs:762 [ComputeContext] —         &crate::ComputeContext::shared_default().unwrap(),
+- packages/engine/src/session/pipeline/settlement.rs:33 [ComputeContext] —         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
+- packages/engine/src/session/pipeline/settlement_tests.rs:41 [ComputeContext] —         crate::compute::ComputeContext::from_workers(threads)
+- packages/engine/src/session/pipeline/settlement_tests.rs:45 [ComputeContext] —                     .prepare_accounts(&crate::ComputeContext::with_workers(threads).unwrap(), &accounts, true)
+- packages/engine/src/session/pipeline/settlement_tests.rs:601 [ComputeContext] —         .prepare_accounts(&crate::ComputeContext::shared_default().unwrap(), &AccountBook::default(), true)
+- packages/engine/src/session/pipeline/stock_execution_transaction.rs:90 [ComputeContext] —     compute: &std::sync::Arc<crate::ComputeContext>,
+- packages/engine/src/session/pipeline/stock_execution_transaction.rs:171 [ComputeContext] —         &crate::ComputeContext::shared_default().expect("测试计算上下文"),
+- packages/engine/src/session/pipeline/stock_stream.rs:293 [ComputeContext] —     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/pipeline/stock_stream.rs:953 [ComputeContext] —             crate::compute::ComputeContext::with_workers(1).unwrap(),
+- packages/engine/src/session/pipeline/stock_stream.rs:982 [ComputeContext] —             crate::compute::ComputeContext::with_workers(1).unwrap(),
+- packages/engine/src/session/pipeline/stock_stream.rs:1001 [ComputeContext] —             crate::compute::ComputeContext::with_workers(1).unwrap(),
+- packages/engine/src/session/pipeline/stock_stream.rs:1024 [ComputeContext] —             crate::compute::ComputeContext::with_workers(1).unwrap(),
+- packages/engine/src/session/pipeline/stock_stream.rs:1041 [ComputeContext] —             crate::compute::ComputeContext::with_workers(1).unwrap(),
+- packages/engine/src/session/pipeline/stock_stream.rs:1158 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/stock_stream.rs:1187 [ComputeContext] —                         &crate::compute::ComputeContext::with_workers(workers).unwrap(),
+- packages/engine/src/session/pipeline/stock_stream.rs:1238 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/stock_stream.rs:1362 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/stock_stream.rs:1428 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/stock_stream.rs:1518 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/stock_stream.rs:1640 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/stock_stream.rs:1794 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/stock_stream.rs:1872 [ComputeContext] —         let shared = crate::compute::ComputeContext::from_workers(pool_workers);
+- packages/engine/src/session/pipeline/t3_boundary_tests.rs:24 [ComputeContext] —     session.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+- packages/engine/src/session/pipeline/t3_boundary_tests.rs:388 [ComputeContext] —     session.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+- packages/engine/src/session/pipeline/t3_boundary_tests.rs:548 [ComputeContext] —     session.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+- packages/engine/src/session/pipeline/t4inc76_route_cross_batch_tests.rs:81 [ComputeContext] —     let compute = crate::compute::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/session/plan_chain_candidates_tests.rs:6 [ComputeContext] —     execution_fixture_with_compute(crate::compute::ComputeContext::shared_default().unwrap())
+- packages/engine/src/session/plan_chain_candidates_tests.rs:13 [ComputeContext] —     compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/plan_chain_candidates_tests.rs:20 [ComputeContext] —     compute: std::sync::Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:50 [ComputeContext] — fn dedicated_compute() -> Arc<crate::compute::ComputeContext> {
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:51 [ComputeContext] —     crate::compute::ComputeContext::with_workers(3).unwrap()
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:58 [ComputeContext] — fn two_account_session_with(compute: Arc<crate::compute::ComputeContext>) -> crate::GameSession {
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:91 [ComputeContext] —     compute: &Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:137 [ComputeContext] —     compute: &Arc<crate::compute::ComputeContext>,
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:202 [ComputeContext] — fn assert_guards_returned(compute: &Arc<crate::compute::ComputeContext>) {
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:570 [ComputeContext] —     let wide = crate::compute::ComputeContext::with_workers(8).unwrap();
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:1060 [ComputeContext] —     let wide = crate::compute::ComputeContext::with_workers(3).unwrap();
+- packages/engine/src/session/protocol/civil/day_end_npc_tests.rs:24 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
+- packages/engine/src/session/protocol/civil/decision_failure_witness_tests.rs:22 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+- packages/engine/src/session/protocol/civil/decision_failure_witness_tests.rs:312 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
+- packages/engine/src/session/protocol/civil/decision_failure_witness_tests.rs:573 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
+- packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:632 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
+- packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:952 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
+- packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:1052 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(2).unwrap());
+- packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:1104 [ComputeContext] —         .rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+- packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:1166 [ComputeContext] —     twin.rebind_compute_for_verification(crate::compute::ComputeContext::with_workers(1).unwrap());
+- packages/engine/src/session/self_views.rs:111 [ComputeContext] —         let one = crate::compute::ComputeContext::from_workers(1)
+- packages/engine/src/session/self_views.rs:113 [ComputeContext] —         let four = crate::compute::ComputeContext::from_workers(4)
+- packages/engine/src/session/views.rs:320 [ComputeContext] —             crate::compute::ComputeContext::from_workers(workers)
+- packages/engine/src/session/views.rs:363 [ComputeContext] —             let error = crate::compute::ComputeContext::from_workers(workers)
+- packages/engine/src/verification_evidence/phase_timing_tests.rs:222 [ComputeContext] —     let compute = crate::ComputeContext::with_workers(2).unwrap();
+- packages/engine/src/verification_evidence/phase_timing_tests.rs:244 [ComputeContext] —     let compute = crate::ComputeContext::with_workers(2).unwrap();
+
+## 注释文档：68 行
+- apps/desktop/src-tauri/examples/production_actor_performance.rs:3 [RAYON_NUM_THREADS] — //! Run with `RAYON_NUM_THREADS=<workers>`; the pool size does not limit requests.
+- apps/server/src/actor/fatal_tests.rs:34 [rayon（词边界）] —         // rayon 退役（批 7）：foreign 池隔离路径的串行等价=直接调用。
+- apps/server/tests/actor.rs:200 [rayon（词边界）] —         // rayon 退役（批 7）：global 池初始化断言随机制退役。
+- docs/architecture.md:157 [rayon（词边界）] — 股票撮合由每股一个交易部持久线程承载（ADR-0043）：组↔交易部全互联 `std::sync::mpsc` 直发（G×N 下行 `Ops` + N×G 上行 `DeskBatch`），数据面不经协调者；无 Barrier、无 Condvar、无共享 Mutex。正确性基石是锁步不变量：交易部实体批次先于 `DeskReport` 发送、协调者收齐 G+N 报告后才广播下一 `Start`（mpsc FIFO + happens-before）；活性由相位感知看门狗（`recv_timeout` + `Phase`，`watchdog.rs`）守护，重述见 ADR-0043 关联的活性契约。rayon 随旧调度形态退役，`in_place_scope` 嵌套池已知边界不再存在。
+- docs/architecture.md:162 [rayon（词边界）] — （历史 rayon 形态）只表示池中配置的 worker 数，不能称为实际 runnable/active worker；实际
+- docs/decisions/0007-three-deployment-frontend-framework.md:46 [rayon（词边界）] — - **GPU offload（可选，默认关）**：`ComputeBackend` trait + `CpuBackend`(rayon) + `engine-gpu`(wgpu) crate + `ComputeMode` 配置；wgpu 跨 native/WebGPU 三端复用；**确定性用 GPU 整数/定点计算解决**（i32/i64 bit-精确，契合 Money=i64）；为大规模 NPC 预备，当前规模默认关。
+- docs/decisions/0008-gpu-and-compute-offload.md:23 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] — 这些问题在 engine 已实现 rayon CPU 多核并行、wasm-bindgen-rayon 已跑通之后被重新审视。结论需要固化，否则后续协作者会重复踩「为什么不上 GPU」的讨论。
+- docs/decisions/0008-gpu-and-compute-offload.md:27 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] — - 当时记录 engine **已实现 rayon CPU 多核并行**、`wasm-bindgen-rayon` 已跑通。
+- docs/decisions/0008-gpu-and-compute-offload.md:41 [rayon（词边界）] — | D1 | **rayon CPU 多核并行是当前最优**，作为 `CpuBackend` 基座 | ✅ 已实现 |
+- docs/decisions/0008-gpu-and-compute-offload.md:42 [rayon（词边界）] — | D2 | MACD、价格 KDJ 与 OHLC KDJ 在 Rust engine 计算；批量输入使用 rayon 并行 | ✅ 已实现，Web 经宿主请求消费结果 |
+- docs/decisions/0008-gpu-and-compute-offload.md:72 [rayon（词边界）] — // CpuBackend 使用 rayon；Auto 当前等同 Cpu；显式 Gpu 请求返回 BackendUnavailable。
+- docs/decisions/0008-gpu-and-compute-offload.md:88 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] — - **T5. wasm-bindgen-rayon 已跑通。** 浏览器内多核可用：nightly toolchain + `-Z build-std=std,panic_abort` + `-C target-feature=+atomics` + `wasm-bindgen-rayon`。→ CPU 多核路径在「纯前端 WASM」端也成立，不依赖 GPU。
+- docs/decisions/0008-gpu-and-compute-offload.md:99 [rayon（词边界）] — | MACD/KDJ → engine Rust（rayon） | 已实现 | — | D2 当前路径 |
+- docs/decisions/0008-gpu-and-compute-offload.md:121 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] —   - rayon CPU 并行 + wasm-bindgen-rayon 三端一致，是当前最优且已验证的多核路径。
+- docs/decisions/0010-unified-host-protocol-and-local-refresh.md:66 [rayon（词边界）] — | WASM Worker | Structured Clone `postMessage`；WASM 绑定使用 `serde_wasm_bindgen` | `uiFrame` 背压、SharedArrayBuffer/rayon |
+- docs/decisions/0017-escrow-parallel-tick.md:30 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] — 采用一条阶段化并行实现，不建立独立串行参考引擎，也不以不同实现路径作为正确性依据。预算为 1 的并行运行只是调度对照条件，不是第二套实现。native 与 WASM 保持同一 rayon 并行代码路径，WASM 保留 `wasm-bindgen-rayon`。引擎不建立常驻的 channel/actor 权威状态或跨实体业务锁；同一 tick 内允许用临时 channel 回传已完成的股票与计划根任务，发送不能因等待其他股票而阻塞。此项按 2026-09-25 的局部冲突决定修订原先的“完全不用 channel”限制。
+- docs/decisions/0017-escrow-parallel-tick.md:152 [rayon（词边界）] — - [ADR-0008](0008-gpu-and-compute-offload.md)：rayon 与跨股票并行方向。
+- docs/decisions/0043-std-thread-ownership-runtime.md:15 [rayon（词边界）] — ### 1. rayon 宽度税与串行脊（性能主线实测，16 核 server 路径 s5 负载）
+- docs/decisions/0043-std-thread-ownership-runtime.md:35 [rayon（词边界）] — 对照：rayon 形态同负载 359 t/s（std-thread 原型 982 t/s 的 1/2.7）。
+- docs/decisions/0043-std-thread-ownership-runtime.md:41 [RAYON_NUM_THREADS] — 无池宽、无 RAYON_NUM_THREADS）；CPU 限制用 **OS 级**能力（cgroup cpu quota /
+- docs/decisions/0043-std-thread-ownership-runtime.md:103 [rayon（词边界）] — 2. **池宽封顶**：rayon 128 线程池封顶止血。用户否决——128=真实 128 线程池不许缩；
+- docs/decisions/0043-std-thread-ownership-runtime.md:105 [rayon（词边界）] — 3. **rayon 补丁**：在 rayon 调度器上打补丁修宽度税/嵌套池边界。用户否决——直接换
+- docs/decisions/0043-std-thread-ownership-runtime.md:106 [rayon（词边界）] —    更简单的 std::thread，不再投资 rayon（architecture.md 旧文记录的
+- docs/decisions/0043-std-thread-ownership-runtime.md:107 [rayon（词边界）] —    `in_place_scope` 嵌套池已知边界随 rayon 退役整体消失）。
+- docs/decisions/0043-std-thread-ownership-runtime.md:119 [rayon（词边界）] — - 机制口径 962 t/s（10 组调优，s5 负载），约为 rayon 形态 359 t/s 的 2.7 倍；
+- docs/decisions/0043-std-thread-ownership-runtime.md:124 [rayon（词边界）] —   rayon 版。
+- docs/superpowers/plans/2026-09-25-production-entry-and-thread-pool.md:57 [RAYON_NUM_THREADS] — 真实 server 宿主进程另用 release `host-parity` 验证入口：以同一 20 股、20,007 NPC setup 经 HTTP 建局，在发布休市日跨日更新后，连续请求 80 个真实 actor tick，全部返回成功；进程由 `RAYON_NUM_THREADS=8` 启动，采样区间约 1.972 秒内累计约 5.67 秒 CPU，即 288%，进程最多 137 个线程（含 Tokio runtime）。此为同进程多核工作的直接证据，不把总线程数解释为 Rayon 池大小；验证入口仍经过生产 actor 命令队列和 `ProtocolSession::step_frame`，不冒称普通自动定时路由的长期服务压测。
+- docs/superpowers/plans/2026-09-25-production-entry-and-thread-pool.md:59 [RAYON_NUM_THREADS] — desktop 的 `production_actor_performance` 样例通过 Tauri mock app 创建真实 desktop actor，并经其 `host-parity` 命令队列步进；它不打开打包后的 GUI。相同 20 股、20,007 NPC setup，改用 2030-01-02 交易日开局并每 tick 入队一条玩家买单，80 tick 的 actor 步进累计为 `RAYON_NUM_THREADS=1` 时 3.987 秒、8 时 2.693 秒；完整进程 `/usr/bin/time` CPU 分别为 101% 和 221%。此样例没有预置计划，计划源的完整活跃交易仍以前面的 engine 三来源负载为证。server、desktop 构建与上述运行均通过进程外 `timeout 300`，已执行的普通定向单测各以 `timeout 5` 约束。两个原生宿主均有进程内多核证据；桌面打包 GUI 的长时间运行仍未单独测量。
+- docs/superpowers/plans/2026-09-26-ready-receipt-and-thread-boundary.md:7 [RAYON_NUM_THREADS] — 生产 `step` 已在同一进程的 Rayon 池中并行执行账户与股票工作。Web 宿主可以传可选的正整数 `threadCount`，默认读取浏览器报告的硬件并发数；原生宿主使用 Rayon 全局池，并可在启动前通过 `RAYON_NUM_THREADS` 配置。池的线程数只影响同一时刻有多少任务运行，不构成请求、挂单、账户或计划的数量上限。浏览器绑定和操作系统资源仍有实际表示及创建边界，错误必须显式返回。
+- docs/superpowers/plans/2026-09-26-sparse-continuous-book-feedback.md:5 [RAYON_NUM_THREADS] — 三种宿主都在同一进程内运行 engine 的 Rayon 工作；浏览器可传 `threadCount`，原生端可在启动前设置 `RAYON_NUM_THREADS`。这些是同时运行的工作线程数，不是请求或计划数量配额，不再增加一套会话级兼容线程池。订单簿本身按股票维持价格、时间规则，账户只在资金或可卖股份实际争用时保留接收顺序，计划只等待自己的必要反馈。
+- docs/superpowers/specs/2026-09-13-company-information-learnings.md:1271 [RAYON_NUM_THREADS] — - **QA 硬门禁全绿**：company_decision_session 11/11（含跨线程确定性：RAYON_NUM_THREADS
+- docs/work-status.md:268 [RAYON_NUM_THREADS] — `RAYON_NUM_THREADS=4`，各进程树 10000ms deadline，复测和相关组各四进程并行。
+- packages/engine/examples/driver_semantics_probe.rs:9 [ComputeContext] — //!（ENGINE_STEP_RUNTIME=1 运行；threads 只喂 ComputeContext）。
+- packages/engine/src/compute.rs:1 [rayon（词边界）] — //! 计算后端抽象（ADR-0008）：批 7 起 rayon 全面退役——本文件是**串行垫片**
+- packages/engine/src/compute.rs:8 [rayon（词边界）] — //! - CPU 实现 = rayon 并行（零行为变化）。
+- packages/engine/src/compute.rs:47 [rayon（词边界）] —     /// 工作的线程走 rayon 空闲协议快速入睡，消灭宽池空扫描与 join 等待
+- packages/engine/src/compute.rs:76 [ComputeContext] — /// T1 验收探针组（cfg(test)）：全部按 ComputeContext 隔离。
+- packages/engine/src/compute.rs:106 [ComputeContext] —     /// 单调递增；跨测试上下文隔离（同一 ComputeContext 内全局唯一）。
+- packages/engine/src/compute.rs:457 [rayon（词边界）] —     /// 测试迁移面——rayon 池已退役）。
+- packages/engine/src/compute.rs:685 [rayon（词边界）] —     /// rayon join/par_iter 的驱动线程在等待分裂任务完成时以 SpinLatch
+- packages/engine/src/compute.rs:689 [rayon（词边界）] —     /// worker 无可见工作即走 rayon 空闲协议入睡。
+- packages/engine/src/compute.rs:1084 [rayon（词边界）] —         /// 顺序实现复用单个 scratch；rayon 按 split 重建 init，两者结果一致（init 纯构造）。
+- packages/engine/src/compute.rs:1126 [rayon（词边界）] — /// CPU 后端：rayon 多核并行。
+- packages/engine/src/compute.rs:1173 [rayon（词边界）] —     /// CPU rayon 并行（默认）。
+- packages/engine/src/indicators.rs:237 [rayon（词边界）] — /// `compute`：会话计算上下文；`None` 时串行计算（消灭全局 rayon 池惰性初始化
+- packages/engine/src/indicators.rs:239 [ComputeContext] — /// 先例：ledger_conservation::map_rows 的 Option<&ComputeContext> 口径）。
+- packages/engine/src/indicators.rs:561 [ComputeContext] —         // 修1 后并行分支只经会话 ComputeContext（消灭全局池入口）；本测试随之
+- packages/engine/src/indicators.rs:576 [rayon（词边界）] — /// crate::compute::join（全局 rayon 池惰性初始化；HTTP 线程等非池环境实测常驻
+- packages/engine/src/indicators.rs:582 [rayon（词边界）] — /// 该边界为已知限制。池已被其他代码初始化时护栏空转（rayon 无查询接口，
+- packages/engine/src/runtime/decision.rs:5 [rayon（词边界）, ComputeContext] — //! 执行形态改为组线程内联直调——不经 ComputeContext/rayon dispatch。
+- packages/engine/src/session.rs:5141 [rayon（词边界）] —         // actor 只做字段交接。四个分页容器原先走 rayon 池内 par drop，
+- packages/engine/src/session/deferred_drop.rs:3 [rayon（词边界）] — //! E7 教训：rayon::spawn(drop) 与下一 tick 的并行突发共用车道（4 worker 小池），
+- packages/engine/src/session/pipeline/continuous_matching_adapter.rs:151 [rayon（词边界）] —         // 加 with_min_len 后仍残留 rayon join 驱动线程 SpinLatch 自旋+全池
+- packages/engine/src/session/pipeline/ledger_conservation_tests.rs:173 [rayon（词边界）] —         // rayon 退役（批 7）：串行垫片无池线程概念，逃逸检测由线程 id 兜底。
+- packages/engine/src/session/pipeline/local_admission.rs:368 [rayon（词边界）] —             // rayon 退役（批 7）：install 的串行等价=直接执行（缩进保留）。
+- packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:166 [rayon（词边界）] — /// try_recv+yield_work 会经 rayon 让位**自执行**含阻塞 hold 的任务，把窗口
+- packages/engine/src/session/pipeline/npc_decisions_tests.rs:20 [rayon（词边界）] —     // rayon 退役（批 7）：非池线程断言的串行等价=恒真（本测试在普通线程跑）。
+- packages/engine/src/session/pipeline/npc_decisions_tests.rs:794 [rayon（词边界）] —     // rayon 退役（批 7）：1/2 worker 等价性=串行两次同结果。
+- packages/engine/src/session/pipeline/npc_split.rs:4 [rayon（词边界）] — //! 不相交借用，使 commit 尾部可以在 `rayon::join` 中一边排 NPC 队列、一边投机准备
+- packages/engine/src/session/pipeline/npc_split.rs:318 [rayon（词边界）] —     /// 拆分后两组借用必须能在 rayon::join 中并存，且写侧对 accounts 的变更
+- packages/engine/src/session/pipeline/npc_tick_preparation.rs:417 [ComputeContext] —     /// worker**（ComputeContext::with_workers 显式宽度，rebind 后由 queue 消费）。
+- packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:35 [ComputeContext] — /// 放行（per-ComputeContext，专用池不串扰）。
+- packages/engine/src/session/pipeline/read_only_start.rs:441 [rayon（词边界）] —             // rayon 退役（批 7）：install 的串行等价=直接调用。
+- packages/engine/src/session/pipeline/stock_stream.rs:345 [ComputeContext] —     /// 判定，池身份取 `ComputeContext` 自身而非 Rayon 全局注册表）。
+- packages/engine/src/session/pipeline/stock_stream.rs:1787 [ComputeContext] —     /// 协调者经 `ComputeContext::install` 入池（绑定由 install 在 worker 上
+- packages/engine/src/session/plan_root_quota_wave_tests.rs:84 [ComputeContext] — /// per-ComputeContext（专用池），不污染其他用例。
+- packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:948 [ComputeContext] —     // 调用见证按 ComputeContext 隔离（T1Probes 纪律）：默认共享池会混入并行
+- packages/engine/tests/extraction_replay.rs:179 [rayon（词边界）] —     // rayon 退役（批 7）：单 worker install 的串行等价=直接调用。
+
+## 构建配置：5 行
+- .github/workflows/ci.yml:81 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] —       # wasm-bindgen-rayon 的 +atomics 需要走 build-std → 要 wasm32 target + rust-src。
+- .github/workflows/distributions.yml:60 [RAYON_NUM_THREADS] —         run: node -e "const n=require('node:os').availableParallelism(); console.log({jobs:n}); require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'CARGO_BUILD_JOBS='+n+'\nRAYON_NUM_THREADS='+n+'\n');"
+- apps/web-wasm/.cargo/config.toml:2 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] — # 参数历史上对齐固定的 wasm-bindgen-rayon 1.2.1 官方配置，rayon 随 std-thread 迁移
+- apps/web/vite.config.ts:8 [rayon（词边界）, wasm.bindgen.rayon（按给定正则，点为通配符）] — // SharedArrayBuffer 支持（wasm-bindgen-rayon 多核需要）：
+- packages/std-thread-proto/Cargo.toml:11 [rayon（词边界）] — # 本原型不调用 engine 的 rayon 路径。
+
