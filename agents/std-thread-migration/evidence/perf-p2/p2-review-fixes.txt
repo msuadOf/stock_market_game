@@ -1,0 +1,26 @@
+=== P2 复核阻断修复轮 ===
+阻断 1（P2-2b 回滚完整性回归）：日结拍 install_runtime_day_boundary 内 unlock_t1_positions 直改
+state.accounts（day_end.rs:52，不经 fixture_account_mut 无 undo）→world 日结失败回滚残留。
+红证（修复前）：p2r1_day_end_step_failure_rolls_back_t1_unlock ——
+t1_locked=None（条目丢失）panic（fixture: t1_enabled=true、tpd=4、日结拍前夕预置 400 冻结
+（首拍全量回写会冲掉更早预置——预置时点经三轮调试锁定）、注入日结 validator 拒绝）。
+修复：日结拍 baseline 恢复全量账户快照（accounts_full=Option，ends_day 同式判定；
+低频拍付一次全量，覆盖日结迁移一切直改面）；rollback Some→全量恢复+清 undo。
+
+阻断 2（P2-1b 生产接线缺口）：force_full_accounts 仅手动 driver.day_end 设，
+生产 ends_day 段（world_day_end_for_step）不设——组端 Drain 回流/AdminBatch 无 desk
+事实，session 镜像漏同步（B fixture 单日不跨日结=盲区）。修复：生产日结成功后置位
+（force_full_accounts 改 pub(crate)）。
+
+验证：阻断 1 守卫红→绿；全量默认 1612/0/11、env=1 1612/0/11（复跑；首轮 2 failed
+为 npc_decisions 既有 flake 域，复跑全绿）。
+B 探针：300 tick 53.1(离群)/75.3/74.7/61.0（波动带，机器 15min load 14.56 回归余温）；
+1000 tick 54.1/50.1。events=3336/11119、fees=0/5705 全程逐位一致（硬等价）。
+性能数字波动大无法精确归因（日结拍快照代价仅日结拍生效，300/1000 tick 均不跨
+日结 tpd=15300——理论上无代价；数字差异按机器波动登记，第 13 任可在净机上复测）。
+
+---[返工轮（复审实证判定错拍）]---
+baseline 判定改 (tick+1)%tpd==0（对齐 ends_day 的 step 后 tick 基准）；
+红证循环 4→3（失败正确落 day_end_world 分支——原 4 次落 run_ticks 自动日界 ? 路径，
+断言被'日结'字样误命中=无判别力，复审突变实证）。
+返工后判别复验：快照禁用突变→panic（fixture '持仓在册'expect 红）；完整态绿。
