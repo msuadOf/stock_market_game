@@ -1226,3 +1226,55 @@ fn r09_fully_filled_cancel_returns_already_filled_receipt() {
         "卖方净得两笔（500+50+1 与 500+100+2）"
     );
 }
+
+/// R01b/#7 连续竞价自成交终止（死亡断言再锚定·census 自成交 #7）：
+/// 同账户买卖同价挂单——taker 交叉档遇自单**终止撮合**（不与自单成
+/// 交）。零 Trade、双边挂单原位保留（卖 1000 在 ask、买 1000 在 bid）。
+#[test]
+fn r07_continuous_self_cross_terminates_without_self_trade() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            // 卖单先入簿（maker 候选）。
+            1 => place_at(1, vec![sell(1, 0, 1000, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    // 同账户（acct1）买入同价——taker 交叉档=自单 ⇒ 终止撮合。
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 1,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Fixed(1000),
+            purse_reference: 1000,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let rec = &world.report_log[0];
+    assert!(
+        rec.desk_trades.is_empty(),
+        "同主交叉档不得自成交：{:?}",
+        rec.desk_trades
+    );
+    let views = world.public_views().to_vec();
+    assert_eq!(
+        views[0].best_ask,
+        Some(1000),
+        "自单（卖）原位保留在簿"
+    );
+    assert_eq!(
+        views[0].best_bid,
+        Some(1000),
+        "taker（买）终止后挂簿（未与自单成交）"
+    );
+    let report = world.shutdown().expect("关停");
+    assert_eq!(report.desk_finals[0].market.volume_today, 0, "零成交量");
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.cash, 1_000_000, "现金不动（无成交）");
+    assert_eq!(a1.shares[0], 1_000, "Drain 后持仓复原");
+}

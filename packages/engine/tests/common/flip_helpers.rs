@@ -108,6 +108,36 @@ pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     (session, all)
 }
 
+/// 驱动 N tick（runtime 路径，含安装/日结编排）并**保留驱动器**供
+/// 事实读面（world_report_log/world_accounts_snapshot——语义再锚定
+/// 批的费用/守恒恒等式需要成交事实，事件流 helper 不保留驱动器）。
+pub fn runtime_events_with_driver(
+    ticks: u64,
+    seed: u64,
+) -> (GameSession, RuntimeDriver, Vec<Event>) {
+    let mut session = GameSession::new(setup_1stock(), seed).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    let mut all = Vec::new();
+    for t in 1..=ticks {
+        let events = driver
+            .step_frame_equivalent(&mut session)
+            .expect("runtime tick（含安装）");
+        all.extend(events);
+        driver
+            .install_market_views(&mut session)
+            .expect("行情/价格历史安装");
+        driver.install_candles(&mut session).expect("K 安装");
+        if t % 240 == 0 {
+            driver
+                .day_end_with_runtime_market_day(&mut session)
+                .unwrap_or_else(|e| panic!("日结编排失败（t={t}）：{e}"));
+            all.extend(driver.take_drained_events());
+        }
+    }
+    (session, driver, all)
+}
+
 /// 注入确定性交叉对手单（batch4_t1 写法，断言强度批提炼为公共件）：
 /// retail 位 AccountId(1) 卖 100 股@1000（float 初始持仓）+ 玩家
 /// AccountId(0) 买 100 股@1000。开盘竞价完成拍（tick 10）以清算价
