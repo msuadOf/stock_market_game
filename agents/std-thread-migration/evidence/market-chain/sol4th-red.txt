@@ -1,0 +1,19 @@
+
+=== Sol 四轮·红证与绿证（原始输出）===
+--- 修前红（save 游标重算，原始值）---
+test sol4r_serial_cursor_survives_save_restore_roundtrip ... FAILED
+[原始运行见本轮会话：left: 0 right: 2 —— save 投影空簿得 0]
+--- 修后绿（生产路径端到端）---
+test sol4r_serial_cursor_survives_save_restore_roundtrip ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 1.57s
+--- Continue 轮1失败重播恰一次 ---
+
+=== Sol 四轮最终绿证（原始输出）===
+--- 端到端游标贯通（生产路径 session.step）---
+test sol4r_serial_cursor_survives_save_restore_roundtrip ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 1.59s
+--- Continue 轮1失败重播恰一次 ---
+test runtime::desk_semantics_tests::sol4r_continue_round1_failure_retry_emits_facts_exactly_once ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1651 filtered out; finished in 0.01s
+--- 回归 ---
+test result: ok. 1641 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 32.40s

@@ -1,0 +1,21 @@
+test strategy::factory::r22b_tests::r22b_classification_cadence_matches_registered_policy ... FAILED
+test strategy::factory::r22b_tests::r22b_belief_horizon_days_by_classification ... FAILED
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1637 filtered out; finished in 0.00s
+test trading_phase_vocabulary_excludes_halt_and_suspension ... FAILED
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test runtime::desk_semantics_tests::r09_fully_filled_cancel_returns_already_filled_receipt ... FAILED
+test runtime::desk_semantics_tests::r09_partial_fill_cancel_releases_remainder_only ... FAILED
+test runtime::desk_semantics_tests::r08_cancel_window_partition_by_receipt_and_clearing_participation ... FAILED
+thread 'runtime::desk_semantics_tests::r09_fully_filled_cancel_returns_already_filled_receipt' (1732222) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:1209:5:
+thread 'runtime::desk_semantics_tests::r09_partial_fill_cancel_releases_remainder_only' (1732223) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:1137:5:
+thread 'runtime::desk_semantics_tests::r08_cancel_window_partition_by_receipt_and_clearing_participation' (1732221) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:1098:5:
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 1636 filtered out; finished in 0.01s
+test runtime::desk_semantics_tests::r19_symbolic_prices_resolve_to_daily_band_edges ... FAILED
+test runtime::desk_semantics_tests::r16_market_intent_fills_walks_book_and_refunds_remainder ... FAILED
+thread 'runtime::desk_semantics_tests::r19_symbolic_prices_resolve_to_daily_band_edges' (1733366) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:911:5:
+thread 'runtime::desk_semantics_tests::r16_market_intent_fills_walks_book_and_refunds_remainder' (1733365) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:845:5:
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1637 filtered out; finished in 0.01s
+test runtime::desk_semantics_tests::r21_capacity_convention_no_fixed_count_rejection ... FAILED
+thread 'runtime::desk_semantics_tests::r21_capacity_convention_no_fixed_count_rejection' (1733681) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:782:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1638 filtered out; finished in 0.01s
+--- 9 处突变全红；逆回 ---

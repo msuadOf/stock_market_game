@@ -1,0 +1,13 @@
+--- 旧断言空转证据（探针输出）---
+# 补充探针（第二轮，sol-103 期间采集）：
+# PROBE2 rt30_seed7 trades=0 events=11 seq=11      ← f-1：旧 fixture 30 tick 零成交（#8 断言从未执行）
+# PROBE2 pipe30_seed7 events=26 seq=26             ← a-4：seq 实测值（旧断言 < u64::MAX 恒真）
+# PROBE2 seed8 base=1000003075056 rt=1000003075056 pipe=1000003075056   ← a-2：现金总量分毫未动，旧容差 +5.67e9 恒过
+# PROBE2 seed308 base=1000002041345 rt=1000002041345 pipe=1000002041345 ← a-3：同上（跨日）
+# PROBE rt30 seed 1..15 trades 全 0                ← f-1：公共 fixture（arrival=1.0）30 tick 仍零成交
+# PROBE runtime202 cancels=0                       ← f-3：batch3#3 固定 seed 202 撤单断言空转
+# PROBE runtime204 accepts30=0                     ← f-3：batch3#5 固定 seed 204 受理断言空转
+# PROBE completed tick=10 price=None vol=0         ← e-1：batch2#5 seed 104 唯一 completed=None（Some 分支从未执行）
+# PROBE_F6 after_paused_count=2                    ← f-6：Abort 后 Paused 投影仍在（原注释"消失"与实测不符）
+# AUCTIONFACTS daily=[(1,14,0,0,0),(2,10,62,0,0),(3,11,88,0,0)] ← b-3：三日完成点 matched 全 0（审计建议的 matched>0 与引擎现实矛盾）
+# PROBE5 old-pipeline day_boundary_events=1 day_adv=true (env=0) ← f-4：旧管线同样产 DayBoundary（守卫可移除）

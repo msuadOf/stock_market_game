@@ -1,0 +1,12 @@
+test runtime::equivalence_tests::batch8_final_verdict_flip_requires_integration_migration_batch ... FAILED
+test runtime::equivalence_tests::batch8_final_verdict_flip_requires_integration_migration_batch ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.00s
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.01s
+test runtime::equivalence_tests::market_views_install_into_session_markets ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 0.20s
+test runtime::drive_tests::d5_runtime_step_installs_day_boundary ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 1.40s
+test runtime::drive_tests::solmid_day_end_drain_releases_child_tickets ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 1.37s
+test runtime::drive_tests::d3b2_plan_event_injection_pauses_group_plan ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 1.36s
