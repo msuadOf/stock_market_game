@@ -780,14 +780,12 @@ fn d0_world_drop_shuts_down_workers() {
         Box::new(|_t, _r| TickPlan::default())
     };
     let world = World::spawn(basic_spec(1, 2, 1, Box::new(script))).expect("世界构造");
-    // 等线程注册（≤2s）。
-    let spawned = loop {
-        let c = task_count();
-        if c >= before + 3 {
-            break c;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    };
+    // 注册等待已移除：spawn 返回即持有全部 worker 句柄（注册完成的
+    // 同步证明=drop 内 join 返回本身）；原"c >= before+3"轮询在并行
+    // 满载批下被其他测试的线程增减污染（before 采样于高峰、判定时
+    /// 其他测试已退出——永假导致无界挂起，见 run5 实测 before=170
+    /// now=18）。计数判据仅保留 drop 后回落（并行高峰采样时判别力
+    /// 弱化为不误红；串行/低峰场景判别力不变）。
     drop(world);
     // 等线程退出回落（≤2s）——Drop 兜底须发 Shutdown 并 join。
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -798,7 +796,7 @@ fn d0_world_drop_shuts_down_workers() {
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "Drop 后线程未回收：before={before} spawned={spawned} now={c}"
+            "Drop 后线程未回收：before={before} now={c}"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
