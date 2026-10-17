@@ -36,7 +36,9 @@ pub struct RuntimeDriver {
     account_dirty_prev: Vec<bool>,
     /// P2-1b：日结（Drain/T+1/AdminBatch 改账户但无逐账户事实事件）后
     /// 置 true——下一 step 全量回写一次（低频路径，语义安全优先）。
-    force_full_accounts: bool,
+    /// P2 复核阻断 2 后改 pub(crate)：生产日结路径（session/failure.rs
+    /// 的 ends_day 段）需直接置位（此前仅手动 day_end 设=接线缺口）。
+    pub(crate) force_full_accounts: bool,
     /// P2-1b 红证计数（cfg(test)）：账户回写实际写入次数。
     #[cfg(test)]
     account_writes: u64,

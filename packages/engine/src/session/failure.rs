@@ -18,6 +18,17 @@ pub(crate) struct RuntimeInstallBaseline {
     // runtime_record_account_undo 记录首写前值，O(dirty)；回滚恢复。
     // 原 O(名册) 每 tick 快照是驱动器侧 AccountBook::get 全名册遍历+
     // positions 深拷贝的主要来源（P2-2a 后画像 19% 读写下的大项）。
+    // P2 复核阻断 1 修正：**日结拍**恢复全量快照——ends_day 段的
+    // install_runtime_day_boundary 直改 state.accounts（T+1 解锁——
+    // day_end.rs:52，不经 fixture_account_mut、无 undo 记录），其后
+    // world 日结失败回滚须覆盖该直改面；日结低频，全量一次可接受。
+    accounts_full: Option<
+        Vec<(
+            crate::AccountId,
+            i64,
+            std::collections::BTreeMap<crate::StockId, crate::account::Position>,
+        )>,
+    >,
     markets: std::collections::BTreeMap<crate::StockId, crate::Market>,
     price_history:
         std::collections::BTreeMap<crate::StockId, std::collections::VecDeque<crate::money::Money>>,
@@ -695,6 +706,11 @@ impl GameSession {
                     description: e,
                 }));
             }
+            // P2 复核阻断 2：生产日结路径（此前仅手动 driver.day_end 设
+            // force_full，生产 ends_day 段不设——组端 Drain 回流/
+            // AdminBatch 无逐账户 desk 事实，session 镜像漏同步）。日结
+            // 成功后置强制全量（下一拍回写全名册同步）。
+            driver.force_full_accounts = true;
             let drained = driver.take_drained_events();
             events.extend(drained);
             // D5 调序收尾：desk 清簿后重刷 mirror（此前刷新在 world 段前
@@ -751,9 +767,18 @@ impl GameSession {
     /// 写入循环不产生中途失败——收集失败时不写任何条目；若后续写入
     /// 面变为可失败，此快照即回滚依据）。
     fn runtime_install_baseline(&self) -> RuntimeInstallBaseline {
+        // P2 复核阻断 1：ends_day 拍（与 runtime_step_with_install 的
+        // ends_day 判定同式同基准——step 前 tick）恢复全量账户快照。
+        let tpd = u64::from(self.state.setup.ticks_per_day);
+        let day_end_tick = tpd > 0 && self.tick() % tpd == 0 && self.tick() > 0;
         RuntimeInstallBaseline {
             tick: self.tick(),
             seq: self.current_seq(),
+            accounts_full: if day_end_tick {
+                Some(self.runtime_accounts_snapshot())
+            } else {
+                None
+            },
             markets: self.state.markets.clone(),
             price_history: self.state.price_history.clone(),
             minute_closes: self.state.market_minute_closes.clone(),
@@ -1028,6 +1053,7 @@ impl GameSession {
         let RuntimeInstallBaseline {
             tick,
             seq,
+            accounts_full,
             markets,
             price_history,
             minute_closes,
@@ -1043,14 +1069,27 @@ impl GameSession {
         self.state.tick = tick;
         self.state.seq = seq;
         // P2-2b：账户恢复改走写时 undo（首写前值——step 内全部账户写入
-        /// 的回滚等价；无记录=step 内未写=无需恢复）。
-        for (id, cash, positions) in std::mem::take(&mut self.state.runtime_account_undo) {
-            if let Some(acct) = self.fixture_account_mut(&id) {
-                acct.fixture_set_cash(crate::money::Money::from_cents(cash));
-                acct.fixture_set_positions(positions);
+        /// 的回滚等价；无记录=step 内未写=无需恢复）。P2 复核阻断 1：
+        /// 日结拍（accounts_full=Some）全量恢复——覆盖日结迁移对
+        /// state.accounts 的一切直改（T+1 解锁等）。
+        if let Some(accounts) = accounts_full {
+            for (id, cash, positions) in accounts {
+                if let Some(acct) = self.fixture_account_mut(&id) {
+                    acct.fixture_set_cash(crate::money::Money::from_cents(cash));
+                    acct.fixture_set_positions(positions);
+                }
             }
+            self.state.runtime_account_undo.clear();
+            self.state.runtime_account_undo_ids.clear();
+        } else {
+            for (id, cash, positions) in std::mem::take(&mut self.state.runtime_account_undo) {
+                if let Some(acct) = self.fixture_account_mut(&id) {
+                    acct.fixture_set_cash(crate::money::Money::from_cents(cash));
+                    acct.fixture_set_positions(positions);
+                }
+            }
+            self.state.runtime_account_undo_ids.clear();
         }
-        self.state.runtime_account_undo_ids.clear();
         self.state.markets = markets;
         self.state.price_history = price_history;
         self.state.market_minute_closes = minute_closes;

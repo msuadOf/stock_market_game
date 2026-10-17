@@ -432,3 +432,77 @@ fn d0_lockstep_violation_fails_explicitly() {
         "错误须指明锁步失配：{err}"
     );
 }
+
+// ── P2 复核阻断 1 红证：日结拍 T+1 解锁的回滚完整性 ──
+
+// P2-2b 回归（独立复核发现）：ends_day 拍 install_runtime_day_boundary 内
+// unlock_t1_positions 直改 state.accounts（不经 fixture_account_mut、无写时
+// undo）→随后 world 日结失败→rollback 只消费 undo→**T+1 解锁残留**。
+// 修复：日结拍 baseline 恢复全量账户快照（低频拍付一次，覆盖一切直改面）。
+#[test]
+fn p2r1_day_end_step_failure_rolls_back_t1_unlock() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    setup.ticks_per_day = 4;
+    setup.t1_enabled = true; // 解锁分支进入（否则日结迁移不触碰冻结）
+    setup.strategy_params.retail.arrival_rate = 0.0; // 无决策干扰
+    let mut session = GameSession::new(setup, 91).expect("会话构造");
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    // 前 4 拍正常推进（ends_day 判定基于 step 前 tick——第 5 拍 tick=4 时 4%4==0 触发日结段）。
+    for _ in 0..4 {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        driver.install_candles(&mut session).expect("K");
+    }
+    // 预置 T+1 冻结（当日买入形态——日结拍前夕注入：首拍全量回写会以
+    // 组端值覆盖 session 侧，故预置须在回写基线建立之后）。
+    {
+        let acct = session
+            .fixture_account_mut(&crate::AccountId(1))
+            .expect("NPC 在册");
+        let mut positions = acct.positions().clone();
+        positions.insert(
+            crate::StockId(0),
+            crate::account::Position::from_restored_parts(1000, 400, 400_000, 0),
+        );
+        acct.fixture_set_positions(positions);
+    }
+    let frozen_before = session
+        .account(crate::AccountId(1))
+        .expect("NPC 在册")
+        .positions()
+        .get(&crate::StockId(0))
+        .expect("持仓在册")
+        .t1_locked();
+    assert_eq!(frozen_before, 400, "fixture 预置冻结 400");
+    // 第 4 拍=日结拍：注入日结候选拒绝（world 段失败——生产 ends_day 段
+    // 在 install_runtime_day_boundary（解锁已发生）之后）。
+    driver.set_day_end_validator_for_test(Box::new(|_c| Err("注入：日结拒".to_owned())));
+    let err = session
+        .runtime_step_with_install(&mut driver)
+        .expect_err("注入拒绝的日结拍必须 Err");
+    assert!(
+        err.to_string().contains("day_end_world") || err.to_string().contains("日结"),
+        "失败位置可辨识：{err}"
+    );
+    // 回滚后冻结必须恢复（解锁残留=P2-2b 回归）。
+    let frozen_after = {
+        let p = session
+            .account(crate::AccountId(1))
+            .expect("NPC 在册")
+            .positions()
+            .get(&crate::StockId(0))
+            .expect("持仓在册")
+            .clone();
+        p.t1_locked()
+    };
+    assert_eq!(
+        frozen_after, frozen_before,
+        "日结拍失败的 T+1 解锁必须随回滚恢复（P2-2b 回归守卫）"
+    );
+}
