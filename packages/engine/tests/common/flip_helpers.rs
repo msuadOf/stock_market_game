@@ -108,6 +108,48 @@ pub fn pipeline_events(ticks: u64, seed: u64) -> (GameSession, Vec<Event>) {
     (session, all)
 }
 
+/// 注入确定性交叉对手单（batch4_t1 写法，断言强度批提炼为公共件）：
+/// retail 位 AccountId(1) 卖 100 股@1000（float 初始持仓）+ 玩家
+/// AccountId(0) 买 100 股@1000。开盘竞价完成拍（tick 10）以清算价
+/// 1000 成交 100 股——maker=卖方 1、taker=买方 0（R12 沪市单候选价
+/// =申报价本身，无中间价问题）。适用于需要**必然成交**的语义断言。
+pub fn inject_crossing_pair_at_1000(driver: &mut RuntimeDriver) {
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(
+            &[
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(1),
+                    intent: engine::Intent::PlaceLimit {
+                        code: engine::StockId(0),
+                        side: engine::Side::Sell,
+                        price: engine::strategy::LimitPrice::Fixed(Money::from_cents(1_000)),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(0),
+                    intent: engine::Intent::PlaceLimit {
+                        code: engine::StockId(0),
+                        side: engine::Side::Buy,
+                        price: engine::strategy::LimitPrice::Fixed(Money::from_cents(1_000)),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+            ],
+            &upper,
+        )
+        .expect("注入交叉对手单");
+}
+
 /// 订单事件不变量（Sol 四审措辞勘正）：逐单**局部**不变量 + 账户
 /// **聚合**口径——**不构成逐单终结完整性的证明**：
 /// (1) 每条 OrderCanceled 的 (account, code, id) 必须先有同键

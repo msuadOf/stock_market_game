@@ -1261,7 +1261,12 @@ fn solmid_day_end_drain_releases_child_tickets() {
             "日结清簿后计划 {pid:?} 的在途子单应释放（Closed/Refund→release_child_ticket）"
         );
     }
-    let _ = had_child;
+    // f-5 修复（断言强度批）：前置不可弃置——无在途子单时日终释放
+    // 循环空转（对照同文件 sol4 版本的 assert!(had_child) 前置）。
+    assert!(
+        had_child,
+        "fixture 须有带在途子单的计划（否则日终释放断言空转）"
+    );
 }
 
 
@@ -2139,12 +2144,21 @@ fn d3b2_plan_event_injection_pauses_group_plan() {
     driver.set_world_validator_for_test(Box::new(|_e| Err("注入：拒绝".to_owned())));
     assert!(driver.step_frame_equivalent(&mut session).is_err());
     driver.set_world_validator_for_test(Box::new(|_e| Ok(())));
+    // f-6 修复（断言强度批）：原 `let _ = after;` 弃置——"回滚→Paused
+    // 消失"的注释与实测不符（探针：Abort 后 Paused 投影仍在，计数 2）。
+    // 真实语义=sol3「失败拍不安装」：注入 Paused 已在上一成功拍提交并
+    // 投影，失败拍只回滚自身变更、不回退会话投影——已提交的 Paused
+    // 投影必须在失败拍后保持（若 Abort 错误冲回会话侧已安装状态即红）。
     let after: Vec<_> = session
         .plans_debug()
         .into_iter()
         .filter(|(_, _, _, _, _, s)| s.contains("Paused"))
         .collect();
-    let _ = after;
+    assert!(
+        !after.is_empty(),
+        "失败拍不回滚已提交投影：Paused 注入（上一成功拍）在 Abort 后必须仍可见：{:?}",
+        session.plans_debug()
+    );
 }
 
 // D3b 件 3 红证：撤销路由——Paused 计划带活动子单时，报价决策产出
@@ -2409,13 +2423,13 @@ fn d5_zero_qty_intent_routes_rejection_event() {
 
 // D5 日界安装红证（复核阻断项补测）：ends_day 拍（tick%tpd==0）在
 // runtime step 内复用交易日终迁移——day 推进+DayBoundary 事件+T+1 解锁
-//（旧管线 continuous_tick_finalizer 的 ends_day 段等价；仅 runtime 模式
-// 生效——默认 env 跳过）。
+//（旧管线 continuous_tick_finalizer 的 ends_day 段等价）。
+// f-4 修复（断言强度批）：原 `if !step_runtime_enabled() { return; }`
+// 在翻转前缺省=0 时默认门禁永远零断言绿。翻转后缺省=runtime（断言
+// 必跑）；且实测（sol-103 探针）旧管线 env=0 路径同样产 DayBoundary
+// 且 day 推进——两模式断言均成立，守卫整体移除。
 #[test]
 fn d5_runtime_step_installs_day_boundary() {
-    if !crate::runtime::step_runtime_enabled() {
-        return;
-    }
     let mut setup = setup_fixture();
     setup.npcs.retail_count = 1;
     setup.npcs.inst_count = 0;

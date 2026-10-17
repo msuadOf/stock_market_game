@@ -248,31 +248,83 @@ fn seq_channel_unifies_runtime_cursor_with_session_authority() {
 #[test]
 fn market_views_install_into_session_markets() {
     use super::drive::RuntimeDriver;
-    // 驱动 20 tick（成交后 last_price 移动）→ install_market_views：
-    // 会话每股 last_price 与 runtime 收束点一致。
-    let mut session = GameSession::new(equiv_setup(), 55).expect("会话构造");
+    // f-7 修复（断言强度批）：原测试唯一断言 `view.last_price > 0`，
+    // snap/probe/installed 全是弃置的死脚手架——"会话每股 last_price
+    // 与 runtime 收束点一致"从未被断言。且原 fixture（arrival=0.0）
+    // 价格恒为初始 1000，即使逐股比对也无法证明安装通道写了真实值。
+    // 现改为注入交叉对手单（@1001）驱动成交：
+    // - 成交前（未安装）：会话侧市场价保持初始 1000（step 不装行情）；
+    // - install 后：desk 权威 last=1001 必须逐股写入会话市场快照。
+    // 手算 oracle：清算价=1001（双边同价申报）、成交量=100。
+    // （fixture 沿用本文件 equiv_setup：arrival=0.0——NPC 不产单，
+    // 成交面完全由注入对承载，oracle 唯一确定。）
+    let mut session = GameSession::new(equiv_setup(), 199).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
     driver.adopt_session_seq(&session);
-    for _ in 0..20 {
-        driver.step_frame_equivalent(&mut session).expect("步进");
+    // 注入交叉对手单：AccountId(1) 卖 100@1001 × 玩家买 100@1001。
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(
+            &[
+                crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(1),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(0),
+                        side: crate::orderbook::Side::Sell,
+                        price: crate::strategy::LimitPrice::Fixed(Money::from_cents(1_001)),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+                crate::session::ReceiptBearingIntent {
+                    owner: crate::AccountId(0),
+                    intent: crate::Intent::PlaceLimit {
+                        code: crate::StockId(0),
+                        side: crate::orderbook::Side::Buy,
+                        price: crate::strategy::LimitPrice::Fixed(Money::from_cents(1_001)),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+            ],
+            &upper,
+        )
+        .expect("注入");
+    let mut traded = false;
+    for _ in 0..12 {
+        let events = driver.step_frame_equivalent(&mut session).expect("步进");
+        traded |= events
+            .iter()
+            .any(|e| matches!(e, crate::Event::Trade { .. }));
     }
+    assert!(traded, "注入对必须成交（否则安装断言无移动价可证）");
+    // 成交后、安装前：会话市场价仍在初始 1000（行情安装是独立通道）。
+    let before = &session.snapshot().markets[&crate::StockId(0)];
+    assert_eq!(
+        before.last_price.cents(),
+        1_000,
+        "未安装时会话市场价保持初始值（step 不写行情——安装职责分离）"
+    );
+    // 安装后：desk 权威收束点（清算价 1001）逐股写入会话市场。
     driver.install_market_views(&mut session).expect("行情安装");
     let views = driver.world_public_views().to_vec();
     for (idx, view) in views.iter().enumerate() {
-        let code = crate::StockId(idx as u32);
-        let snap = session.snapshot();
-        let _ = snap;
-        // 经 market_mut_for_runtime 读回验证（直改入口即读入口）。
-        let installed = {
-            let mut probe = GameSession::new(equiv_setup(), 55).expect("对照构造");
-            let _ = &mut probe;
-            None::<i64>
-        };
-        let _ = installed;
-        // 直接对照：会话 market 的 last_price 经公开快照读。
-        // （snapshot 面较大；此处用驱动器视图与会话报价一致性的
-        // 等价断言——行情安装后再次驱动不 panic 即通道有效。）
-        assert!(view.last_price > 0);
+        assert_eq!(
+            view.last_price, 1_001,
+            "desk 权威 last=清算价 1001（注入对手单成交）"
+        );
+        let installed = &session.snapshot().markets[&crate::StockId(idx as u32)];
+        assert_eq!(
+            installed.last_price.cents(),
+            view.last_price,
+            "会话市场 last_price 必须与 runtime 收束点逐股一致（安装通道）"
+        );
     }
     // 通道有效性：安装后续跑一步不失败。
     driver
@@ -379,17 +431,36 @@ fn auxiliary_state_domains_have_runtime_equivalents_registered() {
     assert!(session.account_count() >= 1);
 }
 
+// 终判锚（批 8 收官→翻转批兑现）：原形态是 `assert!(true)` 的决策
+// 记录占位（零判别力——断言强度批 a-1 修复）。历史前提（附带域等价 +
+// 撮合域集成迁移）已由翻转批兑现：**缺省已翻转为 runtime**
+// （runtime/mod.rs step_runtime_enabled 缺省 true）。本测试改为可
+// 执行的翻转状态锚：子进程清除 ENGINE_STEP_RUNTIME 后缺省必须仍为
+// runtime（env=0 逃生门不改变缺省值语义）。进程外断言避免本进程
+// OnceLock 缓存与本测试套自身运行模式的耦合。
 #[test]
 fn batch8_final_verdict_flip_requires_integration_migration_batch() {
-    // 终判锚（批 8 收官）：翻转的两个硬前提状态——
-    // ① candidate 附带域：attention/experience 有 runtime 等价形态
-    //   （next_due/StrategyData），history_reads/belief 未建（登记）；
-    // ② 撮合域 ~50 集成测试逐字段锚定：未开始。
-    // 在两者闭合前 step_frame 保持旧管线（本测试即该决策的可执行
-    // 记录——翻转批删除本测试时须同时提交集成迁移台账）。
+    // 子进程标记：防自递归（子进程内直接断言，不再 spawn）。
+    const PROBE: &str = "SOL103_FLIP_DEFAULT_PROBE";
+    if std::env::var(PROBE).is_ok() {
+        assert!(
+            super::step_runtime_enabled(),
+            "子进程内（env 清除后）缺省必须=runtime（翻转批终判已兑现）"
+        );
+        return;
+    }
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("runtime::equivalence_tests::batch8_final_verdict_flip_requires_integration_migration_batch")
+        .arg("--nocapture")
+        .env_remove("ENGINE_STEP_RUNTIME")
+        .env(PROBE, "1")
+        .output()
+        .expect("子进程执行翻转缺省探针");
     assert!(
-        true,
-        "批 8 终判：不翻转——附带域 2/3 覆盖 + 集成测试迁移 0/50"
+        out.status.success(),
+        "缺省（未设 ENGINE_STEP_RUNTIME）子进程必须全绿——stdout:\n{}",
+        String::from_utf8_lossy(&out.stdout)
     );
 }
 

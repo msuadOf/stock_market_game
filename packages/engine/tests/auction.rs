@@ -1902,6 +1902,10 @@ fn multi_stock_auction_activity_facts_are_deterministic_evidence() {
     let mut day_accepts_continuous = 0u64;
     let mut day_trades = 0u64;
     let mut day_matched = 0u64;
+    let mut day_completed_events = 0u64;
+    // b-3 修复（断言强度批）：completed 事件的 (price, volume) 域合法
+    // 性——无交叉 ⇒ 无价无量、有清算价 ⇒ 量>0（Event 契约）。
+    let mut completed_domain_ok = true;
     let mut tail_accepts = 0u64;
     let mut tail_trades = 0u64;
     let mut tail_seen_completion = false;
@@ -1919,8 +1923,18 @@ fn multi_stock_auction_activity_facts_are_deterministic_evidence() {
                 }
                 Event::Trade { .. } => day_trades += 1,
                 Event::AuctionCompleted {
-                    matched_volume, ..
-                } => day_matched += u64::from(*matched_volume),
+                    clearing_price,
+                    matched_volume,
+                    ..
+                } => {
+                    day_completed_events += 1;
+                    day_matched += u64::from(*matched_volume);
+                    let legal = match clearing_price {
+                        None => *matched_volume == 0,
+                        Some(p) => p.cents() > 0 && *matched_volume > 0,
+                    };
+                    completed_domain_ok &= legal;
+                }
                 _ => {}
             }
         }
@@ -1956,12 +1970,26 @@ fn multi_stock_auction_activity_facts_are_deterministic_evidence() {
     );
     // 确定性事实断言：受理与竞价撮合机制真实运转（事实面）；活跃日分布
     // 数据留链供策略域重估（原断言 ≥2 保持在原用例，不在本见证中弱化）。
+    // b-3 修复（断言强度批）：原 total_matched 逐日算出后即弃置、codes
+    // 同为死绑定——撮合面（f.4=matched_at_completion）无任何断言。实测
+    // （sol-103 探针）：本 fixture 三日完成点均无交叉（matched=0——
+    // Event 契约的法定"无价无量"形态，非撮合失灵），故撮合面锚定改为
+    // completed 事件存在性 + (price, volume) 域合法性（有交叉与否由
+    // fixture 真实决定，不伪造）。
     let total_matched: u64 = daily_facts.iter().map(|f| f.4).sum();
     let total_accepts: u64 = daily_facts
         .iter()
         .map(|f| f.1 + f.2)
         .sum();
     assert!(total_accepts > 0, "三日累计受理>0（生产/派发运转）");
+    assert!(
+        day_completed_events > 0,
+        "三日必须出现 AuctionCompleted 事件（竞价完成机制运转；实测本 fixture 全部无交叉）"
+    );
+    assert!(
+        completed_domain_ok,
+        "AuctionCompleted 域合法：None⇒量 0、Some⇒价正量正（累计 {day_completed_events} 条，总撮合 {total_matched}）"
+    );
     assert_eq!(daily_facts.len(), 3, "三日事实逐日落链");
-    let _ = (codes, total_matched);
+    assert!(!codes.is_empty(), "fixture 股票目录非空（见证域成立）");
 }

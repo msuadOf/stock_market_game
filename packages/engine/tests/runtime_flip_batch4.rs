@@ -179,6 +179,10 @@ fn batch4_drain_closes_all_resting() {
 }
 
 // 9. 双路径现金守恒方向（跨日无注入）。
+//    a-3 修复（断言强度批）：原容差 +5_670_000_000 分（≈整个流通市值
+//    的 56 倍）使任何现实铸造 bug 恒过。同种子同 fixture 无随机注入
+//    通道：费用只减不增 ⇒ 收紧为恒等方向 `total <= base`（T+1 解冻/
+//    日结清簿只移动冻结位与在途票，不动现金总量）。
 #[test]
 fn batch4_cash_no_injection_across_days() {
     let initial = GameSession::new(setup_1stock(), 308).expect("基线");
@@ -193,8 +197,8 @@ fn batch4_cash_no_injection_across_days() {
             .filter_map(|i| session.account(engine::AccountId(i)).map(|a| a.cash().cents()))
             .sum();
         assert!(
-            total <= base + 5_670_000_000,
-            "{name} 跨日现金不异常增加"
+            total <= base,
+            "{name} 跨日现金不增（费用只减不增；无铸造通道）：{total} vs 基线 {base}"
         );
     }
 }

@@ -32,15 +32,28 @@ fn batch5_runtime_save_restore_roundtrip() {
 }
 
 // 4. 双路径存档快照同构（tick/day/账户数面）。
+//    a-4 修复（断言强度批）：原 `seq < u64::MAX` 近恒真（两路径 seq
+//    完全相同也绿）。真断言=权威 seq 恰等于本路径累计发出的事件数
+//    （每事件恰消耗一个 seq，构造起点 0——seq 双计/漏计即红）。
 #[test]
 fn batch5_save_shape_parity() {
-    let (rt, _) = runtime_events(30, 403);
-    let (pipe, _) = pipeline_events(30, 403);
+    let (rt, rt_events) = runtime_events(30, 403);
+    let (pipe, pipe_events) = pipeline_events(30, 403);
     let s1 = rt.save().expect("rt 存档");
     let s2 = pipe.save().expect("pipe 存档");
     assert_eq!(s1.snapshot.tick, s2.snapshot.tick, "tick 面");
-    // seq 面不可逐值比（两路径决策流不同——事件数不同）；锚 seq 单调域：
-    assert!(s1.snapshot.seq < u64::MAX && s2.snapshot.seq < u64::MAX);
+    // seq 面：seq == 事件数（探针实证：rt 30 tick=11 事件/seq=11；
+    // pipe=26/26）。两路径决策流不同不可逐值比，各锚恒等式。
+    assert_eq!(
+        s1.snapshot.seq,
+        rt_events.len() as u64,
+        "runtime seq 恰等于发出事件数（seq 游标与事件流一致）"
+    );
+    assert_eq!(
+        s2.snapshot.seq,
+        pipe_events.len() as u64,
+        "旧管线 seq 恰等于发出事件数（seq 游标与事件流一致）"
+    );
 }
 
 // 5. 公司域存档面：restore 后公司注册表在场（公司域随会话权威保留）。
@@ -110,6 +123,13 @@ fn batch5_publication_channel_alive_after_day_end() {
     let _ = session.publication_ids();
 }
 
+// 诊断面锚定（b-1 修复·断言强度批）：原测试零断言（只 eprintln）——
+// 永远绿。手算 oracle（fixture：ticks_per_day=240、auction=15、
+// closing=3 ⇒ 连续窗=222 tick）：
+// - recent_prices：环形上限=history_len=16（50 tick 超限后恒满）；
+// - minute_closes：末拍（第 50 拍）elapsed=50−15=35 ⇒ 完成分钟
+//   =⌊35×240/222⌋=⌊37.837⌋=37（observation::completed_market_minute_count
+//   比例映射），键=日内绝对分钟 0..36 严格递增。
 #[test]
 fn batch5_diag_minute_counts() {
     use engine::runtime::drive::RuntimeDriver;
@@ -121,12 +141,28 @@ fn batch5_diag_minute_counts() {
         driver.install_market_views(&mut session).expect("安装");
     }
     let views = driver.world_public_views().to_vec();
-    eprintln!(
-        "diag: recent={} minutes={}",
+    assert_eq!(
         views[0].recent_prices.len(),
-        views[0].minute_closes.len()
+        16,
+        "recent_prices 环形上限=history_len=16"
     );
-    // 期望：recent ≤16 对齐后写入；minutes vs 37（0..36）。
+    assert_eq!(
+        views[0].minute_closes.len(),
+        37,
+        "50 拍完成分钟=⌊(50−15)×240/222⌋=37"
+    );
+    for pair in views[0].minute_closes.windows(2) {
+        assert!(
+            pair[0].0 < pair[1].0,
+            "分钟键严格递增：{:?}",
+            views[0].minute_closes
+        );
+    }
+    assert_eq!(
+        views[0].minute_closes.last().map(|(m, _)| *m),
+        Some(36),
+        "末键=36（日内绝对分钟 0..36）"
+    );
 }
 
 #[test]

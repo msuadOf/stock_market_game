@@ -60,17 +60,95 @@ fn batch2_pipeline_auction_window_events() {
 }
 
 // 5. AuctionCompleted 携带 clearing_price 与 matched_volume 域合法。
+//    e-1 修复（断言强度批）：原断言在 clearing_price=None 时零检查且
+//    无事件存在性前置（探针证据：seed 104 25 tick 内唯一一条
+//    completed=None/vol=0——Some 分支与 matched_volume 从未绑定）。
+//    现：(a) 前置 completed 非空；(b) None ⇒ vol==0（无交叉无价无量）；
+//    (c) 注入交叉对手单绑定 Some 分支——手算 oracle：双边 100@1000 ⇒
+//    清算价 1000、量 100（R12 沪市单候选价=申报价本身）。
 #[test]
 fn batch2_auction_completed_fields_wellformed() {
+    use common::flip_helpers::inject_crossing_pair_at_1000;
+    // 无注入臂：seed 104 的 completed=None/vol=0 形态（None 分支绑定）。
     let (_, events) = runtime_events(25, 104);
-    for e in &events {
-        if let Event::AuctionCompleted { clearing_price, matched_volume, .. } = e {
-            if let Some(p) = clearing_price {
-                assert!(p.cents() > 0, "清算价正");
+    let completed: Vec<&Event> = events
+        .iter()
+        .filter(|e| matches!(e, Event::AuctionCompleted { .. }))
+        .collect();
+    assert!(
+        !completed.is_empty(),
+        "25 tick 跨开盘竞价完成点，必有 AuctionCompleted（否则分支断言空转）"
+    );
+    let mut saw_none = false;
+    for e in completed {
+        let Event::AuctionCompleted {
+            clearing_price,
+            matched_volume,
+            ..
+        } = e
+        else {
+            unreachable!()
+        };
+        match clearing_price {
+            Some(p) => {
+                assert!(
+                    (900..=1100).contains(&p.cents()),
+                    "清算价在首日涨跌停带 [900,1100]（初始 1000±10%）：{}",
+                    p.cents()
+                );
+                assert!(*matched_volume > 0, "有清算价必有成交量");
             }
-            // 无交叉时 completed 无价无量为合法形态。
+            None => {
+                assert_eq!(
+                    *matched_volume, 0,
+                    "无交叉 ⇒ 无价无量（matched_volume 必须为 0）"
+                );
+                saw_none = true;
+            }
         }
     }
+    // 注入臂（Some 分支绑定）：确定性交叉对手单 ⇒ 有价有量。
+    let mut session = engine::GameSession::new(setup_1stock(), 199).expect("会话");
+    let mut driver = engine::runtime::drive::RuntimeDriver::from_session(&mut session)
+        .expect("驱动器");
+    driver.adopt_session_seq(&session);
+    inject_crossing_pair_at_1000(&mut driver);
+    let mut injected_completed = Vec::new();
+    for _ in 0..12 {
+        let evs = driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        injected_completed.extend(
+            evs.into_iter()
+                .filter(|e| matches!(e, Event::AuctionCompleted { .. })),
+        );
+        driver.install_market_views(&mut session).expect("行情安装");
+        driver.install_candles(&mut session).expect("K 安装");
+    }
+    assert!(
+        !injected_completed.is_empty(),
+        "注入臂必有 AuctionCompleted"
+    );
+    let mut saw_crossing = false;
+    for e in &injected_completed {
+        if let Event::AuctionCompleted {
+            clearing_price: Some(p),
+            matched_volume,
+            ..
+        } = e
+        {
+            if p.cents() == 1_000 && *matched_volume == 100 {
+                saw_crossing = true;
+            }
+        }
+    }
+    assert!(
+        saw_crossing,
+        "注入对必须以清算价 1000 成交 100 股（手算 oracle）：{injected_completed:?}"
+    );
+    // 两分支在本测试内至少各绑定一次（无注入臂 None + 注入臂 Some）。
+    assert!(saw_none, "无注入臂必须出现 None 形态");
+    assert!(saw_crossing, "Some 分支必须被注入臂绑定");
 }
 
 // 6. 连续竞价窗（tick 16-236）内不出现 AuctionTick（越窗即停）。

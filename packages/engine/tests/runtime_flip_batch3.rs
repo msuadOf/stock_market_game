@@ -47,28 +47,30 @@ fn batch3_runtime_emits_order_canceled() {
 }
 
 // 2. 旧管线同对照面（撤单事件存在）。
+//    f-2 修复（断言强度批）：原名实不符——断言只有事件面非空+seq 单调，
+//    OrderCanceled 出现与否不影响结果（探针证据：seed 201 旧管线 250
+//    tick 订单事件恰 0 条，测试恒绿）。真实对照锚=与 #7 同口径的
+//    `cancels > 0`；observe 门使种子间订单面概率化，候选序内搜索
+//    （与 #1/#4 同模式）。
 #[test]
 fn batch3_pipeline_emits_order_canceled() {
-    let (_, events) = pipeline_events(250, 201);
-    let mut kinds = std::collections::BTreeMap::new();
-    for e in &events {
-        let k = match e {
-            Event::Trade { .. } => "Trade",
-            Event::OrderCanceled { .. } => "Canceled",
-            Event::OrderAccepted { .. } => "Accepted",
-            Event::IntentRejected { .. } => "Rejected",
-            Event::AuctionTick { .. } => "AuctionTick",
-            Event::AuctionCompleted { .. } => "Completed",
-            Event::PriceTick { .. } => "PriceTick",
-            _ => "Other",
-        };
-        *kinds.entry(k).or_insert(0) += 1;
+    let mut events = Vec::new();
+    for seed in 199..260u64 {
+        let (_, evs) = pipeline_events(250, seed);
+        if evs.iter().any(|e| matches!(e, Event::OrderCanceled { .. })) {
+            events = evs;
+            break;
+        }
     }
-    eprintln!("pipeline 250 tick 事件分布：{kinds:?}");
-    // Sol 二审修复集 4：替换恒真断言（`|| true`）。真实对照锚：
-    // arrival_rate=0 的 fixture 下旧管线不产订单事件，但竞价/价格
-    // 事件面非空，且 seq 全局严格单调（权威游标不回退不重号）。
-    assert!(!events.is_empty(), "旧管线 250 tick 事件面非空");
+    let cancels = events
+        .iter()
+        .filter(|e| matches!(e, Event::OrderCanceled { .. }))
+        .count();
+    assert!(
+        cancels > 0,
+        "旧管线对照面：候选序 199..260 内应存在跨日撤单形态（实测 seed 199/204-214 均有）"
+    );
+    // 附带锚：同事件面 seq 严格单调（权威游标不回退不重号）。
     let mut prev: Option<u64> = None;
     for e in &events {
         let seq = e.seq();
@@ -80,17 +82,35 @@ fn batch3_pipeline_emits_order_canceled() {
 }
 
 // 3. OrderCanceled 字段域合法（remaining_qty ≤ 初始量、id 正）。
+//    f-3 修复（断言强度批）：固定 seed 202 实测 250 tick 撤单恰 0 条
+//    ——字段断言从未执行（探针证据）。改候选序搜索 + 非空前置。
 #[test]
 fn batch3_cancel_fields_wellformed() {
-    let (_, events) = runtime_events(250, 202);
-    for e in &events {
-        if let Event::OrderCanceled {
+    let mut events = Vec::new();
+    for seed in 199..260u64 {
+        let (_, evs) = runtime_events(250, seed);
+        if evs.iter().any(|e| matches!(e, Event::OrderCanceled { .. })) {
+            events = evs;
+            break;
+        }
+    }
+    let cancels: Vec<&Event> = events
+        .iter()
+        .filter(|e| matches!(e, Event::OrderCanceled { .. }))
+        .collect();
+    assert!(
+        !cancels.is_empty(),
+        "候选序 199..260 内应存在撤单形态（否则字段断言空转）"
+    );
+    for e in cancels {
+        let Event::OrderCanceled {
             id, remaining_qty, ..
         } = e
-        {
-            assert!(*remaining_qty > 0, "撤单余量必须为正（P1-9）");
-            assert!(id.0 > 0, "订单 id 必须为正（serial 从 1 起，P1-9）");
-        }
+        else {
+            unreachable!()
+        };
+        assert!(*remaining_qty > 0, "撤单余量必须为正（P1-9）");
+        assert!(id.0 > 0, "订单 id 必须为正（serial 从 1 起，P1-9）");
     }
 }
 
@@ -130,13 +150,26 @@ fn batch3_runtime_emits_intent_rejected() {
 }
 
 // 5. OrderAccepted 字段域（价格正/数量正/remaining>0）。
+//    f-3 修复（断言强度批）：固定 seed 204 实测 30 tick 受理恰 0 条
+//    ——字段断言从未执行（探针证据）。改候选序搜索 + 非空前置。
 #[test]
 fn batch3_accept_fields_wellformed() {
-    let (_, events) = runtime_events(30, 204);
+    let mut events = Vec::new();
+    for seed in 199..260u64 {
+        let (_, evs) = runtime_events(30, seed);
+        if evs.iter().any(|e| matches!(e, Event::OrderAccepted { .. })) {
+            events = evs;
+            break;
+        }
+    }
     let accepts: Vec<&Event> = events
         .iter()
         .filter(|e| matches!(e, Event::OrderAccepted { .. }))
         .collect();
+    assert!(
+        !accepts.is_empty(),
+        "候选序 199..260 内应存在 30 tick 受理形态（否则字段断言空转）"
+    );
     for a in accepts {
         let Event::OrderAccepted {
             price,
@@ -207,10 +240,17 @@ fn batch3_no_duplicate_seq() {
 }
 
 // 9. 撤单事件的 account 域在合法账户空间（复合投影非越界）。
+//    f-3 修复（断言强度批）：加非空前置（seed 208 实测撤单 11 条，
+//    断言真实绑定；前置防未来 fixture 演进后退化为空转）。
 #[test]
 fn batch3_cancel_accounts_in_range() {
     let (session, events) = runtime_events(250, 208);
     let count = session.account_count() as u64;
+    let cancels = events
+        .iter()
+        .filter(|e| matches!(e, Event::OrderCanceled { .. }))
+        .count();
+    assert!(cancels > 0, "seed 208 实测有撤单（前置：否则域断言空转）");
     for e in &events {
         if let Event::OrderCanceled { account, .. } = e {
             assert!(
