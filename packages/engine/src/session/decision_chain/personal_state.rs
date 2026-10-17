@@ -6,7 +6,9 @@ use crate::session::attention::NpcAttentionState;
 use crate::strategy::BeliefBook;
 use crate::{AccountId, GameSession};
 
-#[derive(Clone)]
+// PartialEq/Debug：P2-3b 回滚守卫的逐位比对依赖（四组件均已派生——
+// 纯测试使能派生，无语义变更）。
+#[derive(Clone, PartialEq, Debug)]
 pub(in crate::session) struct BeliefParticipantState {
     watchlist: PersonalWatchlist,
     price_memory: PersonalPriceMemory,

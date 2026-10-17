@@ -38,17 +38,17 @@ pub(crate) struct RuntimeInstallBaseline {
     >,
     candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
     candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
-    npc_attention: super::AccountPagedMap<super::attention::NpcAttentionState>,
-    // D5 #4 retail 链：个人态写入面的回滚基线。
-    // P1-C 修正：heap 仍随基线快照——回滚必须逐项还原（旧管线/混合
-    // 路径的基线 heap 可含陈旧项——"从权威重建"会丢陈旧项使
-    // business_state_hash 回滚对比显红，实测 compute_context_shared_
-    // sessions 用例）。无界增长由 set_runtime_attention 的镜像重建
-    // 消除（heap 恒 ≤名册——每 tick clone 成本 O(N) 恒定，不再 O(N·T)）。
-    attention_scheduler: super::attention::NpcAttentionScheduler,
-    belief_participants: super::AccountPagedMap<super::decision_chain::personal_state::BeliefParticipantState>,
-    retail_experience: super::AccountPagedMap<crate::RetailExperienceState>,
-    history_reads: super::AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
+    // P2-3b：npc_attention/attention_scheduler/belief_participants/
+    // retail_experience/history_reads 五域基线 clone 退役——改写时 undo
+    // （记录面=set_runtime_attention/set_runtime_information_checks/
+    // set_runtime_personal_state/runtime_hold_experience_init 四写入点；
+    // heap 整体替换域用 move-undo 旧堆整值入槽）。原每 tick 全名册
+    // clone 使 AccountPagedMap 页 Arc 共享，后续 get_mut 全部触发 COW
+    // 页组深拷贝（驱动线程画像 get_mut 8.6%+jemalloc 家族 ~20% 主源）。
+    // 回滚等价：undo 恢复写入条目（墓碑=拍前不在册→移除）；未写条目
+    // 未变无需恢复——与全量快照逐位等价。heap 回滚=move 还原精确
+    // 旧堆（P1-C 教训保持：不"从权威重建"——旧管线陈旧项会丢，
+    // business_state_hash 回滚对比显红）。
 }
 
 impl GameSession {
@@ -90,6 +90,11 @@ impl GameSession {
         snapshot: &crate::runtime::world::BeliefParticipantSnapshot,
     ) {
         use super::decision_chain::personal_state::BeliefParticipantState;
+        // P2-3b：四域首写前值入 undo（改写前记录——回滚源）。
+        self.runtime_record_attention_undo(&id);
+        self.runtime_record_belief_undo(&id);
+        self.runtime_record_history_undo(&id);
+        self.runtime_record_retail_undo(&id);
         // attention（调度域 candidate 保持组权威值——P1-10 链路回写的
         /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
         /// 覆盖为组快照，两域同源）。
@@ -470,6 +475,10 @@ impl GameSession {
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
     ) -> Result<Vec<Event>, StepFatal> {
+        // P2-3b：step 入口清写时 undo 槽（上一 step 成功已尾清/失败已
+        // 回滚消费——此处清的是驱动器手动序列等直调安装面的残留记录；
+        /// 残留会把本拍回滚恢复到错误的更早状态）。
+        self.runtime_clear_account_undo();
         // 生产探针对齐（t3 契约：每 tick 恰一次"生产调用"）。
         #[cfg(test)]
         self.compute_context()
@@ -762,6 +771,36 @@ impl GameSession {
         Ok(events)
     }
 
+    /// P2-3b：五域写时 undo 记录面（幂等首写——undo_ids 判重；None=拍前
+    /// 不在册墓碑）。写入点在**改写前**调用。
+    fn runtime_record_attention_undo(&mut self, id: &crate::AccountId) {
+        if self.state.runtime_attention_undo_ids.insert(*id) {
+            let prev = self.state.npc_attention.get(id).cloned();
+            self.state.runtime_attention_undo.push((*id, prev));
+        }
+    }
+
+    fn runtime_record_belief_undo(&mut self, id: &crate::AccountId) {
+        if self.state.runtime_belief_undo_ids.insert(*id) {
+            let prev = self.state.belief_participants.get(id).cloned();
+            self.state.runtime_belief_undo.push((*id, prev));
+        }
+    }
+
+    fn runtime_record_retail_undo(&mut self, id: &crate::AccountId) {
+        if self.state.runtime_retail_undo_ids.insert(*id) {
+            let prev = self.state.retail_experience.get(id).cloned();
+            self.state.runtime_retail_undo.push((*id, prev));
+        }
+    }
+
+    fn runtime_record_history_undo(&mut self, id: &crate::AccountId) {
+        if self.state.runtime_history_undo_ids.insert(*id) {
+            let prev = self.state.history_reads.get(id).cloned();
+            self.state.runtime_history_undo.push((*id, prev));
+        }
+    }
+
     /// 安装失败回滚基线（Sol 三审 (b)）：step 推进+安装面可能写入的
     /// 全部会话域快照。candle 域当前为防御性覆盖（install_candles 的
     /// 写入循环不产生中途失败——收集失败时不写任何条目；若后续写入
@@ -786,15 +825,8 @@ impl GameSession {
             minute_closes: self.state.market_minute_closes.clone(),
             candle_histories: self.state.candle_book.histories().clone(),
             candle_active: self.state.candle_book.active().clone(),
-            npc_attention: self.state.npc_attention.clone(),
-            // P1-C 修正：heap 随基线快照（回滚逐项还原——含旧管线陈旧项；
-            // 见结构体注释）。
-            attention_scheduler: self.state.attention_scheduler.clone(),
-            // D5 #4 retail 链：个人态写入面（step_frame 内回写——失败回滚
-            // 基线必须覆盖，否则失败拍泄漏个人态演进）。
-            belief_participants: self.state.belief_participants.clone(),
-            retail_experience: self.state.retail_experience.clone(),
-            history_reads: self.state.history_reads.clone(),
+            // P2-3b：五域（attention/heap/belief/retail/history）不再随基线
+            // 快照——回滚源=写时 undo（见结构体注释）。
         }
     }
 
@@ -898,6 +930,8 @@ impl GameSession {
         self.mark_external_mutation();
         let tick = self.state.tick;
         for (id, next_due, rng_state) in entries {
+            // P2-3b：首写前值入 undo（改写前记录——回滚源）。
+            self.runtime_record_attention_undo(id);
             if let Some(state) = self.state.npc_attention.get_mut(id) {
                 let due = (*next_due).max(tick);
                 state.next_attention_candidate_tick = due;
@@ -906,6 +940,12 @@ impl GameSession {
                 state.rng_state = *rng_state;
             }
         }
+        // P2-3b：heap 整体替换域的 move-undo——旧堆整值搬入槽（零拷贝），
+        /// 回滚精确还原（P1-C 教训：不从权威重建——陈旧项会丢）。
+        let old_heap = std::mem::take(&mut self.state.attention_scheduler);
+        self.state
+            .runtime_heap_undo
+            .get_or_insert(old_heap);
         // 镜像重建：heap=权威候选的精确快照（含未被本批 entries 触及的
         // 在册 NPC——与 restore 的 from_iter 重建同式）。
         self.state.attention_scheduler = self
@@ -1027,9 +1067,21 @@ impl GameSession {
     }
 
     /// P2-2b：成功 step 尾清 undo（失败路径由 rollback 消费）。
+    /// P2-3b：清全部写时 undo 槽（账户+五域）。成功 step 尾部与 step
+    /// 入口各清一次——入口清消除驱动器手动序列（测试直调安装面）跨
+    /// step 的记录残留（残留记录会把回滚恢复到错误的更早状态）。
     pub fn runtime_clear_account_undo(&mut self) {
         self.state.runtime_account_undo.clear();
         self.state.runtime_account_undo_ids.clear();
+        self.state.runtime_attention_undo.clear();
+        self.state.runtime_attention_undo_ids.clear();
+        self.state.runtime_heap_undo = None;
+        self.state.runtime_belief_undo.clear();
+        self.state.runtime_belief_undo_ids.clear();
+        self.state.runtime_retail_undo.clear();
+        self.state.runtime_retail_undo_ids.clear();
+        self.state.runtime_history_undo.clear();
+        self.state.runtime_history_undo_ids.clear();
     }
 
     pub fn runtime_accounts_snapshot(
@@ -1061,11 +1113,6 @@ impl GameSession {
             minute_closes,
             candle_histories,
             candle_active,
-            npc_attention,
-            attention_scheduler,
-            belief_participants,
-            retail_experience,
-            history_reads,
         } = baseline;
         self.mark_external_mutation();
         self.state.tick = tick;
@@ -1097,13 +1144,58 @@ impl GameSession {
         self.state.market_minute_closes = minute_closes;
         self.state.candle_book.replace_histories(candle_histories);
         self.state.candle_book.replace_active(candle_active);
-        self.state.npc_attention = npc_attention;
-        // P1-C 修正：heap 快照逐项还原（不重建——基线可含旧管线陈旧项，
-        // 重建会丢项使回滚 hash 对比显红；见结构体注释）。
-        self.state.attention_scheduler = attention_scheduler;
-        self.state.belief_participants = belief_participants;
-        self.state.retail_experience = retail_experience;
-        self.state.history_reads = history_reads;
+        // P2-3b：五域回滚改写时 undo 消费（原全量快照恢复退役）。
+        // attention：逐条恢复首写前值（None 墓碑=拍前不在册→移除）。
+        for (id, prev) in std::mem::take(&mut self.state.runtime_attention_undo) {
+            match prev {
+                Some(value) => {
+                    self.state.npc_attention.insert(id, value);
+                }
+                None => {
+                    self.state.npc_attention.remove(&id);
+                }
+            }
+        }
+        self.state.runtime_attention_undo_ids.clear();
+        // heap：move-undo 精确还原旧堆（P1-C 教训保持：不"从权威重建"——
+        // 旧管线陈旧项会丢，business_state_hash 回滚对比显红）。
+        if let Some(old_heap) = self.state.runtime_heap_undo.take() {
+            self.state.attention_scheduler = old_heap;
+        }
+        // belief/retail/history：同 attention 式逐条恢复。
+        for (id, prev) in std::mem::take(&mut self.state.runtime_belief_undo) {
+            match prev {
+                Some(value) => {
+                    self.state.belief_participants.insert(id, value);
+                }
+                None => {
+                    self.state.belief_participants.remove(&id);
+                }
+            }
+        }
+        self.state.runtime_belief_undo_ids.clear();
+        for (id, prev) in std::mem::take(&mut self.state.runtime_retail_undo) {
+            match prev {
+                Some(value) => {
+                    self.state.retail_experience.insert(id, value);
+                }
+                None => {
+                    self.state.retail_experience.remove(&id);
+                }
+            }
+        }
+        self.state.runtime_retail_undo_ids.clear();
+        for (id, prev) in std::mem::take(&mut self.state.runtime_history_undo) {
+            match prev {
+                Some(value) => {
+                    self.state.history_reads.insert(id, value);
+                }
+                None => {
+                    self.state.history_reads.remove(&id);
+                }
+            }
+        }
+        self.state.runtime_history_undo_ids.clear();
     }
 
     /// 注意力镜像全量只读（Belief-1b·下：投递下行快照源——candidate
@@ -1164,6 +1256,8 @@ impl GameSession {
     ) {
         self.mark_external_mutation();
         for (id, updated) in updates {
+            // P2-3b：首写前值入 undo（改写前记录——回滚源）。
+            self.runtime_record_attention_undo(id);
             if let Some(state) = self.state.npc_attention.get_mut(id) {
                 state.information_cadence = updated.information_cadence;
                 state.next_information_check = updated.next_information_check;
@@ -1512,6 +1606,8 @@ impl GameSession {
             market_minute: self.current_market_minute(),
             trading_day: u64::from(self.state.day),
         };
+        // P2-3b：首写前值入 undo（改写前记录——回滚源）。
+        self.runtime_record_retail_undo(id);
         let Some(ledger) = self.state.retail_experience.get_mut(id) else {
             // 无经历账的账户（玩家惯例位）无 fault2038 约束——跳过。
             return Ok(());

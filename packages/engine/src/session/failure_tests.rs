@@ -508,3 +508,71 @@ fn p2r1_day_end_step_failure_rolls_back_t1_unlock() {
         "日结拍失败的 T+1 解锁必须随回滚恢复（P2-2b 回归守卫）"
     );
 }
+
+// ── P2-3b 红证：安装基线五域写时 undo 的回滚完整性 ──
+
+// 修复背景：runtime_install_baseline 此前每 tick 全量 clone npc_attention/
+// attention_scheduler/belief_participants/retail_experience/history_reads
+// （AccountPagedMap clone=页 Arc 共享）——后续 set_runtime_attention 等写入
+// 面的 get_mut 全部触发 COW 页组深拷贝（驱动线程画像 get_mut 8.6%+jemalloc
+// 家族 ~20% 的主源）。P2-3b 改写时 undo：五域基线 clone 退役，写入点记
+// 首写前值（墓碑=拍前不在册），heap 整体替换域用 move-undo（零拷贝）。
+// 守卫：注入安装失败（attention 已写入）→五域逐位回滚到拍前。
+#[test]
+fn p2_3b_domain_undo_rolls_back_attention_personal_and_heap() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.retail_count = 6;
+    setup.npcs.inst_count = 0;
+    setup.auction_ticks = 0;
+    // 不跨日结（日结拍全量快照面由 p2r1 守卫承载）。
+    setup.ticks_per_day = 64;
+    let mut game = GameSession::new(setup, 53).expect("会话构造");
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game)
+        .expect("驱动器构造");
+    driver.adopt_session_seq(&game);
+    // 一拍正常推进（建立 dirty 流与 attention 写入节奏）。
+    game.runtime_step_with_install(&mut driver).expect("首拍");
+    // 五域拍前快照（session 模块内直读）。
+    let attention_before = game.state.npc_attention.clone();
+    let heap_before: Vec<(u64, crate::AccountId)> =
+        game.state.attention_scheduler.iter().copied().collect();
+    let belief_before = game.state.belief_participants.clone();
+    let retail_before = game.state.retail_experience.clone();
+    let history_before = game.state.history_reads.clone();
+    // 写入面存在性前置（防守卫空转）：零售名册在册（个人态安装面有效）。
+    assert!(
+        attention_before.len() >= 6,
+        "attention 名册在册（写入面存在）：{}",
+        attention_before.len()
+    );
+    // 注入安装失败（install_market_views 成功后失败——attention 全名册
+    // 已写入、heap 已整体替换）。
+    game.inject_runtime_install_failure();
+    let err = game
+        .runtime_step_with_install(&mut driver)
+        .expect_err("注入安装失败必须 Err");
+    assert!(
+        err.to_string().contains("安装失败注入"),
+        "失败身份可辨识：{err}"
+    );
+    // 五域逐位回滚（undo 缺记 ⇒ attention 残留演进值 ⇒ 红）。
+    assert_eq!(
+        game.state.npc_attention, attention_before,
+        "attention 域回滚（写时 undo 完整性）"
+    );
+    let heap_after: Vec<(u64, crate::AccountId)> =
+        game.state.attention_scheduler.iter().copied().collect();
+    assert_eq!(heap_after, heap_before, "heap 域回滚（move-undo 完整性）");
+    assert_eq!(
+        game.state.belief_participants, belief_before,
+        "belief 域回滚"
+    );
+    assert_eq!(
+        game.state.retail_experience, retail_before,
+        "retail 经历域回滚"
+    );
+    assert_eq!(
+        game.state.history_reads, history_before,
+        "history_reads 域回滚"
+    );
+}
