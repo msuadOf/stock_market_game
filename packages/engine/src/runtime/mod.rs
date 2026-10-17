@@ -91,11 +91,10 @@ mod protocol_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod skeleton_tests;
 
-/// 生产入口翻转开关（翻转批·实测后回退为 opt-in）：ENGINE_STEP_RUNTIME=1
-/// 显式走 runtime，**缺省 0=旧管线**。实测（翻转批）：step() 全量翻转
-/// 使 106 个 session 侧测试失败——全局域（envelope/attention/candidate
-/// 投影）演进仍锚定旧管线，runtime step 未承载 ⇒ 硬翻=静默语义丢失
-/// （铁律二）。翻转的最后一步=全局域迁移完成后再改缺省。
+/// 生产入口翻转开关：**缺省已翻转为 runtime**（翻转批终程：106 个
+/// 失败项清零后落地）；显式 `ENGINE_STEP_RUNTIME=0` 为回旧管线的临时
+/// 逃生门（批 9 外部清理时移除）。历史：翻转前缺省 0=旧管线，硬翻
+/// 曾使 106 个 session 侧测试失败——全局域迁移完成后才改缺省。
 pub fn step_runtime_enabled() -> bool {
     // D5 wasm 方向 A：wasm 宿主无 OS 线程（std::thread::spawn 运行期
     // Err）——恒 false 走串行管线（Web 优先的产品语义；native 缺省
