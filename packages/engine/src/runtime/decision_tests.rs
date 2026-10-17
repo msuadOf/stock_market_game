@@ -136,7 +136,11 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
         retail_style: None,
     };
     // D5 #2：排期归 evaluate_attention（signal 公式）；decide=纯决策。
-    let run = |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, &snapshot, &account, &config);
+    // P1-B：signal/market 由调用方共享构建（同 snapshot 纯函数）。
+    let market = build_market_view(&snapshot);
+    let signal = crate::session::market_attention_signal(&market);
+    let run =
+        |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, &market, &account, &config);
     let mut a = profile.clone();
     let mut b = profile.clone();
     let (ops_a, _) = run(&mut a);
@@ -144,8 +148,8 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
     assert_eq!(ops_a.len(), ops_b.len(), "同种子同 tick 同输出");
     assert_eq!(ops_a, ops_b, "decide_data 纯函数 + 种子化 RNG ⇒ 决策确定");
     // evaluate 确定性：同 seed 同 signal ⇒ 同 wait/续流。
-    let (obs1, _) = evaluate_attention(&mut a, &snapshot, 1);
-    let (obs2, _) = evaluate_attention(&mut b, &snapshot, 1);
+    let (obs1, _) = evaluate_attention(&mut a, signal, 1);
+    let (obs2, _) = evaluate_attention(&mut b, signal, 1);
     assert_eq!(obs1, obs2, "evaluate 确定性（同输入同判定）");
     assert_eq!(a.next_due, b.next_due, "evaluate 同 wait 采样");
     assert_eq!(a.seed, b.seed, "共享流续传一致");
@@ -167,13 +171,15 @@ fn attention_gap_suppresses_non_due_ticks() {
     };
     // D5 #2：evaluate 排期后未到期 tick 不得再 evaluate（静默窗口由
     /// wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
-    let (_, _) = evaluate_attention(&mut profile, &snapshot, 1);
+    let market = build_market_view(&snapshot);
+    let signal = crate::session::market_attention_signal(&market);
+    let (_, _) = evaluate_attention(&mut profile, signal, 1);
     let next = profile.next_due;
     assert!(next >= 2, "evaluate 排期至少推到下一拍");
     let mut evals = 0;
     for tick in 2..=5u64 {
         if tick >= profile.next_due {
-            let _ = evaluate_attention(&mut profile, &snapshot, tick);
+            let _ = evaluate_attention(&mut profile, signal, tick);
             evals += 1;
         }
     }
@@ -217,9 +223,11 @@ fn seed_that_buys() -> u64 {
             retail_style: None,
         };
         // D5 #2：运行序=evaluate（续流）→decide（due 门在调用方——组内
-        /// due 循环保证）。
-        let _ = evaluate_attention(&mut profile, &snapshot, 1);
-        let (ops, _) = decide_account(&mut profile, 0, 1, 0, &snapshot, &account, &config);
+        /// due 循环保证）。P1-B：signal/market 调用方共享构建。
+        let market = build_market_view(&snapshot);
+        let signal = crate::session::market_attention_signal(&market);
+        let _ = evaluate_attention(&mut profile, signal, 1);
+        let (ops, _) = decide_account(&mut profile, 0, 1, 0, &market, &account, &config);
         if ops.iter().any(|op| op.side == Side::Buy && op.qty >= 100) {
             return seed;
         }
@@ -267,6 +275,72 @@ fn inline_decision_drives_orders_and_conservation_holds() {
         resting_tick1.iter().any(|(_, r)| *r > 0),
         "决策产生的订单应到达交易部挂簿：{resting_tick1:?}"
     );
+}
+
+// ── P1-B 等价守卫：共享视图下决策序列黄金值 ──
+
+// golden 常量：P1-B 落地时实测锁定（临时占位 0——首跑填真值）。
+const SHARED_VIEW_GOLDEN_CASH: i64 = 1_000_000;
+const SHARED_VIEW_GOLDEN_FEES: i64 = 0;
+const SHARED_VIEW_GOLDEN_VOLUME: u64 = 0;
+const SHARED_VIEW_GOLDEN_SHARES: u32 = 0;
+/// 每 tick 挂簿余量节奏（决策订单流的逐 tick 痕迹——RNG/视图漂移即变）。
+const SHARED_VIEW_GOLDEN_RESTING: &[(u16, u64)] = &[(0, 1), (0, 2), (0, 2), (0, 3), (0, 3)];
+
+// 共享 MarketView/signal 后，同种子决策序列必须逐字段等价（RNG 流不变
+// 的硬验收）。单组 fixture 无组间并发交错——终态确定。golden 值在 P1-B
+// 落地时实测锁定；任何改变 RNG 消费顺序或视图构建的回归都会在此显红。
+#[test]
+fn shared_view_decision_sequence_golden() {
+    let setup = DecisionSetup {
+        profiles: vec![NpcProfile {
+            strategy: StrategyData::retail(1.0, 100, 1.0),
+            seed: 12345,
+            next_due: 0,
+            attention_base: 0.3,
+            retail_style: None,
+        }],
+        attention_gap_ticks: 0,
+    };
+    let mut spec = basic_spec(
+        1,
+        1,
+        1,
+        Box::new(|_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) }),
+    );
+    spec.initial_shares = vec![vec![vec![0u32; 1]; 1]; 1];
+    spec.decision = Some(setup);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(5).expect("5 tick 收敛");
+    let resting_per_tick: Vec<Vec<(u16, u64)>> = world
+        .report_log
+        .iter()
+        .map(|r| r.desk_resting.clone())
+        .collect();
+    let report = world.shutdown().expect("关停");
+    let group = &report.group_finals[0];
+    let cash = group.accounts[0].cash;
+    let fees: i64 = report.desk_finals.iter().map(|d| d.fee_sink).sum();
+    let volume: u64 = report.desk_finals.iter().map(|d| d.market.volume_today).sum();
+    println!(
+        "GOLDEN cash={cash} fees={fees} volume={volume} shares={:?} decides={} resting={resting_per_tick:?} purse_held={:?} foreign={:?}",
+        group.accounts[0].shares,
+        group.decide_calls_total,
+        group.accounts[0].buy_purse_held_cents,
+        group.accounts[0].foreign_active,
+    );
+    assert_eq!(cash + fees, 1_000_000, "守恒（golden 前置）");
+    // golden 断言（P1-B 落地实测锁定——待填常量后此测试成为等价守卫）：
+    assert_eq!((cash, fees, volume), (SHARED_VIEW_GOLDEN_CASH, SHARED_VIEW_GOLDEN_FEES, SHARED_VIEW_GOLDEN_VOLUME),
+        "共享视图决策序列等价守卫（决策/RNG 流漂移即红）");
+    assert_eq!(group.accounts[0].shares, vec![SHARED_VIEW_GOLDEN_SHARES],
+        "持仓终态 golden");
+    assert_eq!(group.decide_calls_total, 5, "每 tick due（base=1）——决策次数 golden");
+    let expected_resting: Vec<Vec<(u16, u64)>> = (0..5)
+        .map(|i| vec![SHARED_VIEW_GOLDEN_RESTING[i]])
+        .collect();
+    assert_eq!(resting_per_tick, expected_resting,
+        "挂簿节奏 golden（决策订单流逐 tick 痕迹）");
 }
 
 #[test]

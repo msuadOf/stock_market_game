@@ -80,11 +80,14 @@ pub struct PendingOp {
 /// observe 门 + wait 采样；返回 (observe 判定, 排期前值)。每 due 恰一次。
 pub fn evaluate_attention(
     profile: &mut NpcProfile,
-    snapshot: &TickSnapshot,
+    signal: f64,
     tick: u64,
 ) -> (bool, u64) {
-    let market = build_market_view(snapshot);
-    let signal = crate::session::market_attention_signal(&market);
+    // P1-B（性能修复）：signal 由调用方**每轮共享传入**——公共视图对全组
+    /// NPC 相同（同 snapshot 的纯函数），此前每 due NPC 重建全市场视图
+    /// 只为算一个公共 signal（构造次数 ≈3.4× 放大，见
+    /// .tmp/perf-p0-diff-profile.md）。signal 构建不消费 RNG——共享后
+    /// RNG 流与门判定逐位不变。
     let kind = profile.strategy.kind;
     let base = profile.attention_base;
     let mut rng = crate::session::SplitMix64::new(profile.seed);
@@ -105,7 +108,7 @@ pub fn decide_account(
     group_seed_mix: u64,
     tick: u64,
     local: LocalIdx,
-    snapshot: &TickSnapshot,
+    market: &MarketView,
     account: &GroupAccount,
     config: &GameConfig,
 ) -> (Vec<PendingOp>, usize) {
@@ -113,14 +116,15 @@ pub fn decide_account(
     /// 本函数纯决策（此前内嵌 due 判在 evaluate 排期后恒假）。
     // 决策 RNG：注意力流（evaluate 续传）经组混合因子派生——决策流与
     /// 调度流分离（旧管线策略流独立于 attention rng；组内经派生确定化）。
+    // P1-B（性能修复）：market 由调用方每轮共享传入（同 snapshot 的纯
+    /// 函数投影——逐位等价，RNG 流不变）。
     let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
-    let market = build_market_view(snapshot);
     let own = build_self_view(account);
-    let intents = decide_data(&profile.strategy, &market, &own, &mut rng, config);
+    let intents = decide_data(&profile.strategy, market, &own, &mut rng, config);
     let mut ops = Vec::with_capacity(intents.len());
     let mut cancel_skipped = 0usize;
     for intent in intents {
-        if let Some(op) = intent_to_pending(intent, &market) {
+        if let Some(op) = intent_to_pending(intent, market) {
             ops.push(PendingOp { local, ..op });
         } else {
             cancel_skipped += 1;

@@ -3047,6 +3047,15 @@ impl GroupState {
                             ),
                         })?;
                 let group_mix = (self.group as u64).wrapping_mul(0x9E3779B9);
+                // P1-B（性能修复）：本轮共享公共视图与 attention signal——
+                /// 此前每 due NPC 各自 build_market_view（重建全市场
+                /// BTreeMap+复制价格/分钟历史）只为算一个对全组相同的
+                /// 公共 signal，observe 通过后 decide 再建一次（构造次数
+                /// ≈3.4× 放大，见 .tmp/perf-p0-diff-profile.md）。两者均为
+                /// snapshot 的纯函数且不消费 RNG——共享后决策序列/RNG 流
+                /// 逐位不变（等价守卫=同种子终态逐字段对比）。
+                let shared_market = super::decision::build_market_view(&snapshot);
+                let shared_signal = crate::session::market_attention_signal(&shared_market);
                 // D3a-3：belief 位的决策链轮（observe 直调——方向 A 深移植）
                 // 与 retail 的 decide_data 轮分离：due 判定+重排在 profiles
                 // 借用内完成（Sol 二审修复集 5 的 undo 语义），observe 链
@@ -3088,7 +3097,7 @@ impl GroupState {
                             let (observes, prev_due) =
                                 super::decision::evaluate_attention(
                                     &mut profiles[local as usize],
-                                    &snapshot,
+                                    shared_signal,
                                     tick,
                                 );
                             due_npcs += 1;
@@ -3113,7 +3122,7 @@ impl GroupState {
                         /// 重排不决策）。
                         let (observes, prev_due) = super::decision::evaluate_attention(
                             &mut profiles[local as usize],
-                            &snapshot,
+                            shared_signal,
                             tick,
                         );
                         due_npcs += 1;
@@ -3125,7 +3134,7 @@ impl GroupState {
                                 group_mix,
                                 tick,
                                 local,
-                                &snapshot,
+                                &shared_market,
                                 account,
                                 &self.config,
                             );
@@ -3151,10 +3160,12 @@ impl GroupState {
                     chain_cancels.extend(cancels);
                 }
                 // D5 #4 retail 链：观察+决策+trace+经验行（组内权威）。
+                // P1-B：复用本轮共享公共视图（原每轮零售位再建一次——
+                /// 同 snapshot 纯函数，逐位等价）。
                 {
-                    let market = super::decision::build_market_view(&snapshot);
                     for local in retail_due {
-                        let ops = self.run_retail_decision(local, tick, &snapshot, &market)?;
+                        let ops =
+                            self.run_retail_decision(local, tick, &snapshot, &shared_market)?;
                         for op in ops {
                             pendings.push(Pending::Op(op));
                         }
