@@ -384,7 +384,7 @@ impl RuntimeDriver {
         // 构造期直入 desk 初始簿——先于本 tick 新单（此前经 ExternalPlan
         // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
         // partial_fill 红证）。owner 不在名册=投影缺口，显式失败。
-        spec.initial_desk_orders = resting_order_seeds_from_session(session, &ids)?;
+        spec.initial_desk_orders = resting_order_seeds_from_session(session, &ids, per_group)?;
         // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）+
         /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
         /// 续拍在 save 聚合之上演进）。
@@ -439,21 +439,17 @@ impl RuntimeDriver {
     /// 与玩家意图注入同一通道）。仅构造期调用：runtime 步进开始后 session
     /// 旧簿不再新增挂单（写面在组/desk），无重复迁移。owner 不在名册=
     /// 投影缺口，显式失败（不静默丢单）。
+    /// Sol 终审修复 1c 同族：owner→(组, 组内 local) 换算+按组定向发送
+    ///（此前全局下标当 local 广播给组 0——多组下错归）。
     fn adopt_session_resting_orders(&mut self, session: &GameSession) -> Result<(), String> {
-        let mut ops = Vec::new();
+        let n_groups = self.world.n_groups();
+        let mut ops: Vec<Vec<super::decision::PendingOp>> = vec![Vec::new(); n_groups];
         for (code, orders) in session.runtime_resting_orders_snapshot() {
             for order in orders {
-                let local = self
-                    .id_map
-                    .iter()
-                    .position(|id| *id == order.owner)
-                    .ok_or_else(|| {
-                        format!(
-                            "旧簿挂单 owner 不在世界名册（无法迁移）：{:?} {:?}",
-                            order.owner, code
-                        )
-                    })? as super::LocalIdx;
-                ops.push(super::decision::PendingOp {
+                let (g, local) = self.owner_slot(order.owner).map_err(|e| {
+                    format!("旧簿挂单 {e}（无法迁移）：{:?}", code)
+                })?;
+                ops[g as usize].push(super::decision::PendingOp {
                     local,
                     stock: code.0 as super::StockIdx,
                     side: order.side,
@@ -463,7 +459,7 @@ impl RuntimeDriver {
                 });
             }
         }
-        self.world.broadcast_external_plan(ops, Vec::new());
+        self.world.send_external_plan_grouped(ops, vec![Vec::new(); n_groups]);
         Ok(())
     }
 
@@ -679,8 +675,14 @@ impl RuntimeDriver {
                     }
                     let is_new_hold = qty > 0 && !merged.contains_key(&code);
                     if is_new_hold {
+                        // Sol 终审修复 1c：VWAP 查找用真实组号（此前写死
+                        /// group=0——多组下组 0 的 VWAP 误配给其他组账户）。
                         let entry = buy_vwap
-                                .get(&(0, local as super::LocalIdx, idx as super::StockIdx))
+                                .get(&(
+                                    g as super::GroupIdx,
+                                    local as super::LocalIdx,
+                                    idx as super::StockIdx,
+                                ))
                                 .copied()
                                 .or_else(|| last_prices.get(idx).copied())
                                 .unwrap_or(1);
@@ -707,6 +709,11 @@ impl RuntimeDriver {
                     ));
                     engine_acct.fixture_set_positions(merged);
                 }
+                // Sol 终审修复 1b：本账户的首买经历 init 收集并入成员槽
+                ///（此前局部 Vec 随循环体丢弃——Continue 早轮成交已被排除
+                /// 出 unsettled_trades，组回写段是其唯一 init 机会，丢弃
+                /// 形成"有持仓、无经历"，破坏 fault2038 保存校验）。
+                self.pending_hold_inits.extend(pending_hold_inits);
             }
         }
         // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
@@ -1368,28 +1375,28 @@ impl RuntimeDriver {
         upper_limits: &[i64],
     ) -> Result<
         (
-            Vec<super::decision::PendingOp>,
-            Vec<(super::LocalIdx, super::StockIdx, u64)>,
+            Vec<Vec<super::decision::PendingOp>>,
+            Vec<Vec<(super::LocalIdx, super::StockIdx, u64)>>,
         ),
         String,
     > {
-        let mut ops = Vec::new();
-        let mut cancels = Vec::new();
+        // Sol 终审修复 1c 同族：多组名册的 owner→(组, 组内 local) 换算
+        ///（此前全局下标直接当 local——双组下组 1 账户的单被发给组 0
+        /// 的越界 local，tick 失败）。产物按组号分桶，定向发送。
+        let n_groups = self.world.n_groups();
+        let mut ops: Vec<Vec<super::decision::PendingOp>> = vec![Vec::new(); n_groups];
+        let mut cancels: Vec<Vec<(super::LocalIdx, super::StockIdx, u64)>> =
+            vec![Vec::new(); n_groups];
         for r in intents {
             // D5 终程：Cancel 意图路由（OrderId 低 48 位=desk serial——
             /// 组端直转 DeskIn::Cancel；撤单窗/存在性由 desk 权威判定）。
             if let crate::Intent::Cancel { code, id } = &r.intent {
-                let local = self
-                    .id_map
-                    .iter()
-                    .position(|owner| *owner == r.owner)
-                    .ok_or_else(|| {
-                        format!(
-                            "外部撤单 owner 不在世界名册（无法路由）：{:?}",
-                            r.owner
-                        )
-                    })? as super::LocalIdx;
-                cancels.push((local, code.0 as super::StockIdx, id.0 & 0x0000_FFFF_FFFF_FFFF));
+                let (g, local) = self.owner_slot(r.owner)?;
+                cancels[g as usize].push((
+                    local,
+                    code.0 as super::StockIdx,
+                    id.0 & 0x0000_FFFF_FFFF_FFFF,
+                ));
                 continue;
             }
             let crate::Intent::PlaceLimit { code, side, price, qty } = &r.intent else {
@@ -1406,16 +1413,7 @@ impl RuntimeDriver {
                         r.intent
                     ));
                 };
-                let local = self
-                    .id_map
-                    .iter()
-                    .position(|id| *id == r.owner)
-                    .ok_or_else(|| {
-                        format!(
-                            "外部意图 owner 不在世界名册（无法路由到组内账户）：{:?}",
-                            r.owner
-                        )
-                    })? as super::LocalIdx;
+                let (g, local) = self.owner_slot(r.owner)?;
                 let upper = upper_limits
                     .get(code.0 as usize)
                     .copied()
@@ -1427,7 +1425,7 @@ impl RuntimeDriver {
                 }
                 // purse 最坏情况=日涨停（与 decision.rs intent_to_pending
                 /// 的 NPC 市价路径同口径，F §1.5）。
-                ops.push(super::decision::PendingOp {
+                ops[g as usize].push(super::decision::PendingOp {
                     local,
                     stock: code.0 as super::StockIdx,
                     side: *side,
@@ -1437,16 +1435,7 @@ impl RuntimeDriver {
                 });
                 continue;
             };
-            let local = self
-                .id_map
-                .iter()
-                .position(|id| *id == r.owner)
-                .ok_or_else(|| {
-                    format!(
-                        "外部意图 owner 不在世界名册（无法路由到组内账户）：{:?}",
-                        r.owner
-                    )
-                })? as super::LocalIdx;
+            let (g, local) = self.owner_slot(r.owner)?;
             let upper = upper_limits
                 .get(code.0 as usize)
                 .copied()
@@ -1481,7 +1470,7 @@ impl RuntimeDriver {
                 self.pending_rejections.push((*code, r.owner));
                 continue;
             }
-            ops.push(super::decision::PendingOp {
+            ops[g as usize].push(super::decision::PendingOp {
                 local,
                 stock: code.0 as super::StockIdx,
                 side: *side,
@@ -1493,18 +1482,38 @@ impl RuntimeDriver {
         Ok((ops, cancels))
     }
 
-    /// 外部意图注入世界（D2/D1）：经 ExternalPlan 通道广播全部组（组 0
-    /// 消费）。owner 不在名册=显式失败（不静默丢单）。
+    /// owner → (组号, 组内 local)（多组名册换算——单组退化为全局
+    /// 下标；owner 不在名册=显式失败不静默）。
+    fn owner_slot(
+        &self,
+        owner: crate::AccountId,
+    ) -> Result<(super::GroupIdx, super::LocalIdx), String> {
+        let global = self
+            .id_map
+            .iter()
+            .position(|id| *id == owner)
+            .ok_or_else(|| format!("外部意图 owner 不在世界名册（无法路由）：{owner:?}"))?;
+        let per = self.accounts_per_group.max(1);
+        Ok((
+            (global / per) as super::GroupIdx,
+            (global % per) as super::LocalIdx,
+        ))
+    }
+
+    /// 外部意图注入世界（D2/D1）：经 ExternalPlan 通道**按组定向**发送
+    ///（Sol 终审修复 1c 同族——此前广播给组 0 且全局下标当 local，
+    /// 多组下组 1 账户的单路由错组；单组语义不变）。owner 不在名册=
+    /// 显式失败（不静默丢单）。
     pub fn inject_player_intents(
         &mut self,
         intents: &[crate::session::ReceiptBearingIntent],
         upper_limits: &[i64],
     ) -> Result<(), String> {
         let (ops, cancels) = self.route_external_intents(intents, upper_limits)?;
-        if ops.is_empty() && cancels.is_empty() {
+        if ops.iter().all(Vec::is_empty) && cancels.iter().all(Vec::is_empty) {
             return Ok(());
         }
-        self.world.broadcast_external_plan(ops, cancels);
+        self.world.send_external_plan_grouped(ops, cancels);
         Ok(())
     }
 
@@ -2296,6 +2305,7 @@ impl RuntimeDriver {
 fn resting_order_seeds_from_session(
     session: &GameSession,
     id_map: &[crate::AccountId],
+    accounts_per_group: usize,
 ) -> Result<Vec<Vec<super::desk::DeskRestingSeed>>, String> {
     // D5 restore 等价：runtime 形态（旧簿空）下单权威=restore 重建的信封
     // 账本（save 的 live_envelopes）——desk 种子从账本键恢复（purse 由
@@ -2307,12 +2317,18 @@ fn resting_order_seeds_from_session(
     let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = Vec::new();
     if from_ledger {
         for (key, envelope) in session.runtime_envelope_ledger_snapshot() {
-            let local = id_map
+            // Sol 终审修复 1c 同族：owner 用真实组号（此前写死组 0
+            /// ——多组 restore 的挂单被错归组 0 的同 local 账户）。
+            let global = id_map
                 .iter()
                 .position(|id| *id == key.account)
                 .ok_or_else(|| {
                     format!("账本挂单 owner 不在世界名册（无法迁移）：{:?}", key.account)
-                })? as super::LocalIdx;
+                })?;
+            let (g, local) = (
+                (global / accounts_per_group.max(1)) as super::GroupIdx,
+                (global % accounts_per_group.max(1)) as super::LocalIdx,
+            );
             let stock = key.stock.0 as usize;
             if seeds.len() <= stock {
                 seeds.resize(stock + 1, Vec::new());
@@ -2331,7 +2347,7 @@ fn resting_order_seeds_from_session(
                 0
             };
             seeds[stock].push(super::desk::DeskRestingSeed {
-                owner: (0, local),
+                owner: (g, local),
                 side: key.side,
                 price,
                 qty,
@@ -2360,7 +2376,8 @@ fn resting_order_seeds_from_session(
     let mut adopt_serial: u64 = 1;
     for (code, orders) in snapshot {
         for order in orders {
-            let local = id_map
+            // Sol 终审修复 1c 同族：owner 用真实组号（同上）。
+            let global = id_map
                 .iter()
                 .position(|id| *id == order.owner)
                 .ok_or_else(|| {
@@ -2368,7 +2385,11 @@ fn resting_order_seeds_from_session(
                         "旧簿挂单 owner 不在世界名册（无法迁移）：{:?} {:?}",
                         order.owner, code
                     )
-                })? as super::LocalIdx;
+                })?;
+            let (g, local) = (
+                (global / accounts_per_group.max(1)) as super::GroupIdx,
+                (global % accounts_per_group.max(1)) as super::LocalIdx,
+            );
             // 买腿 purse=全额预留（挂单价×量——desk 侧扣减权威；
             /// envelope live 资源面）。
             let purse = if order.side == crate::orderbook::Side::Buy {
@@ -2377,7 +2398,7 @@ fn resting_order_seeds_from_session(
                 0
             };
             seeds[code.0 as usize].push(super::desk::DeskRestingSeed {
-                owner: (0, local),
+                owner: (g, local),
                 side: order.side,
                 price: order.price.cents(),
                 qty: order.qty,

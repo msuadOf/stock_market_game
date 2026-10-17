@@ -14,6 +14,11 @@ pub enum StepFatal {
 pub(crate) struct RuntimeInstallBaseline {
     tick: u64,
     seq: u64,
+    // Sol 终审修复 1a：交易日计数入基线——日结拍（ends_day 段的
+    // install_runtime_day_boundary 推进 day）之后投影失败必须随整面
+    /// 回滚（此前 day 不在基线——tick/seq/账户回滚而 day 留新日，
+    /// 违反失败零泄漏及重试契约）。
+    day: u32,
     // P2-2b：accounts 全名册快照退役——改写时 undo（drive 两写入点经
     // runtime_record_account_undo 记录首写前值，O(dirty)；回滚恢复。
     // 原 O(名册) 每 tick 快照是驱动器侧 AccountBook::get 全名册遍历+
@@ -211,8 +216,9 @@ impl GameSession {
             .map(|book| {
                 book.iter()
                     .map(|fact| {
+                        // Sol 终审修复 1c：归户保留组号（同镜像/信封）。
                         let account = driver
-                            .account_by_local(u16::try_from(fact.owner.1).expect("local 下标"))
+                            .account_by_owner(fact.owner)
                             .expect("owner 在名册");
                         (account, fact.side, crate::money::Money::from_cents(fact.price), fact.qty)
                     })
@@ -829,9 +835,10 @@ impl GameSession {
                 };
                 let mut orders = Vec::with_capacity(book.len());
                 for fact in book {
-                    let Some(owner) = driver.account_by_local(
-                        u16::try_from(fact.owner.1).expect("local 下标在 u16"),
-                    ) else {
+                    // Sol 终审修复 1c：归户用 account_by_owner（保留组号
+                    /// ——此前 account_by_local(owner.1) 丢组号，其他组的
+                    /// 同 local 委托被归给组 0 账户，与删除分支键不一致）。
+                    let Some(owner) = driver.account_by_owner(fact.owner) else {
                         continue;
                     };
                     orders.push((
@@ -880,7 +887,16 @@ impl GameSession {
         /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
         /// 登记差异。
         if ends_day {
-            let facts = crate::session::pipeline::install_runtime_day_boundary(self)?;
+            // Sol 终审修复 1a：日结段的全部可失败出口统一走
+            /// rollback+poison（此前 `?` 直出绕过回滚——day/candle/T+1
+            /// 等已写域泄漏；判决 :883/:930 两处）。
+            let facts = match crate::session::pipeline::install_runtime_day_boundary(self) {
+                Ok(facts) => facts,
+                Err(fatal) => {
+                    self.rollback_runtime_step(baseline);
+                    return Err(self.poison_runtime_step(fatal));
+                }
+            };
             for fact in facts {
                 // step_frame 接轨件 4：分配走驱动器游标（take_event_seq
                 /// 先加后取）再同步会话权威——此前直改 state.seq 而不推进
@@ -927,12 +943,17 @@ impl GameSession {
                     .map(|v| (v.last_price, v.public_cutoff_serial))
                     .collect();
                 let mut mirror = std::collections::BTreeMap::new();
-                let facts = driver.collect_resting_facts().map_err(|e| {
-                    StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::day_end_mirror".to_owned(),
-                        description: e,
+                let facts = match driver.collect_resting_facts() {
+                    Ok(facts) => facts,
+                    Err(e) => {
+                        let fatal = StepFatal::InvariantViolation {
+                            location: "GameSession::step_via_runtime::day_end_mirror".to_owned(),
+                            description: e,
+                        };
+                        self.rollback_runtime_step(baseline);
+                        return Err(self.poison_runtime_step(fatal));
                     }
-                })?;
+                };
                 for (stock_idx, book) in facts.iter().enumerate() {
                     let Some((last_price, cutoff)) = views.get(stock_idx).copied() else {
                         continue;
@@ -1018,6 +1039,8 @@ impl GameSession {
         RuntimeInstallBaseline {
             tick: self.tick(),
             seq: self.current_seq(),
+            // Sol 终审修复 1a：日结拍 day 推进的回滚源。
+            day: self.day(),
             accounts_full: if day_end_tick {
                 Some(self.runtime_accounts_snapshot())
             } else {
@@ -1347,6 +1370,7 @@ impl GameSession {
         let RuntimeInstallBaseline {
             tick,
             seq,
+            day,
             accounts_full,
             markets,
             price_history,
@@ -1357,6 +1381,8 @@ impl GameSession {
         self.mark_external_mutation();
         self.state.tick = tick;
         self.state.seq = seq;
+        // Sol 终审修复 1a：日结拍 day 推进随整面回滚（此前泄漏新日）。
+        self.state.day = day;
         // P2-2b：账户恢复改走写时 undo（首写前值——step 内全部账户写入
         /// 的回滚等价；无记录=step 内未写=无需恢复）。P2 复核阻断 1：
         /// 日结拍（accounts_full=Some）全量恢复——覆盖日结迁移对
@@ -2085,17 +2111,16 @@ impl GameSession {
 /// P2-4b：在途单事实 → 信封构造（全量重建与增量 upsert 共用——数值面
 /// 同源保证两路径逐位一致：nominal 自费用表重算、charged 直取 desk
 /// 累计、OrderId=serial 域、live resources 买=purse/卖=余量、
-/// origin=TickStart）。owner 名册外（account_by_local 缺席）返回
+/// origin=TickStart）。owner 名册外（account_by_owner 缺席）返回
 /// Ok(None)——两路径同语义跳过（账本不含名册外账户的信封）。
+/// Sol 终审修复 1c：归户保留组号（此前 account_by_local 丢组号）。
 fn runtime_resting_envelope(
     driver: &crate::runtime::drive::RuntimeDriver,
     config: &crate::config::GameConfig,
     stock_idx: usize,
     fact: &crate::runtime::RestingFact,
 ) -> Result<Option<crate::session::pipeline::Envelope>, String> {
-    let Some(account) = driver
-        .account_by_local(u16::try_from(fact.owner.1).expect("local 下标在 u16"))
-    else {
+    let Some(account) = driver.account_by_owner(fact.owner) else {
         return Ok(None);
     };
     let key = crate::session::pipeline::EnvelopeKey {

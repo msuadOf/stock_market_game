@@ -3462,3 +3462,94 @@ fn stepframe3_continuous_phase_emits_price_tick_per_stock() {
         assert!(*code == crate::StockId(0) || *code == crate::StockId(1));
     }
 }
+
+// ═══ Sol 终审修复 1b：Continue 早轮首买的 retail 经历初始化 ═══
+
+/// 判决 P1：drive.rs 组回写段的局部 `pending_hold_inits` 收集后被丢弃
+///（:658 创建、:689 收集、循环体尾未并入成员槽），消费点用的是成员
+/// `self.pending_hold_inits`（仅同拍投影段填充）。Continue 场景下早轮
+/// 成交已进组快照又被排除出 unsettled_trades——组回写段是唯一 init
+/// 机会，形成"有持仓、无经历"（fault2038 保存恢复校验破坏）。本测试
+/// 驱动 Continue 早轮首买，断言经历条目在场。
+#[test]
+fn solfinal1b_continue_early_round_first_buy_initializes_experience() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 2;
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 21).expect("会话构造");
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            session
+                .account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 0（float 分配）");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    let code = crate::StockId(0);
+    // 构造"从未持有"首买形态（sol 七审 fixture 先例：两面同清）。
+    session.fixture_clear_holding_for_test(buyer, &code);
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let intents = vec![
+        crate::session::ReceiptBearingIntent {
+            owner: buyer,
+            intent: crate::Intent::PlaceLimit {
+                code,
+                side: crate::orderbook::Side::Buy,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+        crate::session::ReceiptBearingIntent {
+            owner: seller,
+            intent: crate::Intent::PlaceLimit {
+                code,
+                side: crate::orderbook::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        },
+    ];
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(&intents, &upper)
+        .expect("意图注入");
+    driver.force_continuation_for_test();
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进（成交在早轮）");
+    driver.install_market_views(&mut session).expect("行情安装");
+    driver.install_candles(&mut session).expect("K 安装");
+    // 前置：成交确实发生在早轮（Continue 两轮）且买家持仓建立。
+    let rec = driver.world_report_log().last().expect("tick 记录");
+    assert_eq!(rec.rounds, 1, "前置：Continue 发生（早轮成交）");
+    assert!(
+        rec.desk_trades.iter().any(|t| t.qty == 100 && t.stock == 0),
+        "前置：早轮成交在场"
+    );
+    assert!(
+        session
+            .account(buyer)
+            .and_then(|a| a.positions().get(&code))
+            .is_some_and(|p| p.qty() == 100),
+        "前置：买家持仓建立（组快照回写）"
+    );
+    // 判别面：经历条目必须在场（红态=有持仓无经历——fault2038 破坏）。
+    assert!(
+        session.runtime_retail_experience_has(buyer, &code),
+        "Continue 早轮首买必须初始化 retail 经历（组回写段的收集不得丢弃）"
+    );
+}

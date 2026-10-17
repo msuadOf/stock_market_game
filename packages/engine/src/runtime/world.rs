@@ -881,6 +881,24 @@ impl World {
         }
     }
 
+    /// Sol 终审修复 1c 同族：按组定向发送外部计划（多组名册——ops 的
+    /// local 已是**组内**下标；空桶跳过，各组只收自己账户的操作。
+    /// 单组（n_groups=1）与 broadcast_external_plan 等价）。
+    pub fn send_external_plan_grouped(
+        &mut self,
+        ops_by_group: Vec<Vec<super::decision::PendingOp>>,
+        cancels_by_group: Vec<Vec<(super::LocalIdx, super::StockIdx, u64)>>,
+    ) {
+        for (g, tx) in self.group_txs.iter().enumerate() {
+            let ops = ops_by_group.get(g).cloned().unwrap_or_default();
+            let cancels = cancels_by_group.get(g).cloned().unwrap_or_default();
+            if ops.is_empty() && cancels.is_empty() {
+                continue;
+            }
+            let _ = tx.send(GroupIn::ExternalPlan { ops, cancels });
+        }
+    }
+
     /// 计划簿收集（D3a-2c 件5：EchoPlans 广播→收齐——交付点投影源）。
     pub fn collect_plans(
         &mut self,

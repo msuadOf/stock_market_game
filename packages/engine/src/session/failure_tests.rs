@@ -713,3 +713,90 @@ fn p2_3e_sparse_attention_uplink_keeps_session_mirror_equal() {
     }
     assert!(checked > 0, "至少核对一个 NPC（读面接线防护）");
 }
+
+// ═══ Sol 终审修复 1c：多组委托投影的跨组归户 ═══
+
+/// 判决 P2：镜像刷新与信封构造用 `account_by_local(owner.1)` 丢组号
+///（其他组的同 local 委托被归给组 0 账户），删除分支用
+/// `account_by_owner`——增删键不一致；外部意图路由与首买 VWAP 查找
+/// 同族写死组 0/全局下标当 local。本测试构造双组世界：组 1 名册尾
+/// 账户挂单，经完整安装序（runtime_step_with_install——镜像/信封
+/// 投影在内）断言归户到真实账户。
+#[test]
+fn solfinal1c_multi_group_resting_projection_attributes_owner() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.retail_count = 2;
+    setup.npcs.retail_cash_median = crate::money::Money::from_cents(1_000_000);
+    let mut session = super::GameSession::new(setup, 21).expect("会话构造");
+    // 尾名册账户（双组 per_group=2：AccountId(2)=组 1 local 0）。
+    let group1_account = crate::AccountId(2);
+    let group0_local0 = crate::AccountId(1);
+    assert_ne!(group1_account, group0_local0);
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut session, 2)
+        .expect("双组驱动器");
+    driver.adopt_session_seq(&session);
+    assert!(driver.id_map.len() >= 3, "名册含组 1 尾账户");
+    assert!(driver.id_map.contains(&group1_account), "尾账户在名册");
+    let intents = vec![crate::session::ReceiptBearingIntent {
+        owner: group1_account,
+        intent: crate::Intent::PlaceLimit {
+            code: crate::StockId(0),
+            side: crate::Side::Buy,
+            price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+            qty: 100,
+        },
+        account_ordinal: 0,
+        stock_ordinal: 0,
+    }];
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    driver
+        .inject_player_intents(&intents, &upper)
+        .expect("意图注入");
+    // 完整生产安装序（组回写+同拍投影+envelope+mirror 全段）。
+    session
+        .runtime_step_with_install(&mut driver)
+        .expect("步进+安装");
+    // 前置：组 1 账户的单确实挂簿且属组 1。
+    let resting_by_stock = driver.collect_resting_facts().expect("在途收集");
+    let resting: Vec<_> = resting_by_stock
+        .first()
+        .expect("股 0 在途")
+        .iter()
+        .collect();
+    assert!(!resting.is_empty(), "前置：挂单在簿");
+    assert!(
+        resting.iter().all(|f| f.owner.0 == 1),
+        "前置：挂单属组 1（owner.0==1）：{:?}",
+        resting.iter().map(|f| f.owner).collect::<Vec<_>>()
+    );
+    // 判别面（镜像归户）：save 的在场委托=desk 镜像投影。
+    let save = session.save().expect("存档读面");
+    let resting_owners: Vec<_> = save
+        .resting_orders
+        .get(&crate::StockId(0))
+        .map(|orders| orders.iter().map(|o| o.owner).collect())
+        .unwrap_or_default();
+    assert!(
+        resting_owners.contains(&group1_account),
+        "镜像/存档在场委托必须归户到组 1 账户 {:?}（红态=组 0 的 {:?}）：{:?}",
+        group1_account,
+        group0_local0,
+        resting_owners
+    );
+    // 判别面（信封键同源）。
+    let envelope_accounts: Vec<_> = save
+        .runtime_state
+        .live_envelopes
+        .iter()
+        .map(|e| e.key.account)
+        .collect();
+    assert!(
+        envelope_accounts.contains(&group1_account),
+        "信封账本必须含组 1 账户键（红态=组 0 账户）：{:?}",
+        envelope_accounts
+    );
+}

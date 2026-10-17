@@ -1592,6 +1592,39 @@ mod rollback_tests {
         );
     }
 
+    /// Sol 终审修复 1a：日结拍的投影失败不得泄漏 `day`——
+    /// install_runtime_day_boundary 已推进 day（day_end.rs），回滚基线
+    /// 此前不含 day 域（tick/seq/账户回滚而 day 留新日——违反失败零
+    /// 泄漏及重试契约）。红态：失败后 day==day_before+1。
+    #[test]
+    fn solfinal1a_day_end_projection_failure_rolls_back_day() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 49).unwrap();
+        let tpd = session.game().state.setup.ticks_per_day;
+        for _ in 1..tpd {
+            session.step_frame().unwrap();
+        }
+        let day_before = session.game().day();
+        let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
+        session.malformed_frame = true;
+        let error = session.step_frame().unwrap_err();
+        assert!(matches!(error, StepFatal::InvariantViolation { .. }));
+        assert_eq!(
+            session.game().day(),
+            day_before,
+            "日结拍投影失败必须回滚 day（不得泄漏新日——重试契约要求步前等价）"
+        );
+        assert_eq!(
+            serde_json::to_value(session.state.game.save().unwrap()).unwrap(),
+            before,
+            "日结拍投影失败后 save==步前（含 day 域）"
+        );
+        // 重试成功：day 恰推进一次（candidate 丢弃可重试语义）。
+        let frame = session.step_frame().unwrap();
+        frame.validate().unwrap();
+        assert_eq!(session.game().day(), day_before + 1, "重试成功推进 day 恰一次");
+    }
+
     #[test]
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
         let setup = crate::session::protocol::civil::publication_tests::setup();
