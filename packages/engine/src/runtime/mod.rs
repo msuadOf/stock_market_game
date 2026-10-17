@@ -64,6 +64,7 @@ pub mod world;
 pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
 pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, RoutedPrice};
+pub use protocol::{RestingDelta, RestingDeltaEntry, RestingFact};
 
 /// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
 /// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的
