@@ -122,6 +122,10 @@ pub struct DeskReceipt {
 pub enum ReceiptKind {
     /// 带外价拒收：申报价在涨跌停带外。
     PriceOutOfBand,
+    /// 价格笼子拒收：申报价在连续竞价笼子（参考价 ±2% ∨ 十个最小价位）
+    /// 外但**带内**（Sol 终审四审价格族：与带外价区分映射——引擎事件
+    /// 域 RejectionReason::PriceCageExceeded 的 runtime 等价）。
+    PriceCageExceeded,
     /// 买入非整手拒收（须为 100 股整数倍）。
     NotRoundLot,
     /// 超单笔申报上限拒收（主板/创业板差异化上限）。

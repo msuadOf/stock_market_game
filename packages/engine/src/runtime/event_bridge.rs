@@ -181,6 +181,7 @@ pub fn rejection_reason(kind: super::ReceiptKind) -> RejectionReason {
     use super::ReceiptKind as RK;
     match kind {
         RK::PriceOutOfBand => RejectionReason::LimitExceeded,
+        RK::PriceCageExceeded => RejectionReason::PriceCageExceeded,
         RK::NotRoundLot => RejectionReason::InvalidQuantity,
         RK::ExceedsOrderCap => RejectionReason::InvalidQuantity,
         RK::PhaseRejected => RejectionReason::AuctionOrderEntryClosed,

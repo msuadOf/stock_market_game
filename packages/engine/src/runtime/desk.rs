@@ -885,7 +885,16 @@ impl DeskState {
             self.price_bound_for(side, tick, cage)?
         };
         if price < down || price > up {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand);
+            // Sol 终审四审价格族：笼子内限价的带内越界=笼子拒收（区别
+            /// 于涨跌停带外）——两 kind 分开映射引擎事件域的两个
+            /// RejectionReason（PriceCageExceeded/LimitExceeded）。
+            let band = self.price_bound_for(side, tick, false)?;
+            let kind = if price >= band.0 && price <= band.1 {
+                ReceiptKind::PriceCageExceeded
+            } else {
+                ReceiptKind::PriceOutOfBand
+            };
+            self.reject(tick, owner, side, qty, purse, kind);
             return Ok(());
         }
         if purse < 0 || (side == Side::Sell && purse != 0) {

@@ -3540,13 +3540,47 @@ impl GameSession {
                             vec![u64::from(code.0), 0],
                         ))
                     })?;
-                // 镜像档标志回装（空条目占位——save 侧判定
-                /// !mirror.is_empty() 的往返一致性；desk 种子在首拍
-                /// install 重建真实镜像）。
-                sess.state
-                    .desk_book_mirror
-                    .entry(code.clone())
-                    .or_default();
+                // Sol 终审四审游标族：镜像档回装**携带在场委托**——
+                /// 此前空条目占位使 restore 静点（未 step）的 save 投影
+                /// resting_orders 丢失挂单（sparse FIFO key 族显红）；
+                /// desk 种子仍由首拍 install 重建权威，此处回填仅为
+                /// 静点读面/存档往返一致（filled_value 档面已按 A3 修
+                /// 复承载真实累计）。
+                let orders = save
+                    .resting_orders
+                    .get(code)
+                    .map(|orders| {
+                        orders
+                            .iter()
+                            .map(|o| {
+                                (
+                                    o.owner,
+                                    o.side,
+                                    o.price,
+                                    o.qty,
+                                    o.id.0,
+                                    o.filled_value.cents(),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let next_serial = save.book_next_sequences[code];
+                let last_price = market.last_price();
+                sess.state.desk_book_mirror.insert(
+                    code.clone(),
+                    DeskBookMirror {
+                        orders,
+                        last_price,
+                        public_cutoff_serial: save
+                            .runtime_state
+                            .book_public_cutoff_sequences
+                            .get(code)
+                            .copied()
+                            .unwrap_or(0),
+                        next_serial,
+                    },
+                );
                 continue;
             }
             let orders = save
