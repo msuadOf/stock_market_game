@@ -1715,3 +1715,294 @@ fn sol5c_symbolic_four_directions_purse_thresholds() {
         let _ = world.shutdown();
     }
 }
+
+// ═══ Sol 三轮修复测试：Continue 跨轮交付 / serial 唯一 / 卖向跨笼子 ═══
+
+/// Sol 三轮修复 1：Continue 链上早轮事实不丢——轮 0 的市价余量撤销
+/// （Cancelled）与挂簿受理（Accepted）必须进最终 TickRecord（此前
+/// Continue 分支丢弃早轮 evidence，轮 0 事实静默消失）。
+#[test]
+fn sol3r_continue_preserves_early_round_facts() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, round| {
+            let mut plan = TickPlan::default();
+            if tick == 1 && round == 0 {
+                plan.places.push(buy(0, 0, 1000, 100));
+                plan.continuation = true; // 触发 Continue（本轮事实在早轮）
+            }
+            plan
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    // 轮 0 处理的空盘市价单：Cancelled 事实产生于早轮。
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 1,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Market,
+            purse_reference: 1100,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛（含 Continue 轮）");
+    let rec = &world.report_log[0];
+    assert_eq!(rec.rounds, 1, "前置：发生了一次 Continue（两轮）");
+    assert!(
+        rec.desk_lifecycle.iter().any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Cancelled,
+                remaining: 100,
+                owner: (0, 1),
+                ..
+            }
+        )),
+        "轮 0 的市价撤销事实必须进终轮 TickRecord：{:?}",
+        rec.desk_lifecycle
+    );
+    assert!(
+        rec.desk_lifecycle.iter().any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Accepted,
+                owner: (0, 0),
+                ..
+            }
+        )),
+        "轮 0 的受理事实必须进终轮 TickRecord：{:?}",
+        rec.desk_lifecycle
+    );
+}
+
+/// Sol 三轮修复 2：即时单序号推进——同账户同股连续两笔空盘市价单的
+/// Cancelled 订单 ID 必须互异，后续挂簿单不复用（此前取号不推进，
+/// 两条 Cancelled 同 ID、挂簿单复用）。
+#[test]
+fn sol3r_immediate_orders_consume_unique_serials() {
+    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+        Box::new(|_t, _r| TickPlan::default())
+    }));
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    let mut cancelled_serials = Vec::new();
+    for _ in 0..2 {
+        world.broadcast_external_plan(
+            vec![PendingOp {
+                local: 0,
+                stock: 0,
+                side: Side::Buy,
+                routed: RoutedPrice::Market,
+                purse_reference: 1100,
+                qty: 100,
+            }],
+            vec![],
+        );
+        world.run_ticks(1).expect("空盘市价拍");
+        let rec = world.report_log.last().expect("记录");
+        let serial = rec
+            .desk_lifecycle
+            .iter()
+            .find_map(|f| match f {
+                super::protocol::DeskLifecycleFact {
+                    kind: super::protocol::LifecycleKind::Cancelled,
+                    owner: (0, 0),
+                    order_serial,
+                    ..
+                } => Some(*order_serial),
+                _ => None,
+            })
+            .expect("市价撤销事实");
+        cancelled_serials.push(serial);
+    }
+    assert_ne!(
+        cancelled_serials[0], cancelled_serials[1],
+        "两笔即时单的订单 ID 必须互异：{cancelled_serials:?}"
+    );
+    // 后续挂簿单不复用已耗序号：限价挂簿 Accepted serial 严格更大。
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Fixed(1000),
+            purse_reference: 1000,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("挂簿拍");
+    let rec = world.report_log.last().expect("记录");
+    let accepted = rec
+        .desk_lifecycle
+        .iter()
+        .find_map(|f| match f {
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Accepted,
+                owner: (0, 0),
+                order_serial,
+                ..
+            } => Some(*order_serial),
+            _ => None,
+        })
+        .expect("挂簿受理");
+    assert!(
+        accepted > cancelled_serials[0] && accepted > cancelled_serials[1],
+        "挂簿单不复用已耗序号：accepted={accepted} cancelled={cancelled_serials:?}"
+    );
+}
+
+/// Sol 三轮补强：失败重跑恰一次——轮 0 注入失败 Abort 后重跑，撤销/
+/// 受理事实恰一条（不重复、不丢失）。
+#[test]
+fn sol3r_failed_tick_retry_emits_facts_exactly_once() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|_t, _r| TickPlan::default())
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Market,
+            purse_reference: 1100,
+            qty: 100,
+        }],
+        vec![],
+    );
+    let fail: super::coordinator::Validator = Box::new(|ev: &super::coordinator::TickEvidence| {
+        if ev.tick == 1 && ev.round == 0 {
+            Err("注入：轮 0 失败".to_owned())
+        } else {
+            Ok(())
+        }
+    });
+    world.set_validator(fail);
+    assert!(world.run_ticks(1).is_err(), "注入失败必须显式失败");
+    world.set_validator(Box::new(|_| Ok(())));
+    // world 级约定：失败拍已消费注入（组端 take 后随 Abort 回滚不返还
+    /// 队列），重跑由调用方重播（drive 层等价=restore_runtime_player_
+    /// intents 回灌后重注入）。
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Market,
+            purse_reference: 1100,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("重跑成功");
+    assert_eq!(world.report_log.len(), 1, "重跑恰一条 TickRecord");
+    let rec = &world.report_log[0];
+    let cancelled = rec
+        .desk_lifecycle
+        .iter()
+        .filter(|f| matches!(f.kind, super::protocol::LifecycleKind::Cancelled))
+        .count();
+    assert_eq!(cancelled, 1, "撤销事实恰一次（不因重跑重复）");
+}
+
+/// Sol 三轮补强：卖向跨笼子——市价卖保护=纯跌停（笼子只作用限价）。
+/// fixture：买盘 950/900 两档、跌停 900、笼子开（卖下限 min(980,990)）
+/// ⇒ 此前市价卖被钳 980，950<980 不交叉全撤；修后吃 950、900 两档
+/// （900 笼子下限以下也吃）。手算（市价卖 200，maker 价两档）：
+/// - 卖方毛额 95_000+90_000=185_000；单张费用：佣金 max(46.25→46,
+///   500)=500、印花 round(92.5)=92（银行家舍入取偶）、过户 round(1.85)
+///   =2 ⇒ 净得 184_406；
+/// - 逐腿实收（边际）：腿 1（95_000）=500+48+1=549；腿 2=0+44+1=45。
+#[test]
+fn sol3r_market_sell_walks_bids_below_cage() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![buy(0, 0, 950, 100), buy(0, 0, 900, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    // 笼子保持开启（默认）——本测试验证卖向不被笼子钳。
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 1,
+            stock: 0,
+            side: Side::Sell,
+            routed: RoutedPrice::Market,
+            purse_reference: 900,
+            qty: 200,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let rec = &world.report_log[0];
+    let trades: Vec<(u32, i64, i64)> = rec
+        .desk_trades
+        .iter()
+        .map(|f| (f.qty, f.price, f.maker_fees_cents))
+        .collect();
+    assert_eq!(
+        trades,
+        vec![(100, 950, 549), (100, 900, 45)],
+        "卖向跨笼子两档全吃（maker 价），逐腿卖方费用边际拆分：{trades:?}"
+    );
+    let report = world.shutdown().expect("关停");
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.shares[0], 800, "基线 1000−卖 200");
+    assert_eq!(
+        a1.cash,
+        1_000_000 + 184_406,
+        "卖方净得 185_000−（佣金 500+印花 92+过户 2）"
+    );
+}
+
+/// Sol 三轮补强：收盘竞价异价多档也按单一清算价结算（Drain 清算面）。
+/// fixture：收盘窗（day_tick 27-29，tpd=30）挂卖 900×100+卖 1000×100、
+/// 买 1000×200 ⇒ 清算 1000（候选最大量 200），两笔均 1000，卖 1000
+/// 档余 100 随日终清簿。买方实付 200_000+500+2=200_502（若按 maker
+/// 异价结算则为 190_000+费用——判别面）。
+#[test]
+fn sol3r_closing_multi_level_settles_at_clearing_price() {
+    // 收盘窗（day_tick 27-29）内申报：限价买卖均合法（14:57-15:00
+    /// 接受限价申报、不可撤、日终一次撮合）。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            27 => place_at(
+                27,
+                vec![
+                    buy(0, 0, 1000, 200),
+                    sell(1, 0, 900, 100),
+                    sell(1, 0, 1000, 200),
+                ],
+            ),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 3;
+    spec.config = config_with_cage(false);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(29).expect("进收盘窗（申报积累）");
+    world.run_day_end_public().expect("日结（收盘清算+Drain）");
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_200, "买 200 股（清算 1000 单价）");
+    assert_eq!(
+        a0.cash,
+        1_000_000 - 200_502,
+        "实付=200×清算价 1000+佣金 500+过户 2（单一价格——非 maker 异价 190_000）"
+    );
+    assert_eq!(report.desk_finals[0].market.volume_today, 200);
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.shares[0], 800, "卖 200（余 100 随清簿 Drain 退回）");
+}

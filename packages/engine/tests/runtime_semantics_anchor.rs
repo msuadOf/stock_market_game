@@ -939,3 +939,162 @@ fn sol4_lowest_buy_purse_reserves_at_daily_lower_limit() {
     let views = driver.world_public_views();
     assert_eq!(views[0].best_bid, Some(900), "Lowest 买挂簿=跌停 900");
 }
+
+/// Sol 三轮补强：Lowest 买差一分 **drive 级** 边界——玩家现金恰=
+/// 跌停口径 purse（90_501）受理；差一分（90_500）显式 InsufficientCash。
+#[test]
+fn sol3r_lowest_buy_penny_boundary_at_drive_level() {
+    for (cash, want_accepted) in [(90_501i64, true), (90_500, false)] {
+        let mut setup = setup_1stock();
+        setup.auction_ticks = 0;
+        setup.config = engine::config::GameConfig {
+            starting_cash: engine::Money::from_cents(cash),
+            price_cage_enabled: false,
+            ..setup.config.clone()
+        };
+        let mut session = GameSession::new(setup, 199).expect("会话");
+        let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
+        driver.adopt_session_seq(&session);
+        driver
+            .inject_player_intents(
+                &[engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(0),
+                    intent: engine::Intent::PlaceLimit {
+                        code: engine::StockId(0),
+                        side: engine::Side::Buy,
+                        price: engine::strategy::LimitPrice::Lowest,
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                }],
+                &driver
+                    .world_public_views()
+                    .iter()
+                    .map(|v| v.daily_upper_limit)
+                    .collect::<Vec<_>>(),
+            )
+            .expect("注入");
+        let events = driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情");
+        if want_accepted {
+            let views = driver.world_public_views();
+            assert_eq!(
+                views[0].best_bid,
+                Some(900),
+                "现金 {cash}（恰=90_501）：跌停预留受理挂簿"
+            );
+            let accounts = driver.world_accounts_snapshot().expect("快照");
+            assert_eq!(accounts[0].1[0].cash, 0, "purse 全额预留");
+        } else {
+            assert!(
+                events.iter().any(|e| matches!(
+                    e,
+                    Event::IntentRejected {
+                        account: engine::AccountId(0),
+                        reason: engine::RejectionReason::InsufficientCash,
+                        ..
+                    }
+                )),
+                "现金 {cash}（差一分）：必须显式 InsufficientCash：{events:?}"
+            );
+        }
+    }
+}
+
+/// Sol 三轮补强：同账户同股多请求精确回执计数（.any() 抓不到重复）
+/// + 订单身份唯一性（OrderCanceled 的 id 互异——即时单序号推进面）。
+#[test]
+fn sol3r_multi_request_exact_receipt_counts_and_unique_ids() {
+    let mut setup = setup_1stock();
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 199).expect("会话");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    let uppers: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    // 三笔非整手卖（同账户同股）⇒ 恰三条 InvalidQuantity 回执。
+    driver
+        .inject_player_intents(
+            &(0..3)
+                .map(|_| engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(1),
+                    intent: engine::Intent::PlaceLimit {
+                        code: engine::StockId(0),
+                        side: engine::Side::Sell,
+                        price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
+                            1_000,
+                        )),
+                        qty: 150,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                })
+                .collect::<Vec<_>>(),
+            &uppers,
+        )
+        .expect("注入");
+    let mut events = driver
+        .step_frame_equivalent(&mut session)
+        .expect("回执拍");
+    let lot_rejects = events
+        .iter()
+        .filter(|e| matches!(
+            e,
+            Event::IntentRejected {
+                account: engine::AccountId(1),
+                reason: engine::RejectionReason::InvalidQuantity,
+                ..
+            }
+        ))
+        .count();
+    assert_eq!(
+        lot_rejects, 3,
+        "三笔非法零股卖 ⇒ 恰三条回执（不多不少）：{events:?}"
+    );
+    // 两笔空盘市价买 ⇒ 恰两条 OrderCanceled 且 id 互异。
+    for _ in 0..2 {
+        driver
+            .inject_player_intents(
+                &[engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(0),
+                    intent: engine::Intent::PlaceMarket {
+                        code: engine::StockId(0),
+                        side: engine::Side::Buy,
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                }],
+                &uppers,
+            )
+            .expect("注入");
+        let evs = driver
+            .step_frame_equivalent(&mut session)
+            .expect("市价拍");
+        events.extend(evs);
+    }
+    let cancel_ids: Vec<u64> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::OrderCanceled {
+                account: engine::AccountId(0),
+                id,
+                remaining_qty: 100,
+                ..
+            } => Some(id.0),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        cancel_ids.len(),
+        2,
+        "两笔空盘市价买 ⇒ 恰两条余量撤销：{cancel_ids:?}"
+    );
+    assert_ne!(cancel_ids[0], cancel_ids[1], "订单 ID 必须互异（序号推进）");
+}

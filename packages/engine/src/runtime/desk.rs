@@ -888,7 +888,13 @@ impl DeskState {
                 ),
             });
         }
+        // Sol 三轮修复 2（即时单序号推进）：申报取号即消费（A 股语义：
+        /// 每笔申报消耗一个序号）——此前仅在挂簿路径（rest_inner）推进，
+        /// 即成/即撤的即时单不推进，同账户同股连续两笔空盘市价单产生
+        /// **同一订单 ID** 的两条 Cancelled，后续挂簿单复用该 ID。
         let order_ref = (self.setup.stock, self.next_serial);
+        self.next_serial += 1;
+        self.undo.push(DeskUndo::Serial);
         let order = DeskOrder {
             order_ref,
             owner,
@@ -970,9 +976,9 @@ impl DeskState {
     }
 
     /// 挂簿共用段（返回本单的 Accepted 生命周期事实——调用方决定是否记录）。
+    /// 序号已在 place() 取号点消费（Sol 三轮修复 2）——此处不再推进；
+    /// restore 种子路径的 next_serial 由 seed.serial+1 的 max 维护。
     fn rest_inner(&mut self, order: DeskOrder) -> super::protocol::DeskLifecycleFact {
-        self.next_serial += 1;
-        self.undo.push(DeskUndo::Serial);
         let idx = if order.side == Side::Buy {
             &mut self.self_bids
         } else {

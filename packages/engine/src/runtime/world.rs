@@ -1411,8 +1411,19 @@ impl World {
             }
             broadcast_start(&self.group_txs, tick, self.civil_date, &self.public_views)?;
             let mut rounds = 0u32;
+            // Sol 三轮修复 1（Continue 丢早轮事实）：跨轮事实累积器——
+            // Continue 链上每一轮的成交/生命周期/回执/组端拒绝/竞价
+            // 事实都必须进入最终 TickRecord（恰一次；此前早轮 evidence
+            // 在 Continue 分支被丢弃，轮 0 的 IntentRejected/Cancelled
+            // 静默消失）。
+            let mut acc_trades = Vec::new();
+            let mut acc_lifecycle = Vec::new();
+            let mut acc_receipts = Vec::new();
+            let mut acc_group_rejections = Vec::new();
+            let mut acc_auction = Vec::new();
+            let mut acc_entities_out = 0u64;
             loop {
-                let evidence = self.converge_or_die(tick, rounds)?;
+                let mut evidence = self.converge_or_die(tick, rounds)?;
                 if let Err(detail) = (self.validator)(&evidence) {
                     self.abort_tick(tick);
                     return Err(RuntimeError::TickValidation {
@@ -1450,6 +1461,13 @@ impl World {
                     }
                     let _ = tx.send(GroupIn::AcceptedBatch { entries });
                 }
+                // 累积本轮事实（终轮合并进 TickRecord——早轮不丢）。
+                acc_trades.extend(evidence.desk_trades.iter().copied());
+                acc_lifecycle.extend(evidence.desk_lifecycle.iter().copied());
+                acc_receipts.extend(evidence.desk_receipts.iter().copied());
+                acc_group_rejections.extend(evidence.group_rejections.iter().copied());
+                acc_auction.extend(evidence.desk_auction.iter().copied());
+                acc_entities_out += evidence.entities_out;
                 if evidence.continuation_any {
                     let next = rounds + 1;
                     if next > self.rounds_cap {
@@ -1462,6 +1480,14 @@ impl World {
                     broadcast_continue(&self.group_txs, tick, next)?;
                     rounds = next;
                 } else {
+                    // 终轮：以累积事实替换终轮单轮快照（恰一次进
+                    // TickRecord——含全部 Continue 轮）。
+                    evidence.desk_trades = acc_trades;
+                    evidence.desk_lifecycle = acc_lifecycle;
+                    evidence.desk_receipts = acc_receipts;
+                    evidence.group_rejections = acc_group_rejections;
+                    evidence.desk_auction = acc_auction;
+                    evidence.entities_out = acc_entities_out;
                     self.install_tick(tick, rounds, evidence);
                     break;
                 }
