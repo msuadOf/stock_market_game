@@ -21,7 +21,9 @@ use resting_index::{RestingKey, RestingOrderIndex};
 use crate::money::{Money, MoneyError};
 
 /// 买卖方向。
-#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(
+    Copy, Clone, Eq, PartialEq, Hash, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS,
+)]
 pub enum Side {
     /// 买单（愿意买入）。
     Buy,

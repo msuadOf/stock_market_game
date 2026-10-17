@@ -2610,6 +2610,15 @@ impl GameSession {
     }
 
     /// 账户数量（含玩家）。
+    /// P2-4b 红证旋钮通道（cfg(test)）：常驻 runtime 驱动器的测试面
+    /// 访问（跨模块测试驱动旋钮——字段私有，经此受控暴露）。
+    #[cfg(test)]
+    pub fn runtime_driver_for_test(
+        &self,
+    ) -> Option<&std::sync::Mutex<crate::runtime::drive::RuntimeDriver>> {
+        self.runtime_driver.as_ref()
+    }
+
     pub fn account_count(&self) -> usize {
         self.state.accounts.len()
     }

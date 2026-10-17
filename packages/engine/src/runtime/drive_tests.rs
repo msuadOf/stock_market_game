@@ -2939,3 +2939,233 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
         "错误必须指明稀疏回声缺项（got: {err}）"
     );
 }
+
+/// P2-4b 等价守卫辅助：同 fixture 同种子经 session 侧 step_via_runtime
+/// 跑 N 拍（信封增量维护在生产路径 step_via_runtime 内——driver 直调
+/// step_frame_equivalent 不经该段，守卫必须走 session 步进）。可选每拍
+/// 强制全量重建信封账本（增量路径的对照臂）。场景覆盖差分三分面：
+/// Added（t==3 挂单卖不交叉）、Changed（t==8 大买单部分成交——余量/
+/// 费用累计变化）、Removed（t==6 撤 t==3 挂单）。
+fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<String>) {
+    use crate::session::Event;
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 4;
+    setup.auction_ticks = 1;
+    let mut game = GameSession::new(setup, 21).expect("会话构造");
+    let seller = [crate::AccountId(1), crate::AccountId(2)]
+        .into_iter()
+        .find(|id| {
+            game.account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("至少一个 NPC 开局持有股 0");
+    let buyer = if seller == crate::AccountId(1) {
+        crate::AccountId(2)
+    } else {
+        crate::AccountId(1)
+    };
+    let resting_owner = [crate::AccountId(1), crate::AccountId(2), crate::AccountId(3)]
+        .into_iter()
+        .find(|id| {
+            game.account(*id).is_some_and(|a| {
+                // 判别面前置：t==5 的 800 股限价买 purse ≈ 81 万分（涨停
+                // 1100 保护价×1.001 费率上限）——现金须覆盖，否则组端
+                // 静默跳过、Changed 面消失。
+                a.sellable_qty(&crate::StockId(1)) >= 100
+                    && a.cash().cents() >= 900_000
+            })
+        })
+        .expect("至少一个 NPC 开局持有股 1 且现金 ≥90 万分");
+    crate::runtime::drive::RESTING_DELTA_FACE_COUNTS.with(|slot| {
+        *slot.borrow_mut() = Some(std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0))))
+    });
+    let mut digest = Vec::new();
+    let mut resting_order_id: Option<crate::OrderId> = None;
+    for t in 1..=11u64 {
+        // 逐拍成交驱动：t2-t4 买卖交叉；t5 起卖腿持续对 t==5 挂出的
+        /// 800 股限价买逐拍部分成交（Changed 面每拍发生且**期末仍在册**
+        ///——中间态被期末对账吞掉的教训：瞬时 Changed 单期末已清空，
+        /// 跳过更新不改变终态）。
+        let mut intents: Vec<(crate::AccountId, crate::Intent)> = vec![(
+            seller,
+            crate::Intent::PlaceLimit {
+                code: crate::StockId(0),
+                side: crate::orderbook::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                    1000,
+                )),
+                qty: 100,
+            },
+        )];
+        if (2..=4).contains(&t) {
+            intents.push((
+                buyer,
+                crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                        1000,
+                    )),
+                    qty: 100,
+                },
+            ));
+        }
+        if t == 5 {
+            intents.push((
+                resting_owner,
+                crate::Intent::PlaceLimit {
+                    code: crate::StockId(0),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                        1000,
+                    )),
+                    qty: 800,
+                },
+            ));
+        }
+        if t == 3 {
+            intents.push((
+                resting_owner,
+                crate::Intent::PlaceLimit {
+                    code: crate::StockId(1),
+                    side: crate::orderbook::Side::Sell,
+                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                        2050,
+                    )),
+                    qty: 100,
+                },
+            ));
+        }
+        if t == 6 {
+            let Some(id) = resting_order_id else {
+                panic!("t==3 挂单须先受理（OrderId 捕获缺失——fixture 前提破坏）");
+            };
+            intents.push((
+                resting_owner,
+                crate::Intent::Cancel {
+                    code: crate::StockId(1),
+                    id,
+                },
+            ));
+        }
+        // NPC 账户意图经驱动器外部路由注入（enqueue_player_intent 仅收
+        // 玩家账户；外部路由接受全部名册 owner——p2_4a 同式）。
+        // 首拍先空跑建立常驻驱动器，旋钮与注入自第二拍起。
+        if t == 1 {
+            game.step_via_runtime().expect("首拍（驱动器惰性构造）");
+            let mut driver = game
+                .runtime_driver_for_test()
+                .expect("首拍后常驻驱动器在位")
+                .lock()
+                .expect("驱动器锁");
+            driver.set_force_full_envelope_rebuild_for_test(force_full_envelope);
+        } else {
+            let mut driver = game
+                .runtime_driver_for_test()
+                .expect("常驻驱动器在位")
+                .lock()
+                .expect("驱动器锁");
+            let upper: Vec<i64> = driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect();
+            let receipt_intents: Vec<crate::session::ReceiptBearingIntent> = intents
+                .into_iter()
+                .map(|(owner, intent)| crate::session::ReceiptBearingIntent {
+                    owner,
+                    intent,
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                })
+                .collect();
+            driver
+                .inject_player_intents(&receipt_intents, &upper)
+                .expect("外部意图注入");
+        }
+        let events = game.step_via_runtime().expect("session 步进");
+        for event in &events {
+            if let Event::OrderAccepted {
+                account,
+                code,
+                id,
+                ..
+            } = event
+            {
+                if *account == resting_owner && *code == crate::StockId(1) {
+                    resting_order_id = Some(*id);
+                }
+            }
+        }
+        digest.extend(events.iter().map(|e| {
+            let s = format!("{e:?}");
+            match s.find("seq: ") {
+                Some(start) => {
+                    let after = &s[start + 5..];
+                    let end = after.find(", ").map(|i| start + 5 + i).unwrap_or(s.len());
+                    format!("{}seq: _{}", &s[..start], &s[end..])
+                }
+                None => s,
+            }
+        }));
+        digest.sort();
+    }
+    // 判别力前置：差分三面必须都真实发生——否则等价守卫对相应分支
+    // 零判别（守卫曾因 driver 直调不经信封段而恒绿的教训——前置使
+    // fixture 退化显式失败）。
+    if !force_full_envelope {
+        // Changed 面的期末在册前置：800 股限价买期末仍有余量（部分
+        // 成交逐拍变化且未清空——跳过 Changed 更新会使期末信封余量
+        // 停留在挂出值，哈希可判别）。
+        {
+            let mut driver = game
+                .runtime_driver_for_test()
+                .expect("常驻驱动器在位")
+                .lock()
+                .expect("驱动器锁");
+            let facts = driver.collect_resting_facts().expect("期末在途单收集");
+            let local = driver
+                .id_map
+                .iter()
+                .position(|id| *id == resting_owner)
+                .expect("挂单腿账户在名册");
+            let stock0_resting: Vec<u32> = facts[0]
+                .iter()
+                .filter(|f| f.owner == (0u16, local as u32))
+                .map(|f| f.qty)
+                .collect();
+            assert!(
+                stock0_resting.iter().any(|&q| q > 0 && q < 800),
+                "期末股 0 须有部分成交余量在册（100<qty<800）：{stock0_resting:?}"
+            );
+        }
+        let (added, removed, changed) = crate::runtime::drive::RESTING_DELTA_FACE_COUNTS
+            .with(|slot| {
+                let counts = slot.borrow_mut().take().expect("面计数器在位");
+                let c = counts.lock().expect("面计数锁");
+                (c.0, c.1, c.2)
+            });
+        assert!(added >= 1, "Added 面必须真实发生（差分判别前置）：{added}");
+        assert!(removed >= 1, "Removed 面必须真实发生（差分判别前置）：{removed}");
+        assert!(
+            changed >= 1,
+            "Changed 面必须真实发生（差分判别前置）：{changed}"
+        );
+    }
+    (
+        game.business_state_hash().expect("业务哈希"),
+        digest,
+    )
+}
+
+/// P2-4b 等价守卫（协调者批文要求的 hash 等价守卫）：增量维护信封账本
+/// vs 每拍全量重建——期末业务哈希（含 envelope_ledger.hash_projection）
+/// 与事件序列逐位一致。差分漏项/错值/漏删时显红。
+#[test]
+fn p2_4b_envelope_incremental_matches_full_rebuild() {
+    let (inc_hash, inc_events) = p2_4b_run(false);
+    let (full_hash, full_events) = p2_4b_run(true);
+    assert!(!inc_events.is_empty(), "场景须产生事件");
+    assert_eq!(inc_hash, full_hash, "期末业务哈希（含信封投影）必须逐位一致");
+    assert_eq!(inc_events, full_events, "事件序列必须逐位一致");
+}

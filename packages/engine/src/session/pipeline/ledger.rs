@@ -171,6 +171,66 @@ impl EnvelopeLedger {
         cache.project(&self.envelopes)
     }
 
+    /// P2-4b：runtime 路径信封增量安装（upsert——新增或整值替换）。
+    /// 与 [`Self::new`] 的等价合同：envelope.validate 同校验；audits 随
+    /// envelope 替换；conservation 恒 EMPTY（runtime 路径无回执流，
+    /// 全量重建每拍也恒 EMPTY——非 EMPTY 即结构性漂移，显式拒绝）。
+    /// 原位变更后清派生缓存（reservation/evidence——全量重建路径每拍
+    /// 整替新对象天然使缓存失效，增量路径显式清空对齐该语义）。
+    pub(in crate::session) fn upsert_runtime_envelope(
+        &mut self,
+        envelope: Envelope,
+    ) -> Result<(), StepFatal> {
+        envelope.validate()?;
+        let key = envelope.key().clone();
+        let audit = envelope.audit();
+        if self.conservation.get(&key).is_some_and(|c| *c != ConservationState::EMPTY) {
+            return Err(ledger_validation::invariant(
+                "runtime 增量安装遇到非空 conservation（runtime 路径无回执流——结构性漂移）",
+            ));
+        }
+        self.envelopes.insert(key.clone(), envelope);
+        self.audits.insert(key.clone(), audit);
+        self.conservation.insert(key, ConservationState::EMPTY);
+        self.clear_runtime_projection_caches();
+        Ok(())
+    }
+
+    /// P2-4b：runtime 路径信封增量移除（离册：成交清余量/撤单/到期/
+    /// 日终清簿）。键缺席=差分与账本漂移，显式拒绝（不静默）。
+    pub(in crate::session) fn remove_runtime_envelope(
+        &mut self,
+        key: &EnvelopeKey,
+    ) -> Result<(), StepFatal> {
+        if self.envelopes.get(key).is_none() {
+            return Err(ledger_validation::invariant(&format!(
+                "runtime 增量移除遇到缺席键（差分与账本漂移）：{key:?}"
+            )));
+        }
+        self.envelopes.remove(key);
+        self.audits.remove(key);
+        self.conservation.remove(key);
+        self.clear_runtime_projection_caches();
+        Ok(())
+    }
+
+    /// P2-4b：receipt 序号面对齐（全量重建每拍以 session.next_receipt_base
+    /// 重建——增量路径同拍显式同步，保持 hash 投影逐位一致）。
+    pub(in crate::session) fn sync_runtime_receipt_index(&mut self, next_receipt_index: u64) {
+        self.next_receipt_index = next_receipt_index;
+    }
+
+    /// P2-4b：派生缓存清空（原位变更后——预留投影/证据缓存都按对象
+    /// 身份失效，增量路径无整替，显式清空对齐全量重建语义）。
+    fn clear_runtime_projection_caches(&mut self) {
+        if let Ok(mut cache) = self.reservation_cache.lock() {
+            *cache = super::live_reservations::ReservationCache::default();
+        }
+        if let Ok(mut cache) = self.evidence_cache.lock() {
+            *cache = None;
+        }
+    }
+
     pub fn apply(&mut self, receipts: &mut [EnvelopeReceipt]) -> Result<(), StepFatal> {
         self.apply_with_normalizer(receipts, ledger_candidate::normalize)
     }

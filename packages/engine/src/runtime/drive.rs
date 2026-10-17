@@ -57,6 +57,13 @@ pub struct RuntimeDriver {
     pending_hold_inits: Vec<(crate::AccountId, crate::StockId, u32, i64)>,
     /// 已投递的库版本（Belief-1b·下：稀疏判据）。
     last_library_version: Option<u32>,
+    /// P2-4b：上一拍在途单快照基线（信封账本增量维护的差分源——
+    /// None=基线缺失，首拍全量重建后建立）。
+    resting_echo_prev: Option<Vec<Vec<super::protocol::RestingFact>>>,
+    /// P2-4a→4b 红证旋钮（cfg(test)）：强制每拍全量重建信封账本
+    ///（增量路径 A/B 等价守卫的对照臂）。
+    #[cfg(test)]
+    force_full_envelope_rebuild: bool,
 }
 
 impl RuntimeDriver {
@@ -412,6 +419,9 @@ impl RuntimeDriver {
             accounts_per_group: per_group.max(1),
             pending_hold_inits: Vec::new(),
             last_library_version: None,
+            resting_echo_prev: None,
+            #[cfg(test)]
+            force_full_envelope_rebuild: false,
         };
         Ok(driver)
     }
@@ -1027,6 +1037,103 @@ impl RuntimeDriver {
         self.world
             .collect_desk_resting()
             .map_err(|e| format!("在途单快照收集失败：{e:?}"))
+    }
+
+    /// P2-4b：对相邻两拍在途单快照差分（信封账本增量维护输入）。
+    /// 键=(股下标, Owner, side, order_serial)；值变化（部分成交）按
+    /// Changed 整值替换。基线缺失（构造后首拍/红证强制）返回
+    /// full_rebuild 并以本拍建立基线。**等价合同**：给定基线=上一拍
+    /// 快照，本差分应用后的账本内容 == 以本拍快照全量重建的内容
+    ///（守卫：p2_4b_envelope_incremental_matches_full_rebuild）。
+    pub fn resting_delta_since_last_echo(
+        &mut self,
+        current: &[Vec<super::protocol::RestingFact>],
+    ) -> super::protocol::RestingDelta {
+        #[cfg(test)]
+        if self.force_full_envelope_rebuild {
+            self.resting_echo_prev = Some(current.to_vec());
+            return super::protocol::RestingDelta {
+                full_rebuild: true,
+                entries: Vec::new(),
+            };
+        }
+        let Some(prev) = self.resting_echo_prev.take() else {
+            self.resting_echo_prev = Some(current.to_vec());
+            return super::protocol::RestingDelta {
+                full_rebuild: true,
+                entries: Vec::new(),
+            };
+        };
+        let mut delta = super::protocol::RestingDelta {
+            full_rebuild: false,
+            entries: Vec::new(),
+        };
+        // 股数不一致（世界重建/构造形态变化）：快照面错配，退全量
+        ///（不静默截断差分）。前置判——zip 截断不产生半截差分。
+        if prev.len() != current.len() {
+            self.resting_echo_prev = Some(current.to_vec());
+            return super::protocol::RestingDelta {
+                full_rebuild: true,
+                entries: Vec::new(),
+            };
+        }
+        for (stock, (cur_book, prev_book)) in current.iter().zip(prev.iter()).enumerate() {
+            // 键控差分（O(n)——首版逐项线性扫 O(n²) 在 resting ~4700 时
+            /// 每股每拍 2200 万次比较，1000 tick 长跑 271→135 显著回退，
+            /// 实测打回）。
+            let mut prev_index: std::collections::HashMap<
+                (super::Owner, crate::orderbook::Side, u64),
+                &super::protocol::RestingFact,
+            > = prev_book
+                .iter()
+                .map(|f| ((f.owner, f.side, f.order_serial), f))
+                .collect();
+            for fact in cur_book {
+                match prev_index.remove(&(fact.owner, fact.side, fact.order_serial)) {
+                    None => delta.entries.push(super::protocol::RestingDeltaEntry::Added {
+                        stock: stock as super::StockIdx,
+                        fact: fact.clone(),
+                    }),
+                    Some(prev_fact) if prev_fact != fact => {
+                        delta.entries.push(super::protocol::RestingDeltaEntry::Changed {
+                            stock: stock as super::StockIdx,
+                            fact: fact.clone(),
+                        })
+                    }
+                    Some(_) => {}
+                }
+            }
+            for (_, fact) in prev_index {
+                delta
+                    .entries
+                    .push(super::protocol::RestingDeltaEntry::Removed {
+                        stock: stock as super::StockIdx,
+                        owner: fact.owner,
+                        side: fact.side,
+                        order_serial: fact.order_serial,
+                    });
+            }
+        }
+        self.resting_echo_prev = Some(current.to_vec());
+        #[cfg(test)]
+        if let Some(counts) = crate::runtime::drive::RESTING_DELTA_FACE_COUNTS.with(|c| c.borrow().clone()) {
+            let mut counts = counts.lock().expect("面计数锁");
+            for e in &delta.entries {
+                match e {
+                    super::protocol::RestingDeltaEntry::Added { .. } => counts.0 += 1,
+                    super::protocol::RestingDeltaEntry::Removed { .. } => counts.1 += 1,
+                    super::protocol::RestingDeltaEntry::Changed { .. } => counts.2 += 1,
+                }
+            }
+        }
+        delta
+    }
+
+    /// P2-4b 红证旋钮（cfg(test)）：强制每拍全量重建信封账本（A/B
+    /// 等价守卫对照臂）。
+    #[cfg(test)]
+    pub fn set_force_full_envelope_rebuild_for_test(&mut self, on: bool) {
+        self.force_full_envelope_rebuild = on;
     }
 
     /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
@@ -2087,4 +2194,14 @@ fn resting_order_seeds_from_session(
         }
     }
     Ok(seeds)
+}
+
+
+/// P2-4b 判别面前置（cfg(test)）：差分三面计数（Added/Removed/Changed）
+/// ——等价守卫的 fixture 前置断言数据源。
+#[cfg(test)]
+thread_local! {
+    pub static RESTING_DELTA_FACE_COUNTS: std::cell::RefCell<
+        Option<std::sync::Arc<std::sync::Mutex<(usize, usize, usize)>>>
+    > = const { std::cell::RefCell::new(None) };
 }

@@ -560,7 +560,14 @@ impl GameSession {
         };
         // D5 envelope 投影：desk 在途单重建 session 信封账本（审计面——
         /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
-        ///（与事件 id 一致）。下拍重建覆盖（权威在 desk）。
+        ///（与事件 id 一致））。权威在 desk。
+        // P2-4b：增量维护——相邻两拍在途单差分（增/删/改）原位应用，
+        /// 取代每拍 O(resting) 全量重建+全量 drop（insert 4.77%+drop
+        /// 4.13% 样本，resting 存量 305→4766 随时长增长）。等价合同：
+        /// 增量应用后的账本内容 == 以本拍快照全量重建的内容（守卫
+        /// p2_4b_envelope_incremental_matches_full_rebuild；全量读面/
+        /// save/hash 均按内容消费，内容等价即全读面等价）。基线缺失
+        ///（构造后首拍/红证强制/股面错配）退全量重建。
         let resting_by_stock = match driver.collect_resting_facts() {
             Ok(facts) => facts,
             Err(e) => {
@@ -571,79 +578,109 @@ impl GameSession {
                 }));
             }
         };
-        let mut envelopes = Vec::new();
-        for (stock_idx, facts) in resting_by_stock.iter().enumerate() {
-            for fact in facts {
-                let Some(account) = driver.account_by_local(u16::try_from(fact.owner.1).expect("local 下标在 u16")) else {
-                    continue;
-                };
-                let code = crate::StockId(u32::from(stock_idx as u16));
-                let key = crate::session::pipeline::EnvelopeKey {
-                    account,
-                    stock: code,
-                    order: crate::OrderId(fact.order_serial),
-                    side: fact.side,
-                };
-                let nominal = match crate::runtime::fees::FeeQuote::nominal(
-                    &self.state.setup.config,
-                    fact.side,
-                    crate::money::Money::from_cents(fact.filled_value),
-                ) {
-                    Ok(nominal) => nominal,
-                    Err(e) => {
-                        self.rollback_runtime_step(baseline);
-                        return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                            location: "GameSession::step_via_runtime::envelope".to_owned(),
-                            description: format!("名义费用重算失败：{e:?}"),
-                        }));
+        let delta = driver.resting_delta_since_last_echo(&resting_by_stock);
+        if delta.full_rebuild {
+            let mut envelopes = Vec::new();
+            for (stock_idx, facts) in resting_by_stock.iter().enumerate() {
+                for fact in facts {
+                    match runtime_resting_envelope(
+                        driver,
+                        &self.state.setup.config,
+                        stock_idx,
+                        fact,
+                    ) {
+                        Ok(Some(envelope)) => envelopes.push(envelope),
+                        Ok(None) => {}
+                        Err(description) => {
+                            self.rollback_runtime_step(baseline);
+                            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                                location: "GameSession::step_via_runtime::envelope".to_owned(),
+                                description,
+                            }));
+                        }
                     }
-                };
-                let audit = crate::session::pipeline::EnvelopeAudit {
-                    limit: crate::money::Money::from_cents(fact.price),
-                    remaining_qty: fact.qty,
-                    filled_qty: 0,
-                    filled_value: crate::money::Money::from_cents(fact.filled_value),
-                    nominal: crate::session::pipeline::FeeComponents {
-                        commission: nominal.commission,
-                        stamp_tax: nominal.stamp_tax,
-                        transfer_fee: nominal.transfer_fee,
-                    },
-                    charged: crate::session::pipeline::FeeComponents {
-                        commission: crate::money::Money::from_cents(fact.charged_commission),
-                        stamp_tax: crate::money::Money::from_cents(fact.charged_stamp_tax),
-                        transfer_fee: crate::money::Money::from_cents(fact.charged_transfer_fee),
-                    },
-                };
-                // live resources：买=purse（desk 预留）、卖=余量股数
-                //（ledger 校验 live 行须有资源——全零非法）。
-                let (cash, shares) = if fact.side == crate::orderbook::Side::Buy {
-                    (crate::money::Money::from_cents(fact.purse), 0u32)
-                } else {
-                    (crate::money::Money::ZERO, fact.qty)
-                };
-                // origin=TickStart（save quiet point 校验的 rebased 形态）。
-                envelopes.push(
-                    crate::session::pipeline::Envelope::tick_start_existing(
-                        key, cash, shares, audit,
-                    ),
-                );
+                }
             }
-        }
-        self.mark_external_mutation();
-        self.state.envelope_ledger = match crate::session::pipeline::EnvelopeLedger::new(
-            self.state.next_receipt_base,
-            envelopes,
-        ) {
-            Ok(ledger) => ledger,
-            Err(fatal) => {
-                let fatal = StepFatal::InvariantViolation {
+            self.mark_external_mutation();
+            self.state.envelope_ledger = match crate::session::pipeline::EnvelopeLedger::new(
+                self.state.next_receipt_base,
+                envelopes,
+            ) {
+                Ok(ledger) => ledger,
+                Err(fatal) => {
+                    let fatal = StepFatal::InvariantViolation {
                     location: "GameSession::step_via_runtime::envelope".to_owned(),
                     description: format!("信封账本重建失败：{fatal:?}"),
                 };
                 self.rollback_runtime_step(baseline);
                 return Err(self.poison_runtime_step(fatal));
             }
-        };
+            };
+        } else {
+            // P2-4b：差分原位应用。增/改=同构信封 upsert（与全量路径
+            /// 同一构造函数——数值面同源）；删=键移除（缺席=漂移显式
+            /// 拒绝不静默）；尾同步 receipt 序号面（全量路径每拍以
+            /// next_receipt_base 重建，增量路径显式对齐保持 hash 投影
+            /// 逐位一致）。
+            for entry in &delta.entries {
+                let apply_result = match entry {
+                    crate::runtime::RestingDeltaEntry::Added { stock, fact }
+                    | crate::runtime::RestingDeltaEntry::Changed { stock, fact } => {
+                        match runtime_resting_envelope(
+                            driver,
+                            &self.state.setup.config,
+                            *stock as usize,
+                            fact,
+                        ) {
+                            Ok(Some(envelope)) => self
+                                .state
+                                .envelope_ledger
+                                .upsert_runtime_envelope(envelope)
+                                .map_err(|fatal| fatal.to_string()),
+                            // 名册外 owner：全量路径同语义跳过（账本不含
+                            /// 名册外账户的信封）。
+                            Ok(None) => Ok(()),
+                            Err(description) => Err(description),
+                        }
+                    }
+                    crate::runtime::RestingDeltaEntry::Removed {
+                        stock,
+                        owner,
+                        side,
+                        order_serial,
+                    } => {
+                        let Some(account) = driver.account_by_owner(*owner) else {
+                            // 名册外 owner：从未安装过，无键可删。
+                            continue;
+                        };
+                        let key = crate::session::pipeline::EnvelopeKey {
+                            account,
+                            stock: crate::StockId(u32::from(*stock)),
+                            order: crate::OrderId(*order_serial),
+                            side: *side,
+                        };
+                        self.state
+                            .envelope_ledger
+                            .remove_runtime_envelope(&key)
+                            .map_err(|fatal| fatal.to_string())
+                    }
+                };
+                if let Err(description) = apply_result {
+                    let fatal = StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime::envelope".to_owned(),
+                        description: format!("信封账本增量应用失败：{description}"),
+                    };
+                    self.rollback_runtime_step(baseline);
+                    return Err(self.poison_runtime_step(fatal));
+                }
+            }
+            if !delta.entries.is_empty() {
+                self.mark_external_mutation();
+            }
+            self.state
+                .envelope_ledger
+                .sync_runtime_receipt_index(self.state.next_receipt_base);
+        }
         // D5 attention 公开可见性门禁：desk 簿镜像刷新（瞬态读面源——
         /// snapshot 公开投影/玩家在途/预留；desk 权威事实+公开截点）。
         {
@@ -1808,4 +1845,61 @@ impl GameSession {
             None => Ok(()),
         }
     }
+}
+
+/// P2-4b：在途单事实 → 信封构造（全量重建与增量 upsert 共用——数值面
+/// 同源保证两路径逐位一致：nominal 自费用表重算、charged 直取 desk
+/// 累计、OrderId=serial 域、live resources 买=purse/卖=余量、
+/// origin=TickStart）。owner 名册外（account_by_local 缺席）返回
+/// Ok(None)——两路径同语义跳过（账本不含名册外账户的信封）。
+fn runtime_resting_envelope(
+    driver: &crate::runtime::drive::RuntimeDriver,
+    config: &crate::config::GameConfig,
+    stock_idx: usize,
+    fact: &crate::runtime::RestingFact,
+) -> Result<Option<crate::session::pipeline::Envelope>, String> {
+    let Some(account) = driver
+        .account_by_local(u16::try_from(fact.owner.1).expect("local 下标在 u16"))
+    else {
+        return Ok(None);
+    };
+    let key = crate::session::pipeline::EnvelopeKey {
+        account,
+        stock: crate::StockId(u32::from(stock_idx as u16)),
+        order: crate::OrderId(fact.order_serial),
+        side: fact.side,
+    };
+    let nominal = crate::runtime::fees::FeeQuote::nominal(
+        config,
+        fact.side,
+        crate::money::Money::from_cents(fact.filled_value),
+    )
+    .map_err(|e| format!("名义费用重算失败：{e:?}"))?;
+    let audit = crate::session::pipeline::EnvelopeAudit {
+        limit: crate::money::Money::from_cents(fact.price),
+        remaining_qty: fact.qty,
+        filled_qty: 0,
+        filled_value: crate::money::Money::from_cents(fact.filled_value),
+        nominal: crate::session::pipeline::FeeComponents {
+            commission: nominal.commission,
+            stamp_tax: nominal.stamp_tax,
+            transfer_fee: nominal.transfer_fee,
+        },
+        charged: crate::session::pipeline::FeeComponents {
+            commission: crate::money::Money::from_cents(fact.charged_commission),
+            stamp_tax: crate::money::Money::from_cents(fact.charged_stamp_tax),
+            transfer_fee: crate::money::Money::from_cents(fact.charged_transfer_fee),
+        },
+    };
+    // live resources：买=purse（desk 预留）、卖=余量股数（ledger 校验
+    // live 行须有资源——全零非法）。origin=TickStart（save quiet point
+    // 校验的 rebased 形态）。
+    let (cash, shares) = if fact.side == crate::orderbook::Side::Buy {
+        (crate::money::Money::from_cents(fact.purse), 0u32)
+    } else {
+        (crate::money::Money::ZERO, fact.qty)
+    };
+    Ok(Some(
+        crate::session::pipeline::Envelope::tick_start_existing(key, cash, shares, audit),
+    ))
 }

@@ -460,8 +460,9 @@ pub enum GroupIn {
 }
 
 /// D5 envelope 投影：desk 在途单快照（owner/价格/量/费用累计——
-/// session 信封账本重建的输入）。
-#[derive(Clone, Debug)]
+/// session 信封账本重建的输入）。P2-4b：PartialEq 供驱动器跨拍差分
+///（增量维护信封账本——增/删/改三分类）。
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RestingFact {
     pub owner: Owner,
     pub side: Side,
@@ -474,6 +475,37 @@ pub struct RestingFact {
     pub charged_stamp_tax: i64,
     pub charged_transfer_fee: i64,
     pub order_serial: u64,
+}
+
+/// P2-4b：信封账本增量维护的差分条目（驱动器对相邻两拍在途单快照
+/// 差分产物；键=(股下标, Owner, side, order_serial)）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RestingDeltaEntry {
+    /// 新挂出（本拍在册、上一拍不在）。
+    Added { stock: StockIdx, fact: RestingFact },
+    /// 已离册（上一拍在册、本拍不在——成交清余量/撤单/到期/日终清簿）。
+    Removed {
+        stock: StockIdx,
+        owner: super::Owner,
+        side: Side,
+        order_serial: u64,
+    },
+    /// 在册但数值面变化（部分成交改 qty/filled_value/purse/charged）。
+    Changed { stock: StockIdx, fact: RestingFact },
+}
+
+/// P2-4b：一拍差分结果。full_rebuild=true 表示基线缺失（构造后首拍/
+/// 红证强制）——调用方走全量重建路径并以此拍建立基线。
+#[derive(Clone, Debug, Default)]
+pub struct RestingDelta {
+    pub full_rebuild: bool,
+    pub entries: Vec<RestingDeltaEntry>,
+}
+
+impl RestingDelta {
+    pub fn is_empty(&self) -> bool {
+        !self.full_rebuild && self.entries.is_empty()
+    }
 }
 
 /// 交易部收件消息。
