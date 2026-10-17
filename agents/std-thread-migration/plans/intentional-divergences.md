@@ -110,3 +110,16 @@ batch10-doc-sync-pack.md 状态更新），本行保留编制时计数；③ 市
 - 登记缺口：4（已入 docs 3；待批10 1）
 - pin 等价锚：11 组/15 站点（代码注记承载；翻转批统一判定式；批 9 随语义迁移）
 - 已入正式 docs 合计：8；批 10 待同步合计：9（含低优先 2）
+
+## 四审判定 B/C 类遗留登记（2026-10-18，sol-final-acceptance-v4-verdict）
+
+**B 类（批 9 前处理，本轮登记不修）**：
+- B-1 session diagnostics 1 例：首红=seed 20 ticks 内须产生样本的前提；trace 链存在。处置=后置构造可靠采样 fixture，保留非权威与恢复清空断言。
+- B-2 step_skeleton 固定 hash 2 例：迁移表示锚——新增序列化字段改变字节；须逐字段取证后重锚。**不得称迁移前红**（旧 binary 三锚复跑全绿）。
+- B-3 scale_restore 1 例：重复 id 拒绝正确，实际 fault2162 而断言期望 1038——后置校准错误码。
+- B-4 publications weekend 1 例：维持三审的后置裁定。
+
+**C 类（另列，非迁移整改）**：
+- C-1 session 默认资金旧断言 2 例：默认资金已 1e12 分，测试仍断言 1e7；另一例按 tuple 读取已结构化的 pending_player。迁移前源码与基线日志均确认。
+- C-2 server 4 例：api_contract 3（二审已认可）+WS 基线 1（ws.rs:230 读 TickFrame.events 而 wire 为 facts[].event——迁移前 33027fcd 已同样不匹配；"三次复跑红"不证明 runtime 事件流为空）。
+- C-3（判决 §141 前提性）save_contract 五项旧断言失配（calendar/bank ECL/operating due id/plan horizon/industrial loan）：迁移前基线与当前旧模式均 33 过/5 败——day 对齐修复后重新暴露即按 C 另列，不由迁移整改承担。
