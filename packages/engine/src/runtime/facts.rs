@@ -136,4 +136,9 @@ pub enum ReceiptKind {
     AuctionLimitOrderRequired,
     /// 撤单目标不存在（含非本人挂单的防御拒绝）。
     OrderNotFound,
+    /// 组端资金校验拒绝：purse（最坏情况对价+费用上限）超过账户现金
+    /// （Sol 复审修复 2：严格所有权下 skip 只计数不替代玩家回执）。
+    InsufficientCash,
+    /// 组端可卖校验拒绝：含 T+1 当日冻结、在途卖单占用（同上）。
+    InsufficientShares,
 }

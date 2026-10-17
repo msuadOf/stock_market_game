@@ -240,6 +240,7 @@ fn timeseries_mappers_project_runtime_views_to_engine_shapes() {
         best_ask: Some(1010),
         max_buy_price: 1020,
         daily_upper_limit: 1100,
+        daily_lower_limit: 900,
         min_sell_price: 980,
         recent_prices: vec![1000],
         minute_closes: vec![],

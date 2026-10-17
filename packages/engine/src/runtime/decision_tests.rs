@@ -20,7 +20,7 @@ use crate::strategy::{Intent, LimitPrice, MarketView};
 use crate::StockId;
 use std::collections::BTreeMap;
 
-fn snapshot_one_stock(last: i64, upper: i64) -> TickSnapshot {
+fn snapshot_one_stock(last: i64, upper: i64, lower: i64) -> TickSnapshot {
     TickSnapshot {
         civil_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         tick: 1,
@@ -31,6 +31,7 @@ fn snapshot_one_stock(last: i64, upper: i64) -> TickSnapshot {
             best_ask: None,
             max_buy_price: upper,
             daily_upper_limit: upper,
+            daily_lower_limit: lower,
             min_sell_price: (last / 10).max(1),
             recent_prices: vec![last],
             minute_closes: Vec::new(),
@@ -126,7 +127,7 @@ fn intent_conversion_routes_market_and_symbol_prices() {
 #[test]
 fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
     let config = GameConfig::proposed_defaults();
-    let snapshot = snapshot_one_stock(1000, 1100);
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
     let account = GroupAccount::new(1_000_000, 1);
     let mut profile = NpcProfile {
         strategy: StrategyData::retail(1.0, 100, 1.0),
@@ -160,7 +161,7 @@ fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
 fn attention_gap_suppresses_non_due_ticks() {
     // gap=100：tick1 决策一次后，tick2..5 均未到期 ⇒ decide_calls_total 停在 1。
     let config = GameConfig::proposed_defaults();
-    let snapshot = snapshot_one_stock(1000, 1100);
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
     let account = GroupAccount::new(1_000_000, 1);
     let mut profile = NpcProfile {
         strategy: StrategyData::retail(0.0, 100, 0.0),
@@ -190,7 +191,7 @@ fn attention_gap_suppresses_non_due_ticks() {
 
 #[test]
 fn market_and_self_views_mirror_snapshot_and_account() {
-    let snapshot = snapshot_one_stock(1000, 1100);
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
     let view = build_market_view(&snapshot);
     let sv = view.stocks.get(&StockId(0)).expect("StockId 直映射");
     assert_eq!(sv.last_price.cents(), 1000);
@@ -211,7 +212,7 @@ fn market_and_self_views_mirror_snapshot_and_account() {
 /// 找一个"首决策必产生买入意图"的种子（确定性构造，避免测试依赖随机路径）。
 fn seed_that_buys() -> u64 {
     let config = GameConfig::proposed_defaults();
-    let snapshot = snapshot_one_stock(1000, 1100);
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
     let account = GroupAccount::new(1_000_000, 1);
     for seed in 0..200u64 {
         let mut profile = NpcProfile {

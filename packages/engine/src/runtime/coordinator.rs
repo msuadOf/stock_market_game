@@ -87,6 +87,9 @@ pub struct TickEvidence {
     pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// 本轮回执（拒收/不可撤）。
     pub desk_receipts: Vec<super::DeskReceipt>,
+    /// 组端业务拒绝回执（资金/可卖/零股/竞价×市价——与 desk 回执
+    /// 同入事件流，Sol 复审修复 2）。
+    pub group_rejections: Vec<super::DeskReceipt>,
     /// 本轮竞价事实。
     pub desk_auction: Vec<super::protocol::DeskAuctionFact>,
 }
@@ -139,6 +142,7 @@ pub fn converge_round(
     let mut desk_trades = Vec::new();
     let mut desk_lifecycle = Vec::new();
     let mut desk_receipts = Vec::new();
+    let mut group_rejections = Vec::new();
     let mut desk_auction = Vec::new();
     while groups_left > 0 || desks_left > 0 {
         let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
@@ -158,6 +162,7 @@ pub fn converge_round(
                 groups_left -= 1;
                 continuation_any |= r.continuation;
                 group_hashes.push((r.group, r.committed_hash));
+                group_rejections.extend(r.rejections.iter().copied());
             }
             UpMsg::DeskReport(r) => {
                 if r.tick != tick || r.round != round {
@@ -209,6 +214,7 @@ pub fn converge_round(
         desk_trades,
         desk_lifecycle,
         desk_receipts,
+        group_rejections,
         desk_auction,
     }))
 }

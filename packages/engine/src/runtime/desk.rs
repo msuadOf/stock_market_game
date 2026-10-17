@@ -752,6 +752,10 @@ impl DeskState {
 
     /// 解析价格符号（照搬 market.rs resolve_limit_price + 市价=涨跌停保护）。
     /// 返回 (受理价, 余量是否挂簿)——市价余量不进簿。
+    /// Sol 复审修复 1：**市价保护边界=日涨跌停（不含价格笼子）**——
+    /// 笼子只作用于限价申报（对齐旧连续管线：笼子校验在 limit 路径）。
+    /// 此前把"涨跌停∩笼子"结果用于 Market，卖档 1000/1050、涨停 1100、
+    /// 笼子 1020 时市价买吃完首档即停（迁移漂移）。
     fn resolve_price(
         &self,
         rp: RoutedPrice,
@@ -767,10 +771,14 @@ impl DeskState {
                 Side::Sell => (up, true),
             },
             RoutedPrice::Lowest => (down, true),
-            RoutedPrice::Market => match side {
-                Side::Buy => (up, false),
-                Side::Sell => (down, false),
-            },
+            RoutedPrice::Market => {
+                // 市价：保护=纯日涨跌停带（笼子不钳——Sol 复审修复 1）。
+                let (band_down, band_up) = self.price_bound_for(side, tick, false)?;
+                match side {
+                    Side::Buy => (band_up, false),
+                    Side::Sell => (band_down, false),
+                }
+            }
         };
         Ok((price, rest_remainder))
     }
@@ -860,9 +868,14 @@ impl DeskState {
             self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand);
             return Ok(());
         }
-        // 涨跌停带（闭区间）与价格笼子。
+        // 涨跌停带（闭区间）与价格笼子。市价按纯带校验（Sol 复审
+        /// 修复 1：保护边界不含笼子——笼子内限价与带外拒收口径不变）。
         let cage = self.config.price_cage_enabled;
-        let (down, up) = self.price_bound_for(side, tick, cage)?;
+        let (down, up) = if is_market {
+            self.price_bound_for(side, tick, false)?
+        } else {
+            self.price_bound_for(side, tick, cage)?
+        };
         if price < down || price > up {
             self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand);
             return Ok(());
@@ -903,7 +916,10 @@ impl DeskState {
                 } else if rest_remainder {
                     self.rest(order);
                 } else {
-                    // 市价余量不进簿：原路退回。
+                    // 市价余量不进簿：原路退回 + **显式撤销事实**（Sol
+                    /// 复审修复 2：玩家逐请求可见结果——OrderCanceled
+                    /// 的 remaining=余量，部分成交时注明撤销的是余量）。
+                    self.note_terminated(&order, super::protocol::LifecycleKind::Cancelled);
                     self.close_order_entities(&order);
                     self.cancelled_orders += 1;
                     self.undo.push(DeskUndo::Cancelled(1));
@@ -1885,6 +1901,7 @@ impl DeskState {
             best_ask: pub_best_ask,
             max_buy_price: up_buy,
             daily_upper_limit: self.up_stop().unwrap_or(self.market.last_close),
+            daily_lower_limit: self.down_stop().unwrap_or(self.market.last_close),
             min_sell_price: down,
             recent_prices: self.market.recent_prices.iter().copied().collect(),
             minute_closes: self.market.minute_closes.clone(),

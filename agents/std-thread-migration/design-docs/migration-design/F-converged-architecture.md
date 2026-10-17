@@ -133,6 +133,11 @@ pub struct DeskBatch { pub stock: StockIdx, pub tick: u64, pub round: u32,
 买单实体化金额 = 最坏情况对价 × 数量 + 佣金上限 + 过户费上限：
 - Fixed 价：固定价计算；
 - Highest/Lowest/Market 及符号价：按目标股涨停价（组端只有 band 表，`proto/oworker.rs:1432-1449`）。
+  **修订（2026-10-17，Sol 复审修复 4 裁定按 ADR-0022）**：玩家路径 Lowest 买 purse
+  改按目标股**跌停价**预留（Lowest 买等效跌停限价单，永远不可能高于跌停成交，预留
+  跌停即足够——"统一涨停"属过度预留）；Highest 买与 Market 买（保护=涨停）维持涨停
+  口径。NPC 路径（decision.rs）暂维持统一涨停（登记——过度预留不损语义，仅资源
+  可用性口径差）。
 实际成交较低时差额（slack）在挂单终结时以 `CashRefund` 退回（对齐引擎"实际报价较低时
 释放差额；释放额不回补本 tick 预算"）。
 

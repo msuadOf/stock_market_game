@@ -276,6 +276,8 @@ pub struct TickRecord {
     pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// 本轮回执（拒收/不可撤；IntentRejected 映射输入）。
     pub desk_receipts: Vec<DeskReceipt>,
+    /// 组端业务拒绝（资金/可卖/零股/竞价×市价；同上映射输入）。
+    pub group_rejections: Vec<DeskReceipt>,
     /// 本轮竞价事实（AuctionTick/Completed 输入）。
     pub desk_auction: Vec<super::protocol::DeskAuctionFact>,
 }
@@ -527,6 +529,8 @@ impl World {
                 Arc::clone(&config),
                 ticks_per_day,
                 initial_committed_tick,
+                spec.auction_ticks,
+                spec.closing_auction_ticks,
                 group_decision,
                 group_plans,
                 group_root,
@@ -655,6 +659,7 @@ impl World {
                     depth_asks: Vec::new(),
                     max_buy_price: up.cents(),
                     daily_upper_limit: up.cents(),
+                    daily_lower_limit: down.cents(),
                     min_sell_price: down.cents(),
                     recent_prices: vec![last],
                     minute_closes: Vec::new(),
@@ -1560,6 +1565,7 @@ impl World {
             desk_trades: evidence.desk_trades,
             desk_lifecycle: evidence.desk_lifecycle,
             desk_receipts: evidence.desk_receipts,
+            group_rejections: evidence.group_rejections,
             desk_auction: evidence.desk_auction,
         });
     }

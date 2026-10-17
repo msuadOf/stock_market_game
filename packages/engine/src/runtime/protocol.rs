@@ -168,6 +168,9 @@ pub struct StockPublic {
     pub max_buy_price: i64,
     /// 本交易日的涨停价（符号价 purse 最坏情况基准）。
     pub daily_upper_limit: i64,
+    /// 本交易日的跌停价（ADR-0022：Lowest 买等效跌停限价单——purse
+    /// 按跌停预留即足够；Sol 复审修复 4）。
+    pub daily_lower_limit: i64,
     /// 本观察版本允许的最低卖出限价。
     pub min_sell_price: i64,
     /// 最近 N 个 tick 收盘价（分）。
@@ -739,7 +742,7 @@ impl std::fmt::Debug for UpMsg {
 }
 
 /// 组线程本轮报告。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupReport {
     /// 组索引。
     pub group: GroupIdx,
@@ -759,6 +762,10 @@ pub struct GroupReport {
     pub decide_calls: u64,
     /// 被登记跳过的 Cancel 意图数（OrderRef 跟踪随批 6 接线，不静默）。
     pub cancel_intents_skipped: u64,
+    /// 组端业务拒绝回执（Sol 复审修复 2：资金/可卖/零股校验与竞价×
+    /// 市价相位门禁——玩家逐请求可见结果；order 序号=0 哨兵=未入簿
+    /// 无 desk serial，desk serial 从 1 起（P1-9）不冲突）。
+    pub rejections: Vec<DeskReceipt>,
     /// 提交态哈希（Start 转正后立即计算；回滚后 Final 哈希应与之相等）。
     pub committed_hash: u64,
 }

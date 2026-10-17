@@ -516,6 +516,11 @@ pub struct GroupState {
     decision: Option<(Vec<NpcProfile>, u32)>,
     /// 每交易日 tick 数（T+1 日界解冻判定）。
     ticks_per_day: u64,
+    /// 开盘集合竞价 tick 数（组端相位门禁——Sol 复审修复 3；与
+    /// DeskSetup::phase_at 的 entry 同式消费）。
+    auction_ticks: u64,
+    /// 收盘集合竞价 tick 数（同上）。
+    closing_auction_ticks: u64,
     /// 最近一次广播快照（决策观察基；Continue 轮复用）。
     snapshot: Option<std::sync::Arc<TickSnapshot>>,
     /// 活跃计划链（Continue 轮驱动；跨股步骤产物走实体扣除路径）。
@@ -526,6 +531,10 @@ pub struct GroupState {
     pub observed: Vec<Observed>,
     /// 外部注入计划缓冲（玩家意图路由；run_round 消费一次即清）。
     external_pending: Vec<super::decision::PendingOp>,
+    /// 组端业务拒绝回执（本轮累积；run_round 起点清零、报告排空——
+    /// Sol 复审修复 2：资金/可卖/零股 skip 与竞价×市价门禁的玩家
+    /// 逐请求可见结果）。
+    round_rejections: Vec<super::DeskReceipt>,
     /// D5 终程：外部定向撤单缓冲（玩家 Cancel 意图路由——run_round 直转
     /// DeskIn::Cancel；desk 权威判定撤单窗/存在性）。
     external_cancels: Vec<(LocalIdx, StockIdx, u64)>,
@@ -620,6 +629,8 @@ impl GroupState {
             config,
             ticks_per_day,
             0,
+            0,
+            0,
             decision,
             plans,
             None,
@@ -640,6 +651,8 @@ impl GroupState {
         config: Arc<GameConfig>,
         ticks_per_day: u64,
         initial_tick: u64,
+        auction_ticks: u64,
+        closing_auction_ticks: u64,
         decision: Option<(Vec<NpcProfile>, u32)>,
         plans: Vec<Box<dyn PlanChain>>,
         root_projection: Option<std::sync::Arc<crate::runtime::world::RootProjection>>,
@@ -664,12 +677,15 @@ impl GroupState {
             lot,
             config,
             ticks_per_day,
+            auction_ticks,
+            closing_auction_ticks,
             decision,
             snapshot: None,
             plans,
             plan_fills: Vec::new(),
             observed: Vec::new(),
             external_pending: Vec::new(),
+            round_rejections: Vec::new(),
             external_cancels: Vec::new(),
             observation_inputs: vec![ObservationInputs::default(); n_stocks],
             belief_states: belief_states_seed,
@@ -3367,6 +3383,27 @@ impl GroupState {
             _ => None,
         }) {
             let owner = (group, p.local);
+            // Sol 复审修复 3（校验顺序）：竞价相位×市价门禁**先于**资源
+            /// 校验——保证相位显式回执可达（资源不足不误吞相位拒收；
+            /// 对齐旧管线相位门禁在市场层入口的次序）。相位基准
+            /// phase_at(tick−1)（与 desk 受理同窗——D5 off-by-one 口径）。
+            if matches!(p.routed, super::protocol::RoutedPrice::Market) {
+                let day_tick = (tick.saturating_sub(1)) % self.ticks_per_day;
+                let entry = self.auction_ticks - self.auction_ticks / 3;
+                let closing_start =
+                    self.ticks_per_day.saturating_sub(self.closing_auction_ticks);
+                let in_auction = day_tick < entry
+                    || (day_tick >= closing_start && self.closing_auction_ticks > 0);
+                if in_auction {
+                    self.skipped_orders += 1;
+                    self.round_rejections.push(super::DeskReceipt {
+                        order: (p.stock, 0),
+                        owner,
+                        kind: super::ReceiptKind::AuctionLimitOrderRequired,
+                    });
+                    continue;
+                }
+            }
             match p.side {
                 Side::Buy => {
                     // purse = 最坏情况对价 + 佣金上限 + 过户费上限（F §1.5；
@@ -3384,8 +3421,15 @@ impl GroupState {
                     .cents();
                     let acct = self.acct_mut(p.local)?;
                     if acct.cash < purse {
-                        // 严格所有权：在途退款未到账 ⇒ 显式 skip 计数（不静默、不部分执行）。
+                        // 严格所有权：在途退款未到账 ⇒ skip（不部分执行）。
+                        // Sol 复审修复 2：计数不替代玩家回执——显式
+                        // InsufficientCash 进本轮回执流。
                         self.skipped_orders += 1;
+                        self.round_rejections.push(super::DeskReceipt {
+                            order: (p.stock, 0),
+                            owner,
+                            kind: super::ReceiptKind::InsufficientCash,
+                        });
                         continue;
                     }
                     acct.cash -= purse;
@@ -3420,13 +3464,24 @@ impl GroupState {
                     let acct = self.acct_mut(p.local)?;
                     let sellable = acct.sellable(p.stock);
                     if p.qty > sellable {
-                        // 含 T+1：当日买入不可卖。
+                        // 含 T+1：当日买入不可卖。Sol 复审修复 2：显式
+                        // InsufficientShares 回执（计数不替代玩家结果）。
                         self.skipped_orders += 1;
+                        self.round_rejections.push(super::DeskReceipt {
+                            order: (p.stock, 0),
+                            owner,
+                            kind: super::ReceiptKind::InsufficientShares,
+                        });
                         continue;
                     }
                     // 零股须一次性卖出：非整手数量只允许恰好等于全部可卖零头。
                     if p.qty % lot != 0 && p.qty != sellable {
                         self.skipped_orders += 1;
+                        self.round_rejections.push(super::DeskReceipt {
+                            order: (p.stock, 0),
+                            owner,
+                            kind: super::ReceiptKind::NotRoundLot,
+                        });
                         continue;
                     }
                     // D3a-3 收口：卖出扣除后持仓归零=所有权已转移（挂单在
@@ -3506,6 +3561,9 @@ impl GroupState {
             due_npcs,
             decide_calls,
             cancel_intents_skipped,
+            // 组端业务拒绝（Sol 复审修复 2）：本轮排空上行——Abort 重跑
+            /// 时由校验路径重新产生（run_round 起点清零）。
+            rejections: std::mem::take(&mut self.round_rejections),
         };
         up_tx
             .send(UpMsg::GroupReport(report))
@@ -5492,6 +5550,7 @@ mod sol_recheck1_tests {
             best_ask: None,
             max_buy_price: last * 11 / 10,
             daily_upper_limit: last * 11 / 10,
+            daily_lower_limit: last * 9 / 10,
             min_sell_price: last * 9 / 10,
             recent_prices: Vec::new(),
             minute_closes: Vec::new(),

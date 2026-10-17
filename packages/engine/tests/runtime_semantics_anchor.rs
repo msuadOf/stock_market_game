@@ -676,3 +676,266 @@ fn player_market_and_symbolic_intents_route_into_runtime_world() {
         "Lowest 卖解析=卖出下边界（笼子 980∧跌停 900 取严）；此前误路由 Highest=1100"
     );
 }
+
+/// Sol 复审修复 2/3（组端 skip 回执与校验顺序）·drive 级红测试族。
+/// fixture：auction_ticks=0（tick 1 连续相位），全部经
+/// inject_player_intents→组端校验路径。
+#[test]
+fn sol23_group_skips_emit_player_receipts_with_reasons() {
+    // ── T+1/可卖不足：当日买入后卖出 ⇒ IntentRejected(InsufficientShares)。
+    let mut setup = setup_1stock();
+    setup.auction_ticks = 0;
+    let mut session = GameSession::new(setup, 199).expect("会话");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    let upper: Vec<i64> = driver
+        .world_public_views()
+        .iter()
+        .map(|v| v.daily_upper_limit)
+        .collect();
+    // 当日买入 100（玩家）——acct1 卖、玩家买。
+    driver
+        .inject_player_intents(
+            &[
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(1),
+                    intent: engine::Intent::PlaceLimit {
+                        code: engine::StockId(0),
+                        side: engine::Side::Sell,
+                        price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
+                            1_000,
+                        )),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+                engine::ReceiptBearingIntent {
+                    owner: engine::AccountId(0),
+                    intent: engine::Intent::PlaceLimit {
+                        code: engine::StockId(0),
+                        side: engine::Side::Buy,
+                        price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
+                            1_000,
+                        )),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                },
+            ],
+            &upper,
+        )
+        .expect("注入");
+    let _ = driver.step_frame_equivalent(&mut session).expect("成交拍");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
+    // 下一拍：玩家卖当日买入的 100 股（T+1 冻结）。
+    driver
+        .inject_player_intents(
+            &[engine::ReceiptBearingIntent {
+                owner: engine::AccountId(0),
+                intent: engine::Intent::PlaceLimit {
+                    code: engine::StockId(0),
+                    side: engine::Side::Sell,
+                    price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
+                        1_000,
+                    )),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &[],
+        )
+        .expect("注入");
+    let events = driver.step_frame_equivalent(&mut session).expect("回执拍");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::IntentRejected {
+                account: engine::AccountId(0),
+                reason: engine::RejectionReason::InsufficientShares,
+                ..
+            }
+        )),
+        "T+1 冻结卖出必须显式 InsufficientShares 回执（计数不替代回执）：{events:?}"
+    );
+
+    // ── 现金不足：acct2（现金远小于 purse）大额买 ⇒ InsufficientCash。
+    let mut events_all = Vec::new();
+    driver
+        .inject_player_intents(
+            &[engine::ReceiptBearingIntent {
+                owner: engine::AccountId(2),
+                intent: engine::Intent::PlaceLimit {
+                    code: engine::StockId(0),
+                    side: engine::Side::Buy,
+                    price: engine::strategy::LimitPrice::Highest,
+                    qty: 100_000,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect::<Vec<_>>(),
+        )
+        .expect("注入");
+    let evs = driver.step_frame_equivalent(&mut session).expect("回执拍");
+    events_all.extend(evs);
+    assert!(
+        events_all.iter().any(|e| matches!(
+            e,
+            Event::IntentRejected {
+                account: engine::AccountId(2),
+                reason: engine::RejectionReason::InsufficientCash,
+                ..
+            }
+        )),
+        "现金不足必须显式 InsufficientCash 回执：{events_all:?}"
+    );
+
+    // ── 非法零股卖出：acct1 卖 150（非整手非全零头）⇒ InvalidQuantity。
+    let mut events_all = Vec::new();
+    driver
+        .inject_player_intents(
+            &[engine::ReceiptBearingIntent {
+                owner: engine::AccountId(1),
+                intent: engine::Intent::PlaceLimit {
+                    code: engine::StockId(0),
+                    side: engine::Side::Sell,
+                    price: engine::strategy::LimitPrice::Fixed(engine::Money::from_cents(
+                        1_000,
+                    )),
+                    qty: 150,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect::<Vec<_>>(),
+        )
+        .expect("注入");
+    let evs = driver.step_frame_equivalent(&mut session).expect("回执拍");
+    events_all.extend(evs);
+    assert!(
+        events_all.iter().any(|e| matches!(
+            e,
+            Event::IntentRejected {
+                account: engine::AccountId(1),
+                reason: engine::RejectionReason::InvalidQuantity,
+                ..
+            }
+        )),
+        "非整手非全零头卖出必须显式回执：{events_all:?}"
+    );
+}
+
+/// Sol 复审修复 3（校验顺序）：竞价相位×市价×资源不足 ⇒ 相位门禁回执
+/// 优先可达（AuctionLimitOrderRequired，而非 InsufficientCash）。
+#[test]
+fn sol3_auction_phase_gate_precedes_resource_check_for_market_intents() {
+    let mut session = GameSession::new(setup_1stock(), 199).expect("会话");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    // tick 1=开盘竞价申报窗；acct2 现金不足 + 市价 ⇒ 相位回执优先。
+    driver
+        .inject_player_intents(
+            &[engine::ReceiptBearingIntent {
+                owner: engine::AccountId(2),
+                intent: engine::Intent::PlaceMarket {
+                    code: engine::StockId(0),
+                    side: engine::Side::Buy,
+                    qty: 100_000,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect::<Vec<_>>(),
+        )
+        .expect("注入");
+    let events = driver.step_frame_equivalent(&mut session).expect("回执拍");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::IntentRejected {
+                account: engine::AccountId(2),
+                reason: engine::RejectionReason::AuctionLimitOrderRequired,
+                ..
+            }
+        )),
+        "竞价×市价×资源不足：相位门禁回执必须优先可达：{events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::IntentRejected {
+                account: engine::AccountId(2),
+                reason: engine::RejectionReason::InsufficientCash,
+                ..
+            }
+        )),
+        "相位优先于资源校验（原因不误报）：{events:?}"
+    );
+}
+
+/// Sol 复审修复 4（Lowest 买 purse=跌停，ADR-0022）：注入 Lowest 买后
+/// 组端预留=90_501（900×100+500+1），非涨停口径 110_501——快照现金
+/// 可判别。附带"够跌停"边界：涨停口径会多扣 20_000。
+#[test]
+fn sol4_lowest_buy_purse_reserves_at_daily_lower_limit() {
+    let mut setup = setup_1stock();
+    setup.auction_ticks = 0;
+    setup.config = engine::config::GameConfig {
+        price_cage_enabled: false,
+        ..setup.config
+    };
+    let mut session = GameSession::new(setup, 199).expect("会话");
+    let player_cash0 = session
+        .account(engine::AccountId(0))
+        .expect("玩家")
+        .cash()
+        .cents();
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器");
+    driver.adopt_session_seq(&session);
+    driver
+        .inject_player_intents(
+            &[engine::ReceiptBearingIntent {
+                owner: engine::AccountId(0),
+                intent: engine::Intent::PlaceLimit {
+                    code: engine::StockId(0),
+                    side: engine::Side::Buy,
+                    price: engine::strategy::LimitPrice::Lowest,
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect::<Vec<_>>(),
+        )
+        .expect("注入");
+    let _ = driver.step_frame_equivalent(&mut session).expect("预留拍");
+    driver.install_market_views(&mut session).expect("行情");
+    let accounts = driver.world_accounts_snapshot().expect("组快照");
+    assert_eq!(
+        accounts[0].1[0].cash,
+        player_cash0 - 90_501,
+        "Lowest 买 purse=跌停口径（900×100+佣金 500+过户 1）——ADR-0022"
+    );
+    let views = driver.world_public_views();
+    assert_eq!(views[0].best_bid, Some(900), "Lowest 买挂簿=跌停 900");
+}

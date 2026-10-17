@@ -726,10 +726,15 @@ impl RuntimeDriver {
             .as_ref()
             .map(|r| r.desk_lifecycle.clone())
             .unwrap_or_default();
-        let receipts = rec
+        let mut receipts = rec
             .as_ref()
             .map(|r| r.desk_receipts.clone())
             .unwrap_or_default();
+        // Sol 复审修复 2：组端业务拒绝（资金/可卖/零股/竞价×市价）与
+        /// desk 回执同入事件流（IntentRejected 映射）。
+        if let Some(r) = rec.as_ref() {
+            receipts.extend(r.group_rejections.iter().copied());
+        }
         let auction = rec
             .as_ref()
             .map(|r| r.desk_auction.clone())
@@ -1330,13 +1335,21 @@ impl RuntimeDriver {
                 }
                 // 符号价（sol-103 上报项 2 附带修复）：按变体正向路由——
                 // 此前 `_ =>` 把 Lowest 也折叠成 Highest（玩家 Lowest 卖
-                /// 会解析到涨停）。purse 最坏情况恒按日涨停（组端只有公共
-                /// 态，F §1.5；与 NPC 路径 symbol_routed 同口径）。
+                /// 会解析到涨停）。purse 最坏情况（Sol 复审修复 4，
+                /// ADR-0022 裁定）：Highest=日涨停；**Lowest=日跌停**
+                /// （Lowest 买等效跌停限价单，永远不可能高于跌停成交，
+                /// 预留跌停即足够——F §1.5"统一涨停"属过度预留，已按
+                /// 裁定对齐并同步 F 文档注记）。
                 crate::strategy::LimitPrice::Highest => {
                     (super::protocol::RoutedPrice::Highest, upper)
                 }
                 crate::strategy::LimitPrice::Lowest => {
-                    (super::protocol::RoutedPrice::Lowest, upper)
+                    let lower = self
+                        .world_public_views()
+                        .get(code.0 as usize)
+                        .map(|v| v.daily_lower_limit)
+                        .unwrap_or(upper);
+                    (super::protocol::RoutedPrice::Lowest, lower)
                 }
             };
             // D5 组端校验：qty=0 意图路由层拒收（desk 侧为防御性 panic

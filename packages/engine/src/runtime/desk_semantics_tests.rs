@@ -1345,3 +1345,373 @@ fn auction_fills_settle_at_single_clearing_price() {
         "卖方按清算价净得：95_000−（佣金 500+印花 48+过户 1）"
     );
 }
+
+// ═══ Sol 复审修复（sol-103 第二轮）：市价保护边界/玩家逐请求回执/
+// 竞价多档单一价格 ═══
+
+/// Sol-1（阻断）：市价保护边界=日涨跌停（**不含价格笼子**——笼子只
+/// 作用于限价申报）。此前 resolve_price 把"涨跌停∩笼子"用于 Market：
+/// 卖档 1000/1050、涨停 1100、笼子开（参考 1000⇒买上限 1020）时市价
+/// 买被钳成 1020，吃完 1000 档即停（1050 不吃）。手算 oracle（市价
+/// 买 200 保护=1100）：两档全吃（100@1000+100@1050，连续竞价 maker
+/// 价），实付 205_000+500（最低佣金单张一次）+1+1（过户逐笔）
+/// =205_502 ⇒ 现金 794_498。
+#[test]
+fn sol1_market_protection_uses_daily_band_not_cage_across_levels() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 1000, 100), sell(1, 0, 1050, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    // 笼子保持开启（proposed_defaults 默认）——本测试即验证笼子不钳市价。
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Market,
+            purse_reference: 1100,
+            qty: 200,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let rec = &world.report_log[0];
+    let prices: Vec<(u32, i64)> = rec
+        .desk_trades
+        .iter()
+        .map(|f| (f.qty, f.price))
+        .collect();
+    assert_eq!(
+        prices,
+        vec![(100, 1000), (100, 1050)],
+        "市价按涨停保护逐档跨笼子吃单（1050>笼子 1020 也须吃）：{prices:?}"
+    );
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_200, "两档全得 200 股");
+    assert_eq!(a0.cash, 794_498, "实付 205_502（对价+最低佣金一次+过户 2）");
+}
+
+/// Sol-2（阻断）：市价单逐请求玩家可见结果——零成交（空盘口）与部分
+/// 成交余量都必须显式 OrderCanceled（余量即撤销量），不能只有内部
+/// 退款。手算 oracle：空盘口⇒Cancel 余量 100、现金复原；单档 100、
+/// 市价买 200⇒Trade 100@1000+Cancel 余量 100、实付 100_501。
+#[test]
+fn sol2_market_remainder_and_zero_fill_emit_visible_cancellation() {
+    // 空盘口臂：零成交全撤。
+    let mut world = World::spawn({
+        let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+            Box::new(|_t, _r| TickPlan::default())
+        }));
+        spec.auction_ticks = 0;
+        spec
+    })
+    .expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Market,
+            purse_reference: 1100,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let rec = &world.report_log[0];
+    assert!(
+        rec.desk_trades.is_empty(),
+        "空盘口零成交（前置）：{:?}",
+        rec.desk_trades
+    );
+    assert!(
+        rec.desk_lifecycle.iter().any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Cancelled,
+                remaining: 100,
+                owner: (0, 0),
+                ..
+            }
+        )),
+        "零成交市价单必须显式撤销余量（玩家可见）：{:?}",
+        rec.desk_lifecycle
+    );
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.cash, 1_000_000, "purse 全额退款（零成交）");
+    assert_eq!(a0.shares[0], 1_000, "零成交持股不动（基线 1000）");
+
+    // 部分成交臂：Trade 100 + 余量 100 撤销。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 1000, 100)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Market,
+            purse_reference: 1100,
+            qty: 200,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let rec = &world.report_log[0];
+    assert_eq!(rec.desk_trades.len(), 1, "部分成交 100（前置）");
+    assert!(
+        rec.desk_lifecycle.iter().any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Cancelled,
+                remaining: 100,
+                owner: (0, 0),
+                ..
+            }
+        )),
+        "部分成交余量必须显式撤销（注明余量）：{:?}",
+        rec.desk_lifecycle
+    );
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_100, "基线 1000+成交 100");
+    assert_eq!(a0.cash, 899_499, "实付 100_501；余量退款");
+}
+
+/// Sol-5a：开盘竞价异价多档——全部成交 Trade.price==清算价（单一价格
+/// 原则多档面：两笔 maker 档价不同 900/1000，成交价恒=清算价 1000）
+/// +未成交余单保留原档。手算（买 1000×200、卖 900×100+卖 1000×300）：
+/// 候选 1000 成交量 200（最大，单候选）⇒ 清算 1000；FIFO 卖 900 全成
+/// 100 + 卖 1000 成 100（两笔均 1000）；卖 1000 档余 200 留簿转连续。
+/// 买方实付 200_000+500+2=200_502。
+#[test]
+fn sol5a_opening_multi_level_all_trades_at_clearing_price_with_remainder() {
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| match tick {
+            1 => place_at(1, vec![sell(1, 0, 900, 100), sell(1, 0, 1000, 300)]),
+            _ => TickPlan::default(),
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 9;
+    spec.closing_auction_ticks = 3;
+    spec.config = config_with_cage(false);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Fixed(1000),
+            purse_reference: 1000,
+            qty: 200,
+        }],
+        vec![],
+    );
+    world.run_ticks(6).expect("完成拍");
+    let rec = world
+        .report_log
+        .iter()
+        .find(|r| !r.desk_trades.is_empty())
+        .expect("完成拍有成交");
+    let trades: Vec<(u32, i64)> = rec.desk_trades.iter().map(|f| (f.qty, f.price)).collect();
+    assert_eq!(
+        trades,
+        vec![(100, 1000), (100, 1000)],
+        "两笔 maker 档价 900/1000 不同，成交价恒=清算价 1000（单一价格）：{trades:?}"
+    );
+    let views = world.public_views().to_vec();
+    assert_eq!(
+        views[0].depth_asks,
+        vec![(1000, 200)],
+        "卖 1000 档余 200 保留原档转连续"
+    );
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.shares[0], 1_200, "基线 1000+成交 200");
+    assert_eq!(a0.cash, 1_000_000 - 200_502, "实付 200_000+佣金 500+过户 2");
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.shares[0], 800, "卖 200（余 200 在途 Drain 退回）");
+}
+
+/// Sol-5b：市价卖×空盘口（双方向）——零成交全撤、股份复原。
+#[test]
+fn sol5b_market_sell_on_empty_book_cancels_with_share_refund() {
+    let mut world = World::spawn({
+        let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+            Box::new(|_t, _r| TickPlan::default())
+        }));
+        spec.auction_ticks = 0;
+        spec
+    })
+    .expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 1,
+            stock: 0,
+            side: Side::Sell,
+            routed: RoutedPrice::Market,
+            purse_reference: 900,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let rec = &world.report_log[0];
+    assert!(rec.desk_trades.is_empty(), "空盘口零成交");
+    assert!(
+        rec.desk_lifecycle.iter().any(|f| matches!(
+            f,
+            super::protocol::DeskLifecycleFact {
+                kind: super::protocol::LifecycleKind::Cancelled,
+                remaining: 100,
+                owner: (0, 1),
+                ..
+            }
+        )),
+        "市价卖零成交必须显式撤销余量：{:?}",
+        rec.desk_lifecycle
+    );
+    let report = world.shutdown().expect("关停");
+    let a1 = &report.group_finals[0].accounts[1];
+    assert_eq!(a1.shares[0], 1_000, "股份全额复原");
+    assert_eq!(a1.cash, 1_000_000, "卖单无现金预留");
+}
+
+/// Sol-5c：Highest/Lowest 四方向×purse 临界（组端 buy_purse_limit 按
+/// purse_reference 计算）。手算：Lowest 买 purse=900×100+500+1=90_501
+/// （ADR-0022：Lowest 买等效跌停限价单，预留跌停即足够）；Highest 买
+/// purse=110_501；卖向无现金预留（现金 0 也可受理）。
+#[test]
+fn sol5c_symbolic_four_directions_purse_thresholds() {
+    // Lowest 买：现金恰 90_501 ⇒ 受理挂簿 900。
+    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+        Box::new(|_t, _r| TickPlan::default())
+    }));
+    spec.auction_ticks = 0;
+    spec.initial_cash = 90_501;
+    spec.config = config_with_cage(false);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Lowest,
+            purse_reference: 900,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let views = world.public_views().to_vec();
+    assert_eq!(views[0].best_bid, Some(900), "跌停预留恰够 ⇒ 受理挂簿 900");
+    let accounts = world.snapshot_accounts().expect("快照");
+    assert_eq!(accounts[0].1[0].cash, 0, "purse 90_501 全额预留");
+    let _ = world.shutdown();
+
+    // Highest 买：现金恰 110_501 ⇒ 受理；110_500 ⇒ 显式 InsufficientCash。
+    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+        Box::new(|_t, _r| TickPlan::default())
+    }));
+    spec.auction_ticks = 0;
+    spec.initial_cash = 110_501;
+    spec.config = config_with_cage(false);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Highest,
+            purse_reference: 1100,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let views = world.public_views().to_vec();
+    assert_eq!(views[0].best_bid, Some(1100), "涨停预留恰够 ⇒ 受理挂簿 1100");
+
+    let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+        Box::new(|_t, _r| TickPlan::default())
+    }));
+    spec.auction_ticks = 0;
+    spec.initial_cash = 110_500;
+    spec.config = config_with_cage(false);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.broadcast_external_plan(
+        vec![PendingOp {
+            local: 0,
+            stock: 0,
+            side: Side::Buy,
+            routed: RoutedPrice::Highest,
+            purse_reference: 1100,
+            qty: 100,
+        }],
+        vec![],
+    );
+    world.run_ticks(1).expect("收敛");
+    let rec = &world.report_log[0];
+    assert!(
+        rec.group_rejections.iter().any(|r| matches!(
+            r,
+            super::DeskReceipt {
+                kind: super::ReceiptKind::InsufficientCash,
+                owner: (0, 0),
+                ..
+            }
+        )),
+        "现金差 1 分必须显式 InsufficientCash 回执（计数不替代回执）：{:?}",
+        rec.group_rejections
+    );
+
+    // 卖向（现金 0）：Highest/Lowest 均受理（无现金预留）。
+    for routed in [RoutedPrice::Highest, RoutedPrice::Lowest] {
+        let mut spec = basic_spec(1, 1, 2, Box::new(|_g| {
+            Box::new(|_t, _r| TickPlan::default())
+        }));
+        spec.auction_ticks = 0;
+        spec.initial_cash = 0;
+        spec.config = config_with_cage(false);
+        let mut world = World::spawn(spec).expect("世界构造");
+        let want = if matches!(routed, RoutedPrice::Highest) {
+            1100
+        } else {
+            900
+        };
+        world.broadcast_external_plan(
+            vec![PendingOp {
+                local: 1,
+                stock: 0,
+                side: Side::Sell,
+                routed,
+                purse_reference: want,
+                qty: 100,
+            }],
+            vec![],
+        );
+        world.run_ticks(1).expect("收敛");
+        let views = world.public_views().to_vec();
+        assert_eq!(
+            views[0].best_ask,
+            Some(want),
+            "{routed:?} 卖受理（无现金预留——现金 0）"
+        );
+        let _ = world.shutdown();
+    }
+}

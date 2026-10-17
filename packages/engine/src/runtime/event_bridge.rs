@@ -177,6 +177,8 @@ pub fn rejection_reason(kind: super::ReceiptKind) -> RejectionReason {
         RK::AlreadyFilled => RejectionReason::OrderAlreadyFilled,
         RK::AuctionLimitOrderRequired => RejectionReason::AuctionLimitOrderRequired,
         RK::OrderNotFound => RejectionReason::OrderNotFound,
+        RK::InsufficientCash => RejectionReason::InsufficientCash,
+        RK::InsufficientShares => RejectionReason::InsufficientShares,
     }
 }
 
