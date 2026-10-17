@@ -275,7 +275,15 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
                     .expect("real player order must enqueue");
             }
         }
-        let step_events = session.step().expect("healthy step");
+        // std-thread 迁移登记（Sol 终审整改 2）：本组测试是**旧管线
+        // 逐字节确定性回放锚**（FNV 锚/事件序扰动判别——ADR-0017 的
+        // 单 worker 同路径约束）。runtime 并发模型下跨实体受理顺序
+        // 天然变化（用户裁决：并发下不要求可复现），确定性锚不适用
+        // 混跑——显式经恒旧管线的 commit-evidence 入口驱动；runtime
+        // 的行为对照由 flip 批/stepframe parity 承载。
+        let (step_events, _evidence) = session
+            .step_with_commit_evidence()
+            .expect("healthy step（旧管线锚定入口）");
         for event in &step_events {
             if let Event::Trade {
                 code,

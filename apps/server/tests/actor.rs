@@ -178,23 +178,45 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
                             fill_count += 1;
                         }
                     }
-                    let hits = samples.lock().unwrap();
-                    if fill_count > 0 && hits.iter().any(|s| s.work == ComputeWork::ReceiptProjectionAccount) { break; }
+                    // Sol 终审整改 2：退出条件按模型分支——runtime 模型
+                    // 的决策/撮合在组/交易部线程（不经 ComputeContext 池，
+                    // ComputeWork 采样面是旧池模型专有）；真实成交即工作
+                    // 见证（fill_count/affected/无失败断言保留）。
+                    if engine::runtime::step_runtime_enabled() {
+                        if fill_count > 0 { break; }
+                    } else {
+                        let hits = samples.lock().unwrap();
+                        if fill_count > 0 && hits.iter().any(|s| s.work == ComputeWork::ReceiptProjectionAccount) { break; }
+                    }
                 }
             }).await.expect("真实 Actor 在短 deadline 内应成交并广播");
             handles.set_running(false).await.unwrap();
             assert!(fill_count > 0 && affected.len() >= 2, "Actor fixture 必须实际成交并触及多账户");
             handles.shutdown().await.unwrap();
             manager.remove(&id).unwrap();
-            let samples = samples.lock().unwrap();
-            let mut valid = true;
-            for work in [ComputeWork::SettlementAccount, ComputeWork::ReceiptProjectionAccount] {
-                let hits: Vec<_> = samples.iter().filter(|s| s.work == work).collect();
-                assert!(!hits.is_empty(), "Actor 必须执行非空实际 leaf {work:?}");
-                eprintln!("single_pool_actor workers={workers} fills={fill_count} affected={affected:?} work={work:?} samples={hits:?}");
-                valid &= hits.iter().all(|s| s.executing_workers == workers && s.owner_worker.is_some_and(|i| i < workers));
+            if engine::runtime::step_runtime_enabled() {
+                // std-thread 模型（Sol 过程 review 收尾）：决策/撮合在组/
+                // 交易部线程——线程归属**不由本测试证明**（池采样断言
+                // 随机制退役，不伪装为 valid 贡献）。本测试在 runtime
+                // 模型下承载的验证=真实成交+多账户触及+无失败交付+
+                // 注入 compute 绑定（manager.compute_workers 已断言）；
+                // 池工作归属的替代验证由 engine lib 的相位探针测试
+                ///（t3/failure_tests）承载。
+                eprintln!(
+                    "single_pool_actor workers={workers} std-thread model: delivery assertions passed (fills={fill_count} affected={affected:?}); pool-owner assertions retired for this model"
+                );
+                true
+            } else {
+                let samples = samples.lock().unwrap();
+                let mut valid = true;
+                for work in [ComputeWork::SettlementAccount, ComputeWork::ReceiptProjectionAccount] {
+                    let hits: Vec<_> = samples.iter().filter(|s| s.work == work).collect();
+                    assert!(!hits.is_empty(), "Actor 必须执行非空实际 leaf {work:?}");
+                    eprintln!("single_pool_actor workers={workers} fills={fill_count} affected={affected:?} work={work:?} samples={hits:?}");
+                    valid &= hits.iter().all(|s| s.executing_workers == workers && s.owner_worker.is_some_and(|i| i < workers));
+                }
+                valid
             }
-            valid
         });
         drop(runtime);
         // rayon 退役（批 7）：global 池初始化断言随机制退役。

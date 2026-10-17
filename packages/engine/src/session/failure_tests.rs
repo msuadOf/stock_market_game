@@ -799,4 +799,45 @@ fn solfinal1c_multi_group_resting_projection_attributes_owner() {
         "信封账本必须含组 1 账户键（红态=组 0 账户）：{:?}",
         envelope_accounts
     );
+    // Sol 过程 review 补强：撤单后的镜像与信封**删除**（增删键一致性
+    /// ——删除分支用 account_by_owner，构造侧改后两侧必须同键联动）。
+    let order_id = save
+        .resting_orders
+        .get(&crate::StockId(0))
+        .and_then(|orders| orders.iter().find(|o| o.owner == group1_account))
+        .map(|o| o.id)
+        .expect("组 1 账户委托 id 可读");
+    driver
+        .inject_player_intents(
+            &[crate::session::ReceiptBearingIntent {
+                owner: group1_account,
+                intent: crate::Intent::Cancel {
+                    code: crate::StockId(0),
+                    id: order_id,
+                },
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }],
+            &upper,
+        )
+        .expect("撤单注入");
+    session
+        .runtime_step_with_install(&mut driver)
+        .expect("撤单步进+安装");
+    let save_after = session.save().expect("撤单后存档读面");
+    assert!(
+        save_after
+            .resting_orders
+            .get(&crate::StockId(0))
+            .is_none_or(|orders| orders.iter().all(|o| o.owner != group1_account)),
+        "撤单后镜像不得残留组 1 账户委托"
+    );
+    assert!(
+        save_after
+            .runtime_state
+            .live_envelopes
+            .iter()
+            .all(|e| e.key.account != group1_account),
+        "撤单后信封必须删除组 1 账户键（增删键一致性）"
+    );
 }
