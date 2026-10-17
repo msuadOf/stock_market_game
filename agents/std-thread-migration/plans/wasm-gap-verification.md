@@ -1,8 +1,17 @@
 # WASM 编译面缺口核实（2026-10-16）
 
+> **状态回填（2026-10-18，Sol 终审 §89）**：下述"25 错、编译不过"为
+> **2026-10-16 核实时的历史现状**，其后已由 D5 wasm 方向 A 修复——
+> world 门控移除（runtime/mod.rs:58 注记：wasm 宿主无 OS 线程，spawn
+> 运行期 Err 由 session 侧显式处理；step_runtime_enabled 在 wasm 恒
+> false 走串行管线）。nightly engine/web-wasm 检查日志与编译级绿证
+> 归档于 `.tmp/sol-d5-red-evidence/`（运行时验证由 CI 的 wasm 构建+
+> Web 端冒烟承载）。A12 的 ADR-0005/0027 补记候选已登记（wasm 串行
+> 旧路径依赖保留）。本报告保留原貌作历史证据。
+
 核实人：独立分析 subagent（只读源码，产物仅写 .tmp/）。工作区：`.worktree/std-thread-model`（分支 `exp/std-thread-model`）。
 
-## 结论（一句话）
+## 结论（一句话，2026-10-16 时点）
 
 **engine 在 wasm32 下编译不过：25 个 E0432/E0433 错误，全部源于 `runtime::world` 被 `#[cfg(not(target_arch = "wasm32"))]` 门控，而 `runtime::{bridge,drive,group,protocol}` 与 `session/failure.rs` 仍无条件引用其中的类型；web 端确定受影响**（`cargo check -p web-wasm --target wasm32` 复现同一批错误），缺口为本分支引入，main 无此问题。
 

@@ -1,5 +1,11 @@
 # 批 10 文档同步包（diff-ready，批 10 直接落库用）
 
+> **状态更新（2026-10-18，Sol 终审 §134）**：批 10 已由 `7209fdfd`
+> （docs(std-thread): 批 10 文档同步——ADR-0043 落库与迁移差异登记）
+> **实际执行**——A6–A10 及 B4 已入正式文档、A12 已进
+> architecture/ADR-0043。本文件转为**历史编制包**（不再是待做清单）；
+> 下方文本与计数保留编制时原貌，落库差异以 7209fdfd 的 diff 为准。
+>
 > 2026-10-17 编制。输入：`agents/std-thread-migration/plans/intentional-divergences.md`
 > （批 10 待同步 9 条：A6/A7/A8/A9/A10/A11/A12/A13/B4，其中直接受领 trading-rules 6 条）、
 > `agents/std-thread-migration/plans/adr-draft-std-thread-runtime.md`、
