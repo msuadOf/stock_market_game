@@ -3,7 +3,7 @@
 > 来源：sol-103 市价链路修复批（四轮）期间 Sol 复核发现。接通 Continue
 > 到生产 Driver **之前**必须逐条处置，否则已修语义会以新形态回归。
 
-## 1.（阻断级前置）Continue 早轮成交 vs drive 同拍投影的重复应用
+## 1.（阻断级前置）Continue 早轮成交 vs drive 同拍投影的重复应用 ——【已收口，bcc18dbf】
 
 - 事实：world tick 循环经 Sol 三轮修复后，Continue 链上早轮 desk_trades
   会累积进最终 TickRecord（正确——事实不丢）。
@@ -16,6 +16,11 @@
 - 前置约束：接 Continue 前必须把同拍投影改为**逐轮**消费（每轮证据
   到达即投影一次）或按轮次去重；并补"Continue 早轮成交恰一次落账"
   端到端红测试。
+- **收口（2026-10-18，bcc18dbf）**：按"轮次分离"落地——TickRecord 增
+  `unsettled_trades`（终轮未落账尾巴），两个同拍叠加投影改消费尾巴；
+  事件流/buy_vwap/裁剪保持全量。红绿证据
+  `.tmp/sol-stepframe-red-evidence/01-prereq1-{red,green}.txt`
+  （红=买方持仓 +200 双计；绿=恰 +100）。
 
 ## 2.（登记）driver-direct 存档不含 desk 序号游标
 

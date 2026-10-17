@@ -88,3 +88,16 @@ std-thread runtime；TickFrame 投影/validate/失败回滚在 runtime 路径等
 - 序号游标链/镜像瞬态/组端回执链/市价语义：不动。
 - 红证纪律：完整原始输出（含 panic 栈+left/right）落
   .tmp/sol-stepframe-red-evidence/。
+
+## 落地记录（2026-10-18，第 16 任）
+
+- 件 1（bcc18dbf）：unsettled 尾巴+ForceContinuationForTest 通道+红绿。
+- 件 2+3（de55cd31）：seq 先加后取（take_seq）+连续拍 PriceTick
+  （emit_price_tick_events）+d0_world_drop 并行挂起修复（c9b3f05e）。
+- 件 4（50818b9e）：分叉+回滚面扩展+三处潜伏缺口修复（DayBoundary/
+  drained seq 走游标、每拍 adopt、账户域桶）+组内除零防御+旧管线专有
+  契约五族换轨+server 双语义适配+parity 双场景。
+- 双模式终态：lib 默认 1645/0/11、ENGINE_STEP_RUNTIME=0 1646/0/11；
+  集成与 server 批全绿（既有红四项基点复现登记——extraction_replay×3、
+  company_decision_session×1（=0 模式）、server single_pool×1、
+  desktop 全包受 web TS 既有错误阻断）。
