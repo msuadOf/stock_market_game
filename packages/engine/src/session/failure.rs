@@ -43,6 +43,11 @@ pub(crate) struct RuntimeInstallBaseline {
     >,
     candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
     candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
+    // Sol 复核阻断 P1-1：在途快照拍前值（Arc 廉价克隆）。回滚恢复拍前
+    // 快照（上一成功拍发布版本——与账户/镜像回滚面同源），替代清空：
+    // ledger 已停逐拍维护（P2-4），清空使失败拍后的信封查询/save 与
+    // 驱动器重建种子（from_session 读 ledger）读 stale/空集。
+    resting_snapshot: Option<super::RuntimeRestingSnapshot>,
     // P2-3b：npc_attention/attention_scheduler/belief_participants/
     // retail_experience/history_reads 五域基线 clone 退役——改写时 undo
     // （记录面=set_runtime_attention/set_runtime_information_checks/
@@ -156,14 +161,32 @@ impl GameSession {
 
     /// D5 restore 等价：信封账本条目快照（desk 种子恢复——runtime 形态
     /// 下旧簿空，restore 重建的账本承载单身份）。
+    /// Sol 复核阻断 P1-1：有快照→派生（P2-4 起 ledger 停逐拍维护，快照
+    /// 是唯一现势源——回滚恢复/重建种子读现势在途）；无快照（restore
+    /// 后未步进）→实际 ledger（restore 时刻的权威值）。
     pub fn runtime_envelope_ledger_snapshot(
         &self,
-    ) -> Vec<(crate::session::pipeline::EnvelopeKey, crate::session::pipeline::Envelope)> {
-        self.state
+    ) -> Result<
+        Vec<(
+            crate::session::pipeline::EnvelopeKey,
+            crate::session::pipeline::Envelope,
+        )>,
+        StepFatal,
+    > {
+        if self.state.runtime_resting_snapshot.is_some() {
+            return self.runtime_derive_envelopes().map(|envelopes| {
+                envelopes
+                    .into_iter()
+                    .map(|envelope| (envelope.key().clone(), envelope))
+                    .collect()
+            });
+        }
+        Ok(self
+            .state
             .envelope_ledger
             .iter()
             .map(|(key, envelope)| (key.clone(), envelope.clone()))
-            .collect()
+            .collect())
     }
 
     /// D5 restore 等价：逐股 tick 价格历史读面（组世界构造的 desk
@@ -992,6 +1015,15 @@ impl GameSession {
                 self.state.desk_book_mirror = mirror;
                 // Sol 四轮修复：游标会话级缓存（同上）。
                 self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
+                // Sol 复核阻断 P1-1：日终清簿后在途快照 live 重刷（与
+                // mirror 同式现拉——发布版本仍是清簿前 tick；快照安装
+                // 在 Drain 之前，不重刷则日终后信封查询/save 读清簿前
+                // 在途单）。
+                self.state.runtime_resting_snapshot = Some(super::RuntimeRestingSnapshot {
+                    facts: facts.into_iter().map(std::sync::Arc::new).collect(),
+                    id_map: driver.resting_id_map_handle(),
+                    accounts_per_group: driver.accounts_per_group(),
+                });
             }
             // Sol 终审四审 A2：world 日结（上方）把当日 K 归档进 desk
             /// 历史——但常规 install_candles 在其**之前**执行（当日条
@@ -1066,6 +1098,8 @@ impl GameSession {
             minute_closes: self.state.market_minute_closes.clone(),
             candle_histories: self.state.candle_book.histories().clone(),
             candle_active: self.state.candle_book.active().clone(),
+            // P1-1：快照拍前值入基线（回滚恢复源）。
+            resting_snapshot: self.state.runtime_resting_snapshot.clone(),
             // P2-3b：五域（attention/heap/belief/retail/history）不再随基线
             // 快照——回滚源=写时 undo（见结构体注释）。
         }
@@ -1420,6 +1454,7 @@ impl GameSession {
             minute_closes,
             candle_histories,
             candle_active,
+            resting_snapshot,
         } = baseline;
         self.mark_external_mutation();
         self.state.tick = tick;
@@ -1515,10 +1550,12 @@ impl GameSession {
             self.state.plans = plans;
         }
         // P2-4：envelope undo 随每拍维护退役（槽恒 None——保留 no-op
-        /// 消费面防结构扩散，死字段登记随下批清理）；快照失效（失败拍
-        /// 数据不可作为派生源——下一拍 step 重建）。
+        /// 消费面防结构扩散，死字段登记随下批清理）。
         let _ = self.state.runtime_envelope_undo.take();
-        self.state.runtime_resting_snapshot = None;
+        // Sol 复核阻断 P1-1：快照恢复拍前值（上一成功拍发布版本——
+        // ledger 已停逐拍维护，清空使失败拍后的信封查询/save/驱动器
+        // 重建种子读 stale ledger 或空集）。
+        self.state.runtime_resting_snapshot = resting_snapshot;
         if let Some(lifecycles) = self.state.runtime_lifecycles_undo.take() {
             self.state.npc_order_lifecycles = lifecycles;
         }

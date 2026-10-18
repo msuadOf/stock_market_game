@@ -3651,3 +3651,145 @@ fn solfinal1b_continue_early_round_first_buy_initializes_experience() {
         "Continue 早轮首买必须初始化 retail 经历（组回写段的收集不得丢弃）"
     );
 }
+
+// ── Sol 复核阻断 P1-1：在途快照生命周期（回滚恢复/重建种子/日终重刷）──
+
+/// P1-1 fixture：retail 4 NPC（seed 21 float 分配下必有持股 ≥100 的卖方
+/// ——p2_4b 同式）；t1 空跑建立常驻驱动器，t2 经外部意图挂限价卖 @1000
+/// 站簿（无对手交叉——在途前态非空）。返回 (game, seller)。
+fn p1_1_resting_fixture(
+    mut setup: crate::session::SessionSetup,
+) -> (GameSession, crate::AccountId) {
+    setup.npcs.retail_count = 4;
+    setup.auction_ticks = 1;
+    setup.closing_auction_ticks = 0;
+    let mut game = GameSession::new(setup, 21).expect("会话构造");
+    let seller = (1..=4u64)
+        .map(crate::AccountId)
+        .find(|id| {
+            game.account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("持股 NPC（float 分配——p2_4b 同参前提）");
+    game.step_via_runtime().expect("t1 空跑（驱动器惰性构造）");
+    // t2：外部意图挂限价卖（站簿在途前态——外部路由接受全名册 owner）。
+    {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let upper: Vec<i64> = driver
+            .world_public_views()
+            .iter()
+            .map(|v| v.daily_upper_limit)
+            .collect();
+        let intents = vec![crate::session::ReceiptBearingIntent {
+            owner: seller,
+            intent: crate::Intent::PlaceLimit {
+                code: crate::StockId(0),
+                side: crate::orderbook::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        }];
+        driver
+            .inject_player_intents(&intents, &upper)
+            .expect("外部意图注入");
+    }
+    game.step_via_runtime().expect("t2 挂单拍");
+    (game, seller)
+}
+
+/// P1-1 回滚恢复：带在途前态的失败回滚后，信封派生投影必须==拍前在途集
+///（快照恢复——不落 stale ledger/空集派生）。红态：回滚清空快照 →
+/// runtime 形态 ledger 停维护（空）→ 派生空集。
+#[test]
+fn sol_r22_rollback_restores_resting_snapshot_for_envelope_derivation() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 240;
+    let (mut game, seller) = p1_1_resting_fixture(setup);
+    // 前态：t2 后派生投影非空且含卖方在途单。
+    let mut pre: Vec<_> = game
+        .project_live_envelopes()
+        .expect("拍前投影")
+        .into_iter()
+        .map(|e| e.key().clone())
+        .collect();
+    assert!(
+        pre.iter().any(|k| k.account == seller),
+        "fixture 前提：卖方在途单在派生投影中"
+    );
+    pre.sort();
+    // t3 注入安装失败（快照安装后的失败——回滚面必须覆盖快照域）。
+    game.inject_runtime_install_failure();
+    assert!(game.step_via_runtime().is_err(), "安装失败注入生效");
+    let mut post: Vec<_> = game
+        .project_live_envelopes()
+        .expect("回滚后投影")
+        .into_iter()
+        .map(|e| e.key().clone())
+        .collect();
+    post.sort();
+    assert_eq!(
+        post, pre,
+        "回滚后派生投影==拍前在途集（快照恢复为拍前值——清空使派生落空/stale ledger）"
+    );
+}
+
+/// P1-1 重建种子：runtime 形态（旧簿空）下驱动器重建的 desk 种子必须读
+/// 现势在途（快照派生）——from_ledger 分支读停维护的 stale ledger 会使
+/// 新挂单消失/旧单复活、已转移现金股票失去对应。
+#[test]
+fn sol_r22_rebuilt_driver_seeds_read_current_resting_state() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 240;
+    let (mut game, seller) = p1_1_resting_fixture(setup);
+    // t3 安装失败回滚（常驻驱动器锁步断裂——重试经 from_session 重建）。
+    game.inject_runtime_install_failure();
+    assert!(game.step_via_runtime().is_err(), "安装失败注入生效");
+    // 重建：种子须含回滚前（拍前）在途单。
+    let mut rebuilt =
+        RuntimeDriver::from_session_grouped(&mut game, 1).expect("回滚后重建驱动器");
+    let facts = rebuilt
+        .collect_resting_facts_live()
+        .expect("重建世界在途收集");
+    let global = rebuilt
+        .id_map
+        .iter()
+        .position(|id| *id == seller)
+        .expect("卖方在名册");
+    assert!(
+        facts[0]
+            .iter()
+            .any(|f| f.owner == (0u16, global as u32) && f.price == 1000 && f.qty == 100),
+        "重建驱动器种子必须含回滚前在途单（读现势快照——stale ledger 分支丢新挂单）"
+    );
+}
+
+/// P1-1 日终重刷：日结拍 Drain 清簿后，在途快照必须 live 重刷（发布版本
+/// 仍是清簿前 tick）——否则日终后信封查询/save 读清簿前在途。
+#[test]
+fn sol_r22_day_end_refreshes_resting_snapshot_to_drained_state() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 4;
+    let (mut game, _seller) = p1_1_resting_fixture(setup);
+    assert!(
+        !game
+            .project_live_envelopes()
+            .expect("日终前投影")
+            .is_empty(),
+        "fixture 前提：日终前在途非空"
+    );
+    // t3、t4（tpd=4 → t4 为日结拍：Drain 强撤清簿）。
+    game.step_via_runtime().expect("t3");
+    game.step_via_runtime().expect("t4（日结）");
+    let post = game.project_live_envelopes().expect("日终后投影");
+    assert!(
+        post.is_empty(),
+        "日终清簿后派生信封必须为空（快照 live 重刷——不残留清簿前在途）：{post:?}"
+    );
+    game.save().expect("日终静点 save（清簿后空在途一致）");
+}

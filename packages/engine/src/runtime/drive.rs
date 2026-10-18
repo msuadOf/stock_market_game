@@ -1292,6 +1292,12 @@ impl RuntimeDriver {
         self.accounts_per_group
     }
 
+    /// P1-1（日终重刷配套）：id_map 共享句柄（快照构造输入——日终 live
+    /// 重刷与发布版本快照共用同一身份映射源）。
+    pub fn resting_id_map_handle(&self) -> std::sync::Arc<Vec<AccountId>> {
+        std::sync::Arc::clone(&self.id_map_shared)
+    }
+
     /// P2-4b：对相邻两拍在途单快照差分（信封账本增量维护输入）。
     /// 键=(股下标, Owner, side, order_serial)；值变化（部分成交）按
     /// Changed 整值替换。基线缺失（构造后首拍/红证强制）返回
@@ -2408,7 +2414,10 @@ fn resting_order_seeds_from_session(
     let from_ledger = snapshot.iter().all(|(_, orders)| orders.is_empty());
     let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = Vec::new();
     if from_ledger {
-        for (key, envelope) in session.runtime_envelope_ledger_snapshot() {
+        let ledger_entries = session
+            .runtime_envelope_ledger_snapshot()
+            .map_err(|fatal| format!("信封账本快照派生失败：{fatal:?}"))?;
+        for (key, envelope) in ledger_entries {
             // Sol 终审修复 1c 同族：owner 用真实组号（此前写死组 0
             /// ——多组 restore 的挂单被错归组 0 的同 local 账户）。
             let global = id_map
@@ -2490,6 +2499,7 @@ fn resting_order_seeds_from_session(
         crate::session::pipeline::Envelope,
     > = session
         .runtime_envelope_ledger_snapshot()
+        .map_err(|fatal| format!("信封账本快照派生失败：{fatal:?}"))?
         .into_iter()
         .map(|(key, envelope)| {
             let side_rank = u8::from(matches!(key.side, crate::orderbook::Side::Sell));

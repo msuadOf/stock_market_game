@@ -5225,7 +5225,10 @@ impl CommittableSessionState {
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
             runtime_heap_dirty: *runtime_heap_dirty,
-            runtime_resting_snapshot: None,
+            // Sol 复核阻断 P1-1：在途快照随 shadow 携带（瞬态缓存域——
+            // 与 desk_book_mirror/游标同式；envelope 派生唯一现势源，
+            // 清空使 shadow 边界的查询/save 读 stale ledger）。
+            runtime_resting_snapshot: runtime_resting_snapshot.clone(),
             runtime_account_undo: Vec::new(),
             runtime_account_undo_ids: std::collections::HashSet::new(),
             runtime_attention_undo: Vec::new(),
@@ -5426,7 +5429,10 @@ impl CommittableSessionState {
             FieldId::AttentionScheduler,
         );
         self.runtime_heap_dirty = runtime_heap_dirty;
-        self.runtime_resting_snapshot = None;
+        // Sol 复核阻断 P1-1：快照随 shadow 移交（P2-4 起 envelope 派生
+        // 唯一现势源——ledger 已停逐拍维护，commit 清空会使后续查询/
+        // save 读 stale ledger：新挂单消失/旧单复活）。
+        self.runtime_resting_snapshot = runtime_resting_snapshot;
         defer_swap(
             &mut self.company_registry,
             company_registry,
@@ -5514,6 +5520,63 @@ mod committable_state_tests {
             save.book_next_sequences[&StockId(0)],
             9,
             "镜像缺席时 save 游标由会话缓存承载"
+        );
+    }
+
+    /// Sol 复核阻断 P1-1：在途快照生命周期——shadow/commit 边界。
+    /// runtime_resting_snapshot 是 P2-4 起 envelope 派生的唯一现势源
+    ///（ledger 已停逐拍维护）：shadow 克隆必须**携带**权威快照（瞬态
+    /// 缓存域随 shadow——与 desk_book_mirror/游标先例同式），commit_from
+    /// 必须**移交** shadow 值（shadow 期间演进的快照不得丢弃——丢弃后
+    /// envelope 查询/save 读 stale ledger，新挂单消失/旧单复活）。
+    #[test]
+    fn sol_r22_commit_from_carries_and_transfers_resting_snapshot() {
+        let mut session = GameSession::new(
+            npc_working_quote_tests::retail_quote_setup(),
+            4242,
+        )
+        .expect("会话构造");
+        // 权威在途快照在位（上一成功拍发布版本句柄形态——Arc 廉价）。
+        let fact = |order_serial: u64| crate::runtime::RestingFact {
+            owner: (0, 0),
+            side: crate::orderbook::Side::Sell,
+            price: 2000,
+            qty: 100,
+            purse: 0,
+            filled_value: 0,
+            filled_qty: 0,
+            charged_commission: 0,
+            charged_stamp_tax: 0,
+            charged_transfer_fee: 0,
+            order_serial,
+        };
+        session.state.runtime_resting_snapshot = Some(RuntimeRestingSnapshot {
+            facts: vec![std::sync::Arc::new(vec![fact(7)])],
+            id_map: std::sync::Arc::new(vec![AccountId(1)]),
+            accounts_per_group: 1,
+        });
+        let mut shadow = session.state.clone_for_shadow().expect("shadow 克隆");
+        assert!(
+            shadow.runtime_resting_snapshot.is_some(),
+            "shadow 必须携带权威快照（瞬态缓存域随 shadow——清空使 shadow 边界的查询/save 读 stale ledger）"
+        );
+        // shadow 期间快照演进（新拍发布版本形态——order_serial 前进）。
+        shadow.runtime_resting_snapshot = Some(RuntimeRestingSnapshot {
+            facts: vec![std::sync::Arc::new(vec![fact(9)])],
+            id_map: std::sync::Arc::new(vec![AccountId(1)]),
+            accounts_per_group: 1,
+        });
+        session.state.commit_from(shadow);
+        let committed = session
+            .state
+            .runtime_resting_snapshot
+            .as_ref()
+            .expect("commit 后快照必须在位（shadow 值移交——不丢弃）");
+        assert!(
+            committed.facts.iter().any(|book| book
+                .iter()
+                .any(|f| f.order_serial == 9)),
+            "移交的是 shadow 期间演进的快照（新值），非旧值"
         );
     }
 
