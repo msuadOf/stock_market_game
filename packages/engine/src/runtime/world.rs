@@ -369,6 +369,10 @@ pub struct World {
     /// Q1 发布槽（方案 A）：install_tick 单点 publish；读者 load() 得
     /// 一致读点。初值=spawn 时的 v0。
     publication: std::sync::Arc<super::publication::ViewPublication>,
+    /// Q2 A 口径归因诊断：seal_round 累计 wall（含广播+收集等待——
+    /// 组端 drain/落账/分片构建都反映在等待里）。瞬态诊断面，不入
+    /// 存档/hash；探针读数用。
+    pub seal_ns_accumulated: u128,
 }
 
 impl World {
@@ -726,6 +730,7 @@ impl World {
             drained_auction: Vec::new(),
             civil_date: civil_start_date,
             publication,
+            seal_ns_accumulated: 0,
         })
     }
 
@@ -1669,6 +1674,7 @@ impl World {
         )>,
         RuntimeError,
     > {
+        let seal_started = std::time::Instant::now();
         // 存活契约测试注入（one-shot）：模拟一次 SealAck 收集失败——
         // Abort 语义（worker 全存活，同 tick 重试成功）。
         #[cfg(test)]
@@ -1733,6 +1739,7 @@ impl World {
                 }
             }
         }
+        self.seal_ns_accumulated += seal_started.elapsed().as_nanos();
         Ok(seal_accounts)
     }
 

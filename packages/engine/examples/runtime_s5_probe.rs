@@ -101,6 +101,7 @@ fn main() {
     let committed = world.run_ticks(ticks).expect("tick 全部收敛");
     let wall = started.elapsed().as_secs_f64();
 
+    let seal_ns = world.seal_ns_accumulated;
     let report = world.shutdown().expect("关停对账");
     let mut cash: i128 = 0;
     let mut shares = 0u64;
@@ -125,8 +126,12 @@ fn main() {
         fees += d.fee_sink;
     }
     let tps = committed as f64 / wall;
+    // Q2 A 口径归因诊断：seal_round 累计 wall 占比（广播+收集等待——
+    // 组端 drain/落账/分片构建反映在等待里）与每拍均值。
+    let seal_pct = (seal_ns as f64) / (wall * 1e9) * 100.0;
     println!(
-        "结果：{tps:.1} t/s（{committed} tick / {wall:.2}s）；成交量 {trades} 股；费用桶 {fees} 分；挂簿余 {resting}；T+1 冻结 {frozen}"
+        "结果：{tps:.1} t/s（{committed} tick / {wall:.2}s）；成交量 {trades} 股；费用桶 {fees} 分；挂簿余 {resting}；T+1 冻结 {frozen}；Seal 相位 {seal_pct:.1}%（{:.0}μs/tick）",
+        seal_ns as f64 / committed as f64 / 1000.0
     );
     // 守恒：现金 + 费用 = 初始（撤到 Drain 后在途清零）。
     let initial_total = (npcs as i128) * 1_000_000_000;
