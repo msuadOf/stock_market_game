@@ -34,15 +34,16 @@ pub(crate) fn ensure_fact_owners_covered_arc(
     >],
     accounts_per_group: usize,
 ) -> Result<(), String> {
-    let snapshots_vec: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> = snapshots
-        .iter()
-        .map(|arc| {
-            arc.iter()
-                .map(|(local, acct)| (*local, (**acct).clone()))
-                .collect()
-        })
-        .collect();
-    ensure_fact_owners_covered(fact_rec, &snapshots_vec, accounts_per_group)
+    // 复核登记项收口（sealtop 批）：覆盖校验只消费 local 下标——Arc
+    // 分片形态直接迭代（零 GroupAccount 深拷贝；原逐条值形态重组=每拍
+    /// 无谓拷贝税，dirty 集增大时随账户数线性放大）。
+    ensure_fact_owners_covered_locals(
+        fact_rec,
+        snapshots
+            .iter()
+            .map(|arc| arc.iter().map(|(local, _)| *local)),
+        accounts_per_group,
+    )
 }
 
 pub(crate) fn ensure_fact_owners_covered(
@@ -50,15 +51,33 @@ pub(crate) fn ensure_fact_owners_covered(
     snapshots: &[Vec<(super::LocalIdx, super::group::GroupAccount)>],
     accounts_per_group: usize,
 ) -> Result<(), String> {
+    ensure_fact_owners_covered_locals(
+        fact_rec,
+        snapshots.iter().map(|group| group.iter().map(|(local, _)| *local)),
+        accounts_per_group,
+    )
+}
+
+/// 覆盖校验核心（单源）：按组迭代分片条目的 local 下标构建 covered 位
+/// 图，再核对本拍 desk 事实的每个 owner——缺项显式失败（不静默装陈旧
+/// 镜像）。账户实体不进入校验——两种分片形态（Arc 共享/值）共用。
+fn ensure_fact_owners_covered_locals<I>(
+    fact_rec: Option<&super::world::TickRecord>,
+    locals_per_group: I,
+    accounts_per_group: usize,
+) -> Result<(), String>
+where
+    I: Iterator,
+    I::Item: IntoIterator<Item = super::LocalIdx>,
+{
     let Some(rec) = fact_rec else {
         return Ok(());
     };
-    let mut covered: Vec<Vec<bool>> = snapshots
-        .iter()
-        .map(|group| {
+    let mut covered: Vec<Vec<bool>> = locals_per_group
+        .map(|locals| {
             let mut flags = vec![false; accounts_per_group];
-            for (local, _) in group {
-                if let Some(flag) = flags.get_mut(*local as usize) {
+            for local in locals {
+                if let Some(flag) = flags.get_mut(local as usize) {
                     *flag = true;
                 }
             }

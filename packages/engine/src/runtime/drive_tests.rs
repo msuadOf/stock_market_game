@@ -2966,6 +2966,73 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
     assert!(ensure_fact_owners_covered(None, &snapshots, 8).is_ok());
 }
 
+/// Seal 攻顶批复核登记项收口：生产路径覆盖校验走 Arc 分片形态
+/// （ensure_fact_owners_covered_arc——drive.rs 稀疏回写主路径每拍调用）。
+/// 零深拷贝重构（只消费 local 下标）的行为判别面：正/负/None 三态与
+/// 值形态版逐位等价（缺项必须显式失败——不静默装陈旧镜像）。
+#[test]
+fn p2_4a_arc_shard_cover_check_matches_value_form() {
+    use crate::runtime::drive::{ensure_fact_owners_covered, ensure_fact_owners_covered_arc};
+    use crate::runtime::protocol::DeskTradeFact;
+    use crate::runtime::world::TickRecord;
+    use std::sync::Arc;
+
+    let record = TickRecord {
+        tick: 1,
+        rounds: 0,
+        group_hashes: Vec::new(),
+        desk_hashes: Vec::new(),
+        desk_resting: Vec::new(),
+        desk_trades: vec![DeskTradeFact {
+            stock: 0,
+            price: 1000,
+            qty: 100,
+            maker: (0u16, 0u32),
+            taker: (0u16, 3u32),
+            taker_side: crate::orderbook::Side::Buy,
+            maker_fees_cents: 0,
+            taker_fees_cents: 0,
+            maker_order_serial: 1,
+            taker_order_serial: 2,
+        }],
+        desk_lifecycle: Vec::new(),
+        desk_receipts: Vec::new(),
+        group_rejections: Vec::new(),
+        desk_auction: Vec::new(),
+    };
+    // Arc 分片形态（生产形态：组分片条目 Arc 共享——Seal 攻顶 A-1）。
+    let make_shards = |locals: &[crate::runtime::LocalIdx]| -> Vec<
+        Arc<Vec<(crate::runtime::LocalIdx, Arc<crate::runtime::group::GroupAccount>)>>,
+    > {
+        vec![Arc::new(
+            locals
+                .iter()
+                .map(|&local| {
+                    (
+                        local,
+                        Arc::new(crate::runtime::group::GroupAccount::new(1_000_000, 1)),
+                    )
+                })
+                .collect(),
+        )]
+    };
+    // 负例：只含 maker local 0——taker local 3 缺项必须显式失败。
+    let partial = make_shards(&[0]);
+    let err_arc = ensure_fact_owners_covered_arc(Some(&record), &partial, 8)
+        .expect_err("Arc 形态缺项必须显式失败");
+    let value_form: Vec<Vec<(crate::runtime::LocalIdx, crate::runtime::group::GroupAccount)>> =
+        vec![vec![(0, crate::runtime::group::GroupAccount::new(1_000_000, 1))]];
+    let err_value = ensure_fact_owners_covered(Some(&record), &value_form, 8)
+        .expect_err("值形态缺项必须显式失败");
+    assert_eq!(format!("{err_arc}"), format!("{err_value}"),
+        "Arc 形态与值形态缺项错误必须逐字等价");
+    // 正例：maker+taker 全在分片。
+    let full = make_shards(&[0, 3]);
+    assert!(ensure_fact_owners_covered_arc(Some(&record), &full, 8).is_ok());
+    // None 记录恒过（空事实面）。
+    assert!(ensure_fact_owners_covered_arc(None, &partial, 8).is_ok());
+}
+
 /// P2-4b 等价守卫辅助：同 fixture 同种子经 session 侧 step_via_runtime
 /// 跑 N 拍（信封增量维护在生产路径 step_via_runtime 内——driver 直调
 /// step_frame_equivalent 不经该段，守卫必须走 session 步进）。可选每拍
