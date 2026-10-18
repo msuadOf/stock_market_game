@@ -5392,12 +5392,22 @@ pub fn group_main(
                 /// 唯一化）。落账进 undo 日志（Abort 可冲回——S3：undo
                 /// 跨发布无害，Start 清点不变）。期末哈希随 SealAck 上行。
                 if tick != state.cur_tick || round_final != state.cur_round {
-                    result = Err(RuntimeError::ProtocolInvariant {
+                    // 铁律二收口（seal_failed_injection_tests 发现的缺口）：
+                    /// 协议错位退出必须 Failed 上行+abort 置位（对齐其他
+                    /// 失败分支——不静默只 break 会使协调者退化为
+                    /// watchdog/断连超时发现）。
+                    abort.store(true, Ordering::SeqCst);
+                    let e = RuntimeError::ProtocolInvariant {
                         detail: format!(
                             "组 {} Seal 错位：期望 ({},{})，收到 ({tick},{round_final})",
                             state.group, state.cur_tick, state.cur_round
                         ),
+                    };
+                    let _ = up_tx.send(UpMsg::Failed {
+                        who,
+                        error: e.clone(),
                     });
+                    result = Err(e);
                     break;
                 }
                 // 收件箱顺序 drain：Seal 前入队的全部数据面消息（S4：
@@ -5442,12 +5452,19 @@ pub fn group_main(
                         }
                         Ok(other) => {
                             let _ = other;
-                            result = Err(RuntimeError::ProtocolInvariant {
+                            // 铁律二收口：同上——协议错位显式上报（不静默）。
+                            abort.store(true, Ordering::SeqCst);
+                            let e = RuntimeError::ProtocolInvariant {
                                 detail: format!(
                                     "组 {} Seal 期收到非数据面消息（协议错位）",
                                     state.group
                                 ),
+                            };
+                            let _ = up_tx.send(UpMsg::Failed {
+                                who,
+                                error: e.clone(),
                             });
+                            result = Err(e);
                             break;
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -6691,4 +6708,164 @@ mod eager_domain_tests {
             assert_eq!(state.accounts[0].recovered_cents, vec![0; 3], "{label} recovered 冲回");
         }
     }
+}
+
+// ═══ 组端 Seal Failed 路径注入（登记项收口——seal_tests 承载的组内
+// 直连形态，私有字段可见性归本模块）═══
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod seal_failed_injection_tests {
+    use super::*;
+// ═══ 组端 Seal Failed 路径注入（第 20 任登记项收口）═══
+//
+// 协调者侧 SealAck 收集失败已有合同（seal_ack_failure_aborts_then_
+// retry_survives）；组端 Seal 相位自身的两条显式失败防御此前无注入
+// 测试：①Seal tick/round 错位（5183 形态防御）；②Seal drain 期收到
+// 非数据面消息（协议错位——Batch/AcceptedBatch 之外的消息属 Seal
+// 相位不可达形态，显式失败不静默）。组线程直连形态（v5 同款真实
+// 通道）承载。
+
+/// 防御 ①：Seal tick 错位——组在（tick=1, round=0）收到 Seal{tick=2}。
+#[test]
+fn seal_mismatched_tick_fails_explicitly() {
+    
+    use super::GroupIn;
+        use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+    let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+    let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+    let abort = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
+    let capture = Arc::new(Mutex::new(
+        crate::verification_evidence::current_phase_timing_binding(),
+    ));
+    let mut state = GroupState::new(
+        0,
+        vec![GroupAccount::new(1_000_000, 1)],
+        8,
+        100,
+        Arc::new(crate::config::GameConfig::proposed_defaults()),
+        240,
+        None,
+        Vec::new(),
+        Box::new(|_t, _r| TickPlan::default()),
+    );
+    state.cur_tick = 1;
+    state.cur_round = 0;
+    let handle = {
+        let (abort, shutdown_flag, capture) = (Arc::clone(&abort), Arc::clone(&shutdown_flag), Arc::clone(&capture));
+        std::thread::spawn(move || {
+            group_main(
+                state,
+                vec![_desk_tx],
+                group_rx,
+                up_tx,
+                abort,
+                shutdown_flag,
+                crate::runtime::watchdog::WatchdogConfig {
+                    normal: std::time::Duration::from_secs(30),
+                    long: std::time::Duration::from_secs(120),
+                },
+                capture,
+            )
+        })
+    };
+    // 错位 Seal（期望 (1,0)，发 (2,0)）——显式失败（ProtocolInvariant）。
+    group_tx
+        .send(GroupIn::Seal {
+            tick: 2,
+            round_final: 0,
+        })
+        .expect("错位 Seal 发送");
+    let outcome = handle.join().expect("组线程退出");
+    let err = outcome.expect_err("Seal 错位必须显式失败");
+    assert!(
+        matches!(err, RuntimeError::ProtocolInvariant { .. }),
+        "错误面可辨识（ProtocolInvariant）：{err:?}"
+    );
+    // 线程退出后 Failed 上行到达（break 前已发送；单消费者按序收）。
+    let mut saw_failed = false;
+    while let Ok(msg) = up_rx.try_recv() {
+        if matches!(msg, UpMsg::Failed { .. }) {
+            saw_failed = true;
+        }
+    }
+    assert!(saw_failed, "组端退出前 Failed 上行（不静默）");
+    assert!(abort.load(Ordering::SeqCst), "abort 标记置位（通知对端）");
+}
+
+/// 防御 ②：Seal drain 期非数据面消息（Abort 属协议错位形态——Seal
+/// 相位不可达；显式失败不静默吞）。
+#[test]
+fn seal_drain_foreign_message_fails_explicitly() {
+    
+    use super::GroupIn;
+        use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+    let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+    let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+    let abort = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
+    let capture = Arc::new(Mutex::new(
+        crate::verification_evidence::current_phase_timing_binding(),
+    ));
+    let mut state = GroupState::new(
+        0,
+        vec![GroupAccount::new(1_000_000, 1)],
+        8,
+        100,
+        Arc::new(crate::config::GameConfig::proposed_defaults()),
+        240,
+        None,
+        Vec::new(),
+        Box::new(|_t, _r| TickPlan::default()),
+    );
+    state.cur_tick = 1;
+    state.cur_round = 0;
+    let handle = {
+        let (abort, shutdown_flag, capture) = (Arc::clone(&abort), Arc::clone(&shutdown_flag), Arc::clone(&capture));
+        std::thread::spawn(move || {
+            group_main(
+                state,
+                vec![_desk_tx],
+                group_rx,
+                up_tx,
+                abort,
+                shutdown_flag,
+                crate::runtime::watchdog::WatchdogConfig {
+                    normal: std::time::Duration::from_secs(30),
+                    long: std::time::Duration::from_secs(120),
+                },
+                capture,
+            )
+        })
+    };
+    // 先入队一条非数据面消息（Abort——drain 期将被消费到），再发 Seal：
+    // drain 循环收件箱顺序消费——Abort 先于 Seal 处理到达。
+    group_tx
+        .send(GroupIn::Abort { tick: 1 })
+        .expect("协议错位消息入队");
+    group_tx
+        .send(GroupIn::Seal {
+            tick: 1,
+            round_final: 0,
+        })
+        .expect("Seal 发送");
+    let outcome = handle.join().expect("组线程退出");
+    let err = outcome.expect_err("Seal drain 期非数据面消息必须显式失败");
+    assert!(
+        matches!(err, RuntimeError::ProtocolInvariant { .. }),
+        "错误面可辨识（协议错位）：{err:?}"
+    );
+    let mut saw_failed = false;
+    while let Ok(msg) = up_rx.try_recv() {
+        if matches!(msg, UpMsg::Failed { .. }) {
+            saw_failed = true;
+        }
+    }
+    assert!(saw_failed, "组端退出前 Failed 上行（不静默）");
+    assert!(abort.load(Ordering::SeqCst), "abort 标记置位");
+}
+
 }
