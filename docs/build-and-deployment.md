@@ -267,8 +267,11 @@ NPC 开局的性能验收。
   核间歇热）。关法：环境变量 `ENGINE_SPIN_DISABLE=1`（完全回落 50ms
   步进睡眠等待）；`ENGINE_SPIN_US=<微秒>` 调档（默认 500——验证批
   250/500/1000 三档配对不敏感，依据见
-  `agents/view-campaign/plans/seal-spread-wakeup-design.md` §4）。
+  `agents/view-campaign/plans/seal-spread-wakeup-design.md` §4；
+  **显式设置但非法值（非数字/溢出）启动即显式 panic，不静默回落**）。
   WASM 串行路径无 OS 线程，不受影响（编译期恒禁用）。
+  CI/容器注意：cgroup 限核环境自旋空转占比被放大，限核跑测试可用
+  `ENGINE_SPIN_DISABLE=1`。
 
 ## 协议与浏览器约束
 

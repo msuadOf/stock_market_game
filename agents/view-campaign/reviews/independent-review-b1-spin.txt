@@ -1,0 +1,64 @@
+=== B-1' 自旋批+ensure_fact 零拷贝批 独立复核（fork，未实施改动者，2026-10-19）===
+
+对象：b271f9bd（ensure_fact Arc 分片零深拷贝）/ cc9a3795（B-1' 分级自旋
++最晚Ack 诊断）/ 14d716fa（文档登记，顺带）。
+
+【阻断】无。
+
+【建议（登记级，4 条）】
+1. group.rs:19 import 列表保留 `worker_recv` 但文件内已零调用（grep
+   证实——唯一调用点已改 worker_recv_spin）——unused import 编译
+   warning。随下批清理（从 import 列表删除即可）。
+2. ENGINE_SPIN_US 非法值（parse 失败）静默回落 500μs——部署参数容错
+   惯例上可接受，但按铁律二"不用默认值掩盖异常"的精神属轻度违背：
+   至少文档应补记回落行为（14d716fa 未提），或改为 eprintln 显式提示。
+3. spin_exhausted_shutdown_returns_fast 的 <30ms 断言：自旋路径理论
+   ~500μs（余量 60 倍），但极端调度饥饿（测试机满载抢占 >30ms）存在
+   理论 flake 余量。128 核测试机实测风险低——登记不阻塞；若未来 CI
+   限核环境复现，可放宽至 40ms（区分度 40 vs 50ms 仍成立）。
+4. 集成测试（engine/tests/）以非 test 配置编译 engine——env 未设时
+   组线程自旋**真实开启**（这不是盲区反而是真实覆盖，行为等价性被
+   集成面验证）；副作用=每空闲窗至多 500μs 空转，实测时长影响微小
+   （1695 双模式通过）。但 cgroup 限核的 CI 环境会放大空转占比——
+   部署/CI 注意（可用 ENGINE_SPIN_DISABLE=1）。
+
+【确认】
+1. **worker_recv_spin 语义等价（逐分支）**：
+   a) 消息序：try_recv 与 recv_timeout 消费同一 std mpsc 队列（现版
+      std 为 crossbeam 移植实现），FIFO 不变，无副作用差异；
+   b) 断连：自旋段 TryRecvError::Disconnected→Ok(None) 与睡眠段
+      RecvTimeoutError::Disconnected→Ok(None) 一致；
+   c) shutdown：自旋耗尽后的立即观察是**新增观察点**（原版仅在 50ms
+      步进超时后查）——方向=关停响应更快（≤窗+ε vs ≤50ms），消息
+      优先次序两版一致（先收消息再查关停），无误退出面（load false
+      时继续睡眠路径）——语义安全的有意增强，注释与设计稿已声明；
+   d) watchdog：自旋段计入 waited（口径声明一致）；limit<window 边界
+      （测试注入 normal=300μs）自旋段耗尽即 Err，waited 字段=limit、
+      detail 文案与原版逐字同；min(limit) 取值正确（limit≥window 时
+      waited<limit 不误触发）；睡眠回落段 waited 续算（+=step 预设
+      累加与原版同款近似）。
+2. **大 A 语义零触碰**：纯等待策略（watchdog/group）+瞬态诊断
+   （world）+校验拷贝消除（drive）——不涉撮合/账户/费用/涨跌停任何
+   交易路径；无 A 股概念面变化。
+3. **最小性**：desk 未动（desk.rs:2531 仍 worker_recv——协调者裁决③
+   遵守）；诊断字段 seal_last_ack_groups 为 World 瞬态 pub 字段
+   （trio 诊断先例同款，不入存档/hash——World 无序列化面，session
+   存档不经 GlobalState）；探针读数在 shutdown() 前 clone（所有权
+   干净）。
+4. **ensure_fact 重构**：核心 ensure_fact_owners_covered_locals 与原
+   值形态版逐行同构（flags 构建/local 置位/check 闭包/三组 fact 循环
+   均未动）；Arc/值双形态 map 出 local 迭代器共享单源，组序/错误消息
+   一致；值形态老测试 p2_4a_sparse_echo_missing_item_fails_loud 未动
+   语义不变；新测试 Arc/值缺项错误逐字比对=等价锚；突变红实证可复现
+   （短路版→arc 负例红，实施记录在案）。
+5. **测试判别力**：判别面真实（桩阶段 spin_exhausted_shutdown_
+   returns_fast 实测红 50.1ms=走睡眠步进，实现后 ~500μs 绿——红绿
+   差 100 倍）；6 条覆盖自旋窗内消息/断连/关停快观察/禁用回落/
+   窗后回落接收/watchdog 上限，分支面完整；cfg(test) 恒关的盲区由
+   ①直击合同 ②tests/ 集成测试真实开启 双重覆盖。
+6. 文档 14d716fa 与实现一致（DISABLE=1/US 默认 500/wasm 恒禁用/
+   空转代价量级）；全量 1695/0/11 双模式+wasm check 过（npc rayon
+   flake 家族隔离复跑绿——既有登记）。
+
+【复核方法】git show 三提交完整 diff+提交内文件内容核查（group.rs
+调用面 grep/desk 对照/world 字段面/watchdog_spin_tests 断言面）。

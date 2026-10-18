@@ -139,3 +139,19 @@ fn spin_respects_watchdog_limit() {
     );
     drop(tx);
 }
+
+/// 复核建议②收口：ENGINE_SPIN_US 显式设置但非法（非数字/溢出）必须
+/// 显式 panic（含值与原因）——静默回落默认 500μs 会掩盖配置错误
+///（铁律二"不用默认值掩盖异常"）。合法值透传。
+#[test]
+#[should_panic(expected = "ENGINE_SPIN_US 非法值")]
+fn spin_us_invalid_value_panics_loud() {
+    super::watchdog::spin_us_from_str("abc");
+}
+
+/// 合法值透传+空串/超 u64 拒绝（panic 面）。
+#[test]
+fn spin_us_valid_value_passes_through() {
+    assert_eq!(super::watchdog::spin_us_from_str("250"), 250);
+    assert_eq!(super::watchdog::spin_us_from_str("1000"), 1000);
+}

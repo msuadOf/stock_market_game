@@ -158,16 +158,29 @@ pub fn spin_config() -> SpinConfig {
             let disabled = std::env::var("ENGINE_SPIN_DISABLE").ok().as_deref() == Some("1");
             // 默认 500μs：覆盖静置窗实测 spread 主体（124-185μs）且不过度
             // 空转——验证批三档（250/500/1000）配对复核后如改值须同步本注释。
-            let window_us = std::env::var("ENGINE_SPIN_US")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(500);
+            let window_us = match std::env::var("ENGINE_SPIN_US") {
+                Err(_) => 500,
+                // 复核建议②收口：显式设置的部署参数非法值=显式失败，
+                /// 不静默回落默认（铁律二"不用默认值掩盖异常"）。
+                Ok(raw) => spin_us_from_str(&raw),
+            };
             SpinConfig {
                 enabled: !disabled,
                 window: Duration::from_micros(window_us),
             }
         })
     }
+}
+
+/// `ENGINE_SPIN_US` 显式值解析：非法（非数字/溢出）→ panic（含值与
+/// 原因——部署意图明确表达时静默回落会掩盖配置错误）。
+/// 非 wasm 门控（cfg(test) 可见——panic 合同由 watchdog_spin_tests 覆盖；
+/// wasm 无 OS 线程，spin_config 恒关不走本函数）。
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn spin_us_from_str(raw: &str) -> u64 {
+    raw.parse::<u64>().unwrap_or_else(|e| {
+        panic!("ENGINE_SPIN_US 非法值 {raw:?}：{e}——显式部署意图不静默回落默认 500μs（铁律二）")
+    })
 }
 
 /// worker 侧收件的组线程变体（B-1' 分级自旋——先热态自旋窗再回落

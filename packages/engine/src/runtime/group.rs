@@ -16,7 +16,7 @@ use super::protocol::{
     AdminRight, DayEndDirective, DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice,
     RuntimeError, UpMsg, WorkerId,
 };
-use super::watchdog::{spin_config, worker_recv, worker_recv_spin, WatchdogConfig};
+use super::watchdog::{spin_config, worker_recv_spin, WatchdogConfig};
 use super::{Entity, FillFact, GroupIdx, LocalIdx, OrderRef, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
