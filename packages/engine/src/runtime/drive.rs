@@ -777,9 +777,9 @@ impl RuntimeDriver {
                     engine_acct.fixture_set_positions(merged);
                 }
                 // Sol 终审修复 1b：本账户的首买经历 init 收集并入成员槽
-                ///（此前局部 Vec 随循环体丢弃——Continue 早轮成交已被排除
-                /// 出 unsettled_trades，组回写段是其唯一 init 机会，丢弃
-                /// 形成"有持仓、无经历"，破坏 fault2038 保存校验）。
+                ///（Q2 Seal 后组回写（发布分片）已含本拍全部成交——
+                /// 回写段是 init 的唯一时机，丢弃形成"有持仓、无经历"，
+                /// 破坏 fault2038 保存校验）。
                 self.pending_hold_inits.extend(pending_hold_inits);
             }
             }
