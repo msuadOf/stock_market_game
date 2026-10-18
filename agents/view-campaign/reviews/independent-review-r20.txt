@@ -1,0 +1,34 @@
+=== 第 20 任独立复核（fork，未实施改动者）——四提交 ===
+范围：a1a4f02d（合同红先行）/ 2a7e704b（eager 分域落地）/
+faf60c6d（candle 设计稿，略读）/ 7c52a392（belief 刀 a）
+方法：git show 逐提交全 diff 读取（group.rs 1357 行+drive.rs 82 行+
+测试改写+证据归档）。
+
+【阻断】无。
+
+【建议（2 条，登记级）】
+1. 迟到 AcceptedBatch 的 F5/F6 undo 记录在日结转正（undo.drain(..baseline)）
+   后落入保留段=日结 Abort 现在会冲回迟到受理（原版 undo.clear() 不可
+   冲回）。保守方向的行为差异，正常路径无观察面（双模式全绿含 sol4
+   家族）——语义决策登记台账。
+2. handle_start 的防御性 apply_deferred() 调用冗余（上方防御已保证
+   deferred 空）——无害，留作防御纵深。
+
+【确认（关键等价点逐项核实）】
+(a) 延迟相重放序=原批内序（actions 追加序保持 receipts→entities 相对
+    序及 entities 内交错；fills→actions→批尾三连与原序一致）；
+(b) EverReset 延迟读值无漂移（即时相全程不写 ever_held；跨批交错算例
+    终态/undo 记录数/回滚值三面等价——EverHeld 回放为 =prev 幂等赋值）；
+(c) 清零判定同点（CostBasis 清零在即时相批尾，F3 已即时，批间 FIFO
+    保序与原时序一致）；
+(d) DayEnd 三形态（无/有 Drain 批、日结后 Start）日志域恢复正确；
+    undo 单调增保证 drain 不越界；rollback/Start/DayEnd 正确复位
+    seal_acked_len 与计数；
+(e) 防御覆盖（纯即时批空载荷 DeferredBatch 仍入 Vec——deferred 非空
+    可拦+计数双保险；AcceptedBatch 迟到合法不拦改判正确）。
+verify 时点前移 (tick,round) 匹配性成立；v5_shutdown 语义保持且更早
+落账；空批 no-op 重放安全；plan_fills 到达即进等价。
+大 A 语义：纯时序重构，T+1/purse 镜像/成本基/门禁数值路径零触碰。
+belief 刀 a：clone 减一层语义等价；发布 tick 滞后防御保留。
+测试判别力充分（合同 2 双到达序+字段级断言、合同 3 固定交错置换、
+突变红双证归档）。

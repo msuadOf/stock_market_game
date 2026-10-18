@@ -1518,14 +1518,6 @@ impl World {
             .collect())
     }
 
-    /// P2-4a 红证注入通道（cfg(test)）：组 0 稀疏回执丢最后一项。
-    #[cfg(test)]
-    pub fn corrupt_sparse_echo_omit_last_for_test(&mut self) {
-        if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::CorruptSparseEchoOmitLast);
-        }
-    }
-
     /// P2-4a：组数读面（驱动器稀疏回声请求面构建——dirty 全局位 →
     /// (组, 组内下标) 分桶）。
     pub fn n_groups(&self) -> usize {

@@ -468,10 +468,6 @@ pub enum GroupIn {
         /// 请求的组内下标（升序去重——驱动器 dirty 扫描天然有序）。
         wanted: Vec<super::LocalIdx>,
     },
-    /// P2-4a 红证通道（cfg(test)）：组端稀疏回执丢最后一项（缺项注入
-    /// ——收集端精确集校验的显式失败判别用）。
-    #[cfg(test)]
-    CorruptSparseEchoOmitLast,
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
     EchoCandles,
     /// D5 #4 retail 链：本拍零售决策 trace 请求（组回 RetailTraces——

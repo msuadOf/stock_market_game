@@ -1785,13 +1785,6 @@ impl RuntimeDriver {
         self.account_writes
     }
 
-    /// P2-4a 红证注入通道（cfg(test)）：组 0 稀疏账户回声回执丢最后
-    /// 一项——收集端精确集校验的显式失败判别用。
-    #[cfg(test)]
-    pub fn corrupt_sparse_echo_omit_last_for_test(&mut self) {
-        self.world.corrupt_sparse_echo_omit_last_for_test();
-    }
-
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面——**全量语义**
     /// 读面；生产安装链的 dirty 过滤在 step 内部承载，不经此面。
     /// P2-1a：随附 dirty 掩码（读面一般忽略；同源校验可用）。

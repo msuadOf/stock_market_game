@@ -654,10 +654,6 @@ pub struct GroupState {
     /// ForceDue 改排的位——稀疏上行源）。Start 清（上一 tick 的演进已在
     /// Drain 期上行消费；未消费即失效）。
     attention_evolved: Vec<LocalIdx>,
-    /// P2-4a 红证注入（cfg(test)）：稀疏账户回声回执丢最后一项——收集
-    /// 端精确集校验的显式失败判别用（生产恒 false）。
-    #[cfg(test)]
-    sparse_echo_omit_last: bool,
     /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
     /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
@@ -778,7 +774,6 @@ impl GroupState {
             roster_offset: 0,
             attention_evolved: Vec::new(),
             #[cfg(test)]
-            sparse_echo_omit_last: false,
             #[cfg(test)]
             injected_assessments: Vec::new(),
             #[cfg(test)]
@@ -5549,11 +5544,6 @@ pub fn group_main(
                     abort.store(true, Ordering::SeqCst);
                     break;
                 }
-                // cfg(test) 红证注入：丢最后一项（收集端必须显式失败）。
-                #[cfg(test)]
-                if state.sparse_echo_omit_last && !accounts.is_empty() {
-                    accounts.pop();
-                }
                 let msg = UpMsg::GroupEchoSparse {
                     group: state.group,
                     accounts,
@@ -5565,10 +5555,6 @@ pub fn group_main(
                     });
                     break;
                 }
-            }
-            #[cfg(test)]
-            GroupIn::CorruptSparseEchoOmitLast => {
-                state.sparse_echo_omit_last = true;
             }
             GroupIn::EchoCandles => {
                 // K 线投影面向交易部（协调者直发 desk 通道）；组收到=
