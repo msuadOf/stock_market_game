@@ -2233,66 +2233,62 @@ impl RuntimeDriver {
     /// Sol 终审四审 A2：post_day_end=world 日结**之后**的补装（ends_day
     /// 段尾）——desk roll 后新日 active 是起始占位，档校验（fault2076）
     /// 期望日界静点 active 为空 ⇒ 强制清除；常规安装（false）不变。
+    ///
+    /// candle 退役刀 1（数据源切换）：active 观察面改读**发布版本**
+    /// （`PublishedTick.desks[].view` 的 daily_active 5 元组+扩 2 字段
+    /// turnover/trade_count——desk 构造点单点同源），EchoCandles 生产
+    /// 往返退役（原每拍 5 desk 广播+全量 history Vec 克隆+收齐——
+    /// history 消费侧零读者，纯浪费）。等价论证（设计稿 §2）：
+    /// 发布版本 active=终轮 DeskReport 附带（Seal 收敛点），desk active
+    /// 拍内只在成交时演进、Seal 后不变 ⇒ 与原 install 时点的 desk 往返
+    /// 同值；post_day_end 形态走 clear 分支不消费 active（发布版本残留
+    /// 无害）。刀 2：相位判定输入（setup 导出）外提循环外+预计算。
+    /// 语义变化登记（复核确认）：原"desk 通道断连时 install 显式失败"
+    /// 的收集面退役——发布版本为已提交一致快照，sever 后 install 用
+    /// 最后发布版本仍成功（非部分数据；sol3 断连测试随批 2 改写）。
     pub fn install_candles_with_mode(
         &mut self,
         session: &mut GameSession,
         post_day_end: bool,
     ) -> Result<(), String> {
-        let finals = self
-            .world_desk_finals_for_candles()
-            .map_err(|e| format!("K 投影收集失败：{e:?}"))?;
-        let tpd_now = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
+        let published = self.world.publication().load();
+        if published.tick != self.world.global.committed_tick {
+            return Err(format!(
+                "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                published.tick, self.world.global.committed_tick
+            ));
+        }
+        // 刀 2：循环不变量外提（原每股 export_setup 重复导出×N 股）。
+        let s = session.export_setup_for_runtime();
+        let tpd_now = u64::from(s.ticks_per_day).max(1);
         // 日结拍判定（C2/C3 相位基准）：本拍步后 tick 为 tpd 倍数 ⇒
-        /// ends_day 段的日终迁移（commit_active）即将执行。
+        // ends_day 段的日终迁移（commit_active）即将执行。
         let ends_day = session.tick() % tpd_now == 0;
-        for (stock_idx, _desk_hist, active) in finals {
-            let code = crate::StockId(u32::from(stock_idx));
+        let day_tick = session.tick() % tpd_now;
+        let auction_entry = s.auction_ticks - s.auction_ticks / 3;
+        let candle_time = session.candle_date_time_for_runtime();
+        for shard in &published.desks {
+            let code = crate::StockId(u32::from(shard.stock));
+            let view = &shard.view;
             // 日 K 相位状态机（Sol 终审四审 public_step 方案 B，协调者
-            /// 批复）：归档权收归 session 日终迁移（commit_active）唯一
-            /// 承载——desk roll 归档的 hist 条与 session active 是同一份
-            /// 数据的两面，运行期不再自 desk hist push（push 与 commit
-            /// 并存即双重归档，A2PUSH/A2COMMIT 打点实证；撤 push 后
-            /// desk hist 仅余 restore 种子装载与测试面对账两类读者，
-            /// 全仓 rg 已核）。本函数只承载 C1（active 装载/占位）与
-            /// C3（清空）。多日一次归档守卫随 push 退役（迁移每拍至多
-            /// 提交一条 active；一次 step 至多跨一日）。
-            // 活跃 K 窗口对齐（存档校验 fault2076）：竞价申报窗
-            // （day_tick < auction_entry=10）活跃 K 须为空。
-            let s = session.export_setup_for_runtime();
+            // 批复）：归档权收归 session 日终迁移（commit_active）唯一
+            // 承载。本函数只承载 C1（active 装载/占位）与 C3（清空）。
             // C3（方案 B）：active 清空仅两源——迁移后补装
             /// （post_day_end）与**迁移已执行后的**新日申报窗。日结拍
             /// 的常规 install（先于 ends_day 迁移执行）不得清当日
-            /// active：session active 仍持当日终态（前拍装载），是日终
-            /// 迁移 commit_active 的唯一归档输入；此处清空会使日界
-            /// 静点丢当日 K（fault2064 少条——tick8 [0,360,361] 形态）。
-            /// 相位基准=迁移执行标志（ends_day/post_day_end），不再以
-            /// day_tick 几何单独推断（几何推断正是 premature clear 的
-            /// 来源——此前 tick−1 拍前口径尝试亦因与档校验错位交替
-            /// 显红，两案均在状态机统一后退役）。
-            let day_tick = session.tick() % s.ticks_per_day.max(1);
-            let auction_entry = s.auction_ticks - s.auction_ticks / 3;
-            // 活动 K 空窗与存档校验 fault2076 同式：竞价申报窗——
-            // Sol 终审四审 A2：去掉原 day_tick==0（日界拍）分支——常规
-            /// install 在 world 日结**之前**执行（当日 active 必须装载，
-            /// session 日终迁移才能提交归档；原分支使 tpd=1 场景的当日
-            /// K 永不归档，档少一条 fault2064 反截）。日结后的第二次
-            /// install 时 desk roll 已清 active（None=清除，无残留）。
+            /// active（session active 仍持当日终态，是日终迁移
+            /// commit_active 的唯一归档输入；此处清空会使日界静点丢
+            /// 当日 K——fault2064 少条形态）。
             let active_must_be_empty = post_day_end || (day_tick < auction_entry && !ends_day);
-            let candle_time = session.candle_date_time_for_runtime();
             if active_must_be_empty {
                 session.clear_active_candle_for_runtime(&code);
             }
-            // Sol 终审四审 A2 补齐：无成交日的**占位 K**（旧管线每
-            /// PriceTick 拍 mark_candle(None, time, last, 0) 的占位语义
-            /// ——日终 commit 归档占位 K，档校验期望=预置+day 不因无
-            /// 交易日缺条 fault2064）。desk active 仅在成交时建立——
-            /// 连续段缺席时以收束点 last_price 合成。
-            if active.is_none() && !active_must_be_empty && !post_day_end {
-                let last = self
-                    .world_public_views()
-                    .get(stock_idx as usize)
-                    .map(|v| v.last_price.max(1))
-                    .unwrap_or(1);
+            // 无成交日的**占位 K**（旧管线 mark_candle(None, time, last, 0)
+            /// 占位语义——日终 commit 归档占位 K，档校验不因无交易日缺条
+            /// fault2064）。desk active 仅在成交时建立——连续段缺席时以
+            /// 收束点 last_price 合成（发布版本同源值）。
+            if view.daily_active.is_none() && !active_must_be_empty && !post_day_end {
+                let last = view.last_price.max(1);
                 let placeholder = crate::money::Money::from_cents(last);
                 session.set_active_candle_for_runtime(
                     &code,
@@ -2307,19 +2303,32 @@ impl RuntimeDriver {
                     },
                 );
             }
-            if let Some(a) = active.filter(|_| !active_must_be_empty) {
+            if let Some((o, h, l, c, v)) = view.daily_active.filter(|_| !active_must_be_empty) {
+                // 旋钮 1（cfg(test) 突变判别）：close 篡改 +1 分——判别
+                /// 安装数据源真为发布版本读路径（合同 1 负控）。
+                #[cfg(test)]
+                let c = if self.candle_knob_tamper_active { c + 1 } else { c };
+                // 旋钮 2：turnover 置 0——判别 stats 2 字段贯通。
+                #[cfg(test)]
+                let turnover = if self.candle_knob_drop_turnover {
+                    0
+                } else {
+                    view.daily_active_turnover_cents
+                };
+                #[cfg(not(test))]
+                let turnover = view.daily_active_turnover_cents;
                 session.set_active_candle_for_runtime(
                     &code,
                     crate::session::DailyCandle {
                         time: candle_time,
-                        open: Money::from_cents(a.1),
-                        high: Money::from_cents(a.2),
-                        low: Money::from_cents(a.3),
-                        close: Money::from_cents(a.4),
-                        volume: a.5,
+                        open: Money::from_cents(o),
+                        high: Money::from_cents(h),
+                        low: Money::from_cents(l),
+                        close: Money::from_cents(c),
+                        volume: v,
                         trade_stats: Some(crate::session::DailyTradeStats {
-                            turnover_cents: a.6.max(0) as u64,
-                            trade_count: a.7,
+                            turnover_cents: turnover.max(0) as u64,
+                            trade_count: view.daily_active_trade_count,
                         }),
                     },
                 );

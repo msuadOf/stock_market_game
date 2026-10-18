@@ -778,6 +778,8 @@ impl World {
                     minute_closes: Vec::new(),
                 daily_bars: Vec::new(),
                 daily_active: None,
+            daily_active_turnover_cents: 0,
+            daily_active_trade_count: 0,
                 daily_total_completed: 0,
                 daily_total_traded: 0,
                     volume_today: 0,

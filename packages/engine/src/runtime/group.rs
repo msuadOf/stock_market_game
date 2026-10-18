@@ -6340,6 +6340,8 @@ mod sol_recheck1_tests {
 
     fn snapshot_arc() -> std::sync::Arc<TickSnapshot> {
         let stock = |last: i64| super::super::protocol::StockPublic {
+            daily_active_turnover_cents: 0,
+            daily_active_trade_count: 0,
             last_price: last,
             best_bid: None,
             best_ask: None,

@@ -251,6 +251,8 @@ fn timeseries_mappers_project_runtime_views_to_engine_shapes() {
         minute_closes: vec![],
         daily_bars: Vec::new(),
         daily_active: None,
+            daily_active_turnover_cents: 0,
+            daily_active_trade_count: 0,
         daily_total_completed: 0,
         daily_total_traded: 0,
         volume_today: 12_345,

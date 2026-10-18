@@ -1,0 +1,16 @@
+test runtime::candle_retirement_tests::candle_knob2_drop_turnover_proves_stats_flow ... FAILED
+test runtime::candle_retirement_tests::candle_knob1_tamper_proves_publication_source ... FAILED
+failures:
+---- runtime::candle_retirement_tests::candle_knob2_drop_turnover_proves_stats_flow stdout ----
+thread 'runtime::candle_retirement_tests::candle_knob2_drop_turnover_proves_stats_flow' (1473564) panicked at packages/engine/src/runtime/candle_retirement_tests.rs:318:5:
+旋钮 2 开启后至少一股 turnover 归零偏离 desk 权威（批 1 红证：stats 读路径未接，旋钮无效）
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+---- runtime::candle_retirement_tests::candle_knob1_tamper_proves_publication_source stdout ----
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2026, month: 1, day: 5 }, second_of_day: 33900 } cadence=Immediate
+thread 'runtime::candle_retirement_tests::candle_knob1_tamper_proves_publication_source' (1473563) panicked at packages/engine/src/runtime/candle_retirement_tests.rs:282:5:
+旋钮 1 开启后至少一股 active close 偏离 desk 权威（批 1 红证：读路径未接发布版本，旋钮无效）
+failures:
+    runtime::candle_retirement_tests::candle_knob1_tamper_proves_publication_source
+    runtime::candle_retirement_tests::candle_knob2_drop_turnover_proves_stats_flow
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1690 filtered out; finished in 1.62s
+error: test failed, to rerun pass `-p engine --lib`

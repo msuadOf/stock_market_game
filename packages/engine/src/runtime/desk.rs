@@ -2056,6 +2056,11 @@ impl DeskState {
                 .candle
                 .as_ref()
                 .map(|c| (c.open, c.high, c.low, c.close, c.volume)),
+            // candle 退役刀 1：与 candle_projection 的 active 8 元组第 7/8
+            /// 位同源（market.turnover_today/trade_count——发布面与对账
+            /// 面的 stats 一致性由构造点单点保证）。
+            daily_active_turnover_cents: self.market.turnover_today,
+            daily_active_trade_count: self.market.trade_count,
             daily_total_completed: self.market.candles.len() as u64,
             daily_total_traded: self.market.traded_days_total,
             volume_today: self.market.volume_today,

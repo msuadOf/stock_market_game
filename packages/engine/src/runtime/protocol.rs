@@ -182,6 +182,13 @@ pub struct StockPublic {
     pub daily_bars: Vec<(i64, i64, i64, i64, u64)>,
     /// 当日活动 K（存在即有；volume>0 时供 current_day_open/技术面样本）。
     pub daily_active: Option<(i64, i64, i64, i64, u64)>,
+    /// candle 退役刀 1（观察面扩字段）：当日活动 K 的累计成交额（分）
+    /// ——desk 侧 market.turnover_today 同源（DeskCandles active 8 元组
+    /// 第 7 位同值）；install_candles 的 trade_stats 源。
+    pub daily_active_turnover_cents: i64,
+    /// candle 退役刀 1：当日活动 K 的累计成交笔数——market.trade_count
+    /// 同源（8 元组第 8 位同值）。
+    pub daily_active_trade_count: u64,
     /// 已完成日总数（绝对索引基——trading_day = total−kept+offset）。
     pub daily_total_completed: u64,
     /// 历史累计 traded 日数（volume>0——技术面 valid_sample_count 口径）。

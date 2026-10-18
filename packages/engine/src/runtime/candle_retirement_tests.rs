@@ -295,6 +295,9 @@ fn candle_knob2_drop_turnover_proves_stats_flow() {
     driver.adopt_session_seq(&session);
     driver.candle_knob_drop_turnover_for_test();
     drive_ticks(&mut driver, &mut session, 25);
+    // 判别前提：连续段成交（fixture 竞价段成交不进 turnover_today/
+    /// trade_count——stats 判别需 d3a2c 式限价交叉注入）。
+    inject_crossing_intents(&mut driver, &mut session);
     let finals = driver
         .world_desk_finals_for_candles()
         .expect("desk 权威对账面");

@@ -154,6 +154,25 @@ fn publication_desks_match_public_views() {
             assert_eq!(shard.view.volume_today, view.volume_today);
             assert_eq!(shard.view.best_bid, view.best_bid);
             assert_eq!(shard.view.best_ask, view.best_ask);
+            // candle 退役守卫（批 2 扩面）：active K 观察面 5+2 字段
+            ///（daily_active/daily_active_turnover_cents/
+            /// daily_active_trade_count）发布面==权威面——新字段不得
+            /// 成为对账盲区（复核守卫 1）。
+            assert_eq!(
+                shard.view.daily_active, view.daily_active,
+                "tick {expected} 股 {} daily_active 发布面==权威面",
+                shard.stock
+            );
+            assert_eq!(
+                shard.view.daily_active_turnover_cents, view.daily_active_turnover_cents,
+                "tick {expected} 股 {} active turnover 发布面==权威面",
+                shard.stock
+            );
+            assert_eq!(
+                shard.view.daily_active_trade_count, view.daily_active_trade_count,
+                "tick {expected} 股 {} active trade_count 发布面==权威面",
+                shard.stock
+            );
         }
     }
     world.shutdown().expect("关停");

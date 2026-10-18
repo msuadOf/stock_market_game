@@ -4,24 +4,46 @@ use super::bridge_tests::setup_fixture;
 use super::drive::RuntimeDriver;
 use crate::GameSession;
 
-// 断开世界后 install_candles 必须显式失败（此前 take_candle_projection
-// 吞发送错误并返回部分数据——部分 K 安装=静默语义丢失）。
+// 断开世界后的 install_candles 语义（candle 退役刀 1 改写）：数据源
+// 从 desk 通道往返切换为发布版本（已提交一致快照）——sever 后 install
+// 用最后发布版本仍成功且数据与断开前一致（非部分数据；原"收集失败
+// 显式上报"的断连守卫随生产往返退役——对账面通道保留，其断连守卫
+// 由 take_candle_projection 自身的通道面校验承载，测试经
+// world_desk_finals_for_candles 直达）。
 #[test]
-fn sol3_install_candles_propagates_collection_errors() {
+fn sol3_install_candles_after_sever_uses_last_publication() {
     let mut session = GameSession::new(setup_fixture(), 77).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     driver
         .step_frame_equivalent(&mut session)
         .expect("步进成功（安装前基线）");
-    driver.sever_world_for_test();
-    let err = driver
+    // 对照锚：sever 前先装一次（同拍同相位下 session 侧的安装结果面）。
+    driver
         .install_candles(&mut session)
-        .expect_err("K 投影收集失败必须传播（不吞发送错误）");
-    assert!(
-        err.contains("K 投影收集失败") && err.contains("通道面"),
-        "错误面可辨识且为断连守卫即时报错（不空等 watchdog）：{err}"
-    );
+        .expect("断开前安装（对照锚）");
+    let before: Vec<Option<crate::session::DailyCandle>> = (0u32..2)
+        .map(|stock| session.runtime_active_candle(&crate::StockId(stock)))
+        .collect();
+    driver.sever_world_for_test();
+    // 新语义：install 从发布版本读——sever 后成功且与断开前安装
+    /// 逐位一致（发布版本=已提交一致快照；相位清空语义同拍一致）。
+    driver
+        .install_candles(&mut session)
+        .expect("sever 后安装用最后发布版本（一致快照非部分数据）");
+    for stock in 0u32..2 {
+        let code = crate::StockId(stock);
+        let after = session.runtime_active_candle(&code);
+        let fmt = |c: &Option<crate::session::DailyCandle>| {
+            c.as_ref()
+                .map(|k| (k.open.cents(), k.close.cents(), k.volume))
+        };
+        assert_eq!(
+            fmt(&after),
+            fmt(&before[stock as usize]),
+            "股 {code:?} sever 前后安装逐位一致（发布版本快照）"
+        );
+    }
 }
 
 // Sol 二审修复集 5：构造器恢复会话 attention 真实状态（不合成固定
