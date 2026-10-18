@@ -124,3 +124,117 @@ pub fn worker_recv<T>(
         }
     }
 }
+
+/// B-1' 组线程等待自旋配置（协调者批 2026-10-19——seal-spread-wakeup
+/// -design.md）：消息密集期（tick 内 Start/Continue/Batch/Seal 接连
+/// 到达）组线程热态自旋，免深 C-state futex 唤醒延迟（静置窗实测
+/// spread 94μs 无归属段的归因）。自旋窗超时回落现行 50ms 步进睡眠。
+#[derive(Clone, Copy, Debug)]
+pub struct SpinConfig {
+    /// 是否启用自旋（ENGINE_SPIN_DISABLE=1 或 wasm/test 环境恒 false）。
+    pub enabled: bool,
+    /// 热态自旋窗（默认 500μs——验证批 250/500/1000 三档配对选优，
+    /// 选中值依据实测 spread 分布登记；协调者裁决"小常数须带数据来源"）。
+    pub window: Duration,
+}
+
+/// 进程级自旋配置（env 读一次）。默认开（单局吞吐优先的部署取向——
+/// 协调者裁决②）；`ENGINE_SPIN_DISABLE=1` 逃生；`ENGINE_SPIN_US`
+/// 调档（微秒）。**cfg(test) 恒关**：全量回归不因自旋空转拖慢——自旋
+/// 分支等价性由 watchdog_spin_tests 直构 SpinConfig 覆盖。
+/// **wasm 恒关**：串行路径无 OS 线程，自旋无意义（协调者裁决②）。
+pub fn spin_config() -> SpinConfig {
+    #[cfg(any(test, target_family = "wasm"))]
+    {
+        SpinConfig {
+            enabled: false,
+            window: Duration::ZERO,
+        }
+    }
+    #[cfg(not(any(test, target_family = "wasm")))]
+    {
+        static SPIN: std::sync::OnceLock<SpinConfig> = std::sync::OnceLock::new();
+        *SPIN.get_or_init(|| {
+            let disabled = std::env::var("ENGINE_SPIN_DISABLE").ok().as_deref() == Some("1");
+            // 默认 500μs：覆盖静置窗实测 spread 主体（124-185μs）且不过度
+            // 空转——验证批三档（250/500/1000）配对复核后如改值须同步本注释。
+            let window_us = std::env::var("ENGINE_SPIN_US")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(500);
+            SpinConfig {
+                enabled: !disabled,
+                window: Duration::from_micros(window_us),
+            }
+        })
+    }
+}
+
+/// worker 侧收件的组线程变体（B-1' 分级自旋——先热态自旋窗再回落
+/// `worker_recv` 睡眠路径）。语义等价论证（seal-spread-wakeup-design
+/// §3）：消息序 FIFO 不变（try_recv/recv_timeout 同队）；断连→Ok(None)、
+/// 关停→Ok(None)、watchdog 判定（自旋段计入 waited）全部保持；自旋
+/// 耗尽后立即观察 shutdown（响应 ≤T_spin+ε，快于睡眠路径的 50ms 步进）。
+pub fn worker_recv_spin<T>(
+    rx: &Receiver<T>,
+    cfg: &WatchdogConfig,
+    shutdown: &std::sync::atomic::AtomicBool,
+    who: WorkerId,
+    spin: SpinConfig,
+) -> Result<Option<T>, RuntimeError> {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::TryRecvError;
+    let limit = cfg.limit_for(Phase::WorkerIdle);
+    let mut waited = Duration::ZERO;
+    // 热态自旋窗：worker_recv_spin 被调用时=刚处理完一条消息（核热）。
+    // 窗内 try_recv 轮询（spin_loop 让出流水线端口——降功耗与 SMT 干扰）；
+    // 断连即时退出；窗耗尽立即观察 shutdown（响应 ≤窗+ε）并回落睡眠。
+    if spin.enabled && spin.window > Duration::ZERO {
+        let spin_started = std::time::Instant::now();
+        loop {
+            match rx.try_recv() {
+                Ok(msg) => return Ok(Some(msg)),
+                Err(TryRecvError::Disconnected) => return Ok(None),
+                Err(TryRecvError::Empty) => {}
+            }
+            let elapsed = spin_started.elapsed();
+            if elapsed >= spin.window || elapsed >= limit {
+                // 自旋段计入空闲等待（watchdog 判定口径不变）。
+                waited = elapsed.min(limit);
+                break;
+            }
+            std::hint::spin_loop();
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        if waited >= limit {
+            return Err(RuntimeError::Watchdog {
+                phase: Phase::WorkerIdle,
+                waited: limit,
+                detail: format!("worker {who} 空闲超时且无永久关停标记"),
+            });
+        }
+    }
+    // 回落睡眠路径（与 worker_recv 同式——waited 续算）。
+    let step = std::cmp::min(Duration::from_millis(50), limit);
+    loop {
+        match rx.recv_timeout(step) {
+            Ok(msg) => return Ok(Some(msg)),
+            Err(RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(RecvTimeoutError::Timeout) => {
+                waited += step;
+                if shutdown.load(Ordering::SeqCst) {
+                    return Ok(None);
+                }
+                if waited >= limit {
+                    return Err(RuntimeError::Watchdog {
+                        phase: Phase::WorkerIdle,
+                        waited: limit,
+                        detail: format!("worker {who} 空闲超时且无永久关停标记"),
+                    });
+                }
+            }
+        }
+    }
+}

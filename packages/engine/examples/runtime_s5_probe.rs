@@ -103,6 +103,7 @@ fn main() {
 
     let seal_ns = world.seal_ns_accumulated;
     let (first_ack_ns, ack_spread_ns) = (world.seal_first_ack_ns, world.seal_ack_spread_ns);
+    let last_ack_groups = world.seal_last_ack_groups.clone();
     let report = world.shutdown().expect("关停对账");
     let mut cash: i128 = 0;
     let mut shares = 0u64;
@@ -141,6 +142,16 @@ fn main() {
     println!(
         "Seal 分解：广播→首Ack {first_ack_us:.0}μs/tick；首末Ack间隔 {ack_spread_us:.0}μs/tick（长尾）"
     );
+    // B-1' 验证批：最晚 Ack 组身份分布（每组出现次数——唤醒级联假设的
+    /// 直接证据：集中在闲组=唤醒主导；集中在活跃组=组端处理主导）。
+    {
+        let mut counts = std::collections::BTreeMap::new();
+        for g in &last_ack_groups {
+            *counts.entry(*g).or_insert(0u32) += 1;
+        }
+        let dist: Vec<String> = counts.iter().map(|(g, c)| format!("{g}:{c}")).collect();
+        println!("最晚Ack组分布：{}", dist.join(" "));
+    }
     {
         let mut handles: Vec<f64> = report
             .group_finals

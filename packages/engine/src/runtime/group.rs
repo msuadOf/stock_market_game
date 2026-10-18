@@ -16,7 +16,7 @@ use super::protocol::{
     AdminRight, DayEndDirective, DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice,
     RuntimeError, UpMsg, WorkerId,
 };
-use super::watchdog::{worker_recv, WatchdogConfig};
+use super::watchdog::{spin_config, worker_recv, worker_recv_spin, WatchdogConfig};
 use super::{Entity, FillFact, GroupIdx, LocalIdx, OrderRef, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
@@ -4863,7 +4863,10 @@ pub fn group_main(
     loop {
         // Sol 终审三审：退出判定用 shutdown（永久关停——sever/Drop）；
         // abort 只管本 tick 回滚语义（本 worker 失败时置位通知对端）。
-        let msg = match worker_recv(&rx, &watchdog, &shutdown, who) {
+        // B-1' 分级自旋（协调者批 2026-10-19——首版只组线程，desk 走
+        /// 原 worker_recv）：热态自旋窗免深 C-state futex 唤醒延迟
+        ///（spread 94μs 无归属段归因——seal-spread-wakeup-design.md）。
+        let msg = match worker_recv_spin(&rx, &watchdog, &shutdown, who, spin_config()) {
             Ok(Some(m)) => m,
             Ok(None) => break,
             Err(e) => {

@@ -379,6 +379,11 @@ pub struct World {
     pub seal_first_ack_ns: u128,
     /// 首末 Ack 间隔累计（组间 spread）。
     pub seal_ack_spread_ns: u128,
+    /// B-1' 验证批诊断：最近一次 seal_round 最晚 Ack 的组号（每组计数
+    /// ——最晚组身份分布是"唤醒级联 vs 组端处理"假设的直接证据：
+    /// 最晚组集中在低 handle 闲组=唤醒假设成立；集中在活跃组=组端
+    /// 处理主导，假设推翻回设计台）。瞬态诊断面，不入存档/hash。
+    pub seal_last_ack_groups: Vec<u32>,
 }
 
 impl World {
@@ -739,6 +744,7 @@ impl World {
             seal_ns_accumulated: 0,
             seal_first_ack_ns: 0,
             seal_ack_spread_ns: 0,
+            seal_last_ack_groups: Vec::new(),
         })
     }
 
@@ -1720,12 +1726,14 @@ impl World {
                             detail: format!("SealAck 错位：期望 tick={tick}，收到组 {group} tick={t}"),
                         });
                     }
-                    // 地板分解：首条 Ack 记链路墙；末条记 spread。
+                    // 地板分解：首条 Ack 记链路墙；末条记 spread 与身份。
                     if left == self.n_groups {
                         self.seal_first_ack_ns += seal_started.elapsed().as_nanos();
                     }
                     if left == 1 {
                         self.seal_ack_spread_ns += seal_started.elapsed().as_nanos();
+                        // B-1' 验证批：最晚 Ack 组身份（唤醒假设直接证据）。
+                        self.seal_last_ack_groups.push(u32::from(group));
                     }
                     seal_accounts.push((group, accounts_sparse));
                     left -= 1;
