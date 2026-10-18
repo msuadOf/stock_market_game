@@ -69,6 +69,11 @@ pub enum StepSegment {
     StepEntry,
     /// 驱动器锁+锁步校验+ingress freeze+意图路由（body 之前的共用段）。
     LockRoute,
+    /// 刀③（协调者刀单③）：with_routed_runtime_driver 的 body 总段
+    ///（=runtime_step_with_install 全部=driver_step+安装链+尾部）——
+    /// 与 step_outer/lock_route 的差额=step() 内 body 外前置，二分
+    /// 定位"未段化 ~106μs"归属（内联胶水 vs 前置路由）。
+    StepViaBody,
     /// undo 槽清理（入口清+成功尾清；五域 ids/Vec clear）。
     UndoClear,
     /// belief 线程往返收集（collect_group_belief——嵌套在 belief_echo 内；
@@ -80,7 +85,7 @@ pub enum StepSegment {
 }
 
 impl StepSegment {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::WorldRun,
         Self::VwapCalc,
         Self::AcctEchoCollect,
@@ -104,6 +109,7 @@ impl StepSegment {
         Self::DriverStep,
         Self::StepEntry,
         Self::LockRoute,
+        Self::StepViaBody,
         Self::UndoClear,
         Self::BeliefCollect,
         Self::EnvelopeCollect,
@@ -135,6 +141,7 @@ impl StepSegment {
             Self::DriverStep => "driver_step",
             Self::StepEntry => "step_entry",
             Self::LockRoute => "lock_route",
+            Self::StepViaBody => "step_via_body",
             Self::UndoClear => "undo_clear",
             Self::BeliefCollect => "belief_collect",
             Self::EnvelopeCollect => "envelope_collect",
@@ -151,12 +158,12 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     /// 各段累计 ns + 进入次数（下标=StepSegment::index）。
-    static LEDGER: RefCell<Option<([u128; 26], [u64; 26])>> = const { RefCell::new(None) };
+    static LEDGER: RefCell<Option<([u128; 27], [u64; 27])>> = const { RefCell::new(None) };
 }
 
 /// 在当前线程启用分段画像（重复调用=账本重置）。
 pub fn enable_on_this_thread() {
-    LEDGER.with_borrow_mut(|slot| *slot = Some(([0; 26], [0; 26])));
+    LEDGER.with_borrow_mut(|slot| *slot = Some(([0; 27], [0; 27])));
     ENABLED.store(true, Ordering::Relaxed);
 }
 

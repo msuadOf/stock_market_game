@@ -369,6 +369,11 @@ impl GameSession {
         drop(_seg_check);
         check.map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
+            // 刀③：body 总段（driver_step+安装链+尾部全含）——与
+            /// step_outer/lock_route 差额二分定位未段化归属。
+            let _seg_body = crate::runtime::step_profile::scope(
+                crate::runtime::step_profile::StepSegment::StepViaBody,
+            );
             session.runtime_step_with_install(driver)
         })
     }
