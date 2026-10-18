@@ -184,3 +184,26 @@ tpd=1 边缘/首拍 force_full）。
 
 **继承登记项（第 21 任）**：组端 Seal Failed 注入测试；GroupDayDone
 O(N) 哈希 tpd=1 边缘；首拍 force_full 保守面。
+
+## 第 20 任续 2：candle 批复落地+登记项收口（2026-10-19 深夜续）
+
+| 提交 | 内容 | 实测 |
+|---|---|---|
+| d83560fd | candle 批 1 合同红先行（4 等价锚+2 旋钮桩，evidence/p2/candle/） | 4 绿基线+2 旋钮红（注入面红先行） |
+| 3991650f | 批 2 刀 1+2（StockPublic 扩 2 字段+install 读发布版本+Echo 往返退役+循环瘦身；J6 扩面消盲区；sol3 sever 语义改写） | **candle_install 段 41.13→0.335μs（−99.2%）**；合同 6/6 绿+负控双红 |
+| d5a41693 | 证据补录（B 静置窗配对） | b-bel mean 759.0 vs b-candle 5 轮 mean 770.5（+1.5%，双峰 700-841 方差如实记；与 +2.8% 推算同向） |
+| a01e33ed | **登记项收口**：组端 Seal 协议错位防御（注入测试发现缺口——两分支只 break 不上报，补 Failed+abort）+复核归档 | 双注入测试绿；A 抽查 922.1 无回归 |
+
+**复核**（reviews/independent-review-candle.txt）：无阻断。2 登记级：
+①"Seal 后 desk 静止"是发布时点等价的协议前置条件——**若未来协议允许
+Seal 后 desk 演进（异步盘后处理类）会分叉且无运行时守卫**，登记；
+②缩进（已修）。双模式 1683/0/11 ×2；wasm 过。
+
+**B 口径累计对照**（基线 544.7→现在）：eager 分域 747.3 → candle 刀后
+770.5（配对 mean；累计 **+41.5%**）。candle 段退役后驱动器残余镜像税：
+belief 72.8 / retail 19 / acct_writeback 12 / acct_echo_collect 11。
+
+**下任刀序**：①Seal 相位地板协议级设计（A 恢复 1100+ 唯一路径——
+换向合并/COW，需新报批）②belief 深刀（72.8μs=cache clone+session
+内部——Arc 化条目协议面或容器整态化，负担递增评估）③剩余登记项
+（GroupDayDone O(N) tpd=1 边缘/首拍 force_full 保守面/复核前置条件①）。
