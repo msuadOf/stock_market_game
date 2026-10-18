@@ -373,6 +373,12 @@ pub struct World {
     /// 组端 drain/落账/分片构建都反映在等待里）。瞬态诊断面，不入
     /// 存档/hash；探针读数用。
     pub seal_ns_accumulated: u128,
+    /// Seal 地板分解诊断（同上瞬态面）：广播→首条 Ack 的累计墙
+    /// （最快组的完整链路=send+唤醒+组端处理+回传）与首末 Ack 间隔
+    /// 累计（组间长尾方差）。地板归因用（换向链固有 vs 组端不均）。
+    pub seal_first_ack_ns: u128,
+    /// 首末 Ack 间隔累计（组间 spread）。
+    pub seal_ack_spread_ns: u128,
 }
 
 impl World {
@@ -731,6 +737,8 @@ impl World {
             civil_date: civil_start_date,
             publication,
             seal_ns_accumulated: 0,
+            seal_first_ack_ns: 0,
+            seal_ack_spread_ns: 0,
         })
     }
 
@@ -1696,6 +1704,13 @@ impl World {
                         return Err(RuntimeError::ProtocolInvariant {
                             detail: format!("SealAck 错位：期望 tick={tick}，收到组 {group} tick={t}"),
                         });
+                    }
+                    // 地板分解：首条 Ack 记链路墙；末条记 spread。
+                    if left == self.n_groups {
+                        self.seal_first_ack_ns += seal_started.elapsed().as_nanos();
+                    }
+                    if left == 1 {
+                        self.seal_ack_spread_ns += seal_started.elapsed().as_nanos();
                     }
                     seal_accounts.push((group, accounts_sparse));
                     left -= 1;

@@ -528,6 +528,9 @@ pub struct GroupFinalState {
     pub state_hash: u64,
     /// 提交态哈希（最后一次 Start 转正后）。
     pub committed_hash: u64,
+    /// Seal 地板分解诊断（瞬态面，不入存档/hash）：组端 Seal 处理
+    /// （drain+延迟相+分片构建+Ack）累计墙——A 口径长尾归因用。
+    pub seal_handle_ns: u128,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
 }
@@ -552,6 +555,8 @@ pub struct GroupState {
     /// 隐式转正只退役上一 tick 记录（前段 drain），必须保留 Seal 后
     /// 追加的即时记录（Abort 仍可冲回）。消费/回滚后置 None。
     seal_acked_len: Option<usize>,
+    /// Seal 地板分解诊断（瞬态面）：组端 Seal 处理累计墙。
+    pub(crate) seal_handle_ns: u128,
     /// SealAck 后到达并即时应用的实体批次数（Start 防御专用）：Seal
     /// 后到达的 Batch=锁步破坏（协调者收齐 DeskReport 才发 Seal——
     /// 合法例外只有日结 Drain 序列，由 DayEnd 消化清零）。与 undo 基线
@@ -738,6 +743,7 @@ impl GroupState {
             account_dirty_set: Default::default(),
             seal_acked_len: None,
             batches_after_seal: 0,
+            seal_handle_ns: 0,
             cur_tick: initial_tick,
             cur_round: 0,
             committed_tick: initial_tick,
@@ -4018,6 +4024,7 @@ impl GroupState {
             cancel_intents_total: self.cancel_intents_total,
             state_hash: self.state_hash(),
             committed_hash: self.committed_hash,
+            seal_handle_ns: self.seal_handle_ns,
             observed: self.observed.clone(),
         }
     }
@@ -5410,6 +5417,8 @@ pub fn group_main(
                     result = Err(e);
                     break;
                 }
+                // Seal 地板分解诊断：组端处理段（drain→Ack 发送前）计时。
+                let seal_handle_started = std::time::Instant::now();
                 // 收件箱顺序 drain：Seal 前入队的全部数据面消息（S4：
                 /// desk 批次 FIFO 先于其 DeskReport ⇒ 先于 Seal 入队）。
                 /// 数据面=Batch（实体批次）与 AcceptedBatch（受理身份）；
@@ -5527,6 +5536,7 @@ pub fn group_main(
                     });
                     break;
                 }
+                state.seal_handle_ns += seal_handle_started.elapsed().as_nanos();
                 // eager 分域守卫：记录 SealAck 发送点的日志长度基线。
                 // ①日结 Drain 批次的即时记录（Seal 后、DayEnd 前到达）在
                 //   日结隐式转正时保留（drain 前段=上一 tick 记录）；

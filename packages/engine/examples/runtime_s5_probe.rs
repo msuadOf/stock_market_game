@@ -102,6 +102,7 @@ fn main() {
     let wall = started.elapsed().as_secs_f64();
 
     let seal_ns = world.seal_ns_accumulated;
+    let (first_ack_ns, ack_spread_ns) = (world.seal_first_ack_ns, world.seal_ack_spread_ns);
     let report = world.shutdown().expect("关停对账");
     let mut cash: i128 = 0;
     let mut shares = 0u64;
@@ -129,10 +130,31 @@ fn main() {
     // Q2 A 口径归因诊断：seal_round 累计 wall 占比（广播+收集等待——
     // 组端 drain/落账/分片构建反映在等待里）与每拍均值。
     let seal_pct = (seal_ns as f64) / (wall * 1e9) * 100.0;
+    // Seal 地板分解：广播→首 Ack（最快组全链路）与首末 Ack 间隔
+    ///（组间长尾）——换向链固有 vs 组端不均的归因面。
+    let first_ack_us = first_ack_ns as f64 / committed as f64 / 1000.0;
+    let ack_spread_us = ack_spread_ns as f64 / committed as f64 / 1000.0;
     println!(
         "结果：{tps:.1} t/s（{committed} tick / {wall:.2}s）；成交量 {trades} 股；费用桶 {fees} 分；挂簿余 {resting}；T+1 冻结 {frozen}；Seal 相位 {seal_pct:.1}%（{:.0}μs/tick）",
         seal_ns as f64 / committed as f64 / 1000.0
     );
+    println!(
+        "Seal 分解：广播→首Ack {first_ack_us:.0}μs/tick；首末Ack间隔 {ack_spread_us:.0}μs/tick（长尾）"
+    );
+    {
+        let mut handles: Vec<f64> = report
+            .group_finals
+            .iter()
+            .map(|f| f.seal_handle_ns as f64 / committed as f64 / 1000.0)
+            .collect();
+        handles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let n = handles.len();
+        let mean: f64 = handles.iter().sum::<f64>() / n as f64;
+        println!(
+            "组端Seal处理 μs/tick：min {:.0} / mean {:.0} / max {:.0}（{} 组）",
+            handles[0], mean, handles[n - 1], n
+        );
+    }
     // 守恒：现金 + 费用 = 初始（撤到 Drain 后在途清零）。
     let initial_total = (npcs as i128) * 1_000_000_000;
     let shares_total = (npcs as u64) * 1000 * n_stocks as u64;
