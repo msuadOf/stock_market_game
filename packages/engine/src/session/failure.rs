@@ -357,8 +357,14 @@ impl GameSession {
     /// Sol 二审修复集 3：前置校验**真正共用** `check_step_start`
     /// （健康→注入失败→缺策略，与旧管线同判同序）。
     pub fn step_via_runtime(&mut self) -> Result<Vec<Event>, StepFatal> {
-        self.check_step_start()
-            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        // 【P0 画像】入口检查（require_healthy + has_missing_npc_strategy
+        // ——回写 invalidate 后的页级重扫面）。
+        let _seg_check = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::StepEntry,
+        );
+        let check = self.check_step_start();
+        drop(_seg_check);
+        check.map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
             session.runtime_step_with_install(driver)
         })
@@ -447,6 +453,10 @@ impl GameSession {
             &mut crate::runtime::drive::RuntimeDriver,
         ) -> Result<R, StepFatal>,
     ) -> Result<R, StepFatal> {
+        // 【P0 画像】lock_route 段（锁+锁步校验+ingress freeze+意图路由）。
+        let _seg_lock = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::LockRoute,
+        );
         let guard = cell.lock();
         let poisoned = guard.is_err();
         let mut driver = if poisoned {
@@ -493,6 +503,7 @@ impl GameSession {
                 }));
             }
         }
+        drop(_seg_lock);
         let outcome = body(self, &mut driver);
         if outcome.is_err() {
             self.restore_runtime_player_intents(intents);
@@ -562,7 +573,12 @@ impl GameSession {
     ) -> Result<Vec<Event>, StepFatal> {
         let (events, _baseline) = self.runtime_step_with_install_inner(driver, false)?;
         // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
+        // 【P0 画像】undo_clear 段（成功尾清）。
+        let _seg_undo = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::UndoClear,
+        );
         self.runtime_clear_account_undo();
+        drop(_seg_undo);
         Ok(events)
     }
 
@@ -591,17 +607,34 @@ impl GameSession {
         // P2-3b：step 入口清写时 undo 槽（上一 step 成功已尾清/失败已
         // 回滚消费——此处清的是驱动器手动序列等直调安装面的残留记录；
         /// 残留会把本拍回滚恢复到错误的更早状态）。
+        // 【P0 画像】undo_clear 段（入口清）。
+        let _seg_undo0 = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::UndoClear,
+        );
         self.runtime_clear_account_undo();
+        drop(_seg_undo0);
         // 生产探针对齐（t3 契约：每 tick 恰一次"生产调用"）。
         #[cfg(test)]
         self.compute_context()
             .t1_probes
             .queue_attempt_seq
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // 【P0 画像】baseline_snapshot 段（D5：五域每拍快照 clone）。
+        let _seg_baseline = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::BaselineSnapshot,
+        );
         let baseline = self.runtime_install_baseline();
+        drop(_seg_baseline);
         // step 失败即停（此前先存 Result 再无条件安装——已 Abort 的
         // 世界状态会被写进会话）。
-        let mut events = driver.step_frame_equivalent(self)?;
+        // 【P0 画像】driver_step 段（step_frame_equivalent 总 wall——
+        // 二分定位残余在 drive 层还是安装层）。
+        let _seg_dstep = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::DriverStep,
+        );
+        let step_result = driver.step_frame_equivalent(self);
+        drop(_seg_dstep);
+        let mut events = step_result?;
         // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
         // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
         // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
@@ -629,9 +662,19 @@ impl GameSession {
                 Err(e) => Err(format!("{e}（注入点：market_views）")),
             }
         } else {
-            driver
-                .install_market_views(self)
-                .and_then(|()| driver.install_candles(self))
+            // 【P0 画像】market_install 段（D4；内嵌 attention_heap 段——
+            // 报告净额=market_install−attention_heap）。
+            let _seg_market =
+                crate::runtime::step_profile::scope(crate::runtime::step_profile::StepSegment::MarketInstall);
+            let market_result = driver.install_market_views(self);
+            drop(_seg_market);
+            market_result.and_then(|()| {
+                // 【P0 画像】candle_install 段（D4）。
+                let _seg_candle = crate::runtime::step_profile::scope(
+                    crate::runtime::step_profile::StepSegment::CandleInstall,
+                );
+                driver.install_candles(self)
+            })
         };
         if let Err(install_err) = install_outcome {
             self.rollback_runtime_step(baseline);
@@ -644,7 +687,13 @@ impl GameSession {
         /// PriceTick——旧管线 finish_market_data 的 runtime 等价；竞价
         /// 相位由 desk_auction facts 承载）。安装在 install_candles 之后
         ///（daily_candle 读 session 活动 K）。
-        if let Err(emit_err) = driver.emit_price_tick_events(self, &mut events) {
+        // 【P0 画像】price_tick_emit 段。
+        let _seg_ptick = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::PriceTickEmit,
+        );
+        let price_tick_outcome = driver.emit_price_tick_events(self, &mut events);
+        drop(_seg_ptick);
+        if let Err(emit_err) = price_tick_outcome {
             self.rollback_runtime_step(baseline);
             return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
                 location: "GameSession::step_via_runtime::price_tick".to_owned(),
@@ -656,6 +705,10 @@ impl GameSession {
         /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
         /// 仅派生已迁移的 Rejected）。P2-3c：单遍派发（原逐账户×全事件
         /// O(名册×事件)+全名册 keys collect——Sol P3）。
+        // 【P0 画像】retail_diag 段（D5：拒收诊断+决策 trace 收集）。
+        let _seg_retail = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::RetailDiag,
+        );
         // step_frame 接轨件 4b：投影失败回滚面——retail 诊断两域首写
         /// 旧值入 undo（幂等首写；step() 路径 capture_undo=false 不记）。
         if capture_undo && self.state.runtime_retail_diag_undo.is_none() {
@@ -681,6 +734,7 @@ impl GameSession {
             };
             self.state.last_retail_decisions = traces;
         }
+        drop(_seg_retail);
         // D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/
         /// 组日翻，**先于**信封重建：日终清簿后的 desk 在途=空集，ledger
         /// 重建与旧管线"日终无在途"校验面同源；drained 撤单事件并入本拍
@@ -700,6 +754,10 @@ impl GameSession {
         /// p2_4b_envelope_incremental_matches_full_rebuild；全量读面/
         /// save/hash 均按内容消费，内容等价即全读面等价）。基线缺失
         ///（构造后首拍/红证强制/股面错配）退全量重建。
+        // 【P0 画像】envelope 段（D6：resting 收集+增量/全量信封账本）。
+        let _seg_envelope = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::Envelope,
+        );
         let resting_by_stock = match driver.collect_resting_facts() {
             Ok(facts) => facts,
             Err(e) => {
@@ -819,6 +877,11 @@ impl GameSession {
                 .envelope_ledger
                 .sync_runtime_receipt_index(self.state.next_receipt_base);
         }
+        drop(_seg_envelope);
+        // 【P0 画像】desk_mirror 段（D6：簿镜像+lifecycle 投影清空）。
+        let _seg_mirror = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::DeskMirror,
+        );
         // D5 attention 公开可见性门禁：desk 簿镜像刷新（瞬态读面源——
         /// snapshot 公开投影/玩家在途/预留；desk 权威事实+公开截点）。
         {
@@ -883,6 +946,7 @@ impl GameSession {
         }
         self.mark_external_mutation();
         self.state.npc_order_lifecycles = Vec::new();
+        drop(_seg_mirror);
         // D5 日界安装（ends_day 拍）：session 侧交易日终迁移（day 推进/
         /// candle 提交/T+1 解锁/DayBoundary——与旧管线 continuous_tick_
         /// finalizer 同一迁移；在行情安装**之后**（本拍 active candle 先
@@ -890,6 +954,10 @@ impl GameSession {
         /// 价格历史长度由 install 侧按 tick 推导，与本序无耦合）。
         /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
         /// 登记差异。
+        // 【P0 画像】day_end 段（日结编排；低频——B fixture 不触发）。
+        let _seg_dayend = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::DayEnd,
+        );
         if ends_day {
             // Sol 终审修复 1a：日结段的全部可失败出口统一走
             /// rollback+poison（此前 `?` 直出绕过回滚——day/candle/T+1
@@ -1015,6 +1083,7 @@ impl GameSession {
                 }));
             }
         }
+        drop(_seg_dayend);
         // 接轨件 4：尾清与基线交付由调用方承载（见方法注释）。
         Ok((events, baseline))
     }

@@ -517,27 +517,36 @@ impl RuntimeDriver {
 
     /// step 本体（D4：捕获绑定已挂）——驱动器侧相位对齐旧管线 10 相。
     fn step_with_capture(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        // P0 画像：本函数各段用块作用域 + guard 计时（未启用=零成本）。
+        use super::step_profile::{self, StepSegment};
         // D4 相位：密封分配快照段（tick 起点，组/部广播前）。
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::SealAllocationSnapshot,
         );
-        // D1：新增持仓补经历条目（fault2038 存档校验依赖）——在快照
-        // 回写前取现价。
-        let last_prices: Vec<i64> = self
-            .world_public_views()
-            .iter()
-            .map(|v| v.last_price.max(1))
-            .collect();
-        self.world
-            .run_ticks(1)
-            .map_err(|e| format!("runtime tick 失败：{e:?}"))?;
+        // 【P0 画像】world_run 段：裸引擎本体（对照基线——D 系列之外）。
+        let last_prices: Vec<i64> = {
+            let _seg = step_profile::scope(StepSegment::WorldRun);
+            // D1：新增持仓补经历条目（fault2038 存档校验依赖）——在快照
+            // 回写前取现价。
+            let prices: Vec<i64> = self
+                .world_public_views()
+                .iter()
+                .map(|v| v.last_price.max(1))
+                .collect();
+            self.world
+                .run_ticks(1)
+                .map_err(|e| format!("runtime tick 失败：{e:?}"))?;
+            prices
+        };
         // D3 台账收口（入场参考价近似→闭合）：新持仓经历入场参考用本
         // tick 买入腿成交 VWAP（旧管线以真实成交成本为基准；此前近似
         // 现价）。后续加仓的 experience 迁移仍近似（登记——D5 经历域）。
+        // 【P0 画像】vwap_calc 段。
         let buy_vwap: std::collections::BTreeMap<
             (super::GroupIdx, super::LocalIdx, super::StockIdx),
             i64,
         > = {
+            let _seg = step_profile::scope(StepSegment::VwapCalc);
             let trades: Vec<_> = self
                 .world
                 .report_log
@@ -585,35 +594,40 @@ impl RuntimeDriver {
         /// 同步）。省每 tick 全名册 positions 深拷贝回写。
         let fact_rec = self.world.report_log.last().cloned();
         let roster = self.id_map.len();
-        let mut dirty_now: Vec<bool> = vec![false; roster];
-        let mark = |dirty: &mut Vec<bool>, owner: crate::runtime::Owner| {
-            let idx = owner.0 as usize * self.accounts_per_group + owner.1 as usize;
-            if let Some(flag) = dirty.get_mut(idx) {
-                *flag = true;
+        // 【P0 画像】acct_echo_collect 段（D1 EchoAccounts：dirty 标记 +
+        /// 稀疏/全量账户快照上行收集；fact_rec 的 clone 归 remainder——
+        /// 事件面 R4 必留，不属可删链）。
+        let (dirty_now, snapshots) = {
+            let _seg = step_profile::scope(StepSegment::AcctEchoCollect);
+            let mut dirty_now: Vec<bool> = vec![false; roster];
+            let mark = |dirty: &mut Vec<bool>, owner: crate::runtime::Owner| {
+                let idx = owner.0 as usize * self.accounts_per_group + owner.1 as usize;
+                if let Some(flag) = dirty.get_mut(idx) {
+                    *flag = true;
+                }
+            };
+            if let Some(rec) = &fact_rec {
+                for fact in &rec.desk_trades {
+                    mark(&mut dirty_now, fact.maker);
+                    mark(&mut dirty_now, fact.taker);
+                }
+                for fact in &rec.desk_lifecycle {
+                    mark(&mut dirty_now, fact.owner);
+                }
+                for fact in &rec.desk_receipts {
+                    mark(&mut dirty_now, fact.owner);
+                }
             }
-        };
-        if let Some(rec) = &fact_rec {
-            for fact in &rec.desk_trades {
-                mark(&mut dirty_now, fact.maker);
-                mark(&mut dirty_now, fact.taker);
-            }
-            for fact in &rec.desk_lifecycle {
-                mark(&mut dirty_now, fact.owner);
-            }
-            for fact in &rec.desk_receipts {
-                mark(&mut dirty_now, fact.owner);
-            }
-        }
-        let skip_all = !self.force_full_accounts;
-        let dirty_union: Vec<bool> = if skip_all {
-            dirty_now
-                .iter()
-                .zip(self.account_dirty_prev.iter().chain(std::iter::repeat(&false)))
-                .map(|(a, b)| *a || *b)
-                .collect()
-        } else {
-            vec![true; roster]
-        };
+            let skip_all = !self.force_full_accounts;
+            let dirty_union: Vec<bool> = if skip_all {
+                dirty_now
+                    .iter()
+                    .zip(self.account_dirty_prev.iter().chain(std::iter::repeat(&false)))
+                    .map(|(a, b)| *a || *b)
+                    .collect()
+            } else {
+                vec![true; roster]
+            };
         // P2-4a：账户回声稀疏化——P2-1b 只稀疏化了**写回**，读面仍是
         /// 每拍全名册回声（组端 20000×8 堆 Vec 克隆 + 主线程全量 drop
         /// 的双热点：组线程 Vec::clone+memmove ≈17%、主线程
@@ -664,8 +678,13 @@ impl RuntimeDriver {
                     .collect();
             }
             pairs
+            };
+            (dirty_now, snapshots)
         };
-        for (g, accounts) in snapshots.into_iter().enumerate() {
+        // 【P0 画像】acct_writeback 段（session 镜像回写循环）。
+        {
+            let _seg = step_profile::scope(StepSegment::AcctWriteback);
+            for (g, accounts) in snapshots.into_iter().enumerate() {
             for (local, acct) in accounts {
                 let global = g * self.accounts_per_group + local as usize;
                 let Some(id) = self.id_map.get(global).copied() else {
@@ -751,11 +770,12 @@ impl RuntimeDriver {
                 /// 形成"有持仓、无经历"，破坏 fault2038 保存校验）。
                 self.pending_hold_inits.extend(pending_hold_inits);
             }
+            }
+            // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
+            // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
+            self.account_dirty_prev = dirty_now;
+            self.force_full_accounts = false;
         }
-        // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
-        // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
-        self.account_dirty_prev = dirty_now;
-        self.force_full_accounts = false;
         // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
         let rec = fact_rec;
         // step_frame 接轨前置约束①：同拍叠加类投影只消费**终轮未落账
@@ -771,57 +791,66 @@ impl RuntimeDriver {
         // 已成交事实合入公开 session 账户（ADR-0017 完整结算同拍交付；
         /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
         /// 权威随后对齐——下一拍回写为整值同步，天然不重复入账）。
-        if let Some(rec) = &rec {
-            self.apply_same_tick_fill_projection(
-                session,
-                &unsettled_trades,
-                &buy_vwap,
-                &last_prices,
-            )?;
+        // 【P0 画像】fill_projection 段（D3 同拍投影）。
+        {
+            let _seg = step_profile::scope(StepSegment::FillProjection);
+            if let Some(rec) = &rec {
+                self.apply_same_tick_fill_projection(
+                    session,
+                    &unsettled_trades,
+                    &buy_vwap,
+                    &last_prices,
+                )?;
+            }
         }
-        let trades = rec
-            .as_ref()
-            .map(|r| r.desk_trades.clone())
-            .unwrap_or_default();
-        let lifecycle = rec
-            .as_ref()
-            .map(|r| r.desk_lifecycle.clone())
-            .unwrap_or_default();
-        let mut receipts = rec
-            .as_ref()
-            .map(|r| r.desk_receipts.clone())
-            .unwrap_or_default();
-        // Sol 复审修复 2：组端业务拒绝（资金/可卖/零股/竞价×市价）与
-        /// desk 回执同入事件流（IntentRejected 映射）。
-        if let Some(r) = rec.as_ref() {
-            receipts.extend(r.group_rejections.iter().copied());
-        }
-        let auction = rec
-            .as_ref()
-            .map(|r| r.desk_auction.clone())
-            .unwrap_or_default();
-        // D4 相位：回执聚合段（事件/回执投影）。
-        crate::verification_evidence::enter_phase(
-            crate::session::pipeline::TickPhase::ReceiptAggregation,
-        );
-        let mut events = project_trade_events(&trades, &mut self.next_seq);
-        let input = collect_lifecycle(&lifecycle, &receipts);
-        events.extend(project_lifecycle_events(&input, &mut self.next_seq));
-        events.extend(project_auction_events(&auction, &mut self.next_seq));
-        // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
-        // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
-        for (code, owner) in std::mem::take(&mut self.pending_rejections) {
-            self.next_seq = self
-                .next_seq
-                .checked_add(1)
-                .expect("事件 seq 溢出");
-            events.push(Event::IntentRejected {
-                seq: self.next_seq,
-                account: owner,
-                code,
-                reason: crate::RejectionReason::InvalidQuantity,
-            });
-        }
+        // 【P0 画像】event_assembly 段（事件投影——R4 必留面的成本基线）。
+        let (trades, events) = {
+            let _seg = step_profile::scope(StepSegment::EventAssembly);
+            let trades = rec
+                .as_ref()
+                .map(|r| r.desk_trades.clone())
+                .unwrap_or_default();
+            let lifecycle = rec
+                .as_ref()
+                .map(|r| r.desk_lifecycle.clone())
+                .unwrap_or_default();
+            let mut receipts = rec
+                .as_ref()
+                .map(|r| r.desk_receipts.clone())
+                .unwrap_or_default();
+            // Sol 复审修复 2：组端业务拒绝（资金/可卖/零股/竞价×市价）与
+            /// desk 回执同入事件流（IntentRejected 映射）。
+            if let Some(r) = rec.as_ref() {
+                receipts.extend(r.group_rejections.iter().copied());
+            }
+            let auction = rec
+                .as_ref()
+                .map(|r| r.desk_auction.clone())
+                .unwrap_or_default();
+            // D4 相位：回执聚合段（事件/回执投影）。
+            crate::verification_evidence::enter_phase(
+                crate::session::pipeline::TickPhase::ReceiptAggregation,
+            );
+            let mut events = project_trade_events(&trades, &mut self.next_seq);
+            let input = collect_lifecycle(&lifecycle, &receipts);
+            events.extend(project_lifecycle_events(&input, &mut self.next_seq));
+            events.extend(project_auction_events(&auction, &mut self.next_seq));
+            // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
+            // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
+            for (code, owner) in std::mem::take(&mut self.pending_rejections) {
+                self.next_seq = self
+                    .next_seq
+                    .checked_add(1)
+                    .expect("事件 seq 溢出");
+                events.push(Event::IntentRejected {
+                    seq: self.next_seq,
+                    account: owner,
+                    code,
+                    reason: crate::RejectionReason::InvalidQuantity,
+                });
+            }
+            (trades, events)
+        };
         let outcome = Ok(events);
         // D4 相位：派生审计段（回写后对账面——本批为标记位，D3 候选
         // 校验接入后承载实质校验计时）。
@@ -831,11 +860,14 @@ impl RuntimeDriver {
         // Sol 整改个人态交付投影：组权威个人态（observe 演进）上行→
         // session 镜像回写（reference/peak equity 等读面；Belief-1b 的
         // information 域投递回写保持——整态覆盖与其同源）。
-        let belief_states = self
-            .world
-            .collect_group_belief()
-            .map_err(|e| format!("个人态交付投影失败：{e:?}"));
-        match belief_states {
+        // 【P0 画像】belief_echo 段（D1 EchoBelief：上行+session 整态安装）。
+        {
+            let _seg = step_profile::scope(StepSegment::BeliefEcho);
+            let belief_states = self
+                .world
+                .collect_group_belief()
+                .map_err(|e| format!("个人态交付投影失败：{e:?}"));
+            match belief_states {
             Ok(collected) => {
                 for (group, states) in collected {
                     // P2-2a：稀疏条目=本 tick 生产演进位（组端已滤非
@@ -860,10 +892,13 @@ impl RuntimeDriver {
                 }
             }
             Err(projection_error) => return Err(projection_error),
+            }
         }
         // D5 #4：首买经历 init（回写/投影段收集——个人态整态回写之后
         /// 执行，组权威经验行不冲掉首买条目）。
+        // 【P0 画像】hold_inits 段。
         {
+            let _seg = step_profile::scope(StepSegment::HoldInits);
             let mut inits = std::mem::take(&mut self.pending_hold_inits);
             for (id, code, qty, entry) in inits.drain(..) {
                 session
@@ -877,11 +912,14 @@ impl RuntimeDriver {
         // 空簿覆盖会清空它们（env=1 plan_owner 回归显红后收口）。
         // 收集失败显式上抛（铁律二：不静默丢——plans_debug 静默过期
         // 不可接受；复核发现 1 收口）。
-        let plans_projection = self
-            .world
-            .collect_plans()
-            .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
-        match plans_projection {
+        // 【P0 画像】plans_echo 段（D1 EchoPlans + D3 同拍执行腿补写）。
+        {
+            let _seg = step_profile::scope(StepSegment::PlansEcho);
+            let plans_projection = self
+                .world
+                .collect_plans()
+                .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
+            match plans_projection {
             Ok(collected) => {
                 let group_has_plans = collected
                     .iter()
@@ -914,20 +952,25 @@ impl RuntimeDriver {
                 }
             }
             Err(projection_error) => return Err(projection_error),
+            }
         }
         // D3b 件 1：成交触达账户的个人记忆裁剪（同拍——组内 prune 在下一
         // Start 落账；个人态同步在上方用组镜像整态覆盖，裁剪必须在其后；
         // 下一拍组镜像已裁剪同值，双写不漂移）。
-        if !trades.is_empty() {
-            let mut touched: Vec<crate::AccountId> = trades
-                .iter()
-                .flat_map(|tr| [tr.maker, tr.taker])
-                .filter_map(|owner| self.id_map.get(self.global_index(owner)).copied())
-                .collect();
-            touched.sort();
-            touched.dedup();
-            for account in touched {
-                session.runtime_prune_personal_memory(account);
+        // 【P0 画像】memory_prune 段（D3）。
+        {
+            let _seg = step_profile::scope(StepSegment::MemoryPrune);
+            if !trades.is_empty() {
+                let mut touched: Vec<crate::AccountId> = trades
+                    .iter()
+                    .flat_map(|tr| [tr.maker, tr.taker])
+                    .filter_map(|owner| self.id_map.get(self.global_index(owner)).copied())
+                    .collect();
+                touched.sort();
+                touched.dedup();
+                for account in touched {
+                    session.runtime_prune_personal_memory(account);
+                }
             }
         }
         outcome
@@ -2289,23 +2332,28 @@ impl RuntimeDriver {
         // 权威（替换"推到 tick"的假迁移）。P2-3e：生产安装段改稀疏上行
         ///（只回本 tick 演进位；非演进位 session 镜像==组权威——不变式
         /// 同 belief P2-2a。B fixture due≈20-40/tick vs 名册 20000）。
-        let collected = self
-            .world
-            .collect_group_attention_sparse()
-            .map_err(|e| format!("注意力收集失败：{e:?}"))?;
-        let mut entries = Vec::new();
-        for (g, attention) in collected {
-            for (local, next_due, rng_state) in attention {
-                if let Some(id) = self
-                    .id_map
-                    .get(g as usize * self.accounts_per_group + local as usize)
-                    .copied()
-                {
-                    entries.push((id, next_due, rng_state));
+        // 【P0 画像】attention_heap 段（D6：稀疏收集 + heap 全名册镜像
+        /// 重建——set_runtime_attention 内 O(名册) collect）。
+        {
+            let _seg = super::step_profile::scope(super::step_profile::StepSegment::AttentionHeap);
+            let collected = self
+                .world
+                .collect_group_attention_sparse()
+                .map_err(|e| format!("注意力收集失败：{e:?}"))?;
+            let mut entries = Vec::new();
+            for (g, attention) in collected {
+                for (local, next_due, rng_state) in attention {
+                    if let Some(id) = self
+                        .id_map
+                        .get(g as usize * self.accounts_per_group + local as usize)
+                        .copied()
+                    {
+                        entries.push((id, next_due, rng_state));
+                    }
                 }
             }
+            session.set_runtime_attention(&entries);
         }
-        session.set_runtime_attention(&entries);
         Ok(())
     }
 

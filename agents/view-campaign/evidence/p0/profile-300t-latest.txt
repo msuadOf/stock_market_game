@@ -1,0 +1,29 @@
+# P0 分段画像 300 tick
+civil_check（会话守卫循环条件评估）= 108595 ns（362 ns/tick）
+--- step 分段画像（累计 ns / 次 / 占分段和比例）---
+step_outer                618688495 ns  ×300      0.52%
+driver_step               187559248 ns  ×300      0.16%
+world_run                  96311279 ns  ×300      0.31%
+market_install             80652080 ns  ×300      0.26%
+attention_heap             79139976 ns  ×300      0.07%
+belief_echo                50756599 ns  ×300      0.16%
+acct_echo_collect          21845263 ns  ×300      0.07%
+envelope                   18981767 ns  ×300      0.06%
+candle_install             13253521 ns  ×300      0.04%
+acct_writeback             12741169 ns  ×300      0.04%
+retail_diag                 5427887 ns  ×300      0.02%
+plans_echo                  4813135 ns  ×300      0.02%
+step_entry                  3338940 ns  ×300      0.01%
+undo_clear                  2115212 ns  ×600      0.01%
+desk_mirror                 1022336 ns  ×300      0.00%
+baseline_snapshot            590187 ns  ×300      0.00%
+event_assembly               442833 ns  ×300      0.00%
+price_tick_emit               45400 ns  ×300      0.00%
+vwap_calc                     41322 ns  ×300      0.00%
+lock_route                    33890 ns  ×300      0.00%
+day_end                       11890 ns  ×300      0.00%
+hold_inits                    10420 ns  ×300      0.00%
+fill_projection                9760 ns  ×300      0.00%
+memory_prune                   8781 ns  ×300      0.00%
+分段和（含嵌套双计）= 1197841390 ns；去嵌套净和 = 312453671 ns；wall = 949846240 ns
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":2105,"runtime_groups":1,"speed_x":315.8405933153981,"ticks":300,"wall_s":0.94984624}
