@@ -379,7 +379,42 @@ pub struct DeskState {
     rollback_hash: Option<u64>,
 }
 
+/// 刀 2a 判别旋钮（cfg(test)）——desk 投影轮间缓存（dirty 化）：
+/// ①禁缓存（直构建对照臂）；②失效跳过（突变判别面）。生产恒 false。
+#[cfg(test)]
+static DESK_PROJECTION_CACHE_DISABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static DESK_PROJECTION_INVALIDATION_SKIP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 刀 2a 测试面：旋钮设置器（desk_projection_cache_tests 消费）。
+#[cfg(test)]
+pub(crate) fn set_desk_projection_cache_disabled_for_test(on: bool) {
+    DESK_PROJECTION_CACHE_DISABLED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 刀 2a 测试面：旋钮②设置器。
+#[cfg(test)]
+pub(crate) fn set_desk_projection_invalidation_skip_for_test(on: bool) {
+    DESK_PROJECTION_INVALIDATION_SKIP.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl DeskState {
+    /// 刀 2a 判别旋钮（cfg(test)）①：禁缓存（投影直构建对照臂——双跑
+    /// 等价合同的独立权威源）。生产恒 false 零开销。
+    #[cfg(test)]
+    pub(crate) fn projection_cache_disabled() -> bool {
+        DESK_PROJECTION_CACHE_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 刀 2a 判别旋钮②：失效跳过（写点不推进版本——突变判别面：缓存
+    /// 陈旧必须使双臂对照分叉红）。
+    #[cfg(test)]
+    pub(crate) fn projection_invalidation_skip() -> bool {
+        DESK_PROJECTION_INVALIDATION_SKIP.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// 构造交易部状态。
     pub fn new(setup: DeskSetup, n_groups: usize, config: Arc<GameConfig>) -> Self {
         let initial_tick = setup.initial_tick;

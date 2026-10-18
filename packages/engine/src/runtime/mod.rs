@@ -72,6 +72,9 @@ pub mod watchdog;
 /// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod watchdog_spin_tests;
+/// 刀 2a desk 投影轮间缓存合同（协调者刀单裁决②，2026-10-19）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod desk_projection_cache_tests;
 // D5 wasm 方向 A：world 不再按 wasm 门控（session/bridge/drive 的类型
 // 引用面在 wasm 下编译必需）；wasm 宿主无 OS 线程——spawn 运行期
 // Err 由 session 侧显式处理（step_runtime_enabled 在 wasm 恒 false
