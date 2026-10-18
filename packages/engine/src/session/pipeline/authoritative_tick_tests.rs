@@ -71,12 +71,18 @@ fn reachable_session_at(tick: u64, closing_auction_ticks: u64) -> GameSession {
 }
 
 fn small_boundary_session() -> GameSession {
-    let mut setup = crate::session::npc_working_quote_tests::quote_setup(3);
+    boundary_session_with(3, 8, 1)
+}
+
+/// 日 K 相位状态机（方案 B）边界参数化底座：拍卖窗/收盘窗/tick 密度
+/// 可调——tpd=1（每拍日界）与 closing=0（无收盘竞价）两型守卫。
+fn boundary_session_with(auction_ticks: u64, tpd: u64, closing: u64) -> GameSession {
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(auction_ticks);
     setup.npcs.retail_count = 0;
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
-    setup.ticks_per_day = 8;
-    setup.closing_auction_ticks = 1;
+    setup.ticks_per_day = tpd;
+    setup.closing_auction_ticks = closing;
     GameSession::new(setup, 42).unwrap()
 }
 
@@ -399,6 +405,49 @@ fn public_step_commits_phase_boundaries_once_and_leaves_a_saveable_quiet_point()
             serde_json::to_value(restored.save().unwrap()).unwrap(),
             serde_json::to_value(save).unwrap(),
         );
+    }
+}
+
+/// 方案 B 守卫（协调者批复③）：极端相位几何下日 K 状态机不变式
+/// 保持——每拍即日界（tpd=1）与无收盘竞价（closing=0）两型，逐拍
+/// save/restore 往返一致（fault2064/2076 全程不触发）。
+#[test]
+fn public_step_day_boundary_candle_state_machine_holds_for_extreme_phase_geometry() {
+    for (auction_ticks, tpd, closing, ticks) in [
+        (0u64, 1u64, 0u64, 4u64),
+        (0, 4, 0, 9),
+        (1, 4, 1, 9),
+    ] {
+        let mut session = boundary_session_with(auction_ticks, tpd, closing);
+        for _ in 0..ticks {
+            // 双时钟契约驱动（同 public_step_commits：休市日/已收盘日
+            // 先 end_civil_day 对齐交易日序）。
+            while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay
+                || session
+                    .civil_clock()
+                    .completed_trading_sessions_expected()
+                    .unwrap()
+                    != session.day() + 1
+            {
+                session.end_civil_day().unwrap();
+            }
+            session.step().unwrap();
+            let save = session.save().unwrap_or_else(|error| {
+                panic!("tpd={tpd} closing={closing} tick {} 静点存档失败：{error}", session.tick())
+            });
+            let restored = GameSession::restore(&save).unwrap_or_else(|error| {
+                panic!(
+                    "tpd={tpd} closing={closing} tick {} 静点恢复失败：{error}",
+                    session.tick()
+                )
+            });
+            assert_eq!(
+                serde_json::to_value(restored.save().unwrap()).unwrap(),
+                serde_json::to_value(save).unwrap(),
+                "tpd={tpd} closing={closing} tick {} 往返一致",
+                session.tick()
+            );
+        }
     }
 }
 

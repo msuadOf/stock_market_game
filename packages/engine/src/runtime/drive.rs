@@ -2295,85 +2295,34 @@ impl RuntimeDriver {
         let finals = self
             .world_desk_finals_for_candles()
             .map_err(|e| format!("K 投影收集失败：{e:?}"))?;
-        for (stock_idx, candles, active) in finals {
+        let tpd_now = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
+        // 日结拍判定（C2/C3 相位基准）：本拍步后 tick 为 tpd 倍数 ⇒
+        /// ends_day 段的日终迁移（commit_active）即将执行。
+        let ends_day = session.tick() % tpd_now == 0;
+        for (stock_idx, _desk_hist, active) in finals {
             let code = crate::StockId(u32::from(stock_idx));
-            // D3a-2：位置合并——desk 含种子历史（会话预置已入档），仅
-            // 追加会话长度之后的新天（防种子重复入档）。
-            let skip = session.runtime_candle_history_len(&code);
-            // D5 日界归档：desk 日 K 的 time 为占位 0（desk 域无 civil
-            /// 日历）——追加段用 session 日历的当日 time 重写（save 校验
-            /// fault2065 非严格递增显红）。多日一次归档未支持（显式失败
-            /// ——生产一次 step 至多跨一日）。
-            // Sol 终审四审 A2：归档上限=构造期历史+session.day（desk 的
-            /// roll_day 按绝对 tick 界自动归档，超前于 session 日终——
-            /// session.day 未计入的日不 push，留待日终后的下一拍归档
-            /// （档校验 fault2064 期望=预置+saved_day，归档不得超前）。
-            let initial = self
-                .initial_candle_history_len
-                .get(&code)
-                .copied()
-                .unwrap_or(0);
-            let tpd_now = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
-            // 日结拍前瞻：本拍步后 tick 为 tpd 倍数 ⇒ 日终迁移即将推进
-            /// day（install_candles 先于 ends_day 段执行——不前瞻会拦截
-            /// 本应归档的当日 K，mid-scenario 档少一条 fault2064 反截）。
-            let ends_day = session.tick() % tpd_now == 0;
-            let archive_limit = initial
-                + usize::try_from(session.day()).unwrap_or(0)
-                + usize::from(ends_day);
-            let new_days = candles.len().saturating_sub(skip);
-            if new_days > 1 {
-                return Err(format!(
-                    "日界归档一次 {new_days} 日未支持（日历重写面待补）"
-                ));
-            }
-            let archive_time = if new_days == 1 && candles.len() <= archive_limit {
-                Some(session.candle_date_time_for_runtime())
-            } else {
-                None
-            };
-            for (day, candle) in candles.into_iter().enumerate() {
-                if day < skip || day >= archive_limit {
-                    continue;
-                }
-                // Sol 终审四审 A2 收口：world 日结后的补装**不 push**——desk
-                /// roll 归档的当日 K 与 session active（常规装已载）是同一
-                /// 份数据的两面，session 日终迁移（install_runtime_day_
-                /// boundary 的 commit_active）已归档一条；补装再 push 会
-                /// 双重归档（日 K 多一条 fault2064）。补装只承载 active
-                /// 清空（日界静点）。
-                // Sol 终审四审 A2 收口（统一归档点）：**日结拍一律不
-                /// push**——desk 的 roll（相位感知，在日末拍自身的
-                /// begin/match 已完成）使常规 install 时 desk hist 已含
-                /// 当日条，而 session 日终迁移（commit_active）也会归档
-                /// active——push 与 commit 是同一份数据的两面，并存即
-                /// 双重归档（A2PUSH/A2COMMIT 打点实证）。归档统一由
-                /// commit 承载（active 已装）；非日结拍 push 不变。
-                if post_day_end || ends_day {
-                    break;
-                }
-                session.push_historical_candle_for_runtime(
-                    &code,
-                    crate::session::DailyCandle {
-                        time: archive_time.unwrap_or(candle.0),
-                        open: Money::from_cents(candle.1),
-                        high: Money::from_cents(candle.2),
-                        low: Money::from_cents(candle.3),
-                        close: Money::from_cents(candle.4),
-                        volume: candle.5,
-                        trade_stats: None,
-                    },
-                );
-            }
-            let _ = ();
+            // 日 K 相位状态机（Sol 终审四审 public_step 方案 B，协调者
+            /// 批复）：归档权收归 session 日终迁移（commit_active）唯一
+            /// 承载——desk roll 归档的 hist 条与 session active 是同一份
+            /// 数据的两面，运行期不再自 desk hist push（push 与 commit
+            /// 并存即双重归档，A2PUSH/A2COMMIT 打点实证；撤 push 后
+            /// desk hist 仅余 restore 种子装载与测试面对账两类读者，
+            /// 全仓 rg 已核）。本函数只承载 C1（active 装载/占位）与
+            /// C3（清空）。多日一次归档守卫随 push 退役（迁移每拍至多
+            /// 提交一条 active；一次 step 至多跨一日）。
             // 活跃 K 窗口对齐（存档校验 fault2076）：竞价申报窗
             // （day_tick < auction_entry=10）活跃 K 须为空。
             let s = session.export_setup_for_runtime();
-            // 相位基准维持步后 tick（曾试拍前 tick−1 对齐执行相位——
-            /// 修复日结拍误清，但与档校验 fault2076 的步后口径错位，
-            /// tick2/竞价标记族交替显红；两侧口径的完全对齐属"日 K
-            /// 相位状态机等价"专项，登记后置——本形态维持步后与档
-            /// 校验同侧）。
+            // C3（方案 B）：active 清空仅两源——迁移后补装
+            /// （post_day_end）与**迁移已执行后的**新日申报窗。日结拍
+            /// 的常规 install（先于 ends_day 迁移执行）不得清当日
+            /// active：session active 仍持当日终态（前拍装载），是日终
+            /// 迁移 commit_active 的唯一归档输入；此处清空会使日界
+            /// 静点丢当日 K（fault2064 少条——tick8 [0,360,361] 形态）。
+            /// 相位基准=迁移执行标志（ends_day/post_day_end），不再以
+            /// day_tick 几何单独推断（几何推断正是 premature clear 的
+            /// 来源——此前 tick−1 拍前口径尝试亦因与档校验错位交替
+            /// 显红，两案均在状态机统一后退役）。
             let day_tick = session.tick() % s.ticks_per_day.max(1);
             let auction_entry = s.auction_ticks - s.auction_ticks / 3;
             // 活动 K 空窗与存档校验 fault2076 同式：竞价申报窗——
@@ -2382,7 +2331,7 @@ impl RuntimeDriver {
             /// session 日终迁移才能提交归档；原分支使 tpd=1 场景的当日
             /// K 永不归档，档少一条 fault2064 反截）。日结后的第二次
             /// install 时 desk roll 已清 active（None=清除，无残留）。
-            let active_must_be_empty = post_day_end || day_tick < auction_entry;
+            let active_must_be_empty = post_day_end || (day_tick < auction_entry && !ends_day);
             let candle_time = session.candle_date_time_for_runtime();
             if active_must_be_empty {
                 session.clear_active_candle_for_runtime(&code);
