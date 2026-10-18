@@ -136,3 +136,37 @@ candle 47μs（派生读面——等价负担大需专项设计）④eager-apply
 迟——根治屏障+构建外移，预期 A 恢复 1150+；首版教训见批 2 证据）
 ②组端 dirty set/拷贝减量（与①重叠）③G 线性面靠①支撑。
 B 1000 净机 749.4（+37.6% 累计；best 803）。
+
+## 第 20 任：eager undo 分域落地+candle 报批+belief 刀 a（2026-10-19）
+
+| 提交 | 内容 | 实测 |
+|---|---|---|
+| a1a4f02d | 批 1 合同红先行（apply_batch_immediate 现状桩+可交换性守卫；红证 evidence/p2/eager/batch1-red.txt） | 合同 2 红/合同 3 绿（数学守卫）如实登记 |
+| 2a7e704b | 批 2 分域落地（F1/F2/F3 即时域进等待窗+staging 退役+account_dirty_set 免重扫+seal_acked_len 日结守卫+batches_after_seal Start 防御） | 双模式 1675/0/11 ×2；突变红双证（旋钮①延迟域即时化→sol4 红/旋钮②漏 Cash undo→合同 2 红） |
+| faf60c6d | candle 47μs 退役设计报批稿（plans/candle-install-retirement-design.md） | **等协调者批，未实施** |
+| 7c52a392 | belief 刀 a：安装链 collect 层退役（发布版本借用迭代+cache move 序） | belief_echo 段 82→72.8μs；端到端 +0.2% 噪声带内如实登记 |
+
+**正式数字（静置窗 load 1min 3.7-4.0/5min 4.8-5.0/15min 5.5，2026-10-19 深夜）**：
+- A 3000（G=10）：**912.7 mean**（882.0/925.3/930.7）——vs Arc 优化 774.7
+  **+17.8%**；vs preQ2 1218 仍 −25%。Seal 相位 19-20%（206-217μs 稳定）。
+- B 1000：**747.3 mean**（775.2/694.7/772.1）——vs 749.4 持平（694.7 为
+  静置窗内低轮，按纪律不剔除）。
+- 同窗配对锚（高负载窗）：eager 913.1 vs arcopt 818.3（+11.6%），
+  Seal 相位 406→215μs（−47%）——机制归因实锤。
+
+**A 未达推算 1120 的归因（负结果纪律，已闭合）**：推算"屏障 250μs→~0"
+不成立——分域消除的是组端串行应用部分（406→215μs），残余 215μs 是
+**协议链固有地板**（10 组 Seal 广播+组唤醒+延迟相+分片 clone+Ack 回传
+——wall 差对账：821μs（preQ2）+215（Seal）+~60（其他）≈1095μs 实测
+闭合）。进一步压缩需协议级改动（Seal 换向与下一 Start 合并）或组端
+账户 COW（设计 §4 已登记不阻塞）。
+
+**下任刀序建议**：①candle 设计批复后实施（47→~5μs，B +2.9% 推算）
+②belief 深刀评估（72.8μs 剩余=cache clone+session 内部——条目 Arc 化
+随 candle 批协议面同开）③Seal 相位地板的协议级方案（A 恢复 1100+ 的
+唯一路径——换向合并/COW 需新设计报批）④复核登记项继承（组端 Seal
+Failed 注入测试/corrupt_sparse_echo_omit_last 清理/GroupDayDone O(N)
+tpd=1 边缘/首拍 force_full）。
+
+**本任复核**：fork 独立复核已发（四提交），结果见 reviews/（归来后
+补录）。事故与教训：无（regex 批删改用 python 括号配对+逐轮编译门禁）。
