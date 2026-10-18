@@ -44,6 +44,8 @@ mod bridge_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod candle_retirement_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod inline_account_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod drive_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod day_end_tests;

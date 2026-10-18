@@ -444,6 +444,16 @@ pub enum GroupIn {
     /// 只补触发面不改语义）。
     #[cfg(test)]
     ForceContinuationForTest,
+    /// Seal 攻顶批 1 旋钮通道（cfg(test)）：组端分片构建的突变判别
+    /// 注入（tamper=首条目 cash+1/skip_last=丢末条目）——分片内容源
+    /// 与 dirty 集完整性合同的红证面；生产恒不发送。
+    #[cfg(test)]
+    SetSealKnobsForTest {
+        /// 篡改首条目现金 +1 分。
+        tamper: bool,
+        /// 丢末条目（dirty 集完整性）。
+        skip_last: bool,
+    },
     /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
     /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
     EchoOpenDerivation,

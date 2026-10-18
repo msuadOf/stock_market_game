@@ -759,6 +759,16 @@ impl World {
         self.seal_ack_failure_once = Some(());
     }
 
+    /// Seal 攻顶批 1 旋钮桩（cfg(test)）：组 0 分片构建的突变判别——
+    /// ①篡改首条目 cash+1（分片内容源判别）；②丢末条目（dirty 集完整
+    /// 性判别）。批 1 桩：组端未消费（无效果→旋钮测试红=注入面红先行）。
+    #[cfg(test)]
+    pub fn seal_knobs_for_test(&mut self, tamper: bool, skip_last: bool) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::SetSealKnobsForTest { tamper, skip_last });
+        }
+    }
+
     /// 初始公共态（tick1 决策观察基；涨跌停按构造规格推导，无盘口）。
     fn initial_views(specs: &[DeskStockSpec], cage_on: bool) -> Vec<StockPublic> {
         let _ = cage_on;

@@ -33,6 +33,81 @@ use std::time::Duration;
 /// `apply_sell_settlement`）：invested/recovered 只累计**成交额**
 /// （`price × qty`，佣金/过户费/印花税不入账）；清仓（shares 归零）后
 /// 成本基清零（对齐 session 清仓删除条目——下次买入从零新建）。
+/// 内联小向量（Seal 攻顶刀 A-1'，协调者批）：GroupAccount 的每股域
+/// 容器。容量决策数据驱动：现役全部口径股数 P100=5（A/B 探针 5 股、
+/// 测试 fixture 2 股）——内联容量 8（P100 的 2 的幂上取），此区间内
+/// `Clone` = 栈拷贝零堆分配（Seal 分片构建 226μs 的主成本=活跃集 ×
+/// 7 域 × Vec 堆分配）。spill（len>8）走堆 Vec 语义不变（spill 基准
+/// 见 inline_account_tests——不劣化验证）。
+/// 等价面（复核守卫 2）：`Deref<Target=[T]>`——索引/迭代/切片与 Vec
+/// 兼容（调用点零改动）；`PartialEq` 手写按内容比（Inline/Heap 同内容
+/// 相等——变体不参与判等，分片对账/测试断言无变体歧义）。
+#[derive(Clone, Debug)]
+pub(crate) enum InlineVec<T: Copy + Default, const N: usize> {
+    /// 内联（len≤N——栈存储，Clone=数组拷贝）。
+    Inline {
+        /// 固定容量存储（尾部长度内有效）。
+        data: [T; N],
+        /// 有效长度（≤N）。
+        len: usize,
+    },
+    /// 溢出堆（len>N——Vec 语义）。
+    Heap(Vec<T>),
+}
+
+impl<T: Copy + Default, const N: usize> InlineVec<T, N> {
+    /// 定值填充构造（对齐原 `vec![value; len]` 语义；len≤N 内联否则堆）。
+    pub fn filled(len: usize, value: T) -> Self {
+        if len <= N {
+            InlineVec::Inline {
+                data: [value; N],
+                len,
+            }
+        } else {
+            InlineVec::Heap(vec![value; len])
+        }
+    }
+
+    /// 内容切片视图（两变体统一）。
+    pub fn as_slice(&self) -> &[T] {
+        match self {
+            InlineVec::Inline { data, len } => &data[..*len],
+            InlineVec::Heap(v) => v,
+        }
+    }
+
+    /// 可变切片视图（长度不变——Inline 短变体写）。
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        match self {
+            InlineVec::Inline { data, len } => &mut data[..*len],
+            InlineVec::Heap(v) => v,
+        }
+    }
+}
+
+impl<T: Copy + Default, const N: usize> std::ops::Deref for InlineVec<T, N> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: Copy + Default, const N: usize> std::ops::DerefMut for InlineVec<T, N> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+/// 按内容判等（Inline/Heap 同内容相等——变体不参与判等：分片对账与
+/// 测试断言的等价面守卫）。
+impl<T: Copy + Default + PartialEq, const N: usize> PartialEq for InlineVec<T, N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: Copy + Default + PartialEq, const N: usize> Eq for InlineVec<T, N> {}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupAccount {
     /// 现金聚合额（i64 分）。
@@ -566,6 +641,14 @@ pub struct GroupState {
     seal_acked_len: Option<usize>,
     /// Seal 地板分解诊断（瞬态面）：组端 Seal 处理累计墙。
     pub(crate) seal_handle_ns: u128,
+    /// Seal 攻顶批 1 旋钮桩（cfg(test)）：分片内容篡改（cash+1 分——
+    /// 判别"分片真源于组账户终态"）与漏末条目（判别 dirty 集完整性）。
+    /// 批 1 桩：分片构建未消费旋钮（无效果→旋钮测试红=注入面红先行）；
+    /// 批 2 迁移后在分片构建点消费。
+    #[cfg(test)]
+    seal_knob_tamper_shard: bool,
+    #[cfg(test)]
+    seal_knob_skip_last_shard: bool,
     /// 分解细化（瞬态面）：drain 批计数/等待窗批计数/延迟相墙/分片墙。
     pub(crate) seal_drain_batches: u64,
     pub(crate) seal_wait_batches: u64,
@@ -758,6 +841,10 @@ impl GroupState {
             seal_acked_len: None,
             batches_after_seal: 0,
             seal_handle_ns: 0,
+            #[cfg(test)]
+            seal_knob_tamper_shard: false,
+            #[cfg(test)]
+            seal_knob_skip_last_shard: false,
             seal_drain_batches: 0,
             seal_wait_batches: 0,
             seal_deferred_ns: 0,
@@ -5151,6 +5238,12 @@ pub fn group_main(
                     }
                     _ => panic!("MutateBeliefForTest 目标位 {local} 无 belief 态"),
                 }
+            }
+            #[cfg(test)]
+            GroupIn::SetSealKnobsForTest { tamper, skip_last } => {
+                // 批 1 旋钮桩：只置位（分片构建点批 2 接消费）。
+                state.seal_knob_tamper_shard = tamper;
+                state.seal_knob_skip_last_shard = skip_last;
             }
             #[cfg(test)]
             GroupIn::ForceContinuationForTest => {
