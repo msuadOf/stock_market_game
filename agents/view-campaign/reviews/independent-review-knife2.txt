@@ -1,0 +1,75 @@
+=== 刀 2a/2b/③ 批独立复核（fork，未实施改动者，2026-10-19 晨）===
+
+对象：4d94d923（刀 2a 合同红先行）/ d848e8f6（刀 2a 版本缓存实现）/
+a41b23d7（刀 2b Arc 直通）/ b80e8b5c（刀③ StepViaBody 插桩）。
+
+【阻断】无。
+
+【建议（登记级，4 条）】
+1. **begin_tick 的 public_cutoff_serial 写点（desk.rs:2060/2064）无
+   bump——正确性依赖"相位键恰覆盖 cutoff 变化"的隐式论证**：设 cutoff
+   仅发生在进 ClosingAuction 首 tick（该拍相位键新→必重建 ✓）；清 0
+   仅在 Continuous/PreOpen（相位键新 ✓）；CallAuction 窗内 cutoff 残留
+   但该相位公开簿恒空（cutoff 不参与）✓。论证成立但属隐式耦合——
+   建议在 cutoff 写点加注释锚定"view 缓存失效依赖相位键"（未来若在
+   同相位内动态改 cutoff 会静默漏失效）。
+2. 旋钮复位非 panic-safe：run_and_collect 的 disabled 复位与 skip 的
+   尾部复位在 expect 失败 panic 时残留（当前文件仅单测试+串行——实际
+   影响为零；若未来本文件加第二个 #[test] 且并行跑，失败残留会污染。
+   可用 drop guard 收口）。
+3. 2b 后广播基 `*slot = (*view).clone()`（install_tick 每拍每股深拷贝）
+   保留——组决策输入 &[StockPublic] 切片形态约束（P1 面未动），性能
+   余量登记：若未来组端读面 Arc 化（broadcast_start 签名改
+   &[Arc<StockPublic>]）此处拷贝可再退役。
+4. trim_buy_purse_to_exact 对 side!=Buy 早退分支也在入口 bump（无害的
+   多推——宁多勿漏策略一致，仅备注）。
+
+【确认】
+1. **写点 bump 完备性（2a 生命线）——全文扫描证实**：
+   a) 簿写点 `&mut self.bids|asks` 全部 7 处归属 rollback/
+      remove_by_ref/restore_fields/rest_inner/apply_maker_fill(×2)/
+      remove_order——全已 bump（d848e8f6 逐点核对）；链式直写
+      （self.bids.insert 等）零处。
+   b) 行情写点 `&mut self.market` 3 处归属 rollback/settle_fill/
+      roll_day ✓；`market.candle=Some`（execute_opening_clearing ✓
+      bump）；recent/minute/candle 田间写全在 finish_round（值敏感
+      判定承载）；candles.push 唯一在 roll_day ✓；构造期种子回放
+      （desk_main initial_recent_prices/initial_orders/initial_
+      public_cutoff——2624/2664 区）在消息循环前、cache=None——无
+      陈旧面。
+   c) Abort 回滚：rollback 入口双 bump（保守——undo 重放经
+      restore_fields/remove_by_ref 再 bump 属无害重复）。
+2. **finish_round 值敏感判定正确**：candle_close_changed 用
+   is_none_or（None→Some 占位建立 ✓ + close 变化 ✓）；!window_full
+   （增长期内容变）；popped_front != Some(last)（窗满滑动：front==last
+   连续同价=内容不变——正确不失效）；minute 回填归并 content_changed；
+   统一末尾 bump。candle 的 volume/high/low 由 settle_fill bump 覆盖
+   （成交必 bump）——域对账完备。
+3. **Arc 化语义等价（2b）**：a) 读者面全清单=publication_tests（字段
+   访问经 Deref）/desk_projection_cache_tests（(*s.view).clone() 值
+   比较——Arc<StockPublic> 的 PartialEq 委托内值，语义不变）/drive.rs
+   2305（&shard.view Deref）——零改动兼容；b) **无 make_mut/内容写**
+   ——desk 更新投影=新建 Arc 换缓存，共享只读安全；c) install_tick
+   `*slot = (*view).clone()` 广播基与 DeskShard.view 同 tick 同值双份
+   ——与原两份 clone 语义一致，组决策输入一致性保持；d)
+   desk_resting_facts 的 Arc::clone(buffer)（原 mem::take）：evidence
+   每 tick 由 converge_round 新建、install_tick 单点消费——无跨 tick
+   陈旧复用面（Abort 路径整体丢弃 ✓）；e) v0 构造（Arc::new(view.
+   clone())）一次性 ✓；f) publication 无 serde/Hash 面（内存槽）。
+4. **大 A 语义零触碰**：diff 面仅投影缓存/共享+计时插桩——撮合
+   （place/match_incoming/settle）/费用/涨跌停/竞价清算逻辑未动；
+   build_public 的揭示面/涨跌停域原样（daily_bars 尾部切片=同内容）；
+   协议字段类型变化（Arc）透明。
+5. **测试判别力**：fixture 覆盖失效路径全谱（成交=双键失效/挂/撤/
+   空轮=命中路径/收盘竞价=相位键切换/跨日 Drain=清簿大失效——
+   matching_walks 已验证开局保证成交，vol>0 锚防退化）；批 1 红先行
+   （旋钮桩无消费=assert_ne 红）→批 2 绿闭环成立；突变判别（失效
+   跳过→陈旧分叉）+旋钮复位无残留三段齐；合并单测试防并行旋钮污染
+   ✓。本地复验（fork worktree @b80e8b5c）：合同 1/1+publication 7/7
+   +desk_semantics 40/40 全绿。
+6. **刀③**：StepViaBody 段=纯计时 guard（body 闭包内包
+   runtime_step_with_install）+枚举/ALL/LEDGER 数组 27 一致——无语义
+   影响；nested 清单同步 ✓。
+
+【复核方法】git show 四提交完整 diff+批末 checkout（b80e8b5c）全文
+grep 写点归属（python 方法边界判定）+本地复跑三核心域。

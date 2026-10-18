@@ -2054,6 +2054,13 @@ impl DeskState {
         // D5 attention 公开可见性门禁：连续→收盘竞价切换时点记公开截点
         ///（老单公开、竞价新单隐藏——旧管线 set_matching_mode 的 cutoff
         /// 语义等价，desk 权威域承载）。
+        // 【刀 2a 复核建议①锚定】本写点不 bump book_ver——正确性依赖
+        /// "cutoff 变化必然伴随相位切换"的隐式论证：设置只发生在进
+        /// ClosingAuction 首 tick（last_phase≠Closing→相位键已变→缓存
+        /// 必重建）；清零只发生在 Continuous|PreOpen（同理相位键变）。
+        /// CallAuction 窗内 cutoff 不参与揭示（公开簿恒空）。**未来若
+        /// 引入同相位内的 cutoff 动态演进，此隐式依赖破坏——必须改为
+        /// 显式 bump**（独立复核证实现状成立，注释锚定防漂移）。
         if phase == DeskPhase::ClosingAuction
             && self.last_phase.is_some_and(|p| p != DeskPhase::ClosingAuction)
         {
