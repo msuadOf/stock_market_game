@@ -1,0 +1,13 @@
+    = help: use `//` for a plain comment
+
+error[E0599]: no method named `set_seal_ack_failure_once_for_test` found for struct `World` in the current scope
+   --> packages/engine/src/runtime/seal_tests.rs:93:11
+    |
+ 93 |     world.set_seal_ack_failure_once_for_test();
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `World`
+    |
+   ::: packages/engine/src/runtime/world.rs:318:1
+    |
+318 | pub struct World {
+    | ---------------- method `set_seal_ack_failure_once_for_test` not found for this struct
+=== 批1 红证（注入面缺失编译红）===

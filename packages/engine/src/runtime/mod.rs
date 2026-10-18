@@ -59,6 +59,9 @@ pub mod step_profile;
 pub mod publication;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod publication_tests;
+/// Q2 Seal 收尾确认相位——行为合同测试（批 1 红先行）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod seal_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod plans_tests;
 pub mod watchdog;

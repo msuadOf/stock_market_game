@@ -16,6 +16,8 @@ pub enum Phase {
     WorkerIdle,
     /// 协调者 tick 收束（等待 G GroupReport + N DeskReport，正常档）。
     TickConverge,
+    /// Q2 Seal 收尾确认收集（等待 G SealAck，正常档——一组一轮小消息）。
+    Seal,
     /// 日终 Drain→DeskDrained 收集（长相位档：清簿回流可重）。
     Drain,
     /// 关停 Final 收集（长相位档：期末上交可重）。
@@ -44,7 +46,7 @@ impl WatchdogConfig {
     pub fn limit_for(&self, phase: Phase) -> Duration {
         match phase {
             Phase::Drain | Phase::FinalCollection => self.long,
-            Phase::WorkerIdle | Phase::TickConverge => self.normal,
+            Phase::WorkerIdle | Phase::TickConverge | Phase::Seal => self.normal,
         }
     }
 }

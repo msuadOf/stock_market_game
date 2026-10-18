@@ -335,6 +335,10 @@ pub struct World {
     /// （生产语义零变化）。
     #[cfg(test)]
     pub shutdown_stall_for_test: Option<Duration>,
+    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾模拟收集失败
+    ///（Abort 语义——worker 全存活，同 tick 重试成功）。
+    #[cfg(test)]
+    seal_ack_failure_once: Option<()>,
     watchdog: WatchdogConfig,
     validator: Validator,
     rounds_cap: u32,
@@ -706,6 +710,8 @@ impl World {
             worker_shutdown,
             #[cfg(test)]
             shutdown_stall_for_test: None,
+            #[cfg(test)]
+            seal_ack_failure_once: None,
             watchdog,
             validator: no_op_validator(),
             rounds_cap,
@@ -735,6 +741,13 @@ impl World {
     /// 注入 PreCommit 校验器（测试/批 3+ 接线点）。
     pub fn set_validator(&mut self, v: Validator) {
         self.validator = v;
+    }
+
+    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾收集失败一次
+    ///（Abort 语义——worker 全存活；对照六审 300ms 延迟重试模式）。
+    #[cfg(test)]
+    pub fn set_seal_ack_failure_once_for_test(&mut self) {
+        self.seal_ack_failure_once = Some(());
     }
 
     /// 初始公共态（tick1 决策观察基；涨跌停按构造规格推导，无盘口）。
@@ -1617,22 +1630,102 @@ impl World {
                     rounds = next;
                 } else {
                     // 终轮：以累积事实替换终轮单轮快照（恰一次进
-                    // TickRecord——含全部 Continue 轮）。终轮原始成交
-                    // 在替换前抓取——它们的实体从未随 Continue 下行
-                    // 落账（前置约束①的 unsettled 尾巴）。
-                    let unsettled_trades = evidence.desk_trades.clone();
+                    // TickRecord——含全部 Continue 轮）。Q2 Seal 落地后
+                    // 终轮成交已随 Seal 落账（S2）——unsettled 尾巴恒空
+                    ///（合同 5；D3 退役的类型级表达随批 4）。
+                    let unsettled_trades = Vec::new();
                     evidence.desk_trades = acc_trades;
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
                     evidence.group_rejections = acc_group_rejections;
                     evidence.desk_auction = acc_auction;
                     evidence.entities_out = acc_entities_out;
+                    // Q2 Seal 收尾确认：组 drain+落账（S4/S2）→SealAck
+                    // 收齐 → install_tick（发布=提交=Abort 窗口关闭）。
+                    self.seal_round(tick, rounds)?;
                     self.install_tick(tick, rounds, evidence, unsettled_trades);
                     break;
                 }
             }
         }
         Ok(self.global.committed_tick)
+    }
+
+    /// Q2 Seal 收尾确认（S1-S4）：广播 Seal → 组 drain 本拍全部批次并
+    /// 落账（S2 落账点唯一化）→ 收齐 G 个 SealAck。**发布=提交=Abort
+    /// 窗口关闭**（S1）——本函数返回 Ok 后 install_tick 才发布。
+    ///
+    /// 失败语义（协调者守卫 1——存活契约）：
+    /// - **收集失败/超时/断连**：`abort_tick`（tick 级 Abort——幸存
+    ///   worker 回滚存活，同 tick 可重试；不触碰 worker_shutdown 永久
+    ///   关停语义）。
+    /// - **组端 Seal 处理失败**（Failed 上行=数据损坏类）：组 worker 已
+    ///   退出——撤退收齐 Final + 标记死亡（与 converge_or_die 的
+    ///   Failed 分支同式）。
+    fn seal_round(&mut self, tick: u64, round_final: u32) -> Result<(), RuntimeError> {
+        // 存活契约测试注入（one-shot）：模拟一次 SealAck 收集失败——
+        // Abort 语义（worker 全存活，同 tick 重试成功）。
+        #[cfg(test)]
+        if self.seal_ack_failure_once.take() == Some(()) {
+            self.abort_tick(tick);
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: "【测试注入】SealAck 收集失败（Abort 语义——worker 存活可重试）".to_owned(),
+            });
+        }
+        for tx in &self.group_txs {
+            if tx.send(GroupIn::Seal { tick, round_final }).is_err() {
+                self.abort_tick(tick);
+                return Err(RuntimeError::SendFailed {
+                    detail: format!("Seal(tick={tick}) 组广播失败（worker 已退出？）"),
+                });
+            }
+        }
+        let mut left = self.n_groups;
+        while left > 0 {
+            match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog) {
+                Ok(UpMsg::SealAck { group, tick: t, .. }) => {
+                    if t != tick {
+                        self.abort_tick(tick);
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!("SealAck 错位：期望 tick={tick}，收到组 {group} tick={t}"),
+                        });
+                    }
+                    left -= 1;
+                }
+                Ok(UpMsg::Failed { who, error }) => {
+                    // 组端 Seal 处理失败（apply_staging 数据损坏类）——
+                    // worker 已退出：撤退关停+死亡（同 converge_or_die）。
+                    self.abort_tick(tick);
+                    for tx in &self.group_txs {
+                        let _ = tx.send(GroupIn::Shutdown);
+                    }
+                    for tx in &self.desk_txs {
+                        let _ = tx.send(DeskMsg::Shutdown);
+                    }
+                    let report = self.collect_finals().map_err(|e| RuntimeError::ProtocolInvariant {
+                        detail: format!("Seal 失败撤退路径 Final 收集失败：{e}"),
+                    })?;
+                    self.dead_finals = Some(report);
+                    self.dead_reason =
+                        Some(format!("worker {who} Seal 收尾失败（{error}）"));
+                    return Err(RuntimeError::WorkerFailed { who, error: Box::new(error) });
+                }
+                Ok(other) => {
+                    self.abort_tick(tick);
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!(
+                            "Seal(tick={tick}) 期望 SealAck，收到 {other:?}（worker 已提前退出？）"
+                        ),
+                    });
+                }
+                Err(e) => {
+                    self.abort_tick(tick);
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 收束一轮；TaskDied ⇒ 撤退 + 收齐 Final + join + `resume_unwind` 原 payload

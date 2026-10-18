@@ -440,6 +440,17 @@ pub enum GroupIn {
     /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
     /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
     EchoOpenDerivation,
+    /// Q2 Seal 收尾确认（终轮 converge 后由协调者广播）：组 drain 本拍
+    /// 全部批次（S4 锁步不变量：协调者收齐全部 DeskReport ⇒ desk 批次
+    /// 已 FIFO 入组收件箱先于 Seal）→ apply_staging 落账（S2：落账点
+    /// 唯一化，从下一 Start 前移到 Seal）→ SealAck 上行。Abort 语义=
+    /// tick 级可重试（worker 回滚存活，非永久关停）。
+    Seal {
+        /// tick 编号。
+        tick: u64,
+        /// 终轮轮次。
+        round_final: u32,
+    },
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
     /// P2-3e：稀疏注意力上行请求（生产安装段——只回本 tick 演进位
@@ -668,6 +679,17 @@ pub enum UpMsg {
         /// 起 evaluate 共享流写回 session rng_state 同源）。
         attention: Vec<(LocalIdx, u64, u64)>,
     },
+    /// Q2 Seal 收尾确认回执：组已完成终轮落账（apply_staging）+
+    /// 分片构建（P2-5 接入面）。final_hash=Seal 落账后的组态哈希
+    ///（观察点——与报告的 committed_hash 口径不同：含本拍成交）。
+    SealAck {
+        /// 组索引。
+        group: GroupIdx,
+        /// tick 编号。
+        tick: u64,
+        /// Seal 落账后组态哈希。
+        final_hash: u64,
+    },
     /// D5 #4 retail 链：本拍零售决策 trace 回执（瞬态——每拍清+装）。
     RetailTraces {
         /// 组索引。
@@ -758,6 +780,9 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::RetailTraces { group, .. } => write!(f, "RetailTraces(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
+            UpMsg::SealAck { group, tick, .. } => {
+                write!(f, "SealAck(group={group}, tick={tick})")
+            }
             UpMsg::GroupEchoSparse { group, .. } => write!(f, "GroupEchoSparse(group={group})"),
             UpMsg::DeskCandles { stock, .. } => write!(f, "DeskCandles(stock={stock})"),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),

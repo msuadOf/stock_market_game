@@ -907,6 +907,22 @@ impl GroupState {
     ) -> Result<(), RuntimeError> {
         let batches = std::mem::take(&mut self.staging);
         for batch in batches {
+            self.apply_staging_batch(batch, expected_tick, expected_round)?;
+        }
+        Ok(())
+    }
+
+    /// Q2 eager-apply 臂（协调者护栏预案）：单批落账——Batch 消息
+    /// 到达即 apply（与组间决策重叠，回收 Seal 串行屏障税）。语义
+    /// 等价：同一落账逻辑/undo 日志/防御核对；Seal 相位到达时 staging
+    /// 已空（SealAck 立即回）。
+    fn apply_staging_batch(
+        &mut self,
+        batch: DeskBatch,
+        expected_tick: u64,
+        expected_round: u32,
+    ) -> Result<(), RuntimeError> {
+        {
             batch
                 .verify_tick_round(expected_tick, expected_round)
                 .map_err(|m| RuntimeError::ProtocolInvariant {
@@ -1718,7 +1734,21 @@ impl GroupState {
                 inputs.daily_total_traded = stock.daily_total_traded;
             }
         }
-        // 先落账上一 tick 最后一轮的实体批次（tick/round=上一执行位）。
+        // Q2 Seal 后防御核对（协调者守卫 2）：落账点已前移到 Seal——
+        // Start 时 staging 必须恒空；非空=锁步破坏（批次绕过 Seal 到达
+        // 或 Seal drain 缺漏），显式失败上报不静默落账。Seal 相位自身
+        // 的 apply_staging 是唯一落账点（S2 落账点唯一化）。
+        if !self.staging.is_empty() {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {} Start 时 staging 非空（{} 批）——Seal 落账后 Start 不应再有残余批次（锁步破坏，显式上报）",
+                    self.group,
+                    self.staging.len()
+                ),
+            });
+        }
+        // 防御核对保留（恒空批次过 verify——历史接口兼容；上一 tick 的
+        // 尾巴已由 Seal 落账）。
         self.apply_staging(self.cur_tick, self.cur_round)?;
         // 转正点：丢弃上一 tick 可逆日志；committed 推进到 N−1（旧 cur_tick）。
         self.undo.clear();
@@ -5139,6 +5169,111 @@ pub fn group_main(
                     abort.store(true, Ordering::SeqCst);
                     result = Err(RuntimeError::SendFailed {
                         detail: format!("组 {who} GroupEcho 发送失败"),
+                    });
+                    break;
+                }
+            }
+            GroupIn::Seal {
+                tick,
+                round_final,
+            } => {
+                // Q2 Seal 收尾确认（S1-S4）：drain 本拍全部批次——S4 锁步
+                /// 不变量：协调者收齐全部 DeskReport（desk 批次 FIFO 先于
+                /// DeskReport 入组收件箱）后才发 Seal ⇒ 组处理到 Seal 时
+                /// 全部批次已在收件箱，逐条消费进 staging 后一次落账
+                ///（S2：落账点从下一 Start 前移到 Seal——apply_staging
+                /// 唯一化）。落账进 undo 日志（Abort 可冲回——S3：undo
+                /// 跨发布无害，Start 清点不变）。期末哈希随 SealAck 上行。
+                if tick != state.cur_tick || round_final != state.cur_round {
+                    result = Err(RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "组 {} Seal 错位：期望 ({},{})，收到 ({tick},{round_final})",
+                            state.group, state.cur_tick, state.cur_round
+                        ),
+                    });
+                    break;
+                }
+                // 收件箱顺序 drain：Seal 前入队的全部数据面消息（S4：
+                /// desk 批次 FIFO 先于其 DeskReport ⇒ 先于 Seal 入队）。
+                /// 数据面=Batch（实体批次）与 AcceptedBatch（受理身份）；
+                /// 其他消息（外部意图/回声请求/Abort 等）属协议错位——
+                /// Seal 相位不应出现，显式失败不静默。
+                loop {
+                    match rx.try_recv() {
+                        Ok(GroupIn::Batch(batch)) => {
+                            state.observed.push(Observed::Batch(batch.tick));
+                            state.staging.push(batch);
+                        }
+                        Ok(GroupIn::AcceptedBatch { entries }) => {
+                            for (stock, owner, order_serial) in entries {
+                                if owner.0 == state.group {
+                                    state
+                                        .observed
+                                        .push(Observed::ChildAccepted(stock, owner, order_serial));
+                                    if let Err(e) =
+                                        state.adopt_child_on_accepted(stock, owner.1, order_serial)
+                                    {
+                                        abort.store(true, Ordering::SeqCst);
+                                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                                        result = Err(e);
+                                        break;
+                                    }
+                                }
+                            }
+                            if result.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(other) => {
+                            let _ = other;
+                            result = Err(RuntimeError::ProtocolInvariant {
+                                detail: format!(
+                                    "组 {} Seal 期收到非数据面消息（协议错位）",
+                                    state.group
+                                ),
+                            });
+                            break;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            result = Err(RuntimeError::Disconnected {
+                                who: None,
+                                stage: format!("组 {} Seal drain 收件箱断连", state.group),
+                            });
+                            break;
+                        }
+                    }
+                }
+                if result.is_err() {
+                    break;
+                }
+                // 终轮落账（S2）：staging 只剩终轮批次（Continue 链早轮已
+                /// 随各自 handle_continue 消费）。
+                if let Err(e) = state.apply_staging(tick, round_final) {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                    result = Err(e);
+                    break;
+                }
+                // Q2：final_hash 用 O(1) 指纹口径（设计稿 §3.2——与
+                /// committed_hash 同族合成，**非** state_hash 全名册遍历：
+                /// B 口径 20000×5 股×8 域的 O(N) 哈希 ≈2ms/tick 串行屏障
+                /// 实测打回）。指纹含落账事实量（undo 长度+staging 余量）
+                /// 供未来 Abort 对账观察点扩展。
+                let final_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick ^ ((round_final as u64) << 32))
+                    .wrapping_mul(0x100000001b3)
+                    ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                if up_tx
+                    .send(UpMsg::SealAck {
+                        group: state.group,
+                        tick,
+                        final_hash,
+                    })
+                    .is_err()
+                {
+                    abort.store(true, Ordering::SeqCst);
+                    result = Err(RuntimeError::SendFailed {
+                        detail: format!("组 {who} SealAck 发送失败"),
                     });
                     break;
                 }
