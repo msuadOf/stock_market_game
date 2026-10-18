@@ -2979,8 +2979,9 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
 /// 跑 N 拍（信封增量维护在生产路径 step_via_runtime 内——driver 直调
 /// step_frame_equivalent 不经该段，守卫必须走 session 步进）。可选每拍
 /// 强制全量重建信封账本（增量路径的对照臂）。场景覆盖差分三分面：
-/// Added（t==3 挂单卖不交叉）、Changed（t==8 大买单部分成交——余量/
-/// 费用累计变化）、Removed（t==6 撤 t==3 挂单）。
+/// Added（t2-t4 卖腿站簿不交叉+股 1 挂单）、Changed（t6/8/10 卖腿对
+/// t5 挂出的 800 股限价买逐拍部分成交——余量/费用累计变化）、
+/// Removed（t5 一拍扫清站簿卖盘+t==6 撤股 1 挂单）。
 fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<String>) {
     use crate::session::Event;
     let mut setup = setup_fixture();
