@@ -2451,11 +2451,17 @@ fn resting_order_seeds_from_session(
             }
             // D5 restore 链最后一层：audit/ purse 数值面自 save 契约直取
             /// （desk 权威——此前 remaining 退 1 股占位使续拍种子量错）。
-            let price = if envelope.audit().limit.cents() > 0 {
-                envelope.audit().limit.cents()
-            } else {
-                1
-            };
+            // Sol 终审四审符号价族：limit=受理价真值（runtime 信封已收口
+            /// 真价面）——1 分占位标记退役；非正=档损坏，显式失败（此前
+            /// 占位使 restore 后公开簿/笼子参考价错乱——bids=[(1,100)]
+            /// 形态、新单被 cage 误拒）。
+            let price = envelope.audit().limit.cents();
+            if price <= 0 {
+                return Err(format!(
+                    "账本挂单 limit 非正（档损坏或旧标记形态）：account={:?}, stock={:?}, order={}",
+                    key.account, key.stock, key.order.0
+                ));
+            }
             let qty = envelope.audit().remaining_qty;
             let purse = if key.side == crate::orderbook::Side::Buy {
                 envelope.live().cash.cents()

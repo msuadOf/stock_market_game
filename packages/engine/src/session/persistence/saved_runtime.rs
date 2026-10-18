@@ -494,15 +494,11 @@ pub fn restore_runtime_state(
     // 执行完毕后才在此建立每订单自己的证明；本循环不得先于任何typed检查触发。
     let config = session.state.setup.config.clone();
     for (key, envelope) in session.state.envelope_ledger.iter() {
-        // D5 runtime 重建形态（build_ledger 的 saved-only 路径——
-        /// nominal/limit 零标记）：desk 权威数据不在 restore 侧——证明
-        /// 由下一 runtime_step 的重建（desk 权威 purse/费用）建立，此处
-        /// 跳过（登记差异：restore 后首拍前的证明空窗）。
-        let runtime_rebuilt = envelope.audit().nominal == pipeline::FeeComponents::ZERO
-            && envelope.audit().limit == crate::money::Money::ZERO;
-        if runtime_rebuilt {
-            continue;
-        }
+        // Sol 终审四审符号价族：runtime 重建行不再走"nominal/limit 双零"
+        // 跳过通道——desk 挂簿 purse 收敛（trim_buy_purse_to_exact）后
+        /// live==buy_order_reservation(真 limit, 余量, 成交额) 恒成立，
+        /// runtime 行与旧管线行同过 verified_live（restore 后首拍前的
+        /// 证明空窗登记差异就此闭合）。
         envelope.verified_live(&config).map_err(|_| {
             // fault2220：restore末尾财务证明建立失败（同码复用压平）；ctx为订单身份。
             SessionError::InvalidSave(ValidationFault::new(

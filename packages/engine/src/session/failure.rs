@@ -2158,13 +2158,14 @@ fn runtime_resting_envelope(
     )
     .map_err(|e| format!("名义费用重算失败：{e:?}"))?;
     let audit = crate::session::pipeline::EnvelopeAudit {
-        // Sol 终审四审 A2（fault2220 收口）：limit 置零=**重建标记形态**
-        ///（restore 侧 2220 校验按旧 escrow 预留式核对 live——runtime 的
-        /// purse 所有权口径（F §8 15/16 行有意分歧）在 restore 首拍前无
-        /// desk 权威，校验跳过通道以 nominal/limit 双零识别；价格面由
-        /// desk 撮合域在下一拍重建——与 save 的 resting seeds 同标记
-        /// 先例）。
-        limit: crate::money::Money::ZERO,
+        // Sol 终审四审符号价族（session 集成 sparse_fifo/maker_split 收口）：
+        /// limit=受理价真值（desk 解析后的事实）——restore 侧 desk 种子
+        /// 价格面与 verified_live 的 escrow 核对都依赖真值；desk 挂簿时
+        /// purse 已收敛到 buy_purse_limit(受理价, 余量, 成交额)（与旧
+        /// 管线 buy_order_reservation 同式），runtime 行因此与旧管线行
+        /// 同过证明，A2 时期的"nominal/limit 双零跳过通道"与证明空窗
+        /// 就此退役。
+        limit: crate::money::Money::from_cents(fact.price),
         remaining_qty: fact.qty,
         filled_qty: 0,
         filled_value: crate::money::Money::from_cents(fact.filled_value),
