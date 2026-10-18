@@ -154,6 +154,19 @@ fn main() {
             "组端Seal处理 μs/tick：min {:.0} / mean {:.0} / max {:.0}（{} 组）",
             handles[0], mean, handles[n - 1], n
         );
+        // H1/H2/H3 构成：drain 批占比/延迟相/分片构建（max 组口径）。
+        // 诊断面：全部组的构成明细（组号/handle/drain批/等待批/延迟相/分片）。
+        for f in &report.group_finals {
+            println!(
+                "  组 {:>2}: handle {:>6.1}μs | drain批 {:>5} wait批 {:>5} | 延迟相 {:>6.1}μs | 分片 {:>5.1}μs",
+                f.group,
+                f.seal_handle_ns as f64 / committed as f64 / 1000.0,
+                f.seal_drain_batches,
+                f.seal_wait_batches,
+                f.seal_deferred_ns as f64 / committed as f64 / 1000.0,
+                f.seal_shard_ns as f64 / committed as f64 / 1000.0,
+            );
+        }
     }
     // 守恒：现金 + 费用 = 初始（撤到 Drain 后在途清零）。
     let initial_total = (npcs as i128) * 1_000_000_000;

@@ -531,6 +531,15 @@ pub struct GroupFinalState {
     /// Seal 地板分解诊断（瞬态面，不入存档/hash）：组端 Seal 处理
     /// （drain+延迟相+分片构建+Ack）累计墙——A 口径长尾归因用。
     pub seal_handle_ns: u128,
+    /// 分解细化（同上瞬态面）：Seal drain 循环消费的批次数（H1 积压
+    /// 假设——vs 等待窗主循环消化的批次数 seal_wait_batches）。
+    pub seal_drain_batches: u64,
+    /// 等待窗主循环（Batch 消息点）消化的批次数。
+    pub seal_wait_batches: u64,
+    /// 延迟相（apply_deferred——H2 假设）累计墙。
+    pub seal_deferred_ns: u128,
+    /// 分片构建（dirty 集消费+GroupAccount 拷贝——H3 假设）累计墙。
+    pub seal_shard_ns: u128,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
 }
@@ -557,6 +566,11 @@ pub struct GroupState {
     seal_acked_len: Option<usize>,
     /// Seal 地板分解诊断（瞬态面）：组端 Seal 处理累计墙。
     pub(crate) seal_handle_ns: u128,
+    /// 分解细化（瞬态面）：drain 批计数/等待窗批计数/延迟相墙/分片墙。
+    pub(crate) seal_drain_batches: u64,
+    pub(crate) seal_wait_batches: u64,
+    pub(crate) seal_deferred_ns: u128,
+    pub(crate) seal_shard_ns: u128,
     /// SealAck 后到达并即时应用的实体批次数（Start 防御专用）：Seal
     /// 后到达的 Batch=锁步破坏（协调者收齐 DeskReport 才发 Seal——
     /// 合法例外只有日结 Drain 序列，由 DayEnd 消化清零）。与 undo 基线
@@ -744,6 +758,10 @@ impl GroupState {
             seal_acked_len: None,
             batches_after_seal: 0,
             seal_handle_ns: 0,
+            seal_drain_batches: 0,
+            seal_wait_batches: 0,
+            seal_deferred_ns: 0,
+            seal_shard_ns: 0,
             cur_tick: initial_tick,
             cur_round: 0,
             committed_tick: initial_tick,
@@ -4025,6 +4043,10 @@ impl GroupState {
             state_hash: self.state_hash(),
             committed_hash: self.committed_hash,
             seal_handle_ns: self.seal_handle_ns,
+            seal_drain_batches: self.seal_drain_batches,
+            seal_wait_batches: self.seal_wait_batches,
+            seal_deferred_ns: self.seal_deferred_ns,
+            seal_shard_ns: self.seal_shard_ns,
             observed: self.observed.clone(),
         }
     }
@@ -4744,6 +4766,7 @@ pub fn group_main(
                 // 税）；F4/F5/F6 暂存延迟相（Continue/Seal 消息点重放）。
                 // 失败显式上报（与 Seal 期处理同形态——不静默）。
                 state.observed.push(Observed::Batch(batch.tick));
+                state.seal_wait_batches += 1;
                 // SealAck 后到达=锁步破坏面（计数供 Start 防御；日结 Drain
                 /// 序列由 DayEnd 消化清零——批次本身照常即时应用，防御
                 /// 不改变落账行为只改变上报时点）。
@@ -5430,6 +5453,7 @@ pub fn group_main(
                             // eager 分域即时相（Seal drain 批次与等待窗批次
                             /// 同路径——S4 FIFO 锁步语义不变）。
                             state.observed.push(Observed::Batch(batch.tick));
+                            state.seal_drain_batches += 1;
                             if let Err(e) =
                                 state.apply_batch_immediate(batch, tick, round_final)
                             {
@@ -5489,6 +5513,7 @@ pub fn group_main(
                 if result.is_err() {
                     break;
                 }
+                let deferred_started = std::time::Instant::now();
                 // 终轮延迟相（S2 落账点唯一化——eager 分域版）：即时相
                 /// 已随 Batch 到达/Seal drain 应用；此处重放 F4/F5/F6
                 /// 延迟域（早轮批次的延迟项已随各自 handle_continue
@@ -5499,6 +5524,7 @@ pub fn group_main(
                     result = Err(e);
                     break;
                 }
+                state.seal_deferred_ns += deferred_started.elapsed().as_nanos();
                 // Q2：final_hash 用 O(1) 指纹口径（设计稿 §3.2——与
                 /// committed_hash 同族合成，**非** state_hash 全名册遍历：
                 /// B 口径 20000×5 股×8 域的 O(N) 哈希 ≈2ms/tick 串行屏障
@@ -5507,6 +5533,7 @@ pub fn group_main(
                 let final_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick ^ ((round_final as u64) << 32))
                     .wrapping_mul(0x100000001b3)
                     ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                let shard_started = std::time::Instant::now();
                 // Q2 批 3+eager 分域：账户稀疏分片随 SealAck 上行——
                 /// account_dirty_set 由 push_undo 即时维护（决策扣除+
                 /// 全部轮即时域落账的写点；等待窗/Seal drain 消化），Seal
@@ -5536,6 +5563,7 @@ pub fn group_main(
                     });
                     break;
                 }
+                state.seal_shard_ns += shard_started.elapsed().as_nanos();
                 state.seal_handle_ns += seal_handle_started.elapsed().as_nanos();
                 // eager 分域守卫：记录 SealAck 发送点的日志长度基线。
                 // ①日结 Drain 批次的即时记录（Seal 后、DayEnd 前到达）在
