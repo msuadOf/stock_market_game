@@ -1855,6 +1855,11 @@ impl DeskState {
     /// 日界重置：昨收=最新价、日内高低/量清零、活动 K 入历史（F §6.2 步骤 5
     /// 的下一交易日视图；撤销日志的 Market 快照覆盖本重置——Abort 可回退）。
     fn roll_day(&mut self) {
+        // Sol 六审段 1.2 取证修复收尾：新交易日重置开盘清算标记——
+        // opening_cleared 只约束本交易日申报窗末的指示价停发与清算触发，
+        // 跨日不残留（此前第二日开盘窗被首日标记抑制，
+        // batch4_second_day_auction_window 显红）。
+        self.opening_cleared = false;
         let m = &mut self.market;
         m.last_close = m.last_price;
         m.day_high = m.last_price;
@@ -2179,7 +2184,9 @@ impl DeskState {
         if self.cur_tick > 0
             && self.setup.phase_at(self.cur_tick - 1) == DeskPhase::ClosingAuction
         {
-            self.opening_cleared = true;
+            // 不置 opening_cleared——该标记只属开盘清算语义；日结 Drain
+            // 置位会跨日残留（roll_day 在 Drain 前已跑过当日重置），
+            /// 抑制第二日开盘窗的指示价与清算（batch4 二日窗实证）。
             let orders: Vec<ClearingOrder> = self
                 .bids
                 .values()

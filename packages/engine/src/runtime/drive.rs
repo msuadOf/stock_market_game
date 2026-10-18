@@ -1405,6 +1405,12 @@ impl RuntimeDriver {
             );
             return Err(format!("自然日推进失败（日结已全量回滚）：{e:?}"));
         }
+        // Sol 六审段 1.2 取证修复：日结 drained 事件（含收盘竞价清算
+        /// AuctionTick/AuctionCompleted）经 next_seq 分配后**回写会话
+        /// seq 权威**——否则下一拍 step_frame_equivalent 的
+        /// adopt_session_seq 从会话旧值重取游标，日结事件已耗的
+        /// seq 被复用（batch4_seq_continuous 15<=15 双用实证）。
+        session.set_runtime_seq(self.next_seq);
         // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
         session.clear_runtime_minute_history();
         Ok(())
