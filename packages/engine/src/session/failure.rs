@@ -104,6 +104,9 @@ impl GameSession {
         /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
         /// 覆盖为组快照，两域同源）。
         self.state.npc_attention.insert(id, snapshot.attention.clone());
+        // P2-1：npc_attention 变更即置 heap 惰性标记（镜像同步在消费点
+        // 重建——见 set_runtime_attention 注释）。
+        self.state.runtime_heap_dirty = true;
         if let Some(mut previous) = self.state.belief_participants.remove(&id) {
             // 保留 participant 结构语义：以组快照重建（BeliefParticipantState
             // 的字段面=快照四件+attention/history 由各自容器承载）。
@@ -1277,20 +1280,30 @@ impl GameSession {
                 state.rng_state = *rng_state;
             }
         }
-        // P2-3b：heap 整体替换域的 move-undo——旧堆整值搬入槽（零拷贝），
-        /// 回滚精确还原（P1-C 教训：不从权威重建——陈旧项会丢）。
-        let old_heap = std::mem::take(&mut self.state.attention_scheduler);
-        self.state
-            .runtime_heap_undo
-            .get_or_insert(old_heap);
-        // 镜像重建：heap=权威候选的精确快照（含未被本批 entries 触及的
-        // 在册 NPC——与 restore 的 from_iter 重建同式）。
+        // P2-1（视图内生战役）：每拍 heap 全名册重建退役（P0 画像 D6 大头
+        // ≈14% wall）。heap 是旧管线 pop_due 的驱动镜像——runtime 路径
+        // 无 pop_due 消费；候选权威在 npc_attention，镜像改惰性（消费点
+        // [`Self::ensure_attention_heap_current`] 重建一次）。hash 面已改
+        // 由 npc_attention 派生（集合等价——见 hash.rs）。move-undo 槽
+        // 随急切重建一起退役（槽恒 None——回滚路径 no-op；回滚恢复的
+        // npc_attention 即拍前值，heap 未被动过仍同步）。
+        self.state.runtime_heap_dirty = true;
+    }
+
+    /// P2-1：attention heap 惰性重建（消费点调用——dirty 时从候选权威
+    /// npc_attention 重建一次）。等价合同：重建后 heap 集合==权威快照
+    /// （与旧每拍急切重建逐项同值——"新候选入堆"语义由重建保持）。
+    pub fn ensure_attention_heap_current(&mut self) {
+        if !self.state.runtime_heap_dirty {
+            return;
+        }
         self.state.attention_scheduler = self
             .state
             .npc_attention
             .iter()
             .map(|(id, state)| (state.next_attention_candidate_tick, *id))
             .collect();
+        self.state.runtime_heap_dirty = false;
     }
 
     /// runtime 驱动器翻转面（Sol 二审修复集 5）：attention 状态只读投影

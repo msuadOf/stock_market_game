@@ -1490,6 +1490,11 @@ struct CommittableSessionState {
     #[cfg(feature = "simulation-diagnostics")]
     causal: crate::diagnostics::causal::CausalCollector,
     attention_scheduler: NpcAttentionScheduler,
+    /// P2-1（视图内生战役）：attention heap 镜像惰性化标记——npc_attention
+    /// 被 runtime 写点（候选写回/个人态整态覆盖）变更后置 true；heap 是
+    /// 旧管线 pop_due 的驱动镜像，runtime 路径无 pop_due 消费，重建改为
+    /// 消费点惰性（hash 已改由 npc_attention 派生）。瞬态不入存档/hash。
+    runtime_heap_dirty: bool,
     /// P2-2b：账户写时 undo（runtime 安装基线的账户域回滚源——首写
     /// 前值；瞬态不入存档/hash）。
     runtime_account_undo:
@@ -2077,6 +2082,7 @@ impl GameSession {
                 npc_decision_traces:
                     crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
                 attention_scheduler: NpcAttentionScheduler::default(),
+                runtime_heap_dirty: false,
                 runtime_account_undo: Vec::new(),
                 runtime_account_undo_ids: std::collections::HashSet::new(),
                 runtime_attention_undo: Vec::new(),
@@ -5130,6 +5136,7 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
+            runtime_heap_dirty,
             runtime_account_undo: _,
             runtime_account_undo_ids: _,
             runtime_attention_undo: _,
@@ -5198,6 +5205,7 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
+            runtime_heap_dirty: *runtime_heap_dirty,
             runtime_account_undo: Vec::new(),
             runtime_account_undo_ids: std::collections::HashSet::new(),
             runtime_attention_undo: Vec::new(),
@@ -5267,6 +5275,7 @@ impl CommittableSessionState {
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
+            runtime_heap_dirty,
             runtime_account_undo: _,
             runtime_account_undo_ids: _,
             runtime_attention_undo: _,
@@ -5395,6 +5404,7 @@ impl CommittableSessionState {
             attention_scheduler,
             FieldId::AttentionScheduler,
         );
+        self.runtime_heap_dirty = runtime_heap_dirty;
         defer_swap(
             &mut self.company_registry,
             company_registry,

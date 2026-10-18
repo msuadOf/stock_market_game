@@ -71,6 +71,7 @@ impl GameSession {
             #[cfg(feature = "simulation-diagnostics")]
                 causal: _,
             attention_scheduler: _,
+            runtime_heap_dirty: _,
             runtime_account_undo: _,
             runtime_account_undo_ids: _,
             runtime_attention_undo: _,
@@ -142,7 +143,15 @@ impl GameSession {
         hash.field(&self.state.history_reads)?;
         hash.field(&self.state.retail_experience)?;
         hash.field(&self.state.npc_order_lifecycles)?;
-        let mut queue: Vec<_> = self.state.attention_scheduler.iter().copied().collect();
+        // P2-1（视图内生战役）：heap 惰性化后 hash 从候选权威派生（等价
+        // 论证：heap=每账户恰一项 (候选 tick, id) 的权威快照——集合相同，
+        // 排序后同序列 → hash 同值；改派生后 hash 不再依赖镜像重建时点）。
+        let mut queue: Vec<_> = self
+            .state
+            .npc_attention
+            .iter()
+            .map(|(id, state)| (state.next_attention_candidate_tick, *id))
+            .collect();
         queue.sort_unstable();
         hash.field(&queue)?;
         hash.field(self.state.company_registry.as_ref())?;
