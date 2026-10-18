@@ -709,6 +709,12 @@ pub enum UpMsg {
         /// GroupAccount 深拷贝的搬运税）。
         accounts_sparse:
             std::sync::Arc<Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
+        /// Sol 复核阻断 P1-2：belief 稀疏分片随 SealAck 上行（构建点=
+        /// Seal 的 apply_deferred 之后——含清仓经历转移行；此前随
+        /// GroupReport 决策相构建早于延迟相，终轮清仓后发布/session
+        /// 仍留持仓经历）。稀疏语义不变（dirty ∪ 跨 Start pending）。
+        belief_sparse:
+            std::sync::Arc<Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>>,
     },
     /// D5 #4 retail 链：本拍零售决策 trace 回执（瞬态——每拍清+装）。
     RetailTraces {
@@ -812,7 +818,8 @@ impl std::fmt::Debug for UpMsg {
 }
 
 /// 组线程本轮报告。
-/// P2-2：belief_sparse 含 f64 域（attention 概率）——Eq 退役，PartialEq 保持。
+/// P1-2（Sol 复核）：belief 稀疏分片改随 SealAck 上行（Seal 的
+/// apply_deferred 后构建——含清仓经历行）；报告不再携带分片。
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroupReport {
     /// 组索引。
@@ -839,12 +846,6 @@ pub struct GroupReport {
     pub rejections: Vec<DeskReceipt>,
     /// 提交态哈希（Start 转正后立即计算；回滚后 Final 哈希应与之相等）。
     pub committed_hash: u64,
-    /// P2-2（视图内生战役）：组读面分片随报告上行（替代驱动器每拍
-    /// EchoBelief 独立往返——P0 画像 belief_collect 120μs/tick）。稀疏
-    /// 条目=本 tick 生产演进位（dirty ∪ 跨 Start pending——P2-2a 语义
-    /// 原样搬迁；全量读面仍由驱动器增量缓存承载）。
-    pub belief_sparse:
-        std::sync::Arc<Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>>,
 }
 
 /// 双腿成交事实（批 8b 撮合域接线地基）：单笔成交的 maker/taker 双方身份

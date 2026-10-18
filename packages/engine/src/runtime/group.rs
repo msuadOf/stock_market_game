@@ -4099,29 +4099,18 @@ impl GroupState {
         }
         // 名册末尾：每股发 final_flush 空批作为本组本轮提交标记（可空）。
         ops_sent += flush_buffers(&mut buffers, desk_txs, tick, round, group, true)?;
-        // P2-2（视图内生战役）：belief 稀疏分片随报告上行（替代驱动器每拍
-        // EchoBelief 独立往返）。组装口径与 EchoBelief 应答逐字同源
-        //（dirty ∪ 跨 Start pending——P2-2a 语义）。跨轮保留机制：dirty
-        // 在 Continue 轮间不清（清点在 Start）→ 终轮分片天然含全部轮的
-        // 演进位；pending 在首轮构建时并入 dirty（消费一次、随 dirty 跨
-        // 轮到终轮——跨 Start 注入窗口语义保持）。
+        // P2-2（视图内生战役）跨轮保留机制：pending 在首轮构建时并入
+        // dirty（消费一次、随 dirty 跨轮到 Seal——跨 Start 注入窗口语义
+        // 保持）；dirty 在 Continue 轮间不清（清点在 Start）→ Seal 分片
+        // 天然含全部轮的演进位。
+        // P1-2（Sol 复核）：分片构建点自报告（决策相）迁移到 Seal
+        //（apply_deferred 后——含清仓经历转移行），报告不再携带。
         let pending_belief = std::mem::take(&mut self.belief_pending_dirty);
         for local in pending_belief {
             if let Some(flag) = self.belief_dirty.get_mut(local as usize) {
                 *flag = true;
             }
         }
-        let belief_sparse: Vec<(_, _)> = self
-            .belief_states
-            .iter()
-            .zip(self.belief_dirty.iter())
-            .enumerate()
-            .filter_map(|(i, (slot, dirty))| {
-                (*dirty)
-                    .then(|| slot.as_ref().map(|s| (i as super::LocalIdx, s.clone())))
-                    .flatten()
-            })
-            .collect();
         let report = GroupReport {
             group,
             tick,
@@ -4136,13 +4125,31 @@ impl GroupState {
             // 组端业务拒绝（Sol 复审修复 2）：本轮排空上行——Abort 重跑
             /// 时由校验路径重新产生（run_round 起点清零）。
             rejections: std::mem::take(&mut self.round_rejections),
-            belief_sparse: std::sync::Arc::new(belief_sparse),
         };
         up_tx
             .send(UpMsg::GroupReport(report))
             .map_err(|_| RuntimeError::SendFailed {
                 detail: format!("组 {group} GroupReport 发送失败"),
             })
+    }
+
+    /// P1-2（Sol 复核阻断）：belief 稀疏分片构建（dirty 在册位——P2-2a
+    /// 语义）。构建点=Seal 的 apply_deferred 之后（含清仓经历转移行；
+    /// 此前随 GroupReport 决策相构建早于延迟相，终轮清仓后发布/session
+    /// 仍留持仓经历——fault2051 形态）。
+    fn belief_shard_from_dirty(
+        &self,
+    ) -> Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)> {
+        self.belief_states
+            .iter()
+            .zip(self.belief_dirty.iter())
+            .enumerate()
+            .filter_map(|(i, (slot, dirty))| {
+                (*dirty)
+                    .then(|| slot.as_ref().map(|s| (i as super::LocalIdx, s.clone())))
+                    .flatten()
+            })
+            .collect()
     }
 
     /// 期末上交。
@@ -5664,6 +5671,11 @@ pub fn group_main(
                     .wrapping_mul(0x100000001b3)
                     ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
                 let shard_started = std::time::Instant::now();
+                // P1-2（Sol 复核阻断）：belief 稀疏分片在 apply_deferred
+                /// 之后构建（清仓经历转移已置 dirty——终轮清仓行随本拍
+                /// SealAck 上行，发布/session/save 同拍一致；此前随
+                /// GroupReport 决策相构建早于延迟相）。
+                let belief_sparse = std::sync::Arc::new(state.belief_shard_from_dirty());
                 // Q2 批 3+eager 分域：账户稀疏分片随 SealAck 上行——
                 /// account_dirty_set 由 push_undo 即时维护（决策扣除+
                 /// 全部轮即时域落账的写点；等待窗/Seal drain 消化），Seal
@@ -5698,6 +5710,7 @@ pub fn group_main(
                         tick,
                         final_hash,
                         accounts_sparse: std::sync::Arc::new(accounts_sparse),
+                        belief_sparse,
                     })
                     .is_err()
                 {

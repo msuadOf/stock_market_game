@@ -1661,8 +1661,8 @@ impl World {
                     evidence.entities_out = acc_entities_out;
                     // Q2 Seal 收尾确认：组 drain+落账（S4/S2）→SealAck
                     // 收齐 → install_tick（发布=提交=Abort 窗口关闭）。
-                    let seal_accounts = self.seal_round(tick, rounds)?;
-                    self.install_tick(tick, rounds, evidence, seal_accounts);
+                    let seal_shards = self.seal_round(tick, rounds)?;
+                    self.install_tick(tick, rounds, evidence, seal_shards);
                     break;
                 }
             }
@@ -1685,18 +1685,7 @@ impl World {
         &mut self,
         tick: u64,
         round_final: u32,
-    ) -> Result<
-        Vec<(
-            GroupIdx,
-            std::sync::Arc<
-                Vec<(
-                    super::LocalIdx,
-                    std::sync::Arc<super::group::GroupAccount>,
-                )>,
-            >,
-        )>,
-        RuntimeError,
-    > {
+    ) -> Result<Vec<super::publication::GroupShardInput>, RuntimeError> {
         let seal_started = std::time::Instant::now();
         // 存活契约测试注入（one-shot）：模拟一次 SealAck 收集失败——
         // Abort 语义（worker 全存活，同 tick 重试成功）。
@@ -1719,7 +1708,7 @@ impl World {
         let mut seal_accounts = Vec::with_capacity(self.n_groups);
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog) {
-                Ok(UpMsg::SealAck { group, tick: t, accounts_sparse, .. }) => {
+                Ok(UpMsg::SealAck { group, tick: t, accounts_sparse, belief_sparse, .. }) => {
                     if t != tick {
                         self.abort_tick(tick);
                         return Err(RuntimeError::ProtocolInvariant {
@@ -1735,7 +1724,13 @@ impl World {
                         // B-1' 验证批：最晚 Ack 组身份（唤醒假设直接证据）。
                         self.seal_last_ack_groups.push(u32::from(group));
                     }
-                    seal_accounts.push((group, accounts_sparse));
+                    // P1-2（Sol 复核）：账户+belief 双分片随 SealAck 上行
+                    ///（belief 在 apply_deferred 后构建——含清仓经历行）。
+                    seal_accounts.push(super::publication::GroupShardInput {
+                        group,
+                        accounts: accounts_sparse,
+                        belief: belief_sparse,
+                    });
                     left -= 1;
                 }
                 Ok(UpMsg::Failed { who, error }) => {
@@ -1855,15 +1850,7 @@ impl World {
         tick: u64,
         rounds: u32,
         evidence: TickEvidence,
-        seal_accounts: Vec<(
-            GroupIdx,
-            std::sync::Arc<
-                Vec<(
-                    super::LocalIdx,
-                    std::sync::Arc<super::group::GroupAccount>,
-                )>,
-            >,
-        )>,
+        seal_shards: Vec<super::publication::GroupShardInput>,
     ) {
         // tick 成功转正：清除可能残留的全局中止标记（上一次 Abort 已回滚收敛）。
         self.abort.store(false, Ordering::SeqCst);
@@ -1915,8 +1902,6 @@ impl World {
         self.global.events_installed += evidence.entities_out;
         let group_hashes = evidence.group_hashes;
         let desk_hashes = evidence.desk_hashes;
-        // P2-2：组 belief 分片进发布版本（句柄共享零拷贝）。
-        let group_belief = evidence.group_belief;
         let record = TickRecord {
             tick,
             rounds,
@@ -1931,26 +1916,21 @@ impl World {
         };
         self.report_log.push(record);
         // Q1 单点发布（唯一 publish 调用点）：组装不可变版本并原子交换。
-        // P2-2：groups 分片=belief 稀疏观察面（随报告上行）；events 占位
-        ///（事件迁移时填充）。
-        let group_shards: Vec<super::publication::GroupShard> = group_belief
+        // P1-2（Sol 复核）：groups 分片=SealAck 双分片（账户+belief——
+        /// 均为 Seal 落账后构建，含清仓经历行）；events 占位（事件迁移
+        /// 时填充）。
+        let group_shards: Vec<super::publication::GroupShard> = seal_shards
             .into_iter()
-            .map(|(group, belief)| {
-                // Q2 批 3：账户分片自 SealAck（Seal 落账后 undo 集口径）。
-                let accounts = seal_accounts
-                    .iter()
-                    .find(|(g, _)| *g == group)
-                    .map(|(_, a)| std::sync::Arc::clone(a))
-                    .unwrap_or_else(|| std::sync::Arc::new(Vec::new()));
+            .map(|input| {
                 super::publication::GroupShard {
                     committed_hash: group_hashes
                         .iter()
-                        .find(|(g, _)| *g == group)
+                        .find(|(g, _)| *g == input.group)
                         .map(|(_, h)| *h)
                         .unwrap_or(0),
-                    group,
-                    belief,
-                    accounts,
+                    group: input.group,
+                    belief: input.belief,
+                    accounts: input.accounts,
                 }
             })
             .collect();

@@ -44,16 +44,29 @@ pub struct DeskShard {
     pub next_serial: u64,
 }
 
-/// 组读面分片（P2-2 起 belief 稀疏观察面随报告上行；账户投影/计划
-/// 进度为后续接入面）。
+/// P1-2（Sol 复核阻断）：install_tick 的组分片输入——SealAck 双分片
+///（账户+belief 均在 Seal 的 apply_deferred 后构建，同拍一致上行）。
+pub struct GroupShardInput {
+    /// 组索引。
+    pub group: GroupIdx,
+    /// 账户稀疏分片（Seal 落账后 undo 集口径）。
+    pub accounts:
+        std::sync::Arc<Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
+    /// belief 稀疏分片（Seal 落账后 dirty 集——含清仓经历转移行）。
+    pub belief:
+        std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>>,
+}
+
+/// 组读面分片（P1-2 起 belief 稀疏观察面随 SealAck 上行；账户投影/
+/// 计划进度为后续接入面）。
 #[derive(Clone, Debug)]
 pub struct GroupShard {
     /// 组索引。
     pub group: GroupIdx,
     /// 组提交态哈希（验证观察点——与 report_log 一致）。
     pub committed_hash: u64,
-    /// belief 稀疏条目（本 tick 生产演进位——P2-2a 语义；全量读面由
-    /// 驱动器增量缓存承载）。
+    /// belief 稀疏条目（本 tick 生产演进位——P2-2a 语义；P1-2 起随
+    /// SealAck 上行=含 Seal 延迟相演进；全量读面由驱动器增量缓存承载）。
     pub belief: std::sync::Arc<
         Vec<(
             super::LocalIdx,

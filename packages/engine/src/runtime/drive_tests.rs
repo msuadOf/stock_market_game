@@ -3793,3 +3793,168 @@ fn sol_r22_day_end_refreshes_resting_snapshot_to_drained_state() {
     );
     game.save().expect("日终静点 save（清簿后空在途一致）");
 }
+
+/// Sol 复核阻断 P1-2：清仓经历转移的四面同拍对账（真实对账——非
+/// 组数/载荷范围检查）。跨日买建仓→全额卖出（T+1：买入次日方可卖）
+/// 后，组权威（Seal 的 apply_deferred 经历转移）与发布分片/session
+/// 镜像/save-restore 四面必须同拍一致：分片构建（现随 GroupReport
+///——决策相，早于 Seal）读不到 Seal 后经历行 ⇒ 发布/session/save
+/// 留持仓经历（fault2051 形态）。
+#[test]
+fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 4;
+    setup.auction_ticks = 1;
+    // tpd=4：t4 日结（T+1 解锁——t3 买入的仓位 t5 可卖）。
+    setup.ticks_per_day = 4;
+    setup.closing_auction_ticks = 0;
+    let mut game = GameSession::new(setup, 21).expect("会话构造");
+    let code = crate::StockId(0);
+    // 角色（seed 21 float 分配实测，retail_count=4）：acct2 持股 0
+    // 无股 0 持仓（清仓主角——首买建仓）、acct3 现金充足（退出对手）。
+    let maker = crate::AccountId(2);
+    let exiter = crate::AccountId(4);
+    let closer = crate::AccountId(3);
+    assert!(
+        game.account(maker).is_some_and(|a| a.sellable_qty(&code) >= 100),
+        "fixture 前提：maker 持股 0 ≥100"
+    );
+    assert_eq!(
+        game.account(exiter)
+            .and_then(|a| a.positions().get(&code))
+            .map_or(0, |p| p.qty()),
+        0,
+        "fixture 前提：exiter 无股 0 持仓（首买建仓形态）"
+    );
+    assert!(
+        game.account(closer).is_some_and(|a| a.cash().cents() >= 102_000),
+        "fixture 前提：closer 现金充足"
+    );
+    let inject = |game: &mut GameSession, owner: crate::AccountId, side: crate::orderbook::Side| {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let upper: Vec<i64> = driver
+            .world_public_views()
+            .iter()
+            .map(|v| v.daily_upper_limit)
+            .collect();
+        driver
+            .inject_player_intents(
+                &[crate::session::ReceiptBearingIntent {
+                    owner,
+                    intent: crate::Intent::PlaceLimit {
+                        code,
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            1000,
+                        )),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                }],
+                &upper,
+            )
+            .expect("外部意图注入");
+    };
+    // t1 空跑（驱动器惰性构造）；t2 maker 挂卖 100（站簿）；t3 exiter
+    // 买 100（交叉全成——首买建仓）；t4 日结（Drain 清簿+T+1 解锁）；
+    // t5 exiter 挂卖 100（全部持仓——站簿）；t6 closer 买 100（交叉
+    // 全成——exiter face 归零，Seal 经历转移）。
+    game.step_via_runtime().expect("t1");
+    inject(&mut game, maker, crate::orderbook::Side::Sell);
+    game.step_via_runtime().expect("t2（maker 挂卖）");
+    inject(&mut game, exiter, crate::orderbook::Side::Buy);
+    game.step_via_runtime().expect("t3（exiter 首买）");
+    assert_eq!(
+        game.account(exiter)
+            .and_then(|a| a.positions().get(&code))
+            .map_or(0, |p| p.qty()),
+        100,
+        "fixture 前提：exiter 建仓 100（t3 全成）"
+    );
+    game.step_via_runtime().expect("t4（日结——T+1 解锁）");
+    inject(&mut game, exiter, crate::orderbook::Side::Sell);
+    game.step_via_runtime().expect("t5（exiter 挂全部持仓）");
+    inject(&mut game, closer, crate::orderbook::Side::Buy);
+    game.step_via_runtime().expect("t6（清仓拍）");
+    // 前提：exiter 持仓归零（成交全量）。
+    assert_eq!(
+        game.account(exiter)
+            .and_then(|a| a.positions().get(&code))
+            .map_or(0, |p| p.qty()),
+        0,
+        "fixture 前提：exiter 股 0 持仓归零"
+    );
+    // 面 1：组权威行（EchoBelief 真读面——Seal 后 dirty 位）。
+    let (authority_exp, published_exp) = {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let local = driver
+            .id_map
+            .iter()
+            .position(|id| *id == exiter)
+            .expect("exiter 在名册") as u32;
+        let groups = driver.collect_group_belief_for_test().expect("组权威读面");
+        let authority = groups
+            .iter()
+            .flat_map(|(_, rows)| rows.iter())
+            .find(|(l, _)| *l == local)
+            .map(|(_, snapshot)| snapshot.clone())
+            .expect("组权威含 exiter 行（Seal 经历转移置 dirty）");
+        let shard = driver.published_belief_shard_for_test(0);
+        let published = shard
+            .iter()
+            .find(|(l, _)| *l == local)
+            .map(|(_, s)| s.clone());
+        let authority_exp = authority
+            .retail_experience
+            .as_ref()
+            .and_then(|exp| exp.stocks.get(&code))
+            .expect("组权威经历行在场")
+            .clone();
+        let published_exp = published
+            .as_ref()
+            .and_then(|s| s.retail_experience.as_ref())
+            .and_then(|exp| exp.stocks.get(&code).cloned());
+        (authority_exp, published_exp)
+    };
+    assert!(
+        authority_exp.cooldown_until_market_minute.is_some(),
+        "组权威：清仓冷静期已设（Seal 经历转移）"
+    );
+    assert!(
+        authority_exp.entry_reference_price.is_none(),
+        "组权威：入场参考已清"
+    );
+    // 面 2：发布分片行==组权威行（分片须含 Seal 后行——同拍）。
+    assert_eq!(
+        published_exp,
+        Some(authority_exp.clone()),
+        "发布分片必须含 Seal 后清仓经历行（==组权威）"
+    );
+    // 面 3：session 镜像==组权威。
+    let session_exp = game
+        .runtime_retail_experience_stock_for_test(exiter, &code)
+        .expect("session 镜像经历行在场");
+    assert_eq!(
+        session_exp, authority_exp,
+        "session 镜像==组权威（同拍安装）"
+    );
+    // 面 4：save 不触发 fault2051 且 restore 往返保清仓行。
+    let save = game
+        .save()
+        .expect("清仓后同拍 save（fault2051 不得触发——未持仓留持仓观察态）");
+    let restored = GameSession::restore(&save).expect("restore");
+    assert_eq!(
+        restored.runtime_retail_experience_stock_for_test(exiter, &code),
+        Some(authority_exp),
+        "save-restore 往返保清仓经历行"
+    );
+}

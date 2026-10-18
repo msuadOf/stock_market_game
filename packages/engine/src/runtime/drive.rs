@@ -1891,6 +1891,19 @@ impl RuntimeDriver {
             .map_err(|e| format!("belief 组读面失败：{e:?}"))
     }
 
+    /// Sol 复核阻断 P1-2 四面对账（cfg(test)）：发布版本 belief 分片
+    /// 只读（与组权威行逐位对照的发布面）。
+    #[cfg(test)]
+    pub fn published_belief_shard_for_test(
+        &self,
+        group: super::GroupIdx,
+    ) -> std::sync::Arc<
+        Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>,
+    > {
+        let published = self.world.publication().load();
+        published.groups[group as usize].belief.clone()
+    }
+
     /// 计划簿收集（D3a-2c 件5：组内 PlanBook 上行——测试/红证面；生产
     /// 交付点投影在 step 内）。
     pub fn collect_plans(

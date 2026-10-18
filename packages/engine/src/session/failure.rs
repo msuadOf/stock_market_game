@@ -1307,6 +1307,20 @@ impl GameSession {
             .is_some_and(|exp| exp.stocks.contains_key(code))
     }
 
+    /// Sol 复核阻断 P1-2 四面对账（cfg(test)）：session 镜像的逐股
+    /// retail 经历行（与组权威/发布分片行做逐位对照——真实对账面）。
+    #[cfg(test)]
+    pub fn runtime_retail_experience_stock_for_test(
+        &self,
+        id: crate::AccountId,
+        code: &crate::StockId,
+    ) -> Option<crate::experience::RetailStockExperience> {
+        self.state
+            .retail_experience
+            .get(&id)
+            .and_then(|exp| exp.stocks.get(code).cloned())
+    }
+
     /// 测试编排面（Sol 七审修复 3）：构造"从未持有"首买形态——移除
     /// 指定股的持仓条目与 retail 经历条目（float_allocation 默认全股
     /// 配仓；被测对象是投影层初始化，非配仓面）。

@@ -202,8 +202,12 @@ fn publication_old_version_retained_by_reader() {
     world.shutdown().expect("关停");
 }
 
-// P2-2：belief 稀疏分片随 GroupReport 上行——发布版本与组权威稀疏读面
-// 一致（条目数与身份逐位；分片由组端收尾构建，Abort 时随 evidence 丢弃）。
+// P1-2（Sol 复核阻断升级）：belief 稀疏分片随 SealAck 上行（Seal 的
+// apply_deferred 后构建）。发布版本与组权威（EchoBelief 真读面）做
+// **行级对账**——每个发布条目==组权威同位行（非载荷范围检查）；内容
+// 面（含清仓经历行）的四面真对账锚在 drive_tests 的
+// sol_r22_full_exit_experience_reaches_all_four_faces_same_tick
+//（World 级 basic_spec 无 belief_seeds，分片空集时本对账为结构面）。
 #[test]
 fn publication_group_belief_shard_matches_group_authority() {
     use super::skeleton_tests::basic_spec;
@@ -218,14 +222,30 @@ fn publication_group_belief_shard_matches_group_authority() {
         2,
         "组数=2——分片齐"
     );
+    // 行级对账：发布条目逐一与组权威同位行相等（Seal 后权威面）。
+    let authority = world.collect_group_belief().expect("组权威读面");
     for shard in &version.groups {
-        // 稀疏语义：条目身份在名册界内（组端构造保证）。
+        let rows = authority
+            .iter()
+            .find(|(g, _)| *g == shard.group)
+            .map(|(_, rows)| rows)
+            .expect("组权威行集在场");
         for (local, snapshot) in shard.belief.iter() {
-            assert!(
-                snapshot.watchlist.stocks.len() <= 8,
-                "分片条目载荷合法（watchlist 界内）"
+            let matching = rows
+                .iter()
+                .find(|(l, _)| l == local)
+                .map(|(_, s)| s)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "发布分片行 (组{}, local{local}) 在组权威缺席",
+                        shard.group
+                    )
+                });
+            assert_eq!(
+                snapshot, matching,
+                "发布分片行==组权威行（组{} local{local}——行级对账）",
+                shard.group
             );
-            let _ = local;
         }
     }
     world.shutdown().expect("关停");
