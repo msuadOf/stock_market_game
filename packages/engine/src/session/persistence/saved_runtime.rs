@@ -876,9 +876,10 @@ impl CumulativeFeeAudit {
     }
 
     /// 返回累计分量是否一致，由遍历调用方附加委托身份错误上下文。
-    /// `desk_staged`：runtime 形态（desk 分段计费——累计 charged=Σ分笔
-    /// nominal，最低佣金下限使 Σ≥累计式 nominal（口径差登记：fault2228
-    /// 的 Buy 硬等对分段模型不成立，放宽为分量上界+总额不越成交额）。
+    /// `desk_staged`：runtime 形态（Sol 五审重送批起 desk 买腿 charged
+    /// 为**边际**累计——多笔部分成交望远镜式==nominal(Σ)，与旧管线
+    /// 累计式口径及 fault2228 的 Buy 硬等契约一致；此前的"Σ分笔
+    /// nominal"分段口径（Σ≥nominal(Σ)）已随修复统一退役）。
     pub(super) fn validate(
         &self,
         config: &GameConfig,

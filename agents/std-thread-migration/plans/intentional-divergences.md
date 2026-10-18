@@ -125,3 +125,10 @@ batch10-doc-sync-pack.md 状态更新），本行保留编制时计数；③ 市
 - C-3（判决 §141 前提性）save_contract 五项旧断言失配（calendar/bank ECL/operating due id/plan horizon/industrial loan）：迁移前基线与当前旧模式均 33 过/5 败——day 对齐修复后重新暴露即按 C 另列，不由迁移整改承担。
 
 **五审冻结点口径（v5-verdict §3）**：engine 12 败 = **B 6（diagnostics 1 + step_skeleton 3 + scale_restore 1 + weekend 1）/ C 6（session 默认资金 1 + save_contract 5）**；server 4 败维持 C。
+
+**五审重送批新登记（预存在缺口，2026-10-18）**：desk OrderId 编码
+`(stock_idx<<48)|serial` 在股序 **≥32（第 33 股起）** 超出 SaveSlot
+wire 数值域（js_safe_u64 上限 2^53−1）——事件 id/经历行/计划链的该域
+id 在 ≥33 股局不可序列化（save 的 next_order_id 下界已夹取该上限，
+不引入超界值；根源在编码域本身）。处置：登记待批 9 前评估（编码域
+重划或 wire 域扩容），不由本批承担。
