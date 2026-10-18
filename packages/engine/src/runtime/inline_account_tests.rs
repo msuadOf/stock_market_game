@@ -130,7 +130,7 @@ fn seal_shard_abort_retry_fresh() {
     spec.auction_ticks = 0;
     let mut world = World::spawn(spec).expect("世界构造");
     world.run_ticks(2).expect("2 tick 基线");
-    world.set_seal_ack_failure_once_for_test();
+    world.set_seal_ack_failure_once_for_test(0);
     assert!(world.run_ticks(1).is_err(), "注入的 SealAck 失败显式失败");
     world.run_ticks(1).expect("重试成功（worker 存活）");
     let published = world.publication().load();

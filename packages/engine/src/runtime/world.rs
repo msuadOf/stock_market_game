@@ -331,10 +331,13 @@ pub struct World {
     /// （生产语义零变化）。
     #[cfg(test)]
     pub shutdown_stall_for_test: Option<Duration>,
-    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾模拟收集失败
-    ///（Abort 语义——worker 全存活，同 tick 重试成功）。
+    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾在**广播后**
+    /// 消费 consume_acks 条真实 SealAck 再合成收集失败（Abort 语义
+    ///——worker 全存活，同 tick 重试成功）。Sol 复核 P1-3：注入点自
+    /// 广播前迁移到广播后（真实路径——组已收到 Seal，Abort 与 Seal 同
+    /// 队列竞态、迟到 Ack 落入重试收束窗都被注入面覆盖）。
     #[cfg(test)]
-    seal_ack_failure_once: Option<()>,
+    seal_ack_fail_after_acks: Option<usize>,
     watchdog: WatchdogConfig,
     validator: Validator,
     rounds_cap: u32,
@@ -722,7 +725,7 @@ impl World {
             #[cfg(test)]
             shutdown_stall_for_test: None,
             #[cfg(test)]
-            seal_ack_failure_once: None,
+            seal_ack_fail_after_acks: None,
             watchdog,
             validator: no_op_validator(),
             rounds_cap,
@@ -758,11 +761,13 @@ impl World {
         self.validator = v;
     }
 
-    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾收集失败一次
-    ///（Abort 语义——worker 全存活；对照六审 300ms 延迟重试模式）。
+    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾在广播后消费
+    /// consume_acks 条真实 SealAck 再合成收集失败一次（Abort 语义
+    ///——worker 全存活；对照六审 300ms 延迟重试模式；Sol 复核 P1-3
+    /// 注入点走真实路径）。
     #[cfg(test)]
-    pub fn set_seal_ack_failure_once_for_test(&mut self) {
-        self.seal_ack_failure_once = Some(());
+    pub fn set_seal_ack_failure_once_for_test(&mut self, consume_acks: usize) {
+        self.seal_ack_fail_after_acks = Some(consume_acks);
     }
 
     /// Seal 攻顶批 1 旋钮桩（cfg(test)）：组 0 分片构建的突变判别——
@@ -1687,15 +1692,14 @@ impl World {
         round_final: u32,
     ) -> Result<Vec<super::publication::GroupShardInput>, RuntimeError> {
         let seal_started = std::time::Instant::now();
-        // 存活契约测试注入（one-shot）：模拟一次 SealAck 收集失败——
-        // Abort 语义（worker 全存活，同 tick 重试成功）。
+        // 存活契约测试注入（one-shot，Sol 复核 P1-3 真实路径）：广播
+        // **之后**在收集循环内消费 consume_acks 条真实 Ack 再合成收集
+        // 失败（组已处理/正在处理 Seal——Abort 与 Seal 同队列竞态、迟到
+        // Ack 落入重试收束窗均为注入面覆盖的真实形态）。
         #[cfg(test)]
-        if self.seal_ack_failure_once.take() == Some(()) {
-            self.abort_tick(tick);
-            return Err(RuntimeError::ProtocolInvariant {
-                detail: "【测试注入】SealAck 收集失败（Abort 语义——worker 存活可重试）".to_owned(),
-            });
-        }
+        let fail_after_acks = self.seal_ack_fail_after_acks.take();
+        #[cfg(not(test))]
+        let fail_after_acks: Option<usize> = None;
         for tx in &self.group_txs {
             if tx.send(GroupIn::Seal { tick, round_final }).is_err() {
                 self.abort_tick(tick);
@@ -1705,8 +1709,19 @@ impl World {
             }
         }
         let mut left = self.n_groups;
+        let mut acks_seen = 0usize;
+        let mut acked_groups = vec![false; self.n_groups];
         let mut seal_accounts = Vec::with_capacity(self.n_groups);
         while left > 0 {
+            #[cfg(test)]
+            if fail_after_acks.is_some_and(|n| acks_seen >= n) {
+                self.abort_tick(tick);
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "【测试注入】SealAck 收集失败（广播后已收 {acks_seen} Ack——Abort 语义，worker 存活可重试）"
+                    ),
+                });
+            }
             match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog) {
                 Ok(UpMsg::SealAck { group, tick: t, accounts_sparse, belief_sparse, .. }) => {
                     if t != tick {
@@ -1714,6 +1729,21 @@ impl World {
                         return Err(RuntimeError::ProtocolInvariant {
                             detail: format!("SealAck 错位：期望 tick={tick}，收到组 {group} tick={t}"),
                         });
+                    }
+                    let Some(already) = acked_groups.get_mut(usize::from(group)) else {
+                        self.abort_tick(tick);
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "SealAck 组号越界：{group}（组数 {}）",
+                                self.n_groups
+                            ),
+                        });
+                    };
+                    // P1-3（Sol 复核）：同组重复 Ack=上一失败尝试的迟到
+                    /// 竞态产物（本组本拍已 Ack——重跑确定性下值同源）；
+                    /// 跳过不计（缺组由真 Ack 补齐）。
+                    if std::mem::replace(already, true) {
+                        continue;
                     }
                     // 地板分解：首条 Ack 记链路墙；末条记 spread 与身份。
                     if left == self.n_groups {
@@ -1732,6 +1762,7 @@ impl World {
                         belief: belief_sparse,
                     });
                     left -= 1;
+                    acks_seen += 1;
                 }
                 Ok(UpMsg::Failed { who, error }) => {
                     // 组端 Seal 处理失败（apply_staging 数据损坏类）——

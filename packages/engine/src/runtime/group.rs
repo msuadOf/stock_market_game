@@ -5582,8 +5582,11 @@ pub fn group_main(
                 // 收件箱顺序 drain：Seal 前入队的全部数据面消息（S4：
                 /// desk 批次 FIFO 先于其 DeskReport ⇒ 先于 Seal 入队）。
                 /// 数据面=Batch（实体批次）与 AcceptedBatch（受理身份）；
-                /// 其他消息（外部意图/回声请求/Abort 等）属协议错位——
-                /// Seal 相位不应出现，显式失败不静默。
+                /// 其他消息（外部意图/回声请求等）属协议错位——
+                /// Seal 相位不应出现，显式失败不静默。Abort 例外（Sol
+                /// 复核 P1-3）：协调者收集超时后 [Seal, Abort] 同队列
+                /// 竞态——Seal 处理期到达的 Abort 是合法产物，非错位。
+                let mut seal_aborted = false;
                 loop {
                     match rx.try_recv() {
                         Ok(GroupIn::Batch(batch)) => {
@@ -5620,6 +5623,17 @@ pub fn group_main(
                                 break;
                             }
                         }
+                        Ok(GroupIn::Abort { tick: abort_tick }) => {
+                            // Sol 复核阻断 P1-3：Seal 处理期的 Abort=本拍
+                            /// 已被协调者判死（收集超时/失败）——回滚本拍
+                            /// 已应用面、不发 SealAck、**存活**回主循环
+                            ///（Abort 语义：同 tick 可重试——与常规 Abort
+                            /// 臂同式，不判协议错位退出）。
+                            state.observed.push(Observed::Abort(abort_tick));
+                            state.rollback();
+                            seal_aborted = true;
+                            break;
+                        }
                         Ok(other) => {
                             let _ = other;
                             // 铁律二收口：同上——协议错位显式上报（不静默）。
@@ -5649,6 +5663,11 @@ pub fn group_main(
                 }
                 if result.is_err() {
                     break;
+                }
+                if seal_aborted {
+                    // P1-3：跳过 Seal 收尾（无延迟相/分片/SealAck/基线）
+                    ///——主循环继续等待（重试 Start 重跑本拍）。
+                    continue;
                 }
                 let deferred_started = std::time::Instant::now();
                 // 终轮延迟相（S2 落账点唯一化——eager 分域版）：即时相
@@ -6989,11 +7008,15 @@ fn seal_mismatched_tick_fails_explicitly() {
     assert!(abort.load(Ordering::SeqCst), "abort 标记置位（通知对端）");
 }
 
-/// 防御 ②：Seal drain 期非数据面消息（Abort 属协议错位形态——Seal
-/// 相位不可达；显式失败不静默吞）。
+/// 防御 ②：Seal drain 期非数据面消息显式失败不静默吞。Sol 复核 P1-3
+/// 起 Abort 是合法竞态例外（收集超时后 [Seal, Abort] 同队列——存活
+/// 合同由 seal_tests 的真实路径测试承载）；本测试用真外来消息
+///（EchoAttention 回声请求）锚定 drain 的协议错位面。两条消息在组
+/// 线程启动**前**入队（FIFO——Seal 先处理、drain 确定性消费到回声
+/// 请求，无调度竞态）。
 #[test]
 fn seal_drain_foreign_message_fails_explicitly() {
-    
+
     use super::GroupIn;
         use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -7018,6 +7041,17 @@ fn seal_drain_foreign_message_fails_explicitly() {
     );
     state.cur_tick = 1;
     state.cur_round = 0;
+    // 先入队 Seal（匹配 cur_tick/cur_round——进入 drain），紧随真外来
+    // 消息（EchoAttention——Seal 相位不可达的协议错位形态）。
+    group_tx
+        .send(GroupIn::Seal {
+            tick: 1,
+            round_final: 0,
+        })
+        .expect("Seal 入队");
+    group_tx
+        .send(GroupIn::EchoAttention)
+        .expect("协议错位消息入队");
     let handle = {
         let (abort, shutdown_flag, capture) = (Arc::clone(&abort), Arc::clone(&shutdown_flag), Arc::clone(&capture));
         std::thread::spawn(move || {
@@ -7036,22 +7070,15 @@ fn seal_drain_foreign_message_fails_explicitly() {
             )
         })
     };
-    // 先入队一条非数据面消息（Abort——drain 期将被消费到），再发 Seal：
-    // drain 循环收件箱顺序消费——Abort 先于 Seal 处理到达。
-    group_tx
-        .send(GroupIn::Abort { tick: 1 })
-        .expect("协议错位消息入队");
-    group_tx
-        .send(GroupIn::Seal {
-            tick: 1,
-            round_final: 0,
-        })
-        .expect("Seal 发送");
     let outcome = handle.join().expect("组线程退出");
     let err = outcome.expect_err("Seal drain 期非数据面消息必须显式失败");
     assert!(
         matches!(err, RuntimeError::ProtocolInvariant { .. }),
         "错误面可辨识（协议错位）：{err:?}"
+    );
+    assert!(
+        err.to_string().contains("非数据面消息"),
+        "失败须来自 drain 协议错位面（非 Seal 错位）：{err}"
     );
     let mut saw_failed = false;
     while let Ok(msg) = up_rx.try_recv() {

@@ -118,16 +118,17 @@ fn world_report_traded_qty(world: &World) -> u32 {
         .sum()
 }
 
-/// 合同 4+7（注入面未实现=编译红）：SealAck 收集失败→Abort（tick 级
-/// 可重试语义，非 worker_shutdown 永久关停）→同 tick 重试成功且
-/// worker 全存活（对照六审 300ms 延迟重试模式）。
+/// 合同 4+7：SealAck 收集失败→Abort（tick 级可重试语义，非
+/// worker_shutdown 永久关停）→同 tick 重试成功且 worker 全存活（对照
+/// 六审 300ms 延迟重试模式）。Sol 复核 P1-3：注入点在**广播后**（真实
+/// 路径——组已收到 Seal，Abort 与 Seal 同队列竞态：Seal drain 期的
+/// Abort 不得判协议错位退出；组端迟到 SealAck 不得污染重试收束）。
 #[test]
 fn seal_ack_failure_aborts_then_retry_survives() {
     let mut world = spawn_trading_world();
     world.run_ticks(1).expect("首拍（驱动基线）");
-    // 注入：下一次 Seal 收尾失败一次（worker 显式 Failed 上行——
-    // Abort 语义；旋钮 one-shot）。
-    world.set_seal_ack_failure_once_for_test();
+    // 注入：广播后收集失败一次（组正在处理 Seal——Abort 排队其后）。
+    world.set_seal_ack_failure_once_for_test(0);
     let failed = world.run_ticks(1);
     assert!(failed.is_err(), "Seal 收尾失败必须显式失败");
     // 存活契约：worker 未被永久关停——同 tick 重试成功。
@@ -157,4 +158,93 @@ fn seal_continue_contract_anchored_by_existing_prereq1() {
     // ——本测试以存在性断言防止误删。
     let name = "prereq1_continue_early_round_fills_settle_exactly_once";
     let _ = name;
+}
+
+/// Sol 复核 P1-3（部分 Ack 后超时）：2 组世界，广播后消费 1 条真实
+/// SealAck 再合成超时——已 Ack 组的 Abort 走常规回滚、未 Ack 组的
+/// [Seal, Abort] 队列竞态不致死、迟到 Ack 落入重试收束窗被跳过：
+/// 同 tick 重试成功+全存活。
+#[test]
+fn seal_partial_ack_timeout_recovers_with_late_ack_tolerance() {
+    let mut spec = basic_spec(2, 1, 4, trading_script(1, 2));
+    spec.ticks_per_day = 30;
+    spec.auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(1).expect("首拍（驱动基线）");
+    // 注入：广播后收 1 条真实 Ack（部分 Ack 形态）再合成超时。
+    world.set_seal_ack_failure_once_for_test(1);
+    assert!(world.run_ticks(1).is_err(), "部分 Ack 后超时显式失败");
+    world
+        .run_ticks(1)
+        .expect("同 tick 重试成功（迟到 Ack 不污染收束）");
+    assert_eq!(world.global.committed_tick, 2, "重试后权威推进");
+    let stocks = world.public_views().len();
+    let report = world.shutdown().expect("关停干净=worker 全存活");
+    assert_eq!(
+        report.worker_results.len(),
+        2 + stocks,
+        "worker 全存活（组 2 + desk {stocks}）"
+    );
+}
+
+/// Sol 复核 P1-3（单测锚）：迟到 SealAck 不得污染重试收束——收束期
+/// 读到上一失败尝试的 Ack（任何 tick）时跳过，本轮 GroupReport/DeskReport
+/// 照常收齐。
+#[test]
+fn converge_round_skips_stale_seal_ack() {
+    use super::coordinator::converge_round;
+    use super::protocol::UpMsg;
+    use super::watchdog::WatchdogConfig;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let (tx, rx) = mpsc::channel::<UpMsg>();
+    // 预置迟到 Ack（同拍与旧拍各一——均为已判死尝试产物）。
+    tx.send(UpMsg::SealAck {
+        group: 0,
+        tick: 7,
+        final_hash: 0,
+        accounts_sparse: std::sync::Arc::new(Vec::new()),
+        belief_sparse: std::sync::Arc::new(Vec::new()),
+    })
+    .expect("预置同拍迟到 Ack");
+    tx.send(UpMsg::SealAck {
+        group: 0,
+        tick: 6,
+        final_hash: 0,
+        accounts_sparse: std::sync::Arc::new(Vec::new()),
+        belief_sparse: std::sync::Arc::new(Vec::new()),
+    })
+    .expect("预置旧拍迟到 Ack");
+    // 本轮合法收束面：1 组报告（n_stocks=0——零交易部世界）。
+    tx.send(UpMsg::GroupReport(super::protocol::GroupReport {
+        group: 0,
+        tick: 7,
+        round: 0,
+        ops_sent: 0,
+        skipped: 0,
+        continuation: false,
+        due_npcs: 0,
+        decide_calls: 0,
+        cancel_intents_skipped: 0,
+        rejections: Vec::new(),
+        committed_hash: 0,
+    }))
+    .expect("组报告");
+    let outcome = converge_round(
+        &rx,
+        1,
+        0,
+        7,
+        0,
+        &WatchdogConfig {
+            normal: Duration::from_secs(1),
+            long: Duration::from_secs(2),
+        },
+    );
+    match outcome {
+        super::coordinator::RoundOutcome::Converged(ev) => assert_eq!(ev.tick, 7),
+        super::coordinator::RoundOutcome::Failed(_) | super::coordinator::RoundOutcome::TaskDied { .. } => {
+            panic!("迟到 Ack 不得污染收束（RoundOutcome 非 Converged）")
+        }
+    }
 }
