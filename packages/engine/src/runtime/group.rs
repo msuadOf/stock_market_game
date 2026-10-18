@@ -412,6 +412,27 @@ enum GroupUndo {
     },
 }
 
+/// eager 分域延迟载荷（单批）：即时相（F1/F2/F3 delta 族）到达即应用后，
+/// F4/F5/F6 序敏感族按**原批内序**可重放的延迟动作清单。重放时点=下一
+/// Continue/Seal 消息点（与原 apply_staging 消费点一致——续行决策可见
+/// 推进后的计划簿/票）。
+#[derive(Default)]
+struct DeferredBatch {
+    /// 批次股索引（延迟动作的目标股）。
+    stock: StockIdx,
+    /// 成交事实原序（计划推进 F5/F6 重放+经历转移输入）。
+    fills: Vec<FillFact>,
+    /// 卖腿 fill 前仓基快照（经历转移的 cost_before 输入——即时相
+    /// fill 循环前捕获，时点等价原落账点）。
+    pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)>,
+    /// 拒收回执（失败释放 F6 重放：(owner.1, order.1)）。
+    rejected: Vec<(LocalIdx, u64)>,
+    /// RefundedShares 的曾持有复位（qty>0 的 F4 动作重放）。
+    ever_resets: Vec<(LocalIdx, StockIdx)>,
+    /// 期末清仓判定触点（曾持有翻转 F4+记忆裁剪 F5 重放）。
+    touched: Vec<(LocalIdx, StockIdx)>,
+}
+
 /// 决策脚本注入的下单规格（组端换算为 `DeskIn`， purse=对价，费用上限随批 3 补）。
 #[derive(Clone, Copy, Debug)]
 pub struct PlaceSpec {
@@ -505,6 +526,10 @@ pub struct GroupState {
     undo: Vec<GroupUndo>,
     /// 实体批次 staging（tick N 内到达，Start/Continue 时落账）。
     staging: Vec<DeskBatch>,
+    /// eager 分域延迟载荷（F4/F5/F6 序敏感族——即时相暂存，延迟相
+    /// （Continue/Seal 消息点）按原批内序重放；Abort 随 rollback 清空。
+    /// 批 1 桩：恒空（即时相未实现，批次仍整体走 staging）。
+    staging_deferred: Vec<DeferredBatch>,
     /// 当前正在执行的 tick（Abort 后回退到 committed_tick）。
     cur_tick: u64,
     /// 当前轮次。
@@ -686,6 +711,7 @@ impl GroupState {
             accounts,
             undo: Vec::new(),
             staging: Vec::new(),
+            staging_deferred: Vec::new(),
             cur_tick: initial_tick,
             cur_round: 0,
             committed_tick: initial_tick,
@@ -909,6 +935,31 @@ impl GroupState {
         for batch in batches {
             self.apply_staging_batch(batch, expected_tick, expected_round)?;
         }
+        Ok(())
+    }
+
+    /// eager 分域即时相（批 1 红证桩）：Batch 消息到达即应用 F1/F2/F3
+    /// delta 族（Cash/Shares/Frozen/ForeignActive/CostBasis/PendingSell/
+    /// BuyPurseHeld——回放算子对全应用封闭，与决策段记录任意交错无害）
+    /// 并暂存 F4/F5/F6 序敏感族到 `staging_deferred`。
+    /// **桩语义=现状**（批次整体入 staging，等待窗不应用）——合同
+    /// `eager_partial_apply_abort_rolls_back` 以"应用后 state_hash 变化"
+    /// 断言红证锚定（设计稿 plans/eager-undo-domains-design.md §3 合同 2）；
+    /// 批 2 实现后转绿。
+    fn apply_batch_immediate(
+        &mut self,
+        batch: DeskBatch,
+        _expected_tick: u64,
+        _expected_round: u32,
+    ) -> Result<(), RuntimeError> {
+        self.staging.push(batch);
+        Ok(())
+    }
+
+    /// eager 分域延迟相（批 1 红证桩）：暂存的 F4/F5/F6 延迟动作按原批内
+    /// 序重放（Continue/Seal 消息点——续行决策可见推进后的计划簿/票）。
+    /// **桩语义=现状**（staging 仍在，走 apply_staging 全族路径）。
+    fn apply_deferred(&mut self) -> Result<(), RuntimeError> {
         Ok(())
     }
 
@@ -6219,5 +6270,256 @@ mod sol_recheck1_tests {
             "同轮新开被归入 existing 时信心序抢占预算（NewOpportunity 不可达的旧形态——股 1 挂出 {:?}）",
             ops.iter().map(|op| op.stock).collect::<Vec<_>>()
         );
+    }
+}
+
+// ═══ eager-apply undo 分域合同（第 20 任批 1——红先行）═══
+//
+// 设计稿：agents/view-campaign/plans/eager-undo-domains-design.md §3。
+// 分域：F1（Cash/Shares/Frozen）/F2（CostBasis/PendingSell/BuyPurseHeld）/
+// F3（ForeignActive）delta 逆减族=可交换——Batch 到达（等待窗）即应用；
+// F4（EverHeld）/F5（Personal/PlanBook）/F6（ChildInFlight）序敏感族
+// 延迟到 Continue/Seal 消息点重放（首版 eager 撤回的交错教训根因）。
+// 红证形态：批 1 提交含现状语义桩（apply_batch_immediate=staging.push）
+// ——合同 2 以"应用后状态必须变化"红；合同 3 是数学性质守卫（现状即绿，
+// 防未来把序敏感族混进即时域时数学基础被无声破坏）。批 2 实现后合同 2
+// 转绿；突变旋钮红证（延迟项即时化→sol4 红/即时相漏 undo push→合同 2
+// 红）随批 2 实证归档 evidence。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod eager_domain_tests {
+    use super::*;
+
+    /// 分域合同标准夹具：2 账户 × 3 股、空决策脚本；预置在途/成本基/
+    /// 曾持有素材（即时域各族的合法应用前提——如 foreign_active>0 才有
+    /// Closed 的 F3 减、pending_sell>0 才有卖腿 fill 的 F2 减）。
+    fn domain_harness() -> GroupState {
+        let mut a0 = GroupAccount::new(10_000_000, 3);
+        a0.shares[0] = 500;
+        a0.pending_sell_qty[0] = 200;
+        a0.foreign_active[0] = 1;
+        let mut a1 = GroupAccount::new(5_000_000, 3);
+        a1.shares[2] = 80;
+        a1.buy_purse_held_cents = 60_000;
+        a1.ever_held[0] = true;
+        GroupState::new(
+            0,
+            vec![a0, a1],
+            8,
+            100,
+            Arc::new(crate::config::GameConfig::proposed_defaults()),
+            240,
+            None,
+            Vec::new(),
+            Box::new(|_t, _r| TickPlan::default()),
+        )
+    }
+
+    /// 卖腿成交事实（owner=组 0 位 0；经历转移/成本基的 Sell 路径素材）。
+    fn sell_fill(qty: u32) -> FillFact {
+        FillFact {
+            order: (0, 7),
+            owner: (0, 0),
+            side: Side::Sell,
+            price: 1000,
+            qty,
+            commission: 5,
+            stamp_tax: 1,
+            transfer_fee: 1,
+        }
+    }
+
+    /// 合同 2：等待窗即时相部分应用后 Abort——delta 可交换性保证全冲回
+    /// 恒等拍前态（端到端验证分域数学基础；批 1 桩形态=红：等待窗不应用
+    /// ⇒ 状态无变化 ⇒ 第一断言红）。两个到达序（b1→b2 与 b2→b1）都必须
+    /// 精确恢复——任意批到达序与决策段记录交错无害的判别面。
+    #[test]
+    fn eager_partial_apply_abort_rolls_back() {
+        // 批 1：F1（CashRefund 现金+占用/BoughtShares 持仓+冻结）+
+        // F2（RefundedShares 卖余量+持仓、sell fill 成本基/卖余量）+
+        // F3（Closed 在途减）+F4/F5/F6 延迟载荷（RefundedShares 曾持有
+        /// 复位/拒收释放——延迟相重放，Abort 不得触碰）。
+        let b1 = DeskBatch {
+            stock: 0,
+            tick: 1,
+            round: 0,
+            entities: vec![
+                Entity::CashRefund {
+                    local: 1,
+                    amount: 7_000,
+                },
+                Entity::BoughtShares { local: 0, qty: 100 },
+                Entity::RefundedShares { local: 1, qty: 30 },
+                Entity::Closed {
+                    local: 0,
+                    order_serial: 1,
+                },
+            ],
+            fills: vec![sell_fill(50)],
+            receipts: vec![super::super::DeskReceipt {
+                order: (0, 9),
+                owner: (0, 0),
+                kind: super::super::ReceiptKind::PriceOutOfBand,
+            }],
+        };
+        // 批 2：买腿 fill（owner=组 0 位 1——BuyPurseHeld F2 减实付）+
+        /// CashProceeds（F1 加）。
+        let b2 = DeskBatch {
+            stock: 1,
+            tick: 1,
+            round: 0,
+            entities: vec![Entity::CashProceeds {
+                local: 0,
+                amount: 99_400,
+            }],
+            fills: vec![FillFact {
+                order: (1, 3),
+                owner: (0, 1),
+                side: Side::Buy,
+                price: 1000,
+                qty: 30,
+                commission: 0,
+                stamp_tax: 0,
+                transfer_fee: 0,
+            }],
+            receipts: Vec::new(),
+        };
+        for order in [0u8, 1] {
+            let mut state = domain_harness();
+            state.cur_tick = 1;
+            state.cur_round = 0;
+            let hash_before = state.state_hash();
+            let (first, second) = if order == 0 {
+                (b1.clone(), b2.clone())
+            } else {
+                (b2.clone(), b1.clone())
+            };
+            state
+                .apply_batch_immediate(first, 1, 0)
+                .expect("即时相批 1 防御通过");
+            state
+                .apply_batch_immediate(second, 1, 0)
+                .expect("即时相批 2 防御通过");
+            assert_ne!(
+                state.state_hash(),
+                hash_before,
+                "等待窗即时相必须已落账（到达序 {order}）——分域批 1 红证锚"
+            );
+            assert!(
+                !state.staging_deferred.is_empty(),
+                "延迟载荷（F4/F5/F6）须暂存 staging_deferred（到达序 {order}）"
+            );
+            // Abort：逆序全回放——部分应用的即时域精确冲回拍前态。
+            state.rollback();
+            assert_eq!(
+                state.state_hash(),
+                hash_before,
+                "Abort 全冲回=拍前态（delta 可交换性，到达序 {order}）"
+            );
+            assert!(
+                state.staging_deferred.is_empty(),
+                "Abort 清空延迟载荷（到达序 {order}）"
+            );
+            // state_hash 不覆盖的成本基/曾持有位：字段级补充断言。
+            assert_eq!(state.accounts[0].invested_cents, vec![0; 3]);
+            assert_eq!(state.accounts[0].recovered_cents, vec![0; 3]);
+            assert!(
+                state.accounts[1].ever_held[0],
+                "RefundedShares 的曾持有复位属延迟域——即时相/Abort 均不得触碰"
+            );
+        }
+    }
+
+    /// 合同 3（数学性质守卫）：F1/F2/F3 记录集按两个不同交错序"应用+记录"，
+    /// rollback（逆序回放）都必须恢复初始态——delta 逆减族对全应用封闭，
+    /// 日志序任意交错无害。这是"批次 delta 与决策段 delta 交错"的分域
+    /// 基础（设计稿 §1）；未来若把序敏感族混进即时域，此守卫先红。
+    #[test]
+    fn delta_undo_shuffled_replay_equivalence() {
+        /// 与 rollback 逆算子对称的正向应用（测试专用——只覆盖即时域三族）。
+        fn apply_forward(state: &mut GroupState, entry: &GroupUndo) {
+            match entry {
+                GroupUndo::Cash { local, delta } => {
+                    state.accounts[*local as usize].cash += delta;
+                }
+                GroupUndo::Shares { local, stock, delta } => {
+                    let slot = &mut state.accounts[*local as usize].shares[*stock as usize];
+                    *slot = (*slot as i64 + *delta as i64) as u32;
+                }
+                GroupUndo::ForeignActive { local, stock, delta } => {
+                    let slot = &mut state.accounts[*local as usize].foreign_active[*stock as usize];
+                    *slot = (*slot as i32 + *delta as i32) as u16;
+                }
+                GroupUndo::Frozen { local, stock, delta } => {
+                    let slot = &mut state.accounts[*local as usize].frozen_today[*stock as usize];
+                    *slot = (*slot as i64 + *delta as i64) as u32;
+                }
+                GroupUndo::CostBasis {
+                    local,
+                    stock,
+                    d_invested,
+                    d_recovered,
+                } => {
+                    let acct = &mut state.accounts[*local as usize];
+                    acct.invested_cents[*stock as usize] += d_invested;
+                    acct.recovered_cents[*stock as usize] += d_recovered;
+                }
+                GroupUndo::PendingSell { local, stock, delta } => {
+                    let slot = &mut state.accounts[*local as usize].pending_sell_qty[*stock as usize];
+                    *slot = (*slot as i64 + delta) as u32;
+                }
+                GroupUndo::BuyPurseHeld { local, delta } => {
+                    state.accounts[*local as usize].buy_purse_held_cents += delta;
+                }
+                other => panic!("合同 3 只覆盖即时域三族（F1/F2/F3），收到 {other:?}"),
+            }
+        }
+        // 记录集：全族覆盖+同键多条（同账户同股的重复 delta 是交错判别面）。
+        // 取值保证任意应用前缀不触底（pending/占用初始垫高）。
+        let entries: Vec<GroupUndo> = vec![
+            GroupUndo::Cash { local: 0, delta: -50_000 },
+            GroupUndo::Cash { local: 1, delta: 7_000 },
+            GroupUndo::Shares { local: 0, stock: 0, delta: 100 },
+            GroupUndo::Shares { local: 0, stock: 0, delta: -40 },
+            GroupUndo::Shares { local: 1, stock: 2, delta: 30 },
+            GroupUndo::ForeignActive { local: 0, stock: 0, delta: 1 },
+            GroupUndo::ForeignActive { local: 0, stock: 0, delta: -1 },
+            GroupUndo::Frozen { local: 1, stock: 1, delta: 55 },
+            GroupUndo::CostBasis { local: 0, stock: 0, d_invested: 100_000, d_recovered: 0 },
+            GroupUndo::CostBasis { local: 0, stock: 0, d_invested: 0, d_recovered: 60_000 },
+            GroupUndo::PendingSell { local: 0, stock: 0, delta: 100 },
+            GroupUndo::PendingSell { local: 0, stock: 0, delta: -40 },
+            GroupUndo::BuyPurseHeld { local: 1, delta: -7_000 },
+            GroupUndo::BuyPurseHeld { local: 0, delta: 50_000 },
+        ];
+        // 固定交错置换（决策段/批次记录交错的形态模拟——非逆序非原序）。
+        let interleave: [usize; 14] = [7, 0, 13, 3, 8, 1, 9, 4, 10, 2, 11, 5, 12, 6];
+        for (label, permutation) in [("原序", None), ("交错序", Some(&interleave[..]))] {
+            let mut state = domain_harness();
+            state.cur_tick = 1;
+            let hash_before = state.state_hash();
+            let sequence: Vec<usize> = match permutation {
+                None => (0..entries.len()).collect(),
+                Some(perm) => perm.to_vec(),
+            };
+            for i in sequence {
+                let entry = entries[i].clone();
+                apply_forward(&mut state, &entry);
+                state.undo.push(entry);
+            }
+            assert_ne!(
+                state.state_hash(),
+                hash_before,
+                "夹具须产生状态变更（{label}）"
+            );
+            state.rollback();
+            assert_eq!(
+                state.state_hash(),
+                hash_before,
+                "{label}日志逆序回放=初始态（delta 族可交换性守卫）"
+            );
+            // 成本基（state_hash 不覆盖域）字段级补充。
+            assert_eq!(state.accounts[0].invested_cents, vec![0; 3], "{label} invested 冲回");
+            assert_eq!(state.accounts[0].recovered_cents, vec![0; 3], "{label} recovered 冲回");
+        }
     }
 }
