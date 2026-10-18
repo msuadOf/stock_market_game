@@ -223,3 +223,28 @@ plans/seal-floor-decomposition-design.md（数据节已按验证批更新）。
 
 第 21 任接手面：①Seal 攻顶批（批后按 §3 刀 A-1'）②belief 深刀
 （72.8μs）③剩余登记项+复核前置条件（"Seal 后 desk 静止"协议前置）。
+
+## 第 20 任续 4：Seal 攻顶 A-1' 负结果→A-1 落地（2026-10-19 夜极）
+
+| 提交 | 内容 | 实测 |
+|---|---|---|
+| b821e19f | 攻顶批 1：InlineVec 类型（容量 8=P100×2 幂上取）+分片等价锚 3 条+旋钮桩双红 | 合同 3 绿锚+旋钮红先行 |
+| 5f9908db | **A-1' 负结果归因+A-1 Arc COW 落地**（accounts=Vec<Arc>；写点 34 处 make_mut；分片条目 Arc 共享；决策签名 &[&GroupAccount]） | **组端 Seal 处理 max 154→33-37μs（−78%）**；Seal 相位 206-217→**139-152μs（−30%）**；B 配对 798.8→814.0（+1.9%） |
+| 799a6bf3 | 复核归档（无阻断+3 登记级） | — |
+
+**A-1' 负结果**（如实归因 evidence/p2/sealtop/batch2-arc-cow.txt）：内联化只消分配开销——组 0（唯一活跃组 2000 NPC 全 dirty）分片成本主项=**搬运量**（2000×450B/拍）；enum 膨胀反损缓存。条款触发转 A-1 ✓。
+InlineVec 保留（闲组微降+COW clone 栈拷贝复用+spill 合同）。
+
+**A 速度**：3 轮 mean 866.6（15min load 9+ 热窗——**正式数字待静置窗补**，
+批 2 正式 912.7 对照在 15min 5.5 窗取）。结构性指标（Seal 相位/组端处理/
+B 配对）不受负载影响已确凿。**1100 线预期**：Seal 相位 139→静置窗若
+spread 余量同步收敛（调度税与负载相关），A 推算 ~950-1050；触 1100 还需
+spread 的调度余量（~100μs）压缩——刀 C（taskset 亲和）或后续流水线
+（B-1）候选，数据驱动再定。
+
+**复核登记**：ensure_fact_owners_covered_arc 每拍值拷贝（下游只用
+local——driver 侧优化面）；InlineVec pub 变体可见性（低风险）。
+
+**第 21 任**：①静置窗补 A 正式数字（s5-arc 二进制 .tmp/eager/）②若
+spread 仍 >100μs：刀 C taskset 复测（零代码）③ensure_fact 优化面
+④剩余登记项。
