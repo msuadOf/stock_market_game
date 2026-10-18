@@ -1,0 +1,29 @@
+=== eager undo 分域批 2——实现与配对测量（2026-10-19，第 20 任）===
+
+工作区：.worktree/view-campaign @ 批 2 提交
+二进制配对：.tmp/eager/s5-eager（新）vs .tmp/s5-arcopt（A 774.7 版）
+
+【回归】双模式 1675/0/11 ×2 全绿（一次既有 flake 家族单发复跑绿，登记不批改）。
+合同：eager_partial_apply_abort_rolls_back 绿（批 1 红转绿）；delta_undo_shuffled_replay_equivalence 绿；
+sol4_day_end_abort_restores_execution_leg_with_tickets 绿（首版红旗复用）。
+突变红实证：旋钮①（延迟域即时重放=首版形态）→ sol4 红（mutation-knob1-red.txt）；
+旋钮②（CashRefund 漏 Cash undo）→ 合同 2 红（mutation-knob2-red.txt）。恢复后 3/3 绿。
+
+【A 3000（G=10）高负载窗 3 轮：load 3.3→10.6 波动，19 users 外部活动】
+eager：860.8 / 909.8 / 757.0（mean 842.5）——对照 arcopt 774.7 = +8.8%（mean 口径）
+Seal 相位：249/217/322 μs/tick（21.4%/19.7%/24.4%）
+同窗配对单轮（load 10.6 突升窗标注）：
+  arcopt：818.3 t/s，Seal 相位 406μs（33.2%）
+  eager ：913.1 t/s，Seal 相位 215μs（19.7%）
+  → 配对差 +94.8 t/s（+11.6%），Seal 相位 −191μs（−47%）
+守恒锚全对：成交量 6701200/费用桶 651403179/T+1 冻结 6668400（与台账一致）
+
+【B 1000 高负载窗 3 轮：load 6.4-8.6】
+eager：772.1 / 679.0 / 625.8——首轮 772.1 vs 基线 749.4 持平偏升；后两轮外部负载压制
+（降序趋势与 load 尾部离群形态一致——交接坑清单判别法，不剔除只标注窗口）
+
+【归因登记（负结果纪律：推算 1120 未达，先归因不关闭）】
+设计推算"屏障 250μs→~0"部分兑现：Seal 相位（协调者广播→收齐 Ack wall）406→215μs。
+残余 215μs 构成待静置窗 STEP_PROFILE 分解：组端 Seal 临界路径残余（延迟相+GroupAccount
+分片 clone——设计 §4 预留的组端账户 COW 方向）与消息链固有延迟（10 组广播/唤醒/回传）。
+正式净机数字待静置窗（1min<6 且 15min 余温消散）复测补录。

@@ -416,21 +416,37 @@ enum GroupUndo {
 /// F4/F5/F6 序敏感族按**原批内序**可重放的延迟动作清单。重放时点=下一
 /// Continue/Seal 消息点（与原 apply_staging 消费点一致——续行决策可见
 /// 推进后的计划簿/票）。
-#[derive(Default)]
 struct DeferredBatch {
     /// 批次股索引（延迟动作的目标股）。
     stock: StockIdx,
     /// 成交事实原序（计划推进 F5/F6 重放+经历转移输入）。
     fills: Vec<FillFact>,
     /// 卖腿 fill 前仓基快照（经历转移的 cost_before 输入——即时相
-    /// fill 循环前捕获，时点等价原落账点）。
+    /// fill 循环前捕获，时点等价原落账点：批到达与原落账消息点之间
+    /// 组线程串行无其他账户写）。
     pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)>,
-    /// 拒收回执（失败释放 F6 重放：(owner.1, order.1)）。
-    rejected: Vec<(LocalIdx, u64)>,
-    /// RefundedShares 的曾持有复位（qty>0 的 F4 动作重放）。
-    ever_resets: Vec<(LocalIdx, StockIdx)>,
-    /// 期末清仓判定触点（曾持有翻转 F4+记忆裁剪 F5 重放）。
+    /// fill 循环后、批尾前的延迟动作（原批内序：receipts 拒收释放与
+    /// entities 内的 Closed 释放/RefundedShares 复位按原序交错）。
+    actions: Vec<DeferredAction>,
+    /// 期末清仓判定触点（曾持有翻转 F4+经历转移 F5+记忆裁剪 F5——
+    /// 批尾三连按原序重放）。
     touched: Vec<(LocalIdx, StockIdx)>,
+}
+
+/// 延迟域单步动作（原批内序交错保持——同键票据/曾持有位的序敏感面）。
+enum DeferredAction {
+    /// 票释放（F6）：拒收回执与 Closed 实体的统一终结信号。
+    TicketRelease {
+        /// 挂单所有者组内下标。
+        local: LocalIdx,
+        /// 终结单的 desk 序号（身份关联）。
+        order_serial: u64,
+    },
+    /// RefundedShares 的曾持有复位（F4：qty>0 的再持有动作）。
+    EverReset {
+        /// 入账账户组内下标。
+        local: LocalIdx,
+    },
 }
 
 /// 决策脚本注入的下单规格（组端换算为 `DeskIn`， purse=对价，费用上限随批 3 补）。
@@ -524,12 +540,24 @@ pub struct GroupState {
     pub accounts: Vec<GroupAccount>,
     /// 可逆日志（本 tick 内累积；Start 转正时清空）。
     undo: Vec<GroupUndo>,
-    /// 实体批次 staging（tick N 内到达，Start/Continue 时落账）。
-    staging: Vec<DeskBatch>,
     /// eager 分域延迟载荷（F4/F5/F6 序敏感族——即时相暂存，延迟相
     /// （Continue/Seal 消息点）按原批内序重放；Abort 随 rollback 清空。
-    /// 批 1 桩：恒空（即时相未实现，批次仍整体走 staging）。
     staging_deferred: Vec<DeferredBatch>,
+    /// 账户分片脏集（SealAck accounts_sparse 的即时维护——push_undo
+    /// 账户域族顺带插入，Seal 临界路径免 O(undo_len) 重扫；Start/回滚/
+    /// 日结转正随日志退役清空）。
+    account_dirty_set: std::collections::BTreeSet<LocalIdx>,
+    /// SealAck 发送点的 undo 日志长度基线（Q2 eager 分域守卫）：日结
+    /// Drain 批次的即时记录在 DayEnd 消息**前**到达应用（FIFO）——日结
+    /// 隐式转正只退役上一 tick 记录（前段 drain），必须保留 Seal 后
+    /// 追加的即时记录（Abort 仍可冲回）。消费/回滚后置 None。
+    seal_acked_len: Option<usize>,
+    /// SealAck 后到达并即时应用的实体批次数（Start 防御专用）：Seal
+    /// 后到达的 Batch=锁步破坏（协调者收齐 DeskReport 才发 Seal——
+    /// 合法例外只有日结 Drain 序列，由 DayEnd 消化清零）。与 undo 基线
+    /// 分离：AcceptedBatch（受理身份）的 F5/F6 记录跨 SealAck 迟到是
+    /// 合法协议形态，不计数不拦截。
+    batches_after_seal: usize,
     /// 当前正在执行的 tick（Abort 后回退到 committed_tick）。
     cur_tick: u64,
     /// 当前轮次。
@@ -710,8 +738,10 @@ impl GroupState {
             group,
             accounts,
             undo: Vec::new(),
-            staging: Vec::new(),
             staging_deferred: Vec::new(),
+            account_dirty_set: Default::default(),
+            seal_acked_len: None,
+            batches_after_seal: 0,
             cur_tick: initial_tick,
             cur_round: 0,
             committed_tick: initial_tick,
@@ -906,9 +936,14 @@ impl GroupState {
                 }
             }
         }
-        self.staging.clear();
+        self.staging_deferred.clear();
+        self.account_dirty_set.clear();
         self.plan_fills.clear();
         self.plan_undo_saved = false;
+        // eager 分域：Seal 收敛点基线作废（Abort 后重跑不再持有基线——
+        // Start 防御以新基线重建）。
+        self.seal_acked_len = None;
+        self.batches_after_seal = 0;
         // Sol 二审修复集 4：未消费的 ForceDue 待办一并作废（指令失效
         /// 需重发）；已入日志域的由上方 undo 逆序回放冲回。
         self.pending_force_due.clear();
@@ -925,169 +960,239 @@ impl GroupState {
             })
     }
 
-    /// 落账 staging 中属于 `(expected_tick, expected_round)` 的批次（记逆操作）。
-    fn apply_staging(
+    /// undo 入账统一入口：账户域族（F1/F2/F3 即时域+F4 曾持有）顺带登记
+    /// `account_dirty_set`（SealAck 分片集合的即时维护——Seal 临界路径免
+    /// O(undo_len) 重扫）；非账户域族（NextDue/Personal/PlanBook/
+    /// ChildInFlight）不进分片。集合生命周期与 undo 日志同步（Start/回滚/
+    /// 日结转正清空；Seal take 消费——与原 Seal 期全日志扫描的族集合
+    /// 逐族一致，等价替换）。
+    fn push_undo(&mut self, entry: GroupUndo) {
+        match &entry {
+            GroupUndo::Cash { local, .. }
+            | GroupUndo::Shares { local, .. }
+            | GroupUndo::ForeignActive { local, .. }
+            | GroupUndo::Frozen { local, .. }
+            | GroupUndo::CostBasis { local, .. }
+            | GroupUndo::EverHeld { local, .. }
+            | GroupUndo::PendingSell { local, .. }
+            | GroupUndo::BuyPurseHeld { local, .. } => {
+                self.account_dirty_set.insert(*local);
+            }
+            GroupUndo::NextDue { .. }
+            | GroupUndo::Personal { .. }
+            | GroupUndo::PlanBook { .. }
+            | GroupUndo::ChildInFlight { .. } => {}
+        }
+        self.undo.push(entry);
+    }
+
+    /// eager 分域即时相（Q2 批 2）：Batch 消息**到达即**应用 F1/F2/F3
+    /// delta 族（Cash/Shares/Frozen/ForeignActive/CostBasis/PendingSell/
+    /// BuyPurseHeld——回放算子 `-=` 对全应用封闭，与决策段记录任意交错
+    /// 无害，合同 delta_undo_shuffled_replay_equivalence 守卫），并把
+    /// F4/F5/F6 序敏感族按原批内序暂存 `staging_deferred`（延迟相在
+    /// Continue/Seal 消息点重放）。语义等价锚：同一落账逻辑/undo 日志/
+    /// 防御核对；原"落账点=消息点"拆为"即时域=到达点、延迟域=消息点"，
+    /// 两时点间组线程串行无其他账户写（判定读值等价）。
+    fn apply_batch_immediate(
         &mut self,
+        batch: DeskBatch,
         expected_tick: u64,
         expected_round: u32,
     ) -> Result<(), RuntimeError> {
-        let batches = std::mem::take(&mut self.staging);
-        for batch in batches {
-            self.apply_staging_batch(batch, expected_tick, expected_round)?;
+        batch
+            .verify_tick_round(expected_tick, expected_round)
+            .map_err(|m| RuntimeError::ProtocolInvariant {
+                detail: format!("组 {} 批次防御核对失败：{m}", self.group),
+            })?;
+        let stock_idx = batch.stock as usize;
+        if stock_idx >= self
+            .accounts
+            .first()
+            .map(|a| a.shares.len())
+            .unwrap_or(0)
+        {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("组 {} 批次股索引越界：{stock_idx}", self.group),
+            });
+        }
+        let stock = batch.stock;
+        // 成交事实即时进计划结果缓冲（信息回流：续行由 FillFact 驱动，
+        // F §4.3——Continue 轮"先见 fills 再续行"语义不因分域改变）。
+        self.plan_fills.extend(batch.fills.iter().copied());
+        // Sol 终审四审经历族：卖腿 fill 前成本基/面快照（清仓转移的
+        // cost_before 输入——fill 循环内 apply_fill_cost_basis 先行
+        // 推进 invested/recovered，期末值不可反推）。捕获时点=即时相
+        // fill 循环前（等价原落账点——见函数 doc）。
+        let mut pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)> =
+            std::collections::BTreeMap::new();
+        for fill in &batch.fills {
+            if fill.side != Side::Sell || fill.owner.0 != self.group {
+                continue;
+            }
+            let local = fill.owner.1;
+            if pre_exit_basis.contains_key(&local) {
+                continue;
+            }
+            if let Some(acct) = self.accounts.get(local as usize) {
+                pre_exit_basis.insert(
+                    local,
+                    (
+                        acct.invested_cents.get(stock_idx).copied().unwrap_or(0),
+                        acct.recovered_cents.get(stock_idx).copied().unwrap_or(0),
+                        acct.shares.get(stock_idx).copied().unwrap_or(0).saturating_add(
+                            acct.pending_sell_qty.get(stock_idx).copied().unwrap_or(0),
+                        ),
+                    ),
+                );
+            }
+        }
+        let mut deferred = DeferredBatch {
+            stock,
+            fills: batch.fills.clone(),
+            pre_exit_basis,
+            actions: Vec::new(),
+            touched: Vec::new(),
+        };
+        // fill 循环即时域：成本基（F2）+在途镜像（F2）。计划推进
+        // （F5/F6——apply_fill_plan_progress）延迟重放（fills 已暂存）。
+        let mut touched: Vec<(LocalIdx, StockIdx)> = Vec::new();
+        for fill in &batch.fills {
+            self.apply_fill_cost_basis(stock, fill)?;
+            if !touched.contains(&(fill.owner.1, stock)) {
+                touched.push((fill.owner.1, stock));
+            }
+            // Sol 五审：在途镜像统一按 fill 推进（不限计划链票——
+            // 外部/retail 单同口径）：卖腿余量减；买腿占用减实付
+            //（gross+佣金+过户=desk buyer_charge 同式）。
+            let gross = i64::from(fill.price) * i64::from(fill.qty);
+            match fill.side {
+                Side::Sell => {
+                    let acct = &mut self.accounts[fill.owner.1 as usize];
+                    let before = acct.pending_sell_qty[stock_idx];
+                    let after = before.saturating_sub(fill.qty);
+                    acct.pending_sell_qty[stock_idx] = after;
+                    if before != after {
+                        self.push_undo(GroupUndo::PendingSell {
+                            local: fill.owner.1,
+                            stock,
+                            delta: -i64::from(before - after),
+                        });
+                    }
+                }
+                Side::Buy => {
+                    let charge = gross + fill.commission + fill.transfer_fee;
+                    let acct = &mut self.accounts[fill.owner.1 as usize];
+                    acct.buy_purse_held_cents -= charge;
+                    self.push_undo(GroupUndo::BuyPurseHeld {
+                        local: fill.owner.1,
+                        delta: -charge,
+                    });
+                }
+            }
+        }
+        // Sol 整改 2：拒收回执=失败释放（未受理票清除——desk 拒收的挂单
+        // 从未成交，票 order_id=None 走未受理释放路径）。票域（F6）延迟
+        // 重放——原批内序（receipts 在 entities 前）由 actions 追加序保持。
+        for receipt in &batch.receipts {
+            let rejected = matches!(
+                receipt.kind,
+                crate::runtime::ReceiptKind::PriceOutOfBand
+                    | crate::runtime::ReceiptKind::NotRoundLot
+                    | crate::runtime::ReceiptKind::ExceedsOrderCap
+                    | crate::runtime::ReceiptKind::PhaseRejected
+                    | crate::runtime::ReceiptKind::AuctionLimitOrderRequired
+            );
+            if rejected {
+                deferred.actions.push(DeferredAction::TicketRelease {
+                    local: receipt.owner.1,
+                    order_serial: receipt.order.1,
+                });
+            }
+        }
+        // entities：即时域落账（F1/F2/F3）；Closed 票释放（F6）与
+        // RefundedShares 曾持有复位（F4）按原 entities 序进 actions。
+        for entity in batch.entities {
+            self.apply_entity(stock, entity, &mut deferred)?;
+        }
+        // 清仓成本基清零（F2——实体落账后按期末 shares/在途判定：对齐
+        // session 清仓删除条目——下次买入从零新建，避免再持有后
+        // cost_price 漂移）。曾持有翻转（F4）随 touched 延迟到批尾重放。
+        self.clear_flat_cost_basis(&touched);
+        deferred.touched = touched;
+        self.staging_deferred.push(deferred);
+        Ok(())
+    }
+
+    /// eager 分域延迟相：暂存的 F4/F5/F6 延迟动作按原批内序重放。
+    /// 调用点=Continue/Seal/Shutdown/DayEnd 消息点（与原 apply_staging
+    /// 消费点一致——续行决策可见推进后的计划簿/票；Seal 相位到达时
+    /// 全部批次的延迟项已在等待窗暂存齐，S4 锁步不变量承载）。
+    fn apply_deferred(&mut self) -> Result<(), RuntimeError> {
+        for deferred in std::mem::take(&mut self.staging_deferred) {
+            self.replay_deferred_batch(deferred)?;
         }
         Ok(())
     }
 
-    /// eager 分域即时相（批 1 红证桩）：Batch 消息到达即应用 F1/F2/F3
-    /// delta 族（Cash/Shares/Frozen/ForeignActive/CostBasis/PendingSell/
-    /// BuyPurseHeld——回放算子对全应用封闭，与决策段记录任意交错无害）
-    /// 并暂存 F4/F5/F6 序敏感族到 `staging_deferred`。
-    /// **桩语义=现状**（批次整体入 staging，等待窗不应用）——合同
-    /// `eager_partial_apply_abort_rolls_back` 以"应用后 state_hash 变化"
-    /// 断言红证锚定（设计稿 plans/eager-undo-domains-design.md §3 合同 2）；
-    /// 批 2 实现后转绿。
-    fn apply_batch_immediate(
-        &mut self,
-        batch: DeskBatch,
-        _expected_tick: u64,
-        _expected_round: u32,
-    ) -> Result<(), RuntimeError> {
-        self.staging.push(batch);
-        Ok(())
-    }
-
-    /// eager 分域延迟相（批 1 红证桩）：暂存的 F4/F5/F6 延迟动作按原批内
-    /// 序重放（Continue/Seal 消息点——续行决策可见推进后的计划簿/票）。
-    /// **桩语义=现状**（staging 仍在，走 apply_staging 全族路径）。
-    fn apply_deferred(&mut self) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    /// Q2 eager-apply 臂（协调者护栏预案）：单批落账——Batch 消息
-    /// 到达即 apply（与组间决策重叠，回收 Seal 串行屏障税）。语义
-    /// 等价：同一落账逻辑/undo 日志/防御核对；Seal 相位到达时 staging
-    /// 已空（SealAck 立即回）。
-    fn apply_staging_batch(
-        &mut self,
-        batch: DeskBatch,
-        expected_tick: u64,
-        expected_round: u32,
-    ) -> Result<(), RuntimeError> {
-        {
-            batch
-                .verify_tick_round(expected_tick, expected_round)
-                .map_err(|m| RuntimeError::ProtocolInvariant {
-                    detail: format!("组 {} staging 批次防御核对失败：{m}", self.group),
-                })?;
-            let stock = batch.stock as usize;
-            if stock >= self.accounts.first().map(|a| a.shares.len()).unwrap_or(0) {
-                return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!("组 {} staging 批次股索引越界：{stock}", self.group),
-                });
-            }
-            // 成交事实进计划结果缓冲（信息回流：续行由 FillFact 驱动，F §4.3）。
-            self.plan_fills.extend(batch.fills.iter().copied());
-            // D3a-2c 件1：成本基先行（FillFact 逐笔记 invested/recovered，
-            // 仅成交额——对齐 Account::apply_buy/apply_sell 口径）。
-            // D3a-3：计划成交推进（执行腿——同股同方向唯一活跃计划）。
-            // Sol 终审四审经历族：卖腿 fill 前成本基/面快照（清仓转移的
-            // cost_before 输入——fill 循环内 apply_fill_cost_basis 先行
-            // 推进 invested/recovered，期末值不可反推）。
-            let mut pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)> =
-                std::collections::BTreeMap::new();
-            for fill in &batch.fills {
-                if fill.side != Side::Sell || fill.owner.0 != self.group {
-                    continue;
+    /// 单批延迟重放（原 apply_staging 批内序的 F4/F5/F6 部分）：
+    /// fills 计划推进（F5/F6）→ actions 票释放/曾持有复位（F6/F4）→
+    /// 批尾三连：曾持有翻转（F4）→ 经历转移（F5）→ 记忆裁剪（F5）。
+    /// 延迟相不写账户资源域（F1/F2/F3 已在即时相定型）——判定读值
+    /// =即时相末值，与原批尾时点等价（延迟域不触碰资源域字段）。
+    fn replay_deferred_batch(&mut self, deferred: DeferredBatch) -> Result<(), RuntimeError> {
+        let stock = deferred.stock;
+        for fill in &deferred.fills {
+            self.apply_fill_plan_progress(stock, fill)?;
+        }
+        for action in deferred.actions {
+            match action {
+                DeferredAction::TicketRelease {
+                    local,
+                    order_serial,
+                } => {
+                    self.release_child_ticket(stock, local, order_serial)?;
                 }
-                let local = fill.owner.1;
-                if pre_exit_basis.contains_key(&local) {
-                    continue;
-                }
-                if let Some(acct) = self.accounts.get(local as usize) {
-                    pre_exit_basis.insert(
-                        local,
-                        (
-                            acct.invested_cents.get(stock).copied().unwrap_or(0),
-                            acct.recovered_cents.get(stock).copied().unwrap_or(0),
-                            acct.shares.get(stock).copied().unwrap_or(0).saturating_add(
-                                acct.pending_sell_qty.get(stock).copied().unwrap_or(0),
-                            ),
-                        ),
-                    );
-                }
-            }
-            let mut touched: Vec<(LocalIdx, StockIdx)> = Vec::new();
-            for fill in &batch.fills {
-                self.apply_fill_cost_basis(stock as StockIdx, fill)?;
-                self.apply_fill_plan_progress(stock as StockIdx, fill)?;
-                if !touched.contains(&(fill.owner.1, stock as StockIdx)) {
-                    touched.push((fill.owner.1, stock as StockIdx));
-                }
-                // Sol 五审：在途镜像统一按 fill 推进（不限计划链票——
-                // 外部/retail 单同口径）：卖腿余量减；买腿占用减实付
-                //（gross+佣金+过户=desk buyer_charge 同式）。
-                let gross = i64::from(fill.price) * i64::from(fill.qty);
-                match fill.side {
-                    Side::Sell => {
-                        let acct = &mut self.accounts[fill.owner.1 as usize];
-                        let before = acct.pending_sell_qty[stock as usize];
-                        let after = before.saturating_sub(fill.qty);
-                        acct.pending_sell_qty[stock as usize] = after;
-                        if before != after {
-                            self.undo.push(GroupUndo::PendingSell {
-                                local: fill.owner.1,
-                                stock: stock as StockIdx,
-                                delta: -i64::from(before - after),
-                            });
-                        }
-                    }
-                    Side::Buy => {
-                        let charge = gross + fill.commission + fill.transfer_fee;
-                        let acct = &mut self.accounts[fill.owner.1 as usize];
-                        acct.buy_purse_held_cents -= charge;
-                        self.undo.push(GroupUndo::BuyPurseHeld {
-                            local: fill.owner.1,
-                            delta: -charge,
+                DeferredAction::EverReset { local } => {
+                    // RefundedShares 复位（原 apply_entity 批内位置）：qty>0
+                    // 的再持有=曾持有位复位；读当前值翻转（即时相不写
+                    /// ever_held——延迟相内按原序重放等价原批内判定）。
+                    let acct = &mut self.accounts[local as usize];
+                    if acct.ever_held[stock as usize] {
+                        acct.ever_held[stock as usize] = false;
+                        self.push_undo(GroupUndo::EverHeld {
+                            local,
+                            stock,
+                            prev: true,
                         });
                     }
                 }
             }
-            // Sol 整改 2：拒收回执=失败释放（未受理票清除——desk 拒收
-            // 的挂单从未成交，票 order_id=None 走未受理释放路径）。
-            for receipt in &batch.receipts {
-                let rejected = matches!(
-                    receipt.kind,
-                    crate::runtime::ReceiptKind::PriceOutOfBand
-                        | crate::runtime::ReceiptKind::NotRoundLot
-                        | crate::runtime::ReceiptKind::ExceedsOrderCap
-                        | crate::runtime::ReceiptKind::PhaseRejected
-                        | crate::runtime::ReceiptKind::AuctionLimitOrderRequired
-                );
-                if rejected {
-                    self.release_child_ticket(
-                        stock as StockIdx,
-                        receipt.owner.1,
-                        receipt.order.1,
-                    )?;
-                }
+        }
+        // 批尾曾持有翻转（原 clear_flat_cost_basis 批内位置）：期末
+        // shares==0 → true（对齐 session 清仓保留零量条目）；>0 → false。
+        let touched = deferred.touched;
+        for &(local, stock) in &touched {
+            let acct = &mut self.accounts[local as usize];
+            let prev_ever = acct.ever_held[stock as usize];
+            let now_ever = acct.shares[stock as usize] == 0;
+            if prev_ever != now_ever {
+                acct.ever_held[stock as usize] = now_ever;
+                self.push_undo(GroupUndo::EverHeld {
+                    local,
+                    stock,
+                    prev: prev_ever,
+                });
             }
-            for entity in batch.entities {
-                self.apply_entity(stock as StockIdx, entity)?;
-            }
-            // 清仓清零（实体落账后按期末 shares 判定：对齐 session 清仓删除
-            // 条目——下次买入从零新建，避免再持有后 cost_price 漂移）。
-            self.clear_flat_cost_basis(&touched);
-            // Sol 终审四审经历族（fault2051）：清仓 retail 经历转移——旧
-            // 管线结算面 record_fill（Sell 且 after_qty==0）清观察字段并设
-            // 退出冷静期；runtime 组权威此前只在决策拍 observe 演进，清仓
-            // 后经验行残留持仓观察态使存档校验（fault2051）显红。
-            self.apply_full_exit_experience(stock as StockIdx, &batch.fills, &pre_exit_basis)?;
-            // Sol D3b 件 1：fill 触达账户的个人记忆裁剪（对齐 session
-            /// candidate_commit 的逐账户 prune_plan_personal_memory——
-            /// completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
-            for (local, _) in &touched {
-                self.prune_personal_memory_after_completion(*local);
-            }
+        }
+        // Sol 终审四审经历族（fault2051）：清仓 retail 经历转移（F5——
+        /// 期末 face=即时相末值，读值时点等价原批尾）。
+        self.apply_full_exit_experience(stock, &deferred.fills, &deferred.pre_exit_basis)?;
+        // Sol D3b 件 1：fill 触达账户的个人记忆裁剪（F5——对齐 session
+        /// candidate_commit 的逐账户 prune_plan_personal_memory——
+        /// completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
+        for (local, _) in &touched {
+            self.prune_personal_memory_after_completion(*local);
         }
         Ok(())
     }
@@ -1191,7 +1296,7 @@ impl GroupState {
             }
             // 拍前值入可逆日志（Personal）+还槽+dirty（经验行随 Belief
             /// 上行通道同拍回写 session 镜像）。
-            self.undo.push(GroupUndo::Personal {
+            self.push_undo(GroupUndo::Personal {
                 local,
                 prev: Box::new(prev),
             });
@@ -1253,7 +1358,7 @@ impl GroupState {
                 ),
             }
         })?;
-        self.undo.push(GroupUndo::CostBasis {
+        self.push_undo(GroupUndo::CostBasis {
             local,
             stock,
             d_invested,
@@ -1305,7 +1410,7 @@ impl GroupState {
                     panic!("组内子单身份登记失败 {account:?} {code:?}: {error}")
                 });
             ticket.order_id = Some(order_id);
-            self.undo.push(GroupUndo::ChildInFlight {
+            self.push_undo(GroupUndo::ChildInFlight {
                 account,
                 code: code.clone(),
                 prev: Some(ChildTicket {
@@ -1384,7 +1489,7 @@ impl GroupState {
                         panic!("组 {group} 在途票 desk 扣减累计溢出：account={account:?}, code={code:?}")
                     });
             }
-            self.undo.push(GroupUndo::ChildInFlight {
+            self.push_undo(GroupUndo::ChildInFlight {
                 account,
                 code: code.clone(),
                 prev: Some(prev_ticket),
@@ -1396,7 +1501,7 @@ impl GroupState {
         // 部分成交推进（票保留）或全成清除（下一轮可再报价）。
         if fill.qty >= remaining {
             if self.child_in_flight.remove(&(account, code)).is_some() {
-                self.undo.push(GroupUndo::ChildInFlight {
+                self.push_undo(GroupUndo::ChildInFlight {
                     account,
                     code,
                     prev: Some(ticket),
@@ -1447,7 +1552,7 @@ impl GroupState {
             .cloned()
             .flatten()
             .expect("上方已核在位");
-        self.undo.push(GroupUndo::Personal {
+        self.push_undo(GroupUndo::Personal {
             local,
             prev: Box::new(prev),
         });
@@ -1493,7 +1598,7 @@ impl GroupState {
                 panic!("组内受理身份登记失败 {account:?} {code:?}: {error}")
             });
         ticket.order_id = Some(order_id);
-        self.undo.push(GroupUndo::ChildInFlight {
+        self.push_undo(GroupUndo::ChildInFlight {
             account,
             code: code.clone(),
             prev: Some(ChildTicket {
@@ -1544,7 +1649,7 @@ impl GroupState {
         let Some(ticket) = self.child_in_flight.remove(&(account, code)) else {
             return Ok(());
         };
-        self.undo.push(GroupUndo::ChildInFlight {
+        self.push_undo(GroupUndo::ChildInFlight {
             account,
             code: code.clone(),
             prev: Some(ticket.clone()),
@@ -1571,16 +1676,15 @@ impl GroupState {
         Ok(())
     }
 
-    /// 清仓清零+曾持有位（期末 touched 槽位的终态维护）：
-    /// - 成本基清零：shares==0 且**该股无在途挂单**——invested/recovered
-    ///   归零。foreign_active 守卫（复核发现 2 收口）：跨轮余量退款（轮 N
-    ///   卖单全成 shares=0，轮 N+1 RefundedShares 回升）不得永久丢失成本
-    ///   基——在途未终结即不清零，退款落账（shares 回升）后自然跳过。
-    ///   登记残余边界：同 tick 卖光+同股新买单在途推迟清零，买单 Closed
-    ///   时 shares>0（成交）则旧值残留（session 语义=删条目后新建零基）
-    ///   ——罕见形态，D3a-3 注入路由统一时一并收口。
-    /// - 曾持有位（D3a-3 收口）：shares==0 → true（对齐 session 清仓保留
-    ///   零量条目——观察面 held 集成员）；shares>0 → false（再持有）。
+    /// 清仓成本基清零（即时相批尾——F2 delta 族）：期末 touched 槽位的
+    /// 终态维护。成本基清零：shares==0 且**该股无在途挂单**——
+    /// invested/recovered 归零。foreign_active 守卫（复核发现 2 收口）：
+    /// 跨轮余量退款（轮 N 卖单全成 shares=0，轮 N+1 RefundedShares 回升）
+    /// 不得永久丢失成本基——在途未终结即不清零，退款落账（shares 回升）
+    /// 后自然跳过。登记残余边界：同 tick 卖光+同股新买单在途推迟清零，
+    /// 买单 Closed 时 shares>0（成交）则旧值残留（session 语义=删条目后
+    /// 新建零基）——罕见形态，D3a-3 注入路由统一时一并收口。
+    /// 曾持有翻转（F4 序敏感）已移延迟相批尾重放（replay_deferred_batch）。
     fn clear_flat_cost_basis(&mut self, touched: &[(LocalIdx, StockIdx)]) {
         for &(local, stock) in touched {
             let s = stock as usize;
@@ -1592,28 +1696,25 @@ impl GroupState {
                 let (d_invested, d_recovered) = (acct.invested_cents[s], acct.recovered_cents[s]);
                 acct.invested_cents[s] = 0;
                 acct.recovered_cents[s] = 0;
-                self.undo.push(GroupUndo::CostBasis {
+                self.push_undo(GroupUndo::CostBasis {
                     local,
                     stock,
                     d_invested: -d_invested,
                     d_recovered: -d_recovered,
                 });
             }
-            let prev_ever = acct.ever_held[s];
-            let now_ever = acct.shares[s] == 0;
-            if prev_ever != now_ever {
-                acct.ever_held[s] = now_ever;
-                self.undo.push(GroupUndo::EverHeld {
-                    local,
-                    stock,
-                    prev: prev_ever,
-                });
-            }
         }
     }
 
-    /// 落账单条实体（记逆操作）。
-    fn apply_entity(&mut self, stock: StockIdx, e: Entity) -> Result<(), RuntimeError> {
+    /// 落账单条实体（记逆操作）。eager 分域：资源域（F1/F2/F3 delta 族）
+    /// 即时落账；序敏感域延迟——Closed 的票释放（F6）与 RefundedShares
+    /// 的曾持有复位（F4）按原 entities 序追加进 `deferred.actions`。
+    fn apply_entity(
+        &mut self,
+        stock: StockIdx,
+        e: Entity,
+        deferred: &mut DeferredBatch,
+    ) -> Result<(), RuntimeError> {
         let group = self.group;
         match e {
             Entity::CashProceeds { local, amount } => {
@@ -1623,7 +1724,7 @@ impl GroupState {
                         detail: format!("组 {group} 现金落账溢出：local={local}, amount={amount}"),
                     }
                 })?;
-                self.undo.push(GroupUndo::Cash {
+                self.push_undo(GroupUndo::Cash {
                     local,
                     delta: amount,
                 });
@@ -1639,11 +1740,11 @@ impl GroupState {
                     }
                 })?;
                 acct.buy_purse_held_cents -= amount;
-                self.undo.push(GroupUndo::Cash {
+                self.push_undo(GroupUndo::Cash {
                     local,
                     delta: amount,
                 });
-                self.undo.push(GroupUndo::BuyPurseHeld {
+                self.push_undo(GroupUndo::BuyPurseHeld {
                     local,
                     delta: -amount,
                 });
@@ -1660,12 +1761,12 @@ impl GroupState {
                         ),
                     })?;
                 acct.frozen_today[stock as usize] += qty;
-                self.undo.push(GroupUndo::Shares {
+                self.push_undo(GroupUndo::Shares {
                     local,
                     stock,
                     delta: qty as i32,
                 });
-                self.undo.push(GroupUndo::Frozen {
+                self.push_undo(GroupUndo::Frozen {
                     local,
                     stock,
                     delta: qty as i32,
@@ -1682,7 +1783,7 @@ impl GroupState {
                     let after = before.saturating_sub(qty);
                     acct.pending_sell_qty[stock as usize] = after;
                     if before != after {
-                        self.undo.push(GroupUndo::PendingSell {
+                        self.push_undo(GroupUndo::PendingSell {
                             local,
                             stock: stock as StockIdx,
                             delta: -i64::from(before - after),
@@ -1699,17 +1800,12 @@ impl GroupState {
                         ),
                     })?;
                 if qty > 0 {
-                    let prev_ever = acct.ever_held[stock as usize];
-                    if prev_ever {
-                        acct.ever_held[stock as usize] = false;
-                        self.undo.push(GroupUndo::EverHeld {
-                            local,
-                            stock,
-                            prev: prev_ever,
-                        });
-                    }
+                    // F4 序敏感（曾持有复位）——延迟相按原 entities 序重放
+                    ///（replay_deferred_batch 的 EverReset：读当前值翻转，
+                    /// 即时相不写 ever_held，读值时点等价原批内判定）。
+                    deferred.actions.push(DeferredAction::EverReset { local });
                 }
-                self.undo.push(GroupUndo::Shares {
+                self.push_undo(GroupUndo::Shares {
                     local,
                     stock,
                     delta: qty as i32,
@@ -1718,7 +1814,13 @@ impl GroupState {
             Entity::Closed { local, order_serial } => {
                 // Sol 整改 2：子单终结信号（撤销/到期/日终清簿——组侧
                 // 在途票与执行腿释放；order_serial=订单身份关联，二审修复 3）。
-                self.release_child_ticket(stock, local, order_serial)?;
+                // 票域（F6）延迟重放——原批内位置由 actions 追加序保持；
+                // F3 在途计数减（delta 族）即时。跨族序变化无害（票据与
+                // 计数器互不相写）。
+                deferred.actions.push(DeferredAction::TicketRelease {
+                    local,
+                    order_serial,
+                });
                 let acct = self.acct_mut(local)?;
                 let slot = &mut acct.foreign_active[stock as usize];
                 if *slot == 0 {
@@ -1730,7 +1832,7 @@ impl GroupState {
                     return Ok(());
                 }
                 *slot -= 1;
-                self.undo.push(GroupUndo::ForeignActive {
+                self.push_undo(GroupUndo::ForeignActive {
                     local,
                     stock,
                     delta: -1,
@@ -1785,24 +1887,39 @@ impl GroupState {
                 inputs.daily_total_traded = stock.daily_total_traded;
             }
         }
-        // Q2 Seal 后防御核对（协调者守卫 2）：落账点已前移到 Seal——
-        // Start 时 staging 必须恒空；非空=锁步破坏（批次绕过 Seal 到达
-        // 或 Seal drain 缺漏），显式失败上报不静默落账。Seal 相位自身
-        // 的 apply_staging 是唯一落账点（S2 落账点唯一化）。
-        if !self.staging.is_empty() {
+        // Q2 Seal 后防御核对（协调者守卫 2，eager 分域版）：SealAck 后
+        // 延迟载荷必须恒空且无基线外 undo 记录——非空=锁步破坏（批次
+        // 绕过 Seal 到达或 Seal drain 缺漏），显式失败上报不静默落账。
+        // 两条覆盖面：①staging_deferred 非空=Seal 后批次到达（有延迟
+        // 项的形态）；②undo.len() 超 SealAck 基线=Seal 后纯即时批次
+        // （无延迟项的形态——即时相已应用，日志越界即证据）。
+        if !self.staging_deferred.is_empty() {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!(
-                    "组 {} Start 时 staging 非空（{} 批）——Seal 落账后 Start 不应再有残余批次（锁步破坏，显式上报）",
+                    "组 {} Start 时延迟载荷非空（{} 批）——Seal 落账后 Start 不应再有残余批次（锁步破坏，显式上报）",
                     self.group,
-                    self.staging.len()
+                    self.staging_deferred.len()
+                ),
+            });
+        }
+        if self.batches_after_seal > 0 {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {} Start 时发现 Seal 后到达的实体批次（{} 批）——锁步破坏（合法例外只有日结 Drain 序列，显式上报）",
+                    self.group,
+                    self.batches_after_seal
                 ),
             });
         }
         // 防御核对保留（恒空批次过 verify——历史接口兼容；上一 tick 的
-        // 尾巴已由 Seal 落账）。
-        self.apply_staging(self.cur_tick, self.cur_round)?;
+        // 尾巴已由 Seal 落账）。eager 分域后延迟相已在 Seal 消费——此处
+        // 恒空，防御性调用保持（apply_deferred 幂等）。
+        self.apply_deferred()?;
         // 转正点：丢弃上一 tick 可逆日志；committed 推进到 N−1（旧 cur_tick）。
         self.undo.clear();
+        self.account_dirty_set.clear();
+        self.seal_acked_len = None;
+        self.batches_after_seal = 0;
         // P2-1a：dirty 掩码随新 tick 清（上一 tick 的 dirty 已在安装期
         /// 上行消费；新 tick 的演进面重新标记）。
         self.belief_dirty.iter_mut().for_each(|f| *f = false);
@@ -1810,17 +1927,21 @@ impl GroupState {
         self.plan_undo_saved = false;
         // Sol 二审修复集 4：Start 间窗口收到的 ForceDue 在此应用——效果
         // 归本 tick 日志域（Abort 冲回强制前值、指令失效需重发）。
+        // push_undo 封装（&mut self）与 decision 借用互斥——undo 条目
+        // 先攒后入（同拍序不变）。
+        let mut force_due_undo: Vec<GroupUndo> = Vec::new();
+        let mut force_due_evolved: Vec<LocalIdx> = Vec::new();
         for (local, target, ensure_observe) in std::mem::take(&mut self.pending_force_due) {
             if let Some((profiles, _)) = &mut self.decision {
                 if let Some(p) = profiles.get_mut(local as usize) {
                     if p.next_due > target {
-                        self.undo.push(GroupUndo::NextDue {
+                        force_due_undo.push(GroupUndo::NextDue {
                             local,
                             prev: p.next_due,
                         });
                         p.next_due = target;
                         // P2-3e：ForceDue 改排=演进位（稀疏上行须携带）。
-                        self.attention_evolved.push(local);
+                        force_due_evolved.push(local);
                     }
                     // D5 #2：强制观察登记（evaluate 门绕行——仍续流）。
                     if ensure_observe {
@@ -1829,6 +1950,10 @@ impl GroupState {
                 }
             }
         }
+        for entry in force_due_undo {
+            self.push_undo(entry);
+        }
+        self.attention_evolved.extend(force_due_evolved);
         self.committed_tick = self.cur_tick;
         self.cur_tick = tick;
         self.cur_round = 0;
@@ -1857,22 +1982,37 @@ impl GroupState {
         // Sol 二审修复集 4：快照标志随日志一并复位——此前保留 true 时，
         // 日结相位的簿变更（Drain Closed→release_child_ticket）不再保存
         // 新快照，Abort 恢复在途票但不恢复执行腿（票/簿分裂）。
-        self.undo.clear();
+        // eager 分域：日结 Drain 批次在 DayEnd 消息**前**到达（FIFO——
+        // desk 回流直发组通道），即时相已应用并 push 了 F1/F2/F3 记录；
+        // 隐式转正只退役上一 tick 记录（前段 drain），保留 Seal 后追加的
+        // Drain 即时记录（日结 Abort 仍可冲回——回到 Drain 前的上一交易
+        // 日收敛态）。无基线（未经 Seal 的异常路径）退化为整清（原状）。
+        if let Some(baseline) = self.seal_acked_len {
+            let kept = self.undo.len().saturating_sub(baseline);
+            self.undo.drain(..baseline);
+            debug_assert_eq!(self.undo.len(), kept);
+        } else {
+            self.undo.clear();
+        }
+        self.seal_acked_len = None;
+        self.batches_after_seal = 0;
+        self.account_dirty_set.clear();
         // P2-1a：日结转正同步清 dirty（日结后安装期消费的是日结相位
         /// 的标记——留待下一 Start 前的正常安装轮完成）。
         self.belief_dirty.iter_mut().for_each(|f| *f = false);
         self.attention_evolved.clear();
         self.plan_undo_saved = false;
         self.committed_tick = self.cur_tick;
-        // ① Drain 回流落账（清空在途）。
-        self.apply_staging(self.cur_tick, self.cur_round)?;
+        // ① Drain 回流落账（清空在途——即时相已在到达时应用，此处
+        /// 补延迟相 F4/F5/F6 重放；与原 apply_staging 全族落账等价）。
+        self.apply_deferred()?;
         // ② T+1 日界解冻（当日买入进入可卖）。
         for local in 0..self.accounts.len() as LocalIdx {
             let frozen = self.accounts[local as usize].frozen_today.clone();
             for (stock, &f) in frozen.iter().enumerate() {
                 if f > 0 {
                     self.accounts[local as usize].frozen_today[stock] = 0;
-                    self.undo.push(GroupUndo::Frozen {
+                    self.push_undo(GroupUndo::Frozen {
                         local,
                         stock: stock as StockIdx,
                         delta: -(f as i32),
@@ -1917,7 +2057,7 @@ impl GroupState {
                         detail: format!("股利入账溢出：local={local}, stock={stock}"),
                     }
                 })?;
-                self.undo.push(GroupUndo::Cash {
+                self.push_undo(GroupUndo::Cash {
                     local,
                     delta: amount,
                 });
@@ -1934,7 +2074,7 @@ impl GroupState {
                         .ok_or_else(|| RuntimeError::ProtocolInvariant {
                             detail: format!("送转股溢出：local={local}, stock={stock}"),
                         })?;
-                self.undo.push(GroupUndo::Shares {
+                self.push_undo(GroupUndo::Shares {
                     local,
                     stock,
                     delta: bonus_qty as i32,
@@ -1955,7 +2095,7 @@ impl GroupState {
                     });
                 }
                 acct.cash -= amount;
-                self.undo.push(GroupUndo::Cash {
+                self.push_undo(GroupUndo::Cash {
                     local,
                     delta: -amount,
                 });
@@ -1980,8 +2120,10 @@ impl GroupState {
                 ),
             });
         }
-        // 上一轮实体批次落账（tick/round=上一执行位）。
-        self.apply_staging(self.cur_tick, self.cur_round)?;
+        // 上一轮实体批次延迟相落账（即时相已随 Batch 到达应用；此处重放
+        // F4/F5/F6——续行决策可见推进后的计划簿/票，与原 apply_staging
+        // 消费点语义一致）。
+        self.apply_deferred()?;
         self.cur_round = round;
         self.run_round(tick, round, desk_txs, up_tx)
     }
@@ -2028,7 +2170,7 @@ impl GroupState {
             .and_then(Option::take)
         {
             Some(s) => {
-                self.undo.push(GroupUndo::Personal {
+                self.push_undo(GroupUndo::Personal {
                     local,
                     prev: Box::new(s.clone()),
                 });
@@ -2747,7 +2889,7 @@ impl GroupState {
         cancels_out.extend(chain_cancels);
         // 组态写回（生产路径：个人态六件入可逆日志后演进）。
         if write_back {
-            self.undo.push(GroupUndo::Personal {
+            self.push_undo(GroupUndo::Personal {
                 local,
                 prev: Box::new(snap),
             });
@@ -2945,7 +3087,7 @@ impl GroupState {
     /// Sol 整改 1：簿变更前的可逆快照（本 tick 首次变更保存；后续复用）。
     fn save_plan_book_undo(&mut self) {
         if !self.plan_undo_saved {
-            self.undo.push(GroupUndo::PlanBook {
+            self.push_undo(GroupUndo::PlanBook {
                 prev: Box::new(self.plan_book.clone()),
             });
             self.plan_undo_saved = true;
@@ -3315,7 +3457,7 @@ impl GroupState {
                 prev.is_none(),
                 "组内子单在途票重复置入：{account:?} {code:?}"
             );
-            self.undo.push(GroupUndo::ChildInFlight {
+            self.push_undo(GroupUndo::ChildInFlight {
                 account,
                 code: code.clone(),
                 prev: None,
@@ -3496,7 +3638,7 @@ impl GroupState {
                 // retail 的 undo 入账 + belief 位 observe 链（借用已释放）。
                 for (local, prev_due) in std::mem::take(&mut pending_next_due) {
                     self.decide_calls_total += 1;
-                    self.undo.push(GroupUndo::NextDue { local, prev: prev_due });
+                    self.push_undo(GroupUndo::NextDue { local, prev: prev_due });
                 }
                 for local in chain_due {
                     let (_record, child_ops, cancels) =
@@ -3712,15 +3854,15 @@ impl GroupState {
                     // Sol 五审：在途买占用镜像（全部买单——公开现金口径
                     // 的加回面；成交/退款由 apply_staging 实体驱动减）。
                     acct.buy_purse_held_cents += purse;
-                    self.undo.push(GroupUndo::Cash {
+                    self.push_undo(GroupUndo::Cash {
                         local: p.local,
                         delta: -purse,
                     });
-                    self.undo.push(GroupUndo::BuyPurseHeld {
+                    self.push_undo(GroupUndo::BuyPurseHeld {
                         local: p.local,
                         delta: purse,
                     });
-                    self.undo.push(GroupUndo::ForeignActive {
+                    self.push_undo(GroupUndo::ForeignActive {
                         local: p.local,
                         stock: p.stock,
                         delta: 1,
@@ -3778,23 +3920,23 @@ impl GroupState {
                     // Sol 五审：在途卖余量镜像（全部卖单——公开持仓
                     // "在手+在途"口径；成交/退款实体驱动减）。
                     acct.pending_sell_qty[p.stock as usize] += p.qty;
-                    self.undo.push(GroupUndo::Shares {
+                    self.push_undo(GroupUndo::Shares {
                         local: p.local,
                         stock: p.stock,
                         delta: -(p.qty as i32),
                     });
-                    self.undo.push(GroupUndo::ForeignActive {
+                    self.push_undo(GroupUndo::ForeignActive {
                         local: p.local,
                         stock: p.stock,
                         delta: 1,
                     });
-                    self.undo.push(GroupUndo::PendingSell {
+                    self.push_undo(GroupUndo::PendingSell {
                         local: p.local,
                         stock: p.stock,
                         delta: i64::from(p.qty),
                     });
                     if let Some(prev) = ever_flip {
-                        self.undo.push(GroupUndo::EverHeld {
+                        self.push_undo(GroupUndo::EverHeld {
                             local: p.local,
                             stock: p.stock,
                             prev,
@@ -4595,8 +4737,27 @@ pub fn group_main(
         };
         match msg {
             GroupIn::Batch(batch) => {
+                // eager 分域即时相：到达即应用 F1/F2/F3（等待窗=组空闲
+                // recv——与协调者收 DeskReport 的 Seal 屏障重叠，回收串行
+                // 税）；F4/F5/F6 暂存延迟相（Continue/Seal 消息点重放）。
+                // 失败显式上报（与 Seal 期处理同形态——不静默）。
                 state.observed.push(Observed::Batch(batch.tick));
-                state.staging.push(batch);
+                // SealAck 后到达=锁步破坏面（计数供 Start 防御；日结 Drain
+                /// 序列由 DayEnd 消化清零——批次本身照常即时应用，防御
+                /// 不改变落账行为只改变上报时点）。
+                if state.seal_acked_len.is_some() {
+                    state.batches_after_seal += 1;
+                }
+                let (cur_tick, cur_round) = (state.cur_tick, state.cur_round);
+                if let Err(e) = state.apply_batch_immediate(batch, cur_tick, cur_round) {
+                    abort.store(true, Ordering::SeqCst);
+                    let _ = up_tx.send(UpMsg::Failed {
+                        who,
+                        error: e.clone(),
+                    });
+                    result = Err(e);
+                    break;
+                }
             }
             GroupIn::Start { tick, snapshot } => {
                 state.observed.push(Observed::Start(tick));
@@ -5252,8 +5413,17 @@ pub fn group_main(
                 loop {
                     match rx.try_recv() {
                         Ok(GroupIn::Batch(batch)) => {
+                            // eager 分域即时相（Seal drain 批次与等待窗批次
+                            /// 同路径——S4 FIFO 锁步语义不变）。
                             state.observed.push(Observed::Batch(batch.tick));
-                            state.staging.push(batch);
+                            if let Err(e) =
+                                state.apply_batch_immediate(batch, tick, round_final)
+                            {
+                                abort.store(true, Ordering::SeqCst);
+                                let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                                result = Err(e);
+                                break;
+                            }
                         }
                         Ok(GroupIn::AcceptedBatch { entries }) => {
                             for (stock, owner, order_serial) in entries {
@@ -5298,9 +5468,11 @@ pub fn group_main(
                 if result.is_err() {
                     break;
                 }
-                // 终轮落账（S2）：staging 只剩终轮批次（Continue 链早轮已
-                /// 随各自 handle_continue 消费）。
-                if let Err(e) = state.apply_staging(tick, round_final) {
+                // 终轮延迟相（S2 落账点唯一化——eager 分域版）：即时相
+                /// 已随 Batch 到达/Seal drain 应用；此处重放 F4/F5/F6
+                /// 延迟域（早轮批次的延迟项已随各自 handle_continue
+                /// 消费，只剩终轮）。
+                if let Err(e) = state.apply_deferred() {
                     abort.store(true, Ordering::SeqCst);
                     let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
                     result = Err(e);
@@ -5309,41 +5481,23 @@ pub fn group_main(
                 // Q2：final_hash 用 O(1) 指纹口径（设计稿 §3.2——与
                 /// committed_hash 同族合成，**非** state_hash 全名册遍历：
                 /// B 口径 20000×5 股×8 域的 O(N) 哈希 ≈2ms/tick 串行屏障
-                /// 实测打回）。指纹含落账事实量（undo 长度+staging 余量）
+                /// 实测打回）。指纹含落账事实量（undo 长度+延迟载荷余量）
                 /// 供未来 Abort 对账观察点扩展。
                 let final_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick ^ ((round_final as u64) << 32))
                     .wrapping_mul(0x100000001b3)
                     ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-                // Q2 批 3：账户稀疏分片随 SealAck 上行——Seal 落账后
-                /// undo 集即本拍全部账户写点（决策扣除+全部轮成交+退款
-                /// 终结；staging 已 drain 落账）。竞态根因（组报告时点
-                /// 批次在途）由 Seal 的 S4 不变量消除。
-                let mut account_dirty: std::collections::BTreeSet<u32> = Default::default();
-                for entry in &state.undo {
-                    match entry {
-                        GroupUndo::Cash { local, .. }
-                        | GroupUndo::Shares { local, .. }
-                        | GroupUndo::ForeignActive { local, .. }
-                        | GroupUndo::Frozen { local, .. }
-                        | GroupUndo::CostBasis { local, .. }
-                        | GroupUndo::EverHeld { local, .. }
-                        | GroupUndo::PendingSell { local, .. }
-                        | GroupUndo::BuyPurseHeld { local, .. } => {
-                            account_dirty.insert(*local);
-                        }
-                        GroupUndo::NextDue { .. }
-                        | GroupUndo::Personal { .. }
-                        | GroupUndo::PlanBook { .. }
-                        | GroupUndo::ChildInFlight { .. } => {}
-                    }
-                }
-                let accounts_sparse: Vec<(_, _)> = account_dirty
+                // Q2 批 3+eager 分域：账户稀疏分片随 SealAck 上行——
+                /// account_dirty_set 由 push_undo 即时维护（决策扣除+
+                /// 全部轮即时域落账的写点；等待窗/Seal drain 消化），Seal
+                /// 临界路径免原 O(undo_len) 全日志重扫。集合族与原扫描
+                /// 口径逐族一致（8 个账户域族），等价替换。
+                let accounts_sparse: Vec<(_, _)> = std::mem::take(&mut state.account_dirty_set)
                     .into_iter()
                     .filter_map(|local| {
                         state
                             .accounts
                             .get(local as usize)
-                            .map(|acct| (local as LocalIdx, acct.clone()))
+                            .map(|acct| (local, acct.clone()))
                     })
                     .collect();
                 if up_tx
@@ -5361,6 +5515,12 @@ pub fn group_main(
                     });
                     break;
                 }
+                // eager 分域守卫：记录 SealAck 发送点的日志长度基线。
+                // ①日结 Drain 批次的即时记录（Seal 后、DayEnd 前到达）在
+                //   日结隐式转正时保留（drain 前段=上一 tick 记录）；
+                // ②Start 防御以基线判"Seal 后批次绕锁步"（超基线即证据）。
+                state.seal_acked_len = Some(state.undo.len());
+                state.batches_after_seal = 0;
             }
             GroupIn::EchoAccountsSparse { wanted } => {
                 // P2-4a：生产回写段稀疏上行——只回驱动器 dirty 集指名的
@@ -5419,9 +5579,10 @@ pub fn group_main(
             }
             GroupIn::Shutdown => {
                 state.observed.push(Observed::Shutdown);
-                // Drain 实体批次已先于 Shutdown 入队（FIFO）：期末名册须含全部回流。
-                let (cur_tick, cur_round) = (state.cur_tick, state.cur_round);
-                if let Err(e) = state.apply_staging(cur_tick, cur_round) {
+                // Drain 实体批次已先于 Shutdown 入队（FIFO）且即时相已
+                /// 落账（eager 分域）：期末名册须含全部回流——延迟相补齐
+                /// F4/F5/F6 后上交 Final。
+                if let Err(e) = state.apply_deferred() {
                     abort.store(true, Ordering::SeqCst);
                     let _ = up_tx.send(UpMsg::Failed {
                         who,
@@ -5729,7 +5890,7 @@ mod sol_recheck3_tests {
     fn sol4th_full_fill_completes_plan_to_terminal() {
         let mut state = chain_harness_target(Side::Buy, 100);
         state.accounts[0].cash = 1_000_000;
-        state.staging.push(batch(
+        state.apply_batch_immediate(batch(
             Vec::new(),
             vec![FillFact {
                 order: (0, 5),
@@ -5741,9 +5902,9 @@ mod sol_recheck3_tests {
                 stamp_tax: 0,
                 transfer_fee: 1,
             }],
-        ));
+        ), 1, 0);
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("全额成交正常推进");
         // terminal 记录不再出现在 active 面——按 id 直查（记录保留在簿）。
         let plan = state
@@ -5794,7 +5955,7 @@ mod sol_recheck3_tests {
     #[test]
     fn sol3_fill_with_foreign_order_fails_instead_of_eating_the_leg() {
         let mut state = chain_harness(Side::Buy);
-        state.staging.push(
+        state.apply_batch_immediate(
             batch(
                 Vec::new(),
                 vec![FillFact {
@@ -5808,12 +5969,14 @@ mod sol_recheck3_tests {
                     transfer_fee: 0,
                 }],
             ),
+            1,
+            0,
         );
         // Sol 六审勘正：外来同键单成交=合法形态（意图路由/测试注入）——
         /// 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
         /// 杀死合法外来单的拍——sol7th_foreign 场景红证）。
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("外来单成交跳过（不构成失败）");
         let plan = state
             .plan_book
@@ -5834,7 +5997,7 @@ mod sol_recheck3_tests {
         // 卖出扣除后（挂单在途）：在手 0；挂出时镜像加 200。
         state.accounts[0].shares[0] = 0;
         state.accounts[0].pending_sell_qty[0] = 200;
-        state.staging.push(batch(
+        state.apply_batch_immediate(batch(
             Vec::new(),
             vec![FillFact {
                 order: (0, 5),
@@ -5846,9 +6009,9 @@ mod sol_recheck3_tests {
                 stamp_tax: 50,
                 transfer_fee: 1,
             }],
-        ));
+        ), 1, 0);
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("本单部分成交正常推进");
         // session 镜像口径（fill 推进减 fill.qty）。
         assert_eq!(state.accounts[0].pending_sell_qty[0], 100, "镜像减成交部分");
@@ -5888,7 +6051,7 @@ mod sol_recheck3_tests {
         const PURSE0: i64 = 200_000 + 500 + 2;
         const CHARGE: i64 = 90_000 + 500 + 1;
         state.accounts[0].cash = 1_000_000 - PURSE0;
-        state.staging.push(batch(
+        state.apply_batch_immediate(batch(
             Vec::new(),
             vec![FillFact {
                 order: (0, 5),
@@ -5900,9 +6063,9 @@ mod sol_recheck3_tests {
                 stamp_tax: 0,
                 transfer_fee: 1,
             }],
-        ));
+        ), 1, 0);
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("本单部分成交正常推进");
         let face = cash_with_pending_at(
             &state.accounts[0],
@@ -5944,13 +6107,20 @@ mod sol_recheck3_tests {
         let mut state = chain_harness(Side::Sell);
         state.accounts[0].foreign_active[0] = 1;
         state
-            .staging
-            .push(batch(vec![Entity::Closed {
-                local: 0,
-                order_serial: 88,
-            }], Vec::new()));
+            .apply_batch_immediate(
+                batch(
+                    vec![Entity::Closed {
+                        local: 0,
+                        order_serial: 88,
+                    }],
+                    Vec::new(),
+                ),
+                1,
+                0,
+            )
+            .expect("他单终结批次即时相落账");
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("他单终结不构成失败（资源实体照常落账）");
         let key = (crate::AccountId(9), crate::StockId(0));
         assert!(
@@ -5968,13 +6138,20 @@ mod sol_recheck3_tests {
         // 对照：本单（serial 5）的 Closed 正常释放。
         state.accounts[0].foreign_active[0] = 1;
         state
-            .staging
-            .push(batch(vec![Entity::Closed {
-                local: 0,
-                order_serial: 5,
-            }], Vec::new()));
+            .apply_batch_immediate(
+                batch(
+                    vec![Entity::Closed {
+                        local: 0,
+                        order_serial: 5,
+                    }],
+                    Vec::new(),
+                ),
+                1,
+                0,
+            )
+            .expect("本单终结批次即时相落账");
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("本单终结正常释放");
         assert!(
             !state.child_in_flight.contains_key(&key),
@@ -6001,22 +6178,26 @@ mod sol_recheck3_tests {
         // desk 真实形态：卖单终结 Closed 与余股回流 RefundedShares 成对
         //（镜像回收由 RefundedShares 实体驱动——Sol 五审统一口径）。
         state
-            .staging
-            .push(batch(
-                vec![
-                    Entity::RefundedShares {
-                        local: 0,
-                        qty: 200,
-                    },
-                    Entity::Closed {
-                        local: 0,
-                        order_serial: 42,
-                    },
-                ],
-                Vec::new(),
-            ));
+            .apply_batch_immediate(
+                batch(
+                    vec![
+                        Entity::RefundedShares {
+                            local: 0,
+                            qty: 200,
+                        },
+                        Entity::Closed {
+                            local: 0,
+                            order_serial: 42,
+                        },
+                    ],
+                    Vec::new(),
+                ),
+                1,
+                0,
+            )
+            .expect("即时相落账");
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("未受理票的 Closed 正常释放");
         assert!(
             !state.child_in_flight.contains_key(&key),
@@ -6037,7 +6218,7 @@ mod sol_recheck3_tests {
         state.accounts[0].pending_sell_qty[0] = 200;
         // desk 拒收形态：RefundedShares（卖单原路退回）+ Closed 与回执
         // 同批（reject() 三件套）。
-        state.staging.push(DeskBatch {
+        state.apply_batch_immediate(DeskBatch {
             stock: 0,
             tick: 1,
             round: 0,
@@ -6057,9 +6238,9 @@ mod sol_recheck3_tests {
                 owner: (0, 0),
                 kind: crate::runtime::ReceiptKind::PriceOutOfBand,
             }],
-        });
+        }, 1, 0);
         state
-            .apply_staging(1, 0)
+            .apply_deferred()
             .expect("未受理票的拒收回执正常释放");
         assert!(
             !state.child_in_flight.contains_key(&key),

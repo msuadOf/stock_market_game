@@ -1,0 +1,18 @@
+6237 | |             }],
+6238 | |         }, 1, 0);
+6218 |         let _ = state.apply_batch_immediate(DeskBatch {
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/engine-e2b004eecda01d2b)
+running 1 test
+test runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back ... FAILED
+failures:
+---- runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back stdout ----
+thread 'runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back' (1369084) panicked at packages/engine/src/runtime/group.rs:6591:13:
+assertion `left == right` failed: Abort 全冲回=拍前态（delta 可交换性，到达序 0）
+  left: 16291666115133485549
+ right: 6142714959533374422
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+failures:
+    runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1685 filtered out; finished in 0.00s
+error: test failed, to rerun pass `-p engine --lib`
