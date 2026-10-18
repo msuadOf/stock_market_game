@@ -127,3 +127,19 @@ Sol 一审判四阻断+台账勘误；第 22 任逐项修复（红证先行+突�
 台账勘误同步落地：A 基线 1332.6（544.7 是 B）/D1 EchoPlans 生产往返
 仍在/D5 补终态（部分落地）/events 段=默认占位/"零会话层税"改方向口径
 /R19 登记三项补处置结果（§五）。
+
+## 十、第 22 批独立复核（independent-review-sol-blockers-r22.txt）
+
+判定：**阻断 0**；建议 4（登记级，处置如下——fork 隔离 worktree 复跑
++两项独立突变实证 P1-1/P2-4 判别力）：
+
+1. seal_round 迟到 Ack"先到先计"窄竞态（上一失败尝试 Ack 先于本轮真
+   Ack 到达——分片取值依赖"Abort 重跑确定性⇒两值同源"论证，注释已
+   锚定）→ **登记**：失败恢复路径窄竞态、不可确定性构造测试；协议
+   演进可给 Seal/SealAck 加尝试代号消歧。
+2. converge_round 跳过全部 SealAck 的判别边界（单协调者广播时序承载
+   "收束期无本拍真 Ack"）→ **登记**：组自驱 Seal/多协调者演进时复评。
+3. publication belief 行级对账在 World 级空转（basic_spec belief_seeds
+   空⇒分片空集；真锚=drive 四面对账，测试注释已自标）→ **登记**：
+   后续给 World fixture 补 belief_seeds 使非空转。
+4. acks_seen 非测试构建死写 → **已修**（计数改 cfg(test) 落地）。
