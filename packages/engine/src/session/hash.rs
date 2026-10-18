@@ -210,16 +210,24 @@ impl GameSession {
         // P2-4：ledger 每拍维护退役——hash 从派生投影（快照→envelopes→
         // 同构临时 ledger 的 hash_projection；构造与原全量重建同一函数，
         // 内容等价由同源性承载）。
-        let derived_envelopes = self.runtime_derive_envelopes()?;
-        let derived_ledger = crate::session::pipeline::EnvelopeLedger::new(
-            self.state.next_receipt_base,
-            derived_envelopes,
-        )
-        .map_err(|fatal| StepFatal::InvariantViolation {
-            description: format!("派生信封账本构建失败：{fatal:?}"),
-            location: "state_hash.envelope_derived".to_owned(),
-        })?;
-        hash.field(&derived_ledger.hash_projection())?;
+        // Sol 复核阻断 P2-4：无快照（旧管线维护中/restore 未步进/shadow
+        // 边界）读**实际 ledger**——统一"有快照派生、无快照读实际
+        // ledger"合同（对齐 save 面 saved_runtime 的分支先例）；无条件
+        // 派生使非空 ledger 漏出 hash。
+        if self.state.runtime_resting_snapshot.is_some() {
+            let derived_envelopes = self.runtime_derive_envelopes()?;
+            let derived_ledger = crate::session::pipeline::EnvelopeLedger::new(
+                self.state.next_receipt_base,
+                derived_envelopes,
+            )
+            .map_err(|fatal| StepFatal::InvariantViolation {
+                description: format!("派生信封账本构建失败：{fatal:?}"),
+                location: "state_hash.envelope_derived".to_owned(),
+            })?;
+            hash.field(&derived_ledger.hash_projection())?;
+        } else {
+            hash.field(&self.state.envelope_ledger.hash_projection())?;
+        }
         hash.field(&self.state.retail_projection_seen)?;
         hash.field(&(
             self.state.next_order_id,

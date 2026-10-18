@@ -3958,3 +3958,36 @@ fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
         "save-restore 往返保清仓经历行"
     );
 }
+
+/// Sol 复核阻断 P2-4：无快照时业务 hash 必须读实际 ledger（统一
+/// "有快照派生、无快照读实际 ledger"合同——对齐 save 面分支先例）。
+/// 对照组设计：同一存档 restore（无快照），在途完整档 vs 清空
+/// live_envelopes 的合法空在途档——两者 hash 必须不同（派生空集
+/// 形态下两者相等=账本面漏出 hash；旧管线/restore/shadow 同病）。
+#[test]
+fn sol_r22_restored_session_business_hash_reads_actual_ledger() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 240;
+    let (mut game, _seller) = p1_1_resting_fixture(setup);
+    // 前提：在途非空（信封账本面非平凡）。
+    assert!(
+        !game
+            .project_live_envelopes()
+            .expect("存档前投影")
+            .is_empty(),
+        "fixture 前提：在途非空"
+    );
+    let mut save = game.save().expect("存档");
+    let full = GameSession::restore(&save).expect("restore（在途完整档——未步进无快照）");
+    // 对照档：清空 live_envelopes（runtime 空在途合法形态）。
+    save.runtime_state.live_envelopes.clear();
+    let emptied = GameSession::restore(&save).expect("restore（空在途对照档）");
+    assert_ne!(
+        full.business_state_hash().expect("完整档 hash"),
+        emptied.business_state_hash().expect("空在途档 hash"),
+        "无快照 hash 须读实际 ledger——在途面差异必须可见（派生空集漏账本面）"
+    );
+}
+
+
+
