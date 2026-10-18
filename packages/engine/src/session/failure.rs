@@ -931,6 +931,9 @@ impl GameSession {
                 }
                 events.push(event);
             }
+            // Sol 收官再复核阻断 3：撤单事件在 DayBoundary 序号分配
+            /// 之后编号（输出序=编号序的收尾段）。
+            driver.collect_drained_lifecycle_after_boundary();
             // P2 复核阻断 2：生产日结路径（此前仅手动 driver.day_end 设
             // force_full，生产 ends_day 段不设——组端 Drain 回流/
             // AdminBatch 无逐账户 desk 事实，session 镜像漏同步）。日结

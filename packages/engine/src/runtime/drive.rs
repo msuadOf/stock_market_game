@@ -1322,24 +1322,33 @@ impl RuntimeDriver {
 
     /// 清簿撤单事实转事件（seq 分配），并入待取缓冲。
     fn collect_drained_events(&mut self) {
-        // Sol 六审收官复核阻断 3：seq 分配序=输出序——先给竞价事件
-        //（收盘清算 AuctionTick/AuctionCompleted，输出在 DayBoundary
-        // 之前）编号，再给撤单事件（DayBoundary 之后）编号。此前先
-        // 给撤单编号再重排输出，末拍 seq 呈 22→23→24→21 非单调
-        //（batch4_seq 族判别面）。
+        // Sol 收官再复核阻断 3（最终形态）：分段编号分段取——竞价事件
+        ///（DayBoundary 之前输出）先入独立缓冲；撤单事件编号**延迟**到
+        /// DayBoundary 序号分配之后（collect_drained_lifecycle_after_
+        /// boundary）。此前一次性编号使 DayBoundary(24) 晚于撤单(23)
+        /// 而输出在其前——seq 非单调。
+        self.collect_drained_auction_events();
+    }
+
+    /// 日结竞价事件段（DayBoundary 之前输出）——立即编号。
+    fn collect_drained_auction_events(&mut self) {
         let drained_auction = std::mem::take(&mut self.world.drained_auction);
-        let mut auction_events = Vec::new();
         if !drained_auction.is_empty() {
-            auction_events = project_auction_events(&drained_auction, &mut self.next_seq);
+            let mut auction_events = project_auction_events(&drained_auction, &mut self.next_seq);
+            if !auction_events.is_empty() {
+                self.drained_events.append(&mut auction_events);
+            }
         }
+    }
+
+    /// 日结撤单事件段（DayBoundary 之后输出）——在 DayBoundary 序号
+    /// 分配完成后由 failure.rs 段调用编号。
+    pub fn collect_drained_lifecycle_after_boundary(&mut self) {
         let drained = std::mem::take(&mut self.world.drained_lifecycle);
         if !drained.is_empty() {
             let input = collect_lifecycle(&drained, &[]);
             self.drained_events
                 .extend(project_lifecycle_events(&input, &mut self.next_seq));
-        }
-        if !auction_events.is_empty() {
-            self.drained_events.append(&mut auction_events);
         }
     }
 
@@ -1401,6 +1410,9 @@ impl RuntimeDriver {
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败：{e:?}"))?;
         self.collect_drained_events();
+        // driver 直调路径无 DayBoundary 事件——撤单段紧随竞价段编号
+        ///（编号序=输出序：auction → lifecycle）。
+        self.collect_drained_lifecycle_after_boundary();
         session.advance_runtime_market_day();
         if let Err(e) = session.end_civil_day() {
             self.rollback_day_end(

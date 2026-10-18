@@ -3360,7 +3360,13 @@ impl GameSession {
                                         original_qty: qty.saturating_add(*fq),
                                         filled_qty: *fq,
                                         filled_value: Money::from_cents(*fv),
-                                        seq: *serial,
+                                        // 收官再复核建议 1：seq 保留**本地时间序**
+                                        ///（desk serial——"每股下一时间序"域，
+                                        /// orderbook.rs 恢复约束 seq<next_seq
+                                        /// 与游标链同基）；id 才是 wire 编码
+                                        /// 身份。此前写编码值使 seq≈2^32 域
+                                        /// 漂移。
+                                        seq: crate::runtime::group::desk_order_serial(*serial),
                                     }
                                 })
                                 .collect::<Vec<Order>>(),

@@ -101,7 +101,11 @@ fn negative_control(
             Err(error) => {
                 // The same public operation must pass with ONLY the disabled
                 // merge restored. This excludes unrelated fixture/runtime errors.
-                let mut control = ProtocolSession::restore_verification_checkpoint(&before)
+                let mut control =
+                    ProtocolSession::restore_verification_checkpoint_with_compute(
+                        &before,
+                        compute.clone(),
+                    )
                     .map_err(|error| error.to_string())?;
                 let control_policy = ExecutorPerturbation {
                     disable_merge: None,
@@ -114,7 +118,11 @@ fn negative_control(
                 // Scripted enqueueing precedes the step checkpoint. Compare the
                 // post-enqueue authority, not the pre-enqueue SaveSlot.
                 let after = session.game().save().map_err(|error| error.to_string())?;
-                let mut expected = ProtocolSession::restore_verification_checkpoint(&before)
+                let mut expected =
+                    ProtocolSession::restore_verification_checkpoint_with_compute(
+                        &before,
+                        compute.clone(),
+                    )
                     .map_err(|error| error.to_string())?;
                 enqueue_script(&mut expected)?;
                 let expected_bytes =
@@ -194,7 +202,7 @@ pub(super) fn capture_runtime(
     seed: u64,
     compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<RuntimeCapture, String> {
-    capture_runtime_with_session(seed, initial_session(seed, compute)?)
+    capture_runtime_with_session(seed, initial_session(seed, compute.clone())?, compute)
 }
 
 #[cfg(test)]
@@ -221,12 +229,13 @@ pub(super) fn capture_short_restore_runtime(seed: u64) -> Result<RuntimeCapture,
             },
         )
         .map_err(|error| error.to_string())?;
-    capture_runtime_with_session(seed, session)
+    capture_runtime_with_session(seed, session, compute)
 }
 
 fn capture_runtime_with_session(
     seed: u64,
     mut session: ProtocolSession,
+    compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<RuntimeCapture, String> {
     let mut capture = Accumulator::default();
     let mut restore_slots = Vec::new();
@@ -234,7 +243,12 @@ fn capture_runtime_with_session(
         let frame = step_scripted(&mut session)?;
         capture.frame(seed, frame, &session)?;
     }
-    restore_slots.push(capture.restore_slot(seed, "intraday-quiet-point", &mut session)?);
+    restore_slots.push(capture.restore_slot(
+            seed,
+            "intraday-quiet-point",
+            &mut session,
+            compute.clone(),
+        )?);
     while !session
         .civil_day_ready()
         .map_err(|error| error.to_string())?
@@ -253,7 +267,12 @@ fn capture_runtime_with_session(
     );
     capture.snapshots.push(authoritative_checkpoint(&session)?);
     capture.civil_updates += 1;
-    restore_slots.push(capture.restore_slot(seed, "post-civil-quiet-point", &mut session)?);
+    restore_slots.push(capture.restore_slot(
+            seed,
+            "post-civil-quiet-point",
+            &mut session,
+            compute.clone(),
+        )?);
     Ok(RuntimeCapture {
         snapshots: capture.snapshots,
         updates: capture.updates,
@@ -350,12 +369,17 @@ impl Accumulator {
         seed: u64,
         name: &str,
         session: &mut ProtocolSession,
+        compute: std::sync::Arc<engine::ComputeContext>,
     ) -> Result<RestoreSlotCapture, String> {
         let saved = authoritative_checkpoint(session)?;
         let saved = serde_json::to_vec(&saved).map_err(|error| error.to_string())?;
         let decoded: SaveSlot =
             serde_json::from_slice(&saved).map_err(|error| error.to_string())?;
-        let mut restored = ProtocolSession::restore_verification_checkpoint(&decoded)
+        let mut restored =
+            ProtocolSession::restore_verification_checkpoint_with_compute(
+                &decoded,
+                compute,
+            )
             .map_err(|error| error.to_string())?;
         let restored_bytes = serde_json::to_vec(&authoritative_checkpoint(&restored)?)
             .map_err(|error| error.to_string())?;
@@ -479,7 +503,7 @@ fn initial_session_with_setup(
     /// from_game_for_verification 装协议面——A5 退役生产注入面后
     /// shared_default 恒绑 128 核全局池，预算隔离失效。
     let game =
-        engine::GameSession::new_with_compute(setup, seed, compute).map_err(|e| e.to_string())?;
+        engine::GameSession::new_with_compute(setup, seed, compute.clone()).map_err(|e| e.to_string())?;
     let session = engine::session::protocol::ProtocolSession::from_game_for_verification(game, None);
     let mut initial = session.game().save().map_err(|error| error.to_string())?;
     // A declared initial allocation, not a runtime mutation: transfer 1,000
@@ -531,7 +555,7 @@ fn initial_session_with_setup(
                 },
             );
     }
-    ProtocolSession::restore_verification_checkpoint(&initial)
+    ProtocolSession::restore_verification_checkpoint_with_compute(&initial, compute.clone())
         .map_err(|error| format!("frozen initial allocation restore: {error}"))
 }
 

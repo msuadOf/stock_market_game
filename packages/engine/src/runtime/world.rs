@@ -1747,6 +1747,20 @@ impl World {
 
     fn run_day_end(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {
         let day = ((day_final_tick - 1) / self.ticks_per_day) as u32;
+        // Sol 收官再复核阻断 4：日结序列任一失败路径（Drain/组翻/校验）
+        /// 都必须清空 Drain 期间上行的事实缓冲——重跑会重新 Drain 产生
+        /// 同名事实，残留使缓冲双载（此前仅 abort_day_end 清，run_day_end
+        /// 内部失败绕过）。
+        let result = self.run_day_end_inner(day_final_tick);
+        if result.is_err() {
+            self.drained_lifecycle.clear();
+            self.drained_auction.clear();
+        }
+        result
+    }
+
+    fn run_day_end_inner(&mut self, day_final_tick: u64) -> Result<(), RuntimeError> {
+        let day = ((day_final_tick - 1) / self.ticks_per_day) as u32;
         // ① Drain。
         for tx in &self.desk_txs {
             tx.send(DeskMsg::Drain)

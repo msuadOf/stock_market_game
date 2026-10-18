@@ -2,8 +2,10 @@
 # +atomics/build-std 链接链与共享内存（SharedArrayBuffer）隔离门一并退役；
 # wasm32 走稳定工具链串行管线（本期 wasm 语义，登记为简化——
 # docs/trading-rules 与 memory/project_std_thread_migration）。
-# rustflags 显式置空：屏蔽主仓 checkout 目录链上级 .cargo/config.toml 的
-# 历史原子链接参数（本 worktree 合并 main 后该覆盖自然消亡）。
+# 注意：Cargo 的 rustflags 跨目录链**合并**（非替换）——本文件的空
+# rustflags 不能屏蔽主仓 checkout 上级 .cargo/config.toml 的历史原子
+# 参数；本 worktree 内 wasm 查询需 RUSTFLAGS="" 覆盖（已实测全绿）。
+# 合并 main 后主仓配置更新为同形即自然消（环境待合并项，非代码缺陷）。
 [target.wasm32-unknown-unknown]
 rustflags = []
 

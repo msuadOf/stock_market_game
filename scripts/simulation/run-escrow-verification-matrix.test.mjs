@@ -136,7 +136,7 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
 
 function validPerformanceReport() {
   const workload = { scenario: "scenario", seed: "1", setup_manifest: { schema: "fixture" }, completed_ticks: 10, repetitions: 1, profile: "release", features: ["verification-harness"] };
-  const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1, rayon_threads: 1 };
+  const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1 };
   const sample = (after) => ({
     wall_ns: "100", peak_process_tree_rss_bytes: 10, completed_ticks: 10, workload, environment_contract,
     ticks_per_second: 100_000_000,
@@ -146,7 +146,7 @@ function validPerformanceReport() {
       process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 },
       runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } },
     },
-    rayon_registry_capacity_samples: after ? [1] : null, stderr: "",
+    stderr: "",  // 批 9 A7：rayon_registry_capacity_samples 键退役
   });
   const aggregate = { sample_count: 1, ticks_per_second: { minimum: 100_000_000, maximum: 100_000_000, mean: 100_000_000 }, peak_process_tree_rss_bytes: { minimum: 10, maximum: 10, mean: 10 } };
   return {
@@ -182,10 +182,10 @@ describe("escrow verification matrix runner", () => {
 
   it("rejects a forged PASS performance sample whose throughput is not derived from wall time", () => {
     const workload = { scenario: "s", seed: "1", setup_manifest: { schema: "s" }, completed_ticks: 10, repetitions: 1, profile: "release", features: [] };
-    const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1, rayon_threads: 1 };
+    const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1 };
     const sample = (after) => ({ wall_ns: "100", peak_process_tree_rss_bytes: 10, completed_ticks: 10, workload,
       environment_contract, ticks_per_second: 100_000_000, phase_wall_ns: after ? Object.fromEntries(["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"].map((phase) => [phase, "1"])) : null,
-      process_tree_thread_state: { schema: "linux-process-tree-thread-state", schema_version: 1, sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1, process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 }, runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } } }, rayon_registry_capacity_samples: after ? [1] : null, stderr: "" });
+      process_tree_thread_state: { schema: "linux-process-tree-thread-state", schema_version: 1, sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1, process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 }, runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } } }, stderr: "" });
     const report = { schema: "escrow-performance-report", schema_version: 3, status: "PASS", generated_at: "2026-01-01T00:00:00.000Z", workload, environment_contract,
       environment_manifest: { fixture: true }, measurement_contract: { same_machine_for_both_sides: true, same_workload_for_both_sides: true,
         comparison_key_fields: ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features", "environment_contract"],
