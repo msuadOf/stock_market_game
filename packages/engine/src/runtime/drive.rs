@@ -106,6 +106,17 @@ pub struct RuntimeDriver {
     /// P2-1b 红证计数（cfg(test)）：账户回写实际写入次数。
     #[cfg(test)]
     account_writes: u64,
+    /// candle 退役战役突变旋钮 1（cfg(test)）：安装读路径的 active K
+    /// close 篡改 +1 分——判别"install 真从发布版本读"（合同
+    /// candle_install_matches_desk_authoristry 开旋钮必红）。批 1 桩：
+    /// 读路径未接发布版本，旋钮无效果→旋钮测试红（注入面红先行）。
+    #[cfg(test)]
+    candle_knob_tamper_active: bool,
+    /// candle 退役战役突变旋钮 2（cfg(test)）：安装读路径的
+    /// trade_stats.turnover_cents 置 0——判别 stats 2 字段贯通（合同 1
+    /// 的 trade_stats 对照红）。批 1 桩同上。
+    #[cfg(test)]
+    candle_knob_drop_turnover: bool,
     /// P2-2a：信念全量缓存（全局名册序——稀疏上行增量合并；构造期
     /// =belief_seeds 同源投影，collect_belief 读面由它承载全量语义）。
     belief_cache: Vec<Option<super::world::BeliefParticipantSnapshot>>,
@@ -507,6 +518,10 @@ impl RuntimeDriver {
             force_full_accounts: true,
             #[cfg(test)]
             account_writes: 0,
+            #[cfg(test)]
+            candle_knob_tamper_active: false,
+            #[cfg(test)]
+            candle_knob_drop_turnover: false,
             belief_cache,
             drained_events: Vec::new(),
             pending_rejections: Vec::new(),
@@ -1785,6 +1800,20 @@ impl RuntimeDriver {
         self.account_writes
     }
 
+    /// candle 退役战役旋钮 1（cfg(test)）：安装读路径 active close +1
+    /// 分（合同 1 开旋钮必红——判别 install 数据源）。
+    #[cfg(test)]
+    pub fn candle_knob_tamper_active_for_test(&mut self) {
+        self.candle_knob_tamper_active = true;
+    }
+
+    /// candle 退役战役旋钮 2（cfg(test)）：安装读路径 turnover 置 0
+    ///（合同 1 的 trade_stats 对照红——判别 stats 2 字段贯通）。
+    #[cfg(test)]
+    pub fn candle_knob_drop_turnover_for_test(&mut self) {
+        self.candle_knob_drop_turnover = true;
+    }
+
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面——**全量语义**
     /// 读面；生产安装链的 dirty 过滤在 step 内部承载，不经此面。
     /// P2-1a：随附 dirty 掩码（读面一般忽略；同源校验可用）。
@@ -2299,9 +2328,15 @@ impl RuntimeDriver {
         Ok(())
     }
 
-    /// desk K 数据抽取（测试面通道；生产每步安装走 install_candles）。
+    /// desk K 数据抽取（**测试对账面通道**；candle 退役刀 1 后生产
+    /// install_candles 改读发布版本——本通道保留为 desk 权威对照的
+    /// 唯一测试面。**生产零调用验证**：全仓 `grep -rn
+    /// "world_desk_finals_for_candles\|take_candle_projection" --include
+    /// ="*.rs"` 中生产调用点只允许 install_candles_with_mode 批 1 前
+    /// 形态——刀 1 落地后生产侧零引用（仅本 pub(crate) 测试面+sever
+    /// 断连守卫单测），复活生产调用须经 candle 设计稿复核）。
     /// Sol 二审修复集 3：收集错误全传播（不吞发送失败/异常消息）。
-    fn world_desk_finals_for_candles(
+    pub(crate) fn world_desk_finals_for_candles(
         &mut self,
     ) -> Result<
         Vec<(
