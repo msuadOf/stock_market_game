@@ -803,6 +803,19 @@ pub struct IngressReceiptCursors {
     pub next_stock_ordinal: BTreeMap<StockId, u64>,
 }
 
+/// P2-4（视图内生战役）：信封派生快照——发布版本在途单分片句柄
+///（Arc 共享零拷贝）+id_map 共享副本。envelope_ledger 每拍增量维护
+/// 退役后的派生数据源（瞬态，不入存档/hash）。
+#[derive(Clone)]
+pub(crate) struct RuntimeRestingSnapshot {
+    /// 各股在途单分片（下标=股；发布版本句柄）。
+    pub facts: Vec<std::sync::Arc<Vec<crate::runtime::RestingFact>>>,
+    /// Owner(组,local) 全局下标 → AccountId（构造期快照）。
+    pub id_map: std::sync::Arc<Vec<AccountId>>,
+    /// 每组账户数（Owner→全局下标换算基）。
+    pub accounts_per_group: usize,
+}
+
 impl IngressReceiptCursors {
     pub(super) fn receive(
         &mut self,
@@ -1495,6 +1508,10 @@ struct CommittableSessionState {
     /// 旧管线 pop_due 的驱动镜像，runtime 路径无 pop_due 消费，重建改为
     /// 消费点惰性（hash 已改由 npc_attention 派生）。瞬态不入存档/hash。
     runtime_heap_dirty: bool,
+    /// P2-4：信封派生快照（发布版本在途单分片句柄+id_map 共享副本）。
+    /// envelope_ledger 每拍增量维护退役后的派生数据源——查询/hash 时
+    /// 派生投影（内容等价：p2_4b 全量重建口径）。瞬态不入存档/hash。
+    runtime_resting_snapshot: Option<RuntimeRestingSnapshot>,
     /// P2-2b：账户写时 undo（runtime 安装基线的账户域回滚源——首写
     /// 前值；瞬态不入存档/hash）。
     runtime_account_undo:
@@ -2083,6 +2100,7 @@ impl GameSession {
                     crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
                 attention_scheduler: NpcAttentionScheduler::default(),
                 runtime_heap_dirty: false,
+                runtime_resting_snapshot: None,
                 runtime_account_undo: Vec::new(),
                 runtime_account_undo_ids: std::collections::HashSet::new(),
                 runtime_attention_undo: Vec::new(),
@@ -5137,6 +5155,7 @@ impl CommittableSessionState {
             causal,
             attention_scheduler,
             runtime_heap_dirty,
+            runtime_resting_snapshot,
             runtime_account_undo: _,
             runtime_account_undo_ids: _,
             runtime_attention_undo: _,
@@ -5206,6 +5225,7 @@ impl CommittableSessionState {
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
             runtime_heap_dirty: *runtime_heap_dirty,
+            runtime_resting_snapshot: None,
             runtime_account_undo: Vec::new(),
             runtime_account_undo_ids: std::collections::HashSet::new(),
             runtime_attention_undo: Vec::new(),
@@ -5276,6 +5296,7 @@ impl CommittableSessionState {
             causal,
             attention_scheduler,
             runtime_heap_dirty,
+            runtime_resting_snapshot,
             runtime_account_undo: _,
             runtime_account_undo_ids: _,
             runtime_attention_undo: _,
@@ -5405,6 +5426,7 @@ impl CommittableSessionState {
             FieldId::AttentionScheduler,
         );
         self.runtime_heap_dirty = runtime_heap_dirty;
+        self.runtime_resting_snapshot = None;
         defer_swap(
             &mut self.company_registry,
             company_registry,

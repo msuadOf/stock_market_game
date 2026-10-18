@@ -765,8 +765,13 @@ impl GameSession {
         let _seg_ecollect = crate::runtime::step_profile::scope(
             crate::runtime::step_profile::StepSegment::EnvelopeCollect,
         );
-        let resting_by_stock = match driver.collect_resting_facts() {
-            Ok(facts) => facts,
+        // P2-4（视图内生战役）：envelope_ledger 每拍增量/全量维护退役
+        //（P0 画像 80μs/tick）——发布版本快照句柄存 session（Arc 共享
+        /// 零拷贝），投影在查询/hash 时派生（内容等价=原全量重建口径
+        ///——runtime_resting_envelope 同一构造逻辑；undo 面随维护退役，
+        /// 回滚=快照失效下一拍重建）。mirror 段与后续消费改读快照。
+        let (resting_facts, resting_id_map) = match driver.resting_snapshot_for_session() {
+            Ok(pair) => pair,
             Err(e) => {
                 self.rollback_runtime_step(baseline);
                 return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
@@ -775,116 +780,13 @@ impl GameSession {
                 }));
             }
         };
-        // step_frame 接轨件 4b：投影失败回滚面——信封账本整值旧值入
-        /// undo（ledger clone 仅 step_frame 分叉记录；增量路径的原位
-        /// 变更回滚走整值恢复——写前快照覆盖两分支）。
-        if capture_undo && self.state.runtime_envelope_undo.is_none() {
-            self.state.runtime_envelope_undo = Some(self.state.envelope_ledger.clone());
-        }
+        let accounts_per_group = driver.accounts_per_group();
+        self.state.runtime_resting_snapshot = Some(super::RuntimeRestingSnapshot {
+            facts: resting_facts,
+            id_map: resting_id_map,
+            accounts_per_group,
+        });
         drop(_seg_ecollect);
-        let delta = driver.resting_delta_since_last_echo(&resting_by_stock);
-        if delta.full_rebuild {
-            let mut envelopes = Vec::new();
-            for (stock_idx, facts) in resting_by_stock.iter().enumerate() {
-                for fact in facts {
-                    match runtime_resting_envelope(
-                        driver,
-                        &self.state.setup.config,
-                        stock_idx,
-                        fact,
-                    ) {
-                        Ok(Some(envelope)) => envelopes.push(envelope),
-                        Ok(None) => {}
-                        Err(description) => {
-                            self.rollback_runtime_step(baseline);
-                            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                                location: "GameSession::step_via_runtime::envelope".to_owned(),
-                                description,
-                            }));
-                        }
-                    }
-                }
-            }
-            self.mark_external_mutation();
-            self.state.envelope_ledger = match crate::session::pipeline::EnvelopeLedger::new(
-                self.state.next_receipt_base,
-                envelopes,
-            ) {
-                Ok(ledger) => ledger,
-                Err(fatal) => {
-                    let fatal = StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::envelope".to_owned(),
-                    description: format!("信封账本重建失败：{fatal:?}"),
-                };
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(fatal));
-            }
-            };
-        } else {
-            // P2-4b：差分原位应用。增/改=同构信封 upsert（与全量路径
-            /// 同一构造函数——数值面同源）；删=键移除（缺席=漂移显式
-            /// 拒绝不静默）；尾同步 receipt 序号面（全量路径每拍以
-            /// next_receipt_base 重建，增量路径显式对齐保持 hash 投影
-            /// 逐位一致）。
-            for entry in &delta.entries {
-                let apply_result = match entry {
-                    crate::runtime::RestingDeltaEntry::Added { stock, fact }
-                    | crate::runtime::RestingDeltaEntry::Changed { stock, fact } => {
-                        match runtime_resting_envelope(
-                            driver,
-                            &self.state.setup.config,
-                            *stock as usize,
-                            fact,
-                        ) {
-                            Ok(Some(envelope)) => self
-                                .state
-                                .envelope_ledger
-                                .upsert_runtime_envelope(envelope)
-                                .map_err(|fatal| fatal.to_string()),
-                            // 名册外 owner：全量路径同语义跳过（账本不含
-                            /// 名册外账户的信封）。
-                            Ok(None) => Ok(()),
-                            Err(description) => Err(description),
-                        }
-                    }
-                    crate::runtime::RestingDeltaEntry::Removed {
-                        stock,
-                        owner,
-                        side,
-                        order_serial,
-                    } => {
-                        let Some(account) = driver.account_by_owner(*owner) else {
-                            // 名册外 owner：从未安装过，无键可删。
-                            continue;
-                        };
-                        let key = crate::session::pipeline::EnvelopeKey {
-                            account,
-                            stock: crate::StockId(u32::from(*stock)),
-                            order: crate::OrderId(*order_serial),
-                            side: *side,
-                        };
-                        self.state
-                            .envelope_ledger
-                            .remove_runtime_envelope(&key)
-                            .map_err(|fatal| fatal.to_string())
-                    }
-                };
-                if let Err(description) = apply_result {
-                    let fatal = StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::envelope".to_owned(),
-                        description: format!("信封账本增量应用失败：{description}"),
-                    };
-                    self.rollback_runtime_step(baseline);
-                    return Err(self.poison_runtime_step(fatal));
-                }
-            }
-            if !delta.entries.is_empty() {
-                self.mark_external_mutation();
-            }
-            self.state
-                .envelope_ledger
-                .sync_runtime_receipt_index(self.state.next_receipt_base);
-        }
         drop(_seg_envelope);
         // 【P0 画像】desk_mirror 段（D6：簿镜像+lifecycle 投影清空）。
         let _seg_mirror = crate::runtime::step_profile::scope(
@@ -903,12 +805,18 @@ impl GameSession {
             }
             let views = driver.world_public_views();
             let mut mirror = std::collections::BTreeMap::new();
-            for (stock_idx, book) in resting_by_stock.iter().enumerate() {
+            // P2-4：镜像数据源改读发布版本快照（collect 退役）。
+            let snapshot = self
+                .state
+                .runtime_resting_snapshot
+                .as_ref()
+                .expect("envelope 段刚存入快照");
+            for (stock_idx, book) in snapshot.facts.iter().enumerate() {
                 let Some(view) = views.get(stock_idx) else {
                     continue;
                 };
                 let mut orders = Vec::with_capacity(book.len());
-                for fact in book {
+                for fact in book.iter() {
                     // Sol 终审修复 1c：归户用 account_by_owner（保留组号
                     /// ——此前 account_by_local(owner.1) 丢组号，其他组的
                     /// 同 local 委托被归给组 0 账户，与删除分支键不一致）。
@@ -1601,9 +1509,11 @@ impl GameSession {
         if let Some(plans) = self.state.runtime_plans_undo.take() {
             self.state.plans = plans;
         }
-        if let Some(ledger) = self.state.runtime_envelope_undo.take() {
-            self.state.envelope_ledger = ledger;
-        }
+        // P2-4：envelope undo 随每拍维护退役（槽恒 None——保留 no-op
+        /// 消费面防结构扩散，死字段登记随下批清理）；快照失效（失败拍
+        /// 数据不可作为派生源——下一拍 step 重建）。
+        let _ = self.state.runtime_envelope_undo.take();
+        self.state.runtime_resting_snapshot = None;
         if let Some(lifecycles) = self.state.runtime_lifecycles_undo.take() {
             self.state.npc_order_lifecycles = lifecycles;
         }
@@ -2293,15 +2203,14 @@ impl GameSession {
 /// origin=TickStart）。owner 名册外（account_by_owner 缺席）返回
 /// Ok(None)——两路径同语义跳过（账本不含名册外账户的信封）。
 /// Sol 终审修复 1c：归户保留组号（此前 account_by_local 丢组号）。
+/// P2-4：单条在途事实 → 信封（owner→账户由调用方解析——快照 id_map
+/// 或 driver 均可作源；构造逻辑与原全量重建/增量 upsert 同一函数体）。
 fn runtime_resting_envelope(
-    driver: &crate::runtime::drive::RuntimeDriver,
+    account: crate::AccountId,
     config: &crate::config::GameConfig,
     stock_idx: usize,
     fact: &crate::runtime::RestingFact,
 ) -> Result<Option<crate::session::pipeline::Envelope>, String> {
-    let Some(account) = driver.account_by_owner(fact.owner) else {
-        return Ok(None);
-    };
     let key = crate::session::pipeline::EnvelopeKey {
         account,
         stock: crate::StockId(u32::from(stock_idx as u16)),
@@ -2350,4 +2259,41 @@ fn runtime_resting_envelope(
     Ok(Some(
         crate::session::pipeline::Envelope::tick_start_existing(key, cash, shares, audit),
     ))
+}
+
+impl GameSession {
+    /// P2-4（视图内生战役）：信封派生投影——发布版本快照 → Envelope
+    /// 列表（ledger 每拍维护退役后的查询/hash 数据源；构造逻辑与原
+    /// 全量重建同一函数——内容等价由同源性承载）。无快照（restore 后
+    /// 未步进）=空投影（runtime 存档旧簿恒空语义）。
+    pub fn runtime_derive_envelopes(
+        &self,
+    ) -> Result<Vec<crate::session::pipeline::Envelope>, StepFatal> {
+        let Some(snapshot) = self.state.runtime_resting_snapshot.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut envelopes = Vec::new();
+        for (stock_idx, book) in snapshot.facts.iter().enumerate() {
+            for fact in book.iter() {
+                let global = fact.owner.0 as usize * snapshot.accounts_per_group
+                    + fact.owner.1 as usize;
+                // 名册外 owner：与原全量重建同语义跳过。
+                let Some(&account) = snapshot.id_map.get(global) else {
+                    continue;
+                };
+                match runtime_resting_envelope(account, &self.state.setup.config, stock_idx, fact)
+                {
+                    Ok(Some(envelope)) => envelopes.push(envelope),
+                    Ok(None) => {}
+                    Err(description) => {
+                        return Err(StepFatal::InvariantViolation {
+                            location: "GameSession::runtime_derive_envelopes".to_owned(),
+                            description,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(envelopes)
+    }
 }

@@ -25,6 +25,9 @@ pub struct RuntimeDriver {
     world: World,
     /// Owner(组内下标) → 引擎 AccountId（玩家=0 惯例位）。
     pub id_map: Vec<AccountId>,
+    /// P2-4：id_map 的 Arc 共享副本（构造一次——session 信封派生快照用，
+    /// 免每拍 clone 全名册映射）。
+    id_map_shared: std::sync::Arc<Vec<AccountId>>,
     /// 每股 desk 序号游标缓存（最近在途快照收集时的权威值——Sol 四轮
     /// 修复：save 投影/DeskBookMirror 的游标源）。
     desk_next_serials: Vec<u64>,
@@ -435,6 +438,7 @@ impl RuntimeDriver {
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let driver = Self {
             world,
+            id_map_shared: std::sync::Arc::new(ids.clone()),
             id_map: ids.clone(),
             desk_next_serials: Vec::new(),
             next_seq: 0,
@@ -1304,6 +1308,45 @@ impl RuntimeDriver {
     /// 每股 desk 序号游标（最近一次在途快照收集时的权威值）。
     pub fn desk_next_serials(&self) -> &[u64] {
         &self.desk_next_serials
+    }
+
+    /// P2-4（视图内生战役）：信封派生快照——发布版本在途单分片句柄
+    ///（Arc 共享零拷贝）+id_map 共享副本。session 侧派生投影的数据源
+    ///（每拍 step 尾存入 session，替代 ledger 每拍增量维护）。游标缓存
+    /// 同步自发布版本（mirror/save 投影源）。
+    pub fn resting_snapshot_for_session(
+        &mut self,
+    ) -> Result<
+        (
+            Vec<std::sync::Arc<Vec<super::protocol::RestingFact>>>,
+            std::sync::Arc<Vec<AccountId>>,
+        ),
+        String,
+    > {
+        let published = self.world.publication().load();
+        if published.tick != self.world.global.committed_tick {
+            return Err(format!(
+                "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                published.tick, self.world.global.committed_tick
+            ));
+        }
+        let n = published.desks.len();
+        let mut facts = vec![std::sync::Arc::new(Vec::new()); n];
+        let mut cursors = vec![0u64; n];
+        for shard in &published.desks {
+            let idx = shard.stock as usize;
+            if let (Some(slot), Some(cursor)) = (facts.get_mut(idx), cursors.get_mut(idx)) {
+                *slot = std::sync::Arc::clone(&shard.resting);
+                *cursor = shard.next_serial;
+            }
+        }
+        self.desk_next_serials = cursors;
+        Ok((facts, std::sync::Arc::clone(&self.id_map_shared)))
+    }
+
+    /// 每组账户数（Owner→全局下标换算基——快照派生用）。
+    pub fn accounts_per_group(&self) -> usize {
+        self.accounts_per_group
     }
 
     /// P2-4b：对相邻两拍在途单快照差分（信封账本增量维护输入）。

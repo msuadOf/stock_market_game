@@ -2982,7 +2982,7 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
 /// Added（t2-t4 卖腿站簿不交叉+股 1 挂单）、Changed（t6/8/10 卖腿对
 /// t5 挂出的 800 股限价买逐拍部分成交——余量/费用累计变化）、
 /// Removed（t5 一拍扫清站簿卖盘+t==6 撤股 1 挂单）。
-fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<String>) {
+fn p2_4b_run() -> (crate::session::StateHash, Vec<String>) {
     use crate::session::Event;
     let mut setup = setup_fixture();
     setup.npcs.retail_count = 4;
@@ -3008,9 +3008,6 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
         })
         .map(|(s, r)| (crate::AccountId(s), crate::AccountId(r)))
         .expect("须存在不相交的 (持股 0 ≥700, 持股 1 且现金 ≥90 万分) NPC 对");
-    crate::runtime::drive::RESTING_DELTA_FACE_COUNTS.with(|slot| {
-        *slot.borrow_mut() = Some(std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0))))
-    });
     let mut digest = Vec::new();
     let mut resting_order_id: Option<crate::OrderId> = None;
     for t in 1..=11u64 {
@@ -3078,12 +3075,6 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
         // 首拍先空跑建立常驻驱动器，旋钮与注入自第二拍起。
         if t == 1 {
             game.step_via_runtime().expect("首拍（驱动器惰性构造）");
-            let mut driver = game
-                .runtime_driver_for_test()
-                .expect("首拍后常驻驱动器在位")
-                .lock()
-                .expect("驱动器锁");
-            driver.set_force_full_envelope_rebuild_for_test(force_full_envelope);
         } else {
             let mut driver = game
                 .runtime_driver_for_test()
@@ -3135,48 +3126,83 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
         }));
         digest.sort();
     }
-    // 判别力前置：差分三面必须都真实发生——否则等价守卫对相应分支
-    // 零判别（守卫曾因 driver 直调不经信封段而恒绿的教训——前置使
-    // fixture 退化显式失败）。
-    if !force_full_envelope {
-        // Changed 面的期末在册前置：800 股限价买期末仍有余量（部分
-        // 成交逐拍变化且未清空——跳过 Changed 更新会使期末信封余量
-        // 停留在挂出值，哈希可判别）。
-        {
-            let mut driver = game
-                .runtime_driver_for_test()
-                .expect("常驻驱动器在位")
-                .lock()
-                .expect("驱动器锁");
-            let facts = driver.collect_resting_facts().expect("期末在途单收集");
-            let local = driver
-                .id_map
-                .iter()
-                .position(|id| *id == resting_owner)
-                .expect("挂单腿账户在名册");
-            let stock0_resting: Vec<u32> = facts[0]
-                .iter()
-                .filter(|f| f.owner == (0u16, local as u32))
-                .map(|f| f.qty)
-                .collect();
-            assert!(
-                stock0_resting.iter().any(|&q| q > 0 && q < 800),
-                "期末股 0 须有部分成交余量在册（100<qty<800）：{stock0_resting:?}"
-            );
+    // P2-4 判别力前置（增量维护退役后改述）：期末股 0 须有部分成交
+    // 余量在册（100<qty<800——派生投影的非平凡形态）；派生投影的键
+    // 集合 == 发布版本快照的在册集合（Added/Removed/Changed 三面的
+    // 等价合同由"派生=发布快照的函数"结构性承载——漏挂/漏撤/漏改
+    // 均显集合失配红）。
+    let mut driver = game
+        .runtime_driver_for_test()
+        .expect("常驻驱动器在位")
+        .lock()
+        .expect("驱动器锁");
+    let facts = driver.collect_resting_facts().expect("期末在途单收集");
+    let local = driver
+        .id_map
+        .iter()
+        .position(|id| *id == resting_owner)
+        .expect("挂单腿账户在名册");
+    let stock0_resting: Vec<u32> = facts[0]
+        .iter()
+        .filter(|f| f.owner == (0u16, local as u32))
+        .map(|f| f.qty)
+        .collect();
+    assert!(
+        stock0_resting.iter().any(|&q| q > 0 && q < 800),
+        "期末股 0 须有部分成交余量在册（100<qty<800）：{stock0_resting:?}"
+    );
+    drop(driver);
+    // 派生投影 == 发布快照集合对照。
+    let mut published_keys: Vec<(crate::AccountId, u32, u64, u8, u32)> = Vec::new();
+    {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let (snapshot_facts, _) = driver
+            .resting_snapshot_for_session()
+            .expect("发布快照");
+        for (stock_idx, book) in snapshot_facts.iter().enumerate() {
+            for fact in book.iter() {
+                let global = fact.owner.0 as usize * driver.accounts_per_group()
+                    + fact.owner.1 as usize;
+                let account = driver
+                    .id_map
+                    .get(global)
+                    .copied()
+                    .expect("在册 owner 必有名册映射");
+                published_keys.push((
+                    account,
+                    stock_idx as u32,
+                    fact.order_serial,
+                    fact.side as u8,
+                    fact.qty,
+                ));
+            }
         }
-        let (added, removed, changed) = crate::runtime::drive::RESTING_DELTA_FACE_COUNTS
-            .with(|slot| {
-                let counts = slot.borrow_mut().take().expect("面计数器在位");
-                let c = counts.lock().expect("面计数锁");
-                (c.0, c.1, c.2)
-            });
-        assert!(added >= 1, "Added 面必须真实发生（差分判别前置）：{added}");
-        assert!(removed >= 1, "Removed 面必须真实发生（差分判别前置）：{removed}");
-        assert!(
-            changed >= 1,
-            "Changed 面必须真实发生（差分判别前置）：{changed}"
-        );
     }
+    published_keys.sort();
+    let mut projected_keys: Vec<(crate::AccountId, u32, u64, u8, u32)> = game
+        .project_live_envelopes()
+        .expect("派生投影")
+        .into_iter()
+        .map(|e| {
+            let key = e.key();
+            (
+                key.account,
+                key.stock.0,
+                key.order.0,
+                key.side as u8,
+                e.audit().remaining_qty,
+            )
+        })
+        .collect();
+    projected_keys.sort();
+    assert_eq!(
+        projected_keys, published_keys,
+        "派生投影（键+余量）集合==发布快照在册集合（漏挂/漏撤/漏改显失配）"
+    );
     (
         game.business_state_hash().expect("业务哈希"),
         digest,
@@ -3188,11 +3214,14 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
 /// 与事件序列逐位一致。差分漏项/错值/漏删时显红。
 #[test]
 fn p2_4b_envelope_incremental_matches_full_rebuild() {
-    let (inc_hash, inc_events) = p2_4b_run(false);
-    let (full_hash, full_events) = p2_4b_run(true);
-    assert!(!inc_events.is_empty(), "场景须产生事件");
-    assert_eq!(inc_hash, full_hash, "期末业务哈希（含信封投影）必须逐位一致");
-    assert_eq!(inc_events, full_events, "事件序列必须逐位一致");
+    // P2-4 演进：增量维护退役（每拍 upsert/delta 删除）——原"增量 vs
+    // 全量重建"对照臂消亡，守卫改述为"派生投影==发布快照集合（键+余量）"
+    // +同种子确定性。突变红实证：余量写死挂出值 → 集合失配红。
+    let (hash_a, events_a) = p2_4b_run();
+    let (hash_b, events_b) = p2_4b_run();
+    assert!(!events_a.is_empty(), "场景须产生事件");
+    assert_eq!(hash_a, hash_b, "同种子两轮业务哈希（含派生信封投影）逐位一致");
+    assert_eq!(events_a, events_b, "同种子两轮事件序列逐位一致");
 }
 
 // ═══ step_frame 接轨前置约束①：Continue 早轮成交同拍投影恰一次落账 ═══

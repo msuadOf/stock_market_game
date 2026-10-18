@@ -72,6 +72,7 @@ impl GameSession {
                 causal: _,
             attention_scheduler: _,
             runtime_heap_dirty: _,
+            runtime_resting_snapshot: _,
             runtime_account_undo: _,
             runtime_account_undo_ids: _,
             runtime_attention_undo: _,
@@ -206,7 +207,19 @@ impl GameSession {
                 .map(|(id, participant)| (id, participant.price_memory()))
                 .collect::<BTreeMap<_, _>>(),
         )?;
-        hash.field(&self.state.envelope_ledger.hash_projection())?;
+        // P2-4：ledger 每拍维护退役——hash 从派生投影（快照→envelopes→
+        // 同构临时 ledger 的 hash_projection；构造与原全量重建同一函数，
+        // 内容等价由同源性承载）。
+        let derived_envelopes = self.runtime_derive_envelopes()?;
+        let derived_ledger = crate::session::pipeline::EnvelopeLedger::new(
+            self.state.next_receipt_base,
+            derived_envelopes,
+        )
+        .map_err(|fatal| StepFatal::InvariantViolation {
+            description: format!("派生信封账本构建失败：{fatal:?}"),
+            location: "state_hash.envelope_derived".to_owned(),
+        })?;
+        hash.field(&derived_ledger.hash_projection())?;
         hash.field(&self.state.retail_projection_seen)?;
         hash.field(&(
             self.state.next_order_id,
