@@ -272,3 +272,14 @@ spread 解（137→136——真源=消息链级联+load 扰动）；热窗减弱
 全量回归过程如实记：debug 首轮 1 failed（单发 flake 复跑绿）；release
 中间轮 npc_decisions_tests 家族 3 failed（既有登记的 npc rayon flake——
 隔离复跑 19/19 绿+全量复跑 1689/0/11 绿，高负载窗跨测试污染，不批改）。
+
+**belief 深刀评估（第 21 任，不建议本任实施）**：残余 72.8μs 构成=
+每 dirty 账户 7 域 clone（watchlist/price_memory/information/belief/
+attention/history_reads/retail——set_runtime_personal_state 内 6 次+
+belief_cache 1 次）+4 次 undo 记录+3 容器 insert。刀 a 已收中间层。
+深刀两条路均大手术：①七域 Arc 化——BeliefBook 等是 crate 公共值语义
+类型，Arc 化破坏公共 API 面，牵动 BeliefParticipantState/session
+容器/读面全链；②容器整态化——session 三容器（belief_participants/
+npc_attention/history_reads）合并重构。收益上限 ~5%（72.8/1447μs）
+且只影响 B（A 探针直驱不经 belief 安装）。A 主线（1000 线）收官后
+按需再议。
