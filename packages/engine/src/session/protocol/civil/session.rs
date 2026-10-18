@@ -98,15 +98,12 @@ impl ProtocolSession {
     }
 
     pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
-        Self::restore_with_compute(slot, crate::ComputeContext::shared_default()?)
-    }
-
-    /// 恢复时沿用宿主提供的计算资源；协议投影仍在原调用边界。
-    pub fn restore_with_compute(
-        slot: &crate::SaveSlot,
-        compute: Arc<crate::ComputeContext>,
-    ) -> Result<Self, SessionError> {
-        let game = GameSession::restore_with_compute(slot, compute)?;
+        // 批 9 A5（with_compute 注入面退役）：wasm 串行与生产统一走
+        /// shared_default 内部构造（C 桶保留面——wasm 恒旧管线串行）。
+        let game = GameSession::restore_with_compute(
+            slot,
+            crate::ComputeContext::shared_default()?,
+        )?;
         let sessions_through_current_date =
             game.civil_clock().completed_trading_sessions_expected()?;
         let current_date_trades =
@@ -150,17 +147,13 @@ impl ProtocolSession {
     }
 
     pub fn new(setup: SessionSetup, seed: u64) -> Result<Self, SessionError> {
-        Self::new_with_compute(setup, seed, crate::ComputeContext::shared_default()?)
-    }
-
-    /// 协议投影留在原调用边界；只向 GameSession 传入宿主的计算资源。
-    pub fn new_with_compute(
-        setup: SessionSetup,
-        seed: u64,
-        compute: Arc<crate::ComputeContext>,
-    ) -> Result<Self, SessionError> {
+        // 批 9 A5：同 restore——注入面退役，内部 shared_default。
         Ok(Self::from_game(
-            GameSession::new_with_compute(setup, seed, compute)?,
+            GameSession::new_with_compute(
+                setup,
+                seed,
+                crate::ComputeContext::shared_default()?,
+            )?,
             None,
         ))
     }
@@ -169,20 +162,14 @@ impl ProtocolSession {
     /// it available as a public day-end save. Public loading still uses `restore`.
     #[cfg(feature = "verification-harness")]
     pub fn restore_verification_checkpoint(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
-        Self::restore_verification_checkpoint_with_compute(
-            slot,
-            crate::ComputeContext::shared_default()?,
-        )
-    }
-
-    /// 验证恢复与原会话共享同一计算资源域（架构项 14）。
-    #[cfg(feature = "verification-harness")]
-    pub fn restore_verification_checkpoint_with_compute(
-        slot: &crate::SaveSlot,
-        compute: Arc<crate::ComputeContext>,
-    ) -> Result<Self, SessionError> {
+        // 批 9 A5：注入面退役——验证恢复经内部 shared_default（C 桶
+        /// escrow 验证面的 ComputeContext 消费仍由 GameSession 内部
+        /// 承载）。
         Ok(Self::from_game(
-            GameSession::restore_with_compute(slot, compute)?,
+            GameSession::restore_with_compute(
+                slot,
+                crate::ComputeContext::shared_default()?,
+            )?,
             None,
         ))
     }

@@ -120,14 +120,10 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
         let workers: usize = workers.to_str().unwrap().parse().unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let valid = runtime.block_on(async {
-            use engine::compute::ComputeWork;
-            use std::sync::{Arc, Mutex};
-            let compute = engine::ComputeContext::with_workers(workers).unwrap();
-            let samples = Arc::new(Mutex::new(Vec::new()));
-            let observed = samples.clone();
-            compute.set_observer(Arc::new(move |sample| observed.lock().unwrap().push(sample)));
-            let manager = SessionManager::with_compute(1, compute.clone());
-            assert_eq!(manager.compute_workers().unwrap(), workers);
+            // 批 9 A3（compute 注入退役）：observer 采样/池绑定断言面
+            /// 随 A1/A2 消亡——本测试保留的验证=真实成交+多账户触及+
+            /// 无失败交付（runtime 与旧管线分支共同的交付面）。
+            let manager = SessionManager::with_base_ms(1);
             let mut setup = active_market_setup();
             setup.start_date = engine::CivilDate::from_iso("2030-01-06").unwrap();
             setup.float_allocation = engine::FloatAllocation::class_percentages(
@@ -136,7 +132,7 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
             let handles = manager.lookup(&id).unwrap();
             handles.set_running(false).await.unwrap();
             // 真实休市日日结后的可编辑存档，守恒转移 100 股开局库存；不伪造 Fill。
-            let mut initial = engine::session::protocol::ProtocolSession::new_with_compute(setup, 42, compute).unwrap();
+            let mut initial = engine::session::protocol::ProtocolSession::new(setup, 42).unwrap();
             initial.end_civil_day_update().unwrap();
             let mut slot = initial.save().unwrap();
             let code = engine::StockId(0);
@@ -157,7 +153,6 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
                 engine::PositionSnap { qty: 100, t1_locked: 0, invested_cents: 100_000, recovered_cents: 0 });
             assert_eq!(totals(&slot), before);
             handles.restore(slot).await.unwrap();
-            samples.lock().unwrap().clear();
             handles.enqueue(2, Intent::PlaceLimit {
                 code: engine::StockId(0), side: Side::Sell,
                 price: engine::LimitPrice::Lowest, qty: 100,
@@ -182,41 +177,20 @@ fn single_pool_actor_filled_leaves_do_not_initialize_global() {
                     // 的决策/撮合在组/交易部线程（不经 ComputeContext 池，
                     // ComputeWork 采样面是旧池模型专有）；真实成交即工作
                     // 见证（fill_count/affected/无失败断言保留）。
-                    if engine::runtime::step_runtime_enabled() {
-                        if fill_count > 0 { break; }
-                    } else {
-                        let hits = samples.lock().unwrap();
-                        if fill_count > 0 && hits.iter().any(|s| s.work == ComputeWork::ReceiptProjectionAccount) { break; }
-                    }
+                    if fill_count > 0 { break; }
                 }
             }).await.expect("真实 Actor 在短 deadline 内应成交并广播");
             handles.set_running(false).await.unwrap();
             assert!(fill_count > 0 && affected.len() >= 2, "Actor fixture 必须实际成交并触及多账户");
             handles.shutdown().await.unwrap();
             manager.remove(&id).unwrap();
-            if engine::runtime::step_runtime_enabled() {
-                // std-thread 模型（Sol 过程 review 收尾）：决策/撮合在组/
-                // 交易部线程——线程归属**不由本测试证明**（池采样断言
-                // 随机制退役，不伪装为 valid 贡献）。本测试在 runtime
-                // 模型下承载的验证=真实成交+多账户触及+无失败交付+
-                // 注入 compute 绑定（manager.compute_workers 已断言）；
-                // 池工作归属的替代验证由 engine lib 的相位探针测试
-                ///（t3/failure_tests）承载。
-                eprintln!(
-                    "single_pool_actor workers={workers} std-thread model: delivery assertions passed (fills={fill_count} affected={affected:?}); pool-owner assertions retired for this model"
-                );
-                true
-            } else {
-                let samples = samples.lock().unwrap();
-                let mut valid = true;
-                for work in [ComputeWork::SettlementAccount, ComputeWork::ReceiptProjectionAccount] {
-                    let hits: Vec<_> = samples.iter().filter(|s| s.work == work).collect();
-                    assert!(!hits.is_empty(), "Actor 必须执行非空实际 leaf {work:?}");
-                    eprintln!("single_pool_actor workers={workers} fills={fill_count} affected={affected:?} work={work:?} samples={hits:?}");
-                    valid &= hits.iter().all(|s| s.executing_workers == workers && s.owner_worker.is_some_and(|i| i < workers));
-                }
-                valid
-            }
+            // 批 9 A3：池归属断言面退役（rayon 批 7 起 observer 通道仅
+            /// 旧管线测试注入面保留，本测试不再消费）——valid 语义=
+            /// 交付面断言（上方断言组已全部通过即真）。
+            eprintln!(
+                "single_pool_actor workers={workers}: delivery assertions passed (fills={fill_count} affected={affected:?}); pool-owner assertions retired"
+            );
+            true
         });
         drop(runtime);
         // rayon 退役（批 7）：global 池初始化断言随机制退役。exit 只由

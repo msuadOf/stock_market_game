@@ -536,14 +536,6 @@ pub async fn api_new(
                 format!("server permits at most {max} active sessions"),
             )
         }
-        Err(NewSessionError::Compute(error)) => {
-            warn!(%error, "new_session rejected because the compute context failed");
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "COMPUTE_CONTEXT_UNAVAILABLE",
-                format!("无法初始化会话计算执行上下文：{error}"),
-            )
-        }
     }
 }
 

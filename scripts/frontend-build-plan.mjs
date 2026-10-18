@@ -5,7 +5,8 @@ export function createFrontendCommands({ root, host, jobs, frontend, wasmPackage
   if (!["linux", "windows", "macos"].includes(host)) throw new Error(`unsupported frontend host: ${host}`);
   if (!["corepack", "pnpm"].includes(packageManager)) throw new Error(`unsupported package manager: ${packageManager}`);
   if (pagesBase !== undefined && (typeof pagesBase !== "string" || pagesBase !== pagesBase.trim() || pagesBase.split("/").some((part) => part === "." || part === "..") || !/^\/(?:[A-Za-z0-9_.-]+\/)*$/.test(pagesBase))) throw new Error("unsafe Pages base path");
-  const buildEnv = { ...env, CARGO_BUILD_JOBS: String(jobs), RAYON_NUM_THREADS: String(jobs) };
+  // 批 9 A7：RAYON_NUM_THREADS 分量退役（保留 CARGO_BUILD_JOBS）。
+  const buildEnv = { ...env, CARGO_BUILD_JOBS: String(jobs) };
   const nodeCommand = (args, cwd = root) => ({ command: process.execPath, args, cwd, env: buildEnv });
   const installArgs = [...(packageManager === "corepack" ? ["pnpm"] : []), "install", "--frozen-lockfile"];
   const copiedPackage = path.join(frontend, "wasm-pkg");

@@ -1,22 +1,11 @@
-import { ensurePagesIsolation } from "./pages-isolation";
 import "./index.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("游戏启动失败：缺少 root 页面容器。");
 
 async function start(): Promise<void> {
-  if (import.meta.env.MODE === "pages") {
-    root!.textContent = "正在准备静态网页的多线程运行环境；首次访问将在游戏载入前刷新一次。";
-    const ready = await ensurePagesIsolation(import.meta.env.BASE_URL, {
-      isolated: window.crossOriginIsolated,
-      secure: window.isSecureContext,
-      href: window.location.href,
-      serviceWorker: navigator.serviceWorker,
-      replace: (url) => window.location.replace(url),
-      cleanUrl: (url) => window.history.replaceState(window.history.state, "", url),
-    });
-    if (!ready) return;
-  }
+  // 批 9 A10：Pages 跨源隔离引导（Service Worker 注 COOP/COEP 头）随
+  // wasm 多核退役删除——串行 wasm 不需要 SharedArrayBuffer。
   const { renderApp } = await import("./render-app");
   renderApp(root!);
 }

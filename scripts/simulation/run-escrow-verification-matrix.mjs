@@ -76,7 +76,7 @@ function validateThreadState(value, label) {
 }
 
 function validatePerfSample(sample, side, report) {
-  exactKeys(sample, ["wall_ns", "peak_process_tree_rss_bytes", "completed_ticks", "workload", "environment_contract", "ticks_per_second", "phase_wall_ns", "process_tree_thread_state", "rayon_registry_capacity_samples", "stderr"], `${side} performance sample`);
+  exactKeys(sample, ["wall_ns", "peak_process_tree_rss_bytes", "completed_ticks", "workload", "environment_contract", "ticks_per_second", "phase_wall_ns", "process_tree_thread_state", "stderr"], `${side} performance sample`);
   const wall = positiveDecimal(sample.wall_ns, `${side}.wall_ns`);
   if (!Number.isSafeInteger(sample.peak_process_tree_rss_bytes) || sample.peak_process_tree_rss_bytes <= 0
     || sample.completed_ticks !== report.workload.completed_ticks
@@ -90,11 +90,11 @@ function validatePerfSample(sample, side, report) {
   if (side === "after") {
     exactKeys(sample.phase_wall_ns, ["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"], `${side}.phase_wall_ns`);
     for (const [phase, value] of Object.entries(sample.phase_wall_ns)) positiveDecimal(value, `${side}.${phase}`);
-    if (!Array.isArray(sample.rayon_registry_capacity_samples) || sample.rayon_registry_capacity_samples.length === 0
-      || sample.rayon_registry_capacity_samples.some((value) => value !== report.environment_contract.rayon_threads)) {
-      throw new MatrixFailure("INVALID_EVIDENCE", `${side} Rayon capacity samples are invalid`);
-    }
-  } else if (sample.phase_wall_ns !== null || sample.rayon_registry_capacity_samples !== null) {
+    // 批 9 A7：rayon_registry_capacity_samples 对照退役——批 7 后垫片已无
+    // 全局注册表（断言名不副实），且其唯一生产者 escrow_performance_
+    // endpoint 已随 A6 退役；C 桶 escrow 验证面（verification-harness）
+    // 的 actual_rayon_threads 字符串记账不受影响。
+  } else if (sample.phase_wall_ns !== null) {
     throw new MatrixFailure("INVALID_EVIDENCE", `${side} baseline instrumentation must be null`);
   }
 }

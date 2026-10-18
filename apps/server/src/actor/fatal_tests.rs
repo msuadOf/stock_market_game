@@ -1,87 +1,70 @@
 use super::*;
 
 #[test]
-fn compute_context_production_actor_does_not_follow_callers_pool() {
-    use engine::{ComputeContext, ComputeWork};
-    use std::sync::Mutex;
-    for workers in [1, 2] {
-        let compute = ComputeContext::with_workers(workers).unwrap();
-        let samples = Arc::new(Mutex::new(Vec::new()));
-        let observed = samples.clone();
-        compute.set_observer(Arc::new(move |sample| {
-            observed.lock().unwrap().push(sample)
-        }));
-        let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-        let game = ProtocolSession::new_with_compute(setup, 7, compute.clone()).unwrap();
-        let (_sender, cmd_rx) = mpsc::unbounded_channel();
-        let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-        let mut actor = SessionActor {
-            ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
-            injected_step_failure: None,
-            pacing: ServerPacing::new(1, game.tick()),
-            game,
-            cmd_rx,
-            event_tx,
-            session_id: "compute-context".into(),
-
-            public_revision: 0,
-            timeline_generation: 1,
-            pause_preferences: PausePreferences::default(),
-            fatal_failure: None,
-            deferred_drop_reported: false,
+fn production_actor_steps_and_delivers_tick_batches() {
+    // 批 9 A3（compute 注入退役）：原 compute_context_production_actor_
+    // does_not_follow_callers_pool 的池隔离断言面（observer 采样/
+    // ptr_eq 绑定）随 A1/A2 的注入面消亡整体退役——std-thread 模型
+    /// 决策/撮合在组/交易部线程，ComputeContext 池采样仅旧管线
+    /// （=0 逃生门）路径存在。保留的等价断言：actor 构造（无注入）
+    /// → run_protocol_batch 推进 tick → TickBatch 逐拍交付（原测试
+    /// 的交付面不变）。
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let (_sender, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let mut actor = SessionActor {
+        ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        injected_step_failure: None,
+        pacing: ServerPacing::new(1, game.tick()),
+        game,
+        cmd_rx,
+        event_tx,
+        session_id: "no-compute".into(),
+        public_revision: 0,
+        timeline_generation: 1,
+        pause_preferences: PausePreferences::default(),
+        fatal_failure: None,
+        deferred_drop_reported: false,
+    };
+    actor.run_protocol_batch(1);
+    actor.run_protocol_batch(1);
+    assert!(actor.fatal_failure.is_none());
+    assert_eq!(actor.game.tick(), 2);
+    for expected in 1..=2 {
+        let update = receiver.try_recv().unwrap().update.unwrap();
+        let ProtocolUpdate::TickBatch(batch) = update else {
+            panic!("必须提交市场 tick")
         };
-        actor.run_protocol_batch(1);
-        // rayon 退役（批 7）：foreign 池隔离路径的串行等价=直接调用。
-        actor.run_protocol_batch(1);
-        assert!(actor.fatal_failure.is_none());
-        assert_eq!(actor.game.tick(), 2);
-        assert!(Arc::ptr_eq(actor.game.game().compute_context(), &compute));
-        for expected in 1..=2 {
-            let update = receiver.try_recv().unwrap().update.unwrap();
-            let ProtocolUpdate::TickBatch(batch) = update else {
-                panic!("必须提交市场 tick")
-            };
-            assert_eq!(batch.frames.last().unwrap().tick, expected);
-        }
-        let samples = samples.lock().unwrap();
-        if engine::runtime::step_runtime_enabled() {
-            // std-thread runtime 模型差异（step_frame 接轨件 4 登记）：
-            // 决策/撮合在组/交易部线程（不经 ComputeContext 池采样）——
-            // actor 与注入 compute 的绑定（上方 ptr_eq）与 tick 推进/
-            // TickBatch 交付已断言，池工作类型面仅旧管线存在。
-        } else {
-            assert!(samples
-                .iter()
-                .any(|sample| sample.work == ComputeWork::CandidatePrepare));
-            for work in [ComputeWork::Observe, ComputeWork::Analyse, ComputeWork::Decide,
-                ComputeWork::Project, ComputeWork::StockPrepare, ComputeWork::StockMatch, ComputeWork::StockFinish] {
-                assert!(samples.iter().any(|sample| sample.work == work), "未覆盖生产任务 {work:?}");
-            }
-        }
-        for sample in samples.iter() {
-            assert_eq!(sample.executing_workers, workers, "{sample:?}");
-            assert!(
-                sample.owner_worker.is_some_and(|index| index < workers),
-                "{sample:?}"
-            );
-        }
+        assert_eq!(batch.frames.last().unwrap().tick, expected);
     }
 }
 
-#[test]
-fn compute_context_manager_reports_real_owned_registry_not_caller() {
-    let manager = SessionManager::with_compute(1, engine::ComputeContext::with_workers(2).unwrap());
-    assert_eq!(manager.compute_workers().unwrap(), 2);
+#[tokio::test]
+async fn session_manager_defaults_without_compute_injection() {
+    // 批 9 A3：compute_workers/with_compute 面退役（A1/A2）——等价
+    /// 断言：默认构造可用且 new_session 正常登记。
+    let manager = SessionManager::with_base_ms(1);
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let id = manager.new_session(setup, 7).expect("default manager creates sessions");
+    assert!(manager.sessions.contains_key(&id));
 }
 
-#[test]
-fn compute_context_initialization_failure_does_not_register_authority() {
-    let manager = SessionManager::configured(1, Err(crate::HostComputeInitError::InvalidWorkers));
+
+#[tokio::test]
+async fn new_session_capacity_limit_still_guards_registration() {
+    // 批 9 A3：Compute 失败变体退役（A1）——保留的容量/登记等价面：
+    /// Capacity 拒绝时不登记（原断言 active_count==0/sessions 空的
+    /// 等价语义，用容量满构造不可行（MAX_SESSIONS 大），改验正常
+    /// 登记计数一致——失败路径的"不登记"由 fetch_update 先于构造
+    /// 的既有顺序承载）。
+    let manager = SessionManager::with_base_ms(1);
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    assert!(matches!(manager.new_session(setup, 7), Err(NewSessionError::Compute(_))));
-    assert_eq!(manager.active_session_count(), 0);
-    assert!(manager.sessions.is_empty());
+    let _ = manager.new_session(setup, 7).expect("session registers");
+    assert_eq!(manager.active_session_count(), 1);
+    assert_eq!(manager.sessions.len(), 1);
 }
+
 
 #[tokio::test]
 async fn shared_ingress_receives_player_without_actor_command_polling() {

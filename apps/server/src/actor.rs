@@ -963,8 +963,6 @@ pub enum SendCommandError {
 pub enum NewSessionError {
     #[error(transparent)]
     InvalidSetup(#[from] SessionError),
-    #[error("无法初始化会话计算执行上下文：{0}")]
-    Compute(#[source] crate::HostComputeInitError),
     #[error("session capacity reached (maximum {max})")]
     Capacity { max: usize },
 }
@@ -977,8 +975,6 @@ pub enum NewSessionError {
 pub struct SessionManager {
     sessions: Arc<DashMap<String, Arc<SessionHandles>>>,
     active_count: Arc<AtomicUsize>,
-    /// 本宿主提供的计算上下文；同一资源预算由全部会话共享。
-    compute: Result<Arc<engine::ComputeContext>, crate::HostComputeInitError>,
     base_ms: u64,
 }
 
@@ -988,28 +984,13 @@ impl SessionManager {
         Self::with_base_ms(BASE_TICK_MS)
     }
 
-    /// 未明确配置的宿主使用 OS 可用资源；初始化错误由 new_session 报告。
+    /// 批 9 A1（std-thread 迁移收官）：compute 注入退役——线程模型
+    /// 由引擎内部决定（一股一持久线程），CPU 限制走 OS 级
+    /// cgroup/taskset（memory/project_std_thread_migration）。
     pub fn with_base_ms(base_ms: u64) -> Self {
-        Self::configured(base_ms, crate::host_compute_context())
-    }
-
-    pub fn with_compute(base_ms: u64, compute: Arc<engine::ComputeContext>) -> Self {
-        Self::configured(base_ms, Ok(compute))
-    }
-
-    /// 读取本宿主实际持有的 Rayon registry 容量，不读取 caller 的另一个 pool。
-    pub fn compute_workers(&self) -> Result<usize, crate::HostComputeInitError> {
-        self.compute.as_ref().map(|compute| compute.workers()).map_err(|error| *error)
-    }
-
-    fn configured(
-        base_ms: u64,
-        compute: Result<Arc<engine::ComputeContext>, crate::HostComputeInitError>,
-    ) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
             active_count: Arc::new(AtomicUsize::new(0)),
-            compute,
             base_ms,
         }
     }
@@ -1018,7 +999,6 @@ impl SessionManager {
     ///
     /// 失败显式返回 `SessionError`（构造非法参数），绝不静默吞（铁律二）。
     pub fn new_session(&self, setup: SessionSetup, seed: u64) -> Result<String, NewSessionError> {
-        let compute = self.compute.clone().map_err(NewSessionError::Compute)?;
         self.active_count
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current < MAX_SESSIONS).then_some(current + 1)
@@ -1027,7 +1007,7 @@ impl SessionManager {
         let ticks_per_day = setup.ticks_per_day;
         let auction_ticks = setup.auction_ticks;
         let closing_auction_ticks = setup.closing_auction_ticks;
-        let game = match ProtocolSession::new_with_compute(setup, seed, compute) {
+        let game = match ProtocolSession::new(setup, seed) {
             Ok(game) => game,
             Err(error) => {
                 self.active_count.fetch_sub(1, Ordering::AcqRel);
@@ -1542,12 +1522,7 @@ impl SessionActor {
                 let _ = reply.send(result);
             }
             SessionCommand::Restore { slot, reply } => match self.fatal_rejection().map_or_else(
-                || {
-                    ProtocolSession::restore_with_compute(
-                        &slot,
-                        Arc::clone(self.game.game().compute_context()),
-                    )
-                },
+                || ProtocolSession::restore(&slot),
                 Err,
             ) {
                 Ok(restored) => {

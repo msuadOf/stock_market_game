@@ -1,7 +1,10 @@
 //! engine → WASM 绑定（ADR-0007 §4）。
 //!
-//! 多核：wasm 宿主无 OS 线程，native std::thread 运行时（ADR-0043）在 wasm 下
-//! 不可用，engine 恒走串行管线；wasm 侧多核方案待缺口核实结论后再另行登记。
+//! 多核（批 9 A10 终稿）：wasm 宿主无 OS 线程，native std::thread 运行时
+//!（ADR-0043）在 wasm 下不可用，engine 恒走串行管线——**串行 wasm 为本期
+//! wasm 语义，登记为简化**（docs/trading-rules 与
+//! memory/project_std_thread_migration）；原 wasm-bindgen-rayon 多核方案
+//! 随 rayon 退役一并删除（+atomics/build-std 链接链、COOP/COEP 隔离门）。
 //!
 //! GameSession 不可序列化（含 `Box<dyn Strategy + Send + Sync>`），故存于 thread_local
 //! 句柄注册表；仅 `Snapshot`/`Event`/`Intent`/`SessionSetup` 经 serde-wasm-bindgen 跨界。

@@ -5,32 +5,31 @@
 //! 本探针每 tick 走 session 侧安装链（install_market_views/install_candles/
 //! 个人态回写/信封投影）。守恒判据对齐 s5 探针形态（终态对账）。
 //!
-//! 用法：driver_semantics_probe <setup.json> <ticks> <threads> <runtime_groups>
-//!（ENGINE_STEP_RUNTIME=1 运行；threads 只喂 ComputeContext）。
+//! 用法：driver_semantics_probe <setup.json> <ticks> <runtime_groups>
+//!（ENGINE_STEP_RUNTIME=1 运行；批 9 A6 起 threads 参数退役——CPU 约束
+//! 走 OS 级 cgroup/taskset）。
 use engine::{GameSession, SessionSetup};
 use std::{collections::BTreeMap, env, fs, time::Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = env::args().skip(1).collect();
-    let [setup_path, ticks, threads, groups] = args.as_slice() else {
+    let [setup_path, ticks, groups] = args.as_slice() else {
         return Err(
-            "用法：driver_semantics_probe <setup.json> <ticks> <threads> <runtime_groups>".into(),
+            "用法：driver_semantics_probe <setup.json> <ticks> <runtime_groups>".into(),
         );
     };
     let setup: SessionSetup = serde_json::from_slice(&fs::read(setup_path)?)?;
     let ticks: u64 = ticks.parse()?;
-    let threads: usize = threads.parse()?;
     let groups: usize = groups.parse()?;
-    if ticks == 0 || threads == 0 || groups == 0 {
-        return Err("ticks/threads/runtime_groups 必须大于零".into());
+    if ticks == 0 || groups == 0 {
+        return Err("ticks/runtime_groups 必须大于零".into());
     }
     if !engine::runtime::step_runtime_enabled() {
         return Err("本探针测 std-thread runtime 路径：需 ENGINE_STEP_RUNTIME=1".into());
     }
-    let compute = engine::ComputeContext::with_workers(threads)?;
     (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // 守恒基线：构造后全账户现金+费用桶与股份总量（初始事实）。
-        let mut game = GameSession::new_with_runtime_groups(setup, 42, compute.clone(), groups)?;
+        let mut game = GameSession::new_with_runtime_groups(setup, 42, groups)?;
         let accounts_initial: Vec<_> = (0..game.account_count() as u64)
             .map(|i| {
                 let acct = game
@@ -79,7 +78,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "{}",
             serde_json::json!({
                 "ticks": ticks,
-                "threads": threads,
                 "runtime_groups": groups,
                 "wall_s": wall_s,
                 "speed_x": ticks as f64 / wall_s,

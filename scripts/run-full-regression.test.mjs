@@ -188,25 +188,26 @@ it("partitions the detected CPU budget across concurrent binaries without overse
     available_cpu_count: 128,
     binary_count: 80,
     max_concurrent_binaries: 8,
-    worker_budgets: Array.from({ length: 8 }, () => ({ cpu_budget: 16, test_threads: 12, rayon_threads: 4 })),
+    // 批 9 A7：rayon_threads 分量退役——CPU 预算全额给 test_threads。
+    worker_budgets: Array.from({ length: 8 }, () => ({ cpu_budget: 16, test_threads: 16 })),
     aggregate_configured_thread_budget: 128,
   });
   const small = buildRustTestExecutionPolicy(4, 40);
   assert.equal(small.max_concurrent_binaries, 2);
   assert.deepEqual(small.worker_budgets, [
-    { cpu_budget: 2, test_threads: 1, rayon_threads: 1 },
-    { cpu_budget: 2, test_threads: 1, rayon_threads: 1 },
+    { cpu_budget: 2, test_threads: 2 },
+    { cpu_budget: 2, test_threads: 2 },
   ]);
   for (let cpuCount = 2; cpuCount <= 129; cpuCount += 1) {
     const policy = buildRustTestExecutionPolicy(cpuCount, 80);
     assert.equal(policy.aggregate_configured_thread_budget, cpuCount, `CPU ${cpuCount} is misbudgeted by ${JSON.stringify(policy)}`);
     assert.ok(policy.max_concurrent_binaries <= 8);
-    assert.ok(policy.worker_budgets.every((budget) => budget.test_threads + budget.rayon_threads === budget.cpu_budget));
+    assert.ok(policy.worker_budgets.every((budget) => budget.test_threads === budget.cpu_budget));
   }
   assert.deepEqual(buildRustTestExecutionPolicy(5, 80).worker_budgets.map((budget) => budget.cpu_budget), [3, 2]);
   const singleCpu = buildRustTestExecutionPolicy(1, 80);
-  assert.deepEqual(singleCpu.worker_budgets, [{ cpu_budget: 1, test_threads: 1, rayon_threads: 1 }]);
-  assert.equal(singleCpu.aggregate_configured_thread_budget, 2, "the one-CPU Rayon and harness minimum must be reported honestly");
+  assert.deepEqual(singleCpu.worker_budgets, [{ cpu_budget: 1, test_threads: 1 }]);
+  assert.equal(singleCpu.aggregate_configured_thread_budget, 1, "批 9 A7：rayon 最低 1 线程的加计退役——1 CPU 预算如实上报 1");
 });
 
 it("fingerprints Rust, Web, package-manager, and deadline-runner inputs", () => {
@@ -709,7 +710,8 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     const ordinaryBinary = calls.find((call) => call.args.includes("ordinary::case"));
     assert.equal(ordinaryBinary.timeoutMs, 10_000);
     assert.deepEqual(ordinaryBinary.args, ["ordinary::case", "--exact", "--test-threads=1"]);
-    assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, "7");
+    // 批 9 A7：RAYON_NUM_THREADS 导出退役——断言缺省。
+    assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, undefined);
     const longValidation = calls.find((call) => call.command === fixture.artifact && call.args.includes("--ignored") && !call.args.includes("--list"));
     assert.deepEqual(longValidation.args, [
       "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
@@ -717,7 +719,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
       "--ignored",
       "--test-threads=1",
     ]);
-    assert.equal(longValidation.env.RAYON_NUM_THREADS, "7");
+    assert.equal(longValidation.env.RAYON_NUM_THREADS, undefined);
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
     assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_996);
     const web = calls.find((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));

@@ -1090,13 +1090,7 @@ mod tests {
 
     #[test]
     fn public_payload_probe_uses_real_identities_and_negative_controls_diverge() {
-        let capture = committed::capture_runtime(
-            43,
-            engine::ComputeContext::shared_default()
-                .map_err(|error| error.to_string())
-                .unwrap(),
-        )
-        .unwrap();
+        let capture = committed::capture_runtime(43).unwrap();
         let rows = collector_rows(&capture).unwrap();
         let canonical = collect_rows(rows.clone(), Mode::Canonical, None).unwrap();
         let perturbed = collect_rows(rows.clone(), Mode::Perturbed, None).unwrap();

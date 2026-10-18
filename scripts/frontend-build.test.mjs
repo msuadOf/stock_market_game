@@ -15,7 +15,8 @@ test("shared frontend plan owns install, threaded WASM, copy, TypeScript, Vite a
     assert.ok(wasm.args.includes("build-std=panic_abort,std"));
     assert.equal(wasm.env.RUSTUP_TOOLCHAIN, "nightly-2026-09-05");
     assert.equal(wasm.env.CARGO_BUILD_JOBS, "4");
-    assert.equal(wasm.env.RAYON_NUM_THREADS, "4");
+    // 批 9 A7：RAYON 分量退役——断言缺省。
+    assert.equal(wasm.env.RAYON_NUM_THREADS, undefined);
     assert.ok(plan.commands.find(({ action }) => action === "copy-wasm"));
     assert.match(JSON.stringify(plan.commands), /typescript.*tsc/);
     assert.match(JSON.stringify(plan.commands), /vite.*build/);

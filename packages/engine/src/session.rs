@@ -1905,10 +1905,11 @@ impl GameSession {
     pub fn new_with_runtime_groups(
         setup: SessionSetup,
         seed: u64,
-        compute: std::sync::Arc<crate::compute::ComputeContext>,
         runtime_groups: usize,
     ) -> Result<GameSession, SessionError> {
-        let mut session = Self::new_with_compute(setup, seed, compute)?;
+        // 批 9 A6：compute 参数退役——内部 shared_default（wasm 串行/OS 级
+        /// CPU 约束同 A5 口径）。
+        let mut session = Self::new(setup, seed)?;
         if runtime_groups == 0 {
             return Err(SessionError::InvalidSetup(crate::error::ValidationFault::bare(
                 1001,

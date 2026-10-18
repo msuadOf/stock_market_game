@@ -49,6 +49,9 @@ fn main() {
             long: Duration::from_secs(120),
         },
         rounds_cap: 4,
+        initial_desk_next_serial: Vec::new(),
+        initial_last_day_end_tick: None,
+        initial_pending_sell: Vec::new(),
         stocks: (0..n_stocks)
             .map(|i| DeskStockSpec {
                 exchange: if i % 2 == 0 {

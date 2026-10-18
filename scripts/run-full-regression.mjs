@@ -57,7 +57,8 @@ export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRo
     TMP: processTmpDir,
     TEMP: processTmpDir,
   };
-  const cargoEnv = { ...workspaceEnv, CARGO_BUILD_JOBS: String(cpuCount), RAYON_NUM_THREADS: String(cpuCount) };
+  // 批 9 A7：RAYON_NUM_THREADS 导出退役（rayon 全退）。
+  const cargoEnv = { ...workspaceEnv, CARGO_BUILD_JOBS: String(cpuCount) };
   return [
     { kind: "rust-test-build", label: "Rust test build", command: "cargo", args: ["test", "--workspace", "--no-run", "--message-format=json-render-diagnostics"], env: cargoEnv, captureOutput: true },
     { kind: "rust-test-binaries", label: "Rust prebuilt test binaries", env: workspaceEnv, cpuCount },
@@ -66,7 +67,7 @@ export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRo
       label: "Rust workspace doctests",
       command: "cargo",
       args: ["test", "--workspace", "--doc", "--no-fail-fast", "--", `--test-threads=${Math.max(1, cpuCount - 1)}`],
-      env: { ...cargoEnv, RAYON_NUM_THREADS: "1" },
+      env: { ...cargoEnv },
     },
     {
       kind: "ordinary-command",
@@ -312,11 +313,10 @@ export function buildRustTestExecutionPolicy(availableCpuCount, binaryCount) {
   const remainingCpus = availableCpuCount % maxConcurrentBinaries;
   const workerBudgets = Array.from({ length: maxConcurrentBinaries }, (_, index) => {
     const cpuBudget = cpuBudgetPerBinary + Number(index < remainingCpus);
-    const rayonThreads = Math.max(1, Math.floor(cpuBudget / 4));
     return {
       cpu_budget: cpuBudget,
-      test_threads: Math.max(1, cpuBudget - rayonThreads),
-      rayon_threads: rayonThreads,
+      // 批 9 A7：rayon 分量退役——全额并回 test_threads。
+      test_threads: Math.max(1, cpuBudget),
     };
   });
   return {
@@ -324,7 +324,7 @@ export function buildRustTestExecutionPolicy(availableCpuCount, binaryCount) {
     binary_count: binaryCount,
     max_concurrent_binaries: maxConcurrentBinaries,
     worker_budgets: workerBudgets,
-    aggregate_configured_thread_budget: workerBudgets.reduce((total, budget) => total + budget.test_threads + budget.rayon_threads, 0),
+    aggregate_configured_thread_budget: workerBudgets.reduce((total, budget) => total + budget.test_threads, 0),
   };
 }
 
@@ -361,7 +361,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run, cwd, env
           const output = await run({
             command: artifact.executable,
             args: ["--list", "--format=terse", ...(ignored ? ["--ignored"] : [])],
-            env: { ...env, RAYON_NUM_THREADS: String(budget.rayon_threads) },
+            env: { ...env },
             cwd, timeoutMs, captureOutput: true,
             cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
             signal: controller.signal,
@@ -383,8 +383,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run, cwd, env
   const cases = results.flat();
   const concurrency = Math.min(cases.length, Math.max(1, Math.floor(policy.available_cpu_count / 2)));
   const cpuBudget = concurrency === 0 ? 0 : Math.floor(policy.available_cpu_count / concurrency);
-  const rayonThreads = Math.max(1, cpuBudget - 1);
-  const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, rayon_threads: rayonThreads, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
+  const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
   log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
   nextIndex = 0;
   async function caseWorker() {
@@ -397,7 +396,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run, cwd, env
         await run({
           command: testCase.executable,
           args: [testCase.name, "--exact", "--test-threads=1"],
-          env: { ...env, RAYON_NUM_THREADS: String(rayonThreads) },
+          env: { ...env },
           cwd, timeoutMs,
           cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
           signal: controller.signal,
@@ -427,7 +426,7 @@ async function executeRequiredLongValidations({ artifacts, policy, run, cwd, env
     await run({
       command: artifact.executable,
       args: [validation.filter, "--exact", "--ignored", `--test-threads=${policy.testThreadsPerBinary}`],
-      env: { ...env, RAYON_NUM_THREADS: String(policy.rayonThreadsPerBinary) },
+      env: { ...env },
       cwd,
       timeoutMs,
       cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, timeoutMs - 1)),
@@ -515,7 +514,7 @@ export async function buildFullRegressionArtifacts({
   const resolvedInventoryPath = await prepareInventoryPath(workspacePaths.workspaceRoot, inventoryPath);
   const buildStep = fullRegressionSteps(cpuCount, sourceRoot, process.env, workspacePaths.workspaceRoot)
     .find((step) => step.kind === "rust-test-build");
-  log(JSON.stringify({ phase: "build-start", available_cpu_count: cpuCount, cargo_build_jobs: Number(buildStep.env.CARGO_BUILD_JOBS), rayon_threads: Number(buildStep.env.RAYON_NUM_THREADS) }));
+  log(JSON.stringify({ phase: "build-start", available_cpu_count: cpuCount, cargo_build_jobs: Number(buildStep.env.CARGO_BUILD_JOBS) }));
   const startedAt = now();
   log(JSON.stringify({ phase: "build", status: "started", stage: "source_fingerprint", elapsed_ms: 0,
     cpu_jobs: cpuCount, deadline_ms: LONG_VALIDATION_MAX_MS, cargo_target_dir: workspacePaths.cargoTargetDir }));
@@ -610,7 +609,6 @@ export async function executeFullRegression({
   const policy = buildRustTestExecutionPolicy(binaryStep.cpuCount, artifacts.length);
   const longValidationPolicy = {
     testThreadsPerBinary: 1,
-    rayonThreadsPerBinary: Math.max(1, cpuCount - 1),
   };
   log(JSON.stringify({ phase: "execute-start", ...policy, long_validation: longValidationPolicy }));
   let stepStartedAt = now();
@@ -632,7 +630,6 @@ export async function executeFullRegression({
     wall_ms: now() - stepStartedAt,
     case_count: longValidationResults.length,
     test_threads: longValidationPolicy.testThreadsPerBinary,
-    rayon_threads: longValidationPolicy.rayonThreadsPerBinary,
     cases: longValidationResults,
   });
 

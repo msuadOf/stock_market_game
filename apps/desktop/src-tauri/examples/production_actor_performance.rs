@@ -1,6 +1,6 @@
 //! Exercise the real desktop actor command path without opening a GUI window.
 //! `cargo run -p stock-market-game --features host-parity --example production_actor_performance -- <workload.json> <steps>`
-//! Run with `RAYON_NUM_THREADS=<workers>`; the pool size does not limit requests.
+//! 批 9 A9：RAYON_NUM_THREADS 用法退役——引擎线程数内部决定，CPU 约束走 OS 级（cgroup/taskset）。
 
 use engine::{calendar::CivilDate, Intent, SessionSetup, Side};
 use serde::Deserialize;

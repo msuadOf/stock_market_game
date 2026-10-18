@@ -3,15 +3,14 @@ import { describe, it } from "node:test";
 import { fatalDesktopInitializationMessage, fatalWasmInitializationMessage } from "./startup-policy.ts";
 
 describe("WASM startup failure policy", () => {
-  it("turns the original multi-thread failure into a fatal, non-fallback error", () => {
+  it("批 9 A10：门禁面随 wasm 多核退役——错误包装仍致命不回退", () => {
     const message = fatalWasmInitializationMessage(
-      new Error("SharedArrayBuffer is unavailable because COOP/COEP headers are missing"),
+      new Error("isSecureContext is unavailable"),
     );
 
     assert.match(message, /游戏已中止/);
     assert.match(message, /不会回退到主线程/);
-    assert.match(message, /SharedArrayBuffer/);
-    assert.match(message, /COOP\/COEP/);
+    assert.match(message, /isSecureContext/);
   });
 });
 

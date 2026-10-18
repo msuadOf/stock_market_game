@@ -108,9 +108,10 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   硬期限；先验证 inventory 自校验、当前源码指纹和每个二进制哈希，再按 `os.availableParallelism()`
   的可用 CPU 预算最多并发 8 个预构建 Rust test binaries 的 case 清单查询；分别读取完整清单与 ignored 清单，取差集，不运行 ignored 普通 case。
   每个普通 case 用独立进程执行 `--exact --test-threads=1`，进程外 watchdog 为 `min(10000ms, 批次剩余时间)`；
-  case 并发数为 `min(case 数量, max(1, floor(CPU 数量 / 2)))`，每个 case 分配一个 harness thread 和其 CPU 预算余量对应的 Rayon threads。
-  例如 128 CPU 最多并发 64 个各 1+1 的 case，4 CPU 最多并发两个各 1+1 的 case；单核时仍各至少 1 线程，不宣称未超卖。
-  独立执行的必跑 ignored 长用例使用 1 个 harness thread 和其余可用 CPU 对应的 Rayon threads。
+  case 并发数为 `min(case 数量, max(1, floor(CPU 数量 / 2)))`，每个 case 分配一个 harness thread
+  与其全部 CPU 预算（批 9 A7 起 Rayon threads 分量退役——引擎内部线程模型，
+  不再按环境变量切分预算；单核时仍至少 1 线程，不宣称未超卖）。
+  独立执行的必跑 ignored 长用例使用 1 个 harness thread。
   执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case；同一执行期限随后覆盖 workspace doctests 和上述多进程 Web 普通测试入口，其中 Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
   完整回归已有 Web 整批的进程外十秒监督，直接启动带显式标记的 Web internal worker，
   不再让 Web CLI 重复启动另一层监督进程；独立 Web CLI 仍保留自己的进程外十秒监督。

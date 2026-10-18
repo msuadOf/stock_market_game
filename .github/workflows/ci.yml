@@ -78,7 +78,7 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
 
-      # wasm-bindgen-rayon 的 +atomics 需要走 build-std → 要 wasm32 target + rust-src。
+      # 批 9 A10：wasm-bindgen-rayon/build-std 链退役——串行 wasm 走稳定工具链。
       - name: Add wasm32 target + rust-src (pinned nightly)
         run: |
           rustup target add wasm32-unknown-unknown --toolchain nightly-2026-09-05

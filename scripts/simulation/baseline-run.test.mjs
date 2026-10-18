@@ -328,8 +328,8 @@ describe("cargo example 参数构造", () => {
       available_cpu_count: 128,
       available_cpu_source: "node_available_parallelism",
       maximum_thread_count: "auto",
+      // 批 9 A7：rayon_threads_per_seed 退役——128 CPU 全额给并发上限 30。
       max_concurrent_child_executions: 30,
-      rayon_threads_per_seed: 4,
       ordinary_test_max_ms: 10_000,
       child_timeout_ms: 300_000,
       batch_timeout_ms: 300_000,
@@ -344,8 +344,7 @@ describe("cargo example 参数构造", () => {
       available_cpu_count: 12,
       available_cpu_source: "node_available_parallelism",
       maximum_thread_count: 3,
-      max_concurrent_child_executions: 1,
-      rayon_threads_per_seed: 3,
+      max_concurrent_child_executions: 3,
       ordinary_test_max_ms: 10_000,
       child_timeout_ms: 300_000,
       batch_timeout_ms: 300_000,
@@ -353,12 +352,9 @@ describe("cargo example 参数构造", () => {
       cleanup_reserve_ms: 1_000,
     });
     const bounded = buildSimulationResourcePolicy(128, "node_available_parallelism", 24);
-    assert.equal(bounded.max_concurrent_child_executions, 6);
-    assert.equal(bounded.rayon_threads_per_seed, 4);
-    assert.ok(
-      bounded.max_concurrent_child_executions * bounded.rayon_threads_per_seed <= 24,
-      "the aggregate child Rayon budget must not exceed --max-threads",
-    );
+    // 批 9 A7：Rayon 预算算术退役——并发数=预算全额。
+    assert.equal(bounded.max_concurrent_child_executions, 24);
+    assert.ok(bounded.max_concurrent_child_executions <= 24, "并发子进程不得超过 --max-threads");
   });
 
   it("prefers the process-aware Node count and tightens it with an observable cgroup CPU quota", async () => {
@@ -372,8 +368,7 @@ describe("cargo example 参数构造", () => {
       available_cpu_count: 2,
       available_cpu_source: "node_available_parallelism+cgroup_cpu_max",
       maximum_thread_count: "auto",
-      max_concurrent_child_executions: 1,
-      rayon_threads_per_seed: 2,
+      max_concurrent_child_executions: 2,
       ordinary_test_max_ms: 10_000,
       child_timeout_ms: 300_000,
       batch_timeout_ms: 300_000,
@@ -398,7 +393,7 @@ describe("cargo example 参数构造", () => {
     });
     assert.equal(policy.available_cpu_count, 2);
     assert.equal(policy.maximum_thread_count, 9);
-    assert.equal(policy.rayon_threads_per_seed, 2);
+    assert.equal(policy.max_concurrent_child_executions, 2);
   });
 
   it("does not consult the host fallback when Node reports a process-available count", async () => {
@@ -886,7 +881,8 @@ describe("模拟验收 capture 契约", () => {
       }
       activeChildren += 1;
       maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
-      observedRayonThreads.add(options.env.RAYON_NUM_THREADS);
+      // 批 9 A7：RAYON 注入退役——观察子进程不再携带该 env。
+      observedRayonThreads.add(options.env.RAYON_NUM_THREADS === undefined ? "<retired>" : options.env.RAYON_NUM_THREADS);
       observedCargoTargets.add(options.env.CARGO_TARGET_DIR);
       observedProcessTmp.add(`${options.env.TMPDIR}|${options.env.TMP}|${options.env.TEMP}`);
       if (activeChildren === expectedConcurrentChildren) releaseFirstWave();
@@ -913,14 +909,13 @@ describe("模拟验收 capture 契约", () => {
     assert.equal(maxActiveChildren, expectedConcurrentChildren);
     assert.ok(maxActiveChildren <= resourcePolicy.max_concurrent_child_executions);
     assert.ok(maxActiveChildren > 1, "the simulation acceptance runner must exercise process-level parallelism");
-    assert.deepEqual(observedRayonThreads, new Set([String(resourcePolicy.rayon_threads_per_seed)]));
+    // 批 9 A7：断言全部子进程均无 RAYON_NUM_THREADS（注入退役）。
+    assert.deepEqual(observedRayonThreads, new Set(["<retired>"]));
     assert.deepEqual(observedCargoTargets, new Set([TEST_WORKSPACE_PATHS.cargoTargetDir.replace("test-fixtures", "simulation-acceptance")]));
     const simulationProcessTmp = TEST_WORKSPACE_PATHS.processTmpDir.replace("test-fixtures", "simulation-acceptance");
     assert.deepEqual(observedProcessTmp, new Set([`${simulationProcessTmp}|${simulationProcessTmp}|${simulationProcessTmp}`]));
-    assert.ok(
-      resourcePolicy.max_concurrent_child_executions * resourcePolicy.rayon_threads_per_seed <= 128,
-      "the aggregate Rayon budget must stay within the detected CPU budget",
-    );
+    // 批 9 A7：Rayon 预算算术退役——并发数本身受 CPU 预算约束。
+    assert.ok(resourcePolicy.max_concurrent_child_executions <= 128);
     assert.deepEqual(manifest.resource_policy, resourcePolicy);
     assert.deepEqual(manifest.primary.resource_policy, resourcePolicy);
     assert.deepEqual(manifest.primary.runs.map((run) => run.seed), MATRIX_SEEDS);
@@ -980,7 +975,7 @@ describe("模拟验收 capture 契约", () => {
 
     assert.deepEqual(auto.primary.runs[0].raw, capped.primary.runs[0].raw);
     assert.equal(auto.primary.runs[0].sha256, capped.primary.runs[0].sha256);
-    assert.equal(capped.primary.resource_policy.rayon_threads_per_seed, 1);
+    // 批 9 A7：Rayon 每种子预算断言退役（键已从 schema 移除）。
   });
 
   it("checkpoints successful siblings before surfacing a concurrent-wave failure, then resumes exactly", async () => {
