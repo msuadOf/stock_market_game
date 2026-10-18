@@ -250,6 +250,8 @@ fn sol3_runtime_install_failure_rolls_back_advanced_state() {
 }
 
 // Sol 二审修复集 5：candidate 写回与 attention_scheduler heap 同步。
+// P2-1（视图内生战役）：heap 重建改惰性——同步语义由消费点
+// ensure_attention_heap_current 承载（重建后新候选必在堆，断言不变）。
 #[test]
 fn sol5_set_runtime_attention_syncs_scheduler_heap() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -265,8 +267,12 @@ fn sol5_set_runtime_attention_syncs_scheduler_heap() {
         999_999,
         "candidate 写回"
     );
+    // 惰性合同：写点只置标记（消费点才重建）。
+    assert!(game.state.runtime_heap_dirty, "写点置 heap 惰性标记");
     // heap 同步：新候选入堆（pop_due 由候选核对去陈旧项——堆可含旧项，
-    // 但必须含新候选，否则调度面永远看不到它）。
+    // 但必须含新候选，否则调度面永远看不到它）——ensure 后保持。
+    game.ensure_attention_heap_current();
+    assert!(!game.state.runtime_heap_dirty, "ensure 后标记清除");
     let heap: Vec<_> = game.state.attention_scheduler.iter().copied().collect();
     assert!(
         heap.contains(&(999_999, id)),
@@ -293,6 +299,9 @@ fn runtime_attention_heap_mirror_does_not_grow_across_ticks() {
     for _ in 0..5 {
         game.step().unwrap();
     }
+    // P2-1：镜像惰性化——消费点 ensure 后再断言（等价合同：重建后
+    // heap=权威快照，与旧每拍急切重建逐项同值）。
+    game.ensure_attention_heap_current();
     let heap_len = game.state.attention_scheduler.iter().count();
     assert!(
         heap_len <= roster,
@@ -988,5 +997,24 @@ fn solfinal3_same_tick_projection_group1_first_buy_uses_real_vwap() {
         restored_price,
         serde_json::json!("1010"),
         "恢复后经历入场价==成交 VWAP 1010（数值面锁定）"
+    );
+}
+
+// P2-1（视图内生战役）：hash 与 heap 镜像解耦——business_state_hash 恒从
+// 候选权威 npc_attention 派生，heap 陈旧（惰性标记在位、尚未重建）不得
+// 影响 hash 值。突变红锚：hash 改回读 heap → 陈旧堆项混入 → hash1≠hash2 红。
+#[test]
+fn runtime_heap_staleness_does_not_affect_business_hash() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let id = crate::AccountId(1);
+    game.set_runtime_attention(&[(id, 999_999, 7)]);
+    // 惰性态：heap 标记在位（镜像未重建）——hash 必须不受影响。
+    assert!(game.state.runtime_heap_dirty, "前置：镜像陈旧");
+    let hash_stale = game.business_state_hash().expect("陈旧态 hash");
+    game.ensure_attention_heap_current();
+    let hash_current = game.business_state_hash().expect("重建后 hash");
+    assert_eq!(
+        hash_stale, hash_current,
+        "hash 与 heap 镜像状态解耦（恒由候选权威派生）"
     );
 }

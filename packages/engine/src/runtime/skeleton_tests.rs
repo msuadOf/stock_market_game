@@ -621,9 +621,17 @@ fn watchdog_timeout_carries_phase_context() {
     let err = world.run_ticks(1).expect_err("停顿须触发看门狗");
     match &err {
         super::protocol::RuntimeError::Watchdog { phase, waited, .. } => {
-            assert_eq!(*phase, Phase::TickConverge, "超时须携带相位上下文");
+            // Q2 Seal 后停顿可能落在收束或 Seal 相位（取决于停顿时点
+            /// ——断言放宽为两者之一；相位上下文携带本身是判据）。
+            assert!(
+                matches!(*phase, Phase::TickConverge | Phase::Seal),
+                "超时须携带相位上下文（got {phase:?}）"
+            );
             assert_eq!(*waited, Duration::from_millis(100));
-            assert!(err.to_string().contains("TickConverge"), "消息含相位名");
+            assert!(
+                err.to_string().contains("TickConverge") || err.to_string().contains("Seal"),
+                "消息含相位名"
+            );
         }
         other => panic!("应为 Watchdog，收到 {other:?}"),
     }

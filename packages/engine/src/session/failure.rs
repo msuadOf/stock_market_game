@@ -43,6 +43,11 @@ pub(crate) struct RuntimeInstallBaseline {
     >,
     candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
     candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
+    // Sol 复核阻断 P1-1：在途快照拍前值（Arc 廉价克隆）。回滚恢复拍前
+    // 快照（上一成功拍发布版本——与账户/镜像回滚面同源），替代清空：
+    // ledger 已停逐拍维护（P2-4），清空使失败拍后的信封查询/save 与
+    // 驱动器重建种子（from_session 读 ledger）读 stale/空集。
+    resting_snapshot: Option<super::RuntimeRestingSnapshot>,
     // P2-3b：npc_attention/attention_scheduler/belief_participants/
     // retail_experience/history_reads 五域基线 clone 退役——改写时 undo
     // （记录面=set_runtime_attention/set_runtime_information_checks/
@@ -104,6 +109,9 @@ impl GameSession {
         /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
         /// 覆盖为组快照，两域同源）。
         self.state.npc_attention.insert(id, snapshot.attention.clone());
+        // P2-1：npc_attention 变更即置 heap 惰性标记（镜像同步在消费点
+        // 重建——见 set_runtime_attention 注释）。
+        self.state.runtime_heap_dirty = true;
         if let Some(mut previous) = self.state.belief_participants.remove(&id) {
             // 保留 participant 结构语义：以组快照重建（BeliefParticipantState
             // 的字段面=快照四件+attention/history 由各自容器承载）。
@@ -153,14 +161,32 @@ impl GameSession {
 
     /// D5 restore 等价：信封账本条目快照（desk 种子恢复——runtime 形态
     /// 下旧簿空，restore 重建的账本承载单身份）。
+    /// Sol 复核阻断 P1-1：有快照→派生（P2-4 起 ledger 停逐拍维护，快照
+    /// 是唯一现势源——回滚恢复/重建种子读现势在途）；无快照（restore
+    /// 后未步进）→实际 ledger（restore 时刻的权威值）。
     pub fn runtime_envelope_ledger_snapshot(
         &self,
-    ) -> Vec<(crate::session::pipeline::EnvelopeKey, crate::session::pipeline::Envelope)> {
-        self.state
+    ) -> Result<
+        Vec<(
+            crate::session::pipeline::EnvelopeKey,
+            crate::session::pipeline::Envelope,
+        )>,
+        StepFatal,
+    > {
+        if self.state.runtime_resting_snapshot.is_some() {
+            return self.runtime_derive_envelopes().map(|envelopes| {
+                envelopes
+                    .into_iter()
+                    .map(|envelope| (envelope.key().clone(), envelope))
+                    .collect()
+            });
+        }
+        Ok(self
+            .state
             .envelope_ledger
             .iter()
             .map(|(key, envelope)| (key.clone(), envelope.clone()))
-            .collect()
+            .collect())
     }
 
     /// D5 restore 等价：逐股 tick 价格历史读面（组世界构造的 desk
@@ -209,7 +235,7 @@ impl GameSession {
             .as_mut()
             .and_then(|cell| cell.lock().ok())
             .expect("runtime 驱动器在位（调用方已判）");
-        let facts = driver.collect_resting_facts().expect("在途簿收集");
+        let facts = driver.collect_resting_facts_live().expect("在途簿收集");
         let idx = code.0 as usize;
         facts
             .get(idx)
@@ -357,9 +383,20 @@ impl GameSession {
     /// Sol 二审修复集 3：前置校验**真正共用** `check_step_start`
     /// （健康→注入失败→缺策略，与旧管线同判同序）。
     pub fn step_via_runtime(&mut self) -> Result<Vec<Event>, StepFatal> {
-        self.check_step_start()
-            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        // 【P0 画像】入口检查（require_healthy + has_missing_npc_strategy
+        // ——回写 invalidate 后的页级重扫面）。
+        let _seg_check = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::StepEntry,
+        );
+        let check = self.check_step_start();
+        drop(_seg_check);
+        check.map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
+            // 刀③：body 总段（driver_step+安装链+尾部全含）——与
+            /// step_outer/lock_route 差额二分定位未段化归属。
+            let _seg_body = crate::runtime::step_profile::scope(
+                crate::runtime::step_profile::StepSegment::StepViaBody,
+            );
             session.runtime_step_with_install(driver)
         })
     }
@@ -447,6 +484,10 @@ impl GameSession {
             &mut crate::runtime::drive::RuntimeDriver,
         ) -> Result<R, StepFatal>,
     ) -> Result<R, StepFatal> {
+        // 【P0 画像】lock_route 段（锁+锁步校验+ingress freeze+意图路由）。
+        let _seg_lock = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::LockRoute,
+        );
         let guard = cell.lock();
         let poisoned = guard.is_err();
         let mut driver = if poisoned {
@@ -493,6 +534,7 @@ impl GameSession {
                 }));
             }
         }
+        drop(_seg_lock);
         let outcome = body(self, &mut driver);
         if outcome.is_err() {
             self.restore_runtime_player_intents(intents);
@@ -562,7 +604,12 @@ impl GameSession {
     ) -> Result<Vec<Event>, StepFatal> {
         let (events, _baseline) = self.runtime_step_with_install_inner(driver, false)?;
         // P2-2b：成功 step 尾清账户写时 undo（失败路径已由 rollback 消费）。
+        // 【P0 画像】undo_clear 段（成功尾清）。
+        let _seg_undo = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::UndoClear,
+        );
         self.runtime_clear_account_undo();
+        drop(_seg_undo);
         Ok(events)
     }
 
@@ -591,17 +638,34 @@ impl GameSession {
         // P2-3b：step 入口清写时 undo 槽（上一 step 成功已尾清/失败已
         // 回滚消费——此处清的是驱动器手动序列等直调安装面的残留记录；
         /// 残留会把本拍回滚恢复到错误的更早状态）。
+        // 【P0 画像】undo_clear 段（入口清）。
+        let _seg_undo0 = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::UndoClear,
+        );
         self.runtime_clear_account_undo();
+        drop(_seg_undo0);
         // 生产探针对齐（t3 契约：每 tick 恰一次"生产调用"）。
         #[cfg(test)]
         self.compute_context()
             .t1_probes
             .queue_attempt_seq
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // 【P0 画像】baseline_snapshot 段（D5：五域每拍快照 clone）。
+        let _seg_baseline = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::BaselineSnapshot,
+        );
         let baseline = self.runtime_install_baseline();
+        drop(_seg_baseline);
         // step 失败即停（此前先存 Result 再无条件安装——已 Abort 的
         // 世界状态会被写进会话）。
-        let mut events = driver.step_frame_equivalent(self)?;
+        // 【P0 画像】driver_step 段（step_frame_equivalent 总 wall——
+        // 二分定位残余在 drive 层还是安装层）。
+        let _seg_dstep = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::DriverStep,
+        );
+        let step_result = driver.step_frame_equivalent(self);
+        drop(_seg_dstep);
+        let mut events = step_result?;
         // 晚失败注入（D0：旧管线 post_shadow 语义等价点——生产工作完成、
         // 安装之前；晚失败不得泄漏任何已计算状态。两路径同判：此前
         // runtime 路径不消费该注入，注入后期望 Err 的对照测试被
@@ -629,9 +693,19 @@ impl GameSession {
                 Err(e) => Err(format!("{e}（注入点：market_views）")),
             }
         } else {
-            driver
-                .install_market_views(self)
-                .and_then(|()| driver.install_candles(self))
+            // 【P0 画像】market_install 段（D4；内嵌 attention_heap 段——
+            // 报告净额=market_install−attention_heap）。
+            let _seg_market =
+                crate::runtime::step_profile::scope(crate::runtime::step_profile::StepSegment::MarketInstall);
+            let market_result = driver.install_market_views(self);
+            drop(_seg_market);
+            market_result.and_then(|()| {
+                // 【P0 画像】candle_install 段（D4）。
+                let _seg_candle = crate::runtime::step_profile::scope(
+                    crate::runtime::step_profile::StepSegment::CandleInstall,
+                );
+                driver.install_candles(self)
+            })
         };
         if let Err(install_err) = install_outcome {
             self.rollback_runtime_step(baseline);
@@ -644,7 +718,13 @@ impl GameSession {
         /// PriceTick——旧管线 finish_market_data 的 runtime 等价；竞价
         /// 相位由 desk_auction facts 承载）。安装在 install_candles 之后
         ///（daily_candle 读 session 活动 K）。
-        if let Err(emit_err) = driver.emit_price_tick_events(self, &mut events) {
+        // 【P0 画像】price_tick_emit 段。
+        let _seg_ptick = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::PriceTickEmit,
+        );
+        let price_tick_outcome = driver.emit_price_tick_events(self, &mut events);
+        drop(_seg_ptick);
+        if let Err(emit_err) = price_tick_outcome {
             self.rollback_runtime_step(baseline);
             return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
                 location: "GameSession::step_via_runtime::price_tick".to_owned(),
@@ -656,6 +736,10 @@ impl GameSession {
         /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
         /// 仅派生已迁移的 Rejected）。P2-3c：单遍派发（原逐账户×全事件
         /// O(名册×事件)+全名册 keys collect——Sol P3）。
+        // 【P0 画像】retail_diag 段（D5：拒收诊断+决策 trace 收集）。
+        let _seg_retail = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::RetailDiag,
+        );
         // step_frame 接轨件 4b：投影失败回滚面——retail 诊断两域首写
         /// 旧值入 undo（幂等首写；step() 路径 capture_undo=false 不记）。
         if capture_undo && self.state.runtime_retail_diag_undo.is_none() {
@@ -681,6 +765,7 @@ impl GameSession {
             };
             self.state.last_retail_decisions = traces;
         }
+        drop(_seg_retail);
         // D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/
         /// 组日翻，**先于**信封重建：日终清簿后的 desk 在途=空集，ledger
         /// 重建与旧管线"日终无在途"校验面同源；drained 撤单事件并入本拍
@@ -700,8 +785,21 @@ impl GameSession {
         /// p2_4b_envelope_incremental_matches_full_rebuild；全量读面/
         /// save/hash 均按内容消费，内容等价即全读面等价）。基线缺失
         ///（构造后首拍/红证强制/股面错配）退全量重建。
-        let resting_by_stock = match driver.collect_resting_facts() {
-            Ok(facts) => facts,
+        // 【P0 画像】envelope 段（D6：resting 收集+增量/全量信封账本；
+        /// 子分 envelope_collect=收集往返，差额=差分+增量应用）。
+        let _seg_envelope = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::Envelope,
+        );
+        let _seg_ecollect = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::EnvelopeCollect,
+        );
+        // P2-4（视图内生战役）：envelope_ledger 每拍增量/全量维护退役
+        //（P0 画像 80μs/tick）——发布版本快照句柄存 session（Arc 共享
+        /// 零拷贝），投影在查询/hash 时派生（内容等价=原全量重建口径
+        ///——runtime_resting_envelope 同一构造逻辑；undo 面随维护退役，
+        /// 回滚=快照失效下一拍重建）。mirror 段与后续消费改读快照。
+        let (resting_facts, resting_id_map) = match driver.resting_snapshot_for_session() {
+            Ok(pair) => pair,
             Err(e) => {
                 self.rollback_runtime_step(baseline);
                 return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
@@ -710,115 +808,18 @@ impl GameSession {
                 }));
             }
         };
-        // step_frame 接轨件 4b：投影失败回滚面——信封账本整值旧值入
-        /// undo（ledger clone 仅 step_frame 分叉记录；增量路径的原位
-        /// 变更回滚走整值恢复——写前快照覆盖两分支）。
-        if capture_undo && self.state.runtime_envelope_undo.is_none() {
-            self.state.runtime_envelope_undo = Some(self.state.envelope_ledger.clone());
-        }
-        let delta = driver.resting_delta_since_last_echo(&resting_by_stock);
-        if delta.full_rebuild {
-            let mut envelopes = Vec::new();
-            for (stock_idx, facts) in resting_by_stock.iter().enumerate() {
-                for fact in facts {
-                    match runtime_resting_envelope(
-                        driver,
-                        &self.state.setup.config,
-                        stock_idx,
-                        fact,
-                    ) {
-                        Ok(Some(envelope)) => envelopes.push(envelope),
-                        Ok(None) => {}
-                        Err(description) => {
-                            self.rollback_runtime_step(baseline);
-                            return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                                location: "GameSession::step_via_runtime::envelope".to_owned(),
-                                description,
-                            }));
-                        }
-                    }
-                }
-            }
-            self.mark_external_mutation();
-            self.state.envelope_ledger = match crate::session::pipeline::EnvelopeLedger::new(
-                self.state.next_receipt_base,
-                envelopes,
-            ) {
-                Ok(ledger) => ledger,
-                Err(fatal) => {
-                    let fatal = StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::envelope".to_owned(),
-                    description: format!("信封账本重建失败：{fatal:?}"),
-                };
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(fatal));
-            }
-            };
-        } else {
-            // P2-4b：差分原位应用。增/改=同构信封 upsert（与全量路径
-            /// 同一构造函数——数值面同源）；删=键移除（缺席=漂移显式
-            /// 拒绝不静默）；尾同步 receipt 序号面（全量路径每拍以
-            /// next_receipt_base 重建，增量路径显式对齐保持 hash 投影
-            /// 逐位一致）。
-            for entry in &delta.entries {
-                let apply_result = match entry {
-                    crate::runtime::RestingDeltaEntry::Added { stock, fact }
-                    | crate::runtime::RestingDeltaEntry::Changed { stock, fact } => {
-                        match runtime_resting_envelope(
-                            driver,
-                            &self.state.setup.config,
-                            *stock as usize,
-                            fact,
-                        ) {
-                            Ok(Some(envelope)) => self
-                                .state
-                                .envelope_ledger
-                                .upsert_runtime_envelope(envelope)
-                                .map_err(|fatal| fatal.to_string()),
-                            // 名册外 owner：全量路径同语义跳过（账本不含
-                            /// 名册外账户的信封）。
-                            Ok(None) => Ok(()),
-                            Err(description) => Err(description),
-                        }
-                    }
-                    crate::runtime::RestingDeltaEntry::Removed {
-                        stock,
-                        owner,
-                        side,
-                        order_serial,
-                    } => {
-                        let Some(account) = driver.account_by_owner(*owner) else {
-                            // 名册外 owner：从未安装过，无键可删。
-                            continue;
-                        };
-                        let key = crate::session::pipeline::EnvelopeKey {
-                            account,
-                            stock: crate::StockId(u32::from(*stock)),
-                            order: crate::OrderId(*order_serial),
-                            side: *side,
-                        };
-                        self.state
-                            .envelope_ledger
-                            .remove_runtime_envelope(&key)
-                            .map_err(|fatal| fatal.to_string())
-                    }
-                };
-                if let Err(description) = apply_result {
-                    let fatal = StepFatal::InvariantViolation {
-                        location: "GameSession::step_via_runtime::envelope".to_owned(),
-                        description: format!("信封账本增量应用失败：{description}"),
-                    };
-                    self.rollback_runtime_step(baseline);
-                    return Err(self.poison_runtime_step(fatal));
-                }
-            }
-            if !delta.entries.is_empty() {
-                self.mark_external_mutation();
-            }
-            self.state
-                .envelope_ledger
-                .sync_runtime_receipt_index(self.state.next_receipt_base);
-        }
+        let accounts_per_group = driver.accounts_per_group();
+        self.state.runtime_resting_snapshot = Some(super::RuntimeRestingSnapshot {
+            facts: resting_facts,
+            id_map: resting_id_map,
+            accounts_per_group,
+        });
+        drop(_seg_ecollect);
+        drop(_seg_envelope);
+        // 【P0 画像】desk_mirror 段（D6：簿镜像+lifecycle 投影清空）。
+        let _seg_mirror = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::DeskMirror,
+        );
         // D5 attention 公开可见性门禁：desk 簿镜像刷新（瞬态读面源——
         /// snapshot 公开投影/玩家在途/预留；desk 权威事实+公开截点）。
         {
@@ -832,12 +833,18 @@ impl GameSession {
             }
             let views = driver.world_public_views();
             let mut mirror = std::collections::BTreeMap::new();
-            for (stock_idx, book) in resting_by_stock.iter().enumerate() {
+            // P2-4：镜像数据源改读发布版本快照（collect 退役）。
+            let snapshot = self
+                .state
+                .runtime_resting_snapshot
+                .as_ref()
+                .expect("envelope 段刚存入快照");
+            for (stock_idx, book) in snapshot.facts.iter().enumerate() {
                 let Some(view) = views.get(stock_idx) else {
                     continue;
                 };
                 let mut orders = Vec::with_capacity(book.len());
-                for fact in book {
+                for fact in book.iter() {
                     // Sol 终审修复 1c：归户用 account_by_owner（保留组号
                     /// ——此前 account_by_local(owner.1) 丢组号，其他组的
                     /// 同 local 委托被归给组 0 账户，与删除分支键不一致）。
@@ -883,6 +890,7 @@ impl GameSession {
         }
         self.mark_external_mutation();
         self.state.npc_order_lifecycles = Vec::new();
+        drop(_seg_mirror);
         // D5 日界安装（ends_day 拍）：session 侧交易日终迁移（day 推进/
         /// candle 提交/T+1 解锁/DayBoundary——与旧管线 continuous_tick_
         /// finalizer 同一迁移；在行情安装**之后**（本拍 active candle 先
@@ -890,6 +898,10 @@ impl GameSession {
         /// 价格历史长度由 install 侧按 tick 推导，与本序无耦合）。
         /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
         /// 登记差异。
+        // 【P0 画像】day_end 段（日结编排；低频——B fixture 不触发）。
+        let _seg_dayend = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::DayEnd,
+        );
         if ends_day {
             // Sol 终审修复 1a：日结段的全部可失败出口统一走
             /// rollback+poison（此前 `?` 直出绕过回滚——day/candle/T+1
@@ -955,7 +967,8 @@ impl GameSession {
                     .map(|v| (v.last_price, v.public_cutoff_serial))
                     .collect();
                 let mut mirror = std::collections::BTreeMap::new();
-                let facts = match driver.collect_resting_facts() {
+                // P2-3：日结清簿后发布版本仍是清簿前 tick——须 live 现拉。
+                let facts = match driver.collect_resting_facts_live() {
                     Ok(facts) => facts,
                     Err(e) => {
                         let fatal = StepFatal::InvariantViolation {
@@ -1002,6 +1015,15 @@ impl GameSession {
                 self.state.desk_book_mirror = mirror;
                 // Sol 四轮修复：游标会话级缓存（同上）。
                 self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
+                // Sol 复核阻断 P1-1：日终清簿后在途快照 live 重刷（与
+                // mirror 同式现拉——发布版本仍是清簿前 tick；快照安装
+                // 在 Drain 之前，不重刷则日终后信封查询/save 读清簿前
+                // 在途单）。
+                self.state.runtime_resting_snapshot = Some(super::RuntimeRestingSnapshot {
+                    facts: facts.into_iter().map(std::sync::Arc::new).collect(),
+                    id_map: driver.resting_id_map_handle(),
+                    accounts_per_group: driver.accounts_per_group(),
+                });
             }
             // Sol 终审四审 A2：world 日结（上方）把当日 K 归档进 desk
             /// 历史——但常规 install_candles 在其**之前**执行（当日条
@@ -1015,6 +1037,7 @@ impl GameSession {
                 }));
             }
         }
+        drop(_seg_dayend);
         // 接轨件 4：尾清与基线交付由调用方承载（见方法注释）。
         Ok((events, baseline))
     }
@@ -1075,6 +1098,8 @@ impl GameSession {
             minute_closes: self.state.market_minute_closes.clone(),
             candle_histories: self.state.candle_book.histories().clone(),
             candle_active: self.state.candle_book.active().clone(),
+            // P1-1：快照拍前值入基线（回滚恢复源）。
+            resting_snapshot: self.state.runtime_resting_snapshot.clone(),
             // P2-3b：五域（attention/heap/belief/retail/history）不再随基线
             // 快照——回滚源=写时 undo（见结构体注释）。
         }
@@ -1162,6 +1187,24 @@ impl GameSession {
         Ok(())
     }
 
+    /// Q1 发布槽句柄（session 侧读者面）：外部读者（server actor/测试/
+    /// 存档）经此取一致读点——load() 一次 clone 即得"一个固定提交版本
+    /// + 它的全部分片句柄"。驱动器不在位=尚未步入 runtime 模式，显式
+    /// 失败（不静默返回空版本）。
+    pub fn runtime_publication(
+        &self,
+    ) -> Result<std::sync::Arc<crate::runtime::publication::ViewPublication>, String>
+    {
+        let cell = self
+            .runtime_driver
+            .as_ref()
+            .ok_or_else(|| "发布槽不可用：runtime 驱动器尚未构造".to_owned())?;
+        let driver = cell
+            .lock()
+            .map_err(|_| "驱动器锁被 poison（前次持有期 panic）".to_owned())?;
+        Ok(driver.publication())
+    }
+
     /// runtime 驱动器翻转面（P1-10）：逐账户注意力候选真实写回
     /// （组线程 next_due 是调度权威——替换"推到 tick"的假迁移）。
     /// Sol 二审修复集 5：candidate 与 attention_scheduler heap 同步
@@ -1190,20 +1233,30 @@ impl GameSession {
                 state.rng_state = *rng_state;
             }
         }
-        // P2-3b：heap 整体替换域的 move-undo——旧堆整值搬入槽（零拷贝），
-        /// 回滚精确还原（P1-C 教训：不从权威重建——陈旧项会丢）。
-        let old_heap = std::mem::take(&mut self.state.attention_scheduler);
-        self.state
-            .runtime_heap_undo
-            .get_or_insert(old_heap);
-        // 镜像重建：heap=权威候选的精确快照（含未被本批 entries 触及的
-        // 在册 NPC——与 restore 的 from_iter 重建同式）。
+        // P2-1（视图内生战役）：每拍 heap 全名册重建退役（P0 画像 D6 大头
+        // ≈14% wall）。heap 是旧管线 pop_due 的驱动镜像——runtime 路径
+        // 无 pop_due 消费；候选权威在 npc_attention，镜像改惰性（消费点
+        // [`Self::ensure_attention_heap_current`] 重建一次）。hash 面已改
+        // 由 npc_attention 派生（集合等价——见 hash.rs）。move-undo 槽
+        // 随急切重建一起退役（槽恒 None——回滚路径 no-op；回滚恢复的
+        // npc_attention 即拍前值，heap 未被动过仍同步）。
+        self.state.runtime_heap_dirty = true;
+    }
+
+    /// P2-1：attention heap 惰性重建（消费点调用——dirty 时从候选权威
+    /// npc_attention 重建一次）。等价合同：重建后 heap 集合==权威快照
+    /// （与旧每拍急切重建逐项同值——"新候选入堆"语义由重建保持）。
+    pub fn ensure_attention_heap_current(&mut self) {
+        if !self.state.runtime_heap_dirty {
+            return;
+        }
         self.state.attention_scheduler = self
             .state
             .npc_attention
             .iter()
             .map(|(id, state)| (state.next_attention_candidate_tick, *id))
             .collect();
+        self.state.runtime_heap_dirty = false;
     }
 
     /// runtime 驱动器翻转面（Sol 二审修复集 5）：attention 状态只读投影
@@ -1252,6 +1305,20 @@ impl GameSession {
             .retail_experience
             .get(&id)
             .is_some_and(|exp| exp.stocks.contains_key(code))
+    }
+
+    /// Sol 复核阻断 P1-2 四面对账（cfg(test)）：session 镜像的逐股
+    /// retail 经历行（与组权威/发布分片行做逐位对照——真实对账面）。
+    #[cfg(test)]
+    pub fn runtime_retail_experience_stock_for_test(
+        &self,
+        id: crate::AccountId,
+        code: &crate::StockId,
+    ) -> Option<crate::experience::RetailStockExperience> {
+        self.state
+            .retail_experience
+            .get(&id)
+            .and_then(|exp| exp.stocks.get(code).cloned())
     }
 
     /// 测试编排面（Sol 七审修复 3）：构造"从未持有"首买形态——移除
@@ -1401,6 +1468,7 @@ impl GameSession {
             minute_closes,
             candle_histories,
             candle_active,
+            resting_snapshot,
         } = baseline;
         self.mark_external_mutation();
         self.state.tick = tick;
@@ -1495,9 +1563,13 @@ impl GameSession {
         if let Some(plans) = self.state.runtime_plans_undo.take() {
             self.state.plans = plans;
         }
-        if let Some(ledger) = self.state.runtime_envelope_undo.take() {
-            self.state.envelope_ledger = ledger;
-        }
+        // P2-4：envelope undo 随每拍维护退役（槽恒 None——保留 no-op
+        /// 消费面防结构扩散，死字段登记随下批清理）。
+        let _ = self.state.runtime_envelope_undo.take();
+        // Sol 复核阻断 P1-1：快照恢复拍前值（上一成功拍发布版本——
+        // ledger 已停逐拍维护，清空使失败拍后的信封查询/save/驱动器
+        // 重建种子读 stale ledger 或空集）。
+        self.state.runtime_resting_snapshot = resting_snapshot;
         if let Some(lifecycles) = self.state.runtime_lifecycles_undo.take() {
             self.state.npc_order_lifecycles = lifecycles;
         }
@@ -2187,15 +2259,14 @@ impl GameSession {
 /// origin=TickStart）。owner 名册外（account_by_owner 缺席）返回
 /// Ok(None)——两路径同语义跳过（账本不含名册外账户的信封）。
 /// Sol 终审修复 1c：归户保留组号（此前 account_by_local 丢组号）。
+/// P2-4：单条在途事实 → 信封（owner→账户由调用方解析——快照 id_map
+/// 或 driver 均可作源；构造逻辑与原全量重建/增量 upsert 同一函数体）。
 fn runtime_resting_envelope(
-    driver: &crate::runtime::drive::RuntimeDriver,
+    account: crate::AccountId,
     config: &crate::config::GameConfig,
     stock_idx: usize,
     fact: &crate::runtime::RestingFact,
 ) -> Result<Option<crate::session::pipeline::Envelope>, String> {
-    let Some(account) = driver.account_by_owner(fact.owner) else {
-        return Ok(None);
-    };
     let key = crate::session::pipeline::EnvelopeKey {
         account,
         stock: crate::StockId(u32::from(stock_idx as u16)),
@@ -2244,4 +2315,41 @@ fn runtime_resting_envelope(
     Ok(Some(
         crate::session::pipeline::Envelope::tick_start_existing(key, cash, shares, audit),
     ))
+}
+
+impl GameSession {
+    /// P2-4（视图内生战役）：信封派生投影——发布版本快照 → Envelope
+    /// 列表（ledger 每拍维护退役后的查询/hash 数据源；构造逻辑与原
+    /// 全量重建同一函数——内容等价由同源性承载）。无快照（restore 后
+    /// 未步进）=空投影（runtime 存档旧簿恒空语义）。
+    pub fn runtime_derive_envelopes(
+        &self,
+    ) -> Result<Vec<crate::session::pipeline::Envelope>, StepFatal> {
+        let Some(snapshot) = self.state.runtime_resting_snapshot.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut envelopes = Vec::new();
+        for (stock_idx, book) in snapshot.facts.iter().enumerate() {
+            for fact in book.iter() {
+                let global = fact.owner.0 as usize * snapshot.accounts_per_group
+                    + fact.owner.1 as usize;
+                // 名册外 owner：与原全量重建同语义跳过。
+                let Some(&account) = snapshot.id_map.get(global) else {
+                    continue;
+                };
+                match runtime_resting_envelope(account, &self.state.setup.config, stock_idx, fact)
+                {
+                    Ok(Some(envelope)) => envelopes.push(envelope),
+                    Ok(None) => {}
+                    Err(description) => {
+                        return Err(StepFatal::InvariantViolation {
+                            location: "GameSession::runtime_derive_envelopes".to_owned(),
+                            description,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(envelopes)
+    }
 }

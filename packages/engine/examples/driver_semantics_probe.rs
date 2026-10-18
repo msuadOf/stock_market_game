@@ -5,6 +5,14 @@
 //! 本探针每 tick 走 session 侧安装链（install_market_views/install_candles/
 //! 个人态回写/信封投影）。守恒判据对齐 s5 探针形态（终态对账）。
 //!
+//! **测量口径协议（协调者裁决 2026-10-19，双报）**：一次性冷启动
+//!（World/线程 spawn 构造+jemalloc 预热+缺页集中）≈330ms——1000 tick
+//! 口径摊 330μs/tick（**27% 税**），3000 tick 摊 110μs。**正式数字以
+//! 3000 tick 为主口径**；短局（≤1000 tick）数字必须附注冷启动摊销，
+//! 不得与 3000 tick 口径直比。依据：agents/view-campaign/evidence/
+//! p2/sealtop/b-profile-3000.txt（X≈330ms 实测：1000 tick wall−step=330、
+//! 3000 tick=112，摊薄关系成立）。
+//!
 //! 用法：driver_semantics_probe <setup.json> <ticks> <runtime_groups>
 //!（ENGINE_STEP_RUNTIME=1 运行；批 9 A6 起 threads 参数退役——CPU 约束
 //! 走 OS 级 cgroup/taskset）。
@@ -42,14 +50,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
         let mut events = 0usize;
+        // P0 分段画像（STEP_PROFILE=1）：driver 线程各段 wall 计时——
+        // 视图内生战役的"可删份额"定标数据源（默认关=零开销）。
+        let profile_on = env::var("STEP_PROFILE").map(|v| v == "1").unwrap_or(false);
+        if profile_on {
+            engine::runtime::step_profile::enable_on_this_thread();
+        }
         let started = Instant::now();
+        // P0 归因：civil check 循环的独立计时（step 外围嫌疑面）。
+        let mut civil_ns: u128 = 0;
         for _ in 0..ticks {
-            while game.day() == game.civil_clock().completed_trading_sessions_expected()? {
+            loop {
+                let t0 = std::time::Instant::now();
+                let due_now = game.day() == game.civil_clock().completed_trading_sessions_expected()?;
+                civil_ns += t0.elapsed().as_nanos();
+                if !due_now {
+                    break;
+                }
                 game.end_civil_day()?;
             }
-            events += game.step()?.len();
+            events += {
+                // 【P0 画像】step_outer 段=完整 step() wall + 事件 Vec
+                /// drop（临时值延长到语句尾——drop 一并入段防漏计）。
+                let _seg_outer = engine::runtime::step_profile::scope(
+                    engine::runtime::step_profile::StepSegment::StepOuter,
+                );
+                let evs = game.step()?;
+                let n = evs.len();
+                drop(evs);
+                n
+            };
         }
         let wall_s = started.elapsed().as_secs_f64();
+        if profile_on {
+            eprintln!(
+                "civil_check（会话守卫循环条件评估）= {civil_ns} ns（{:.0} ns/tick）",
+                civil_ns as f64 / ticks as f64
+            );
+        }
+        if profile_on {
+            let Some(ledger) = engine::runtime::step_profile::take_ledger() else {
+                return Err("STEP_PROFILE=1 但账本为空（enable 后无段进入）".into());
+            };
+            let total_ns: u128 = ledger.iter().map(|(_, ns, _)| *ns).sum();
+            // 注意：market_install 内嵌 attention_heap；step_outer 内嵌
+            // 全部子段（完整 step wall）——占比按"去嵌套分母"解释。
+            eprintln!("--- step 分段画像（累计 ns / 次 / 占分段和比例）---");
+            let nested = ["attention_heap", "step_outer", "driver_step", "belief_collect", "envelope_collect"];
+            let net_total: u128 = total_ns
+                - ledger
+                    .iter()
+                    .filter(|(n, _, _)| nested.contains(n))
+                    .map(|(_, ns, _)| *ns)
+                    .sum::<u128>();
+            let mut rows: Vec<_> = ledger;
+            rows.sort_by(|a, b| b.1.cmp(&a.1));
+            for (name, ns, count) in rows {
+                let ratio = if nested.contains(&name) {
+                    ns as f64 / total_ns as f64
+                } else {
+                    ns as f64 / net_total as f64
+                };
+                eprintln!("{name:<20} {ns:>14} ns  ×{count:<6} {ratio:6.2}%");
+            }
+            eprintln!(
+                "分段和（含嵌套双计）= {total_ns} ns；去嵌套净和 = {net_total} ns；wall = {} ns",
+                (wall_s * 1e9) as u128
+            );
+        }
         // 终态守恒对账：现金（+费用桶不可达——desk 权威内部；现金守恒以
         // 期末现金+持仓市值近似现金总量的股份守恒为主判据，对齐 s5 探针
         /// 的"股份=初始"与现金面（费用桶经 fee_sink 为 desk 内部域——

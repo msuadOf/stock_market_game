@@ -1,0 +1,44 @@
+# P2-4：D6 envelope ledger 每拍增量维护退役——派生投影
+
+## 机制
+P0 子分段实测增量应用+差分 80.5μs/tick。session 新增 runtime_resting_
+snapshot（发布版本分片 Arc 句柄+id_map 共享副本+每组账户数——driver
+构造期缓存 id_map_shared 避免每拍 clone）；每拍 step 尾存快照（几个
+Arc clone）；ledger 每拍增量/全量维护+delta 差分+echo 基线+undo 面
+全部退役（driver 死代码同批清理：resting_delta_since_last_echo/
+RESTING_DELTA_FACE_COUNTS/force_full 旋钮/resting_echo_prev）。
+
+消费面改造：
+- project_live_envelopes：快照在位→runtime_derive_envelopes（与原全量
+  重建同一构造函数 runtime_resting_envelope——owner 解析改快照 id_map）；
+  无快照（restore 后未步进）→回退 ledger（hydrate 存档值，restore 链
+  语义保持；首步快照建立后派生接管）。
+- business_state_hash：派生临时 ledger 的 hash_projection（&self 约束
+  ——business_state_hash 仅测试调用已证实，低频全量重建可接受）。
+- save（capture_runtime_state）：派生临时 ledger 消费（cursor 校验/
+  live 提取/rebase 静点/DTO 往返——内容等价=原全量重建口径）；旧管线
+  形态沿用维护中的 state.envelope_ledger。
+- mirror 段：数据源改读快照。
+- 回滚：快照置 None（失败拍数据不作派生源，下一拍重建）；envelope
+  undo 槽恒 None（死字段登记随下批清理）。
+
+## 测量（load 35.7 极高负载窗——如实登记；净机复测待补）
+- B 1000：750.3（刀 A 后 713.5，+5.2%；P0 基线 544.7，累计 +37.7%）
+- envelope 段：80.5→2.7μs（增量维护退役）；envelope_collect 4.4→2.6μs
+- B 300：mean 347.7（336.7/353.1/353.4——高负载窗与刀 A 后同级）
+- A 3000：1211.9（load 35 窗只登记）
+- 逐位锚：events 300:2105 / 1000:6016；守恒 6701200/651403179/6668400
+
+## 守卫与突变红
+- p2_4b 守卫改述（增量对照臂消亡）："派生投影（键+余量）集合==发布
+  快照在册集合"+同种子确定性。突变红实证：余量写死挂出值→集合
+  失配红（3211 行）。奇数股漏投影突变零判别（fixture 期末奇数股空）
+  ——如实登记，判别力由余量面承载。
+- 修复过程中闭环 7 个回归红（fault2226/DTO 往返——restore 回退分支
+  与 save 派生临时 ledger）：全量双模式复跑 1669/0/11 双绿（一轮
+  flake 复跑绿）。
+
+## 事故登记（如实）
+批量删除 drive.rs 死代码时脚本退化路径切坏文件（类型重定义编译错）；
+git checkout 回退到 HEAD 后重放刀 B 四处改动恢复。教训：regex 批删
+必须 assert 锚+编译门禁逐批。

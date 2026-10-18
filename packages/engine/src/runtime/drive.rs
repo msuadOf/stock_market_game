@@ -20,11 +20,105 @@ use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
 
+/// Q2 批 3：账户分片覆盖校验——本拍 desk 事实（成交双腿/生命周期/回执）
+/// 的每个 owner 必须在对应组分片中（组端 undo 集漏标即红——不静默装
+/// 陈旧镜像；原 validate_sparse_echo_reply"缺项=RuntimeError"语义的
+/// 等价物，请求集改述为本拍事实集）。独立自由函数供负控单测直击。
+pub(crate) fn ensure_fact_owners_covered_arc(
+    fact_rec: Option<&super::world::TickRecord>,
+    snapshots: &[std::sync::Arc<
+        Vec<(
+            super::LocalIdx,
+            std::sync::Arc<super::group::GroupAccount>,
+        )>,
+    >],
+    accounts_per_group: usize,
+) -> Result<(), String> {
+    // 复核登记项收口（sealtop 批）：覆盖校验只消费 local 下标——Arc
+    // 分片形态直接迭代（零 GroupAccount 深拷贝；原逐条值形态重组=每拍
+    /// 无谓拷贝税，dirty 集增大时随账户数线性放大）。
+    ensure_fact_owners_covered_locals(
+        fact_rec,
+        snapshots
+            .iter()
+            .map(|arc| arc.iter().map(|(local, _)| *local)),
+        accounts_per_group,
+    )
+}
+
+pub(crate) fn ensure_fact_owners_covered(
+    fact_rec: Option<&super::world::TickRecord>,
+    snapshots: &[Vec<(super::LocalIdx, super::group::GroupAccount)>],
+    accounts_per_group: usize,
+) -> Result<(), String> {
+    ensure_fact_owners_covered_locals(
+        fact_rec,
+        snapshots.iter().map(|group| group.iter().map(|(local, _)| *local)),
+        accounts_per_group,
+    )
+}
+
+/// 覆盖校验核心（单源）：按组迭代分片条目的 local 下标构建 covered 位
+/// 图，再核对本拍 desk 事实的每个 owner——缺项显式失败（不静默装陈旧
+/// 镜像）。账户实体不进入校验——两种分片形态（Arc 共享/值）共用。
+fn ensure_fact_owners_covered_locals<I>(
+    fact_rec: Option<&super::world::TickRecord>,
+    locals_per_group: I,
+    accounts_per_group: usize,
+) -> Result<(), String>
+where
+    I: Iterator,
+    I::Item: IntoIterator<Item = super::LocalIdx>,
+{
+    let Some(rec) = fact_rec else {
+        return Ok(());
+    };
+    let mut covered: Vec<Vec<bool>> = locals_per_group
+        .map(|locals| {
+            let mut flags = vec![false; accounts_per_group];
+            for local in locals {
+                if let Some(flag) = flags.get_mut(local as usize) {
+                    *flag = true;
+                }
+            }
+            flags
+        })
+        .collect();
+    let mut check = |owner: crate::runtime::Owner, what: &str| -> Result<(), String> {
+        let (g, local) = (owner.0 as usize, owner.1 as usize);
+        let ok = covered
+            .get(g)
+            .and_then(|flags| flags.get(local))
+            .copied()
+            .unwrap_or(false);
+        if !ok {
+            return Err(format!(
+                "账户分片缺项（组端 undo 集漏标？）：{what} owner=(g={g}, local={local}) 不在分片"
+            ));
+        }
+        Ok(())
+    };
+    for fact in &rec.desk_trades {
+        check(fact.maker, "成交 maker")?;
+        check(fact.taker, "成交 taker")?;
+    }
+    for fact in &rec.desk_lifecycle {
+        check(fact.owner, "生命周期")?;
+    }
+    for fact in &rec.desk_receipts {
+        check(fact.owner, "回执")?;
+    }
+    Ok(())
+}
+
 /// 常驻 runtime 驱动器。
 pub struct RuntimeDriver {
     world: World,
     /// Owner(组内下标) → 引擎 AccountId（玩家=0 惯例位）。
     pub id_map: Vec<AccountId>,
+    /// P2-4：id_map 的 Arc 共享副本（构造一次——session 信封派生快照用，
+    /// 免每拍 clone 全名册映射）。
+    id_map_shared: std::sync::Arc<Vec<AccountId>>,
     /// 每股 desk 序号游标缓存（最近在途快照收集时的权威值——Sol 四轮
     /// 修复：save 投影/DeskBookMirror 的游标源）。
     desk_next_serials: Vec<u64>,
@@ -34,9 +128,6 @@ pub struct RuntimeDriver {
     /// 次数——守卫测试断言"安装数==dirty 位计数"（全量重装突变即红）。
     #[cfg(test)]
     personal_installs: u64,
-    /// P2-1b 账户回写 dirty 状态：上一 tick 事实 owner 集（组端 staging
-    /// 落账滞后一拍——fill owner 的整值同步发生在下一拍，两拍并集覆盖）。
-    account_dirty_prev: Vec<bool>,
     /// P2-1b：日结（Drain/T+1/AdminBatch 改账户但无逐账户事实事件）后
     /// 置 true——下一 step 全量回写一次（低频路径，语义安全优先）。
     /// P2 复核阻断 2 后改 pub(crate)：生产日结路径（session/failure.rs
@@ -45,6 +136,17 @@ pub struct RuntimeDriver {
     /// P2-1b 红证计数（cfg(test)）：账户回写实际写入次数。
     #[cfg(test)]
     account_writes: u64,
+    /// candle 退役战役突变旋钮 1（cfg(test)）：安装读路径的 active K
+    /// close 篡改 +1 分——判别"install 真从发布版本读"（合同
+    /// candle_install_matches_desk_authoristry 开旋钮必红）。批 1 桩：
+    /// 读路径未接发布版本，旋钮无效果→旋钮测试红（注入面红先行）。
+    #[cfg(test)]
+    candle_knob_tamper_active: bool,
+    /// candle 退役战役突变旋钮 2（cfg(test)）：安装读路径的
+    /// trade_stats.turnover_cents 置 0——判别 stats 2 字段贯通（合同 1
+    /// 的 trade_stats 对照红）。批 1 桩同上。
+    #[cfg(test)]
+    candle_knob_drop_turnover: bool,
     /// P2-2a：信念全量缓存（全局名册序——稀疏上行增量合并；构造期
     /// =belief_seeds 同源投影，collect_belief 读面由它承载全量语义）。
     belief_cache: Vec<Option<super::world::BeliefParticipantSnapshot>>,
@@ -435,17 +537,21 @@ impl RuntimeDriver {
         let world = World::spawn(spec).map_err(|e| format!("驱动器世界构造失败：{e:?}"))?;
         let driver = Self {
             world,
+            id_map_shared: std::sync::Arc::new(ids.clone()),
             id_map: ids.clone(),
             desk_next_serials: Vec::new(),
             next_seq: 0,
             #[cfg(test)]
             personal_installs: 0,
-            account_dirty_prev: Vec::new(),
             // 首拍全量（初始镜像同步——构造后首 step 建立 session 侧
             /// 组权威镜像基线；此后按事实 dirty 增量）。
             force_full_accounts: true,
             #[cfg(test)]
             account_writes: 0,
+            #[cfg(test)]
+            candle_knob_tamper_active: false,
+            #[cfg(test)]
+            candle_knob_drop_turnover: false,
             belief_cache,
             drained_events: Vec::new(),
             pending_rejections: Vec::new(),
@@ -517,27 +623,36 @@ impl RuntimeDriver {
 
     /// step 本体（D4：捕获绑定已挂）——驱动器侧相位对齐旧管线 10 相。
     fn step_with_capture(&mut self, session: &mut GameSession) -> Result<Vec<Event>, String> {
+        // P0 画像：本函数各段用块作用域 + guard 计时（未启用=零成本）。
+        use super::step_profile::{self, StepSegment};
         // D4 相位：密封分配快照段（tick 起点，组/部广播前）。
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::SealAllocationSnapshot,
         );
-        // D1：新增持仓补经历条目（fault2038 存档校验依赖）——在快照
-        // 回写前取现价。
-        let last_prices: Vec<i64> = self
-            .world_public_views()
-            .iter()
-            .map(|v| v.last_price.max(1))
-            .collect();
-        self.world
-            .run_ticks(1)
-            .map_err(|e| format!("runtime tick 失败：{e:?}"))?;
+        // 【P0 画像】world_run 段：裸引擎本体（对照基线——D 系列之外）。
+        let last_prices: Vec<i64> = {
+            let _seg = step_profile::scope(StepSegment::WorldRun);
+            // D1：新增持仓补经历条目（fault2038 存档校验依赖）——在快照
+            // 回写前取现价。
+            let prices: Vec<i64> = self
+                .world_public_views()
+                .iter()
+                .map(|v| v.last_price.max(1))
+                .collect();
+            self.world
+                .run_ticks(1)
+                .map_err(|e| format!("runtime tick 失败：{e:?}"))?;
+            prices
+        };
         // D3 台账收口（入场参考价近似→闭合）：新持仓经历入场参考用本
         // tick 买入腿成交 VWAP（旧管线以真实成交成本为基准；此前近似
         // 现价）。后续加仓的 experience 迁移仍近似（登记——D5 经历域）。
+        // 【P0 画像】vwap_calc 段。
         let buy_vwap: std::collections::BTreeMap<
             (super::GroupIdx, super::LocalIdx, super::StockIdx),
             i64,
         > = {
+            let _seg = step_profile::scope(StepSegment::VwapCalc);
             let trades: Vec<_> = self
                 .world
                 .report_log
@@ -577,97 +692,80 @@ impl RuntimeDriver {
         // 期间 qty=0 条目由 ever_held 保留观察面，权益/目标量读面已含
         // 在途（Sol 整改 3 组侧收口——回写侧不再加回，避免 session 旧
         // 管线代码读到双计）。
-        // P2-1b：账户回写 dirty 过滤——只重写"本 tick 事实 owner ∪ 上一
-        /// tick 事实 owner"（组端 staging 落账滞后一拍，两拍并集覆盖；
-        /// 多装等值无害，漏装才会镜像陈旧）∪ 日结强制全量（Drain/T+1/
-        /// AdminBatch 无逐账户事实事件）。等价不变式：非 dirty ⇒ 组端
-        /// 账户==session 镜像（首拍全量建立基线后，两侧只经事实通道
-        /// 同步）。省每 tick 全名册 positions 深拷贝回写。
+        // Q2 批 3（视图内生战役）：账户稀疏分片随 SealAck 上行（Seal
+        /// 落账后 undo 集口径——决策扣除/全部轮成交/退款终结全含；
+        /// acct 竞态根因由 Seal 的 S4 不变量消除）。驱动器读发布版本，
+        /// EchoAccountsSparse 独立往返退役；覆盖校验承接原"缺项=
+        /// RuntimeError"语义（请求集改述为本拍事实集）。全量读面
+        ///（force_full/日结/调试）仍走 EchoAccounts。
         let fact_rec = self.world.report_log.last().cloned();
-        let roster = self.id_map.len();
-        let mut dirty_now: Vec<bool> = vec![false; roster];
-        let mark = |dirty: &mut Vec<bool>, owner: crate::runtime::Owner| {
-            let idx = owner.0 as usize * self.accounts_per_group + owner.1 as usize;
-            if let Some(flag) = dirty.get_mut(idx) {
-                *flag = true;
-            }
-        };
-        if let Some(rec) = &fact_rec {
-            for fact in &rec.desk_trades {
-                mark(&mut dirty_now, fact.maker);
-                mark(&mut dirty_now, fact.taker);
-            }
-            for fact in &rec.desk_lifecycle {
-                mark(&mut dirty_now, fact.owner);
-            }
-            for fact in &rec.desk_receipts {
-                mark(&mut dirty_now, fact.owner);
-            }
-        }
-        let skip_all = !self.force_full_accounts;
-        let dirty_union: Vec<bool> = if skip_all {
-            dirty_now
-                .iter()
-                .zip(self.account_dirty_prev.iter().chain(std::iter::repeat(&false)))
-                .map(|(a, b)| *a || *b)
-                .collect()
-        } else {
-            vec![true; roster]
-        };
-        // P2-4a：账户回声稀疏化——P2-1b 只稀疏化了**写回**，读面仍是
-        /// 每拍全名册回声（组端 20000×8 堆 Vec 克隆 + 主线程全量 drop
-        /// 的双热点：组线程 Vec::clone+memmove ≈17%、主线程
-        /// drop_in_place≈10% 样本）。非 force_full 拍只请求 dirty 账户
-        /// ——取回的恰是原来要写的同一批值，逐位等价由构造保证（守卫
-        /// p2_4a_sparse_account_writeback_matches_force_full_bitwise：
-        /// 稀疏 vs 每拍 force_full 全量两条运行期末哈希+事件序列逐位
-        /// 一致）；回执集与请求集的精确一致由收集端校验（缺项
-        /// =RuntimeError 不静默）。全量读面（调试纵切/日结）用
-        /// EchoAccounts 不变。
-        let snapshots: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> = if skip_all {
-            let n_groups = self.world.n_groups();
-            let mut wanted: Vec<Vec<super::LocalIdx>> = vec![Vec::new(); n_groups];
-            for (global, &dirty) in dirty_union.iter().enumerate() {
-                if !dirty {
-                    continue;
-                }
-                // 与 mark 同式映射：global = g*accounts_per_group + local。
-                let g = global / self.accounts_per_group.max(1);
-                let local = global % self.accounts_per_group.max(1);
-                let Some(slot) = wanted.get_mut(g) else {
+        let _ = self.id_map.len();
+        // 【P0 画像】acct_echo_collect 段（残余=发布版本分片重组；
+        /// fact_rec 的 clone 归 remainder——事件面 R4 必留）。
+        let snapshots = {
+            let _seg = step_profile::scope(StepSegment::AcctEchoCollect);
+            let skip_all = !self.force_full_accounts;
+            if skip_all {
+                let published = self.world.publication().load();
+                if published.tick != self.world.global.committed_tick {
                     return Err(format!(
-                        "账户回写 dirty 位越界：global={global} → 组 {g} 不存在（组数 {n_groups}，每组 {}）",
-                        self.accounts_per_group
+                        "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                        published.tick, self.world.global.committed_tick
                     ));
-                };
-                slot.push(local as super::LocalIdx);
+                }
+                let n_groups = self.world.n_groups();
+                // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
+                /// clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
+                let mut shards: Vec<
+                    std::sync::Arc<Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
+                > = vec![std::sync::Arc::new(Vec::new()); n_groups];
+                for shard in &published.groups {
+                    let Some(slot) = shards.get_mut(shard.group as usize) else {
+                        return Err(format!(
+                            "账户分片组号越界：g={}（组数 {n_groups}）",
+                            shard.group
+                        ));
+                    };
+                    *slot = std::sync::Arc::clone(&shard.accounts);
+                }
+                ensure_fact_owners_covered_arc(
+                    fact_rec.as_ref(),
+                    &shards,
+                    self.accounts_per_group,
+                )?;
+                shards
+            } else {
+                // 日结/首拍全量（EchoAccounts 全量读面不变）——转 (组,
+                // 下标) Arc 形态与稀疏路径共用回写循环。
+                let dense = self
+                    .world
+                    .snapshot_accounts()
+                    .map_err(|e| format!("账户快照失败：{e:?}"))?;
+                let mut shards =
+                    vec![std::sync::Arc::new(Vec::new()); self.world.n_groups()];
+                for (g, accounts) in dense {
+                    let slot = shards
+                        .get_mut(g as usize)
+                        .ok_or_else(|| format!("全量账户快照组号越界：g={g}"))?;
+                    *slot = std::sync::Arc::new(
+                        accounts
+                            .into_iter()
+                            .enumerate()
+                            .map(|(local, acct)| {
+                                (local as super::LocalIdx, std::sync::Arc::new(acct))
+                            })
+                            .collect(),
+                    );
+                }
+                shards
             }
-            self.world
-                .snapshot_accounts_sparse(&wanted)
-                .map_err(|e| format!("稀疏账户回声收集失败：{e:?}"))?
-        } else {
-            // 日结/首拍全量（EchoAccounts 全量读面不变）——转 (组, 下标)
-            /// 对形态与稀疏路径共用回写循环。
-            let dense = self
-                .world
-                .snapshot_accounts()
-                .map_err(|e| format!("账户快照失败：{e:?}"))?;
-            let mut pairs = vec![Vec::new(); self.world.n_groups()];
-            for (g, accounts) in dense {
-                let slot = pairs
-                    .get_mut(g as usize)
-                    .ok_or_else(|| format!("全量账户快照组号越界：g={g}"))?;
-                *slot = accounts
-                    .into_iter()
-                    .enumerate()
-                    .map(|(local, acct)| (local as super::LocalIdx, acct))
-                    .collect();
-            }
-            pairs
         };
-        for (g, accounts) in snapshots.into_iter().enumerate() {
-            for (local, acct) in accounts {
-                let global = g * self.accounts_per_group + local as usize;
+        // 【P0 画像】acct_writeback 段（session 镜像回写循环——Arc 借用）。
+        {
+            let _seg = step_profile::scope(StepSegment::AcctWriteback);
+            for (g, accounts_arc) in snapshots.iter().enumerate() {
+            for (local, acct) in accounts_arc.iter() {
+                let global = g * self.accounts_per_group + *local as usize;
                 let Some(id) = self.id_map.get(global).copied() else {
                     continue;
                 };
@@ -716,7 +814,7 @@ impl RuntimeDriver {
                         let entry = buy_vwap
                                 .get(&(
                                     g as super::GroupIdx,
-                                    local as super::LocalIdx,
+                                    *local,
                                     idx as super::StockIdx,
                                 ))
                                 .copied()
@@ -746,82 +844,71 @@ impl RuntimeDriver {
                     engine_acct.fixture_set_positions(merged);
                 }
                 // Sol 终审修复 1b：本账户的首买经历 init 收集并入成员槽
-                ///（此前局部 Vec 随循环体丢弃——Continue 早轮成交已被排除
-                /// 出 unsettled_trades，组回写段是其唯一 init 机会，丢弃
-                /// 形成"有持仓、无经历"，破坏 fault2038 保存校验）。
+                ///（Q2 Seal 后组回写（发布分片）已含本拍全部成交——
+                /// 回写段是 init 的唯一时机，丢弃形成"有持仓、无经历"，
+                /// 破坏 fault2038 保存校验）。
                 self.pending_hold_inits.extend(pending_hold_inits);
             }
+            }
+            // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
+            // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
+            self.force_full_accounts = false;
         }
-        // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
-        // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
-        self.account_dirty_prev = dirty_now;
-        self.force_full_accounts = false;
         // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
         let rec = fact_rec;
-        // step_frame 接轨前置约束①：同拍叠加类投影只消费**终轮未落账
-        /// 尾巴**（unsettled_trades——实体仍在组 staging）。Continue 链
-        /// 的早轮成交已随组 Continue 落账进组账户（上方快照回写已含），
-        /// 以全量 desk_trades 叠加会把早轮重复应用（现金/持仓双计）。
-        /// 事件流/buy_vwap/裁剪/dirty 面保持全量（非叠加面——事实不丢）。
-        let unsettled_trades = rec
-            .as_ref()
-            .map(|r| r.unsettled_trades.clone())
-            .unwrap_or_default();
-        // Sol 五审修复 1：**本拍公开期末投影**——step() 返回前把本 tick
-        // 已成交事实合入公开 session 账户（ADR-0017 完整结算同拍交付；
-        /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
-        /// 权威随后对齐——下一拍回写为整值同步，天然不重复入账）。
-        if let Some(rec) = &rec {
-            self.apply_same_tick_fill_projection(
-                session,
-                &unsettled_trades,
-                &buy_vwap,
-                &last_prices,
-            )?;
-        }
-        let trades = rec
-            .as_ref()
-            .map(|r| r.desk_trades.clone())
-            .unwrap_or_default();
-        let lifecycle = rec
-            .as_ref()
-            .map(|r| r.desk_lifecycle.clone())
-            .unwrap_or_default();
-        let mut receipts = rec
-            .as_ref()
-            .map(|r| r.desk_receipts.clone())
-            .unwrap_or_default();
-        // Sol 复审修复 2：组端业务拒绝（资金/可卖/零股/竞价×市价）与
-        /// desk 回执同入事件流（IntentRejected 映射）。
-        if let Some(r) = rec.as_ref() {
-            receipts.extend(r.group_rejections.iter().copied());
-        }
-        let auction = rec
-            .as_ref()
-            .map(|r| r.desk_auction.clone())
-            .unwrap_or_default();
-        // D4 相位：回执聚合段（事件/回执投影）。
-        crate::verification_evidence::enter_phase(
-            crate::session::pipeline::TickPhase::ReceiptAggregation,
-        );
-        let mut events = project_trade_events(&trades, &mut self.next_seq);
-        let input = collect_lifecycle(&lifecycle, &receipts);
-        events.extend(project_lifecycle_events(&input, &mut self.next_seq));
-        events.extend(project_auction_events(&auction, &mut self.next_seq));
-        // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
-        // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
-        for (code, owner) in std::mem::take(&mut self.pending_rejections) {
-            self.next_seq = self
-                .next_seq
-                .checked_add(1)
-                .expect("事件 seq 溢出");
-            events.push(Event::IntentRejected {
-                seq: self.next_seq,
-                account: owner,
-                code,
-                reason: crate::RejectionReason::InvalidQuantity,
-            });
-        }
+        // Q2 批 4（D3 退役）：同拍成交公开投影删除——Seal 落账（批 2）
+        // 使组账户在发布点已含本拍全部成交，驱动器回写（发布分片）
+        // 即期末权威值，无"组 staging 未落账尾巴"可叠加。原投影的
+        // 双写补偿语义（Sol 五审修复 1）由 Seal 承接；Continue 早轮
+        // 的恰一次落账不变（prereq1 合同承载）。
+        // 【P0 画像】event_assembly 段（事件投影——R4 必留面的成本基线）。
+        let (trades, events) = {
+            let _seg = step_profile::scope(StepSegment::EventAssembly);
+            let trades = rec
+                .as_ref()
+                .map(|r| r.desk_trades.clone())
+                .unwrap_or_default();
+            let lifecycle = rec
+                .as_ref()
+                .map(|r| r.desk_lifecycle.clone())
+                .unwrap_or_default();
+            let mut receipts = rec
+                .as_ref()
+                .map(|r| r.desk_receipts.clone())
+                .unwrap_or_default();
+            // Sol 复审修复 2：组端业务拒绝（资金/可卖/零股/竞价×市价）与
+            /// desk 回执同入事件流（IntentRejected 映射）。
+            if let Some(r) = rec.as_ref() {
+                receipts.extend(r.group_rejections.iter().copied());
+            }
+            let auction = rec
+                .as_ref()
+                .map(|r| r.desk_auction.clone())
+                .unwrap_or_default();
+            // D4 相位：回执聚合段（事件/回执投影）。
+            crate::verification_evidence::enter_phase(
+                crate::session::pipeline::TickPhase::ReceiptAggregation,
+            );
+            let mut events = project_trade_events(&trades, &mut self.next_seq);
+            let input = collect_lifecycle(&lifecycle, &receipts);
+            events.extend(project_lifecycle_events(&input, &mut self.next_seq));
+            events.extend(project_auction_events(&auction, &mut self.next_seq));
+            // D5 组端校验拒收（路由层 qty=0 等）——本拍事件流投影。
+            // step_frame 接轨件 2：先加后取（对齐旧管线 collect 语义）。
+            for (code, owner) in std::mem::take(&mut self.pending_rejections) {
+                self.next_seq = self
+                    .next_seq
+                    .checked_add(1)
+                    .expect("事件 seq 溢出");
+                events.push(Event::IntentRejected {
+                    seq: self.next_seq,
+                    account: owner,
+                    code,
+                    reason: crate::RejectionReason::InvalidQuantity,
+                });
+            }
+            (trades, events)
+        };
         let outcome = Ok(events);
         // D4 相位：派生审计段（回写后对账面——本批为标记位，D3 候选
         // 校验接入后承载实质校验计时）。
@@ -831,20 +918,31 @@ impl RuntimeDriver {
         // Sol 整改个人态交付投影：组权威个人态（observe 演进）上行→
         // session 镜像回写（reference/peak equity 等读面；Belief-1b 的
         // information 域投递回写保持——整态覆盖与其同源）。
-        let belief_states = self
-            .world
-            .collect_group_belief()
-            .map_err(|e| format!("个人态交付投影失败：{e:?}"));
-        match belief_states {
-            Ok(collected) => {
-                for (group, states) in collected {
+        // 【P0 画像】belief_echo 段（D1 EchoBelief 残余=session 整态安装；
+        /// P2-2：独立 EchoBelief 往返退役——稀疏分片已随 GroupReport 上行
+        /// 进发布版本，此处从发布版本读（读面归 owner 内生维护）。
+        {
+            let _seg = step_profile::scope(StepSegment::BeliefEcho);
+            // P2-2e（bel 刀 a，零等价负担）：发布版本直接借用迭代——
+            /// 原 collect 逐条 clone 出中间 Vec+cache 再 clone 共两层冗余
+            /// 深拷贝；改为借用安装（&snapshot）后 cache move（同值所有权
+            /// 转移，语义不变：缓存条目==安装条目==发布条目）。
+            {
+                let published = self.world.publication().load();
+                if published.tick != self.world.global.committed_tick {
+                    return Err(format!(
+                        "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                        published.tick, self.world.global.committed_tick
+                    ));
+                }
+                for shard in &published.groups {
                     // P2-2a：稀疏条目=本 tick 生产演进位（组端已滤非
                     /// dirty——上行即 dirty）。逐条重装 session 镜像并
                     /// 增量维护全量缓存（读面语义）。等价不变式：
                     /// 缓存/镜像与组端只在 dirty 通道同步、构造期同源。
-                    for (local, snapshot) in states {
+                    for (local, snapshot) in shard.belief.iter() {
                         let global =
-                            group as usize * self.accounts_per_group + local as usize;
+                            shard.group as usize * self.accounts_per_group + *local as usize;
                         let Some(&id) = self.id_map.get(global) else {
                             continue;
                         };
@@ -852,18 +950,21 @@ impl RuntimeDriver {
                         {
                             self.personal_installs += 1;
                         }
+                        // 先借用安装、后 move 入缓存——省原顺序的
+                        /// snapshot.clone()（缓存持有的是安装的同一份值）。
+                        session.set_runtime_personal_state(id, snapshot);
                         if let Some(slot) = self.belief_cache.get_mut(global) {
                             *slot = Some(snapshot.clone());
                         }
-                        session.set_runtime_personal_state(id, &snapshot);
                     }
                 }
             }
-            Err(projection_error) => return Err(projection_error),
         }
         // D5 #4：首买经历 init（回写/投影段收集——个人态整态回写之后
         /// 执行，组权威经验行不冲掉首买条目）。
+        // 【P0 画像】hold_inits 段。
         {
+            let _seg = step_profile::scope(StepSegment::HoldInits);
             let mut inits = std::mem::take(&mut self.pending_hold_inits);
             for (id, code, qty, entry) in inits.drain(..) {
                 session
@@ -877,11 +978,14 @@ impl RuntimeDriver {
         // 空簿覆盖会清空它们（env=1 plan_owner 回归显红后收口）。
         // 收集失败显式上抛（铁律二：不静默丢——plans_debug 静默过期
         // 不可接受；复核发现 1 收口）。
-        let plans_projection = self
-            .world
-            .collect_plans()
-            .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
-        match plans_projection {
+        // 【P0 画像】plans_echo 段（D1 EchoPlans + D3 同拍执行腿补写）。
+        {
+            let _seg = step_profile::scope(StepSegment::PlansEcho);
+            let plans_projection = self
+                .world
+                .collect_plans()
+                .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
+            match plans_projection {
             Ok(collected) => {
                 let group_has_plans = collected
                     .iter()
@@ -892,136 +996,36 @@ impl RuntimeDriver {
                         .find(|(_, plans)| plans.plan_ids().next().is_some())
                         .expect("上方已判非空");
                     // Sol 整改 4：权威状态控制的完整投影——组簿有任何
-                    // 计划记录（含 terminal：最后计划结束的事实必须覆盖
-                    /// session 旧镜像）即安装。
-                    // Sol 五审修复 1：本拍成交事实合入执行腿（组内
-                    /// staging 下一 Start 合并——公开计划读面同拍；
-                    /// 下一拍被组权威整值覆盖，不双计）。前置约束①：
-                    /// 叠加输入=终轮未落账尾巴（早轮已随组 Continue
-                    /// 落账推进——组簿 collect 已含，全量输入双计）。
-                    if !unsettled_trades.is_empty() {
-                        let day = u64::from(session.day());
-                        self.apply_same_tick_plan_fills(&mut plans, &unsettled_trades, day)?;
-                    }
+                    // 计划记录（含 terminal）即安装。
+                    // Q2 批 4（D3 退役）：本拍成交执行腿补写删除——
+                    // Seal 落账使组簿 collect 已含全部轮成交推进
+                    //（apply_staging 的 apply_fill_plan_progress）。
                     session.set_runtime_plans(plans);
-                } else if !unsettled_trades.is_empty() {
-                    // D5 cross_stock 收口：组簿无计划（迁移期注入面——
-                    /// session 侧测试注入的计划）时，本拍成交事实对
-                    /// session plans 同拍合入（与组簿非空路径同式；
-                    /// 下一拍组权威接管后此分支自然失效）。
-                    let day = u64::from(session.day());
-                    self.apply_same_tick_plan_fills_for_session(session, &unsettled_trades, day)?;
                 }
             }
             Err(projection_error) => return Err(projection_error),
+            }
         }
         // D3b 件 1：成交触达账户的个人记忆裁剪（同拍——组内 prune 在下一
         // Start 落账；个人态同步在上方用组镜像整态覆盖，裁剪必须在其后；
         // 下一拍组镜像已裁剪同值，双写不漂移）。
-        if !trades.is_empty() {
-            let mut touched: Vec<crate::AccountId> = trades
-                .iter()
-                .flat_map(|tr| [tr.maker, tr.taker])
-                .filter_map(|owner| self.id_map.get(self.global_index(owner)).copied())
-                .collect();
-            touched.sort();
-            touched.dedup();
-            for account in touched {
-                session.runtime_prune_personal_memory(account);
+        // 【P0 画像】memory_prune 段（D3）。
+        {
+            let _seg = step_profile::scope(StepSegment::MemoryPrune);
+            if !trades.is_empty() {
+                let mut touched: Vec<crate::AccountId> = trades
+                    .iter()
+                    .flat_map(|tr| [tr.maker, tr.taker])
+                    .filter_map(|owner| self.id_map.get(self.global_index(owner)).copied())
+                    .collect();
+                touched.sort();
+                touched.dedup();
+                for account in touched {
+                    session.runtime_prune_personal_memory(account);
+                }
             }
         }
         outcome
-    }
-
-    /// Sol 五审修复 1：本拍成交的执行腿同拍投影——按 (账户,股,方向)
-    /// 匹配活跃计划的活动子单推进成交（record_child_fill 语义：余量/
-    /// 全成收口）。组内权威下一 Start 落账同值，投影不构成双计；无
-    /// 匹配子单的事实（外部单/非计划腿）自然跳过。
-    /// D5 cross_stock：session 侧计划簿的同拍成交合入（组簿空、迁移期
-    /// 注入面保护的计划——与组簿路径同式）。
-    fn apply_same_tick_plan_fills_for_session(
-        &mut self,
-        session: &mut GameSession,
-        trades: &[super::protocol::DeskTradeFact],
-        day: u64,
-    ) -> Result<(), String> {
-        let mut plans = session.take_runtime_plans();
-        // 身份核用低 48 位（迁移期注入面的计划子单持旧管线 OrderId 域
-        /// ——无 stock 高位编码；组内链子单为全等核，见下方 fn）。
-        let result = self.apply_same_tick_plan_fills_inner(&mut plans, trades, day, false);
-        session.set_runtime_plans(plans);
-        result
-    }
-
-    fn apply_same_tick_plan_fills(
-        &self,
-        plans: &mut crate::plans::PlanBook,
-        trades: &[super::protocol::DeskTradeFact],
-        day: u64,
-    ) -> Result<(), String> {
-        self.apply_same_tick_plan_fills_inner(plans, trades, day, true)
-    }
-
-    /// `strict_identity`：true=OrderId 全等核（组内链——stock 高位编码
-    /// 域）；false=低 48 位核（迁移期 session 注入面的旧管线 OrderId 域）。
-    fn apply_same_tick_plan_fills_inner(
-        &self,
-        plans: &mut crate::plans::PlanBook,
-        trades: &[super::protocol::DeskTradeFact],
-        day: u64,
-        strict_identity: bool,
-    ) -> Result<(), String> {
-        for tr in trades {
-            // maker≡卖方/taker≡买方（归一化身份——费用与订单序列同序）。
-            for (owner, is_buyer, order_serial) in [
-                (tr.maker, false, tr.maker_order_serial),
-                (tr.taker, true, tr.taker_order_serial),
-            ] {
-                let Some(&id) = self.id_map.get(self.global_index(owner)) else {
-                    continue;
-                };
-                let code = crate::StockId(tr.stock as u32);
-                let side = if is_buyer {
-                    crate::orderbook::Side::Buy
-                } else {
-                    crate::orderbook::Side::Sell
-                };
-                // Sol 六审修复 2：按**真实订单身份**推进——成交的 desk
-                // 序号必须等于计划活动子单身份（合成同式：OrderRef=
-                //（股, 序号）→OrderId 高位编码股）。外部/retail 单的同键
-                // 成交身份不匹配即跳过（此前按账户+股+方向套挂，把组内
-                // 已修好的身份关联漏洞带回投影层）。
-                let child_order = plans
-                    .active_plan(id, &code)
-                    .filter(|p| p.direction() == side)
-                    .and_then(|p| p.active_child_order_id());
-                let Some(child_order) = child_order else {
-                    continue;
-                };
-                let identity_ok = if strict_identity {
-                    // Sol 六审收官复核阻断 2：trade facts 的 order_serial
-                    // 已是 wire 编码 id——直接全等比较。
-                    child_order.0 == order_serial
-                } else {
-                    super::group::desk_order_serial(child_order.0)
-                        == super::group::desk_order_serial(order_serial)
-                };
-                if !identity_ok {
-                    continue;
-                }
-                // 身份已核——record_child_fill 的 Ok(false)/Err 均为投影
-                // 数据不一致（身份匹配后计划不应拒收），显式失败。
-                let pushed = plans
-                    .record_child_fill(id, &code, side, child_order, tr.qty, day)
-                    .map_err(|e| format!("同拍执行腿投影推进失败 {id:?} {code:?}: {e:?}"))?;
-                if !pushed {
-                    return Err(format!(
-                        "同拍执行腿投影未被计划消费（身份已核）：{id:?} {code:?} order={child_order:?}"
-                    ));
-                }
-            }
-        }
-        Ok(())
     }
 
     /// 事件 seq 游标（诊断）。
@@ -1132,6 +1136,14 @@ impl RuntimeDriver {
         self.world.global.committed_tick
     }
 
+    /// Q1 发布槽句柄（驱动器侧转发——session/server/测试读者经此取
+    /// 一致读点；install_tick 单点发布，load 一次 clone）。
+    pub fn publication(
+        &self,
+    ) -> std::sync::Arc<super::publication::ViewPublication> {
+        self.world.publication()
+    }
+
     /// world tick 记录只读（D0 常驻断言：单一世界连续累积）。
     pub fn world_report_log(&self) -> &[super::world::TickRecord] {
         &self.world.report_log
@@ -1196,13 +1208,42 @@ impl RuntimeDriver {
     /// D5 envelope 投影：desk 在途单收集（session 信封账本重建输入）。
     /// 附带缓存每股 desk 真实 next_serial（Sol 四轮修复：save 投影/
     /// DeskBookMirror 游标源——空簿也保留已耗序号）。
+    /// P2-3（视图内生战役）：生产每拍读面改从**发布版本**取（在途单观察
+    /// 面已随 DeskReport 上行进 PublishedTick.desks——EchoResting 独立
+    /// 往返退役）。游标缓存同步自发布版本（save 投影权威源）。
+    /// 发布滞后=单点发布不变量破坏，显式失败（不静默装旧版）。
     pub fn collect_resting_facts(
+        &mut self,
+    ) -> Result<Vec<Vec<super::protocol::RestingFact>>, String> {
+        let published = self.world.publication().load();
+        if published.tick != self.world.global.committed_tick {
+            return Err(format!(
+                "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                published.tick, self.world.global.committed_tick
+            ));
+        }
+        let mut facts = vec![Vec::new(); published.desks.len()];
+        let mut cursors = vec![0u64; published.desks.len()];
+        for shard in &published.desks {
+            let idx = shard.stock as usize;
+            if let (Some(slot), Some(cursor)) = (facts.get_mut(idx), cursors.get_mut(idx)) {
+                *slot = shard.resting.as_ref().clone();
+                *cursor = shard.next_serial;
+            }
+        }
+        self.desk_next_serials = cursors;
+        Ok(facts)
+    }
+
+    /// P2-3：live 收集通道（日结重刷等**发布版本外**的静点读面——日结
+    /// 清簿后发布版本仍是清簿前 tick 的，须向 desk 现拉）。
+    pub fn collect_resting_facts_live(
         &mut self,
     ) -> Result<Vec<Vec<super::protocol::RestingFact>>, String> {
         let (facts, cursors) = self
             .world
             .collect_desk_resting()
-            .map_err(|e| format!("在途单快照收集失败：{e:?}"))?;
+            .map_err(|e| format!("在途单快照 live 收集失败：{e:?}"))?;
         self.desk_next_serials = cursors;
         Ok(facts)
     }
@@ -1210,6 +1251,51 @@ impl RuntimeDriver {
     /// 每股 desk 序号游标（最近一次在途快照收集时的权威值）。
     pub fn desk_next_serials(&self) -> &[u64] {
         &self.desk_next_serials
+    }
+
+    /// P2-4（视图内生战役）：信封派生快照——发布版本在途单分片句柄
+    ///（Arc 共享零拷贝）+id_map 共享副本。session 侧派生投影的数据源
+    ///（每拍 step 尾存入 session，替代 ledger 每拍增量维护）。游标缓存
+    /// 同步自发布版本（mirror/save 投影源）。
+    pub fn resting_snapshot_for_session(
+        &mut self,
+    ) -> Result<
+        (
+            Vec<std::sync::Arc<Vec<super::protocol::RestingFact>>>,
+            std::sync::Arc<Vec<AccountId>>,
+        ),
+        String,
+    > {
+        let published = self.world.publication().load();
+        if published.tick != self.world.global.committed_tick {
+            return Err(format!(
+                "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                published.tick, self.world.global.committed_tick
+            ));
+        }
+        let n = published.desks.len();
+        let mut facts = vec![std::sync::Arc::new(Vec::new()); n];
+        let mut cursors = vec![0u64; n];
+        for shard in &published.desks {
+            let idx = shard.stock as usize;
+            if let (Some(slot), Some(cursor)) = (facts.get_mut(idx), cursors.get_mut(idx)) {
+                *slot = std::sync::Arc::clone(&shard.resting);
+                *cursor = shard.next_serial;
+            }
+        }
+        self.desk_next_serials = cursors;
+        Ok((facts, std::sync::Arc::clone(&self.id_map_shared)))
+    }
+
+    /// 每组账户数（Owner→全局下标换算基——快照派生用）。
+    pub fn accounts_per_group(&self) -> usize {
+        self.accounts_per_group
+    }
+
+    /// P1-1（日终重刷配套）：id_map 共享句柄（快照构造输入——日终 live
+    /// 重刷与发布版本快照共用同一身份映射源）。
+    pub fn resting_id_map_handle(&self) -> std::sync::Arc<Vec<AccountId>> {
+        std::sync::Arc::clone(&self.id_map_shared)
     }
 
     /// P2-4b：对相邻两拍在途单快照差分（信封账本增量维护输入）。
@@ -1605,168 +1691,6 @@ impl RuntimeDriver {
         Ok(())
     }
 
-    /// Sol 五审修复 1：本拍成交事实的公开期末投影。数据源=本 tick
-    /// desk_trades（双腿 owner/价/量/实收费用分项）；写入面=session 账户
-    /// （在组回写之后执行——回写值为本拍落账前权威，此处的本拍增量叠
-    /// 加后即期末公开态）。下一拍组回写为整值同步（已含落账），投影
-    /// 不构成重复入账。
-    fn apply_same_tick_fill_projection(
-        &mut self,
-        session: &mut GameSession,
-        trades: &[super::protocol::DeskTradeFact],
-        buy_vwap: &std::collections::BTreeMap<(super::GroupIdx, super::LocalIdx, super::StockIdx), i64>,
-        last_prices: &[i64],
-    ) -> Result<(), String> {
-        if trades.is_empty() {
-            return Ok(());
-        }
-        // (账户, 股) → 本拍增量：qty（买卖净额）、frozen（买入）、
-        // invested/recovered（成交额）、cash（买负实付/卖正净得）。
-        use std::collections::BTreeMap;
-        #[derive(Default)]
-        struct Delta {
-            qty: i64,
-            frozen: i64,
-            invested: i64,
-            recovered: i64,
-            cash: i64,
-        }
-        let mut by_account: BTreeMap<crate::AccountId, BTreeMap<crate::StockId, Delta>> =
-            BTreeMap::new();
-        // Sol 终审四审经历族：卖腿最后一条成交（(账户,股)→(价,desk 序号)
-        /// ——清仓转移的身份/价格输入）。
-        let mut last_sell: BTreeMap<(crate::AccountId, crate::StockId), (i64, u64)> =
-            BTreeMap::new();
-        for tr in trades {
-            // maker≡卖方/taker≡买方（desk 产出侧两方向统一——台账备忘）。
-            for (owner, is_buyer, fees) in [
-                (tr.maker, false, tr.maker_fees_cents),
-                (tr.taker, true, tr.taker_fees_cents),
-            ] {
-                let Some(&id) = self.id_map.get(self.global_index(owner)) else {
-                    continue;
-                };
-                let code = crate::StockId(tr.stock as u32);
-                let gross = i64::from(tr.price) * i64::from(tr.qty);
-                let d = by_account
-                    .entry(id)
-                    .or_default()
-                    .entry(code)
-                    .or_default();
-                if is_buyer {
-                    d.qty += i64::from(tr.qty);
-                    d.frozen += i64::from(tr.qty);
-                    d.invested += gross;
-                    // 买腿现金=实付（gross+费用）：公开现金基数=组现金+
-                    // 在途占用（挂出全额加回——基数不含 purse），本拍实付
-                    // 经此投影即时扣；下一拍占用/退款对齐后回写同值
-                    //（整值同步，不双计）。
-                    d.cash -= gross + fees;
-                } else {
-                    d.qty -= i64::from(tr.qty);
-                    d.recovered += gross;
-                    // 卖腿净得（组现金下一 Start 才落账——同拍补齐）。
-                    d.cash += gross - fees;
-                    last_sell.insert((id, code), (tr.price, tr.maker_order_serial));
-                }
-            }
-        }
-        for (id, by_code) in by_account {
-            // P2-2b：首写前值入 undo（同上）。
-            session.runtime_record_account_undo(id);
-            let Some(engine_acct) = session.fixture_account_mut(&id) else {
-                continue;
-            };
-            // Sol 终审二审阻断 1：全局名册下标换算 (组, 组内 local)
-            ///（此前全局下标直接当 local——组 1 账户查错组；VWAP 表按
-            /// 真实组建，错组 miss 后静默退步前价使经历入场参考价错）。
-            let global = self
-                .id_map
-                .iter()
-                .position(|map_id| *map_id == id)
-                .expect("投影账户必在名册");
-            let per_group = self.accounts_per_group.max(1);
-            let (owner_group, local) = (
-                (global / per_group) as super::GroupIdx,
-                (global % per_group) as super::LocalIdx,
-            );
-            let mut positions = engine_acct.positions().clone();
-            // Sol 六审修复 3：首买经历初始化（与回写路径同款——此前
-            /// 直接建条目，下一拍条目已在使 is_new_hold 永假，retail
-            /// 首次持有永久缺经历条目→fault2038 保存校验）。收集后在
-            /// 账户借用外执行。
-            let mut new_hold_inits: Vec<(crate::StockId, i64, u32)> = Vec::new();
-            // Sol 终审四审经历族：清仓经历转移（账户借用外执行——同
-            /// new_hold_inits 模式）。
-            let mut full_exits: Vec<(crate::StockId, i64, u32, Option<Money>, u64)> = Vec::new();
-            for (code, d) in &by_code {
-                let is_new_hold = d.qty > 0 && !positions.contains_key(code);
-                if is_new_hold {
-                    // Sol 终审二审阻断 1：VWAP 查表用真实组号（此前写死
-                    /// 组 0——组 1 首买 miss 后退步前价，经历入场价错）。
-                    let entry = buy_vwap
-                        .get(&(owner_group, local, code.0 as super::StockIdx))
-                        .copied()
-                        .or_else(|| last_prices.get(code.0 as usize).copied())
-                        .or_else(|| trades.iter().map(|t| t.price).min())
-                        .unwrap_or(1);
-                    new_hold_inits.push((code.clone(), entry, d.qty as u32));
-                }
-                let entry = positions
-                    .entry(code.clone())
-                    .or_insert_with(|| crate::account::Position::from_restored_parts(0, 0, 0, 0));
-                // 拍前口径（清仓转移的 before/cost_before 输入——变异前取值）。
-                let pre_qty = entry.qty();
-                let pre_cost = entry.cost_price().filter(|price| price.cents() > 0);
-                let new_qty = i64::from(entry.qty()) + d.qty;
-                let new_frozen = i64::from(entry.t1_locked()) + d.frozen;
-                let new_invested = entry.invested_cents() + d.invested;
-                let new_recovered = entry.recovered_cents() + d.recovered;
-                if new_qty <= 0 && new_frozen <= 0 {
-                    // 清仓（同拍）：删除条目——旧管线 apply_sell 语义
-                    ///（qty 已含在途卖余量口径的回写面；本拍卖增量后归零
-                    /// 即真清仓）。
-                    if new_qty < 0 || new_frozen < 0 {
-                        return Err(format!(
-                            "同拍投影持仓下穿：{id:?} {code:?} qty={new_qty} frozen={new_frozen}"
-                        ));
-                    }
-                    positions.remove(code);
-                    // Sol 终审四审经历族（fault2051）：卖腿清仓的 retail
-                    /// 经历同拍转移（清观察字段+退出冷静期——组权威侧
-                    /// apply_full_exit_experience 晚于本拍 Belief 上行，
-                    /// save 面由此双写闭合；无经历账账户内建跳过）。
-                    if d.qty < 0 && pre_qty > 0 {
-                        if let Some(&(price, serial)) = last_sell.get(&(id, *code)) {
-                            // serial（tr.maker_order_serial）已是 wire 编码 id。
-                            let order = crate::OrderId(serial);
-                            full_exits.push((code.clone(), price, pre_qty, pre_cost, order.0));
-                        }
-                    }
-                    continue;
-                }
-                *entry = crate::account::Position::from_restored_parts(
-                    new_qty as u32,
-                    new_frozen as u32,
-                    new_invested,
-                    new_recovered,
-                );
-            }
-            engine_acct.fixture_set_positions(positions);
-            let cash_delta: i64 = by_code.values().map(|d| d.cash).sum();
-            let cash = engine_acct.cash().cents() + cash_delta;
-            engine_acct.fixture_set_cash(crate::Money::from_cents(cash));
-            drop(engine_acct);
-            for (code, entry, qty) in new_hold_inits {
-                self.pending_hold_inits.push((id, code, qty, entry));
-            }
-            for (code, price, pre_qty, pre_cost, order) in full_exits {
-                session.runtime_record_full_exit(&id, &code, price, pre_qty, pre_cost, order)?;
-            }
-        }
-        Ok(())
-    }
-
     /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。
     pub fn sever_world_for_test(&mut self) {
         self.world.sever();
@@ -1915,11 +1839,18 @@ impl RuntimeDriver {
         self.account_writes
     }
 
-    /// P2-4a 红证注入通道（cfg(test)）：组 0 稀疏账户回声回执丢最后
-    /// 一项——收集端精确集校验的显式失败判别用。
+    /// candle 退役战役旋钮 1（cfg(test)）：安装读路径 active close +1
+    /// 分（合同 1 开旋钮必红——判别 install 数据源）。
     #[cfg(test)]
-    pub fn corrupt_sparse_echo_omit_last_for_test(&mut self) {
-        self.world.corrupt_sparse_echo_omit_last_for_test();
+    pub fn candle_knob_tamper_active_for_test(&mut self) {
+        self.candle_knob_tamper_active = true;
+    }
+
+    /// candle 退役战役旋钮 2（cfg(test)）：安装读路径 turnover 置 0
+    ///（合同 1 的 trade_stats 对照红——判别 stats 2 字段贯通）。
+    #[cfg(test)]
+    pub fn candle_knob_drop_turnover_for_test(&mut self) {
+        self.candle_knob_drop_turnover = true;
     }
 
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面——**全量语义**
@@ -1958,6 +1889,19 @@ impl RuntimeDriver {
         self.world
             .collect_group_belief()
             .map_err(|e| format!("belief 组读面失败：{e:?}"))
+    }
+
+    /// Sol 复核阻断 P1-2 四面对账（cfg(test)）：发布版本 belief 分片
+    /// 只读（与组权威行逐位对照的发布面）。
+    #[cfg(test)]
+    pub fn published_belief_shard_for_test(
+        &self,
+        group: super::GroupIdx,
+    ) -> std::sync::Arc<
+        Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>,
+    > {
+        let published = self.world.publication().load();
+        published.groups[group as usize].belief.clone()
     }
 
     /// 计划簿收集（D3a-2c 件5：组内 PlanBook 上行——测试/红证面；生产
@@ -2098,7 +2042,6 @@ impl RuntimeDriver {
         self.world.public_views()
     }
 }
-
 
 impl RuntimeDriver {
     /// 翻转缺口②（批 8h·部分3）：tick 计数与 poison 安装面。
@@ -2289,23 +2232,28 @@ impl RuntimeDriver {
         // 权威（替换"推到 tick"的假迁移）。P2-3e：生产安装段改稀疏上行
         ///（只回本 tick 演进位；非演进位 session 镜像==组权威——不变式
         /// 同 belief P2-2a。B fixture due≈20-40/tick vs 名册 20000）。
-        let collected = self
-            .world
-            .collect_group_attention_sparse()
-            .map_err(|e| format!("注意力收集失败：{e:?}"))?;
-        let mut entries = Vec::new();
-        for (g, attention) in collected {
-            for (local, next_due, rng_state) in attention {
-                if let Some(id) = self
-                    .id_map
-                    .get(g as usize * self.accounts_per_group + local as usize)
-                    .copied()
-                {
-                    entries.push((id, next_due, rng_state));
+        // 【P0 画像】attention_heap 段（D6：稀疏收集 + heap 全名册镜像
+        /// 重建——set_runtime_attention 内 O(名册) collect）。
+        {
+            let _seg = super::step_profile::scope(super::step_profile::StepSegment::AttentionHeap);
+            let collected = self
+                .world
+                .collect_group_attention_sparse()
+                .map_err(|e| format!("注意力收集失败：{e:?}"))?;
+            let mut entries = Vec::new();
+            for (g, attention) in collected {
+                for (local, next_due, rng_state) in attention {
+                    if let Some(id) = self
+                        .id_map
+                        .get(g as usize * self.accounts_per_group + local as usize)
+                        .copied()
+                    {
+                        entries.push((id, next_due, rng_state));
+                    }
                 }
             }
+            session.set_runtime_attention(&entries);
         }
-        session.set_runtime_attention(&entries);
         Ok(())
     }
 
@@ -2337,66 +2285,62 @@ impl RuntimeDriver {
     /// Sol 终审四审 A2：post_day_end=world 日结**之后**的补装（ends_day
     /// 段尾）——desk roll 后新日 active 是起始占位，档校验（fault2076）
     /// 期望日界静点 active 为空 ⇒ 强制清除；常规安装（false）不变。
+    ///
+    /// candle 退役刀 1（数据源切换）：active 观察面改读**发布版本**
+    /// （`PublishedTick.desks[].view` 的 daily_active 5 元组+扩 2 字段
+    /// turnover/trade_count——desk 构造点单点同源），EchoCandles 生产
+    /// 往返退役（原每拍 5 desk 广播+全量 history Vec 克隆+收齐——
+    /// history 消费侧零读者，纯浪费）。等价论证（设计稿 §2）：
+    /// 发布版本 active=终轮 DeskReport 附带（Seal 收敛点），desk active
+    /// 拍内只在成交时演进、Seal 后不变 ⇒ 与原 install 时点的 desk 往返
+    /// 同值；post_day_end 形态走 clear 分支不消费 active（发布版本残留
+    /// 无害）。刀 2：相位判定输入（setup 导出）外提循环外+预计算。
+    /// 语义变化登记（复核确认）：原"desk 通道断连时 install 显式失败"
+    /// 的收集面退役——发布版本为已提交一致快照，sever 后 install 用
+    /// 最后发布版本仍成功（非部分数据；sol3 断连测试随批 2 改写）。
     pub fn install_candles_with_mode(
         &mut self,
         session: &mut GameSession,
         post_day_end: bool,
     ) -> Result<(), String> {
-        let finals = self
-            .world_desk_finals_for_candles()
-            .map_err(|e| format!("K 投影收集失败：{e:?}"))?;
-        let tpd_now = u64::from(session.export_setup_for_runtime().ticks_per_day).max(1);
+        let published = self.world.publication().load();
+        if published.tick != self.world.global.committed_tick {
+            return Err(format!(
+                "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                published.tick, self.world.global.committed_tick
+            ));
+        }
+        // 刀 2：循环不变量外提（原每股 export_setup 重复导出×N 股）。
+        let s = session.export_setup_for_runtime();
+        let tpd_now = u64::from(s.ticks_per_day).max(1);
         // 日结拍判定（C2/C3 相位基准）：本拍步后 tick 为 tpd 倍数 ⇒
-        /// ends_day 段的日终迁移（commit_active）即将执行。
+        // ends_day 段的日终迁移（commit_active）即将执行。
         let ends_day = session.tick() % tpd_now == 0;
-        for (stock_idx, _desk_hist, active) in finals {
-            let code = crate::StockId(u32::from(stock_idx));
+        let day_tick = session.tick() % tpd_now;
+        let auction_entry = s.auction_ticks - s.auction_ticks / 3;
+        let candle_time = session.candle_date_time_for_runtime();
+        for shard in &published.desks {
+            let code = crate::StockId(u32::from(shard.stock));
+            let view = &shard.view;
             // 日 K 相位状态机（Sol 终审四审 public_step 方案 B，协调者
-            /// 批复）：归档权收归 session 日终迁移（commit_active）唯一
-            /// 承载——desk roll 归档的 hist 条与 session active 是同一份
-            /// 数据的两面，运行期不再自 desk hist push（push 与 commit
-            /// 并存即双重归档，A2PUSH/A2COMMIT 打点实证；撤 push 后
-            /// desk hist 仅余 restore 种子装载与测试面对账两类读者，
-            /// 全仓 rg 已核）。本函数只承载 C1（active 装载/占位）与
-            /// C3（清空）。多日一次归档守卫随 push 退役（迁移每拍至多
-            /// 提交一条 active；一次 step 至多跨一日）。
-            // 活跃 K 窗口对齐（存档校验 fault2076）：竞价申报窗
-            // （day_tick < auction_entry=10）活跃 K 须为空。
-            let s = session.export_setup_for_runtime();
+            // 批复）：归档权收归 session 日终迁移（commit_active）唯一
+            // 承载。本函数只承载 C1（active 装载/占位）与 C3（清空）。
             // C3（方案 B）：active 清空仅两源——迁移后补装
             /// （post_day_end）与**迁移已执行后的**新日申报窗。日结拍
             /// 的常规 install（先于 ends_day 迁移执行）不得清当日
-            /// active：session active 仍持当日终态（前拍装载），是日终
-            /// 迁移 commit_active 的唯一归档输入；此处清空会使日界
-            /// 静点丢当日 K（fault2064 少条——tick8 [0,360,361] 形态）。
-            /// 相位基准=迁移执行标志（ends_day/post_day_end），不再以
-            /// day_tick 几何单独推断（几何推断正是 premature clear 的
-            /// 来源——此前 tick−1 拍前口径尝试亦因与档校验错位交替
-            /// 显红，两案均在状态机统一后退役）。
-            let day_tick = session.tick() % s.ticks_per_day.max(1);
-            let auction_entry = s.auction_ticks - s.auction_ticks / 3;
-            // 活动 K 空窗与存档校验 fault2076 同式：竞价申报窗——
-            // Sol 终审四审 A2：去掉原 day_tick==0（日界拍）分支——常规
-            /// install 在 world 日结**之前**执行（当日 active 必须装载，
-            /// session 日终迁移才能提交归档；原分支使 tpd=1 场景的当日
-            /// K 永不归档，档少一条 fault2064 反截）。日结后的第二次
-            /// install 时 desk roll 已清 active（None=清除，无残留）。
+            /// active（session active 仍持当日终态，是日终迁移
+            /// commit_active 的唯一归档输入；此处清空会使日界静点丢
+            /// 当日 K——fault2064 少条形态）。
             let active_must_be_empty = post_day_end || (day_tick < auction_entry && !ends_day);
-            let candle_time = session.candle_date_time_for_runtime();
             if active_must_be_empty {
                 session.clear_active_candle_for_runtime(&code);
             }
-            // Sol 终审四审 A2 补齐：无成交日的**占位 K**（旧管线每
-            /// PriceTick 拍 mark_candle(None, time, last, 0) 的占位语义
-            /// ——日终 commit 归档占位 K，档校验期望=预置+day 不因无
-            /// 交易日缺条 fault2064）。desk active 仅在成交时建立——
-            /// 连续段缺席时以收束点 last_price 合成。
-            if active.is_none() && !active_must_be_empty && !post_day_end {
-                let last = self
-                    .world_public_views()
-                    .get(stock_idx as usize)
-                    .map(|v| v.last_price.max(1))
-                    .unwrap_or(1);
+            // 无成交日的**占位 K**（旧管线 mark_candle(None, time, last, 0)
+            /// 占位语义——日终 commit 归档占位 K，档校验不因无交易日缺条
+            /// fault2064）。desk active 仅在成交时建立——连续段缺席时以
+            /// 收束点 last_price 合成（发布版本同源值）。
+            if view.daily_active.is_none() && !active_must_be_empty && !post_day_end {
+                let last = view.last_price.max(1);
                 let placeholder = crate::money::Money::from_cents(last);
                 session.set_active_candle_for_runtime(
                     &code,
@@ -2411,19 +2355,32 @@ impl RuntimeDriver {
                     },
                 );
             }
-            if let Some(a) = active.filter(|_| !active_must_be_empty) {
+            if let Some((o, h, l, c, v)) = view.daily_active.filter(|_| !active_must_be_empty) {
+                // 旋钮 1（cfg(test) 突变判别）：close 篡改 +1 分——判别
+                /// 安装数据源真为发布版本读路径（合同 1 负控）。
+                #[cfg(test)]
+                let c = if self.candle_knob_tamper_active { c + 1 } else { c };
+                // 旋钮 2：turnover 置 0——判别 stats 2 字段贯通。
+                #[cfg(test)]
+                let turnover = if self.candle_knob_drop_turnover {
+                    0
+                } else {
+                    view.daily_active_turnover_cents
+                };
+                #[cfg(not(test))]
+                let turnover = view.daily_active_turnover_cents;
                 session.set_active_candle_for_runtime(
                     &code,
                     crate::session::DailyCandle {
                         time: candle_time,
-                        open: Money::from_cents(a.1),
-                        high: Money::from_cents(a.2),
-                        low: Money::from_cents(a.3),
-                        close: Money::from_cents(a.4),
-                        volume: a.5,
+                        open: Money::from_cents(o),
+                        high: Money::from_cents(h),
+                        low: Money::from_cents(l),
+                        close: Money::from_cents(c),
+                        volume: v,
                         trade_stats: Some(crate::session::DailyTradeStats {
-                            turnover_cents: a.6.max(0) as u64,
-                            trade_count: a.7,
+                            turnover_cents: turnover.max(0) as u64,
+                            trade_count: view.daily_active_trade_count,
                         }),
                     },
                 );
@@ -2432,9 +2389,15 @@ impl RuntimeDriver {
         Ok(())
     }
 
-    /// desk K 数据抽取（测试面通道；生产每步安装走 install_candles）。
+    /// desk K 数据抽取（**测试对账面通道**；candle 退役刀 1 后生产
+    /// install_candles 改读发布版本——本通道保留为 desk 权威对照的
+    /// 唯一测试面。**生产零调用验证**：全仓 `grep -rn
+    /// "world_desk_finals_for_candles\|take_candle_projection" --include
+    /// ="*.rs"` 中生产调用点只允许 install_candles_with_mode 批 1 前
+    /// 形态——刀 1 落地后生产侧零引用（仅本 pub(crate) 测试面+sever
+    /// 断连守卫单测），复活生产调用须经 candle 设计稿复核）。
     /// Sol 二审修复集 3：收集错误全传播（不吞发送失败/异常消息）。
-    fn world_desk_finals_for_candles(
+    pub(crate) fn world_desk_finals_for_candles(
         &mut self,
     ) -> Result<
         Vec<(
@@ -2464,7 +2427,10 @@ fn resting_order_seeds_from_session(
     let from_ledger = snapshot.iter().all(|(_, orders)| orders.is_empty());
     let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = Vec::new();
     if from_ledger {
-        for (key, envelope) in session.runtime_envelope_ledger_snapshot() {
+        let ledger_entries = session
+            .runtime_envelope_ledger_snapshot()
+            .map_err(|fatal| format!("信封账本快照派生失败：{fatal:?}"))?;
+        for (key, envelope) in ledger_entries {
             // Sol 终审修复 1c 同族：owner 用真实组号（此前写死组 0
             /// ——多组 restore 的挂单被错归组 0 的同 local 账户）。
             let global = id_map
@@ -2546,6 +2512,7 @@ fn resting_order_seeds_from_session(
         crate::session::pipeline::Envelope,
     > = session
         .runtime_envelope_ledger_snapshot()
+        .map_err(|fatal| format!("信封账本快照派生失败：{fatal:?}"))?
         .into_iter()
         .map(|(key, envelope)| {
             let side_rank = u8::from(matches!(key.side, crate::orderbook::Side::Sell));
@@ -2619,7 +2586,6 @@ fn resting_order_seeds_from_session(
     }
     Ok(seeds)
 }
-
 
 /// P2-4b 判别面前置（cfg(test)）：差分三面计数（Added/Removed/Changed）
 /// ——等价守卫的 fixture 前置断言数据源。

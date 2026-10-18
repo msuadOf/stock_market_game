@@ -1,0 +1,25 @@
+=== P0 基线复测 2026-10-18T18:54:00+08:00 HEAD=56268e5f ===
+--- load: 1.30 ---
+[B-300 r1 18:54:00]
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":2105,"runtime_groups":1,"speed_x":288.5953373648422,"ticks":300,"wall_s":1.039517834}
+[A-3000 r1 18:54:06]
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：1287.2 t/s（3000 tick / 2.33s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- load: 1.53 ---
+[B-300 r2 18:54:14]
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":2105,"runtime_groups":1,"speed_x":315.063230055393,"ticks":300,"wall_s":0.952189819}
+[A-3000 r2 18:54:20]
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：1383.2 t/s（3000 tick / 2.17s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- load: 1.55 ---
+[B-300 r3 18:54:27]
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":2105,"runtime_groups":1,"speed_x":318.078790533814,"ticks":300,"wall_s":0.94316254}
+[A-3000 r3 18:54:34]
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：1327.5 t/s（3000 tick / 2.26s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+[B-1000 long 18:54:41]
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":6016,"runtime_groups":1,"speed_x":544.6865882685244,"ticks":1000,"wall_s":1.835918162}
+=== 完成 2026-10-18T18:54:44+08:00 ===

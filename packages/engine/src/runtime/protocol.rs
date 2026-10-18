@@ -182,6 +182,13 @@ pub struct StockPublic {
     pub daily_bars: Vec<(i64, i64, i64, i64, u64)>,
     /// 当日活动 K（存在即有；volume>0 时供 current_day_open/技术面样本）。
     pub daily_active: Option<(i64, i64, i64, i64, u64)>,
+    /// candle 退役刀 1（观察面扩字段）：当日活动 K 的累计成交额（分）
+    /// ——desk 侧 market.turnover_today 同源（DeskCandles active 8 元组
+    /// 第 7 位同值）；install_candles 的 trade_stats 源。
+    pub daily_active_turnover_cents: i64,
+    /// candle 退役刀 1：当日活动 K 的累计成交笔数——market.trade_count
+    /// 同源（8 元组第 8 位同值）。
+    pub daily_active_trade_count: u64,
     /// 已完成日总数（绝对索引基——trading_day = total−kept+offset）。
     pub daily_total_completed: u64,
     /// 历史累计 traded 日数（volume>0——技术面 valid_sample_count 口径）。
@@ -437,9 +444,30 @@ pub enum GroupIn {
     /// 只补触发面不改语义）。
     #[cfg(test)]
     ForceContinuationForTest,
+    /// Seal 攻顶批 1 旋钮通道（cfg(test)）：组端分片构建的突变判别
+    /// 注入（tamper=首条目 cash+1/skip_last=丢末条目）——分片内容源
+    /// 与 dirty 集完整性合同的红证面；生产恒不发送。
+    #[cfg(test)]
+    SetSealKnobsForTest {
+        /// 篡改首条目现金 +1 分。
+        tamper: bool,
+        /// 丢末条目（dirty 集完整性）。
+        skip_last: bool,
+    },
     /// 开仓派生读面（D3a-2c：组线程组装 RootReadContext+DecisionChain
     /// Observation 直调 observe——红证/读面上行；生产驱动接线随件4）。
     EchoOpenDerivation,
+    /// Q2 Seal 收尾确认（终轮 converge 后由协调者广播）：组 drain 本拍
+    /// 全部批次（S4 锁步不变量：协调者收齐全部 DeskReport ⇒ desk 批次
+    /// 已 FIFO 入组收件箱先于 Seal）→ apply_staging 落账（S2：落账点
+    /// 唯一化，从下一 Start 前移到 Seal）→ SealAck 上行。Abort 语义=
+    /// tick 级可重试（worker 回滚存活，非永久关停）。
+    Seal {
+        /// tick 编号。
+        tick: u64,
+        /// 终轮轮次。
+        round_final: u32,
+    },
     /// 账户快照请求（驱动器纵切/测试面；生产热路径不开）。
     EchoAttention,
     /// P2-3e：稀疏注意力上行请求（生产安装段——只回本 tick 演进位
@@ -457,10 +485,6 @@ pub enum GroupIn {
         /// 请求的组内下标（升序去重——驱动器 dirty 扫描天然有序）。
         wanted: Vec<super::LocalIdx>,
     },
-    /// P2-4a 红证通道（cfg(test)）：组端稀疏回执丢最后一项（缺项注入
-    /// ——收集端精确集校验的显式失败判别用）。
-    #[cfg(test)]
-    CorruptSparseEchoOmitLast,
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
     EchoCandles,
     /// D5 #4 retail 链：本拍零售决策 trace 请求（组回 RetailTraces——
@@ -668,6 +692,30 @@ pub enum UpMsg {
         /// 起 evaluate 共享流写回 session rng_state 同源）。
         attention: Vec<(LocalIdx, u64, u64)>,
     },
+    /// Q2 Seal 收尾确认回执：组已完成终轮落账（apply_staging）+
+    /// 分片构建（P2-5 接入面）。final_hash=Seal 落账后的组态哈希
+    ///（观察点——与报告的 committed_hash 口径不同：含本拍成交）。
+    SealAck {
+        /// 组索引。
+        group: GroupIdx,
+        /// tick 编号。
+        tick: u64,
+        /// Seal 落账后组态哈希。
+        final_hash: u64,
+        /// Q2 批 3+Seal 攻顶 A-1：账户稀疏分片（Seal 落账后的 undo 集
+        /// 口径——决策扣除/本拍全部成交/日结全含；替代驱动器
+        /// EchoAccountsSparse 独立往返。全量读面走 EchoAccounts 全量
+        /// 通道。A-1：条目 Arc 共享（组端写点 COW——分片构建免全量
+        /// GroupAccount 深拷贝的搬运税）。
+        accounts_sparse:
+            std::sync::Arc<Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
+        /// Sol 复核阻断 P1-2：belief 稀疏分片随 SealAck 上行（构建点=
+        /// Seal 的 apply_deferred 之后——含清仓经历转移行；此前随
+        /// GroupReport 决策相构建早于延迟相，终轮清仓后发布/session
+        /// 仍留持仓经历）。稀疏语义不变（dirty ∪ 跨 Start pending）。
+        belief_sparse:
+            std::sync::Arc<Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>>,
+    },
     /// D5 #4 retail 链：本拍零售决策 trace 回执（瞬态——每拍清+装）。
     RetailTraces {
         /// 组索引。
@@ -758,6 +806,9 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::RetailTraces { group, .. } => write!(f, "RetailTraces(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),
+            UpMsg::SealAck { group, tick, .. } => {
+                write!(f, "SealAck(group={group}, tick={tick})")
+            }
             UpMsg::GroupEchoSparse { group, .. } => write!(f, "GroupEchoSparse(group={group})"),
             UpMsg::DeskCandles { stock, .. } => write!(f, "DeskCandles(stock={stock})"),
             UpMsg::Failed { who, .. } => write!(f, "Failed({who}, ..)"),
@@ -767,7 +818,9 @@ impl std::fmt::Debug for UpMsg {
 }
 
 /// 组线程本轮报告。
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// P1-2（Sol 复核）：belief 稀疏分片改随 SealAck 上行（Seal 的
+/// apply_deferred 后构建——含清仓经历行）；报告不再携带分片。
+#[derive(Clone, Debug, PartialEq)]
 pub struct GroupReport {
     /// 组索引。
     pub group: GroupIdx,
@@ -904,8 +957,10 @@ pub struct DeskReport {
     pub trade_count: u64,
     /// 费用桶累计（双边实收费用，守恒审计输入）。
     pub fee_sink: i64,
-    /// 本收束点公共态（协调者安装进下一 tick 广播快照）。
-    pub view: StockPublic,
+    /// 本收束点公共态（协调者安装进下一 tick 广播快照）。刀 2b（协调
+    /// 者刀单②续）：Arc 共享——converge 收集/发布分片安装免逐轮深拷贝
+    ///（desk 端缓存条目直通；内容语义不变——Arc 的 PartialEq 委托内值）。
+    pub view: std::sync::Arc<StockPublic>,
     /// 本轮双腿成交事实（TickFrame 事件映射输入；按成交序）。
     pub trades: Vec<DeskTradeFact>,
     /// 本轮生命周期事实（受理/撤单/到期）。
@@ -914,6 +969,12 @@ pub struct DeskReport {
     pub receipts_out_list: Vec<DeskReceipt>,
     /// 本轮竞价事实（拍卖窗 indicative/完成撮合）。
     pub auction: Vec<DeskAuctionFact>,
+    /// P2-3（视图内生战役）：在途单观察面随报告上行（替代驱动器每拍
+    /// EchoResting 独立往返——组装与 DeskResting 应答逐字同源）。终轮
+    /// 报告的分片进发布版本；Abort 时随 evidence 丢弃。
+    pub resting_orders: std::sync::Arc<Vec<RestingFact>>,
+    /// desk 序号游标（真实已耗序号——空簿也保留；save 投影权威源）。
+    pub next_serial: u64,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

@@ -1,0 +1,41 @@
+=== B 口径画像分解+3000 tick 正式数字（2026-10-19 04:20-04:23，静置窗 load 1min 2.4/15min 4.5）===
+
+二进制 b-r21（当前 HEAD 96d15225 前一版 cc9a3795 编译——driver 面无差异，
+watchdog env 校验不影响热路径）。setup=driver-semantics-setup.json 9 股。
+
+【B 3000 tick 静置窗 3 轮（SPIN on 默认）】
+1036.1（画像轮）/ 1007.2 / 1054.9 → **mean 1032.7——B 口径 1000 线触线**
+【SPIN off 对照】1044.7——与 on 同带（G=1 单组自旋无感，差在噪声带）
+
+【画像 3000 tick（1036.1 轮，wall 965.1μs/tick 稳态）】
+- step_outer 853.0μs（88.4% wall）
+  - driver_step 633.4（world_run 488.1 + 安装链净 145.3）
+  - step 内段化外未段化：853.0−743.0（净和）= 110.0μs
+- wall−step_outer 112.1μs（冷启动摊销为主，见下）
+- 安装链明细（μs/tick）：belief_echo 73.3（含在 driver_step）/plans 16.6/
+  acct_writeback 14.3/acct_echo 12.6/attention_heap 22.9/market 净 5.1/
+  desk_mirror 11.6/retail 15.7
+
+【冷启动摊销实锤（口径失真登记）】
+wall−step_outer：1000 tick=329.5-333.6μs/tick；3000 tick=112.1μs/tick
+——固定一次性成本 X≈330ms（World/线程 spawn 构造+jemalloc 预热+页错误
+集中）被 tick 数摊薄。**1000 tick 旧口径含 27% 冷启动税**——旧正式数字
+788-814 被系统性压低；稳态对照（旧基线 544.7 折算稳态 ~664）→当前
+稳态 965μs=**B 稳态累计 +56%**。
+
+【perf 归因（3000 tick 采样 11482 样本）】
+- 主线程：memmove 3.23%+jemalloc malloc/sdallocx 1.95%+kernel_init_pages
+  0.87%（缺页）+step_via_runtime 内联面 3.29%+futex 等待 3.70%（段内）
+- 组线程：run_round 7.53%（决策主体）+BTreeMap clone_subtree 0.5%
+- desk 线程：**build_resting_facts 2.97+1.14+0.67%（三 desk 合计 ~4.8%）
+  +build_public 0.82%×4——每拍全量投影构建**（world_run 等待内）
+
+【判读】
+1. B 触线（1032.7）主因=口径修正（3000 tick）+战役累计刀（稳态 664→1033）。
+2. 自旋对 B（G=1）无感——A 口径（G=10）+10% 与 B 口径 0% 并存合理
+  （G=1 组唤醒非瓶颈；desk 线程未自旋）。
+3. 下一刀最大候选：desk 每拍全量投影（build_resting_facts+build_public
+  ~5.3% 样本=world_run 内等待成分）——"Seal 后 desk 静止"协议前置
+  （登记项）恰支持 dirty 化。
+4. step 内未段化 110μs=主线程分配/拷贝税（memmove+jemalloc+缺页）——
+  段化二分（StepViaRuntimeTotal）待归因。

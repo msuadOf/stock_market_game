@@ -1,0 +1,30 @@
+
+
+...    |
+
+...   |
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running unittests src/lib.rs (target/debug/deps/engine-e2b004eecda01d2b)
+
+running 2 tests
+test runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back ... FAILED
+test runtime::group::eager_domain_tests::delta_undo_shuffled_replay_equivalence ... ok
+
+failures:
+
+---- runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back stdout ----
+
+thread 'runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back' (1335930) panicked at packages/engine/src/runtime/group.rs:6402:13:
+assertion `left != right` failed: 等待窗即时相必须已落账（到达序 0）——分域批 1 红证锚
+  left: 6142714959533374422
+ right: 6142714959533374422
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::group::eager_domain_tests::eager_partial_apply_abort_rolls_back
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1684 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p engine --lib`

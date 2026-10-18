@@ -1,0 +1,41 @@
+=== candle 退役批 2——两刀实施与测量（2026-10-19，第 20 任续）===
+
+刀 1：StockPublic 扩 daily_active_turnover_cents/daily_active_trade_count
+（desk.rs 构造点单点同源——market.turnover_today/trade_count 与 DeskCandles
+active 8 元组第 7/8 位同值）；install_candles_with_mode 改读发布版本
+（published.desks[].view——含 tick 滞后防御）；EchoCandles 生产往返退役
+（world_desk_finals_for_candles 留 pub(crate) 测试对账面+生产零调用登记）。
+刀 2：export_setup 外提循环外+相位量预计算；占位合成读发布版本 last_price。
+
+守卫落地：
+①J6 扩面（publication_desks_match_public_views 补 daily_active+2 新字段
+逐位断言——原 J6 未覆盖 daily_active，本批顺带消除既有盲区）；
+②生产零调用验证：grep -n "world_desk_finals_for_candles\|take_candle_projection"
+生产侧仅剩本测试面方法定义（drive.rs 注释内嵌验证说明）。
+
+语义变化登记（复核确认）：sever 断连后 install 用最后发布版本仍成功
+（原"收集失败显式上报"随生产往返退役）——sol3 测试改写为前后一致对照
+（sol3_install_candles_after_sever_uses_last_publication）。
+
+【合同】candle_retirement 6/6 绿（合同 1-4 现状基线+旋钮判别）；
+突变负控双红实证（旋钮消费短路→knob1/knob2 双红，恢复后绿——
+mutation-knobs-red.txt）。全量双模式 1681/0/11（两次既有 flake 家族
+[panic_transport]单发复跑绿，登记不批改）；wasm check 过。
+
+【实测（高负载漂移窗 load 3.4-8.3，正式数字待静置）】
+candle_install 段：41.13μs → 0.335μs（−99.2%，超设计预期 ~5μs）。
+B 1000 交替配对（窗口漂移污染，如实登记不采信）：b-bel mean 724.3
+vs b-candle mean 777.4；单轮 max 812.5 vs 776.6——方向与 +2.8% 推算
+（41μs/1447μs）一致，静置窗正式复测待补。
+A 3000 抽查（world 直驱不经安装链——预期无回归）：922.1 t/s，Seal 相位
+217μs 不变，守恒锚全对。
+
+【B 正式静置窗复测补录（load 1min 1.5-1.6 / 5min 4.7-5.1 / 15min 5.4）】
+b-bel（批 2+刀 a 基线）3 轮：756.9 / 755.8 / 764.3 → mean 759.0（紧凑）
+b-candle（+candle 两刀）5 轮：703.2 / 787.5 / 841.3 / 700.2 / 820.2
+  → mean 770.5 / min 700.2 / max 841.3（**双峰分布** ~700 与 ~820 两簇
+  ——G=1 单线程驱动器对同机突发活动敏感，19 users 环境；按纪律如实记
+  不剔除）
+配对 mean 差 **+1.5%**（759.0→770.5）；与段面推算 +2.8%
+（−40.8μs/1447μs）同向，端到端被双峰方差压制。**主证据=段计时**：
+candle_install 41.13→0.335μs（−99.2%，机制性消除，不受负载影响）。

@@ -4,24 +4,46 @@ use super::bridge_tests::setup_fixture;
 use super::drive::RuntimeDriver;
 use crate::GameSession;
 
-// 断开世界后 install_candles 必须显式失败（此前 take_candle_projection
-// 吞发送错误并返回部分数据——部分 K 安装=静默语义丢失）。
+// 断开世界后的 install_candles 语义（candle 退役刀 1 改写）：数据源
+// 从 desk 通道往返切换为发布版本（已提交一致快照）——sever 后 install
+// 用最后发布版本仍成功且数据与断开前一致（非部分数据；原"收集失败
+// 显式上报"的断连守卫随生产往返退役——对账面通道保留，其断连守卫
+// 由 take_candle_projection 自身的通道面校验承载，测试经
+// world_desk_finals_for_candles 直达）。
 #[test]
-fn sol3_install_candles_propagates_collection_errors() {
+fn sol3_install_candles_after_sever_uses_last_publication() {
     let mut session = GameSession::new(setup_fixture(), 77).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
     driver.adopt_session_seq(&session);
     driver
         .step_frame_equivalent(&mut session)
         .expect("步进成功（安装前基线）");
-    driver.sever_world_for_test();
-    let err = driver
+    // 对照锚：sever 前先装一次（同拍同相位下 session 侧的安装结果面）。
+    driver
         .install_candles(&mut session)
-        .expect_err("K 投影收集失败必须传播（不吞发送错误）");
-    assert!(
-        err.contains("K 投影收集失败") && err.contains("通道面"),
-        "错误面可辨识且为断连守卫即时报错（不空等 watchdog）：{err}"
-    );
+        .expect("断开前安装（对照锚）");
+    let before: Vec<Option<crate::session::DailyCandle>> = (0u32..2)
+        .map(|stock| session.runtime_active_candle(&crate::StockId(stock)))
+        .collect();
+    driver.sever_world_for_test();
+    // 新语义：install 从发布版本读——sever 后成功且与断开前安装
+    /// 逐位一致（发布版本=已提交一致快照；相位清空语义同拍一致）。
+    driver
+        .install_candles(&mut session)
+        .expect("sever 后安装用最后发布版本（一致快照非部分数据）");
+    for stock in 0u32..2 {
+        let code = crate::StockId(stock);
+        let after = session.runtime_active_candle(&code);
+        let fmt = |c: &Option<crate::session::DailyCandle>| {
+            c.as_ref()
+                .map(|k| (k.open.cents(), k.close.cents(), k.volume))
+        };
+        assert_eq!(
+            fmt(&after),
+            fmt(&before[stock as usize]),
+            "股 {code:?} sever 前后安装逐位一致（发布版本快照）"
+        );
+    }
 }
 
 // Sol 二审修复集 5：构造器恢复会话 attention 真实状态（不合成固定
@@ -2897,82 +2919,118 @@ fn p2_4a_sparse_account_writeback_matches_force_full_bitwise() {
     assert_eq!(sparse_hash, full_hash, "期末业务哈希必须逐位一致");
     assert_eq!(sparse_events, full_events, "事件序列必须逐位一致");
 }
-
-/// P2-4a 显式失败守卫（铁律二）：组端稀疏回声回执缺项（红证注入通道
-/// 丢最后一项）时，生产步进必须以显式错误失败——不静默丢账户。
+/// Q2 批 3 改述：分片上行后"缺项"=组端 undo 集漏标（写点漏 undo push）。
+/// 判别面=驱动器覆盖校验 ensure_fact_owners_covered（本拍 desk 事实
+/// owner 必须在分片——缺=显式失败不静默装陈旧镜像）。负控直击校验
+/// 函数：事实 owner 不在分片必须 Err。
 #[test]
 fn p2_4a_sparse_echo_missing_item_fails_loud() {
-    let mut setup = setup_fixture();
-    setup.npcs.retail_count = 4;
-    setup.auction_ticks = 1;
-    let mut session = GameSession::new(setup, 21).expect("会话构造");
-    let seller = [crate::AccountId(1), crate::AccountId(2)]
-        .into_iter()
-        .find(|id| {
-            session
-                .account(*id)
-                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
-        })
-        .expect("至少一个 NPC 开局持有股 0");
-    let buyer = if seller == crate::AccountId(1) {
-        crate::AccountId(2)
-    } else {
-        crate::AccountId(1)
+    use crate::runtime::drive::ensure_fact_owners_covered;
+    use crate::runtime::world::TickRecord;
+    let record = TickRecord {
+        tick: 1,
+        rounds: 0,
+        group_hashes: Vec::new(),
+        desk_hashes: Vec::new(),
+        desk_resting: Vec::new(),
+        desk_trades: vec![crate::runtime::protocol::DeskTradeFact {
+            stock: 0,
+            price: 1000,
+            qty: 100,
+            maker: (0u16, 0u32),
+            taker: (0u16, 3u32),
+            taker_side: crate::orderbook::Side::Buy,
+            maker_fees_cents: 0,
+            taker_fees_cents: 0,
+            maker_order_serial: 1,
+            taker_order_serial: 2,
+        }],
+        desk_lifecycle: Vec::new(),
+        desk_receipts: Vec::new(),
+        group_rejections: Vec::new(),
+        desk_auction: Vec::new(),
     };
-    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
-    driver.adopt_session_seq(&session);
-    // 走一拍建立基线（force_full 构造默认），再打开缺项注入。
-    let intents = || {
-        vec![
-            crate::session::ReceiptBearingIntent {
-                owner: buyer,
-                intent: crate::Intent::PlaceLimit {
-                    code: crate::StockId(0),
-                    side: crate::orderbook::Side::Buy,
-                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
-                    qty: 100,
-                },
-                account_ordinal: 0,
-                stock_ordinal: 0,
-            },
-            crate::session::ReceiptBearingIntent {
-                owner: seller,
-                intent: crate::Intent::PlaceLimit {
-                    code: crate::StockId(0),
-                    side: crate::orderbook::Side::Sell,
-                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
-                    qty: 100,
-                },
-                account_ordinal: 0,
-                stock_ordinal: 0,
-            },
-        ]
-    };
-    let upper: Vec<i64> = driver
-        .world_public_views()
-        .iter()
-        .map(|v| v.daily_upper_limit)
-        .collect();
-    driver
-        .inject_player_intents(&intents(), &upper)
-        .expect("意图注入");
-    driver
-        .step_frame_equivalent(&mut session)
-        .expect("首拍步进");
-    driver.install_market_views(&mut session).expect("行情安装");
-    driver.install_candles(&mut session).expect("K 安装");
-    // 打开组端缺项注入（丢稀疏回执最后一项）——下一拍 dirty 集非空
-    //（上一拍成交+本拍再成交），稀疏回声必然被请求。
-    driver.corrupt_sparse_echo_omit_last_for_test();
-    driver
-        .inject_player_intents(&intents(), &upper)
-        .expect("意图注入");
-    let outcome = driver.step_frame_equivalent(&mut session);
-    let err = outcome.expect_err("缺项回声必须显式失败（不静默丢账户）");
+    // 分片只含 local 0（maker）——taker local 3 缺项必须显式失败。
+    let snapshots: Vec<Vec<(crate::runtime::LocalIdx, crate::runtime::group::GroupAccount)>> =
+        vec![vec![(
+            0,
+            crate::runtime::group::GroupAccount::new(1_000_000, 1),
+        )]];
+    let err = ensure_fact_owners_covered(Some(&record), &snapshots, 8)
+        .expect_err("缺项必须显式失败（不静默丢账户）");
     assert!(
-        format!("{err}").contains("稀疏回声"),
-        "错误必须指明稀疏回声缺项（got: {err}）"
+        format!("{err}").contains("分片缺项"),
+        "错误必须指明分片缺项（got: {err}）"
     );
+    // 全量形态（None 记录）恒过。
+    assert!(ensure_fact_owners_covered(None, &snapshots, 8).is_ok());
+}
+
+/// Seal 攻顶批复核登记项收口：生产路径覆盖校验走 Arc 分片形态
+/// （ensure_fact_owners_covered_arc——drive.rs 稀疏回写主路径每拍调用）。
+/// 零深拷贝重构（只消费 local 下标）的行为判别面：正/负/None 三态与
+/// 值形态版逐位等价（缺项必须显式失败——不静默装陈旧镜像）。
+#[test]
+fn p2_4a_arc_shard_cover_check_matches_value_form() {
+    use crate::runtime::drive::{ensure_fact_owners_covered, ensure_fact_owners_covered_arc};
+    use crate::runtime::protocol::DeskTradeFact;
+    use crate::runtime::world::TickRecord;
+    use std::sync::Arc;
+
+    let record = TickRecord {
+        tick: 1,
+        rounds: 0,
+        group_hashes: Vec::new(),
+        desk_hashes: Vec::new(),
+        desk_resting: Vec::new(),
+        desk_trades: vec![DeskTradeFact {
+            stock: 0,
+            price: 1000,
+            qty: 100,
+            maker: (0u16, 0u32),
+            taker: (0u16, 3u32),
+            taker_side: crate::orderbook::Side::Buy,
+            maker_fees_cents: 0,
+            taker_fees_cents: 0,
+            maker_order_serial: 1,
+            taker_order_serial: 2,
+        }],
+        desk_lifecycle: Vec::new(),
+        desk_receipts: Vec::new(),
+        group_rejections: Vec::new(),
+        desk_auction: Vec::new(),
+    };
+    // Arc 分片形态（生产形态：组分片条目 Arc 共享——Seal 攻顶 A-1）。
+    let make_shards = |locals: &[crate::runtime::LocalIdx]| -> Vec<
+        Arc<Vec<(crate::runtime::LocalIdx, Arc<crate::runtime::group::GroupAccount>)>>,
+    > {
+        vec![Arc::new(
+            locals
+                .iter()
+                .map(|&local| {
+                    (
+                        local,
+                        Arc::new(crate::runtime::group::GroupAccount::new(1_000_000, 1)),
+                    )
+                })
+                .collect(),
+        )]
+    };
+    // 负例：只含 maker local 0——taker local 3 缺项必须显式失败。
+    let partial = make_shards(&[0]);
+    let err_arc = ensure_fact_owners_covered_arc(Some(&record), &partial, 8)
+        .expect_err("Arc 形态缺项必须显式失败");
+    let value_form: Vec<Vec<(crate::runtime::LocalIdx, crate::runtime::group::GroupAccount)>> =
+        vec![vec![(0, crate::runtime::group::GroupAccount::new(1_000_000, 1))]];
+    let err_value = ensure_fact_owners_covered(Some(&record), &value_form, 8)
+        .expect_err("值形态缺项必须显式失败");
+    assert_eq!(format!("{err_arc}"), format!("{err_value}"),
+        "Arc 形态与值形态缺项错误必须逐字等价");
+    // 正例：maker+taker 全在分片。
+    let full = make_shards(&[0, 3]);
+    assert!(ensure_fact_owners_covered_arc(Some(&record), &full, 8).is_ok());
+    // None 记录恒过（空事实面）。
+    assert!(ensure_fact_owners_covered_arc(None, &partial, 8).is_ok());
 }
 
 /// P2-4b 等价守卫辅助：同 fixture 同种子经 session 侧 step_via_runtime
@@ -2982,7 +3040,7 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
 /// Added（t2-t4 卖腿站簿不交叉+股 1 挂单）、Changed（t6/8/10 卖腿对
 /// t5 挂出的 800 股限价买逐拍部分成交——余量/费用累计变化）、
 /// Removed（t5 一拍扫清站簿卖盘+t==6 撤股 1 挂单）。
-fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<String>) {
+fn p2_4b_run() -> (crate::session::StateHash, Vec<String>) {
     use crate::session::Event;
     let mut setup = setup_fixture();
     setup.npcs.retail_count = 4;
@@ -3008,9 +3066,6 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
         })
         .map(|(s, r)| (crate::AccountId(s), crate::AccountId(r)))
         .expect("须存在不相交的 (持股 0 ≥700, 持股 1 且现金 ≥90 万分) NPC 对");
-    crate::runtime::drive::RESTING_DELTA_FACE_COUNTS.with(|slot| {
-        *slot.borrow_mut() = Some(std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0))))
-    });
     let mut digest = Vec::new();
     let mut resting_order_id: Option<crate::OrderId> = None;
     for t in 1..=11u64 {
@@ -3078,12 +3133,6 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
         // 首拍先空跑建立常驻驱动器，旋钮与注入自第二拍起。
         if t == 1 {
             game.step_via_runtime().expect("首拍（驱动器惰性构造）");
-            let mut driver = game
-                .runtime_driver_for_test()
-                .expect("首拍后常驻驱动器在位")
-                .lock()
-                .expect("驱动器锁");
-            driver.set_force_full_envelope_rebuild_for_test(force_full_envelope);
         } else {
             let mut driver = game
                 .runtime_driver_for_test()
@@ -3135,48 +3184,83 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
         }));
         digest.sort();
     }
-    // 判别力前置：差分三面必须都真实发生——否则等价守卫对相应分支
-    // 零判别（守卫曾因 driver 直调不经信封段而恒绿的教训——前置使
-    // fixture 退化显式失败）。
-    if !force_full_envelope {
-        // Changed 面的期末在册前置：800 股限价买期末仍有余量（部分
-        // 成交逐拍变化且未清空——跳过 Changed 更新会使期末信封余量
-        // 停留在挂出值，哈希可判别）。
-        {
-            let mut driver = game
-                .runtime_driver_for_test()
-                .expect("常驻驱动器在位")
-                .lock()
-                .expect("驱动器锁");
-            let facts = driver.collect_resting_facts().expect("期末在途单收集");
-            let local = driver
-                .id_map
-                .iter()
-                .position(|id| *id == resting_owner)
-                .expect("挂单腿账户在名册");
-            let stock0_resting: Vec<u32> = facts[0]
-                .iter()
-                .filter(|f| f.owner == (0u16, local as u32))
-                .map(|f| f.qty)
-                .collect();
-            assert!(
-                stock0_resting.iter().any(|&q| q > 0 && q < 800),
-                "期末股 0 须有部分成交余量在册（100<qty<800）：{stock0_resting:?}"
-            );
+    // P2-4 判别力前置（增量维护退役后改述）：期末股 0 须有部分成交
+    // 余量在册（100<qty<800——派生投影的非平凡形态）；派生投影的键
+    // 集合 == 发布版本快照的在册集合（Added/Removed/Changed 三面的
+    // 等价合同由"派生=发布快照的函数"结构性承载——漏挂/漏撤/漏改
+    // 均显集合失配红）。
+    let mut driver = game
+        .runtime_driver_for_test()
+        .expect("常驻驱动器在位")
+        .lock()
+        .expect("驱动器锁");
+    let facts = driver.collect_resting_facts().expect("期末在途单收集");
+    let local = driver
+        .id_map
+        .iter()
+        .position(|id| *id == resting_owner)
+        .expect("挂单腿账户在名册");
+    let stock0_resting: Vec<u32> = facts[0]
+        .iter()
+        .filter(|f| f.owner == (0u16, local as u32))
+        .map(|f| f.qty)
+        .collect();
+    assert!(
+        stock0_resting.iter().any(|&q| q > 0 && q < 800),
+        "期末股 0 须有部分成交余量在册（100<qty<800）：{stock0_resting:?}"
+    );
+    drop(driver);
+    // 派生投影 == 发布快照集合对照。
+    let mut published_keys: Vec<(crate::AccountId, u32, u64, u8, u32)> = Vec::new();
+    {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let (snapshot_facts, _) = driver
+            .resting_snapshot_for_session()
+            .expect("发布快照");
+        for (stock_idx, book) in snapshot_facts.iter().enumerate() {
+            for fact in book.iter() {
+                let global = fact.owner.0 as usize * driver.accounts_per_group()
+                    + fact.owner.1 as usize;
+                let account = driver
+                    .id_map
+                    .get(global)
+                    .copied()
+                    .expect("在册 owner 必有名册映射");
+                published_keys.push((
+                    account,
+                    stock_idx as u32,
+                    fact.order_serial,
+                    fact.side as u8,
+                    fact.qty,
+                ));
+            }
         }
-        let (added, removed, changed) = crate::runtime::drive::RESTING_DELTA_FACE_COUNTS
-            .with(|slot| {
-                let counts = slot.borrow_mut().take().expect("面计数器在位");
-                let c = counts.lock().expect("面计数锁");
-                (c.0, c.1, c.2)
-            });
-        assert!(added >= 1, "Added 面必须真实发生（差分判别前置）：{added}");
-        assert!(removed >= 1, "Removed 面必须真实发生（差分判别前置）：{removed}");
-        assert!(
-            changed >= 1,
-            "Changed 面必须真实发生（差分判别前置）：{changed}"
-        );
     }
+    published_keys.sort();
+    let mut projected_keys: Vec<(crate::AccountId, u32, u64, u8, u32)> = game
+        .project_live_envelopes()
+        .expect("派生投影")
+        .into_iter()
+        .map(|e| {
+            let key = e.key();
+            (
+                key.account,
+                key.stock.0,
+                key.order.0,
+                key.side as u8,
+                e.audit().remaining_qty,
+            )
+        })
+        .collect();
+    projected_keys.sort();
+    assert_eq!(
+        projected_keys, published_keys,
+        "派生投影（键+余量）集合==发布快照在册集合（漏挂/漏撤/漏改显失配）"
+    );
     (
         game.business_state_hash().expect("业务哈希"),
         digest,
@@ -3188,11 +3272,14 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
 /// 与事件序列逐位一致。差分漏项/错值/漏删时显红。
 #[test]
 fn p2_4b_envelope_incremental_matches_full_rebuild() {
-    let (inc_hash, inc_events) = p2_4b_run(false);
-    let (full_hash, full_events) = p2_4b_run(true);
-    assert!(!inc_events.is_empty(), "场景须产生事件");
-    assert_eq!(inc_hash, full_hash, "期末业务哈希（含信封投影）必须逐位一致");
-    assert_eq!(inc_events, full_events, "事件序列必须逐位一致");
+    // P2-4 演进：增量维护退役（每拍 upsert/delta 删除）——原"增量 vs
+    // 全量重建"对照臂消亡，守卫改述为"派生投影==发布快照集合（键+余量）"
+    // +同种子确定性。突变红实证：余量写死挂出值 → 集合失配红。
+    let (hash_a, events_a) = p2_4b_run();
+    let (hash_b, events_b) = p2_4b_run();
+    assert!(!events_a.is_empty(), "场景须产生事件");
+    assert_eq!(hash_a, hash_b, "同种子两轮业务哈希（含派生信封投影）逐位一致");
+    assert_eq!(events_a, events_b, "同种子两轮事件序列逐位一致");
 }
 
 // ═══ step_frame 接轨前置约束①：Continue 早轮成交同拍投影恰一次落账 ═══
@@ -3564,3 +3651,343 @@ fn solfinal1b_continue_early_round_first_buy_initializes_experience() {
         "Continue 早轮首买必须初始化 retail 经历（组回写段的收集不得丢弃）"
     );
 }
+
+// ── Sol 复核阻断 P1-1：在途快照生命周期（回滚恢复/重建种子/日终重刷）──
+
+/// P1-1 fixture：retail 4 NPC（seed 21 float 分配下必有持股 ≥100 的卖方
+/// ——p2_4b 同式）；t1 空跑建立常驻驱动器，t2 经外部意图挂限价卖 @1000
+/// 站簿（无对手交叉——在途前态非空）。返回 (game, seller)。
+fn p1_1_resting_fixture(
+    mut setup: crate::session::SessionSetup,
+) -> (GameSession, crate::AccountId) {
+    setup.npcs.retail_count = 4;
+    setup.auction_ticks = 1;
+    setup.closing_auction_ticks = 0;
+    let mut game = GameSession::new(setup, 21).expect("会话构造");
+    let seller = (1..=4u64)
+        .map(crate::AccountId)
+        .find(|id| {
+            game.account(*id)
+                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        })
+        .expect("持股 NPC（float 分配——p2_4b 同参前提）");
+    game.step_via_runtime().expect("t1 空跑（驱动器惰性构造）");
+    // t2：外部意图挂限价卖（站簿在途前态——外部路由接受全名册 owner）。
+    {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let upper: Vec<i64> = driver
+            .world_public_views()
+            .iter()
+            .map(|v| v.daily_upper_limit)
+            .collect();
+        let intents = vec![crate::session::ReceiptBearingIntent {
+            owner: seller,
+            intent: crate::Intent::PlaceLimit {
+                code: crate::StockId(0),
+                side: crate::orderbook::Side::Sell,
+                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            account_ordinal: 0,
+            stock_ordinal: 0,
+        }];
+        driver
+            .inject_player_intents(&intents, &upper)
+            .expect("外部意图注入");
+    }
+    game.step_via_runtime().expect("t2 挂单拍");
+    (game, seller)
+}
+
+/// P1-1 回滚恢复：带在途前态的失败回滚后，信封派生投影必须==拍前在途集
+///（快照恢复——不落 stale ledger/空集派生）。红态：回滚清空快照 →
+/// runtime 形态 ledger 停维护（空）→ 派生空集。
+#[test]
+fn sol_r22_rollback_restores_resting_snapshot_for_envelope_derivation() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 240;
+    let (mut game, seller) = p1_1_resting_fixture(setup);
+    // 前态：t2 后派生投影非空且含卖方在途单。
+    let mut pre: Vec<_> = game
+        .project_live_envelopes()
+        .expect("拍前投影")
+        .into_iter()
+        .map(|e| e.key().clone())
+        .collect();
+    assert!(
+        pre.iter().any(|k| k.account == seller),
+        "fixture 前提：卖方在途单在派生投影中"
+    );
+    pre.sort();
+    // t3 注入安装失败（快照安装后的失败——回滚面必须覆盖快照域）。
+    game.inject_runtime_install_failure();
+    assert!(game.step_via_runtime().is_err(), "安装失败注入生效");
+    let mut post: Vec<_> = game
+        .project_live_envelopes()
+        .expect("回滚后投影")
+        .into_iter()
+        .map(|e| e.key().clone())
+        .collect();
+    post.sort();
+    assert_eq!(
+        post, pre,
+        "回滚后派生投影==拍前在途集（快照恢复为拍前值——清空使派生落空/stale ledger）"
+    );
+}
+
+/// P1-1 重建种子：runtime 形态（旧簿空）下驱动器重建的 desk 种子必须读
+/// 现势在途（快照派生）——from_ledger 分支读停维护的 stale ledger 会使
+/// 新挂单消失/旧单复活、已转移现金股票失去对应。
+#[test]
+fn sol_r22_rebuilt_driver_seeds_read_current_resting_state() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 240;
+    let (mut game, seller) = p1_1_resting_fixture(setup);
+    // t3 安装失败回滚（常驻驱动器锁步断裂——重试经 from_session 重建）。
+    game.inject_runtime_install_failure();
+    assert!(game.step_via_runtime().is_err(), "安装失败注入生效");
+    // 重建：种子须含回滚前（拍前）在途单。
+    let mut rebuilt =
+        RuntimeDriver::from_session_grouped(&mut game, 1).expect("回滚后重建驱动器");
+    let facts = rebuilt
+        .collect_resting_facts_live()
+        .expect("重建世界在途收集");
+    let global = rebuilt
+        .id_map
+        .iter()
+        .position(|id| *id == seller)
+        .expect("卖方在名册");
+    assert!(
+        facts[0]
+            .iter()
+            .any(|f| f.owner == (0u16, global as u32) && f.price == 1000 && f.qty == 100),
+        "重建驱动器种子必须含回滚前在途单（读现势快照——stale ledger 分支丢新挂单）"
+    );
+}
+
+/// P1-1 日终重刷：日结拍 Drain 清簿后，在途快照必须 live 重刷（发布版本
+/// 仍是清簿前 tick）——否则日终后信封查询/save 读清簿前在途。
+#[test]
+fn sol_r22_day_end_refreshes_resting_snapshot_to_drained_state() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 4;
+    let (mut game, _seller) = p1_1_resting_fixture(setup);
+    assert!(
+        !game
+            .project_live_envelopes()
+            .expect("日终前投影")
+            .is_empty(),
+        "fixture 前提：日终前在途非空"
+    );
+    // t3、t4（tpd=4 → t4 为日结拍：Drain 强撤清簿）。
+    game.step_via_runtime().expect("t3");
+    game.step_via_runtime().expect("t4（日结）");
+    let post = game.project_live_envelopes().expect("日终后投影");
+    assert!(
+        post.is_empty(),
+        "日终清簿后派生信封必须为空（快照 live 重刷——不残留清簿前在途）：{post:?}"
+    );
+    game.save().expect("日终静点 save（清簿后空在途一致）");
+}
+
+/// Sol 复核阻断 P1-2：清仓经历转移的四面同拍对账（真实对账——非
+/// 组数/载荷范围检查）。跨日买建仓→全额卖出（T+1：买入次日方可卖）
+/// 后，组权威（Seal 的 apply_deferred 经历转移）与发布分片/session
+/// 镜像/save-restore 四面必须同拍一致：分片构建（现随 GroupReport
+///——决策相，早于 Seal）读不到 Seal 后经历行 ⇒ 发布/session/save
+/// 留持仓经历（fault2051 形态）。
+#[test]
+fn sol_r22_full_exit_experience_reaches_all_four_faces_same_tick() {
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 4;
+    setup.auction_ticks = 1;
+    // tpd=4：t4 日结（T+1 解锁——t3 买入的仓位 t5 可卖）。
+    setup.ticks_per_day = 4;
+    setup.closing_auction_ticks = 0;
+    let mut game = GameSession::new(setup, 21).expect("会话构造");
+    let code = crate::StockId(0);
+    // 角色（seed 21 float 分配实测，retail_count=4）：acct2 持股 0
+    // 无股 0 持仓（清仓主角——首买建仓）、acct3 现金充足（退出对手）。
+    let maker = crate::AccountId(2);
+    let exiter = crate::AccountId(4);
+    let closer = crate::AccountId(3);
+    assert!(
+        game.account(maker).is_some_and(|a| a.sellable_qty(&code) >= 100),
+        "fixture 前提：maker 持股 0 ≥100"
+    );
+    assert_eq!(
+        game.account(exiter)
+            .and_then(|a| a.positions().get(&code))
+            .map_or(0, |p| p.qty()),
+        0,
+        "fixture 前提：exiter 无股 0 持仓（首买建仓形态）"
+    );
+    assert!(
+        game.account(closer).is_some_and(|a| a.cash().cents() >= 102_000),
+        "fixture 前提：closer 现金充足"
+    );
+    let inject = |game: &mut GameSession, owner: crate::AccountId, side: crate::orderbook::Side| {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let upper: Vec<i64> = driver
+            .world_public_views()
+            .iter()
+            .map(|v| v.daily_upper_limit)
+            .collect();
+        driver
+            .inject_player_intents(
+                &[crate::session::ReceiptBearingIntent {
+                    owner,
+                    intent: crate::Intent::PlaceLimit {
+                        code,
+                        side,
+                        price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
+                            1000,
+                        )),
+                        qty: 100,
+                    },
+                    account_ordinal: 0,
+                    stock_ordinal: 0,
+                }],
+                &upper,
+            )
+            .expect("外部意图注入");
+    };
+    // t1 空跑（驱动器惰性构造）；t2 maker 挂卖 100（站簿）；t3 exiter
+    // 买 100（交叉全成——首买建仓）；t4 日结（Drain 清簿+T+1 解锁）；
+    // t5 exiter 挂卖 100（全部持仓——站簿）；t6 closer 买 100（交叉
+    // 全成——exiter face 归零，Seal 经历转移）。
+    game.step_via_runtime().expect("t1");
+    inject(&mut game, maker, crate::orderbook::Side::Sell);
+    game.step_via_runtime().expect("t2（maker 挂卖）");
+    inject(&mut game, exiter, crate::orderbook::Side::Buy);
+    game.step_via_runtime().expect("t3（exiter 首买）");
+    assert_eq!(
+        game.account(exiter)
+            .and_then(|a| a.positions().get(&code))
+            .map_or(0, |p| p.qty()),
+        100,
+        "fixture 前提：exiter 建仓 100（t3 全成）"
+    );
+    game.step_via_runtime().expect("t4（日结——T+1 解锁）");
+    inject(&mut game, exiter, crate::orderbook::Side::Sell);
+    game.step_via_runtime().expect("t5（exiter 挂全部持仓）");
+    inject(&mut game, closer, crate::orderbook::Side::Buy);
+    game.step_via_runtime().expect("t6（清仓拍）");
+    // 前提：exiter 持仓归零（成交全量）。
+    assert_eq!(
+        game.account(exiter)
+            .and_then(|a| a.positions().get(&code))
+            .map_or(0, |p| p.qty()),
+        0,
+        "fixture 前提：exiter 股 0 持仓归零"
+    );
+    // 面 1：组权威行（EchoBelief 真读面——Seal 后 dirty 位）。
+    let (authority_exp, published_exp) = {
+        let mut driver = game
+            .runtime_driver_for_test()
+            .expect("常驻驱动器在位")
+            .lock()
+            .expect("驱动器锁");
+        let local = driver
+            .id_map
+            .iter()
+            .position(|id| *id == exiter)
+            .expect("exiter 在名册") as u32;
+        let groups = driver.collect_group_belief_for_test().expect("组权威读面");
+        let authority = groups
+            .iter()
+            .flat_map(|(_, rows)| rows.iter())
+            .find(|(l, _)| *l == local)
+            .map(|(_, snapshot)| snapshot.clone())
+            .expect("组权威含 exiter 行（Seal 经历转移置 dirty）");
+        let shard = driver.published_belief_shard_for_test(0);
+        let published = shard
+            .iter()
+            .find(|(l, _)| *l == local)
+            .map(|(_, s)| s.clone());
+        let authority_exp = authority
+            .retail_experience
+            .as_ref()
+            .and_then(|exp| exp.stocks.get(&code))
+            .expect("组权威经历行在场")
+            .clone();
+        let published_exp = published
+            .as_ref()
+            .and_then(|s| s.retail_experience.as_ref())
+            .and_then(|exp| exp.stocks.get(&code).cloned());
+        (authority_exp, published_exp)
+    };
+    assert!(
+        authority_exp.cooldown_until_market_minute.is_some(),
+        "组权威：清仓冷静期已设（Seal 经历转移）"
+    );
+    assert!(
+        authority_exp.entry_reference_price.is_none(),
+        "组权威：入场参考已清"
+    );
+    // 面 2：发布分片行==组权威行（分片须含 Seal 后行——同拍）。
+    assert_eq!(
+        published_exp,
+        Some(authority_exp.clone()),
+        "发布分片必须含 Seal 后清仓经历行（==组权威）"
+    );
+    // 面 3：session 镜像==组权威。
+    let session_exp = game
+        .runtime_retail_experience_stock_for_test(exiter, &code)
+        .expect("session 镜像经历行在场");
+    assert_eq!(
+        session_exp, authority_exp,
+        "session 镜像==组权威（同拍安装）"
+    );
+    // 面 4：save 不触发 fault2051 且 restore 往返保清仓行。
+    let save = game
+        .save()
+        .expect("清仓后同拍 save（fault2051 不得触发——未持仓留持仓观察态）");
+    let restored = GameSession::restore(&save).expect("restore");
+    assert_eq!(
+        restored.runtime_retail_experience_stock_for_test(exiter, &code),
+        Some(authority_exp),
+        "save-restore 往返保清仓经历行"
+    );
+}
+
+/// Sol 复核阻断 P2-4：无快照时业务 hash 必须读实际 ledger（统一
+/// "有快照派生、无快照读实际 ledger"合同——对齐 save 面分支先例）。
+/// 对照组设计：同一存档 restore（无快照），在途完整档 vs 清空
+/// live_envelopes 的合法空在途档——两者 hash 必须不同（派生空集
+/// 形态下两者相等=账本面漏出 hash；旧管线/restore/shadow 同病）。
+#[test]
+fn sol_r22_restored_session_business_hash_reads_actual_ledger() {
+    let mut setup = setup_fixture();
+    setup.ticks_per_day = 240;
+    let (mut game, _seller) = p1_1_resting_fixture(setup);
+    // 前提：在途非空（信封账本面非平凡）。
+    assert!(
+        !game
+            .project_live_envelopes()
+            .expect("存档前投影")
+            .is_empty(),
+        "fixture 前提：在途非空"
+    );
+    let mut save = game.save().expect("存档");
+    let full = GameSession::restore(&save).expect("restore（在途完整档——未步进无快照）");
+    // 对照档：清空 live_envelopes（runtime 空在途合法形态）。
+    save.runtime_state.live_envelopes.clear();
+    let emptied = GameSession::restore(&save).expect("restore（空在途对照档）");
+    assert_ne!(
+        full.business_state_hash().expect("完整档 hash"),
+        emptied.business_state_hash().expect("空在途档 hash"),
+        "无快照 hash 须读实际 ledger——在途面差异必须可见（派生空集漏账本面）"
+    );
+}
+
+
+

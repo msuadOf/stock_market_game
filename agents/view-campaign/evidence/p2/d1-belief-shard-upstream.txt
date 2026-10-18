@@ -1,0 +1,39 @@
+# P2-2：D1 belief Echo 独立往返退役——稀疏分片随 GroupReport 上行
+
+## 机制
+P0 画像 belief_collect 子段（EchoBelief 广播→组应答→收集的线程往返）
+120μs/tick。组端 run_round 末尾（GroupReport 发送点）构建 belief 稀疏
+分片（dirty∪pending——与 EchoBelief 应答逐字同源，P2-2a 语义）；随
+报告上行（Arc 句柄零拷贝）；converge 收集进 TickEvidence.group_belief；
+install_tick 组装进 PublishedTick.groups[].belief；驱动器 belief_echo 段
+改从发布版本读（发布=提交不变量校验：published.tick==committed_tick）。
+
+跨轮语义：dirty 在 Continue 轮间不清（清点在 Start）——终轮分片天然含
+全部轮演进位；pending 首轮构建时并入 dirty（消费一次、跨轮到终轮——
+跨 Start 注入窗口语义保持，d3b5 守卫承载）。Abort 时分片随 evidence
+丢弃（candidate 不外泄，C2）。EchoBelief 消息通道保留（测试直调守卫
+读面 collect_group_belief_for_test 继续用）。
+
+## 测量
+- B 300：349.0/348.6/352.6 → mean 350.1（P2-1 后 339.2，+3.2%；
+  P0 基线 307.3，累计 +13.9%）
+- B 1000：691.0（P2-1 后 640.6，+7.9%；基线 544.7，累计 +26.8%）
+- A 3000：1308.5（基线带内，load 3.9 余温窗）
+- 分段画像：belief_collect 段归零；belief_echo 200→82μs（余=session
+  安装循环——D1 安装侧，后续刀）
+- 逐位锚：events 300:2105 / 1000:6016；A 守恒 6701200/651403179/6668400
+
+## 守卫与突变红
+- publication_group_belief_shard_matches_group_authority（新）：分片
+  齐组、载荷界内。
+- d3b5_install_personal_updates_group_authority：注入经组权威→发布
+  分片→session 镜像（跨 Start 注入窗口）。突变红实证：组端 pending
+  不并入 dirty → d3b5 红（注入位丢失）。
+- P2-2a 既有守卫（稀疏 vs force_full 逐位）继续绿（数据同源）。
+- 回归：默认+ENGINE_STEP_RUNTIME=1 全量 1667/0/11 双绿。
+
+## 语义影响面（如实登记）
+- GroupReport.derive 的 Eq 退役（belief_sparse 含 f64 域），PartialEq
+  保持——Eq 无消费方（grep 证实）。
+- 驱动器 belief_echo 增加发布版本滞后防御校验（published.tick !=
+  committed → 显式失败，不静默装旧版）。

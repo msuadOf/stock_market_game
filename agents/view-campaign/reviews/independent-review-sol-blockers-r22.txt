@@ -1,0 +1,86 @@
+# Sol 复核四阻断修复批（第 22 任）独立复核（未实施 fork subagent，2026-10-19）
+
+> 注：fork 沙箱限制写入主 worktree——本文件写在隔离 worktree
+> `.claude/worktrees/agent-a2744004a49a2f0e7/agents/view-campaign/reviews/`
+> 下，请协调者复制到
+> `.worktree/view-campaign/agents/view-campaign/reviews/` 同名归档。
+
+对象：exp/view-internalization 提交区间 3aae81ae..105d398d（5 提交：
+P1-1 c253361a / P1-2 08f07686 / P1-3 3f45b4b3 / P2-4 7a82ecc1 / 台账勘误
+105d398d）。逐提交审完整 diff+读上下文；在隔离 worktree 于 105d398d
+复跑测试与两项独立突变。
+
+## 【阻断】
+
+无。
+
+## 【建议】
+
+1. **seal_round 迟到 Ack"先到先计"窗口（登记级）**：重复 Ack 跳过只
+   覆盖"本组已 Ack"形态；若上一失败尝试的 Ack 先于本轮真 Ack 到达，
+   先到者被计入、真 Ack 被当重复跳过——分片取值依赖"Abort 重跑确定
+   性 ⇒ 两值同源"论证（代码注释已锚定）。窗口为失败恢复路径的窄
+   竞态、无测试锚（racy 不可确定性构造）。建议登记；未来协议演进可
+   给 Seal/SealAck 加尝试代号消歧。
+2. **converge_round 跳过全部 SealAck 的判别边界（登记级）**：单次
+   尝试内"收束期不可能有本拍真 Ack"由广播时序承载（注释已述）；若
+   未来引入组自驱 Seal 或多协调者，此跳过会掩盖真漂移。建议随协议
+   演进复评。
+3. **publication belief 行级对账测试在 World 级为结构面**：basic_spec
+   belief_seeds 空 ⇒ 分片空集 ⇒ 对账空转（测试注释已自标；真锚=
+   drive_tests 四面对账）。可后续给 World fixture 补 belief_seeds 使
+   其非空转。
+4. **acks_seen 计数仅在 cfg(test) 被读**：非测试构建为死写（warning
+   级，无行为影响）。
+
+## 【确认】
+
+1. **P1-1 语义与覆盖**：shadow 携带/commit 移交/回滚恢复拍前快照/
+   日终 live 重刷/快照感知账本读面五处均与阻断对应、最小范围。
+   投影失败 discard 路径=回滚恢复拍前快照+from_session 重建种子读
+   现势——`sol_r22_rebuilt_driver_seeds_read_current_resting_state`
+   正是此形态（回滚后 from_session_grouped 断言种子含在途单）。日
+   结块内后续失败（candles 段）走同一 baseline 恢复（拍前快照与拍
+   前账户/镜像同源）——语义闭合。旧管线不受影响（快照恒 None）。
+   独立突变复核：回滚改清空 ⇒ 回滚投影+重建种子双红（本 fork 实跑）。
+2. **P1-2 语义**：分片构建点迁移使 Seal 时分片=旧报告时分片的超集
+   （+延迟相/清仓经历行）——额外行是组权威行幂等安装，发布/session
+   得到严格更新鲜的权威值；dirty 清点时序（Start/DayEnd）与跨 Start
+   pending 并入（首轮 run_round，Seal 前）不变，无 A 股交易语义面
+   改动（belief/experience 属观察层；结算/账户面未触碰）。DayEnd
+   清 dirty 先于其 apply_deferred 的时序保持原样——日结相位如有
+   belief 写入仍走下一拍分片（与既有跨拍投递滞后同族，非回归）。
+   belief_echo 读发布版本时序闭合（install_tick 于 seal_round 后
+   立即 publish，echo 在 run_ticks 返回后读——同拍）。四面测试为
+   真对账（持仓归零前提+组权威/EchoBelief 行 vs 发布 vs session vs
+   save-restore 行级相等，冷却期/入场参考字段断言）。
+3. **P1-3 语义**：Seal drain 的 Abort=回滚+不发 Ack+存活（与常规
+   Abort 臂同式——Abort 语义合同）；真外来消息仍显式失败（测试改
+   EchoAttention 前入队确定性打 drain 面，含"非数据面消息"错误文案
+   断言）。注入面迁广播后+consume_acks 参数使存活契约测试覆盖真实
+   [Seal, Abort] 队列竞态与部分 Ack 形态。组号越界从静默 unwrap
+   改显式失败（防御增强）。
+4. **P2-4 语义**：无快照读实际 ledger=恢复 P2-4 之前旧管线口径
+   （有快照派生分支不变）；对齐 save 面分支先例。对照组测试判别力
+   独立实证：恒派生突变 ⇒ 对照相等红（本 fork 实跑）；空在途档为
+   合法 restore 形态（验证通过）非篡改档。
+5. **回归声明核实**：lib 双模式 1706/0/11（本 fork 在 105d398d 实跑
+   一轮 3 失败均为已登记 flake 家族——panic_transport/npc rayon
+   注入，二轮全绿）；web-wasm 18 绿（实跑）；5 个集成测试失败与
+   std-thread-proto 编译错在 3aae81ae 已存在（本 fork 于 3aae81ae
+   实跑确认同 5 名单 FAILED）；publication_bench example 未被本批
+   触碰（diff --stat 无 examples）。
+6. **台账勘误**：A 基线一处写作 1332.6（协调者勘误单原文口径——
+   数字非代码事实，不影响结论）；D1/D5/events/方向口径/R19 三项
+   处置（②未补维持登记/③未清理维持登记/④solfinal1b 闭合）均与
+   代码现状一致（heap 双源守卫确无、runtime_heap_undo 仍恒 None
+   死槽、ForceContinuationForTest 已被 solfinal1b 使用）。
+7. **最小范围**：无夹带；计划文件随 P1-1 入库属 agents/ 工作文件
+   规范路径。
+
+## 复核方法备注
+
+隔离 worktree（.claude/worktrees/agent-a2744004a49a2f0e7）检出
+105d398d 复跑：6 个 sol_r22 测试+4 个 P1-3 测试全绿；两项独立突变
+（P1-1 回滚清空/P2-4 恒派生）各自显红后还原；3aae81ae 基线对照确认
+集成失败/编译错先在。

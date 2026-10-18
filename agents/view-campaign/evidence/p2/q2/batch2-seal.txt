@@ -1,0 +1,48 @@
+# Q2 批 2：Seal 收尾确认相位落地（保守形态）
+
+## 实现
+- protocol：GroupIn::Seal{tick,round_final} + UpMsg::SealAck{group,tick,
+  final_hash}（Display 补）。
+- 组端 handle_seal：错位防御→收件箱 drain（S4：FIFO 保证批次先于 Seal
+  入队——Batch/AcceptedBatch 消费，其他消息=协议错位显式失败）→
+  apply_staging（S2 落账点唯一化）→SealAck（O(1) 指纹哈希）。
+- 协调者 seal_round：广播 Seal→收齐 G SealAck（Phase::Seal 正常档）→
+  install_tick 发布。失败语义（守卫 1 存活契约）：收集失败/超时=
+  abort_tick（tick 级可重试，worker 存活）；组端 Failed（数据损坏）=
+  撤退关停+死亡（同 converge_or_die）。
+- Start 防御核对（守卫 2）：staging 非空=显式失败上报（"锁步破坏"），
+  不静默落账。apply_staging 保留为恒空防御接口。
+- run_ticks 终轮：unsettled_trades=Vec::new()（Seal 后语义恒空——
+  D3 退役与字段删除随批 4）。
+
+## 测量（配对二进制同窗）
+- B 300：344.5/355.6（preSeal 376/363，−5%：G=1 的 Seal 往返可见）
+- B 1000：747.7（preSeal 750.3——持平，Seal 税消化在噪声内）
+- A 3000：1124.4（preSeal 1190/1174，**−5.5%**——10 组串行屏障税）
+- **事故+修复**：首版 SealAck 用 state_hash()=O(20000×5 股×8 域)
+  ≈2ms/tick 全名册哈希——B 300 掉到 202/188（−48%）、1000 掉到 261
+  实测打回；改 O(1) 指纹（设计稿 §3.2 本指定口径——实现用错函数）。
+- 守恒逐位全程保持（6701200/651403179/6668400）。
+
+## 护栏触发（A −5.5% > 5%）与 eager-apply 评估结论
+eager-apply 臂（批次到达即落账、与决策重叠）首版实测：**破坏日结
+Abort 回滚**（sol4_day_end_abort——undo 日志交错序：批次的 undo 记录
+与决策 undo 的相对次序变化，F5/F6 族整态快照/键控票据恢复语义破坏）
+→已撤回，apply_staging_batch 单批版保留供未来。**结论：eager 需
+undo 分域（资源域即时/计划域延迟）或批次级事务标记的专门设计——
+登记为开放项待专批**。
+
+## 守卫与突变红
+- 合同 8/8 绿（含存活契约：注入 SealAck 失败→Abort→同 tick 重试成功
+  →shutdown 干净 1+5 worker 全存活；Start 防御）。
+- 突变红 A 实证：Seal 的 apply_staging no-op → tick3 Start 防御显式
+  失败红（"组 0 Start 时 staging 非空——锁步破坏"）——判别链闭环
+  （守卫 2 正是判别器）。
+- 回归：默认+ENGINE_STEP_RUNTIME=1 全量 1673/0/11 双绿（各一轮 flake
+  复跑绿）。
+
+## G 规模推算面（守卫 3）
+Seal 相位 wall ≈ G×(消息唤醒 ~7μs + 组 drain+落账)——G=1 实测 B 持平
+（往返与既有调度重叠）；G=10 A −5.5%（≈150μs/tick 屏障）。多组形态
+（G=50+）的 Seal 轮预计线性放大——acct 分片（批 3）与 D3 退役（批 4）
+回收的 ~100μs 为对冲；eager-apply（undo 分域版）为根治项。

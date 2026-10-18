@@ -1,0 +1,157 @@
+=== 静置窗监视启动（自旋终态）2026-10-19 04:06:08 ===
+04:06:08 load 1min=2.81 5min=4.61 15min=4.63 ok=1
+=== 静置条件达成 2026-10-19 04:06:10 load=2.81/4.61/4.63 ===
+--- SPIN500绑核轮 1（04:06:10 load=2.81 4.61 4.63）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：948.3 t/s（3000 tick / 3.16s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 12.0%（127μs/tick）
+Seal 分解：广播→首Ack 14μs/tick；首末Ack间隔 126μs/tick（长尾）
+最晚Ack组分布：0:2444 1:5 2:10 3:12 4:16 5:36 6:26 7:49 8:53 9:349
+组端Seal处理 μs/tick：min 1 / mean 6 / max 30（10 组）
+  组  0: handle   30.4μs | drain批     0 wait批 14811 | 延迟相   14.8μs | 分片  15.5μs
+  组  1: handle    1.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.1μs
+  组  2: handle    1.5μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.4μs
+  组  3: handle    2.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.9μs
+  组  4: handle    2.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.3μs
+  组  5: handle    2.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.4μs
+  组  6: handle    3.9μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.8μs
+  组  7: handle    6.2μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.0μs
+  组  8: handle    7.1μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.9μs
+  组  9: handle    6.1μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.0μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- SPIN500绑核轮 2（04:06:13 load=3.55 4.74 4.67）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：1132.1 t/s（3000 tick / 2.65s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 11.3%（100μs/tick）
+Seal 分解：广播→首Ack 13μs/tick；首末Ack间隔 100μs/tick（长尾）
+最晚Ack组分布：0:2442 1:4 2:9 3:20 4:27 5:29 6:41 7:37 8:63 9:328
+组端Seal处理 μs/tick：min 2 / mean 6 / max 30（10 组）
+  组  0: handle   30.1μs | drain批     0 wait批 14811 | 延迟相   14.8μs | 分片  15.1μs
+  组  1: handle    1.5μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.4μs
+  组  2: handle    1.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.5μs
+  组  3: handle    1.9μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.8μs
+  组  4: handle    2.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.3μs
+  组  5: handle    3.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.9μs
+  组  6: handle    3.5μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.3μs
+  组  7: handle    5.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.6μs
+  组  8: handle    6.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.5μs
+  组  9: handle    6.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.2μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- SPIN500绑核轮 3（04:06:16 load=3.55 4.74 4.67）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：954.9 t/s（3000 tick / 3.14s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 11.9%（125μs/tick）
+Seal 分解：广播→首Ack 14μs/tick；首末Ack间隔 125μs/tick（长尾）
+最晚Ack组分布：0:2465 1:3 2:5 3:9 4:26 5:29 6:23 7:45 8:64 9:331
+组端Seal处理 μs/tick：min 1 / mean 6 / max 30（10 组）
+  组  0: handle   30.4μs | drain批     0 wait批 14811 | 延迟相   14.9μs | 分片  15.3μs
+  组  1: handle    1.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.1μs
+  组  2: handle    1.5μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.4μs
+  组  3: handle    2.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.9μs
+  组  4: handle    2.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.5μs
+  组  5: handle    3.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.1μs
+  组  6: handle    2.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.4μs
+  组  7: handle    5.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.5μs
+  组  8: handle    6.2μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.0μs
+  组  9: handle    5.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.2μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- SPIN500默认轮 1（04:06:19 load=4.38 4.89 4.72）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：715.5 t/s（3000 tick / 4.19s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 12.4%（173μs/tick）
+Seal 分解：广播→首Ack 26μs/tick；首末Ack间隔 173μs/tick（长尾）
+最晚Ack组分布：0:2212 1:7 2:3 3:22 4:12 5:17 6:23 7:42 8:83 9:579
+组端Seal处理 μs/tick：min 2 / mean 7 / max 36（10 组）
+  组  0: handle   36.4μs | drain批     0 wait批 14811 | 延迟相   15.5μs | 分片  20.8μs
+  组  1: handle    2.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.1μs
+  组  2: handle    2.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.2μs
+  组  3: handle    2.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.5μs
+  组  4: handle    2.9μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.8μs
+  组  5: handle    3.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.2μs
+  组  6: handle    3.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.5μs
+  组  7: handle    5.9μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.7μs
+  组  8: handle    6.5μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.3μs
+  组  9: handle    5.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.6μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- SPIN500默认轮 2（04:06:23 load=4.19 4.84 4.71）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：938.9 t/s（3000 tick / 3.20s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 10.8%（115μs/tick）
+Seal 分解：广播→首Ack 17μs/tick；首末Ack间隔 115μs/tick（长尾）
+最晚Ack组分布：0:2325 1:5 2:13 3:30 4:16 5:39 6:41 7:58 8:101 9:372
+组端Seal处理 μs/tick：min 2 / mean 7 / max 33（10 组）
+  组  0: handle   33.3μs | drain批     0 wait批 14811 | 延迟相   15.2μs | 分片  17.9μs
+  组  1: handle    1.8μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.7μs
+  组  2: handle    2.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.8μs
+  组  3: handle    3.2μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.0μs
+  组  4: handle    2.8μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.6μs
+  组  5: handle    3.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.2μs
+  组  6: handle    4.2μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.0μs
+  组  7: handle    5.5μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.3μs
+  组  8: handle    6.2μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.0μs
+  组  9: handle    5.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.5μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- SPIN500默认轮 3（04:06:27 load=4.19 4.84 4.71）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：671.7 t/s（3000 tick / 4.47s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 12.9%（192μs/tick）
+Seal 分解：广播→首Ack 21μs/tick；首末Ack间隔 192μs/tick（长尾）
+最晚Ack组分布：0:2388 1:5 2:4 3:9 4:14 5:20 6:24 7:61 8:115 9:360
+组端Seal处理 μs/tick：min 2 / mean 8 / max 38（10 组）
+  组  0: handle   38.4μs | drain批     0 wait批 14811 | 延迟相   16.7μs | 分片  21.5μs
+  组  1: handle    1.9μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.7μs
+  组  2: handle    2.1μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.0μs
+  组  3: handle    2.8μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.6μs
+  组  4: handle    3.0μs | drain批     0 wait批     0 | 延迟相    0.1μs | 分片   2.8μs
+  组  5: handle    5.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.8μs
+  组  6: handle    4.8μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.7μs
+  组  7: handle    7.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   7.5μs
+  组  8: handle    7.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   7.5μs
+  组  9: handle    6.5μs | drain批     0 wait批     0 | 延迟相    0.1μs | 分片   6.3μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- OFF绑核对照轮 1（04:06:31 load=4.18 4.83 4.70）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：917.6 t/s（3000 tick / 3.27s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 12.7%（138μs/tick）
+Seal 分解：广播→首Ack 15μs/tick；首末Ack间隔 138μs/tick（长尾）
+最晚Ack组分布：0:2558 1:2 2:8 3:10 4:8 5:19 6:29 7:55 8:57 9:254
+组端Seal处理 μs/tick：min 1 / mean 6 / max 32（10 组）
+  组  0: handle   32.0μs | drain批     0 wait批 14811 | 延迟相   15.2μs | 分片  16.6μs
+  组  1: handle    1.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.2μs
+  组  2: handle    1.8μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.6μs
+  组  3: handle    2.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.3μs
+  组  4: handle    3.2μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.1μs
+  组  5: handle    3.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.1μs
+  组  6: handle    5.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.8μs
+  组  7: handle    5.9μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.7μs
+  组  8: handle    5.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.4μs
+  组  9: handle    4.5μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.4μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- OFF绑核对照轮 2（04:06:35 load=3.92 4.76 4.68）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：921.6 t/s（3000 tick / 3.26s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 12.9%（140μs/tick）
+Seal 分解：广播→首Ack 15μs/tick；首末Ack间隔 140μs/tick（长尾）
+最晚Ack组分布：0:2571 1:3 2:1 3:13 4:12 5:15 6:28 7:46 8:81 9:230
+组端Seal处理 μs/tick：min 1 / mean 7 / max 34（10 组）
+  组  0: handle   34.5μs | drain批     0 wait批 14811 | 延迟相   15.5μs | 分片  18.8μs
+  组  1: handle    1.1μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.0μs
+  组  2: handle    1.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.5μs
+  组  3: handle    2.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.6μs
+  组  4: handle    3.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.1μs
+  组  5: handle    4.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.9μs
+  组  6: handle    5.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.2μs
+  组  7: handle    6.2μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   6.0μs
+  组  8: handle    6.0μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.9μs
+  组  9: handle    4.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.5μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- OFF绑核对照轮 3（04:06:38 load=4.09 4.79 4.69）---
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：920.9 t/s（3000 tick / 3.26s）；成交量 6701200 股；费用桶 651403179 分；挂簿余 0；T+1 冻结 6668400；Seal 相位 12.8%（139μs/tick）
+Seal 分解：广播→首Ack 15μs/tick；首末Ack间隔 139μs/tick（长尾）
+最晚Ack组分布：0:2563 1:4 2:2 3:11 4:14 5:12 6:22 7:45 8:90 9:237
+组端Seal处理 μs/tick：min 1 / mean 6 / max 32（10 组）
+  组  0: handle   31.8μs | drain批     0 wait批 14811 | 延迟相   15.4μs | 分片  16.2μs
+  组  1: handle    1.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.4μs
+  组  2: handle    1.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   1.2μs
+  组  3: handle    2.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.6μs
+  组  4: handle    2.9μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   2.7μs
+  组  5: handle    3.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   3.2μs
+  组  6: handle    4.3μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.1μs
+  组  7: handle    5.4μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.3μs
+  组  8: handle    5.7μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   5.6μs
+  组  9: handle    4.6μs | drain批     0 wait批     0 | 延迟相    0.0μs | 分片   4.5μs
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+=== 自旋正式复测完成 2026-10-19 04:06:41 ===

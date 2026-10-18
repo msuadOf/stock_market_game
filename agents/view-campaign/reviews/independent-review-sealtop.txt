@@ -1,0 +1,20 @@
+=== Seal 攻顶批（b821e19f/5f9908db）独立复核（fork）===
+
+【阻断】无。
+
+【建议（3 条，登记级）】
+1. ensure_fact_owners_covered_arc（drive.rs:27）每拍无条件重建 snapshots_vec
+   （逐条值拷贝）而下游只消费 local 下标——非本批引入（原同款 Vec
+   clone），driver 口径 dirty 集增大时是现成优化面（改传 local 迭代）。
+   A 口径不受影响（s5 probe 直驱不经 driver）。
+2. 合同 3 叙述性死注释——已清理（随批复核归档提交）。
+3. InlineVec 因 GroupAccount 公有域泄漏类型而 pub 化（变体可外部构造）
+   ——crate 内无碍；engine 作库被外部消费时可收口。低风险。
+
+【确认】写点 34 处 Arc::make_mut 全覆盖（绕过写编译期拦）；rollback
+回放经 make_mut 分叉新 Arc 值正确；分片 Arc 浅共享+组端后续写强制 COW
+分叉——发布快照不被污染（Arc 语义）；低频展开与原 clone 逐值同构；
+决策签名 &[&GroupAccount] deref 语义不变；dense/稀疏回写形态统一；
+InlineVec 手写 PartialEq 按内容+IntoIterator 兼容+spill 边界合同；
+旋钮负控判别面成立（篡改经 make_mut 分叉不污染组端原值）。大 A 语义
+零触碰。本地验证 5/5 合同绿+全量 1688/0/11。

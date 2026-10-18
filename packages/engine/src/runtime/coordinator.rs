@@ -78,7 +78,7 @@ pub struct TickEvidence {
     /// 本轮实体流出总数（守恒审计输入，批 3+ 扩展）。
     pub entities_out: u64,
     /// 各交易部公共态（安装进下一 tick 广播快照；决策观察基）。
-    pub desk_views: Vec<(StockIdx, super::protocol::StockPublic)>,
+    pub desk_views: Vec<(StockIdx, std::sync::Arc<super::protocol::StockPublic>)>,
     /// 各交易部本收束点挂单数（观察面）。
     pub desk_resting: Vec<(StockIdx, u64)>,
     /// 本 tick 双腿成交事实（事件映射输入）。
@@ -92,6 +92,10 @@ pub struct TickEvidence {
     pub group_rejections: Vec<super::DeskReceipt>,
     /// 本轮竞价事实。
     pub desk_auction: Vec<super::protocol::DeskAuctionFact>,
+    /// P2-3：各交易部在途单观察面（随 DeskReport 上行——下标=股）。
+    pub desk_resting_facts: Vec<std::sync::Arc<Vec<super::protocol::RestingFact>>>,
+    /// 各交易部序号游标（随 DeskReport 上行；save 投影权威源）。
+    pub desk_serial_cursors: Vec<u64>,
 }
 
 /// PreCommit 校验器（骨架注入点；批 3+ 换 PreCommitValidation）。
@@ -144,6 +148,10 @@ pub fn converge_round(
     let mut desk_receipts = Vec::new();
     let mut group_rejections = Vec::new();
     let mut desk_auction = Vec::new();
+    // P2-3：在途单观察面+游标收集（随 DeskReport 上行——发布源）。
+    let mut desk_resting_facts: Vec<Option<std::sync::Arc<Vec<super::protocol::RestingFact>>>> =
+        vec![None; n_stocks];
+    let mut desk_serial_cursors = vec![0u64; n_stocks];
     while groups_left > 0 || desks_left > 0 {
         let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
             Ok(m) => m,
@@ -176,8 +184,10 @@ pub fn converge_round(
                 desks_left -= 1;
                 entities_out += r.entities_out;
                 desk_hashes.push((r.stock, r.committed_hash));
-                desk_views.push((r.stock, r.view.clone()));
+                desk_views.push((r.stock, std::sync::Arc::clone(&r.view)));
                 desk_resting.push((r.stock, r.resting_count));
+                desk_resting_facts[r.stock as usize] = Some(r.resting_orders);
+                desk_serial_cursors[r.stock as usize] = r.next_serial;
                 desk_trades.extend(r.trades.iter().copied());
                 desk_lifecycle.extend(r.lifecycle.iter().copied());
                 desk_receipts.extend(r.receipts_out_list.iter().copied());
@@ -185,6 +195,14 @@ pub fn converge_round(
             }
             UpMsg::TaskDied { who, payload } => {
                 return RoundOutcome::TaskDied { who, payload };
+            }
+            UpMsg::SealAck { .. } => {
+                // Sol 复核阻断 P1-3：迟到 SealAck=已判死尝试（SealAck
+                // 收集超时已 Abort）的 Ack 竞态落入重试收束窗——协议
+                // 合法产物（组在 Abort 后已回滚重跑，本轮回执以本轮
+                /// GroupReport/DeskReport 为准），跳过不报错。单次尝试
+                /// 内 Seal 只在收束后广播，收束期不可能有本拍真 Ack。
+                continue;
             }
             UpMsg::Failed { who, error } => {
                 return RoundOutcome::Failed(RuntimeError::WorkerFailed {
@@ -216,6 +234,11 @@ pub fn converge_round(
         desk_receipts,
         group_rejections,
         desk_auction,
+        desk_resting_facts: desk_resting_facts
+            .into_iter()
+            .map(|slot| slot.unwrap_or_default())
+            .collect(),
+        desk_serial_cursors,
     }))
 }
 

@@ -97,6 +97,16 @@ pub struct SavedReceiptTransition {
     pub ordinal: u64,
 }
 
+/// P2-4：save 面派生临时 ledger（快照→envelopes→同构重建——与原每拍
+/// 全量重建同一构造口径；restore 链的 ledger 字段语义不变）。
+fn build_save_ledger(
+    session: &GameSession,
+) -> Result<pipeline::EnvelopeLedger, StepFatal> {
+    let envelopes = session.runtime_derive_envelopes()?;
+    pipeline::EnvelopeLedger::new(session.state.next_receipt_base, envelopes)
+        .map_err(|fatal| invariant(format!("派生信封账本构建失败：{fatal:?}")))
+}
+
 /// 从健康且已提交的 quiet point 捕获全部权威运行状态。
 pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState, StepFatal> {
     session.require_healthy()?;
@@ -106,28 +116,32 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
             session.state.setup.simulation_policy_id
         )));
     }
+    // P2-4（视图内生战役）：ledger 每拍维护退役——save 面改从派生临时
+    // ledger 消费（快照→envelopes→同构重建；内容等价=原全量重建口径。
+    // 旧管线形态（无快照）沿用维护中的 state.envelope_ledger）。
+    let derived_ledger = build_save_ledger(session)?;
+    let ledger: &pipeline::EnvelopeLedger = if session.state.runtime_resting_snapshot.is_some() {
+        &derived_ledger
+    } else {
+        &session.state.envelope_ledger
+    };
     // save 侧完整校验与 restore 侧同源：≥512 行的并行审计必须归入会话 compute
     // registry（capture 入口持有 session，不得落入 caller 当前的池）。
-    session
-        .state
-        .envelope_ledger
-        .validate_complete_evidence_in(session.compute_context())?;
-    if session.state.envelope_ledger.terminal_count() != 0 {
+    ledger.validate_complete_evidence_in(session.compute_context())?;
+    if ledger.terminal_count() != 0 {
         return Err(invariant(
             "quiet-point envelope ledger retains terminal tick evidence".to_owned(),
         ));
     }
-    if session.state.envelope_ledger.next_receipt_index() != session.state.next_receipt_base {
+    if ledger.next_receipt_index() != session.state.next_receipt_base {
         return Err(invariant(format!(
             "envelope ledger cursor {} disagrees with next_receipt_base {}",
-            session.state.envelope_ledger.next_receipt_index(),
+            ledger.next_receipt_index(),
             session.state.next_receipt_base
         )));
     }
 
-    let live_envelopes = session
-        .state
-        .envelope_ledger
+    let live_envelopes = ledger
         .iter()
         .map(|(_, envelope)| {
             if envelope.origin() != pipeline::EnvelopeOrigin::TickStart
@@ -144,9 +158,9 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut rebased_ledger = session.state.envelope_ledger.clone();
+    let mut rebased_ledger = ledger.clone();
     rebased_ledger.rebase_live_for_next_tick()?;
-    if rebased_ledger != session.state.envelope_ledger {
+    if rebased_ledger != *ledger {
         return Err(invariant(
             "save requires a fully rebased envelope-ledger quiet point".to_owned(),
         ));
@@ -208,9 +222,7 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
     let reconstructed = state
         .build_ledger(session)
         .map_err(session_error_as_invariant)?;
-    let actual: Vec<_> = session
-        .state
-        .envelope_ledger
+    let actual: Vec<_> = ledger
         .iter()
         .map(|(_, envelope)| envelope.clone())
         .collect();

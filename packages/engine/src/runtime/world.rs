@@ -286,13 +286,9 @@ pub struct TickRecord {
     /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。Continue
     /// 链下含**全轮**成交（早轮+终轮，每条恰一次——事实不丢）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
-    /// 终轮（最后一次 Continue 之后）成交——实体仍在组 staging、
-    /// **尚未随 Continue 落账**的尾巴。step_frame 接轨前置约束①：
-    /// 驱动器的同拍成交投影（"组回写后叠加增量"口径）必须只消费本
-    /// 尾巴——早轮成交已随组 Continue 落账进组账户（快照回写已含），
-    /// 以全量 desk_trades 叠加会把早轮重复应用（现金/持仓双计）。
-    /// rounds=0（无 Continue）时与 desk_trades 等值。
-    pub unsettled_trades: Vec<super::protocol::DeskTradeFact>,
+    /// Q2 批 4（D3 退役）：unsettled_trades 字段已删除——Seal 落账
+    ///（批 2）使"终轮未落账尾巴"结构性不存在（合同 5 由类型承载：
+    /// 复活需显式重新引入字段并过全部行为合同）。
     /// 本 tick 生命周期事实（受理/撤单/到期；事件映射输入）。
     pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// 本轮回执（拒收/不可撤；IntentRejected 映射输入）。
@@ -335,6 +331,13 @@ pub struct World {
     /// （生产语义零变化）。
     #[cfg(test)]
     pub shutdown_stall_for_test: Option<Duration>,
+    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾在**广播后**
+    /// 消费 consume_acks 条真实 SealAck 再合成收集失败（Abort 语义
+    ///——worker 全存活，同 tick 重试成功）。Sol 复核 P1-3：注入点自
+    /// 广播前迁移到广播后（真实路径——组已收到 Seal，Abort 与 Seal 同
+    /// 队列竞态、迟到 Ack 落入重试收束窗都被注入面覆盖）。
+    #[cfg(test)]
+    seal_ack_fail_after_acks: Option<usize>,
     watchdog: WatchdogConfig,
     validator: Validator,
     rounds_cap: u32,
@@ -366,6 +369,24 @@ pub struct World {
     /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
     /// 自然日权威在会话 civil clock）。
     civil_date: crate::calendar::CivilDate,
+    /// Q1 发布槽（方案 A）：install_tick 单点 publish；读者 load() 得
+    /// 一致读点。初值=spawn 时的 v0。
+    publication: std::sync::Arc<super::publication::ViewPublication>,
+    /// Q2 A 口径归因诊断：seal_round 累计 wall（含广播+收集等待——
+    /// 组端 drain/落账/分片构建都反映在等待里）。瞬态诊断面，不入
+    /// 存档/hash；探针读数用。
+    pub seal_ns_accumulated: u128,
+    /// Seal 地板分解诊断（同上瞬态面）：广播→首条 Ack 的累计墙
+    /// （最快组的完整链路=send+唤醒+组端处理+回传）与首末 Ack 间隔
+    /// 累计（组间长尾方差）。地板归因用（换向链固有 vs 组端不均）。
+    pub seal_first_ack_ns: u128,
+    /// 首末 Ack 间隔累计（组间 spread）。
+    pub seal_ack_spread_ns: u128,
+    /// B-1' 验证批诊断：最近一次 seal_round 最晚 Ack 的组号（每组计数
+    /// ——最晚组身份分布是"唤醒级联 vs 组端处理"假设的直接证据：
+    /// 最晚组集中在低 handle 闲组=唤醒假设成立；集中在活跃组=组端
+    /// 处理主导，假设推翻回设计台）。瞬态诊断面，不入存档/hash。
+    pub seal_last_ack_groups: Vec<u32>,
 }
 
 impl World {
@@ -658,12 +679,42 @@ impl World {
         }
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
         drop(up_tx);
+        let public_views = Self::initial_views(&stocks_specs, cage_on);
+        // Q1 发布槽 v0：初始公共态即第一个一致读点（tick=initial）。
+        let global_v0 = GlobalState {
+            committed_tick: initial_committed_tick,
+            day: (initial_committed_tick / ticks_per_day) as u32,
+            events_installed: 0,
+        };
+        let publication = std::sync::Arc::new(
+            super::publication::ViewPublication::new(std::sync::Arc::new(
+                super::publication::PublishedTick {
+                    tick: initial_committed_tick,
+                    global: global_v0,
+                    desks: public_views
+                        .iter()
+                        .enumerate()
+                        .map(|(s, view)| super::publication::DeskShard {
+                            stock: s as super::StockIdx,
+                            view: std::sync::Arc::new(view.clone()),
+                            resting_count: 0,
+                            // P2-3：v0 空 observation 面；游标=初始种子
+                            ///（空簿保留已耗序号）。
+                            resting: std::sync::Arc::new(Vec::new()),
+                            next_serial: initial_desk_next_serial
+                                .get(s)
+                                .copied()
+                                .unwrap_or(0),
+                        })
+                        .collect(),
+                    groups: Vec::new(),
+                    events: super::publication::EventSegment::default(),
+                    hashes: super::publication::TickHashes::default(),
+                },
+            )),
+        );
         Ok(World {
-            global: GlobalState {
-                committed_tick: initial_committed_tick,
-                day: (initial_committed_tick / ticks_per_day) as u32,
-                events_installed: 0,
-            },
+            global: global_v0,
             report_log: Vec::new(),
             group_txs,
             desk_txs,
@@ -673,6 +724,8 @@ impl World {
             worker_shutdown,
             #[cfg(test)]
             shutdown_stall_for_test: None,
+            #[cfg(test)]
+            seal_ack_fail_after_acks: None,
             watchdog,
             validator: no_op_validator(),
             rounds_cap,
@@ -680,7 +733,7 @@ impl World {
             n_stocks,
             dead_finals: None,
             dead_reason: None,
-            public_views: Self::initial_views(&stocks_specs, cage_on),
+            public_views,
             rights_computer,
             ticks_per_day,
             day_end_validator: Box::new(|_| Ok(())),
@@ -690,12 +743,41 @@ impl World {
             drained_lifecycle: Vec::new(),
             drained_auction: Vec::new(),
             civil_date: civil_start_date,
+            publication,
+            seal_ns_accumulated: 0,
+            seal_first_ack_ns: 0,
+            seal_ack_spread_ns: 0,
+            seal_last_ack_groups: Vec::new(),
         })
+    }
+
+    /// Q1 发布槽句柄（读者面：load() 得一致读点；句柄可长期持有）。
+    pub fn publication(&self) -> std::sync::Arc<super::publication::ViewPublication> {
+        std::sync::Arc::clone(&self.publication)
     }
 
     /// 注入 PreCommit 校验器（测试/批 3+ 接线点）。
     pub fn set_validator(&mut self, v: Validator) {
         self.validator = v;
+    }
+
+    /// Q2 存活契约测试注入（one-shot）：下一次 Seal 收尾在广播后消费
+    /// consume_acks 条真实 SealAck 再合成收集失败一次（Abort 语义
+    ///——worker 全存活；对照六审 300ms 延迟重试模式；Sol 复核 P1-3
+    /// 注入点走真实路径）。
+    #[cfg(test)]
+    pub fn set_seal_ack_failure_once_for_test(&mut self, consume_acks: usize) {
+        self.seal_ack_fail_after_acks = Some(consume_acks);
+    }
+
+    /// Seal 攻顶批 1 旋钮桩（cfg(test)）：组 0 分片构建的突变判别——
+    /// ①篡改首条目 cash+1（分片内容源判别）；②丢末条目（dirty 集完整
+    /// 性判别）。批 1 桩：组端未消费（无效果→旋钮测试红=注入面红先行）。
+    #[cfg(test)]
+    pub fn seal_knobs_for_test(&mut self, tamper: bool, skip_last: bool) {
+        if let Some(tx) = self.group_txs.first() {
+            let _ = tx.send(GroupIn::SetSealKnobsForTest { tamper, skip_last });
+        }
     }
 
     /// 初始公共态（tick1 决策观察基；涨跌停按构造规格推导，无盘口）。
@@ -725,6 +807,8 @@ impl World {
                     minute_closes: Vec::new(),
                 daily_bars: Vec::new(),
                 daily_active: None,
+                daily_active_turnover_cents: 0,
+                daily_active_trade_count: 0,
                 daily_total_completed: 0,
                 daily_total_traded: 0,
                     volume_today: 0,
@@ -1465,14 +1549,6 @@ impl World {
             .collect())
     }
 
-    /// P2-4a 红证注入通道（cfg(test)）：组 0 稀疏回执丢最后一项。
-    #[cfg(test)]
-    pub fn corrupt_sparse_echo_omit_last_for_test(&mut self) {
-        if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::CorruptSparseEchoOmitLast);
-        }
-    }
-
     /// P2-4a：组数读面（驱动器稀疏回声请求面构建——dirty 全局位 →
     /// (组, 组内下标) 分桶）。
     pub fn n_groups(&self) -> usize {
@@ -1578,22 +1654,157 @@ impl World {
                     rounds = next;
                 } else {
                     // 终轮：以累积事实替换终轮单轮快照（恰一次进
-                    // TickRecord——含全部 Continue 轮）。终轮原始成交
-                    // 在替换前抓取——它们的实体从未随 Continue 下行
-                    // 落账（前置约束①的 unsettled 尾巴）。
-                    let unsettled_trades = evidence.desk_trades.clone();
+                    // TickRecord——含全部 Continue 轮）。Q2 Seal 落地后
+                    // 终轮成交已随 Seal 落账（S2）——unsettled 尾巴恒空
+                    //（合同 5；D3 退役的类型级表达随批 4）。
+
                     evidence.desk_trades = acc_trades;
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
                     evidence.group_rejections = acc_group_rejections;
                     evidence.desk_auction = acc_auction;
                     evidence.entities_out = acc_entities_out;
-                    self.install_tick(tick, rounds, evidence, unsettled_trades);
+                    // Q2 Seal 收尾确认：组 drain+落账（S4/S2）→SealAck
+                    // 收齐 → install_tick（发布=提交=Abort 窗口关闭）。
+                    let seal_shards = self.seal_round(tick, rounds)?;
+                    self.install_tick(tick, rounds, evidence, seal_shards);
                     break;
                 }
             }
         }
         Ok(self.global.committed_tick)
+    }
+
+    /// Q2 Seal 收尾确认（S1-S4）：广播 Seal → 组 drain 本拍全部批次并
+    /// 落账（S2 落账点唯一化）→ 收齐 G 个 SealAck。**发布=提交=Abort
+    /// 窗口关闭**（S1）——本函数返回 Ok 后 install_tick 才发布。
+    ///
+    /// 失败语义（协调者守卫 1——存活契约）：
+    /// - **收集失败/超时/断连**：`abort_tick`（tick 级 Abort——幸存
+    ///   worker 回滚存活，同 tick 可重试；不触碰 worker_shutdown 永久
+    ///   关停语义）。
+    /// - **组端 Seal 处理失败**（Failed 上行=数据损坏类）：组 worker 已
+    ///   退出——撤退收齐 Final + 标记死亡（与 converge_or_die 的
+    ///   Failed 分支同式）。
+    fn seal_round(
+        &mut self,
+        tick: u64,
+        round_final: u32,
+    ) -> Result<Vec<super::publication::GroupShardInput>, RuntimeError> {
+        let seal_started = std::time::Instant::now();
+        // 存活契约测试注入（one-shot，Sol 复核 P1-3 真实路径）：广播
+        // **之后**在收集循环内消费 consume_acks 条真实 Ack 再合成收集
+        // 失败（组已处理/正在处理 Seal——Abort 与 Seal 同队列竞态、迟到
+        // Ack 落入重试收束窗均为注入面覆盖的真实形态）。
+        #[cfg(test)]
+        let fail_after_acks = self.seal_ack_fail_after_acks.take();
+        #[cfg(not(test))]
+        let fail_after_acks: Option<usize> = None;
+        for tx in &self.group_txs {
+            if tx.send(GroupIn::Seal { tick, round_final }).is_err() {
+                self.abort_tick(tick);
+                return Err(RuntimeError::SendFailed {
+                    detail: format!("Seal(tick={tick}) 组广播失败（worker 已退出？）"),
+                });
+            }
+        }
+        let mut left = self.n_groups;
+        // 复核建议 ④：计数仅供 cfg(test) 注入阈值消费——非测试构建
+        // 不落地（免死写）。
+        #[cfg(test)]
+        let mut acks_seen = 0usize;
+        let mut acked_groups = vec![false; self.n_groups];
+        let mut seal_accounts = Vec::with_capacity(self.n_groups);
+        while left > 0 {
+            #[cfg(test)]
+            if fail_after_acks.is_some_and(|n| acks_seen >= n) {
+                self.abort_tick(tick);
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "【测试注入】SealAck 收集失败（广播后已收 {acks_seen} Ack——Abort 语义，worker 存活可重试）"
+                    ),
+                });
+            }
+            match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog) {
+                Ok(UpMsg::SealAck { group, tick: t, accounts_sparse, belief_sparse, .. }) => {
+                    if t != tick {
+                        self.abort_tick(tick);
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!("SealAck 错位：期望 tick={tick}，收到组 {group} tick={t}"),
+                        });
+                    }
+                    let Some(already) = acked_groups.get_mut(usize::from(group)) else {
+                        self.abort_tick(tick);
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!(
+                                "SealAck 组号越界：{group}（组数 {}）",
+                                self.n_groups
+                            ),
+                        });
+                    };
+                    // P1-3（Sol 复核）：同组重复 Ack=上一失败尝试的迟到
+                    /// 竞态产物（本组本拍已 Ack——重跑确定性下值同源）；
+                    /// 跳过不计（缺组由真 Ack 补齐）。
+                    if std::mem::replace(already, true) {
+                        continue;
+                    }
+                    // 地板分解：首条 Ack 记链路墙；末条记 spread 与身份。
+                    if left == self.n_groups {
+                        self.seal_first_ack_ns += seal_started.elapsed().as_nanos();
+                    }
+                    if left == 1 {
+                        self.seal_ack_spread_ns += seal_started.elapsed().as_nanos();
+                        // B-1' 验证批：最晚 Ack 组身份（唤醒假设直接证据）。
+                        self.seal_last_ack_groups.push(u32::from(group));
+                    }
+                    // P1-2（Sol 复核）：账户+belief 双分片随 SealAck 上行
+                    ///（belief 在 apply_deferred 后构建——含清仓经历行）。
+                    seal_accounts.push(super::publication::GroupShardInput {
+                        group,
+                        accounts: accounts_sparse,
+                        belief: belief_sparse,
+                    });
+                    left -= 1;
+                    #[cfg(test)]
+                    {
+                        acks_seen += 1;
+                    }
+                }
+                Ok(UpMsg::Failed { who, error }) => {
+                    // 组端 Seal 处理失败（apply_staging 数据损坏类）——
+                    // worker 已退出：撤退关停+死亡（同 converge_or_die）。
+                    self.abort_tick(tick);
+                    for tx in &self.group_txs {
+                        let _ = tx.send(GroupIn::Shutdown);
+                    }
+                    for tx in &self.desk_txs {
+                        let _ = tx.send(DeskMsg::Shutdown);
+                    }
+                    let report = self.collect_finals().map_err(|e| RuntimeError::ProtocolInvariant {
+                        detail: format!("Seal 失败撤退路径 Final 收集失败：{e}"),
+                    })?;
+                    self.dead_finals = Some(report);
+                    self.dead_reason =
+                        Some(format!("worker {who} Seal 收尾失败（{error}）"));
+                    return Err(RuntimeError::WorkerFailed { who, error: Box::new(error) });
+                }
+                Ok(other) => {
+                    self.abort_tick(tick);
+                    return Err(RuntimeError::Disconnected {
+                        who: None,
+                        stage: format!(
+                            "Seal(tick={tick}) 期望 SealAck，收到 {other:?}（worker 已提前退出？）"
+                        ),
+                    });
+                }
+                Err(e) => {
+                    self.abort_tick(tick);
+                    return Err(e);
+                }
+            }
+        }
+        self.seal_ns_accumulated += seal_started.elapsed().as_nanos();
+        Ok(seal_accounts)
     }
 
     /// 收束一轮；TaskDied ⇒ 撤退 + 收齐 Final + join + `resume_unwind` 原 payload
@@ -1671,22 +1882,54 @@ impl World {
     }
 
     /// 单点安装（唯一安装点语义保持：成功路径才触碰全局域权威）。
-    /// `unsettled_trades`：终轮原始成交（前置约束①——从未随 Continue
-    /// 落账的尾巴，同拍投影的合法输入面）。
     fn install_tick(
         &mut self,
         tick: u64,
         rounds: u32,
         evidence: TickEvidence,
-        unsettled_trades: Vec<super::protocol::DeskTradeFact>,
+        seal_shards: Vec<super::publication::GroupShardInput>,
     ) {
         // tick 成功转正：清除可能残留的全局中止标记（上一次 Abort 已回滚收敛）。
         self.abort.store(false, Ordering::SeqCst);
+        // Q1 分片组装（发布=提交=Abort 窗口关闭——C2）：公共态 move 进
+        // 广播基（public_views）的同时 clone 一份进 DeskShard（P1 v1
+        // 口径：clone 税由 J1 定标，可见再 Arc 化）；resting 计数自观察面。
+        let resting_of = |stock: super::StockIdx| {
+            evidence
+                .desk_resting
+                .iter()
+                .find(|(s, _)| *s == stock)
+                .map(|(_, n)| *n)
+                .unwrap_or(0)
+        };
+        // P2-3：在途单观察面+游标进分片（随报告上行——读面源）。facts
+        // 按股索引 move 重排（免逐股 clone）。
+        let mut resting_facts = evidence.desk_resting_facts;
+        let serial_cursors = evidence.desk_serial_cursors;
+        let mut desk_shards: Vec<super::publication::DeskShard> =
+            Vec::with_capacity(self.public_views.len());
         for (stock, view) in evidence.desk_views {
             if let Some(slot) = self.public_views.get_mut(stock as usize) {
-                *slot = view;
+                // 刀 2b：resting 条目已 Arc（desk 报告直通——免整 Vec
+                /// 重建包装）；view Arc 直通分片；广播基保持值拷贝（组
+                /// 决策输入 &[StockPublic] 切片形态——P1 的"可见再 Arc
+                /// 化"面：发布分片与收束收集双 clone 退役）。
+                let facts_for_stock = match resting_facts.get_mut(stock as usize) {
+                    Some(buffer) => std::sync::Arc::clone(buffer),
+                    None => std::sync::Arc::new(Vec::new()),
+                };
+                desk_shards.push(super::publication::DeskShard {
+                    stock,
+                    view: std::sync::Arc::clone(&view),
+                    resting_count: resting_of(stock),
+                    resting: facts_for_stock,
+                    next_serial: serial_cursors.get(stock as usize).copied().unwrap_or(0),
+                });
+                *slot = (*view).clone();
             }
         }
+        // 收束到达序不定——发布分片按股序稳定排列（读者按下标=股消费）。
+        desk_shards.sort_by_key(|shard| shard.stock);
         self.global.committed_tick = tick;
         // Sol 终审四审 A2：day 按 World 自身的 ticks_per_day 推导（此前
         // 硬编码 240——非 240 配置（如 tpd=1 的存档契约 fixture）下组
@@ -1694,19 +1937,53 @@ impl World {
         // plan 事件 day，precedes 校验显红（save_contract 38 败同根因）。
         self.global.day = ((tick - 1) / self.ticks_per_day) as u32;
         self.global.events_installed += evidence.entities_out;
-        self.report_log.push(TickRecord {
+        let group_hashes = evidence.group_hashes;
+        let desk_hashes = evidence.desk_hashes;
+        let record = TickRecord {
             tick,
             rounds,
-            group_hashes: evidence.group_hashes,
-            desk_hashes: evidence.desk_hashes,
+            group_hashes: group_hashes.clone(),
+            desk_hashes: desk_hashes.clone(),
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
-            unsettled_trades,
             desk_lifecycle: evidence.desk_lifecycle,
             desk_receipts: evidence.desk_receipts,
             group_rejections: evidence.group_rejections,
             desk_auction: evidence.desk_auction,
-        });
+        };
+        self.report_log.push(record);
+        // Q1 单点发布（唯一 publish 调用点）：组装不可变版本并原子交换。
+        // P1-2（Sol 复核）：groups 分片=SealAck 双分片（账户+belief——
+        /// 均为 Seal 落账后构建，含清仓经历行）；events 占位（事件迁移
+        /// 时填充）。
+        let group_shards: Vec<super::publication::GroupShard> = seal_shards
+            .into_iter()
+            .map(|input| {
+                super::publication::GroupShard {
+                    committed_hash: group_hashes
+                        .iter()
+                        .find(|(g, _)| *g == input.group)
+                        .map(|(_, h)| *h)
+                        .unwrap_or(0),
+                    group: input.group,
+                    belief: input.belief,
+                    accounts: input.accounts,
+                }
+            })
+            .collect();
+        self.publication.publish(std::sync::Arc::new(
+            super::publication::PublishedTick {
+                tick,
+                global: self.global,
+                desks: desk_shards,
+                groups: group_shards,
+                events: super::publication::EventSegment::default(),
+                hashes: super::publication::TickHashes {
+                    groups: group_hashes,
+                    desks: desk_hashes,
+                },
+            },
+        ));
     }
 
     /// 日结序列（F §6.2）：

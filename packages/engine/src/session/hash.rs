@@ -71,6 +71,8 @@ impl GameSession {
             #[cfg(feature = "simulation-diagnostics")]
                 causal: _,
             attention_scheduler: _,
+            runtime_heap_dirty: _,
+            runtime_resting_snapshot: _,
             runtime_account_undo: _,
             runtime_account_undo_ids: _,
             runtime_attention_undo: _,
@@ -142,7 +144,15 @@ impl GameSession {
         hash.field(&self.state.history_reads)?;
         hash.field(&self.state.retail_experience)?;
         hash.field(&self.state.npc_order_lifecycles)?;
-        let mut queue: Vec<_> = self.state.attention_scheduler.iter().copied().collect();
+        // P2-1（视图内生战役）：heap 惰性化后 hash 从候选权威派生（等价
+        // 论证：heap=每账户恰一项 (候选 tick, id) 的权威快照——集合相同，
+        // 排序后同序列 → hash 同值；改派生后 hash 不再依赖镜像重建时点）。
+        let mut queue: Vec<_> = self
+            .state
+            .npc_attention
+            .iter()
+            .map(|(id, state)| (state.next_attention_candidate_tick, *id))
+            .collect();
         queue.sort_unstable();
         hash.field(&queue)?;
         hash.field(self.state.company_registry.as_ref())?;
@@ -197,7 +207,27 @@ impl GameSession {
                 .map(|(id, participant)| (id, participant.price_memory()))
                 .collect::<BTreeMap<_, _>>(),
         )?;
-        hash.field(&self.state.envelope_ledger.hash_projection())?;
+        // P2-4：ledger 每拍维护退役——hash 从派生投影（快照→envelopes→
+        // 同构临时 ledger 的 hash_projection；构造与原全量重建同一函数，
+        // 内容等价由同源性承载）。
+        // Sol 复核阻断 P2-4：无快照（旧管线维护中/restore 未步进/shadow
+        // 边界）读**实际 ledger**——统一"有快照派生、无快照读实际
+        // ledger"合同（对齐 save 面 saved_runtime 的分支先例）；无条件
+        // 派生使非空 ledger 漏出 hash。
+        if self.state.runtime_resting_snapshot.is_some() {
+            let derived_envelopes = self.runtime_derive_envelopes()?;
+            let derived_ledger = crate::session::pipeline::EnvelopeLedger::new(
+                self.state.next_receipt_base,
+                derived_envelopes,
+            )
+            .map_err(|fatal| StepFatal::InvariantViolation {
+                description: format!("派生信封账本构建失败：{fatal:?}"),
+                location: "state_hash.envelope_derived".to_owned(),
+            })?;
+            hash.field(&derived_ledger.hash_projection())?;
+        } else {
+            hash.field(&self.state.envelope_ledger.hash_projection())?;
+        }
         hash.field(&self.state.retail_projection_seen)?;
         hash.field(&(
             self.state.next_order_id,

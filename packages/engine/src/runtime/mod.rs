@@ -42,6 +42,10 @@ pub mod event_bridge;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod bridge_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod candle_retirement_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod inline_account_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod drive_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod day_end_tests;
@@ -52,9 +56,25 @@ mod equivalence_tests;
 pub mod fees;
 pub mod group;
 pub mod plans;
+/// P0 分段画像探针（视图内生战役）：driver 线程 step 各段 wall 计时。
+/// 默认零开销（探针显式 enable；生产恒关闭）。
+pub mod step_profile;
+/// Q1 版化发布协议（方案 A·RwLock 先行版）：Arc<PublishedTick> 单点发布。
+pub mod publication;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod publication_tests;
+/// Q2 Seal 收尾确认相位——行为合同测试（批 1 红先行）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod seal_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod plans_tests;
 pub mod watchdog;
+/// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod watchdog_spin_tests;
+/// 刀 2a desk 投影轮间缓存合同（协调者刀单裁决②，2026-10-19）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod desk_projection_cache_tests;
 // D5 wasm 方向 A：world 不再按 wasm 门控（session/bridge/drive 的类型
 // 引用面在 wasm 下编译必需）；wasm 宿主无 OS 线程——spawn 运行期
 // Err 由 session 侧显式处理（step_runtime_enabled 在 wasm 恒 false
@@ -64,7 +84,7 @@ pub mod world;
 pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
 pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, RoutedPrice};
-pub use protocol::{RestingDelta, RestingDeltaEntry, RestingFact};
+pub use protocol::{RestingDelta, RestingDeltaEntry, RestingFact, StockPublic};
 
 /// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
 /// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的

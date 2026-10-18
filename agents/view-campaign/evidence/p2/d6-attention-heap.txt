@@ -1,0 +1,29 @@
+# P2-1：D6 attention heap 每拍全名册重建退役（惰性化）
+
+## 机制
+set_runtime_attention/set_runtime_personal_state 不再每拍从 npc_attention
+全名册重建 BinaryHeap（P0 画像 258μs/tick=14.1% wall 的 D6 大头）；改为
+runtime_heap_dirty 标记 + ensure_attention_heap_current 消费点惰性重建。
+business_state_hash 改由候选权威 npc_attention 派生（集合等价：heap=
+每账户恰一项权威快照，排序后同序列→hash 同值——hash 不再依赖镜像时点）。
+heap 消费面盘点：pop_due（旧管线专用，runtime 不跑）、clone_for_shadow
+（旧管线 candidate）、restore（从权威重建）、测试守卫（ensure 适配）。
+move-undo 槽随急切重建退役（槽恒 None；回滚恢复的权威即拍前值，heap
+未被动过仍同步）。
+
+## 测量（净机窗 load<1.6 前/4.4 混合后对比同窗轮）
+- B 300：338.7/346.1/332.8 → mean 339.2（P0 基线 307.3，+10.4%）
+- B 1000：640.6（基线 544.7，+17.6%）
+- A 3000：1334.1（基线 1332.6 持平——不降 ✓）
+- 分段画像：attention_heap 段 258μs→23μs（-91%；余=稀疏收集本体）
+- 逐位锚：events 300:2105 / 1000:6016；A 守恒 6701200/651403179/6668400
+
+## 守卫与突变红
+- sol5_set_runtime_attention_syncs_scheduler_heap：ensure 后新候选必入堆
+  （断言值域不变）；突变红实证：ensure 重建体 no-op → 红（277 行断言）。
+- runtime_attention_heap_mirror_does_not_grow_across_ticks：ensure 后
+  镜像完整性（每账户恰一项=权威 tick）；同突变下零判别（小 fixture 5 拍
+  权威无变化）——如实登记，判别力由 sol5 承载。
+- runtime_heap_staleness_does_not_affect_business_hash（新）：陈旧态与
+  重建后 business_state_hash 逐位一致（hash/heap 解耦）。
+- 回归：默认+ENGINE_STEP_RUNTIME=1 全量 1667/0/11 双绿。

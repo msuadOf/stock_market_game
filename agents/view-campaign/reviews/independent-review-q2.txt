@@ -1,0 +1,27 @@
+# Q2 四批独立复核（fork subagent，未实施者，2026-10-18/19 之交）
+
+对象：8034083a..5ebd0a4b（P2-3 resting / P2-4 envelope / Q2 批 2-4）
+
+## 判定：无阻断（S4 锁步论证独立验证成立）
+
+核心验证：desk flush_batches 先于 DeskReport（代码序）；批次与 Seal 同
+走组单条 mpsc FIFO ⇒ 组收 Seal 时本 tick 批次已在其前。迟批次理论不
+存在（下 tick 批次在 Start(N+1) 后入队——FIFO 保证 Start 先到，Start
+防御不误杀）；协议破坏面=staging 残留→Start 防御显式失败不丢数据。
+Continue 早轮落账未动；Seal undo 跨发布 Abort 冲回语义正确（1c 保持）；
+unsettled 删除等价（首拍/日结 force_full 覆盖；prereq1 复跑绿）；D2
+删除推理成立（N 拍终值回写+事实 owner 覆盖校验兜底）；wasm check 过。
+
+## 非阻断建议与处置
+
+1. 组端 Seal Failed 路径零测试（seal_round 撤退分支）→ 登记：下任补
+   组端注入面。
+2. watchdog_timeout 断言恒 TickConverge（停顿落 Seal 相位即 flake）
+   → **已闭合**：断言放宽 {TickConverge, Seal}。
+3. drive.rs 陈旧注释（"排除出 unsettled_trades"——概念已删）→
+   **已闭合**：改述 Seal 语义。
+4. 死旋钮 corrupt_sparse_echo_omit_last_for_test 无调用方 → 登记：随
+   下批清理。
+5. GroupDayDone 的 state_hash()=O(N)（日结序列，每交易日一次可接受；
+   tpd=1 边缘形态放大）→ 登记。
+6. 首拍 force_full 仍走全量往返（有分片可用但保守）→ 无害登记。

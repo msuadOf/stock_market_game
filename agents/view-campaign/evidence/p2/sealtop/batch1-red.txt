@@ -1,0 +1,16 @@
+test runtime::inline_account_tests::seal_knob2_skip_proves_dirty_completeness ... FAILED
+failures:
+---- runtime::inline_account_tests::seal_knob1_tamper_proves_shard_source stdout ----
+thread 'runtime::inline_account_tests::seal_knob1_tamper_proves_shard_source' (1571149) panicked at packages/engine/src/runtime/inline_account_tests.rs:185:5:
+旋钮 1 开启后至少一组首条目 cash+1 偏离权威（批 1 红证：分片构建未消费旋钮）
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+---- runtime::inline_account_tests::seal_knob2_skip_proves_dirty_completeness stdout ----
+thread 'runtime::inline_account_tests::seal_knob2_skip_proves_dirty_completeness' (1571150) panicked at packages/engine/src/runtime/inline_account_tests.rs:222:5:
+assertion `left == right` failed: 旋钮 2 开启后分片恰少 1 条（批 1 红证：未消费时两份等长）
+  left: 3
+ right: 2
+failures:
+    runtime::inline_account_tests::seal_knob1_tamper_proves_shard_source
+    runtime::inline_account_tests::seal_knob2_skip_proves_dirty_completeness
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 1694 filtered out; finished in 0.01s
+error: test failed, to rerun pass `-p engine --lib`
