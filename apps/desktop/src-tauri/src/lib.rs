@@ -21,11 +21,11 @@ use actor::{SendCommandError, SessionManager};
 use engine::session::protocol::CivilUpdate;
 use engine::{
     calendar::CivilDate,
-    company::{PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportPage, PublicReportQuery, PublicReportSummary},
+    company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
     AccountId, Intent, NpcDecisionDiagnostics, SaveSlot, SessionError, SessionSetup, Snapshot,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Runtime, State};
 
 /// 前端监听的事件名（`@tauri-apps/api/event` 的 `listen("engine-event", ...)`）。
 pub const ENGINE_EVENT_NAME: &str = "engine-event";
@@ -46,33 +46,13 @@ pub struct EngineEventPayload {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostCapabilities {
-    pub persistence: &'static str,
     pub npc_decision_diagnostics: bool,
-    pub indicator_capabilities: IndicatorCapabilities,
-    pub personal_trade_history: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IndicatorCapabilities {
-    pub intraday_average: bool,
-    pub macd: bool,
-    pub price_kdj: bool,
-    pub candle_kdj: bool,
 }
 
 #[tauri::command]
 fn host_capabilities() -> HostCapabilities {
     HostCapabilities {
-        persistence: "native",
         npc_decision_diagnostics: cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
-        indicator_capabilities: IndicatorCapabilities {
-            intraday_average: true,
-            macd: true,
-            price_kdj: true,
-            candle_kdj: true,
-        },
-        personal_trade_history: true,
     }
 }
 
@@ -81,36 +61,7 @@ fn calculate_indicators(
     prices: Vec<f64>,
     candles: Vec<engine::indicators::OhlcBar>,
 ) -> Result<engine::indicators::IndicatorResults, String> {
-    engine::indicators::calculate_indicators(&prices, &candles).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn calculate_intraday_average(
-    turnover_cents: String,
-    trade_count: u64,
-    volume_shares: u64,
-) -> Result<Option<engine::IntradayAverage>, String> {
-    let turnover_cents = engine::parse_turnover_cents(&turnover_cents)
-        .map_err(|error| format!("turnover_cents 无效：{error}"))?;
-    let stats = engine::DailyTradeStats { turnover_cents, trade_count };
-    engine::calculate_intraday_average(Some(&stats), volume_shares).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn calculate_intraday_average_curve(
-    series_key: String,
-    samples: Vec<engine::IntradayAverageInput>,
-) -> Result<IntradayAverageCurveResponse, String> {
-    if series_key.is_empty() || series_key.len() > 256 { return Err("VWAP curve series_key 长度无效".to_owned()); }
-    if samples.len() > 600 { return Err("VWAP curve 样本数不能超过 600".to_owned()); }
-    let results = engine::calculate_intraday_average_curve(&samples).map_err(|error| error.to_string())?;
-    Ok(IntradayAverageCurveResponse { series_key, results })
-}
-
-#[derive(serde::Serialize)]
-struct IntradayAverageCurveResponse {
-    series_key: String,
-    results: Vec<Option<engine::IntradayAverage>>,
+    engine::indicators::calculate_indicators(&prices, &candles, None).map_err(|error| error.to_string())
 }
 
 // ── Tauri 命令 ──────────────────────────────────────────────────────────────
@@ -125,17 +76,16 @@ async fn create_session<R: Runtime>(
     state: State<'_, DesktopState>,
     setup: SessionSetup,
     seed: String,
-    resume_archive: bool,
-) -> Result<actor::SessionCreation, String> {
+) -> Result<String, String> {
     let seed = seed
         .parse::<u64>()
         .map_err(|error| format!("随机种子必须是 0..=u64::MAX 的十进制整数：{error}"))?;
     let manager = state.manager.clone();
-    let creation = manager
-        .new_session_with_archive(setup, seed, app, resume_archive)
+    let session_id = manager
+        .new_session(setup, seed, app)
         .await
         .map_err(map_session_error)?;
-    Ok(creation)
+    Ok(session_id)
 }
 
 /// 入队玩家意图（固定玩家 `AccountId(0)`）。
@@ -149,47 +99,6 @@ async fn enqueue(
     let handles = lookup_handles(&state, &session_id).await?;
     handles
         .enqueue(parse_generation(generation)?, intent)
-        .await
-        .map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn submit_report_correction(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    request: engine::CompanyReportCorrection,
-) -> Result<actor::GenerationResponse<()>, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles
-        .submit_report_correction(parse_generation(generation)?, request)
-        .await
-        .map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn cancel_report_correction(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    operation_id: String,
-) -> Result<actor::GenerationResponse<()>, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles
-        .cancel_report_correction(parse_generation(generation)?, operation_id)
-        .await
-        .map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn query_report_corrections(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-) -> Result<actor::GenerationResponse<engine::ReportCorrectionStatus>, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles
-        .query_report_corrections(parse_generation(generation)?)
         .await
         .map_err(map_send_error)
 }
@@ -227,137 +136,18 @@ async fn player_working_orders(
         .map_err(map_send_error)
 }
 
-/// F 批共同契约查询面（任务 178 Desktop 桥接）：公司身份校验与 web-wasm
-/// 导出同口径（UTF-16 ≤ 64）；owner 固定本机玩家 0。
-fn parse_company_argument(company: &str) -> Result<engine::company::CompanyId, String> {
-    if company.trim().is_empty() || company.encode_utf16().count() > 64 {
-        return Err("公司身份必须是非空且 UTF-16 不超过 64 字符的字符串".to_owned());
-    }
-    Ok(engine::company::CompanyId(company.to_owned()))
-}
-
-#[tauri::command]
-async fn company_capabilities(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    company: String,
-) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles
-        .company_capabilities(parse_generation(generation)?, parse_company_argument(&company)?)
-        .await
-        .map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn company_period_explanation(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    company: String,
-    period_end: String,
-) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
-    let period_end = engine::CivilDate::from_iso(&period_end)
-        .map_err(|error| format!("period_end 必须是合法 ISO 日期：{error}"))?;
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles
-        .company_period_explanation(
-            parse_generation(generation)?,
-            parse_company_argument(&company)?,
-            period_end,
-        )
-        .await
-        .map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn owner_rights_offerings(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles
-        .owner_rights_offerings(parse_generation(generation)?)
-        .await
-        .map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn owner_flat_withholding_receipts(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles
-        .owner_flat_withholding_receipts(parse_generation(generation)?)
-        .await
-        .map_err(map_send_error)
-}
-
 #[tauri::command]
 async fn query_stock_history(
     state: State<'_, DesktopState>,
     session_id: String,
     generation: String,
-    code: engine::StockCode,
+    code: engine::StockId,
 ) -> Result<actor::GenerationResponse<engine::session::HistoricalStockData>, String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.query_stock_history(parse_generation(generation)?, code).await.map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn personal_trade_confirmations(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    before_receipt: Option<String>,
-) -> Result<serde_json::Value, String> {
-    let before_receipt = before_receipt.map(|value| {
-        if value.is_empty() || value.len() > 20 || !value.bytes().all(|byte| byte.is_ascii_digit()) || (value.len() > 1 && value.starts_with('0')) {
-            return Err("交割单 before_receipt 必须是规范u64字符串".to_owned());
-        }
-        value.parse::<u64>().map_err(|error| error.to_string())
-    }).transpose()?;
-    let handles = lookup_handles(&state, &session_id).await?;
-    let response = handles
-        .personal_trade_confirmations(parse_generation(generation)?, before_receipt)
+    handles
+        .query_stock_history(parse_generation(generation)?, code)
         .await
-        .map_err(map_send_error)?;
-    Ok(serde_json::json!({ "generation": response.generation, "confirmations": response.value }))
-}
-
-#[tauri::command]
-async fn personal_trade_history(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    query: engine::session::PersonalTradeHistoryRequest,
-) -> Result<serde_json::Value, String> {
-    let response = lookup_handles(&state, &session_id).await?
-        .personal_trade_history(parse_generation(generation)?, query).await.map_err(map_send_error)?;
-    Ok(serde_json::json!({ "generation": response.generation, "page": response.value }))
-}
-
-#[tauri::command]
-async fn market_history(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    query: engine::session::MarketHistoryRequest,
-) -> Result<serde_json::Value, String> {
-    let response = lookup_handles(&state, &session_id).await?
-        .market_history(parse_generation(generation)?, query).await.map_err(map_send_error)?;
-    Ok(serde_json::json!({ "generation": response.generation, "page": response.value }))
-}
-
-#[tauri::command]
-async fn current_minute_history(state: State<'_, DesktopState>, session_id: String, generation: String, query: engine::session::CurrentMinuteHistoryRequest) -> Result<serde_json::Value, String> {
-    let response = lookup_handles(&state, &session_id).await?
-        .current_minute_history(parse_generation(generation)?, query).await.map_err(map_send_error)?;
-    Ok(serde_json::json!({ "generation": response.generation, "response": response.value }))
+        .map_err(map_send_error)
 }
 
 #[tauri::command]
@@ -367,7 +157,10 @@ async fn initial_allocation(
     generation: String,
 ) -> Result<actor::GenerationResponse<engine::session::InitialAllocation>, String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.initial_allocation(parse_generation(generation)?).await.map_err(map_send_error)
+    handles
+        .initial_allocation(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
 }
 
 /// 取不含历史日 K 的轻量运行快照（跨日 UI 同步）。
@@ -405,17 +198,6 @@ async fn public_reports(
         .public_reports(parse_generation(generation)?, query)
         .await
         .map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn public_report_availability(
-    state: State<'_, DesktopState>,
-    session_id: String,
-    generation: String,
-    query: PublicReportAvailabilityQuery,
-) -> Result<actor::GenerationResponse<PublicReportAvailability>, String> {
-    let handles = lookup_handles(&state, &session_id).await?;
-    handles.public_report_availability(parse_generation(generation)?, query).await.map_err(map_send_error)
 }
 
 #[tauri::command]
@@ -481,11 +263,10 @@ async fn restore_session(
     session_id: String,
     generation: String,
     slot: SaveSlot,
-    archive_slot_id: Option<String>,
 ) -> Result<actor::RestoreResult, String> {
     let handles = lookup_handles(&state, &session_id).await?;
     handles
-        .restore_archive(parse_generation(generation)?, slot, archive_slot_id)
+        .restore(parse_generation(generation)?, slot)
         .await
         .map_err(map_send_error)
 }
@@ -633,92 +414,25 @@ pub struct DesktopState {
     pub(crate) manager: SessionManager,
 }
 
-#[tauri::command]
-async fn archive_list(state: State<'_, DesktopState>, session_id: String) -> Result<Vec<native_store::ArchiveMetadata>, String> {
-    lookup_handles(&state, &session_id).await?;
-    state.manager.database().list().map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-async fn archive_load(state: State<'_, DesktopState>, session_id: String, slot_id: Option<String>) -> Result<Option<SaveSlot>, String> {
-    lookup_handles(&state, &session_id).await?;
-    let database = state.manager.database();
-    let slot_id = match slot_id {
-        Some(slot_id) => slot_id,
-        None => match database.selection().map_err(|error| error.to_string())? {
-            native_store::ArchiveSelection::Selected(slot_id) => slot_id,
-            native_store::ArchiveSelection::Cleared | native_store::ArchiveSelection::Uninitialized => return Ok(None),
-        },
-    };
-    database.load(&slot_id).map_err(|error| error.to_string())?.map(Some).ok_or_else(|| format!("日终存档槽 {slot_id} 不存在"))
-}
-
-#[tauri::command]
-async fn archive_select(state: State<'_, DesktopState>, session_id: String, generation: String, slot_id: String) -> Result<bool, String> {
-    lookup_handles(&state, &session_id).await?.select_archive(parse_generation(generation)?, slot_id).await.map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn archive_rename(state: State<'_, DesktopState>, session_id: String, generation: String, slot_id: String, name: String) -> Result<(), String> {
-    match lookup_handles(&state, &session_id).await?.mutate_archive_metadata(parse_generation(generation)?, slot_id, name, false).await.map_err(map_send_error)? {
-        None => Ok(()),
-        Some(_) => Err("存档重命名返回了复制结果；请反馈 Native 协议错误".into()),
-    }
-}
-
-#[tauri::command]
-async fn archive_delete(state: State<'_, DesktopState>, session_id: String, generation: String, slot_id: String) -> Result<(), String> {
-    lookup_handles(&state, &session_id).await?.delete_archive(parse_generation(generation)?, slot_id).await.map_err(map_send_error)
-}
-
-#[tauri::command]
-async fn archive_copy(state: State<'_, DesktopState>, session_id: String, generation: String, slot_id: String, name: String) -> Result<native_store::ArchiveMetadata, String> {
-    lookup_handles(&state, &session_id).await?.mutate_archive_metadata(parse_generation(generation)?, slot_id, name, true).await.map_err(map_send_error)?.ok_or_else(|| "存档复制未返回槽元数据；请反馈 Native 协议错误".into())
-}
-
-#[cfg(test)]
-fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    command_builder_base(builder).manage(DesktopState::default())
-}
-
 #[cfg(not(feature = "host-parity"))]
-fn command_builder_base<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(DesktopState::default())
         .invoke_handler(tauri::generate_handler![
             create_session,
-            archive_list,
-            archive_load,
-            archive_select,
-            archive_rename,
-            archive_delete,
-            archive_copy,
-            submit_report_correction,
-            cancel_report_correction,
-            query_report_corrections,
             enqueue,
             snapshot,
             engine_baseline,
             host_capabilities,
             calculate_indicators,
-            calculate_intraday_average,
-            calculate_intraday_average_curve,
             player_working_orders,
-            company_capabilities,
-            company_period_explanation,
-            owner_rights_offerings,
-            owner_flat_withholding_receipts,
             query_stock_history,
-            personal_trade_confirmations,
-            personal_trade_history,
-            market_history,
-            current_minute_history,
             initial_allocation,
             runtime_snapshot,
             civil_date,
             public_reports,
-            public_report_availability,
             public_report_by_id,
             npc_decision_diagnostics,
             speed_metrics,
@@ -733,43 +447,24 @@ fn command_builder_base<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
 }
 
 #[cfg(feature = "host-parity")]
-fn command_builder_base<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(DesktopState::default())
         .invoke_handler(tauri::generate_handler![
             create_session,
-            archive_list,
-            archive_load,
-            archive_select,
-            archive_rename,
-            archive_delete,
-            archive_copy,
-            submit_report_correction,
-            cancel_report_correction,
-            query_report_corrections,
             enqueue,
             snapshot,
             engine_baseline,
             host_capabilities,
             calculate_indicators,
-            calculate_intraday_average,
-            calculate_intraday_average_curve,
             player_working_orders,
-            company_capabilities,
-            company_period_explanation,
-            owner_rights_offerings,
-            owner_flat_withholding_receipts,
             query_stock_history,
-            personal_trade_confirmations,
-            personal_trade_history,
-            market_history,
-            current_minute_history,
             initial_allocation,
             runtime_snapshot,
             civil_date,
             public_reports,
-            public_report_availability,
             public_report_by_id,
             npc_decision_diagnostics,
             speed_metrics,
@@ -789,13 +484,9 @@ fn command_builder_base<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builde
 ///
 /// 注册命令 + 注入状态。失败时 panic（防御式：Tauri 启动失败属不可恢复，应显式崩溃而非静默）。
 pub fn run() {
-    command_builder_base(tauri::Builder::default())
-        .setup(|app| {
-            let path = app.path().app_data_dir()?.join("stock-market-game.sqlite");
-            let database = native_store::NativeDatabase::open(&path)?;
-            if !app.manage(DesktopState { manager: SessionManager::with_database(database) }) {
-                return Err("DesktopState 重复初始化；拒绝替换正在运行的市场".into());
-            }
+    command_builder(tauri::Builder::default())
+        .setup(|_app| {
+            // 预留：可在此读取 CLI 参数 / 初始化单例资源。当前无额外初始化。
             Ok(())
         })
         .run(tauri::generate_context!())

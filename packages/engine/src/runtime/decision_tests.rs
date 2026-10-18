@@ -1,0 +1,516 @@
+//! 批 4 决策内联测试（G 批 4 验收判据）：decide_data 内联直调、到期调度
+//! （attention 简化 due 检查）、观察基快照（上一收束点公共态）、市价路径
+//! 意图转换、T+1 日界解冻、决策确定性（同种子同输出）、严格所有权守恒。
+
+use super::decision::DecisionSetup;
+use super::decision::{
+    evaluate_attention,
+    build_market_view, build_self_view, decide_account, intent_to_pending, NpcProfile,
+};
+use super::group::{GroupAccount, GroupScript, PlaceSpec, TickPlan};
+use super::protocol::{RoutedPrice, TickSnapshot};
+use super::skeleton_tests::basic_spec;
+use super::world::World;
+use super::GroupIdx;
+use crate::config::GameConfig;
+use crate::money::Money;
+use crate::orderbook::Side;
+use crate::strategy::StrategyData;
+use crate::strategy::{Intent, LimitPrice, MarketView};
+use crate::StockId;
+use std::collections::BTreeMap;
+
+fn snapshot_one_stock(last: i64, upper: i64, lower: i64) -> TickSnapshot {
+    TickSnapshot {
+        civil_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
+        tick: 1,
+        market_minute: 0,
+        stocks: std::sync::Arc::new(vec![super::protocol::StockPublic {
+            last_price: last,
+            best_bid: None,
+            best_ask: None,
+            max_buy_price: upper,
+            daily_upper_limit: upper,
+            daily_lower_limit: lower,
+            min_sell_price: (last / 10).max(1),
+            recent_prices: vec![last],
+            minute_closes: Vec::new(),
+            daily_bars: Vec::new(),
+            daily_active: None,
+            daily_total_completed: 0,
+            daily_total_traded: 0,
+            volume_today: 0,
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
+            public_cutoff_serial: 0,
+            depth_bids: Vec::new(),
+            depth_asks: Vec::new(),
+        }]),
+    }
+}
+
+// ── 意图转换（含市价路径与 Cancel 登记）──
+
+#[test]
+fn intent_conversion_routes_market_and_symbol_prices() {
+    let mut market = MarketView {
+        stocks: BTreeMap::new(),
+        tick: 1,
+        market_minute: 0,
+    };
+    market.stocks.insert(
+        StockId(0),
+        crate::strategy::StockView {
+            best_bid: None,
+            best_ask: None,
+            last_price: Money::from_cents(1000),
+            max_buy_price: Money::from_cents(1020),
+            daily_upper_limit: Money::from_cents(1100),
+            min_sell_price: Money::from_cents(980),
+            recent_prices: vec![],
+            recent_market_minute_prices: vec![],
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
+        },
+    );
+    // Fixed：路由原价、purse 参考价=限价。
+    let op = intent_to_pending(
+        Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Buy,
+            price: LimitPrice::Fixed(Money::from_cents(1005)),
+            qty: 100,
+        },
+        &market,
+    )
+    .expect("Fixed 转换");
+    assert_eq!(op.routed, RoutedPrice::Fixed(1005));
+    assert_eq!(op.purse_reference, 1005);
+    // 符号价：路由符号、purse 参考价=日涨停（F §1.5 最坏情况）。
+    let op = intent_to_pending(
+        Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Buy,
+            price: LimitPrice::Highest,
+            qty: 100,
+        },
+        &market,
+    )
+    .expect("符号价转换");
+    assert_eq!(op.routed, RoutedPrice::Highest);
+    assert_eq!(op.purse_reference, 1100, "purse 最坏情况=日涨停");
+    // 市价：涨跌停保护、余量不进簿、purse=日涨停（批 4 接入点）。
+    let op = intent_to_pending(
+        Intent::PlaceMarket {
+            code: StockId(0),
+            side: Side::Sell,
+            qty: 100,
+        },
+        &market,
+    )
+    .expect("市价转换");
+    assert_eq!(op.routed, RoutedPrice::Market);
+    assert_eq!(op.purse_reference, 1100);
+    // Cancel：显式登记（None），不静默执行。
+    assert!(intent_to_pending(
+        Intent::Cancel {
+            code: StockId(0),
+            id: crate::orderbook::OrderId(7)
+        },
+        &market,
+    )
+    .is_none());
+}
+
+// ── 决策确定性与到期调度 ──
+
+#[test]
+fn decide_account_is_deterministic_per_seed_tick_and_reschedules() {
+    let config = GameConfig::proposed_defaults();
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
+    let account = GroupAccount::new(1_000_000, 1);
+    let mut profile = NpcProfile {
+        strategy: StrategyData::retail(1.0, 100, 1.0),
+        seed: 42,
+        next_due: 0,
+        attention_base: 0.30,
+        retail_style: None,
+    };
+    // D5 #2：排期归 evaluate_attention（signal 公式）；decide=纯决策。
+    // P1-B：signal/market 由调用方共享构建（同 snapshot 纯函数）。
+    let market = build_market_view(&snapshot);
+    let signal = crate::session::market_attention_signal(&market);
+    let run =
+        |p: &mut NpcProfile| decide_account(p, 0x1234, 1, 0, &market, &account, &config);
+    let mut a = profile.clone();
+    let mut b = profile.clone();
+    let (ops_a, _) = run(&mut a);
+    let (ops_b, _) = run(&mut b);
+    assert_eq!(ops_a.len(), ops_b.len(), "同种子同 tick 同输出");
+    assert_eq!(ops_a, ops_b, "decide_data 纯函数 + 种子化 RNG ⇒ 决策确定");
+    // evaluate 确定性：同 seed 同 signal ⇒ 同 wait/续流。
+    let (obs1, _) = evaluate_attention(&mut a, signal, 1);
+    let (obs2, _) = evaluate_attention(&mut b, signal, 1);
+    assert_eq!(obs1, obs2, "evaluate 确定性（同输入同判定）");
+    assert_eq!(a.next_due, b.next_due, "evaluate 同 wait 采样");
+    assert_eq!(a.seed, b.seed, "共享流续传一致");
+    // D5 #2：due 门归调用方（evaluate 链）——decide 纯函数无 due 判。
+}
+
+#[test]
+fn attention_gap_suppresses_non_due_ticks() {
+    // gap=100：tick1 决策一次后，tick2..5 均未到期 ⇒ decide_calls_total 停在 1。
+    let config = GameConfig::proposed_defaults();
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
+    let account = GroupAccount::new(1_000_000, 1);
+    let mut profile = NpcProfile {
+        strategy: StrategyData::retail(0.0, 100, 0.0),
+        seed: 7,
+        next_due: 0,
+        attention_base: 0.30,
+        retail_style: None,
+    };
+    // D5 #2：evaluate 排期后未到期 tick 不得再 evaluate（静默窗口由
+    /// wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
+    let market = build_market_view(&snapshot);
+    let signal = crate::session::market_attention_signal(&market);
+    let (_, _) = evaluate_attention(&mut profile, signal, 1);
+    let next = profile.next_due;
+    assert!(next >= 2, "evaluate 排期至少推到下一拍");
+    let mut evals = 0;
+    for tick in 2..=5u64 {
+        if tick >= profile.next_due {
+            let _ = evaluate_attention(&mut profile, signal, tick);
+            evals += 1;
+        }
+    }
+    assert!(evals <= 4, "静默窗口内无重复 evaluate（evals={evals}）");
+}
+
+// ── 视图构建（观察基 = 上一收束点公共态）──
+
+#[test]
+fn market_and_self_views_mirror_snapshot_and_account() {
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
+    let view = build_market_view(&snapshot);
+    let sv = view.stocks.get(&StockId(0)).expect("StockId 直映射");
+    assert_eq!(sv.last_price.cents(), 1000);
+    assert_eq!(sv.daily_upper_limit.cents(), 1100);
+    assert_eq!(view.tick, 1);
+    let mut account = GroupAccount::new(500_000, 1);
+    account.shares[0] = 800;
+    account.frozen_today[0] = 300;
+    let own = build_self_view(&account);
+    assert_eq!(own.cash.cents(), 500_000);
+    let pos = own.positions.get(&StockId(0)).expect("持仓视图");
+    assert_eq!(pos.qty, 800);
+    assert_eq!(pos.sellable_qty, 500, "T+1 冻结反映进可卖视图");
+}
+
+// ── 世界级：内联决策驱动真实订单流 ──
+
+/// 找一个"首决策必产生买入意图"的种子（确定性构造，避免测试依赖随机路径）。
+fn seed_that_buys() -> u64 {
+    let config = GameConfig::proposed_defaults();
+    let snapshot = snapshot_one_stock(1000, 1100, 900);
+    let account = GroupAccount::new(1_000_000, 1);
+    for seed in 0..200u64 {
+        let mut profile = NpcProfile {
+            strategy: StrategyData::retail(1.0, 100, 1.0),
+            seed,
+            next_due: 0,
+            // 与 inline fixture 同款（base=1——搜索面=运行面）。
+            attention_base: 1.0,
+            retail_style: None,
+        };
+        // D5 #2：运行序=evaluate（续流）→decide（due 门在调用方——组内
+        /// due 循环保证）。P1-B：signal/market 调用方共享构建。
+        let market = build_market_view(&snapshot);
+        let signal = crate::session::market_attention_signal(&market);
+        let _ = evaluate_attention(&mut profile, signal, 1);
+        let (ops, _) = decide_account(&mut profile, 0, 1, 0, &market, &account, &config);
+        if ops.iter().any(|op| op.side == Side::Buy && op.qty >= 100) {
+            return seed;
+        }
+    }
+    panic!("200 个种子内应存在产生买入的种子（decide_data 到达率 1.0）");
+}
+
+#[test]
+fn inline_decision_drives_orders_and_conservation_holds() {
+    let seed = seed_that_buys();
+    let setup = DecisionSetup {
+        profiles: vec![NpcProfile {
+            strategy: StrategyData::retail(1.0, 100, 1.0),
+            seed,
+            next_due: 0,
+            // D5 #2：base=1 ⇒ observe 恒真+wait=1（保持"每 tick 到期"的
+            /// 既有断言面；signal 概率语义由 attention_gap 测试承载。
+            attention_base: 1.0,
+            retail_style: None,
+        }],
+        attention_gap_ticks: 0,
+    };
+    let mut spec = basic_spec(
+        1,
+        1,
+        1,
+        Box::new(|_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) }),
+    );
+    // 初始零持仓：与种子搜索的单元上下文一致（持仓影响策略分类）。
+    spec.initial_shares = vec![vec![vec![0u32]]];
+    spec.decision = Some(setup);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(3).expect("3 tick 收敛");
+    let resting_tick1 = world.report_log[0].desk_resting.clone();
+    let report = world.shutdown().expect("关停");
+    let group = &report.group_finals[0];
+    // 每 tick 到期一次（gap=0）。
+    assert_eq!(group.decide_calls_total, 3, "attention 简化：每 tick due");
+    // 守恒：现金总量 + 费用桶 = 初始（严格所有权下的决策-扣除-回流闭环）。
+    let cash: i64 = group.accounts.iter().map(|a| a.cash).sum();
+    let fees: i64 = report.desk_finals.iter().map(|d| d.fee_sink).sum();
+    assert_eq!(cash + fees, 1_000_000, "决策路径守恒");
+    // 决策确已产生订单流：tick1 收束时交易部挂单 > 0（符号价买单挂 @笼子上限）。
+    assert!(
+        resting_tick1.iter().any(|(_, r)| *r > 0),
+        "决策产生的订单应到达交易部挂簿：{resting_tick1:?}"
+    );
+}
+
+// ── P1-B 等价守卫：共享视图下决策序列黄金值 ──
+
+// golden 常量：P1-B 落地时实测锁定（单组确定性 fixture，RNG/视图漂移即红）。
+const SHARED_VIEW_GOLDEN_CASH: i64 = 1_000_000;
+const SHARED_VIEW_GOLDEN_FEES: i64 = 0;
+const SHARED_VIEW_GOLDEN_VOLUME: u64 = 0;
+const SHARED_VIEW_GOLDEN_SHARES: u32 = 0;
+/// 每 tick 挂簿余量节奏（决策订单流的逐 tick 痕迹——RNG/视图漂移即变）。
+const SHARED_VIEW_GOLDEN_RESTING: &[(u16, u64)] = &[(0, 1), (0, 2), (0, 2), (0, 3), (0, 3)];
+
+// 共享 MarketView/signal 后，同种子决策序列必须逐字段等价（RNG 流不变
+// 的硬验收）。单组 fixture 无组间并发交错——终态确定。golden 值在 P1-B
+// 落地时实测锁定；任何改变 RNG 消费顺序或视图构建的回归都会在此显红。
+#[test]
+fn shared_view_decision_sequence_golden() {
+    let setup = DecisionSetup {
+        profiles: vec![NpcProfile {
+            strategy: StrategyData::retail(1.0, 100, 1.0),
+            seed: 12345,
+            next_due: 0,
+            attention_base: 0.3,
+            retail_style: None,
+        }],
+        attention_gap_ticks: 0,
+    };
+    let mut spec = basic_spec(
+        1,
+        1,
+        1,
+        Box::new(|_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) }),
+    );
+    spec.initial_shares = vec![vec![vec![0u32; 1]; 1]; 1];
+    spec.decision = Some(setup);
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(5).expect("5 tick 收敛");
+    let resting_per_tick: Vec<Vec<(u16, u64)>> = world
+        .report_log
+        .iter()
+        .map(|r| r.desk_resting.clone())
+        .collect();
+    let report = world.shutdown().expect("关停");
+    let group = &report.group_finals[0];
+    let cash = group.accounts[0].cash;
+    let fees: i64 = report.desk_finals.iter().map(|d| d.fee_sink).sum();
+    let volume: u64 = report.desk_finals.iter().map(|d| d.market.volume_today).sum();
+    assert_eq!(cash + fees, 1_000_000, "守恒（golden 前置）");
+    // golden 断言（决策/RNG 流漂移即红）：
+    assert_eq!((cash, fees, volume), (SHARED_VIEW_GOLDEN_CASH, SHARED_VIEW_GOLDEN_FEES, SHARED_VIEW_GOLDEN_VOLUME),
+        "共享视图决策序列等价守卫（决策/RNG 流漂移即红）");
+    assert_eq!(group.accounts[0].shares, vec![SHARED_VIEW_GOLDEN_SHARES],
+        "持仓终态 golden");
+    assert_eq!(group.decide_calls_total, 5, "每 tick due（该种子 wait 采样恒 1）——决策次数 golden");
+    let expected_resting: Vec<Vec<(u16, u64)>> = (0..5)
+        .map(|i| vec![SHARED_VIEW_GOLDEN_RESTING[i]])
+        .collect();
+    assert_eq!(resting_per_tick, expected_resting,
+        "挂簿节奏 golden（决策订单流逐 tick 痕迹）");
+}
+
+#[test]
+fn snapshot_reflects_last_converged_desk_state() {
+    // tick1 成交后，下一 tick 的决策观察基应反映成交价（last_price 移动）。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                plan.places.push(PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: Side::Sell,
+                    price: 1000,
+                    qty: 100,
+                });
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: Side::Buy,
+                    price: 1005,
+                    qty: 100,
+                });
+            }
+            plan
+        })
+    };
+    let mut world = World::spawn(basic_spec(1, 1, 2, Box::new(script))).expect("世界构造");
+    world.run_ticks(2).expect("收敛");
+    let views = world.public_views();
+    assert_eq!(views[0].last_price, 1000, "成交价=maker 价 1000 进入观察基");
+    assert_eq!(views[0].volume_today, 100);
+    assert!(
+        views[0].recent_prices.contains(&1000),
+        "tick 收盘价历史进入观察基：{:?}",
+        views[0].recent_prices
+    );
+}
+
+// ── T+1 日界解冻（组线程接入）──
+
+#[test]
+fn t1_frozen_unfreezes_at_day_boundary_in_group_thread() {
+    // ticks_per_day=4：tick1 买入成交（冻结）；tick5 为新交易日首 tick ⇒ 解冻后可卖。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick, _round| {
+            let mut plan = TickPlan::default();
+            match tick {
+                1 => {
+                    plan.places.push(PlaceSpec {
+                        local: 1,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    });
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Buy,
+                        price: 1000,
+                        qty: 100,
+                    });
+                }
+                // tick2..4 仍在当日：T+1 冻结中，卖出应被组端 skip。
+                2 => {
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    });
+                }
+                // tick5 跨日：解冻后卖出成功（acct1 提供对手买单）。
+                5 => {
+                    plan.places.push(PlaceSpec {
+                        local: 0,
+                        stock: 0,
+                        side: Side::Sell,
+                        price: 1000,
+                        qty: 100,
+                    });
+                    plan.places.push(PlaceSpec {
+                        local: 1,
+                        stock: 0,
+                        side: Side::Buy,
+                        price: 1000,
+                        qty: 100,
+                    });
+                }
+                _ => {}
+            }
+            plan
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.initial_shares = vec![vec![vec![0u32], vec![1_000u32]]];
+    spec.ticks_per_day = 4;
+    spec.auction_ticks = 0;
+    spec.closing_auction_ticks = 0;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(5).expect("5 tick 收敛");
+    let report = world.shutdown().expect("关停");
+    let a0 = &report.group_finals[0].accounts[0];
+    assert_eq!(a0.frozen_today[0], 0, "日界解冻");
+    assert_eq!(a0.shares[0], 0, "tick2 卖出被 T+1 拦、tick5 解冻后卖出");
+    assert_eq!(
+        report.group_finals[0].skipped_orders, 1,
+        "当日卖出显式 skip"
+    );
+}
+
+// ── Sol 二审修复集 5：next_due 入可逆日志（Abort 回放不少一次决策） ──
+
+#[test]
+fn sol5_abort_rolls_back_next_due_reschedule() {
+    // 失败 tick 的决策重排（next_due 前移）必须随 Abort 回滚——否则
+    // 重跑同 tick 时 NPC 已被排到未来，少一次决策。
+    let setup = DecisionSetup {
+        profiles: vec![
+            NpcProfile {
+                strategy: StrategyData::retail(1.0, 100, 1.0),
+                seed: 11,
+                next_due: 0,
+        attention_base: 0.30,
+        retail_style: None,
+            },
+            NpcProfile {
+                strategy: StrategyData::retail(1.0, 100, 1.0),
+                seed: 22,
+                next_due: 1,
+        attention_base: 0.30,
+        retail_style: None,
+            },
+        ],
+        attention_gap_ticks: 4,
+    };
+    let mut spec = basic_spec(
+        1,
+        1,
+        2,
+        Box::new(|_g: GroupIdx| -> GroupScript { Box::new(|_t, _r| TickPlan::default()) }),
+    );
+    spec.decision = Some(setup);
+    let mut world = World::spawn(spec).expect("世界构造");
+    let fail: super::coordinator::Validator = Box::new(|ev| {
+        if ev.tick == 1 {
+            Err("sol5 注入".to_owned())
+        } else {
+            Ok(())
+        }
+    });
+    world.set_validator(fail);
+    assert!(world.run_ticks(1).is_err(), "tick1 注入失败（Abort）");
+    // Abort 后 attention 恢复初始 due（0/1）——不回滚则已被重排到 ≥2。
+    let collected = world.collect_group_attention().expect("注意力收集");
+    let entries = &collected[0].1;
+    let due0 = entries
+        .iter()
+        .find(|(l, _, _)| *l == 0)
+        .expect("local0 在名册")
+        .1;
+    let due1 = entries
+        .iter()
+        .find(|(l, _, _)| *l == 1)
+        .expect("local1 在名册")
+        .1;
+    assert_eq!(due0, 0, "local0 next_due 回滚到初始 0（Sol 二审：否则 ≥2）");
+    assert_eq!(due1, 1, "local1 next_due 回滚到初始 1");
+    // 重跑同 tick：两 NPC 再次到期决策（决策次数不少一次）。
+    world.set_validator(Box::new(|_| Ok(())));
+    world.run_ticks(1).expect("tick1 重跑");
+    let report = world.shutdown().expect("关停");
+    assert_eq!(
+        report.group_finals[0].decide_calls_total, 4,
+        "两次 tick1 各 2 次 NPC 决策（第一次失败+回滚+重跑）"
+    );
+}

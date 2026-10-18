@@ -34,12 +34,12 @@ fn duplicate_mixed_industry_members_return_typed_error() {
             kind: ReportKind::Monthly,
             source: ReportSource::Consolidated {
                 request: ConsolidationRequest {
-                    root: MemberId("duplicate".into()),
+                    root: MemberId(0),
                     members: books
                         .into_iter()
                         .map(|books| GroupMember {
                             spec: MemberSpec {
-                                id: MemberId("duplicate".into()),
+                                id: MemberId(0),
                                 group_parent: None,
                                 issued_shares: 100,
                                 parent_held_shares: 0,
@@ -62,7 +62,7 @@ fn duplicate_mixed_industry_members_return_typed_error() {
             result,
             Err(ReportError::Consolidation(error))
                 if matches!(*error, ConsolidationError::DuplicateMember { ref member }
-                    if member == &MemberId("duplicate".into()))
+                    if member == &MemberId(0))
         ));
     }
 }
@@ -107,10 +107,10 @@ fn mixed_industry_receivables_keep_their_statement_meaning() {
         engine::company::insurance::insurance_account_chart(),
         "2501",
     );
-    let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+    let member = |id: u32, parent: Option<u32>, held, books| GroupMember {
         spec: MemberSpec {
-            id: MemberId(id.into()),
-            group_parent: parent.map(|id| MemberId(id.into())),
+            id: MemberId(id),
+            group_parent: parent.map(MemberId),
             issued_shares: 100,
             parent_held_shares: held,
         },
@@ -121,11 +121,8 @@ fn mixed_industry_receivables_keep_their_statement_meaning() {
         kind: ReportKind::Monthly,
         source: ReportSource::Consolidated {
             request: ConsolidationRequest {
-                root: MemberId("root".into()),
-                members: vec![
-                    member("root", None, 0, &parent),
-                    member("sub", Some("root"), 80, &sub),
-                ],
+                root: MemberId(0),
+                members: vec![member(0, None, 0, &parent), member(1, Some(0), 80, &sub)],
                 intercompany_balances: vec![],
                 intercompany_sales: vec![],
             },
@@ -186,10 +183,10 @@ fn consolidated_current_tax_balances_preserve_separate_taxpayers_and_prior_year(
     for (overpaid, payable) in [(30, 30), (30, 50), (50, 30)] {
         let parent = make_books(PostingSide::Debit, overpaid);
         let sub = make_books(PostingSide::Credit, payable);
-        let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+        let member = |id: u32, parent: Option<u32>, held, books| GroupMember {
             spec: MemberSpec {
-                id: MemberId(id.into()),
-                group_parent: parent.map(|id| MemberId(id.into())),
+                id: MemberId(id),
+                group_parent: parent.map(MemberId),
                 issued_shares: 100,
                 parent_held_shares: held,
             },
@@ -200,11 +197,8 @@ fn consolidated_current_tax_balances_preserve_separate_taxpayers_and_prior_year(
             kind: ReportKind::Monthly,
             source: ReportSource::Consolidated {
                 request: ConsolidationRequest {
-                    root: MemberId("root".into()),
-                    members: vec![
-                        member("root", None, 0, &parent),
-                        member("sub", Some("root"), 80, &sub),
-                    ],
+                    root: MemberId(0),
+                    members: vec![member(0, None, 0, &parent), member(1, Some(0), 80, &sub)],
                     intercompany_balances: vec![],
                     intercompany_sales: vec![],
                 },
@@ -284,10 +278,10 @@ fn consolidated_tax_assets_classify_prior_and_current_balances_independently() {
     };
     let parent = make_books(PostingSide::Debit, 30, PostingSide::Credit);
     let child = make_books(PostingSide::Credit, 40, PostingSide::Debit);
-    let member = |id: &str, parent: Option<&str>, held, books| GroupMember {
+    let member = |id: u32, parent: Option<u32>, held, books| GroupMember {
         spec: MemberSpec {
-            id: MemberId(id.into()),
-            group_parent: parent.map(|id| MemberId(id.into())),
+            id: MemberId(id),
+            group_parent: parent.map(MemberId),
             issued_shares: 100,
             parent_held_shares: held,
         },
@@ -298,11 +292,8 @@ fn consolidated_tax_assets_classify_prior_and_current_balances_independently() {
         kind: ReportKind::Monthly,
         source: ReportSource::Consolidated {
             request: ConsolidationRequest {
-                root: MemberId("root".into()),
-                members: vec![
-                    member("root", None, 0, &parent),
-                    member("child", Some("root"), 80, &child),
-                ],
+                root: MemberId(0),
+                members: vec![member(0, None, 0, &parent), member(1, Some(0), 80, &child)],
                 intercompany_balances: vec![],
                 intercompany_sales: vec![],
             },
@@ -368,41 +359,13 @@ fn consolidated_missing_parent_income_is_rejected_at_report_validation() {
 }
 
 #[test]
-fn consolidated_missing_report_period_parent_income_is_rejected() {
-    let parent = group_parent_books();
-    let sub = group_sub_books();
-    let mut report = generate_report_set(ReportRequest {
-        period: AccountingPeriod::from_iso("2030-03").unwrap(),
-        kind: ReportKind::Monthly,
-        source: ReportSource::Consolidated {
-            request: group_request(&parent, &sub),
-        },
-        version: ReportVersion {
-            sequence: 1,
-            supersedes: None,
-            kind: VersionKind::Original,
-        },
-        adjustments: &BTreeMap::new(),
-    })
-    .unwrap();
-    report.income.report_period_net_income_to_parent = None;
-
-    let error = report
-        .validate()
-        .expect_err("consolidated report must carry same-window parent income");
-    assert!(error
-        .to_string()
-        .contains("income.report_period_net_income_to_parent"));
-}
-
-#[test]
 fn standalone_parent_income_none_remains_valid() {
     let books = crate::fixture::industrial_fixture();
     let report = generate_report_set(ReportRequest {
         period: AccountingPeriod::from_iso("2030-06").unwrap(),
         kind: ReportKind::Monthly,
         source: crate::fixture::standalone(
-            "standalone",
+            0,
             &books,
             engine::accounting::reports::IndustryPresentation::Industrial,
         ),
@@ -474,10 +437,7 @@ fn consolidated_march_gold() {
     .expect("consolidated report must generate");
     set.validate().expect("consolidated set must cross-foot");
 
-    assert_eq!(
-        set.scope,
-        ScopeId::Consolidated(MemberId(GROUP_ROOT.to_string()))
-    );
+    assert_eq!(set.scope, ScopeId::Consolidated(MemberId(GROUP_ROOT)));
 
     // —— 资产负债表：内部应收/应付全额抵销，存货扣未实现利润 200 ——
     let bs = &set.balance_sheet;
@@ -568,31 +528,4 @@ fn consolidated_march_gold() {
         .consolidation_split_items
         .iter()
         .any(|item| item.code == "4001"));
-}
-
-#[test]
-fn consolidated_quarter_validation_uses_report_window_parent_income() {
-    let parent = group_parent_books();
-    let sub = group_sub_books();
-    let set = generate_report_set(ReportRequest {
-        period: AccountingPeriod::from_iso("2030-06").expect("period"),
-        kind: ReportKind::Quarter,
-        source: ReportSource::Consolidated {
-            request: group_request(&parent, &sub),
-        },
-        version: ReportVersion {
-            sequence: 1,
-            supersedes: None,
-            kind: VersionKind::Original,
-        },
-        adjustments: &BTreeMap::new(),
-    })
-    .expect("consolidated quarter must generate");
-
-    assert_ne!(
-        set.income.net_income_to_parent,
-        set.income.report_period_net_income_to_parent
-    );
-    set.validate()
-        .expect("quarterly report validates against same-window parent income");
 }

@@ -4,8 +4,7 @@
 //! 只做单股状态：涨跌停拒单、last_price 记录、日终重置。
 //! 不碰 account 结算、不碰全 tick 编排（session/simulator）。
 
-use crate::account::StockCode;
-use crate::company::ex_reference_price::ExReferencePrice;
+use crate::account::StockId;
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{
     AccountId, MatchResult, Order, OrderBook, OrderBookDelta, OrderError, OrderId, Side,
@@ -20,7 +19,7 @@ pub enum MarketError {
     /// 下单价超出涨跌停范围 [down_stop, up_stop]。
     #[error("limit exceeded for {code:?}: price {price:?} not in [{down:?}, {up:?}]")]
     LimitExceeded {
-        code: StockCode,
+        code: StockId,
         price: Money,
         down: Money,
         up: Money,
@@ -37,45 +36,6 @@ pub enum MarketError {
     /// 权威价格状态必须为正，否则无法计算交易边界。
     #[error("invalid price state: {field}={value:?} (must be positive)")]
     InvalidPriceState { field: &'static str, value: Money },
-    /// 准备日与除息日不符，或参考价无法用于当前市场。
-    #[error("invalid ex-date reference for {code:?}: {reason}")]
-    InvalidExDateReference { code: StockCode, reason: String },
-    /// 同一除息日收到不同市场锚，或事件日期倒退。
-    #[error("cash ex-reference conflicts for {code:?}: {reason}")]
-    CashExReferenceConflict { code: StockCode, reason: String },
-}
-
-/// 涨跌停/价格笼子边界价的整数推导核心（单位：分）。
-///
-/// 语义与 [`Market`] 的 `price_bound` 完全一致，提取为共享函数供两处复用：
-/// （1）`Market::price_bound` 自身；（2）公司行为偏好封顶的跌停链迭代
-/// （`company::simple::preferences`，见 2026-10-07 修复轮 2：闭式线性下界在
-/// 低价域被证伪，跌停敞口余量必须按本核心逐日迭代推导）。
-/// 推导：`reference × ratio_bps / 10000` 按正数四舍五入（half-up）取至最小
-/// 价位；**涨/跌幅度不足一个价位（舍入结果未离开昨收）时强制至少移动一个
-/// 价位**；最低不低于一个价位。
-/// 返回 `None` 表示输入非法（reference/tick 非正）或推导溢出，由调用方
-/// 显式映射为既有错误（铁律二：不静默吞错）。
-pub(crate) fn price_bound_cents(
-    reference_cents: i64,
-    ratio_bps: u32,
-    tick_cents: i64,
-    upward: bool,
-) -> Option<i64> {
-    if reference_cents <= 0 || tick_cents <= 0 {
-        return None;
-    }
-    let denominator = i128::from(10_000_u32) * i128::from(tick_cents);
-    let numerator = i128::from(reference_cents) * i128::from(ratio_bps);
-    let rounded_ticks = (numerator + denominator / 2) / denominator;
-    let rounded_cents = i64::try_from(rounded_ticks.checked_mul(i128::from(tick_cents))?).ok()?;
-    let mut bound = rounded_cents.max(tick_cents);
-    if upward && bound <= reference_cents {
-        bound = reference_cents.checked_add(tick_cents)?;
-    } else if !upward && bound >= reference_cents {
-        bound = (reference_cents - tick_cents).max(tick_cents);
-    }
-    Some(bound)
 }
 
 /// 单只股票的市场状态。
@@ -89,40 +49,30 @@ pub(crate) fn price_bound_cents(
 #[derive(Clone, Debug)]
 pub struct Market {
     /// 股票代码。
-    code: StockCode,
+    code: StockId,
     /// 委托其撮合的订单簿。
     book: OrderBook,
     /// 最新成交价（成交驱动更新；首日 = initial_price）。
     last_price: Money,
-    /// 昨日收盘/交易所除息参考价（涨跌停基准）。
+    /// 昨日收盘价（涨跌停基准；日终重置为 last_price）。
     last_close: Money,
-    /// 除息日无成交前，限价笼子的行情回退应使用交易所除息前收。
-    cash_ex_reference_pending_trade: bool,
-    /// 最近已应用的市场除息事实；与 pending 独立，供幂等重放和日期顺序校验。
-    last_cash_ex_reference: Option<ExReferencePrice>,
-    /// 本交易日是否已有受理委托或成交；用于拒绝开市后迟到的锚安装。
-    day_market_activity: bool,
     /// 涨跌停比例（基点，10%=1000），避免边界价格使用浮点运算。
     limit_bps: u32,
     /// 申报价格最小变动单位。
     tick: Money,
+    /// 进入 Auction 时已经受理的下一 seq 截点；不保存第二份订单或可变盘口。
+    /// Closing 的公开连续余单取 seq < 截点，Opening 由 PhasePolicy 隐藏全部未清算单。
+    auction_public_cutoff_sequence: u64,
 }
 
 /// The changed part of one stock book after a tick-private worker round.
 /// Order identities locate rows; they do not assign trading priority.
 #[derive(Clone, Debug)]
 pub(crate) struct MarketDelta {
-    code: StockCode,
+    code: StockId,
     before_last_price: Money,
-    before_last_close: Money,
     after_last_price: Money,
     last_close: Money,
-    before_cash_ex_reference_pending_trade: bool,
-    cash_ex_reference_pending_trade: bool,
-    before_last_cash_ex_reference: Option<ExReferencePrice>,
-    last_cash_ex_reference: Option<ExReferencePrice>,
-    before_day_market_activity: bool,
-    day_market_activity: bool,
     book: OrderBookDelta,
 }
 
@@ -132,12 +82,9 @@ impl Market {
             &self.code,
             self.last_price,
             self.last_close,
-            self.cash_ex_reference_pending_trade,
-            self.last_cash_ex_reference
-                .map(|reference| (reference.ex_date.to_string(), reference.reference_price)),
-            self.day_market_activity,
             self.limit_bps,
             self.tick,
+            self.auction_public_cutoff_sequence,
             self.book.hash_projection(),
         )
     }
@@ -148,7 +95,7 @@ impl Market {
     /// 绝不静默 clamp 到默认值。tick 非法透传 [`OrderBook::new`] 的
     /// [`MarketError::OrderBook`]。
     pub fn new(
-        code: StockCode,
+        code: StockId,
         initial_price: Money,
         limit_pct: f64,
         tick: Money,
@@ -176,11 +123,9 @@ impl Market {
             book,
             last_price: initial_price,
             last_close: initial_price,
-            cash_ex_reference_pending_trade: false,
-            last_cash_ex_reference: None,
-            day_market_activity: false,
             limit_bps: rounded_limit as u32,
             tick,
+            auction_public_cutoff_sequence: 0,
         })
     }
 
@@ -205,11 +150,7 @@ impl Market {
             Side::Buy => self.best_ask().or_else(|| self.best_bid()),
             Side::Sell => self.best_bid().or_else(|| self.best_ask()),
         }
-        .unwrap_or(if self.cash_ex_reference_pending_trade {
-            self.last_close
-        } else {
-            self.last_price
-        })
+        .unwrap_or(self.last_price)
     }
 
     /// 连续竞价价格笼子的买入上限或卖出下限。
@@ -283,14 +224,23 @@ impl Market {
                 value: reference,
             });
         }
-        let bound_cents =
-            price_bound_cents(reference.cents(), ratio_bps, self.tick.cents(), upward).ok_or_else(
-                || MoneyError::Overflow {
-                    op: "positive_half_up_price_bound",
-                    operand: format!("{} * {ratio_bps} / 10000", reference.cents()),
-                },
-            )?;
-        Ok(Money::from_cents(bound_cents))
+        let denominator = i128::from(10_000_u32) * i128::from(self.tick.cents());
+        let numerator = i128::from(reference.cents()) * i128::from(ratio_bps);
+        let rounded_ticks = (numerator + denominator / 2) / denominator;
+        let rounded_cents = rounded_ticks
+            .checked_mul(i128::from(self.tick.cents()))
+            .and_then(|value| i64::try_from(value).ok())
+            .ok_or_else(|| MoneyError::Overflow {
+                op: crate::money::MoneyOp::PositiveHalfUpBound,
+                operand: reference.cents(),
+            })?;
+        let mut bound = Money::from_cents(rounded_cents.max(self.tick.cents()));
+        if upward && bound <= reference {
+            bound = reference.add(self.tick)?;
+        } else if !upward && bound >= reference {
+            bound = reference.sub(self.tick)?.max(self.tick);
+        }
+        Ok(bound)
     }
 
     /// 最新成交价（只读）。
@@ -303,180 +253,22 @@ impl Market {
         self.last_close
     }
 
-    /// 涨跌幅限制（整数基点，10% = 1000）。构造期由 `limit_pct` 转换的权威
-    /// 整数值；公司行为偏好提案的跌停余量封顶按该整数推导（只读）。
-    pub const fn limit_bps(&self) -> u32 {
-        self.limit_bps
-    }
-
-    /// 申报价格最小变动单位（只读）。公司行为偏好的跌停链迭代必须与
-    /// `price_bound` 使用同一价位取整，防止两侧整数口径漂移。
-    pub const fn tick(&self) -> Money {
-        self.tick
-    }
-
-    /// 在调用方确认该证券除息日首次开市前安装已核验的除息参考价。
-    /// 仅更新行情前收/涨跌停锚，不覆盖真实最新成交，不生成行情或成交。
-    pub fn prepare_ex_date_reference(
-        &mut self,
-        prepared_date: crate::calendar::CivilDate,
-        ex_reference: ExReferencePrice,
-    ) -> Result<(), MarketError> {
-        if prepared_date != ex_reference.ex_date {
-            return Err(MarketError::InvalidExDateReference {
-                code: self.code.clone(),
-                reason: format!(
-                    "prepared date {prepared_date} differs from ex-date {}",
-                    ex_reference.ex_date
-                ),
-            });
-        }
-        if let Some(previous) = self.last_cash_ex_reference {
-            if previous == ex_reference {
-                return Ok(());
-            }
-            if previous.ex_date >= ex_reference.ex_date {
-                return Err(MarketError::CashExReferenceConflict {
-                    code: self.code.clone(),
-                    reason: format!(
-                        "new ex-date {} does not follow installed ex-date {}",
-                        ex_reference.ex_date, previous.ex_date
-                    ),
-                });
-            }
-        }
-        if ex_reference.reference_price <= Money::ZERO {
-            return Err(MarketError::InvalidPriceState {
-                field: "ex_reference_price",
-                value: ex_reference.reference_price,
-            });
-        }
-        if ex_reference.reference_price.cents() % self.tick.cents() != 0 {
-            return Err(MarketError::InvalidExDateReference {
-                code: self.code.clone(),
-                reason: format!(
-                    "reference price {:?} is not aligned to tick {:?}",
-                    ex_reference.reference_price, self.tick
-                ),
-            });
-        }
-        if self.day_market_activity {
-            return Err(MarketError::InvalidExDateReference {
-                code: self.code.clone(),
-                reason: "market activity has already started for this trading day".to_owned(),
-            });
-        }
-        self.last_close = ex_reference.reference_price;
-        self.cash_ex_reference_pending_trade = true;
-        self.last_cash_ex_reference = Some(ex_reference);
-        Ok(())
-    }
-
-    /// 除息参考价是否仍是当日无成交前收锚，供严格存档恢复。
-    pub const fn cash_ex_reference_pending_trade(&self) -> bool {
-        self.cash_ex_reference_pending_trade
-    }
-
-    /// 最近已应用的除息事实，包含事件日期和税前参考价。
-    pub const fn last_cash_ex_reference(&self) -> Option<ExReferencePrice> {
-        self.last_cash_ex_reference
-    }
-
-    /// 本股当交易日是否已有受理委托或成交，供严格存档恢复。
-    pub const fn day_market_activity(&self) -> bool {
-        self.day_market_activity
-    }
-
-    pub(crate) fn mark_day_market_activity(&mut self) {
-        self.day_market_activity = true;
-    }
-
-    pub(crate) fn validate_restored_facts(
-        code: &StockCode,
-        snapshot_date: crate::calendar::CivilDate,
-        last_price: Money,
-        last_close: Money,
-        cash_ex_reference_pending_trade: bool,
-        last_cash_ex_reference: Option<ExReferencePrice>,
-        tick: Money,
-    ) -> Result<(), MarketError> {
-        if tick <= Money::ZERO {
-            return Err(MarketError::InvalidExDateReference {
-                code: code.clone(),
-                reason: format!("stored market tick must be positive, got {tick:?}"),
-            });
-        }
-        for (field, value) in [("last_price", last_price), ("last_close", last_close)] {
-            if value <= Money::ZERO {
-                return Err(MarketError::InvalidPriceState { field, value });
-            }
-        }
-        if let Some(reference) = last_cash_ex_reference {
-            if reference.ex_date > snapshot_date {
-                return Err(MarketError::InvalidExDateReference {
-                    code: code.clone(),
-                    reason: format!(
-                        "stored ex-date {} is after snapshot date {snapshot_date}",
-                        reference.ex_date
-                    ),
-                });
-            }
-            if reference.reference_price <= Money::ZERO
-                || reference.reference_price.cents() % tick.cents() != 0
-            {
-                return Err(MarketError::InvalidExDateReference {
-                    code: code.clone(),
-                    reason: format!(
-                        "stored ex-reference is not positive and tick aligned: {reference:?}"
-                    ),
-                });
-            }
-        }
-        if cash_ex_reference_pending_trade {
-            let reference =
-                last_cash_ex_reference.ok_or_else(|| MarketError::InvalidExDateReference {
-                    code: code.clone(),
-                    reason: "pending ex-reference has no applied reference fact".to_owned(),
-                })?;
-            if last_close != reference.reference_price {
-                return Err(MarketError::InvalidExDateReference {
-                    code: code.clone(),
-                    reason: "pending ex-reference does not match the market previous close"
-                        .to_owned(),
-                });
-            }
-        }
-        Ok(())
-    }
-
     /// 股票代码（只读引用）。
-    pub fn code(&self) -> &StockCode {
+    pub fn code(&self) -> &StockId {
         &self.code
     }
 
     // ── 经过上层校验的恢复事实与竞价结果写入口 ──
 
-    /// 完整 save slot 校验后恢复市场价格与除息运行事实。
-    pub(crate) fn restore_prices(
-        &mut self,
-        last_price: Money,
-        last_close: Money,
-        cash_ex_reference_pending_trade: bool,
-        day_market_activity: bool,
-        last_cash_ex_reference: Option<ExReferencePrice>,
-    ) {
+    /// 完整 save slot 校验后同时恢复两项权威价格事实。
+    pub(crate) fn restore_prices(&mut self, last_price: Money, last_close: Money) {
         self.last_price = last_price;
         self.last_close = last_close;
-        self.cash_ex_reference_pending_trade = cash_ex_reference_pending_trade;
-        self.day_market_activity = day_market_activity;
-        self.last_cash_ex_reference = last_cash_ex_reference;
     }
 
     /// 竞价 caller 在完成撮合后应用其 clearing price，不重新改变输入接受集。
     pub(crate) fn apply_auction_price(&mut self, price: Money) {
         self.last_price = price;
-        self.cash_ex_reference_pending_trade = false;
-        self.day_market_activity = true;
     }
 
     #[cfg(test)]
@@ -528,10 +320,86 @@ impl Market {
         // 末笔成交价成为新的 last_price（成交驱动）。
         if let Some(last) = result.trades.last() {
             self.last_price = last.price;
-            self.cash_ex_reference_pending_trade = false;
         }
-        self.day_market_activity = true;
         Ok(result)
+    }
+
+    /// 返回当前撮合模式（透传底层 OrderBook）。
+    pub fn matching_mode(&self) -> crate::orderbook::MatchingMode {
+        self.book.mode()
+    }
+
+    /// 设置撮合模式（透传底层 OrderBook）。
+    pub fn set_matching_mode(
+        &mut self,
+        mode: crate::orderbook::MatchingMode,
+    ) -> Result<(), crate::orderbook::OrderError> {
+        let before = self.book.mode();
+        self.book.set_mode(mode)?;
+        if before != mode {
+            self.auction_public_cutoff_sequence = if mode == crate::orderbook::MatchingMode::Auction {
+                self.book.next_sequence()
+            } else { 0 };
+        }
+        Ok(())
+    }
+
+    pub(crate) fn auction_public_cutoff_sequence(&self) -> u64 {
+        self.auction_public_cutoff_sequence
+    }
+
+    /// 恢复受理时序事实；合法性在安装到 authority 之前由存档完整校验确认。
+    pub(crate) fn restore_auction_public_cutoff_sequence(&mut self, cutoff: u64) -> Result<(), MarketError> {
+        // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
+        /// 恒空、next_sequence=0）——空簿时截点不与本簿对拍（desk 恢复
+        /// 域接管；旧簿单恢复后仍按原校验）。
+        if cutoff > self.book.next_sequence() && self.book.next_sequence() > 0 {
+            return Err(MarketError::InvalidParams { reason: "公开可见性截点超过 book 下一受理序号".to_owned() });
+        }
+        self.auction_public_cutoff_sequence = cutoff;
+        Ok(())
+    }
+
+    pub(crate) fn depth_before_sequence(&self, cutoff: u64) -> (Vec<(Money, u64)>, Vec<(Money, u64)>) {
+        let mut bids = BTreeMap::<Money, u64>::new();
+        let mut asks = BTreeMap::<Money, u64>::new();
+        for order in self.resting_order_refs().filter(|order| order.seq < cutoff) {
+            let level = match order.side { Side::Buy => &mut bids, Side::Sell => &mut asks }
+                .entry(order.price).or_default();
+            *level = level.checked_add(u64::from(order.qty)).expect("公开盘口数量不能溢出");
+        }
+        (bids.into_iter().rev().collect(), asks.into_iter().collect())
+    }
+
+    /// 集合竞价清算：在清算价批量撮合，并由末笔清算价更新 last_price。
+    pub fn execute_auction_clearing(
+        &mut self,
+        exchange: crate::StockExchange,
+    ) -> Result<crate::orderbook::AuctionClearingResult, MarketError> {
+        let result = self
+            .book
+            .execute_auction_clearing(self.last_close, exchange)?;
+        if let Some(price) = result.price {
+            self.last_price = price;
+        }
+        Ok(result)
+    }
+
+    /// 集合竞价参考价（不产生 Trades，不修改状态）。
+    pub fn indicative_clearing_price(
+        &self,
+        exchange: crate::StockExchange,
+    ) -> Result<Option<Money>, MarketError> {
+        Ok(self
+            .book
+            .indicative_clearing_price(self.last_close, exchange)?)
+    }
+
+    pub(crate) fn auction_indicative(
+        &self,
+        exchange: crate::StockExchange,
+    ) -> Result<(Option<(Money, u64)>, u64), MarketError> {
+        Ok(self.book.auction_indicative(self.last_close, exchange)?)
     }
 
     /// 买盘最优价（透传 book）。空簿返回 None。
@@ -584,29 +452,20 @@ impl Market {
         &self,
         before_last_price: Money,
         before_last_close: Money,
-        before_cash_ex_reference_pending_trade: bool,
-        before_last_cash_ex_reference: Option<ExReferencePrice>,
-        before_day_market_activity: bool,
         before_next_seq: u64,
         originals: BTreeMap<OrderId, Option<Order>>,
     ) -> Result<MarketDelta, MarketError> {
         if self.last_close != before_last_close {
             return Err(MarketError::OrderBook(OrderError::ProjectionMismatch {
-                reason: "continuous stock round changed yesterday's close".to_owned(),
+                reason: crate::orderbook::ProjectionMismatchKind::YesterdayCloseChanged,
+                context: Vec::new(),
             }));
         }
         Ok(MarketDelta {
             code: self.code.clone(),
             before_last_price,
-            before_last_close,
             after_last_price: self.last_price,
             last_close: self.last_close,
-            before_cash_ex_reference_pending_trade,
-            cash_ex_reference_pending_trade: self.cash_ex_reference_pending_trade,
-            before_last_cash_ex_reference,
-            day_market_activity: self.day_market_activity,
-            before_day_market_activity,
-            last_cash_ex_reference: self.last_cash_ex_reference,
             book: self.book.changed_orders_since(before_next_seq, originals),
         })
     }
@@ -614,21 +473,15 @@ impl Market {
     pub(crate) fn apply_changed_orders(&mut self, delta: MarketDelta) -> Result<(), MarketError> {
         if self.code != delta.code
             || self.last_price != delta.before_last_price
-            || self.last_close != delta.before_last_close
             || self.last_close != delta.last_close
-            || self.cash_ex_reference_pending_trade != delta.before_cash_ex_reference_pending_trade
-            || self.last_cash_ex_reference != delta.before_last_cash_ex_reference
-            || self.day_market_activity != delta.before_day_market_activity
         {
             return Err(MarketError::OrderBook(OrderError::ProjectionMismatch {
-                reason: "candidate market version differs from stock worker".to_owned(),
+                reason: crate::orderbook::ProjectionMismatchKind::MarketVersionDiffers,
+                context: Vec::new(),
             }));
         }
         self.book.apply_changes(delta.book)?;
         self.last_price = delta.after_last_price;
-        self.cash_ex_reference_pending_trade = delta.cash_ex_reference_pending_trade;
-        self.day_market_activity = delta.day_market_activity;
-        self.last_cash_ex_reference = delta.last_cash_ex_reference;
         Ok(())
     }
 
@@ -673,16 +526,13 @@ impl Market {
         Ok(self.book.cancel(id)?)
     }
 
-    /// 日终：有真实成交时以 `last_price` 重置涨跌停基准；除息日尚无成交时保留除息参考价。
+    /// 日终：`last_close = last_price`，为次日重置涨跌停基准。
     ///
     /// 涨跌停价以 `last_close` 为基准（见 [`Self::up_stop`] / [`Self::down_stop`]），
-    /// 日终通常把昨收对齐到当日最新成交价；除息后无成交期间保留交易所参考价。
+    /// 日终把昨收对齐到当日最新成交价，使次日 ±`limit_pct` 区间跟随当日收盘。
     pub fn end_of_day(&mut self) {
-        if !self.cash_ex_reference_pending_trade {
-            self.last_close = self.last_price;
-        }
+        self.last_close = self.last_price;
         self.book.clear();
-        self.day_market_activity = false;
     }
 
     /// 卖盘深度（透传 book）：按价低→高，每价位聚合总数量。空簿返回空 Vec。
@@ -712,7 +562,7 @@ mod price_limit_state_tests {
     fn mk_market() -> Market {
         // last_close=last_price=10.00，limit=0.10，tick=0.01
         Market::new(
-            StockCode("600101".to_string()),
+            StockId(0),
             Money::from_cents(1000),
             0.10,
             Money::from_cents(1),
@@ -787,7 +637,7 @@ mod price_limit_state_tests {
     #[test]
     fn legal_limit_order_prices_keep_the_wider_ten_tick_cage_and_propagate_errors() {
         let mut market = Market::new(
-            StockCode("LOW_PRICE".to_string()),
+            StockId(0),
             Money::from_cents(285),
             0.10,
             Money::from_cents(1),
@@ -804,188 +654,5 @@ mod price_limit_state_tests {
         market.fixture_set_last_close(Money::from_cents(i64::MAX));
         assert!(market.limit_order_price_bound(Side::Buy, true).is_err());
         assert!(market.limit_order_price_bound(Side::Buy, false).is_err());
-    }
-
-    #[test]
-    fn ex_date_reference_changes_quotes_and_limits_without_rewriting_last_trade() {
-        let mut market = mk_market();
-        let ex_date = crate::calendar::CivilDate::from_ymd(2026, 10, 7).unwrap();
-        let reference = crate::company::ex_reference_price::ExReferencePrice {
-            ex_date,
-            reference_price: Money::from_cents(900),
-        };
-
-        market
-            .prepare_ex_date_reference(ex_date, reference)
-            .unwrap();
-
-        assert_eq!(market.last_price(), Money::from_cents(1000));
-        assert_eq!(market.last_close(), Money::from_cents(900));
-        assert_eq!(market.up_stop().unwrap(), Money::from_cents(990));
-        assert_eq!(market.down_stop().unwrap(), Money::from_cents(810));
-        assert_eq!(
-            market.continuous_limit_reference(Side::Buy),
-            Money::from_cents(900)
-        );
-        assert_eq!(
-            market.continuous_limit_bound(Side::Buy).unwrap(),
-            Money::from_cents(918)
-        );
-        assert_eq!(
-            market.limit_order_price_bound(Side::Buy, true).unwrap(),
-            Money::from_cents(918)
-        );
-        assert!(matches!(
-            market.place(sell(8, 1000, 100)),
-            Err(MarketError::LimitExceeded { .. })
-        ));
-        market.end_of_day();
-        assert_eq!(market.last_price(), Money::from_cents(1000));
-        assert_eq!(market.last_close(), Money::from_cents(900));
-    }
-
-    #[test]
-    fn invalid_or_late_ex_date_reference_leaves_market_unchanged() {
-        let mut market = mk_market();
-        let ex_date = crate::calendar::CivilDate::from_ymd(2026, 10, 7).unwrap();
-        let invalid = crate::company::ex_reference_price::ExReferencePrice {
-            ex_date,
-            reference_price: Money::ZERO,
-        };
-        assert!(market.prepare_ex_date_reference(ex_date, invalid).is_err());
-        assert_eq!(market.last_close(), Money::from_cents(1000));
-        assert!(!market.cash_ex_reference_pending_trade());
-        assert_eq!(market.last_cash_ex_reference(), None);
-
-        let mismatched_date = crate::calendar::CivilDate::from_ymd(2026, 10, 8).unwrap();
-        let valid = crate::company::ex_reference_price::ExReferencePrice {
-            ex_date,
-            reference_price: Money::from_cents(900),
-        };
-        assert!(market
-            .prepare_ex_date_reference(mismatched_date, valid)
-            .is_err());
-        assert_eq!(market.last_close(), Money::from_cents(1000));
-        assert_eq!(market.last_cash_ex_reference(), None);
-
-        market.place(sell(1, 1050, 100)).unwrap();
-        assert!(market.prepare_ex_date_reference(ex_date, valid).is_err());
-        assert_eq!(market.last_close(), Money::from_cents(1000));
-        assert_eq!(market.last_cash_ex_reference(), None);
-    }
-
-    #[test]
-    fn pending_ex_reference_is_restored_explicitly_not_inferred_from_price_difference() {
-        let mut market = mk_market();
-        market.restore_prices(
-            Money::from_cents(1000),
-            Money::from_cents(900),
-            false,
-            false,
-            None,
-        );
-        assert_eq!(
-            market.continuous_limit_reference(Side::Buy),
-            Money::from_cents(1000)
-        );
-
-        market.restore_prices(
-            Money::from_cents(1000),
-            Money::from_cents(900),
-            true,
-            false,
-            None,
-        );
-        assert_eq!(
-            market.continuous_limit_reference(Side::Buy),
-            Money::from_cents(900)
-        );
-    }
-
-    #[test]
-    fn ex_reference_is_idempotent_conflict_checked_and_advances_by_explicit_date() {
-        let mut market = mk_market();
-        let first_date = crate::calendar::CivilDate::from_ymd(2026, 10, 7).unwrap();
-        let first = crate::company::ex_reference_price::ExReferencePrice {
-            ex_date: first_date,
-            reference_price: Money::from_cents(900),
-        };
-        market.prepare_ex_date_reference(first_date, first).unwrap();
-        market.end_of_day();
-        market.prepare_ex_date_reference(first_date, first).unwrap();
-        assert_eq!(market.last_close(), Money::from_cents(900));
-        assert_eq!(market.last_cash_ex_reference(), Some(first));
-
-        let conflict = crate::company::ex_reference_price::ExReferencePrice {
-            reference_price: Money::from_cents(890),
-            ..first
-        };
-        assert!(matches!(
-            market.prepare_ex_date_reference(first_date, conflict),
-            Err(MarketError::CashExReferenceConflict { .. })
-        ));
-        assert_eq!(market.last_close(), Money::from_cents(900));
-
-        let second_date = crate::calendar::CivilDate::from_ymd(2026, 10, 8).unwrap();
-        let second = crate::company::ex_reference_price::ExReferencePrice {
-            ex_date: second_date,
-            reference_price: Money::from_cents(800),
-        };
-        market
-            .prepare_ex_date_reference(second_date, second)
-            .unwrap();
-        assert_eq!(market.last_close(), Money::from_cents(800));
-        assert_eq!(market.last_price(), Money::from_cents(1000));
-    }
-
-    #[test]
-    fn restored_pending_reference_requires_a_matching_applied_reference_fact() {
-        let code = StockCode("600101".to_owned());
-        let ex_date = crate::calendar::CivilDate::from_ymd(2026, 10, 7).unwrap();
-        let reference = crate::company::ex_reference_price::ExReferencePrice {
-            ex_date,
-            reference_price: Money::from_cents(900),
-        };
-        assert!(Market::validate_restored_facts(
-            &code,
-            ex_date,
-            Money::from_cents(1000),
-            Money::from_cents(900),
-            true,
-            None,
-            Money::from_cents(1),
-        )
-        .is_err());
-        assert!(Market::validate_restored_facts(
-            &code,
-            ex_date,
-            Money::from_cents(1000),
-            Money::from_cents(890),
-            true,
-            Some(reference),
-            Money::from_cents(1),
-        )
-        .is_err());
-        assert!(Market::validate_restored_facts(
-            &code,
-            ex_date,
-            Money::from_cents(1000),
-            Money::from_cents(900),
-            true,
-            Some(reference),
-            Money::from_cents(1),
-        )
-        .is_ok());
-        let earlier_date = crate::calendar::CivilDate::from_ymd(2026, 10, 6).unwrap();
-        assert!(Market::validate_restored_facts(
-            &code,
-            earlier_date,
-            Money::from_cents(1000),
-            Money::from_cents(900),
-            true,
-            Some(reference),
-            Money::from_cents(1),
-        )
-        .is_err());
     }
 }

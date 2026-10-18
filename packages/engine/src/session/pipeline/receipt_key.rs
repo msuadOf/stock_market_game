@@ -1,5 +1,5 @@
 use super::super::StepFatal;
-use crate::{AccountId, OrderId, Side, StockCode};
+use crate::{AccountId, OrderId, Side, StockId};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
@@ -81,7 +81,7 @@ impl PartialOrd for ReceiptSource {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct EnvelopeKey {
     pub account: AccountId,
-    pub stock: StockCode,
+    pub stock: StockId,
     pub order: OrderId,
     pub side: Side,
 }

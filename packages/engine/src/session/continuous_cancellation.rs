@@ -10,7 +10,7 @@ pub(super) enum ContinuousCancellationCause {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ContinuousCancellationFact {
     pub(super) account: AccountId,
-    pub(super) code: StockCode,
+    pub(super) code: StockId,
     pub(super) order_id: OrderId,
     pub(super) side: Side,
     pub(super) remaining_qty: u32,
@@ -23,13 +23,14 @@ pub(super) enum ContinuousCancellationError {
     OrderAlreadyFilled,
     NotOrderOwner,
     Market(MarketError),
+    Plan(crate::plans::PlanError),
 }
 
 impl GameSession {
     pub(super) fn cancel_continuous_order_state_only(
         &mut self,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         cause: ContinuousCancellationCause,
     ) -> Result<ContinuousCancellationFact, ContinuousCancellationError> {
@@ -59,13 +60,14 @@ impl GameSession {
             return Err(ContinuousCancellationError::NotOrderOwner);
         }
 
+        self.record_parent_order_canceled(account, &code, order_id)
+            .map_err(ContinuousCancellationError::Plan)?;
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_terminated((account, order_id, order.qty), &code, cause.termination());
         self.state.markets.insert(code.clone(), candidate_market);
         #[cfg(feature = "simulation-diagnostics")]
         self.causal_snapshot(&code);
         self.remove_npc_order_lifecycle(account, &code, order_id);
-        self.record_parent_order_canceled(account, &code, order_id);
         self.record_retail_order_canceled(account, code.clone(), order_id, order.qty);
 
         Ok(ContinuousCancellationFact {

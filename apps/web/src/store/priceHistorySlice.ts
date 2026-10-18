@@ -5,7 +5,7 @@
  * 每只股票维护一个最多 MAX_POINTS 个点的数组，超出则丢弃最旧的。
  */
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type { Cents, StockCode } from "../types/engine";
+import type { Cents } from "../types/engine";
 
 /** 单个价格采样点。time 为序号（seq），便于排序与去重。 */
 export interface PricePoint {
@@ -20,7 +20,7 @@ export interface PricePoint {
 }
 
 /** 每只股票一个采样数组。 */
-type PriceHistoryState = Record<StockCode, PricePoint[]>;
+type PriceHistoryState = Record<string, PricePoint[]>;
 
 /** 每只股票最多保留的点数。 */
 const MAX_POINTS = 300;
@@ -28,7 +28,7 @@ const MAX_POINTS = 300;
 const initialState: PriceHistoryState = {};
 
 interface AppendPayload {
-  code: StockCode;
+  code: string;
   time: number;
   price: Cents;
   buy?: boolean;

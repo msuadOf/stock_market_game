@@ -3,14 +3,12 @@ use engine::company::CompanyId;
 use engine::information::PublicationId;
 use engine::session::CompanyDisclosureKind;
 use engine::{
-    AccountId, CivilDate, DailyCandle, Event, Money, OrderId, RejectionReason, Side, StockCode,
+    AccountId, CivilDate, DailyCandle, Event, Money, OrderId, RejectionReason, Side, StockId,
     TradingPhase,
 };
 
 pub fn adr_mapping(event: &Event) -> (&'static str, u8, String, u8) {
     match event {
-        Event::PublicTrade { code, .. } => ("PublicTrade", 4, format!("Stock:{}", code.0), 0),
-        Event::PrivateEventOmitted { .. } => ("PrivateEventOmitted", 4, "Session".into(), 0),
         Event::Trade { code, .. } => ("Trade", 4, format!("Stock:{}", code.0), 0),
         Event::AuctionTick { code, .. } => ("AuctionTick", 4, format!("Stock:{}", code.0), 2),
         Event::AuctionCompleted { code, .. } => {
@@ -38,18 +36,11 @@ pub fn adr_mapping(event: &Event) -> (&'static str, u8, String, u8) {
 }
 
 pub fn events() -> Vec<Event> {
-    let code = StockCode("600519".into());
+    let code = StockId(0);
     let account = AccountId(73);
     let date = CivilDate::from_iso("2030-01-02").unwrap();
     let price = Money::from_cents(1234);
     vec![
-        Event::PublicTrade {
-            seq: 12,
-            code: code.clone(),
-            price,
-            qty: 100,
-        },
-        Event::PrivateEventOmitted { seq: 13 },
         Event::Trade {
             seq: 1,
             code: code.clone(),
@@ -106,7 +97,7 @@ pub fn events() -> Vec<Event> {
         Event::CompanyDisclosurePublished {
             seq: 7,
             publication_id: PublicationId::new(17),
-            company: CompanyId("company-distinct-from-stock".into()),
+            company: CompanyId(0),
             published_at: CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
             kind: CompanyDisclosureKind::Announcement,
         },

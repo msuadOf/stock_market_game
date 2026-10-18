@@ -1,19 +1,13 @@
+# 批 9 A10（W 收尾）：wasm-bindgen-rayon 多核随 rayon 退役（ADR-0043）——
+# +atomics/build-std 链接链与共享内存（SharedArrayBuffer）隔离门一并退役；
+# wasm32 走稳定工具链串行管线（本期 wasm 语义，登记为简化——
+# docs/trading-rules 与 memory/project_std_thread_migration）。
+# 注意：Cargo 的 rustflags 跨目录链**合并**（非替换）——本文件的空
+# rustflags 不能屏蔽主仓 checkout 上级 .cargo/config.toml 的历史原子
+# 参数；本 worktree 内 wasm 查询需 RUSTFLAGS="" 覆盖（已实测全绿）。
+# 合并 main 后主仓配置更新为同形即自然消（环境待合并项，非代码缺陷）。
 [target.wasm32-unknown-unknown]
-rustflags = [
-  "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
-  "-Z", "llvm-target-feature=+atomics,+bulk-memory,+mutable-globals",
-  "-C", "link-arg=--shared-memory",
-  "-C", "link-arg=--import-memory",
-  "-C", "link-arg=--max-memory=4294967296",
-  "-C", "link-arg=--export=__heap_base",
-  "-C", "link-arg=--export=__wasm_init_tls",
-  "-C", "link-arg=--export=__tls_size",
-  "-C", "link-arg=--export=__tls_align",
-  "-C", "link-arg=--export=__tls_base",
-]
-
-[unstable]
-build-std = ["panic_abort", "std"]
+rustflags = []
 
 [env]
 TS_RS_EXPORT_DIR = { value = "apps/web/src/types/generated", relative = true }

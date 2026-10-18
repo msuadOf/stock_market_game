@@ -3,12 +3,10 @@ export type StartupMode = "local" | "remote";
 export type StartupTarget =
   | { readonly kind: "wasm" }
   | { readonly kind: "tauri" }
-  | { readonly kind: "remote"; readonly baseUrl: string; readonly token?: string; readonly context?: import("./remote-market-context.ts").RemoteMarketContext };
+  | { readonly kind: "remote"; readonly baseUrl: string };
 
 export interface WasmEnvironment {
   readonly isSecureContext: boolean;
-  readonly crossOriginIsolated: boolean;
-  readonly sharedArrayBufferAvailable: boolean;
 }
 
 export function initialStartupTarget(buildMode: string): StartupTarget | null {
@@ -16,21 +14,19 @@ export function initialStartupTarget(buildMode: string): StartupTarget | null {
 }
 
 export function browserWasmEnvironment(): WasmEnvironment {
+  // 批 9 A10：crossOriginIsolated/SharedArrayBuffer 门禁随 wasm 多核退役——
+  // 串行 wasm 无跨源隔离需求。
   return {
     isSecureContext: globalThis.isSecureContext === true,
-    crossOriginIsolated: globalThis.crossOriginIsolated === true,
-    sharedArrayBufferAvailable: typeof globalThis.SharedArrayBuffer === "function",
   };
 }
 
 export function assertWasmEnvironment(environment: WasmEnvironment): void {
   const missing = [
     ...(!environment.isSecureContext ? ["isSecureContext（安全上下文）"] : []),
-    ...(!environment.crossOriginIsolated ? ["crossOriginIsolated（跨源隔离）"] : []),
-    ...(!environment.sharedArrayBufferAvailable ? ["SharedArrayBuffer（共享内存）"] : []),
   ];
   if (missing.length === 0) return;
-  throw new Error(`浏览器本地 WASM 多线程无法启动：缺少 ${missing.join("、")}。请使用 HTTPS（或浏览器认可的回环地址安全上下文），并配置 COOP/COEP 响应头：Cross-Origin-Opener-Policy: same-origin 和 Cross-Origin-Embedder-Policy: require-corp；也可返回启动界面选择远程 Server。不会降级到单线程或主线程，也不会自动切换宿主。请复制此错误反馈部署环境。`);
+  throw new Error(`浏览器本地 WASM 无法启动：缺少 ${missing.join("、")}。请使用 HTTPS（或浏览器认可的回环地址安全上下文）；也可返回启动界面选择远程 Server。不会降级也不会自动切换宿主。请复制此错误反馈部署环境。`);
 }
 
 export function validateRemoteServerAddress(value: string): string {
@@ -45,7 +41,7 @@ export function validateRemoteServerAddress(value: string): string {
     throw new Error("Server 地址无效，请检查主机、IPv6 括号和端口。", { cause: error });
   }
   if (url.username !== "" || url.password !== "") {
-    throw new Error("Server 地址不能包含用户名或密码；请选择地址后通过独立登录界面认证。");
+    throw new Error("Server 地址不能包含用户名或密码；本次启动选择不新增账户认证。");
   }
   return url.href.replace(/\/+$/, "");
 }

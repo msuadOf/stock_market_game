@@ -29,22 +29,10 @@ test("附注渲染单体范围、更正原因与已公布行业科目明细", ()
   assert.doesNotMatch(html, /公开摘要未提供|只显示已公开摘要/);
 });
 
-test("Simple 来源与仿真来源共用完整四表附注，不以模式隐藏功能", { timeout: 10000 }, () => {
-  for (const source of ["SimpleGenerated", "SimulationAccounting"] as const) {
-    const html = renderToStaticMarkup(createElement(notes.ReportNotes, { report: { ...publicReportGold(), source } }));
-    assert.match(html, new RegExp(source));
-    assert.match(html, /报表附注与口径/);
-    assert.match(html, /已披露科目明细/);
-    assert.doesNotMatch(html, /此模式不支持|未实现.*股东分配/);
-  }
-});
-
-// 共同报告支持月/季/半年/年，首列是实际报告窗口，不应把所有报告都称为当季。
-test("利润表渲染报告窗口、累计、比较列，缺历史有原因不填零", () => {
+test("利润表渲染当季、累计、比较列，缺历史有原因不填零", () => {
   const statement = reportStatementRows(publicReportGold().financials)[1]!;
   const html = renderToStaticMarkup(createElement(table.FinancialStatementTable, { statement, exactAmountsVisible: true }));
-  assert.match(html, /报告窗口/);
-  assert.doesNotMatch(html, /当季/);
+  assert.match(html, /当季/);
   assert.match(html, /年初至今累计/);
   assert.match(html, /上年同期/);
   assert.match(html, /无上年历史/);

@@ -22,49 +22,15 @@ test("存档和宿主严格拒绝非规范 Money 并保留错误路径", { timeo
 test("盘口价格严格使用无损分字符串，股数仍是整数", { timeout: 10000 }, () => {
   assert.deepEqual(parseDepth([["9007199254740993", 100]], "bids"), [["9007199254740993", 100]]);
   assert.throws(() => parseDepth([[Number("9007199254740993"), 100]], "bids"), /bids\[0\]\[0\]/);
-  const market = { last_price: "9007199254740993", last_close: "9007199254740992", best_bid: null, best_ask: null, bids: [], asks: [], cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null };
+  const market = { last_price: "9007199254740993", last_close: "9007199254740992", best_bid: null, best_ask: null, bids: [], asks: [] };
   assert.deepEqual(parseMarket(market, "market"), market);
   assert.throws(() => parseMarket({ ...market, last_close: 1 }, "market"), /last_close/);
-});
-
-test("运行快照与存档快照严格传输除息状态与可空锚点", { timeout: 10000 }, () => {
-  const anchor = { ex_date: "2030-01-02", reference_price: "9007199254740993" };
-  const market = {
-    last_price: "9007199254740993", last_close: "9007199254740992", best_bid: null, best_ask: null,
-    bids: [], asks: [], cash_ex_reference_pending_trade: true, day_market_activity: false,
-    last_cash_ex_reference: anchor,
-  };
-  const snapshot = {
-    seq: 0, tick: 0, day: 1, phase: "Continuous", markets: { "600000": market },
-    accounts: {}, daily_candles: {}, active_daily_candles: {},
-  };
-
-  assert.deepEqual(parseMarket(market, "market"), market);
-  assert.deepEqual(parseSnapshot(snapshot, "snapshot").markets["600000"], market);
-  for (const field of ["cash_ex_reference_pending_trade", "day_market_activity", "last_cash_ex_reference"]) {
-    const missing = { ...market };
-    delete missing[field as keyof typeof missing];
-    assert.throws(() => parseMarket(missing, "market"), /字段不符合协议契约/);
-    assert.throws(() => parseSnapshot({ ...snapshot, markets: { "600000": missing } }, "snapshot"), /是必填字段/);
-  }
-  assert.throws(() => parseMarket({ ...market, day_market_activity: "false" }, "market"), /day_market_activity/);
-  assert.throws(() => parseSnapshot({ ...snapshot, markets: { "600000": { ...market, last_cash_ex_reference: { ...anchor, reference_price: "0" } } } }, "snapshot"), /参考价必须为正/);
-  for (const exDate of ["1800-01-01", "2200-01-01"]) {
-    const outOfRangeMarket = { ...market, last_cash_ex_reference: { ...anchor, ex_date: exDate } };
-    assert.throws(() => parseMarket(outOfRangeMarket, "market"), /有效 ISO 日期/);
-    assert.throws(() => parseSnapshot({ ...snapshot, markets: { "600000": outOfRangeMarket } }, "snapshot"), /1900.*2199/);
-  }
-  for (const exDate of ["1900-01-01", "2199-12-31"]) {
-    const boundaryMarket = { ...market, last_cash_ex_reference: { ...anchor, ex_date: exDate } };
-    assert.equal(parseMarket(boundaryMarket, "market").last_cash_ex_reference?.ex_date, exDate);
-    assert.equal(parseSnapshot({ ...snapshot, markets: { "600000": boundaryMarket } }, "snapshot").markets["600000"]?.last_cash_ex_reference?.ex_date, exDate);
-  }
 });
 
 test("公共存档资金与成本在安全整数外精确保留", { timeout: 10000 }, () => {
   const snapshot = {
     seq: 0, tick: 0, markets: {}, daily_candles: {}, active_daily_candles: {},
-    accounts: { "0": { cash: "9007199254740993", positions: { "600000": { qty: 100, t1_locked: 0, invested_cents: "9007199254740993", recovered_cents: "2" } } } },
+    accounts: { "0": { cash: "9007199254740993", positions: { "0": { qty: 100, t1_locked: 0, invested_cents: "9007199254740993", recovered_cents: "2" } } } },
   };
   assert.equal(parseSaveSnapshot(snapshot, "snapshot").accounts[0]!.cash, "9007199254740993");
   assert.throws(() => parseSaveSnapshot({ ...snapshot, accounts: { "0": { cash: "-1", positions: {} } } }, "snapshot"), /cash.*不能为负数/);
@@ -74,12 +40,12 @@ test("运行快照 PositionSnap 成本严格接受大额字符串并拒绝旧数
   const position = { qty: 100, t1_locked: 0, invested_cents: "9007199254740993", recovered_cents: "9223372036854775807" };
   const snapshot = {
     seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, daily_candles: {}, active_daily_candles: {},
-    accounts: { "0": { cash: "10", reserved_cash: "0", reserved_sell_qty: {}, positions: { "600000": position } } },
+    accounts: { "0": { cash: "10", reserved_cash: "0", reserved_sell_qty: {}, positions: { "0": position } } },
   };
-  assert.deepEqual(parseSnapshot(snapshot, "snapshot").accounts[0]!.positions["600000"], position);
+  assert.deepEqual(parseSnapshot(snapshot, "snapshot").accounts[0]!.positions["0"], position);
   for (const field of ["invested_cents", "recovered_cents"]) {
     const invalid = structuredClone(snapshot);
-    Object.assign(invalid.accounts[0].positions["600000"], { [field]: 1 });
+    Object.assign(invalid.accounts[0].positions["0"], { [field]: 1 });
     assert.throws(() => parseSnapshot(invalid, "snapshot"), new RegExp(field));
   }
 });
@@ -92,7 +58,7 @@ test("NPC 经历金额严格使用 Money 而不误改失败计数", { timeout: 1
 
 test("计划历史资源按整数金额而非字符串字典序校验占用", { timeout: 10000 }, () => {
   const plan = {
-    plan_id: 1, account: "1", code: "600000", direction: "Buy", target: { ShareCount: 100 }, filled_qty: 0,
+    plan_id: 1, account: 1, code: 0, direction: "Buy", target: { ShareCount: 100 }, filled_qty: 0,
     opinion: { signal_score_bp: 1, source: "Fundamental" }, confidence_bp: 1, urgency: "Normal", status: "Active",
     version: 1, last_revision: null, last_resume: null, created_trading_day: 0, horizon_trading_days: 1,
     active_child_order_id: null, last_event_trading_day: 0,

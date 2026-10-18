@@ -1,0 +1,34 @@
+=== 独占复测 2026-10-17T05:04:34+08:00 machine:128核
+--- A轮1
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：71.1 t/s（3000 tick / 42.17s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- A轮2
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：61.6 t/s（3000 tick / 48.71s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- A轮3
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：105.0 t/s（3000 tick / 28.56s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- A轮4
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：91.0 t/s（3000 tick / 32.98s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- A轮5
+runtime s5 探针：3000 tick、10 组×2000 NPC=20000、5 股
+结果：70.7 t/s（3000 tick / 42.46s）；成交量 6438600 股；费用桶 647541185 分；挂簿余 0；T+1 冻结 6438600
+守恒：现金+费用=初始 ✓；股份=初始 ✓
+--- B协议轮1 (groups=1)
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3336,"runtime_groups":1,"speed_x":4.358866992942212,"threads":16,"ticks":300,"wall_s":68.825224648}
+--- B协议轮2 (groups=1)
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3336,"runtime_groups":1,"speed_x":4.372251134313628,"threads":16,"ticks":300,"wall_s":68.614539921}
+--- B协议轮3 (groups=1)
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3336,"runtime_groups":1,"speed_x":4.261705663668094,"threads":16,"ticks":300,"wall_s":70.39434998}
+--- B协议轮4 (groups=1)
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3336,"runtime_groups":1,"speed_x":3.0376919766722947,"threads":16,"ticks":300,"wall_s":98.759190301}
+--- B协议轮5 (groups=1)
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3336,"runtime_groups":1,"speed_x":4.2233076732569135,"threads":16,"ticks":300,"wall_s":71.034370027}
+--- B归因轮 (groups=10, 300tick)
+{"conservation":{"cash_final":1655573067947,"cash_initial":1655573067947,"fees_paid":0,"shares_ok":true},"events":3252,"runtime_groups":10,"speed_x":5.020622091691888,"threads":16,"ticks":300,"wall_s":59.753551357}
+=== 完成 2026-10-17T05:15:40+08:00

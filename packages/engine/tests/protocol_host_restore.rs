@@ -58,9 +58,11 @@ fn intraday_checkpoint_preserves_engine_cursor_but_is_not_a_public_day_end_save(
 
     assert_eq!(restored.tick(), original.game().tick());
     assert_eq!(restored.seq(), original.game().seq());
+    // 数值断言替代原文本等值断言 "公共日级档必须来自完整的自然日日终结算"
+    // （fault3013：公共日级档必须来自完整的自然日日终结算）。
     assert!(matches!(ProtocolSession::restore(&saved),
-        Err(engine::SessionError::InvalidSave(reason))
-        if reason == "公共日级档必须来自完整的自然日日终结算"));
+        Err(engine::SessionError::InvalidSave(fault))
+        if fault.code == 3013));
     assert_eq!(
         serde_json::to_value(original.game().save().unwrap()).unwrap(),
         serde_json::to_value(saved).unwrap(),

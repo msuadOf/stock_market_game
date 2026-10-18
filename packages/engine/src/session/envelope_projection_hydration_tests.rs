@@ -6,9 +6,9 @@ use crate::session::pipeline::{
 #[test]
 fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_ledger() {
     let mut game = fixture();
-    let code = game.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     place(&mut game, &code, OrderId(41), 100);
-    game.state.auction_orders.insert(
+    game.fixture_append_auction_orders(
         code.clone(),
         vec![AuctionOrderSnap {
             owner: AccountId(2),
@@ -17,7 +17,8 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
             qty: 100,
             order_id: 42,
         }],
-    );
+    )
+    .unwrap();
     let before = game.business_state_hash().unwrap();
 
     let projected = game.project_live_envelopes().unwrap();
@@ -64,7 +65,7 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
 #[test]
 fn hydration_rejects_nominal_fee_drift_without_mutating_the_ledger() {
     let mut game = fixture();
-    let code = game.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     game.state
         .markets
         .get_mut(&code)
@@ -104,7 +105,7 @@ fn hydration_rejects_nominal_fee_drift_without_mutating_the_ledger() {
 #[test]
 fn hydration_preserves_valid_seller_debt_and_rejects_out_of_bounds_charge() {
     let mut game = fixture();
-    let code = game.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     game.state
         .markets
         .get_mut(&code)
@@ -184,7 +185,7 @@ fn hydration_preserves_path_dependent_rounding_debt() {
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.commission_min = Money::ZERO;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let code = game.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     game.state
         .markets
         .get_mut(&code)
@@ -238,7 +239,7 @@ fn hydration_preserves_path_dependent_rounding_debt() {
 #[test]
 fn hydration_rejects_partial_seller_when_charged_history_is_missing() {
     let mut game = fixture();
-    let code = game.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     game.state
         .markets
         .get_mut(&code)
@@ -266,7 +267,7 @@ fn fixture() -> GameSession {
     GameSession::new(npc_working_quote_tests::quote_setup(0), 42).unwrap()
 }
 
-fn place(game: &mut GameSession, code: &StockCode, id: OrderId, qty: u32) {
+fn place(game: &mut GameSession, code: &StockId, id: OrderId, qty: u32) {
     game.state
         .markets
         .get_mut(code)
@@ -308,4 +309,34 @@ fn assert_envelope(
             charged: pipeline::FeeComponents::ZERO,
         }
     );
+}
+
+#[test]
+fn existing_ledger_validation_does_not_rebuild_owned_envelope_projections() {
+    let mut game = fixture();
+    let code = StockId(0);
+    place(&mut game, &code, OrderId(61), 100);
+    game.fixture_append_auction_orders(
+        code.clone(),
+        vec![AuctionOrderSnap {
+            owner: AccountId(2),
+            side: Side::Sell,
+            limit: Money::from_cents(1_100),
+            qty: 100,
+            order_id: 62,
+        }],
+    )
+    .unwrap();
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let before = game.business_state_hash().unwrap();
+    let ledger = game.state.envelope_ledger.clone();
+    super::envelope_projection::OWNED_PROJECTION_COUNT.with(|count| count.set(0));
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    assert_eq!(
+        super::envelope_projection::OWNED_PROJECTION_COUNT.with(|count| count.get()),
+        0,
+        "已有权威账本的只读校验不应重新构造 owned Envelope"
+    );
+    assert_eq!(game.business_state_hash().unwrap(), before);
+    assert_eq!(game.state.envelope_ledger, ledger);
 }

@@ -1,0 +1,66 @@
+diff --git a/agents/std-thread-migration/evidence/perf-p2/MANIFEST.md b/agents/std-thread-migration/evidence/perf-p2/MANIFEST.md
+index 38ebd7f9..57e371e3 100644
+--- a/agents/std-thread-migration/evidence/perf-p2/MANIFEST.md
++++ b/agents/std-thread-migration/evidence/perf-p2/MANIFEST.md
+@@ -171,3 +171,14 @@ Abort 语义必需）。判别边界：驱动器缓存读面零判别（全量
+ （镜像 P2-3e 模式）；全量读面 EchoAccounts 保留；收集端精确集校验
+ （缺项=RuntimeError 不静默）。信封投影增量化同窗 stub 定界 −2% 降级候补
+ （负结果归因登记，方向不关闭）。B 账本 300 tick 118.7→263.1。
++
++## P2-4b：信封账本增量维护（244ae360）
++
++| 文件 | 内容 | 命令 | 红形态 | 绿形态 |
++|---|---|---|---|---|
++| p2-4b-envelope-incremental.md | 动机（insert 4.77%+drop 4.13%+resting 增长税）+消费面盘点+机制 | — | — | 244ae360 |
++| p2-4b-green.txt | 守卫绿+M1/M2 突变红+判别力三迭代（含首版 O(n²) 差分长跑回退打回）+全量双绿 1620/0/11×2+B 探针 300 tick 309.1/1000 tick 489.7 | 文件内注明 | M1/M2 哈希红 | 244ae360 |
++
++机制：每拍 EnvelopeLedger 全量重建+drop 改跨拍差分原位 upsert/remove
++（共用信封构造函数=数值面同源）；基线缺失退全量；派生缓存显式清空。
++B 账本 300 tick 263.1→309.1、1000 tick 271.6→489.7。
+diff --git a/agents/std-thread-migration/evidence/perf-p2/perf-phase1-final.txt b/agents/std-thread-migration/evidence/perf-p2/perf-phase1-final.txt
+new file mode 100644
+index 00000000..ce1ad4b3
+--- /dev/null
++++ b/agents/std-thread-migration/evidence/perf-p2/perf-phase1-final.txt
+@@ -0,0 +1,29 @@
++性能恢复战役第一阶段——正式终测账本（2026-10-17 20:53-20:58，第 14 任）
++====================================================================
++分支 exp/std-thread-model，HEAD 1f5863cd（实现链尾）。
++二进制 SHA256（target/release/examples/）：
++  driver_semantics_probe 6123db29b892f2e42632eae557de6e6ecfed95ead4cc60842ce29bef8848745a
++  runtime_s5_probe       ced474fac39be2a1c613b921553b8db481cc0b40997255798ed1b398154ee92d
++命令（战役口径）：
++  ENGINE_STEP_RUNTIME=1 ./target/release/examples/driver_semantics_probe .tmp/driver-semantics-setup.json 300 16 1
++  ENGINE_STEP_RUNTIME=1 ./target/release/examples/driver_semantics_probe .tmp/driver-semantics-setup.json 1000 16 1
++  ./target/release/examples/runtime_s5_probe 3000 10
++测量窗：load 15.6-18.7（外部负载在途——净机窗 load~6 时 B300 曾达
++309-315、B1000 489-501；本表为正式窗口实测，如实登记不择轮）。
++
++B 口径（driver_semantics_probe，300 tick/1 组/20000 retail NPC）：
++  r1 290.8  r2 302.9  r3 303.7  r4 308.0  r5 308.2
++  mean=302.7 min=290.8 max=308.2  events=3336 fees=0（逐位）
++  1000 tick 长跑：501.5 t/s  events=11119 fees=5705（逐位，零衰减——
++  长跑反超短跑：resting 增长税已消除）
++
++A 口径（runtime_s5_probe，3000 tick/10 组×2000 NPC/5 股）：
++  r1 1374.4  r2 1414.2  r3 1399.9  r4 1440.0  r5 1417.3
++  mean=1409.2 min=1374.4 max=1440.0
++  守恒逐位：成交量 6438600/费用桶 647541185/T+1 冻结 6438600（5/5 轮）
++  （战役起点 1358 → 1409：+3.7%——P2-4a 稀疏账户回声对 A 口径
++  10 组×2000 名册回写同样生效）
++
++第一阶段总账（B 口径 300 tick）：
++  战役起点 4.3 → 302.7 = 70.4×；1000 tick 3.18 → 501.5 = 157.7×
++  A 口径 1358 → 1409.2。
+diff --git a/packages/engine/src/runtime/mod.rs b/packages/engine/src/runtime/mod.rs
+index a83cac5a..affb0a07 100644
+--- a/packages/engine/src/runtime/mod.rs
++++ b/packages/engine/src/runtime/mod.rs
+@@ -64,6 +64,7 @@ pub mod world;
+ pub use entities::Entity;
+ pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
+ pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, RoutedPrice};
++pub use protocol::{RestingDelta, RestingDeltaEntry, RestingFact};
+ 
+ /// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
+ /// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的

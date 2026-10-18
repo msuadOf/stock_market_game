@@ -33,6 +33,18 @@ pub struct MomentumStrategy {
 }
 
 impl MomentumStrategy {
+    /// 个体参数全集投影（runtime 决策对等用——D3 台账收口）。
+    pub(crate) fn strategy_data(&self) -> StrategyData {
+        let mut data = StrategyData::hot(
+            self.lookback,
+            self.trend_threshold,
+            self.order_size,
+        );
+        data.volume_confirmation = self.volume_confirmation;
+        data.base_observation_probability = self.base_observation_probability;
+        data
+    }
+
     pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
         Self::new(self.lookback, self.trend_threshold, self.order_size)
             .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;

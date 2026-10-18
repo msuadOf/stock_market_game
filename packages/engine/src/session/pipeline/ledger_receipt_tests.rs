@@ -1,6 +1,7 @@
 use super::ledger_tests::*;
 use super::{
     Envelope, EnvelopeLedger, FeeComponents, ReceiptDelta, ReceiptKind, ReceiptSource, ResVec,
+    StepFatal,
 };
 use crate::Money;
 
@@ -284,40 +285,82 @@ fn non_fill_receipts_cannot_spend_or_accrue_fees() {
         .apply(std::slice::from_mut(&mut reject))
         .is_err());
     assert_eq!(reject_ledger, reject_before);
+}
 
-    let mut charged_audit = audit_with_remaining(100);
-    charged_audit.nominal.commission = Money::from_cents(1);
-    let mut charged_ledger = EnvelopeLedger::new(
-        7,
-        [Envelope::created_at_validation(
-            key(),
-            Money::from_cents(100),
-            0,
-            charged_audit,
-        )],
+/// 真实Sell封顶历史形成nominal>charged：此场景下Reject新收1分通过全部
+/// component-chain检查（charged_after≤nominal）与合法全额释放资源形态，
+/// 只有nonFill零新增费用守卫能拒绝。独立成case：删除该守卫时本case必须
+/// 由apply成功而失败（红证），证明守卫被本场景真实行使——前一版fixture
+/// （Buy满额收费nominal==charged）在守卫之前先被"charged component chain
+/// mismatch"拒绝，删除守卫后仍会过，不能证明守卫受保护。
+#[test]
+fn non_fill_accrual_within_nominal_headroom_is_rejected_by_the_zero_fee_guard() {
+    let config = crate::GameConfig::proposed_defaults();
+    let sell_key = second_key();
+    // raw行（不带FeeProof）：本case隔离ledger层nonFill守卫；带proof时FeeProof
+    // checked-hook（卖方charged≤gross界）会先拒，测不到目标守卫。
+    let mut seller = Envelope::created_at_validation(
+        sell_key.clone(),
+        Money::ZERO,
+        200,
+        super::EnvelopeAudit {
+            limit: Money::from_cents(1),
+            remaining_qty: 200,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            nominal: FeeComponents::ZERO,
+            charged: FeeComponents::ZERO,
+        },
+    );
+    // 100股×1分：nominal=(500,0,0)（佣金下限），charge_cap=min(500,100)=100全入佣金，
+    // 实收=(100,0,0)，留下 (500−100) 分的合法收费余量。
+    let capped = super::order_receipts::fill_receipt(
+        &mut seller,
+        ReceiptSource::SealedIntent(0),
+        0,
+        Money::ZERO,
+        100,
+        Money::from_cents(100),
+        &config,
     )
     .unwrap();
-    let charged_before = charged_ledger.clone();
-    let mut charged_reject = receipt_from_source(ReceiptFixture {
-        key: key(),
+    assert_eq!(capped.nominal.commission, Money::from_cents(500));
+    assert_eq!(capped.charged.commission, Money::from_cents(100));
+    seller.rebase_for_next_tick().unwrap();
+    let seller_audit = seller.audit();
+    assert!(seller_audit.nominal.commission > seller_audit.charged.commission);
+    let mut capped_ledger = EnvelopeLedger::new(7, [seller]).unwrap();
+    let capped_before = capped_ledger.clone();
+    let mut capped_reject = receipt_from_source(ReceiptFixture {
+        key: sell_key,
         source: ReceiptSource::SealedIntent(0),
         kind: ReceiptKind::Reject,
         qty_before: 100,
         qty_after: 100,
-        value_before: Money::ZERO,
-        value_after: Money::ZERO,
-        delta: ReceiptDelta::sealed(
-            ResVec::ZERO,
-            ResVec::new(Money::from_cents(100), 0),
-            ResVec::ZERO,
-        ),
+        value_before: seller_audit.filled_value,
+        value_after: seller_audit.filled_value,
+        delta: ReceiptDelta::sealed(ResVec::ZERO, ResVec::new(Money::ZERO, 100), ResVec::ZERO),
     });
-    charged_reject.charged.commission = Money::from_cents(1);
-    charged_reject.charged_after.commission = Money::from_cents(1);
-    assert!(charged_ledger
-        .apply(std::slice::from_mut(&mut charged_reject))
-        .is_err());
-    assert_eq!(charged_ledger, charged_before);
+    // 新收1分：component-chain全部自洽（101=100+1≤500），资源形态是合法全额释放；
+    // 拒绝它的只能是nonFill零新增费用守卫本身。
+    capped_reject.charged.commission = Money::from_cents(1);
+    capped_reject.charged_before = seller_audit.charged;
+    capped_reject.charged_after = FeeComponents {
+        commission: seller_audit.charged.commission.add(Money::from_cents(1)).unwrap(),
+        ..seller_audit.charged
+    };
+    let capped_error = capped_ledger
+        .apply(std::slice::from_mut(&mut capped_reject))
+        .unwrap_err();
+    assert!(
+        matches!(
+            capped_error,
+            StepFatal::InvariantViolation { ref description, .. }
+                if description == "non-fill receipt spends resources or accrues fees"
+        ),
+        "该场景应只被nonFill零新增费用守卫拒绝，实际拒绝：{capped_error:?}"
+    );
+    assert_eq!(capped_ledger, capped_before);
 }
 
 #[test]

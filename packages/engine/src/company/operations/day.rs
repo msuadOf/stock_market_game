@@ -193,6 +193,7 @@ impl<'a> OperatingDayRun<'a> {
         } = &mut self.operations;
         for (id, company) in companies {
             advance_flow_day(
+                *id,
                 company,
                 date,
                 newly.get(id).map(Vec::as_slice).unwrap_or(&[]),
@@ -312,6 +313,7 @@ impl IndustryPairView<'_> {
 }
 
 fn advance_flow_day(
+    id: CompanyId,
     company: &mut OperatingCompany,
     date: CivilDate,
     newly: &[ActiveShock],
@@ -322,7 +324,7 @@ fn advance_flow_day(
     let aggregates = company.economy.aggregates();
     IndustryPairView::at_existing_guard(&mut company.books, &company.params, &company.spec)?
         .advance_day(FlowDayContext {
-            company: company.spec.id.clone(),
+            company: id,
             date,
             aggregates,
             newly,
@@ -413,9 +415,10 @@ mod tests {
         CompanyOperationsConfig {
             seed: 7,
             shock_params,
+            catalog: crate::company::spec::CompanyCatalog::from_codes(&["C"]).expect("单公司目录"),
             companies: vec![OperatingCompanyConfig {
                 spec: CompanySpec {
-                    id: CompanyId("C".to_string()),
+                    code: 'C'.to_string(),
                     name: "虚构公司".to_string(),
                     industry: IndustryId("IND".to_string()),
                     kind: CompanyKind::Industrial,
@@ -489,12 +492,9 @@ mod tests {
     }
 
     #[test]
-    fn restore_rejects_pair_mismatch_while_runtime_guard_keeps_prior_due_consumption() {
+    fn restored_pair_mismatch_keeps_prior_expiry_sampling_and_due_consumption() {
         let mut ops = CompanyOperations::new(fixture(), start()).expect("装配");
-        let company = ops
-            .companies
-            .get_mut(&CompanyId("C".to_string()))
-            .expect("公司");
+        let company = ops.companies.get_mut(&CompanyId(0)).expect("公司");
         company.params = insurance_params();
         company.economy.activate(ActiveShock {
             kind: ShockKind::ProductionInterruption,
@@ -505,9 +505,7 @@ mod tests {
         ops.shock_params.market_candidate_bp = 10_000;
         let before_rng = ops.market_rng.clone();
         let json = serde_json::to_vec(&ops).expect("存档序列化");
-        // 当前恢复契约拒绝 kind/flow 错配；日推进的防御仍用内存故障注入验证。
-        let error = serde_json::from_slice::<CompanyOperations>(&json).unwrap_err();
-        assert!(error.to_string().contains("does not match flow variant"));
+        let mut ops: CompanyOperations = serde_json::from_slice(&json).expect("错配存档仍接受");
         assert!(matches!(
             ops.advance_civil_day(start()),
             Err(OperationsError::KindFlowMismatch {
@@ -535,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_rejects_spec_kind_mismatch_before_the_daily_books_flow_guard() {
+    fn restored_spec_kind_is_not_an_extra_daily_pair_guard() {
         let mut config = fixture();
         config.companies[0].spec.kind = CompanyKind::Insurance;
         assert!(matches!(
@@ -545,9 +543,7 @@ mod tests {
         let mut ops = CompanyOperations::new(fixture(), start()).expect("装配");
         ops.companies.values_mut().next().expect("公司").spec.kind = CompanyKind::Insurance;
         let json = serde_json::to_vec(&ops).expect("序列化");
-        // restore 已校验 spec.kind，不能把旧接受集合写成当前存档合同。
-        let error = serde_json::from_slice::<CompanyOperations>(&json).unwrap_err();
-        assert!(error.to_string().contains("does not match flow variant"));
+        let mut ops: CompanyOperations = serde_json::from_slice(&json).expect("既有存档接受集合");
         let report = ops
             .advance_civil_day(start())
             .expect("day 仅检查 books/params 配对");
@@ -561,12 +557,14 @@ mod tests {
     fn shock_records_follow_market_then_sorted_industries_then_sorted_companies() {
         let mut config = fixture();
         let mut other = config.companies[0].clone();
-        config.companies[0].spec.id = CompanyId("Z".to_string());
+        config.companies[0].spec.code = "C-Z".to_string();
         config.companies[0].spec.industry = IndustryId("Z-IND".to_string());
-        other.spec.id = CompanyId("A".to_string());
+        other.spec.code = "C-A".to_string();
         other.spec.industry = IndustryId("A-IND".to_string());
-        // 故意按反序装配，保护输出依据领域 id 的稳定顺序。
+        // 故意按反序装配（代码序在后的先入列），保护输出依据目录 id 的稳定顺序。
         config.companies.push(other);
+        config.catalog =
+            crate::company::spec::CompanyCatalog::from_codes(&["C-A", "C-Z"]).expect("双公司目录");
         config.shock_params.market_candidate_bp = 10_000;
         config.shock_params.industry_candidate_bp = 10_000;
         config.shock_params.company_candidate_bp = 10_000;
@@ -617,9 +615,12 @@ mod tests {
             report
                 .activated
                 .iter()
-                .map(|record| record.company.as_ref().map(|id| id.0.as_str()))
+                .map(|record| record
+                    .company
+                    .as_ref()
+                    .and_then(|id| ops.catalog().code(*id)))
                 .collect::<Vec<_>>(),
-            vec![None, Some("A"), Some("Z"), Some("A"), Some("Z")],
+            vec![None, Some("C-A"), Some("C-Z"), Some("C-A"), Some("C-Z")],
         );
         assert_eq!(ops.market_rng, expected_rngs.market_rng);
         assert_eq!(ops.industry_rngs, expected_rngs.industry_rngs);
@@ -669,7 +670,7 @@ mod tests {
             key: "MAT:C:FIXTURE".to_string(),
             due_date: start(),
             action: ScheduledAction::ContractMaturity {
-                company: CompanyId("C".to_string()),
+                company: CompanyId(0),
                 reference: format!("AR:{}", sale.receivable.0),
             },
         })
@@ -678,7 +679,7 @@ mod tests {
     }
 
     fn cash(ops: &CompanyOperations) -> AccountingAmount {
-        ops.industrial_books(&CompanyId("C".to_string()))
+        ops.industrial_books(&CompanyId(0))
             .expect("工商账套")
             .books()
             .ledger()
@@ -706,11 +707,6 @@ mod tests {
     #[test]
     fn flow_error_retains_prior_maturity_and_does_not_queue_next_interest() {
         let mut ops = with_receivable(0);
-        // 零费用已表示不发生收付；用真正非法的负费用注入保留流程中途失败的覆盖。
-        let FlowParams::Industrial(params) = &mut ops.companies.values_mut().next().unwrap().params else {
-            panic!("工商参数")
-        };
-        params.daily_admin_expense = amount(-1);
         assert!(matches!(
             ops.advance_civil_day(start()),
             Err(OperationsError::Industrial(

@@ -3,7 +3,7 @@ import type { AccountId } from "./AccountId";
 import type { PlanOpinion } from "./PlanOpinion";
 import type { PlanTarget } from "./PlanTarget";
 import type { Side } from "./Side";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 import type { Urgency } from "./Urgency";
 
 /**
@@ -11,7 +11,7 @@ import type { Urgency } from "./Urgency";
  */
 export type PlanOpen = {
   account: AccountId;
-  code: StockCode;
+  code: StockId;
   direction: Side;
   target: PlanTarget;
   opinion: PlanOpinion;

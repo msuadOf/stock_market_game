@@ -1,4 +1,7 @@
-//! Target-stock working orders and parent execution-state maintenance.
+//! 计划工作单读取与执行腿安装接缝。
+//!
+//! 母单执行子状态唯一保存在 `PlanBook`/`TradingPlan`（ADR-0015 2026-09-10 修订）；
+//! 本文件只提供会话侧的读视图（真实订单簿/竞价队列）与安装入口。
 
 use super::*;
 
@@ -14,7 +17,7 @@ impl GameSession {
     pub(in crate::session) fn plan_working_orders(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
     ) -> Vec<WorkingPlanOrder> {
         self.state
             .markets
@@ -31,88 +34,40 @@ impl GameSession {
                 price: order.price,
                 qty: order.qty,
             })
-            .chain(
-                self.state
-                    .auction_orders
-                    .get(code)
-                    .into_iter()
-                    .flatten()
-                    .filter(|order| order.owner == account)
-                    .map(|order| WorkingPlanOrder {
-                        id: OrderId(order.order_id),
-                        side: order.side,
-                        price: order.limit,
-                        qty: order.qty,
-                    }),
-            )
             .collect()
     }
 
-    pub(super) fn install_plan_parent(
-        &mut self,
+    /// 为一张新提交的子单安装执行腿（目标股数与已成交进度来自计划本体）。
+    /// 采纳已有工作单时同时登记在途子单身份与剩余数量。
+    pub(in crate::session) fn install_plan_execution(
+        &self,
+        plans: &mut PlanBook,
         plan: &crate::plans::TradingPlan,
         child: NewChildSpec,
-        active: Option<(OrderId, u32)>,
+        adopted: Option<(OrderId, u32)>,
     ) -> Result<(), PlanExecutionError> {
-        let target_qty = match plan.target() {
-            PlanTarget::ShareCount(target_qty) => target_qty,
-            PlanTarget::PositionFractionBp(_) => {
-                return Err(PlanExecutionError::UnconvertedFractionTarget {
-                    plan_id: plan.plan_id(),
-                });
-            }
-        };
-        let day_end = (self
-            .stock_trading_day(plan.code())
-            .expect("plan stock trading day is valid")
-            + 1)
-            * u64::from(GAME_INTRADAY_MINUTES_PER_DAY);
-        self.state
-            .parent_orders
-            .entry(plan.account())
-            .or_default()
-            .insert(
-                plan.code().clone(),
-                ParentOrderPlan::from_facts(
-                    plan.code().clone(),
-                    plan.direction(),
-                    target_qty,
-                    plan.filled_qty(),
-                    child.qty,
-                    active,
-                    Some(plan.plan_id()),
-                    child.price,
-                    day_end,
-                ),
-            );
-        Ok(())
-    }
-
-    pub(super) fn remove_empty_linked_parent(&mut self, plan_id: PlanId) {
-        self.retain_other_linked_parents(plan_id, true);
-    }
-
-    pub(in crate::session) fn remove_linked_parent(&mut self, plan_id: PlanId) {
-        self.retain_other_linked_parents(plan_id, false);
-    }
-
-    fn retain_other_linked_parents(&mut self, plan_id: PlanId, retain_progress: bool) {
-        let accounts: Vec<_> = self.state.parent_orders.keys().copied().collect();
-        for account in accounts {
-            let empty = if let Some(parents) = self.state.parent_orders.get_mut(&account) {
-                parents.retain(|_, parent| {
-                    parent.linked_plan_id() != Some(plan_id)
-                        || (retain_progress
-                            && (parent.active_child_order_id().is_some()
-                                || parent.filled_qty() > 0))
-                });
-                parents.is_empty()
-            } else {
-                false
-            };
-            if empty {
-                self.state.parent_orders.remove(&account);
-            }
+        if !matches!(plan.target(), PlanTarget::ShareCount(_)) {
+            return Err(PlanExecutionError::UnconvertedFractionTarget {
+                plan_id: plan.plan_id(),
+            });
         }
+        let day_end = (u64::from(self.state.day) + 1)
+            * u64::from(crate::session::GAME_INTRADAY_MINUTES_PER_DAY);
+        plans
+            .install_execution(plan.plan_id(), child.qty, child.price, day_end)
+            .map_err(PlanExecutionError::Plan)?;
+        if let Some((order_id, qty)) = adopted {
+            plans
+                .record_child_submitted(
+                    plan.account(),
+                    plan.code(),
+                    plan.direction(),
+                    order_id,
+                    qty,
+                    u64::from(self.state.day),
+                )
+                .map_err(PlanExecutionError::Plan)?;
+        }
+        Ok(())
     }
 }

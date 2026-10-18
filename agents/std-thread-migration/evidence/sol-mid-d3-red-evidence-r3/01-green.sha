@@ -1,0 +1,2 @@
+ca96f4490841d9dada066f335ddc7a0e60031f48
+命令：cargo test -p engine --lib sol4th_buy_purse

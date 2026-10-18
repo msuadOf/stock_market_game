@@ -28,10 +28,8 @@ pub(super) fn into_fatal(error: impl Error + 'static, location: &str) -> StepFat
 mod tests {
     use super::*;
     use crate::session::pipeline::{
-        auction_tick_transaction::AuctionTransactionError,
-        continuous_tick_transaction::ContinuousTransactionError,
+        market_tick_transaction::MarketTransactionError,
         session_execution_transaction::SessionExecutionTransactionError,
-        stock_auction::auction_day_end::AuctionDayEndError,
         stock_execution_transaction::StockExecutionTransactionError,
     };
 
@@ -43,7 +41,7 @@ mod tests {
             location: "session::pipeline::settlement".to_owned(),
         };
         assert_eq!(
-            ContinuousTransactionError::SessionExecution(
+            MarketTransactionError::SessionExecution(
                 SessionExecutionTransactionError::StockExecution(
                     StockExecutionTransactionError::Settlement(
                         SettlementTransactionError::Settlement(fatal.clone())
@@ -54,9 +52,13 @@ mod tests {
             fatal,
         );
         assert_eq!(
-            AuctionTransactionError::Finalization(AuctionDayEndError::Settlement(
-                SettlementTransactionError::Settlement(fatal.clone()),
-            ))
+            MarketTransactionError::SessionExecution(
+                SessionExecutionTransactionError::StockExecution(
+                    StockExecutionTransactionError::Settlement(
+                        SettlementTransactionError::Settlement(fatal.clone()),
+                    ),
+                ),
+            )
             .into_fatal(),
             fatal,
         );

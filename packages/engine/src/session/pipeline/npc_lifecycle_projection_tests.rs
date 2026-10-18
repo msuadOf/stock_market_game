@@ -1,20 +1,20 @@
 use super::*;
-use crate::session::pipeline::continuous_tick_transaction::prepare_continuous_tick;
+use crate::session::pipeline::market_tick_transaction::prepare_market_tick;
 use crate::strategy::ZiNoiseStrategy;
 use crate::{AccountKind, Money};
 
-fn npc_session() -> (GameSession, AccountId, StockCode) {
+fn npc_session() -> (GameSession, AccountId, StockId) {
     let mut session = GameSession::new(
         crate::session::npc_working_quote_tests::retail_quote_setup(),
         8,
     )
     .unwrap();
     let account = AccountId(1);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = session
+        .stock_id(&session.state.setup.stocks[0].code.0)
+        .unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let tick = session.state.tick;
@@ -39,9 +39,7 @@ fn restore_attention_profile(session: &mut GameSession, npc: AccountId) {
         .unwrap();
     state.set_base_observation_probability(probability);
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .set_strategy(state.into_strategy().unwrap());
 }
@@ -53,9 +51,8 @@ fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling()
         &mut session,
         npc,
     );
-    session.state.pending_npc = None;
     crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
-    prepare_continuous_tick(&mut session).unwrap().commit();
+    prepare_market_tick(&mut session).unwrap().commit();
     let resting = session.state.markets[&code].resting_orders_for(npc);
     assert_eq!(resting.len(), 1);
     assert_eq!(session.state.npc_order_lifecycles.len(), 1);
@@ -82,9 +79,7 @@ fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling()
 fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
     let (mut session, npc, code) = npc_session();
     session
-        .state
-        .accounts
-        .get_mut(&npc)
+        .fixture_account_mut(&npc)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
@@ -137,7 +132,7 @@ fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
             },
         )
         .unwrap();
-    let result = prepare_continuous_tick(&mut session).unwrap().commit();
+    let result = prepare_market_tick(&mut session).unwrap().commit();
     assert!(result
         .output
         .receipts
@@ -158,9 +153,7 @@ fn npc_parent_child_uses_parent_horizon_instead_of_quote_lifecycle() {
     let (mut session, request) = fixture();
     let account = AccountId(1);
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_kind(AccountKind::Inst);
     let (mut validator, mut stock_execution) = seal(&mut session);
@@ -173,11 +166,13 @@ fn npc_parent_child_uses_parent_horizon_instead_of_quote_lifecycle() {
     )
     .is_some()
     {}
-    assert!(
-        session.state.parent_orders[&account][&request.allocation.code]
-            .active_child_order_id()
-            .is_some()
-    );
+    assert!(session
+        .state
+        .plans
+        .plan(request.plan_id)
+        .unwrap()
+        .active_child_order_id()
+        .is_some());
     assert!(session.state.npc_order_lifecycles.is_empty());
 }
 
@@ -185,9 +180,7 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
-        .state
-        .accounts
-        .get_mut(&player)
+        .fixture_account_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
@@ -220,9 +213,10 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
     let operation = result.operation().unwrap().clone();
     let mut round = stock_execution.apply_round(vec![operation]).unwrap();
     let order_id = round.facts[0].allocated_order_id.unwrap();
-    chain
-        .project_execution_round(&mut session, &mut round)
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut round)
+    })
+    .unwrap();
     (session, order_id)
 }
 
@@ -231,11 +225,13 @@ fn npc_partial_resting_fill_registers_once_and_immediate_full_fill_does_not_regi
     let (partial, order_id) = project_npc_limit_against_player_ask(200);
     assert_eq!(partial.state.npc_order_lifecycles.len(), 1);
     assert_eq!(partial.state.npc_order_lifecycles[0].order_id, order_id);
-    let code = &partial.state.setup.stocks[0].code;
-    assert_eq!(partial.state.markets[code].resting_orders()[0].qty, 100);
+    let code = partial
+        .stock_id(&partial.state.setup.stocks[0].code.0)
+        .unwrap();
+    assert_eq!(partial.state.markets[&code].resting_orders()[0].qty, 100);
     let (filled, _) = project_npc_limit_against_player_ask(100);
     assert!(filled.state.npc_order_lifecycles.is_empty());
-    assert!(filled.state.markets[code].resting_orders().is_empty());
+    assert!(filled.state.markets[&code].resting_orders().is_empty());
 }
 
 #[test]
@@ -243,9 +239,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
-        .state
-        .accounts
-        .get_mut(&player)
+        .fixture_account_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
@@ -289,9 +283,10 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     })
     .collect();
     let mut round = stock_execution.apply_round(operations).unwrap();
-    chain
-        .project_execution_round(&mut session, &mut round)
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut round)
+    })
+    .unwrap();
     assert_eq!(session.state.npc_order_lifecycles.len(), 1);
     let lifecycle = &session.state.npc_order_lifecycles[0];
     assert_eq!(lifecycle.account, npc);
@@ -328,9 +323,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
     let (mut session, npc, code) = npc_session();
     let player = AccountId(0);
     session
-        .state
-        .accounts
-        .get_mut(&player)
+        .fixture_account_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
@@ -402,9 +395,10 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
             crate::orderbook::OrderError::OrderAlreadyFilled(id)
         )) if id == new_id
     ));
-    chain
-        .project_execution_round(&mut session, &mut round)
-        .unwrap();
+    PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut round)
+    })
+    .unwrap();
     assert!(session.state.npc_order_lifecycles.is_empty());
 }
 
@@ -436,9 +430,10 @@ fn npc_resting_fact_without_its_acceptance_quote_is_a_typed_failure() {
         .unwrap()
         .acceptance_quotes
         .clear();
-    let error = chain
-        .project_execution_round(&mut session, &mut round)
-        .unwrap_err();
+    let error = PlanContinuationDomain::scoped(&mut session, |domain| {
+        chain.project_execution_round(domain, &mut round)
+    })
+    .unwrap_err();
     assert!(
         matches!(error, StepFatal::InvariantViolation { description, .. }
         if description.contains("no acceptance quote"))

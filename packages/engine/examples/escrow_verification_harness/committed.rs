@@ -45,17 +45,14 @@ struct Accumulator {
     day_boundaries: u64,
 }
 
-fn count_events(events: &[Event], predicate: impl Fn(&Event) -> bool) -> Result<u64, String> {
-    u64::try_from(events.iter().filter(|event| predicate(event)).count())
+fn count_events<'a>(events: impl Iterator<Item = &'a Event>, predicate: impl Fn(&Event) -> bool) -> Result<u64, String> {
+    u64::try_from(events.filter(|event| predicate(event)).count())
         .map_err(|error| format!("event count overflow: {error}"))
 }
 
 pub(super) fn execute(config: &Config) -> Result<CaptureBundle, String> {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(config.budget.thread_count()?)
-        .thread_name(|index| format!("escrow-evidence-{index}"))
-        .build()
-        .map_err(|error| format!("cannot build rayon pool: {error}"))?;
+    let compute = engine::ComputeContext::with_workers(config.budget.thread_count()?)
+        .map_err(|error| format!("cannot build compute context: {error}"))?;
     let permutation = if config.mode == Mode::Canonical {
         ExecutorPermutation::Canonical
     } else {
@@ -70,24 +67,26 @@ pub(super) fn execute(config: &Config) -> Result<CaptureBundle, String> {
             MergeDimension::Completion => CanonicalMerge::Completion,
         }),
     };
+    let threads = compute.workers();
     if config.mode == Mode::NegativeControl {
-        return pool.install(|| negative_control(config, policy, pool.current_num_threads()));
+        return compute.install(|| negative_control(config, policy, threads, compute.clone()));
     }
-    let (capture, records) = pool.install(|| {
-        with_executor_perturbation(policy, || capture_runtime(config.seed))
+    let (capture, records) = compute.install(|| {
+        with_executor_perturbation(policy, || capture_runtime(config.seed, compute.clone()))
             .map_err(|error| error.to_string())
     })?;
     let mut capture = capture?;
     capture.executor_records = records;
-    super::assemble(config, pool.current_num_threads(), capture)
+    super::assemble(config, threads, capture)
 }
 
 fn negative_control(
     config: &Config,
     policy: ExecutorPerturbation,
     threads: usize,
+    compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<CaptureBundle, String> {
-    let mut session = initial_session(config.seed)?;
+    let mut session = initial_session(config.seed, compute.clone())?;
     let mut capture = Accumulator::default();
     let mut records = Vec::new();
     for _ in 0..13 {
@@ -102,7 +101,11 @@ fn negative_control(
             Err(error) => {
                 // The same public operation must pass with ONLY the disabled
                 // merge restored. This excludes unrelated fixture/runtime errors.
-                let mut control = ProtocolSession::restore_verification_checkpoint(&before)
+                let mut control =
+                    ProtocolSession::restore_verification_checkpoint_with_compute(
+                        &before,
+                        compute.clone(),
+                    )
                     .map_err(|error| error.to_string())?;
                 let control_policy = ExecutorPerturbation {
                     disable_merge: None,
@@ -115,7 +118,11 @@ fn negative_control(
                 // Scripted enqueueing precedes the step checkpoint. Compare the
                 // post-enqueue authority, not the pre-enqueue SaveSlot.
                 let after = session.game().save().map_err(|error| error.to_string())?;
-                let mut expected = ProtocolSession::restore_verification_checkpoint(&before)
+                let mut expected =
+                    ProtocolSession::restore_verification_checkpoint_with_compute(
+                        &before,
+                        compute.clone(),
+                    )
                     .map_err(|error| error.to_string())?;
                 enqueue_script(&mut expected)?;
                 let expected_bytes =
@@ -191,8 +198,11 @@ fn negative_control(
     ))
 }
 
-pub(super) fn capture_runtime(seed: u64) -> Result<RuntimeCapture, String> {
-    capture_runtime_with_session(seed, initial_session(seed)?)
+pub(super) fn capture_runtime(
+    seed: u64,
+    compute: std::sync::Arc<engine::ComputeContext>,
+) -> Result<RuntimeCapture, String> {
+    capture_runtime_with_session(seed, initial_session(seed, compute.clone())?, compute)
 }
 
 #[cfg(test)]
@@ -206,24 +216,26 @@ pub(super) fn capture_short_restore_runtime(seed: u64) -> Result<RuntimeCapture,
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
     setup.strategy_params.retail.arrival_rate = 0.0;
-    let mut session = initial_session_with_setup(seed, setup)?;
+    let mut session = initial_session_with_setup(seed, setup, compute)?;
+    let code = session.game().stock_id("600101").expect("短恢复夹具股票必须已入目录");
     session
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("600101".to_owned()),
+                code,
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(1_008)),
                 qty: 100,
             },
         )
         .map_err(|error| error.to_string())?;
-    capture_runtime_with_session(seed, session)
+    capture_runtime_with_session(seed, session, compute)
 }
 
 fn capture_runtime_with_session(
     seed: u64,
     mut session: ProtocolSession,
+    compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<RuntimeCapture, String> {
     let mut capture = Accumulator::default();
     let mut restore_slots = Vec::new();
@@ -231,7 +243,12 @@ fn capture_runtime_with_session(
         let frame = step_scripted(&mut session)?;
         capture.frame(seed, frame, &session)?;
     }
-    restore_slots.push(capture.restore_slot(seed, "intraday-quiet-point", &mut session)?);
+    restore_slots.push(capture.restore_slot(
+            seed,
+            "intraday-quiet-point",
+            &mut session,
+            compute.clone(),
+        )?);
     while !session
         .civil_day_ready()
         .map_err(|error| error.to_string())?
@@ -250,7 +267,12 @@ fn capture_runtime_with_session(
     );
     capture.snapshots.push(authoritative_checkpoint(&session)?);
     capture.civil_updates += 1;
-    restore_slots.push(capture.restore_slot(seed, "post-civil-quiet-point", &mut session)?);
+    restore_slots.push(capture.restore_slot(
+            seed,
+            "post-civil-quiet-point",
+            &mut session,
+            compute.clone(),
+        )?);
     Ok(RuntimeCapture {
         snapshots: capture.snapshots,
         updates: capture.updates,
@@ -282,10 +304,10 @@ impl Accumulator {
         self.tick_from.get_or_insert(frame.tick);
         self.tick_to = frame.tick;
         self.tick_frames += 1;
-        self.auction_completed += count_events(&frame.events, |event| {
+        self.auction_completed += count_events(frame.events(), |event| {
             matches!(event, Event::AuctionCompleted { .. })
         })?;
-        self.day_boundaries += count_events(&frame.events, |event| {
+        self.day_boundaries += count_events(frame.events(), |event| {
             matches!(event, Event::DayBoundary { .. })
         })?;
         self.updates.push(
@@ -347,12 +369,17 @@ impl Accumulator {
         seed: u64,
         name: &str,
         session: &mut ProtocolSession,
+        compute: std::sync::Arc<engine::ComputeContext>,
     ) -> Result<RestoreSlotCapture, String> {
         let saved = authoritative_checkpoint(session)?;
         let saved = serde_json::to_vec(&saved).map_err(|error| error.to_string())?;
         let decoded: SaveSlot =
             serde_json::from_slice(&saved).map_err(|error| error.to_string())?;
-        let mut restored = ProtocolSession::restore_verification_checkpoint(&decoded)
+        let mut restored =
+            ProtocolSession::restore_verification_checkpoint_with_compute(
+                &decoded,
+                compute,
+            )
             .map_err(|error| error.to_string())?;
         let restored_bytes = serde_json::to_vec(&authoritative_checkpoint(&restored)?)
             .map_err(|error| error.to_string())?;
@@ -459,20 +486,37 @@ fn decimal_identity_json(value: Value) -> Value {
     }
 }
 
-fn initial_session(seed: u64) -> Result<ProtocolSession, String> {
-    initial_session_with_setup(seed, frozen_setup()?)
+fn initial_session(
+    seed: u64,
+    compute: std::sync::Arc<engine::ComputeContext>,
+) -> Result<ProtocolSession, String> {
+    initial_session_with_setup(seed, frozen_setup()?, compute)
 }
 
 fn initial_session_with_setup(
     seed: u64,
     setup: engine::SessionSetup,
+    compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<ProtocolSession, String> {
-    let session = ProtocolSession::new(setup, seed).map_err(|error| error.to_string())?;
+    // C 桶预算注入修复（收官复核阻断 9）：会话经 GameSession::
+    /// new_with_compute 绑定 harness 预算池，再以
+    /// from_game_for_verification 装协议面——A5 退役生产注入面后
+    /// shared_default 恒绑 128 核全局池，预算隔离失效。
+    let game =
+        engine::GameSession::new_with_compute(setup, seed, compute.clone()).map_err(|e| e.to_string())?;
+    let session = engine::session::protocol::ProtocolSession::from_game_for_verification(game, None);
     let mut initial = session.game().save().map_err(|error| error.to_string())?;
     // A declared initial allocation, not a runtime mutation: transfer 1,000
     // already-settled shares per stock from an NPC to the player. Total supply
     // is unchanged. Production restore validates the complete initial slot.
+    let catalog = initial
+        .setup
+        .stock_catalog()
+        .map_err(|error| error.to_string())?;
     for spec in &initial.setup.stocks {
+        let stock = catalog
+            .id(&spec.code.0)
+            .expect("目录由同一批规格构造，必须命中");
         let donor = initial
             .snapshot
             .accounts
@@ -481,7 +525,7 @@ fn initial_session_with_setup(
                 (*id != AccountId(0)
                     && account
                         .positions
-                        .get(&spec.code)
+                        .get(&stock)
                         .is_some_and(|position| position.qty - position.t1_locked >= 1_000))
                 .then_some(*id)
             })
@@ -492,7 +536,7 @@ fn initial_session_with_setup(
             .get_mut(&donor)
             .expect("selected donor")
             .positions
-            .get_mut(&spec.code)
+            .get_mut(&stock)
             .expect("selected position");
         donor_position.qty -= 1_000;
         initial
@@ -502,7 +546,7 @@ fn initial_session_with_setup(
             .ok_or("missing player")?
             .positions
             .insert(
-                spec.code.clone(),
+                stock,
                 PositionSnap {
                     qty: 1_000,
                     t1_locked: 0,
@@ -511,7 +555,7 @@ fn initial_session_with_setup(
                 },
             );
     }
-    ProtocolSession::restore_verification_checkpoint(&initial)
+    ProtocolSession::restore_verification_checkpoint_with_compute(&initial, compute.clone())
         .map_err(|error| format!("frozen initial allocation restore: {error}"))
 }
 
@@ -521,13 +565,31 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
         // Two sell legs and one incoming buy per stock guarantee an actual
         // multi-leg receipt chain, including the opening auction. Self crossing
         // is the existing game simplification, not a claim about A-share legality.
-        for (code, price) in [("600101", 1_120), ("000812", 885)] {
+        // 目录 id 按代码升序分配（"000812"=0、"600101"=1）；必须动态解析而非硬编码，
+        // 否则双股多腿链会静默退化为单股（独立复核 P0-1）。
+        let stock_ids: Vec<(engine::StockId, i64)> = [("600101", 1_120_i64), ("000812", 885)]
+            .into_iter()
+            .map(|(code, price)| {
+                (
+                    session
+                        .game()
+                        .stock_id(code)
+                        .unwrap_or_else(|| panic!("harness 股票必须全部在目录内: {code}")),
+                    price,
+                )
+            })
+            .collect();
+        assert!(
+            stock_ids.iter().any(|(id, _)| id.0 == 0) && stock_ids.iter().any(|(id, _)| id.0 == 1),
+            "harness 双股必须解析到不同目录 id，防单股退化回归"
+        );
+        for (id, price) in stock_ids {
             for (side, qty) in [(Side::Sell, 100), (Side::Sell, 200), (Side::Buy, 300)] {
                 session
                     .enqueue_player_intent(
                         AccountId(0),
                         Intent::PlaceLimit {
-                            code: StockCode(code.to_owned()),
+                            code: id,
                             side,
                             price: engine::LimitPrice::Fixed(Money::from_cents(price)),
                             qty,
@@ -541,7 +603,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code: StockCode("600999".to_owned()),
+                code: StockId(9),
                 side: Side::Buy,
                 price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
@@ -589,7 +651,11 @@ mod receipt_journal_tests {
 
     #[test]
     fn committed_receipt_journal_emits_expiry_count_without_legacy_key() {
-        let mut session = initial_session(17).expect("构造当前测试会话");
+        let mut session = initial_session(
+            17,
+            engine::ComputeContext::shared_default().map_err(|error| error.to_string()).unwrap(),
+        )
+        .expect("构造当前测试会话");
         let (frame, evidence) = step_scripted(&mut session).expect("实际提交一次 tick");
         let journal = receipt_journal(frame.tick, &evidence).expect("序列化已提交 receipt journal");
         assert_eq!(

@@ -107,19 +107,26 @@ export async function preparePerformanceConfig({
     target: toolchain.target,
     rustflags: process.env.RUSTFLAGS ?? "",
     cargo_jobs: Number(process.env.CARGO_BUILD_JOBS ?? 1),
-    rayon_threads: rayonThreads,
   };
   if (!environmentContract.cargo || !environmentContract.rustc || !environmentContract.target) {
     throw new Error("actual Cargo/Rust toolchain probe was incomplete");
   }
-  if (!Number.isSafeInteger(environmentContract.cargo_jobs) || environmentContract.cargo_jobs <= 0
-    || !Number.isSafeInteger(rayonThreads) || rayonThreads <= 0) {
-    throw new Error("cargo_jobs and rayon_threads must be positive safe integers");
+  if (!Number.isSafeInteger(environmentContract.cargo_jobs) || environmentContract.cargo_jobs <= 0) {
+    // 批 9 A7/A10 收尾：rayon_threads 校验随键退役。
+    throw new Error("cargo_jobs must be a positive safe integer");
   }
   // 两侧完整 source manifest 冻结后才编译；endpoint 嵌入 fingerprint，
   // 拒绝来自其他 source tree 的请求。两次 release build 共用同一完整 build slot，
   // 因此按顺序执行；每次 Cargo build 内仍使用配置的多核并发。
   // before 侧使用当前代码 checkout 的同一 endpoint，两侧均使用当前 SessionSetup 契约。
+  // 批 9 A6/A10 收尾：escrow_performance_endpoint 已随旧管线性能端点
+  // 退役删除（A6 判定）——本准备链的端点构建腿随之退役，显式失败
+  /// 指引（不静默产出半配置）。C 桶 escrow 验证面的性能对照随批 9
+  /// 旧管线退役整体裁定（intentional-divergences 登记）。
+  throw new Error(
+    "escrow 性能对照端点已随批 9 A6 退役（packages/engine/examples/escrow_performance_endpoint 删除）；本准备链待 C 桶 escrow 验证面统一裁定后重建或移除",
+  );
+  // eslint-disable-next-line no-unreachable
   const verifiedBaselineBinary = await buildEndpoint({
     sourceRoot: baselineRoot,
     targetRoot: path.join(outputRoot, "baseline-target"),

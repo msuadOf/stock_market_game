@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use crate::config::A_SHARE_BOARD_LOT;
 use crate::experience::PersonalWatchlist;
-use crate::{Money, StockCode};
+use crate::{Money, StockId};
 
 use super::signals::div_round_half_even;
 use super::types::{CandidateError, SignalScore};
@@ -126,10 +126,10 @@ impl CandidateTargetProposal {
 }
 
 pub fn eligible_candidates(
-    held: &BTreeSet<StockCode>,
+    held: &BTreeSet<StockId>,
     watchlist: &PersonalWatchlist,
-    discovered_this_round: &BTreeSet<StockCode>,
-) -> BTreeSet<StockCode> {
+    discovered_this_round: &BTreeSet<StockId>,
+) -> BTreeSet<StockId> {
     held.iter()
         .chain(watchlist.stocks.keys())
         .chain(discovered_this_round)

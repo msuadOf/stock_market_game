@@ -1,17 +1,22 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
 import { candleDate } from "../../utils/candle-date.ts"
-import { parseTurnoverCents } from "../../utils/turnover.ts"
-import type { FloatAllocation, SessionSetup, Snapshot } from "../../types/engine"
+import type { FloatAllocation, SessionSetup } from "../../types/engine"
 import type { DailyCandle } from "../../types/generated/DailyCandle"
-import type { ExReferencePrice } from "./company/ex-reference-price.ts"
-import { parseCompanySystemConfig } from "./company/system-config.ts"
-import { parseReportFrequency } from "./report-frequency.ts"
-import { array, boolean, civilDate, decimal, exact, finite, integer, map, nullable, oneOf, record, accountKey, string, SaveSchemaError } from "./primitives.ts"
+import type { MarketSnap } from "../../types/generated/MarketSnap"
+import { parseCompanyOperationsConfig } from "./company/operations.ts"
+import { parseGroups } from "./company/groups.ts"
+import { array, boolean, civilDate, decimal, exact, finite, integer, map, nullable, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
 
 const exchange = ["Shanghai", "Shenzhen"] as const
 const category = ["MainBoard", "StMainBoard", "ChiNext"] as const
 const phase = ["CallAuction", "PreOpen", "ClosingAuction", "Continuous"] as const
 
+/** 存档 wire 的股票 map 键：数值 StockId 的 JSON 字符串形态（ADR 0041）。 */
+function stockIdKey(value: string, path: string): void {
+  if (!/^(0|[1-9]\d*)$/.test(value)) throw new Error(`存档 ${path} 必须是数值 StockId 的规范十进制字符串形态`)
+}
+
+/** setup.stocks[].code 保持人类可读 A 股代码串（非 StockId），仅做非空校验。 */
 function stockCode(value: string, path: string): void {
   if (value.length === 0) throw new Error(`存档 ${path} 股票代码不能为空`)
 }
@@ -58,45 +63,9 @@ function floatAllocation(value: unknown, path: string): FloatAllocation {
   return { between_kinds: betweenKinds, within_kind: withinKind }
 }
 
-/** 三层税制的简税比例三态契约：仅 Flat 模式必填整数 bp（0..=10000），
- * 其他模式必须为 null（携带数值即拒绝，与引擎 setup 校验同构）。 */
-function parseFlatWithholdingBp(value: unknown, path: string, mode: SessionSetup["dividend_tax_mode"]): number | null {
-  if (mode === "FlatWithholding") {
-    if (value === null || value === undefined) {
-      throw new SaveSchemaError(`${path}.flat_withholding_bp`, "FlatWithholding 模式必须携带简税比例（bp）")
-    }
-    const rate = integer(value, `${path}.flat_withholding_bp`, 0)
-    if (rate > 10000) {
-      throw new SaveSchemaError(`${path}.flat_withholding_bp`, `简税比例 ${rate}bp 超出合法域 0..=10000bp（最高全额代扣）`)
-    }
-    return rate
-  }
-  if (value !== null && value !== undefined) {
-    throw new SaveSchemaError(`${path}.flat_withholding_bp`, `flat_withholding_bp 仅 FlatWithholding 模式可携带，模式 ${mode} 不得携带`)
-  }
-  return null
-}
-
-/** 面值参数域（与引擎 SessionSetup::validate 同构）：规范分字符串且必须为
- * 正数（面值不得为零或负）；缺省值 100 分（1 元/股）由 DEFAULT_SETUP 与
- * UI 草稿层提供，不设解析默认，杜绝旧档静默取默认的兼容路径。 */
-function parseParValuePerShare(value: unknown, path: string): string {
-  const cents = money(value, path)
-  if (BigInt(cents) <= 0n) {
-    throw new SaveSchemaError(path, `面值 ${cents} 分必须为正数（面值不得为零或负）`)
-  }
-  return cents
-}
-
 export function parseSetup(value: unknown, path: string): SessionSetup {
   const parsed = record(value, path)
-  // 简税比例键与引擎 serde Option 语义对齐：缺失 ⇔ null（非 Flat 模式等价不携带；
-  // Flat 模式缺失即显式拒绝）。先取出再过 exact，保持「无未知键」校验不变。
-  const flatWithholdingBpRaw = Object.hasOwn(parsed, "flat_withholding_bp") ? (parsed as Record<string, unknown>).flat_withholding_bp : undefined
-  delete (parsed as Record<string, unknown>).flat_withholding_bp
-  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "report_frequency", "company_system", "start_date", "simulation_policy_id", "dividend_tax_mode", "rights_offering_enabled", "issuer_repurchase_enabled", "par_value_per_share", "auto_corporate_foundation"], path)
-  const dividendTaxMode = oneOf(parsed.dividend_tax_mode, `${path}.dividend_tax_mode`, ["FlatWithholding", "AShareIndividual", "Exempt"] as const)
-  const flatWithholdingBp = parseFlatWithholdingBp(flatWithholdingBpRaw, path, dividendTaxMode)
+  exact(parsed, ["stocks", "npcs", "config", "strategy_params", "ticks_per_day", "auction_ticks", "closing_auction_ticks", "history_len", "t1_enabled", "float_allocation", "start_date", "simulation_policy_id", ...("company_operations" in parsed ? ["company_operations"] : []), ...("groups" in parsed ? ["groups"] : [])], path)
   const npcs = record(parsed.npcs, `${path}.npcs`)
   exact(npcs, ["retail_count", "inst_count", "hot_count", "retail_cash_median"], `${path}.npcs`)
   const config = record(parsed.config, `${path}.config`)
@@ -110,15 +79,13 @@ export function parseSetup(value: unknown, path: string): SessionSetup {
   exact(inst, ["margin", "order_size"], `${path}.strategy_params.inst`)
   exact(hot, ["lookback", "trend_threshold", "order_size"], `${path}.strategy_params.hot`)
   return {
-    company_system: parseCompanySystemConfig(parsed.company_system),
-    report_frequency: parseReportFrequency(parsed.report_frequency, `${path}.report_frequency`),
+    ...("company_operations" in parsed ? { company_operations: parsed.company_operations === null ? null : parseCompanyOperationsConfig(parsed.company_operations, `${path}.company_operations`) } : {}),
+    ...("groups" in parsed ? { groups: parseGroups(parsed.groups, `${path}.groups`) } : {}),
     stocks: array(parsed.stocks, `${path}.stocks`).map((item, index) => stock(item, `${path}.stocks[${index}]`)),
     npcs: { retail_count: integer(npcs.retail_count, `${path}.npcs.retail_count`, 0), inst_count: integer(npcs.inst_count, `${path}.npcs.inst_count`, 0), hot_count: integer(npcs.hot_count, `${path}.npcs.hot_count`, 0), retail_cash_median: money(npcs.retail_cash_median, `${path}.npcs.retail_cash_median`) },
     config: { commission_rate: finite(config.commission_rate, `${path}.config.commission_rate`), commission_min: money(config.commission_min, `${path}.config.commission_min`), stamp_tax_rate: finite(config.stamp_tax_rate, `${path}.config.stamp_tax_rate`), default_limit: finite(config.default_limit, `${path}.config.default_limit`), st_limit: finite(config.st_limit, `${path}.config.st_limit`), price_cage_enabled: boolean(config.price_cage_enabled, `${path}.config.price_cage_enabled`), lot_size: integer(config.lot_size, `${path}.config.lot_size`, 1), starting_cash: money(config.starting_cash, `${path}.config.starting_cash`) },
     strategy_params: { retail: { arrival_rate: finite(retail.arrival_rate, `${path}.strategy_params.retail.arrival_rate`), order_size_mean: integer(retail.order_size_mean, `${path}.strategy_params.retail.order_size_mean`, 0), chase_prob: finite(retail.chase_prob, `${path}.strategy_params.retail.chase_prob`) }, inst: { margin: finite(inst.margin, `${path}.strategy_params.inst.margin`), order_size: integer(inst.order_size, `${path}.strategy_params.inst.order_size`, 1) }, hot: { lookback: integer(hot.lookback, `${path}.strategy_params.hot.lookback`, 2), trend_threshold: finite(hot.trend_threshold, `${path}.strategy_params.hot.trend_threshold`), order_size: integer(hot.order_size, `${path}.strategy_params.hot.order_size`, 1) } },
-    ticks_per_day: integer(parsed.ticks_per_day, `${path}.ticks_per_day`, 1), auction_ticks: integer(parsed.auction_ticks, `${path}.auction_ticks`, 0), closing_auction_ticks: integer(parsed.closing_auction_ticks, `${path}.closing_auction_ticks`, 0), history_len: integer(parsed.history_len, `${path}.history_len`, 0), t1_enabled: boolean(parsed.t1_enabled, `${path}.t1_enabled`), float_allocation: floatAllocation(parsed.float_allocation, `${path}.float_allocation`), start_date: civilDate(parsed.start_date, `${path}.start_date`), simulation_policy_id: string(parsed.simulation_policy_id, `${path}.simulation_policy_id`), dividend_tax_mode: dividendTaxMode, flat_withholding_bp: flatWithholdingBp, rights_offering_enabled: boolean(parsed.rights_offering_enabled, `${path}.rights_offering_enabled`), issuer_repurchase_enabled: boolean(parsed.issuer_repurchase_enabled, `${path}.issuer_repurchase_enabled`),
-    par_value_per_share: parseParValuePerShare(parsed.par_value_per_share, `${path}.par_value_per_share`),
-    auto_corporate_foundation: boolean(parsed.auto_corporate_foundation, `${path}.auto_corporate_foundation`),
+    ticks_per_day: integer(parsed.ticks_per_day, `${path}.ticks_per_day`, 1), auction_ticks: integer(parsed.auction_ticks, `${path}.auction_ticks`, 0), closing_auction_ticks: integer(parsed.closing_auction_ticks, `${path}.closing_auction_ticks`, 0), history_len: integer(parsed.history_len, `${path}.history_len`, 0), t1_enabled: boolean(parsed.t1_enabled, `${path}.t1_enabled`), float_allocation: floatAllocation(parsed.float_allocation, `${path}.float_allocation`), start_date: civilDate(parsed.start_date, `${path}.start_date`), simulation_policy_id: string(parsed.simulation_policy_id, `${path}.simulation_policy_id`),
   }
 }
 
@@ -135,34 +102,25 @@ export function parseDailyCandle(value: unknown, path: string): DailyCandle {
   const stats = parsed.trade_stats === undefined ? undefined : nullable(parsed.trade_stats, `${path}.trade_stats`, (nested, statsPath) => {
     const result = record(nested, statsPath)
     exact(result, ["turnover_cents", "trade_count"], statsPath)
-    let turnoverCents: string
-    try {
-      turnoverCents = parseTurnoverCents(result.turnover_cents, `${statsPath}.turnover_cents`)
-    } catch (error) {
-      if (!(error instanceof Error)) throw error
-      throw new SaveSchemaError(`${statsPath}.turnover_cents`, error.message)
-    }
-    return { turnover_cents: turnoverCents, trade_count: integer(result.trade_count, `${statsPath}.trade_count`, 0) }
+    return { turnover_cents: decimal(result.turnover_cents, `${statsPath}.turnover_cents`), trade_count: integer(result.trade_count, `${statsPath}.trade_count`, 0) }
   })
   return stats === undefined ? { time: integer(parsed.time, `${path}.time`), open: money(parsed.open, `${path}.open`), high: money(parsed.high, `${path}.high`), low: money(parsed.low, `${path}.low`), close: money(parsed.close, `${path}.close`), volume: integer(parsed.volume, `${path}.volume`, 0) } : { time: integer(parsed.time, `${path}.time`), open: money(parsed.open, `${path}.open`), high: money(parsed.high, `${path}.high`), low: money(parsed.low, `${path}.low`), close: money(parsed.close, `${path}.close`), volume: integer(parsed.volume, `${path}.volume`, 0), trade_stats: stats }
 }
 
-export function parseSnapshot(value: unknown, path: string): Snapshot {
-  const parsed = record(value, path)
-  exact(parsed, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path)
-  return { seq: integer(parsed.seq, `${path}.seq`, 0), tick: integer(parsed.tick, `${path}.tick`, 0), day: integer(parsed.day, `${path}.day`, 0), phase: oneOf(parsed.phase, `${path}.phase`, phase), markets: map(parsed.markets, `${path}.markets`, stockCode, (item, itemPath) => { const market = record(item, itemPath); exact(market, ["last_price", "last_close", "best_bid", "best_ask", "bids", "asks", "cash_ex_reference_pending_trade", "day_market_activity", "last_cash_ex_reference"], itemPath); return { last_price: money(market.last_price, `${itemPath}.last_price`), last_close: money(market.last_close, `${itemPath}.last_close`), best_bid: nullable(market.best_bid, `${itemPath}.best_bid`, money), best_ask: nullable(market.best_ask, `${itemPath}.best_ask`, money), bids: array(market.bids, `${itemPath}.bids`).map((quote, index) => { const tuple = array(quote, `${itemPath}.bids[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.bids[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.bids[${index}][0]`), integer(tuple[1], `${itemPath}.bids[${index}][1]`, 0)] }), asks: array(market.asks, `${itemPath}.asks`).map((quote, index) => { const tuple = array(quote, `${itemPath}.asks[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.asks[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.asks[${index}][0]`), integer(tuple[1], `${itemPath}.asks[${index}][1]`, 0)] }), cash_ex_reference_pending_trade: boolean(market.cash_ex_reference_pending_trade, `${itemPath}.cash_ex_reference_pending_trade`), day_market_activity: boolean(market.day_market_activity, `${itemPath}.day_market_activity`), last_cash_ex_reference: nullable(market.last_cash_ex_reference, `${itemPath}.last_cash_ex_reference`, parseSaveExReferencePrice) } }), accounts: map(parsed.accounts, `${path}.accounts`, accountKey, (item, itemPath) => { const account = record(item, itemPath); exact(account, ["cash", "positions", "reserved_cash", "reserved_sell_qty"], itemPath); return { cash: money(account.cash, `${itemPath}.cash`), positions: map(account.positions, `${itemPath}.positions`, stockCode, (position, positionPath) => { const result = record(position, positionPath); exact(result, ["qty", "t1_locked", "invested_cents", "recovered_cents"], positionPath); return { qty: integer(result.qty, `${positionPath}.qty`, 0), t1_locked: integer(result.t1_locked, `${positionPath}.t1_locked`, 0), invested_cents: money(result.invested_cents, `${positionPath}.invested_cents`), recovered_cents: money(result.recovered_cents, `${positionPath}.recovered_cents`) } }), reserved_cash: money(account.reserved_cash, `${itemPath}.reserved_cash`), reserved_sell_qty: map(account.reserved_sell_qty, `${itemPath}.reserved_sell_qty`, stockCode, (qty, qtyPath) => integer(qty, qtyPath, 0)) } }), daily_candles: map(parsed.daily_candles, `${path}.daily_candles`, stockCode, (items, itemPath) => array(items, itemPath).map((item, index) => parseDailyCandle(item, `${itemPath}[${index}]`))), active_daily_candles: map(parsed.active_daily_candles, `${path}.active_daily_candles`, stockCode, parseDailyCandle) }
+/** 运行快照 wire 形态：股票 map 键为数值 StockId 的 JSON 字符串形态（ADR 0041）。 */
+export type WireRuntimeSnapshot = {
+  readonly seq: number
+  readonly tick: number
+  readonly day: number
+  readonly phase: string
+  readonly markets: Record<string, MarketSnap>
+  readonly accounts: Record<string, { readonly cash: string; readonly positions: Record<string, { readonly qty: number; readonly t1_locked: number; readonly invested_cents: string; readonly recovered_cents: string }>; readonly reserved_cash: string; readonly reserved_sell_qty: Record<string, number> }>
+  readonly daily_candles: Record<string, readonly DailyCandle[]>
+  readonly active_daily_candles: Record<string, DailyCandle>
 }
 
-function parseSaveExReferencePrice(value: unknown, path: string): ExReferencePrice {
-  const reference = record(value, path)
-  exact(reference, ["ex_date", "reference_price"], path)
-  const exDate = civilDate(reference.ex_date, `${path}.ex_date`)
-  const year = Number(exDate.slice(0, 4))
-  if (year < 1900 || year > 2199) throw new SaveSchemaError(`${path}.ex_date`, "除息锚点年份必须在 1900 至 2199 之间")
-  const parsed = {
-    ex_date: exDate,
-    reference_price: money(reference.reference_price, `${path}.reference_price`),
-  }
-  if (BigInt(parsed.reference_price) <= 0n) throw new SaveSchemaError(`${path}.reference_price`, "除息参考价必须为正")
-  return parsed
+export function parseSnapshot(value: unknown, path: string): WireRuntimeSnapshot {
+  const parsed = record(value, path)
+  exact(parsed, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path)
+  return { seq: integer(parsed.seq, `${path}.seq`, 0), tick: integer(parsed.tick, `${path}.tick`, 0), day: integer(parsed.day, `${path}.day`, 0), phase: oneOf(parsed.phase, `${path}.phase`, phase), markets: map(parsed.markets, `${path}.markets`, stockIdKey, (item, itemPath) => { const market = record(item, itemPath); exact(market, ["last_price", "last_close", "best_bid", "best_ask", "bids", "asks"], itemPath); return { last_price: money(market.last_price, `${itemPath}.last_price`), last_close: money(market.last_close, `${itemPath}.last_close`), best_bid: nullable(market.best_bid, `${itemPath}.best_bid`, money), best_ask: nullable(market.best_ask, `${itemPath}.best_ask`, money), bids: array(market.bids, `${itemPath}.bids`).map((quote, index) => { const tuple = array(quote, `${itemPath}.bids[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.bids[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.bids[${index}][0]`), integer(tuple[1], `${itemPath}.bids[${index}][1]`, 0)] }), asks: array(market.asks, `${itemPath}.asks`).map((quote, index) => { const tuple = array(quote, `${itemPath}.asks[${index}]`); if (tuple.length !== 2) throw new Error(`存档 ${itemPath}.asks[${index}] 必须是二元组`); return [money(tuple[0], `${itemPath}.asks[${index}][0]`), integer(tuple[1], `${itemPath}.asks[${index}][1]`, 0)] }) } }), accounts: map(parsed.accounts, `${path}.accounts`, safeIntegerKey, (item, itemPath) => { const account = record(item, itemPath); exact(account, ["cash", "positions", "reserved_cash", "reserved_sell_qty"], itemPath); return { cash: money(account.cash, `${itemPath}.cash`), positions: map(account.positions, `${itemPath}.positions`, stockIdKey, (position, positionPath) => { const result = record(position, positionPath); exact(result, ["qty", "t1_locked", "invested_cents", "recovered_cents"], positionPath); return { qty: integer(result.qty, `${positionPath}.qty`, 0), t1_locked: integer(result.t1_locked, `${positionPath}.t1_locked`, 0), invested_cents: money(result.invested_cents, `${positionPath}.invested_cents`), recovered_cents: money(result.recovered_cents, `${positionPath}.recovered_cents`) } }), reserved_cash: money(account.reserved_cash, `${itemPath}.reserved_cash`), reserved_sell_qty: map(account.reserved_sell_qty, `${itemPath}.reserved_sell_qty`, stockIdKey, (qty, qtyPath) => integer(qty, qtyPath, 0)) } }), daily_candles: map(parsed.daily_candles, `${path}.daily_candles`, stockIdKey, (items, itemPath) => array(items, itemPath).map((item, index) => parseDailyCandle(item, `${itemPath}[${index}]`))), active_daily_candles: map(parsed.active_daily_candles, `${path}.active_daily_candles`, stockIdKey, parseDailyCandle) }
 }

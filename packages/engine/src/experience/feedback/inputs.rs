@@ -24,19 +24,17 @@ impl RetailExperienceState {
     /// 最近一次本人观察价低于读取方传入的当前权威持仓成本（不复制成本）。
     pub fn is_long_stuck(
         &self,
-        code: &StockCode,
+        code: &StockId,
         cost: Money,
         as_of: &ExperienceMoment,
     ) -> Result<bool, ExperienceError> {
         require_positive("long-stuck cost", cost)?;
         self.feedback.ensure_as_of_reached(as_of)?;
-        let epoch =
-            self.feedback
-                .stocks
-                .get(code)
-                .ok_or_else(|| ExperienceError::NoActiveEntry {
-                    code: code.0.clone(),
-                })?;
+        let epoch = self
+            .feedback
+            .stocks
+            .get(code)
+            .ok_or_else(|| ExperienceError::NoActiveEntry { code: *code })?;
         let held_days = as_of.trading_day - epoch.entry_moment.trading_day;
         Ok(held_days >= LONG_STUCK_TRADING_DAYS
             && epoch

@@ -306,7 +306,7 @@ fn unlisted_bank_test_entity_adds_no_default_stock() {
         .filter(|config| config.spec.kind == engine::company::CompanyKind::Bank)
         .collect();
     assert_eq!(bank_configs.len(), 1);
-    assert_eq!(bank_configs[0].spec.id.0, "C-TEST-BANK");
+    assert_eq!(bank_configs[0].spec.code, "C-TEST-BANK");
     assert!(bank_configs[0].spec.listed_stock.is_none());
     let registry = engine::company::CompanyRegistry::new(companies).expect("registry builds");
     let stocks: Vec<(engine::account::StockCode, u64)> = registry

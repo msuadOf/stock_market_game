@@ -33,7 +33,7 @@ export async function smokePages(input, base) {
   let browser;
   try {
     const workers = Math.max(2, Math.min(4, availableParallelism()));
-    console.log(JSON.stringify({ kind: "Pages browser smoke", contexts: 2, wasmThreads: workers, cpuCount: availableParallelism(), isolationHeadersAtOrigin: false }));
+    console.log(JSON.stringify({ kind: "Pages browser smoke", contexts: 2, cpuCount: availableParallelism() }));
     browser = await chromium.launch({ headless: true });
     const origin = `http://127.0.0.1:${server.address().port}`;
     await Promise.all(["", "index.html"].map(async (entry) => {
@@ -49,7 +49,6 @@ export async function smokePages(input, base) {
           };
           const postMessage = Worker.prototype.postMessage;
           Worker.prototype.postMessage = function (message, ...options) {
-            if (message.type === "init") message = { ...message, threads: count };
             if (message.type === "create") {
               message = { ...message, setup: { ...message.setup, stocks: message.setup.stocks.slice(0, 2),
                 npcs: { ...message.setup.npcs, retail_count: 4, inst_count: 2, hot_count: 1 },
@@ -64,19 +63,17 @@ export async function smokePages(input, base) {
         await page.goto(`${origin}${base}${entry}`);
         await page.getByRole("heading", { name: "股票模拟游戏 · 启动选择" }).waitFor({ timeout: 15000 });
         console.log(`Pages bootstrap ready: ${entry || "repository root"}`);
-        assert.equal(await page.evaluate(() => crossOriginIsolated && typeof SharedArrayBuffer === "function"), true);
-        assert.equal(new URL(page.url()).searchParams.has("__stock_pages_isolation"), false);
-        assert.equal(await page.evaluate(() => window.__PAGES_SAVE_READS__), 0, "isolation bootstrap must not read the quick save");
+        // 批 9 A10 收尾：跨源隔离/SharedArrayBuffer/Rayon 池断言随
+        // wasm 多核退役删除——串行 wasm 无隔离需求。
+        assert.equal(await page.evaluate(() => window.__PAGES_SAVE_READS__), 0, "bootstrap must not read the quick save");
         assert.equal(await page.evaluate(() => "__STOCK_GAME_E2E__" in window), false);
         if (entry === "") {
           await page.getByRole("button", { name: "启动游戏", exact: true }).click();
           await page.locator(".app-root").waitFor({ timeout: 15000 });
-          console.log("Representative two-stock/seven-NPC session loaded in actual WASM Workers (test-only input instrumentation, unchanged production assets).");
+          console.log("Representative two-stock/seven-NPC session loaded in actual WASM Worker (test-only input instrumentation, unchanged production assets).");
           assert.equal(await page.locator(".app-error").count(), 0);
-          assert.equal(page.workers().length, workers + 1, "expected one main WASM Worker and the configured Rayon pool");
           const mainWorker = page.workers().find((worker) => /\/wasm-worker-[^/]+\.js$/.test(new URL(worker.url()).pathname));
           assert.ok(mainWorker, "missing main WASM Worker");
-          assert.equal(await mainWorker.evaluate(() => crossOriginIsolated), true);
         }
         assert.deepEqual(errors, []);
       } finally { await context.close(); }

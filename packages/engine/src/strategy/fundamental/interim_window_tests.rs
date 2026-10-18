@@ -54,7 +54,7 @@ fn assert_same_window_growth(kind: ReportKind, month: u8, consolidated: bool) {
                 .unwrap();
         }
     }
-    let root = MemberId("company".into());
+    let root = MemberId(0);
     let child_books = books.clone();
     let report_source = if consolidated {
         ReportSource::Consolidated {
@@ -72,7 +72,7 @@ fn assert_same_window_growth(kind: ReportKind, month: u8, consolidated: bool) {
                     },
                     GroupMember {
                         spec: MemberSpec {
-                            id: MemberId("child".into()),
+                            id: MemberId(1),
                             group_parent: Some(root.clone()),
                             issued_shares: 100,
                             parent_held_shares: 80,
@@ -110,8 +110,7 @@ fn assert_same_window_growth(kind: ReportKind, month: u8, consolidated: bool) {
         CivilInstant::from_hms(CivilDate::from_ymd(2031, 3, 20).unwrap(), 18, 0, 0).unwrap();
     let published = PublishedReport {
         id: PublicationId::new(2),
-        company: CompanyId("company".into()),
-        source: crate::information::PublicationSource::SimulationAccounting,
+        company: CompanyId(0),
         policy: AccountingPolicyRef { chart_version: 2 },
         approved_at: CivilInstant::from_hms(published_at.date(), 8, 0, 0).unwrap(),
         published_at,

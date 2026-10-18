@@ -68,10 +68,9 @@ export function usePausePreferences(options: Options) {
     const host = options.hostRef.current;
     if (host === null) { options.onError("宿主尚未就绪，无法修改暂停偏好"); return; }
     setPendingCount((count) => count + 1);
-    const generation = host.marketContext?.().generation;
     try {
       await lifecycleRef.current!.synchronize(host, preferences,
-        () => typeof window === "undefined" ? null : window.sessionStorage, () => host === options.hostRef.current && host.marketContext?.().generation === generation);
+        () => typeof window === "undefined" ? null : window.sessionStorage, () => host === options.hostRef.current);
     } finally { setPendingCount((count) => count - 1); }
   }
   return { pending: pendingCount > 0, changePreferences };

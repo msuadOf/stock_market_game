@@ -1,0 +1,6 @@
+红=修复前真实失败（env1-final9th.txt 内含：completed_sell 2081 left=9 right=8
+——price_memory 裁剪缺失的原形态）。突变复核：同拍裁剪禁用后仍绿——该 fixture
+下组内 Start 裁剪+同步已先行覆盖（判别力 fixture 限制，如实登记）；同拍入口保留
+为一般形态（完成拍为末拍时组内裁剪永不可达）。
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib completed_sell
+基准：a7d18a2feb4b777109865fc2d8937b82134557b0（红）/ a7d18a2feb4b777109865fc2d8937b82134557b0（绿）

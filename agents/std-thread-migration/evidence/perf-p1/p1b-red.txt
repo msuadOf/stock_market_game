@@ -1,0 +1,10 @@
+=== P1-B 突变红（observation 门判定取反）===
+命令：cargo test -p engine --lib shared_view_decision_sequence_golden
+基准：当前工作树（P1-B 实现+golden 守卫在位）+ 突变=decision.rs evaluate_attention 判定取反
+c7cd0eb7306e0fc5e233724785e98f2fc9e6f3cb
+GOLDEN cash=1000000 fees=0 volume=0 shares=[0] decides=5 resting=[[(0, 0)], [(0, 0)], [(0, 0)], [(0, 0)], [(0, 0)]] purse_held=0 foreign=[0]
+thread 'runtime::decision_tests::shared_view_decision_sequence_golden' (492591) panicked at packages/engine/src/runtime/decision_tests.rs:342:5:
+assertion `left == right` failed: 挂簿节奏 golden（决策订单流逐 tick 痕迹）
+  left: [[(0, 0)], [(0, 0)], [(0, 0)], [(0, 0)], [(0, 0)]]
+ right: [[(0, 1)], [(0, 2)], [(0, 2)], [(0, 3)], [(0, 3)]]
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1617 filtered out; finished in 0.01s

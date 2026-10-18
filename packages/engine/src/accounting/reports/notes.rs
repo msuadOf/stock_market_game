@@ -125,14 +125,7 @@ impl ReportClassification {
         let mut assignments = BTreeMap::new();
         for member in members {
             let industry = super::industry_of_chart(member.books.ledger().chart())?;
-            let mut source = merge_into(BTreeMap::new(), assignments_for(industry))?;
-            let summary = super::simple_summary::assignments()
-                .into_iter()
-                .filter(|item| {
-                    member.books.ledger().chart().get(&LedgerAccountId(item.code.into())).is_some()
-                })
-                .collect();
-            source = merge_into(source, summary)?;
+            let source = merge_into(BTreeMap::new(), assignments_for(industry))?;
             for (code, _) in member.books.ledger().chart().iter() {
                 let target =
                     source
@@ -163,11 +156,6 @@ impl ReportClassification {
         for industry in industries {
             merged = merge_into(merged, assignments_for(*industry))?;
         }
-        let summary = super::simple_summary::assignments()
-            .into_iter()
-            .filter(|item| defs.contains_key(&LedgerAccountId(item.code.into())))
-            .collect();
-        merged = merge_into(merged, summary)?;
         for code in defs.keys() {
             if !merged.contains_key(code) {
                 return Err(super::ReportError::UnclassifiedAccount { code: code.clone() });
@@ -291,8 +279,6 @@ impl BsLine {
         match self {
             BsLine::CashFunds => "货币资金",
             BsLine::Receivables => "应收账款",
-            BsLine::SimpleDividendSettlementAdjustment => "Simple 分红账面资产调整（非现金）",
-            BsLine::SimpleIssuerFundingAdjustment => "Simple 发行人募集资金账面调整（非现金）",
             BsLine::InsuranceReceivables => "应收保费",
             BsLine::Inventory => "存货",
             BsLine::DevelopmentInventory => "开发存货",
@@ -310,8 +296,6 @@ impl BsLine {
             BsLine::InsuranceContractLiabilities => "保险合同负债",
             BsLine::DeferredTaxLiabilities => "递延所得税负债",
             BsLine::PaidInCapital => "实收资本",
-            BsLine::CapitalReserve => "资本公积",
-            BsLine::StatutoryReserve => "法定公积金",
             BsLine::RetainedEarnings => "未分配利润",
             BsLine::MinorityEquity => "少数股东权益",
         }

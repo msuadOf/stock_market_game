@@ -1,0 +1,7 @@
+c8b6c2639cee889b51ed2943e21a5d79ad01e654（清仓删条目实现）
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib completed_sell_prunes
+
+注记（五审后重出，c8b6c2639cee889b51ed2943e21a5d79ad01e654+同拍投影修复）：清仓断言 2053/持仓 2057/现金
+2061-2067 全部通过——残余失败 2069=price_memory 裁剪（belief 个人态
+重构域=D3b 测试主题，非结算面；同拍结算面由 sol6th_* 全绿承载）。
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib completed_sell

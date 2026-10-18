@@ -1,0 +1,9 @@
+=== P2-1a 突变红（dirty 过滤移除=全量重装）===
+命令：cargo test -p engine --lib p2_1a_personal
+基准：当前工作树（P2-1a 完整态）+ 突变=drive.rs 安装循环移除 dirty 过滤
+816cddb33fad44932d2a29f757eee4823d562a63
+thread 'runtime::drive_tests::p2_1a_personal_state_install_respects_dirty_mask' (743692) panicked at packages/engine/src/runtime/drive_tests.rs:2472:5:
+assertion `left == right` failed: 个人态安装数必须==dirty 位计数（非演进位不重装；全量重装=回归）
+  left: 8
+ right: 0
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1619 filtered out; finished in 1.43s

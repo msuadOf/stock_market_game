@@ -13,7 +13,7 @@ fn interest_due(company: &str, key: &str, due_date: CivilDate) -> SchedulerReque
         key: key.to_string(),
         due_date,
         action: ScheduledAction::InterestAccrual {
-            company: CompanyId(company.to_string()),
+            company: CompanyId(0), // 单公司夹具目录位 0
         },
     }
 }
@@ -49,7 +49,7 @@ fn shareholder_actions_are_unsupported() {
     let mut scheduler = OperatingScheduler::new();
     let error = scheduler
         .submit(SchedulerRequest::ShareholderDistribution {
-            company: CompanyId("C-IND-A".to_string()),
+            company: CompanyId(0),
             detail: "dividend".to_string(),
         })
         .expect_err("shareholder action must be rejected");

@@ -193,7 +193,8 @@ fn tampered_restore_rejected() {
     ));
 
     // 跨公司重复 id（公开库 id 全局唯一 ⇒ 同 id 挂两公司 = 篡改）。
-    let other = engine::company::CompanyId("C-OTHER".to_string());
+    // 与夹具主公司互异的第二公司。
+    let other = engine::company::CompanyId(1);
     let cross = NpcInformationStateSave {
         owner: a,
         companies: [(company, vec![record()]), (other, vec![record()])]

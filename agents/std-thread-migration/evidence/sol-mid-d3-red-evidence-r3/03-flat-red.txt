@@ -1,0 +1,18 @@
+
+running 1 test
+test session::decision_chain::chain_restructure_tests::completed_sell_prunes_memory_before_quiet_point_save_validation ... FAILED
+
+failures:
+
+---- session::decision_chain::chain_restructure_tests::completed_sell_prunes_memory_before_quiet_point_save_validation stdout ----
+
+thread 'session::decision_chain::chain_restructure_tests::completed_sell_prunes_memory_before_quiet_point_save_validation' (2025535) panicked at packages/engine/src/session/decision_chain.rs:2053:9:
+assertion failed: !session.state.accounts[&account].positions().contains_key(&code)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::decision_chain::chain_restructure_tests::completed_sell_prunes_memory_before_quiet_point_save_validation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 4.76s
+

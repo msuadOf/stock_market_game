@@ -7,7 +7,7 @@
 //!
 //! 保留与淡出：未持仓/无活跃计划条目上限
 //! [`MAX_UNHELD_WATCHLIST_STOCKS`]（8），按最后实际关注分钟驱逐，同分钟按
-//! StockCode 稳定破同分（与 `RetailExperienceState::prune_watchlist`、
+//! StockId 稳定破同分（与 `RetailExperienceState::prune_watchlist`、
 //! `PersonalPriceMemory::prune` 的降序 `(minute, code)` 约定一致）。受保护
 //! 集合（持仓 ∪ 活跃计划股票）由调用方传入，**永不**被驱逐——活跃计划终止
 //! 后调用方不再列入保护，该股票即恢复可淡出。
@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{retention::RetentionCandidates, MAX_UNHELD_WATCHLIST_STOCKS};
-use crate::StockCode;
+use crate::StockId;
 
 /// 个人关注列表失败。绝不静默吞掉（铁律二）。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -50,7 +50,7 @@ pub struct WatchedStock {
 #[derive(Clone, Debug, Default, PartialEq, Eq, ts_rs::TS)]
 #[ts(export)]
 pub struct PersonalWatchlist {
-    pub stocks: BTreeMap<StockCode, WatchedStock>,
+    pub stocks: BTreeMap<StockId, WatchedStock>,
     /// 列表级注意力时钟：所有条目分钟 ≤ 该值；修剪移除条目不回拨它。
     #[ts(type = "string")]
     pub latest_attention_minute: u64,
@@ -60,7 +60,7 @@ pub struct PersonalWatchlist {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersonalWatchlistSave {
-    stocks: BTreeMap<StockCode, WatchedStock>,
+    stocks: BTreeMap<StockId, WatchedStock>,
     #[serde(with = "super::u64_decimal")]
     latest_attention_minute: u64,
 }
@@ -89,7 +89,7 @@ impl PersonalWatchlist {
     }
 
     /// 查询单股关注条目，供会话接线与存档恢复使用。
-    pub fn stock(&self, code: &StockCode) -> Option<&WatchedStock> {
+    pub fn stock(&self, code: &StockId) -> Option<&WatchedStock> {
         self.stocks.get(code)
     }
 
@@ -105,7 +105,7 @@ impl PersonalWatchlist {
     /// 边界共同维护，单一检查即覆盖单条目回拨）。返回是否新纳入关注。
     pub fn record_attention(
         &mut self,
-        code: &StockCode,
+        code: &StockId,
         market_minute: u64,
         now_market_minute: u64,
     ) -> Result<bool, WatchlistError> {
@@ -134,9 +134,9 @@ impl PersonalWatchlist {
     ///
     /// `protected` = 持仓 ∪ 活跃计划股票（调用方组合；计划终止后不再列入，
     /// 该股票即恢复可淡出）。受保护条目**不受上限约束**——cap 超限永远不
-    /// 能驱逐它们。未受保护股票按 `(last_observed_minute, StockCode)` 降序
+    /// 能驱逐它们。未受保护股票按 `(last_observed_minute, StockId)` 降序
     /// 保留前 [`MAX_UNHELD_WATCHLIST_STOCKS`] 个：同分钟代码较大者保留。
-    pub fn prune(&mut self, protected: &BTreeSet<StockCode>) {
+    pub fn prune(&mut self, protected: &BTreeSet<StockId>) {
         let kept = RetentionCandidates::from_contacts(
             self.stocks
                 .iter()
@@ -152,7 +152,7 @@ impl PersonalWatchlist {
     /// 恢复边界：条目分钟不得越过列表注意力时钟。任何失败 ⇒ 状态不产生
     /// （`PublicLibrary`/`PlanBook` 先例）；修剪历史允许时钟高于现存条目。
     pub fn from_parts(
-        stocks: BTreeMap<StockCode, WatchedStock>,
+        stocks: BTreeMap<StockId, WatchedStock>,
         latest_attention_minute: u64,
     ) -> Result<Self, WatchlistError> {
         for (code, entry) in &stocks {
@@ -181,7 +181,7 @@ mod protection_tests {
         let mut list = PersonalWatchlist::new();
         let mut protected = BTreeSet::new();
         for index in 0..20 {
-            let code = StockCode(format!("600{index:03}"));
+            let code = StockId(index);
             list.record_attention(&code, 7, 7).unwrap();
             if index < 10 {
                 protected.insert(code);
@@ -190,9 +190,9 @@ mod protection_tests {
         list.prune(&protected);
         assert_eq!(list.stock_count(), 18);
         assert!(protected.iter().all(|code| list.stock(code).is_some()));
-        assert!(list.stock(&StockCode("600010".to_owned())).is_none());
-        assert!(list.stock(&StockCode("600011".to_owned())).is_none());
-        assert!(list.stock(&StockCode("600012".to_owned())).is_some());
+        assert!(list.stock(&StockId(10)).is_none());
+        assert!(list.stock(&StockId(11)).is_none());
+        assert!(list.stock(&StockId(12)).is_some());
         assert_eq!(list.latest_attention_minute, 7);
         assert_eq!(
             PersonalWatchlist::from_parts(list.stocks.clone(), 7).unwrap(),
@@ -205,18 +205,16 @@ mod protection_tests {
         let mut list = PersonalWatchlist::new();
         let mut memory = super::super::PersonalPriceMemory::default();
         let mut reads = super::super::PersonalHistoryReadLedger::default();
-        let codes: Vec<_> = (0..10)
-            .map(|index| StockCode(format!("600{index:03}")))
-            .collect();
+        let codes: Vec<_> = (0..10).map(|index| StockId(index)).collect();
         for (index, code) in codes.iter().enumerate() {
             let minute = index as u64 + 1;
             list.record_attention(code, minute, minute).unwrap();
             memory
-                .observe_price(code, crate::Money::from_cents(100), minute, minute)
+                .observe_price(code, crate::Money::from_cents(100), minute)
                 .unwrap();
         }
         memory
-            .record_public_history_read(&codes[0], 11, 11, &mut reads)
+            .record_public_history_read(&codes[0], 11, &mut reads)
             .unwrap();
         list.prune(&BTreeSet::new());
         memory.prune(&BTreeSet::new());

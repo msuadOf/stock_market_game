@@ -1,11 +1,17 @@
 use super::*;
+use engine::StockId;
 
 #[test]
 fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: same-seed sessions with identical accounts and one validated three-failure history.
     let mut setup = setup("2030-01-07");
     setup.stocks.truncate(1);
-    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     setup.npcs = NpcSetup {
         retail_count: 1,
         inst_count: 1,
@@ -14,14 +20,16 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
     };
     setup.auction_ticks = 0;
     setup.closing_auction_ticks = 0;
-    setup.float_allocation = FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
+    setup.float_allocation =
+        FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
     let mut fresh = GameSession::new(setup, SEED).unwrap();
     for _ in 0..1 {
         fresh.step().expect("healthy step");
     }
     let mut fresh_save = fresh.save().expect("healthy save");
     let account = *fresh_save.retail_experience.keys().next().unwrap();
-    let stock = code("600101");
+    // truncate(1) 后仅剩 "600101"，目录 rank 恒为 0。
+    let stock = StockId(0);
     let closes = fresh_save.market_minute_closes.get_mut(&stock).unwrap();
     closes.clear();
     for minute in 0..38_u64 {

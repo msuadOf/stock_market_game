@@ -10,9 +10,9 @@ use super::{code, price};
 fn personal_observations_record_first_last_and_high_low_since_first_observation() {
     let mut memory = PersonalPriceMemory::default();
     let stock = code("600101");
-    memory.observe_price(&stock, price(1000), 100, 100).unwrap();
-    memory.observe_price(&stock, price(1200), 200, 200).unwrap();
-    memory.observe_price(&stock, price(800), 300, 300).unwrap();
+    memory.observe_price(&stock, price(1000), 100).unwrap();
+    memory.observe_price(&stock, price(1200), 200).unwrap();
+    memory.observe_price(&stock, price(800), 300).unwrap();
 
     let entry = memory.stock(&stock).unwrap();
     assert_eq!(entry.first_observed_minute, 100);
@@ -33,12 +33,12 @@ fn public_history_read_is_recorded_without_overwriting_personal_anchors() {
     let mut memory = PersonalPriceMemory::default();
     let mut reads = PersonalHistoryReadLedger::default();
     let stock = code("600101");
-    memory.observe_price(&stock, price(1000), 100, 100).unwrap();
-    memory.observe_price(&stock, price(1200), 200, 200).unwrap();
-    memory.observe_price(&stock, price(800), 300, 300).unwrap();
+    memory.observe_price(&stock, price(1000), 100).unwrap();
+    memory.observe_price(&stock, price(1200), 200).unwrap();
+    memory.observe_price(&stock, price(800), 300).unwrap();
 
     memory
-        .record_public_history_read(&stock, 400, 400, &mut reads)
+        .record_public_history_read(&stock, 400, &mut reads)
         .unwrap();
 
     let entry = memory.stock(&stock).unwrap();
@@ -53,7 +53,7 @@ fn public_history_read_is_recorded_without_overwriting_personal_anchors() {
     assert_eq!(entry.last_touched_minute, 400);
 
     memory
-        .record_public_history_read(&stock, 500, 500, &mut reads)
+        .record_public_history_read(&stock, 500, &mut reads)
         .unwrap();
     assert_eq!(reads.stocks[&stock].read_count, 2);
 }
@@ -65,10 +65,10 @@ fn prune_keeps_protected_and_eight_most_recent_unheld_stocks() {
     let mut memory = PersonalPriceMemory::default();
     let mut reads = PersonalHistoryReadLedger::default();
     let held = code("600001");
-    memory.observe_price(&held, price(1000), 0, 0).unwrap();
+    memory.observe_price(&held, price(1000), 0).unwrap();
     for index in 1..=10_u64 {
         memory
-            .observe_price(&code(&format!("6001{index:02}")), price(1000), index, index)
+            .observe_price(&code(&format!("6001{index:02}")), price(1000), index)
             .unwrap();
     }
 
@@ -90,19 +90,14 @@ fn prune_breaks_last_touched_ties_by_stock_code() {
     // 一致：降序 (minute, code)，代码较大者保留），"000001" 被驱逐。
     let mut memory = PersonalPriceMemory::default();
     memory
-        .observe_price(&code("000001"), price(1000), 5, 5)
+        .observe_price(&code("000001"), price(1000), 5)
         .unwrap();
     memory
-        .observe_price(&code("000002"), price(1000), 5, 5)
+        .observe_price(&code("000002"), price(1000), 5)
         .unwrap();
     for minute in 6..=12_u64 {
         memory
-            .observe_price(
-                &code(&format!("6001{minute:02}")),
-                price(1000),
-                minute,
-                minute,
-            )
+            .observe_price(&code(&format!("6001{minute:02}")), price(1000), minute)
             .unwrap();
     }
 
@@ -120,19 +115,14 @@ fn public_read_refreshes_recency_for_eviction() {
     let mut memory = PersonalPriceMemory::default();
     let mut reads = PersonalHistoryReadLedger::default();
     let earliest = code("600100");
-    memory.observe_price(&earliest, price(1000), 1, 1).unwrap();
+    memory.observe_price(&earliest, price(1000), 1).unwrap();
     for minute in 2..=9_u64 {
         memory
-            .observe_price(
-                &code(&format!("6001{minute:02}")),
-                price(1000),
-                minute,
-                minute,
-            )
+            .observe_price(&code(&format!("6001{minute:02}")), price(1000), minute)
             .unwrap();
     }
     memory
-        .record_public_history_read(&earliest, 100, 100, &mut reads)
+        .record_public_history_read(&earliest, 100, &mut reads)
         .unwrap();
 
     memory.prune(&BTreeSet::new());
@@ -147,10 +137,10 @@ fn price_memory_serde_round_trip_preserves_state() {
     let mut memory = PersonalPriceMemory::default();
     let mut reads = PersonalHistoryReadLedger::default();
     let stock = code("600101");
-    memory.observe_price(&stock, price(1000), 120, 120).unwrap();
-    memory.observe_price(&stock, price(1300), 240, 240).unwrap();
+    memory.observe_price(&stock, price(1000), 120).unwrap();
+    memory.observe_price(&stock, price(1300), 240).unwrap();
     memory
-        .record_public_history_read(&stock, 300, 300, &mut reads)
+        .record_public_history_read(&stock, 300, &mut reads)
         .unwrap();
 
     let serialized = serde_json::to_string(&memory).unwrap();

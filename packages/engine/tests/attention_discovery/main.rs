@@ -17,15 +17,16 @@ use engine::experience::{PersonalWatchlist, MAX_UNHELD_WATCHLIST_STOCKS};
 use engine::plans::{PlanBook, PlanEvent, PlanOpen};
 use engine::session::NpcAttentionState;
 use engine::strategy::{MarketView, StockView};
-use engine::{AccountId, Money, OpinionSource, PlanOpinion, PlanTarget, Side, StockCode, Urgency};
+use engine::{AccountId, Money, OpinionSource, PlanOpinion, PlanTarget, Side, StockId, Urgency};
 
-fn code(suffix: &str) -> StockCode {
-    StockCode(suffix.to_string())
+/// 无目录夹具：代码字符串本身为纯数字，直接以数值为 `StockId`；
+/// 唯一性与大小关系（含公司映射 `C-{code}`）与原字符串语义一致。
+fn code(suffix: &str) -> StockId {
+    StockId(suffix.parse().expect("测试夹具代码必须是数字字符串"))
 }
 
 fn view(last_cents: i64, minute_closes: &[i64], relative_volume: f64) -> StockView {
     StockView {
-        is_trading: true,
         best_bid: Some(Money::from_cents(last_cents - 1)),
         best_ask: Some(Money::from_cents(last_cents + 1)),
         last_price: Money::from_cents(last_cents),
@@ -42,7 +43,7 @@ fn view(last_cents: i64, minute_closes: &[i64], relative_volume: f64) -> StockVi
     }
 }
 
-fn market_of(stocks: Vec<(StockCode, StockView)>) -> MarketView {
+fn market_of(stocks: Vec<(StockId, StockView)>) -> MarketView {
     MarketView {
         stocks: stocks.into_iter().collect::<BTreeMap<_, _>>(),
         tick: 7,
@@ -69,12 +70,12 @@ fn counts_over_draws(
     seed: u64,
     draws: usize,
     market: &MarketView,
-    held: &BTreeSet<StockCode>,
+    held: &BTreeSet<StockId>,
     watchlist: &PersonalWatchlist,
-    exposed: &BTreeSet<StockCode>,
-) -> BTreeMap<StockCode, usize> {
+    exposed: &BTreeSet<StockId>,
+) -> BTreeMap<StockId, usize> {
     let mut state = attention(seed);
-    let mut counts: BTreeMap<StockCode, usize> = BTreeMap::new();
+    let mut counts: BTreeMap<StockId, usize> = BTreeMap::new();
     for _ in 0..draws {
         let picked = state
             .sample_discovery_stock(market, held, watchlist, exposed)

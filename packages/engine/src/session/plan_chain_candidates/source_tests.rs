@@ -16,9 +16,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
     // placing the next one. This adapter fixture requires two simultaneously live
     // commands, so make its otherwise strategy-free account a player explicitly.
     session
-        .state
-        .accounts
-        .get_mut(&owner)
+        .fixture_account_mut(&owner)
         .expect("fixture plan owner must exist")
         .fixture_set_kind(AccountKind::Player);
     let mut setup_events = Vec::new();

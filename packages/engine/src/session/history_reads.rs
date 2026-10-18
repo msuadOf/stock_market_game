@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::{DailyCandle, GameSession, SessionError};
-use crate::{AccountId, StockCode};
+use crate::{AccountId, StockId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct HistoricalStockData {
-    pub code: StockCode,
+    pub code: StockId,
     pub daily_candles: Vec<DailyCandle>,
     pub active_daily_candle: Option<DailyCandle>,
 }
@@ -17,7 +17,7 @@ impl GameSession {
     pub fn query_stock_history(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
     ) -> Result<HistoricalStockData, SessionError> {
         if !self.state.accounts.contains_key(&account) {
             return Err(SessionError::UnknownHistoryAccount(account));
@@ -39,7 +39,10 @@ impl GameSession {
             .get_mut(&account)
             .ok_or(SessionError::UnknownHistoryAccount(account))?
             .record(code, market_minute)
-            .map_err(|error| SessionError::InvalidHistoryRead(error.to_string()))?;
+            // 1260：个人历史读记录失败（数值原因由下层枚举承载，此处统一码）。
+            .map_err(|_| {
+                SessionError::InvalidHistoryRead(crate::error::ValidationFault::bare(1260))
+            })?;
         Ok(result)
     }
 }
@@ -51,25 +54,27 @@ mod tests {
     use super::*;
 
     fn session() -> GameSession {
-        GameSession::new(
-            super::super::npc_working_quote_tests::quote_setup(0),
-            41,
-        )
-        .unwrap()
+        GameSession::new(super::super::npc_working_quote_tests::quote_setup(0), 41).unwrap()
     }
 
     #[test]
     fn player_history_request_records_only_requested_account_without_personal_price_memory() {
         let mut game = session();
-        let code = game.state.setup.stocks[0].code.clone();
+        let code = game.stock_id("600888").unwrap();
         let before = game.snapshot();
 
         let result = game.query_stock_history(AccountId(0), &code).unwrap();
 
         assert_eq!(result.code, code);
         assert_eq!(result.daily_candles, before.daily_candles[&result.code]);
-        assert_eq!(result.active_daily_candle, before.active_daily_candles.get(&result.code).cloned());
-        assert_eq!(game.state.history_reads[&AccountId(0)].stocks[&result.code].read_count, 1);
+        assert_eq!(
+            result.active_daily_candle,
+            before.active_daily_candles.get(&result.code).cloned()
+        );
+        assert_eq!(
+            game.state.history_reads[&AccountId(0)].stocks[&result.code].read_count,
+            1
+        );
         assert!(game.state.history_reads[&AccountId(1)].stocks.is_empty());
         assert_eq!(
             serde_json::to_value(game.snapshot()).unwrap(),
@@ -80,7 +85,7 @@ mod tests {
     #[test]
     fn invalid_history_requests_do_not_record_reads() {
         let mut game = session();
-        let code = game.state.setup.stocks[0].code.clone();
+        let code = game.stock_id("600888").unwrap();
         let before = game.state.history_reads.to_map();
 
         assert!(matches!(
@@ -88,7 +93,7 @@ mod tests {
             Err(SessionError::UnknownHistoryAccount(AccountId(999)))
         ));
         assert!(matches!(
-            game.query_stock_history(AccountId(0), &StockCode("123456".to_owned())),
+            game.query_stock_history(AccountId(0), &StockId(9)),
             Err(SessionError::UnknownHistoryStock(_))
         ));
         assert_eq!(game.state.history_reads.to_map(), before);
@@ -100,7 +105,7 @@ mod tests {
         setup.start_date = crate::CivilDate::from_iso("2030-01-07").unwrap();
         setup.ticks_per_day = 3;
         let mut game = GameSession::new(setup, 41).unwrap();
-        let code = game.state.setup.stocks[0].code.clone();
+        let code = game.stock_id("600888").unwrap();
         let snapshot_before = serde_json::to_value(game.snapshot()).unwrap();
         let price_memories_before = game
             .state
@@ -111,7 +116,10 @@ mod tests {
 
         game.query_stock_history(AccountId(0), &code).unwrap();
 
-        assert_eq!(serde_json::to_value(game.snapshot()).unwrap(), snapshot_before);
+        assert_eq!(
+            serde_json::to_value(game.snapshot()).unwrap(),
+            snapshot_before
+        );
         assert_eq!(
             game.state
                 .belief_participants

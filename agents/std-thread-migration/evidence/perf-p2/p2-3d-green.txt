@@ -1,0 +1,47 @@
+# P2-3d 绿证据：零售决策个人态消费 take+move 化（9ff0cc7f）
+
+## 改动
+
+run_retail_decision：
+- belief 槽 take（原 get+cloned 深拷贝）+ journal 在 take 时记拍前值
+ （GroupUndo::Personal——唯一必要副本，Abort 语义必需）。
+- snap 六件+经验行 move 进 personal/工作副本（构建零 clone）。
+- 写回 personal 六件 move 进新快照（写回零 clone）。
+- 每决策个人态克隆 20 次 Vec → 1 次快照深拷贝。
+
+## Abort 语义论证
+
+- GroupUndo::Personal 重放无条件 `*slot = Some(*prev)`——槽空窗（take
+  到写回）仅函数内，组线程单线程，run_round 期无并发读面。
+- panic 路径：catch_unwind → Abort → 重放恢复（与 Err 同）。
+- journal 相对序不变：本函数唯一 undo 条目，前后无其他条目交错
+ （回放 drain(..).rev() LIFO，序等价）。
+
+## 守卫
+
+- p2_3d_retail_slot_take_restores_on_abort：validator 拒拍（零售决策已
+  跑）→ Abort 重放 → 组端 EchoBelief 真读面（新 collect_group_belief_
+  for_test）对照拍前驱动器缓存逐字段断言。
+- 突变红（p2-3d-red.txt）：take 时 journal 记录 no-op → local=7 槽残留
+  演进值（watchlist {StockId(0)} vs {}、information 7 records vs {}、
+  belief entries 1 vs 0、history_reads 1 vs 0）。
+- 判别边界登记（如实）：collect_belief=驱动器缓存零判别（Abort 不触
+  安装、缓存不变；突变下全量套件 1615 全绿实证）——守卫必须读组端
+  权威槽。chain 决策路径（run_chain_decision）同型克隆链未动（B
+  fixture 无 chain 位），登记为后续候选。
+
+## 等价
+
+- B 探针 300/1000 tick events/fees 逐位（3336/0、11119/5705）。
+- 全量回归：env=1 1616/0/11 绿；默认 4 轮中 1 次 watchdog_timeout_
+  carries_phase_context 计时 flake（隔离 6/6 绿——400ms 停顿计时测试，
+  高负载诱发；非交接清单既有 flake，新登记）。
+
+## 性能（负载 21+ 时段，如实登记）
+
+- 300 tick：99.1/92.9/82.0（mean 91.3；P2-3c ~86，+5~6%）。
+- 1000 tick：净轮 90.8/87.5（与 P2-3c 89.3 持平）；负载伪影轮 61-63
+  已剔除（机器 load 21+，25 users——他方任务）。
+- 配对循环数在高负载下缓存污染不可判读（r1 −6.5%/r3 +26%/r5 +6%，
+  不作依据）。
+- 账本累计（300 tick mean）：4.3 → 78.1 → 84.1 → ~86 → 91.3。

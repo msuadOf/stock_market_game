@@ -1,0 +1,7 @@
+=== P2-2a 突变红（组侧稀疏上行突变回全量）===
+命令：cargo test -p engine --lib p2_1a_personal
+基准：当前工作树（P2-2a 完整态）+ 突变=group.rs EchoBelief 稀疏过滤突变恒真（全量上行）
+816cddb33fad44932d2a29f757eee4823d562a63
+thread 'runtime::drive_tests::p2_1a_personal_state_install_respects_dirty_mask' (856134) panicked at packages/engine/src/runtime/drive_tests.rs:2473:5:
+个人态安装数必须小于名册 belief 位数（稀疏上行；全量重装=回归）：8
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1620 filtered out; finished in 1.50s

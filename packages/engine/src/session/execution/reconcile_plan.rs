@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::session::pipeline::npc_split::SessionReadView;
+
 #[derive(Clone, Debug)]
 pub(in crate::session) struct ReconciliationPlan {
     pub(in crate::session) decisions: Vec<WorkingOrderDecision>,
@@ -13,7 +15,7 @@ pub(in crate::session) enum WorkingOrderDecision {
     },
     Cancel {
         order_id: OrderId,
-        code: StockCode,
+        code: StockId,
     },
     Replace {
         old_order_id: OrderId,
@@ -24,84 +26,116 @@ pub(in crate::session) enum WorkingOrderDecision {
 impl GameSession {
     pub(in crate::session) fn plan_npc_working_order_reconciliation(
         &self,
-        mut desired: Vec<Intent>,
+        desired: Vec<Intent>,
         phase: TradingPhase,
         scope: ReconcileScope,
         working: WorkingOrderSlices<'_>,
     ) -> ReconciliationPlan {
-        let in_scope = |code: &StockCode| match &scope {
-            ReconcileScope::AllWorkingOrders => true,
-            ReconcileScope::ReviewedStocks(stocks) => stocks.contains(code),
-        };
-        let mut decisions = Vec::new();
-        match phase {
-            TradingPhase::Continuous => {
-                for (code, order) in working.continuous {
-                    if !in_scope(code) {
-                        continue;
-                    }
-                    if take_exact(&mut desired, code, order.side, order.price, order.qty) {
-                        decisions.push(WorkingOrderDecision::Keep { order_id: order.id });
-                    } else if let Some(intent) = desired
-                        .iter()
-                        .find(|intent| same_side(intent, code, order.side))
-                        .cloned()
-                    {
-                        decisions.push(WorkingOrderDecision::Replace {
-                            old_order_id: order.id,
-                            new_intent: intent,
-                        });
-                    } else {
-                        decisions.push(WorkingOrderDecision::Cancel {
-                            order_id: order.id,
-                            code: code.clone(),
-                        });
-                    }
-                }
-            }
-            TradingPhase::CallAuction => {
-                let cancelable = self.state.tick % self.state.setup.ticks_per_day
-                    < self.state.setup.auction_ticks / 3;
-                for (code, order) in working.auction {
-                    if !in_scope(code) {
-                        continue;
-                    }
-                    if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
-                        decisions.push(WorkingOrderDecision::Keep {
-                            order_id: OrderId(order.order_id),
-                        });
-                    } else if cancelable {
-                        decisions.push(WorkingOrderDecision::Cancel {
-                            order_id: OrderId(order.order_id),
-                            code: code.clone(),
-                        });
-                    } else {
-                        let market = self
-                            .state
-                            .markets
-                            .get(code)
-                            .expect("working auction stock exists");
-                        suppress_noncancelable(
-                            &mut desired,
-                            code,
-                            order.side,
-                            order.limit,
-                            &scope,
-                            market,
-                        );
-                    }
-                }
-            }
-            TradingPhase::ClosingAuction | TradingPhase::PreOpen => {}
-        }
-        ReconciliationPlan {
-            decisions,
-            residual_intents: desired,
-        }
+        Self::plan_npc_working_order_reconciliation_on(
+            &self.read_view(),
+            desired,
+            phase,
+            scope,
+            working,
+        )
+    }
+
+    /// 读视图版本（queue 链转换目标形态）：会话读集仅 tick/setup（竞价不可撤销
+    /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
+    /// 读视图版本（queue 链转换目标形态）：会话读集仅 tick/setup（竞价不可撤销
+    /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
+    pub(in crate::session) fn plan_npc_working_order_reconciliation_on(
+        view: &SessionReadView<'_>,
+        desired: Vec<Intent>,
+        phase: TradingPhase,
+        scope: ReconcileScope,
+        working: WorkingOrderSlices<'_>,
+    ) -> ReconciliationPlan {
+        plan_npc_working_order_reconciliation_standalone(
+            view.tick % view.setup.ticks_per_day < view.setup.auction_ticks / 3,
+            view.markets,
+            desired,
+            phase,
+            scope,
+            working,
+        )
     }
 }
 
-fn intent_stock_side(intent: &Intent) -> Option<(StockCode, Side)> {
+/// 纯参数版本（T1·两阶段审计：决策任务内可调——竞价可撤窗口布尔与行情
+/// 快照由调用方捕获一次传入，任务不借用会话视图）。
+pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
+    cancelable_auction_window: bool,
+    markets: &std::collections::BTreeMap<StockId, Market>,
+    mut desired: Vec<Intent>,
+    phase: TradingPhase,
+    scope: ReconcileScope,
+    working: WorkingOrderSlices<'_>,
+) -> ReconciliationPlan {
+    let in_scope = |code: &StockId| match &scope {
+        ReconcileScope::AllWorkingOrders => true,
+        ReconcileScope::ReviewedStocks(stocks) => stocks.contains(code),
+    };
+    let mut decisions = Vec::new();
+    match phase {
+        TradingPhase::Continuous => {
+            for (code, order) in working.continuous {
+                if !in_scope(code) {
+                    continue;
+                }
+                if take_exact(&mut desired, code, order.side, order.price, order.qty) {
+                    decisions.push(WorkingOrderDecision::Keep { order_id: order.id });
+                } else if let Some(intent) = desired
+                    .iter()
+                    .find(|intent| same_side(intent, code, order.side))
+                    .cloned()
+                {
+                    decisions.push(WorkingOrderDecision::Replace {
+                        old_order_id: order.id,
+                        new_intent: intent,
+                    });
+                } else {
+                    decisions.push(WorkingOrderDecision::Cancel {
+                        order_id: order.id,
+                        code: code.clone(),
+                    });
+                }
+            }
+        }
+        TradingPhase::CallAuction => {
+            for (code, order) in working.auction {
+                if !in_scope(code) {
+                    continue;
+                }
+                if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
+                    decisions.push(WorkingOrderDecision::Keep { order_id: OrderId(order.order_id) });
+                } else if cancelable_auction_window {
+                    decisions.push(WorkingOrderDecision::Cancel {
+                        order_id: OrderId(order.order_id),
+                        code: code.clone(),
+                    });
+                } else {
+                    let market = markets.get(code).expect("working auction stock exists");
+                    suppress_noncancelable(
+                        &mut desired,
+                        code,
+                        order.side,
+                        order.limit,
+                        &scope,
+                        market,
+                    );
+                }
+            }
+        }
+        TradingPhase::ClosingAuction | TradingPhase::PreOpen => {}
+    }
+    ReconciliationPlan {
+        decisions,
+        residual_intents: desired,
+    }
+}
+
+fn intent_stock_side(intent: &Intent) -> Option<(StockId, Side)> {
     match intent {
         Intent::PlaceLimit { code, side, .. } | Intent::PlaceMarket { code, side, .. } => {
             Some((code.clone(), *side))
@@ -110,13 +144,13 @@ fn intent_stock_side(intent: &Intent) -> Option<(StockCode, Side)> {
     }
 }
 
-fn same_side(intent: &Intent, code: &StockCode, side: Side) -> bool {
+fn same_side(intent: &Intent, code: &StockId, side: Side) -> bool {
     matches!(intent, Intent::PlaceLimit { code: target, side: target_side, .. } if target == code && *target_side == side)
 }
 
 fn take_exact(
     desired: &mut Vec<Intent>,
-    code: &StockCode,
+    code: &StockId,
     side: Side,
     price: Money,
     qty: u32,
@@ -128,7 +162,7 @@ fn take_exact(
 
 fn crosses(
     intent: &Intent,
-    code: &StockCode,
+    code: &StockId,
     resting_side: Side,
     resting_price: Money,
     market: &Market,
@@ -162,7 +196,7 @@ fn crosses(
 
 fn suppress_noncancelable(
     desired: &mut Vec<Intent>,
-    code: &StockCode,
+    code: &StockId,
     side: Side,
     price: Money,
     scope: &ReconcileScope,

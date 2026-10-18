@@ -1,35 +1,6 @@
 use engine::plans::PlanOpen;
 use engine::session::{decode_save_slot, GameSession, SaveDecodeLimits};
-use engine::{AccountId, OpinionSource, PlanOpinion, PlanTarget, Side, StockCode, Urgency};
-
-#[allow(dead_code)]
-#[path = "../company_operations/fixtures.rs"]
-mod operating_fixture;
-
-fn operating_baseline() -> serde_json::Value {
-    let start = operating_fixture::d("2030-01-01");
-    let mut operations = engine::company::CompanyOperations::new(
-        engine::company::operations::CompanyOperationsConfig {
-            seed: super::SEED,
-            shock_params: operating_fixture::quiet_params(),
-            companies: vec![operating_fixture::industrial_a(start)],
-        },
-        start,
-    )
-    .unwrap();
-    operations.advance_civil_day(start).unwrap();
-    let encoded = serde_json::to_value(&operations).unwrap();
-    let restored: engine::company::CompanyOperations =
-        serde_json::from_value(encoded.clone()).unwrap();
-    assert_eq!(restored, operations);
-    encoded
-}
-
-fn operating_decode_error(wire: serde_json::Value) -> String {
-    serde_json::from_value::<engine::company::CompanyOperations>(wire)
-        .expect_err("损坏独立经营状态必须显式拒绝")
-        .to_string()
-}
+use engine::{AccountId, OpinionSource, PlanOpinion, PlanTarget, Side, StockId, Urgency};
 
 fn baseline() -> serde_json::Value {
     static BASELINE: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
@@ -41,7 +12,7 @@ fn baseline() -> serde_json::Value {
             save.plans
                 .create(PlanOpen {
                     account: AccountId(1),
-                    code: StockCode("600101".into()),
+                    code: StockId(0),
                     direction: Side::Buy,
                     target: PlanTarget::ShareCount(100),
                     opinion: PlanOpinion {
@@ -83,10 +54,10 @@ fn restore_error(wire: serde_json::Value) -> String {
 }
 
 #[test]
-fn independent_operations_restore_rejects_invalid_industrial_loan_facts() {
-    let baseline = operating_baseline();
+fn audit_credit_complete_save_rejects_invalid_industrial_loan_facts() {
+    let baseline = baseline();
     let mut invalid = baseline.clone();
-    let company = invalid["companies"]
+    let company = invalid["company_operations"]["companies"]
         .as_object_mut()
         .unwrap()
         .values_mut()
@@ -98,10 +69,10 @@ fn independent_operations_restore_rejects_invalid_industrial_loan_facts() {
     assert!(!loans.is_empty());
     loans.values_mut().next().unwrap()["outstanding"] =
         serde_json::to_value(engine::accounting::AccountingAmount::from_cents(-1)).unwrap();
-    let error = operating_decode_error(invalid);
+    let error = decode_error(invalid);
     assert!(error.contains("industrial credit state"), "{error}");
     let mut overflowing = baseline;
-    let company = overflowing["companies"]
+    let company = overflowing["company_operations"]["companies"]
         .as_object_mut()
         .unwrap()
         .values_mut()
@@ -125,7 +96,7 @@ fn independent_operations_restore_rejects_invalid_industrial_loan_facts() {
     extra_contract["principal"] =
         serde_json::to_value(engine::accounting::AccountingAmount::MAX).unwrap();
     contracts.insert("synthetic-overflow-loan".into(), extra_contract);
-    let error = operating_decode_error(overflowing);
+    let error = decode_error(overflowing);
     assert!(error.contains("amount overflow in add"), "{error}");
 }
 
@@ -150,9 +121,9 @@ fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
 }
 
 #[test]
-fn independent_operations_decoding_rejects_duplicate_operating_due_id() {
-    let mut wire = operating_baseline();
-    let scheduler = &mut wire["scheduler"];
+fn complete_save_decoding_rejects_duplicate_operating_due_id() {
+    let mut wire = baseline();
+    let scheduler = &mut wire["company_operations"]["scheduler"];
     let pending = scheduler["pending"].as_array_mut().unwrap();
     assert!(!pending.is_empty());
     let mut duplicate = pending[0].clone();
@@ -165,52 +136,55 @@ fn independent_operations_decoding_rejects_duplicate_operating_due_id() {
             due["id"].as_u64().unwrap(),
         )
     });
-    let error = operating_decode_error(wire);
+    let error = decode_error(wire);
     assert!(error.contains("duplicate due id"), "{error}");
 }
 
 #[test]
-fn complete_save_restore_rejects_duplicate_clock_id_and_future_due_outside_policy() {
-    let baseline = baseline();
+fn complete_save_decoding_rejects_civil_clock_due_mirror_fields() {
+    // 公司 due 单一 authority：时钟侧携带旧镜像字段（pending_due/next_due_seq）
+    // 在解码边界显式失败，不接受静默忽略的旧格式。
+    for (field, value) in [
+        ("pending_due", serde_json::json!([])),
+        ("next_due_seq", serde_json::json!(1)),
+    ] {
+        let mut wire = baseline();
+        wire["civil_clock"][field] = value;
+        let decoded = decode_save_slot(
+            &serde_json::to_vec(&wire).unwrap(),
+            &SaveDecodeLimits::default(),
+        );
+        assert!(
+            matches!(decoded, Err(engine::session::SessionError::InvalidSave(ref fault)) if fault.code == 2080),
+            "旧公司镜像字段 {field} 必须在 JSON 解码边界以结构化 2080 拒绝"
+        );
+    }
+}
+
+#[test]
+fn complete_save_restore_rejects_scheduler_due_beyond_runtime_ceiling() {
+    // 公司 due 单一 authority 后，日历适用范围校验必须由会话边界承担：
+    // 待办 due 晚于冻结政策 runtime_max_end（2099-12-31）= 失去恰好一次
+    // 派发机会的越界待办，恢复显式拒绝（fault2234）。
+    let mut wire = baseline();
+    let scheduler = &mut wire["company_operations"]["scheduler"];
+    let pending = scheduler["pending"].as_array_mut().unwrap();
+    assert!(pending.len() >= 2, "基线存档须有多条待办");
+    // 取日期最大的一条（排序仍保持：2100-01-01 仍是最大）。
+    pending
+        .iter_mut()
+        .max_by_key(|due| due["due_date"].as_str().unwrap().to_owned())
+        .unwrap()["due_date"] = serde_json::json!("2100-01-01");
     let save = decode_save_slot(
-        &serde_json::to_vec(&baseline).unwrap(),
+        &serde_json::to_vec(&wire).unwrap(),
         &SaveDecodeLimits::default(),
     )
     .unwrap();
-    let mut session = GameSession::restore(&save).unwrap();
-    session
-        .civil_clock_mut()
-        .register_due(
-            operating_fixture::d("2030-01-09"),
-            engine::session::DueKind::ContractMaturity,
-        )
-        .unwrap();
-    let baseline = serde_json::to_value(session.save().unwrap()).unwrap();
-    GameSession::restore(&session.save().unwrap())
-        .expect("Simple 会话外部明确注册的合法到期事实必须恢复");
-    let pending = baseline["civil_clock"]["pending_due"].as_array().unwrap();
-    assert!(!pending.is_empty());
-    let mut duplicate = baseline.clone();
-    duplicate["civil_clock"]["pending_due"]
-        .as_array_mut()
-        .unwrap()
-        .push(pending[0].clone());
-    let error = restore_error(duplicate);
-    assert!(error.contains("duplicate due id"), "{error}");
-    let mut outside = baseline;
-    let mut future_due = outside["civil_clock"]["pending_due"][0].clone();
-    let next_seq = outside["civil_clock"]["next_due_seq"].as_u64().unwrap();
-    future_due["id"] = serde_json::json!(next_seq);
-    future_due["due_date"] = serde_json::json!("2100-01-01");
-    outside["civil_clock"]["next_due_seq"] = serde_json::json!(next_seq + 1);
-    outside["civil_clock"]["pending_due"]
-        .as_array_mut()
-        .unwrap()
-        .push(future_due);
-    let error = restore_error(outside);
-    assert!(error.contains("2100-01-01"), "{error}");
-    assert!(
-        !error.contains("mirror"),
-        "不应由后续镜像校验误核销：{error}"
-    );
+    match GameSession::restore(&save) {
+        Err(engine::session::SessionError::InvalidSave(fault)) => {
+            assert_eq!(fault.code, 2234, "越界 due 用 fault2234 拒绝：{fault}");
+        }
+        Ok(_) => panic!("越界待办必须被恢复边界拒绝，实际恢复成功"),
+        Err(other) => panic!("越界 due 应以 fault2234 拒绝，实际：{other}"),
+    }
 }

@@ -2,7 +2,7 @@ use super::{
     validate_indexed_receipt_keys, validate_receipt_keys, EnvelopeKey, IndexedReceiptKey,
     JournalRank, ReceiptIndex, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
 };
-use crate::{AccountId, OrderId, Side, StockCode};
+use crate::{AccountId, OrderId, Side, StockId};
 
 #[test]
 fn receipt_keys_reject_duplicate_local_identity() -> Result<(), crate::session::StepFatal> {
@@ -180,7 +180,7 @@ fn envelope() -> EnvelopeKey {
 fn envelope_with_order(order: u64) -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
-        stock: StockCode("600001".to_owned()),
+        stock: StockId(0),
         order: OrderId(order),
         side: Side::Buy,
     }

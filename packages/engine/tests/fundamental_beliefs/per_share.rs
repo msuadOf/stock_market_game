@@ -90,7 +90,7 @@ fn float_shares_never_enter_valuation_and_market_untouched() {
 /// 少数行不泄漏进估值；与等额单体口径产出完全一致。
 #[test]
 fn minority_equity_excluded_in_consolidated_scope() {
-    let company = CompanyId(COMPANY.to_string());
+    let company = CompanyId(0);
     let as_of = CivilInstant::from_hms(d("2031-03-21"), 12, 0, 0).expect("as_of");
     let consolidated = extract_annual_facts(
         &hand_report(HandReportSpec {

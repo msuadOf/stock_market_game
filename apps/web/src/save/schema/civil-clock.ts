@@ -1,10 +1,10 @@
 import { array, civilDate, exact, integer, oneOf, record, string } from "./primitives.ts"
 
+// 公司 due 的单一 authority 在 company_operations.scheduler（OperatingScheduler）；
+// 时钟存档不携带逐项公司镜像（pending_due/next_due_seq 是旧格式的未知字段）。
 type CivilClock = {
   readonly current_date: string
   readonly settled_through: string | null
-  readonly next_due_seq: number
-  readonly pending_due: readonly { readonly id: number; readonly due_date: string; readonly kind: "InterestAccrual" | "ContractMaturity" }[]
   readonly policy: CalendarPolicy
 }
 
@@ -20,20 +20,12 @@ type CalendarPolicy = {
 
 export function parseCivilClock(value: unknown, path = "civil_clock"): CivilClock {
   const parsed = record(value, path)
-  exact(parsed, ["current_date", "settled_through", "next_due_seq", "pending_due", "policy"], path)
+  exact(parsed, ["current_date", "settled_through", "policy"], path)
   return {
     current_date: civilDate(parsed.current_date, `${path}.current_date`),
     settled_through: parsed.settled_through === null ? null : civilDate(parsed.settled_through, `${path}.settled_through`),
-    next_due_seq: integer(parsed.next_due_seq, `${path}.next_due_seq`, 0),
-    pending_due: array(parsed.pending_due, `${path}.pending_due`).map((entry, index) => parseDue(entry, `${path}.pending_due[${index}]`)),
     policy: parsePolicy(parsed.policy, `${path}.policy`),
   }
-}
-
-function parseDue(value: unknown, path: string): CivilClock["pending_due"][number] {
-  const parsed = record(value, path)
-  exact(parsed, ["id", "due_date", "kind"], path)
-  return { id: integer(parsed.id, `${path}.id`, 0), due_date: civilDate(parsed.due_date, `${path}.due_date`), kind: oneOf(parsed.kind, `${path}.kind`, ["InterestAccrual", "ContractMaturity"] as const) }
 }
 
 function parsePolicy(value: unknown, path: string): CalendarPolicy {

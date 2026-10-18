@@ -7,6 +7,7 @@
 use crate::config::{ConfigError, GameConfig};
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{AccountId, Side};
+pub use crate::stock::StockId;
 use crate::strategy::ProductionStrategy;
 mod strategy;
 use std::collections::BTreeMap;
@@ -42,20 +43,11 @@ pub enum AccountKind {
     Hot,
     /// 玩家（真人，strategy=None）。
     Player,
-    /// 发行人回购专用账户（ADR-0038）：真实交易账户，但不是玩家也不是 NPC
-    /// 策略主体——委托由回购方案执行器产生；其名册身份是 IssuerTreasury
-    /// （专户股份失权，不参与分红/送转/配售）。
-    IssuerRepurchase,
 }
 
 /// 账户操作失败。绝不静默吞掉（铁律二），错误携带上下文。
 #[derive(Debug, Error)]
 pub enum AccountError {
-    #[error("cash credit must be positive, got {amount:?}")]
-    InvalidCashCredit { amount: Money },
-    /// 公司行为送股入账数量必须为正且不超出 u32 持仓域。
-    #[error("share credit must be positive and fit u32 for {code:?}, got {qty}")]
-    InvalidShareCredit { code: StockCode, qty: u64 },
     /// 买入资金不足：成交额+佣金 > 现金。
     #[error("insufficient cash: needed {needed:?}, have {have:?}")]
     InsufficientCash { needed: Money, have: Money },
@@ -65,13 +57,13 @@ pub enum AccountError {
     /// 卖出超卖：qty > 可卖持仓（持仓 − T+1锁定）。
     #[error("insufficient shares for {code:?}: needed {needed}, sellable {have}")]
     InsufficientShares {
-        code: StockCode,
+        code: StockId,
         needed: u32,
         have: u32,
     },
     /// 卖出/查询时无持仓。
     #[error("no position for {0:?}")]
-    NoPosition(StockCode),
+    NoPosition(StockId),
     /// 结算边界只接受正股数和正成交价。
     #[error("invalid trade: price {price:?}, qty {qty} (both must be positive)")]
     InvalidTrade { price: Money, qty: u32 },
@@ -115,7 +107,7 @@ struct AccountState {
     /// 现金（分）。全程 Money/i64，绝不存 f64（money 模块铁律）。
     cash: Money,
     /// 持仓表：股票代码 → Position。BTreeMap 保有序，便于聚合/快照。
-    positions: BTreeMap<StockCode, Position>,
+    positions: BTreeMap<StockId, Position>,
     /// 策略：NPC 注入算法，玩家为 None（UI 动作直接产 Intent）。
     strategy: Option<StoredStrategy>,
 }
@@ -134,178 +126,20 @@ impl Account {
         self.state.cash
     }
 
-    pub(crate) fn credit_cash(&mut self, amount: Money) -> Result<(), AccountError> {
-        if amount <= Money::ZERO {
-            return Err(AccountError::InvalidCashCredit { amount });
-        }
-        let credited_cash = self.state.cash.add(amount)?;
-        Arc::make_mut(&mut self.state).cash = credited_cash;
-        Ok(())
-    }
-
-    /// 公司行为送转股入账：只增加持仓数量，不动现金、invested/recovered 累计
-    /// （净投入口径下成本自然摊薄），也不进入 T+1 锁定（送转股非当日买入）。
-    /// 无持仓时新建零成本持仓（持有人在登记日持有原股，入账前可能已全部卖出）。
-    pub(crate) fn credit_position_shares(
-        &mut self,
-        code: StockCode,
-        qty: u64,
-    ) -> Result<(), AccountError> {
-        let added = u32::try_from(qty).map_err(|_| AccountError::InvalidShareCredit {
-            code: code.clone(),
-            qty,
-        })?;
-        if added == 0 {
-            return Err(AccountError::InvalidShareCredit { code, qty });
-        }
-        let state = Arc::make_mut(&mut self.state);
-        match state.positions.get_mut(&code) {
-            Some(position) => {
-                let new_qty = position
-                    .qty
-                    .checked_add(added)
-                    .ok_or(AccountError::InvalidShareCredit { code, qty })?;
-                position.qty = new_qty;
-            }
-            None => {
-                state.positions.insert(
-                    code,
-                    Position {
-                        qty: added,
-                        t1_locked: 0,
-                        invested_cents: 0,
-                        recovered_cents: 0,
-                    },
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// 回购注销核减：只减少持仓数量（须为可卖股份，即 T+1 已解锁），不动现金与
-    /// invested/recovered 累计。注销股份离开投资者可交易域，由公司股本核减承接。
-    pub(crate) fn write_down_position_shares(
-        &mut self,
-        code: StockCode,
-        qty: u64,
-    ) -> Result<(), AccountError> {
-        let removed = u32::try_from(qty).map_err(|_| AccountError::InvalidShareCredit {
-            code: code.clone(),
-            qty,
-        })?;
-        if removed == 0 {
-            return Err(AccountError::InvalidShareCredit { code, qty });
-        }
-        let state = Arc::make_mut(&mut self.state);
-        let position = state
-            .positions
-            .get_mut(&code)
-            .ok_or(AccountError::InsufficientShares {
-                code: code.clone(),
-                needed: removed,
-                have: 0,
-            })?;
-        let sellable = position.qty - position.t1_locked;
-        if removed > sellable {
-            return Err(AccountError::InsufficientShares {
-                code,
-                needed: removed,
-                have: sellable,
-            });
-        }
-        position.qty -= removed;
-        if position.qty == 0 {
-            state.positions.remove(&code);
-        }
-        Ok(())
-    }
-
-    /// 拆股／缩股（股份重新计值）后的持仓同步：把 `code` 持仓从 `original`
-    /// 换算到 `new_shares`（缩股核减），T+1 锁定数量按换算比例等比缩小
-    /// （重新计值不是转让，不要求可卖股份）；不动现金与 invested/recovered。
-    pub(crate) fn apply_share_redenomination(
-        &mut self,
-        code: StockCode,
-        original: u64,
-        new_shares: u64,
-    ) -> Result<(), AccountError> {
-        let new_qty = u32::try_from(new_shares).map_err(|_| AccountError::InvalidShareCredit {
-            code: code.clone(),
-            qty: new_shares,
-        })?;
-        if new_shares >= original || original == 0 {
-            return Err(AccountError::InvalidShareCredit {
-                code,
-                qty: new_shares,
-            });
-        }
-        let state = Arc::make_mut(&mut self.state);
-        let position = state
-            .positions
-            .get_mut(&code)
-            .ok_or(AccountError::InsufficientShares {
-                code: code.clone(),
-                needed: u32::try_from(original - new_shares).map_err(|_| {
-                    AccountError::InvalidShareCredit {
-                        code: code.clone(),
-                        qty: new_shares,
-                    }
-                })?,
-                have: 0,
-            })?;
-        if u64::from(position.qty) != original {
-            return Err(AccountError::InvalidShareCredit {
-                code,
-                qty: new_shares,
-            });
-        }
-        let scaled_locked =
-            u32::try_from((u64::from(position.t1_locked) * u64::from(new_qty)) / original)
-                .unwrap_or(0);
-        position.t1_locked = scaled_locked.min(new_qty);
-        position.qty = new_qty;
-        if position.qty == 0 {
-            state.positions.remove(&code);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn debit_cash(&mut self, amount: Money) -> Result<(), AccountError> {
-        if amount < Money::ZERO {
-            return Err(AccountError::InvalidCashCredit { amount });
-        }
-        let debited_cash = self.state.cash.sub(amount).map_err(|error| {
-            if self.state.cash.cents() >= 0 && amount.cents() > 0 {
-                AccountError::InsufficientCash {
-                    needed: amount,
-                    have: self.state.cash,
-                }
-            } else {
-                error.into()
-            }
-        })?;
-        Arc::make_mut(&mut self.state).cash = debited_cash;
-        Ok(())
-    }
-
     pub fn strategy(&self) -> Option<&StoredStrategy> {
         self.state.strategy.as_ref()
     }
 
-    pub fn positions(&self) -> &BTreeMap<StockCode, Position> {
+    pub fn positions(&self) -> &BTreeMap<StockId, Position> {
         &self.state.positions
     }
 
-    pub fn position(&self, code: &StockCode) -> Option<&Position> {
+    pub fn position(&self, code: &StockId) -> Option<&Position> {
         self.state.positions.get(code)
     }
 
     /// 仅在 save slot 完整校验后恢复账务事实；不重复校验以改变原首错顺序。
-    pub(crate) fn restore_balances(
-        &mut self,
-        cash: Money,
-        positions: BTreeMap<StockCode, Position>,
-    ) {
+    pub(crate) fn restore_balances(&mut self, cash: Money, positions: BTreeMap<StockId, Position>) {
         let state = Arc::make_mut(&mut self.state);
         state.cash = cash;
         state.positions = positions;
@@ -316,8 +150,9 @@ impl Account {
         Arc::make_mut(&mut self.state).strategy = strategy;
     }
 
-    #[cfg(test)]
-    pub(crate) fn fixture_set_cash(&mut self, cash: Money) {
+    /// 现金直改（测试夹具与 runtime 驱动器回写共用；外部直改经会话
+    /// `fixture_account_mut` X1 标记入口）。
+    pub fn fixture_set_cash(&mut self, cash: Money) {
         Arc::make_mut(&mut self.state).cash = cash;
     }
 
@@ -331,13 +166,19 @@ impl Account {
         self.restore_strategy(strategy);
     }
 
+    /// 测试编排面（Sol 七审修复 3）：移除单股持仓条目（构造"从未持有"
+    /// 首买形态）。
     #[cfg(test)]
-    pub(crate) fn fixture_set_positions(&mut self, positions: BTreeMap<StockCode, Position>) {
+    pub fn fixture_clear_position_for_test(&mut self, code: &StockId) {
+        Arc::make_mut(&mut self.state).positions.remove(code);
+    }
+
+    pub fn fixture_set_positions(&mut self, positions: BTreeMap<StockId, Position>) {
         Arc::make_mut(&mut self.state).positions = positions;
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_insert_position(&mut self, code: StockCode, position: Position) {
+    pub(crate) fn fixture_insert_position(&mut self, code: StockId, position: Position) {
         Arc::make_mut(&mut self.state)
             .positions
             .insert(code, position);
@@ -349,7 +190,7 @@ impl Account {
     }
 
     #[cfg(test)]
-    pub(crate) fn fixture_remove_position(&mut self, code: &StockCode) -> Option<Position> {
+    pub(crate) fn fixture_remove_position(&mut self, code: &StockId) -> Option<Position> {
         Arc::make_mut(&mut self.state).positions.remove(code)
     }
 
@@ -401,24 +242,8 @@ impl Account {
         }
     }
 
-    pub(crate) fn unlock_t1_for_stocks(&mut self, open: &std::collections::BTreeSet<StockCode>) {
-        if !self
-            .state
-            .positions
-            .iter()
-            .any(|(code, position)| open.contains(code) && position.t1_locked > 0)
-        {
-            return;
-        }
-        for (code, position) in Arc::make_mut(&mut self.state).positions.iter_mut() {
-            if open.contains(code) {
-                position.t1_locked = 0;
-            }
-        }
-    }
-
     /// 可卖股数（持仓 − T+1 锁定）；无持仓返回 0。
-    pub fn sellable_qty(&self, code: &StockCode) -> u32 {
+    pub fn sellable_qty(&self, code: &StockId) -> u32 {
         self.state
             .positions
             .get(code)
@@ -427,7 +252,7 @@ impl Account {
     }
 
     /// 派生只读成本价（分/股）；无持仓返回 None。
-    pub fn cost_price(&self, code: &StockCode) -> Option<Money> {
+    pub fn cost_price(&self, code: &StockId) -> Option<Money> {
         self.state.positions.get(code).and_then(|p| p.cost_price())
     }
 
@@ -436,7 +261,7 @@ impl Account {
     /// 通用方法：新游戏随机分配 + 加载存档精确仓位 都走它。
     pub fn grant_position(
         &mut self,
-        code: StockCode,
+        code: StockId,
         qty: u32,
         cost_price: Money,
     ) -> Result<(), AccountError> {
@@ -466,7 +291,7 @@ impl Account {
     pub fn apply_buy(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
         t1_enabled: bool,
@@ -482,7 +307,7 @@ impl Account {
     fn apply_buy_total(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         cost: Money,
         qty: u32,
         t1_enabled: bool,
@@ -504,7 +329,7 @@ impl Account {
 
     fn apply_buy_settlement(
         &mut self,
-        code: StockCode,
+        code: StockId,
         settlement: SettlementTotals,
         t1_enabled: bool,
     ) -> Result<(), AccountError> {
@@ -528,15 +353,15 @@ impl Account {
             current_qty
                 .checked_add(settlement.qty)
                 .ok_or_else(|| MoneyError::Overflow {
-                    op: "position_qty_add",
-                    operand: format!("{current_qty} + {}", settlement.qty),
+                    op: crate::money::MoneyOp::PositionQtyAdd,
+                    operand: current_qty as i64,
                 })?;
         let new_locked = if t1_enabled {
             current_locked
                 .checked_add(settlement.qty)
                 .ok_or_else(|| MoneyError::Overflow {
-                    op: "t1_locked_add",
-                    operand: format!("{current_locked} + {}", settlement.qty),
+                    op: crate::money::MoneyOp::T1LockedAdd,
+                    operand: current_locked as i64,
                 })?
         } else {
             current_locked
@@ -544,8 +369,8 @@ impl Account {
         let new_invested = current_invested
             .checked_add(settlement.gross.cents())
             .ok_or_else(|| MoneyError::Overflow {
-                op: "invested_cents_add",
-                operand: format!("{current_invested} + {}", settlement.gross.cents()),
+                op: crate::money::MoneyOp::InvestedCentsAdd,
+                operand: current_invested,
             })?;
         let state = Arc::make_mut(&mut self.state);
         state.cash = new_cash;
@@ -577,7 +402,7 @@ impl Account {
     pub fn apply_sell(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
     ) -> Result<(), AccountError> {
@@ -592,7 +417,7 @@ impl Account {
     fn apply_sell_total(
         &mut self,
         config: &GameConfig,
-        code: StockCode,
+        code: StockId,
         proceeds: Money,
         qty: u32,
     ) -> Result<(), AccountError> {
@@ -613,7 +438,7 @@ impl Account {
 
     fn apply_sell_settlement(
         &mut self,
-        code: StockCode,
+        code: StockId,
         settlement: SettlementTotals,
     ) -> Result<(), AccountError> {
         let sellable = self.sellable_qty(&code);
@@ -646,8 +471,8 @@ impl Account {
             .recovered_cents
             .checked_add(settlement.gross.cents())
             .ok_or_else(|| MoneyError::Overflow {
-                op: "recovered_cents_add",
-                operand: format!("{} + {}", pos.recovered_cents, settlement.gross.cents()),
+                op: crate::money::MoneyOp::RecoveredCentsAdd,
+                operand: pos.recovered_cents,
             })?;
         let new_qty = pos
             .qty
@@ -673,7 +498,7 @@ impl Account {
     pub(crate) fn apply_settlement(
         &mut self,
         side: Side,
-        code: StockCode,
+        code: StockId,
         settlement: SettlementTotals,
         t1_enabled: bool,
     ) -> Result<(), AccountError> {
@@ -699,7 +524,7 @@ impl Account {
         &mut self,
         config: &GameConfig,
         side: Side,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
         t1_enabled: bool,
@@ -716,7 +541,7 @@ impl Account {
         &mut self,
         config: &GameConfig,
         side: Side,
-        code: StockCode,
+        code: StockId,
         fills: &[(Money, u32)],
         t1_enabled: bool,
     ) -> Result<(), AccountError> {
@@ -740,8 +565,8 @@ impl Account {
             total_qty = total_qty
                 .checked_add(*qty)
                 .ok_or_else(|| MoneyError::Overflow {
-                    op: "trade_batch_qty_add",
-                    operand: format!("{total_qty} + {qty}"),
+                    op: crate::money::MoneyOp::TradeBatchQtyAdd,
+                    operand: total_qty as i64,
                 })?;
         }
         match side {
@@ -751,11 +576,7 @@ impl Account {
     }
 
     /// 持仓市值 = 现价 × 总持仓(qty)。无持仓返回 None。
-    pub fn market_value(
-        &self,
-        code: &StockCode,
-        price: Money,
-    ) -> Result<Option<Money>, MoneyError> {
+    pub fn market_value(&self, code: &StockId, price: Money) -> Result<Option<Money>, MoneyError> {
         self.state
             .positions
             .get(code)
@@ -766,7 +587,7 @@ impl Account {
     /// 未实现盈亏 = (现价 − 成本价) × 总持仓。无持仓返回 None。
     pub fn unrealized_pnl(
         &self,
-        code: &StockCode,
+        code: &StockId,
         price: Money,
     ) -> Result<Option<Money>, MoneyError> {
         let Some(position) = self.state.positions.get(code) else {
@@ -875,86 +696,8 @@ mod shadow_tests {
     use std::sync::Arc;
 
     #[test]
-    fn share_credit_dilutes_existing_position_or_creates_zero_cost_position() {
-        let code = StockCode("600888".to_owned());
-        let mut authority =
-            Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
-        authority
-            .grant_position(code.clone(), 100, Money::from_cents(10))
-            .unwrap();
-        authority
-            .credit_position_shares(code.clone(), 50)
-            .unwrap();
-        assert_eq!(authority.positions()[&code].qty(), 150);
-        assert_eq!(authority.positions()[&code].t1_locked(), 0);
-        assert_eq!(authority.positions()[&code].invested_cents(), 1_000);
-        assert_eq!(authority.positions()[&code].recovered_cents(), 0);
-        assert_eq!(
-            authority.cost_price(&code),
-            Some(Money::from_cents(7))
-        );
-
-        let fresh_code = StockCode("600999".to_owned());
-        authority.credit_position_shares(fresh_code.clone(), 30).unwrap();
-        assert_eq!(authority.positions()[&fresh_code].qty(), 30);
-        assert_eq!(authority.cost_price(&fresh_code), Some(Money::from_cents(0)));
-
-        assert!(matches!(
-            authority.credit_position_shares(fresh_code, 0),
-            Err(AccountError::InvalidShareCredit { .. })
-        ));
-        assert!(matches!(
-            authority.credit_position_shares(StockCode("600888".to_owned()), u64::from(u32::MAX) + 1),
-            Err(AccountError::InvalidShareCredit { .. })
-        ));
-    }
-
-    #[test]
-    fn cash_credit_updates_only_candidate_cash_and_preserves_positions() {
-        let code = StockCode("600888".to_owned());
-        let mut authority =
-            Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
-        authority
-            .grant_position(code, 100, Money::from_cents(10))
-            .unwrap();
-        let positions = authority.positions().clone();
-        let mut shadow = authority.clone_for_shadow().unwrap();
-        shadow.credit_cash(Money::from_cents(250)).unwrap();
-        assert_eq!(shadow.cash(), Money::from_cents(1_250));
-        assert_eq!(authority.cash(), Money::from_cents(1_000));
-        assert_eq!(
-            serde_json::to_value(shadow.positions()).unwrap(),
-            serde_json::to_value(&positions).unwrap()
-        );
-        assert!(!Arc::ptr_eq(&authority.state, &shadow.state));
-    }
-
-    #[test]
-    fn rejected_or_overflowing_cash_credit_does_not_mutate_candidate() {
-        let authority = Account::new(
-            AccountId(1),
-            AccountKind::Player,
-            Money::from_cents(i64::MAX),
-        );
-        let mut shadow = authority.clone_for_shadow().unwrap();
-        for amount in [Money::ZERO, Money::from_cents(-1)] {
-            assert!(matches!(
-                shadow.credit_cash(amount),
-                Err(AccountError::InvalidCashCredit { .. })
-            ));
-            assert!(Arc::ptr_eq(&authority.state, &shadow.state));
-        }
-        assert!(matches!(
-            shadow.credit_cash(Money::from_cents(1)),
-            Err(AccountError::MoneyErr(_))
-        ));
-        assert!(Arc::ptr_eq(&authority.state, &shadow.state));
-        assert_eq!(shadow.cash(), Money::from_cents(i64::MAX));
-    }
-
-    #[test]
     fn quiet_shadow_shares_account_until_its_own_state_changes() {
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let mut authority =
             Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
         authority
@@ -977,7 +720,7 @@ mod shadow_tests {
 
     #[test]
     fn restored_balances_and_t1_unlock_leave_shared_authority_unchanged() {
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let mut authority =
             Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
         authority
@@ -1008,7 +751,7 @@ mod shadow_tests {
         let error = shadow
             .apply_settlement(
                 Side::Buy,
-                StockCode("600888".to_owned()),
+                StockId(0),
                 SettlementTotals {
                     gross: Money::from_cents(100),
                     qty: 1,

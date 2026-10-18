@@ -1,14 +1,12 @@
 use super::continuous_cancellation::ContinuousCancellationCause;
 use super::*;
 
-fn session_with_resting_npc_order() -> (GameSession, StockCode, AccountId, OrderId) {
-    let code = StockCode("600888".to_string());
+fn session_with_resting_npc_order() -> (GameSession, StockId, AccountId, OrderId) {
+    let code = StockId(0);
     let account = AccountId(1);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 7).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
     let mut events = Vec::new();
@@ -134,7 +132,7 @@ fn state_only_continuous_cancellation_rejects_unknown_stock_without_mutation() {
     let error = session
         .cancel_continuous_order_state_only(
             account,
-            StockCode("600999".to_string()),
+            StockId(9),
             order_id,
             ContinuousCancellationCause::Voluntary,
         )

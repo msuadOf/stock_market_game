@@ -1,0 +1,19 @@
+=== P2-1a 绿（完整态）===
+守卫测试：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1619 filtered out; finished in 1.44s
+belief 同源/注入读面（既有测试不适配即过——协议加字段不破坏 .1 下标访问）：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1619 filtered out; finished in 1.45s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1619 filtered out; finished in 1.47s
+
+全量回归（默认/env=1）：
+error: test failed, to rerun pass `-p engine --lib`
+
+
+B 口径（300 tick groups=1）：
+9.57 / 10.20 / 6.13(离群) / 10.38 / 10.41 —— 代表 ≈10.1（P1 后 5.02，+101%）
+B 1000 tick：10.16（98.4s）——不随长度恶化；events=11119/fees=5705 逐位一致
+events 300 tick=3336 逐位一致
+
+flake 对照登记：npc_decisions_tests 两用例（旧管线 rayon 域）既有 flake——
+原代码 4 次 2 失败 vs P2-1a 4 次 1 失败，与改动无关（域不交叉）；
+此前登记的 panic_transport/disconnected_backend 同类。

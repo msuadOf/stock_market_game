@@ -1,7 +1,7 @@
 use super::execution::reconcile_plan::WorkingOrderDecision;
 use super::*;
 
-fn buy(code: &StockCode, price: i64) -> Intent {
+fn buy(code: &StockId, price: i64) -> Intent {
     Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
@@ -28,9 +28,9 @@ fn working_orders_plan(
     )
 }
 
-fn resting_auction_buy() -> (GameSession, AccountId, StockCode, OrderId) {
+fn resting_auction_buy() -> (GameSession, AccountId, StockId, OrderId) {
     let account = AccountId(1);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(900), 93).unwrap();
     let mut events = Vec::new();
     session.seed_auction_order_for_test(account, buy(&code, 900), &mut events);
@@ -65,14 +65,12 @@ fn reconciliation_plan_preopen_and_closing_auction_preserve_residual_order() {
 #[test]
 fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
     let account = AccountId(1);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 94).unwrap();
     let mut events = Vec::new();
     session.seed_order_for_test(account, buy(&code, 900), &mut events);
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();
@@ -135,7 +133,7 @@ fn locked_auction_symbolic_crossing_uses_both_daily_boundaries() {
     ];
     for (resting_side, resting_price, new_side, new_price, crosses) in cases {
         let account = AccountId(1);
-        let code = StockCode("600888".to_owned());
+        let code = StockId(0);
         let mut session = GameSession::new(npc_working_quote_tests::quote_setup(900), 93).unwrap();
         session.state.tick = 300;
         session.seed_auction_order_for_test(
@@ -176,7 +174,7 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
         .expect("player fixture accepts pending intent");
     let business_before = session.business_state_hash().unwrap();
     let seq_before = session.seq();
-    let auction_before = session.state.auction_orders.clone();
+    let auction_before = session.auction_order_projection_for_test().clone();
     let lifecycle_before = session.state.npc_order_lifecycles.clone();
     let pending_before = session.state.pending_player.len();
 
@@ -190,7 +188,7 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
     assert_eq!(plan.decisions.len(), 1);
     assert_eq!(session.business_state_hash().unwrap(), business_before);
     assert_eq!(session.seq(), seq_before);
-    assert_eq!(session.state.auction_orders, auction_before);
+    assert_eq!(session.auction_order_projection_for_test(), auction_before);
     assert_eq!(session.state.npc_order_lifecycles, lifecycle_before);
     assert_eq!(session.state.pending_player.len(), pending_before);
 }

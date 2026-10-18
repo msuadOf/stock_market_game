@@ -1,0 +1,2 @@
+c8b6c2639cee889b51ed2943e21a5d79ad01e654 工作树（= 本轮修复完整态，提交于六审报告同批）。
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib sol6th

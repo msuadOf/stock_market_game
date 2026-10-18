@@ -9,25 +9,6 @@ use crate::company::counterparty::CounterpartyId;
 use crate::company::spec::CompanyId;
 use thiserror::Error;
 
-/// 公司域公共错误的四分类（F 批共同契约收口，R4 最小公共合同）。
-///
-/// 分类是**附加结构**，不替代具体错误信息：调用方仍按原变体与 display 字符串
-/// 处理错误；本分类仅供宿主／UI 按语义分流（提示输入修正／说明业务条件／
-/// 标注未支持／上报系统故障）。
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-#[ts(export)]
-pub enum CompanyErrorClass {
-    /// 非法输入：调用方传入的结构、身份、日期或参数不合法。
-    InvalidInput,
-    /// 业务条件拒绝：输入合法，但当前制度、状态或额度不满足业务条件。
-    BusinessCondition,
-    /// 未支持操作：当前实现／模式明确不支持该操作。
-    UnsupportedOperation,
-    /// 系统状态错误：内部状态不一致或违反不变量（防御式编程显式暴露）。
-    SystemState,
-}
-
 /// 公司域操作失败（规格/开局/映射/对手方/合同/授信）。
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum CompanyError {
@@ -35,28 +16,28 @@ pub enum CompanyError {
     #[error("invalid company spec: {detail}")]
     SpecInvalid { detail: String },
 
-    /// 公司 id 重复。
-    #[error("duplicate company id {company:?}")]
-    DuplicateCompanyId { company: CompanyId },
+    /// 公司代码重复（代码是字符串身份，配置层校验）。
+    #[error("duplicate company code {company_code:?}")]
+    DuplicateCompanyId { company_code: String },
 
     /// 两家公司映射同一发行股票。
-    #[error("duplicate issuer stock {stock:?}: company {company:?} after {first:?}")]
+    #[error("duplicate issuer stock {stock:?}: company {company_code:?} after {first_code:?}")]
     DuplicateIssuerStock {
         stock: StockCode,
-        company: CompanyId,
-        first: CompanyId,
+        company_code: String,
+        first_code: String,
     },
 
     /// 集团母公司不在注册表内。
-    #[error("company {company:?} references unknown group parent {parent:?}")]
+    #[error("company {company_code:?} references unknown group parent {parent_code:?}")]
     UnknownGroupParent {
-        company: CompanyId,
-        parent: CompanyId,
+        company_code: String,
+        parent_code: String,
     },
 
     /// 固定集团关系成环。
-    #[error("group parent chain cycles at company {company:?}")]
-    GroupCycle { company: CompanyId },
+    #[error("group parent chain cycles at company {company_code:?}")]
+    GroupCycle { company_code: String },
 
     /// 上市公司映射的股票不在清单内。
     #[error("company {company:?} maps unknown issuer stock {stock:?}")]

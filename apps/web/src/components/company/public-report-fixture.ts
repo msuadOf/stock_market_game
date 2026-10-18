@@ -8,14 +8,12 @@ export function publicReportGold(): PublicReportSummary {
     discontinued: [], discontinued_subtotal: "0.00", income_tax: "22.00", net_income: "88.00",
   };
   return {
-    source: "SimulationAccounting",
     id: "7", company_id: "C-600101", period: "2030-03-31", kind: "Quarter" as const,
     version_sequence: "2", supersedes: "6", approved_date: "2030-04-01", approved_second_of_day: 28_800,
     published_date: "2030-04-02", published_second_of_day: 64_800,
     accounting: {
       total_assets: "1620.00", total_liabilities: "532.00", total_equity: "1088.00", closing_cash: "1620.00",
       quarter_net_income: "88.00", net_income: "88.00", income_tax: "22.00", operating_cash_flow: "120.00",
-      report_period_net_income: "88.00",
       investing_cash_flow: "0.00", financing_cash_flow: "500.00", net_cash_change: "620.00",
       prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } },
     },
@@ -36,18 +34,9 @@ export function publicReportGold(): PublicReportSummary {
         } },
       },
       income: {
-        report_period: structuredClone(columns), quarter: structuredClone(columns), cumulative: structuredClone(columns),
-        report_period_net_income_to_parent: null,
+        quarter: structuredClone(columns), cumulative: structuredClone(columns),
         prior_year: { Unavailable: { reason: "NoPriorYearHistory" as const } },
         minority_net_income: null, net_income_to_parent: null,
-      },
-      roe: {
-        basis: "AttributableToOrdinaryShareholders",
-        ordinary_roe: { Available: { numerator: "8800", denominator: "104400" } },
-        adjusted_roe: { Available: { numerator: "8800", denominator: "104400" } },
-        weighted_average_parent_equity_cents: { Available: { numerator: "104400", denominator: "1" } },
-        non_recurring: { Listed: { items: [], parent_net_income_after_deduction: "88.00" } },
-        equity_events: { attributable_to_parent: { Items: [] }, minority_interest: { Unavailable: { reason: "StandaloneHasNoMinorityInterest" } } },
       },
       cash_flow: {
         operating: "120.00", investing: "0.00", financing: "500.00", net_change: "620.00",

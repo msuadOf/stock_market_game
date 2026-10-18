@@ -9,7 +9,6 @@ export type PublicReportAccountingSummary = {
   total_liabilities: string;
   total_equity: string;
   closing_cash: string;
-  report_period_net_income: string;
   quarter_net_income: string;
   net_income: string;
   income_tax: string;

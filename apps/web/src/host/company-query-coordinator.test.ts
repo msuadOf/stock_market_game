@@ -7,7 +7,6 @@ import { CompanyRequestRegistry } from "./company-request-registry.ts";
 import { frame, civilUpdate, isJsonRecord, recordArray } from "./protocol-test-fixtures.ts";
 import { parseNormalizedEngineUpdate, type NormalizedTickFrame } from "./protocol/index.ts";
 import type { EngineEvent } from "../types/engine.ts";
-import { canonicalJson } from "./protocol/canonical.ts";
 import { companyReducer } from "../store/company-slice.ts";
 
 type QueryHost = Pick<EngineHost, "capabilities" | "publicReportById" | "queryPublicReports">;
@@ -54,19 +53,8 @@ function disclosure(seq: number, company: string): EngineEvent {
 }
 
 const host = {
-  capabilities: { persistence: "browser" as const, deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false },
+  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
 };
-
-test("公司公开状态覆盖匿名成交与私有省略seq，不把占位当作披露或金融通知", { timeout: 10000 }, () => {
-  const actions: unknown[] = [];
-  const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
-  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  const before = actions.length;
-  coordinator.acceptFrame(normalizedFrame([{ PublicTrade: { seq: 1, code: "600000", price: "1000", qty: 100 } }, { PrivateEventOmitted: { seq: 2 } }], 0, 2), { civilDate: "2030-01-01", revision: "1" });
-  assert.deepEqual(actions.slice(before).map((action) => (action as { type: string }).type), ["company/advanceCompanyEventCoverage", "company/reconcileCompanyPublicMetadata"]);
-  coordinator.acceptFrame(normalizedFrame([disclosure(3, "600001")], 2, 3), { civilDate: "2030-01-01", revision: "1" });
-  assert.ok(actions.length > before);
-});
 
 test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能污染新局", async () => {
   for (const rejected of [false, true]) {
@@ -119,7 +107,7 @@ test("Given a normalized tick frame, when public metadata advances, then company
   const actions: unknown[] = [];
   const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [frame(1, 0, ["600000"])], runtime_snapshot: null } });
+  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [frame(1, 0, [0])], runtime_snapshot: null } });
   if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
   coordinator.acceptFrame(normalized.frames[0]!, { civilDate: "2030-01-01", revision: "2" });
   assert.match(JSON.stringify(actions), /advanceCompanyEventCoverage/);
@@ -257,10 +245,10 @@ test("rejects a reversed empty TickFrame range before it can desynchronize the c
 test("accepts reordered TickFrame events after protocol normalization restores canonical seq order", () => {
   const coordinator = new CompanyQueryCoordinator(host, () => {});
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  const wireFrame = frame(1, 0, ["600001", "600002"]);
+  // frame 的 code 参数是 wire 数值 StockId（ADR 0041）：0=000812、1=002156。
+  const wireFrame = frame(1, 0, [0, 1]);
   const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [{
     ...wireFrame,
-    events: [...recordArray(wireFrame.events, "events")].reverse(),
     facts: [...recordArray(wireFrame.facts, "facts")].reverse(),
   }], runtime_snapshot: null } });
   if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
@@ -274,7 +262,7 @@ test("accepts reordered CivilUpdate events and facts after protocol normalizatio
   if (!isJsonRecord(update.refresh) || !isJsonRecord(update.refresh.snapshot)) throw new Error("test fixture invalid");
   const disclosureEvent = {
     CompanyDisclosurePublished: {
-      seq: 2, publication_id: 9, company: "600001",
+      seq: 2, publication_id: 9, company: 600001,
       published_at: { date: "2030-01-02", second_of_day: 64_800 }, kind: "Announcement",
     },
   };
@@ -283,15 +271,12 @@ test("accepts reordered CivilUpdate events and facts after protocol normalizatio
   } };
   const normalized = parseNormalizedEngineUpdate({ CivilUpdate: {
     ...update,
-    events: [civilEvent, disclosureEvent],
     facts: [{
       key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 1 },
       event: civilEvent,
-      canonical_payload: canonicalJson(civilEvent),
     }, {
       key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
       event: disclosureEvent,
-      canonical_payload: canonicalJson(disclosureEvent),
     }],
     seq_to: 3,
     refresh: {

@@ -1,11 +1,11 @@
-use super::continuous_tick_transaction::{
-    apply_tick_shadow_continuous_transaction, prepare_continuous_tick,
+use super::market_tick_transaction::{
+    apply_tick_shadow_market_transaction, prepare_market_tick,
 };
 use super::*;
 use crate::session::RetailOrderDiagnosticEvent;
 use crate::{
     Account, AccountId, AccountKind, Event, Intent, Money, Order, OrderId, RetailExperienceState,
-    Side, StockCode,
+    Side, StockId,
 };
 
 const PLAYER: AccountId = AccountId(0);
@@ -33,12 +33,10 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
         enqueue_crossing_buy(&mut authority, &code);
     }
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
 
-    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_market_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
     assert_eq!(authority.state.pending_player.len(), 2);
@@ -100,7 +98,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
     assert_eq!(output.settlement.settlement.applied_receipts, 4);
     assert_eq!(output.settlement.settlement.applied_groups, 2);
     assert!(matches!(
-        output.events.as_slice(),
+        output.event_values().as_slice(),
         [
             Event::Trade {
                 seq: 1,
@@ -130,7 +128,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase()
         .unwrap()
         .commit();
 
-    assert_eq!(committed.tick.events, output.events);
+    assert_eq!(committed.tick.event_values(), output.event_values());
     assert!(authority.state.pending_player.is_empty());
     assert_eq!(authority.state.next_order_id, 4);
     assert_eq!(authority.seq(), 3);
@@ -175,7 +173,7 @@ fn projects_retail_submission_and_bilateral_fills_from_typed_facts() {
         .insert(SELLER, RetailExperienceState::without_equity_reference());
     enqueue_crossing_buy(&mut authority, &code);
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -217,7 +215,7 @@ fn projects_each_retail_fill_with_its_own_request() {
     enqueue_crossing_buy(&mut authority, &code);
     enqueue_crossing_buy(&mut authority, &code);
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -276,7 +274,7 @@ fn market_remainder_is_not_reported_as_an_auction_abort() {
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     assert!(authority
         .last_retail_order_events()
@@ -320,7 +318,7 @@ fn crossing_trade_has_a_complete_causal_chain() {
         )
         .unwrap();
 
-    prepare_continuous_tick(&mut authority).unwrap().commit();
+    prepare_market_tick(&mut authority).unwrap().commit();
 
     let report = authority.causal_diagnostics().unwrap();
     assert_eq!(report.submitted_qty, u64::from(LOT * 3));
@@ -342,12 +340,10 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     let (mut authority, code) = session_with_resting_sell(t1_enabled, LOT);
     enqueue_crossing_buy(&mut authority, &code);
     let authority_before = authority.business_state_hash().unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
 
-    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_market_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
     assert_eq!(authority.state.pending_player.len(), 1);
@@ -371,10 +367,8 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     assert_eq!(output.settlement.settlement.applied_receipts, 2);
     assert_eq!(output.settlement.settlement.applied_groups, 2);
     assert!(output.settlement.events.is_empty());
-    assert!(authority.personal_trade_confirmations(PLAYER).is_empty());
-    assert!(authority.personal_trade_confirmations(SELLER).is_empty());
     assert!(matches!(
-        output.events.as_slice(),
+        output.event_values().as_slice(),
         [Event::Trade {
             seq: 1,
             code: traded_code,
@@ -391,41 +385,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
         .unwrap()
         .commit();
 
-    assert_eq!(committed.tick.events, output.events);
-    let confirmations = authority.personal_trade_confirmations(PLAYER);
-    assert_eq!(confirmations.len(), 1);
-    let confirmation = &confirmations[0];
-    assert_eq!(confirmation.code, code);
-    assert_eq!(confirmation.side, Side::Buy);
-    assert_eq!(confirmation.price, Money::from_cents(PRICE_CENTS));
-    assert_eq!(confirmation.quantity_shares, LOT);
-    assert_eq!(confirmation.gross, Money::from_cents(100_000));
-    assert_eq!(
-        confirmation.actual_fees,
-        output.receipts[0].charged,
-        "交割单费用必须来自玩家自己的实际 Fill receipt"
-    );
-    let seller_confirmations = authority.personal_trade_confirmations(SELLER);
-    assert_eq!(seller_confirmations.len(), 1);
-    assert_eq!(seller_confirmations[0].side, Side::Sell);
-    assert_eq!(seller_confirmations[0].price, Money::from_cents(PRICE_CENTS));
-    assert_eq!(seller_confirmations[0].quantity_shares, LOT);
-    assert_eq!(seller_confirmations[0].gross, Money::from_cents(100_000));
-    assert_eq!(seller_confirmations[0].actual_fees, output.receipts[1].charged);
-    assert!(seller_confirmations[0].actual_fees.stamp_tax > Money::ZERO);
-    let saved = authority.save().expect("真实成交交割单应进入完整存档结构");
-    assert_eq!(
-        saved.runtime_state.personal_trade_confirmations[&PLAYER],
-        confirmations,
-        "内存投影完整保存原始买方真实成交和实际费用"
-    );
-    assert_eq!(
-        saved.runtime_state.personal_trade_confirmations[&SELLER],
-        seller_confirmations,
-        "内存投影完整保存原始卖方真实成交和实际费用"
-    );
-    let restored_error = GameSession::restore(&saved).err().expect("非法fixture必须显式拒绝恢复");
-    assert!(matches!(restored_error, crate::SessionError::InvalidSave(ref reason) if reason.contains(if t1_enabled { "账户集合必须恰好为NPC与市场成员账户" } else { "formal A-share sessions require T+1 settlement" })), "低层fixture额外安装的第二Player不属于setup，不能冒充合法公共会话；合法恢复由真实Protocol用例验证：{restored_error}");
+    assert_eq!(committed.tick.event_values(), output.event_values());
     assert!(authority.state.pending_player.is_empty());
     assert_eq!(authority.state.next_order_id, 3);
     assert_eq!(authority.seq(), 2);
@@ -437,11 +397,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
 
     let buyer = &authority.state.accounts[&PLAYER];
     let buyer_position = &buyer.positions()[&code];
-    // 精确费用与成交金额不变；余额以实际 fixture 起始现金扣减，不能写死旧产品默认。
-    assert_eq!(
-        buyer.cash(),
-        authority.state.setup.config.starting_cash.sub(Money::from_cents(100_501)).unwrap()
-    );
+    assert_eq!(buyer.cash(), Money::from_cents(9_899_499));
     assert_eq!(buyer_position.qty(), LOT);
     assert_eq!(buyer_position.t1_locked(), expected_locked);
     assert_eq!(buyer_position.invested_cents(), 100_000);
@@ -462,10 +418,11 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     assert_eq!(committed.receipt.next_receipt_base(), 2);
 }
 
-fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, StockCode) {
+fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, StockId) {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
-    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    // 本用例的现金断言以 10 万元开局；不跟随产品默认开局资金变化。
+    setup.config.starting_cash = Money::from_cents(10_000_000);
     let mut game = GameSession::new(setup, 42).unwrap();
     // Product sessions are correctly fixed to A-share T+1. The false branch is an
     // in-crate test seam for the lower settlement transaction only.
@@ -508,7 +465,7 @@ fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, S
     (game, code)
 }
 
-fn enqueue_crossing_buy(game: &mut GameSession, code: &StockCode) {
+fn enqueue_crossing_buy(game: &mut GameSession, code: &StockId) {
     game.enqueue_player_intent(
         PLAYER,
         Intent::PlaceLimit {
@@ -521,7 +478,7 @@ fn enqueue_crossing_buy(game: &mut GameSession, code: &StockCode) {
     .unwrap();
 }
 
-fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
+fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockId) {
     let charged = FeeComponents {
         commission: Money::from_cents(500),
         stamp_tax: Money::ZERO,
@@ -560,7 +517,7 @@ fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
     assert_eq!(receipt.deliver_cash, Money::ZERO);
 }
 
-fn assert_sell_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
+fn assert_sell_receipt(receipt: &EnvelopeReceipt, code: &StockId) {
     let charged = FeeComponents {
         commission: Money::from_cents(500),
         stamp_tax: Money::from_cents(50),

@@ -10,14 +10,14 @@ use std::collections::BTreeMap;
 use engine::plans::{PlanBook, PlanEvent, PlanOpen};
 use engine::{
     AccountId, OpinionSource, OrderId, PauseReason, PlanError, PlanId, PlanOpinion, PlanPolicy,
-    PlanRevision, PlanStatus, PlanTarget, ResumeReason, RevisionReason, Side, StockCode,
+    PlanRevision, PlanStatus, PlanTarget, ResumeReason, RevisionReason, Side, StockId,
     TerminationReason, TradingPlan, Urgency,
 };
 
 fn buy_open() -> PlanOpen {
     PlanOpen {
         account: AccountId(7),
-        code: StockCode("600101".into()),
+        code: StockId(0),
         direction: Side::Buy,
         target: PlanTarget::ShareCount(1000),
         opinion: PlanOpinion {
@@ -31,10 +31,10 @@ fn buy_open() -> PlanOpen {
     }
 }
 
-fn sell_open(code: &str) -> PlanOpen {
+fn sell_open(code: StockId) -> PlanOpen {
     PlanOpen {
         account: AccountId(9),
-        code: StockCode(code.into()),
+        code,
         direction: Side::Sell,
         target: PlanTarget::ShareCount(800),
         opinion: PlanOpinion {
@@ -395,7 +395,7 @@ fn cross_day_state_persists_through_serde_round_trip() {
     let mut scenario = PlanScenario::new_buy();
     scenario.accept_and_fill(OrderId(100), 400, 0, true);
     let PlanScenario { mut book, id } = scenario;
-    let sell_id = book.create(sell_open("000812")).expect("open sell plan");
+    let sell_id = book.create(sell_open(StockId(1))).expect("open sell plan");
     book.apply(
         sell_id,
         PlanEvent::Paused {
@@ -528,7 +528,7 @@ fn terminated_plan_slot_allows_a_new_plan_with_a_new_stable_plan_id() {
     assert!(
         scenario
             .book
-            .active_plan(AccountId(7), &StockCode("600101".into()))
+            .active_plan(AccountId(7), &StockId(0))
             .is_none(),
         "terminated plan is not the active plan"
     );
@@ -548,7 +548,7 @@ fn terminated_plan_slot_allows_a_new_plan_with_a_new_stable_plan_id() {
     assert_eq!(
         scenario
             .book
-            .active_plan(AccountId(7), &StockCode("600101".into()))
+            .active_plan(AccountId(7), &StockId(0))
             .map(|p| p.plan_id()),
         Some(second_id)
     );
@@ -821,7 +821,7 @@ fn duplicate_active_plan_for_account_and_stock_is_rejected() {
     scenario
         .book
         .create(PlanOpen {
-            code: StockCode("002156".into()),
+            code: StockId(2),
             ..buy_open()
         })
         .expect("different stock is fine");
@@ -914,7 +914,7 @@ fn invalid_open_fields_are_rejected() {
     // 合法仓位比例目标可以表达（0..=10000bp）。
     assert!(book
         .create(PlanOpen {
-            code: StockCode("300260".into()),
+            code: StockId(3),
             target: PlanTarget::PositionFractionBp(6000),
             ..buy_open()
         })
@@ -982,7 +982,7 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
 #[test]
 fn fraction_targets_accumulate_fills_without_share_completion_semantics() {
     let mut scenario = PlanScenario::from_open(PlanOpen {
-        code: StockCode("300260".into()),
+        code: StockId(3),
         target: PlanTarget::PositionFractionBp(6000),
         ..buy_open()
     });
@@ -1066,7 +1066,7 @@ fn remaining_and_horizon_helpers_are_explicit() {
     let frac_id = scenario
         .book
         .create(PlanOpen {
-            code: StockCode("300260".into()),
+            code: StockId(3),
             target: PlanTarget::PositionFractionBp(6000),
             horizon_trading_days: 5,
             ..buy_open()

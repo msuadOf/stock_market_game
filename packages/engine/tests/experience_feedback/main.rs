@@ -15,10 +15,10 @@ mod seam;
 
 use engine::calendar::CivilDate;
 use engine::experience::ExperienceMoment;
-use engine::{Money, RetailExperienceState, Side, StockCode};
+use engine::{Money, RetailExperienceState, Side, StockId};
 
-pub(crate) fn code() -> StockCode {
-    StockCode("600101".into())
+pub(crate) fn code() -> StockId {
+    StockId(0)
 }
 
 pub(crate) fn price(cents: i64) -> Money {
@@ -86,7 +86,7 @@ pub(crate) fn moment(trading_day: u64, market_minute: u64) -> ExperienceMoment {
     }
 }
 
-pub(crate) fn buy(state: &mut RetailExperienceState, code: &StockCode, fill: FillFixture) {
+pub(crate) fn buy(state: &mut RetailExperienceState, code: &StockId, fill: FillFixture) {
     state
         .record_fill_dated(
             code,
@@ -101,7 +101,7 @@ pub(crate) fn buy(state: &mut RetailExperienceState, code: &StockCode, fill: Fil
         .unwrap();
 }
 
-pub(crate) fn sell(state: &mut RetailExperienceState, code: &StockCode, fill: FillFixture) {
+pub(crate) fn sell(state: &mut RetailExperienceState, code: &StockId, fill: FillFixture) {
     state
         .record_fill_dated(
             code,
@@ -120,7 +120,7 @@ pub(crate) fn sell(state: &mut RetailExperienceState, code: &StockCode, fill: Fi
 /// 失败事件 +1、退出历史 +1（realized_profit=false）。
 pub(crate) fn failed_round_trip(
     state: &mut RetailExperienceState,
-    code: &StockCode,
+    code: &StockId,
     order_id: u64,
     trading_day: u64,
     market_minute: u64,

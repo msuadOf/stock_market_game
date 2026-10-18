@@ -23,13 +23,5 @@ fn every_event_matches_adr_phase_entity_value_and_source() {
         assert_eq!(key.local_event_index(), 29);
         assert!(variants.insert(variant));
     }
-    assert!(events.iter().any(|event| matches!(
-        event,
-        engine::Event::PublicTrade { seq: 12, .. }
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        engine::Event::PrivateEventOmitted { seq: 13 }
-    )));
-    assert_eq!(variants.len(), 13);
+    assert_eq!(variants.len(), 11);
 }

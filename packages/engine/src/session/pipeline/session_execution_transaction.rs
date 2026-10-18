@@ -5,17 +5,26 @@
 
 use super::{
     account_settlement::SettlementTransactionOutput,
-    continuous_matching::{ContinuousStockOutput, IncrementalContinuousStockFinish},
-    continuous_projection_transaction::collect_continuous_transaction_events,
-    event_collection::OwnedEventFact,
-    execution_fact_producers::adapt_continuous_execution_facts,
-    stock_execution_transaction::{
-        apply_stock_execution_transaction_with_beliefs, StockExecutionTransactionError,
-        StockExecutionTransactionOutput,
-    },
-    EnvelopeReceipt, StepFatal,
+    event_collection::EventFact,
+    stock_execution_transaction::StockExecutionTransactionError,
+    StepFatal,
 };
-use crate::{Event, GameSession};
+// T5（批次八十）/Luna 快检（八十·1）：本模块 apply 族与辅助仅测试构建
+// （生产路径已并入 finalize 单点汇合）——测试专用导入统一 cfg(test)。
+#[cfg(test)]
+use super::continuous_matching::{ContinuousStockOutput, IncrementalContinuousStockFinish};
+#[cfg(test)]
+use super::continuous_projection_transaction::collect_continuous_transaction_events;
+#[cfg(test)]
+use super::execution_fact_producers::adapt_continuous_execution_facts;
+#[cfg(test)]
+use super::stock_execution_transaction::{
+    compose_stock_execution_transaction_for_test, StockExecutionTransactionOutput,
+};
+#[cfg(test)]
+use super::EnvelopeReceipt;
+#[cfg(test)]
+use crate::GameSession;
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum SessionExecutionTransactionError {
@@ -28,37 +37,51 @@ pub(super) enum SessionExecutionTransactionError {
 }
 
 pub(super) struct SessionExecutionTransactionOutput {
-    pub(super) events: Vec<Event>,
-    pub(super) event_keys: Vec<super::EventStableKey>,
-    pub(super) receipts: Vec<EnvelopeReceipt>,
+    pub(super) facts: Vec<EventFact>,
+    pub(super) receipts: super::fill_fact::ReceiptBatch,
     pub(super) settlement: SettlementTransactionOutput,
 }
 
+#[cfg(test)]
+impl SessionExecutionTransactionOutput {
+    pub(super) fn event_values(&self) -> Vec<crate::Event> {
+        self.facts.iter().map(|fact| fact.event.clone()).collect()
+    }
+}
+
 /// 在 prospective 会话 shadow 上应用 Continuous 股票处理与 Projection，尚不提交权威状态。
+/// T5（批次八十）：本 apply 族为**测试组合面**（生产路径已并入
+/// finalize_continuous_tick 单点汇合），cfg(test) 门控。
+#[cfg(test)]
 pub(super) fn apply_session_execution_transaction(
     session: &mut GameSession,
     workers: Vec<ContinuousStockOutput>,
-    preceding_facts: Vec<OwnedEventFact>,
+    preceding_facts: Vec<EventFact>,
 ) -> Result<SessionExecutionTransactionOutput, SessionExecutionTransactionError> {
     validate_receipt_cursor(session)?;
-    let transaction = apply_stock_execution_transaction_with_beliefs(
-        &session.state.envelope_ledger,
-        &session.state.accounts,
-        &session.state.retail_experience,
-        &session.state.belief_participants,
-        &session.state.retail_projection_seen,
-        workers,
-        super::stock_execution_transaction::SettlementApplicationContext::new(
-            crate::experience::ExperienceMoment {
-                civil_date: session.civil_date(),
-                market_minute: session.current_market_minute(),
-                trading_day: u64::from(session.state.day),
-            },
-            &[],
-            session.state.setup.t1_enabled,
-        ),
-    )
-    .map_err(SessionExecutionTransactionError::StockExecution)?;
+    let transaction = session
+        .compute
+        .install(|| {
+            compose_stock_execution_transaction_for_test(
+                session.compute_context(),
+                &session.state.envelope_ledger,
+                &session.state.accounts,
+                &session.state.retail_experience,
+                &session.state.belief_participants,
+                &session.state.retail_projection_seen,
+                workers,
+                super::stock_execution_transaction::SettlementApplicationContext::new(
+                    crate::experience::ExperienceMoment {
+                        civil_date: session.civil_date(),
+                        market_minute: session.current_market_minute(),
+                        trading_day: u64::from(session.state.day),
+                    },
+                    &[],
+                    session.state.setup.t1_enabled,
+                ),
+            )
+        })
+        .map_err(SessionExecutionTransactionError::StockExecution)?;
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     validate_stock_ownership(session, &transaction)?;
     let collected = collect_continuous_transaction_events(
@@ -99,8 +122,7 @@ pub(super) fn apply_session_execution_transaction(
     session.state.seq = collected.next_seq;
 
     Ok(SessionExecutionTransactionOutput {
-        events: collected.events,
-        event_keys: collected.keys,
+        facts: collected.facts,
         receipts,
         settlement,
     })
@@ -110,10 +132,11 @@ pub(super) fn apply_session_execution_transaction(
 ///
 /// 未知股票撤单拒绝是真实股票处理事实，但不拥有股票 worker。
 /// 先将其适配为同一 Projection 事实集合，再让累计 worker outboxes 进入普通原子会话事务。
+#[cfg(test)]
 pub(super) fn apply_incremental_session_execution_transaction(
     session: &mut GameSession,
     finish: IncrementalContinuousStockFinish,
-    mut preceding_facts: Vec<OwnedEventFact>,
+    mut preceding_facts: Vec<EventFact>,
 ) -> Result<SessionExecutionTransactionOutput, SessionExecutionTransactionError> {
     preceding_facts.extend(
         adapt_continuous_execution_facts(&finish.detached_facts)
@@ -122,6 +145,7 @@ pub(super) fn apply_incremental_session_execution_transaction(
     apply_session_execution_transaction(session, finish.workers, preceding_facts)
 }
 
+#[cfg(test)]
 fn validate_receipt_cursor(session: &GameSession) -> Result<(), SessionExecutionTransactionError> {
     let ledger_cursor = session.state.envelope_ledger.next_receipt_index();
     if session.state.next_receipt_base != ledger_cursor {
@@ -135,6 +159,7 @@ fn validate_receipt_cursor(session: &GameSession) -> Result<(), SessionExecution
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_stock_ownership(
     session: &GameSession,
     transaction: &StockExecutionTransactionOutput,

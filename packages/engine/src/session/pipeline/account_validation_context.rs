@@ -1,6 +1,6 @@
 use super::{AccountValidationContext, StepFatal, StockValidation};
-use crate::{GameSession, SecurityCategory, StockCode};
-use rayon::prelude::*;
+use crate::compute::parallel::*;
+use crate::{GameSession, SecurityCategory, StockId};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -12,7 +12,7 @@ pub(super) struct StockValidationFacts {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct AccountValidationFacts {
-    pub(super) stocks: BTreeMap<StockCode, StockValidationFacts>,
+    pub(super) stocks: BTreeMap<StockId, StockValidationFacts>,
 }
 
 /// 捕获 AccountValidation 消费的真实报价过期后事实。
@@ -21,13 +21,6 @@ pub(super) fn build_account_validation_context(
     session: &GameSession,
 ) -> Result<AccountValidationContext, StepFatal> {
     let facts = collect_account_validation_context_facts(session)?;
-    let closed = session.state.setup.stocks.iter().filter_map(|stock| {
-        match session.stock_day_status(&stock.code) {
-            Ok(crate::DayStatus::Trading) => None,
-            Ok(crate::DayStatus::Closed(_)) => Some(Ok(stock.code.clone())),
-            Err(error) => Some(Err(invariant(&error.to_string()))),
-        }
-    }).collect::<Result<std::collections::BTreeSet<_>, StepFatal>>()?;
     AccountValidationContext::new(facts.stocks.into_iter().map(|(code, stock)| {
         (
             code,
@@ -37,7 +30,7 @@ pub(super) fn build_account_validation_context(
                 stock.market_sell_protective_price,
             ),
         )
-    })).map(|context| context.with_closed_stocks(closed))
+    }))
 }
 
 pub(super) fn collect_account_validation_context_facts(
@@ -50,7 +43,12 @@ pub(super) fn collect_account_validation_context_facts(
     }
     let mut specifications = BTreeMap::new();
     for stock in &session.state.setup.stocks {
-        if specifications.insert(&stock.code, stock.category).is_some() {
+        let id = session
+            .state
+            .stocks
+            .id(&stock.code.0)
+            .expect("配置股票必须已入目录");
+        if specifications.insert(id, stock.category).is_some() {
             return Err(invariant("AccountValidation 上下文中 StockSpec 重复"));
         }
     }

@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { it } from "node:test";
 
 function dependencyFeatures(packageName, target) {
+  // 批 9 A10 收尾：nightly 工具链退役——稳定工具链查询。
   return execFileSync("cargo", [
-    ...(target === undefined ? [] : ["+nightly-2026-09-05"]),
     "tree", "--locked", "--offline", "-p", packageName, "-e", "features",
     ...(target === undefined ? [] : ["--target", target]),
   ], { cwd: new URL("..", import.meta.url), encoding: "utf8", timeout: 5000 });

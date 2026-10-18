@@ -1,10 +1,10 @@
 //! Pure Settlement receipt projection for retail experience and its companion event stream.
 
-use super::{EnvelopeReceipt, FeeComponents, ReceiptKind, ReceiptLocalKey};
+use super::{EnvelopeReceipt, FeeComponents, ReceiptLocalKey};
+use crate::compute::parallel::*;
 use crate::{
-    AccountId, ExperienceError, Money, OrderId, Position, RetailExperienceState, Side, StockCode,
+    AccountId, ExperienceError, Money, OrderId, Position, RetailExperienceState, Side, StockId,
 };
-use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ pub(super) struct RetailReceiptIdentity {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct RetailOrderIdentity {
     pub(super) account: AccountId,
-    pub(super) stock: StockCode,
+    pub(super) stock: StockId,
     pub(super) side_rank: u8,
     pub(super) order: OrderId,
 }
@@ -91,7 +91,9 @@ impl RetailProjectionSeen {
         }
     }
 
-    fn insert(
+    /// 插入一条收据身份（任务65 #11：由 account_settlement 的 canonical 单遍调用；
+    /// 投影自身不再触碰 seen）。
+    pub(in crate::session) fn insert(
         &mut self,
         index: u64,
         local_key: ReceiptLocalKey,
@@ -247,18 +249,19 @@ pub(super) struct RetailProjectionInput<'a> {
     /// Settlement derives this from authoritative `AccountKind::Retail`; experience
     /// storage must never be used to infer an account's kind.
     pub(super) retail_accounts: &'a BTreeSet<AccountId>,
-    pub(super) positions_before: &'a BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
-    pub(super) positions_after: &'a BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
-    pub(super) seen: &'a RetailProjectionSeen,
+    pub(super) positions_before: &'a BTreeMap<AccountId, BTreeMap<StockId, Position>>,
+    pub(super) positions_after: &'a BTreeMap<AccountId, BTreeMap<StockId, Position>>,
     pub(super) market_minute: u64,
-    pub(super) receipts: &'a [EnvelopeReceipt],
+    /// typed Fill 事实（settlement 边界一次派生）：投影不再从收据 before/after 重推数量/金额，
+    /// 也不再承担 seen 重放门（由 account_settlement 的 canonical 单遍负责）。
+    pub(super) fill_facts: super::fill_fact::FillFactView<'a>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum RetailReceiptEvent {
     Filled {
         account: AccountId,
-        stock: StockCode,
+        stock: StockId,
         side: Side,
         order: OrderId,
         qty: u32,
@@ -272,7 +275,6 @@ pub(super) enum RetailReceiptEvent {
 pub(super) struct RetailProjectionOutput {
     /// Only retail accounts with new fills need a copy.
     pub(super) retail_experience: BTreeMap<AccountId, RetailExperienceState>,
-    pub(super) seen: RetailProjectionSeen,
     pub(super) events: Vec<RetailReceiptEvent>,
 }
 
@@ -328,10 +330,15 @@ struct AccountProjection {
 pub(super) fn project_retail_receipts(
     input: RetailProjectionInput<'_>,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
-    project_receipts(input, ExperienceUpdateMode::Retail)
+    project_receipts(
+        &crate::ComputeContext::shared_default().expect("测试计算上下文"),
+        input,
+        ExperienceUpdateMode::Retail,
+    )
 }
 
 pub(super) fn project_retail_receipts_dated(
+    compute: &crate::ComputeContext,
     input: RetailProjectionInput<'_>,
     moment: crate::experience::ExperienceMoment,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
@@ -341,14 +348,19 @@ pub(super) fn project_retail_receipts_dated(
             moment_minute: moment.market_minute,
         });
     }
-    project_receipts(input, ExperienceUpdateMode::RetailDated(moment))
+    project_receipts(compute, input, ExperienceUpdateMode::RetailDated(moment))
 }
 
 pub(super) fn project_institutional_receipts(
+    compute: &crate::ComputeContext,
     input: RetailProjectionInput<'_>,
     moment: crate::experience::ExperienceMoment,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
-    project_receipts(input, ExperienceUpdateMode::InstitutionalFacts(moment))
+    project_receipts(
+        compute,
+        input,
+        ExperienceUpdateMode::InstitutionalFacts(moment),
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -360,54 +372,31 @@ enum ExperienceUpdateMode {
 }
 
 fn project_receipts(
+    compute: &crate::ComputeContext,
     input: RetailProjectionInput<'_>,
     mode: ExperienceUpdateMode,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
-    let mut seen = input.seen.clone();
     let mut aggregates = BTreeMap::new();
-    for receipt in canonical_unseen_receipts(input.receipts, input.seen)? {
-        seen.insert(receipt.index, receipt.local_key.clone())?;
-        match receipt.kind {
-            ReceiptKind::PriceResolved { .. }
-            | ReceiptKind::Release
-            | ReceiptKind::Reject
-            | ReceiptKind::Rollover => continue,
-            ReceiptKind::Fill => {}
-        }
-        if !input.retail_accounts.contains(&receipt.envelope.account) {
+    for fact in input.fill_facts.iter() {
+        if !input.retail_accounts.contains(&fact.key().account) {
             continue;
         }
-        let qty = receipt.qty_before.checked_sub(receipt.qty_after).ok_or(
-            RetailProjectionError::QuantityRegression {
-                index: receipt.index,
-            },
-        )?;
-        let gross = receipt.value_after.sub(receipt.value_before).map_err(|_| {
-            RetailProjectionError::NonPositiveGross {
-                index: receipt.index,
-            }
-        })?;
-        if qty == 0 || gross <= Money::ZERO {
-            return Err(RetailProjectionError::NonPositiveGross {
-                index: receipt.index,
-            });
-        }
-        let order = order_identity(receipt);
+        let order = order_identity(fact);
         let aggregate = aggregates.entry(order).or_insert_with(|| Aggregate {
-            side: receipt.envelope.side,
+            side: fact.key().side,
             qty: 0,
             gross: Money::ZERO,
             charged: FeeComponents::ZERO,
         });
         aggregate.qty = aggregate
             .qty
-            .checked_add(qty)
+            .checked_add(fact.qty())
             .ok_or(RetailProjectionError::Overflow)?;
         aggregate.gross = aggregate
             .gross
-            .add(gross)
+            .add(fact.gross())
             .map_err(|_| RetailProjectionError::Overflow)?;
-        aggregate.charged = add_fee(aggregate.charged, receipt.charged)?;
+        aggregate.charged = add_fee(aggregate.charged, fact.charged())?;
     }
 
     let mut by_account: BTreeMap<AccountId, Vec<(RetailOrderIdentity, Aggregate)>> =
@@ -423,16 +412,19 @@ fn project_receipts(
         .iter()
         .map(|account| (*account, by_account.remove(account).unwrap_or_default()))
         .collect();
-    let prepared: Vec<Result<AccountProjection, RetailProjectionError>> = jobs
-        .into_par_iter()
-        .map(|(account, orders)| {
-            let mut projection = AccountFillProjection::new(&input, account, mode, orders.len());
-            for (order, aggregate) in orders {
-                projection.apply_order(order, aggregate)?;
-            }
-            Ok(projection.finish())
-        })
-        .collect();
+    let prepared: Vec<Result<AccountProjection, RetailProjectionError>> = compute.parallel(|| {
+        jobs.into_par_iter()
+            .map(|(account, orders)| {
+                compute.record(crate::compute::ComputeWork::ReceiptProjectionAccount);
+                let mut projection =
+                    AccountFillProjection::new(&input, account, mode, orders.len());
+                for (order, aggregate) in orders {
+                    projection.apply_order(order, aggregate)?;
+                }
+                Ok(projection.finish())
+            })
+            .collect()
+    });
 
     // Complete every account's fill processing before checking final positions.
     // Indexed collection keeps the first error in account order.
@@ -450,7 +442,6 @@ fn project_receipts(
     }
     Ok(RetailProjectionOutput {
         retail_experience,
-        seen,
         events,
     })
 }
@@ -462,10 +453,10 @@ struct AccountFillProjection<'a> {
     state: Option<RetailExperienceState>,
     #[cfg(test)]
     market_minute: u64,
-    positions_before: Option<&'a BTreeMap<StockCode, Position>>,
-    positions_after: Option<&'a BTreeMap<StockCode, Position>>,
-    running_qty: BTreeMap<StockCode, u32>,
-    running_positions: BTreeMap<StockCode, Position>,
+    positions_before: Option<&'a BTreeMap<StockId, Position>>,
+    positions_after: Option<&'a BTreeMap<StockId, Position>>,
+    running_qty: BTreeMap<StockId, u32>,
+    running_positions: BTreeMap<StockId, Position>,
     events: Vec<RetailReceiptEvent>,
 }
 
@@ -723,15 +714,15 @@ fn receipt_identity(receipt: &EnvelopeReceipt) -> RetailReceiptIdentity {
     }
 }
 
-fn order_identity(receipt: &EnvelopeReceipt) -> RetailOrderIdentity {
+fn order_identity(fact: &super::fill_fact::FillFact) -> RetailOrderIdentity {
     RetailOrderIdentity {
-        account: receipt.envelope.account,
-        stock: receipt.envelope.stock.clone(),
-        side_rank: match receipt.envelope.side {
+        account: fact.key().account,
+        stock: fact.key().stock.clone(),
+        side_rank: match fact.key().side {
             Side::Buy => 0,
             Side::Sell => 1,
         },
-        order: receipt.envelope.order,
+        order: fact.key().order,
     }
 }
 

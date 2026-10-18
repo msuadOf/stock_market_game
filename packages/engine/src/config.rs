@@ -26,6 +26,60 @@ pub(crate) fn fee_delta(
     calculate(after)?.sub(before_fee)
 }
 
+/// 每个测试配置独立的真实费用 helper 探针；clone 共享同一作用域，Rayon 线程也计入。
+/// 此字段仅 cfg(test)，不进入配置 serde/TS 契约，不参与业务配置相等比较。
+#[cfg(test)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FeeHelperProbe(Option<std::sync::Arc<FeeHelperCounts>>);
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct FeeHelperCounts {
+    buy_reservation: std::sync::atomic::AtomicUsize,
+    nominal: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+impl PartialEq for FeeHelperProbe {
+    fn eq(&self, _other: &Self) -> bool {
+        // 探针是观测配置，不是费用输入；不能让 serde 跳过的计数状态改变业务比较。
+        true
+    }
+}
+
+#[cfg(test)]
+impl FeeHelperProbe {
+    pub(crate) fn scoped() -> Self {
+        Self(Some(std::sync::Arc::default()))
+    }
+
+    pub(crate) fn reset(&self) {
+        if let Some(counts) = &self.0 {
+            counts.buy_reservation.store(0, std::sync::atomic::Ordering::Relaxed);
+            counts.nominal.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> (usize, usize) {
+        self.0.as_ref().map_or((0, 0), |counts| {
+            (counts.buy_reservation.load(std::sync::atomic::Ordering::Relaxed),
+             counts.nominal.load(std::sync::atomic::Ordering::Relaxed))
+        })
+    }
+
+    fn record_buy_reservation(&self) {
+        if let Some(counts) = &self.0 {
+            counts.buy_reservation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn record_nominal(&self) {
+        if let Some(counts) = &self.0 {
+            counts.nominal.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
 /// 买单剩余数量所需现金；策略估算和账户受理共用同一累计费用口径。
 pub(crate) fn buy_order_reservation(
     config: &GameConfig,
@@ -33,6 +87,8 @@ pub(crate) fn buy_order_reservation(
     qty: u32,
     filled_value: Money,
 ) -> Result<Money, MoneyError> {
+    #[cfg(test)]
+    config.fee_probe.record_buy_reservation();
     let remaining_gross = limit.mul_shares(qty)?;
     let final_gross = filled_value.add(remaining_gross)?;
     let commission = fee_delta(filled_value, final_gross, |amount| {
@@ -75,7 +131,7 @@ pub enum ConfigError {
 /// 比率字段（`commission_rate` / `stamp_tax_rate` / `default_limit` / `st_limit`）为 `f64`，
 /// 仅作为 [`Money::apply_rate`] 的比率入参使用，绝不参与存储为金额；
 /// 金额类字段（`commission_min` / `starting_cash`）为定点 [`Money`]，遵循 money 模块铁律。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct GameConfig {
     /// 成交额佣金率（ref 提议: 0.00025）。
     pub commission_rate: f64,
@@ -93,6 +149,10 @@ pub struct GameConfig {
     pub lot_size: u32,
     /// 初始资金（默认 100 亿元 = 1_000_000_000_000 分）。
     pub starting_cash: Money,
+    #[cfg(test)]
+    #[serde(skip)]
+    #[ts(skip)]
+    pub(crate) fee_probe: FeeHelperProbe,
 }
 
 impl GameConfig {
@@ -122,6 +182,8 @@ impl GameConfig {
             price_cage_enabled,
             lot_size,
             starting_cash,
+            #[cfg(test)]
+            fee_probe: FeeHelperProbe::default(),
         };
         config.validate()?;
         Ok(config)

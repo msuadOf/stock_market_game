@@ -8,7 +8,7 @@ use super::{
     EnvelopeOrigin, EnvelopeReceipt, FeeComponents, IndexedReceiptKey, JournalRank, ReceiptIndex,
     ReceiptKind, ReceiptLocalKey, ReceiptSource, ResVec, StepFatal,
 };
-use crate::{Money, StockCode};
+use crate::{Money, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(test)]
@@ -45,7 +45,7 @@ impl CommitEnvelopeChain {
 /// Counts emitted by one real Auction stock-worker tail execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuctionFinalizerExecution {
-    stock: StockCode,
+    stock: StockId,
     auction_tail_passes: u64,
     auction_completion_passes: u64,
     day_end_passes: u64,
@@ -53,7 +53,7 @@ pub struct AuctionFinalizerExecution {
 
 impl AuctionFinalizerExecution {
     pub(super) const fn new(
-        stock: StockCode,
+        stock: StockId,
         auction_tail_passes: u64,
         auction_completion_passes: u64,
         day_end_passes: u64,
@@ -66,7 +66,7 @@ impl AuctionFinalizerExecution {
         }
     }
 
-    pub const fn stock(&self) -> &StockCode {
+    pub const fn stock(&self) -> &StockId {
         &self.stock
     }
 

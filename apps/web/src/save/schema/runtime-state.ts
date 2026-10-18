@@ -1,7 +1,6 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
-import { accountId, SaveSchemaError, array, boolean, civilDate, decimal, exact, integer, map, oneOf, record, string } from "./primitives.ts"
+import { SaveSchemaError, array, boolean, decimal, exact, integer, map, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
 import { u32 } from "./personal/common.ts"
-import { parseActiveMinuteHistory } from "./retained-history.ts"
 
 const sides = ["Buy", "Sell"] as const
 const retailStyles = ["Dormant", "LongTerm", "Noise", "DipBuyer", "Momentum", "Panic"] as const
@@ -18,8 +17,9 @@ export type SavedFeeComponents = {
 }
 
 export type SavedEnvelopeKey = {
-  readonly account: string
-  readonly stock: string
+  readonly account: number
+  /** 存档 wire 的股票身份：数值 StockId（ADR 0041）。 */
+  readonly stock: number
   readonly order: number
   readonly side: (typeof sides)[number]
 }
@@ -76,48 +76,20 @@ export type SavedRetailReceiptIdentity = {
 }
 
 export type SavedRuntimeState = {
-  readonly active_minute_history: ReturnType<typeof parseActiveMinuteHistory>
   readonly poisoned: boolean
   readonly next_receipt_base: string
   readonly live_envelopes: readonly SavedLiveEnvelope[]
+  readonly book_public_cutoff_sequences: Readonly<Record<string, string>>
   readonly retail_projection_seen: readonly SavedRetailReceiptIdentity[]
   readonly strategy_states: Readonly<Record<string, RuntimeStrategyState>>
-  readonly personal_trade_confirmations: Readonly<Record<string, readonly SavedPersonalTradeConfirmation[]>>
-}
-
-export type SavedPersonalTradeConfirmation = {
-  readonly receipt_id: string
-  readonly civil_date: string
-  readonly code: string
-  readonly side: (typeof sides)[number]
-  readonly price: string
-  readonly quantity_shares: number
-  readonly gross: string
-  readonly actual_fees: SavedFeeComponents
-}
-
-function personalConfirmation(value: unknown, path: string): SavedPersonalTradeConfirmation {
-  const parsed = record(value, path)
-  exact(parsed, ["receipt_id", "civil_date", "code", "side", "price", "quantity_shares", "gross", "actual_fees"], path)
-  const receipt = decimal(parsed.receipt_id, `${path}.receipt_id`)
-  if (!/^(0|[1-9]\d*)$/.test(receipt)) throw new SaveSchemaError(`${path}.receipt_id`, "必须为规范u64十进制字符串")
-  const price = money(parsed.price, `${path}.price`)
-  const quantity = boundedU32(parsed.quantity_shares, `${path}.quantity_shares`, 1)
-  const gross = money(parsed.gross, `${path}.gross`)
-  const fees = feeComponents(parsed.actual_fees, `${path}.actual_fees`)
-  if (BigInt(price) <= 0n || BigInt(price) * BigInt(quantity) !== BigInt(gross)) throw new SaveSchemaError(path, "成交价乘股数必须等于正成交额")
-  if (Object.values(fees).some((fee) => BigInt(fee) < 0n)) throw new SaveSchemaError(`${path}.actual_fees`, "实际费用不能为负数")
-  return { receipt_id: receipt, civil_date: civilDate(parsed.civil_date, `${path}.civil_date`), code: stock(parsed.code, `${path}.code`), side: oneOf(parsed.side, `${path}.side`, sides), price, quantity_shares: quantity, gross, actual_fees: fees }
 }
 
 function accountKey(value: string, path: string): void {
-  accountId(value, path)
+  safeIntegerKey(value, path)
 }
 
-function stock(value: unknown, path: string): string {
-  const parsed = string(value, path)
-  if (parsed.length === 0) throw new Error(`存档 ${path} 股票代码不能为空`)
-  return parsed
+function stock(value: unknown, path: string): number {
+  return u32(integer(value, path, 0), path)
 }
 
 function money(value: unknown, path: string): string {
@@ -157,7 +129,7 @@ function envelopeKey(value: unknown, path: string): SavedEnvelopeKey {
   const parsed = record(value, path)
   exact(parsed, ["account", "stock", "order", "side"], path)
   return {
-    account: accountId(parsed.account, `${path}.account`),
+    account: integer(parsed.account, `${path}.account`, 0),
     stock: stock(parsed.stock, `${path}.stock`),
     order: integer(parsed.order, `${path}.order`, 1),
     side: oneOf(parsed.side, `${path}.side`, sides),
@@ -260,27 +232,13 @@ function receiptIdentity(value: unknown, path: string): SavedRetailReceiptIdenti
 
 export function parseSaveRuntime(value: unknown, path = "runtime_state"): SavedRuntimeState {
   const parsed = record(value, path)
-  exact(parsed, ["active_minute_history", "poisoned", "next_receipt_base", "live_envelopes", "retail_projection_seen", "strategy_states", "personal_trade_confirmations"], path)
-  const nextReceipt = decimal(parsed.next_receipt_base, `${path}.next_receipt_base`)
-  const seen = new Set<string>()
-  const confirmations = map(parsed.personal_trade_confirmations, `${path}.personal_trade_confirmations`, accountKey, (value, accountPath) => {
-    let previous: bigint | null = null
-    return array(value, accountPath).map((item, index) => {
-      const itemPath = `${accountPath}[${index}]`
-      const confirmation = personalConfirmation(item, itemPath)
-      const receipt = BigInt(confirmation.receipt_id)
-      if (receipt >= BigInt(nextReceipt) || (previous !== null && receipt <= previous) || seen.has(confirmation.receipt_id)) throw new SaveSchemaError(`${itemPath}.receipt_id`, "receipt必须唯一、递增且小于next_receipt_base")
-      previous = receipt
-      seen.add(confirmation.receipt_id)
-      return confirmation
-    })
-  })
+  exact(parsed, ["poisoned", "next_receipt_base", "live_envelopes", "book_public_cutoff_sequences", "retail_projection_seen", "strategy_states"], path)
   return {
-    active_minute_history: parseActiveMinuteHistory(parsed.active_minute_history, `${path}.active_minute_history`),
     poisoned: boolean(parsed.poisoned, `${path}.poisoned`),
-    next_receipt_base: nextReceipt,
-    personal_trade_confirmations: confirmations,
+    next_receipt_base: decimal(parsed.next_receipt_base, `${path}.next_receipt_base`),
     live_envelopes: array(parsed.live_envelopes, `${path}.live_envelopes`).map((item, index) => liveEnvelope(item, `${path}.live_envelopes[${index}]`)),
+    book_public_cutoff_sequences: map(parsed.book_public_cutoff_sequences, `${path}.book_public_cutoff_sequences`,
+      (key, keyPath) => { safeIntegerKey(key, keyPath); u32(Number(key), keyPath) }, decimal),
     retail_projection_seen: array(parsed.retail_projection_seen, `${path}.retail_projection_seen`).map((item, index) => receiptIdentity(item, `${path}.retail_projection_seen[${index}]`)),
     strategy_states: map(parsed.strategy_states, `${path}.strategy_states`, accountKey, strategyState),
   }

@@ -6,7 +6,6 @@ import type { PublicReportIncome } from "./PublicReportIncome";
 import type { PublicReportNotes } from "./PublicReportNotes";
 import type { PublicReportScope } from "./PublicReportScope";
 import type { PublicReportVersionKind } from "./PublicReportVersionKind";
-import type { ReportRoe } from "./ReportRoe";
 
 export type PublicReportFinancials = {
   scope: PublicReportScope;
@@ -19,5 +18,4 @@ export type PublicReportFinancials = {
   cash_flow: PublicReportCashFlow;
   equity: PublicReportEquity;
   notes: PublicReportNotes;
-  roe: ReportRoe;
 };

@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 
 use super::{require_positive, AppendOnlyHistory, ExperienceError, RetailExperienceState};
 use crate::calendar::CivilDate;
-use crate::{Money, Side, StockCode};
+use crate::{Money, Side, StockId};
 
 /// 每 20 个交易日无新受挫，失败影响减弱一档（ADR-0013 衰减取代条款）。
 pub const FAILURE_DECAY_TRADING_DAYS: u64 = 20;
@@ -54,7 +54,7 @@ pub struct ExperienceMoment {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct FailureEventRecord {
-    pub code: StockCode,
+    pub code: StockId,
     #[serde(with = "super::optional_u64_decimal")]
     #[ts(type = "string | null")]
     pub order_id: Option<u64>,
@@ -93,7 +93,7 @@ fn deserialize_institutional_fees<'de, Decoder: serde::Deserializer<'de>>(
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ExitRecord {
-    pub code: StockCode,
+    pub code: StockId,
     #[serde(with = "super::optional_u64_decimal")]
     #[ts(type = "string | null")]
     pub order_id: Option<u64>,
@@ -115,7 +115,7 @@ pub struct ExperienceFeedback {
     #[ts(as = "Vec<FailureEventRecord>")]
     pub failure_events: AppendOnlyHistory<FailureEventRecord>,
     /// 每股当前持仓生命周期（未持仓/仅关注列表的股票没有条目）。
-    pub stocks: BTreeMap<StockCode, HoldingEpoch>,
+    pub stocks: BTreeMap<StockId, HoldingEpoch>,
     /// 清仓退出历史（追加式，含冷静期截止与盈亏事实）。
     #[ts(as = "Vec<ExitRecord>")]
     pub exit_records: AppendOnlyHistory<ExitRecord>,
@@ -252,7 +252,7 @@ mod history_storage_tests {
     #[test]
     fn cloned_feedback_shares_history_until_a_real_event_is_added() {
         let date = CivilDate::from_iso("2030-01-01").unwrap();
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let mut original = ExperienceFeedback::default();
         for ordinal in 1..=65 {
             let moment = ExperienceMoment {

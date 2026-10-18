@@ -59,7 +59,7 @@ pub(crate) fn generic_opening(lines: Vec<OpeningLine>) -> CompanyOpening {
 /// 未上市测试实体规格（id/会计类型/股本由调用处指定）。
 pub(crate) fn unlisted_spec(id: &str, kind: CompanyKind, issued_shares: u64) -> CompanySpec {
     CompanySpec {
-        id: CompanyId(id.to_string()),
+        code: id.to_string(),
         name: format!("虚构测试实体 {id}"),
         industry: IndustryId("machinery".to_string()),
         kind,

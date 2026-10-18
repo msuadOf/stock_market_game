@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { remoteTestContext } from "./remote-test-context.ts";
 import { createRemoteHost } from "./remote-host.ts";
-import type { Intent } from "../types/engine.ts";
-import { DEFAULT_SETUP } from "../config/defaults.ts";
+import type { SessionSetup, Intent } from "../types/engine.ts";
 
 const options = { timeout: 10000, concurrency: true };
 const baseline = JSON.stringify({ Baseline: { timeline_generation: 1, snapshot: { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} }, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
@@ -13,17 +11,16 @@ async function fixture(loadResponse?: () => Promise<Response>) {
   const sent: string[][] = [];
   const requests: { url: string; init: RequestInit | undefined }[] = [];
   const protocols: string[][] = [];
-  let authorityGeneration = "1";
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     requests.push({ url, init });
     if (url.endsWith("/api/load") && loadResponse !== undefined) return loadResponse();
-    if (url.includes("/api/market/context?")) return Response.json(remoteTestContext("s", authorityGeneration));
-    if (url.includes("host-capabilities")) return Response.json({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true });
+    if (url.endsWith("/api/new")) return Response.json({ session_id: "s", session_token: "owner-token" });
+    if (url.includes("host-capabilities")) return Response.json({ npcDecisionDiagnostics: false });
     if (url.includes("/api/speed?")) return Response.json({ requested: { mode: "fixed", multiplier: 1 }, running: false, actual_multiplier: 0, sample_duration_ms: 0, sample_ticks: 0 });
     return new Response(null);
   }) as typeof fetch;
-  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "owner-token", context: remoteTestContext("s", "1", "1"), fetchFn, webSocketFactory(url, offered) {
+  const host = await createRemoteHost({} as SessionSetup, 1n, { fetchFn, webSocketFactory(url, offered) {
     assert.equal(new URL(url).searchParams.has("token"), false);
     protocols.push(offered);
     const messages: string[] = [];
@@ -32,11 +29,7 @@ async function fixture(loadResponse?: () => Promise<Response>) {
     sockets.push(socket);
     return socket;
   } });
-  const receive = (index: number, data: string) => {
-    const parsed = JSON.parse(data);
-    if (parsed.Baseline !== undefined) authorityGeneration = String(parsed.Baseline.timeline_generation);
-    sockets[index].onmessage!({ data } as MessageEvent);
-  };
+  const receive = (index: number, data: string) => sockets[index].onmessage!({ data } as MessageEvent);
   return { host, sockets, sent, requests, protocols, receive };
 }
 
@@ -74,7 +67,7 @@ test("dispose 与切换 delivery 为已发送写请求提供结果未知出口",
     const context = await fixture();
     await context.host.start(() => {});
     context.receive(0, baseline);
-    const pending = context.host.submitIntent({} as Intent);
+    const pending = context.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent);
     const rejection = assert.rejects(pending, /结果未知/);
     if (action === "dispose") await context.host.dispose();
     else context.host.setDeliveryMode!("pull");
@@ -117,7 +110,7 @@ test("已中断的写请求迟到 queued 不冒充完成，不关闭同 socket �
   const failures: unknown[] = [];
   await context.host.start(() => {}, (failure) => failures.push(failure));
   context.receive(0, baseline);
-  const command = context.host.submitIntent({} as Intent);
+  const command = context.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent);
   const rejected = assert.rejects(command, /结果未知/);
   const refreshing = context.host.refreshBaseline!();
   await rejected;
@@ -134,7 +127,7 @@ test("无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID
   const failures: unknown[] = [];
   await fixtureContext.host.start(() => {}, (failure) => failures.push(failure));
   fixtureContext.receive(0, baseline);
-  const command = fixtureContext.host.submitIntent({} as Intent);
+  const command = fixtureContext.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent);
   const rejected = assert.rejects(command, /5000ms.*结果未知/);
   context.mock.timers.tick(5000);
   await rejected;
@@ -172,7 +165,7 @@ test("应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不
   context.receive(0, baseline);
   await rejected;
   assert.equal(failures.length, 0);
-  await assert.rejects(context.host.submitIntent({} as Intent), /尚未完成权威基线同步/);
+  await assert.rejects(context.host.submitIntent({ PlaceLimit: { code: "600101", side: "Buy", price: { Fixed: "1000" }, qty: 100 } } as Intent), /尚未完成权威基线同步/);
   await context.host.dispose();
 });
 
@@ -195,7 +188,7 @@ test("远程新 generation baseline 先于HTTP读档响应时，先通知恢复�
   const observations: boolean[] = [];
   await context.host.start(update => { if (update.generation === "2") observations.push(restored); });
   context.receive(0, baseline);
-  const loaded = context.host.load({}, "selected-archive", () => { restored = true; });
+  const loaded = context.host.load({}, () => { restored = true; });
   const newBaseline = baseline.replace('"timeline_generation":1', '"timeline_generation":2');
   context.receive(0, newBaseline);
   acknowledge(new Response(null));
@@ -204,8 +197,6 @@ test("远程新 generation baseline 先于HTTP读档响应时，先通知恢复�
   try {
     await loaded;
     assert.deepEqual(observations, [true, true]);
-    const request = context.requests.find(({ url }) => url.endsWith("/api/load"));
-    assert.deepEqual(JSON.parse(String(request!.init!.body)), { session_id: "s", generation: "1", slot: {}, archive_slot_id: "selected-archive" });
   } finally { await context.host.dispose(); }
 });
 
@@ -217,7 +208,7 @@ test("远程读档HTTP响应丢失后，重同步新generation仍先确认已提
   const observations: boolean[] = [];
   await context.host.start(update => { if (update.generation === "2") observations.push(restored); });
   context.receive(0, baseline);
-  const rejected = assert.rejects(context.host.load({}, undefined, () => { restored = true; }), /响应丢失/);
+  const rejected = assert.rejects(context.host.load({}, () => { restored = true; }), /响应丢失/);
   rejectResponse(new Error("响应丢失"));
   await rejected;
   assert.equal(restored, false);
@@ -234,7 +225,7 @@ test("远程读档失败后旧generation确认不改变配置并允许重试", o
   let restores = 0;
   await context.host.start(() => {});
   context.receive(0, baseline);
-  await assert.rejects(context.host.load({}, undefined, () => { restores++; }), /请求未受理/);
+  await assert.rejects(context.host.load({}, () => { restores++; }), /请求未受理/);
   await assert.rejects(context.host.load({}), /先刷新权威基线/);
   const refreshing = context.host.refreshBaseline();
   context.receive(0, baseline);

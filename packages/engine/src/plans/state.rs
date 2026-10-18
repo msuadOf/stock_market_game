@@ -1,12 +1,12 @@
 //! 个人交易计划的权威状态类型：账户+股票唯一、可跨日、只以真实成交计进度。
 //!
-//! 复用既有身份类型（AccountId/StockCode/Side/OrderId），不建立平行体系；
+//! 复用既有身份类型（AccountId/StockId/Side/OrderId），不建立平行体系；
 //! 对母单执行子状态仅持可选订单 id 引用，不复制订单/冻结逻辑。
 //! 事件转移（观察/接受/成交/修订/暂停/恢复/到期/日终）见 [`super::revision`]。
 
 use super::validation::{validate_open, PlanError};
 use super::PlanPolicy;
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId, Side};
 
 /// 计划稳定 id：由 [`super::PlanBook`] 单调分配，永不复用。
@@ -148,7 +148,7 @@ fn deserialize_review_resources<'de, Decoder: serde::Deserializer<'de>>(
 #[ts(export)]
 pub struct PlanOpen {
     pub account: AccountId,
-    pub code: StockCode,
+    pub code: StockId,
     pub direction: Side,
     pub target: PlanTarget,
     pub opinion: PlanOpinion,
@@ -160,6 +160,60 @@ pub struct PlanOpen {
     pub created_trading_day: u64,
 }
 
+
+/// 母单执行子状态：一次执行腿的调度参数与唯一在途子单事实。
+///
+/// ADR-0015（2026-09-10 修订）把母单语义并入 `TradingPlan` 的执行子状态；
+/// 这里是计划执行侧的**唯一**可变状态——子单限价、单次最大数量、执行腿到期
+/// 分钟、在途子单 id 及其未成交数量。会话侧不得再持有这些字段的第二份可变
+/// 镜像；执行层只读投影或经 [`super::PlanBook`] 的事实入口推进。
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct PlanExecutionLeg {
+    /// 单次重新报价所允许的最大子单数量。
+    pub(in crate::plans) child_qty: u32,
+    /// 子单限价（同向再判断只修订此值，不重置已成交进度）。
+    pub(in crate::plans) limit_price: crate::Money,
+    /// 本执行腿停止续发子单的绝对市场分钟。
+    #[serde(with = "crate::orderbook::js_safe_u64")]
+    #[ts(type = "number")]
+    pub(in crate::plans) expires_market_minute: u64,
+    /// 计划本体所引用子单的未成交数量；与订单簿剩余严格一致；无子单时为 `None`。
+    pub(in crate::plans) active_child_remaining_qty: Option<u32>,
+}
+
+impl PlanExecutionLeg {
+    /// 仅测试/存档边界用的直接构造器：生产路径一律经 `PlanBook::install_execution`。
+    #[cfg(test)]
+    pub(crate) fn from_facts_for_tests(
+        child_qty: u32,
+        limit_price: crate::Money,
+        expires_market_minute: u64,
+        active_child_remaining_qty: Option<u32>,
+    ) -> Self {
+        Self {
+            child_qty,
+            limit_price,
+            expires_market_minute,
+            active_child_remaining_qty,
+        }
+    }
+
+    pub const fn child_qty(&self) -> u32 {
+        self.child_qty
+    }
+    pub const fn limit_price(&self) -> crate::Money {
+        self.limit_price
+    }
+    pub const fn expires_market_minute(&self) -> u64 {
+        self.expires_market_minute
+    }
+    pub const fn active_child_remaining_qty(&self) -> Option<u32> {
+        self.active_child_remaining_qty
+    }
+}
+
 /// 可跨日的个人交易计划：每账户+股票唯一、版本化修订、真实成交计进度。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
@@ -167,7 +221,7 @@ pub struct PlanOpen {
 pub struct TradingPlan {
     pub(in crate::plans) plan_id: PlanId,
     pub(in crate::plans) account: AccountId,
-    pub(in crate::plans) code: StockCode,
+    pub(in crate::plans) code: StockId,
     pub(in crate::plans) direction: Side,
     pub(in crate::plans) target: PlanTarget,
     /// 累计真实成交（按当前方向计；反向修订开新进度，旧腿真实成交留在账户里）。
@@ -184,14 +238,19 @@ pub struct TradingPlan {
     pub(in crate::plans) created_trading_day: u64,
     pub(in crate::plans) horizon_trading_days: u32,
     pub(in crate::plans) review: ReviewConditions,
-    /// 对现有母单子单的可选引用；日终清除（仅结束子单生命周期，不结束计划）。
+    /// 在途子单身份的唯一引用；纯计划事件与生产执行共用，不在执行侧复制。
     pub(in crate::plans) active_child_order_id: Option<OrderId>,
+    /// 母单执行子状态；`None` 表示尚未开始执行（未提交过子单）或执行腿已随
+    /// 反向修订/终止/到期/日终一并结束。旧 `ParentOrderPlan` 镜像已删除。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub(in crate::plans) execution: Option<PlanExecutionLeg>,
     /// 最近一次已接受事件的交易日，事件时间必须单调不减。
     pub(in crate::plans) last_event_trading_day: u64,
 }
 
 impl TradingPlan {
-    pub fn code(&self) -> &StockCode {
+    pub fn code(&self) -> &StockId {
         &self.code
     }
 
@@ -259,8 +318,19 @@ impl TradingPlan {
         self.review
     }
 
+    /// 母单执行子状态的只读投影；`None` 表示当前没有执行腿。
+    pub fn execution(&self) -> Option<&PlanExecutionLeg> {
+        self.execution.as_ref()
+    }
+
     pub fn active_child_order_id(&self) -> Option<OrderId> {
         self.active_child_order_id
+    }
+
+    pub fn active_child_remaining_qty(&self) -> Option<u32> {
+        self.execution
+            .as_ref()
+            .and_then(|leg| leg.active_child_remaining_qty)
     }
 
     pub fn last_event_trading_day(&self) -> u64 {
@@ -333,6 +403,7 @@ impl TradingPlan {
                 last_review_resources: None,
             },
             active_child_order_id: None,
+            execution: None,
             last_event_trading_day: open.created_trading_day,
         })
     }
@@ -365,6 +436,8 @@ impl TradingPlan {
     ) -> Result<(), PlanError> {
         self.ensure_event_allowed("terminate", trading_day, false)?;
         self.status = PlanStatus::Terminated { reason };
+        self.active_child_order_id = None;
+        self.execution = None;
         self.last_event_trading_day = trading_day;
         Ok(())
     }
@@ -379,7 +452,7 @@ impl<'de> serde::Deserialize<'de> for TradingPlan {
         struct Raw {
             plan_id: PlanId,
             account: AccountId,
-            code: StockCode,
+            code: StockId,
             direction: Side,
             target: PlanTarget,
             filled_qty: u32,
@@ -394,6 +467,7 @@ impl<'de> serde::Deserialize<'de> for TradingPlan {
             horizon_trading_days: u32,
             review: ReviewConditions,
             active_child_order_id: Option<OrderId>,
+            execution: Option<PlanExecutionLeg>,
             last_event_trading_day: u64,
         }
         let raw = Raw::deserialize(decoder)?;
@@ -417,6 +491,7 @@ impl<'de> serde::Deserialize<'de> for TradingPlan {
             horizon_trading_days: raw.horizon_trading_days,
             review: raw.review,
             active_child_order_id: raw.active_child_order_id,
+            execution: raw.execution,
             last_event_trading_day: raw.last_event_trading_day,
         })
     }
@@ -432,7 +507,7 @@ mod owner_tests {
             PlanId(7),
             PlanOpen {
                 account: AccountId(1),
-                code: StockCode("600101".to_owned()),
+                code: StockId(0),
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(100),
                 opinion: PlanOpinion {

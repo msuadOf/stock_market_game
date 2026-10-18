@@ -76,7 +76,7 @@ impl From<TickPhase> for PhaseTimingPhase {
         match phase {
             TickPhase::ExpiryShadow => Self::ExpiryShadow,
             TickPhase::SealAllocationSnapshot => Self::SealAllocationSnapshot,
-            TickPhase::DecisionShadow => Self::DecisionAndCoordinatorWork,
+            TickPhase::DecisionAndContinuation => Self::DecisionAndCoordinatorWork,
             TickPhase::AccountValidation => Self::AccountValidation,
             TickPhase::StockProcessing => Self::StockProcessing,
             TickPhase::ReceiptAggregation => Self::ReceiptAggregation,
@@ -199,6 +199,8 @@ pub enum PhaseTimingCaptureError {
     CaptureAlreadyActive,
     #[error("the operation completed without one committed authoritative tick")]
     NoCommittedTick,
+    #[error("phase timing 观察绑定仍被在途计算任务持有；完成信号必须在绑定释放后发出")]
+    CaptureStillBound,
     #[error("phase-timing capture is incomplete at {phase}")]
     IncompletePhase { phase: &'static str },
     #[error("committed tick advanced from {before} to {after}, expected exactly one tick")]
@@ -266,7 +268,12 @@ impl PhaseTimingLedger {
         &mut self.accumulators[phase.index()]
     }
 
-    fn record_span(&mut self, phase: PhaseTimingPhase, elapsed: u128) -> Option<&'static str> {
+    fn record_span(
+        &mut self,
+        phase: PhaseTimingPhase,
+        elapsed: u128,
+        workers: usize,
+    ) -> Option<&'static str> {
         let mut overflow = None;
         let accumulator = self.accumulator_mut(phase);
         accumulator.wall_time_ns = match accumulator.wall_time_ns.checked_add(elapsed) {
@@ -283,7 +290,7 @@ impl PhaseTimingLedger {
                 accumulator.span_count
             }
         };
-        if let Err(field) = accumulator.sample(current_runnable_threads()) {
+        if let Err(field) = accumulator.sample(workers) {
             overflow = Some(field);
         }
         overflow
@@ -330,6 +337,7 @@ struct ActiveSpan {
 }
 
 struct Collector {
+    context_workers: Option<usize>,
     tick_before: Option<u64>,
     tick_after: Option<u64>,
     current: Option<ActiveSpan>,
@@ -340,6 +348,7 @@ struct Collector {
 impl Collector {
     fn new() -> Self {
         Self {
+            context_workers: None,
             tick_before: None,
             tick_after: None,
             current: None,
@@ -353,14 +362,23 @@ impl Collector {
             return;
         };
         let elapsed = span.started.elapsed().as_nanos();
-        if let Some(field) = self.ledger.record_span(span.phase, elapsed) {
+        if let Some(field) = self.ledger.record_span(
+            span.phase,
+            elapsed,
+            self.context_workers
+                .expect("计时开始前必须绑定真实会话上下文"),
+        ) {
             self.overflow = Some(field);
         }
     }
 
     fn enter(&mut self, phase: PhaseTimingPhase) {
         self.close_current();
-        if let Err(field) = self.ledger.sample(phase, current_runnable_threads()) {
+        if let Err(field) = self.ledger.sample(
+            phase,
+            self.context_workers
+                .expect("计时开始前必须绑定真实会话上下文"),
+        ) {
             self.overflow = Some(field);
         }
         self.current = Some(ActiveSpan {
@@ -398,11 +416,86 @@ impl Collector {
 }
 
 thread_local! {
-    static COLLECTOR: RefCell<Option<Collector>> = const { RefCell::new(None) };
+    static COLLECTOR: RefCell<Option<std::sync::Arc<std::sync::Mutex<Collector>>>> = const { RefCell::new(None) };
 }
 
-fn current_runnable_threads() -> usize {
-    rayon::current_num_threads()
+/// 显式 compute burst 继承同一次捕获；只共享临时观察账本，不共享业务权威状态。
+#[derive(Clone)]
+pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+
+pub(crate) fn current_phase_timing_binding() -> PhaseTimingBinding {
+    PhaseTimingBinding(COLLECTOR.with_borrow(Clone::clone))
+}
+
+pub(crate) fn with_phase_timing_binding<R>(
+    binding: PhaseTimingBinding,
+    work: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            COLLECTOR.with_borrow_mut(|slot| *slot = self.0.take());
+        }
+    }
+    let previous = COLLECTOR.with_borrow_mut(|slot| std::mem::replace(slot, binding.0));
+    let _restore = Restore(previous);
+    work()
+}
+
+fn with_collector<R>(work: impl FnOnce(Option<&mut Collector>) -> R) -> R {
+    COLLECTOR.with_borrow(|slot| {
+        let mut collector = slot
+            .as_ref()
+            .map(|value| value.lock().expect("phase timing 观察账本锁被 poison"));
+        work(collector.as_deref_mut())
+    })
+}
+
+/// 本线程 TLS 是否仍安装着相位计时绑定（发布点直证辅助：发布现场必须已
+/// 卸下=实际绑定已释放，非计数推断）。
+#[cfg(any(test, feature = "verification-harness"))]
+pub(crate) fn phase_timing_binding_installed_on_this_thread() -> bool {
+    COLLECTOR.with_borrow(|slot| slot.is_some())
+}
+
+impl PhaseTimingBinding {
+    /// 空绑定（等价于从未进入捕获线程的 TLS；D4 runtime worker 槽的
+    /// 初值/清除态——生产使用，不限于测试）。
+    pub(crate) fn empty() -> Self {
+        Self(None)
+    }
+}
+
+#[cfg(test)]
+impl PhaseTimingBinding {
+    /// 跨线程传播测试用：以全新观察账本构造可识别绑定（与生产捕获同构）。
+    pub(crate) fn test_collector() -> Self {
+        Self(Some(std::sync::Arc::new(std::sync::Mutex::new(
+            Collector::new(),
+        ))))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// 两个绑定是否指向同一观察账本（跨线程身份比较）。
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(left), Some(right)) => std::sync::Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// 当前绑定持有的观察账本强引用数（空绑定为 0）。
+    /// 用于断言完成通知严格晚于最后一个绑定克隆的释放。
+    pub(crate) fn strong_count(&self) -> usize {
+        self.0
+            .as_ref()
+            .map(|collector| std::sync::Arc::strong_count(collector))
+            .unwrap_or(0)
+    }
 }
 
 fn capture_one_committed_tick<T>(
@@ -410,10 +503,17 @@ fn capture_one_committed_tick<T>(
 ) -> Result<(T, CommittedPhaseTiming), PhaseTimingCaptureError> {
     start_capture()?;
     let result = operation();
-    let collector = take_capture()?;
     match result {
-        Ok(value) => collector.finish().map(|timing| (value, timing)),
-        Err(fatal) => Err(PhaseTimingCaptureError::Step(fatal)),
+        Ok(value) => {
+            let collector = take_capture()?;
+            collector.finish().map(|timing| (value, timing))
+        }
+        // 错误路径：原 StepFatal 必须原样上抛；在途任务仍持有的绑定随其自然结束释放，
+        // 观察账本就地丢弃，绝不 panic 遮蔽原始错误。
+        Err(fatal) => {
+            discard_capture();
+            Err(PhaseTimingCaptureError::Step(fatal))
+        }
     }
 }
 
@@ -422,21 +522,39 @@ fn start_capture() -> Result<(), PhaseTimingCaptureError> {
         if slot.is_some() {
             Err(PhaseTimingCaptureError::CaptureAlreadyActive)
         } else {
-            *slot = Some(Collector::new());
+            *slot = Some(std::sync::Arc::new(std::sync::Mutex::new(Collector::new())));
             Ok(())
         }
     })
 }
 
 fn take_capture() -> Result<Collector, PhaseTimingCaptureError> {
-    COLLECTOR.with_borrow_mut(|slot| slot.take().ok_or(PhaseTimingCaptureError::NoCommittedTick))
+    let collector = COLLECTOR
+        .with_borrow_mut(|slot| slot.take().ok_or(PhaseTimingCaptureError::NoCommittedTick))?;
+    // 协议保证：协调者可见的完成信号都在绑定释放之后发出（spawn 两段式），
+    // 因此成功路径此处必然独占；若仍共享，说明有任务绕过协议，用类型化错误显式上抛。
+    let collector = std::sync::Arc::try_unwrap(collector)
+        .map_err(|_| PhaseTimingCaptureError::CaptureStillBound)?;
+    Ok(collector
+        .into_inner()
+        .expect("phase timing 观察账本锁被 poison"))
 }
 
-pub(crate) fn begin_authoritative_tick(tick_before: u64) -> Result<(), crate::session::StepFatal> {
-    COLLECTOR.with_borrow_mut(|slot| {
-        let Some(collector) = slot.as_mut() else {
+/// 丢弃未完成的观察账本：错误路径不发布计时，也不因在途任务仍持有绑定而 panic。
+fn discard_capture() {
+    COLLECTOR.with_borrow_mut(|slot| *slot = None);
+}
+
+pub(crate) fn begin_authoritative_tick(
+    tick_before: u64,
+    compute: &crate::ComputeContext,
+) -> Result<(), crate::session::StepFatal> {
+    with_collector(|collector| {
+        let Some(collector) = collector else {
             return Ok(());
         };
+        // 读取实际指定 pool 的 registry 容量，不采样 caller 的另一个 pool。
+        collector.context_workers = Some(compute.workers());
         if collector.tick_before.replace(tick_before).is_some() {
             return Err(invariant(
                 "phase-timing capture observed more than one tick",
@@ -447,16 +565,16 @@ pub(crate) fn begin_authoritative_tick(tick_before: u64) -> Result<(), crate::se
 }
 
 pub(crate) fn enter_phase(phase: TickPhase) {
-    COLLECTOR.with_borrow_mut(|slot| {
-        if let Some(collector) = slot.as_mut() {
+    with_collector(|collector| {
+        if let Some(collector) = collector {
             collector.enter(phase.into());
         }
     });
 }
 
 pub(crate) fn validate_precommit() -> Result<(), crate::session::StepFatal> {
-    COLLECTOR.with_borrow_mut(|slot| {
-        let Some(collector) = slot.as_mut() else {
+    with_collector(|collector| {
+        let Some(collector) = collector else {
             return Ok(());
         };
         collector.close_current();
@@ -476,8 +594,8 @@ pub(crate) fn validate_precommit() -> Result<(), crate::session::StepFatal> {
 }
 
 pub(crate) fn mark_committed(tick_after: u64) {
-    COLLECTOR.with_borrow_mut(|slot| {
-        if let Some(collector) = slot.as_mut() {
+    with_collector(|collector| {
+        if let Some(collector) = collector {
             collector.close_current();
             collector.tick_after = Some(tick_after);
         }
@@ -505,10 +623,15 @@ pub(super) fn with_phase_timing_capture_for_test<T>(
 ) -> Result<T, PhaseTimingCaptureError> {
     start_capture()?;
     let result = operation();
-    let collector = take_capture()?;
     match result {
-        Ok(value) => collector.finish().map(|_| value),
-        Err(_) => Err(PhaseTimingCaptureError::NoCommittedTick),
+        Ok(value) => {
+            let collector = take_capture()?;
+            collector.finish().map(|_| value)
+        }
+        Err(_) => {
+            discard_capture();
+            Err(PhaseTimingCaptureError::NoCommittedTick)
+        }
     }
 }
 

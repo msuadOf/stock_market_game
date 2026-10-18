@@ -24,39 +24,30 @@ mod prehistory;
 mod public_view;
 mod publication;
 mod queries;
-mod simple_disclosures;
-pub use simple_disclosures::publish_simple_scheduled;
 mod schedule;
-#[cfg(test)]
-mod source_tests;
 
 pub use acquisition::{
-    AcquiredKind, AcquisitionError, AcquisitionOutcome, AcquisitionRecord, NpcInformationState,
-    NpcInformationStateSave, discovery_candidates,
+    discovery_candidates, AcquiredKind, AcquisitionError, AcquisitionOutcome, AcquisitionRecord,
+    NpcInformationState, NpcInformationStateSave,
 };
 pub use npc_view::{AcquiredEntry, NpcObservationContext};
 pub use prehistory::{
-    SeededPrehistory, assemble_seeded_prehistory, ensure_original_registered, industry_presentation,
+    assemble_seeded_prehistory, ensure_original_registered, industry_presentation, SeededPrehistory,
 };
 pub use public_view::{PublicLibrary, PublicLibrarySave};
 pub(crate) use publication::period_end_date;
 pub use publication::{
-    APPROVAL_HOUR, AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementContent,
-    AnnouncementRequest, CashDividendAnnouncement, DISCLOSURE_PHASE_SECOND, PublicationId,
-    PublicationOrigin, PublicationRequest, PublicationSource, PublishedReport,
-    RightsOfferingAnnouncement, IssuerRepurchaseAnnouncement,
+    AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementRequest, PublicationId,
+    PublicationOrigin, PublicationRequest, PublishedReport, APPROVAL_HOUR, DISCLOSURE_PHASE_SECOND,
 };
-mod monthly_schedule;
-pub use monthly_schedule::{MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule};
 pub use schedule::{
-    ReportFrequency, SCHEDULE_OFFSET_MAX, ScheduledReportKind, scheduled_instant,
-    stable_company_offset,
+    scheduled_instant, stable_company_offset, ScheduledReportKind, SCHEDULE_OFFSET_MAX,
 };
 
-use crate::accounting::AccountingPeriod;
 use crate::accounting::closing::ClosingError;
 use crate::accounting::consolidation::ScopeId;
 use crate::accounting::reports::ReportError;
+use crate::accounting::AccountingPeriod;
 use crate::calendar::{CivilDateError, CivilInstant};
 use crate::company::operations::OperationsError;
 use thiserror::Error;
@@ -97,7 +88,12 @@ pub enum InformationError {
     InvalidPublicReportPageSize { page_size: u16, max: u16 },
     /// 游标不是当前公司的一条已公开报告 id，或不是十进制 id。
     #[error("invalid public report cursor {cursor:?} for company {company}")]
-    InvalidPublicReportCursor { cursor: String, company: String },
+    /// 公开报告游标非法；cursor=已解析的 PublicationId 数值（解析失败时 0），
+    /// company=公司数值身份（查询上下文；无公司上下文时用 u32::MAX 占位）。
+    InvalidPublicReportCursor {
+        cursor: u32,
+        company: crate::company::CompanyId,
+    },
 
     /// 结账登记簿不存在该版本（期间未结账/序号越界 = 未定稿，不可公开）。
     #[error("no finalized version for {scope:?} {period} {kind:?} sequence {sequence}")]
@@ -152,14 +148,6 @@ pub enum InformationError {
     /// 更正目标不在库中。
     #[error("correction target {target:?} is not in the library")]
     CorrectionTargetUnknown { target: PublicationId },
-    #[error(
-        "集团更正公布时点早于被更正报告 {original:?}：原时点 {original_at:?}，请求时点 {published_at:?}"
-    )]
-    CorrectionPrecedesOriginal {
-        original: PublicationId,
-        original_at: CivilInstant,
-        published_at: CivilInstant,
-    },
     /// 更正目标与本公司/范围/期间/种类不一致。
     #[error("correction target {target:?} does not match the corrected publication")]
     CorrectionTargetMismatch {

@@ -3,20 +3,17 @@ use super::*;
 fn decision_resources_fixture(
     side: crate::Side,
     expires: bool,
-) -> (GameSession, crate::AccountId, crate::StockCode) {
+) -> (GameSession, crate::AccountId, crate::StockId) {
     let account = crate::AccountId(1);
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
     if side == crate::Side::Sell {
-        game.state
-            .accounts
-            .get_mut(&account)
+        game.fixture_account_mut(&account)
             .unwrap()
             .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
             .unwrap();
@@ -42,16 +39,12 @@ fn decision_resources_fixture(
 fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservation() {
     let (mut game, account, _code) = decision_resources_fixture(crate::Side::Buy, true);
     let reservation = game.project_live_envelopes().unwrap()[0].live().cash;
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reservation);
     let (mut before_expiry, _, _) = decision_resources_fixture(crate::Side::Buy, false);
     before_expiry
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reservation);
     let before_reservation = before_expiry.project_live_envelopes().unwrap()[0]
@@ -61,7 +54,10 @@ fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservatio
         session: &before_expiry,
     })
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
 
     assert_eq!(before_reservation, reservation);
     assert_eq!(
@@ -106,7 +102,10 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
         session: &before_expiry,
     })
     .unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
 
     assert_eq!(reserved, sellable_before);
     assert_eq!(
@@ -140,7 +139,10 @@ fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position(
 #[test]
 fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     let (buy_game, buy_account, buy_code) = decision_resources_fixture(crate::Side::Buy, false);
-    let buy_plan = plan_tick(PhaseInput { session: &buy_game }).unwrap();
+    let buy_plan = plan_tick(PhaseInput {
+        session: &buy_game,
+    })
+    .unwrap();
     assert!(
         buy_plan
             .decision_resources()
@@ -187,7 +189,7 @@ fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unkno
     assert!(sell_plan
         .decision_resources()
         .unwrap()
-        .available_sell_qty(sell_account, &crate::StockCode("999999".to_owned()))
+        .available_sell_qty(sell_account, &crate::StockId(9))
         .is_err());
 }
 
@@ -207,20 +209,17 @@ fn decision_resources_sell_reservation_uses_account_book_key() {
 }
 
 #[test]
-fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
-    let code = crate::StockCode("600888".to_owned());
+fn decision_resources_mixed_books_ignore_plan_legs_and_keep_seller_cash_unreserved() {
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let seller = crate::AccountId(1);
     let player = crate::AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(2), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&seller)
+    game.fixture_account_mut(&seller)
         .unwrap()
         .fixture_set_strategy(None);
-    game.state
-        .accounts
-        .get_mut(&seller)
+    game.fixture_account_mut(&seller)
         .unwrap()
         .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
         .unwrap();
@@ -247,21 +246,76 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
         },
         &mut events,
     );
-    let baseline = plan_tick(PhaseInput { session: &game }).unwrap();
-    game.state.pending_plan_events.push(
-        crate::session::plan_execution::PendingPlanEvent::DayEnded {
-            plan_id: crate::PlanId(1),
-            trading_day: 0,
-        },
-    );
+    // 计划执行腿只描述已提交子单；决策资源仍以真实订单簿 envelope 为准。
+    let plan_id = game
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account: player,
+            code: code.clone(),
+            direction: crate::Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(400),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    game.state
+        .plans
+        .install_execution(plan_id, 100, crate::Money::from_cents(980), 240)
+        .unwrap();
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let allocation = plan.decision_resources().unwrap();
 
     assert_eq!(allocation.available_cash(seller).unwrap(), seller_cash);
     assert_eq!(allocation.available_sell_qty(seller, &code).unwrap(), 0);
     assert!(allocation.available_cash(player).unwrap() < player_cash);
-    assert_eq!(game.state.pending_plan_events.len(), 1);
+    // 执行腿只描述已提交子单，不重复冻结资产：与无计划腿的基线一致。
+    let mut without_leg = GameSession::new(
+        crate::session::npc_working_quote_tests::quote_setup(2),
+        42,
+    )
+    .unwrap();
+    without_leg
+        .fixture_account_mut(&seller)
+        .unwrap()
+        .fixture_set_strategy(None);
+    without_leg
+        .fixture_account_mut(&seller)
+        .unwrap()
+        .grant_position(code.clone(), 100, crate::Money::from_cents(100_000))
+        .unwrap();
+    let mut plain_events = Vec::new();
+    without_leg.seed_order_for_test(
+        seller,
+        crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: crate::Side::Sell,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
+            qty: 100,
+        },
+        &mut plain_events,
+    );
+    without_leg.seed_order_for_test(
+        player,
+        crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
+            qty: 100,
+        },
+        &mut plain_events,
+    );
+    let baseline = plan_tick(PhaseInput { session: &without_leg }).unwrap();
     assert_eq!(
         allocation.available_cash(player).unwrap(),
         baseline
@@ -274,27 +328,24 @@ fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cas
 
 #[test]
 fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
-    let held = crate::StockCode("600888".to_owned());
-    let unheld = crate::StockCode("600889".to_owned());
+    // 数值身份后无字符串可断言：two_stock_quote_setup 目录按代码序 rank 取 0/1。
+    let held = crate::StockId(0);
+    let unheld = crate::StockId(1);
     let account = crate::AccountId(1);
     let mut game = GameSession::new(
         crate::session::npc_working_quote_tests::two_stock_quote_setup(),
         42,
     )
     .unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(held.clone(), 200, crate::Money::from_cents(1_000))
         .unwrap();
     {
-        let account = game.state.accounts.get_mut(&account).unwrap();
+        let account = game.fixture_account_mut(&account).unwrap();
         let mut position = account.position(&held).unwrap().clone();
         position = crate::account::Position::from_restored_parts(
             position.qty(),
@@ -304,9 +355,7 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         );
         account.fixture_insert_position(held.clone(), position);
     }
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(crate::Money::from_cents(500_000));
 
@@ -342,7 +391,10 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
         .unwrap();
     let before = game.business_state_hash().unwrap();
 
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let resources = plan.decision_resources().unwrap();
 
     assert_eq!(resources.raw_cash(account).unwrap(), raw_cash);
@@ -387,25 +439,22 @@ fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
     );
     assert!(resources.raw_cash(crate::AccountId(999)).is_err());
     assert!(resources
-        .total_held_qty(account, &crate::StockCode("999999".to_owned()))
+        .total_held_qty(account, &crate::StockId(9))
         .is_err());
     assert_eq!(game.business_state_hash().unwrap(), before);
 }
 
 #[test]
 fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_strategy(None);
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 2, crate::Money::from_cents(1))
         .unwrap();
@@ -416,7 +465,9 @@ fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
         .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let before = game.business_state_hash().unwrap();
 
-    let error = match plan_tick(PhaseInput { session: &game }) {
+    let error = match plan_tick(PhaseInput {
+        session: &game,
+    }) {
         Ok(_) => panic!("资产溢出必须使 SealAllocationSnapshot 密封失败"),
         Err(error) => error,
     };
@@ -440,9 +491,7 @@ fn account_resources_are_identical_with_one_or_four_workers() {
     .into_iter()
     .enumerate()
     {
-        game.state
-            .accounts
-            .get_mut(&account)
+        game.fixture_account_mut(&account)
             .unwrap()
             .grant_position(
                 codes[index % codes.len()].clone(),
@@ -452,10 +501,7 @@ fn account_resources_are_identical_with_one_or_four_workers() {
             .unwrap();
     }
     let run = |threads| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| DecisionResourceSnapshot::seal(&game).unwrap())
     };
     assert_eq!(run(1), run(4));
@@ -463,13 +509,12 @@ fn account_resources_are_identical_with_one_or_four_workers() {
 
 #[test]
 fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_change() {
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
         .unwrap();
@@ -477,13 +522,11 @@ fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_chang
     let cash = sealed.available_cash(account).unwrap();
     let equity = sealed.equity(account).unwrap();
 
-    game.state
-        .accounts
-        .get_mut(&account)
+    game.fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(crate::Money::ZERO);
     {
-        let account = game.state.accounts.get_mut(&account).unwrap();
+        let account = game.fixture_account_mut(&account).unwrap();
         let mut position = account.position(&code).unwrap().clone();
         position = crate::account::Position::from_restored_parts(
             0,
@@ -509,12 +552,11 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 2;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let code = game.state.setup.stocks[0].code.clone();
+    // 数值身份后无字符串可断言：spec.code 是边界 StockCode，作内部键须经 rank 翻译（单股目录=0）。
+    let code = crate::StockId(0);
     let seller = crate::AccountId(1);
     let buyer = crate::AccountId(2);
-    game.state
-        .accounts
-        .get_mut(&seller)
+    game.fixture_account_mut(&seller)
         .unwrap()
         .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
         .unwrap();
@@ -541,7 +583,7 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     );
     assert_eq!(game.project_live_envelopes().unwrap().len(), 2);
     {
-        let account = game.state.accounts.get_mut(&seller).unwrap();
+        let account = game.fixture_account_mut(&seller).unwrap();
         let mut position = account.position(&code).unwrap().clone();
         position = crate::account::Position::from_restored_parts(
             0,
@@ -551,16 +593,11 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
         );
         account.fixture_insert_position(code.clone(), position);
     }
-    game.state
-        .accounts
-        .get_mut(&buyer)
+    game.fixture_account_mut(&buyer)
         .unwrap()
         .fixture_set_cash(crate::Money::ZERO);
     let run = |threads| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| DecisionResourceSnapshot::seal(&game).unwrap_err())
     };
     for threads in [1, 4] {
@@ -576,33 +613,29 @@ fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
 
 #[test]
 fn decision_resources_parallel_equity_failures_reject_overflow() {
-    let code = crate::StockCode("600888".to_owned());
+    // 数值身份后无字符串可断言：quote_setup 单股目录按 rank 取 StockId(0)。
+    let code = crate::StockId(0);
     let player = crate::AccountId(0);
     let npc = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.state
-        .accounts
-        .get_mut(&player)
+    game.fixture_account_mut(&player)
         .unwrap()
         .grant_position(code.clone(), 2, crate::Money::from_cents(1))
         .unwrap();
-    game.state
-        .accounts
-        .get_mut(&npc)
+    game.fixture_account_mut(&npc)
         .unwrap()
         .grant_position(code.clone(), 1, crate::Money::from_cents(1))
         .unwrap();
+    // 先建立成功缓存，再单独改变价格；旧成功结果不能掩盖后续溢出。
+    DecisionResourceSnapshot::seal(&game).unwrap();
     game.state
         .markets
         .get_mut(&code)
         .unwrap()
         .fixture_set_last_price(crate::Money::from_cents(i64::MAX));
     let run = |threads, session: &GameSession| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(threads)
             .install(|| {
                 DecisionResourceSnapshot::seal(session).expect_err("equity overflow must fail")
             })
@@ -611,14 +644,14 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
         assert!(matches!(
             run(threads, &game),
             StepFatal::InvariantViolation { description, location }
-                if (description.contains("mul_shares")
-                    || description.contains("overflow in add"))
+                if (description.contains("MulShares")
+                    || description.contains("overflow in CashAdd"))
                     && location == "pipeline::decision_resources"
         ));
     }
 
     {
-        let account = game.state.accounts.get_mut(&player).unwrap();
+        let account = game.fixture_account_mut(&player).unwrap();
         let mut position = account.position(&code).unwrap().clone();
         position = crate::account::Position::from_restored_parts(
             0,
@@ -632,7 +665,7 @@ fn decision_resources_parallel_equity_failures_reject_overflow() {
     assert!(matches!(
         &second,
         StepFatal::InvariantViolation { description, location }
-            if description.contains("overflow in add")
+            if description.contains("overflow in CashAdd")
                 && location == "pipeline::decision_resources"
     ));
 }

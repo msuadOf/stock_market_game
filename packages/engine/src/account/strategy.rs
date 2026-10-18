@@ -1,7 +1,7 @@
 use crate::strategy::{ProductionStrategy, Strategy, StrategyState, StrategyStateError};
 use std::sync::{Arc, OnceLock};
 
-/// DecisionShadow 在独立恢复的 strategy 上运行，只在投影完成后安装替换状态。
+/// DecisionAndContinuation 在独立恢复的 strategy 上运行，只在投影完成后安装替换状态。
 pub struct StoredStrategy(Arc<StrategyStorage>);
 
 impl std::fmt::Debug for StoredStrategy {

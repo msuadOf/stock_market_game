@@ -30,8 +30,8 @@ fn player_candidate_capture_returns_empty_batch_without_touching_session_state()
 fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order() {
     let first_player = AccountId(0);
     let second_player = AccountId(3);
-    let first_code = StockCode("600888".to_owned());
-    let second_code = StockCode("000001".to_owned());
+    let first_code = StockId(0);
+    let second_code = StockId(1);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let queued = vec![
         received_intent(
@@ -77,7 +77,7 @@ fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order()
 #[test]
 fn player_candidate_capture_preserves_same_account_payloads_without_normalization() {
     let player = AccountId(0);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 43).unwrap();
     let queued = vec![
         received_intent(
@@ -122,7 +122,7 @@ fn player_candidate_capture_preserves_same_account_payloads_without_normalizatio
 #[test]
 fn player_candidate_capture_transfers_queued_intents_without_routing_side_effects() {
     let player = AccountId(0);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 44).unwrap();
     let queued = received_intent(
         &mut session,
@@ -152,7 +152,7 @@ fn player_candidate_capture_transfers_queued_intents_without_routing_side_effect
 #[test]
 fn full_u64_receipt_ordinals_roundtrip_and_overflow_atomically() {
     let player = AccountId(0);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 45).unwrap();
     session
         .state
@@ -240,7 +240,7 @@ fn full_u64_receipt_ordinals_roundtrip_and_overflow_atomically() {
 
 #[test]
 fn receipt_and_cursor_wire_values_reject_noncanonical_decimal_strings() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 47).unwrap();
     session
         .enqueue_player_intent(
@@ -267,14 +267,15 @@ fn receipt_and_cursor_wire_values_reject_noncanonical_decimal_strings() {
     }
     for value in ["01", "+1"] {
         let mut malformed = encoded.clone();
-        malformed["ingress_receipt_cursors"]["next_stock_ordinal"][code.0.as_str()] = value.into();
+        malformed["ingress_receipt_cursors"]["next_stock_ordinal"][code.0.to_string()] =
+            value.into();
         assert!(serde_json::from_value::<crate::session::SaveSlot>(malformed).is_err());
     }
 }
 
 #[test]
 fn restore_rejects_cross_lane_receipt_cycle() {
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 46).unwrap();
     for price in [900, 901] {
         session
@@ -293,8 +294,10 @@ fn restore_rejects_cross_lane_receipt_cycle() {
     save.pending_player[0].stock_ordinal = 1;
     save.pending_player[1].stock_ordinal = 0;
 
+    // 数值断言替代原文本断言 "precedence contains a cycle"
+    // （fault2084：回执先序图含环）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(SessionError::InvalidSave(message)) if message.contains("precedence contains a cycle")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2084
     ));
 }

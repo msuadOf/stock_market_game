@@ -1,5 +1,6 @@
 use super::{CivilUpdate, TickBatch, TickFrame};
-use crate::experience::AppendOnlyHistory;
+use crate::error::{ymd_context, ValidationFault};
+use crate::shared_history::AppendOnlyHistory;
 use crate::session::{GameSession, SessionError, SessionSetup, StepFatal};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -8,12 +9,13 @@ use std::sync::Arc;
 /// 一个未发布宿主批次的共同回滚集合；GameSession 保留自身 tick authority。
 struct ProtocolState {
     game: GameSession,
-    intraday: AppendOnlyHistory<TickFrame>,
-    fact_cursor: PublicationFactCursor,
+    // 回滚点只复制 chunk 中的 Arc，已提交 frame 的 facts/payload 保持不可变共享。
+    intraday: AppendOnlyHistory<Arc<TickFrame>>,
+    fact_cursor: crate::session::protocol::SessionFactCursor,
     day_end_save: Option<Arc<crate::SaveSlot>>,
+    committed_runtime: Option<super::super::PublicRuntimeState>,
     published_runtime: RefCell<Option<super::super::PublicRuntimeState>>,
     pending_save_candidates: RefCell<BTreeMap<u64, Arc<crate::SaveSlot>>>,
-    pending_disclosure_observers: Vec<(crate::CivilInstant, Vec<crate::session::civil_clock::DisclosureObserver>)>,
 }
 
 impl ProtocolState {
@@ -24,43 +26,15 @@ impl ProtocolState {
             intraday: self.intraday.clone(),
             fact_cursor: self.fact_cursor.clone(),
             day_end_save: self.day_end_save.clone(),
+            committed_runtime: self.committed_runtime.clone(),
             published_runtime: RefCell::new(self.published_runtime.borrow().clone()),
             pending_save_candidates: RefCell::new(self.pending_save_candidates.borrow().clone()),
-            pending_disclosure_observers: self.pending_disclosure_observers.clone(),
         })
-    }
-}
-
-/// 发布流内同 tick 的 preceding facts；恢复新 Session 时从空流开始。
-#[derive(Clone, Default)]
-struct PublicationFactCursor {
-    tick: Option<u64>,
-    facts: Vec<crate::session::protocol::EventFact>,
-}
-
-impl PublicationFactCursor {
-    fn begin_tick(&mut self, tick: u64) {
-        if self.tick != Some(tick) {
-            self.tick = Some(tick);
-            self.facts.clear();
-        }
-    }
-
-    fn append_committed_facts(&mut self, facts: &[crate::session::protocol::EventFact]) {
-        self.facts.extend(facts.iter().cloned());
-    }
-
-    fn attach_after(
-        &self,
-        events: &[crate::Event],
-    ) -> Result<Vec<crate::session::protocol::EventFact>, super::super::ProtocolError> {
-        crate::session::protocol::attach_facts_after(&self.facts, events)
     }
 }
 
 pub struct ProtocolSession {
     state: ProtocolState,
-    publication_scope: Option<Arc<()>>,
     #[cfg(test)]
     malformed_frame: bool,
     #[cfg(test)]
@@ -69,50 +43,13 @@ pub struct ProtocolSession {
 
 pub struct ProtocolCheckpoint {
     state: ProtocolState,
-    source: crate::SharedSessionIngress,
-    publication: crate::session::shared_ingress::CalendarPublication,
-    publication_scope: Option<Arc<()>>,
-}
-
-struct PublicationTransaction<'session> {
-    session: &'session mut ProtocolSession,
-    checkpoint: Option<ProtocolCheckpoint>,
-    scope: Arc<()>,
-}
-
-impl Drop for PublicationTransaction<'_> {
-    fn drop(&mut self) {
-        if let Some(checkpoint) = self.checkpoint.take() {
-            self.session.state = checkpoint.state;
-            self.session.publication_scope = None;
-        }
-    }
 }
 
 impl ProtocolSession {
-    pub fn query_current_minute_history_for(&mut self, account: crate::AccountId, request: &crate::session::CurrentMinuteHistoryRequest) -> Result<crate::session::CurrentMinuteHistoryResponse, SessionError> {
-        self.state.game.query_current_minute_history_for(account, request)
-    }
-    pub fn bind_market_creator(&mut self, subject: crate::session::OpaqueSubjectId) -> Result<crate::session::MarketMembership, crate::session::MembershipError> {
-        self.state.game.bind_market_creator(subject)
-    }
-
-    pub fn join_market(&mut self, subject: crate::session::OpaqueSubjectId, confirmed_rejoin: bool) -> Result<crate::session::MarketMembership, crate::session::MembershipError> {
-        self.state.game.join_market(subject, confirmed_rejoin)
-    }
-
-    pub fn set_admission_cash(&mut self, cash: crate::Money) -> Result<(), crate::session::MembershipError> {
-        self.state.game.set_admission_cash(cash)
-    }
-
-    pub fn query_market_history_for(&mut self, account: crate::AccountId, request: &crate::session::MarketHistoryRequest) -> Result<crate::session::MarketHistoryPage, SessionError> {
-        self.state.game.query_market_history_for(account, request)
-    }
-
     pub fn query_stock_history(
         &mut self,
         account: crate::AccountId,
-        code: &crate::StockCode,
+        code: &crate::StockId,
     ) -> Result<crate::session::HistoricalStockData, SessionError> {
         self.state.game.query_stock_history(account, code)
     }
@@ -121,50 +58,11 @@ impl ProtocolSession {
     pub fn checkpoint(&self) -> Result<ProtocolCheckpoint, StepFatal> {
         Ok(ProtocolCheckpoint {
             state: self.state.try_clone_for_checkpoint()?,
-            source: self.shared_ingress(),
-            publication: self.shared_ingress().calendar_publication().map_err(|error| StepFatal::InvariantViolation {
-                location: "ProtocolSession checkpoint".into(), description: error.to_string(),
-            })?,
-            publication_scope: self.publication_scope.clone(),
         })
     }
 
-    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) -> Result<(), SessionError> {
-        let source = self.shared_ingress();
-        if !source.same_source(&checkpoint.source)
-            || source.calendar_publication()? != checkpoint.publication
-            || !same_publication_scope(&self.publication_scope, &checkpoint.publication_scope) {
-            return Err(SessionError::InvalidSave("内存checkpoint的收件入口、已发布自然日或publication scope不匹配".into()));
-        }
+    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) {
         self.state = checkpoint.state;
-        Ok(())
-    }
-
-    pub fn with_publication_transaction<Value>(
-        &mut self,
-        operation: impl FnOnce(&mut Self) -> Result<Value, SessionError>,
-    ) -> Result<Value, SessionError> {
-        self.state.game.require_healthy()?;
-        if self.publication_scope.is_some() {
-            return Err(SessionError::InvalidSave("自然日发布事务不允许嵌套".into()));
-        }
-        let checkpoint = self.checkpoint()?;
-        let scope = Arc::new(());
-        self.publication_scope = Some(scope.clone());
-        let mut transaction = PublicationTransaction { session: self, checkpoint: Some(checkpoint), scope };
-        let result = operation(transaction.session)?;
-        transaction.session.state.game.require_healthy()?;
-        let checkpoint = transaction.checkpoint.as_ref().expect("发布事务持有原始checkpoint");
-        let source = transaction.session.shared_ingress();
-        if !source.same_source(&checkpoint.source)
-            || !transaction.session.publication_scope.as_ref().is_some_and(|scope| Arc::ptr_eq(scope, &transaction.scope)) {
-            return Err(SessionError::InvalidSave("自然日发布事务的收件入口发生变化".into()));
-        }
-        source.publish_calendar(checkpoint.publication, transaction.session.civil_date())?;
-        transaction.session.publication_scope = None;
-        transaction.checkpoint = None;
-        transaction.session.deliver_committed_disclosure_observers();
-        Ok(result)
     }
 
     #[cfg(feature = "verification-harness")]
@@ -175,7 +73,6 @@ impl ProtocolSession {
         state.game.shared_ingress();
         Ok(Self {
             state,
-            publication_scope: None,
             #[cfg(test)]
             malformed_frame: false,
             #[cfg(test)]
@@ -201,7 +98,12 @@ impl ProtocolSession {
     }
 
     pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
-        let game = GameSession::restore(slot)?;
+        // 批 9 A5（with_compute 注入面退役）：wasm 串行与生产统一走
+        /// shared_default 内部构造（C 桶保留面——wasm 恒旧管线串行）。
+        let game = GameSession::restore_with_compute(
+            slot,
+            crate::ComputeContext::shared_default()?,
+        )?;
         let sessions_through_current_date =
             game.civil_clock().completed_trading_sessions_expected()?;
         let current_date_trades =
@@ -209,50 +111,92 @@ impl ProtocolSession {
         let sessions_through_settled_date = sessions_through_current_date
             .checked_sub(u32::from(current_date_trades))
             .ok_or_else(|| {
-                SessionError::InvalidSave("自然日时钟的已完成交易会话计数不合法".into())
+                // fault3012: 自然日时钟的已完成交易会话计数不合法（当前日内会话数超过时钟计数）。
+                SessionError::InvalidSave(ValidationFault::bare(3012))
             })?;
         let completed = slot.civil_clock.settled_through.is_some()
             && slot.snapshot.tick.is_multiple_of(slot.setup.ticks_per_day)
             && game.day() == sessions_through_settled_date;
         if !completed {
-            return Err(SessionError::InvalidSave(
-                "公共日级档必须来自完整的自然日日终结算".into(),
-            ));
+            // fault3013: 公共日级档必须来自完整的自然日日终结算。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(3013)));
         }
         if slot
             .resting_orders
             .values()
             .any(|orders| !orders.is_empty())
-            || slot
-                .auction_orders
-                .values()
-                .any(|orders| !orders.is_empty())
             || !slot.runtime_state.live_envelopes.is_empty()
-            || !slot.runtime_state.active_minute_history.is_empty()
             || !slot.npc_order_lifecycles.is_empty()
-            || slot.parent_orders.values().any(|plans| !plans.is_empty())
-            || !slot.pending_player.is_empty()
             || slot
-                .pending_npc
-                .as_ref()
-                .is_some_and(|batch| !batch.intents.is_empty())
+                .plans
+                .plan_ids()
+                .any(|plan_id| {
+                    slot.plans
+                        .plan(plan_id)
+                        .expect("plan_ids always resolve")
+                        .execution()
+                        .is_some()
+                })
+            || !slot.pending_player.is_empty()
+            // 批四：pending_npc 载体删除（旧档在解码边界 fault2100 拒绝）。
         {
-            return Err(SessionError::InvalidSave(
-                "公共日级档不能包含日内活动委托或待处理输入".into(),
-            ));
+            // fault3014: 公共日级档不能包含日内活动委托或待处理输入。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(3014)));
         }
         Ok(Self::from_game(game, Some(Arc::new(slot.clone()))))
     }
 
     pub fn new(setup: SessionSetup, seed: u64) -> Result<Self, SessionError> {
-        Ok(Self::from_game(GameSession::new(setup, seed)?, None))
+        // 批 9 A5：同 restore——注入面退役，内部 shared_default。
+        Ok(Self::from_game(
+            GameSession::new_with_compute(
+                setup,
+                seed,
+                crate::ComputeContext::shared_default()?,
+            )?,
+            None,
+        ))
     }
 
     /// Restore a validated in-memory verification checkpoint, without making
     /// it available as a public day-end save. Public loading still uses `restore`.
     #[cfg(feature = "verification-harness")]
+    pub fn restore_verification_checkpoint_with_compute(
+        slot: &crate::SaveSlot,
+        compute: Arc<crate::ComputeContext>,
+    ) -> Result<Self, SessionError> {
+        // Sol 收官再复核阻断 9：验证恢复沿 harness 预算池（与
+        /// from_game_for_verification 对偶——默认通道恒绑 shared_default
+        /// 使预算隔离在"构造→保存→恢复"链上丢失）。
+        Ok(Self::from_game(
+            GameSession::restore_with_compute(slot, compute)?,
+            None,
+        ))
+    }
+
+    #[cfg(feature = "verification-harness")]
     pub fn restore_verification_checkpoint(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
-        Ok(Self::from_game(GameSession::restore(slot)?, None))
+        // 批 9 A5：注入面退役——验证恢复经内部 shared_default（C 桶
+        /// escrow 验证面的 ComputeContext 消费仍由 GameSession 内部
+        /// 承载）。
+        Ok(Self::from_game(
+            GameSession::restore_with_compute(
+                slot,
+                crate::ComputeContext::shared_default()?,
+            )?,
+            None,
+        ))
+    }
+
+    /// C 桶（escrow 验证面）注入通道：宿主提供已绑定指定 ComputeContext
+    /// 的 GameSession 构造协议会话——验证 harness 的预算隔离经此保留
+    ///（A5 退役的是 crate 外生产注入面；此面 cfg verification-harness）。
+    #[cfg(feature = "verification-harness")]
+    pub fn from_game_for_verification(
+        game: GameSession,
+        day_end_save: Option<Arc<crate::SaveSlot>>,
+    ) -> Self {
+        Self::from_game(game, day_end_save)
     }
 
     fn from_game(mut game: GameSession, day_end_save: Option<Arc<crate::SaveSlot>>) -> Self {
@@ -261,13 +205,12 @@ impl ProtocolSession {
             state: ProtocolState {
                 game,
                 intraday: AppendOnlyHistory::default(),
-                fact_cursor: PublicationFactCursor::default(),
+                fact_cursor: crate::session::protocol::SessionFactCursor::default(),
                 day_end_save,
+                committed_runtime: None,
                 published_runtime: RefCell::new(None),
                 pending_save_candidates: RefCell::new(BTreeMap::new()),
-                pending_disclosure_observers: Vec::new(),
             },
-            publication_scope: None,
             #[cfg(test)]
             malformed_frame: false,
             #[cfg(test)]
@@ -279,81 +222,20 @@ impl ProtocolSession {
         &self.state.game
     }
 
-    /// 显式配置账户在指定证券下的现金分红税务身份（宿主显式入口）。
-    /// 仅限装配期语义：名册已有历史日结回执或已登记分红时由 engine 显式拒绝。
-    pub fn configure_cash_dividend_tax_book(
-        &mut self,
-        account: crate::AccountId,
-        stock: crate::StockCode,
-        profile: crate::company::cash_dividend_tax::DividendTaxProfile,
-    ) -> Result<(), crate::session::SessionCorporateActionsError> {
-        self.state
-            .game
-            .configure_cash_dividend_tax_book(account, stock, profile)
-    }
-
-    /// 玩家／宿主显式认购配股（宿主显式入口；owner 隔离由宿主层固定账户）。
-    /// 受理成功即入队（缴款期内当日日终划扣）；现金不足、窗口外、超额或重复
-    /// 提交等由 engine 显式拒绝，错误完整上抛不静默。
-    pub fn subscribe_rights_offering(
-        &mut self,
-        event_id: &str,
-        account: crate::AccountId,
-        shares: u64,
-    ) -> Result<(), SessionError> {
-        self.state
-            .game
-            .subscribe_rights_offering(event_id, account, shares)
-    }
-
-    pub fn report_correction_epoch(&self) -> crate::session::ReportCorrectionEpoch {
-        self.state.game.report_correction_epoch()
-    }
-
-    /// 玩家公司行为提案（N2b；owner 由宿主层固定本机玩家）。委托
-    /// [`GameSession::propose_company_action`]，语义见该方法文档。
-    pub fn propose_company_action(
-        &mut self,
-        account: crate::AccountId,
-        proposal: crate::session::player_proposals::PlayerCompanyProposal,
-    ) -> Result<
-        crate::session::player_proposals::PlayerProposalReceipt,
-        crate::session::player_proposals::PlayerProposalError,
-    > {
-        self.state.game.propose_company_action(account, proposal)
-    }
-
-    /// 偏好局内编辑（N2b）。委托 [`GameSession::set_simple_preferences`]。
-    pub fn set_simple_preferences(
-        &mut self,
-        company: &crate::company::CompanyId,
-        preferences: crate::company::simple::preferences::SimpleCompanyPreferences,
-    ) -> Result<(), crate::session::SessionCorporateActionsError> {
-        self.state.game.set_simple_preferences(company, preferences)
-    }
-
-    pub fn report_corrections(&self) -> Result<crate::session::ReportCorrectionStatus, SessionError> {
-        self.state.game.report_corrections()
-    }
-
-    pub fn enqueue_report_correction(
-        &mut self,
-        epoch: &crate::session::ReportCorrectionEpoch,
-        request: crate::session::CompanyReportCorrection,
-    ) -> Result<(), SessionError> {
-        self.state.game.enqueue_report_correction(epoch, request)
-    }
-
-    pub fn cancel_report_correction(
-        &mut self,
-        epoch: &crate::session::ReportCorrectionEpoch,
-        operation_id: &str,
-    ) -> Result<(), SessionError> {
-        self.state.game.cancel_report_correction(epoch, operation_id)
+    /// epoch 对齐 fixture（A3）专用：可变访问内部 GameSession（cfg(test)）。
+    #[cfg(test)]
+    pub(crate) fn game_mut(&mut self) -> &mut GameSession {
+        &mut self.state.game
     }
 
     pub fn shared_ingress(&self) -> crate::SharedSessionIngress {
-        self.state.game.ingress.as_ref().expect("ProtocolSession initializes shared ingress").source.clone()
+        self.state
+            .game
+            .ingress
+            .as_ref()
+            .expect("ProtocolSession initializes shared ingress")
+            .source
+            .clone()
     }
 
     pub fn save(&self) -> Result<crate::SaveSlot, SessionError> {
@@ -363,7 +245,8 @@ impl ProtocolSession {
             .as_ref()
             .map(|slot| slot.as_ref().clone())
             .ok_or_else(|| {
-                SessionError::InvalidSave("尚未完成首次自然日日结，没有可用日终存档".into())
+                // fault3015: 尚未完成首次自然日日结，没有可用日终存档。
+                SessionError::InvalidSave(ValidationFault::bare(3015))
             })
     }
 
@@ -382,15 +265,17 @@ impl ProtocolSession {
                     .filter(|slot| slot.snapshot.seq == key.seq)
             })
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "日终候选 {} / {} 已失效或不存在",
-                    key.settled_date, key.seq
+                // fault3016: 日终候选已失效或不存在；ctx[0]=请求的自然日 yyyymmdd，ctx[1]=请求的 seq
+                // （原文本 "日终候选 {settled_date} / {seq} 已失效或不存在"）。
+                let (year, month, day) = key.settled_date.ymd();
+                SessionError::InvalidSave(ValidationFault::new(
+                    3016,
+                    vec![ymd_context(year, month, day), key.seq],
                 ))
             })?;
         if candidate.civil_clock.settled_through != Some(key.settled_date) {
-            return Err(SessionError::InvalidSave(
-                "日终候选自然日与请求不一致".into(),
-            ));
+            // fault3017: 日终候选自然日与请求不一致（候选档 settled_through ≠ SaveCandidateKey.settled_date）。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(3017)));
         }
         let captured = candidate.as_ref().clone();
         pending.remove(&key.seq);
@@ -407,79 +292,115 @@ impl ProtocolSession {
     }
 
     pub fn step_frame(&mut self) -> Result<TickFrame, StepFatal> {
-        #[cfg(test)]
+        self.step_frame_inner(false).map(|(frame, _)| frame)
+    }
+
+    /// step_frame 接轨件 4 的契约测试入口（cfg(test)）：显式走**旧管线**
+    /// frame 路径——旧管线专有注入面/决策链契约（决策失败注入、epoch
+    /// 对齐见证、NPC 日界准备 seam、旧簿 fixture）的测试锚定在旧语义
+    /// 上，与 `GameSession::step_pipeline_contract` 同型登记（D2 先例：
+    /// runtime 无对应注入面，经 step_frame 混跑只会把注入面缺失误报为
+    /// 语义失败）。runtime 的等价锚由 flip 批/stepframe parity 承载。
+    #[cfg(test)]
+    pub fn step_frame_pipeline_contract(&mut self) -> Result<TickFrame, StepFatal> {
         let malformed = std::mem::take(&mut self.malformed_frame);
-        let checkpoint = self.checkpoint()?;
-        let result = self.state.game.step_frame().and_then(|frame| {
-            #[cfg(test)]
-            let frame = malformed_frame_if_requested(frame, malformed);
-            self.prepare_frame(frame)
-        });
-        let frame = match result {
-            Ok(frame) => frame,
-            Err(error) => {
-                self.rollback(checkpoint).map_err(|error| StepFatal::InvariantViolation {
-                    location: "ProtocolSession rollback".into(), description: error.to_string(),
-                })?;
-                return Err(error);
-            }
-        };
-        drop(checkpoint);
-        self.state.fact_cursor.append_committed_facts(&frame.facts);
-        self.state.intraday.push(frame.clone());
+        let mut cursor = self.state.fact_cursor.clone();
+        let ((frame, retained), _evidence) =
+            crate::session::pipeline::execute_authoritative_tick_with_projection(
+                &mut self.state.game,
+                false,
+                |projection, facts| {
+                    let frame = projection.project_frame(facts)?;
+                    let frame = malformed_frame_if_requested(frame, malformed);
+                    frame.validate().map_err(protocol_fatal)?;
+                    cursor.begin_tick(frame.tick);
+                    cursor
+                        .record_committed_facts(&frame.facts)
+                        .map_err(protocol_fatal)?;
+                    let retained = std::sync::Arc::new(frame.clone());
+                    Ok((frame, retained))
+                },
+            )?;
+        self.state.fact_cursor = cursor;
+        self.state.intraday.push(retained);
+        // committed_runtime 不写（tick_batch 是 publication 面——契约
+        // 测试不消费）。
         Ok(frame)
     }
 
-    /// 通过普通公共 protocol 路径发布一帧，同时返回
-    /// 该帧在 CommitTick 成功提交时捕获的不可变证据。
+    /// 证据与 frame 来自同一 prepared candidate；提交前不外发任何事实。
     pub fn step_frame_with_commit_evidence(
         &mut self,
     ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {
-        #[cfg(test)]
-        let malformed = std::mem::take(&mut self.malformed_frame);
-        let checkpoint = self.checkpoint()?;
-        let result =
-            self.state
-                .game
-                .step_frame_with_commit_evidence()
-                .and_then(|(frame, evidence)| {
-                    #[cfg(test)]
-                    let frame = malformed_frame_if_requested(frame, malformed);
-                    self.prepare_frame(frame).map(|frame| (frame, evidence))
-                });
-        let (frame, evidence) = match result {
-            Ok(committed) => committed,
-            Err(error) => {
-                self.rollback(checkpoint).map_err(|error| StepFatal::InvariantViolation {
-                    location: "ProtocolSession rollback".into(), description: error.to_string(),
-                })?;
-                return Err(error);
-            }
-        };
-        drop(checkpoint);
-        self.state.fact_cursor.append_committed_facts(&frame.facts);
-        self.state.intraday.push(frame.clone());
-        Ok((frame, evidence))
+        let (frame, evidence) = self.step_frame_inner(true)?;
+        Ok((
+            frame,
+            evidence.expect("commit evidence was requested at the authoritative entry"),
+        ))
     }
 
-    fn prepare_frame(&mut self, frame: TickFrame) -> Result<TickFrame, StepFatal> {
-        self.prepare_fact_tick(frame.tick);
-        frame.validate().map_err(protocol_fatal)?;
-        Ok(frame)
+    fn step_frame_inner(
+        &mut self,
+        capture_commit_evidence: bool,
+    ) -> Result<
+        (
+            TickFrame,
+            Option<crate::session::pipeline::TickCommitEvidence>,
+        ),
+        StepFatal,
+    > {
+        #[cfg(test)]
+        let malformed = std::mem::take(&mut self.malformed_frame);
+        // 只复制数值游标；frame、runtime 和游标检查都在同版 candidate 的 precommit
+        // callback 中完成。失败时从未安装 authority，不靠 install→rollback 修复。
+        let mut cursor = self.state.fact_cursor.clone();
+        let ((frame, retained, runtime), evidence) = self.state.game.step_frame_and_commit(
+            capture_commit_evidence,
+            |projection, facts| {
+                let (frame, runtime) = projection.project_frame_and_runtime(facts)?;
+                #[cfg(test)]
+                let frame = malformed_frame_if_requested(frame, malformed);
+                frame.validate().map_err(protocol_fatal)?;
+                cursor.begin_tick(frame.tick);
+                cursor
+                    .record_committed_facts(&frame.facts)
+                    .map_err(protocol_fatal)?;
+                let retained = Arc::new(frame.clone());
+                Ok((frame, retained, runtime))
+            },
+        )?;
+        // 全部可失败工作已结束：只安装已验证记录与同版 runtime。
+        self.state.fact_cursor = cursor;
+        self.state.intraday.push(retained);
+        self.state.committed_runtime = Some(runtime);
+        Ok((frame, evidence))
     }
 
     pub fn end_civil_day_update(&mut self) -> Result<CivilUpdate, SessionError> {
         #[cfg(test)]
         let malformed = std::mem::take(&mut self.malformed_civil);
-        let checkpoint = self.checkpoint()?;
-        // Only civil publication needs the full day's transport array. Tick and
-        // outer host checkpoints retain shared immutable history chunks.
-        let intraday = self.state.intraday.iter().cloned().collect::<Vec<_>>();
-        let result = self
+        // 只有 civil publication 构建完整收盘数组；外层 checkpoint 仍共享既有历史。
+        let intraday = self
+            .state
+            .intraday
+            .iter()
+            .map(|frame| frame.as_ref().clone())
+            .collect::<Vec<_>>();
+        let settled_phase = self.state.game.validate_civil_intraday(&intraday)?;
+        let seq_from = self.state.game.seq();
+        let mut cursor = self.state.fact_cursor.clone();
+        cursor.begin_tick(self.state.game.tick());
+        let (update, save) = self
             .state
             .game
-            .end_civil_day_update(&intraday)
-            .and_then(|update| {
+            .with_prepared_civil_day(|candidate, report| {
+                let update = candidate.project_civil_update(
+                    intraday,
+                    settled_phase,
+                    seq_from,
+                    report,
+                    &cursor,
+                )?;
                 #[cfg(test)]
                 let update = {
                     let mut update = update;
@@ -488,66 +409,37 @@ impl ProtocolSession {
                     }
                     update
                 };
-                let mut update = update;
-                self.prepare_fact_tick(update.tick);
-                update.facts = self
-                    .state
-                    .fact_cursor
-                    .attach_after(&update.events)
-                    .map_err(protocol_fatal)?;
                 update.validate().map_err(protocol_fatal)?;
-                let candidate = self.state.game.save_committed_projection()?;
-                Ok((update, candidate))
-            });
-        let (update, candidate) = match result {
-            Ok(committed) => committed,
-            Err(error) => {
-                self.rollback(checkpoint)?;
-                return Err(error);
-            }
-        };
-        self.state.fact_cursor.append_committed_facts(&update.facts);
+                cursor
+                    .record_committed_facts(&update.facts)
+                    .map_err(protocol_fatal)?;
+                let save = Arc::new(candidate.save_committed_projection()?);
+                Ok((update, save))
+            })?;
+        // authority 已一次安装；此后仅移交同版已验证输出，不再有可失败投影。
+        self.state.fact_cursor = cursor;
         self.state.intraday = AppendOnlyHistory::default();
-        let candidate = Arc::new(candidate);
+        self.state.committed_runtime = None;
         self.state
             .pending_save_candidates
             .borrow_mut()
-            .insert(candidate.snapshot.seq, Arc::clone(&candidate));
-        self.state.day_end_save = Some(candidate);
+            .insert(save.snapshot.seq, Arc::clone(&save));
+        self.state.day_end_save = Some(save);
         *self.state.published_runtime.borrow_mut() = None;
-        self.state.pending_disclosure_observers.push((
-            crate::CivilInstant::from_hms(update.boundary.settled_date, 18, 0, 0)
-                .expect("已验证自然日的18:00有效"),
-            self.state.game.civil_clock().disclosure_observers().to_vec(),
-        ));
-        if self.publication_scope.is_none() {
-            if let Err(error) = self.shared_ingress().publish_calendar(checkpoint.publication, self.civil_date()) {
-                self.rollback(checkpoint)?;
-                return Err(error);
-            }
-            self.deliver_committed_disclosure_observers();
-        }
         Ok(update)
-    }
-
-    fn deliver_committed_disclosure_observers(&mut self) {
-        for (instant, observers) in std::mem::take(&mut self.state.pending_disclosure_observers) {
-            for observer in observers { observer(instant); }
-        }
     }
 
     pub fn tick_batch(&self, frames: Vec<TickFrame>) -> Result<TickBatch, StepFatal> {
         let mut previous = self.state.published_runtime.borrow_mut();
-        let (batch, current) = self
+        self.state.game.require_healthy()?;
+        let current = self
             .state
-            .game
-            .tick_batch_delta(frames, previous.as_ref())?;
-        *previous = Some(current);
+            .committed_runtime
+            .as_ref()
+            .ok_or_else(|| protocol_fatal(super::super::ProtocolError::RuntimeDeltaMismatch))?;
+        let batch = current.tick_batch_delta(frames, previous.as_ref())?;
+        *previous = Some(current.clone());
         Ok(batch)
-    }
-
-    fn prepare_fact_tick(&mut self, tick: u64) {
-        self.state.fact_cursor.begin_tick(tick);
     }
 }
 
@@ -574,209 +466,57 @@ fn protocol_fatal(error: super::ProtocolError) -> StepFatal {
     }
 }
 
-fn same_publication_scope(left: &Option<Arc<()>>, right: &Option<Arc<()>>) -> bool {
-    match (left, right) {
-        (None, None) => true,
-        (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-        _ => false,
-    }
-}
-
-#[cfg(test)]
-#[path = "personal_trade_tests.rs"]
-mod personal_trade_tests;
-
 #[cfg(test)]
 #[path = "day_end_npc_tests.rs"]
 mod day_end_npc_tests;
 
 #[cfg(test)]
+#[path = "epoch_alignment_tests.rs"]
+mod epoch_alignment_tests;
+
+#[cfg(test)]
+#[path = "decision_failure_witness_tests.rs"]
+mod decision_failure_witness_tests;
+
+#[cfg(test)]
+#[path = "single_owner_tests.rs"]
+mod single_owner_tests;
+
+#[cfg(test)]
 mod rollback_tests {
     use super::*;
 
-    fn calendar_session() -> ProtocolSession {
-        let mut setup = crate::session::protocol::civil::publication_tests::setup();
-        setup.npcs.retail_count = 0;
-        setup.npcs.inst_count = 0;
-        setup.ticks_per_day = 2;
-        ProtocolSession::new(setup, 95).unwrap()
-    }
-
-    fn calendar_buy() -> crate::Intent {
-        crate::Intent::PlaceLimit {
-            code: crate::StockCode("600101".into()), side: crate::Side::Buy,
-            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
-        }
-    }
-
-    static CALENDAR_OBSERVER_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-    fn calendar_publication_observer(_: crate::CivilInstant) {
-        CALENDAR_OBSERVER_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-
     #[test]
-    fn disclosure_observers_wait_for_successful_outer_publication() {
-        let mut session = calendar_session();
-        session.state.game.civil_clock_mut().add_disclosure_observer(calendar_publication_observer);
-        CALENDAR_OBSERVER_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
-        session.malformed_civil = true;
-        assert!(session.end_civil_day_update().is_err());
-        assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
-        let failed: Result<(), SessionError> = session.with_publication_transaction(|session| {
-            session.end_civil_day_update()?;
-            assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
-            Err(SessionError::InvalidSave("测试外层失败".into()))
-        });
-        assert!(failed.is_err());
-        assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
-        session.with_publication_transaction(|session| { session.end_civil_day_update()?; Ok(()) }).unwrap();
-        assert_eq!(CALENDAR_OBSERVER_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
-    }
+    fn publication_cursor_continues_at_same_tick_and_resets_on_next_tick() {
+        use crate::session::protocol::SessionFactCursor;
 
-    #[test]
-    fn ordinary_checkpoint_does_not_pin_calendar_and_cannot_rollback_published_day() {
-        let mut session = calendar_session();
-        let checkpoint = session.checkpoint().unwrap();
-        let source = session.shared_ingress();
-        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
-        session.end_civil_day_update().unwrap();
-        source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).unwrap();
-        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
-        assert!(matches!(session.rollback(checkpoint), Err(SessionError::InvalidSave(message)) if message.contains("已发布")));
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
-    }
-
-    #[test]
-    fn failed_protocol_civil_publication_never_opens_next_day_intake() {
-        let mut session = calendar_session();
-        let source = session.shared_ingress();
-        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
-        session.malformed_civil = true;
-        assert!(session.end_civil_day_update().is_err());
-        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
-        assert_eq!(source.calendar_publication().unwrap().epoch, 0);
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
-    }
-
-    #[test]
-    fn publication_transaction_exposes_only_complete_successful_civil_progress() {
-        let mut session = calendar_session();
-        let source = session.shared_ingress();
-        session.with_publication_transaction(|session| {
-            session.end_civil_day_update()?;
-            assert_eq!(session.civil_date().to_iso(), "2030-01-02");
-            assert_eq!(source.calendar_publication()?.date.to_iso(), "2030-01-01");
-            assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
-            assert!(session.with_publication_transaction(|_| Ok(())).is_err());
-            Ok(())
-        }).unwrap();
-        assert_eq!(source.calendar_publication().unwrap().date, session.civil_date());
-        source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).unwrap();
-    }
-
-    #[test]
-    fn publication_transaction_failure_and_drop_restore_without_future_intake() {
-        let mut session = calendar_session();
-        let source = session.shared_ingress();
-        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
-        let result: Result<(), SessionError> = session.with_publication_transaction(|session| {
-            session.end_civil_day_update()?;
-            Err(SessionError::InvalidSave("测试外层发布失败".into()))
-        });
-        assert!(result.is_err());
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
-        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
-        let checkpoint = session.checkpoint().unwrap();
-        let scope = Arc::new(());
-        session.publication_scope = Some(scope.clone());
-        let transaction = PublicationTransaction { session: &mut session, checkpoint: Some(checkpoint), scope };
-        transaction.session.end_civil_day_update().unwrap();
-        drop(transaction);
-        assert!(session.publication_scope.is_none());
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
-        assert!(source.enqueue_player_intent(crate::AccountId(0), calendar_buy()).is_err());
-    }
-
-    #[test]
-    fn escaped_checkpoint_cannot_resurrect_a_failed_publication_scope() {
-        let mut session = calendar_session();
-        let before = serde_json::to_value(session.game().save().unwrap()).unwrap();
-        let mut outside = None;
-        let mut next_batch = None;
-        let failed: Result<(), SessionError> = session.with_publication_transaction(|session| {
-            session.end_civil_day_update()?;
-            outside = Some(session.checkpoint()?);
-            next_batch = Some(session.checkpoint()?);
-            Err(SessionError::InvalidSave("测试旧scope失败".into()))
-        });
-        assert!(failed.is_err());
-        assert!(session.rollback(outside.take().unwrap()).is_err());
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
-        session.with_publication_transaction(|session| {
-            assert!(session.rollback(next_batch.take().unwrap()).is_err());
-            assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
-            Ok(())
-        }).unwrap();
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), before);
-        assert_eq!(session.shared_ingress().calendar_publication().unwrap().epoch, 0);
-    }
-
-    #[test]
-    fn publication_rollback_preserves_inputs_received_under_old_open_day() {
-        let mut setup = calendar_session().game().state.setup.clone();
-        setup.start_date = crate::CivilDate::from_iso("2030-01-04").unwrap();
-        let mut session = ProtocolSession::new(setup, 96).unwrap();
-        for _ in 0..2 { session.step_frame().unwrap(); }
-        let source = session.shared_ingress();
-        let before = session.business_state_hash().unwrap();
-        let result: Result<(), SessionError> = session.with_publication_transaction(|session| {
-            session.end_civil_day_update()?;
-            session.end_civil_day_update()?;
-            session.end_civil_day_update()?;
-            assert_eq!(session.civil_date().to_iso(), "2030-01-07");
-            source.enqueue_player_intent(crate::AccountId(0), calendar_buy())?;
-            Err(SessionError::InvalidSave("测试未发布整批失败".into()))
-        });
-        assert!(result.is_err());
-        assert_eq!(session.civil_date().to_iso(), "2030-01-04");
-        assert_eq!(source.calendar_publication().unwrap().date, session.civil_date());
-        assert_eq!(session.business_state_hash().unwrap(), before);
-        assert_eq!(session.game().save().unwrap().pending_player.len(), 1);
-    }
-
-    #[test]
-    fn publication_cursor_appends_at_same_tick_and_resets_on_next_tick() {
         let event = |seq| crate::Event::CivilDateAdvanced {
             seq,
             settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),
             next_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
             next_status: crate::DayStatus::Trading,
         };
-        let mut cursor = PublicationFactCursor::default();
+        let mut cursor = SessionFactCursor::default();
         cursor.begin_tick(12);
-        let first = cursor.attach_after(&[event(1)]).unwrap();
+        let first = cursor.assign_session_facts(vec![event(1)]).unwrap();
         assert_eq!(first[0].key.local_event_index(), 0);
-        cursor.append_committed_facts(&first);
+        cursor.record_committed_facts(&first).unwrap();
         cursor.begin_tick(12);
-        let second = cursor.attach_after(&[event(2)]).unwrap();
+        let second = cursor.assign_session_facts(vec![event(2)]).unwrap();
         assert_eq!(second[0].key.local_event_index(), 1);
-        // attach_after 的结果只有发布成功后才进入 cursor。
-        assert_eq!(cursor.facts.len(), 1);
-        cursor.append_committed_facts(&second);
+        // 分配结果只有发布成功后才记入游标；游标本身不保留任何事件副本。
+        cursor.record_committed_facts(&second).unwrap();
         let checkpoint = cursor.clone();
         cursor.begin_tick(13);
-        assert!(cursor.facts.is_empty());
         assert_eq!(
-            cursor.attach_after(&[event(3)]).unwrap()[0]
+            cursor.assign_session_facts(vec![event(3)]).unwrap()[0]
                 .key
                 .local_event_index(),
             0
         );
         cursor = checkpoint;
-        assert_eq!(cursor.tick, Some(12));
         assert_eq!(
-            cursor.attach_after(&[event(3)]).unwrap()[0]
+            cursor.assign_session_facts(vec![event(4)]).unwrap()[0]
                 .key
                 .local_event_index(),
             2
@@ -811,7 +551,7 @@ mod rollback_tests {
                 .test_projection(),
             before
         );
-        session.rollback(checkpoint).unwrap();
+        session.rollback(checkpoint);
         assert_eq!(
             session
                 .state
@@ -841,15 +581,18 @@ mod rollback_tests {
         let old = session.end_civil_day_update().unwrap();
         let before = session.state.pending_save_candidates.borrow().clone();
         let frozen = session.state.day_end_save.clone().unwrap();
-        session.with_publication_transaction(|session| {
-            let checkpoint = session.checkpoint()?;
-            session.end_civil_day_update()?;
-            session.end_civil_day_update()?;
-            assert_eq!(checkpoint.state.pending_save_candidates.borrow().len(), before.len());
-            assert_eq!(session.state.pending_save_candidates.borrow().len(), before.len() + 2);
-            session.rollback(checkpoint)?;
-            Ok(())
-        }).unwrap();
+        let checkpoint = session.checkpoint().unwrap();
+        session.end_civil_day_update().unwrap();
+        session.end_civil_day_update().unwrap();
+        assert_eq!(
+            checkpoint.state.pending_save_candidates.borrow().len(),
+            before.len()
+        );
+        assert_eq!(
+            session.state.pending_save_candidates.borrow().len(),
+            before.len() + 2
+        );
+        session.rollback(checkpoint);
         assert_eq!(
             session
                 .state
@@ -928,24 +671,33 @@ mod rollback_tests {
         setup.npcs.retail_count = 0;
         setup.npcs.inst_count = 0;
         let steps = setup.ticks_per_day;
-        let code = setup.stocks[0].code.clone();
+        let code = crate::StockId(0);
         let mut session = ProtocolSession::new(setup, 79).unwrap();
         for _ in 0..steps {
             session.step_frame().unwrap();
         }
         assert!(session.civil_day_ready().unwrap());
-        session.shared_ingress().enqueue_player_intent(crate::AccountId(0), crate::Intent::PlaceLimit {
-            code: code.clone(), side: crate::Side::Buy, price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
-        }).unwrap();
+        session
+            .shared_ingress()
+            .enqueue_player_intent(
+                crate::AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: crate::Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
         session.end_civil_day_update().unwrap();
         let archived = session.save().unwrap();
         assert!(archived.pending_player.is_empty());
         ProtocolSession::restore(&archived).unwrap();
         assert_eq!(session.game().save().unwrap().pending_player.len(), 1);
         let received = session.step_frame().unwrap();
-        assert_eq!(received.events.iter().filter(|event| matches!(event, crate::Event::OrderAccepted { account, code: received_code, .. } if *account == crate::AccountId(0) && *received_code == code)).count(), 1);
+        assert_eq!(received.events().filter(|event| matches!(event, crate::Event::OrderAccepted { account, code: received_code, .. } if *account == crate::AccountId(0) && *received_code == code)).count(), 1);
         let next = session.step_frame().unwrap();
-        assert!(!next.events.iter().any(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))));
+        assert!(!next.events().any(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))));
     }
 
     #[cfg(feature = "verification-harness")]
@@ -955,9 +707,12 @@ mod rollback_tests {
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         setup.npcs.retail_count = 0;
         setup.npcs.inst_count = 0;
-        let code = setup.stocks[0].code.clone();
+        let code = crate::StockId(0);
         let intent = || crate::Intent::PlaceLimit {
-            code: code.clone(), side: crate::Side::Buy, price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)), qty: 100,
+            code: code.clone(),
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
+            qty: 100,
         };
         let mut session = ProtocolSession::new(setup, 83).unwrap();
         let retained = session.step_frame().unwrap();
@@ -966,34 +721,87 @@ mod rollback_tests {
         let before = session.business_state_hash().unwrap();
         let player = intent();
         std::thread::scope(|scope| {
-            scope.spawn(|| original.enqueue_player_intent(crate::AccountId(0), player).unwrap()).join().unwrap();
+            scope
+                .spawn(|| {
+                    original
+                        .enqueue_player_intent(crate::AccountId(0), player)
+                        .unwrap()
+                })
+                .join()
+                .unwrap();
         });
         session.malformed_frame = true;
         assert!(session.step_frame().is_err());
-        session.rollback(checkpoint).unwrap();
+        session.rollback(checkpoint);
         assert_eq!(session.business_state_hash().unwrap(), before);
         let npc_intent = intent();
         let mut failed_private = session.state.game.clone_for_tick_shadow().unwrap();
-        let discarded = failed_private.receive_private_intent(crate::AccountId(0), npc_intent).unwrap();
-        failed_private.state.pending_npc = Some(crate::PendingNpcBatch { observed_tick: failed_private.tick(), observed_accounts: Vec::new(), intents: vec![discarded], dependencies: Vec::new() });
+        let discarded = failed_private
+            .receive_private_intent(crate::AccountId(0), npc_intent)
+            .unwrap();
+        crate::session::pipeline::staged_decision::stage(
+            crate::session::pipeline::NpcDecisionHandover::new(
+                failed_private.tick(),
+                Vec::new(),
+                vec![discarded],
+                Vec::new(),
+            ),
+        );
         drop(failed_private);
+        // 影子丢弃语义（批四等价改接）：candidate 整体作废 ⇒ 批随之作废
+        //（旧形态=影子内 pending 随 drop 消失；staged 槽同步清空）。
+        crate::session::pipeline::staged_decision::clear();
         original.close().unwrap();
         let original_save = session.game().save().unwrap();
         assert_eq!(original_save.pending_player.len(), 1);
         assert_eq!(original_save.pending_player[0].account_ordinal, 0);
-        assert_eq!(original_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)], 2);
+        assert_eq!(
+            original_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)],
+            2
+        );
         let mut branch = session.fork_for_verification().unwrap();
-        assert_eq!(serde_json::to_value(branch.game().save().unwrap()).unwrap(), serde_json::to_value(&original_save).unwrap());
-        branch.shared_ingress().enqueue_player_intent(crate::AccountId(0), intent()).unwrap();
+        assert_eq!(
+            serde_json::to_value(branch.game().save().unwrap()).unwrap(),
+            serde_json::to_value(&original_save).unwrap()
+        );
+        branch
+            .shared_ingress()
+            .enqueue_player_intent(crate::AccountId(0), intent())
+            .unwrap();
         let branch_save = branch.game().save().unwrap();
-        assert_eq!(branch_save.pending_player.iter().map(|receipt| receipt.account_ordinal).collect::<Vec<_>>(), vec![0, 2]);
-        assert_eq!(branch_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)], 3);
-        assert_eq!(serde_json::to_value(session.game().save().unwrap()).unwrap(), serde_json::to_value(original_save).unwrap());
-        assert!(original.enqueue_player_intent(crate::AccountId(0), intent()).is_err());
+        assert_eq!(
+            branch_save
+                .pending_player
+                .iter()
+                .map(|receipt| receipt.account_ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 2]
+        );
+        assert_eq!(
+            branch_save.ingress_receipt_cursors.next_account_ordinal[&crate::AccountId(0)],
+            3
+        );
+        assert_eq!(
+            serde_json::to_value(session.game().save().unwrap()).unwrap(),
+            serde_json::to_value(original_save).unwrap()
+        );
+        assert!(original
+            .enqueue_player_intent(crate::AccountId(0), intent())
+            .is_err());
         let accepted = branch.step_frame().unwrap();
-        assert_eq!(accepted.events.iter().filter(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))).count(), 2);
-        assert_eq!(serde_json::to_value(branch.state.intraday.iter().next().unwrap()).unwrap(), serde_json::to_value(retained).unwrap());
-        assert!(branch.game().save().unwrap().pending_npc.as_ref().unwrap().intents.is_empty());
+        assert_eq!(accepted.events().filter(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == crate::AccountId(0))).count(), 2);
+        assert_eq!(
+            serde_json::to_value(branch.state.intraday.iter().next().unwrap()).unwrap(),
+            serde_json::to_value(retained).unwrap()
+        );
+        // 批四：跨 tick 载体删除——档不含 pending_npc 键（NPC 待处理事实随
+        // 载体退役；本断言原验证批为空，键缺失为更强形态）。
+        assert!(
+            serde_json::to_value(&branch.game().save().unwrap())
+                .unwrap()
+                .get("pending_npc")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1004,7 +812,7 @@ mod rollback_tests {
         let saved = session.save().unwrap();
         let mut candidate = saved.clone();
         candidate.resting_orders.insert(
-            crate::StockCode("600000".into()),
+            crate::StockId(9),
             vec![crate::Order {
                 id: crate::OrderId(1),
                 side: crate::Side::Buy,
@@ -1022,21 +830,14 @@ mod rollback_tests {
             Err(SessionError::InvalidSave(_))
         ));
 
-        let mut candidate = saved.clone();
-        candidate.auction_orders.insert(
-            crate::StockCode("600000".into()),
-            vec![crate::AuctionOrderSnap {
-                owner: crate::AccountId(0),
-                side: crate::Side::Buy,
-                limit: crate::Money::from_cents(1000),
-                qty: 100,
-                order_id: 1,
-            }],
+        let mut candidate = serde_json::to_value(&saved).unwrap();
+        candidate["auction_orders"] = serde_json::json!({ "9": [{
+            "owner": 0, "side": "Buy", "limit": "1000", "qty": 100, "order_id": 1,
+        }] });
+        assert!(
+            serde_json::from_value::<crate::SaveSlot>(candidate).is_err(),
+            "统一存档严格拒绝旧 auction_orders 字段，不做格式转换"
         );
-        assert!(matches!(
-            ProtocolSession::restore(&candidate),
-            Err(SessionError::InvalidSave(_))
-        ));
 
         let mut candidate = saved.clone();
         candidate
@@ -1045,7 +846,7 @@ mod rollback_tests {
             .push(crate::SavedLiveEnvelope {
                 key: crate::SavedEnvelopeKey {
                     account: crate::AccountId(0),
-                    stock: crate::StockCode("600000".into()),
+                    stock: crate::StockId(9),
                     order: crate::OrderId(1),
                     side: crate::Side::Buy,
                 },
@@ -1054,6 +855,11 @@ mod rollback_tests {
                     stamp_tax: crate::Money::ZERO,
                     transfer_fee: crate::Money::ZERO,
                 },
+                remaining_qty: 100,
+                filled_qty: 0,
+                filled_value: crate::Money::ZERO,
+                limit: crate::Money::ZERO,
+                purse: crate::Money::ZERO,
             });
         assert!(matches!(
             ProtocolSession::restore(&candidate),
@@ -1065,7 +871,7 @@ mod rollback_tests {
             .npc_order_lifecycles
             .push(crate::session::NpcOrderLifecycle {
                 account: crate::AccountId(0),
-                code: crate::StockCode("600000".into()),
+                code: crate::StockId(9),
                 order_id: crate::OrderId(1),
                 placed_market_minute: 0,
                 expires_market_minute: 1,
@@ -1076,7 +882,7 @@ mod rollback_tests {
         ));
 
         let intent = crate::Intent::PlaceLimit {
-            code: crate::StockCode("600000".into()),
+            code: crate::StockId(9),
             side: crate::Side::Buy,
             price: crate::LimitPrice::Fixed(crate::Money::from_cents(1000)),
             qty: 100,
@@ -1095,59 +901,74 @@ mod rollback_tests {
             Err(SessionError::InvalidSave(_))
         ));
 
-        let mut candidate = saved.clone();
-        candidate.pending_npc = Some(crate::session::PendingNpcBatch {
-            observed_tick: candidate.snapshot.tick,
-            observed_accounts: Vec::new(),
-            intents: vec![crate::session::ReceiptBearingIntent {
-                owner: crate::AccountId(0),
-                intent,
-                account_ordinal: 0,
-                stock_ordinal: 0,
+        // 批四终态：`pending_npc` 字段已从 SaveSlot 删除——本组 tamper 用例
+        //（含 intents 的 Some 档/空占位档）统一改在**解码边界**拒绝：JSON
+        // 携带 `pending_npc` 键（任意形态）⇒ fault2100（旧格式档不被接受；
+        // 原「日终空占位合法」契约随 queue_empty_npc_at_day_end 退役）。
+        let mut legacy = serde_json::to_value(&saved).unwrap();
+        legacy["pending_npc"] = serde_json::json!({
+            "observed_tick": saved.snapshot.tick,
+            "observed_accounts": Vec::<u64>::new(),
+            "intents": [{
+                "owner": 0,
+                "intent": { "PlaceLimit": { "code": 9, "side": "Buy", "price": "1000", "qty": 100 } },
+                "account_ordinal": "0",
+                "stock_ordinal": "0",
             }],
-            dependencies: Vec::new(),
+            "dependencies": [],
         });
         assert!(matches!(
-            ProtocolSession::restore(&candidate),
-            Err(SessionError::InvalidSave(_))
+            crate::decode_save_slot(
+                &serde_json::to_vec(&legacy).unwrap(),
+                &crate::session::persistence::SaveDecodeLimits::default()
+            ),
+            Err(SessionError::InvalidSave(fault)) if fault.code == 2100
         ));
-
-        let mut empty_pending = saved.clone();
-        empty_pending.pending_npc = Some(crate::session::PendingNpcBatch {
-            observed_tick: empty_pending.snapshot.tick,
-            observed_accounts: Vec::new(),
-            intents: Vec::new(),
-            dependencies: Vec::new(),
+        let mut empty_legacy = serde_json::to_value(&saved).unwrap();
+        empty_legacy["pending_npc"] = serde_json::json!({
+            "observed_tick": saved.snapshot.tick,
+            "observed_accounts": [],
+            "intents": [],
+            "dependencies": [],
         });
-        assert!(ProtocolSession::restore(&empty_pending).is_ok());
+        assert!(matches!(
+            crate::decode_save_slot(
+                &serde_json::to_vec(&empty_legacy).unwrap(),
+                &crate::session::persistence::SaveDecodeLimits::default()
+            ),
+            Err(SessionError::InvalidSave(fault)) if fault.code == 2100
+        ));
     }
 
     #[test]
-    fn restore_rejects_completed_save_with_active_parent_order_plan() {
+    fn restore_rejects_completed_save_with_an_active_plan_execution_leg() {
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 80).unwrap();
         session.end_civil_day_update().unwrap();
         let mut candidate = session.save().unwrap();
-        let code = crate::StockCode("600101".into());
+        let code = crate::StockId(0);
         assert!(candidate.resting_orders.values().all(Vec::is_empty));
-        candidate
-            .parent_orders
-            .entry(crate::AccountId(2))
-            .or_default()
-            .insert(
-                code.clone(),
-                crate::session::SaveParentOrderPlan {
-                    code,
-                    side: crate::Side::Buy,
-                    target_qty: 200,
-                    filled_qty: 0,
-                    child_qty: 100,
-                    active_child_order_id: None,
-                    linked_plan_id: None,
-                    limit_price: crate::Money::from_cents(1000),
-                    expires_market_minute: 1000,
+        let plan_id = candidate
+            .plans
+            .create(crate::plans::PlanOpen {
+                account: crate::AccountId(2),
+                code: code.clone(),
+                direction: crate::Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(200),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
                 },
-            );
+                confidence_bp: 8_000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        candidate
+            .plans
+            .install_execution(plan_id, 100, crate::Money::from_cents(1_000), 1_000)
+            .unwrap();
 
         GameSession::restore(&candidate)
             .expect("the low-level snapshot API must retain restorable intraday plans");
@@ -1218,11 +1039,11 @@ mod rollback_tests {
 
     #[test]
     fn player_working_orders_reads_live_auction_without_a_save() {
-        use crate::{Money, Side, StockCode};
+        use crate::{Money, Side, StockId};
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 75).unwrap();
-        session.state.game.state.auction_orders.insert(
-            StockCode("600101".into()),
+        session.state.game.fixture_append_auction_orders(
+            StockId(0),
             vec![
                 crate::AuctionOrderSnap {
                     owner: crate::AccountId(0),
@@ -1245,7 +1066,10 @@ mod rollback_tests {
         assert_eq!(orders.len(), 1);
         assert_eq!(orders[0].id, 81);
         assert_eq!(orders[0].remaining_qty, 100);
-        assert_eq!(orders[0].venue, "auction");
+        assert_eq!(
+            orders[0].venue,
+            crate::session::protocol::player_orders::OrderVenue::Auction
+        );
     }
 
     #[test]
@@ -1357,14 +1181,14 @@ mod rollback_tests {
         live.end_civil_day_update().unwrap();
         let slot = live.save().unwrap();
         assert!(
-            slot.pending_npc.is_none(),
-            "日终候选不能提前准备下一交易日的 NPC 批次"
+            serde_json::to_value(&slot).unwrap().get("pending_npc").is_none(),
+            "日终候选不能提前准备下一交易日的 NPC 批次（批四：键结构不存在）"
         );
         let mut restored = ProtocolSession::restore(&slot).unwrap();
         let frozen = serde_json::to_value(&slot).unwrap();
         let before_failed_tick = serde_json::to_value(restored.state.game.save().unwrap()).unwrap();
         restored.malformed_frame = true;
-        assert!(restored.step_frame().is_err());
+        assert!(restored.step_frame_pipeline_contract().is_err());
         assert_eq!(
             serde_json::to_value(restored.state.game.save().unwrap()).unwrap(),
             before_failed_tick,
@@ -1374,7 +1198,7 @@ mod rollback_tests {
             serde_json::to_value(restored.save().unwrap()).unwrap(),
             frozen
         );
-        let code = slot.setup.stocks[0].code.clone();
+        let code = crate::StockId(0);
         let buy = crate::Intent::PlaceLimit {
             code,
             side: crate::Side::Buy,
@@ -1389,16 +1213,18 @@ mod rollback_tests {
         let mut observed_npc_request = false;
         let mut diagnostics = Vec::new();
         for _ in 0..3 {
-            let continued = live.step_frame().unwrap();
-            let resumed = restored.step_frame().unwrap();
+            let continued = live.step_frame_pipeline_contract().unwrap();
+            let resumed = restored.step_frame_pipeline_contract().unwrap();
             diagnostics.push(format!(
-                "events={:?}; decisions={:?}; pending={:?}",
-                continued.events,
+                "events={:?}; decisions={:?}",
+                continued.events().collect::<Vec<_>>(),
                 live.state.game.state.last_retail_decisions,
-                live.state.game.state.pending_npc
             ));
-            assert_eq!(continued.events, resumed.events);
-            observed_npc_request |= continued.events.iter().any(|event| {
+            assert_eq!(
+                continued.events().collect::<Vec<_>>(),
+                resumed.events().collect::<Vec<_>>()
+            );
+            observed_npc_request |= continued.events().any(|event| {
                 matches!(
                     event,
                     crate::Event::OrderAccepted {
@@ -1443,12 +1269,9 @@ mod rollback_tests {
         let mut expected = live.state.game.clone_for_tick_shadow().unwrap();
         crate::session::pipeline::queue_npc_for_next_tick(&mut expected).unwrap();
         assert_eq!(
-            expected
-                .state
-                .pending_npc
-                .as_ref()
+            crate::session::pipeline::staged_decision::take_any()
                 .unwrap()
-                .observed_accounts,
+                .observed_accounts(),
             vec![npc]
         );
         assert_ne!(
@@ -1466,15 +1289,18 @@ mod rollback_tests {
         );
 
         restored.malformed_frame = true;
-        assert!(restored.step_frame().is_err());
+        assert!(restored.step_frame_pipeline_contract().is_err());
         assert_eq!(
             serde_json::to_value(restored.state.game.save().unwrap()).unwrap(),
             before,
             "首 tick 后续失败必须回滚实际 NPC 观察及随机流"
         );
-        let continued = live.step_frame().unwrap();
-        let resumed = restored.step_frame().unwrap();
-        assert_eq!(continued.events, resumed.events);
+        let continued = live.step_frame_pipeline_contract().unwrap();
+        let resumed = restored.step_frame_pipeline_contract().unwrap();
+        assert_eq!(
+            continued.events().collect::<Vec<_>>(),
+            resumed.events().collect::<Vec<_>>()
+        );
         assert_eq!(
             live.state.game.state.npc_attention[&npc], expected.state.npc_attention[&npc],
             "首 tick 必须在日界版本实际准备 NPC，而不是延后到首个 commit"
@@ -1499,7 +1325,7 @@ mod rollback_tests {
     fn trading_day_archive_defers_active_npc_requests_and_restores_exactly() {
         let mut live = ProtocolSession::new(active_retail_day_end_setup("2030-01-02"), 8).unwrap();
         for _ in 0..11 {
-            live.step_frame().unwrap();
+            live.step_frame_pipeline_contract().unwrap();
         }
         let attention = live
             .state
@@ -1516,7 +1342,7 @@ mod rollback_tests {
             .state
             .attention_scheduler
             .enqueue(12, crate::AccountId(1));
-        live.step_frame().unwrap();
+        live.step_frame_pipeline_contract().unwrap();
         assert_day_end_npc_continuation(live);
     }
 
@@ -1552,13 +1378,41 @@ mod rollback_tests {
     }
 
     #[test]
+    fn checkpoint_append_shares_frames_in_the_incomplete_tail_chunk() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.ticks_per_day = 48;
+        let mut session = ProtocolSession::new(setup, 50).unwrap();
+        for _ in 0..33 {
+            session.step_frame().unwrap();
+        }
+        let checkpoint = session.checkpoint().unwrap();
+        let before = serde_json::to_value(&checkpoint.state.intraday).unwrap();
+        session.step_frame().unwrap();
+        assert!(
+            std::ptr::eq(
+                &session.state.intraday[32].timeseries_payload,
+                &checkpoint.state.intraday[32].timeseries_payload,
+            ),
+            "宿主批次回滚点不得让未满 chunk 中的已提交 TickFrame 深复制"
+        );
+        session.rollback(checkpoint);
+        assert_eq!(
+            serde_json::to_value(&session.state.intraday).unwrap(),
+            before
+        );
+        assert_eq!(session.tick(), 33);
+        assert_eq!(session.step_frame().unwrap().tick, 34);
+    }
+
+    #[test]
     fn outer_rollback_restores_runtime_diagnostics_without_reloading_a_save() {
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 51).unwrap();
         session.state.game.state.last_retail_order_events.push(
             crate::session::RetailOrderDiagnosticEvent::Rejected {
                 account: crate::AccountId(1),
-                code: crate::StockCode("600101".into()),
+                code: crate::StockId(0),
                 reason: crate::RejectionReason::InsufficientCash,
             },
         );
@@ -1568,7 +1422,7 @@ mod rollback_tests {
         let checkpoint = session.checkpoint().unwrap();
         session.state.game.state.last_retail_order_events.clear();
 
-        session.rollback(checkpoint).unwrap();
+        session.rollback(checkpoint);
 
         assert_eq!(session.state.game.session_state_hash().unwrap(), before);
         assert_eq!(
@@ -1588,29 +1442,24 @@ mod rollback_tests {
         }
         let before = session.state.game.session_state_hash().unwrap();
         let history = serde_json::to_value(&session.state.intraday).unwrap();
-        let fact_tick = session.state.fact_cursor.tick;
-        let facts = serde_json::to_value(&session.state.fact_cursor.facts).unwrap();
-        let (frame, closing, weekend) = session.with_publication_transaction(|session| {
-            let checkpoint = session.checkpoint()?;
-            let frame = session.step_frame()?;
-            let closing = session.end_civil_day_update()?;
-            let weekend = session.end_civil_day_update()?;
-            assert!(session.state.intraday.is_empty());
-            assert_eq!(weekend.civil_date, "2030-01-06");
-            session.rollback(checkpoint)?;
-            Ok((frame, closing, weekend))
-        }).unwrap();
+        let fact_tick = session.state.fact_cursor.tick();
+        let cursor_before = session.state.fact_cursor.clone();
+        let checkpoint = session.checkpoint().unwrap();
+        let frame = session.step_frame().unwrap();
+        let closing = session.end_civil_day_update().unwrap();
+        let weekend = session.end_civil_day_update().unwrap();
+        assert!(session.state.intraday.is_empty());
+        assert_eq!(weekend.civil_date, "2030-01-06");
+
+        session.rollback(checkpoint);
 
         assert_eq!(session.state.game.session_state_hash().unwrap(), before);
         assert_eq!(
             serde_json::to_value(&session.state.intraday).unwrap(),
             history
         );
-        assert_eq!(session.state.fact_cursor.tick, fact_tick);
-        assert_eq!(
-            serde_json::to_value(&session.state.fact_cursor.facts).unwrap(),
-            facts
-        );
+        assert_eq!(session.state.fact_cursor.tick(), fact_tick);
+        assert_eq!(session.state.fact_cursor, cursor_before);
         assert_eq!(
             serde_json::to_value(session.step_frame().unwrap()).unwrap(),
             serde_json::to_value(frame).unwrap()
@@ -1627,8 +1476,7 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_rejects_poison_and_failed_candidate_can_retry_from_healthy_state() {
-        let mut setup = crate::session::protocol::civil::publication_tests::setup();
-        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 53).unwrap();
         let fatal = StepFatal::InvariantViolation {
             location: "protocol checkpoint test".into(),
@@ -1647,8 +1495,7 @@ mod rollback_tests {
 
     #[test]
     fn committed_evidence_frame_is_the_same_public_runtime_step() {
-        let mut setup = crate::session::protocol::civil::publication_tests::setup();
-        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut ordinary = ProtocolSession::new(setup.clone(), 47).unwrap();
         let mut observed = ProtocolSession::new(setup, 47).unwrap();
 
@@ -1672,8 +1519,7 @@ mod rollback_tests {
 
     #[test]
     fn malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries() {
-        let mut setup = crate::session::protocol::civil::publication_tests::setup();
-        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 48).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),
@@ -1681,13 +1527,24 @@ mod rollback_tests {
             next_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
             next_status: crate::DayStatus::Trading,
         };
-        session.state.fact_cursor.tick = Some(session.state.game.tick());
-        session.state.fact_cursor.facts =
-            crate::session::protocol::attach_facts(&[preceding]).unwrap();
+        session
+            .state
+            .fact_cursor
+            .begin_tick(session.state.game.tick());
+        let preceding_facts = session
+            .state
+            .fact_cursor
+            .assign_session_facts(vec![preceding])
+            .unwrap();
+        session
+            .state
+            .fact_cursor
+            .record_committed_facts(&preceding_facts)
+            .unwrap();
         let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
         let history = serde_json::to_value(&session.state.intraday).unwrap();
-        let fact_tick = session.state.fact_cursor.tick;
-        let facts = serde_json::to_value(&session.state.fact_cursor.facts).unwrap();
+        let fact_tick = session.state.fact_cursor.tick();
+        let cursor_before = session.state.fact_cursor.clone();
         session.malformed_frame = true;
 
         let error = session.step_frame_with_commit_evidence().unwrap_err();
@@ -1701,11 +1558,8 @@ mod rollback_tests {
             serde_json::to_value(&session.state.intraday).unwrap(),
             history
         );
-        assert_eq!(session.state.fact_cursor.tick, fact_tick);
-        assert_eq!(
-            serde_json::to_value(&session.state.fact_cursor.facts).unwrap(),
-            facts
-        );
+        assert_eq!(session.state.fact_cursor.tick(), fact_tick);
+        assert_eq!(session.state.fact_cursor, cursor_before);
         let (frame, evidence) = session.step_frame_with_commit_evidence().unwrap();
         frame.validate().unwrap();
         assert_eq!(
@@ -1750,10 +1604,42 @@ mod rollback_tests {
         );
     }
 
+    /// Sol 终审修复 1a：日结拍的投影失败不得泄漏 `day`——
+    /// install_runtime_day_boundary 已推进 day（day_end.rs），回滚基线
+    /// 此前不含 day 域（tick/seq/账户回滚而 day 留新日——违反失败零
+    /// 泄漏及重试契约）。红态：失败后 day==day_before+1。
+    #[test]
+    fn solfinal1a_day_end_projection_failure_rolls_back_day() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 49).unwrap();
+        let tpd = session.game().state.setup.ticks_per_day;
+        for _ in 1..tpd {
+            session.step_frame().unwrap();
+        }
+        let day_before = session.game().day();
+        let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
+        session.malformed_frame = true;
+        let error = session.step_frame().unwrap_err();
+        assert!(matches!(error, StepFatal::InvariantViolation { .. }));
+        assert_eq!(
+            session.game().day(),
+            day_before,
+            "日结拍投影失败必须回滚 day（不得泄漏新日——重试契约要求步前等价）"
+        );
+        assert_eq!(
+            serde_json::to_value(session.state.game.save().unwrap()).unwrap(),
+            before,
+            "日结拍投影失败后 save==步前（含 day 域）"
+        );
+        // 重试成功：day 恰推进一次（candidate 丢弃可重试语义）。
+        let frame = session.step_frame().unwrap();
+        frame.validate().unwrap();
+        assert_eq!(session.game().day(), day_before + 1, "重试成功推进 day 恰一次");
+    }
+
     #[test]
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
-        let mut setup = crate::session::protocol::civil::publication_tests::setup();
-        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 40).unwrap();
         let preceding = crate::Event::CivilDateAdvanced {
             seq: session.state.game.seq(),
@@ -1761,13 +1647,24 @@ mod rollback_tests {
             next_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
             next_status: crate::DayStatus::Trading,
         };
-        session.state.fact_cursor.tick = Some(session.state.game.tick());
-        session.state.fact_cursor.facts =
-            crate::session::protocol::attach_facts(&[preceding]).unwrap();
+        session
+            .state
+            .fact_cursor
+            .begin_tick(session.state.game.tick());
+        let preceding_facts = session
+            .state
+            .fact_cursor
+            .assign_session_facts(vec![preceding])
+            .unwrap();
+        session
+            .state
+            .fact_cursor
+            .record_committed_facts(&preceding_facts)
+            .unwrap();
         let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
         let history = serde_json::to_value(&session.state.intraday).unwrap();
-        let fact_tick = session.state.fact_cursor.tick;
-        let facts = serde_json::to_value(&session.state.fact_cursor.facts).unwrap();
+        let fact_tick = session.state.fact_cursor.tick();
+        let cursor_before = session.state.fact_cursor.clone();
         session.malformed_frame = true;
 
         let error = session.step_frame().unwrap_err();
@@ -1781,11 +1678,8 @@ mod rollback_tests {
             serde_json::to_value(&session.state.intraday).unwrap(),
             history
         );
-        assert_eq!(session.state.fact_cursor.tick, fact_tick);
-        assert_eq!(
-            serde_json::to_value(&session.state.fact_cursor.facts).unwrap(),
-            facts
-        );
+        assert_eq!(session.state.fact_cursor.tick(), fact_tick);
+        assert_eq!(session.state.fact_cursor, cursor_before);
         session.step_frame().unwrap().validate().unwrap();
     }
 
@@ -1805,7 +1699,10 @@ mod rollback_tests {
         let continued = uninterrupted.end_civil_day_update().unwrap();
         let fresh = restored.end_civil_day_update().unwrap();
 
-        assert_eq!(continued.events, fresh.events);
+        assert_eq!(
+            continued.events().collect::<Vec<_>>(),
+            fresh.events().collect::<Vec<_>>()
+        );
         let continued_indices = continued
             .facts
             .iter()

@@ -245,9 +245,7 @@ fn state_serde_round_trip_preserves_acquisitions() {
         Some(announcement_read_at)
     );
     assert_eq!(
-        restored
-            .records_for_company(&CompanyId(COMPANY.to_string()))
-            .len(),
+        restored.records_for_company(&CompanyId(0)).len(),
         2,
         "per-company registry keeps both acquisitions"
     );

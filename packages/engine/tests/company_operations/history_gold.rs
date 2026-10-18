@@ -30,10 +30,12 @@ fn history_config(
     } else {
         panic!("保险 fixture 必须使用 InsuranceFlowParams");
     }
+    let industrial = industrial_a(d("2027-12-31"));
     engine::company::operations::CompanyOperationsConfig {
         seed,
         shock_params: params,
-        companies: vec![industrial_a(d("2027-12-31")), insurance],
+        catalog: catalog_for([&industrial, &insurance]),
+        companies: vec![industrial, insurance],
     }
 }
 
@@ -63,7 +65,7 @@ fn history_spans_two_full_years_before_start() {
 
     for (company, opening_equity) in [("C-IND-A", -4_100_000i128), ("C-INS", -2_000_000i128)] {
         let books = first
-            .company(&CompanyId(company.to_string()))
+            .company(&first.catalog().id(company).expect("前史公司均在目录"))
             .expect("company present")
             .books()
             .books();
@@ -89,7 +91,7 @@ fn history_spans_two_full_years_before_start() {
     }
 
     // 同 seed 重放：账套与调度队列逐字节一致。
-    let a = CompanyId("C-IND-A".to_string());
+    let a = CompanyId(0);
     assert_eq!(
         first.industrial_books(&a).expect("A present"),
         second.industrial_books(&a).expect("A present")
@@ -106,6 +108,7 @@ fn history_honors_1998_init_floor() {
     let config = engine::company::operations::CompanyOperationsConfig {
         seed: 9,
         shock_params: ShockParams::current_default_parameters(),
+        catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-A"]).unwrap(),
         companies: vec![industrial_a(d("1997-12-31"))],
     };
     let ops = CompanyOperations::generate_history(config, d("2000-01-01"))
@@ -123,6 +126,7 @@ fn history_before_init_floor_is_rejected() {
     let config = engine::company::operations::CompanyOperationsConfig {
         seed: 9,
         shock_params: ShockParams::current_default_parameters(),
+        catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-A"]).unwrap(),
         companies: vec![industrial_a(d("1996-12-31"))],
     };
     let error = CompanyOperations::generate_history(config, d("1999-01-01"))

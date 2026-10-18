@@ -1,11 +1,6 @@
-include!("../test-support/simple_company.rs");
-
-#[path = "company_operations/fixtures.rs"]
-mod operations_fixture;
-
 use engine::account::StockCode;
 use engine::calendar::CivilDate;
-use engine::company::{ActiveShock, ShockKind};
+use engine::company::{ActiveShock, CompanyId, ShockKind};
 use engine::money::Money;
 use engine::session::{
     CivilPhase, CompanyDisclosureKind, Event, FloatAllocation, GameSession, NpcSetup,
@@ -18,7 +13,8 @@ const TICKS_PER_DAY: u64 = 12;
 
 fn setup(start_date: &str) -> SessionSetup {
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -57,16 +53,9 @@ fn setup(start_date: &str) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso(start_date).expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 
@@ -96,32 +85,7 @@ fn advance_to_next_report(session: &mut GameSession) -> Vec<Event> {
 #[test]
 fn scheduled_publication_event_is_lossless_public_and_precedes_civil_advance() {
     // Given: an authoritative session before its next scheduled public report.
-    let mut fixture = setup("2030-01-01");
-    fixture.auto_corporate_foundation = true;
-    let mut session = GameSession::new(fixture, 29).expect("fixture session is valid");
-    // Simple 不再产生旧经营冲击公告，同报表披露日受理真实现金分红方案保持公告排序意图。
-    let company = engine::company::CompanyId("C-600101".into());
-    let exchange = engine::calendar::CalendarExchange::Sse;
-    let announced_on = engine::information::scheduled_instant(
-        engine::information::ScheduledReportKind::Annual, 2029,
-        engine::information::stable_company_offset(29, &company),
-    ).unwrap().date();
-    let policy = engine::calendar::CalendarPolicy::from_parts(session.save().unwrap().civil_clock.policy).unwrap();
-    let calendar = engine::calendar::TradingCalendar::from_policy(policy).unwrap();
-    let registered_on = calendar.next_trading_day(exchange, announced_on).unwrap();
-    let ex_dividend_on = calendar.next_trading_day(exchange, registered_on).unwrap();
-    let payable_on = calendar.next_trading_day(exchange, ex_dividend_on).unwrap();
-    let plan = engine::company::cash_dividend::CashDividendPlan::new(
-        "event-contract-dividend".into(), company, StockCode("600101".into()), exchange,
-        engine::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
-        session.civil_date(), announced_on, registered_on, ex_dividend_on, payable_on,
-        Money::from_cents(1), Money::from_cents(10_000_000), &calendar,
-    ).unwrap();
-    session.approve_cash_dividend(engine::company::DividendDeclaration {
-        plan_id: plan.plan_id.clone(), approved_on: session.civil_date(),
-        total_gross: engine::accounting::AccountingAmount::from_cents(10_000_000),
-        registered_capital: engine::accounting::AccountingAmount::from_cents(1_000_000_000),
-    }, plan).unwrap();
+    let mut session = GameSession::new(setup("2030-01-01"), 29).expect("fixture session is valid");
 
     // When: the civil/disclosure path reaches a newly due report.
     let events = advance_to_next_report(&mut session);
@@ -161,9 +125,7 @@ fn scheduled_publication_event_is_lossless_public_and_precedes_civil_advance() {
         .expect("preceding announcement must resolve in the immutable public library");
     assert_eq!(&announcement.company, announcement_company);
     assert_eq!(announcement.published_at, *announcement_instant);
-    assert!(events
-        .windows(2)
-        .all(|pair| pair[0].seq() < pair[1].seq()));
+    assert!(events.windows(2).all(|pair| pair[0].seq() < pair[1].seq()));
     let advance_index = events
         .iter()
         .position(|event| matches!(event, Event::CivilDateAdvanced { .. }))
@@ -242,63 +204,66 @@ fn restored_closed_day_keeps_civil_event_sequence_identical() {
 
 #[test]
 fn announcement_event_follows_successful_immutable_library_insertion() {
-    use engine::calendar::CalendarExchange;
-    use engine::company::operations::CompanyOperations;
-    use engine::session::{CivilClock, DayEndDisclosureCtx, DisclosureDispatch};
-
-    let date = engine::CivilDate::from_iso("2030-01-01").unwrap();
-    let prior = date.prev().unwrap();
-    let company = engine::company::CompanyId("C-IND-A".into());
-    let config = operations_fixture::four_company_config(
-        41,
-        operations_fixture::quiet_params(),
-        prior,
-    );
-    let mut operations = CompanyOperations::new(config, date).unwrap();
-    operations
+    // Given: a closed civil day whose company operating state contains an active public shock.
+    let session = GameSession::new(setup("2030-01-01"), 41).expect("fixture session is valid");
+    let mut save = session.save().expect("healthy save");
+    let company = CompanyId(0);
+    let date = save.civil_clock.current_date;
+    save.company_operations
         .apply_company_shock(
             &company,
             ActiveShock {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 1_000,
                 starts_on: date,
-                expires_on: date.next().unwrap(),
+                expires_on: date.next().expect("fixture date has a next day"),
             },
         )
-        .unwrap();
-    let before = serde_json::to_value(&operations).unwrap();
-    let mut restored: CompanyOperations = serde_json::from_value(before.clone()).unwrap();
-    assert_eq!(serde_json::to_value(&restored).unwrap(), before);
-    assert!(restored
-        .company(&company)
-        .unwrap()
-        .economy()
-        .active()
-        .iter()
-        .any(|shock| shock.kind == ShockKind::ContractWon && shock.amplitude_bp == 1_000));
-    restored.advance_civil_day(date).unwrap();
+        .expect("fixture shock must be accepted");
+    let mut session = GameSession::restore(&save).expect("modified authoritative state restores");
 
-    let mut clock = CivilClock::new(date, CalendarExchange::Sse).unwrap();
-    let civil = clock.end_day(date).unwrap();
-    let mut closing = engine::accounting::closing::ClosingEngine::new();
-    let mut library = engine::information::PublicLibrary::new();
-    let mut dispatch = DisclosureDispatch::new(Some(civil.disclosure_instant));
-    let outcome = dispatch.run_day_end(DayEndDisclosureCtx {
-        report_frequency: engine::information::ReportFrequency::Quarterly,
-        groups: &[],
-        report: &civil,
-        ops: &restored,
-        closing: &mut closing,
-        library: &mut library,
-    }).unwrap();
-    assert_eq!(outcome.announcements_published.len(), 1);
-    let saved = library.save();
-    let announcement = saved.announcements.first().unwrap();
-    assert_eq!(announcement.company, company);
-    assert_eq!(announcement.occurred_on, date);
-    assert_eq!(announcement.published_at, civil.disclosure_instant);
-    let restored_library = engine::information::PublicLibrary::from_parts(saved).unwrap();
-    assert_eq!(restored_library.save(), library.save());
+    // When: the normal GameSession civil/disclosure path publishes the announcement.
+    let report = session.end_civil_day().expect("closed day settles");
+
+    // Then: the event points to a queryable immutable announcement and precedes date advancement.
+    let announcement_index = report
+        .events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                Event::CompanyDisclosurePublished {
+                    kind: CompanyDisclosureKind::Announcement,
+                    ..
+                }
+            )
+        })
+        .expect("successful announcement insertion must emit one publication event");
+    let Event::CompanyDisclosurePublished {
+        publication_id,
+        company: event_company,
+        published_at,
+        kind: CompanyDisclosureKind::Announcement,
+        ..
+    } = &report.events[announcement_index]
+    else {
+        panic!("expected announcement publication event");
+    };
+    let saved = session.save().expect("healthy save");
+    let announcement = saved
+        .public_library
+        .announcement(*publication_id, *published_at)
+        .expect("event publication id must resolve in the immutable public library");
+    assert_eq!(&announcement.company, event_company);
+    assert_eq!(announcement.published_at, *published_at);
+    assert!(saved
+        .public_library
+        .all_publication_ids()
+        .unwrap()
+        .contains(publication_id));
+    assert!(report.events[announcement_index + 1..]
+        .iter()
+        .any(|event| matches!(event, Event::CivilDateAdvanced { .. })));
 }
 
 fn bytes_to_save(bytes: &[u8]) -> engine::session::SaveSlot {
@@ -317,7 +282,7 @@ fn civil_report_refresh_validates_and_reconnect_resolves_publication() {
         }
         let update = session.end_civil_day_update().unwrap();
         update.validate().unwrap();
-        for event in &update.events {
+        for event in update.events() {
             if let Event::CompanyDisclosurePublished {
                 publication_id,
                 kind: CompanyDisclosureKind::Report { .. },

@@ -1,5 +1,4 @@
-import { canonicalJson } from "./protocol/canonical.ts";
-import { parseEngineUpdate } from "./protocol/parse.ts";
+import { parseProtocolSnapshot } from "./protocol/parse.ts";
 import { createProtocolState } from "./protocol/types.ts";
 
 export interface JsonRecord {
@@ -19,8 +18,12 @@ export function dailyCandle(): JsonRecord {
 }
 
 export function market(): JsonRecord {
-  return { last_price: "1000", last_close: "1000", cash_ex_reference_pending_trade: false, day_market_activity: false, last_cash_ex_reference: null, best_bid: null, best_ask: null, bids: [], asks: [] };
+  return { last_price: "1000", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] };
 }
+
+/** fixture 股票宇宙：数值 StockId 0 对应 STOCK_LIST 代码串 "000812"（ADR 0041）。 */
+export const FIXTURE_STOCK_ID = 0;
+export const FIXTURE_STOCK_CODE = "000812";
 
 export function snapshot(tick: number, seq: number): JsonRecord {
   return {
@@ -28,41 +31,39 @@ export function snapshot(tick: number, seq: number): JsonRecord {
     tick,
     day: 0,
     phase: "Continuous",
-    markets: { "600000": market() },
+    markets: { "0": market() },
     accounts: {},
-    daily_candles: { "600000": [] },
-    active_daily_candles: { "600000": dailyCandle() },
+    daily_candles: { "0": [] },
+    active_daily_candles: { "0": dailyCandle() },
   };
 }
 
-export function rejection(seq: number, code = "600000"): JsonRecord {
-  return { IntentRejected: { seq, account: "0", code, reason: "UnknownStock" } };
+export function rejection(seq: number, code: number = FIXTURE_STOCK_ID): JsonRecord {
+  return { IntentRejected: { seq, account: 0, code, reason: "UnknownStock" } };
 }
 
-export function fact(seq: number, localEventIndex: number, code = "600000"): JsonRecord {
+export function fact(seq: number, localEventIndex: number, code: number = FIXTURE_STOCK_ID): JsonRecord {
   const event = rejection(seq, code);
   return {
-    key: { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: localEventIndex },
+    key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: localEventIndex },
     event,
-    canonical_payload: canonicalJson(event),
   };
 }
 
 export function timeseries(tick: number): JsonRecord {
   return {
-    markets: { "600000": market() },
-    active_daily_candles: { "600000": dailyCandle() },
+    markets: { "0": market() },
+    active_daily_candles: { "0": dailyCandle() },
     closed_daily_candles: {},
     auction_points: {},
     continuous_points: {
-      "600000": { tick, phase: "Continuous", last_price: "1000", cumulative_volume: tick, bids: [], asks: [] },
+      "0": { tick, phase: "Continuous", last_price: "1000", cumulative_volume: tick, bids: [], asks: [] },
     },
   };
 }
-export function frame(tick: number, seqFrom: number, codes: readonly string[]): JsonRecord {
+export function frame(tick: number, seqFrom: number, codes: readonly number[]): JsonRecord {
   return {
     tick,
-    events: codes.map((code, index) => rejection(seqFrom + index + 1, code)),
     facts: codes.map((code, index) => fact(seqFrom + index + 1, index, code)),
     timeseries_payload: timeseries(tick),
     seq_from: seqFrom,
@@ -75,11 +76,9 @@ export function tickBatch(frames: readonly JsonRecord[], runtimeSnapshot: JsonRe
 }
 
 export function baseState(): ReturnType<typeof createProtocolState> {
-  const initial = parseEngineUpdate(tickBatch([frame(0, 0, [])], snapshot(0, 0)));
-  if (!("TickBatch" in initial) || initial.TickBatch.runtime_snapshot === null) {
-    throw new Error("test fixture invalid");
-  }
-  return createProtocolState(initial.TickBatch.runtime_snapshot, "generation-1");
+  // 初始快照经公共摄入入口解析（内部完成数值键 → 代码串翻译）。
+  const initial = parseProtocolSnapshot(snapshot(0, 0));
+  return createProtocolState(initial, "generation-1");
 }
 
 export function firstFrame(batch: TickBatchWire): JsonRecord {
@@ -101,7 +100,7 @@ export function isJsonRecord(value: JsonValue): value is JsonRecord {
 
 export function securities(): readonly JsonRecord[] {
   return [{
-    code: "600000",
+    code: FIXTURE_STOCK_CODE,
     exchange: "Shanghai",
     initial_price: "1000",
     category: "MainBoard",
@@ -132,11 +131,9 @@ export function civilUpdate(): JsonRecord {
       kinds: ["AfterClose", "BeforeOpen"],
       tick: 1,
       civil_date: "2030-01-03",
-      events: [event],
       facts: [{
         key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
         event,
-        canonical_payload: canonicalJson(event),
       }],
       seq_from: 1,
       seq_to: 2,
@@ -144,7 +141,7 @@ export function civilUpdate(): JsonRecord {
         ticks_per_day: 1,
         snapshot: snapshot(1, 2),
         securities: securities(),
-        intraday: [frame(1, 0, ["600000"])],
+        intraday: [frame(1, 0, [FIXTURE_STOCK_ID])],
         public_publication_ids: [],
       },
     },

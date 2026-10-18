@@ -1,21 +1,14 @@
-import type { CivilUpdate } from "../../types/generated/CivilUpdate.ts";
-import type { EngineUpdate } from "../../types/generated/EngineUpdate.ts";
-import type { Event } from "../../types/generated/Event.ts";
-import type { EventFact } from "../../types/generated/EventFact.ts";
 import type { StockSpec } from "../../types/generated/StockSpec.ts";
-import type { TickBatch } from "../../types/generated/TickBatch.ts";
-import type { TickFrame } from "../../types/generated/TickFrame.ts";
 import { canonicalJson, eventStableKey, factIdentity } from "./canonical.ts";
 import { ProtocolError } from "./types.ts";
+import { stockCodeOf, type WireCivilUpdate, type WireEngineUpdate, type WireEvent, type WireEventFact, type WireTickFrame } from "./stock-identity.ts";
 
 function malformed(where: string, message: string): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", where, message);
 }
 
-function eventSeq(event: Event): number {
+function eventSeq(event: WireEvent): number {
   if ("Trade" in event) return event.Trade.seq;
-  if ("PublicTrade" in event) return event.PublicTrade.seq;
-  if ("PrivateEventOmitted" in event) return event.PrivateEventOmitted.seq;
   if ("AuctionTick" in event) return event.AuctionTick.seq;
   if ("AuctionCompleted" in event) return event.AuctionCompleted.seq;
   if ("PriceTick" in event) return event.PriceTick.seq;
@@ -33,57 +26,40 @@ function assertNever(value: never): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.validate", `未处理事件变体：${String(value)}`);
 }
 
-function eventMap(events: readonly Event[], from: number, to: number, where: string): ReadonlyMap<number, string> {
-  if (to < from || events.length !== to - from) {
-    malformed(where, `事件覆盖必须精确等于 (${from}, ${to}]`);
-  }
-  const represented = new Map<number, string>();
-  for (const event of events) {
-    const seq = eventSeq(event);
-    if (seq <= from || seq > to || represented.has(seq)) {
-      malformed(where, `事件 seq 必须在 (${from}, ${to}] 内唯一`);
-    }
-    represented.set(seq, canonicalJson(event));
-  }
-  return represented;
-}
-
 export function validateFacts(
-  facts: readonly EventFact[],
-  events: readonly Event[],
+  facts: readonly WireEventFact[],
   from: number,
   to: number,
   where: string,
 ): void {
-  const supplied = eventMap(events, from, to, where);
-  if (facts.length !== events.length) malformed(where, "事实数量必须等于事件数量");
+  // 单批事实记录是唯一权威：seq 覆盖、key 与事件变体映射、身份唯一都在同一集合上校验；
+  // 不再对 canonical payload 做第二份序列化比对（架构项 #6）。
+  if (to < from || facts.length !== to - from) {
+    malformed(where, `事实覆盖必须精确等于 (${from}, ${to}]`);
+  }
   const identities = new Set<string>();
-  const represented = new Map<number, string>();
+  const seqs = new Set<number>();
   for (const fact of facts) {
-    const identity = factIdentity(fact);
-    const payload = canonicalJson(fact.event);
+    const seq = eventSeq(fact.event);
     if (
-      identities.has(identity)
+      identities.has(factIdentity(fact))
+      || seq <= from
+      || seq > to
+      || seqs.has(seq)
       || canonicalJson(fact.key) !== canonicalJson(eventStableKey(fact.event, fact.key.local_event_index))
-      || fact.canonical_payload !== payload
-      || represented.has(eventSeq(fact.event))
     ) {
-      malformed(where, "事实身份、稳定键或规范载荷不匹配");
+      malformed(where, "事实身份、稳定键或 seq 覆盖不匹配");
     }
-    identities.add(identity);
-    represented.set(eventSeq(fact.event), payload);
-  }
-  if (represented.size !== supplied.size) malformed(where, "事实与事件不构成一一映射");
-  for (const [seq, payload] of supplied) {
-    if (represented.get(seq) !== payload) malformed(where, "事实与事件 seq 到载荷映射不匹配");
+    identities.add(factIdentity(fact));
+    seqs.add(seq);
   }
 }
 
-export function validateFrame(frame: TickFrame, where = "protocol.frame"): void {
-  validateFacts(frame.facts, frame.events, frame.seq_from, frame.seq_to, where);
+export function validateFrame(frame: WireTickFrame, where = "protocol.frame"): void {
+  validateFacts(frame.facts, frame.seq_from, frame.seq_to, where);
 }
 
-export function validateTickBatch(batch: TickBatch): void {
+export function validateTickBatch(batch: Extract<WireEngineUpdate, { TickBatch: unknown }>["TickBatch"]): void {
   if (batch.frames.length === 0) malformed("protocol.tick-batch", "TickBatch 不得为空");
   for (const [index, frame] of batch.frames.entries()) {
     validateFrame(frame, `protocol.tick-batch.frames[${index}]`);
@@ -110,8 +86,10 @@ export function validateTickBatch(batch: TickBatch): void {
   }
 }
 
-function civilAdvanceMatches(update: CivilUpdate): boolean {
-  const advances = update.events.filter((event): event is Extract<Event, { CivilDateAdvanced: unknown }> => "CivilDateAdvanced" in event);
+function civilAdvanceMatches(update: WireCivilUpdate): boolean {
+  const advances = update.facts
+    .map((fact) => fact.event)
+    .filter((event): event is Extract<WireEvent, { CivilDateAdvanced: unknown }> => "CivilDateAdvanced" in event);
   const advance = advances[0];
   return advances.length === 1
     && advance !== undefined
@@ -120,7 +98,7 @@ function civilAdvanceMatches(update: CivilUpdate): boolean {
     && canonicalJson(advance.CivilDateAdvanced.next_status) === canonicalJson(update.boundary.next_status);
 }
 
-function expectedKinds(update: CivilUpdate): readonly CivilUpdate["kinds"][number][] {
+function expectedKinds(update: WireCivilUpdate): readonly WireCivilUpdate["kinds"][number][] {
   if (update.boundary.settled_phase === "IntradayTrading") {
     return update.boundary.next_status === "Trading" ? ["AfterClose", "BeforeOpen"] : ["AfterClose"];
   }
@@ -134,8 +112,8 @@ function nextDate(settledDate: string): string | null {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
-export function validateCivilUpdate(update: CivilUpdate): void {
-  validateFacts(update.facts, update.events, update.seq_from, update.seq_to, "protocol.civil.facts");
+export function validateCivilUpdate(update: WireCivilUpdate): void {
+  validateFacts(update.facts, update.seq_from, update.seq_to, "protocol.civil.facts");
   if (
     update.refresh.snapshot.tick !== update.tick
     || update.refresh.snapshot.seq !== update.seq_to
@@ -153,12 +131,16 @@ export function validateCivilUpdate(update: CivilUpdate): void {
   if (codes.size === 0 || codes.size !== update.refresh.securities.length || codes.size !== Object.keys(update.refresh.snapshot.markets).length) {
     malformed("protocol.civil.refresh", "CivilUpdate 证券与快照市场必须一一对应");
   }
-  for (const code of Object.keys(update.refresh.snapshot.markets)) {
-    if (!codes.has(code)) malformed("protocol.civil.refresh", "CivilUpdate 快照市场缺少证券定义");
+  for (const id of Object.keys(update.refresh.snapshot.markets)) {
+    // wire 快照市场键为数值 StockId；翻译为代码串后再与证券定义比对（未知 id 显式失败）。
+    if (!codes.has(stockCodeOf(Number(id), "protocol.civil.refresh.snapshot.markets"))) {
+      malformed("protocol.civil.refresh", "CivilUpdate 快照市场缺少证券定义");
+    }
   }
   const publicationIds = new Set(update.refresh.public_publication_ids);
   if (publicationIds.size !== update.refresh.public_publication_ids.length) malformed("protocol.civil.refresh", "公开披露 ID 不得重复");
-  for (const event of update.events) {
+  for (const fact of update.facts) {
+    const event = fact.event;
     if ("CompanyDisclosurePublished" in event && !publicationIds.has(String(event.CompanyDisclosurePublished.publication_id))) {
       malformed("protocol.civil.refresh", "披露事件必须存在于公开披露 ID 刷新中");
     }
@@ -185,7 +167,7 @@ export function validateCivilUpdate(update: CivilUpdate): void {
   }
 }
 
-function validateFrames(frames: readonly TickFrame[], where: string): void {
+function validateFrames(frames: readonly WireTickFrame[], where: string): void {
   if (frames.length === 0) malformed(where, "帧序列不得为空");
   for (const [index, frame] of frames.entries()) {
     validateFrame(frame, `${where}[${index}]`);
@@ -198,7 +180,7 @@ function validateFrames(frames: readonly TickFrame[], where: string): void {
   }
 }
 
-export function validateEngineUpdate(update: EngineUpdate): void {
+export function validateEngineUpdate(update: WireEngineUpdate): void {
   if ("TickBatch" in update) {
     validateTickBatch(update.TickBatch);
     return;
@@ -210,7 +192,7 @@ export function validateEngineUpdate(update: EngineUpdate): void {
   assertNever(update);
 }
 
-export function canonicalEngineUpdate(update: EngineUpdate): string {
+export function canonicalEngineUpdate(update: WireEngineUpdate): string {
   if ("TickBatch" in update) {
     return canonicalJson({
       TickBatch: {
@@ -223,7 +205,6 @@ export function canonicalEngineUpdate(update: EngineUpdate): string {
   return canonicalJson({
     CivilUpdate: {
       ...update.CivilUpdate,
-      events: [...update.CivilUpdate.events].sort((left, right) => eventSeq(left) - eventSeq(right)),
       facts: [...update.CivilUpdate.facts].sort((left, right) => factIdentity(left).localeCompare(factIdentity(right))),
       refresh: {
         ...update.CivilUpdate.refresh,
@@ -233,10 +214,9 @@ export function canonicalEngineUpdate(update: EngineUpdate): string {
   });
 }
 
-function canonicalFrame(frame: TickFrame): TickFrame {
+function canonicalFrame(frame: WireTickFrame): WireTickFrame {
   return {
     ...frame,
-    events: [...frame.events].sort((left, right) => eventSeq(left) - eventSeq(right)),
     facts: [...frame.facts].sort((left, right) => factIdentity(left).localeCompare(factIdentity(right))),
   };
 }

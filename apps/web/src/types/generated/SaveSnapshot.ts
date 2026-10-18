@@ -3,13 +3,13 @@ import type { AccountId } from "./AccountId";
 import type { DailyCandle } from "./DailyCandle";
 import type { SaveAccountSnap } from "./SaveAccountSnap";
 import type { SaveMarketSnap } from "./SaveMarketSnap";
-import type { StockCode } from "./StockCode";
+import type { StockId } from "./StockId";
 
 export type SaveSnapshot = {
   seq: number;
   tick: number;
-  markets: { [key in StockCode]: SaveMarketSnap };
+  markets: { [key in StockId]: SaveMarketSnap };
   accounts: { [key in AccountId]: SaveAccountSnap };
-  daily_candles: { [key in StockCode]: Array<DailyCandle> };
-  active_daily_candles: { [key in StockCode]: DailyCandle };
+  daily_candles: { [key in StockId]: Array<DailyCandle> };
+  active_daily_candles: { [key in StockId]: DailyCandle };
 };

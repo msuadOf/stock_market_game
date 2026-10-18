@@ -42,7 +42,7 @@ impl ZiNoiseStrategy {
     pub(crate) fn apply_personal_analysis(
         &self,
         decision: &mut StrategyDecision,
-        assessments: &BTreeMap<StockCode, crate::plans::CandidateAssessment>,
+        assessments: &BTreeMap<StockId, crate::plans::CandidateAssessment>,
         market: &MarketView,
         own: &SelfView,
         risk: &AccountRiskObservation,
@@ -277,7 +277,7 @@ impl Strategy for ZiNoiseStrategy {
     }
 }
 
-fn retail_position_decision_to_intents(
+pub(crate) fn retail_position_decision_to_intents(
     strategy: &StrategyData,
     decision: &PositionDecision,
     market: &MarketView,
@@ -293,9 +293,6 @@ fn retail_position_decision_to_intents(
             code.0
         );
     };
-    if !stock.is_trading {
-        return Vec::new();
-    }
     if decision.executable_delta_shares > 0 {
         let desired = u32::try_from(decision.executable_delta_shares)
             .unwrap_or(u32::MAX)

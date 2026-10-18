@@ -21,97 +21,6 @@ pub const SCHEDULE_OFFSET_MAX: u8 = 7;
 /// 披露相位的当日秒（18:00:00）。
 const PHASE_SECOND: u32 = 18 * 3600;
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-#[ts(export)]
-pub enum ReportFrequency {
-    Quarterly,
-    Monthly {
-        schedule: super::MonthlyReportSchedule,
-    },
-}
-
-impl ReportFrequency {
-    pub fn scheduled_kinds(self) -> Vec<ScheduledReportKind> {
-        let mut kinds = ScheduledReportKind::ALL.to_vec();
-        if matches!(self, Self::Monthly { .. }) {
-            kinds.extend((1..=12).map(|month| ScheduledReportKind::Monthly { month }));
-        }
-        kinds
-    }
-
-    pub fn scheduled_instant(
-        self,
-        kind: ScheduledReportKind,
-        year: i32,
-        seed: u64,
-        company: &CompanyId,
-    ) -> Result<CivilInstant, InformationError> {
-        if let ScheduledReportKind::Monthly { .. } = kind {
-            let Self::Monthly { schedule } = self else {
-                return Err(InformationError::InconsistentLibrary {
-                    detail: "季度模式不包含月报排期".into(),
-                });
-            };
-            let period = kind.landing_period(year)?;
-            schedule.instant(period, schedule.delay_days(seed, company, period)?)
-        } else {
-            scheduled_instant(kind, year, stable_company_offset(seed, company))
-        }
-    }
-
-    pub fn publication_origin(
-        self,
-        kind: ScheduledReportKind,
-        year: i32,
-        seed: u64,
-        company: &CompanyId,
-        seeded: bool,
-    ) -> Result<super::PublicationOrigin, InformationError> {
-        if let ScheduledReportKind::Monthly { .. } = kind {
-            let Self::Monthly { schedule } = self else {
-                return Err(InformationError::InconsistentLibrary {
-                    detail: "季度模式不能公布月报".into(),
-                });
-            };
-            Ok(super::PublicationOrigin::MonthlyDisclosure {
-                schedule,
-                delay_days: schedule.delay_days(seed, company, kind.landing_period(year)?)?,
-                seeded,
-            })
-        } else if seeded {
-            Ok(super::PublicationOrigin::SeededPrehistory {
-                fiscal_year: year,
-                kind,
-                offset_days: stable_company_offset(seed, company),
-            })
-        } else {
-            Ok(super::PublicationOrigin::ScheduledDisclosure {
-                fiscal_year: year,
-                kind,
-                offset_days: stable_company_offset(seed, company),
-            })
-        }
-    }
-
-    pub fn approval_instant(
-        self,
-        kind: ScheduledReportKind,
-        published_at: CivilInstant,
-    ) -> Result<CivilInstant, InformationError> {
-        if matches!(kind, ScheduledReportKind::Monthly { .. }) {
-            Ok(published_at)
-        } else {
-            Ok(CivilInstant::from_hms(
-                published_at.date(),
-                super::APPROVAL_HOUR,
-                0,
-                0,
-            )?)
-        }
-    }
-}
-
 /// 定期披露种类（游戏排期表目；报表种类映射见 [`Self::report_kind`]）。
 #[derive(
     Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
@@ -125,9 +34,6 @@ pub enum ScheduledReportKind {
     HalfYear,
     /// 三季报（窗口 = 7..=9 月；同年 10-20 基准）。
     Q3,
-    Monthly {
-        month: u8,
-    },
 }
 
 impl ScheduledReportKind {
@@ -141,7 +47,6 @@ impl ScheduledReportKind {
             Self::Annual => ReportKind::Annual,
             Self::Q1 | Self::Q3 => ReportKind::Quarter,
             Self::HalfYear => ReportKind::HalfYear,
-            Self::Monthly { .. } => ReportKind::Monthly,
         }
     }
 
@@ -153,7 +58,6 @@ impl ScheduledReportKind {
             Self::Q1 => 3,
             Self::HalfYear => 6,
             Self::Q3 => 9,
-            Self::Monthly { month } => month,
         };
         Ok(AccountingPeriod::from_ymd(fiscal_year, month)?)
     }
@@ -162,19 +66,17 @@ impl ScheduledReportKind {
     fn publication_year(self, fiscal_year: i32) -> i32 {
         match self {
             Self::Annual => fiscal_year + 1,
-            Self::Monthly { month: 12 } => fiscal_year + 1,
             _ => fiscal_year,
         }
     }
 
     /// 基准月/日（+偏移前）。
-    const fn base_month_day(self) -> Option<(u8, u8)> {
+    const fn base_month_day(self) -> (u8, u8) {
         match self {
-            Self::Annual => Some((3, 20)),
-            Self::Q1 => Some((4, 20)),
-            Self::HalfYear => Some((8, 15)),
-            Self::Q3 => Some((10, 20)),
-            Self::Monthly { .. } => None,
+            Self::Annual => (3, 20),
+            Self::Q1 => (4, 20),
+            Self::HalfYear => (8, 15),
+            Self::Q3 => (10, 20),
         }
     }
 }
@@ -184,11 +86,11 @@ impl ScheduledReportKind {
 /// FNV-1a(流标签 + 公司 id) 与 seed 混合后过一次 SplitMix64 终结器
 /// （`company::rng::OperatingRng::derive` 同算法孪生；此处无状态、
 /// 每次调用重 derive，从不推进、从不重采样）。
-pub fn stable_company_offset(seed: u64, company: &CompanyId) -> u8 {
+pub fn stable_company_offset(seed: u64, company_code: &str) -> u8 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in b"publication-schedule-offset"
         .iter()
-        .chain(company.0.as_bytes())
+        .chain(company_code.as_bytes())
     {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
@@ -213,14 +115,7 @@ pub fn scheduled_instant(
     if offset > SCHEDULE_OFFSET_MAX {
         return Err(InformationError::IllegalScheduleOffset { offset });
     }
-    kind.landing_period(fiscal_year)?;
-    let (month, day) = kind
-        .base_month_day()
-        .ok_or(InformationError::IllegalScheduleWindow {
-            kind,
-            fiscal_year,
-            detail: "月报公开时点尚待用户决定，不提供默认排期",
-        })?;
+    let (month, day) = kind.base_month_day();
     let mut date = CivilDate::from_ymd(kind.publication_year(fiscal_year), month, day)?;
     for _ in 0..offset {
         date = date.next()?;
@@ -259,7 +154,7 @@ pub fn scheduled_instant(
                 });
             }
         }
-        ScheduledReportKind::Q3 | ScheduledReportKind::Monthly { .. } => {}
+        ScheduledReportKind::Q3 => {}
     }
     Ok(CivilInstant::from_hms(date, PHASE_SECOND / 3600, 0, 0)?)
 }

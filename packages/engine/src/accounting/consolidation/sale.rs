@@ -13,7 +13,7 @@ use crate::accounting::error::AccountingError;
 use crate::accounting::inventory::rhe_div;
 use crate::accounting::journal::PostingSide;
 use crate::accounting::ledger::{AccountElement, LedgerAccountId};
-use crate::accounting::Ledger;
+use crate::accounting::Books;
 
 use super::eliminate::{ensure_member, member_def};
 use super::error::ConsolidationError;
@@ -30,7 +30,7 @@ impl IntercompanySale {
     pub(super) fn validate_for<'a>(
         &'a self,
         group: &ValidatedGroup,
-        members: &BTreeMap<MemberId, &Ledger>,
+        members: &BTreeMap<MemberId, &Books>,
     ) -> Result<ValidatedIntercompanySale<'a>, ConsolidationError> {
         let sale = self;
         ensure_member(group, &sale.seller)?;
@@ -144,7 +144,7 @@ impl ValidatedIntercompanySale<'_> {
 
 /// 申报科目要素必须等于期望要素且非现金。
 fn require_element(
-    members: &BTreeMap<MemberId, &Ledger>,
+    members: &BTreeMap<MemberId, &Books>,
     id: &MemberId,
     account: &LedgerAccountId,
     expected: AccountElement,
@@ -169,8 +169,8 @@ mod tests {
 
     #[test]
     fn validated_sale_keeps_account_error_first_and_half_even_zero_lines() {
-        let root = MemberId("root".into());
-        let sub = MemberId("sub".into());
+        let root = MemberId(0);
+        let sub = MemberId(1);
         let group = ValidatedGroup {
             root: root.clone(),
             subsidiaries: vec![SubsidiaryOwnership {
@@ -181,7 +181,7 @@ mod tests {
                 minority_bp: 2000,
             }],
         };
-        let books = Ledger::new(AccountChart::generic_account_chart());
+        let books = Books::new(AccountChart::generic_account_chart());
         let members = BTreeMap::from([(root.clone(), &books), (sub.clone(), &books)]);
         let mut sale = IntercompanySale {
             seller: root,

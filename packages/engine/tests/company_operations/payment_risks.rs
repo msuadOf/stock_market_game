@@ -1,6 +1,6 @@
 use super::fixtures::*;
-use engine::company::CompanyId;
 use engine::company::operations::{CompanyOperations, CompanyOperationsConfig, FlowParams};
+use engine::company::CompanyId;
 
 #[test]
 fn newly_recognized_insurance_claim_is_payable_not_contractual_overdue() {
@@ -35,6 +35,7 @@ fn newly_recognized_insurance_claim_is_payable_not_contractual_overdue() {
         CompanyOperationsConfig {
             seed: 17,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -59,6 +60,7 @@ fn failed_payments_are_authoritative_and_survive_restore() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
             companies: vec![industrial_broke(date.prev().unwrap())],
         },
         date,
@@ -81,6 +83,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
             companies: vec![industrial_broke(date.prev().unwrap())],
         },
         date,
@@ -94,7 +97,6 @@ fn failed_operating_payment_is_published_once_at_day_end() {
     let mut dispatch = DisclosureDispatch::new(Some(report.disclosure_instant));
     let outcome = dispatch
         .run_day_end(DayEndDisclosureCtx {
-            report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &report,
             ops: &ops,
@@ -112,15 +114,7 @@ fn failed_operating_payment_is_published_once_at_day_end() {
         assert_eq!(announcement.occurred_on, date);
         assert_eq!(announcement.published_at, report.disclosure_instant);
         assert_eq!(
-            match &announcement.content {
-                engine::information::AnnouncementContent::Shock(event) => event.kind.clone(),
-                engine::information::AnnouncementContent::CashDividend(_)
-                | engine::information::AnnouncementContent::RightsOffering(_)
-                | engine::information::AnnouncementContent::IssuerRepurchase(_)
-                | engine::information::AnnouncementContent::ShareSplit(_)
-                | engine::information::AnnouncementContent::StockDistribution(_) =>
-                    panic!("payment failure must be a shock announcement"),
-            },
+            announcement.event.kind,
             engine::company::ShockKind::PaymentFailure {
                 obligation_status: failure.obligation_status,
                 what: failure.what.clone(),
@@ -132,7 +126,6 @@ fn failed_operating_payment_is_published_once_at_day_end() {
     assert_eq!(restored.save(), library.save());
     let repeated = dispatch
         .run_day_end(DayEndDisclosureCtx {
-            report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &report,
             ops: &ops,
@@ -171,6 +164,7 @@ fn insolvent_bank_keeps_due_deposit_and_retries_without_rescue() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         date,
@@ -179,14 +173,12 @@ fn insolvent_bank_keeps_due_deposit_and_retries_without_rescue() {
     ops.advance_civil_day(date).unwrap();
     for day in [date.next().unwrap(), date.next().unwrap().next().unwrap()] {
         let report = ops.advance_civil_day(day).unwrap();
-        assert!(
-            report
-                .payment_failures
-                .iter()
-                .any(|failure| failure.what == "overdue deposit principal:DEP-1"
-                    && failure.amount == yuan(1_000))
-        );
-        let books = ops.bank_books(&CompanyId("C-BANK".into())).unwrap();
+        assert!(report
+            .payment_failures
+            .iter()
+            .any(|failure| failure.what == "overdue deposit principal:DEP-1"
+                && failure.amount == yuan(1_000)));
+        let books = ops.bank_books(&CompanyId(0)).unwrap();
         assert_eq!(
             books
                 .deposit(&ContractId("DEP-1".into()))
@@ -205,6 +197,7 @@ fn payment_history_rejects_invalid_amount_or_unknown_company() {
         CompanyOperationsConfig {
             seed: 1,
             shock_params: quiet_params(),
+            catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-BROKE"]).unwrap(),
             companies: vec![industrial_broke(date.prev().unwrap())],
         },
         date,
@@ -212,13 +205,15 @@ fn payment_history_rejects_invalid_amount_or_unknown_company() {
     .unwrap();
     ops.advance_civil_day(date).unwrap();
     ops.validate_payment_history().unwrap();
-    for (field, invalid) in [("amount", "0"), ("company", "UNKNOWN"), ("what", "")] {
+    for (field, invalid) in [
+        ("amount", serde_json::json!("0")),
+        ("company", serde_json::json!(u32::MAX)),
+        ("what", serde_json::json!("")),
+    ] {
         let mut value = serde_json::to_value(&ops).unwrap();
-        value["payment_failures"][date.to_iso()][0][field] =
-            serde_json::Value::String(invalid.into());
-        // 当前 Deserialize 已执行付款历史校验，坏事实必须在获得 runtime 状态前拒绝。
-        let error = serde_json::from_value::<CompanyOperations>(value).unwrap_err();
-        assert!(error.to_string().contains("invalid company payment history"), "{error}");
+        value["payment_failures"][date.to_iso()][0][field] = invalid;
+        let restored: CompanyOperations = serde_json::from_value(value).unwrap();
+        assert!(restored.validate_payment_history().is_err());
     }
     let mut future = serde_json::to_value(&ops).unwrap();
     let failures = future["payment_failures"]
@@ -227,8 +222,8 @@ fn payment_history_rejects_invalid_amount_or_unknown_company() {
         .remove(&date.to_iso())
         .unwrap();
     future["payment_failures"][date.next().unwrap().to_iso()] = failures;
-    let error = serde_json::from_value::<CompanyOperations>(future).unwrap_err();
-    assert!(error.to_string().contains("invalid company payment history"), "{error}");
+    let restored: CompanyOperations = serde_json::from_value(future).unwrap();
+    assert!(restored.validate_payment_history().is_err());
 }
 
 #[test]
@@ -238,10 +233,10 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
     let mut library = PublicLibrary::new();
     library
         .publish_announcement(AnnouncementRequest {
-            company: CompanyId("C-IND-A".into()),
+            company: CompanyId(0),
             occurred_on: date,
             published_at: engine::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
-            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
+            event: AnnouncedEvent {
                 kind: engine::company::ShockKind::PaymentFailure {
                     obligation_status:
                         engine::company::events::PaymentObligationStatus::ContractualOverdue,
@@ -251,16 +246,11 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
                 amplitude_bp: 0,
                 starts_on: date,
                 expires_on: date,
-            }),
+            },
         })
         .unwrap();
     let mut saved = library.save();
-    let engine::information::AnnouncementContent::Shock(event) =
-        &mut saved.announcements[0].content
-    else {
-        panic!("payment failure must be a shock announcement");
-    };
-    event.kind = engine::company::ShockKind::PaymentFailure {
+    saved.announcements[0].event.kind = engine::company::ShockKind::PaymentFailure {
         obligation_status: engine::company::events::PaymentObligationStatus::ContractualOverdue,
         what: "overdue principal".into(),
         amount: amt(0),

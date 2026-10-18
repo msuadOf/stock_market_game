@@ -8,6 +8,238 @@ use super::{
 use crate::{GameConfig, Money};
 
 #[test]
+fn active_rebase_keeps_untouched_pages_shared_and_preserves_fee_audit() {
+    let first = existing(key(), Money::from_cents(100));
+    let mut far_key = key();
+    far_key.account = crate::AccountId(512);
+    far_key.order = crate::OrderId(512);
+    let untouched = existing(far_key.clone(), Money::from_cents(200));
+    let mut candidate = EnvelopeLedger::new(7, [first.clone(), untouched.clone()]).unwrap();
+    let mut release = expiry_release(first.key().clone(), ResVec::new(Money::from_cents(100), 0));
+    candidate.apply(std::slice::from_mut(&mut release)).unwrap();
+    candidate
+        .remove_terminal(std::slice::from_ref(first.key()))
+        .unwrap();
+    let before = candidate.clone();
+    candidate.rebase_private_for_tick_commit().unwrap();
+    assert!(
+        std::ptr::eq(
+            before.get(&far_key).unwrap(),
+            candidate.get(&far_key).unwrap()
+        ),
+        "处理其他账户的终结行不应重建未触及 page"
+    );
+    assert_eq!(candidate.get(&far_key).unwrap(), &untouched);
+    assert_eq!(candidate.next_receipt_index(), before.next_receipt_index());
+    assert_eq!(candidate.terminal_count(), 0);
+    candidate.validate_complete_evidence().unwrap();
+}
+
+#[test]
+fn hydration_rejects_same_length_field_key_and_terminal_mismatches_atomically() {
+    let first = existing(key(), Money::from_cents(100));
+    let second =
+        Envelope::tick_start_existing(second_key(), Money::ZERO, 100, audit_with_remaining(100));
+    let authority = EnvelopeLedger::new(7, [first.clone(), second.clone()]).unwrap();
+    let field = existing(key(), Money::from_cents(101));
+    let changed_audit = Envelope::tick_start_existing(
+        key(),
+        Money::from_cents(100),
+        0,
+        EnvelopeAudit {
+            limit: Money::from_cents(2),
+            ..first.audit()
+        },
+    );
+    for projected in [
+        vec![field, second.clone()],
+        vec![changed_audit, second.clone()],
+        vec![first.clone(), extra()],
+    ] {
+        let mut candidate = authority.clone();
+        assert!(candidate.hydrate_or_validate(projected).is_err());
+        assert_eq!(candidate, authority);
+    }
+    let mut empty = EnvelopeLedger::new(7, []).unwrap();
+    let before = empty.clone();
+    assert!(empty
+        .hydrate_or_validate([first.clone(), first.clone()])
+        .is_err());
+    assert_eq!(empty, before);
+    for mut candidate in [empty, authority] {
+        candidate
+            .terminal_envelopes
+            .insert(first.key().clone(), first.clone());
+        let before = candidate.clone();
+        assert!(
+            matches!(candidate.hydrate_or_validate([first.clone(), second.clone()]),
+            Err(super::StepFatal::InvariantViolation { description, .. })
+                if description == "live projection overlaps terminal envelope evidence")
+        );
+        assert_eq!(candidate, before);
+    }
+}
+
+#[test]
+fn full_evidence_parallel_threshold_and_mixed_terminal_rows_preserve_first_error() {
+    for count in [511_u64, 512, 513] {
+        let values = (0..count).map(|index| {
+            Envelope::tick_start_existing(
+                EnvelopeKey {
+                    account: crate::AccountId(index),
+                    stock: crate::StockId(0),
+                    order: crate::OrderId(index),
+                    side: crate::Side::Buy,
+                },
+                Money::from_cents(1),
+                0,
+                audit(),
+            )
+        });
+        let mut ledger = EnvelopeLedger::new(7, values).unwrap();
+        // 用真实 release transition 建立 terminal 行，保留累积守恒证据。
+        let terminal_key = ledger.envelopes.keys().next_back().unwrap().clone();
+        let mut release =
+            expiry_release(terminal_key.clone(), ResVec::new(Money::from_cents(1), 0));
+        ledger.apply(std::slice::from_mut(&mut release)).unwrap();
+        ledger
+            .remove_terminal(std::slice::from_ref(&terminal_key))
+            .unwrap();
+        assert_eq!(ledger.terminal_count(), 1);
+        ledger.validate_complete_evidence().unwrap();
+        let early = ledger.iter().next().unwrap().0.clone();
+        let later = ledger.iter().nth(400).unwrap().0.clone();
+        ledger.audits.get_mut(&early).unwrap().limit = Money::from_cents(2);
+        // 后续行制造不同的 overlap 错误，证据 map 的数量仍与行数对应。
+        // 应先报告更早行的 audit mismatch，而不是按 worker 完成顺序选错。
+        ledger.terminal_envelopes.insert(
+            later.clone(),
+            Envelope::tick_start_existing(later, Money::ZERO, 0, audit()),
+        );
+        let extra_key = EnvelopeKey {
+            account: crate::AccountId(count + 1),
+            stock: crate::StockId(0),
+            order: crate::OrderId(count + 1),
+            side: crate::Side::Buy,
+        };
+        ledger.audits.insert(extra_key.clone(), audit());
+        ledger
+            .conservation
+            .insert(extra_key, super::ledger::ConservationState::EMPTY);
+        let before = ledger.clone();
+        for threads in [1, 4] {
+            let error = crate::compute::ComputeContext::from_workers(threads)
+                .install(|| ledger.validate_complete_evidence())
+                .unwrap_err();
+            assert!(
+                matches!(error, super::StepFatal::InvariantViolation { description, .. }
+                if description == "envelope audit row disagrees with envelope")
+            );
+            assert_eq!(ledger, before);
+        }
+    }
+}
+
+#[test]
+fn nonempty_hydration_checks_projection_without_constructing_a_replacement_ledger() {
+    let first = existing(key(), Money::from_cents(100));
+    let second =
+        Envelope::tick_start_existing(second_key(), Money::ZERO, 100, audit_with_remaining(100));
+    let mut authority = EnvelopeLedger::new(7, [first.clone(), second.clone()]).unwrap();
+    let before = authority.clone();
+    super::ledger::LEDGER_CONSTRUCTION_COUNT.with(|count| count.set(0));
+    authority
+        .hydrate_or_validate([second.clone(), first.clone()])
+        .unwrap();
+    assert_eq!(authority, before);
+    assert_eq!(
+        super::ledger::LEDGER_CONSTRUCTION_COUNT.with(|count| count.get()),
+        0,
+        "只验证已有 ledger，不应重新构造全部证据行"
+    );
+    assert!(authority
+        .hydrate_or_validate([first.clone(), second.clone(), first.clone()])
+        .is_err());
+    assert_eq!(authority, before);
+    assert!(authority.hydrate_or_validate([first]).is_err());
+    assert_eq!(authority, before);
+}
+
+#[test]
+fn unchanged_tick_rebase_keeps_live_rows_shared_without_discarding_audit() {
+    let envelope = existing(key(), Money::from_cents(100));
+    let authority = EnvelopeLedger::new(7, [envelope.clone()]).unwrap();
+    let mut candidate = authority.clone();
+    candidate.rebase_private_for_tick_commit().unwrap();
+    assert!(
+        std::ptr::eq(
+            authority.get(envelope.key()).unwrap(),
+            candidate.get(envelope.key()).unwrap()
+        ),
+        "未变化的跨 tick 行不能在 rebase 中重复复制"
+    );
+    assert_eq!(candidate.get(envelope.key()).unwrap(), &envelope);
+    candidate.validate_complete_evidence().unwrap();
+}
+
+#[test]
+fn ledger_clone_shares_live_rows_until_mutation_and_keeps_authority_isolated() {
+    let envelope = existing(key(), Money::from_cents(100));
+    let authority = EnvelopeLedger::new(7, [envelope.clone()]).unwrap();
+    let mut candidate = authority.clone();
+    assert!(
+        std::ptr::eq(
+            authority.get(envelope.key()).unwrap(),
+            candidate.get(envelope.key()).unwrap()
+        ),
+        "未修改的 live ledger 必须共享不可变行"
+    );
+    candidate.envelopes.remove(envelope.key());
+    assert_eq!(authority.get(envelope.key()).unwrap(), &envelope);
+    assert!(candidate.get(envelope.key()).is_err());
+}
+
+#[test]
+fn evidence_validation_reuses_immutable_ledger_and_rechecks_mutated_maps() {
+    let envelope = existing(key(), Money::from_cents(100));
+    let authority = EnvelopeLedger::new(7, [envelope.clone()]).unwrap();
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    authority.validate_complete_evidence().unwrap();
+    let candidate = authority.clone();
+    candidate.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        1,
+        "相同 ledger 不应重复全量审计"
+    );
+    let corruptions: [fn(&mut EnvelopeLedger); 4] = [
+        |ledger| {
+            ledger.envelopes.remove(&key());
+        },
+        |ledger| {
+            ledger.audits.remove(&key());
+        },
+        |ledger| {
+            ledger.conservation.remove(&key());
+        },
+        |ledger| {
+            let value = ledger.envelopes.get(&key()).unwrap().clone();
+            ledger.terminal_envelopes.insert(key(), value);
+        },
+    ];
+    for corrupt in corruptions {
+        let mut changed = authority.clone();
+        corrupt(&mut changed);
+        assert!(
+            changed.validate_complete_evidence().is_err(),
+            "mutation 后不得复用旧成功审计"
+        );
+        authority.validate_complete_evidence().unwrap();
+    }
+    assert_eq!(authority.get(envelope.key()).unwrap(), &envelope);
+}
+
+#[test]
 fn hydration_installs_empty_or_validates_exact_without_cursor_change() {
     let envelope = existing(key(), Money::from_cents(100));
     let mut ledger = EnvelopeLedger::new(7, []).unwrap();
@@ -161,6 +393,13 @@ fn next_tick_rebase_preserves_cumulative_fee_audit_and_receipt_cursor() {
     assert_eq!(ledger.next_receipt_index(), 42);
 
     let authoritative = ledger.clone();
+    // 无新成交的下一 tick 使用 fastpath，仍需保留名义费用、实收及历史欠费。
+    ledger.rebase_private_for_tick_commit().unwrap();
+    assert!(std::ptr::eq(
+        authoritative.get(&key).unwrap(),
+        ledger.get(&key).unwrap()
+    ));
+    assert_eq!(ledger.get(&key).unwrap().audit(), audit_after_first);
     let projected_without_fee_history = Envelope::tick_start_existing(
         key.clone(),
         Money::ZERO,
@@ -572,7 +811,7 @@ fn seller_fill_receipt(
 fn third_key() -> EnvelopeKey {
     EnvelopeKey {
         account: crate::AccountId(2),
-        stock: crate::StockCode("600003".to_owned()),
+        stock: crate::StockId(2),
         order: crate::OrderId(3),
         side: crate::Side::Buy,
     }
@@ -623,4 +862,301 @@ fn charged_component_discontinuity_is_rejected_transactionally() {
     };
     assert!(ledger.apply(&mut receipts).is_err());
     assert_eq!(ledger, before);
+}
+
+#[test]
+fn borrowed_projection_gate_preserves_owned_gate_errors_and_map_key_checks() {
+    let first = existing(key(), Money::from_cents(100));
+    let second =
+        Envelope::tick_start_existing(second_key(), Money::ZERO, 100, audit_with_remaining(100));
+    let authority = EnvelopeLedger::new(7, [first.clone(), second.clone()]).unwrap();
+    let field = existing(key(), Money::from_cents(101));
+    let audit = Envelope::tick_start_existing(
+        key(),
+        Money::from_cents(100),
+        0,
+        EnvelopeAudit {
+            limit: Money::from_cents(2),
+            ..first.audit()
+        },
+    );
+    let mut terminal = authority.clone();
+    terminal
+        .terminal_envelopes
+        .insert(first.key().clone(), first.clone());
+    let mut wrong_map_key = authority.clone();
+    *wrong_map_key.envelopes.get_mut(first.key()).unwrap() = second.clone();
+    for source in [authority, terminal, wrong_map_key] {
+        for mut projections in [
+            vec![first.clone(), second.clone()],
+            vec![field.clone(), second.clone()],
+            vec![audit.clone(), second.clone()],
+            vec![first.clone()],
+            vec![first.clone(), extra()],
+            vec![first.clone(), first.clone()],
+            vec![],
+        ] {
+            projections.sort_by(|left, right| left.key().cmp(right.key()));
+            let borrowed = projections
+                .iter()
+                .map(|envelope| super::BorrowedTickStartEnvelope {
+                    account: envelope.key().account,
+                    stock: &envelope.key().stock,
+                    order: envelope.key().order,
+                    side: envelope.key().side,
+                    live: envelope.live(),
+                    audit: envelope.audit(),
+                })
+                .collect::<Vec<_>>();
+            let mut owned_candidate = source.clone();
+            let owned_result = owned_candidate.hydrate_or_validate(projections.clone());
+            let borrowed_result = source.validate_borrowed_tick_start_projection(&borrowed);
+            assert_eq!(borrowed_result, owned_result);
+        }
+    }
+}
+
+#[test]
+fn active_tick_rebase_carries_complete_evidence_proof_into_the_next_read_only_gate() {
+    let first = existing(key(), Money::from_cents(100));
+    let mut untouched_key = key();
+    untouched_key.stock = crate::StockId(2);
+    untouched_key.order = crate::OrderId(3);
+    let untouched = existing(untouched_key, Money::from_cents(200));
+    let mut ledger = EnvelopeLedger::new(41, [first.clone(), untouched.clone()]).unwrap();
+    let mut receipt = expiry_release(first.key().clone(), ResVec::new(Money::from_cents(100), 0));
+    ledger.apply(std::slice::from_mut(&mut receipt)).unwrap();
+    ledger
+        .remove_terminal(std::slice::from_ref(first.key()))
+        .unwrap();
+    ledger.rebase_private_for_tick_commit().unwrap();
+    let before = ledger.clone();
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        0,
+        "rebase 已校验来源与全部变化行，应复用这份完整证据而非立即再次扫描"
+    );
+    assert_eq!(ledger, before);
+    assert_eq!(ledger.get(untouched.key()).unwrap(), &untouched);
+    assert_eq!(ledger.terminal_count(), 0);
+    assert_eq!(ledger.next_receipt_index(), 42);
+}
+
+#[test]
+fn rebase_proof_preserves_seller_fee_debt_and_invalidates_on_each_map_mutation() {
+    let config = GameConfig::proposed_defaults();
+    let seller_key = second_key();
+    let mut ledger = EnvelopeLedger::new(
+        41,
+        [Envelope::created_at_validation(
+            seller_key.clone(),
+            Money::ZERO,
+            3,
+            EnvelopeAudit {
+                limit: Money::from_cents(1000),
+                remaining_qty: 3,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                nominal: FeeComponents::ZERO,
+                charged: FeeComponents::ZERO,
+            },
+        )],
+    )
+    .unwrap();
+    let mut receipt = seller_fill_receipt(
+        &config,
+        seller_key.clone(),
+        ledger.get(&seller_key).unwrap().audit(),
+        100,
+    );
+    ledger.apply(std::slice::from_mut(&mut receipt)).unwrap();
+    let audit = ledger.get(&seller_key).unwrap().audit();
+    assert!(audit.nominal.total().unwrap() > audit.charged.total().unwrap());
+    ledger.rebase_private_for_tick_commit().unwrap();
+    let expected = EnvelopeLedger::new(
+        42,
+        [Envelope::tick_start_existing(
+            seller_key.clone(),
+            Money::ZERO,
+            2,
+            audit,
+        )],
+    )
+    .unwrap();
+    assert_eq!(ledger, expected);
+    assert_eq!(
+        serde_json::to_vec(&ledger.hash_projection()).unwrap(),
+        serde_json::to_vec(&expected.hash_projection()).unwrap()
+    );
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        0
+    );
+    // 独立新建的等值 ledger 没有该构造证明，必须执行原完整门禁。
+    expected.validate_complete_evidence().unwrap();
+    let corruptions: [fn(&mut EnvelopeLedger, &EnvelopeKey); 4] = [
+        |ledger, key| {
+            ledger.envelopes.remove(key);
+        },
+        |ledger, key| {
+            ledger.audits.remove(key);
+        },
+        |ledger, key| {
+            ledger.conservation.remove(key);
+        },
+        |ledger, key| {
+            let row = ledger.envelopes.get(key).unwrap().clone();
+            ledger.terminal_envelopes.insert(key.clone(), row);
+        },
+    ];
+    for corrupt in corruptions {
+        let mut changed = ledger.clone();
+        corrupt(&mut changed, &seller_key);
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+        assert!(changed.validate_complete_evidence().is_err());
+        assert_eq!(
+            super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+            1
+        );
+        ledger.validate_complete_evidence().unwrap();
+        assert_eq!(ledger, expected);
+    }
+}
+
+#[test]
+fn rebase_proof_handles_exact_cash_share_totals_and_all_terminal_removal() {
+    for shares in [false, true] {
+        let identity = if shares { second_key() } else { key() };
+        let mut ledger = EnvelopeLedger::new(
+            77,
+            [Envelope::created_at_validation(
+                identity.clone(),
+                if shares {
+                    Money::ZERO
+                } else {
+                    Money::from_cents(i64::MAX)
+                },
+                if shares { u32::MAX } else { 0 },
+                audit(),
+            )],
+        )
+        .unwrap();
+        ledger.rebase_private_for_tick_commit().unwrap();
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+        ledger.validate_complete_evidence().unwrap();
+        assert_eq!(
+            super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+            0
+        );
+        let expected = EnvelopeLedger::new(
+            77,
+            [Envelope::tick_start_existing(
+                identity,
+                if shares {
+                    Money::ZERO
+                } else {
+                    Money::from_cents(i64::MAX)
+                },
+                if shares { u32::MAX } else { 0 },
+                audit(),
+            )],
+        )
+        .unwrap();
+        expected.validate_complete_evidence().unwrap();
+        assert_eq!(ledger, expected);
+    }
+    let first = existing(key(), Money::from_cents(100));
+    let mut ledger = EnvelopeLedger::new(41, [first.clone()]).unwrap();
+    let mut release = expiry_release(first.key().clone(), first.live());
+    ledger.apply(std::slice::from_mut(&mut release)).unwrap();
+    ledger
+        .remove_terminal(std::slice::from_ref(first.key()))
+        .unwrap();
+    ledger.rebase_private_for_tick_commit().unwrap();
+    super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    assert_eq!(
+        super::ledger::EVIDENCE_VALIDATION_COUNT.with(|count| count.get()),
+        0
+    );
+    assert_eq!(ledger, EnvelopeLedger::new(42, []).unwrap());
+}
+
+#[test]
+fn dense_complete_evidence_uses_one_parallel_row_mapping_without_changing_the_ledger() {
+    let rows = (0..513).map(|index| {
+        let mut envelope_key = key();
+        envelope_key.account = crate::AccountId(index);
+        envelope_key.order = crate::OrderId(index);
+        existing(envelope_key, Money::from_cents(1))
+    });
+    let ledger = EnvelopeLedger::new(0, rows).unwrap();
+    let before = ledger.clone();
+    super::ledger_conservation::ROW_MAPPING_PASSES.with(|count| count.set(0));
+    ledger.validate_complete_evidence().unwrap();
+    super::ledger_conservation::ROW_MAPPING_PASSES.with(|count| {
+        assert_eq!(
+            count.get(),
+            1,
+            "完整门禁应在一轮并行映射中保留守恒和证据校验，避免重复枚举与等待"
+        )
+    });
+    assert_eq!(ledger, before);
+}
+
+#[test]
+fn complete_evidence_defers_early_audit_error_until_conservation_resources_and_shape_pass() {
+    for count in [511, 512, 513] {
+        let rows = (0..count).map(|index| {
+            let mut envelope_key = key();
+            envelope_key.account = crate::AccountId(index);
+            envelope_key.order = crate::OrderId(index);
+            existing(envelope_key, Money::from_cents(1))
+        });
+        let source = EnvelopeLedger::new(0, rows).unwrap();
+        let first = source.envelopes.keys().next().unwrap().clone();
+        let last = source.envelopes.keys().next_back().unwrap().clone();
+        for fault in 0..4 {
+            let mut ledger = source.clone();
+            ledger.audits.get_mut(&first).unwrap().limit = Money::from_cents(2);
+            let description = match fault {
+                0 => {
+                    ledger.conservation.remove(&last);
+                    "missing conservation row"
+                }
+                1 => {
+                    ledger
+                        .envelopes
+                        .insert(last.clone(), existing(last.clone(), Money::ZERO));
+                    "live envelope row has no live resources"
+                }
+                2 => {
+                    let envelope = ledger.envelopes.remove(&last).unwrap();
+                    ledger.terminal_envelopes.insert(last.clone(), envelope);
+                    "terminal envelope row still has live resources"
+                }
+                3 => {
+                    ledger.audits.remove(&last);
+                    "ledger evidence rows do not match envelope rows"
+                }
+                _ => unreachable!(),
+            };
+            let before = ledger.clone();
+            for threads in [1, 4] {
+                let error = crate::compute::ComputeContext::from_workers(threads)
+                    .install(|| ledger.validate_complete_evidence())
+                    .unwrap_err();
+                assert_eq!(
+                    error,
+                    super::ledger_validation::invariant(description),
+                    "{count}行/{threads}worker/fault{fault}应保留全门禁错误优先级"
+                );
+                assert_eq!(ledger, before);
+            }
+        }
+    }
 }

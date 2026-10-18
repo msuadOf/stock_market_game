@@ -16,17 +16,15 @@
 #[global_allocator]
 static NATIVE_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(test)]
-#[macro_use]
-#[path = "../test-support/simple_company.rs"]
-mod simple_company_test_fixture;
+pub mod shared_history;
+pub(crate) mod u64_decimal;
 
 pub mod indicators;
 pub mod money;
 pub use money::{Money, MoneyError};
 
 pub mod intraday_average;
-pub use intraday_average::{calculate_intraday_average, calculate_intraday_average_curve, parse_turnover_cents, IntradayAverage, IntradayAverageError, IntradayAverageInput};
+pub use intraday_average::{calculate_intraday_average, IntradayAverage, IntradayAverageError};
 
 pub mod config;
 pub use config::{ConfigError, GameConfig};
@@ -41,6 +39,12 @@ pub use strategy::{
     StrategyData, StrategyDecision, StrategyError, StrategyFactory, StrategyFamily, StrategyParams,
     StrategyProfile, TargetPolicy, ZiNoiseStrategy,
 };
+
+pub mod error;
+pub use error::{ymd_context, ValidationFault};
+
+pub mod stock;
+pub use stock::{StockCatalog, StockCatalogError, StockId, StockMeta};
 
 pub mod account;
 pub use account::{Account, AccountError, AccountKind, Position, StockCode};
@@ -61,23 +65,24 @@ pub mod market;
 pub use market::{Market, MarketError};
 
 pub mod compute;
-pub use compute::{create_backend, ComputeBackend, ComputeError, ComputeMode, CpuBackend};
+pub use compute::{
+    create_backend, ComputeBackend, ComputeContext, ComputeError, ComputeInitError, ComputeMode,
+    ComputeWork, CpuBackend,
+};
 
 pub mod verification_evidence;
 
 pub mod session;
 pub use session::{
-    CompanyReportCorrection, CompletedReportCorrection, ReportCorrectionEpoch, ReportCorrectionStatus,
-    PersonalTradeConfirmation, SharedSessionIngress,
     decode_save_slot, AccountSnap, AuctionOrderSnap, BetweenKindDistribution, DailyCandle,
     DailyTradeStats, Event, FloatAllocation, GameSession, IngressReceiptCursors, MarketSnap,
-    NpcAttentionState, NpcSetup, ParentOrderPlan, PendingNpcBatch, PendingPlanEvent, PositionSnap,
-    ReceiptBearingIntent, RejectionReason, SaveDecodeLimits, SaveParentOrderPlan, SaveSlot,
+    NpcAttentionState, NpcSetup, PositionSnap,
+    ReceiptBearingIntent, RejectionReason, SaveDecodeLimits, SaveSlot,
     SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank, SavedLiveEnvelope,
     SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition, SavedRetailReceiptIdentity,
-    SavedRuntimeState, SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64,
-    StockExchange, StockSpec, TradingPhase, WithinKindDistribution, MAX_SAVE_DECODE_BYTES,
-    SIMULATION_POLICY_ID,
+    SavedRuntimeState, SecurityCategory, SessionError, SessionSetup, SharedSessionIngress,
+    Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase, WithinKindDistribution,
+    MAX_SAVE_DECODE_BYTES, SIMULATION_POLICY_ID,
 };
 
 pub mod diagnostics;
@@ -124,3 +129,6 @@ pub use accounting::{
 pub mod company;
 
 pub mod information;
+
+/// std-thread 所有权转移模型运行时原语（身份/实体/事实/批次协议类型，批 1 类型先行）。
+pub mod runtime;

@@ -385,8 +385,8 @@ async function main() {
     await client.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 1180, deviceScaleFactor: 1, mobile: true });
     await client.send("Page.navigate", { url: config.url });
     await enterGame(client);
-    const isolated = await evaluate(client, "crossOriginIsolated");
-    if (!isolated) throw new Error("页面未启用 crossOriginIsolated，WASM 多线程性能测试无效；请检查 COOP/COEP 响应头");
+    // 批 9 A10 收尾：跨源隔离前置检查随 wasm 多核退役删除——串行
+    // wasm 性能采样无隔离需求。
 
     await evaluate(client, `(() => {
       window.__marketPerfProbe = { startedAt: performance.now(), frames: 0, longTasks: [], layoutShift: 0 };

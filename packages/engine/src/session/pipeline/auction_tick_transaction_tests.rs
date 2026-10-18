@@ -1,14 +1,8 @@
 use super::account_validation_context::build_account_validation_context;
 use super::adaptive_plan_chain::AdaptivePlanChainCoordinator;
-use super::auction_tick_transaction::{
-    apply_tick_shadow_auction_transaction_with_roots_for_test, prepare_auction_tick,
-    validate_execution_round,
+use super::market_tick_transaction::{
+    apply_tick_shadow_market_transaction_with_roots_for_test, prepare_market_tick,
 };
-use super::stock_auction::auction_day_end::{
-    apply_incremental_auction_finish, finish_incremental_auction_coordinator,
-    IncrementalAuctionStockCoordinator,
-};
-use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
 use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
 use crate::plans::{
@@ -25,6 +19,7 @@ fn fixture() -> (GameSession, PlanExecutionRequest) {
     session.state.setup.auction_ticks = 900;
     session.state.setup.ticks_per_day = 15_300;
     session.state.tick = 0;
+    session.fixture_sync_market_modes_for_test();
     assert_eq!(session.phase(), crate::TradingPhase::CallAuction);
     (session, request)
 }
@@ -42,11 +37,11 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
     setup.ticks_per_day = 15_300;
     let mut authority = GameSession::new(setup, 41).unwrap();
     let retail = AccountId(1);
-    let code = authority.state.setup.stocks[0].code.clone();
+    let code = authority
+        .stock_id(&authority.state.setup.stocks[0].code.0)
+        .unwrap();
     authority
-        .state
-        .accounts
-        .get_mut(&retail)
+        .fixture_account_mut(&retail)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let mut setup_events = Vec::new();
@@ -74,16 +69,15 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
         retail,
         tick,
     );
-    authority.state.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
 
-    let committed = prepare_auction_tick(&mut authority)
+    let committed = prepare_market_tick(&mut authority)
         .expect("real retail auction review must complete")
         .commit();
     let cancel_seq = committed
         .commit
         .tick
-        .events
+        .event_values()
         .iter()
         .find_map(|event| match event {
             Event::OrderCanceled {
@@ -95,7 +89,7 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
     let (accept_seq, new_id, new_price) = committed
         .commit
         .tick
-        .events
+        .event_values()
         .iter()
         .find_map(|event| match event {
             Event::OrderAccepted {
@@ -109,12 +103,44 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
         })
         .expect("review must accept one new quote");
 
-    assert_eq!(accept_seq, cancel_seq + 1);
+    // seq 只标识事件交付，不代表业务先后；直接核对本股实际执行的 typed facts。
+    use super::continuous_matching::{
+        ContinuousCancelFact, ContinuousExecutionOutcome, ContinuousPlaceFact,
+    };
+    let cancel_position = committed.output.execution_facts.iter().position(|fact| matches!(
+        &fact.outcome, ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled { account, order_id, .. })
+            if *account == retail && *order_id == old_id,
+    )).expect("必须保留实际撤旧事实");
+    let place_position = committed.output.execution_facts.iter().position(|fact| matches!(
+        &fact.outcome, ContinuousExecutionOutcome::Place { fact: ContinuousPlaceFact::Resting { account, order_id, .. }, .. }
+            if *account == retail && *order_id == new_id,
+    )).expect("必须保留实际新单挂入事实");
+    assert!(
+        cancel_position < place_position,
+        "同股真实执行必须先撤旧再挂新，不能从输出 seq 推断"
+    );
+    assert_ne!(cancel_seq, accept_seq);
     assert_ne!(new_price, Money::from_cents(900));
-    let own_orders = authority.state.auction_orders[&code]
-        .iter()
-        .filter(|order| order.owner == retail)
-        .collect::<Vec<_>>();
+    let snapshot_after = authority.snapshot_inner(false, true);
+    let reserved = snapshot_after.accounts[&retail].reserved_cash;
+    let one_order = crate::session::buy_order_reservation(
+        &authority.state.setup.config,
+        new_price,
+        100,
+        Money::ZERO,
+    )
+    .unwrap();
+    assert_eq!(reserved, one_order, "同一 tick 的换单不得双冻结旧单与新单");
+    let projected = authority.auction_order_projection_for_test();
+    let own_orders = projected
+        .get(&code)
+        .map(|orders| {
+            orders
+                .iter()
+                .filter(|order| order.owner == retail)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     assert!(
         matches!(own_orders.as_slice(), [order] if order.order_id == new_id.0 && order.limit == new_price)
     );
@@ -133,9 +159,7 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
     )
     .unwrap();
     authority
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_set_cash(one_order_cash);
     for _ in 0..2 {
@@ -152,7 +176,7 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
     }
     let rejected_id = OrderId(authority.state.next_order_id);
 
-    let committed = prepare_auction_tick(&mut authority)
+    let committed = prepare_market_tick(&mut authority)
         .expect("市场拒绝属于普通 StockProcessing 结果")
         .commit();
 
@@ -167,23 +191,17 @@ fn production_market_rejection_consumes_id_and_does_not_refund_account_validatio
         ]
     ));
     assert_eq!(authority.state.next_order_id, rejected_id.0 + 1);
-    assert_eq!(committed.output.auction.receipts.len(), 1);
-    assert_eq!(
-        committed.output.auction.receipts[0].kind,
-        ReceiptKind::Reject
-    );
-    assert_eq!(
-        committed.output.auction.receipts[0].envelope.order,
-        rejected_id
-    );
-    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+    assert_eq!(committed.output.receipts.len(), 1);
+    assert_eq!(committed.output.receipts[0].kind, ReceiptKind::Reject);
+    assert_eq!(committed.output.receipts[0].envelope.order, rejected_id);
+    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
         event,
         Event::IntentRejected {
             reason: RejectionReason::AuctionLimitOrderRequired,
             ..
         }
     )));
-    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
         event,
         Event::IntentRejected {
             reason: RejectionReason::InsufficientCash,
@@ -214,9 +232,7 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
     )
     .unwrap();
     authority
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .fixture_set_cash(one_order_cash);
     authority
@@ -242,7 +258,7 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
         .unwrap();
     let rejected_market_id = OrderId(authority.state.next_order_id);
 
-    let committed = prepare_auction_tick(&mut authority)
+    let committed = prepare_market_tick(&mut authority)
         .expect("Auction 市场拒绝属于普通 StockProcessing 结果")
         .commit();
 
@@ -259,19 +275,19 @@ fn production_market_rejection_consumes_the_shared_account_validation_budget_bef
         ]
     ));
     assert_eq!(authority.state.next_order_id, rejected_market_id.0 + 1);
-    assert_eq!(committed.output.auction.receipts.len(), 1);
+    assert_eq!(committed.output.receipts.len(), 1);
     assert_eq!(
-        committed.output.auction.receipts[0].envelope.order,
+        committed.output.receipts[0].envelope.order,
         rejected_market_id
     );
-    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
         event,
         Event::IntentRejected {
             reason: RejectionReason::AuctionLimitOrderRequired,
             ..
         }
     )));
-    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+    assert!(committed.commit.tick.event_values().iter().any(|event| matches!(
         event,
         Event::IntentRejected {
             reason: RejectionReason::InsufficientCash,
@@ -307,7 +323,7 @@ fn production_market_validation_rejects_quantity_and_shares_before_allocating_id
     }
     let rejected_id = OrderId(authority.state.next_order_id);
 
-    let committed = prepare_auction_tick(&mut authority)
+    let committed = prepare_market_tick(&mut authority)
         .expect("AccountValidation 业务拒绝与 StockProcessing 市场拒绝必须原子提交")
         .commit();
 
@@ -356,15 +372,9 @@ fn production_market_validation_rejects_quantity_and_shares_before_allocating_id
         assert_eq!(identity.2, expected_id);
     }
     assert_eq!(authority.state.next_order_id, rejected_id.0 + 1);
-    assert_eq!(committed.output.auction.receipts.len(), 1);
-    assert_eq!(
-        committed.output.auction.receipts[0].kind,
-        ReceiptKind::Reject
-    );
-    assert_eq!(
-        committed.output.auction.receipts[0].envelope.order,
-        rejected_id
-    );
+    assert_eq!(committed.output.receipts.len(), 1);
+    assert_eq!(committed.output.receipts[0].kind, ReceiptKind::Reject);
+    assert_eq!(committed.output.receipts[0].envelope.order, rejected_id);
 }
 
 fn opening_completion_fixture(
@@ -397,22 +407,22 @@ fn opening_completion_fixture(
         })
         .unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
+        .fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), seller_qty, Money::from_cents(900))
         .unwrap();
-    session.state.auction_orders.insert(
-        code.clone(),
-        vec![crate::AuctionOrderSnap {
-            owner: AccountId(0),
-            side: Side::Sell,
-            limit: Money::from_cents(900),
-            qty: seller_qty,
-            order_id: 30,
-        }],
-    );
+    session
+        .fixture_append_auction_orders(
+            code.clone(),
+            vec![crate::AuctionOrderSnap {
+                owner: AccountId(0),
+                side: Side::Sell,
+                limit: Money::from_cents(900),
+                qty: seller_qty,
+                order_id: 30,
+            }],
+        )
+        .unwrap();
     session.state.next_order_id = 31;
     session.hydrate_or_validate_envelope_ledger().unwrap();
     (
@@ -438,232 +448,26 @@ fn opening_completion_fixture(
 }
 
 fn commit_with_roots(authority: &mut GameSession, request: PlanExecutionRequest) {
-    authority.state.pending_npc = None;
+    drop(commit_with_roots_returning(authority, request));
+}
+
+fn commit_with_roots_returning(
+    authority: &mut GameSession,
+    request: PlanExecutionRequest,
+) -> Result<Vec<Event>, ()> {
     super::npc_tick_preparation::queue_npc_for_next_tick(authority).unwrap();
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let mut plan = plan_tick(PhaseInput { session: authority }).unwrap();
-    apply_tick_shadow_auction_transaction_with_roots_for_test(&mut plan, roots).unwrap();
-    super::candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
-        .unwrap()
-        .commit();
-}
-
-fn seal(session: &mut GameSession) -> (AccountValidatorDriver, IncrementalAuctionStockCoordinator) {
-    session.hydrate_or_validate_envelope_ledger().unwrap();
-    let resources = DecisionResourceSnapshot::seal(session).unwrap();
-    let validator = AccountValidatorDriver::new(
-        resources,
-        session.state.envelope_ledger.clone(),
-        session.state.next_order_id,
-        session.state.setup.config.clone(),
-        build_account_validation_context(session).unwrap(),
-    )
+    let mut plan = plan_tick(PhaseInput { session: authority })
     .unwrap();
-    let stock_execution = IncrementalAuctionStockCoordinator::from_post_expiry(
-        prepare_incremental_auction_inputs(session).unwrap(),
-    )
-    .unwrap();
-    (validator, stock_execution)
-}
-
-fn coordinator(
-    session: &GameSession,
-    request: PlanExecutionRequest,
-) -> AdaptivePlanChainCoordinator {
-    let mut roots = PlanChainOperationBatch::empty();
-    roots.push_execution(request);
-    AdaptivePlanChainCoordinator::capture_batch(session, roots).unwrap()
-}
-
-fn execute(
-    session: &mut GameSession,
-    chain: &mut AdaptivePlanChainCoordinator,
-    validator: &mut AccountValidatorDriver,
-    stock_execution: &mut IncrementalAuctionStockCoordinator,
-) -> Option<(
-    IntentCandidate,
-    CandidateValidationOutcome,
-    Option<super::stock_auction::auction_day_end::AuctionExecutionRound>,
-)> {
-    let mut batch = chain.next_ready_batch(session).unwrap();
-    if batch.is_empty() {
-        return None;
-    }
-    assert_eq!(batch.len(), 1);
-    let candidate = batch.remove(0);
-    let outcome = validator.consume(candidate.clone()).unwrap();
-    let round = outcome.operation().map(|operation| {
-        stock_execution
-            .apply_round(vec![operation.clone()])
+    apply_tick_shadow_market_transaction_with_roots_for_test(&mut plan, roots).unwrap();
+    Ok(
+        super::candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
             .unwrap()
-    });
-    if let Some(round) = &round {
-        validate_execution_round(std::slice::from_ref(&outcome), round).unwrap();
-    }
-    chain
-        .advance_after_auction_outcomes(session, std::slice::from_ref(&outcome), round.as_ref())
-        .unwrap();
-    Some((candidate, outcome, round))
-}
-
-#[test]
-fn auction_round_validation_accepts_cross_stock_fact_reordering() {
-    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
-    setup.auction_ticks = 900;
-    setup.ticks_per_day = 15_300;
-    let mut session = GameSession::new(setup, 42).unwrap();
-    let codes = session.state.markets.keys().cloned().collect::<Vec<_>>();
-    let (mut validator, mut stock_execution) = seal(&mut session);
-    let candidates = codes
-        .iter()
-        .enumerate()
-        .map(|(index, code)| {
-            IntentCandidate::new(
-                IntentCandidateKey::player(u64::try_from(index).unwrap()),
-                AccountId(0),
-                Intent::Cancel {
-                    code: code.clone(),
-                    id: OrderId(77),
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-    let outcomes = validator.consume_round(candidates).unwrap();
-    let operations = outcomes
-        .iter()
-        .filter_map(|outcome| outcome.operation().cloned())
-        .collect::<Vec<_>>();
-    assert_eq!(operations.len(), 2);
-    let mut round = stock_execution.apply_round(operations).unwrap();
-    round.facts.reverse();
-    validate_execution_round(&outcomes, &round).unwrap();
-}
-
-#[test]
-fn auction_plan_chain_accepts_cross_stock_fact_reordering() {
-    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
-    setup.auction_ticks = 900;
-    setup.ticks_per_day = 15_300;
-    let mut session = GameSession::new(setup, 47).unwrap();
-    let (_, template) = fixture();
-    let mut roots = PlanChainOperationBatch::empty();
-    for (account, code) in [
-        (AccountId(1), crate::StockCode("600888".to_owned())),
-        (AccountId(0), crate::StockCode("600889".to_owned())),
-    ] {
-        let plan_id = session
-            .state
-            .plans
-            .create(PlanOpen {
-                account,
-                code: code.clone(),
-                direction: Side::Buy,
-                target: PlanTarget::ShareCount(100),
-                opinion: PlanOpinion {
-                    signal_score_bp: 3_000,
-                    source: OpinionSource::Blended,
-                },
-                confidence_bp: 8_000,
-                urgency: Urgency::Normal,
-                horizon_trading_days: 5,
-                created_trading_day: 0,
-            })
-            .unwrap();
-        let mut request = template.clone();
-        request.plan_id = plan_id;
-        request.allocation.plan_id = plan_id;
-        request.allocation.code = code;
-        roots.push_execution(request);
-    }
-    let (mut validator, mut stock_execution) = seal(&mut session);
-    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
-    let batch = chain.next_ready_batch(&mut session).unwrap();
-    assert_eq!(batch.len(), 2);
-    let outcomes = validator.consume_round(batch).unwrap();
-    let operations = outcomes
-        .iter()
-        .filter_map(|outcome| outcome.operation().cloned())
-        .collect();
-    let mut round = stock_execution.apply_round(operations).unwrap();
-    assert_eq!(round.facts.len(), 2);
-    round.facts.reverse();
-    validate_execution_round(&outcomes, &round).unwrap();
-    chain
-        .advance_after_auction_outcomes(&mut session, &outcomes, Some(&round))
-        .unwrap();
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
-    assert_eq!(chain.finish().unwrap().reports.len(), 2);
-}
-
-#[test]
-fn auction_plan_projection_keeps_cancel_before_replace_with_reverse_sealed_ids() {
-    let (mut session, request) = fixture();
-    let old_id = install_original_child(&mut session, &request);
-    session
-        .state
-        .envelope_ledger
-        .rebase_live_for_next_tick()
-        .unwrap();
-    let code = request.allocation.code.clone();
-    let account = session.state.plans.plan(request.plan_id).unwrap().account();
-    let (mut validator, mut stock_execution) = seal(&mut session);
-    let candidates = [
-        IntentCandidate::new(
-            IntentCandidateKey::player(0),
-            account,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: crate::LimitPrice::Fixed(Money::from_cents(901)),
-                qty: 100,
-            },
-        ),
-        IntentCandidate::new(
-            IntentCandidateKey::player(1),
-            account,
-            Intent::Cancel {
-                code: code.clone(),
-                id: old_id,
-            },
-        ),
-    ];
-    let outcomes = validator.consume_round(candidates).unwrap();
-    let new_id = outcomes[0]
-        .operation()
-        .and_then(|operation| match operation {
-            ValidatedOperation::Place(draft) => Some(draft.order_id()),
-            ValidatedOperation::Cancel { .. } => None,
-        })
-        .unwrap();
-    let operations = outcomes
-        .iter()
-        .rev()
-        .filter_map(|outcome| outcome.operation().cloned())
-        .collect::<Vec<_>>();
-    let round = stock_execution.apply_round(operations).unwrap();
-    assert_eq!(
-        round
-            .facts
-            .iter()
-            .map(|fact| fact.sealed_index)
-            .collect::<Vec<_>>(),
-        vec![1, 0]
-    );
-    validate_execution_round(&outcomes, &round).unwrap();
-
-    let mut chain =
-        AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
-            .unwrap();
-    chain
-        .project_auction_execution_round(&mut session, &round)
-        .unwrap();
-    assert_eq!(
-        session.state.parent_orders[&account][&code].active_child_order_id(),
-        Some(new_id)
-    );
-    assert_eq!(session.state.auction_orders[&code].len(), 1);
-    assert_eq!(session.state.auction_orders[&code][0].order_id, new_id.0);
+            .commit()
+            .tick
+            .event_values(),
+    )
 }
 
 fn install_original_child(session: &mut GameSession, request: &PlanExecutionRequest) -> OrderId {
@@ -679,186 +483,6 @@ fn install_original_child(session: &mut GameSession, request: &PlanExecutionRequ
         .collect::<Vec<_>>();
     assert_eq!(accepted.len(), 1, "expected one accepted auction child");
     accepted[0]
-}
-
-#[test]
-fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() {
-    let (mut session, mut request) = fixture();
-    let old_id = install_original_child(&mut session, &request);
-    session
-        .state
-        .envelope_ledger
-        .rebase_live_for_next_tick()
-        .unwrap();
-    request.decision.action = QuoteAction::Replace {
-        order_id: old_id,
-        price: Money::from_cents(901),
-        qty: 100,
-    };
-    let (mut validator, mut stock_execution) = seal(&mut session);
-    let mut chain = coordinator(&session, request.clone());
-    let mut candidates = Vec::new();
-    while let Some((candidate, _, _)) = execute(
-        &mut session,
-        &mut chain,
-        &mut validator,
-        &mut stock_execution,
-    ) {
-        candidates.push(candidate);
-    }
-
-    assert_eq!(candidates.len(), 2);
-    assert!(matches!(candidates[0].intent(), Intent::Cancel { id, .. } if *id == old_id));
-    assert!(matches!(
-        candidates[1].intent(),
-        Intent::PlaceLimit { price, .. } if *price == crate::LimitPrice::Fixed(Money::from_cents(901))
-    ));
-    let completion = chain.finish().unwrap();
-    assert!(matches!(
-        completion.reports[0].disposition,
-        PlanExecutionDisposition::Replaced { canceled_order_id, .. } if canceled_order_id == old_id
-    ));
-    let validation = validator.finish();
-    let candidates = IntentCandidateBatch::new(candidates).unwrap();
-    let finish = finish_incremental_auction_coordinator(&session, stock_execution).unwrap();
-    assert!(finish.workers.values().all(|worker| {
-        worker.finalizer.auction_tail_passes == 1
-            && worker.finalizer.auction_completion_passes == 0
-            && worker.finalizer.day_end_passes == 0
-    }));
-    let output = apply_incremental_auction_finish(
-        &mut session,
-        &candidates,
-        &validation,
-        finish,
-        Vec::new(),
-        &completion.consumed,
-    )
-    .unwrap();
-
-    assert_eq!(
-        output
-            .events
-            .iter()
-            .filter(|event| matches!(event, Event::AuctionTick { .. }))
-            .count(),
-        1
-    );
-    let active = session
-        .state
-        .plans
-        .plan(request.plan_id)
-        .unwrap()
-        .active_child_order_id();
-    assert!(active.is_some_and(|order_id| order_id != old_id));
-    assert_eq!(
-        session.state.auction_orders[&request.allocation.code].len(),
-        1
-    );
-    assert_eq!(
-        session.state.auction_orders[&request.allocation.code][0].order_id,
-        active.unwrap().0
-    );
-    assert!(
-        session.state.pending_plan_events.is_empty(),
-        "continuation 已消费的 cancel/accept 事实不得再次进入 DerivationAudit 投影"
-    );
-    let plan_account = session.state.plans.plan(request.plan_id).unwrap().account();
-    assert_eq!(
-        session.state.parent_orders[&plan_account][&request.allocation.code]
-            .active_child_order_id(),
-        active
-    );
-}
-
-#[test]
-fn auction_cancel_rejection_stops_replace_before_illegal_successor() {
-    let (mut session, mut request) = fixture();
-    let old_id = install_original_child(&mut session, &request);
-    session
-        .state
-        .envelope_ledger
-        .rebase_live_for_next_tick()
-        .unwrap();
-    request.decision.action = QuoteAction::Replace {
-        order_id: old_id,
-        price: Money::from_cents(901),
-        qty: 100,
-    };
-    let next_order_id = session.state.next_order_id;
-    let mut chain = coordinator(&session, request);
-    session.state.auction_orders.clear();
-    session.state.envelope_ledger =
-        EnvelopeLedger::new(session.state.next_receipt_base, Vec::new()).unwrap();
-    let (mut validator, mut stock_execution) = seal(&mut session);
-
-    let (candidate, _, round) = execute(
-        &mut session,
-        &mut chain,
-        &mut validator,
-        &mut stock_execution,
-    )
-    .unwrap();
-    assert!(matches!(candidate.intent(), Intent::Cancel { id, .. } if *id == old_id));
-    assert!(matches!(
-        &round.unwrap().facts[0].outcome,
-        super::stock_auction::auction_day_end::AuctionLifecycleFact::Rejected {
-            reason: RejectionReason::OrderNotFound,
-            ..
-        }
-    ));
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
-    assert_eq!(validator.output().drafts().len(), 0);
-    assert_eq!(validator.output().next_order_id_after(), next_order_id);
-    assert!(matches!(
-        chain.finish().unwrap().reports[0].disposition,
-        PlanExecutionDisposition::RouteRejected {
-            reason: RejectionReason::OrderNotFound
-        }
-    ));
-}
-
-#[test]
-fn later_auction_round_typed_failure_discards_private_tick_progress() {
-    let (mut authority, mut request) = fixture();
-    let old_id = install_original_child(&mut authority, &request);
-    authority
-        .state
-        .envelope_ledger
-        .rebase_live_for_next_tick()
-        .unwrap();
-    authority.state.next_order_id = crate::orderbook::js_safe_u64::MAX;
-    request.decision.action = QuoteAction::Replace {
-        order_id: old_id,
-        price: Money::from_cents(901),
-        qty: 100,
-    };
-    let before = authority.business_state_hash().unwrap();
-    let mut candidate = authority.clone_for_tick_shadow().unwrap();
-    let (mut validator, mut stock_execution) = seal(&mut candidate);
-    let mut chain = coordinator(&candidate, request);
-
-    execute(
-        &mut candidate,
-        &mut chain,
-        &mut validator,
-        &mut stock_execution,
-    )
-    .unwrap();
-    let place = chain.next_ready_batch(&mut candidate).unwrap().remove(0);
-    assert!(matches!(place.intent(), Intent::PlaceLimit { .. }));
-    let outcome = validator.consume(place).unwrap();
-    let error = stock_execution
-        .apply_round(vec![outcome.operation().unwrap().clone()])
-        .unwrap_err();
-
-    assert!(matches!(error, StepFatal::InvariantViolation { .. }));
-    assert_eq!(authority.business_state_hash().unwrap(), before);
-    assert_eq!(
-        authority.state.auction_orders[&request_code(&authority)].len(),
-        1
-    );
-    assert!(candidate.state.auction_orders.is_empty());
 }
 
 #[test]
@@ -881,31 +505,30 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
     let next_order_before = authority.state.next_order_id;
-    let queue_before = serde_json::to_value(&authority.state.auction_orders).unwrap();
+    let queue_before =
+        serde_json::to_value(&authority.auction_order_projection_for_test()).unwrap();
     let ledger_before = authority.state.envelope_ledger.clone();
     let plans_before = serde_json::to_value(&authority.state.plans).unwrap();
-    let parent_before = serde_json::to_value(&authority.state.parent_orders).unwrap();
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
+    let mut plan = plan_tick(PhaseInput { session: &authority })
     .unwrap();
 
-    let result = apply_tick_shadow_auction_transaction_with_roots_for_test(&mut plan, roots);
+    let result = apply_tick_shadow_market_transaction_with_roots_for_test(&mut plan, roots);
+    eprintln!("DBG late failure result {:?}", result.as_ref().err());
 
     assert!(matches!(
         result,
         Err(
-            super::auction_tick_transaction::AuctionTransactionError::Preparation(
+            super::market_tick_transaction::MarketTransactionError::Preparation(
                 StepFatal::InvariantViolation { .. }
             )
         )
     ));
-    assert!(plan.state.execute(|_| Ok(())).is_err());
+    assert!(plan.execute(|_| Ok(())).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
     assert_eq!(authority.state.next_order_id, next_order_before);
     assert_eq!(
-        serde_json::to_value(&authority.state.auction_orders).unwrap(),
+        serde_json::to_value(&authority.auction_order_projection_for_test()).unwrap(),
         queue_before
     );
     assert_eq!(authority.state.envelope_ledger, ledger_before);
@@ -913,10 +536,7 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
         serde_json::to_value(&authority.state.plans).unwrap(),
         plans_before
     );
-    assert_eq!(
-        serde_json::to_value(&authority.state.parent_orders).unwrap(),
-        parent_before
-    );
+    // 母单镜像断言随镜像删除（owner8 执行腿唯一所有权）；无漂移不变量由 plans_before 覆盖。
 }
 
 #[test]
@@ -935,7 +555,7 @@ fn prepared_parent_auction_seam_commits_one_complete_tick() {
         )
         .unwrap();
 
-    let committed = prepare_auction_tick(&mut authority).unwrap().commit();
+    let committed = prepare_market_tick(&mut authority).unwrap().commit();
 
     assert_eq!(
         committed.output.candidates.candidates()[0].key(),
@@ -951,19 +571,25 @@ fn prepared_parent_auction_seam_commits_one_complete_tick() {
         vec![IntentCandidateKey::player(0)]
     );
     assert!(committed.output.plan_reports.is_empty());
-    assert_eq!(committed.output.auction.finalizer.auction_tail_passes, 1);
+    assert_eq!(
+        committed.output.auction_finalizers[0].auction_tail_passes(),
+        1
+    );
     assert_eq!(
         committed
             .commit
             .tick
-            .events
+            .event_values()
             .iter()
             .filter(|event| matches!(event, Event::AuctionTick { .. }))
             .count(),
         1
     );
     assert!(authority.state.pending_player.is_empty());
-    assert_eq!(authority.state.auction_orders[&code].len(), 1);
+    assert_eq!(
+        authority.auction_order_projection_for_test()[&code].len(),
+        1
+    );
     assert_eq!(
         authority.business_state_hash().unwrap(),
         committed.commit.receipt.business_hash()
@@ -975,13 +601,13 @@ fn parent_transaction_applies_opening_completion_full_fill_once() {
     let (mut authority, request) = opening_completion_fixture(100, 100);
     let plan_id = request.plan_id;
 
-    commit_with_roots(&mut authority, request);
-
+    let committed_dbg = commit_with_roots_returning(&mut authority, request).unwrap();
+    eprintln!("DBG events {:?}", committed_dbg);
     let plan = authority.state.plans.plan(plan_id).unwrap();
     assert_eq!(plan.filled_qty(), 100);
     assert_eq!(plan.status(), PlanStatus::Completed);
-    assert!(authority.state.pending_plan_events.is_empty());
-    assert!(authority.state.parent_orders.is_empty());
+    // 旧 pending_plan_events/parent_orders 空断言随两结构删除；等价断言=完成计划无在途子单。
+    assert_eq!(plan.active_child_order_id(), None);
 }
 
 #[test]
@@ -998,13 +624,18 @@ fn parent_transaction_applies_opening_completion_partial_fill_once() {
     let child_id = plan
         .active_child_order_id()
         .expect("partial child remains active");
-    let parent = &authority.state.parent_orders[&AccountId(1)][&code];
-    assert_eq!(parent.filled_qty(), 100);
-    assert_eq!(parent.active_child_order_id(), Some(child_id));
-    assert_eq!(parent.active_child_remaining_qty(), Some(100));
-    assert!(authority.state.pending_plan_events.is_empty());
+    let leg = authority
+        .state
+        .plans
+        .plan(plan_id)
+        .unwrap()
+        .execution()
+        .expect("partial child keeps the execution leg");
+    assert_eq!(plan.filled_qty(), 100);
+    assert_eq!(plan.active_child_order_id(), Some(child_id));
+    assert_eq!(leg.active_child_remaining_qty(), Some(100));
 }
 
-fn request_code(session: &GameSession) -> crate::StockCode {
+fn request_code(session: &GameSession) -> crate::StockId {
     session.state.markets.keys().next().unwrap().clone()
 }

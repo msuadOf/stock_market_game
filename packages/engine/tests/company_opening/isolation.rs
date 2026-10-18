@@ -6,8 +6,6 @@
 //! 触碰交易域任何账户状态」的资金边界。外部商业对手方承担全部开局资金流
 //! （股本注入/借款对端是公司域对手方，不是证券 NPC）。
 
-include!("../../test-support/simple_company.rs");
-
 use super::*;
 use engine::orderbook::AccountId;
 use engine::session::{GameSession, NpcSetup, SessionSetup};
@@ -19,7 +17,8 @@ use engine::{FloatAllocation, GameConfig, StrategyParams};
 fn trading_session() -> GameSession {
     let stocks = default_stock_specs();
     let setup = SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks,
         npcs: NpcSetup {
             retail_count: 64,
@@ -49,22 +48,15 @@ fn trading_session() -> GameSession {
         closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: d("2030-01-01"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     };
     GameSession::new(setup, 42).expect("compact default-stock session must be valid")
 }
 
-/// 逐户快照：账户 id、现金与全部持仓（代码/数量/T+1 锁定/投入/回收）。
-type AccountStates = Vec<(u64, Money, Vec<(String, u32, u32, i64, i64)>)>;
+/// 逐户快照：账户 id、现金与全部持仓（股票 id/数量/T+1 锁定/投入/回收）。
+type AccountStates = Vec<(u64, Money, Vec<(u32, u32, u32, i64, i64)>)>;
 
 fn account_states(session: &GameSession) -> AccountStates {
     (0..u64::try_from(session.account_count()).expect("account count fits u64"))

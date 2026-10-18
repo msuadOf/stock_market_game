@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
+import { wireIntentOf } from "./protocol/stock-identity.ts";
 import test from "node:test";
-import type { Intent } from "../types/engine.ts";
-import { DEFAULT_SETUP } from "../config/defaults.ts";
+import type { Intent, SessionSetup } from "../types/engine.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
-import { remoteTestContext } from "./remote-test-context.ts";
 import { createRemoteHost } from "./remote-host.ts";
 
 const snapshot = { seq: 0, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
 const baseline = (generation = 1) => ({ Baseline: { timeline_generation: generation, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } });
 const protocol = (generation = 1) => ({ PublisherFrame: { timeline_generation: generation, update: { TickBatch: { frames: [], runtime_snapshot: null } }, civil_date: "2030-01-02", public_revision: 0 } });
-const intent = {} as Intent;
+// 公共 Intent 形态（代码串 code；宿主经 wireIntentOf 译数值后上 wire）。
+const intent = { PlaceLimit: { code: "600101", side: "Buy" as const, price: { Fixed: "1000" }, qty: 100 } } satisfies Intent;
 
 class FakeSocket {
   readyState = 1;
@@ -27,16 +27,16 @@ class FakeSocket {
   receive(value: unknown) { this.onmessage?.({ data: JSON.stringify(value) } as MessageEvent); }
 }
 
-async function fixture(onUpdate?: (update: HostUpdate) => void, respond?: (url: URL) => Response | Promise<Response>, start = true) {
+async function fixture(onUpdate?: (update: HostUpdate) => void, respond?: (url: URL) => Response | Promise<Response>) {
   const sockets: FakeSocket[] = [];
   const failures: HostFailure[] = [];
   const received: HostUpdate[] = [];
-  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token", context: remoteTestContext("session", "1", "1"),
+  const host = await createRemoteHost({} as SessionSetup, 1n, {
     baseUrl: "https://remote.example",
     fetchFn: async (input) => {
       const url = new URL(String(input));
-      if (url.pathname === "/api/market/context") return Response.json(remoteTestContext("session", "2"));
-      if (url.pathname === "/api/host-capabilities") return Response.json({ npcDecisionDiagnostics: respond !== undefined, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true });
+      if (url.pathname === "/api/new") return Response.json({ session_id: "session", session_token: "token" });
+      if (url.pathname === "/api/host-capabilities") return Response.json({ npcDecisionDiagnostics: respond !== undefined });
       return respond === undefined ? Response.json({}) : respond(url);
     },
     webSocketFactory: () => {
@@ -45,7 +45,7 @@ async function fixture(onUpdate?: (update: HostUpdate) => void, respond?: (url: 
       return socket as unknown as WebSocket;
     },
   });
-  if (start) await host.start((update) => { received.push(update); onUpdate?.(update); }, (failure) => failures.push(failure));
+  await host.start((update) => { received.push(update); onUpdate?.(update); }, (failure) => failures.push(failure));
   return { host, sockets, failures, received, socket: sockets[0]! };
 }
 
@@ -63,14 +63,14 @@ test("Remote SubmitIntent 严格携带权威 generation，不用默认值且旧�
   const pending = host.submitIntent(intent);
   const rejected = assert.rejects(pending, /已过期.*generation/);
   socket.receive(baseline(2));
-  await new Promise<void>((resolve) => setImmediate(resolve));
   socket.receive({ CommandQueued: { request_id: commandId(socket, 0) } });
   await rejected;
-  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent } });
+  // wire 携带数值 StockId（wireIntentOf 译码串→数值，ADR 0041）。
+  assert.deepEqual(socket.sent[0], { SubmitIntent: { request_id: 1, generation: "1", intent: wireIntentOf(intent) } });
   const current = host.submitIntent(intent);
   socket.receive({ CommandQueued: { request_id: commandId(socket, 1) } });
   await current;
-  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent } });
+  assert.deepEqual(socket.sent[1], { SubmitIntent: { request_id: 2, generation: "2", intent: wireIntentOf(intent) } });
   await host.dispose();
 });
 
@@ -118,7 +118,6 @@ test("mode 切换丢弃旧 socket message/close，已同步的新连接沿用 pr
   host.setDeliveryMode("pull");
   const replacement = sockets[1]!;
   socket.receive(baseline(2));
-  await new Promise<void>((resolve) => setImmediate(resolve));
   socket.onclose?.();
   replacement.receive(protocol());
   assert.deepEqual(received.map((update) => update.type), ["baseline"]);
@@ -162,7 +161,6 @@ test("baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝", opti
   const rejected = assert.rejects(refresh, /REMOTE_PROTOCOL: callback broke/);
   shouldThrow = true;
   socket.receive(baseline(2));
-  await new Promise<void>((resolve) => setImmediate(resolve));
   await rejected;
   assert.equal(host.snapshot().seq, 0);
   assert.equal(failures[0]!.code, "REMOTE_PROTOCOL");
@@ -192,31 +190,36 @@ test("generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 p
   socket.receive(protocol());
   assert.equal(received.length, 1);
   socket.receive(baseline(2));
-  await new Promise<void>((resolve) => setImmediate(resolve));
   socket.receive({ ResyncRequired: { reason: "lagged", missed: 1 } });
   assert.deepEqual(socket.sent, [{ Resync: {} }, { Resync: {} }]);
   socket.receive(baseline(2));
-  await new Promise<void>((resolve) => setImmediate(resolve));
   await host.dispose();
 });
 
-test("load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败", { timeout: 10000 }, async (context) => {
-  context.mock.timers.enable({ apis: ["setTimeout"] });
-  const successful = await fixture(undefined, undefined, false);
+test("load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败", { timeout: 10000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const successful = await fixture();
+  successful.socket.receive(baseline());
+  await successful.host.stop();
+  successful.socket.onclose?.();
+  t.mock.timers.tick(100);
   const loaded = successful.host.load({});
   await new Promise<void>((resolve) => setImmediate(resolve));
-  successful.sockets[0]!.receive(baseline(2));
+  successful.sockets[1]!.receive(baseline(2));
   await loaded;
-  context.mock.timers.tick(5000);
+  t.mock.timers.tick(5000);
   assert.equal(successful.failures.length, 0);
 
-  const expired = await fixture(undefined, undefined, false);
+  const expired = await fixture();
+  await expired.host.stop();
+  expired.socket.onclose?.();
+  t.mock.timers.tick(100);
   const loading = expired.host.load({});
-  const rejected = assert.rejects(loading, /REMOTE_BASELINE_TIMEOUT.*5000ms/);
+  const rejected = assert.rejects(loading, /连接中断.*结果未知/);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  context.mock.timers.tick(5000);
+  t.mock.timers.tick(5000);
   await rejected;
-  assert.equal(expired.sockets[0]!.closed, 1);
+  assert.equal(expired.failures.length, 0);
   await expired.host.dispose();
   await successful.host.dispose();
 });
@@ -231,7 +234,7 @@ for (const queryKind of ["orders", "diagnostics", "save"] as const) {
       return Response.json({});
     });
     socket.receive(baseline());
-    const pending = queryKind === "orders" ? host.playerWorkingOrders() : queryKind === "diagnostics" ? host.npcDecisionTrace!("1") : host.save();
+    const pending = queryKind === "orders" ? host.playerWorkingOrders() : queryKind === "diagnostics" ? host.npcDecisionTrace!(1) : host.save();
     const completed = queryKind === "save" ? pending : assert.rejects(pending, /已过期会话 generation/);
     socket.receive(baseline());
     finish!(Response.json(queryKind === "orders" ? { generation: "1", orders: [] } : queryKind === "diagnostics" ? { generation: "1", diagnostics: null } : { saved: true }));

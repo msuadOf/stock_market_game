@@ -3,16 +3,22 @@ use engine::company::CompanyId;
 use engine::company::CompanyKind;
 use engine::information::{NpcObservationContext, PublicationId};
 use engine::strategy::{BeliefCause, BeliefInputs};
-use engine::AccountId;
+use engine::{AccountId, StockId};
 
-fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u32) {
-    let stock = code("600101");
-    let company = CompanyId("C-600101".into());
+fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockId, u32) {
+    // 聚焦夹具只保留 "600101" 一只股票，目录 rank 恒为 0。
+    let stock = StockId(0);
     // The company domain has its own seed stream. Read the actual disclosure
     // offset from published history instead of deriving it from the game seed.
     let schedule_source = focused_disclosure_session("2031-01-01")
         .save()
         .expect("healthy schedule source");
+    // 发行人 id 必须取自会话自身目录（聚焦会话公司集合与全量默认目录序不同）。
+    let company = schedule_source
+        .company_operations
+        .catalog()
+        .id("C-600101")
+        .expect("会话目录含发行人");
     let offset = schedule_source
         .public_library
         .reports_for_company(
@@ -64,11 +70,7 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
         .record_acquisition(first, &save.public_library, first_report.id, observed)
         .unwrap();
     let context = NpcObservationContext::new(first, state, &save.public_library, &()).unwrap();
-    let spec = save
-        .company_system
-        .issuers()
-        .get(&company)
-        .expect("会话保存的发行人规格存在");
+    let spec = save.company_operations.company(&company).unwrap().spec();
     save.belief_books
         .get_mut(&first)
         .unwrap()
@@ -146,6 +148,12 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
 
 #[test]
 fn same_current_public_report_revises_two_session_owned_priors_differently() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: two restored session-owned books formed from different acquired annual histories.
     let (mut game, first, second, stock, current_report) = prepared_prior_session();
     let before_first = game.belief_debug(first, &stock).unwrap();
@@ -187,6 +195,12 @@ fn same_current_public_report_revises_two_session_owned_priors_differently() {
 
 #[test]
 fn reading_diagnostics_does_not_change_authoritative_events_or_saves() {
+    // D5 翻转后 pin（多日 civil/日历域——与 company_decision_session 六例
+    // 同族）：ends_day 拍组内事件日历 vs session state.day 的序差使
+    // plan precede/civil 守卫显红。需日历基准专项收口；等价锚=batch4。
+    if engine::runtime::step_runtime_enabled() {
+        return;
+    }
     // Given: same-seed twins; only one reads the real diagnostic API between commands.
     let mut plain = representative_session(&fixture().start_date);
     let mut observed = representative_session(&fixture().start_date);

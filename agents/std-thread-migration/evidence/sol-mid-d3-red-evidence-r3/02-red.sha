@@ -1,0 +1,6 @@
+c8b6c2639cee889b51ed2943e21a5d79ad01e654 工作树（红态源码组成如实注明）：
+= c8b6c263 + 未提交改动（四审第 1/2 项测试编辑：drive_tests 同键统计过滤、
+  npc_tick_preparation 的 sol5th 零推进测试——即红日志总数 1605 vs
+  c8b6c263 的 1604 的来源）+ 突变：step_via_runtime 消费后丢弃注入
+  （`.map(|_| Vec::new())`）。fixture 与绿完全同构造序（twin 先行）。
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib sol4th_queue

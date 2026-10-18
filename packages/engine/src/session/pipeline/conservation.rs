@@ -66,17 +66,7 @@ impl ReceiptDelta {
     }
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Eq,
-    PartialEq,
-    serde::Serialize,
-    serde::Deserialize,
-    ts_rs::TS,
-)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize)]
 pub struct FeeComponents {
     pub commission: Money,
     pub stamp_tax: Money,

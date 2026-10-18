@@ -13,12 +13,12 @@
 //! QA 入口：`cargo test -p engine --test company_operations`（happy 与 failure
 //! 同命令覆盖）。
 
+mod closing_domain;
 mod determinism;
 mod fixtures;
 mod history_gold;
 mod industry_guards;
 mod industry_sessions;
-mod income_tax;
 mod maturities;
 mod payment_risks;
 mod period_end;

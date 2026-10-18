@@ -77,7 +77,8 @@ macro_rules! missing_field_tests {
 
 missing_field_tests! {
     missing_runtime_state_field_is_rejected => "runtime_state",
-    missing_company_system_is_rejected => "company_system",
+    missing_company_operations_is_rejected => "company_operations",
+    missing_closing_registry_is_rejected => "closing_registry",
     missing_public_library_is_rejected => "public_library",
     missing_disclosures_is_rejected => "disclosures",
     missing_plans_is_rejected => "plans",
@@ -85,42 +86,56 @@ missing_field_tests! {
     missing_belief_books_is_rejected => "belief_books",
     missing_watchlists_is_rejected => "watchlists",
     missing_price_memories_is_rejected => "price_memories",
-    missing_pending_plan_events_is_rejected => "pending_plan_events",
     missing_civil_clock_is_rejected => "civil_clock",
 }
 
-// CompanySystem 已拥有封账与接线；旧顶层字段由严格当前 schema 拒绝，不做补齐兼容。
-fn assert_legacy_company_field_is_rejected(field: &str) {
+#[test]
+fn removed_plan_state_mirrors_are_rejected_as_unknown_fields() {
+    // 架构项 8 删除了 pending_plan_events 队列与 parent_orders 镜像；
+    // 旧存档携带这两个键时必须按未知字段拒绝，不做静默迁移。
+    // （批次③保守合成未并入；owner8 engine 闭包落地后恢复。）
+    for field in ["pending_plan_events", "parent_orders"] {
+        let mut legacy = seasoned_fixture().clone_save_value();
+        legacy
+            .as_object_mut()
+            .expect("fixture save must be an object")
+            .insert(field.to_string(), Value::Array(Vec::new()));
+        let error = expect_rejection(&legacy);
+        assert!(
+            matches!(error, SessionError::InvalidSave(ref fault) if fault.code == 2080),
+            "已删除的计划镜像字段 {field} 必须由严格当前结构拒绝：{error:?}"
+        );
+    }
+}
+
+#[test]
+fn ops_wiring_is_rejected_as_unknown_field() {
+    // 公司 due 单一 authority：存档根不再有 ops_wiring 镜像字段；
+    // 携带旧镜像字段的 JSON 是当前 schema 的未知字段，整体拒绝。
     let mut legacy = seasoned_fixture().clone_save_value();
-    assert!(legacy.get(field).is_none(), "当前存档不得带有旧字段 {field}");
-    legacy.as_object_mut().unwrap().insert(field.into(), Value::Null);
-    let error = expect_rejection(&legacy);
-    assert!(matches!(error, SessionError::InvalidSave(_)), "{error:?}");
+    legacy["ops_wiring"] = serde_json::json!({ "mirrored": [] });
+    expect_rejection(&legacy);
 }
 
 #[test]
-fn legacy_closing_registry_is_rejected() {
-    assert_legacy_company_field_is_rejected("closing_registry");
-}
-
-#[test]
-fn legacy_ops_wiring_is_rejected() {
-    assert_legacy_company_field_is_rejected("ops_wiring");
-}
-
-#[test]
-fn missing_selected_company_system_configuration_is_rejected() {
-    let mut missing = seasoned_fixture().clone_save_value();
-    missing["setup"]
-        .as_object_mut()
-        .unwrap()
-        .remove("company_system")
-        .expect("selected company system config must exist in setup");
-    let error = expect_rejection(&missing);
-    assert!(
-        matches!(error, SessionError::InvalidSave(_)),
-        "missing selected company system must be rejected without a default mode: {error:?}"
-    );
+fn civil_clock_due_mirror_fields_are_rejected() {
+    // CivilClock 不再镜像公司 due：时钟存档携带 pending_due/next_due_seq
+    // 即为当前 schema 的未知字段，解码以结构化 fault2080 显式失败。
+    for (field, value) in [
+        ("pending_due", serde_json::json!([])),
+        ("next_due_seq", serde_json::json!(1)),
+    ] {
+        let mut mirror = seasoned_fixture().clone_save_value();
+        mirror["civil_clock"][field] = value;
+        let bytes = serde_json::to_vec(&mirror).expect("tampered JSON must serialize");
+        match decode_save_slot(&bytes, &SaveDecodeLimits::default()) {
+            Err(SessionError::InvalidSave(fault)) => assert_eq!(
+                fault.code, 2080,
+                "旧公司镜像字段 {field} 必须以结构化 2080 拒绝"
+            ),
+            other => panic!("旧镜像字段 {field} 不应解码成功：{other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -140,8 +155,10 @@ fn obsolete_version_marker_is_rejected_as_unknown_field() {
     let mut legacy = seasoned_fixture().clone_save_value();
     legacy["schema_version"] = Value::from(1);
     let error = expect_rejection(&legacy);
+    // 数值断言替代原文本断言 "unknown field `schema_version`"
+    // （fault2080：存档 JSON 不可解码，serde 拒绝未知字段）。
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `schema_version`")),
+        matches!(error, SessionError::InvalidSave(ref fault) if fault.code == 2080),
         "额外版本字段必须由严格当前结构拒绝：{error:?}"
     );
 }
@@ -156,8 +173,10 @@ fn obsolete_runtime_key_is_rejected_without_migration() {
         .expect("fixture 必须包含 runtime 字段");
     previous["runtime_v2"] = runtime;
     let error = expect_rejection(&previous);
+    // 数值断言替代原文本断言 "unknown field `runtime_v2`"
+    // （fault2080：存档 JSON 不可解码，serde 拒绝未知字段）。
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `runtime_v2`")),
+        matches!(error, SessionError::InvalidSave(ref fault) if fault.code == 2080),
         "旧 runtime 字段不能误用当前结构：{error:?}"
     );
 }
@@ -167,8 +186,10 @@ fn arbitrary_version_marker_is_rejected_as_unknown_field() {
     let mut future = seasoned_fixture().clone_save_value();
     future["schema_version"] = Value::from(4);
     let error = expect_rejection(&future);
+    // 数值断言替代原文本断言 "unknown field `schema_version`"
+    // （fault2080：存档 JSON 不可解码，serde 拒绝未知字段）。
     assert!(
-        matches!(error, SessionError::InvalidSave(ref message) if message.contains("unknown field `schema_version`")),
+        matches!(error, SessionError::InvalidSave(ref fault) if fault.code == 2080),
         "任意版本字段必须由严格当前结构拒绝：{error:?}"
     );
 }
@@ -309,10 +330,9 @@ fn tampered_calendar_policy_is_rejected() {
     assert!(
         matches!(
             error,
-            // CompanySystem 恢复会先验证同一政策；错误直接来自 Calendar，但守卫未放宽。
-            SessionError::Calendar(
-                engine::calendar::CalendarError::DigestMismatch { field: "simulated_fallback", .. }
-            )
+            SessionError::CivilClock(engine::session::CivilClockError::Calendar(
+                engine::calendar::CalendarError::DigestMismatch { .. }
+            ))
         ),
         "a calendar policy whose facts digest fails recomputation must be a typed digest rejection: {error:?}"
     );

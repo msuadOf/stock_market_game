@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 pub struct ExpiryRelease {
     pub receipt_index: u64,
     pub account: crate::AccountId,
-    pub stock: crate::StockCode,
+    pub stock: crate::StockId,
     pub order_id: crate::OrderId,
     pub side: crate::Side,
     pub resources: ResVec,
@@ -50,7 +50,7 @@ impl<'a> NpcOrderLifecycleBook<'a> {
     pub(in crate::session) fn remove(
         &mut self,
         account: crate::AccountId,
-        code: &crate::StockCode,
+        code: &crate::StockId,
         order: crate::OrderId,
     ) {
         self.lifecycles.retain(|lifecycle| {
@@ -90,27 +90,28 @@ pub(super) fn plan_expiry(shadow: &mut TickShadowPlan) -> Result<ExpiryOutput, S
     if shadow.expiry_applied {
         return Err(invariant("ExpiryShadow 重复应用报价过期"));
     }
-    let (output, events, receipts) = shadow.state.execute(GameSession::apply_quote_expiry)?;
+    let (output, events, receipts) = shadow.execute(GameSession::apply_quote_expiry)?;
     let mut next_by_account = BTreeMap::new();
-    for event in &events {
+    for event in events {
         let Event::OrderCanceled { account, .. } = event else {
             return Err(invariant("ExpiryShadow 产生了非撤单事件"));
         };
-        let index = next_by_account.entry(*account).or_insert(0_u64);
+        let index = next_by_account.entry(account).or_insert(0_u64);
         let local_index = super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE
             .checked_add(*index)
             .ok_or_else(|| invariant("ExpiryShadow 事件身份溢出"))?;
+        // producer 在此处一次创建带身份的完整记录；后续层不再拆开重装（架构项 #6）。
         shadow
-            .event_keys
-            .push(super::EventStableKey::for_event(event, local_index));
+            .event_outbox
+            .push(crate::session::protocol::EventFact {
+                key: super::EventStableKey::for_event(&event, local_index),
+                event,
+            });
         *index = index
             .checked_add(1)
             .ok_or_else(|| invariant("ExpiryShadow 账户事件数量溢出"))?;
     }
-    shadow.event_outbox.extend(events);
-    shadow
-        .receipt_keys
-        .extend(receipts.iter().map(|receipt| receipt.local_key.clone()));
+    // T2：receipt 事实单载体（receipts 自带 local_key）。
     shadow.applied_receipts.extend(receipts);
     shadow.expiry_applied = true;
     Ok(output)
@@ -136,7 +137,12 @@ impl GameSession {
         expired
             .sort_by(|left, right| (&left.code, left.order_id).cmp(&(&right.code, right.order_id)));
 
+        // T2 收尾（ADR-0042 §T2·「一份收据事实链」）：prepared 只保存
+        // lifecycle/envelope 元数据；receipt 在构造时即进入**唯一集合**
+        // receipts（不再经 prepared 三元组中转后整批 clone——该重复载体
+        // 由 Astra T2 节点审指出，漏盘登记见 t2-inventory-addendum.md）。
         let mut prepared = Vec::with_capacity(expired.len());
+        let mut receipts = Vec::with_capacity(expired.len());
         for (source_index, lifecycle) in expired.iter().enumerate() {
             let source_index = u32::try_from(source_index)
                 .map_err(|_| invariant("ExpiryShadow 报价过期索引溢出"))?;
@@ -152,31 +158,35 @@ impl GameSession {
                 .map(|(key, envelope)| (key.clone(), envelope.clone()))
                 .ok_or_else(|| invariant("expired lifecycle has no live envelope"))?;
             let receipt = expiry_receipt(envelope.0.clone(), &envelope.1, source_index)?;
-            prepared.push((lifecycle.clone(), envelope.0, receipt));
+            prepared.push((lifecycle.clone(), envelope.0));
+            receipts.push(receipt);
         }
-        let mut receipts: Vec<_> = prepared
-            .iter()
-            .map(|(_, _, receipt)| receipt.clone())
-            .collect();
-        self.state.envelope_ledger.apply(&mut receipts)?;
-        let terminal_keys: Vec<_> = prepared
-            .iter()
-            .map(|(_, envelope, _)| envelope.clone())
-            .collect();
-        self.state.envelope_ledger.remove_terminal(&terminal_keys)?;
+        // 串行脊接线：dense（≥512 行）聚合守恒审计必须归入会话 compute registry；
+        // 不显式传 Some 时 actor 线程会隐式借用 caller 域（惰性初始化全局池）。
+        let compute = self.compute_context().clone();
+        self.state
+            .envelope_ledger
+            .apply_in(&mut receipts, &compute)?;
+        let terminal_keys: Vec<_> = prepared.iter().map(|(_, envelope)| envelope.clone()).collect();
+        self.state
+            .envelope_ledger
+            .remove_terminal_in(&terminal_keys, &compute)?;
         self.state.next_receipt_base = self.state.envelope_ledger.next_receipt_index();
 
         let mut output = ExpiryOutput::default();
         let mut events = Vec::with_capacity(prepared.len());
-        let applied_receipts = receipts.clone();
-        let mut receipts_by_envelope: BTreeMap<_, _> = receipts
-            .into_iter()
-            .map(|receipt| (receipt.envelope.clone(), receipt))
+        // T2（ADR-0042 §T2）：消除重复批载体——原实现先 clone 整份 receipts
+        // 再 into_iter 建 map（同一批事实双载）；改为索引 map（envelope→下标），
+        // 消费按原序借用，最终原样归还 receipts（单载体、零克隆）。
+        let receipt_index: BTreeMap<_, usize> = receipts
+            .iter()
+            .enumerate()
+            .map(|(index, receipt)| (receipt.envelope.clone(), index))
             .collect();
-        for (lifecycle, envelope, _) in prepared {
-            let receipt = receipts_by_envelope
-                .remove(&envelope)
-                .ok_or_else(|| invariant("已准备的 ExpiryShadow 生命周期缺少 applied receipt"))?;
+        for (lifecycle, envelope) in prepared.into_iter() {
+            let receipt = &receipts[*receipt_index
+                .get(&envelope)
+                .ok_or_else(|| invariant("已准备的 ExpiryShadow 生命周期缺少 applied receipt"))?];
             let fact = self
                 .cancel_continuous_order_state_only(
                     lifecycle.account,
@@ -204,7 +214,7 @@ impl GameSession {
                 remaining_qty: fact.remaining_qty,
             });
         }
-        Ok((output, events, applied_receipts))
+        Ok((output, events, receipts))
     }
 }
 
@@ -266,6 +276,9 @@ fn cancellation_failure(
         crate::session::continuous_cancellation::ContinuousCancellationError::Market(error) => {
             error.to_string()
         }
+        crate::session::continuous_cancellation::ContinuousCancellationError::Plan(error) => {
+            error.to_string()
+        }
     };
     StepFatal::InvariantViolation {
         description,
@@ -279,13 +292,13 @@ mod ownership_tests {
 
     fn lifecycle(
         account: u64,
-        code: &str,
+        code: crate::StockId,
         order: u64,
         expires: u64,
     ) -> crate::session::NpcOrderLifecycle {
         crate::session::NpcOrderLifecycle {
             account: crate::AccountId(account),
-            code: crate::StockCode(code.to_owned()),
+            code,
             order_id: crate::OrderId(order),
             placed_market_minute: 1,
             expires_market_minute: expires,
@@ -295,9 +308,9 @@ mod ownership_tests {
     #[test]
     fn lifecycle_book_removal_uses_all_three_identity_fields_and_due_keeps_order() {
         let mut values = vec![
-            lifecycle(1, "600888", 1, 5),
-            lifecycle(2, "600888", 1, 4),
-            lifecycle(1, "600999", 1, 6),
+            lifecycle(1, crate::StockId(0), 1, 5),
+            lifecycle(2, crate::StockId(0), 1, 4),
+            lifecycle(1, crate::StockId(1), 1, 6),
         ];
         let mut book = NpcOrderLifecycleBook::new(&mut values);
         assert_eq!(
@@ -306,16 +319,8 @@ mod ownership_tests {
                 .collect::<Vec<_>>(),
             vec![crate::AccountId(1), crate::AccountId(2)]
         );
-        book.remove(
-            crate::AccountId(1),
-            &crate::StockCode("600888".to_owned()),
-            crate::OrderId(1),
-        );
-        book.remove(
-            crate::AccountId(99),
-            &crate::StockCode("600888".to_owned()),
-            crate::OrderId(1),
-        );
+        book.remove(crate::AccountId(1), &crate::StockId(0), crate::OrderId(1));
+        book.remove(crate::AccountId(99), &crate::StockId(0), crate::OrderId(1));
         assert_eq!(
             book.due_at(6)
                 .map(|entry| entry.account)
@@ -329,7 +334,7 @@ mod ownership_tests {
     #[test]
     #[should_panic(expected = "NPC quote lifecycle already exists for order 1")]
     fn lifecycle_book_duplicate_order_is_global_across_account_and_stock() {
-        let mut values = vec![lifecycle(1, "600888", 1, 5)];
+        let mut values = vec![lifecycle(1, crate::StockId(0), 1, 5)];
         NpcOrderLifecycleBook::new(&mut values).ensure_order_absent(crate::OrderId(1));
     }
 
@@ -337,7 +342,7 @@ mod ownership_tests {
         ExpiryRelease {
             receipt_index: 0,
             account: crate::AccountId(account),
-            stock: crate::StockCode("600888".to_owned()),
+            stock: crate::StockId(0),
             order_id: crate::OrderId(1),
             side: crate::Side::Buy,
             resources: ResVec::new(crate::Money::from_cents(cash), shares),

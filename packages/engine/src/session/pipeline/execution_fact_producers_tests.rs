@@ -3,13 +3,13 @@ use super::continuous_matching::{
 };
 use super::execution_fact_producers::adapt_continuous_facts;
 use super::*;
-use crate::{AccountId, Event, Money, OrderId, RejectionReason, Side, StockCode, Trade};
+use crate::{AccountId, Event, Money, OrderId, RejectionReason, Side, StockId, Trade};
 
-fn code(value: &str) -> StockCode {
-    StockCode(value.to_owned())
+fn code(value: u32) -> StockId {
+    StockId(value)
 }
 
-fn trade(stock: &StockCode, sealed_index: u64, local_index: u64) -> ContinuousTradeFact {
+fn trade(stock: &StockId, sealed_index: u64, local_index: u64) -> ContinuousTradeFact {
     ContinuousTradeFact {
         stock: stock.clone(),
         triggering_sealed_index: sealed_index,
@@ -29,8 +29,8 @@ fn trade(stock: &StockCode, sealed_index: u64, local_index: u64) -> ContinuousTr
 
 #[test]
 fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
-    let alpha = code("600001");
-    let beta = code("600002");
+    let alpha = code(0);
+    let beta = code(1);
     let places = vec![
         ContinuousPlaceFact::Resting {
             sealed_index: 4,
@@ -151,8 +151,8 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
 
 #[test]
 fn continuous_adapter_accepts_equal_stock_local_trade_indices_for_distinct_stocks() {
-    let alpha = code("600001");
-    let beta = code("600002");
+    let alpha = code(0);
+    let beta = code(1);
 
     let facts = adapt_continuous_facts(&[], &[], &[trade(&alpha, 71, 0), trade(&beta, 9, 0)])
         .expect("the stock identity scopes a stock-local trade event index");
@@ -167,7 +167,7 @@ fn continuous_adapter_accepts_equal_stock_local_trade_indices_for_distinct_stock
 
 #[test]
 fn continuous_adapter_rejects_duplicate_explicit_event_identity_without_output() {
-    let alpha = code("600001");
+    let alpha = code(0);
     let places = [ContinuousPlaceFact::Resting {
         sealed_index: 4,
         account: AccountId(7),
@@ -207,7 +207,7 @@ fn continuous_adapter_rejects_duplicate_explicit_event_identity_without_output()
 
 #[test]
 fn continuous_adapter_preserves_explicit_max_trade_index_without_allocating_or_overflowing() {
-    let alpha = code("600001");
+    let alpha = code(0);
     let facts = adapt_continuous_facts(&[], &[], &[trade(&alpha, 99, u64::MAX)]).unwrap();
 
     assert_eq!(facts.len(), 1);

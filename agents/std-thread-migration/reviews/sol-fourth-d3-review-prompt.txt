@@ -1,0 +1,54 @@
+# Sol 第四轮复审请求：D3a 三审四项收尾（af1d3478^..b1c5abd9）
+
+日期：2026-10-16。请求人：协调者。这是你 D3a 三审判决（原文
+`.tmp/sol-third-d3-verdict.md`）的整改复审。只读复核：不写文件、不构建；
+允许读文件/git/复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净，HEAD=b1c5abd9。
+**红证据说明**：`.tmp/sol-mid-d3-red-evidence-r3/MANIFEST.md` 已逐份列
+命令+SHA+内容形态——r3 为突变型红（如实标注基准与突变内容，无独立提交）；
+**r4 起改为"测试提交先于实现提交"的可审计形态**（红 SHA=仅测试提交）。
+协调人已抽查格式：无空文件、数值断言含 left/right（01: 899449/909499；
+02: 0/1；04: [(0,1)]/[(0,100)]；04a: 完整 PlanBook Debug 串）。
+
+## 四项收尾声称（逐项核真伪）
+
+1. **live purse desk 占用**（af1d3478 红→ca96f449 绿）：charged_cents=
+   Σbuyer_charge（成交额+边际佣金+过户费），加回=挂出全额−charged。
+   你的反例对账 110001 ✓（红 left=899499 right=909499）；Abort 恢复全额；
+   三层现金语义注记。
+2. **首步前 queue 接通**（30d286b3 红→d34fbc76 绿）：构造期消费 staged
+   handover、intents 注入世界；attention 恰一次（红 left=0 right=1）。
+   **登记**：消费拍不抑制——belief root 不在 handover 且组簿无通道（D3b）；
+   实测抑制连坐 institution_observation 族后按事实回退（提交说明有记录）。
+3. **断言收尾**（63a44df6）：部分成交绑同一子单（0<remaining<child_qty+
+   desk_trades 同键聚合下界）；terminal 小型确定性 fixture×2（组内全额
+   成交⇒Completed；session 旧 Active 被 terminal 投影覆盖）。
+4. **红证+边界**：MANIFEST 逐份如实标注；未受理票（order_id=None）
+   Closed/拒收边界固化，实测语义正确无需修。
+
+## chain 适配+对账声称（b1c5abd9，按你裁定的 (a)）
+
+多拍+逐拍 force——**26 失败→12**（14 转化）。对账确认你的 26 正确
+（实现方此前"28"系误算已登记）。剩 12=D3b 复审/撤销面（session 按 id
+撤单对 runtime 世界 OrderNotFound、复审重估断言）。
+
+## 声称数字（交叉核验）
+
+默认 lib 1593/0/11；翻转批 10/13/14/14/15 全绿；**env=1=40**
+（55→54→40，零新增红）。全量日志 env1-final4th.txt 在证据目录。
+
+## 终裁问题
+
+1. 四项逐项：真实修复/表面/未修复（重点抽查 1 的 desk 对账口径与
+   2 的恰一次证明）。
+2. r4 红证形态（测试提交先于实现提交）是否满足你的同源性要求；
+   r3 突变型的如实标注是否可接受为既有证据。
+3. chain 适配结果与剩余 12 例的 D3b 归因是否成立。
+4. **终裁：D3a 可否宣告闭合（含四轮整改）**，正式进入 D3b。
+   若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。

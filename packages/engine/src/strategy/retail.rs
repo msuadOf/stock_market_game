@@ -6,7 +6,7 @@ use super::*;
 ///
 /// 关键修正（修复「只有一只股票有成交」）：散户**从全部股票中均匀随机选一只**下单，
 /// 而非恒取 `first_key_value()`（那会让全部散户 NPC 的订单集中在字典序最小的那只股票——
-/// BTreeMap<StockCode> 按 string 排序，首键固定——其余股票毫无散户流动性、无人撮合、价格不动）。
+/// BTreeMap<StockId> 按 string 排序，首键固定——其余股票毫无散户流动性、无人撮合、价格不动）。
 /// 随机选股经注入 RNG，保持确定性（同种子同输出，铁律三）。
 pub(super) fn decide_retail(
     strategy: &StrategyData,
@@ -15,19 +15,22 @@ pub(super) fn decide_retail(
     rng: &mut dyn Rng,
     config: &GameConfig,
 ) -> Vec<Intent> {
-    let trading_stocks: Vec<_> = market
-        .stocks
-        .iter()
-        .filter(|(_, stock)| stock.is_trading)
-        .collect();
-    if trading_stocks.is_empty() {
+    if market.stocks.is_empty() {
         return Vec::new();
     }
     // 从全部股票中均匀随机选一只（注入 RNG，确定性）。BTreeMap 无随机访问 → 先按 key 取索引。
-    let n = trading_stocks.len();
+    let n = market.stocks.len();
     let idx = rng.next_range_u32(0, n as u32) as usize;
-    let (selected_code, sv) = trading_stocks[idx];
-    let code = selected_code.clone();
+    let (code, sv) = match market.stocks.keys().nth(idx) {
+        Some(c) => {
+            let v = market
+                .stocks
+                .get(c)
+                .expect("key 刚从同一 BTreeMap 取出，必存在（防御式：不可达则显式 panic）");
+            (c.clone(), v)
+        }
+        None => return Vec::new(),
+    };
     let change = market_minute_price_change(sv).unwrap_or(0.0);
     let volume_activity = 0.5
         + 0.5 * sv.relative_volume.clamp(0.0, 1.0)
@@ -84,15 +87,13 @@ pub(super) fn decide_retail(
         Side::Sell
     };
     let (code, sv) = if side == Side::Sell {
-        let sellable_codes: Vec<&StockCode> = market
+        let sellable_codes: Vec<&StockId> = market
             .stocks
             .keys()
             .filter(|candidate| {
-                market.stocks[*candidate].is_trading
-                    && own
-                        .positions
-                        .get(*candidate)
-                        .is_some_and(|position| position.sellable_qty > 0)
+                own.positions
+                    .get(*candidate)
+                    .is_some_and(|position| position.sellable_qty > 0)
             })
             .collect();
         if sellable_codes.is_empty() {
@@ -136,7 +137,7 @@ pub(super) fn decide_retail(
 
 /// 单次追势判断中同一股票的行情与本人持仓事实，不进入存档。
 struct RetailDecisionContext<'a> {
-    code: StockCode,
+    code: StockId,
     stock_view: &'a StockView,
     minute_change: f64,
     position: Option<&'a PositionView>,
@@ -158,7 +159,7 @@ enum RetailSignal {
 impl<'a> RetailDecisionContext<'a> {
     fn from_selected_stock(
         strategy: &StrategyData,
-        code: StockCode,
+        code: StockId,
         stock_view: &'a StockView,
         own: &'a SelfView,
     ) -> Self {
@@ -254,7 +255,6 @@ mod decision_context_tests {
 
     fn stock(last: i64, history: &[i64], imbalance: f64) -> StockView {
         StockView {
-            is_trading: true,
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
@@ -268,7 +268,7 @@ mod decision_context_tests {
         }
     }
 
-    fn own(code: &StockCode, cost: Option<i64>, sellable: u32) -> SelfView {
+    fn own(code: &StockId, cost: Option<i64>, sellable: u32) -> SelfView {
         SelfView {
             cash: Money::from_cents(1_000_000),
             positions: [(
@@ -291,7 +291,7 @@ mod decision_context_tests {
         floats: &[f64],
         expected: Option<(Side, u32)>,
     ) {
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let market = MarketView {
             stocks: [(code.clone(), stock)].into(),
             tick: 0,
@@ -390,8 +390,8 @@ mod decision_context_tests {
 
     #[test]
     fn noise_sell_reselects_its_own_stock_view_and_position() {
-        let first = StockCode("600101".to_owned());
-        let second = StockCode("600102".to_owned());
+        let first = StockId(0);
+        let second = StockId(1);
         let market = MarketView {
             stocks: [
                 (first, stock(1000, &[], 0.0)),

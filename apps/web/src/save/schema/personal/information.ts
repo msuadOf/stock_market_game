@@ -1,4 +1,4 @@
-import { accountId, array, exact, map, record } from "../primitives.ts"
+import { array, exact, integer, map, record } from "../primitives.ts"
 import { accountKey, companyKey, publicationId, type StringMap } from "./common.ts"
 import { parseCivilInstant } from "./experience.ts"
 
@@ -14,7 +14,7 @@ export type CivilInstant = {
 }
 
 export type InformationState = {
-  readonly owner: string
+  readonly owner: number
   readonly companies: StringMap<readonly AcquisitionRecord[]>
 }
 
@@ -26,7 +26,7 @@ export function parseInformationState(value: unknown, path: string): Information
   const parsed = record(value, path)
   exact(parsed, ["owner", "companies"], path)
   return {
-    owner: accountId(parsed.owner, `${path}.owner`),
+    owner: integer(parsed.owner, `${path}.owner`, 0),
     companies: map(parsed.companies, `${path}.companies`, companyKey, parseAcquisitionRecords),
   }
 }

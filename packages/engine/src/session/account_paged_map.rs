@@ -1,7 +1,7 @@
 //! Per-account state shared between a committed session and its tick candidate.
 
+use crate::compute::parallel::*;
 use crate::AccountId;
-use rayon::prelude::*;
 use serde::ser::SerializeMap;
 use std::collections::BTreeMap;
 use std::ops::Index;
@@ -68,21 +68,6 @@ impl<Value> AccountPagedMap<Value> {
 }
 
 impl<Value: Clone> AccountPagedMap<Value> {
-    /// Retire the old authority's independent page groups after installing a
-    /// completed tick candidate. Destruction can be substantial when most
-    /// accounts acquired a fresh value during the tick.
-    pub(super) fn replace_and_drop_parallel(&mut self, replacement: Self)
-    where
-        Value: Send + Sync,
-    {
-        let old = std::mem::replace(self, replacement);
-        old.groups
-            .into_values()
-            .collect::<Vec<_>>()
-            .into_par_iter()
-            .for_each(drop);
-    }
-
     pub(super) fn replace_existing_shared_parallel(
         &mut self,
         updates: Vec<(AccountId, Arc<Value>)>,

@@ -1,24 +1,23 @@
 import { money as parseCanonicalMoney } from "./primitives.ts"
-import type { AccountId } from "../../types/generated/AccountId.ts"
 import type { DailyCandle } from "../../types/generated/DailyCandle.ts"
 import type { Money } from "../../types/generated/Money.ts"
 import type { PositionSnap } from "../../types/generated/PositionSnap.ts"
-import type { StockCode } from "../../types/generated/StockCode.ts"
-import type { ExReferencePrice } from "./company/ex-reference-price.ts"
 import { parseDailyCandle } from "./market.ts"
 import { stockKey } from "./personal/common.ts"
-import { array, boolean, civilDate, exact, integer, map, record, SaveSchemaError, accountKey } from "./primitives.ts"
+import { array, exact, integer, map, record, safeIntegerKey } from "./primitives.ts"
 
-type SaveMarket = { readonly last_price: Money; readonly last_close: Money; readonly cash_ex_reference_pending_trade: boolean; readonly day_market_activity: boolean; readonly last_cash_ex_reference: ExReferencePrice | null }
-type SaveAccount = { readonly cash: Money; readonly positions: Readonly<Record<StockCode, PositionSnap>> }
+// 存档 wire（ADR 0041）：股票 map 键为数值 StockId 的 JSON 字符串形态（"0"、"1"…）。
+// 键原样保留以随存档回传引擎恢复；根 cross-check（root.ts）负责将其对齐 setup 证券。
+type SaveMarket = { readonly last_price: Money; readonly last_close: Money }
+type SaveAccount = { readonly cash: Money; readonly positions: Readonly<Record<string, PositionSnap>> }
 
 export type SaveSnapshot = {
   readonly seq: number
   readonly tick: number
-  readonly markets: Readonly<Record<StockCode, SaveMarket>>
-  readonly accounts: Readonly<Record<AccountId, SaveAccount>>
-  readonly daily_candles: Readonly<Record<StockCode, readonly DailyCandle[]>>
-  readonly active_daily_candles: Readonly<Record<StockCode, DailyCandle>>
+  readonly markets: Readonly<Record<string, SaveMarket>>
+  readonly accounts: Readonly<Record<string, SaveAccount>>
+  readonly daily_candles: Readonly<Record<string, readonly DailyCandle[]>>
+  readonly active_daily_candles: Readonly<Record<string, DailyCandle>>
 }
 
 function parsePosition(value: unknown, path: string): PositionSnap {
@@ -45,26 +44,13 @@ export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
   exact(parsed, ["seq", "tick", "markets", "accounts", "daily_candles", "active_daily_candles"], path)
   const markets = map(parsed.markets, `${path}.markets`, stockKey, (item, itemPath) => {
     const market = record(item, itemPath)
-    exact(market, ["last_price", "last_close", "cash_ex_reference_pending_trade", "day_market_activity", "last_cash_ex_reference"], itemPath)
-    let last_cash_ex_reference: ExReferencePrice | null = null
-    if (market.last_cash_ex_reference !== null) {
-      const anchor = record(market.last_cash_ex_reference, `${itemPath}.last_cash_ex_reference`)
-      exact(anchor, ["ex_date", "reference_price"], `${itemPath}.last_cash_ex_reference`)
-      last_cash_ex_reference = {
-        ex_date: civilDate(anchor.ex_date, `${itemPath}.last_cash_ex_reference.ex_date`),
-        reference_price: money(anchor.reference_price, `${itemPath}.last_cash_ex_reference.reference_price`),
-      }
-      if (BigInt(last_cash_ex_reference.reference_price) <= 0n) throw new SaveSchemaError(`${itemPath}.last_cash_ex_reference.reference_price`, "除息参考价必须为正")
-    }
+    exact(market, ["last_price", "last_close"], itemPath)
     return {
       last_price: money(market.last_price, `${itemPath}.last_price`),
       last_close: money(market.last_close, `${itemPath}.last_close`),
-      cash_ex_reference_pending_trade: boolean(market.cash_ex_reference_pending_trade, `${itemPath}.cash_ex_reference_pending_trade`),
-      day_market_activity: boolean(market.day_market_activity, `${itemPath}.day_market_activity`),
-      last_cash_ex_reference,
     }
   })
-  const accounts = map(parsed.accounts, `${path}.accounts`, accountKey, (item, itemPath) => {
+  const accounts = map(parsed.accounts, `${path}.accounts`, safeIntegerKey, (item, itemPath) => {
     const account = record(item, itemPath)
     exact(account, ["cash", "positions"], itemPath)
     const cash = money(account.cash, `${itemPath}.cash`)
@@ -82,17 +68,4 @@ export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
     daily_candles: map(parsed.daily_candles, `${path}.daily_candles`, stockKey, (items, itemPath) => array(items, itemPath).map((item, index) => parseDailyCandle(item, `${itemPath}[${index}]`))),
     active_daily_candles: map(parsed.active_daily_candles, `${path}.active_daily_candles`, stockKey, parseDailyCandle),
   } as SaveSnapshot
-}
-
-export function validateCashExReferenceFacts(snapshot: SaveSnapshot, setupStocks: readonly { readonly code: string; readonly tick: string }[], currentDate: string): void {
-  for (const [code, market] of Object.entries(snapshot.markets)) {
-    const path = `snapshot.markets.${code}`
-    const anchor = market.last_cash_ex_reference
-    if (anchor !== null) {
-      if (anchor.ex_date > currentDate) throw new SaveSchemaError(`${path}.last_cash_ex_reference.ex_date`, "除息事实日期晚于当前存档日")
-      const tick = setupStocks.find(stock => stock.code === code)?.tick
-      if (tick === undefined || BigInt(tick) <= 0n || BigInt(anchor.reference_price) % BigInt(tick) !== 0n) throw new SaveSchemaError(`${path}.last_cash_ex_reference.reference_price`, "除息参考价必须符合证券最小价位单位")
-    }
-    if (market.cash_ex_reference_pending_trade && (anchor === null || anchor.ex_date > currentDate || anchor.reference_price !== market.last_close)) throw new SaveSchemaError(`${path}.cash_ex_reference_pending_trade`, "待首笔交易的除息参考价必须已安装、未晚于当前日且等于昨收价")
-  }
 }

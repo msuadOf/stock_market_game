@@ -2,15 +2,17 @@
 import type { CivilBoundary } from "./CivilBoundary";
 import type { CivilRefresh } from "./CivilRefresh";
 import type { CivilUpdateKind } from "./CivilUpdateKind";
-import type { Event } from "./Event";
 import type { EventFact } from "./EventFact";
 
+/**
+ * 自然日日结更新。事件只随 `facts` 记录出现一次（架构项 #6）；
+ * 纯事件视图由消费方在边界从 facts 投影。
+ */
 export type CivilUpdate = {
   boundary: CivilBoundary;
   kinds: Array<CivilUpdateKind>;
   tick: number;
   civil_date: string;
-  events: Array<Event>;
   facts: Array<EventFact>;
   seq_from: number;
   seq_to: number;

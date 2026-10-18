@@ -29,11 +29,10 @@
 ### engine：Rust → WASM（[ADR-0002](decisions/0002-engine-rust-wasm.md)）
 - `packages/engine` 是 Rust crate，纯逻辑，参与 cargo workspace。
 - 前端经 `wasm-pack`/`wasm-bindgen` 调用；后端与 Tauri 直接复用同一 crate。
-- 多线程 WASM 构建使用固定的 `nightly-2026-09-05` + `rust-src`；项目根目录 `.cargo/config.toml`
-  启用 `atomics`/`bulk-memory`/`mutable-globals` 与 `build-std`。针对该 nightly，根配置还显式
-  启用 shared/import memory，并导出 wasm-bindgen 0.2.93 线程转换所需的堆/TLS 符号；
-  `scripts/check-wasm-threading.mjs` 会拒绝产出非共享内存的伪多线程绑定。执行
-  `scripts/wasm-build.sh`（Windows 用 `.bat`），成员目录不重复声明 rustflags。
+- WASM 构建走**稳定工具链串行管线**（批 9 A10：wasm-bindgen-rayon 多核随 rayon
+  退役——`nightly`+`build-std`+atomics 链接链、COOP/COEP 隔离门与
+  `check-wasm-threading` 校验均已删除；串行 wasm 为本期语义，登记为简化）。执行
+  `scripts/wasm-build.sh`（Windows 用 `.bat`）。
 - 状态以 JSON 序列化跨端传输。`SaveSlot.runtime_state` 的类型为 `SavedRuntimeState`；
   Rust `saved_runtime` 与 Web `runtime-state` 负责同一严格当前结构的恢复契约。
   类型、模块和函数不附带内部版本后缀，游戏存档不设代际版本标记，

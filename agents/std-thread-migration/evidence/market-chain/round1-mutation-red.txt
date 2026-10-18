@@ -1,0 +1,69 @@
+test batch1_trade_event_fields_wellformed ... FAILED
+test batch1_runtime_emits_auction_window_events ... ok
+test batch1_phase_window_consistency ... ok
+test batch1_pipeline_emits_auction_window_events ... ok
+test batch1_tick_advances_both_paths ... ok
+test batch1_seq_monotonic_both_paths ... ok
+test batch1_account_count_matches ... ok
+test batch1_event_types_within_engine_vocabulary ... ok
+test batch1_cash_never_increases ... FAILED
+test batch1_player_cash_untouched_both_paths ... ok
+thread 'batch1_trade_event_fields_wellformed' (1666946) panicked at packages/engine/tests/runtime_flip_batch1.rs:189:5:
+thread 'batch1_cash_never_increases' (1666938) panicked at packages/engine/tests/runtime_flip_batch1.rs:220:9:
+test result: FAILED. 11 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.35s
+test batch2_runtime_auction_ticks_in_window ... ok
+test batch2_pipeline_auction_window_events ... ok
+test batch2_single_stock_routing ... ok
+test batch2_no_auction_tick_in_continuous_window ... ok
+test batch2_opening_completion_after_window ... ok
+test batch2_auction_tick_phase_is_call_auction ... ok
+test batch2_auction_window_accepts_not_trades ... ok
+test batch2_auction_completed_fields_wellformed ... FAILED
+test batch2_event_volume_same_order_both_paths ... ok
+test batch2_tick_parity ... ok
+thread 'batch2_auction_completed_fields_wellformed' (1667020) panicked at packages/engine/tests/runtime_flip_batch2.rs:151:5:
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.59s
+test batch3_no_duplicate_seq ... ok
+test batch3_accept_terminal_closure ... ok
+test batch3_cancel_accounts_in_range ... FAILED
+test batch3_exact_closure_on_no_trade_fixture ... ok
+test batch3_runtime_emits_order_canceled ... ok
+test batch3_cancel_fields_wellformed ... FAILED
+test batch3_pipeline_emits_order_canceled ... FAILED
+test batch3_cross_day_no_panic ... ok
+test batch3_both_paths_cancels_present ... ok
+test batch3_accept_fields_wellformed ... FAILED
+test batch3_runtime_emits_intent_rejected ... ok
+thread 'batch3_cancel_accounts_in_range' (1667072) panicked at packages/engine/tests/runtime_flip_batch3.rs:253:5:
+thread 'batch3_cancel_fields_wellformed' (1667073) panicked at packages/engine/tests/runtime_flip_batch3.rs:101:5:
+thread 'batch3_pipeline_emits_order_canceled' (1667077) panicked at packages/engine/tests/runtime_flip_batch3.rs:69:5:
+thread 'batch3_accept_fields_wellformed' (1667069) panicked at packages/engine/tests/runtime_flip_batch3.rs:169:5:
+test result: FAILED. 10 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.32s
+test batch4_pipeline_day_advances ... ok
+test batch4_continue_after_day_end ... ok
+test batch4_day_advances_after_crossing ... ok
+test batch4_seq_continuous_across_day_end ... ok
+test batch4_second_day_auction_window ... ok
+test batch4_drain_closes_all_resting ... ok
+test batch4_t1_unfreeze_clears_frozen_after_day_end ... ok
+test batch4_two_full_days_no_panic ... ok
+test batch4_day_parity ... ok
+test batch4_cash_no_injection_across_days ... FAILED
+test batch4_civil_failure_rolls_back_day_end_fully_and_retries_once ... ok
+thread 'batch4_cash_no_injection_across_days' (1667205) panicked at packages/engine/tests/runtime_flip_batch4.rs:199:9:
+test result: FAILED. 13 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.45s
+test flip_opt_in_runtime_step_drives_and_old_default_unchanged ... ok
+test batch5_diag_minute_counts ... FAILED
+test batch5_history_query_after_driving ... ok
+test batch5_runtime_save_after_driving ... ok
+test batch5_publication_channel_alive_after_day_end ... ok
+test batch5_pipeline_save_after_driving ... ok
+test batch5_save_shape_parity ... FAILED
+test batch5_company_registry_present_after_restore ... ok
+test batch5_restore_then_drive ... ok
+test batch5_pipeline_roundtrip ... ok
+test batch5_civil_date_advances ... ok
+test batch5_runtime_save_restore_roundtrip ... ok
+thread 'batch5_diag_minute_counts' (1667386) panicked at packages/engine/tests/runtime_flip_batch5.rs:149:5:
+thread 'batch5_save_shape_parity' (1667394) panicked at packages/engine/tests/runtime_flip_batch5.rs:47:5:
+test result: FAILED. 13 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s

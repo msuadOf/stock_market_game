@@ -49,7 +49,7 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                 }
                 for frame in &batch.frames {
                     ticks.push(frame.tick);
-                    assert_eq!(frame.facts.len(), frame.events.len());
+                    assert_eq!(frame.facts.len(), frame.events().len());
                     assert!(!frame.timeseries_payload.markets.is_empty());
                 }
             }

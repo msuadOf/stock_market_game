@@ -1,0 +1,39 @@
+P2-4a 账户回声稀疏化——绿态证据（2026-10-17，第 14 任）
+====================================================================
+HEAD：本刀提交前工作区（基于 2a45d2e9）
+
+守卫（cargo test -p engine --lib p2_4a）：
+  test runtime::drive_tests::p2_4a_sparse_account_writeback_matches_force_full_bitwise ... ok
+  test runtime::drive_tests::p2_4a_sparse_echo_missing_item_fails_loud ... ok
+  test result: ok. 2 passed; 0 failed
+
+突变红（三突变逐个施加后同命令，随后还原；无独立提交）：
+  M1 请求集恒空（wanted 清空）→ fails_loud 红（expect_err 收到 Ok）。
+     同窗登记：等价守卫 M1 下仍绿——写回值与 same_tick 成交投影值冗余
+     （挂单在手+在途口径 qty 中性、成交面投影全覆盖）。值级判别力由 M2 证。
+  M2 回执值腐蚀（结构合法、invested_cents 清零）→ 等价守卫红：
+     assertion `left == right' failed: 期末业务哈希必须逐位一致
+  M3 收集端精确集校验禁用（validate 调用注释）→ fails_loud 红：
+     缺项回声必须显式失败（不静默丢账户）: [OrderAccepted ...]（收到 Ok）
+
+全量回归双绿：
+  cargo test -p engine --lib → 1619 passed; 0 failed; 11 ignored（44.4s）
+  ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib → 1619 passed; 0 failed; 11 ignored（32.5s）
+  （基线 1617→1619=本刀 +2 守卫）
+
+B 口径（driver_semantics_probe 300 16 1；events/fees 逐位）：
+  r1 t/s=259.7 events=3336 fees=0 shares_ok=True
+  r2 t/s=269.0 events=3336 fees=0 shares_ok=True
+  r3 t/s=260.5 events=3336 fees=0 shares_ok=True
+  mean=263.1 min=259.7 max=269.0
+  1000 tick：t/s=271.6 events=11119 fees=5705 shares_ok=True（长跑零衰减）
+  逐位判据全程保持（300: 3336/0；1000: 11119/5705）。
+
+  测量窗：机器 load 6.3（净机窗口，早前 load 20.6 高载期不可比）。
+  同窗配对（排除机器变净假象）：
+    round1 baseline(2a45d2e9)=128.4  new=262.0
+    round2 baseline=145.5             new=264.4
+  → 同窗增益 +82%~+104%（本刀真实效应）。
+
+A 口径抽查（runtime_s5_probe 3000 10）：
+  1363.7 t/s；成交量 6438600；费用桶 647541185；T+1 冻结 6438600（逐位不变）

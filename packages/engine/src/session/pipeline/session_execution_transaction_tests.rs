@@ -3,14 +3,17 @@ use super::session_execution_transaction::{
     apply_session_execution_transaction, SessionExecutionTransactionError,
 };
 use super::*;
-use crate::{AccountId, Event, Intent, Market, Money, SecurityCategory, Side, StockCode};
+use crate::{AccountId, Event, Intent, Market, Money, SecurityCategory, Side, StockId};
 
 fn accepted_buy_worker(
     game: &GameSession,
     buyer: AccountId,
 ) -> super::continuous_matching::ContinuousStockOutput {
     let code = game.state.markets.keys().next().unwrap().clone();
-    let plan = plan_tick(PhaseInput { session: game }).unwrap();
+    let plan = plan_tick(PhaseInput {
+        session: game,
+    })
+    .unwrap();
     let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
         IntentCandidateKey::player(0),
         buyer,
@@ -71,8 +74,8 @@ fn successful_candidate_installs_matching_through_projection_state_and_cursors_t
     assert_eq!(game.state.markets[&code].resting_orders().len(), 1);
     assert!(output.receipts.is_empty());
     assert_eq!(output.settlement.settlement.applied_receipts, 0);
-    assert_eq!(output.events.len(), 1);
-    match output.events[0].clone() {
+    assert_eq!(output.event_values().len(), 1);
+    match output.event_values()[0].clone() {
         Event::OrderAccepted {
             seq,
             code: event_code,
@@ -103,12 +106,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
         .unwrap();
     participant
         .price_memory_mut()
-        .observe_price(
-            &code,
-            Money::from_cents(1_011),
-            market_minute,
-            market_minute,
-        )
+        .observe_price(&code, Money::from_cents(1_011), market_minute)
         .unwrap();
     *participant.information_mut() = crate::information::NpcInformationState::new(buyer);
     participant
@@ -118,9 +116,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
     let buyer_before = participant.clone();
     let other_before = game.state.belief_participants[&other].clone();
     let other_account_before = game.state.accounts[&other].clone();
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(1_000))
         .unwrap();
@@ -141,7 +137,7 @@ fn institutional_fill_updates_belief_and_preserves_participant_members_and_other
     let output = apply_session_execution_transaction(&mut game, vec![worker], Vec::new()).unwrap();
 
     assert_eq!(output.settlement.settlement.applied_receipts, 2);
-    assert!(output.events.iter().any(|event| matches!(
+    assert!(output.event_values().iter().any(|event| matches!(
         event,
         Event::Trade { maker: AccountId(0), taker, qty: 100, .. } if *taker == buyer
     )));
@@ -245,7 +241,7 @@ fn split_receipt_cursor_is_rejected_before_any_candidate_work() {
 fn unknown_worker_stock_is_rejected_without_extending_session_markets() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let code = StockCode("600999".to_owned());
+    let code = StockId(9);
     let worker = super::continuous_matching::ContinuousStockOutput {
         market: Market::new(code, Money::from_cents(1_000), 0.10, Money::from_cents(1)).unwrap(),
         created_envelopes: Vec::new(),
@@ -254,6 +250,7 @@ fn unknown_worker_stock_is_rejected_without_extending_session_markets() {
         trades: Vec::new(),
         place_facts: Vec::new(),
         cancel_facts: Vec::new(),
+        market_data: Default::default(),
     };
     let before = game.business_state_hash().unwrap();
     let market_count = game.state.markets.len();

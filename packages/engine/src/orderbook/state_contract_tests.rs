@@ -64,8 +64,8 @@ fn maker_money_overflow_precedes_taker_money_overflow_without_book_write() {
         let error = book.place(taker).unwrap_err();
         match error {
             OrderError::Money(MoneyError::Overflow { op, operand }) => {
-                assert_eq!(op, "add");
-                assert_eq!(operand, format!("{} + 2", i64::MAX - 1));
+                assert_eq!(op, crate::money::MoneyOp::CashAdd);
+                assert_eq!(operand, i64::MAX - 1);
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -91,8 +91,8 @@ fn taker_money_overflow_leaves_book_status_and_cursor_unchanged() {
         taker.filled_value = Money::from_cents(i64::MAX);
         match book.place(taker).unwrap_err() {
             OrderError::Money(MoneyError::Overflow { op, operand }) => {
-                assert_eq!(op, "add");
-                assert_eq!(operand, format!("{} + 2", i64::MAX));
+                assert_eq!(op, crate::money::MoneyOp::CashAdd);
+                assert_eq!(operand, i64::MAX);
             }
             other => panic!("unexpected error: {other:?}"),
         }

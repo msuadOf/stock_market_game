@@ -13,7 +13,6 @@
 pub mod bank;
 pub mod insurance;
 pub mod real_estate;
-pub mod simple_summary;
 
 pub mod balance_sheet;
 pub mod cash_flow;
@@ -21,7 +20,6 @@ pub mod equity;
 pub mod income;
 pub mod industrial;
 pub mod notes;
-mod roe;
 
 pub(crate) mod consolidated_window;
 mod error;
@@ -42,7 +40,6 @@ use crate::accounting::consolidation::{ConsolidationRequest, MemberId, ScopeId};
 use crate::accounting::journal::BusinessEventId;
 use crate::accounting::ledger::{AccountChart, TrialBalanceSummary};
 use crate::accounting::period::AccountingPeriod;
-use crate::accounting::AccountingAmount;
 
 /// 行业列报口径（按 AccountChart.version 对应：1/2 工业、3 银行、4 保险、5 地产）。
 #[derive(
@@ -147,10 +144,6 @@ pub enum ReportSource<'a> {
     Consolidated {
         request: ConsolidationRequest<'a>,
     },
-    ConsolidatedRestated {
-        request: ConsolidationRequest<'a>,
-        member_adjustments: &'a BTreeMap<MemberId, &'a BTreeMap<BusinessEventId, AccountingPeriod>>,
-    },
 }
 
 /// 生成请求（`adjustments` = 重述映射：调整分录来源 → 目标历史期间）。
@@ -172,120 +165,9 @@ pub struct ReportSet {
     pub version: ReportVersion,
     pub balance_sheet: BalanceSheet,
     pub income: IncomeStatement,
-    pub roe: ReportRoe,
     pub cash_flow: CashFlowStatement,
     pub equity: EquityStatement,
     pub notes: Notes,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-#[serde(deny_unknown_fields)]
-pub struct ReportRational {
-    pub numerator: String,
-    pub denominator: String,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub enum ReportRoeUnavailable {
-    NonPositiveAverageEquity,
-    MissingNonRecurringIncomeFacts,
-    IncompleteEquityEventHistory,
-    SameControlCombination,
-    ComparativePeriodSpecialTreatment,
-    UnclassifiedEquityEvent,
-    ConsolidatedAttributionFactsUnavailable,
-    StandaloneHasNoMinorityInterest,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub enum ReportRoeValue {
-    Available(ReportRational),
-    Unavailable { reason: ReportRoeUnavailable },
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub enum ReportRoeBasis {
-    AttributableToOrdinaryShareholders,
-    Unsupported { reason: ReportRoeUnavailable },
-}
-
-/// 非经常性损益项目列示行（证监会披露口径；当前已登记简化下列示恒空）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-#[serde(deny_unknown_fields)]
-pub struct ReportRoeNonRecurringItem {
-    pub code: String,
-    pub name: String,
-    /// 税后归母口径金额（分项税影响未登记细分 → 已登记简化下无实例）。
-    pub amount: AccountingAmount,
-}
-
-/// 扣非净利润事实：项目列示可得（含派生归母扣非），或类型化不可用（不填零）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub enum ReportRoeNonRecurring {
-    Listed {
-        items: Vec<ReportRoeNonRecurringItem>,
-        /// 归母净利润 − Σ项目（税后归母）；同一账套窗口派生，不跨期累计。
-        parent_net_income_after_deduction: AccountingAmount,
-    },
-    Unavailable { reason: ReportRoeUnavailable },
-}
-
-/// 权益事件实际生效类别（与公式层 EquityEventKind 同语义的披露投影）。
-#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub enum ReportRoeEquityEventKind {
-    Increase,
-    Decrease,
-    Other,
-}
-
-/// 逐项归属权益事件明细行。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-#[serde(deny_unknown_fields)]
-pub struct ReportRoeEquityEvent {
-    /// 实际生效日（ISO 日期字符串；与窗口/期间同风格的边界 DTO）。
-    pub effective_on: String,
-    pub kind: ReportRoeEquityEventKind,
-    /// `Increase`/`Decrease` 为正的绝对金额；`Other` 为带方向的净变动。
-    pub amount: AccountingAmount,
-}
-
-/// 归属维度的权益事件列示：逐项可得或类型化不可用（不填零）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub enum ReportRoeEquityEventListing {
-    Items(Vec<ReportRoeEquityEvent>),
-    Unavailable { reason: ReportRoeUnavailable },
-}
-
-/// 逐项归属权益事件：归属母公司 / 少数股东两列独立列示。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-#[serde(deny_unknown_fields)]
-pub struct ReportRoeEquityEventBreakdown {
-    pub attributable_to_parent: ReportRoeEquityEventListing,
-    pub minority_interest: ReportRoeEquityEventListing,
-}
-
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-#[serde(deny_unknown_fields)]
-pub struct ReportRoe {
-    pub basis: ReportRoeBasis,
-    pub ordinary_roe: ReportRoeValue,
-    pub adjusted_roe: ReportRoeValue,
-    pub weighted_average_parent_equity_cents: ReportRoeValue,
-    /// 非经常性损益项目列示与归母扣非净利润派生（扣非 ROE 的分子来源）。
-    pub non_recurring: ReportRoeNonRecurring,
-    /// 加权平均权益事件按归属逐项列示（单体/合并可得性不同）。
-    pub equity_events: ReportRoeEquityEventBreakdown,
 }
 
 /// 科目表版本 → 行业列报口径。
@@ -305,12 +187,6 @@ fn industry_of_chart(chart: &AccountChart) -> Result<IndustryPresentation, Repor
 pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, ReportError> {
     let ((first, last), prior_window) = request.kind.resolve(request.period)?;
     let restatement = !request.adjustments.is_empty();
-    // 更早调整可能改变期初权益，不能只检查窗口内；更晚有效期间不影响本期 ROE。
-    let roe_restatement = request.adjustments.values().any(|target| *target <= last);
-    let roe_books = match &request.source {
-        ReportSource::Standalone { books, .. } => Some(*books),
-        ReportSource::Consolidated { .. } | ReportSource::ConsolidatedRestated { .. } => None,
-    };
     let (scope, windows, classification) = match request.source {
         ReportSource::Standalone {
             id,
@@ -342,48 +218,12 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
                 })?;
             (ScopeId::Consolidated(root), windows, classification)
         }
-        ReportSource::ConsolidatedRestated {
-            request: group_request,
-            member_adjustments,
-        } => {
-            if restatement {
-                return Err(ReportError::InternalWindowInconsistent {
-                    detail: "合并重述必须使用成员命名空间，不能同时提供单体调整映射".into(),
-                });
-            }
-            let members = group_request.members.clone();
-            let windows = consolidated_window::consolidated_restated(
-                group_request,
-                (first, last),
-                prior_window,
-                member_adjustments,
-            )?;
-            let classification = notes::ReportClassification::from_members(&members)?;
-            let root = windows
-                .consolidation
-                .as_ref()
-                .ok_or_else(|| ReportError::InternalWindowInconsistent {
-                    detail: "合并重述窗口缺少集团事实".into(),
-                })?
-                .root
-                .clone();
-            (ScopeId::Consolidated(root), windows, classification)
-        }
     };
     let balance_sheet = balance_sheet::generate(&windows, &classification)?;
     let income = income::generate(&windows, &classification)?;
     let cash_flow = cash_flow::generate(&windows)?;
     let equity = equity::generate(&windows)?;
     let notes = notes::build_notes(&windows, &classification)?;
-    let roe_period = roe::period_dates(first, last)?;
-    let roe = roe::calculate_report_roe(
-        roe_books,
-        &scope,
-        roe_period,
-        equity.opening_parent,
-        income.report_period.net_income,
-        roe_restatement,
-    )?;
     Ok(ReportSet {
         scope,
         period: request.period,
@@ -392,7 +232,6 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
         version: request.version,
         balance_sheet,
         income,
-        roe,
         cash_flow,
         equity,
         notes,

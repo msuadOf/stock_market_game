@@ -64,9 +64,14 @@ fn cp(id: &str, kind: CounterpartyKind) -> ExternalCounterparty {
     }
 }
 
+pub(crate) fn fixture_catalog() -> engine::company::CompanyCatalog {
+    // 夹具公司代码集（与 spec()/industrial_company/bank_company 使用的代码保持一致）。
+    engine::company::CompanyCatalog::from_codes(&["C-BANK", "C-IND-A"]).unwrap()
+}
+
 fn spec(id: &str, kind: CompanyKind) -> CompanySpec {
     CompanySpec {
-        id: CompanyId(id.to_string()),
+        code: id.to_string(),
         name: format!("虚构公司{id}"),
         industry: IndustryId("fixture-industry".to_string()),
         kind,
@@ -170,7 +175,6 @@ fn bank_company(as_of: CivilDate) -> OperatingCompanyConfig {
                 lgd_bp: 6_000,
             }],
         },
-        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     };
     OperatingCompanyConfig {
         spec: spec(BANK_ID, CompanyKind::Bank),
@@ -232,6 +236,7 @@ pub(crate) fn single_company_config(as_of: CivilDate) -> CompanyOperationsConfig
     CompanyOperationsConfig {
         seed: OPS_SEED,
         shock_params: quiet_params(),
+        catalog: fixture_catalog(),
         companies: vec![industrial_company(as_of)],
     }
 }
@@ -241,6 +246,7 @@ pub(crate) fn two_company_config(seed: u64, as_of: CivilDate) -> CompanyOperatio
     CompanyOperationsConfig {
         seed,
         shock_params: quiet_params(),
+        catalog: fixture_catalog(),
         companies: vec![industrial_company(as_of), bank_company(as_of)],
     }
 }

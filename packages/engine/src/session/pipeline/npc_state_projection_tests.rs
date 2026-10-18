@@ -9,13 +9,43 @@ use crate::session::npc_working_quote_tests;
 use crate::strategy::ZiNoiseStrategy;
 use crate::{AccountId, Money};
 
+#[test]
+fn production_source_does_not_fabricate_the_currently_unreachable_parent_capability() {
+    let account = AccountId(1);
+    let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 991).unwrap();
+    let code = crate::StockId(0);
+    let id = shadow.state.plans.create(crate::plans::PlanOpen {
+        account,
+        code,
+        direction: crate::Side::Buy,
+        target: crate::plans::PlanTarget::ShareCount(400),
+        opinion: crate::plans::PlanOpinion {
+            signal_score_bp: 3000,
+            source: crate::plans::OpinionSource::Blended,
+        },
+        confidence_bp: 8000,
+        urgency: crate::plans::Urgency::Normal,
+        horizon_trading_days: 5,
+        created_trading_day: 0,
+    }).unwrap();
+    shadow.state.plans.install_execution(id, 100, Money::from_cents(1000), 100).unwrap();
+    let before = shadow.state.plans.clone();
+    let tick = shadow.state.tick;
+    npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+    let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.state.setup.config).unwrap();
+    assert!(!source.account_outputs()[0].uses_parent_order_execution());
+    let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
+    assert!(output.residual_intents().iter().all(|intent| intent.source_key().is_some()));
+    assert_eq!(shadow.state.plans, before, "普通策略投影不能伪造计划执行事实");
+    assert!(shadow.state.markets[&code].resting_orders_for(account).is_empty());
+}
+
 fn due_retail(seed: u64) -> (GameSession, AccountId) {
     let account = AccountId(1);
     let mut shadow = GameSession::new(npc_working_quote_tests::retail_quote_setup(), seed).unwrap();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let tick = shadow.state.tick;
@@ -71,7 +101,7 @@ pub(super) fn use_buy_imbalance_analysis(session: &mut GameSession, account: Acc
 fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping() {
     let account = AccountId(1);
     let intent = crate::Intent::PlaceLimit {
-        code: crate::StockCode("600888".to_owned()),
+        code: crate::StockId(0),
         side: crate::Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,
@@ -90,7 +120,7 @@ fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping()
 #[test]
 fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
     let account = AccountId(1);
-    let code = crate::StockCode("600888".to_owned());
+    let code = crate::StockId(0);
     let raw_intent = crate::Intent::PlaceLimit {
         code: code.clone(),
         side: crate::Side::Buy,
@@ -139,7 +169,7 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
             )
         })
         .collect::<Vec<_>>();
-    let parent_before = shadow.state.parent_orders.clone();
+    let plans_before = serde_json::to_value(&shadow.state.plans).unwrap();
     let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
     assert!(matches!(
         source.strategy_state(account),
@@ -177,7 +207,10 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
         &*installed_before,
         &**shadow.state.accounts[&account].strategy().unwrap()
     ));
-    assert_eq!(shadow.state.parent_orders, parent_before);
+    assert_eq!(
+        serde_json::to_value(&shadow.state.plans).unwrap(),
+        plans_before
+    );
     assert_eq!(
         shadow
             .state
@@ -201,9 +234,7 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
     let mut shadow = GameSession::new(setup, 10).unwrap();
     for account in [AccountId(1), AccountId(2)] {
         shadow
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .set_strategy(Box::new(
                 ZiNoiseStrategy::new(if account == AccountId(1) { 0.0 } else { 1.0 }, 100, 0.5)
@@ -272,9 +303,7 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
     let mut authority = GameSession::new(setup, 19).unwrap();
     for account in [AccountId(1), AccountId(2)] {
         authority
-            .state
-            .accounts
-            .get_mut(&account)
+            .fixture_account_mut(&account)
             .unwrap()
             .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
         let tick = authority.state.tick;
@@ -283,24 +312,25 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
     let before_hash = authority.session_state_hash().unwrap();
     let before_save = serde_json::to_vec(&authority.save().unwrap()).unwrap();
 
-    let mut plan = plan_tick(PhaseInput {
-        session: &authority,
-    })
-    .unwrap();
-    let mut candidate = plan.state.take_session().unwrap();
-    // plan_tick 的日界 queue 已在 shadow 上消费过一次注意力调度，测试自己的
-    // 捕获前重新强制候选，保持「两个 due NPC」的原始场景语义。
-    let candidate_tick = candidate.state.tick;
-    for account in [AccountId(1), AccountId(2)] {
-        npc_working_quote_tests::force_attention_candidate(&mut candidate, account, candidate_tick);
-    }
-    let captured = capture_decision_snapshot(&mut candidate).unwrap();
+    // known-6 #4 处置（B 类重锚，ADR-0042 §9.2）：plan_tick 入口即消费 due
+    // NPC（D(a) 唯一生产点）——决策快照须在 plan_tick **前**取得（旧序
+    // plan_tick→take_session→capture 的快照恒为空）；捕获会推进注意力，
+    // 故在一次性 tick shadow 克隆上捕获，authority 保持未动（末尾
+    // hash/save 全等断言面不变）。失败注入与丢弃断言面不变。
+    let (captured, decision_config) = {
+        let mut capture_view = authority.clone_for_tick_shadow().unwrap();
+        let captured = capture_decision_snapshot(&mut capture_view).unwrap();
+        let config = capture_view.state.setup.config.clone();
+        (captured, config)
+    };
     assert_eq!(
         captured.snapshot.due_npc_ids(),
         &[AccountId(1), AccountId(2)]
     );
-    let mut source =
-        run_npc_decisions(captured.snapshot.clone(), &candidate.state.setup.config).unwrap();
+    let mut source = run_npc_decisions(captured.snapshot.clone(), &decision_config).unwrap();
+    let mut plan = plan_tick(PhaseInput { session: &authority })
+    .unwrap();
+    let mut candidate = plan.take_session().unwrap();
     candidate.state.retail_experience.remove(&AccountId(2));
 
     let error = project_npc_state(&mut candidate, &captured, &mut source).unwrap_err();
@@ -325,15 +355,11 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
     use_buy_imbalance_analysis(&mut shadow, account);
     // 当前散户试买目标为资产的 7%；明确给足资金，让策略确实请求完整 900 股。
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(Money::from_cents(20_000_000));
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
@@ -365,14 +391,16 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
     let books_after = serde_json::to_vec(&shadow.snapshot()).unwrap();
     assert_eq!(
         books_after, books_before,
-        "DecisionShadow 投影不得路由或结算"
+        "DecisionAndContinuation 投影不得路由或结算"
     );
 }
 
 #[test]
 fn projection_exposes_working_decisions_before_residuals_without_canceling_the_book() {
     let (mut shadow, account) = due_retail(41);
-    let code = shadow.state.setup.stocks[0].code.clone();
+    let code = shadow
+        .stock_id(&shadow.state.setup.stocks[0].code.0)
+        .unwrap();
     let mut setup_events = Vec::new();
     shadow.seed_order_for_test(
         account,
@@ -398,9 +426,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     )
     .unwrap();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .fixture_set_cash(reserved);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
@@ -455,46 +481,6 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     );
 }
 
-#[test]
-fn production_source_does_not_fabricate_the_currently_unreachable_parent_capability() {
-    let account = AccountId(1);
-    let mut shadow = GameSession::new(npc_working_quote_tests::quote_setup(0), 991).unwrap();
-    let code = shadow.state.setup.stocks[0].code.clone();
-    let existing = crate::session::ParentOrderPlan::from_facts(
-        code.clone(),
-        crate::Side::Buy,
-        400,
-        0,
-        100,
-        None,
-        None,
-        Money::from_cents(1_000),
-        100,
-    );
-    shadow
-        .state
-        .parent_orders
-        .entry(account)
-        .or_default()
-        .insert(code.clone(), existing.clone());
-    let tick = shadow.state.tick;
-    npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
-    let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source =
-        run_npc_decisions(snapshot.snapshot.clone(), &shadow.state.setup.config).unwrap();
-    assert!(!source.account_outputs()[0].uses_parent_order_execution());
-
-    let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
-
-    assert!(output
-        .residual_intents()
-        .iter()
-        .all(|intent| intent.source_key().is_some()));
-    assert_eq!(shadow.state.parent_orders[&account][&code], existing);
-    assert!(shadow.state.markets[&code]
-        .resting_orders_for(account)
-        .is_empty());
-}
 
 #[test]
 fn retail_review_reconciles_only_the_stock_actually_observed() {
@@ -504,9 +490,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
     setup.npcs.inst_count = 0;
     let mut shadow = GameSession::new(setup, 43).unwrap();
     shadow
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
     let codes = shadow.state.markets.keys().cloned().collect::<Vec<_>>();
@@ -553,6 +537,6 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
             .resting_orders_for(account)
             .len(),
         1,
-        "DecisionShadow 只提出撤单；订单簿变更仍由 StockProcessing 负责"
+        "DecisionAndContinuation 只提出撤单；订单簿变更仍由 StockProcessing 负责"
     );
 }

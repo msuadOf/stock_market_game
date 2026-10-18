@@ -1,0 +1,15 @@
+=== P2-2a 绿（完整态：EchoBelief 稀疏上行+驱动器增量缓存）===
+守卫（p2_1a 改写后=稀疏判别+缓存全量）：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1620 filtered out; finished in 1.43s
+构造期同源（d3a2b）：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1620 filtered out; finished in 1.46s
+注入读面（d3b5——注入窗口 pending 语义修复后绿）：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1620 filtered out; finished in 1.45s
+
+全量回归：默认 1610/0/11、env=1 1610/0/11（另两轮复跑绿；偶发 npc_decisions_tests
+既有 flake 同 P2-1a 登记——旧管线 rayon 域，与改动无交叉）
+
+B 口径（300 tick groups=1）3 轮：65.30 / 65.87 / 65.64（mean 65.6）
+P2 链条：4.3(基线)→5.02(P1-C)→10.1(P2-1a)→10.4(P2-1b)→65.6(P2-2a) 累计 15.3×
+B 1000 tick：53.0（18.9s）——300→1000 衰减 19%（事件密度 3.3×自然负载）；
+events/fees 全程逐位一致（300:3336/0；1000:11119/5705）

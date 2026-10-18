@@ -7,16 +7,16 @@ mod publication_failures;
 
 use crate::books_fixture::correction_books;
 use crate::fixture::OPS_SEED;
-use engine::accounting::AccountingPeriod;
 use engine::accounting::closing::ClosingEngine;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::{IndustryPresentation, ReportKind};
+use engine::accounting::AccountingPeriod;
 use engine::calendar::CivilInstant;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
-    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
-    PublicLibrarySave, PublicationOrigin, PublicationRequest, ScheduledReportKind,
-    scheduled_instant, stable_company_offset,
+    scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
+    AnnouncementRequest, InformationError, PublicLibrary, PublicLibrarySave, PublicationOrigin,
+    PublicationRequest, ScheduledReportKind,
 };
 
 const COMPANY: &str = "C-FAIL";
@@ -34,15 +34,16 @@ struct Base {
 /// 合法基线：Q1 2030 快照 + 一次合法公布（后续拒绝用例在其上构造）。
 impl Base {
     fn valid_q1() -> Self {
-        let company = CompanyId(COMPANY.to_string());
-        let offset = stable_company_offset(OPS_SEED, &company);
+        // 单公司独立夹具：目录位 0。
+        let company = CompanyId(0);
+        let offset = stable_company_offset(OPS_SEED, COMPANY);
         let mut closing = ClosingEngine::new();
         let books = correction_books();
-        let scope = ScopeId::Standalone(MemberId(COMPANY.to_string()));
+        let scope = ScopeId::Standalone(MemberId(0));
         closing
             .snapshot_interim(
                 &books,
-                &MemberId(COMPANY.to_string()),
+                &MemberId(0),
                 IndustryPresentation::Industrial,
                 AccountingPeriod::from_ymd(2030, 3).expect("q1 period"),
                 ReportKind::Quarter,
@@ -85,7 +86,7 @@ impl Base {
 
     fn publication_request(&self, period: AccountingPeriod) -> PublicationRequest {
         PublicationRequest {
-            company: CompanyId(COMPANY.to_string()),
+            company: CompanyId(0),
             scope: self.scope.clone(),
             period,
             kind: ReportKind::Quarter,
@@ -116,15 +117,15 @@ fn early_read_rejected() {
     let mut library = base.library;
     let announcement_id = library
         .publish_announcement(AnnouncementRequest {
-            company: CompanyId(COMPANY.to_string()),
+            company: CompanyId(0),
             occurred_on: base.q1_instant.date(),
             published_at: base.q1_instant,
-            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
+            event: AnnouncedEvent {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 100,
                 starts_on: base.q1_instant.date(),
                 expires_on: base.q1_instant.date(),
-            }),
+            },
         })
         .expect("announcement publishes at its phase");
     assert!(matches!(

@@ -1,15 +1,15 @@
 //! 周末发布金样：非交易日 18:00 照常公布、零撮合零市场事件零 RNG
 //! 消费；开局后首次排期经 live 派发落地；提前读取被类型化拒绝。
 
-use crate::fixture::{INDUSTRIAL_ID, OPS_SEED, history_start_of, plus_days, single_company_config};
-use crate::session_fixture::{TICKS_PER_DAY, civil_setup};
-use engine::accounting::AccountingPeriod;
+use crate::fixture::{history_start_of, plus_days, single_company_config, INDUSTRIAL_ID, OPS_SEED};
+use crate::session_fixture::{civil_setup, TICKS_PER_DAY};
 use engine::accounting::reports::ReportKind;
+use engine::accounting::AccountingPeriod;
 use engine::calendar::{CalendarExchange, CivilInstant, TradingCalendar, Weekday};
 use engine::company::{ActiveShock, CompanyId, ShockKind};
 use engine::information::{
-    InformationError, PublicationOrigin, ScheduledReportKind, assemble_seeded_prehistory,
-    scheduled_instant, stable_company_offset,
+    assemble_seeded_prehistory, scheduled_instant, stable_company_offset, InformationError,
+    PublicationOrigin, ScheduledReportKind,
 };
 use engine::session::{
     CivilDayEndReport, CompanyDisclosureKind, DayEndDisclosureCtx, DayEndDisclosures,
@@ -47,21 +47,18 @@ struct WeekendScenario {
 
 impl WeekendScenario {
     fn new(offset: u8) -> Self {
-        Self::for_company(offset, CompanyId(INDUSTRIAL_ID.into()))
-    }
-
-    fn for_company(offset: u8, company: CompanyId) -> Self {
         let year = saturday_q1_year(offset);
         let saturday = scheduled_instant(ScheduledReportKind::Q1, year, offset)
             .expect("saturday q1 instant")
             .date();
         let friday = saturday.prev().expect("friday before saturday");
-        let mut operations = single_company_config(history_start_of(friday).prev().expect("as_of before history"));
-        operations.companies[0].spec.id = company;
         let seeded = assemble_seeded_prehistory(
-            operations,
+            single_company_config(
+                history_start_of(friday)
+                    .prev()
+                    .expect("as_of before history"),
+            ),
             friday,
-            engine::information::ReportFrequency::Quarterly,
         )
         .expect("prehistory assembles");
         let session =
@@ -95,7 +92,6 @@ impl WeekendScenario {
         let out = self
             .dispatch
             .run_day_end(DayEndDisclosureCtx {
-                report_frequency: engine::information::ReportFrequency::Quarterly,
                 groups: &[],
                 report: &report,
                 ops: &self.seeded.ops,
@@ -111,10 +107,11 @@ impl WeekendScenario {
 /// 断言公布本身零市场副作用（事件 seq / day / tick / 快照全部不变）。
 #[test]
 fn weekend_report_publishes_without_trade() {
-    // Session 已改为 Simple，两套独立生产者须使用同一发行人才能冻结同一披露日。
-    let company = CompanyId("C-600101".into());
-    let offset = stable_company_offset(OPS_SEED, &company);
-    let mut scenario = WeekendScenario::for_company(offset, company.clone());
+    let company = crate::fixture::fixture_catalog()
+        .id(INDUSTRIAL_ID)
+        .expect("目录含工商夹具公司");
+    let offset = stable_company_offset(OPS_SEED, INDUSTRIAL_ID);
+    let mut scenario = WeekendScenario::new(offset);
     let year = scenario.year;
     let q1_instant = scheduled_instant(ScheduledReportKind::Q1, year, offset).expect("instant");
 
@@ -164,16 +161,7 @@ fn weekend_report_publishes_without_trade() {
     );
     let save_after = scenario.session.save().expect("healthy settled save");
     assert_eq!(save_after.rng_state, save_before.rng_state);
-    // 2bf5b2a9 自然日信息送达可推进 next_information_check，不得消费市场注意力随机流。
-    assert_eq!(save_after.npc_attention.len(), save_before.npc_attention.len());
-    for (owner, before) in &save_before.npc_attention {
-        let after = &save_after.npc_attention[owner];
-        assert_eq!(after.information_cadence, before.information_cadence);
-        assert_eq!(after.base_probability, before.base_probability);
-        assert_eq!(after.next_attention_candidate_tick, before.next_attention_candidate_tick);
-        assert_eq!(after.rng_state, before.rng_state);
-        assert!(after.next_information_check >= before.next_information_check);
-    }
+    assert_eq!(save_after.npc_attention, save_before.npc_attention);
     assert!(saturday_report.events.len() > 1);
     for (index, event) in saturday_report.events.iter().enumerate() {
         assert_eq!(event.seq(), seq_before + index as u64 + 1);
@@ -267,8 +255,10 @@ fn weekend_report_publishes_without_trade() {
 /// 派发不追加（恰好一次）。
 #[test]
 fn interim_announcement_publishes_at_next_disclosure_phase() {
-    let company = CompanyId(INDUSTRIAL_ID.to_string());
-    let offset = stable_company_offset(OPS_SEED, &company);
+    let company = crate::fixture::fixture_catalog()
+        .id(INDUSTRIAL_ID)
+        .expect("目录含工商夹具公司");
+    let offset = stable_company_offset(OPS_SEED, INDUSTRIAL_ID);
     let mut scenario = WeekendScenario::new(offset);
     let year = scenario.year;
     let saturday = scheduled_instant(ScheduledReportKind::Q1, year, offset)
@@ -315,13 +305,13 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
         announcement.published_at,
         saturday_report.disclosure_instant
     );
-    let engine::information::AnnouncementContent::Shock(event) = &announcement.content else {
-        panic!("operating event must be a shock announcement");
-    };
-    assert_eq!(event.kind, ShockKind::ContractWon);
-    assert_eq!(event.amplitude_bp, 1_500);
-    assert_eq!(event.starts_on, saturday);
-    assert_eq!(event.expires_on, plus_days(saturday, 5).unwrap());
+    assert_eq!(announcement.event.kind, ShockKind::ContractWon);
+    assert_eq!(announcement.event.amplitude_bp, 1_500);
+    assert_eq!(announcement.event.starts_on, saturday);
+    assert_eq!(
+        announcement.event.expires_on,
+        plus_days(saturday, 5).unwrap()
+    );
     // 未来现金流是预测：公告类型上只有事件条款，无任何「已实现」金额声明。
     let friday_night =
         CivilInstant::from_hms(friday_report.settled_date, 23, 59, 59).expect("23:59:59 valid");
@@ -337,7 +327,6 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
     let again = scenario
         .dispatch
         .run_day_end(DayEndDisclosureCtx {
-            report_frequency: engine::information::ReportFrequency::Quarterly,
             groups: &[],
             report: &saturday_report,
             ops: &scenario.seeded.ops,

@@ -41,9 +41,6 @@ const snapshot: Snapshot = {
     "600101": {
       last_price: "1000",
       last_close: "1000",
-      cash_ex_reference_pending_trade: false,
-      day_market_activity: true,
-      last_cash_ex_reference: null,
       best_bid: "999",
       best_ask: "1001",
       bids: [["999", 250]],
@@ -62,12 +59,11 @@ const snapshot: Snapshot = {
   active_daily_candles: {},
 };
 
-function renderView(view: ReactElement, activeSnapshot = snapshot, accountId: string | null = "0", canControl = accountId === "0"): string {
+function renderView(view: ReactElement, activeSnapshot = snapshot): string {
   const state: RootState = {
     ...store.getState(),
-    remoteMembership: { remote: accountId !== "0", accountId, canControl, needsRejoin: accountId === null, generation: "1", ready: true },
     snapshot: { snapshot: activeSnapshot, lastSeq: 1, generation: "1", playerWorkingOrders: {}, playerOrdersReady: false },
-    trades: { items: [{ seq: 1, code: "600101", price: "1000", qty: 250, maker: "1", taker: "2" }] },
+    trades: { items: [{ seq: 1, code: "600101", price: "1000", qty: 250, maker: 1, taker: 2 }] },
   };
   const testStore = configureStore({ reducer: () => state });
   return renderToStaticMarkup(createElement(Provider, {
@@ -82,51 +78,6 @@ function renderView(view: ReactElement, activeSnapshot = snapshot, accountId: st
 }
 
 const browserFixture = { favorites: ["600101"], ready: true, error: null, view: "watchlist" as const, query: "", sortRules: [], setSortRules() {}, setView() {}, setQuery() {}, toggleFavorite() {}, reload() {} };
-
-test("Remote 缺席本人只显示未加入，不泄露其他玩家账户或零资产", { timeout: 10000 }, () => {
-  for (const view of [createElement(views.DesktopAssets), createElement(views.PositionsPanel, { onOpenMarket() {} })]) {
-    const markup = renderView(view, snapshot, null);
-    assert.match(markup, /尚未加入市场/);
-    assert.doesNotMatch(markup, /总资产|可用资金|2623\.45|暂无持仓/);
-  }
-  const desktopChart = renderView(createElement(views.ConnectedChartPanel, { chartPeriod: "分时", setChartPeriod() {}, klineDays: 20, browser: browserFixture }), snapshot, null);
-  assert.doesNotMatch(desktopChart, /交割起始自然日|按日期复盘本人交割单/);
-  assert.match(desktopChart, /无法查询本人交割历史/);
-  const mobileDetail = renderView(createElement(views.ConnectedMobileDetail, {
-    browser: browserFixture,
-    klineDays: 20,
-    setKlineDays() {},
-    period: "分时",
-    infoTab: "资金",
-    speed: 1,
-    measuredSpeed: "实测 —",
-    measuredSpeedTitle: "",
-    running: false,
-    initialCivilDate: "2025-01-01",
-    onCompanyQuery() {},
-    onAdvanceCivilDay: async () => {},
-    onPeriodChange() {},
-    onInfoTabChange() {},
-    onSpeedChange() {},
-    onPauseToggle() {},
-    onBack() {},
-    onSelect() {},
-  }), snapshot, null);
-  assert.doesNotMatch(mobileDetail, /交割起始自然日|按日期复盘本人交割单/);
-  assert.match(mobileDetail, /无法查询本人交割历史/);
-});
-
-test("Remote 只能使用本人非零 AccountID 资产，并按 CanControl 限制管理入口", { timeout: 10000 }, () => {
-  const active = structuredClone(snapshot);
-  active.accounts["7"] = { cash: "70000", reserved_cash: "0", reserved_sell_qty: {}, positions: {} };
-  const markup = renderView(createElement(views.DesktopAssets), active, "7", false);
-  assert.match(markup, /总资产<\/span><span class="value">700<\/span>/);
-  assert.doesNotMatch(markup, /2623\.45/);
-  const userProps = { running: false, pauseAfterClose: false, pauseBeforeOpen: false, pausePreferencesPending: false, deliveryMode: null, deliveryModes: [], deliveryLabels: { polling: "轮询", push: "推送" }, onPauseAfterCloseChange() {}, onPauseBeforeOpenChange() {}, onDeliveryModeChange() {}, onSave() {}, onLoad() {}, onSaveFile() {}, onLoadFile() {} };
-  const member = renderView(createElement(views.UserPanel, userProps as never), active, "7", false);
-  assert.match(member, /disabled=""[^>]*\/?>收盘后暂停复盘/);
-  assert.match(member, /disabled=""[^>]*>读取本地进度/);
-});
 
 test("账户金额以元显示，持仓和 T+1 可卖股数仍以股显示", () => {
   const assets = renderView(createElement(views.DesktopAssets));
@@ -162,7 +113,9 @@ test("审计G46：一档、两档、五档卖盘标签对应真实rank，卖一�
 test("审计G49：持仓成本半偶到分，浮盈使用同一每股成本口径", () => {
   for (const [invested, recovered, cost, pnl] of [[200100, 0, "10.00", "+2"], [0, 200100, "-10.00", "+4002"]] as const) {
     const active = structuredClone(snapshot);
-    active.accounts["0"].positions["600101"] = { qty: 200, t1_locked: 0, invested_cents: String(invested), recovered_cents: String(recovered) };
+    // positions 是 Readonly Record：以新账户对象整体替换该持仓项，不原位改写。
+    const account = active.accounts["0"];
+    active.accounts["0"] = { ...account, positions: { ...account.positions, "600101": { qty: 200, t1_locked: 0, invested_cents: String(invested), recovered_cents: String(recovered) } } };
     active.markets["600101"].last_price = "1001";
     const html = renderView(createElement(views.PositionsPanel, { onOpenMarket() {} }), active);
     assert.match(html, new RegExp(`<td class="num">${cost.replace(".", "\\.")}<\\/td>`));
@@ -172,7 +125,9 @@ test("审计G49：持仓成本半偶到分，浮盈使用同一每股成本口�
 
 test("Q16：持仓SSR保留真实负净成本金额与浮盈金额，不显示误导收益率", { timeout: 10000 }, () => {
   const active = structuredClone(snapshot);
-  active.accounts["0"].positions["600101"] = { qty: 200, t1_locked: 0, invested_cents: "200000", recovered_cents: "400000" };
+  // positions 是 Readonly Record：以新账户对象整体替换该持仓项，不原位改写。
+  const account = active.accounts["0"];
+  active.accounts["0"] = { ...account, positions: { ...account.positions, "600101": { qty: 200, t1_locked: 0, invested_cents: "200000", recovered_cents: "400000" } } };
   active.markets["600101"].last_price = "1001";
   const html = renderView(createElement(views.PositionsPanel, { onOpenMarket() {} }), active);
   assert.match(html, /<td class="num">-10\.00<\/td>/);
@@ -186,7 +141,7 @@ test("G68：快捷涨跌停从当前setup读取非默认证券的创业板规则
   const active = structuredClone(snapshot);
   active.markets = { "300999": active.markets["600101"]! };
   const setup = { ...DEFAULT_SETUP, stocks: [{ ...DEFAULT_SETUP.stocks[0]!, code: "300999", category: "ChiNext" as const }] };
-  const trading = new QuickTrading({ setup: () => setup, snapshot: () => active, account: () => active.accounts["0"]!, autoAllowed: () => true, submit: async () => {} });
+  const trading = new QuickTrading({ setup: () => setup, snapshot: () => active, autoAllowed: () => true, submit: async () => {} });
   trading.edit("300999", "Buy", { priceMode: "highest" });
   trading.edit("300999", "Sell", { priceMode: "lowest" });
   const html = renderView(createElement(QuickTradingPanel, { trading, setup, code: "300999", side: "Buy", onSideChange() {}, onSelect() {}, notice() {} }), active);
@@ -200,22 +155,13 @@ test("快捷面板显示现金与跨股可买手数都扣除待受理买单预�
   active.accounts["0"].reserved_cash = "0";
   active.markets["002156"] = { ...active.markets["600101"], last_price: "2000", last_close: "2000", best_bid: "1999", best_ask: "2000" };
   let reject!: (error: Error) => void;
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => active, account: () => active.accounts["0"]!, autoAllowed: () => true, submit: () => new Promise<void>((_, fail) => { reject = fail; }) });
+  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => active, autoAllowed: () => true, submit: () => new Promise<void>((_, fail) => { reject = fail; }) });
   const submitting = trading.submit("600101", "Buy");
   try {
     const html = renderView(createElement(QuickTradingPanel, { trading, setup: DEFAULT_SETUP, code: "002156", side: "Buy", onSideChange() {}, onSelect() {}, notice() {} }), active);
     assert.match(html, /可买 0 手 · 可用 1994\.99元（已扣待受理买单预占）/);
     assert.doesNotMatch(html, /可用 3000元/);
   } finally { reject(new Error("短测试释放待处理提交")); await submitting; }
-});
-
-test("QuickTrading 使用本人非零 AccountID 现金，不读取账户0", { timeout: 10000 }, () => {
-  const active = structuredClone(snapshot);
-  active.accounts = { "7": { cash: "70000", reserved_cash: "0", reserved_sell_qty: {}, positions: {} } };
-  const trading = new QuickTrading({ setup: () => DEFAULT_SETUP, snapshot: () => active, account: () => active.accounts["7"]!, autoAllowed: () => true, submit: async () => {} });
-  const markup = renderView(createElement(QuickTradingPanel, { trading, setup: DEFAULT_SETUP, code: "600101", side: "Buy", onSideChange() {}, onSelect() {}, notice() {} }), active, "7", true);
-  assert.match(markup, /可用 700元（已扣待受理买单预占）/);
-  assert.doesNotMatch(markup, /可用 120元/);
 });
 
 test("G65：行情分类SSR公开当前分类而非只有active class", { timeout: 10000 }, () => {

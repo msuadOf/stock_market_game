@@ -1,0 +1,16 @@
+=== P2-2b 绿（完整态）===
+守卫（结构判别：首拍全量回写必产生 undo 记录+清空归零）：
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1621 filtered out; finished in 1.35s
+hash 回滚守卫：
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1619 filtered out; finished in 0.94s
+全量回归：默认+env=1 均 1611/0/11
+
+B 口径 300 tick 3 轮：84.35 / 78.86 / 71.16（mean 78.1，P2-2a 后 65.6，+19%）
+B 1000 tick：69.5（14.4s）——events=11119/fees=5705 逐位一致
+
+B 口径总链条：4.3(基线)→5.02(P1-C)→10.1(P2-1a)→10.4(P2-1b)→65.6(P2-2a)→78.1(P2-2b)
+1000 tick：3.18(修复前)→69.5（累计 21.9×）
+
+判别边界登记：compute_context hash 守卫对 undo 突变在零写入拍不可判别
+（受理只挪 purse 公开现金不变）——新守卫 p2_2b_account_undo_records_and_clears
+以结构断言承担判别（突变红 left=0/right=2）。

@@ -1,8 +1,9 @@
 //! 在自然日经营终局后派发 18:00 披露。
 //!
-//! GameSession 先执行 `ops_wiring.run_day_end`，月末或年末通过行业可变账套
-//! 完成 `close_month`/`close_year`，再将同一份 [`CivilDayEndReport`] 传入
-//! [`DisclosureDispatch::run_day_end`]。定期报告须经登记簿校验、定稿后公布。
+//! GameSession 先经公司领域入口完成当日经营与必要关账，再将同一份
+//! [`CivilDayEndReport`] 传入 [`DisclosureDispatch::run_day_end`]。领域入口
+//! 准备定稿材料身份/政策，Session 不读取账套、成本或应计字段；公开库仍
+//! 与公司事实、NPC 本人获知分开，材料经登记簿校验后才公布。
 //!
 //! 18:00 观察者使用无捕获的 `fn(CivilInstant)`；权威相位瞬间由
 //! [`CivilDayEndReport::disclosure_instant`] 承载。生产 hook
@@ -11,13 +12,13 @@
 
 use crate::accounting::closing::ClosingEngine;
 use crate::calendar::{CivilDate, CivilDateError, CivilInstant};
+use crate::company::operations::{CompanyCloseError, CompanyOperations};
 use crate::company::CompanyId;
-use crate::company::operations::CompanyOperations;
 
 use crate::information::{
-    AccountingPolicyRef, AnnouncedEvent, AnnouncementContent, AnnouncementRequest,
-    InformationError, PublicLibrary, PublicationId, PublicationRequest, ScheduledReportKind,
-    ensure_original_registered, industry_presentation,
+    scheduled_instant, stable_company_offset,
+    AnnouncedEvent, AnnouncementRequest, InformationError, PublicLibrary,
+    PublicationId, PublicationOrigin, PublicationRequest, ScheduledReportKind, APPROVAL_HOUR,
 };
 use crate::session::civil_clock::{CivilClock, CivilDayEndReport};
 use thiserror::Error;
@@ -32,6 +33,8 @@ pub enum DisclosureError {
     Information(#[from] InformationError),
     #[error("civil date error: {0}")]
     Date(#[from] CivilDateError),
+    #[error(transparent)]
+    Company(#[from] CompanyCloseError),
 }
 
 /// 一次日终披露的结果（确定性顺序：公告先于定期报告；公司 id 序）。
@@ -43,35 +46,11 @@ pub struct DayEndDisclosures {
 
 /// 日终披露上下文（参数组——closing.rs `StandaloneTarget` 先例）。
 pub struct DayEndDisclosureCtx<'a> {
-    pub report_frequency: crate::information::ReportFrequency,
     pub groups: &'a [super::company_groups::GroupStructure],
     pub report: &'a CivilDayEndReport,
     /// 已完成当日 finalize 的经营编排（只读）。
     pub ops: &'a CompanyOperations,
     pub closing: &'a mut ClosingEngine,
-    pub library: &'a mut PublicLibrary,
-}
-
-pub(super) struct SimpleDayEndDisclosureCtx<'a> {
-    pub report_frequency: crate::information::ReportFrequency,
-    pub report: &'a CivilDayEndReport,
-    pub system: &'a crate::company::CompanySystem,
-    pub seed: u64,
-    pub dividends: &'a [crate::company::cash_dividend::CashDividendBook],
-    pub rights_offerings:
-        &'a [crate::company::rights_offering::RightsOfferingBook],
-    pub issuer_repurchases:
-        &'a [crate::company::issuer_repurchase::IssuerRepurchaseBook],
-    pub share_splits: &'a [crate::company::share_split::ShareSplitBook],
-    pub stock_distributions: &'a [crate::company::stock_distribution::StockDistributionBook],
-    pub library: &'a mut PublicLibrary,
-}
-
-pub(super) struct SimpleScheduledDisclosureCtx<'a> {
-    pub report_frequency: crate::information::ReportFrequency,
-    pub through: CivilInstant,
-    pub system: &'a crate::company::CompanySystem,
-    pub seed: u64,
     pub library: &'a mut PublicLibrary,
 }
 
@@ -85,161 +64,6 @@ pub struct DisclosureDispatch {
 }
 
 impl DisclosureDispatch {
-    pub(super) fn run_simple_day_end(
-        &mut self,
-        ctx: SimpleDayEndDisclosureCtx<'_>,
-    ) -> Result<DayEndDisclosures, DisclosureError> {
-        let through = if matches!(
-            ctx.report_frequency,
-            crate::information::ReportFrequency::Monthly { .. }
-        ) {
-            CivilInstant::new(ctx.report.settled_date, 86399)?
-        } else {
-            ctx.report.disclosure_instant
-        };
-        let reports_published = self.run_simple_scheduled(SimpleScheduledDisclosureCtx {
-            report_frequency: ctx.report_frequency,
-            through,
-            system: ctx.system,
-            seed: ctx.seed,
-            library: ctx.library,
-        })?;
-        let mut announcements_published = Vec::new();
-        for book in ctx.dividends {
-            if book.status() == &crate::company::cash_dividend::CashDividendStatus::Announced
-                && book.plan().announced_on == ctx.report.settled_date
-            {
-                let finance_plan = ctx
-                    .system
-                    .dividend_plan_facts(&book.plan().issuer)
-                    .map_err(|error| InformationError::InconsistentLibrary {
-                        detail: format!(
-                            "cash dividend {} approved amount unavailable: {error}",
-                            book.plan().plan_id
-                        ),
-                    })?
-                    .into_iter()
-                    .find(|fact| fact.plan_id == book.plan().plan_id)
-                    .ok_or_else(|| InformationError::InconsistentLibrary {
-                        detail: format!(
-                            "cash dividend {} has no matching approved finance fact",
-                            book.plan().plan_id
-                        ),
-                    })?;
-                let total_gross = finance_plan.total_gross.to_money().map_err(|error| {
-                    InformationError::InconsistentLibrary {
-                        detail: format!(
-                            "cash dividend {} approved amount cannot be represented as Money: {error}",
-                            book.plan().plan_id
-                        ),
-                    }
-                })?;
-                let id = ctx.library.publish_announcement(AnnouncementRequest {
-                    company: book.plan().issuer.clone(),
-                    occurred_on: ctx.report.settled_date,
-                    published_at: ctx.report.disclosure_instant,
-                    content: AnnouncementContent::CashDividend(
-                        crate::information::CashDividendAnnouncement {
-                            plan: book.plan().clone(),
-                            total_gross,
-                        },
-                    ),
-                })?;
-                announcements_published.push(id);
-            }
-        }
-        // 配股／增发与回购方案公告：复用现金分红公告通道（同日 18:00 相位、
-        // 恰好一次语义；NPC 经公开库按既有注意力规则获知）。
-        for book in ctx.rights_offerings {
-            if book.status() == &crate::company::rights_offering::RightsOfferingStatus::Announced
-                && book.plan().announced_on == ctx.report.settled_date
-            {
-                let id = ctx.library.publish_announcement(AnnouncementRequest {
-                    company: book.plan().issuer.clone(),
-                    occurred_on: ctx.report.settled_date,
-                    published_at: ctx.report.disclosure_instant,
-                    content: AnnouncementContent::RightsOffering(
-                        crate::information::RightsOfferingAnnouncement {
-                            plan: book.plan().clone(),
-                        },
-                    ),
-                })?;
-                announcements_published.push(id);
-            }
-        }
-        for book in ctx.issuer_repurchases {
-            if book.status()
-                == &crate::company::issuer_repurchase::IssuerRepurchaseStatus::Announced
-                && book.plan().announced_on == ctx.report.settled_date
-            {
-                let id = ctx.library.publish_announcement(AnnouncementRequest {
-                    company: book.plan().issuer.clone(),
-                    occurred_on: ctx.report.settled_date,
-                    published_at: ctx.report.disclosure_instant,
-                    content: AnnouncementContent::IssuerRepurchase(
-                        crate::information::IssuerRepurchaseAnnouncement {
-                            plan: book.plan().clone(),
-                        },
-                    ),
-                })?;
-                announcements_published.push(id);
-            }
-        }
-        // 拆股／缩股方案公告：复用同一公告通道（同日 18:00 相位、恰好一次）。
-        for book in ctx.share_splits {
-            if book.status()
-                == &crate::company::share_split::ShareSplitStatus::Announced
-                && book.plan().announced_on == ctx.report.settled_date
-            {
-                let id = ctx.library.publish_announcement(AnnouncementRequest {
-                    company: book.plan().issuer.clone(),
-                    occurred_on: ctx.report.settled_date,
-                    published_at: ctx.report.disclosure_instant,
-                    content: AnnouncementContent::ShareSplit(book.plan().clone()),
-                })?;
-                announcements_published.push(id);
-            }
-        }
-        // 送转（股票股利与资本公积转增）方案公告：复用同一公告通道（同日 18:00
-        // 相位、恰好一次；`announce` 状态推进发生在日结更早的公司行为阶段，
-        // 此处只对 Announced 且当日到期的方案公开发布）。
-        for book in ctx.stock_distributions {
-            if book.status()
-                == &crate::company::stock_distribution::StockDistributionStatus::Announced
-                && book.plan().announced_on == ctx.report.settled_date
-            {
-                let id = ctx.library.publish_announcement(AnnouncementRequest {
-                    company: book.plan().issuer.clone(),
-                    occurred_on: ctx.report.settled_date,
-                    published_at: ctx.report.disclosure_instant,
-                    content: AnnouncementContent::StockDistribution(book.plan().clone()),
-                })?;
-                announcements_published.push(id);
-            }
-        }
-        self.announced_through = Some(ctx.report.settled_date);
-        Ok(DayEndDisclosures {
-            announcements_published,
-            reports_published,
-        })
-    }
-
-    pub(super) fn run_simple_scheduled(
-        &mut self,
-        ctx: SimpleScheduledDisclosureCtx<'_>,
-    ) -> Result<Vec<PublicationId>, DisclosureError> {
-        let publications = crate::information::publish_simple_scheduled(
-            ctx.system,
-            ctx.report_frequency,
-            ctx.seed,
-            self.published_through,
-            ctx.through,
-            ctx.library,
-            false,
-        )?;
-        self.published_through = Some(ctx.through);
-        Ok(publications)
-    }
     /// 以前史播种的最后公布时点为游标初值（未播种 = `None`，首次派发
     /// 衔接补账窗口）。
     pub fn new(published_through: Option<CivilInstant>) -> Self {
@@ -273,7 +97,7 @@ impl DisclosureDispatch {
     ///    内的全部排期（公司 id × 种类确定序），经登记簿定稿后公布。
     pub fn run_day_end(
         &mut self,
-        ctx: DayEndDisclosureCtx<'_>,
+        mut ctx: DayEndDisclosureCtx<'_>,
     ) -> Result<DayEndDisclosures, DisclosureError> {
         let mut out = DayEndDisclosures::default();
         let settled = ctx.report.settled_date;
@@ -293,7 +117,7 @@ impl DisclosureDispatch {
                         company: id.clone(),
                         occurred_on: settled,
                         published_at: phase,
-                        content: AnnouncementContent::Shock(AnnouncedEvent::from_active(shock)),
+                        event: AnnouncedEvent::from_active(shock),
                     })?;
                     out.announcements_published.push(announcement);
                 }
@@ -303,7 +127,7 @@ impl DisclosureDispatch {
                     company: failure.company.clone(),
                     occurred_on: settled,
                     published_at: phase,
-                    content: AnnouncementContent::Shock(AnnouncedEvent {
+                    event: AnnouncedEvent {
                         kind: crate::company::ShockKind::PaymentFailure {
                             obligation_status: failure.obligation_status,
                             what: failure.what.clone(),
@@ -312,129 +136,89 @@ impl DisclosureDispatch {
                         amplitude_bp: 0,
                         starts_on: settled,
                         expires_on: settled,
-                    }),
+                    },
                 })?;
                 out.announcements_published.push(announcement);
             }
             self.announced_through = Some(settled);
         }
 
-        let through = if matches!(
-            ctx.report_frequency,
-            crate::information::ReportFrequency::Monthly { .. }
-        ) {
-            CivilInstant::new(settled, 86399)?
-        } else {
-            phase
-        };
-        out.reports_published = self.run_scheduled(ScheduledDisclosureCtx {
-            report_frequency: ctx.report_frequency,
-            groups: ctx.groups,
-            through,
-            ops: ctx.ops,
-            closing: ctx.closing,
-            library: ctx.library,
-        })?;
-
-        Ok(out)
-    }
-    pub(super) fn run_scheduled(
-        &mut self,
-        mut ctx: ScheduledDisclosureCtx<'_>,
-    ) -> Result<Vec<PublicationId>, DisclosureError> {
-        let mut due = Vec::new();
+        // 2) 定期披露（窗口内的排期；公司 id 序 ⇒ PublicationId 确定）。
         for id in ctx.ops.companies.keys() {
-            for year in [ctx.through.date().year() - 1, ctx.through.date().year()] {
-                for kind in ctx.report_frequency.scheduled_kinds() {
-                    let instant =
-                        ctx.report_frequency
-                            .scheduled_instant(kind, year, ctx.ops.seed, id)?;
-                    if instant <= ctx.through
-                        && self
-                            .published_through
-                            .is_none_or(|through| instant > through)
+            let offset = stable_company_offset(
+                ctx.ops.seed,
+                ctx.ops
+                    .catalog()
+                    .code(*id)
+                    .expect("公司 id 必须能在目录内翻译出代码"),
+            );
+            for fiscal_year in [settled.year() - 1, settled.year()] {
+                for kind in ScheduledReportKind::ALL {
+                    let instant = scheduled_instant(kind, fiscal_year, offset)?;
+                    if self
+                        .published_through
+                        .is_some_and(|through| instant <= through)
                     {
-                        due.push((instant, id.clone(), year, kind));
+                        continue;
+                    }
+                    if instant > phase {
+                        continue;
+                    }
+                    let publication =
+                        ctx.publish_scheduled(id, instant, fiscal_year, kind, offset)?;
+                    out.reports_published.push(publication);
+                    for group in ctx.groups.iter().filter(|group| group.root == *id) {
+                        let publication = super::company_groups::publish_group_scheduled(
+                            group,
+                            ctx.ops,
+                            ctx.closing,
+                            ctx.library,
+                            instant,
+                            fiscal_year,
+                            kind,
+                            offset,
+                        )?;
+                        out.reports_published.push(publication);
                     }
                 }
             }
         }
-        due.sort();
-        let mut publications = Vec::new();
-        for (instant, id, year, kind) in due {
-            let company = ctx.ops.company(&id).expect("排期来自现存公司");
-            publications.push(ctx.publish_scheduled(&id, company, instant, year, kind)?);
-            for group in ctx.groups.iter().filter(|group| group.root == id) {
-                publications.push(super::company_groups::publish_group_scheduled(
-                    group,
-                    ctx.ops,
-                    ctx.closing,
-                    ctx.library,
-                    instant,
-                    year,
-                    kind,
-                    ctx.report_frequency,
-                )?);
-            }
-        }
-        self.published_through = Some(ctx.through);
-        Ok(publications)
+        self.published_through = Some(phase);
+        Ok(out)
     }
 }
 
-pub(super) struct ScheduledDisclosureCtx<'a> {
-    pub report_frequency: crate::information::ReportFrequency,
-    pub groups: &'a [super::company_groups::GroupStructure],
-    pub through: CivilInstant,
-    pub ops: &'a CompanyOperations,
-    pub closing: &'a mut ClosingEngine,
-    pub library: &'a mut PublicLibrary,
-}
-
-impl ScheduledDisclosureCtx<'_> {
-    /// 登记并公布排期原始报告；更正后的私有原始版使用返回的实际 sequence。
+impl DayEndDisclosureCtx<'_> {
+    /// 登记并公布一条排期披露（原始版本 sequence 1；已存在则复用）。
     fn publish_scheduled(
         &mut self,
         company_id: &CompanyId,
-        company: &crate::company::operations::OperatingCompany,
         instant: CivilInstant,
         fiscal_year: i32,
         kind: ScheduledReportKind,
+        offset: u8,
     ) -> Result<PublicationId, DisclosureError> {
-        let books = company.books().books();
-        let industry = industry_presentation(company.spec().kind);
-        let member = crate::accounting::consolidation::MemberId(company_id.0.clone());
         let period = kind.landing_period(fiscal_year)?;
-        let sequence = ensure_original_registered(
-            self.closing,
-            books,
-            &member,
-            industry,
-            period,
-            kind.report_kind(),
+        let registered = self.ops.prepare_report_for_publication(
+            *company_id, period, kind.report_kind(), self.closing,
         )?;
-        let policy = AccountingPolicyRef {
-            chart_version: books.ledger().chart().version(),
-        };
-        let approval = self.report_frequency.approval_instant(kind, instant)?;
+        let approval = CivilInstant::from_hms(instant.date(), APPROVAL_HOUR, 0, 0)?;
         let publication = self.library.publish_closed(
             self.closing,
             PublicationRequest {
                 company: company_id.clone(),
-                scope: crate::accounting::consolidation::ScopeId::Standalone(member),
+                scope: registered.scope,
                 period,
                 kind: kind.report_kind(),
-                sequence,
-                policy,
+                sequence: 1,
+                policy: registered.policy,
                 approved_at: approval,
                 published_at: instant,
-                origin: self.report_frequency.publication_origin(
-                    kind,
+                origin: PublicationOrigin::ScheduledDisclosure {
                     fiscal_year,
-                    self.ops.seed,
-                    company_id,
-                    false,
-                )?,
+                    kind,
+                    offset_days: offset,
+                },
                 supersedes: None,
             },
         )?;

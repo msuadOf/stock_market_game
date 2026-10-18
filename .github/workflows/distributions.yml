@@ -57,7 +57,7 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
       - name: Record frontend CPU budget
-        run: node -e "const n=require('node:os').availableParallelism(); console.log({jobs:n}); require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'CARGO_BUILD_JOBS='+n+'\nRAYON_NUM_THREADS='+n+'\n');"
+        run: node -e "const n=require('node:os').availableParallelism(); console.log({jobs:n}); require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'CARGO_BUILD_JOBS='+n+'\n');"
       - name: Cache WASM Cargo
         uses: Swatinem/rust-cache@v2
         with:

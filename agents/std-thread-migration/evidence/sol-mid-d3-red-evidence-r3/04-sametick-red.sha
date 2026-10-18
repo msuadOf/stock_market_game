@@ -1,0 +1,3 @@
+c8b6c2639cee889b51ed2943e21a5d79ad01e654 工作树 + 突变：禁用 apply_same_tick_fill_projection 调用 +
+回写现金去掉 buy_purse_held 加回（两处还原 pre-fix 行为）。
+命令：ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib sol6th_same_tick_settlement

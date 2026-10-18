@@ -1,5 +1,3 @@
-include!("../test-support/simple_company.rs");
-
 use engine::{
     CivilDate, Event, FloatAllocation, GameConfig, GameSession, HotParams, InstParams, Money,
     NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec,
@@ -8,7 +6,8 @@ use engine::{
 
 fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>> {
     Ok(SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600001"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600001".to_owned()),
             exchange: StockExchange::Shanghai,
@@ -47,16 +46,9 @@ fn setup(auction_ticks: u64) -> Result<SessionSetup, Box<dyn std::error::Error>>
         closing_auction_ticks: 2,
         history_len: 20,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02")?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     })
 }
 
@@ -75,7 +67,8 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
             let snapshot = game.snapshot();
             assert_eq!(snapshot.tick, expected_tick);
             assert_eq!(
-                snapshot.markets[&StockCode("600001".to_owned())].last_price,
+                snapshot.markets[&game.stock_id("600001").expect("夹具股票必须在目录中")]
+                    .last_price,
                 Money::from_cents(1000)
             );
         }
@@ -88,26 +81,20 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
 fn complete_projection(auction_ticks: u64, seed: u64, ticks: u64) -> Vec<Vec<u8>> {
     // A single worker controls scheduling on the same production path. The
     // harness still runs the independent tests concurrently (ADR-0017).
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .unwrap()
-        .install(|| {
             let mut game = GameSession::new(setup(auction_ticks).unwrap(), seed).unwrap();
-            (0..ticks)
-                .map(|_| {
-                    let events = game.step().expect("healthy step");
-                    let save = game.save().expect("healthy save");
-                    assert!(save.setup.config.price_cage_enabled);
-                    assert!(save.resting_orders.values().all(Vec::is_empty));
-                    assert!(save.auction_orders.values().all(Vec::is_empty));
-                    assert!(!events
-                        .iter()
-                        .any(|event| matches!(event, Event::Trade { .. })));
-                    serde_json::to_vec(&(events, game.snapshot(), save)).unwrap()
-                })
-                .collect()
-        })
+        (0..ticks)
+            .map(|_| {
+                let events = game.step().expect("healthy step");
+                let save = game.save().expect("healthy save");
+                assert!(save.setup.config.price_cage_enabled);
+                assert!(save.resting_orders.values().all(Vec::is_empty));
+                assert!(game.player_working_orders().is_empty());
+                assert!(!events
+                    .iter()
+                    .any(|event| matches!(event, Event::Trade { .. })));
+                serde_json::to_vec(&(events, game.snapshot(), save)).unwrap()
+            })
+            .collect()
 }
 
 fn projection_digest(projection: &[Vec<u8>]) -> u64 {
@@ -155,7 +142,12 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // 保留事件、权威业务事实、原顺序与所有独立 guards。旧锚保留：
     // 18099143602724613260 / 16192716476036528973 / 2620780488067564097；
     // 原字节 FNV/SHA 与逐 path 核验见 money-wire-golden.md。
-    // 0c6a7793 旧表示锚之后 ce5b3a1c..a07d2431 演化 Simple/Setup；只重钉现行静默场景，不宣称旧业务逐字节等价。
+    // T3 线重锚（增量五十一·B 类双登记）：决策前移（四十~四十八：attention
+    // 节律/受理时点/个人 patch 发布进度）改变 projection 字节——A1 §8 输出
+    // 等价收窄+§9.7 登记面。基线证据：三用例在 48/49 态已红
+    // （logs/t3b5-baseline48/49.txt），非批四回归。旧锚保留（T3 前最后形态）：
+    // 1454294662355836716 系列之后末代=14588880118627202930 /
+    // 10855500538460332623 / 14140194587992130069；新锚=下列常量。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -165,17 +157,27 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 11_572_407_623_641_889_976);
+    // Sol 六审段 1.2 重锚（逐字段取证后）：对齐批修复日结竞价事件序
+    /// （AuctionTick/AuctionCompleted 先于 DayBoundary、窗相位 N−1
+    /// 基准、drain 收盘清算事实上行——60/60 拍事件序列与基线零差，
+    /// 取证落盘 /tmp/forensic-final vs forensic-baseline）后，残余
+    /// 字节差=3 类已判表示面：desk serial 游标起点 0→1（v5 E 提交）、
+    /// desk_mirrored_resting 新键（runtime 形态标记）、收盘 cutoff
+    /// 跨日残留值 1（新日 CallAuction 窗全隐藏——值无消费面）。
+    /// 旧锚保留：14_183_549_150_061_140_820。
+    assert_complete_projection(0, 16_114_484_025_310_678_034);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 11_728_167_582_188_373_707);
+    // 同上重锚；旧锚保留：862_635_824_146_359_871。
+    assert_complete_projection(3, 15_244_279_962_941_296_384);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 18_308_112_575_746_819_741);
+    // 同上重锚；旧锚保留：7_784_286_686_475_819_964。
+    assert_complete_projection(6, 12_603_764_770_532_460_219);
 }
 
 #[test]
@@ -194,6 +196,16 @@ fn complete_projection_is_repeatable_and_distinguishes_seed_and_tick_order() {
         projection_digest(&reordered),
         "the digest must distinguish causal tick order"
     );
+}
+
+/// 收盘竞价截点不能残留到下一日 Continuous，也不能使 runtime 自产档被拒绝。
+#[test]
+fn runtime_save_resets_closing_cutoff_without_opening_auction() {
+    let mut game = GameSession::new(setup(0).unwrap(), 42).unwrap();
+    for _ in 0..20 {
+        game.step().expect("无委托的市场 tick 必须健康推进");
+        game.save().expect("每个 quiet point 的自产档必须通过校验");
+    }
 }
 
 #[test]

@@ -23,8 +23,6 @@ pub(crate) use inventory::rhe_div;
 mod journal;
 mod ledger;
 mod period;
-pub mod period_roe;
-pub mod disclosure_roe;
 mod receivables;
 pub mod reports;
 mod tax;
@@ -40,7 +38,8 @@ pub use error::AccountingError;
 pub use fixed_assets::{FixedAssetCode, FixedAssetEntry, FixedAssetError, FixedAssetRegister};
 pub use inventory::{InventoryError, InventoryItemCode, InventoryItemState, InventoryLedger};
 pub use journal::{
-    BusinessEventId, BusinessKind, CashFlowClass, Journal, JournalEntry, JournalLine, PostingSide,
+    journal_entry_clone_count, BusinessEventId, BusinessKind, CashFlowClass, Journal, JournalEntry,
+    JournalLine, PostingSide,
 };
 pub use ledger::{
     AccountBalance, AccountChart, AccountDef, AccountElement, Ledger, LedgerAccountId,

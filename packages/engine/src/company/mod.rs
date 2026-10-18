@@ -1,39 +1,26 @@
-//! 公司域：共同身份、CompanySystem、Simple 汇总财务与公司行为基础。
+//! 公司域：公司实体、开局账套、外部对手方与四行业经营会计。
 //!
-//! Simple 公司现金只作账面展示，不是实际分红预算；投资者交易 `Account`
-//! 与公司账套互不复用。旧经营实体的资金仍由 [`Books`] 的现金科目持有，
-//! 外部商业对手方用独立 `CounterpartyId`。发行人映射要求股本精确匹配
-//! （`issued_shares` == 股票 `total_shares`）；Simple 允许开局按显式虚拟估值
-//! 倍率反推初值，后续结算和恢复不重新锚定股价。
+//! 资金边界：公司经营资金只存在于公司账套（[`Books`]，现金走科目
+//! 1001/1002），外部商业对手方用独立 `CounterpartyId`；投资者交易 `Account`
+//! 与公司账套互不复用。发行人映射要求股本精确匹配（`issued_shares` == 股票
+//! `total_shares`），不依据初始股价反推任何资产负债价值。
 //!
-//! Session 使用 CompanySystem 分派选定实现；原经营实体、账套、合同、授信与
-//! 行业处理器仍保留为后续 Simulation 接入基础，不在 Simple 后台执行。
-//! 公司行为的登记、税务、方案事实和除息计算是共用基础，不等于已完成投资者付款。
-//! 报表由 `accounting` 提供，
+//! 本模块提供公司实体、显式平衡开局账套、合同与授信数据、四行业处理器，
+//! 以及自然日经营演化、事件目录、到期调度、RNG 分流与前史生成
+//! （`operations`/`events`/`scheduler`/`rng`）。报表由 `accounting` 提供，
 //! 历史公开库由 `information` 提供，会话装配由 `session` 负责。
 //! 公司注册表独立构建，不依赖 `session`；依赖方向为 session → company。
 
+pub(crate) mod assembly;
 pub mod bank;
-pub mod api;
-pub mod capabilities;
-pub mod config;
-pub mod identity;
-pub mod persistence;
-pub mod simple;
-mod system;
-pub use system::{CompanySystem, CompanySystemError};
 mod contracts;
-mod correction;
 mod counterparty;
 pub mod customer_finance;
 mod defaults;
 mod error;
 pub mod events;
+pub mod groups;
 pub mod industrial;
-pub(crate) mod income_tax;
-pub use income_tax::{IncomeTaxOutcome, IncomeTaxOwnerError};
-pub(crate) mod report_correction;
-pub use report_correction::CompanyCorrectionError;
 pub mod insurance;
 mod opening;
 pub mod operations;
@@ -42,26 +29,6 @@ pub mod real_estate;
 pub mod rng;
 pub mod scheduler;
 mod spec;
-pub mod share_registry;
-pub mod stock_distribution;
-pub mod share_split;
-pub mod rights_offering;
-pub mod issuer_repurchase;
-pub mod cash_dividend_tax;
-pub use cash_dividend_tax::{CashDividendTaxBook, CashDividendTaxMode, DividendTaxProfile};
-pub mod cash_dividend;
-pub mod ex_reference_price;
-#[cfg(test)]
-mod capabilities_tests;
-#[cfg(test)]
-mod dividend_contract_tests;
-#[cfg(test)]
-mod error_classification_tests;
-mod dividend;
-pub use dividend::{
-    DistributableProfit, DividendDeclaration, DividendLegalFacts, DividendPaymentFact,
-    DividendPaymentReceipt, DividendPlanFact, DividendPlanReceipt,
-};
 
 pub use contracts::{
     ContractBook, ContractId, ContractRole, CreditLine, DayCountBasis, OperatingBudget,
@@ -73,13 +40,11 @@ pub use counterparty::{
 };
 pub use customer_finance::{
     CashEndpoint, CompanyClaimIdentity, CompanyClaimSource, CustomerCashFlow, CustomerDebt,
-    CustomerFinanceBook, CustomerFinanceError,
-    CustomerFinanceEventId, CustomerFinanceState, DebtCreditor, DebtId, DebtPayment, DebtWriteOff,
-    WriteOffEvidence,
+    CustomerFinanceBook, CustomerFinanceError, CustomerFinanceEventId, CustomerFinanceState,
+    DebtCreditor, DebtId, DebtPayment, DebtWriteOff, WriteOffEvidence,
 };
 pub use defaults::default_companies;
 pub use error::CompanyError;
-pub use error::CompanyErrorClass;
 pub use events::{ActiveShock, ShockKind, ShockParams};
 pub use industrial::{
     IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,
@@ -97,7 +62,6 @@ pub use operations::{
     OperatingCompanyConfig, OperationsError, PaymentFailureRecord,
 };
 pub use query::{
-    PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportUnavailableReason,
     PublicComparativeAmount, PublicReportAccountingSummary, PublicReportBalanceComparison,
     PublicReportBalanceSheet, PublicReportCashFlow, PublicReportComparative, PublicReportEquity,
     PublicReportFinancials, PublicReportIncome, PublicReportIncomeColumns, PublicReportKind,
@@ -116,7 +80,7 @@ pub use scheduler::{
     OperatingScheduler, ScheduledAction, ScheduledDue, ScheduledDueId, SchedulerError,
     SchedulerRequest,
 };
-pub use spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
+pub use spec::{CompanyCatalog, CompanyId, CompanyKind, CompanyMeta, CompanySpec, IndustryId};
 
 use std::collections::BTreeMap;
 
@@ -137,6 +101,7 @@ pub struct CompanyConfig {
 /// 现金在账套（accounting 域）而非交易账户；具体行业子账由各行业账套持有。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Company {
+    id: CompanyId,
     spec: CompanySpec,
     books: Books,
     counterparties: CounterpartyLedger,
@@ -149,7 +114,7 @@ impl Company {
     /// 由配置构造：过账开局凭证（经 [`Books::post_batch`] 验证路径——不平衡/
     /// 未知科目/负现金 ⇒ `CompanyError::OpeningPost`，无半构造公司）并登记
     /// 外部对手方。
-    pub fn new(config: CompanyConfig) -> Result<Self, CompanyError> {
+    pub fn new(id: CompanyId, config: CompanyConfig) -> Result<Self, CompanyError> {
         let CompanyConfig {
             spec,
             opening,
@@ -157,13 +122,12 @@ impl Company {
             budget,
         } = config;
         spec.validate()?;
-        let company_id = spec.id.clone();
         let voucher = opening.to_voucher();
         let mut books = Books::new(opening.chart);
         books
             .post_batch(vec![voucher])
             .map_err(|source| CompanyError::OpeningPost {
-                company: company_id,
+                company: id,
                 source,
             })?;
         let mut ledger = CounterpartyLedger::new();
@@ -171,6 +135,7 @@ impl Company {
             ledger.register(counterparty)?;
         }
         Ok(Self {
+            id,
             spec,
             books,
             counterparties: ledger,
@@ -196,7 +161,7 @@ impl Company {
                 .outstanding_borrowings(&contract.counterparty)?;
             let Some(credit_limit) = self.budget.credit_line(&contract.counterparty) else {
                 return Err(CompanyError::NoCreditLine {
-                    company: self.spec.id.clone(),
+                    company: self.id,
                     lender: contract.counterparty,
                     requested,
                 });
@@ -204,7 +169,7 @@ impl Company {
             let projected = outstanding.add(requested)?;
             if projected > credit_limit {
                 return Err(CompanyError::DebtBeyondCreditLine {
-                    company: self.spec.id.clone(),
+                    company: self.id,
                     lender: contract.counterparty,
                     credit_limit,
                     outstanding,
@@ -213,6 +178,11 @@ impl Company {
             }
         }
         self.contracts.register(contract)
+    }
+
+    /// 公司数值 id（核心标识；字符串代码见 `spec().code` 与注册表目录）。
+    pub fn id(&self) -> CompanyId {
+        self.id
     }
 
     pub fn spec(&self) -> &CompanySpec {
@@ -244,19 +214,44 @@ impl Company {
 /// 公司注册表：规格集合校验 + 逐公司装配。任一失败 ⇒ 整体不产生（无部分状态）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyRegistry {
+    catalog: CompanyCatalog,
     companies: BTreeMap<CompanyId, Company>,
 }
 
 impl CompanyRegistry {
+    /// 由配置装配注册表：先按规格代码升序构造目录（分配数值 id），再逐公司
+    /// 装配。任一失败 ⇒ 整体不产生（无部分状态）。id 分配序 = 代码字典序，
+    /// BTreeMap 迭代序与展示序保持一致。
     pub fn new(configs: Vec<CompanyConfig>) -> Result<Self, CompanyError> {
         let specs: Vec<CompanySpec> = configs.iter().map(|config| config.spec.clone()).collect();
         CompanySpec::validate_set(&specs)?;
+        let metas = specs
+            .iter()
+            .map(|spec| CompanyMeta {
+                code: spec.code.clone(),
+                name: spec.name.clone(),
+            })
+            .collect();
+        let catalog =
+            CompanyCatalog::from_metas(metas).map_err(|err| CompanyError::SpecInvalid {
+                detail: err.to_string(),
+            })?;
         let mut companies = BTreeMap::new();
         for config in configs {
-            let company = Company::new(config)?;
-            companies.insert(company.spec.id.clone(), company);
+            let id = catalog
+                .id(&config.spec.code)
+                .ok_or_else(|| CompanyError::SpecInvalid {
+                    detail: format!("company code missing from catalog: {}", config.spec.code),
+                })?;
+            let company = Company::new(id, config)?;
+            companies.insert(id, company);
         }
-        Ok(Self { companies })
+        Ok(Self { catalog, companies })
+    }
+
+    /// 公司目录（数值 id ↔ 字符串代码/公司名 翻译层）。
+    pub fn catalog(&self) -> &CompanyCatalog {
+        &self.catalog
     }
 
     /// 发行人映射精确校验：上市公司映射的股票必须在清单内且股本精确相等；
@@ -296,11 +291,11 @@ impl CompanyRegistry {
     }
 
     /// 股票的发行人公司 id（未映射 = None）。
-    pub fn issuer_of(&self, stock: &StockCode) -> Option<&CompanyId> {
+    pub fn issuer_of(&self, stock: &StockCode) -> Option<CompanyId> {
         self.companies
             .values()
             .find(|company| company.spec.listed_stock.as_ref() == Some(stock))
-            .map(|company| &company.spec.id)
+            .map(|company| company.id)
     }
 
     pub fn get(&self, id: &CompanyId) -> Option<&Company> {

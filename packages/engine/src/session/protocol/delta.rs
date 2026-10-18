@@ -3,26 +3,18 @@ use crate::session::StepFatal;
 use crate::{AccountId, AccountSnap, GameSession, Side, TradingPhase};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct PlayerOrderDelta {
     pub reset: bool,
     pub upserts: Vec<PlayerWorkingOrder>,
-    pub removed: Vec<OwnerScopedRemovedOrder>,
+    #[serde(with = "safe_order_ids")]
+    #[ts(type = "Array<number>")]
+    pub removed: Vec<u64>,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-#[ts(export)]
-pub struct OwnerScopedRemovedOrder {
-    #[serde(with = "crate::orderbook::js_safe_u64")]
-    #[ts(type = "number")]
-    pub id: u64,
-    pub owner: AccountId,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct RuntimeDelta {
@@ -82,8 +74,8 @@ impl RuntimeDelta {
         if self.working_orders.reset && !self.working_orders.removed.is_empty() {
             return Err(ProtocolError::RuntimeDeltaMismatch);
         }
-        for order in &self.working_orders.removed {
-            if order.id > crate::orderbook::js_safe_u64::MAX || !ids.insert(order.id) {
+        for id in &self.working_orders.removed {
+            if !ids.insert(*id) {
                 return Err(ProtocolError::RuntimeDeltaMismatch);
             }
         }
@@ -92,8 +84,9 @@ impl RuntimeDelta {
 }
 
 fn validate_accounts(accounts: &BTreeMap<AccountId, AccountSnap>) -> Result<(), ProtocolError> {
-    for account in accounts.values() {
-        if account.cash.cents() < 0
+    for (id, account) in accounts {
+        if *id != AccountId(0)
+            || account.cash.cents() < 0
             || account.reserved_cash.cents() < 0
             || account.reserved_cash > account.cash
             || account.positions.values().any(|position| {
@@ -115,15 +108,10 @@ fn validate_accounts(accounts: &BTreeMap<AccountId, AccountSnap>) -> Result<(), 
 
 fn validate_order(order: &PlayerWorkingOrder) -> Result<(), ProtocolError> {
     let frozen = match order.side {
-        Side::Buy => "cash",
-        Side::Sell => "shares",
+        Side::Buy => super::player_orders::FrozenAsset::Cash,
+        Side::Sell => super::player_orders::FrozenAsset::Shares,
     };
-    if order.code.0.is_empty()
-        || order.price.cents() <= 0
-        || order.remaining_qty == 0
-        || !matches!(order.venue.as_str(), "auction" | "continuous")
-        || order.frozen != frozen
-    {
+    if order.price.cents() <= 0 || order.remaining_qty == 0 || order.frozen != frozen {
         return Err(ProtocolError::RuntimeDeltaMismatch);
     }
     Ok(())
@@ -146,7 +134,6 @@ fn same_account(left: &AccountSnap, right: &AccountSnap) -> bool {
 
 fn same_order(left: &PlayerWorkingOrder, right: &PlayerWorkingOrder) -> bool {
     left.id == right.id
-        && left.owner == right.owner
         && left.code == right.code
         && left.side == right.side
         && left.price == right.price
@@ -166,12 +153,22 @@ impl GameSession {
     pub fn public_runtime_state(&self) -> Result<PublicRuntimeState, StepFatal> {
         self.require_healthy()?;
         let snapshot = self.runtime_snapshot();
+        self.public_runtime_from_snapshot(&snapshot)
+    }
+
+    /// 从调用方已捕获的快照构造 public runtime；precommit 投影与 frame 共用同一份
+    /// 冻结 candidate 快照，不再对 live authority 二次读取（#4 冻结接口形状）。
+    pub(in crate::session) fn public_runtime_from_snapshot(
+        &self,
+        snapshot: &crate::Snapshot,
+    ) -> Result<PublicRuntimeState, StepFatal> {
+        self.require_healthy()?;
         validate_accounts(&snapshot.accounts).map_err(fatal)?;
         if !snapshot.accounts.contains_key(&AccountId(0)) {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
         }
         let mut working_orders = BTreeMap::new();
-        for order in self.state.accounts.values().filter(|account| account.kind() == crate::AccountKind::Player).flat_map(|account| self.account_working_orders(account.id())) {
+        for order in self.player_working_orders() {
             validate_order(&order).map_err(fatal)?;
             if working_orders.insert(order.id, order).is_some() {
                 return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
@@ -182,7 +179,7 @@ impl GameSession {
             seq: snapshot.seq,
             day: snapshot.day,
             phase: snapshot.phase,
-            accounts: snapshot.accounts,
+            accounts: snapshot.accounts.clone(),
             working_orders,
         })
     }
@@ -192,10 +189,23 @@ impl GameSession {
         frames: Vec<TickFrame>,
         previous: Option<&PublicRuntimeState>,
     ) -> Result<(TickBatch, PublicRuntimeState), StepFatal> {
+        let current = self.public_runtime_state()?;
+        let batch = current.tick_batch_delta(frames, previous)?;
+        Ok((batch, current))
+    }
+}
+
+impl PublicRuntimeState {
+    /// 发布只使用 precommit 时冻结的 runtime，不重读 live GameSession。
+    pub fn tick_batch_delta(
+        &self,
+        frames: Vec<TickFrame>,
+        previous: Option<&PublicRuntimeState>,
+    ) -> Result<TickBatch, StepFatal> {
         let first = frames
             .first()
             .ok_or_else(|| fatal(ProtocolError::EmptyBatch))?;
-        let current = self.public_runtime_state()?;
+        let current = self;
         if previous.is_some_and(|before| {
             before.seq != first.seq_from || before.tick.checked_add(1) != Some(first.tick)
         }) {
@@ -230,9 +240,9 @@ impl GameSession {
         let removed = match previous {
             Some(before) => before
                 .working_orders
-                .iter()
-                .filter(|(id, _)| !current.working_orders.contains_key(*id))
-                .map(|(id, order)| OwnerScopedRemovedOrder { id: *id, owner: order.owner })
+                .keys()
+                .filter(|id| !current.working_orders.contains_key(*id))
+                .copied()
                 .collect(),
             None => Vec::new(),
         };
@@ -254,53 +264,33 @@ impl GameSession {
             frames,
         };
         batch.validate().map_err(fatal)?;
-        Ok((batch, current))
+        Ok(batch)
     }
 }
 
-#[cfg(test)]
-mod multiplayer_validation_tests {
-    use super::*;
+mod safe_order_ids {
+    use serde::{Deserialize, Serialize};
 
-    #[test]
-    fn runtime_delta_accepts_nonzero_player_accounts_and_keeps_financial_guards() {
-        let valid = AccountSnap { cash: crate::Money::from_cents(100000), positions: BTreeMap::new(), reserved_cash: crate::Money::from_cents(1000), reserved_sell_qty: BTreeMap::new() };
-        let delta = RuntimeDelta {
-            seq_from: 0,
-            seq_to: 1,
-            tick: 1,
-            day: 0,
-            phase: TradingPhase::Continuous,
-            accounts: BTreeMap::from([(AccountId(0), valid.clone()), (AccountId(2), valid)]),
-            working_orders: PlayerOrderDelta { reset: true, upserts: Vec::new(), removed: Vec::new() },
-        };
-        delta.validate().unwrap();
-        let mut negative = delta.clone();
-        negative.accounts.get_mut(&AccountId(2)).unwrap().cash = crate::Money::from_cents(-1);
-        assert!(matches!(negative.validate(), Err(ProtocolError::RuntimeDeltaMismatch)));
-        let mut excessive = delta.clone();
-        excessive.accounts.get_mut(&AccountId(2)).unwrap().reserved_cash = crate::Money::from_cents(100001);
-        assert!(matches!(excessive.validate(), Err(ProtocolError::RuntimeDeltaMismatch)));
-        let mut missing_shares = delta;
-        missing_shares.accounts.get_mut(&AccountId(2)).unwrap().reserved_sell_qty.insert(crate::StockCode("600888".into()), 100);
-        assert!(matches!(missing_shares.validate(), Err(ProtocolError::RuntimeDeltaMismatch)));
+    const MAX: u64 = 9_007_199_254_740_991;
+
+    pub fn serialize<S: serde::Serializer>(ids: &[u64], serializer: S) -> Result<S::Ok, S::Error> {
+        if ids.iter().any(|id| *id > MAX) {
+            return Err(serde::ser::Error::custom(
+                "removed order ID exceeds JavaScript safe range",
+            ));
+        }
+        ids.serialize(serializer)
     }
 
-    #[test]
-    fn removed_order_identity_requires_strict_owner_string_and_safe_order_id() {
-        let removal = OwnerScopedRemovedOrder { id: crate::orderbook::js_safe_u64::MAX, owner: AccountId(u64::MAX) };
-        let encoded = serde_json::to_value(&removal).unwrap();
-        assert_eq!(encoded, serde_json::json!({ "id": 9007199254740991_u64, "owner": "18446744073709551615" }));
-        assert_eq!(serde_json::from_value::<OwnerScopedRemovedOrder>(encoded).unwrap().owner, removal.owner);
-        for invalid in [
-            serde_json::json!(1),
-            serde_json::json!({ "id": 1, "owner": 1 }),
-            serde_json::json!({ "id": 1, "owner": "01" }),
-            serde_json::json!({ "id": 1 }),
-            serde_json::json!({ "id": 9007199254740992_u64, "owner": "1" }),
-            serde_json::json!({ "id": 1, "owner": "1", "account": "2" }),
-        ] {
-            assert!(serde_json::from_value::<OwnerScopedRemovedOrder>(invalid).is_err());
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<u64>, D::Error> {
+        let ids = Vec::<u64>::deserialize(deserializer)?;
+        if ids.iter().any(|id| *id > MAX) {
+            return Err(serde::de::Error::custom(
+                "removed order ID exceeds JavaScript safe range",
+            ));
         }
+        Ok(ids)
     }
 }

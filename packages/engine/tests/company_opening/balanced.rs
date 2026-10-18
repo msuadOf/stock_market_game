@@ -167,7 +167,7 @@ fn default_registry_maps_five_stocks_with_exact_share_capital() {
         let issuer = registry
             .issuer_of(&StockCode(code.to_string()))
             .expect("every default stock has an issuer");
-        let company = registry.get(issuer).expect("issuer is registered");
+        let company = registry.get(&issuer).expect("issuer is registered");
         // 股本精确匹配（会计与资金边界：固定股本与股票总股本一致，流通股与总股本不可互换）。
         assert_eq!(company.spec().issued_shares, total_shares, "{code}");
         // 默认 5 股票全部映射工商语义；银行/保险/地产只作为未上市测试实体存在。
@@ -206,7 +206,15 @@ fn default_registry_maps_five_stocks_with_exact_share_capital() {
         .expect("600101 issuer")
         .clone();
     let subsidiary = registry
-        .get(&CompanyId("C-TEST-IND".to_string()))
+        .get(
+            &registry
+                .catalog()
+                .id("C-TEST-IND")
+                .expect("默认目录含测试工商实体"),
+        )
         .expect("unlisted industrial test entity");
-    assert_eq!(subsidiary.spec().group_parent.as_ref(), Some(&parent));
+    assert_eq!(
+        subsidiary.spec().group_parent.as_deref(),
+        registry.catalog().code(parent)
+    );
 }

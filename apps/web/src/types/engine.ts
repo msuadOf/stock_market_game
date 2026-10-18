@@ -5,17 +5,19 @@
  * 与宿主方法契约。修改 Rust 边界类型后运行 `pnpm types:generate`，不要手改生成文件。
  */
 
-import type { Event } from "./generated/Event";
+// 摄入层已把数值股票 id 译回代码串：视图统一用 Coded* 形态（ADR 0041）。
+import type { CodedEvent } from "../host/protocol/stock-identity.ts";
+type Event = CodedEvent;
 import type { Money } from "./generated/Money";
 
 export type { AccountId } from "./generated/AccountId";
-export type { AccountSnap } from "./generated/AccountSnap";
+export type { CodedAccountSnap as AccountSnap } from "../host/protocol/stock-identity.ts";
 export type { AuctionOrderSnap } from "./generated/AuctionOrderSnap";
 export type { BetweenKindDistribution } from "./generated/BetweenKindDistribution";
 export type { DailyTradeStats } from "./generated/DailyTradeStats";
 export type { FloatAllocation } from "./generated/FloatAllocation";
 export type { GameConfig } from "./generated/GameConfig";
-export type { Intent } from "./generated/Intent";
+export type { CodedIntent as Intent } from "../host/protocol/stock-identity.ts";
 export type { LimitPrice } from "./generated/LimitPrice";
 export type { EngineUpdate } from "./generated/EngineUpdate";
 export type { MarketSnap } from "./generated/MarketSnap";
@@ -25,8 +27,6 @@ export type { NpcSetup } from "./generated/NpcSetup";
 export type { PositionSnap } from "./generated/PositionSnap";
 export type { PublicComparativeAmount } from "./generated/PublicComparativeAmount";
 export type { PublicReportAccountingSummary } from "./generated/PublicReportAccountingSummary";
-export type { PublicReportAvailability } from "./generated/PublicReportAvailability";
-export type { PublicReportAvailabilityQuery } from "./generated/PublicReportAvailabilityQuery";
 export type { PublicReportBalanceComparison } from "./generated/PublicReportBalanceComparison";
 export type { PublicReportBalanceSheet } from "./generated/PublicReportBalanceSheet";
 export type { PublicReportCashFlow } from "./generated/PublicReportCashFlow";
@@ -45,7 +45,6 @@ export type { PublicReportQuery } from "./generated/PublicReportQuery";
 export type { PublicReportScope } from "./generated/PublicReportScope";
 export type { PublicReportSummary } from "./generated/PublicReportSummary";
 export type { PublicReportVersionKind } from "./generated/PublicReportVersionKind";
-export type { PublicReportUnavailableReason } from "./generated/PublicReportUnavailableReason";
 export type { PublicUnavailableReason } from "./generated/PublicUnavailableReason";
 export type { RejectionReason } from "./generated/RejectionReason";
 export type { SaveSlot } from "./generated/SaveSlot";
@@ -53,7 +52,8 @@ export type { SecurityCategory } from "./generated/SecurityCategory";
 export type { StockExchange } from "./generated/StockExchange";
 export type { SessionSetup } from "./generated/SessionSetup";
 export type { Side } from "./generated/Side";
-export type { Snapshot } from "./generated/Snapshot";
+// Snapshot 视图形态 = 摄入层翻译后的 CodedSnapshot（数值 id 已译代码串）。
+export type { CodedSnapshot as Snapshot } from "../host/protocol/stock-identity.ts";
 export type { StockCode } from "./generated/StockCode";
 export type { StockSpec } from "./generated/StockSpec";
 export type { StrategyParams } from "./generated/StrategyParams";
@@ -72,7 +72,7 @@ export type HistoricalStockData = {
 export type RestingOrderSnap = import("./generated/Order").Order;
 export type PriceLevel = [Cents, number];
 
-export type TradeEvent = (Extract<Event, { Trade: unknown }>["Trade"] | Extract<Event, { PublicTrade: unknown }>["PublicTrade"]) & { readonly tick?: number };
+export type TradeEvent = Extract<Event, { Trade: unknown }>["Trade"] & { readonly tick?: number };
 export type PriceTickEvent = Extract<Event, { PriceTick: unknown }>["PriceTick"];
 export type AuctionTickEvent = Extract<Event, { AuctionTick: unknown }>["AuctionTick"];
 export type AuctionCompletedEvent = Extract<Event, { AuctionCompleted: unknown }>["AuctionCompleted"];
@@ -103,10 +103,6 @@ export interface WasmApi {
     handle: number,
     id: string,
   ): import("./generated/PublicReportSummary").PublicReportSummary;
-  public_report_availability(
-    handle: number,
-    query: import("./generated/PublicReportAvailabilityQuery").PublicReportAvailabilityQuery,
-  ): import("./generated/PublicReportAvailability").PublicReportAvailability;
   player_working_orders(handle: number): readonly import("../host/player-working-orders").PlayerWorkingOrder[];
   query_stock_history(handle: number, code: import("./generated/StockCode").StockCode): HistoricalStockData;
   host_capabilities(): { readonly npcDecisionDiagnostics: boolean };

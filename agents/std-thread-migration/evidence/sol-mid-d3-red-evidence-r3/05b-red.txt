@@ -1,0 +1,1517 @@
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine)
+warning: unused import: `crate::compute::parallel::*`
+ --> packages/engine/src/indicators.rs:1:5
+  |
+1 | use crate::compute::parallel::*;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `IndicatorInput`
+   --> packages/engine/src/indicators.rs:303:38
+    |
+303 |     use super::{kdj, kdj_ohlc, macd, IndicatorInput, IndicatorInputError, OhlcBar};
+    |                                      ^^^^^^^^^^^^^^
+
+warning: unused import: `Serialize`
+  --> packages/engine/src/stock.rs:46:44
+   |
+46 |     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+   |                                            ^^^^^^^^^
+
+warning: unused import: `scope as in_place_scope`
+    --> packages/engine/src/compute.rs:1005:16
+     |
+1005 | pub(crate) use scope as in_place_scope;
+     |                ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StockId`
+  --> packages/engine/src/verification_evidence/phase_timing_tests.rs:13:76
+   |
+13 |         GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StockId, StrategyParams,
+   |                                                                            ^^^^^^^
+
+warning: unused import: `crate::compute::parallel::*`
+ --> packages/engine/src/session/account_book.rs:6:5
+  |
+6 | use crate::compute::parallel::*;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `seed_groups`
+ --> packages/engine/src/session/company_groups.rs:6:30
+  |
+6 |     publish_group_scheduled, seed_groups, validate_groups,
+  |                              ^^^^^^^^^^^
+
+warning: unused import: `Ordering`
+  --> packages/engine/src/session/deferred_drop.rs:46:41
+   |
+46 |     use std::sync::atomic::{AtomicBool, Ordering};
+   |                                         ^^^^^^^^
+
+warning: unused doc comment
+  --> packages/engine/src/session/failure.rs:75:9
+   |
+75 | /         /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
+76 | |         /// 覆盖为组快照，两域同源）。
+   | |______________________________________^
+77 |           self.state.npc_attention.insert(id, snapshot.attention.clone());
+   |           --------------------------------------------------------------- rustdoc does not generate documentation for expressions
+   |
+   = help: use `//` for a plain comment
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:149:9
+    |
+149 |           /// 本入口服务"opt-in 翻转"的正确性验证。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+153 | /         self.check_step_start()
+154 | |             .map_err(|fatal| self.poison_runtime_step(fatal))?;
+    | |______________________________________________________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:329:9
+    |
+329 |           /// 注释；全局域迁移完成后才改缺省）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+330 | /         if crate::runtime::step_runtime_enabled() {
+331 | |             return self.step_via_runtime();
+332 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `Side`
+ --> packages/engine/src/session/pipeline/book_auction_boundary.rs:7:49
+  |
+7 | use crate::{GameConfig, Market, Money, OrderId, Side, StockExchange, Trade};
+  |                                                 ^^^^
+
+warning: unused imports: `BuyFillInput`, `FillTransition`, and `SellFillInput`
+ --> packages/engine/src/session/pipeline/continuous_matching.rs:5:18
+  |
+5 |     transition::{BuyFillInput, FillTransition, SellFillInput},
+  |                  ^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused import: `TradingPhase`
+ --> packages/engine/src/session/pipeline/continuous_matching_adapter.rs:7:50
+  |
+7 | use crate::{GameSession, Market, Order, StockId, TradingPhase};
+  |                                                  ^^^^^^^^^^^^
+
+warning: unused import: `completed_market_minute_count`
+  --> packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:18:22
+   |
+18 | use crate::session::{completed_market_minute_count, RetailOrderDiagnosticEvent};
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:418:5
+    |
+418 |       /// 协调者位置：池内（登记 drive 成功，A 类）或池外（非 worker 线程顶层编排）。
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+422 | /     let (pooled, _drive_slot) = if compute.is_worker() {
+423 | |         match compute.try_enter_pool_drive_slot() {
+424 | |             Some(slot) => (true, Some(slot)),
+...   |
+437 | |         (false, None)
+438 | |     };
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `super::npc_decisions::stream_npc_decisions_with`
+  --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:25:5
+   |
+25 | use super::npc_decisions::stream_npc_decisions_with;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::npc_state_projection::project_npc_account`
+  --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:27:5
+   |
+27 | use super::npc_state_projection::project_npc_account;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::*`
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:122:9
+    |
+122 |     use super::*;
+    |         ^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:625:9
+    |
+625 |           /// 见 observing 对照用例断言）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+626 | /         {
+627 | |             let closes = session.state.market_minute_closes.get_mut(&crate::StockId(0)).unwrap();
+628 | |             let next_minute = closes
+629 | |                 .last()
+...   |
+635 | |             });
+636 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:692:5
+    |
+692 | /     /// 在组——不生产/暂存旧管线产物（take 个人态的副作用同样跳过）；
+693 | |     /// 测试意图（下一 tick 全部 NPC 决策）经显式 ForceDue 指令承载
+694 | |     ///（全部 belief 位+retail 位到期）。Sol 二审修复集 5：首步前（驱动器
+695 | |     /// 不在位）走旧 produce/stage——个人态经构造期投影接管（staged 批
+696 | |     /// 由旧管线语义持有，runtime 消费面=构造期 attention/挂单迁移）。
+    | |______________________________________________________________________^
+697 |       #[cfg(test)]
+698 | /     if session.runtime_driver.is_some() {
+699 | |         session.force_all_due_via_runtime();
+700 | |         return Ok(());
+701 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused imports: `AtomicBool` and `Ordering`
+   --> packages/engine/src/session/pipeline/read_only_start.rs:194:29
+    |
+194 |     use std::sync::atomic::{AtomicBool, Ordering};
+    |                             ^^^^^^^^^^  ^^^^^^^^
+
+warning: unused imports: `Duration` and `Instant`
+   --> packages/engine/src/session/pipeline/read_only_start.rs:195:21
+    |
+195 |     use std::time::{Duration, Instant};
+    |                     ^^^^^^^^  ^^^^^^^
+
+warning: unused import: `BTreeSet`
+  --> packages/engine/src/session/pipeline/ready_stock_stream.rs:15:34
+   |
+15 | use std::collections::{BTreeMap, BTreeSet};
+   |                                  ^^^^^^^^
+
+warning: unused import: `super::EnvelopeReceipt`
+  --> packages/engine/src/session/pipeline/session_execution_transaction.rs:25:5
+   |
+25 | use super::EnvelopeReceipt;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `prepare_settlement_transaction_with_beliefs` and `receipt_aggregation::apply_owned_receipt_transaction`
+  --> packages/engine/src/session/pipeline/stock_execution_transaction.rs:8:9
+   |
+ 8 |         prepare_settlement_transaction_with_beliefs, SettlementTransactionError,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+14 |     receipt_aggregation::apply_owned_receipt_transaction,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `stock_stream::TickWorkReady`
+  --> packages/engine/src/session/pipeline/mod.rs:72:28
+   |
+72 | pub(in crate::session) use stock_stream::TickWorkReady;
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::account_validation_context::build_account_validation_context`
+ --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:1:5
+  |
+1 | use super::account_validation_context::build_account_validation_context;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::adaptive_plan_chain::AdaptivePlanChainCoordinator`
+ --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:2:5
+  |
+2 | use super::adaptive_plan_chain::AdaptivePlanChainCoordinator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::session::pipeline::DecisionResourceSnapshot`
+  --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:11:5
+   |
+11 | use crate::session::pipeline::DecisionResourceSnapshot;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PlanExecutionDisposition`
+  --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:13:22
+   |
+13 | use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `stream_npc_decisions_with`
+ --> packages/engine/src/session/pipeline/npc_decisions_tests.rs:2:60
+  |
+2 |     npc_rng_seed, run_npc_decisions, stream_npc_decisions, stream_npc_decisions_with,
+  |                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Intent`
+  --> packages/engine/src/session/pipeline/npc_decisions_tests.rs:13:37
+   |
+13 | use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockId, TradingPhase};
+   |                                     ^^^^^^
+
+warning: unused import: `std::sync::mpsc`
+  --> packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:18:5
+   |
+18 | use std::sync::mpsc;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `super::account_validation_context::build_account_validation_context`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:14:5
+   |
+14 | use super::account_validation_context::build_account_validation_context;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::ready_ingress::validate_available_ready`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:15:5
+   |
+15 | use super::ready_ingress::validate_available_ready;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `FeedOutcome` and `ReadyStockStream`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:16:33
+   |
+16 | use super::ready_stock_stream::{FeedOutcome, ReadyStockStream};
+   |                                 ^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::stock_stream::StockStreamProgress`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:17:5
+   |
+17 | use super::stock_stream::StockStreamProgress;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AccountValidatorDriver`, `DecisionResourceSnapshot`, and `EnvelopeLedger`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:18:13
+   |
+18 | use super::{AccountValidatorDriver, DecisionResourceSnapshot, EnvelopeLedger};
+   |             ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^
+
+warning: unused imports: `AtomicUsize` and `Ordering`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:21:25
+   |
+21 | use std::sync::atomic::{AtomicUsize, Ordering};
+   |                         ^^^^^^^^^^^  ^^^^^^^^
+
+warning: unused imports: `AccountId`, `OrderId`, `Side`, and `StockId`
+  --> packages/engine/src/session/pipeline/receipt_aggregation_tests.rs:10:13
+   |
+10 | use crate::{AccountId, GameSession, Money, OrderId, Side, StockId};
+   |             ^^^^^^^^^                      ^^^^^^^  ^^^^  ^^^^^^^
+
+warning: unused import: `StepFatal`
+  --> packages/engine/src/session/pipeline/t4inc76_route_cross_batch_tests.rs:20:42
+   |
+20 |     IntentCandidate, IntentCandidateKey, StepFatal,
+   |                                          ^^^^^^^^^
+
+warning: unused import: `Intent`
+  --> packages/engine/src/session/pipeline/t4inc76_route_cross_batch_tests.rs:23:37
+   |
+23 | use crate::{AccountId, GameSession, Intent, Money, Side, StockId};
+   |                                     ^^^^^^
+
+warning: unused import: `crate::TradingPhase`
+   --> packages/engine/src/session/pipeline/mod.rs:533:9
+    |
+533 |     use crate::TradingPhase;
+    |         ^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `PlanLifecycleAction`, `PlanRootDiagnostics`, and `next_routable_buy_qty`
+   --> packages/engine/src/session.rs:133:56
+    |
+133 |     DecisionChainObservation, InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState,
+    |                                                        ^^^^^^^^^^^^^^^^^^^
+134 |     PlanQuoteInputs, PlanRootDiagnostics, RootReadContext, buy_allocation_request,
+    |                      ^^^^^^^^^^^^^^^^^^^
+135 |     decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty, next_routable_sell_qty,
+    |                                               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:3873:9
+     |
+3873 | /         /// 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
+3874 | |         /// session book 在 runtime 模式下不可见——裁决"book fixture
+3875 | |         /// 分别适配"）。Sol 二审修复集 5：首步前（驱动器不在位）的注入
+3876 | |         /// 走旧簿+构造期迁移（RuntimeDriver::adopt_session_resting_orders
+3877 | |         /// ——免全局分流破坏旧管线 fixture 面）。事件面：runtime 模式的
+3878 | |         /// 受理事件由下一 step 产出（seed 调用方的 events 缓冲不在此
+3879 | |         /// 伪造就地事件——如实空）。
+     | |____________________________________^
+3880 |           #[cfg(test)]
+3881 | /         if self.runtime_driver.is_some() {
+3882 | |             let mut intents = vec![crate::session::ReceiptBearingIntent {
+3883 | |                 owner: account,
+3884 | |                 intent: intent.clone(),
+...    |
+3911 | |             return;
+3912 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:4362:9
+     |
+4362 | /         /// 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
+4363 | |         /// session 镜像）。旧管线（无驱动器）路径不变。Sol 二审修复集 5：
+4364 | |         /// 首步前（驱动器不在位）走旧镜像路径——构造器自会话 attention
+4365 | |         /// 恢复 next_due（镜像值即组权威起点）。
+     | |_________________________________________________^
+4366 |           #[cfg(test)]
+4367 | /         if session.runtime_driver.is_some() {
+4368 | |             let target = tick.max(session.state.tick + 1);
+4369 | |             session.force_due_via_runtime(&[account], target);
+4370 | |             return;
+4371 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused import: `CompanyId`
+  --> packages/engine/src/company/assembly.rs:36:39
+   |
+36 |     default_companies, CompanyConfig, CompanyId, CompanyKind, CompanyRegistry, CompanySpec,
+   |                                       ^^^^^^^^^
+
+warning: unused import: `CompanyId`
+  --> packages/engine/src/company/defaults.rs:16:28
+   |
+16 | use crate::company::spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
+   |                            ^^^^^^^^^
+
+warning: unused import: `crate::company::CompanyId`
+ --> packages/engine/src/company/groups/sales.rs:8:5
+  |
+8 | use crate::company::CompanyId;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::company::CompanyId`
+  --> packages/engine/src/information/schedule.rs:16:5
+   |
+16 | use crate::company::CompanyId;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:356:21
+    |
+356 | /                     /// ——qty 口径差收口；session 域 cost_price/权益观察
+357 | |                     /// 因此与组读面同源）。
+    | |____________________________________________^
+358 | /                     let qty = qty_raw
+359 | |                         .saturating_add(
+360 | |                             acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
+361 | |                         );
+    | |__________________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:469:21
+    |
+469 | /                     /// session 旧镜像）即安装；空簿不覆盖（迁移期注入面
+470 | |                     /// 保护——组从未开仓时保留 session 侧测试注入）。
+    | |_____________________________________________________________________^
+471 | /                     if plans.plan_ids().next().is_some() {
+472 | |                         session.set_runtime_plans(plans);
+473 | |                     }
+    | |_____________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `GroupAccount`
+ --> packages/engine/src/runtime/day_end_tests.rs:7:20
+  |
+7 | use super::group::{GroupAccount, GroupScript, PlaceSpec, TickPlan};
+  |                    ^^^^^^^^^^^^
+
+warning: unused import: `DayEndCandidate`
+  --> packages/engine/src/runtime/day_end_tests.rs:10:20
+   |
+10 | use super::world::{DayEndCandidate, World};
+   |                    ^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/group.rs:759:9
+    |
+759 |         /// 需重发）；已入日志域的由上方 undo 逆序回放冲回。
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+760 |         self.pending_force_due.clear();
+    |         ------------------------------ rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1124:9
+     |
+1124 | /         /// 成交部分；此处=未成交余量——Sol 二审修复集 2：票实时余量为
+1125 | |         /// 唯一来源，与 fill 推进同口径）。
+     | |____________________________________________^
+1126 | /         if matches!(ticket.side, Side::Sell) {
+1127 | |             let remaining_pending = ticket.remaining;
+1128 | |             let acct = &mut self.accounts[local as usize];
+1129 | |             let before = acct.pending_sell_qty[stock as usize];
+...    |
+1139 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1313:9
+     |
+1313 |           /// 每 tick 整值刷新，无累积无窗口截断——与 session 读面同源）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1314 | /         if let Some(snapshot) = &self.snapshot {
+1315 | |             for (inputs, stock) in self
+1316 | |                 .observation_inputs
+1317 | |                 .iter_mut()
+...    |
+1326 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1749:9
+     |
+1749 | /         /// 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
+1750 | |         /// 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
+1751 | |         /// NewOpportunity 不可达）。
+     | |_____________________________________^
+1752 |           let cash = crate::money::Money::from_cents(group_account.cash);
+     |           --------------------------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2471:9
+     |
+2471 |           /// 缩水，对齐旧管线 escrow 口径）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2472 | /         let mut account = crate::account::Account::new(
+2473 | |             account_id,
+2474 | |             crate::account::AccountKind::Inst,
+2475 | |             crate::money::Money::from_cents(cash_with_pending_at(
+...    |
+2481 | |             )),
+2482 | |         );
+     | |__________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2486:13
+     |
+2486 | /             /// 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
+2487 | |             /// 卖时建条目（held 集成员参与发现采样）。
+     | |_______________________________________________________^
+2488 | /             let qty = held_qty_with_pending_at(
+2489 | |                 &group_account.shares,
+2490 | |                 child_in_flight,
+2491 | |                 &projection.account_ids,
+2492 | |                 local as LocalIdx,
+2493 | |                 stock,
+2494 | |             );
+     | |______________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2574:5
+     |
+2574 |       /// 与 session 版同一共享函数 exposed_stocks_shared）。
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2575 | /     let exposed =
+2576 | |         crate::session::exposed_stocks_shared(library, company_registry, stock_codes, now);
+     | |___________________________________________________________________________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3009:17
+     |
+3009 |                   /// build_technical_observation_from_recent_trades）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3010 | /                 let observations: Vec<(
+3011 | |                     crate::observation::PricePathObservation,
+3012 | |                     crate::observation::TechnicalObservation,
+3013 | |                 )> = state
+...    |
+3016 | |                     .map(|inputs| inputs.build_observations())
+3017 | |                     .collect();
+     | |_______________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused import: `std::time::Duration`
+  --> packages/engine/src/runtime/desk_semantics_tests.rs:19:5
+   |
+19 | use std::time::Duration;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `plans`
+   --> packages/engine/src/session/decision_chain/retail_analysis.rs:351:9
+    |
+351 |         plans: &crate::plans::PlanBook,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_plans`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:4096:13
+     |
+4096 |         let mut plans = std::mem::take(&mut session.state.plans);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:4316:13
+     |
+4316 |         let mut plans = std::mem::take(&mut session.state.plans);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:5296:13
+     |
+5296 |         let mut plans = std::mem::take(&mut session.state.plans);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `world_next`
+   --> packages/engine/src/session/failure.rs:101:19
+    |
+101 |         let (ids, world_next) = {
+    |                   ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_world_next`
+
+warning: unused variable: `qty`
+   --> packages/engine/src/session/failure.rs:818:9
+    |
+818 |         qty: u32,
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_qty`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:718:10
+    |
+718 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:739:10
+    |
+739 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:762:10
+    |
+762 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:777:10
+    |
+777 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: unused variable: `first_institution`
+   --> packages/engine/src/session/persistence.rs:594:9
+    |
+594 |     let first_institution = u64::from(save.setup.npcs.retail_count) + 1;
+    |         ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_first_institution`
+
+warning: unused variable: `last_institution`
+   --> packages/engine/src/session/persistence.rs:595:9
+    |
+595 |     let last_institution = u64::from(save.setup.npcs.retail_count)
+    |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_last_institution`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/persistence.rs:1102:9
+     |
+1102 |     let mut intents = save.pending_player.clone();
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: unused variable: `saved_day`
+    --> packages/engine/src/session/persistence.rs:1779:9
+     |
+1779 |     let saved_day = context.saved_day;
+     |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_saved_day`
+
+warning: variable does not need to be mutable
+  --> packages/engine/src/session/pipeline/local_admission.rs:70:10
+   |
+70 |     let (mut plan, has_conflicts) =
+   |          ----^^^^
+   |          |
+   |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/local_admission.rs:256:22
+    |
+256 |     fn finish_layout(mut self) -> Result<Vec<IntentCandidate>, StepFatal> {
+    |                      ----^^^^
+    |                      |
+    |                      help: remove this `mut`
+
+warning: value assigned to `consumer_failed` is never read
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:521:33
+    |
+521 | ...                   consumer_failed = true;
+    |                       ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/npc_split.rs:320:20
+    |
+320 |         let (view, mut writes) = npc_split(&mut session);
+    |                    ----^^^^^^
+    |                    |
+    |                    help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:1220:24
+     |
+1220 |     let (mut personal, mut attention);
+     |                        ----^^^^^^^^^
+     |                        |
+     |                        help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/read_only_start.rs:186:17
+    |
+186 |             let mut plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    |                 ----^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/ready_ingress.rs:119:13
+    |
+119 |         let mut roots = match roots_override {
+    |             ----^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `stock`
+  --> packages/engine/src/session/pipeline/ready_stock_stream.rs:76:14
+   |
+76 |         let (stock, round, matched) = match progress {
+   |              ^^^^^ help: if this is intentional, prefix it with an underscore: `_stock`
+
+warning: unused variable: `expected`
+   --> packages/engine/src/session/pipeline/stock_stream.rs:707:9
+    |
+707 |         expected: Vec<super::CandidateValidationOutcome>,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_expected`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1159:13
+     |
+1159 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1244:17
+     |
+1244 |             let pool = Arc::clone(&pool);
+     |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1363:13
+     |
+1363 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `code`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1809:42
+     |
+1809 |                     let detached = move |code: &StockId| {
+     |                                          ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1795:13
+     |
+1795 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1873:13
+     |
+1873 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `code`
+   --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:617:9
+    |
+617 |     let code = request.allocation.code.clone();
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unused variable: `code`
+   --> packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:274:9
+    |
+274 |     let code = request.allocation.code.clone();
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unreachable pattern
+  --> packages/engine/src/session/pipeline/decision_output_tests.rs:37:9
+   |
+36 |         crate::session::StepFatal::InvariantViolation { description, .. } => description.clone(),
+   |         ----------------------------------------------------------------- matches all the relevant values
+37 |         other => format!("{other:?}"),
+   |         ^^^^^ no value can reach this
+   |
+   = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:479:19
+    |
+479 |             move |account, result: Result<(), ()>, _errors: &mut Vec<(
+    |                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:593:23
+    |
+593 |                 move |account,
+    |                       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/t3_boundary_tests.rs:151:13
+    |
+151 |         let mut s = boundary_setup();
+    |             ----^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/t4_market_data_owner_tests.rs:410:9
+    |
+410 |     let mut market = super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code);
+    |         ----^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/mod.rs:485:9
+    |
+485 |     let mut shadow = TickShadowPlan {
+    |         ----^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `phase`
+   --> packages/engine/src/session/pipeline/mod.rs:538:9
+    |
+538 |     let phase = authority.phase();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_phase`
+
+warning: unused variable: `personal`
+   --> packages/engine/src/session/plan_chain_candidates.rs:742:34
+    |
+742 |         while let Some((account, personal)) = pending.front() {
+    |                                  ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_personal`
+
+warning: unused variable: `receiver`
+    --> packages/engine/src/session/plan_chain_candidates.rs:1050:25
+     |
+1050 |                         receiver,
+     |                         ^^^^^^^^ help: try ignoring the field: `receiver: _`
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/plan_execution/continuation_tests.rs:330:9
+    |
+330 |     let account = plan.account();
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: unused variable: `code`
+   --> packages/engine/src/session/plan_execution/continuation_tests.rs:331:9
+    |
+331 |     let code = plan.code().clone();
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/plan_execution/continuation_tests.rs:568:10
+    |
+568 |     let (mut session, mut plans, plan, child) = fixture();
+    |          ----^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: unused variable: `terminating`
+  --> packages/engine/src/session/plan_execution/interpreter/resume.rs:15:17
+   |
+15 |                 terminating,
+   |                 ^^^^^^^^^^^ help: try ignoring the field: `terminating: _`
+
+warning: unused variable: `plan`
+  --> packages/engine/src/session/plan_execution/interpreter/resume.rs:96:36
+   |
+96 |             Continuation::Submit { plan, child } => {
+   |                                    ^^^^ help: try ignoring the field: `plan: _`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:208:13
+    |
+208 |         let mut probe_session = session;
+    |             ----^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `probe_session`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:208:13
+    |
+208 |         let mut probe_session = session;
+    |             ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_probe_session`
+
+warning: unused variable: `session`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:226:5
+    |
+226 |     session: &ProtocolSession,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_session`
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:227:5
+    |
+227 |     account: AccountId,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: unused variable: `tick`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:228:5
+    |
+228 |     tick: u64,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_tick`
+
+warning: unused variable: `a`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:402:9
+    |
+402 |     let a = AccountId(1);
+    |         ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:403:9
+    |
+403 |     let b = AccountId(2);
+    |         ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `state_b6`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:434:13
+    |
+434 |     let (_, state_b6) = probe_chain_from(&session, b, &attention_before, &[(6, signal_at_epoch6)]);
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_state_b6`
+
+warning: unused variable: `after_b`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:439:9
+    |
+439 |     let after_b = attention_after
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_after_b`
+
+warning: variable `npc_admissions_total` is assigned to, but never used
+   --> packages/engine/src/session/protocol/civil/decision_failure_witness_tests.rs:650:9
+    |
+650 |     let mut npc_admissions_total = 0u64;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_npc_admissions_total` instead
+
+warning: value assigned to `npc_admissions_total` is never read
+   --> packages/engine/src/session/protocol/civil/decision_failure_witness_tests.rs:676:9
+    |
+676 |         npc_admissions_total += admissions;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `name`
+    --> packages/engine/src/session.rs:1235:22
+     |
+1235 |         for (active, name, quantity) in [
+     |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `name`
+    --> packages/engine/src/session.rs:1329:25
+     |
+1329 |             for (value, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
+     |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `serial`
+   --> packages/engine/src/runtime/event_bridge.rs:214:24
+    |
+214 |     for (owner, stock, serial, reason) in &input.rejections {
+    |                        ^^^^^^ help: if this is intentional, prefix it with an underscore: `_serial`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/runtime/drive_tests.rs:213:9
+    |
+213 |     let mut session = GameSession::new(setup, 11).expect("会话构造");
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `catalog`
+   --> packages/engine/src/runtime/drive_tests.rs:531:10
+    |
+531 |     let (catalog, registry, operations) = session.runtime_company_handles();
+    |          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_catalog`
+
+warning: unused variable: `operations`
+   --> packages/engine/src/runtime/drive_tests.rs:531:29
+    |
+531 |     let (catalog, registry, operations) = session.runtime_company_handles();
+    |                             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_operations`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/runtime/decision_tests.rs:129:9
+    |
+129 |     let mut profile = NpcProfile {
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `code`
+   --> packages/engine/src/runtime/equivalence_tests.rs:262:13
+    |
+262 |         let code = crate::StockId(idx as u32);
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unused variable: `probe`
+   --> packages/engine/src/runtime/equivalence_tests.rs:346:9
+    |
+346 |     let probe = std::sync::Arc::clone(&fired);
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_probe`
+
+warning: type `AuthoritativeTickCommit` is more private than the item `failure::<impl session::GameSession>::step_on_context`
+   --> packages/engine/src/session/failure.rs:373:5
+    |
+373 | /     pub(crate) fn step_on_context(
+374 | |         &mut self,
+375 | |         capture_commit_evidence: bool,
+376 | |     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
+    | |____________________________________________________________________^ method `failure::<impl session::GameSession>::step_on_context` is reachable at visibility `pub(crate)`
+    |
+note: but type `AuthoritativeTickCommit` is only usable at visibility `pub(in crate::session)`
+   --> packages/engine/src/session/pipeline/authoritative_tick.rs:10:1
+    |
+ 10 | pub(in crate::session) struct AuthoritativeTickCommit {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `RuntimeInstallBaseline` is more private than the item `failure::<impl session::GameSession>::rollback_runtime_step`
+   --> packages/engine/src/session/failure.rs:476:5
+    |
+476 |     pub fn rollback_runtime_step(&mut self, baseline: RuntimeInstallBaseline) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method `failure::<impl session::GameSession>::rollback_runtime_step` is reachable at visibility `pub`
+    |
+note: but type `RuntimeInstallBaseline` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/session/failure.rs:14:1
+    |
+ 14 | pub(crate) struct RuntimeInstallBaseline {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `personal_state::PlanPersonalState` is more private than the item `failure::<impl session::GameSession>::runtime_personal_states`
+   --> packages/engine/src/session/failure.rs:694:5
+    |
+694 | /     pub fn runtime_personal_states(
+695 | |         &self,
+696 | |     ) -> std::collections::BTreeMap<
+697 | |         crate::AccountId,
+698 | |         crate::session::decision_chain::personal_state::PlanPersonalState,
+699 | |     > {
+    | |_____^ method `failure::<impl session::GameSession>::runtime_personal_states` is reachable at visibility `pub`
+    |
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/session/decision_chain/personal_state.rs:78:1
+    |
+ 78 | pub(crate) struct PlanPersonalState {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `RetailProjectionError` is more private than the item `RetailProjectionSeen::insert`
+   --> packages/engine/src/session/pipeline/retail_projection.rs:96:5
+    |
+ 96 | /     pub(in crate::session) fn insert(
+ 97 | |         &mut self,
+ 98 | |         index: u64,
+ 99 | |         local_key: ReceiptLocalKey,
+100 | |     ) -> Result<(), RetailProjectionError> {
+    | |__________________________________________^ method `RetailProjectionSeen::insert` is reachable at visibility `pub(in crate::session)`
+    |
+note: but type `RetailProjectionError` is only usable at visibility `pub(in crate::session::pipeline)`
+   --> packages/engine/src/session/pipeline/retail_projection.rs:282:1
+    |
+282 | pub(super) enum RetailProjectionError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `phase_timing::PhaseTimingBinding` is more private than the item `desk_main`
+    --> packages/engine/src/runtime/desk.rs:1997:1
+     |
+1997 | / pub fn desk_main(
+1998 | |     setup: DeskSetup,
+1999 | |     n_groups: usize,
+2000 | |     config: Arc<GameConfig>,
+...    |
+2006 | |     capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+2007 | | ) -> Result<(), RuntimeError> {
+     | |_____________________________^ function `desk_main` is reachable at visibility `pub`
+     |
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+    --> packages/engine/src/verification_evidence/phase_timing.rs:424:1
+     |
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `phase_timing::PhaseTimingBinding` is more private than the item `group_main`
+    --> packages/engine/src/runtime/group.rs:2629:1
+     |
+2629 | / pub fn group_main(
+2630 | |     state: GroupState,
+2631 | |     desk_txs: Vec<Sender<super::protocol::DeskMsg>>,
+2632 | |     rx: Receiver<GroupIn>,
+...    |
+2636 | |     capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+2637 | | ) -> Result<(), RuntimeError> {
+     | |_____________________________^ function `group_main` is reachable at visibility `pub`
+     |
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+    --> packages/engine/src/verification_evidence/phase_timing.rs:424:1
+     |
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `personal_state::PlanPersonalState` is more private than the item `OpenDerivationRecord::personal_in`
+   --> packages/engine/src/runtime/world.rs:107:5
+    |
+107 |     pub personal_in: crate::session::PlanPersonalState,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `OpenDerivationRecord::personal_in` is reachable at visibility `pub`
+    |
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/session/decision_chain/personal_state.rs:78:1
+    |
+ 78 | pub(crate) struct PlanPersonalState {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `personal_state::PlanPersonalState` is more private than the item `OpenDerivationRecord::personal_out`
+   --> packages/engine/src/runtime/world.rs:109:5
+    |
+109 |     pub personal_out: crate::session::PlanPersonalState,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `OpenDerivationRecord::personal_out` is reachable at visibility `pub`
+    |
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/session/decision_chain/personal_state.rs:78:1
+    |
+ 78 | pub(crate) struct PlanPersonalState {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `phase_timing::PhaseTimingBinding` is more private than the item `World::set_tick_capture`
+   --> packages/engine/src/runtime/world.rs:914:5
+    |
+914 | /     pub fn set_tick_capture(
+915 | |         &mut self,
+916 | |         binding: crate::verification_evidence::PhaseTimingBinding,
+917 | |     ) {
+    | |_____^ method `World::set_tick_capture` is reachable at visibility `pub`
+    |
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/verification_evidence/phase_timing.rs:424:1
+    |
+424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `resting_orders_for_owners` is never used
+   --> packages/engine/src/orderbook.rs:903:19
+    |
+377 | impl OrderBook {
+    | -------------- method in this implementation
+...
+903 |     pub(crate) fn resting_orders_for_owners(&self, owners: &BTreeSet<AccountId>) -> Vec<Order> {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `apply_auction_price` and `resting_orders_for_owners` are never used
+   --> packages/engine/src/market.rs:270:19
+    |
+ 79 | impl Market {
+    | ----------- methods in this implementation
+...
+270 |     pub(crate) fn apply_auction_price(&mut self, price: Money) {
+    |                   ^^^^^^^^^^^^^^^^^^^
+...
+510 |     pub(crate) fn resting_orders_for_owners(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `scope` is never used
+   --> packages/engine/src/compute.rs:640:19
+    |
+361 | impl ComputeContext {
+    | ------------------- method in this implementation
+...
+640 |     pub(crate) fn scope<'scope, R: Send>(
+    |                   ^^^^^
+
+warning: trait `ParallelRefMutIterator` is never used
+    --> packages/engine/src/compute.rs:1071:15
+     |
+1071 |     pub trait ParallelRefMutIterator<'a>: 'a
+     |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `display_limit` is never used
+   --> packages/engine/src/session.rs:967:8
+    |
+946 | impl SecurityCategory {
+    | --------------------- method in this implementation
+...
+967 |     fn display_limit(self) -> &'static str {
+    |        ^^^^^^^^^^^^^
+
+warning: variants `NpcDecisionTraces` and `Causal` are never constructed
+    --> packages/engine/src/session.rs:1490:5
+     |
+1470 | pub(in crate::session) enum FieldId {
+     |                             ------- variants in this enum
+...
+1490 |     NpcDecisionTraces,
+     |     ^^^^^^^^^^^^^^^^^
+1491 |     Causal,
+     |     ^^^^^^
+     |
+     = note: `FieldId` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: constant `COMMIT_FIELD_EXPECTED` is never used
+    --> packages/engine/src/session.rs:1517:30
+     |
+1517 | pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
+     |                              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `record_retail_intent_rejections` is never used
+    --> packages/engine/src/session.rs:2859:8
+     |
+1757 | impl GameSession {
+     | ---------------- method in this implementation
+...
+2859 |     fn record_retail_intent_rejections(&mut self, account: AccountId, events: &[Event]) {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `replace_existing_shared_parallel` is never used
+  --> packages/engine/src/session/account_paged_map.rs:71:19
+   |
+70 | impl<Value: Clone> AccountPagedMap<Value> {
+   | ----------------------------------------- method in this implementation
+71 |     pub(super) fn replace_existing_shared_parallel(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `pop_due_npc_ids` is never used
+   --> packages/engine/src/session/attention.rs:326:19
+    |
+325 | impl GameSession {
+    | ---------------- method in this implementation
+326 |     pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
+    |                   ^^^^^^^^^^^^^^^
+
+warning: methods `observe_retail_analysis`, `retail_candidate_signals`, and `retail_cost_signal` are never used
+   --> packages/engine/src/session/decision_chain/retail_analysis.rs:91:8
+    |
+  8 | impl GameSession {
+    | ---------------- methods in this implementation
+...
+ 91 |     fn observe_retail_analysis(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+...
+323 |     fn retail_candidate_signals(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+426 |     fn retail_cost_signal(
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: method `into_session` is never used
+   --> packages/engine/src/session/pipeline/mod.rs:324:19
+    |
+268 | impl TickShadowPlan {
+    | ------------------- method in this implementation
+...
+324 |     pub(super) fn into_session(self) -> Result<GameSession, StepFatal> {
+    |                   ^^^^^^^^^^^^
+
+warning: method `into_fatal` is never used
+  --> packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:87:41
+   |
+85 | impl StockFinishFatal {
+   | --------------------- method in this implementation
+86 |     /// 归并为其承载的 fatal（分类判定已在上游完成）。
+87 |     pub(in crate::session::pipeline) fn into_fatal(self) -> StepFatal {
+   |                                         ^^^^^^^^^^
+
+warning: function `prepare_inputs_with_observer` is never used
+  --> packages/engine/src/session/pipeline/continuous_matching_adapter.rs:56:15
+   |
+56 | pub(super) fn prepare_inputs_with_observer(
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `urgency_policy` is never used
+   --> packages/engine/src/session/pipeline/decision_snapshot.rs:256:19
+    |
+164 | impl DecisionSnapshot {
+    | --------------------- method in this implementation
+...
+256 |     pub(super) fn urgency_policy(&self) -> &crate::plans::UrgencyPolicy {
+    |                   ^^^^^^^^^^^^^^
+
+warning: function `validate_market_view_inputs` is never used
+   --> packages/engine/src/session/pipeline/decision_snapshot_capture.rs:273:4
+    |
+273 | fn validate_market_view_inputs(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated functions `capture` and `capture_on` are never used
+   --> packages/engine/src/session/pipeline/decision_snapshot_capture.rs:395:8
+    |
+394 | impl CapturedExperienceObservation {
+    | ---------------------------------- associated functions in this implementation
+395 |     fn capture(
+    |        ^^^^^^^
+...
+409 |     fn capture_on(
+    |        ^^^^^^^^^^
+
+warning: method `strong_count` is never used
+  --> packages/engine/src/session/pipeline/executor_perturbation.rs:89:19
+   |
+72 | impl ExecutorBinding {
+   | -------------------- method in this implementation
+...
+89 |     pub(super) fn strong_count(&self) -> usize {
+   |                   ^^^^^^^^^^^^
+
+warning: method `values_mut` is never used
+   --> packages/engine/src/session/pipeline/ledger_paged_map.rs:127:19
+    |
+ 30 | impl<V> LedgerPagedMap<V> {
+    | ------------------------- method in this implementation
+...
+127 |     pub(super) fn values_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut V>
+    |                   ^^^^^^^^^^
+
+warning: function `stream_npc_decisions_inline` is never used
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:710:4
+    |
+710 | fn stream_npc_decisions_inline<E>(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `project_npc_account` is never used
+   --> packages/engine/src/session/pipeline/npc_state_projection.rs:393:27
+    |
+393 | pub(in crate::session) fn project_npc_account(
+    |                           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `project_npc_account_on` is never used
+   --> packages/engine/src/session/pipeline/npc_state_projection.rs:403:27
+    |
+403 | pub(in crate::session) fn project_npc_account_on(
+    |                           ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `queue_npc_on_for_test` is never used
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:745:37
+    |
+745 | pub(in crate::session::pipeline) fn queue_npc_on_for_test(
+    |                                     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `into_parts` is never used
+    --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:1530:41
+     |
+1502 | impl NpcDecisionHandover {
+     | ------------------------ method in this implementation
+...
+1530 |     pub(in crate::session::pipeline) fn into_parts(
+     |                                         ^^^^^^^^^^
+
+warning: function `apply_to_auction_order` is never used
+  --> packages/engine/src/session/pipeline/price_resolution.rs:79:15
+   |
+79 | pub(super) fn apply_to_auction_order(
+   |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `policy` is never read
+  --> packages/engine/src/session/pipeline/read_only_start.rs:14:16
+   |
+12 | pub(in crate::session) struct ReadOnlyStart {
+   |                               ------------- field in this struct
+13 |     /// 捕获的交易制度截点与输入共同移交，不能只凭外层 tick/revision 猜测 shard 模式。
+14 |     pub(super) policy: super::phase::PhasePolicy,
+   |                ^^^^^^
+
+warning: function `inline_prepare_calls` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:31:37
+   |
+31 | pub(in crate::session::pipeline) fn inline_prepare_calls() -> usize {
+   |                                     ^^^^^^^^^^^^^^^^^^^^
+
+warning: variants `QuantityRegression` and `NonPositiveGross` are never constructed
+   --> packages/engine/src/session/pipeline/retail_projection.rs:289:5
+    |
+282 | pub(super) enum RetailProjectionError {
+    |                 --------------------- variants in this enum
+...
+289 |     QuantityRegression { index: u64 },
+    |     ^^^^^^^^^^^^^^^^^^
+290 |     #[error("retail receipt {index} has non-positive gross")]
+291 |     NonPositiveGross { index: u64 },
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `RetailProjectionError` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `invariant` is never used
+   --> packages/engine/src/session/pipeline/stock_execution_transaction.rs:190:4
+    |
+190 | fn invariant(description: &str) -> StepFatal {
+    |    ^^^^^^^^^
+
+warning: field `order` is never read
+   --> packages/engine/src/session/pipeline/stock_stream.rs:887:9
+    |
+886 |     struct MockRound {
+    |            --------- field in this struct
+887 |         order: OrderId,
+    |         ^^^^^
+
+warning: struct `SaturatedPairShard` is never constructed
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1110:12
+     |
+1110 |     struct SaturatedPairShard {
+     |            ^^^^^^^^^^^^^^^^^^
+
+warning: type alias `RootGate` is never used
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:36:6
+   |
+36 | type RootGate = Arc<(Mutex<u8>, Condvar)>;
+   |      ^^^^^^^^
+
+warning: associated function `new` is never used
+  --> packages/engine/src/session/plan_continuation_domain.rs:61:31
+   |
+49 | impl<'a> PlanContinuationDomain<'a> {
+   | ----------------------------------- associated function in this implementation
+...
+61 |     pub(in crate::session) fn new(session: &'a mut GameSession) -> Self {
+   |                               ^^^
+
+warning: type alias `SerialDispatchGate` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:134:6
+    |
+134 | type SerialDispatchGate = Arc<(Mutex<u8>, Condvar, AtomicUsize)>;
+    |      ^^^^^^^^^^^^^^^^^^
+
+warning: function `install_serial_dispatch_gate` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:136:4
+    |
+136 | fn install_serial_dispatch_gate(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `dispatch_gate_calls` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:159:4
+    |
+159 | fn dispatch_gate_calls(gate: &SerialDispatchGate) -> usize {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `release_serial_dispatch_to` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:164:4
+    |
+164 | fn release_serial_dispatch_to(gate: &SerialDispatchGate, level: u8) {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `release_gate_to` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:460:4
+    |
+460 | fn release_gate_to(gate: &Arc<(Mutex<u8>, Condvar)>, level: u8) {
+    |    ^^^^^^^^^^^^^^^
+
+warning: method `note_accepted` is never used
+   --> packages/engine/src/runtime/desk.rs:850:8
+    |
+304 | impl DeskState {
+    | -------------- method in this implementation
+...
+850 |     fn note_accepted(&mut self, order: &DeskOrder) {
+    |        ^^^^^^^^^^^^^
+
+warning: function `equity_cents` is never used
+    --> packages/engine/src/runtime/group.rs:2361:4
+     |
+2361 | fn equity_cents(
+     |    ^^^^^^^^^^^^
+
+warning: function `context_day` is never used
+    --> packages/engine/src/runtime/group.rs:2400:4
+     |
+2400 | fn context_day(tick: u64, ticks_per_day: u64) -> u64 {
+     |    ^^^^^^^^^^^
+
+warning: function `self_lot` is never used
+    --> packages/engine/src/runtime/group.rs:2405:4
+     |
+2405 | fn self_lot(config: &std::sync::Arc<crate::config::GameConfig>) -> u32 {
+     |    ^^^^^^^^
+
+warning: function `buy` is never used
+  --> packages/engine/src/runtime/plans_tests.rs:13:4
+   |
+13 | fn buy(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
+   |    ^^^
+
+warning: unused `Result` that must be used
+    --> packages/engine/src/session/protocol/civil/session.rs:995:9
+     |
+ 995 | /         session.state.game.fixture_append_auction_orders(
+ 996 | |             StockId(0),
+ 997 | |             vec![
+ 998 | |                 crate::AuctionOrderSnap {
+...    |
+1012 | |             ],
+1013 | |         );
+     | |_________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+ 995 |         let _ = session.state.game.fixture_append_auction_orders(
+     |         +++++++
+
+warning: `engine` (lib test) generated 182 warnings (run `cargo fix --lib -p engine --tests` to apply 107 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.29s
+     Running unittests src/lib.rs (target/debug/deps/engine-e2b004eecda01d2b)
+
+running 1 test
+test session::pipeline::npc_tick_preparation::t1_account_task_tests::sol5_queue_npc_all_due_takes_effect_in_runtime ... FAILED
+
+failures:
+
+---- session::pipeline::npc_tick_preparation::t1_account_task_tests::sol5_queue_npc_all_due_takes_effect_in_runtime stdout ----
+
+thread 'session::pipeline::npc_tick_preparation::t1_account_task_tests::sol5_queue_npc_all_due_takes_effect_in_runtime' (1161766) panicked at packages/engine/src/session/pipeline/npc_tick_preparation.rs:172:13:
+queue 的全名册到期须在 runtime 生效（种子 311：3→[3, 26, 10, 62, 25]，MAX no-op 时零决策）
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    session::pipeline::npc_tick_preparation::t1_account_task_tests::sol5_queue_npc_all_due_takes_effect_in_runtime
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1597 filtered out; finished in 0.19s
+
+error: test failed, to rerun pass `-p engine --lib`

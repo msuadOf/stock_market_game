@@ -12,15 +12,13 @@ interface WasmStepSlot {
   readGeneration(): number;
 }
 
-export type WasmLoopStopResult = { readonly ok: true } | { readonly ok: false; readonly error: unknown };
-
 export interface WasmTickLoopDependencies<TTimer> {
   readonly slot: WasmStepSlot;
   readonly now: () => number;
   readonly schedule: (callback: () => void, delay: number) => TTimer;
   readonly cancel: (timer: TTimer) => void;
   readonly post: (message: unknown) => void;
-  readonly failure: (where: string, error: unknown, stopped: WasmLoopStopResult) => void;
+  readonly failure: (where: string, error: unknown) => void;
 }
 
 /** 循环拥有 timer、节拍、暂停策略和测速；会话句柄由 slot 独立拥有。 */
@@ -135,7 +133,8 @@ export class WasmTickLoop<TTimer> {
       if (this.publish(rawUpdate, immediate)) this.speedMeter.recordTicks();
       return true;
     } catch (error) {
-      this.dependencies.failure("wasm-worker.step", error, this.stopForFailure());
+      this.stop();
+      this.dependencies.failure("wasm-worker.step", error);
       return false;
     }
   }
@@ -179,27 +178,12 @@ export class WasmTickLoop<TTimer> {
     this.scheduleFrame(FRAME_MS);
   }
 
-  stopForFailure(): WasmLoopStopResult {
-    try {
-      this.stop();
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, error };
-    }
-  }
-
   stop(): void {
-    try {
-      this.flushForControl();
-    } finally {
-      // 已提交帧仍先交付；传输失败也必须使旧 timer 失效并完成停止。
-      this.timerEpoch += 1;
-      this.running = false;
-      this.awaitingConsumer = false;
-      this.speedMeter.setRunning(false);
-      const timer = this.timer;
-      this.timer = null;
-      if (timer !== null) this.dependencies.cancel(timer);
-    }
+    this.flushForControl();
+    this.timerEpoch += 1;
+    this.running = false;
+    this.speedMeter.setRunning(false);
+    if (this.timer !== null) this.dependencies.cancel(this.timer);
+    this.timer = null;
   }
 }

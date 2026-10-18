@@ -3,16 +3,14 @@
 //! 本套件使用会话的公共测试接口；断言中的每笔成交均由 orderbook 产生，
 //! 不虚构 `Trade`、candle、fill 或流动性。
 
-include!("../../test-support/simple_company.rs");
-
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     FloatAllocation, GameSession, NpcSetup, SecurityCategory, SessionSetup, StockExchange,
     StockSpec,
 };
-use engine::WithinKindDistribution;
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
+use engine::WithinKindDistribution;
 use serde::Deserialize;
 
 mod controlled;
@@ -63,7 +61,8 @@ fn stock(
 
 pub(crate) fn setup(start_date: &str) -> SessionSetup {
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
             stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),
@@ -99,38 +98,33 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
         closing_auction_ticks: 1,
         history_len: 10,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
-        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
+        float_allocation: FloatAllocation::class_percentages(
+            0.4,
+            0.5,
+            0.1,
+            WithinKindDistribution::Random,
+        ),
         start_date: engine::CivilDate::from_iso(start_date).expect("fixture civil date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 
 /// Disclosure-focused scenarios still use the real company, information and
 /// belief pipelines, but do not need five issuers or six market ticks on every
 /// trading day while advancing through a civil reporting window.
+/// 场景会话使用引擎默认公司集合；此处提供默认目录（代码序分配 id）供断言查询。
+pub(crate) fn scenario_catalog() -> engine::company::CompanyCatalog {
+    let as_of = engine::calendar::CivilDate::from_iso("2027-12-31").expect("开局前一日");
+    let configs = engine::company::default_companies(as_of).expect("默认公司集合");
+    engine::company::CompanyRegistry::new(configs)
+        .expect("默认公司注册表")
+        .catalog()
+        .clone()
+}
+
 pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     let mut focused = setup(start_date);
     focused.stocks.retain(|stock| stock.code.0 == "600101");
-    focused.company_system = simple_company_fixture!(engine; codes = focused.stocks.iter().map(|stock| stock.code.0.as_str()));
-    // Simple 按完整窗口生成年报，三月开局须有三年期间才能包含上一份完整年报。
-    let engine::company::config::CompanySystemConfig::Simple(config) = &mut focused.company_system else { unreachable!("测试只支持 Simple"); };
-    config.prehistory_periods = 36;
-    // 控制场景需要不同年度材料真有变化且每股金额可表示，不使用恒定零增长的摘要。
-    for company in &mut config.companies {
-        company.generation.initial_revenue = engine::accounting::AccountingAmount::from_cents(company.generation.initial_revenue.cents() * 1_000);
-        company.generation.initial_fixed_expense = engine::accounting::AccountingAmount::from_cents(company.generation.initial_fixed_expense.cents() * 1_000);
-        company.generation.revenue_trend = engine::company::simple::period::AnnualTrendConfig::Fixed { annual_growth_bp: 1_500 };
-        for line in &mut company.finance.opening_lines {
-            line.amount = engine::accounting::AccountingAmount::from_cents(line.amount.cents() * 1_000);
-        }
-    }
     focused.npcs = NpcSetup {
         retail_count: 0,
         inst_count: 2,
@@ -141,7 +135,8 @@ pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
     focused.auction_ticks = 0;
     focused.closing_auction_ticks = 0;
     focused.history_len = 1;
-    focused.float_allocation = FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
+    focused.float_allocation =
+        FloatAllocation::class_percentages(0.0, 1.0, 0.0, WithinKindDistribution::Random);
     GameSession::new(focused, SEED).expect("focused disclosure fixture must assemble")
 }
 
@@ -153,8 +148,9 @@ pub(crate) fn run_focused_trading_day(session: &mut GameSession) {
 
 fn representative_setup(start_date: &str) -> SessionSetup {
     let mut representative = setup(start_date);
-    representative.stocks.retain(|stock| stock.code.0 == "600101");
-    representative.company_system = simple_company_fixture!(engine; codes = representative.stocks.iter().map(|stock| stock.code.0.as_str()));
+    representative
+        .stocks
+        .retain(|stock| stock.code.0 == "600101");
     representative
 }
 

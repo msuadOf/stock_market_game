@@ -29,7 +29,7 @@ impl GameSession {
     /// Non-authoritative decision fixtures are rejected, never projected as production state.
     pub fn business_state_hash(&self) -> Result<StateHash, StepFatal> {
         let Self {
-            report_correction_epoch: _,
+            compute: _,
             ingress: _,
             state,
             poison: _,
@@ -38,13 +38,17 @@ impl GameSession {
                 injected_failure: _,
             #[cfg(test)]
                 post_shadow_failure: _,
+            #[cfg(test)]
+                runtime_install_failure: _,
+            runtime_driver: _,
+            runtime_group_count: _,
+            runtime_discard_driver_flag: _,
+            revision: _,
         } = self;
         let super::CommittableSessionState {
-            retained_market_history: _,
-            memberships: _,
-            pending_report_corrections: _,
-            report_correction_operations: _,
             setup: _,
+            validated_config: _,
+            stocks: _,
             rng: _,
             seed: _,
             markets: _,
@@ -53,14 +57,12 @@ impl GameSession {
             price_history: _,
             market_minute_closes: _,
             candle_book: _,
-            auction_orders: _,
             pending_player: _,
-            pending_npc: _,
             ingress_receipt_cursors: _,
             npc_attention: _,
+            desk_book_mirror: _,
+            runtime_desk_serial_cursors: _,
             retail_experience: _,
-            parent_orders: _,
-            pending_plan_events: _,
             npc_order_lifecycles: _,
             last_retail_decisions: _,
             last_retail_order_events: _,
@@ -69,16 +71,35 @@ impl GameSession {
             #[cfg(feature = "simulation-diagnostics")]
                 causal: _,
             attention_scheduler: _,
-            company_system: _,
-            corporate_actions: _,
+            runtime_account_undo: _,
+            runtime_account_undo_ids: _,
+            runtime_attention_undo: _,
+            runtime_attention_undo_ids: _,
+            runtime_heap_undo: _,
+            runtime_belief_undo: _,
+            runtime_belief_undo_ids: _,
+            runtime_retail_undo: _,
+            runtime_retail_undo_ids: _,
+            runtime_history_undo: _,
+            runtime_history_undo_ids: _,
+            runtime_mirror_undo: _,
+            runtime_plans_undo: _,
+            runtime_envelope_undo: _,
+            runtime_lifecycles_undo: _,
+            runtime_retail_diag_undo: _,
+            company_registry: _,
+            operations: _,
+            closing: _,
             library: _,
             disclosures: _,
+            groups: _,
             plans: _,
             urgency_policy: _,
+            // Sol 六审段 1.3：运行时权威标志（非业务事实——不参与哈希）。
+            runtime_information_authority: _,
             belief_participants: _,
             envelope_ledger: _,
             retail_projection_seen: _,
-            personal_trade_confirmations: _,
             next_receipt_base: _,
             next_order_id: _,
             tick: _,
@@ -87,14 +108,7 @@ impl GameSession {
             civil_clock: _,
         } = state;
         let mut hash = StateHash(0xcbf29ce484222325);
-        if !self.state.pending_report_corrections.is_empty() {
-            hash.field(&self.state.pending_report_corrections)?;
-        }
-        if !self.state.report_correction_operations.is_empty() {
-            hash.field(&self.state.report_correction_operations)?;
-        }
         hash.field(&self.state.setup)?;
-        hash.field(&self.state.memberships)?;
         hash.field(&self.state.seed)?;
         hash.field(&self.state.rng.state)?;
         for (id, account) in &self.state.accounts {
@@ -120,33 +134,35 @@ impl GameSession {
         }
         hash.field(&self.state.price_history)?;
         hash.field(&self.state.market_minute_closes)?;
-        hash.field(&self.state.retained_market_history)?;
         hash.field(&self.state.candle_book.histories())?;
         hash.field(&self.state.candle_book.active())?;
-        hash.field(&self.state.auction_orders)?;
         hash.field(&self.state.pending_player)?;
-        hash.field(&self.state.pending_npc)?;
         hash.field(&self.state.ingress_receipt_cursors)?;
         hash.field(&self.state.npc_attention)?;
         hash.field(&self.state.history_reads)?;
         hash.field(&self.state.retail_experience)?;
-        hash.field(&self.state.personal_trade_confirmations)?;
-        hash.field(&self.state.parent_orders)?;
-        hash.field(&self.state.pending_plan_events)?;
         hash.field(&self.state.npc_order_lifecycles)?;
         let mut queue: Vec<_> = self.state.attention_scheduler.iter().copied().collect();
         queue.sort_unstable();
         hash.field(&queue)?;
-        let system = self.state.company_system.hash_projection().map_err(|error| {
+        hash.field(self.state.company_registry.as_ref())?;
+        let operations = self.state.operations.hash_projection().map_err(|error| {
             StepFatal::InvariantViolation {
                 description: error.to_string(),
-                location: "state_hash.company_system".to_owned(),
+                location: "state_hash.company_operations".to_owned(),
             }
         })?;
-        hash.field(&system)?;
-        hash.field(&self.state.corporate_actions)?;
+        hash.field(&operations)?;
+        let closing = self.state.closing.hash_projection().map_err(|error| {
+            StepFatal::InvariantViolation {
+                description: error.to_string(),
+                location: "state_hash.closing".to_owned(),
+            }
+        })?;
+        hash.field(&closing)?;
         hash.field(&self.state.library.hash_projection())?;
         hash.field(&self.state.disclosures)?;
+        hash.field(&self.state.groups)?;
         hash.field(&self.state.plans)?;
         hash.field(&self.state.urgency_policy)?;
         hash.field(

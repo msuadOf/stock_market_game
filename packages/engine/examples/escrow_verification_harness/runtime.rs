@@ -1,5 +1,3 @@
-include!("../../test-support/simple_company.rs");
-
 use crate::{
     cli::{Config, MergeDimension, Mode},
     digest::digest_hex,
@@ -8,8 +6,8 @@ use engine::{
     session::protocol::{ProtocolSession, TickFrame},
     verification_evidence::{RuntimeUpdateRef, UpdateProjection},
     AccountId, CivilDate, Event, FloatAllocation, GameConfig, HotParams, InstParams, Intent, Money,
-    NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockCode,
-    StockExchange, StockSpec, StrategyParams, SIMULATION_POLICY_ID,
+    NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockExchange, StockId,
+    StockSpec, StrategyParams, SIMULATION_POLICY_ID,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -521,7 +519,8 @@ fn identities(rows: &[CollectorRow]) -> Vec<String> {
 
 fn frozen_setup() -> Result<SessionSetup, String> {
     let setup = SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock(
                 "600101",
@@ -564,18 +563,9 @@ fn frozen_setup() -> Result<SessionSetup, String> {
         closing_auction_ticks: 2,
         history_len: 24,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::random(),
         start_date: CivilDate::from_iso("2030-01-02").map_err(|error| error.to_string())?,
         simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        // N2a 起为严格持久化必填字段：escrow 验证 harness 保持显式装配语义
-        //（自动名册/法定事实关闭），面值取产品默认 1 元/股。
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     };
     setup
         .validate()
@@ -590,7 +580,7 @@ fn stock(
     initial_price: i64,
 ) -> StockSpec {
     StockSpec {
-        code: StockCode(code.to_owned()),
+        code: engine::StockCode(code.to_owned()),
         exchange,
         initial_price: Money::from_cents(initial_price),
         category,
@@ -1100,7 +1090,11 @@ mod tests {
 
     #[test]
     fn public_payload_probe_uses_real_identities_and_negative_controls_diverge() {
-        let capture = committed::capture_runtime(43).unwrap();
+        let capture = committed::capture_runtime(
+            43,
+            engine::ComputeContext::shared_default().map_err(|error| error.to_string()).unwrap(),
+        )
+        .unwrap();
         let rows = collector_rows(&capture).unwrap();
         let canonical = collect_rows(rows.clone(), Mode::Canonical, None).unwrap();
         let perturbed = collect_rows(rows.clone(), Mode::Perturbed, None).unwrap();

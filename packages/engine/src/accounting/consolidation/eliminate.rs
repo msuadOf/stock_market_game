@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use crate::accounting::journal::PostingSide;
 use crate::accounting::ledger::{AccountDef, AccountElement, LedgerAccountId};
-use crate::accounting::Ledger;
+use crate::accounting::Books;
 
 use super::aggregate::AggregatedBalances;
 use super::error::{ConsolidationError, DeclaredSide};
@@ -29,7 +29,7 @@ use PostingSide::{Credit, Debit};
 /// 抵销分录（两侧各申报一次是正常输入形态，不是重复抵销）。
 pub(crate) fn build_worksheet(
     group: &ValidatedGroup,
-    members: &BTreeMap<MemberId, &Ledger>,
+    members: &BTreeMap<MemberId, &Books>,
     balances: &[IntercompanyBalance],
     sales: &[IntercompanySale],
 ) -> Result<Vec<WorksheetEntry>, ConsolidationError> {
@@ -83,7 +83,9 @@ pub(crate) fn build_worksheet(
             .or_insert(crate::accounting::AccountingAmount::ZERO);
         *total = total.add(declaration.amount)?;
         let def = member_def(members, &declaration.member, &declaration.account)?;
-        let net = members[&declaration.member].account_net_debit(&declaration.account)?;
+        let net = members[&declaration.member]
+            .ledger()
+            .account_net_debit(&declaration.account)?;
         let balance = if def.element == AccountElement::Liability {
             net.neg()?
         } else {
@@ -108,7 +110,7 @@ pub(crate) fn build_worksheet(
 /// 单笔申报的基本校验（成员存在、非自指、科目存在、非现金）——先于配对。
 fn precheck_balance(
     group: &ValidatedGroup,
-    members: &BTreeMap<MemberId, &Ledger>,
+    members: &BTreeMap<MemberId, &Books>,
     decl: &IntercompanyBalance,
 ) -> Result<(), ConsolidationError> {
     ensure_member(group, &decl.member)?;
@@ -138,7 +140,7 @@ fn precheck_balance(
 /// 配对成功后的往来抵销分录：Dr 负债侧 / Cr 资产侧（两侧金额精确相等——
 /// 不等即拒绝，绝不 plug）。
 fn balance_entry(
-    members: &BTreeMap<MemberId, &Ledger>,
+    members: &BTreeMap<MemberId, &Books>,
     decl: &IntercompanyBalance,
     mirror: &IntercompanyBalance,
 ) -> Result<WorksheetEntry, ConsolidationError> {
@@ -171,7 +173,9 @@ fn balance_entry(
         }
     };
     for (declaration, side) in [(asset_side, Debit), (liability_side, Credit)] {
-        let net = members[&declaration.member].account_net_debit(&declaration.account)?;
+        let net = members[&declaration.member]
+            .ledger()
+            .account_net_debit(&declaration.account)?;
         let balance = match side {
             Debit => net,
             Credit => net.neg()?,
@@ -209,9 +213,9 @@ fn balance_entry(
 pub(crate) fn apply_worksheet(
     balances: &mut AggregatedBalances,
     worksheet: &[WorksheetEntry],
-    members: &BTreeMap<MemberId, &Ledger>,
+    members: &BTreeMap<MemberId, &Books>,
 ) -> Result<(), ConsolidationError> {
-    let keys = super::aggregate::ledger_account_keys(members);
+    let keys = super::aggregate::account_keys(members);
     for entry in worksheet {
         for line in &entry.lines {
             let key = &keys[&(line.member.clone(), line.account.clone())];
@@ -247,16 +251,19 @@ pub(super) fn ensure_member(
 
 /// 成员科目表中的科目定义（不存在 → 类型化拒绝）。
 pub(super) fn member_def(
-    members: &BTreeMap<MemberId, &Ledger>,
+    members: &BTreeMap<MemberId, &Books>,
     id: &MemberId,
     account: &LedgerAccountId,
 ) -> Result<AccountDef, ConsolidationError> {
-    members[id].chart().get(account).cloned().ok_or_else(|| {
-        ConsolidationError::UnknownIntercompanyAccount {
+    members[id]
+        .ledger()
+        .chart()
+        .get(account)
+        .cloned()
+        .ok_or_else(|| ConsolidationError::UnknownIntercompanyAccount {
             member: id.clone(),
             account: account.clone(),
-        }
-    })
+        })
 }
 
 /// 构造申报侧错误上下文。

@@ -10,8 +10,6 @@
 //!
 //! 副本漂移由 `scripts/simulation/baseline-run.mjs` 的对账校验与仓库测试共同看住。
 
-include!("../test-support/simple_company.rs");
-
 use std::{env, process};
 
 use engine::{
@@ -161,7 +159,8 @@ fn matrix_setup() -> SessionSetup {
         ),
     ];
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks,
         npcs: NpcSetup {
             retail_count: 20_000,
@@ -204,7 +203,6 @@ fn matrix_setup() -> SessionSetup {
         closing_auction_ticks: 180,
         history_len: 20,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(
             0.45,
             0.53,
@@ -214,12 +212,6 @@ fn matrix_setup() -> SessionSetup {
         // 冻结日历与双时钟的默认开局日期（Web DEFAULT_SETUP 不发送该字段时的 serde 缺省值）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 
@@ -244,7 +236,8 @@ fn compressed_setup() -> SessionSetup {
         })
         .collect();
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks,
         npcs: NpcSetup {
             retail_count: 20_000,
@@ -276,7 +269,6 @@ fn compressed_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(
             0.45,
             0.53,
@@ -286,12 +278,6 @@ fn compressed_setup() -> SessionSetup {
         // 冻结日历与双时钟的默认开局日期（与 matrix 场景一致的基准语义）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 

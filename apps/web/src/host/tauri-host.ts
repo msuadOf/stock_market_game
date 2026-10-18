@@ -1,14 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createTransportArchiveStore } from "../save/archive-store.ts";
-import { parseSetup } from "../save/schema/market.ts";
-import { decimal } from "../save/schema/primitives.ts";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { HistoricalStockData, PublicReportAvailability, PublicReportAvailabilityQuery, PublicReportPage, PublicReportQuery, PublicReportSummary, SaveSlot, SessionSetup, StockCode } from "../types/engine.ts";
+import type { HistoricalStockData, PublicReportPage, PublicReportQuery, PublicReportSummary, SaveSlot, SessionSetup, StockCode } from "../types/engine.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
-import type { EngineHost, IndicatorCapabilities, IntradayAverageCurveInput, IntradayAverageInput, IntradayAverageResult, PersonalTradeConfirmation } from "./engine-host.ts";
+import type { EngineHost } from "./engine-host.ts";
 import { createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
 import { TauriTimelineState, type TauriBaselineResponse } from "./tauri-timeline-state.ts";
-import { normalizePublicReportAvailability, normalizePublicReportAvailabilityQuery, normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
+import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-working-orders.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
@@ -18,15 +15,8 @@ import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-
 import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { exact } from "./protocol/guards.ts";
-import { parseReportCorrectionResponse, reportCorrectionFailureGeneration } from "./report-corrections.ts";
-import { parseCompanyReportCorrection } from "../save/schema/company/report-corrections.ts";
-import { normalizeConfirmationCursor, normalizeIntradayAverageCurveInput, normalizeIntradayAverageCurveResult, normalizeIntradayAverageInput, normalizeIntradayAverageResult, normalizePersonalTradeConfirmations } from "./intraday-average.ts";
-import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage } from "./personal-trade-history.ts";
-import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, type MarketHistoryRequest, type MarketHistoryPage } from "./market-history.ts";
-import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, type CurrentMinuteHistoryRequest, type CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
-import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./engine-host.ts";
-// 公司共同契约查询（任务 178 Desktop 桥接）：与本地 WASM 宿主同源 parser。
-import { parseCompanyCapabilities, parseFlatWithholdingReceipts, parseOwnerRightsOfferings, parsePeriodChangeExplanation } from "./company-contract-views.ts";
+import { wireIntentOf } from "./protocol/stock-identity.ts";
+import { stockIdOf } from "../config/stock-ids.ts";
 
 type EngineEventPayload = {
   readonly session_id: string;
@@ -76,15 +66,10 @@ export function tauriPausePreferenceArgs(sessionId: string, preferences: PausePr
   return { sessionId, preferences };
 }
 
-function parseHostCapabilities(value: unknown): { readonly npcDecisionDiagnostics: boolean; readonly indicatorCapabilities: IndicatorCapabilities; readonly personalTradeHistory: boolean } {
+function parseHostCapabilities(value: unknown): boolean {
   const source = record(value, "Tauri host_capabilities");
-  const indicators = record(source.indicatorCapabilities, "Tauri host_capabilities.indicatorCapabilities");
-  const indicatorKeys = ["intradayAverage", "macd", "priceKdj", "candleKdj"];
-  if (Object.keys(source).length !== 3 || typeof source.npcDecisionDiagnostics !== "boolean"
-    || Object.keys(indicators).length !== indicatorKeys.length
-    || indicatorKeys.some((key) => typeof indicators[key] !== "boolean")
-    || typeof source.personalTradeHistory !== "boolean") throw new Error("Tauri 宿主能力响应不符合契约");
-  return { npcDecisionDiagnostics: source.npcDecisionDiagnostics, indicatorCapabilities: indicators as unknown as IndicatorCapabilities, personalTradeHistory: source.personalTradeHistory };
+  if (Object.keys(source).length !== 1 || typeof source.npcDecisionDiagnostics !== "boolean") throw new Error("Tauri 宿主能力响应不符合契约");
+  return source.npcDecisionDiagnostics;
 }
 
 function parseFailurePayload(value: unknown): EngineFailurePayload {
@@ -114,7 +99,7 @@ function parseRestore(value: unknown): TauriBaselineResponse {
   return { snapshot: source.snapshot, civil_date: source.civil_date, timeline_id: text(source.timeline_id, "Tauri restore_session.timeline_id"), generation: generation(source.generation, "Tauri restore_session.generation") };
 }
 
-export async function createTauriHost(setup: SessionSetup, seed: bigint, options: { resumeArchive?: boolean } = {}): Promise<EngineHost> {
+export async function createTauriHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {
   let sessionId: string | null = null;
   const timeline = new TauriTimelineState();
   let callback: ((update: HostUpdate) => void | boolean) | null = null;
@@ -124,13 +109,9 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
   let eventUnlisten: UnlistenFn | null = null;
   let failureUnlisten: UnlistenFn | null = null;
   let npcDiagnosticsEnabled = false;
-  let indicatorCapabilities: IndicatorCapabilities = { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false };
-  let personalTradeHistory = false;
-  let startupContext: EngineHost["startupContext"];
   let deliveredGeneration: string | null = null;
 
   const fail = (failure: HostFailure) => {
-    if (failure.code === "REPORT_CORRECTION_REJECTED" && failure.recoverable === true && reportCorrectionFailureGeneration(failure) !== timeline.currentGeneration()) return;
     running = false;
     fatalCallback?.(failure);
   };
@@ -161,17 +142,11 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
       }
     });
 
-    const created = record(await invoke<unknown>("create_session", { setup, seed: seed.toString(), resumeArchive: options.resumeArchive === true }), "Tauri create_session");
-    if (Object.keys(created).sort().join() !== "resumed,seed,sessionId,setup" || typeof created.resumed !== "boolean") throw new Error("Tauri create_session 响应结构无效");
-    sessionId = text(created.sessionId, "Tauri create_session.sessionId");
-    startupContext = { setup: parseSetup(created.setup, "Tauri create_session.setup"), seed: decimal(created.seed, "Tauri create_session.seed"), resumed: created.resumed };
+    sessionId = text(await invoke<unknown>("create_session", { setup, seed: seed.toString() }), "Tauri create_session.session_id");
     timeline.setInitialTimeline(sessionId);
     const initialBaseline = parseRestore(await invoke<unknown>("engine_baseline", { sessionId, generation: timeline.currentGeneration() }));
     timeline.installInitialBaseline(initialBaseline);
-    const hostCapabilities = parseHostCapabilities(await invoke<unknown>("host_capabilities"));
-    npcDiagnosticsEnabled = hostCapabilities.npcDecisionDiagnostics;
-    indicatorCapabilities = hostCapabilities.indicatorCapabilities;
-    personalTradeHistory = hostCapabilities.personalTradeHistory;
+    npcDiagnosticsEnabled = parseHostCapabilities(await invoke<unknown>("host_capabilities"));
   } catch (error) {
     disposed = true;
     const ownedSessionId = sessionId;
@@ -220,14 +195,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
   };
 
   return {
-    startupContext,
-    archiveStore: createTransportArchiveStore(async (operation, slotId, name) => {
-      const currentGeneration = timeline.captureGeneration();
-      const result = await invoke<unknown>(`archive_${operation}`, { sessionId: requireSession(), ...(slotId === undefined ? {} : { slotId }), ...(name === undefined ? {} : { name }), ...(["select", "rename", "copy", "delete"].includes(operation) ? { generation: currentGeneration } : {}) });
-      assertResponseCurrent(currentGeneration, `archive.${operation}`);
-      return result;
-    }),
-    capabilities: { persistence: "native", deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: npcDiagnosticsEnabled, indicatorCapabilities, personalTradeHistory },
+    capabilities: { deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: npcDiagnosticsEnabled },
     async start(onUpdate, onFatalError) {
       if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");
       callback = onUpdate;
@@ -290,7 +258,8 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
     },
     async submitIntent(intent) {
       const generation = timeline.captureGeneration();
-      await invoke("enqueue", { sessionId: requireSession(), generation, intent });
+      // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再入队（ADR 0041）。
+      await invoke("enqueue", { sessionId: requireSession(), generation, intent: wireIntentOf(intent) });
       assertResponseCurrent(generation, "submitIntent");
     },
     snapshot() {
@@ -326,40 +295,10 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
     async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
       timeline.baselineForRead("Tauri 基线尚未就绪，不能查询股票历史");
       const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("query_stock_history", { sessionId: requireSession(), generation: cursor.generation, code }), "Tauri query_stock_history");
+      // Tauri 命令参数 code 为数值 StockId（ADR 0041）。
+      const response = record(await invoke<unknown>("query_stock_history", { sessionId: requireSession(), generation: cursor.generation, code: stockIdOf(code) }), "Tauri query_stock_history");
       timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri query_stock_history.generation"), "Tauri 股票历史响应属于已过期会话 generation");
       return parseHistoricalStockData(response.value, code);
-    },
-    async companyCapabilities(company: string) {
-      if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("能力面公司身份必须是非空且不超过 64 字符的字符串");
-      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询公司能力面");
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("company_capabilities", { sessionId: requireSession(), generation: cursor.generation, company }), "Tauri company_capabilities");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri company_capabilities.generation"), "Tauri 公司能力面响应属于已过期会话 generation");
-      return parseCompanyCapabilities(response.value);
-    },
-    async companyPeriodExplanation(company: string, periodEnd: string) {
-      if (typeof company !== "string" || company.trim().length === 0 || company.length > 64) throw new Error("期间解释公司身份必须是非空且不超过 64 字符的字符串");
-      if (typeof periodEnd !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd)) throw new Error("期间解释 periodEnd 必须是 ISO YYYY-MM-DD");
-      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询期间解释");
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("company_period_explanation", { sessionId: requireSession(), generation: cursor.generation, company, periodEnd }), "Tauri company_period_explanation");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri company_period_explanation.generation"), "Tauri 期间解释响应属于已过期会话 generation");
-      return parsePeriodChangeExplanation(response.value);
-    },
-    async ownerRightsOfferings() {
-      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询本人配股权益");
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("owner_rights_offerings", { sessionId: requireSession(), generation: cursor.generation }), "Tauri owner_rights_offerings");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri owner_rights_offerings.generation"), "Tauri 本人配股权益响应属于已过期会话 generation");
-      return parseOwnerRightsOfferings(response.value);
-    },
-    async ownerFlatWithholdingReceipts() {
-      timeline.baselineForRead("Tauri 基线尚未就绪，不能查询简税代扣回执");
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("owner_flat_withholding_receipts", { sessionId: requireSession(), generation: cursor.generation }), "Tauri owner_flat_withholding_receipts");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri owner_flat_withholding_receipts.generation"), "Tauri 简税代扣回执响应属于已过期会话 generation");
-      return parseFlatWithholdingReceipts(response.value);
     },
     async initialAllocation() {
       timeline.baselineForRead("Tauri 基线尚未就绪，不能查询初始分配");
@@ -377,7 +316,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
       const baseline = timeline.replaceRefreshedBaseline(restored, queryGeneration);
       await deliverInstalledBaseline(baseline, "refresh");
     },
-    async load(slot, archiveSlotId, onRestored) {
+    async load(slot, onRestored) {
       const id = requireSession();
       const wasRunning = running;
       const requestedGeneration = timeline.captureGeneration();
@@ -386,39 +325,16 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
         assertResponseCurrent(requestedGeneration, "load.pause");
         running = false;
       }
-      const restored = parseRestore(await invoke<unknown>("restore_session", { sessionId: id, generation: requestedGeneration, slot, ...(archiveSlotId === undefined ? {} : { archiveSlotId }) }));
+      const restored = parseRestore(await invoke<unknown>("restore_session", { sessionId: id, generation: requestedGeneration, slot }));
       assertResponseCurrent(requestedGeneration, "load");
-      const baseline = timeline.replaceRestoredBaseline(restored);
       onRestored?.();
+      const baseline = timeline.replaceRestoredBaseline(restored);
       await deliverInstalledBaseline(baseline, "restore");
       if (wasRunning) {
         await invoke("resume_session", { sessionId: id });
         assertResponseCurrent(restored.generation, "load.resume");
         running = true;
       }
-    },
-    async submitReportCorrection(request) {
-      const normalized = parseCompanyReportCorrection(request);
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("submit_report_correction", { sessionId: requireSession(), generation: cursor.generation, request: normalized }), "财报更正确认");
-      if (disposed) throw new Error("财报更正确认属于已销毁市场");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "财报更正 generation"), "财报更正确认属于已过期 generation");
-      parseReportCorrectionResponse(response, cursor.generation, true);
-    },
-    async cancelReportCorrection(operationId) {
-      if (operationId.trim().length === 0) throw new Error("更正 operation_id 必须非空");
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("cancel_report_correction", { sessionId: requireSession(), generation: cursor.generation, operationId }), "财报更正取消确认");
-      if (disposed) throw new Error("取消确认属于已销毁市场");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "取消 generation"), "取消财报更正确认属于已过期 generation");
-      parseReportCorrectionResponse(response, cursor.generation, true);
-    },
-    async queryReportCorrections() {
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("query_report_corrections", { sessionId: requireSession(), generation: cursor.generation }), "财报更正查询");
-      if (disposed) throw new Error("财报更正查询属于已销毁市场");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "更正查询 generation"), "财报更正查询属于已过期 generation");
-      return parseReportCorrectionResponse(response, cursor.generation, false);
     },
     async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
       const response = record(await invoke<unknown>("public_reports", { sessionId: requireSession(), generation: timeline.currentGeneration(), query }), "Tauri public_reports");
@@ -428,17 +344,9 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
       const response = record(await invoke<unknown>("public_report_by_id", { sessionId: requireSession(), generation: timeline.currentGeneration(), id }), "Tauri public_report_by_id");
       return normalizePublicReportById(response.value);
     },
-    async queryPublicReportAvailability(query: PublicReportAvailabilityQuery): Promise<PublicReportAvailability> {
-      const normalizedQuery = normalizePublicReportAvailabilityQuery(query);
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("public_report_availability", { sessionId: requireSession(), generation: cursor.generation, query: normalizedQuery }), "Tauri public_report_availability");
-      if (disposed) throw new Error("公开报告可用性查询属于已销毁市场");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "公开报告可用性 generation"), "公开报告可用性查询属于已过期 generation");
-      return normalizePublicReportAvailability(response.value, normalizedQuery);
-    },
-    async npcDecisionTrace(account: string): Promise<readonly NpcDecisionTraceRecord[]> {
+    async npcDecisionTrace(account: number): Promise<readonly NpcDecisionTraceRecord[]> {
       if (!npcDiagnosticsEnabled) throw new Error("Tauri 后端未协商启用 NPC 决策诊断");
-      if (typeof account !== "string" || !/^(0|[1-9]\d*)$/.test(account) || account.length > 20 || BigInt(account) > 18_446_744_073_709_551_615n) throw new Error("NPC 账户 ID 必须是规范 u64 非负十进制字符串");
+      if (!Number.isSafeInteger(account) || account < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
       const cursor = timeline.captureQueryCursor();
       const queryGeneration = cursor.generation;
       const response = record(await invoke<unknown>("npc_decision_diagnostics", { sessionId: requireSession(), generation: queryGeneration, account }), "Tauri npc_decision_diagnostics");
@@ -451,50 +359,6 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint, options
       const normalized = normalizeIndicatorInput(input);
       const result = await invoke<unknown>("calculate_indicators", normalized);
       return normalizeIndicatorResults(result, normalized);
-    },
-    async calculateIntradayAverage(input: IntradayAverageInput): Promise<IntradayAverageResult | null> {
-      const normalized = normalizeIntradayAverageInput(input);
-      const result = await invoke<unknown>("calculate_intraday_average", { turnoverCents: normalized.turnoverCents, tradeCount: normalized.tradeCount, volumeShares: normalized.volumeShares });
-      return normalizeIntradayAverageResult(result);
-    },
-    async calculateIntradayAverageCurve(input: IntradayAverageCurveInput): Promise<readonly (IntradayAverageResult | null)[]> {
-      const normalized = normalizeIntradayAverageCurveInput(input);
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("calculate_intraday_average_curve", { seriesKey: normalized.seriesKey, samples: normalized.samples.map(({ turnoverCents, tradeCount, volumeShares }) => ({ turnover_cents: turnoverCents, trade_count: tradeCount, volume_shares: volumeShares })) }), "Tauri VWAP curve response");
-      timeline.assertQueryCursor(cursor, cursor.generation, "Tauri VWAP curve 响应属于已过期会话 generation");
-      exact(response, ["series_key", "results"], "Tauri VWAP curve response");
-      if (response.series_key !== normalized.seriesKey) throw new Error("Tauri VWAP curve 响应 series_key 与请求不匹配");
-      return normalizeIntradayAverageCurveResult(response.results, normalized.samples.length, normalized.samples);
-    },
-    async queryPersonalTradeConfirmations(beforeReceipt: string | null = null): Promise<readonly PersonalTradeConfirmation[]> {
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("personal_trade_confirmations", { sessionId: requireSession(), generation: cursor.generation, beforeReceipt: normalizeConfirmationCursor(beforeReceipt) }), "Tauri personal_trade_confirmations");
-      exact(response, ["generation", "confirmations"], "Tauri personal_trade_confirmations");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri confirmations generation"), "Tauri 交割单响应属于已过期会话 generation");
-      return normalizePersonalTradeConfirmations(response.confirmations);
-    },
-    async queryCurrentMinuteHistory(request: CurrentMinuteHistoryRequest): Promise<CurrentMinuteHistoryResponse> {
-      const normalized = normalizeCurrentMinuteHistoryRequest(request), cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("current_minute_history", { sessionId: requireSession(), generation: cursor.generation, query: normalized }), "Tauri当前分钟");
-      exact(response, ["generation", "response"], "Tauri当前分钟");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri当前分钟generation"), "Tauri当前分钟属于过期generation");
-      return normalizeCurrentMinuteHistoryResponse(response.response, normalized);
-    },
-    async queryMarketHistory(request: MarketHistoryRequest): Promise<MarketHistoryPage> {
-      const normalized = normalizeMarketHistoryRequest(request);
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("market_history", { sessionId: requireSession(), generation: cursor.generation, query: normalized }), "Tauri永久量价历史");
-      exact(response, ["generation", "page"], "Tauri永久量价历史");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri量价历史generation"), "Tauri量价历史属于过期generation");
-      return normalizeMarketHistoryPage(response.page, normalized);
-    },
-    async queryPersonalTradeHistory(request: PersonalTradeHistoryRequest): Promise<PersonalTradeHistoryPage> {
-      const normalized = normalizePersonalTradeHistoryRequest(request);
-      const cursor = timeline.captureQueryCursor();
-      const response = record(await invoke<unknown>("personal_trade_history", { sessionId: requireSession(), generation: cursor.generation, query: normalized }), "Tauri本人日期历史");
-      exact(response, ["generation", "page"], "Tauri本人日期历史");
-      timeline.assertQueryCursor(cursor, generation(response.generation, "Tauri本人日期历史generation"), "Tauri日期交割历史属于过期generation");
-      return normalizePersonalTradeHistoryPage(response.page, normalized);
     },
   };
 }

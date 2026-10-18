@@ -1,28 +1,28 @@
+use super::fill_fact::FillFactView;
 use super::retail_projection::{
     project_institutional_receipts, RetailProjectionError, RetailProjectionInput,
-    RetailProjectionSeen,
 };
 use crate::session::account_paged_map::AccountPagedMap;
-use crate::{Account, AccountId, AccountKind, Position, StockCode};
+use crate::{Account, AccountId, AccountKind, Position, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn project_institutional_experience(
+    compute: &crate::ComputeContext,
     accounts: &BTreeMap<AccountId, Account>,
     belief_participants: &AccountPagedMap<
         crate::session::decision_chain::personal_state::BeliefParticipantState,
     >,
-    positions_before: &BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
-    positions_after: &BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
-    seen: &RetailProjectionSeen,
+    positions_before: &BTreeMap<AccountId, BTreeMap<StockId, Position>>,
+    positions_after: &BTreeMap<AccountId, BTreeMap<StockId, Position>>,
     moment: crate::experience::ExperienceMoment,
-    receipts: &[super::EnvelopeReceipt],
+    fill_facts: FillFactView<'_>,
 ) -> Result<BTreeMap<AccountId, crate::strategy::BeliefBook>, RetailProjectionError> {
-    let institutional_accounts: BTreeSet<AccountId> = receipts
+    // 分类走 typed facts（账户身份已在事实键内）；不再触碰收据本体或 seen。
+    let institutional_accounts: BTreeSet<AccountId> = fill_facts
         .iter()
-        .filter(|receipt| receipt.kind == super::ReceiptKind::Fill)
-        .filter_map(|receipt| {
+        .filter_map(|fact| {
             accounts
-                .get(&receipt.envelope.account)
+                .get(&fact.key().account)
                 .filter(|account| account.kind() == AccountKind::Inst)
                 .filter(|account| {
                     account
@@ -52,14 +52,14 @@ pub(super) fn project_institutional_experience(
     }
     let experience_map: AccountPagedMap<_> = experiences.into();
     let projection = project_institutional_receipts(
+        compute,
         RetailProjectionInput {
             retail_experience: &experience_map,
             retail_accounts: &institutional_accounts,
             positions_before,
             positions_after,
-            seen,
             market_minute: moment.market_minute,
-            receipts,
+            fill_facts,
         },
         moment,
     )?;

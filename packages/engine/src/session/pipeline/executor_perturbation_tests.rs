@@ -2,6 +2,14 @@ use super::*;
 use crate::{AccountId, GameSession, Intent, Money, Side};
 use std::collections::BTreeMap;
 
+// D1 登记（2026-10-15）：本文件为**旧执行器扰动契约**——断言旧执行器
+// 的分片记录/控制隔离在不同并发形态下不变。runtime 路径无执行器
+// （决策在组线程、撮合在交易部线程），故经 step() 混跑只会因缺
+// ExecutorOrderRecord 失败。市场对等部分（玩家成交/持仓/现金跨线程
+// 数不变）已在 runtime 路径实测通过（证据：D1 批跑到 154 行 shard
+// 断言处——fills/positions 全过）。全部测试显式走旧管线契约入口；
+// runtime 并发不变式等价测试归 D4 设计（组/部分片维度）。
+
 fn fixture(auction: bool) -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
     setup.npcs.inst_count = 0;
@@ -10,6 +18,9 @@ fn fixture(auction: bool) -> GameSession {
     setup.ticks_per_day = 8;
     setup.closing_auction_ticks = 1;
     let mut game = GameSession::new(setup, 42).unwrap();
+    if auction {
+        game.fixture_sync_market_modes_for_test();
+    }
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     let moment = crate::experience::ExperienceMoment {
         civil_date: game.civil_date(),
@@ -17,12 +28,10 @@ fn fixture(auction: bool) -> GameSession {
         trading_day: u64::from(game.day()),
     };
     // 保持生产 StrategyState 已安装。外部测试候选仍走真实
-    // DecisionShadow/AccountValidation 路径，不替换生产 dispatcher。
+    // DecisionAndContinuation/AccountValidation 路径，不替换生产 dispatcher。
     for account in [AccountId(1), AccountId(2)] {
         for code in &codes {
-            game.state
-                .accounts
-                .get_mut(&account)
+            game.fixture_account_mut(&account)
                 .unwrap()
                 .grant_position(code.clone(), 1_000, Money::from_cents(1_000_000))
                 .unwrap();
@@ -78,47 +87,46 @@ fn run(
     threads: usize,
     config: ExecutorPerturbation,
 ) -> Vec<ExecutorOrderRecord> {
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .unwrap()
-        .install(|| {
-            with_executor_perturbation(config, || {
-                let mut game = prototype.clone_for_tick_shadow().unwrap();
-                let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
-                let mut player_fills = BTreeMap::<_, u64>::new();
-                // Includes auction completion, PreOpen, continuous, and day-end finalizers.
-                for _ in 0..8 {
-                    let events = game.step().unwrap();
-                    for event in events {
-                        if let crate::Event::Trade {
-                            code,
-                            maker,
-                            taker,
-                            qty,
-                            ..
-                        } = event
-                        {
-                            if maker == AccountId(0) || taker == AccountId(0) {
-                                *player_fills.entry(code).or_default() += u64::from(qty);
-                            }
+    let pool_workers = threads;
+    let compute = crate::compute::ComputeContext::from_workers(pool_workers);
+    compute.install(|| {
+        with_executor_perturbation(config, || {
+            let mut game = prototype.clone_for_tick_shadow().unwrap();
+            game.rebind_compute_for_verification(compute.clone());
+            let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
+            let mut player_fills = BTreeMap::<_, u64>::new();
+            // Includes auction completion, PreOpen, continuous, and day-end finalizers.
+            for _ in 0..8 {
+                let events = game.step_pipeline_contract().unwrap();
+                for event in events {
+                    if let crate::Event::Trade {
+                        code,
+                        maker,
+                        taker,
+                        qty,
+                        ..
+                    } = event
+                    {
+                        if maker == AccountId(0) || taker == AccountId(0) {
+                            *player_fills.entry(code).or_default() += u64::from(qty);
                         }
                     }
-                    game.save().unwrap();
                 }
-                let player = game.state.accounts.get(&AccountId(0)).unwrap();
-                assert!(player.cash() < game.state.setup.config.starting_cash);
-                for code in codes {
-                    assert_eq!(player_fills.get(&code), Some(&300), "{code:?} player fill");
-                    assert_eq!(
-                        player.positions().get(&code).map(|position| position.qty()),
-                        Some(300)
-                    );
-                }
-            })
-            .unwrap()
-            .1
+                game.save().unwrap();
+            }
+            let player = game.state.accounts.get(&AccountId(0)).unwrap();
+            assert!(player.cash() < game.state.setup.config.starting_cash);
+            for code in codes {
+                assert_eq!(player_fills.get(&code), Some(&300), "{code:?} player fill");
+                assert_eq!(
+                    player.positions().get(&code).map(|position| position.qty()),
+                    Some(300)
+                );
+            }
         })
+        .unwrap()
+        .1
+    })
 }
 
 fn records_at(
@@ -140,16 +148,9 @@ fn assert_public_path_budget(auction: bool, threads: usize) {
         ExecutorPermutation::RotateLeft,
     ] {
         let records = run(&prototype, threads, config(permutation));
-        let stock_boundary = if auction {
-            ExecutorBoundary::AuctionStockShards
-        } else {
-            ExecutorBoundary::ContinuousStockShards
-        };
-        let completion_boundary = if auction {
-            ExecutorBoundary::AuctionWorkerResults
-        } else {
-            ExecutorBoundary::ContinuousWorkerResults
-        };
+        // 两种交易模式共用实际 stock stream/finish 接缝；扰动不能再观察已删除的独立竞价调度器。
+        let stock_boundary = ExecutorBoundary::ContinuousStockShards;
+        let completion_boundary = ExecutorBoundary::ContinuousWorkerResults;
         for boundary in [
             ExecutorBoundary::AccountValidationShards,
             stock_boundary,
@@ -206,7 +207,7 @@ fn executor_perturbation_allows_stock_output_reordering() {
         let perturbation = config(ExecutorPermutation::Reverse);
         for _ in 0..8 {
             let before_tick = game.state.tick;
-            let (result, _) = with_executor_perturbation(perturbation, || game.step()).unwrap();
+            let (result, _) = with_executor_perturbation(perturbation, || game.step_pipeline_contract()).unwrap();
             result.expect("cross-stock output order must not fail the tick");
             assert_eq!(game.state.tick, before_tick + 1);
             assert!(game.poison_reason().is_none());
@@ -243,6 +244,110 @@ fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
     assert!(with_executor_perturbation(ExecutorPerturbation::default(), || ()).is_ok());
     assert_eq!(prototype.session_state_hash().unwrap(), prototype_before);
 }
+#[test]
+fn compute_context_executor_binding_restores_after_error_unwind_and_nested_burst() {
+    with_executor_perturbation(ExecutorPerturbation::default(), || {
+        let original = super::executor_perturbation::current_executor_binding();
+        let result: Result<(), ()> = super::executor_perturbation::with_executor_binding(
+            super::executor_perturbation::ExecutorBinding::empty(), || {
+                assert!(super::executor_perturbation::current_executor_binding().is_empty());
+                super::executor_perturbation::with_executor_binding(original.clone(), || {
+                    assert!(super::executor_perturbation::current_executor_binding().same_as(&original));
+                });
+                Err(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(super::executor_perturbation::current_executor_binding().same_as(&original));
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::executor_perturbation::with_executor_binding(super::executor_perturbation::ExecutorBinding::empty(), || panic!("测试扰动绑定 unwind"));
+        }));
+        assert!(panic.is_err());
+        assert!(super::executor_perturbation::current_executor_binding().same_as(&original));
+    }).unwrap();
+    assert!(super::executor_perturbation::current_executor_binding().is_empty());
+}
+
+#[test]
+fn compute_context_shared_host_sessions_keep_executor_controls_isolated() {
+    let compute = crate::ComputeContext::with_workers(2).unwrap();
+    std::thread::scope(|threads| {
+        for stock_shards in [ExecutorPermutation::Canonical, ExecutorPermutation::Reverse] {
+            let compute = compute.clone();
+            threads.spawn(move || {
+                let mut game = fixture(false);
+                game.rebind_compute_for_verification(compute);
+                let (result, records) = with_executor_perturbation(
+                    ExecutorPerturbation { stock_shards, ..Default::default() }, || game.step_pipeline_contract(),
+                ).unwrap();
+                result.unwrap();
+                assert!(!records_at(&records, ExecutorBoundary::ContinuousStockShards).is_empty());
+            });
+        }
+    });
+}
+
+#[test]
+fn compute_context_foreign_caller_preserves_real_executor_controls() {
+    let mut game = fixture(false);
+    game.rebind_compute_for_verification(crate::ComputeContext::with_workers(1).unwrap());
+    let foreign_workers = 3;
+    let foreign = crate::compute::ComputeContext::from_workers(foreign_workers);
+    let (result, records) = foreign.install(|| with_executor_perturbation(
+        ExecutorPerturbation { stock_shards: ExecutorPermutation::Reverse, ..Default::default() },
+        || game.step_pipeline_contract(),
+    )).unwrap();
+    result.unwrap();
+    assert!(!records_at(&records, ExecutorBoundary::ContinuousStockShards).is_empty());
+    assert!(!records_at(&records, ExecutorBoundary::ContinuousWorkerResults).is_empty());
+}
+
+#[test]
+fn compute_context_spawned_tasks_inherit_scope_and_sessions_do_not_cross() {
+    let left = crate::ComputeContext::with_workers(2).unwrap();
+    let right = crate::ComputeContext::with_workers(2).unwrap();
+    std::thread::scope(|threads| {
+        for (name, compute, boundary, permutation) in [
+            ('a', &left, ExecutorBoundary::ContinuousWorkerResults, ExecutorPermutation::Reverse),
+            ('b', &right, ExecutorBoundary::AuctionWorkerResults, ExecutorPermutation::RotateLeft),
+        ] {
+            threads.spawn(move || {
+                let (ran_tx, ran_rx) = std::sync::mpsc::channel();
+                let signaled = ran_tx.clone();
+                let config = ExecutorPerturbation {
+                    worker_results: permutation,
+                    ..Default::default()
+                };
+                let ((), records) = with_executor_perturbation(config, || {
+                    compute.spawn(move || {
+                        let mut values = vec![1_u32, 2, 3];
+                        super::executor_perturbation::reorder(boundary, &mut values, |value| {
+                            (format!("probe-{value}"), 1)
+                        });
+                        signaled.send(()).expect("任务完成信号必须可达");
+                    });
+                    ran_rx
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .expect("派发任务必须在超时前执行")
+                })
+                .unwrap();
+                // 继承：派发任务内的 reorder 必须落入同一捕获
+                assert!(!records_at(&records, boundary).is_empty(), "任务未继承扰动捕获 {name}");
+                // 隔离：另一会话的边界不得串入本捕获
+                let other = if boundary == ExecutorBoundary::ContinuousWorkerResults {
+                    ExecutorBoundary::AuctionWorkerResults
+                } else {
+                    ExecutorBoundary::ContinuousWorkerResults
+                };
+                assert!(
+                    records.iter().all(|record| record.boundary != other),
+                    "不同会话的观察串账 {name}"
+                );
+            });
+        }
+    });
+}
+
 #[test]
 fn executor_boundaries_serialize_responsibility_labels() {
     for (boundary, label) in [

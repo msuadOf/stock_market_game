@@ -17,30 +17,16 @@ import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
 import { browserWasmEnvironment, initialStartupTarget, resolveStartupTarget, type StartupMode, type StartupTarget } from "./host/startup-policy";
-import { DEFAULT_SETUP, DEFAULT_SEED } from "./config/defaults";
-import { createNewSessionSeed } from "./config/session-seed.ts";
-import { changeCompanyPreferencesDraft, changeSeedDraft, changeSettlementCycleDraft, createSeedDraft, parseSessionSeed, regenerateSeedDraft, type SeedDraft, type DraftSettlementCycle } from "./config/seed-draft.ts";
-import type { SimpleCompanyPreferences } from "./types/generated/SimpleCompanyPreferences.ts";
-import { parseCompanySystemConfig } from "./save/schema/company/system-config.ts";
+import { DEFAULT_SETUP } from "./config/defaults";
 import { SessionControlCommands } from "./app/session-control-commands.ts";
-import { buildErrorFeedback } from "./app/error-details.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
-import { ReportFrequencyInput, type ReportFrequencyDraft } from "./components/ReportFrequencyInput.tsx";
 import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
-import { TaxModeInput } from "./components/TaxModeInput.tsx";
-import { ParValueInput } from "./components/ParValueInput.tsx";
-import { MechanismSwitchesInput } from "./components/MechanismSwitchesInput.tsx";
-import { CompanySystemInput } from "./components/company/CompanySystemInput.tsx";
 import { InitialAllocationSummary } from "./components/InitialAllocationSummary.tsx";
 import type { InitialAllocation } from "./host/initial-allocation.ts";
 import { FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
 import { StartupScreen } from "./app/StartupScreen.tsx";
 import type { DesktopView } from "./app/DesktopTerminal.tsx";
-import { RemoteLoginScreen } from "./app/RemoteLoginScreen.tsx";
-import { RemoteAuthClient } from "./host/remote-auth.ts";
-import { IndexedDbCredentialStore } from "./auth/credential-store.ts";
-import { logoutRemoteIdentity } from "./app/remote-logout.ts";
 import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
 import type { SessionSetup } from "./types/engine";
 import {
@@ -55,9 +41,6 @@ import {
   markTriggered,
   clearTriggeredOrders,
   clearAutoOrders,
-  setRemoteMembership,
-  selectPlayerAccount,
-  selectCanControl,
   type RootState,
 } from "./store/store";
 import { useSessionHostLifecycle } from "./app/useSessionHostLifecycle.ts";
@@ -79,9 +62,7 @@ import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
 import type { StrictSaveEnvelope } from "./save/schema/root.ts";
 import { writeDayEndTargets } from "./save/day-end-targets.ts";
 import { InitialSaveSource, SessionReplacementGate } from "./save/session-replacement.ts";
-import { IndexedDbSaveRepository } from "./save/indexeddb-save-repository.ts";
-import { ArchiveManager } from "./components/ArchiveManager.tsx";
-import type { ArchiveStore } from "./save/archive-store.ts";
+import { CompressedIndexedDbSaveRepository } from "./save/indexed-db-save-repository";
 import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh } from "./components/player-orders.ts";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
@@ -108,6 +89,7 @@ import {
   UserPanel,
 } from "./app/LocalRefreshViews.tsx";
 
+const PLAYER_ACCOUNT_KEY = "0";
 const DevNpcInspector = import.meta.env.DEV ? lazy(() => import("./dev/NpcDecisionInspector.tsx").then((module) => ({ default: module.NpcDecisionInspector }))) : null;
 const MAX_DAILY_CANDLES = 360;
 const TRADING_E2E_MODE = import.meta.env.MODE === "e2e"
@@ -122,15 +104,11 @@ const INITIAL_SESSION_SETUP: SessionSetup = TRADING_E2E_MODE
       closing_auction_ticks: 3,
     }
   : DEFAULT_SETUP;
-const INITIAL_SEED_PREVIEW = (() => {
-  try { return { draft: createSeedDraft(INITIAL_SESSION_SETUP, TRADING_E2E_MODE ? DEFAULT_SEED : createNewSessionSeed()), error: null }; }
-  catch (failure) { return { draft: null, error: `新局预览初始化失败：${failure instanceof Error ? failure.message : String(failure)}` }; }
-})();
 const DELIVERY_MODE_LABELS: Record<DeliveryMode, string> = {
   push: "服务端推送 60Hz",
   pull: "客户端拉取 60Hz",
 };
-let browserSaveRepository: IndexedDbSaveRepository | null = null;
+let browserSaveRepository: CompressedIndexedDbSaveRepository | null = null;
 
 declare global {
   interface Window {
@@ -142,9 +120,11 @@ declare global {
   }
 }
 
-function getBrowserSaveRepository(): IndexedDbSaveRepository {
+function getBrowserSaveRepository(): CompressedIndexedDbSaveRepository {
   if (typeof window === "undefined") throw new Error("浏览器存储在当前运行环境不可用");
-  browserSaveRepository ??= new IndexedDbSaveRepository(window.indexedDB);
+  browserSaveRepository ??= new CompressedIndexedDbSaveRepository(window.indexedDB, {
+    getItem: (key) => window.localStorage.getItem(key),
+  });
   return browserSaveRepository;
 }
 
@@ -153,9 +133,7 @@ interface AppShellProps {
   initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;
   dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;
   sessionSetup: SessionSetup;
-  chosenSessionSeed: string;
-  chosenConfigOrigin: SeedDraft["origin"];
-  setSessionCreation(setup: SessionSetup, seed: string): void;
+  setSessionSetup: Dispatch<SetStateAction<SessionSetup>>;
   returningToStartup: boolean;
   returningToStartupRef: MutableRefObject<boolean>;
   startupReturnError: string | null;
@@ -166,16 +144,10 @@ interface AppShellProps {
   setNotice: Dispatch<SetStateAction<string | null>>;
 }
 
-function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, chosenSessionSeed, chosenConfigOrigin, setSessionCreation, returningToStartup, returningToStartupRef, startupReturnError, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
-  const [managedArchives, setManagedArchives] = useState<ArchiveStore | null>(null);
+function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
   const snapshotGeneration = useSelector((state: RootState) => state.snapshot.generation);
-  const playerAccount = useSelector(selectPlayerAccount);
-  const canControl = useSelector(selectCanControl);
-  const membership = useSelector((state: RootState) => state.remoteMembership);
-  const [remoteConfirmation, setRemoteConfirmation] = useState<"reset" | "load" | "file" | "logout" | "rejoin" | null>(null);
-  const [admissionCashDraft, setAdmissionCashDraft] = useState(sessionSetup.config.starting_cash);
-  const contextSubscriptionRef = useRef<(() => void) | null>(null);
+  const playerAccount = useSelector((s: RootState) => s.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
   const speed = useSelector((s: RootState) => s.settings.speed);
   const running = useSelector((s: RootState) => s.settings.running);
   const theme = useSelector((s: RootState) => s.settings.theme);
@@ -190,36 +162,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const [activeSetup, setActiveSetup] = useState<SessionSetup>(sessionSetup);
   const [startDateDraft, setStartDateDraft] = useState(sessionSetup.start_date);
   const [priceCageEnabledDraft, setPriceCageEnabledDraft] = useState(sessionSetup.config.price_cage_enabled);
-  const [reportFrequencyDraft, setReportFrequencyDraft] = useState<ReportFrequencyDraft>(sessionSetup.report_frequency);
-  const [companyDraft, setCompanyDraft] = useState<SeedDraft>(() => ({ seed: chosenSessionSeed, origin: chosenConfigOrigin, companySystem: JSON.stringify(sessionSetup.company_system, null, 2) }));
-  const companySystemDraft = companyDraft.companySystem;
-  const setCompanySystemDraft = (config: string) => setCompanyDraft(draft => ({ ...draft, companySystem: config }));
-  const setSeedDraft = (seed: string, preserveOrigin = false) => setCompanyDraft(draft => ({ ...draft, seed, origin: preserveOrigin ? draft.origin : "custom" }));
-  const regenerateCompanyDraft = () => {
-    try { setCompanyDraft(regenerateSeedDraft(activeSetup, companyDraft)); }
-    catch (failure) { setNotice(`重新生成预览失败：${failure instanceof Error ? failure.message : String(failure)}；当前 seed 与配置未改变。`); }
-  };
-  const changeCompanySeed = (seed: string) => {
-    try { setCompanyDraft(changeSeedDraft(activeSetup, companyDraft, seed)); }
-    catch (failure) { setNotice(`更新预览失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
-  };
-  const changeCompanySettlementCycle = (cycle: DraftSettlementCycle) => {
-    try { setCompanyDraft(changeSettlementCycleDraft(activeSetup, companyDraft, cycle)); }
-    catch (failure) { setNotice(`更新结算周期失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
-  };
-  const changeCompanyPreferences = (company: string, preferences: SimpleCompanyPreferences) => {
-    // 与结算周期处理同模式：在 setState updater 之外先计算，异常才能被本处
-    // try/catch 捕获并显式提示（updater 在渲染期执行，抛错会绕过这里炸组件树）。
-    try { setCompanyDraft(changeCompanyPreferencesDraft(companyDraft, company, preferences)); }
-    catch (failure) { setNotice(`更新公司偏好失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
-  };
   const [floatAllocationDraft, setFloatAllocationDraft] = useState(sessionSetup.float_allocation);
-  const [dividendTaxModeDraft, setDividendTaxModeDraft] = useState(sessionSetup.dividend_tax_mode);
-  const [flatWithholdingBpDraft, setFlatWithholdingBpDraft] = useState(sessionSetup.flat_withholding_bp ?? 1000);
-  const [rightsOfferingEnabledDraft, setRightsOfferingEnabledDraft] = useState(sessionSetup.rights_offering_enabled);
-  const [issuerRepurchaseEnabledDraft, setIssuerRepurchaseEnabledDraft] = useState(sessionSetup.issuer_repurchase_enabled);
-  // 每股面值草稿（规范分字符串，默认 100 分 = 1 元/股；2026-10-08 N2a 决策）。
-  const [parValuePerShareDraft, setParValuePerShareDraft] = useState(sessionSetup.par_value_per_share);
   const [initialAllocation, setInitialAllocation] = useState<InitialAllocation | null>(null);
   const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
@@ -235,7 +178,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
   const activeSetupRef = useRef(activeSetup);
   activeSetupRef.current = activeSetup;
-  const [quickTrading] = useState(() => new QuickTrading({ setup: () => activeSetupRef.current, snapshot: () => store.getState().snapshot.snapshot, account: () => selectPlayerAccount(store.getState()), autoAllowed: () => store.getState().settings.running || TRADING_E2E_MODE, submit: async (intent) => { const host = hostRef.current; if (!host) throw new Error("游戏引擎尚未就绪"); await host.submitIntent(intent); } }));
+  const [quickTrading] = useState(() => new QuickTrading({ setup: () => activeSetupRef.current, snapshot: () => store.getState().snapshot.snapshot, autoAllowed: () => store.getState().settings.running || TRADING_E2E_MODE, submit: async (intent) => { const host = hostRef.current; if (!host) throw new Error("游戏引擎尚未就绪"); await host.submitIntent(intent); } }));
   const stopStartupRef = useRef<() => Promise<void>>(async () => {});
   const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
   const saveSelectionGenerationRef = useRef(0);
@@ -245,10 +188,6 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const fatalHostErrorRef = useRef<(failure: string | HostFailure) => void>(() => {});
   fatalHostErrorRef.current = (failure) => {
     store.dispatch(setRunning(false));
-    if (typeof failure !== "string" && failure.code === "REPORT_CORRECTION_REJECTED" && failure.recoverable === true) {
-      setNotice(`日终财报更正失败，已暂停；无部分账务或部分公开。请在公司信息的市场控制区查询、取消问题待办后重试。错误反馈：${buildErrorFeedback(failure)}`);
-      return;
-    }
     setError(failure);
   };
   const chartCode = useMarketRuntimeSelection();
@@ -349,47 +288,16 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   }
 
   function connectProtocol(host: EngineHost) {
-    contextSubscriptionRef.current?.();
-    if (host.onMarketContext !== undefined) {
-      contextSubscriptionRef.current = host.onMarketContext((context) => {
-        if (host !== hostRef.current) return;
-        const previous = store.getState().remoteMembership;
-        const accountId = context.member === null ? null : context.member.account_id;
-        const changingAccount = !previous.remote || previous.accountId !== accountId || previous.generation !== context.generation;
-        if (changingAccount) {
-          quickTrading.reset();
-          autoOrderMgrRef.current?.clear();
-          store.dispatch(clearAutoOrders());
-          clearPlayerOrders();
-        }
-        store.dispatch(setRemoteMembership({ accountId, canControl: context.can_control, needsRejoin: context.needs_rejoin, remote: true, generation: context.generation, ready: changingAccount ? false : previous.ready }));
-        setActiveSetup(context.setup);
-        setAdmissionCashDraft(context.setup.config.starting_cash);
-        setStartDateDraft(context.setup.start_date);
-        setPriceCageEnabledDraft(context.setup.config.price_cage_enabled);
-        setFloatAllocationDraft(context.setup.float_allocation);
-        setReportFrequencyDraft(context.setup.report_frequency);
-        setCompanySystemDraft(JSON.stringify(context.setup.company_system, null, 2));
-        setSeedDraft(context.seed);
-      });
-    } else {
-      store.dispatch(setRemoteMembership({ accountId: "0", canControl: true, needsRejoin: false, remote: false }));
-    }
     companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
     protocolCoordinatorRef.current = new ProtocolCoordinator({
       onBaseline(protocolState, baseline) {
         if (quickTrading.jobs().some(job => job.enabled)) setNotice("已重新同步游戏，定时自动下单已停止，请核对后重新开启");
         quickTrading.reset();
-        speedMetricsRequestGateRef.current.invalidate();
-        setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
-        setSpeedMetrics(null);
-        setSpeedMetricsError(null);
         saveSelectionGenerationRef.current += 1;
         dayEndPersistenceRef.current.install(baseline.generation);
         clearPlayerOrders();
         companyCoordinatorRef.current?.installBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq });
         installBaselineRef.current(protocolState);
-        if (host.capabilities.persistence === "remote") store.dispatch(setRemoteMembership({ ...store.getState().remoteMembership, ready: true }));
         setHostBaselineReady(true);
         if (!TRADING_E2E_MODE) void refreshPlayerOrders();
       },
@@ -401,24 +309,18 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           companyCoordinator?.acceptCivil(reduction.update, metadata);
           clearPlayerOrders();
           const target = dayEndFileTargetRef.current;
-          const browserPersistence = host.capabilities.persistence === "browser";
-          if (!browserPersistence && target === null) {
-            void refreshPlayerOrders();
-            acceptReductionRef.current(reduction);
-            return;
-          }
           const reference = { seq: reduction.update.update.seq_to, settledDate: reduction.update.update.boundary.settled_date };
           void dayEndPersistenceRef.current.completed(
             reduction.state.cursor.generation,
             host.save(reference).then((slot) => validateDayEndCandidate(slot, reference)),
             async (slot, isCurrent) => {
               return await writeDayEndTargets(slot, isCurrent, [
-                ...(browserPersistence ? [{ label: "浏览器 IndexedDB", write: (value: unknown, current: () => boolean) => getBrowserSaveRepository().save(value, current) }] : []),
+                { label: "浏览器快速槽", write: (value, current) => getBrowserSaveRepository().save(value, current) },
                 ...(target === null ? [] : [{ label: "授权文件", write: (value: unknown, current: () => boolean) => target.write(value, () => current() && target === dayEndFileTargetRef.current) }]),
               ]);
             },
           ).then((saved) => {
-            if (saved && host === hostRef.current) setNotice(browserPersistence ? "日终存档已更新（IndexedDB）" : "授权日终文件已更新；数据库由 Native 宿主保存");
+            if (saved && host === hostRef.current) setNotice(target === null ? "日终存档已更新（浏览器快速槽）" : "日终存档已更新（快速槽与授权文件）");
           }, (saveError: unknown) => {
             if (host === hostRef.current) setNotice(`日终存档更新失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
           });
@@ -428,10 +330,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         void quickTrading.advance(reduction.state.snapshot);
         const playerOrderChanged = reduction.update.kind === "tick-batch" && reduction.update.frames.some((frame) =>
           frame.facts.some(({ event }) =>
-            ("OrderAccepted" in event && String(event.OrderAccepted.account) === store.getState().remoteMembership.accountId)
-            || ("OrderCanceled" in event && String(event.OrderCanceled.account) === store.getState().remoteMembership.accountId)
-            || ("IntentRejected" in event && String(event.IntentRejected.account) === store.getState().remoteMembership.accountId)
-            || ("Trade" in event && (String(event.Trade.maker) === store.getState().remoteMembership.accountId || String(event.Trade.taker) === store.getState().remoteMembership.accountId)),
+            ("OrderAccepted" in event && event.OrderAccepted.account === 0)
+            || ("OrderCanceled" in event && event.OrderCanceled.account === 0)
+            || ("IntentRejected" in event && event.IntentRejected.account === 0)
+            || ("Trade" in event && (event.Trade.maker === 0 || event.Trade.taker === 0)),
           ),
         );
         if (playerOrderChanged) {
@@ -439,7 +341,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         }
         if (reduction.update.kind === "tick-batch") {
           const frames = reduction.update.frames;
-          if (frames.some((frame) => playerOrderFactsRequireRefresh(frame.facts, store.getState().remoteMembership.accountId))) {
+          if (frames.some((frame) => playerOrderFactsRequireRefresh(frame.facts))) {
             void refreshPlayerOrders();
           }
         }
@@ -460,14 +362,11 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
   useSessionHostLifecycle({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, playerOrderRefreshGateRef, hostUpdateRef, fatalHostErrorRef, stopStartupRef, returningToStartupRef,
-    startupTarget, sessionSetup, consumeChosenSessionSeed: () => parseSessionSeed(chosenSessionSeed), setSeedDraft, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
+    startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
-    setIndicatorCalculator, configureMarketTiming, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState,
+    setIndicatorCalculator, configureMarketTiming, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState,
     setNotice, setReady, setError, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
     disconnectProtocol() {
-      quickTrading.reset();
-      contextSubscriptionRef.current?.();
-      contextSubscriptionRef.current = null;
       companyCoordinatorRef.current?.dispose();
       companyCoordinatorRef.current = null;
       protocolCoordinatorRef.current = null;
@@ -492,13 +391,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
   useSpeedMetricsPolling({ hostRef, ready, speed, running, pollingGeneration: speedMetricsPollingGeneration,
     requestGate: speedMetricsRequestGateRef.current, loadInProgress: speedMetricsLoadInProgressRef,
-    onMetrics(metrics) {
-      if (startupTarget.kind === "remote") {
-        store.dispatch(setRunning(metrics.running));
-        store.dispatch(setSpeed(metrics.requested.mode === "fastest" ? Infinity : metrics.requested.multiplier));
-      }
-      setSpeedMetrics(metrics);
-    }, onError: setSpeedMetricsError });
+    onMetrics: setSpeedMetrics, onError: setSpeedMetricsError });
 
   // 一个浏览器中可能同时打开多个游戏页。隐藏页继续以 720x/MAX 运算会与当前页
   // 抢占全部 CPU，并让可见页的 K 线看似停止；隐藏时暂停宿主，重新可见时按 UI
@@ -509,80 +402,24 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     };
     document.addEventListener("visibilitychange", syncHostVisibility);
     return () => document.removeEventListener("visibilitychange", syncHostVisibility);
-  }, [sessionControls, hostRef]);
+  }, [sessionControls]);
 
   useEffect(() => {
     refreshDailyChart();
   }, [chartCode, refreshDailyChart]);
 
   const saveCommands = useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef,
-    browserLocal: startupTarget.kind === "wasm",
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
-    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, reportFrequencyDraft, companySystemDraft, dividendTaxModeDraft, flatWithholdingBpDraft, rightsOfferingEnabledDraft, issuerRepurchaseEnabledDraft, parValuePerShareDraft, seedDraft: companyDraft.seed, setSeedDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
-    resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionCreation,
-    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setReportFrequencyDraft, setCompanySystemDraft, setDividendTaxModeDraft, setFlatWithholdingBpDraft, setRightsOfferingEnabledDraft, setIssuerRepurchaseEnabledDraft, setParValuePerShareDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
+    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
+    resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionSetup,
+    setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
-  const { recoverFromFile, noticeSavePolicy: handleSave, load: loadMarketArchive, selectFile: handleSaveFile,
-    loadFile: loadMarketFile, newGame: resetMarket } = saveCommands;
-  const handleLoad = (slotId?: string) => {
-    if (!canControl) { setNotice("当前身份没有加载全市场日终存档的控制授权"); return Promise.resolve(); }
-    if (slotId === undefined) {
-      try {
-        const host = hostRef.current;
-        if (host === null) throw new Error("宿主尚未就绪");
-        const repository = host.capabilities.persistence === "browser" ? getBrowserSaveRepository() : host.archiveStore;
-        if (repository === undefined) throw new Error("宿主未提供存档管理接口");
-        setManagedArchives(repository);
-      } catch (failure) { setNotice(`打开存档管理失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈错误。`); }
-      return Promise.resolve();
-    }
-    if (membership.remote && !window.confirm("读档会替换全市场时间线，影响所有玩家；控制授权保留，缺席主体须本人明确重新加入才发一次资金。确认读取此档？")) return Promise.resolve();
-    return loadMarketArchive(slotId);
-  };
-  const handleLoadFile = () => {
-    if (!canControl) { setNotice("当前身份没有加载全市场日终存档的控制授权"); return; }
-    if (membership.remote) setRemoteConfirmation("file");
-    else void loadMarketFile();
-  };
-  const handleNewGame = () => {
-    if (!canControl) { setNotice("当前身份没有重置全市场的控制授权"); return; }
-    if (membership.remote) setRemoteConfirmation("reset");
-    else void resetMarket();
-  };
-  async function confirmRemoteOperation() {
-    const operation = remoteConfirmation;
-    setRemoteConfirmation(null);
-    try {
-      if (operation === "reset") await resetMarket();
-      if (operation === "load") await loadMarketArchive();
-      if (operation === "file") await loadMarketFile();
-      if (operation === "rejoin") {
-        const host = hostRef.current;
-        if (host?.rejoinMarket === undefined) throw new Error("当前宿主没有明确重新加入市场的接口");
-        await host.rejoinMarket();
-        setNotice("已由本人明确重新加入；Server 按本次入场规则发放一次资金，重复请求不重复发放。");
-      }
-      if (operation === "logout" && startupTarget.kind === "remote") {
-        if (startupTarget.token === undefined) throw new Error("当前连接缺少身份 credential");
-        const token = startupTarget.token;
-        await logoutRemoteIdentity({
-          revoke: () => new RemoteAuthClient(startupTarget.baseUrl).logout(token),
-          forget: () => new IndexedDbCredentialStore().remove(startupTarget.baseUrl),
-          disconnect: () => onSelectHost(stopStartupRef.current),
-        });
-      }
-    } catch (failure) { setNotice(`远程操作失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈错误。`); }
-  }
+  const { recoverFromFile, noticeSavePolicy: handleSave, load: handleLoad, selectFile: handleSaveFile,
+    loadFile: handleLoadFile, newGame: handleNewGame } = saveCommands;
 
-  const handlePauseToggle = useCallback(() => {
-    if (!selectCanControl(store.getState())) { setNotice("当前身份没有暂停或继续全市场的控制授权"); return; }
-    void sessionControls.toggleRunning();
-  }, [sessionControls, setNotice]);
-  const handleSpeedChange = useCallback((value: number) => {
-    if (!selectCanControl(store.getState())) { setNotice("当前身份没有修改全市场速度的控制授权"); return; }
-    void sessionControls.setSpeed(value);
-  }, [sessionControls, setNotice]);
+  const handlePauseToggle = useCallback(() => { void sessionControls.toggleRunning(); }, [sessionControls]);
+  const handleSpeedChange = useCallback((value: number) => { void sessionControls.setSpeed(value); }, [sessionControls]);
 
   const handleDeliveryModeChange = useCallback((mode: DeliveryMode) => {
     const host = hostRef.current;
@@ -597,14 +434,13 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     } catch (deliveryError) {
       setNotice(`Publisher 模式切换失败：${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`);
     }
-  }, [setNotice, hostRef]);
+  }, [setNotice]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
     void companyCoordinatorRef.current?.query({ companyId, cursor });
   }, []);
 
   const advanceCivilDay = useCallback(async () => {
-    if (!store.getState().remoteMembership.canControl) { setNotice("当前身份没有推进全市场自然日的控制授权"); return; }
     const host = hostRef.current;
     if (!host?.endCivilDay) {
       setNotice("当前宿主不支持手动推进模拟自然日");
@@ -615,7 +451,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     } catch (advanceError) {
       setNotice(`推进模拟自然日失败：${advanceError instanceof Error ? advanceError.message : String(advanceError)}`);
     }
-  }, [setNotice, hostRef]);
+  }, [setNotice]);
 
   const selectHost = () => { void onSelectHost(stopStartupRef.current); };
 
@@ -673,9 +509,8 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <ConnectedMobileGameClock />
           <strong>{mobilePrimaryTitle(mobileTab, securityBrowser.view)}</strong>
           <span className="mobile-head-tools">
-            <MobileRunToggle disabled={!canControl} running={running} onToggle={handlePauseToggle} variant="global" />
+            <MobileRunToggle running={running} onToggle={handlePauseToggle} variant="global" />
             <MobileSpeedSelect
-              disabled={!canControl}
               speed={speed}
               measuredSpeed={measuredSpeedText}
               measuredSpeedTitle={measuredSpeedTitle}
@@ -686,7 +521,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         <div className="brand"><span className="desktop-brand-mark" aria-hidden="true">行情</span>股票模拟<span className="desktop-brand-caption">交易终端</span></div>
         <div className="controls">
           <span className="label">速度</span>
-          <HTMLSelect disabled={!canControl} className="speed-select" value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
+          <HTMLSelect className="speed-select" value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
             const raw = e.target.value;
             const v = raw === "Infinity" ? Infinity : Number(raw);
             handleSpeedChange(v);
@@ -706,7 +541,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <output className={`speed-actual ${speedMetricsError ? "is-error" : ""}`} title={measuredSpeedTitle}>
             {measuredSpeedText}
           </output>
-          <Button disabled={!canControl} className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
+          <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <DesktopDayTag />
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
             <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
@@ -730,7 +565,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
         <Card className="panel company-panel-shell" id="section-company">
           <h3 className="panel-title">公司信息</h3>
-          <ConnectedCompanyPanel stockContext={orientation === "landscape"} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} reportCorrectionControl={canControl ? hostRef.current : null} timelineGeneration={snapshotGeneration} />
+          <ConnectedCompanyPanel stockContext={orientation === "landscape"} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} />
         </Card>
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
@@ -760,7 +595,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
                     <span className={order.side === "Buy" ? "up" : "down"}>{order.side === "Buy" ? "买" : "卖"}</span>
                     <span className="mono">{order.code}</span>
                     <span className="num">{yuan(order.price)} 元 · {order.remainingQty} 股</span>
-                    <span className="player-order-freeze">{order.frozen === "cash" ? "资金已冻结" : "股份已冻结"}</span>
+                    <span className="player-order-freeze">{order.frozen === "Cash" ? "资金已冻结" : "股份已冻结"}</span>
                     <Button small minimal intent="warning" loading={cancelingOrderIds.has(order.id)} disabled={cancelingOrderIds.has(order.id)} onClick={() => void cancelPlayerOrder(order)}>撤单</Button>
                   </li>
                 ))}
@@ -776,7 +611,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
                 options={(Object.keys(AUTO_ORDER_LABELS) as AutoOrderType[]).map((t) => ({ label: AUTO_ORDER_LABELS[t], value: t }))} />
               <label><span className="sr-only">条件单触发价（元）</span><input className="auto-input" type="text" value={autoTrigger} aria-invalid={Boolean(autoFieldErrors.price)} aria-describedby={autoFieldErrors.price ? "auto-price-error" : undefined} onChange={(e) => setAutoTrigger(e.target.value)} placeholder="触发价（元）" />{autoFieldErrors.price && <span id="auto-price-error" className="field-error" role="alert">{autoFieldErrors.price}</span>}</label>
               <label><span className="sr-only">条件单数量（股）</span><input className="auto-input" type="text" value={autoQty} aria-invalid={Boolean(autoFieldErrors.quantity)} aria-describedby={autoFieldErrors.quantity ? "auto-quantity-error" : undefined} onChange={(e) => setAutoQty(e.target.value)} placeholder="数量（股）" />{autoFieldErrors.quantity && <span id="auto-quantity-error" className="field-error" role="alert">{autoFieldErrors.quantity}</span>}</label>
-              <Button disabled={membership.accountId === null} small intent="primary" onClick={addAuto}>添加</Button>
+              <Button small intent="primary" onClick={addAuto}>添加</Button>
             </div>
             {autoFieldErrors.code && <p className="field-error" role="alert">{autoFieldErrors.code}</p>}
             <div className="auto-list">
@@ -821,34 +656,14 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
         <Card className="panel user-panel" id="section-user">
           <h3 className="panel-title">我的</h3>
-          {membership.remote && <section aria-label="登录身份与市场账户">
-            <p>登录身份与日终经济存档独立；暂停、设置、重置与读档影响全市场，控制授权不来自资金账户。</p>
-            {membership.accountId === null && <p>本时间线没有本人资金账户，金融资产和委托为空；{membership.canControl ? "市场控制授权仍然有效。" : "可继续查看公开市场。"}</p>}
-            {membership.accountId === null && <Button onClick={() => setRemoteConfirmation("rejoin")}>{membership.needsRejoin ? "明确重新加入并领取一次入场资金" : "明确加入公开市场"}</Button>}
-            <Button onClick={() => setRemoteConfirmation("logout")}>退出登录（不删除市场或持仓）</Button>
-            {canControl && <fieldset aria-label="市场入场资金设置"><legend>之后入场玩家的初始资金</legend>
-              <p>只影响之后明确加入的资金账户，不重置已有余额。默认 100 亿元（1,000,000,000,000 分）。</p>
-              <label>入场资金（分）<input inputMode="numeric" value={admissionCashDraft} onChange={(event) => setAdmissionCashDraft(event.currentTarget.value)} /></label>
-              <Button onClick={() => {
-                const host = hostRef.current;
-                if (host?.setAdmissionCash === undefined) { setNotice("当前宿主没有入场资金设置接口"); return; }
-                void host.setAdmissionCash(admissionCashDraft).then(() => setNotice("已修改之后入场玩家的资金设置；已有账户余额不变。"), (failure) => setNotice(`入场资金设置失败：${failure instanceof Error ? failure.message : String(failure)}`));
-              }}>应用全市场入场资金设置</Button>
-            </fieldset>}
-          </section>}
-          <fieldset disabled={!canControl} className="new-game-panel" aria-label="新游戏">
+          <section className="new-game-panel" aria-label="新游戏">
             <h4>新游戏</h4>
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
-            <TaxModeInput value={dividendTaxModeDraft} onChange={setDividendTaxModeDraft} flatWithholdingBp={flatWithholdingBpDraft} onFlatWithholdingBpChange={setFlatWithholdingBpDraft} />
-            <MechanismSwitchesInput rightsOfferingEnabled={rightsOfferingEnabledDraft} issuerRepurchaseEnabled={issuerRepurchaseEnabledDraft} onRightsOfferingChange={setRightsOfferingEnabledDraft} onIssuerRepurchaseChange={setIssuerRepurchaseEnabledDraft} />
-            <ParValueInput value={parValuePerShareDraft} onChange={setParValuePerShareDraft} />
             <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
-            <ReportFrequencyInput value={reportFrequencyDraft} onChange={setReportFrequencyDraft} />
-            <CompanySystemInput value={companySystemDraft} onChange={(companySystem) => setCompanyDraft(draft => ({ ...draft, companySystem, origin: "custom" }))} seed={companyDraft.seed} origin={companyDraft.origin} onSeedChange={changeCompanySeed} onRegenerate={regenerateCompanyDraft} onSettlementCycleChange={changeCompanySettlementCycle} onPreferencesChange={changeCompanyPreferences} />
             <InitialAllocationSummary allocation={initialAllocation} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
-          </fieldset>
+          </section>
           <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen })} onPauseBeforeOpenChange={(value) => void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value })} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
         </Card>
       </WorkspaceGrid>
@@ -871,7 +686,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       {orientation === "portrait" && (
         <>
         <MobileDetailLayer ui={mobileUi}>
-            <ConnectedMobileDetail browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} reportCorrectionControl={canControl ? hostRef.current : null} timelineGeneration={snapshotGeneration} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+            <ConnectedMobileDetail browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
         </MobileDetailLayer>
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
           {MOBILE_PRIMARY_NAV.map(([tab, label]) => (
@@ -889,11 +704,6 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         </>
       )}
       <SpeedMetricsAlert error={speedMetricsError} />
-      {managedArchives !== null && <ArchiveManager repository={managedArchives} onLoad={async (slotId) => { await handleLoad(slotId); }} onClose={() => setManagedArchives(null)} />}
-      {remoteConfirmation !== null && <section role="dialog" aria-modal="true" aria-label="确认远程操作">
-        <p>{remoteConfirmation === "logout" ? "只撤销当前登录凭据并断开连接，不删除市场或持仓。匿名身份退出后不可找回，请确认。" : remoteConfirmation === "rejoin" ? "本人确认在当前市场建立资金账户，按当前设置发放一次入场资金，不恢复旧存档之外的资产。" : "此操作改变整个共享市场，所有玩家切换到同一时间线；旧委托和异步请求失效。控制授权保留，缺席玩家须本人明确重新加入，不自动发资金。"}</p>
-        <Button onClick={() => void confirmRemoteOperation()}>确认</Button><Button onClick={() => setRemoteConfirmation(null)}>取消</Button>
-      </section>}
       {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
     </div>
     </QuickTradingContext.Provider>
@@ -903,10 +713,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 function App() {
   const initialSaveSourceRef = useRef(new InitialSaveSource<StrictSaveEnvelope>());
   const dayEndPersistenceRef = useRef(new DayEndPersistence());
-  const [sessionCreation, setSessionCreationState] = useState(() => ({ setup: INITIAL_SEED_PREVIEW.draft === null ? INITIAL_SESSION_SETUP : { ...INITIAL_SESSION_SETUP, company_system: parseCompanySystemConfig(JSON.parse(INITIAL_SEED_PREVIEW.draft.companySystem)) }, draft: INITIAL_SEED_PREVIEW.draft }));
-  const sessionSetup = sessionCreation.setup;
-  const [seedPreviewError, setSeedPreviewError] = useState(INITIAL_SEED_PREVIEW.error);
-  const setSessionCreation = (setup: SessionSetup, seed: string) => setSessionCreationState({ setup, draft: { seed, origin: "custom", companySystem: JSON.stringify(setup.company_system, null, 2) } });
+  const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
   const returningToStartupRef = useRef(false);
   const [returningToStartup, setReturningToStartup] = useState(false);
   const [startupReturnError, setStartupReturnError] = useState<string | null>(null);
@@ -914,38 +721,9 @@ function App() {
   const [startupMode, setStartupMode] = useState<StartupMode>(import.meta.env.DEV && import.meta.env.VITE_ENGINE_HOST === "remote" ? "remote" : "local");
   const [remoteAddress, setRemoteAddress] = useState(import.meta.env.DEV ? import.meta.env.VITE_REMOTE_BASE_URL ?? "" : "");
   const [startupError, setStartupError] = useState<string | null>(null);
-  const [remoteLoginAddress, setRemoteLoginAddress] = useState<string | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
   const hostRef = useRef<EngineHost | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const regenerateStartupPreview = () => {
-    try {
-      const draft = sessionCreation.draft === null
-        ? createSeedDraft(sessionSetup, TRADING_E2E_MODE ? DEFAULT_SEED : createNewSessionSeed())
-        : regenerateSeedDraft(sessionSetup, sessionCreation.draft);
-      setSessionCreationState({ setup: sessionSetup, draft });
-      setSeedPreviewError(null);
-    } catch (failure) { setSeedPreviewError(`重新生成预览失败：${failure instanceof Error ? failure.message : String(failure)}`); }
-  };
-  const startupCompanySettings = sessionCreation.draft === null ? null : <CompanySystemInput
-    value={sessionCreation.draft.companySystem} seed={sessionCreation.draft.seed} origin={sessionCreation.draft.origin}
-    onChange={(companySystem) => setSessionCreationState(current => ({ ...current, draft: { ...current.draft!, companySystem, origin: "custom" } }))}
-    onSeedChange={(seed) => {
-      try { setSessionCreationState({ setup: sessionSetup, draft: changeSeedDraft(sessionSetup, sessionCreation.draft!, seed) }); setSeedPreviewError(null); }
-      catch (failure) { setSeedPreviewError(`更新预览失败：${failure instanceof Error ? failure.message : String(failure)}`); }
-    }} onSettlementCycleChange={(cycle) => {
-      try { setSessionCreationState({ setup: sessionSetup, draft: changeSettlementCycleDraft(sessionSetup, sessionCreation.draft!, cycle) }); setSeedPreviewError(null); }
-      catch (failure) { setSeedPreviewError(`更新结算周期失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
-    }} onRegenerate={regenerateStartupPreview} onPreferencesChange={(company, preferences) => {
-      if (sessionCreation.draft === null) return;
-      // 同上：先在 updater 外计算，异常走 seedPreviewError 显式通道。
-      try {
-        const draft = changeCompanyPreferencesDraft(sessionCreation.draft, company, preferences);
-        setSessionCreationState(current => ({ ...current, draft }));
-        setSeedPreviewError(null);
-      }
-      catch (failure) { setSeedPreviewError(`更新公司偏好失败：${failure instanceof Error ? failure.message : String(failure)}；当前配置未改变。`); }
-    }} />;
   const returnToStartup = useCallback(async (stopSession: () => Promise<void>) => {
     if (returningToStartupRef.current) return;
     returningToStartupRef.current = true;
@@ -966,13 +744,8 @@ function App() {
       setReturningToStartup(false);
     }
   }, []);
-  if (sessionCreation.draft === null) return <main className="app-error"><h1>新局预览尚未建立</h1><p role="alert">{seedPreviewError}</p><button type="button" onClick={regenerateStartupPreview}>重新生成新局预览</button></main>;
   if (startupTarget === null) {
-    if (remoteLoginAddress !== null) return <RemoteLoginScreen baseUrl={remoteLoginAddress} setup={sessionSetup} seed={sessionCreation.draft.seed} companySystemDraft={sessionCreation.draft.companySystem} creationSettings={startupCompanySettings} onBack={() => setRemoteLoginAddress(null)} onConnected={(token, context) => {
-      setRemoteLoginAddress(null);
-      setStartupTarget({ kind: "remote", baseUrl: remoteLoginAddress, token, context });
-    }} />;
-    return <StartupScreen mode={startupMode} remoteAddress={remoteAddress} error={seedPreviewError ?? startupError ?? notice} creationSettings={startupCompanySettings}
+    return <StartupScreen mode={startupMode} remoteAddress={remoteAddress} error={startupError}
       developmentHint={import.meta.env.DEV && (import.meta.env.VITE_ENGINE_HOST !== undefined || import.meta.env.VITE_REMOTE_BASE_URL !== undefined)}
       onModeChange={(mode) => { setStartupMode(mode); setStartupError(null); }}
       onAddressChange={(address) => { setRemoteAddress(address); setStartupError(null); }}
@@ -980,13 +753,7 @@ function App() {
         try {
           const target = resolveStartupTarget(startupMode, remoteAddress, "__TAURI_INTERNALS__" in window, browserWasmEnvironment);
           setStartupError(null);
-          if (target.kind === "remote") setRemoteLoginAddress(target.baseUrl);
-          else {
-            parseSessionSeed(sessionCreation.draft!.seed);
-            const setup = { ...sessionSetup, company_system: parseCompanySystemConfig(JSON.parse(sessionCreation.draft!.companySystem)) };
-            setSessionCreationState({ setup, draft: sessionCreation.draft });
-            setStartupTarget(target);
-          }
+          setStartupTarget(target);
         } catch (startupFailure) {
           setStartupError(startupFailure instanceof Error ? startupFailure.message : String(startupFailure));
         }
@@ -995,7 +762,7 @@ function App() {
   return (
     <MarketRuntimeProvider autoOrderManagerRef={autoOrderMgrRef} setNotice={setNotice} hostRef={hostRef}>
       <AppShell startupTarget={startupTarget} initialSaveSourceRef={initialSaveSourceRef} onSelectHost={returnToStartup}
-        dayEndPersistenceRef={dayEndPersistenceRef} sessionSetup={sessionSetup} chosenSessionSeed={sessionCreation.draft.seed} chosenConfigOrigin={sessionCreation.draft.origin} setSessionCreation={setSessionCreation}
+        dayEndPersistenceRef={dayEndPersistenceRef} sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}
         returningToStartup={returningToStartup} returningToStartupRef={returningToStartupRef} startupReturnError={startupReturnError}
         autoOrderMgrRef={autoOrderMgrRef} hostRef={hostRef} notice={notice} setNotice={setNotice} />
     </MarketRuntimeProvider>

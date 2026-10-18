@@ -1,5 +1,6 @@
 //! 原子准备 Settlement 及经验 projection，成功后一起采纳账户 patch。
 
+use super::fill_fact::ReceiptBatch;
 use super::institutional_experience_projection::project_institutional_experience;
 use super::retail_projection::{
     canonical_unseen_receipts, project_retail_receipts_dated, RetailProjectionError,
@@ -10,7 +11,7 @@ use super::{EnvelopeReceipt, StepFatal};
 use crate::session::decision_chain::personal_state::BeliefParticipantState;
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{
-    Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockCode,
+    Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,6 +39,7 @@ pub(super) enum SettlementTransactionError {
 
 /// 在 session shadow 的重放敏感容器中应用 Settlement。
 /// 只准备实际成交账户，两个经验 projection 均成功后再一起提交。
+#[cfg(test)]
 pub(super) fn apply_session_settlement_transaction(
     session: &mut GameSession,
     receipts: &[EnvelopeReceipt],
@@ -48,7 +50,9 @@ pub(super) fn apply_session_settlement_transaction(
         trading_day: u64::from(session.state.day),
     };
     let t1_enabled = session.state.setup.t1_enabled;
+    let compute = session.compute_context().clone();
     apply_settlement_transaction_with_beliefs(
+        &compute,
         &mut session.state.accounts,
         &mut session.state.retail_experience,
         &mut session.state.belief_participants,
@@ -71,6 +75,7 @@ pub(super) fn apply_settlement_transaction(
 ) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
     let mut belief_participants = AccountPagedMap::default();
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().expect("测试计算上下文"),
         accounts,
         retail_experience,
         &mut belief_participants,
@@ -81,7 +86,9 @@ pub(super) fn apply_settlement_transaction(
     )
 }
 
+#[cfg(test)]
 pub(super) fn apply_settlement_transaction_with_beliefs(
+    compute: &crate::ComputeContext,
     accounts: &mut AccountBook,
     retail_experience: &mut AccountPagedMap<crate::RetailExperienceState>,
     belief_participants: &mut AccountPagedMap<BeliefParticipantState>,
@@ -90,13 +97,15 @@ pub(super) fn apply_settlement_transaction_with_beliefs(
     receipts: &[EnvelopeReceipt],
     t1_enabled: bool,
 ) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
+    let batch = fixture_receipt_batch(receipts)?;
     let prepared = prepare_settlement_transaction_with_beliefs(
+        compute,
         accounts,
         retail_experience,
         belief_participants,
         seen,
         moment,
-        receipts,
+        &batch,
         t1_enabled,
     )?;
     apply_prepared_settlement_transaction(
@@ -139,42 +148,53 @@ pub(super) fn prepare_settlement_transaction(
     t1_enabled: bool,
 ) -> Result<PreparedSettlementTransaction, SettlementTransactionError> {
     let belief_participants = AccountPagedMap::default();
+    let batch = fixture_receipt_batch(receipts)?;
     prepare_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().expect("测试计算上下文"),
         accounts,
         retail_experience,
         &belief_participants,
         seen,
         test_experience_moment(market_minute),
-        receipts,
+        &batch,
         t1_enabled,
     )
 }
 
 pub(super) fn prepare_settlement_transaction_with_beliefs(
+    compute: &crate::ComputeContext,
     accounts: &AccountBook,
     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
     belief_participants: &AccountPagedMap<BeliefParticipantState>,
     seen: &RetailProjectionSeen,
     moment: crate::experience::ExperienceMoment,
-    receipts: &[EnvelopeReceipt],
+    receipts: &ReceiptBatch,
     t1_enabled: bool,
 ) -> Result<PreparedSettlementTransaction, SettlementTransactionError> {
-    let canonical: Vec<EnvelopeReceipt> = canonical_unseen_receipts(receipts, seen)?
-        .into_iter()
-        .cloned()
+    // seen门只选择产出点同批事实的引用；不再从raw重新派生qty/gross。
+    let canonical = canonical_unseen_receipts(receipts.raw(), seen)?;
+    let mut seen_after = seen.clone();
+    for receipt in &canonical {
+        seen_after
+            .insert(receipt.index, receipt.local_key.clone())
+            .map_err(SettlementTransactionError::Projection)?;
+    }
+    let selected: BTreeSet<_> = canonical
+        .iter()
+        .map(|row| super::ReceiptIndex(row.index))
         .collect();
-    let (account_shadow, settlement) =
-        ReceiptSettlementPlan::from_receipts(&canonical)?.prepare_accounts(accounts, t1_enabled)?;
+    let fill_facts = receipts.fill_facts().select(&selected);
+    let (account_shadow, settlement) = ReceiptSettlementPlan::from_fill_facts(fill_facts.iter())?
+        .prepare_accounts(compute, accounts, t1_enabled)?;
     // Source observation 和 Settlement Fill 各自修剪发生变更的账户。
     // Save 会拒绝超限的未持仓 watchlist，空收据批次没有要访问或修复的 retail 账户。
-    let experience_accounts: BTreeSet<AccountId> = canonical
+    let experience_accounts: BTreeSet<AccountId> = fill_facts
         .iter()
-        .filter(|receipt| receipt.kind == super::ReceiptKind::Fill)
-        .filter_map(|receipt| {
+        .filter_map(|fact| {
             accounts
-                .get(&receipt.envelope.account)
+                .get(&fact.key().account)
                 .filter(|account| matches!(account.kind(), AccountKind::Retail | AccountKind::Inst))
-                .map(|_| receipt.envelope.account)
+                .map(|_| fact.key().account)
         })
         .collect();
     let retail_accounts: BTreeSet<AccountId> = experience_accounts
@@ -194,37 +214,48 @@ pub(super) fn prepare_settlement_transaction_with_beliefs(
         }
     }
     let projection = project_retail_receipts_dated(
+        compute,
         RetailProjectionInput {
             retail_experience,
             retail_accounts: &retail_accounts,
             positions_before: &positions_before,
             positions_after: &positions_after,
-            seen,
             market_minute: moment.market_minute,
-            receipts: &canonical,
+            fill_facts,
         },
         moment,
     )?;
     let belief_patch = project_institutional_experience(
+        compute,
         &account_shadow,
         belief_participants,
         &positions_before,
         &positions_after,
-        seen,
         moment,
-        &canonical,
+        fill_facts,
     )?;
 
     Ok(PreparedSettlementTransaction {
         account_patch: account_shadow,
         retail_patch: projection.retail_experience,
         belief_patch,
-        seen: projection.seen,
+        seen: seen_after,
         output: SettlementTransactionOutput {
             settlement,
             events: projection.events,
         },
     })
+}
+
+/// 独立旧结算测试的fixture产出桥，不能进入生产market链。
+#[cfg(test)]
+fn fixture_receipt_batch(
+    receipts: &[EnvelopeReceipt],
+) -> Result<ReceiptBatch, SettlementTransactionError> {
+    let canonical = canonical_unseen_receipts(receipts, &RetailProjectionSeen::default())?;
+    Ok(ReceiptBatch::from_aggregation(
+        canonical.into_iter().cloned().collect(),
+    )?)
 }
 
 #[cfg(test)]
@@ -239,7 +270,7 @@ fn test_experience_moment(market_minute: u64) -> crate::experience::ExperienceMo
 fn positions_of_accounts(
     accounts: &AccountBook,
     experience_accounts: &BTreeSet<AccountId>,
-) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
+) -> BTreeMap<AccountId, BTreeMap<StockId, Position>> {
     experience_accounts
         .iter()
         .filter_map(|account_id| {

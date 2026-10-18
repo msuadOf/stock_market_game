@@ -1,15 +1,13 @@
 //! 当前新会话的模拟验收 baseline fixture。每次运行创建会话，
 //! 推进 market 与 civil clocks，不接受存档路径。
 
-include!("../test-support/simple_company.rs");
-
 use std::{env, process};
 
 use engine::calendar::CalendarExchange;
 use engine::{
     run_price_volume_baseline, CivilDate, FloatAllocation, GameConfig, GameSession, HotParams,
-    InstParams, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode,
-    StockExchange, StockSpec, StrategyParams, TradingCalendar,
+    InstParams, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockExchange,
+    StockId, StockSpec, StrategyParams, TradingCalendar,
 };
 
 const SOURCE: &str = "current_session_setup";
@@ -219,7 +217,8 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         _ => return Err(format!("unknown scenario `{scenario}`")),
     };
     Ok(SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock(
                 "600101",
@@ -300,7 +299,6 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         closing_auction_ticks: 2,
         history_len,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: FloatAllocation::class_percentages(
             0.45,
             0.53,
@@ -314,10 +312,6 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
         })
         .map_err(|error| error.to_string())?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
     })
 }
 
@@ -330,7 +324,7 @@ fn stock(
     float_shares: u32,
 ) -> StockSpec {
     StockSpec {
-        code: StockCode(code.to_string()),
+        code: StockId(code.to_string()),
         exchange,
         initial_price: Money::from_cents(price_cents),
         category,

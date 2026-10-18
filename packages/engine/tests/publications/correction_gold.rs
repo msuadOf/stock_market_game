@@ -10,18 +10,18 @@ use engine::accounting::{AccountingPeriod, BusinessKind, CashFlowClass, PostingS
 use engine::calendar::CivilInstant;
 use engine::company::CompanyId;
 use engine::information::{
-    scheduled_instant, stable_company_offset, AccountingPolicyRef, PublicLibrary,
-    CorrectionPublicationError, InformationError, PublicationOrigin, PublicationRequest,
-    ScheduledReportKind,
+    scheduled_instant, stable_company_offset, AccountingPolicyRef, CorrectionPublicationError,
+    InformationError, PublicLibrary, PublicationOrigin, PublicationRequest, ScheduledReportKind,
 };
 
 const COMPANY: &str = "C-CORR";
 
 #[test]
 fn correction_preserves_previous_version() {
-    let company = CompanyId(COMPANY.to_string());
-    let offset = stable_company_offset(OPS_SEED, &company);
-    let scope = ScopeId::Standalone(MemberId(COMPANY.to_string()));
+    // 单公司独立夹具：目录位 0。
+    let company = CompanyId(0);
+    let offset = stable_company_offset(OPS_SEED, COMPANY);
+    let scope = ScopeId::Standalone(MemberId(0));
     let annual_instant = scheduled_instant(ScheduledReportKind::Annual, 2030, offset)
         .expect("annual 2030 schedule legal");
     let approval =
@@ -33,7 +33,7 @@ fn correction_preserves_previous_version() {
     let (_monthly, original_annual_report) = closing
         .close_year(
             &mut books,
-            &MemberId(COMPANY.to_string()),
+            &MemberId(0),
             IndustryPresentation::Industrial,
             2030,
         )
@@ -93,7 +93,7 @@ fn correction_preserves_previous_version() {
         .correct_and_publish(
             &mut closing,
             &mut books,
-            &MemberId(COMPANY.to_string()),
+            &MemberId(0),
             IndustryPresentation::Industrial,
             CorrectionRequest {
                 entries: correction_entries.clone(),
@@ -137,7 +137,7 @@ fn correction_preserves_previous_version() {
         .correct_and_publish(
             &mut closing,
             &mut books,
-            &MemberId(COMPANY.to_string()),
+            &MemberId(0),
             IndustryPresentation::Industrial,
             CorrectionRequest {
                 entries: correction_entries,

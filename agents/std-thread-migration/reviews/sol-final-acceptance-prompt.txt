@@ -1,0 +1,219 @@
+# Sol 终验收请求：std-thread 迁移收官（缺省翻转+性能恢复战役+市价链路+step_frame 接轨+全链终审）
+
+> 【送审前替换本文件全部 <…> 占位符，并删除本提示块】
+> 占位符共 8 个：REVIEW_DATE / REVIEW_HEAD_SHA / FLIP_COMMIT_RANGE /
+> MIGRATION_COMMIT_COUNT / R1_R5_RESULTS / ENV1_FINAL / WASM_CHECK_RESULT /
+> STEPFRAME_RESULT。性能数字（A 1409.2 / B 302.7 / 501.5）为已归档第一阶段
+> 终测账本实值，直接引用、非占位符。
+
+日期：<REVIEW_DATE>。请求人：协调者。这是 std-thread 迁移的**终验收**
+（flip-runbook §4）：翻转批及翻转后各战役批（性能恢复、断言强化、市价
+链路、step_frame 接轨）完成后送审，通过后方可宣称迁移完成、合并 main、
+开工批 9 与视图内生战役。工作区=
+/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，送审 HEAD=<REVIEW_HEAD_SHA>。
+基线原则：旧 pipeline=语义基线（翻转批起既定裁决原则，协调者已批准）。
+
+## 一、复核范围
+
+1. **翻转批全部提交**：<FLIP_COMMIT_RANGE>
+   - 已知前置（在案）：5c1f4cd7 翻转前置——15 处 pin 判定统一为
+     step_runtime_enabled（消除 var_os"存在即跳过"在 =0 时的静默语义差）。
+   - 翻转本体：7419c39b——单一目的提交：runtime/mod.rs
+     step_runtime_enabled 缺省 false→true，doc 注释同步改写
+     （缺省=runtime；显式 ENGINE_STEP_RUNTIME=0=逃生门，批 9 清理前保留）。
+   - 翻转后回归矩阵（runbook §2.2，R1=默认 lib / R2=--tests 含
+     flip_batch1-5（10/13/14/14/15）/ R3=显式回旧管线 / R4=doctests /
+     R5=全 workspace 长验收）结果：<R1_R5_RESULTS>。
+2. **翻转后战役批链**（每批须有对应 Sol 复核记录与红绿证据，缺失=
+   程序违规退回）：
+   - **性能恢复战役**（Sol 归因终裁 reviews/sol-perf-attribution-verdict.txt
+     认定 70–93% 为可回收实现浪费，路线图 P0–P2）：P0 差分 profiling →
+     P1 堆修复/公共观察 → P2-1a…P2-4b（含 P2 独立复核轮两阻断返工）→
+     第一阶段正式终测账本 evidence/perf-p2/perf-phase1-final.txt。
+   - **sol-103 语义细化+断言强化批**：修弱断言 13 位点（44b60f2b）、
+     补零覆盖 4 面（d41adb42）、死亡断言再锚定 27 条为 runtime 单侧
+     独立测试（8a7b3b5b）、复核 3 项发现修复（6e918f9c）。
+   - **竞价单一价格修复**（41716af9，Sol 专项复核通过）：集合竞价成交
+     按单一清算价结算——settle_fill 显式 fill_price，连续竞价传 maker 价
+     （语义不变）、execute_clearing_at（开盘/收盘共用）传清算价；清算价
+     选择两侧同源（orderbook::auction::select_clearing）；trading-rules.md
+     已随提交登记沪深依据。A 股制度级对齐。
+   - **市价链路五提交闭环**（35fa8909→21b1e88b，Sol 五轮终审通过）：
+     ①35fa8909 玩家市价/符号价意图真路由进 runtime 世界（不再静默丢弃；
+     附带修复 Lowest 误路由 Highest）→ ②0aa4f19f 复审六项（市价保护
+     边界/逐请求回执/校验顺序/Lowest purse）→ ③9c5a83d8 三轮（Continue
+     跨轮事实合并/即时单序号推进）→ ④5ed0e255 四轮（序号游标贯通
+     存档恢复）→ ⑤21b1e88b 五轮（commit_from 补齐 runtime 缓存域交接：
+     desk_book_mirror+runtime_desk_serial_cursors）。红证
+     .tmp/sol-103-red-evidence/（sol2nd–sol5th 家族，含完整 panic 栈）。
+   - **step_frame 接轨批**：视图终裁发现的生产入口分叉（server/desktop
+     actor 的 step_frame() 仍走旧管线，B 探针 step() 绿证不能替代）收口。
+     <STEPFRAME_RESULT>（批尾 SHA/换轨面/两路径 TickFrame 等价对照/回归
+     结果）。交接底稿 .tmp/handoff-stepframe-integration.md；前置约束
+     plans/step-frame-integration-prerequisites.md 三条处置状态。
+3. **迁移全链 diff 摘要**：`git diff a6001494..HEAD --stat`（merge-base
+   a600149469a7d14be5b3dc682119ce07012af991，共 <MIGRATION_COMMIT_COUNT>
+   提交）+ 分域导览：packages/engine/src/runtime/ 新模块（desk/group/
+   world/coordinator/drive/decision/plans/bridge/event_bridge/fees/
+   watchdog）、session 侧接线（failure.rs step 分流、runtime_driver
+   挂载、投影回写群）、翻转批台账 packages/engine/tests/
+   runtime_flip_batch{1..5}.rs + tests/common/flip_helpers.rs、
+   multi-tick-design.md D0-D5 记录。
+4. **域迁移 106→0 批次表**（Sol 核对台账与实测一致性，逐批末态以
+   plans/multi-tick-design.md 与交接文件为准）：
+
+| 批 | 内容 | 末态 |
+|----|------|------|
+| 起点 | 62ff4c9b 缺省翻 runtime 实测 | 106 失败→回退 opt-in |
+| P2 | attention/事件 seq 等先行修复 | 101 失败（1457/101/11） |
+| D0 | 常驻 driver+锁步不变量+initial_committed_tick | 见台账 |
+| D2 | envelope/ingress/回执/到期边界面 | 见台账 |
+| D4 | 执行器绑定/相位计时 | 见台账 |
+| D3a/D3b | candidate/committable 语义翻译（Sol 一~九审） | 见台账 |
+| D1 | 决策链/计划域 | 见台账 |
+| D5 | 存档/恢复+desk 域收官（Sol 终审四轮） | 见台账 |
+| 翻转前置 | pin 判定式统一（5c1f4cd7） | 判定式归一 |
+| 翻转 | 7419c39b | env=1 全量 lib=<ENV1_FINAL>（runbook P1 要求 0 failed） |
+| 性能恢复战役 | 归因终裁→P0–P2（含两阻断返工） | A 1358→1409.2；B 4.3→302.7（§二.1） |
+| sol-103 | 断言强化+语义细化 | 弱断言 13/零覆盖 4/再锚 27（红证齐） |
+| 竞价修复 | 41716af9 单一清算价 | Sol 专项复核通过 |
+| 市价链路 | 35fa8909→21b1e88b 五提交 | Sol 五轮终审闭环 |
+| step_frame | 生产入口接轨 | <STEPFRAME_RESULT> |
+
+## 二、必查清单（逐项给"通过/不通过"+证据出处）
+
+1. **双口径性能数字与测量窗声明**（报告=agents/std-thread-migration/
+   evidence/perf-p2/perf-phase1-final.txt，2026-10-17 采于 HEAD 1f5863cd，
+   binary SHA256 账本内登记——driver_semantics_probe 6123db29… /
+   runtime_s5_probe ced474fa…）：
+   - 口径 A（裸引擎探针 `runtime_s5_probe -- 3000 10`，arg3 缺省 2000
+     ≡3000 tick/10 组×2000 NPC/5 股，直跑 World）：5 轮
+     1374.4/1414.2/1399.9/1440.0/1417.3，mean **1409.2**；守恒逐位 5/5 轮
+     （成交量 6438600/费用桶 647541185/T+1 冻结 6438600）——两条守恒
+     断言任一红=数字作废并升级正确性事故。
+   - 口径 B（driver 全语义 `ENGINE_STEP_RUNTIME=1 driver_semantics_probe
+     .tmp/driver-semantics-setup.json <ticks> 16 1`，1 组×20000 纯 retail
+     经 runtime driver）：300 tick 5 轮 290.8/302.9/303.7/308.0/308.2，
+     mean **302.7**（events=3336/fees=0——300 tick 全处集合竞价申报窗、
+     无成交费用，如实登记，不可当连续竞价成本代表）；1000 tick 长跑
+     **501.5**（events=11119/fees=5705，零衰减——resting 增长税已消除）。
+   - **测量窗声明（必验）**：正式窗口 load 15.6–18.7、外部负载在途，
+     如实登记不择轮（净机窗 load~6 时 B300 曾 309–315、B1000 489–501）。
+     战役总账：A 71→1409.2；B 4.3→302.7（70.4×）、1000 tick
+     3.18→501.5（157.7×）。
+   - 核验点：账本数字/binary SHA 与归档一致；两口径分开陈述、未做
+     跨口径换算（A 裸探针与 B driver 负载不同构）；原型 own-inline 962
+     （简化口径）只作背景、未与两口径并列；step_frame 接轨批落地后若
+     复测，以新账本覆盖并在此登记。
+2. **318/627 同源勘正的口径表述是否如实**：按
+   plans/flip-runbook-baseline-commands.md 重建：318.0 与 627-689 **同源
+   同命令**（同口径 A 探针），318.0 采于 P1 空档防御之前（62ff4c9b）；
+   runbook §3.3 原把 318.0 记为口径 B 对照系**误归属**。Sol 必须
+   Explicitly 裁决其 §1 矛盾登记（sol-recheck-verdict.md:38"不同口径"
+   表述 vs 提交链证据 #1-#5，两者必有一错），并核验终测报告引用 318.0
+   时是否携带同源勘正声明、"低于 318.0 属预期"类预警是否已随勘正撤除。
+3. **有意分歧 13 条+缺口 4 条+pin 锚登记完整性**（总账=
+   plans/intentional-divergences.md）：
+   - A1-A13 逐条裁定"维持（理由）/需修复"；已入 docs 8 项、待批 10
+     同步 9 项（A6-A13+B4）清点是否与总账计数一致；**分歧未在
+     trading-rules.md 或台账正式登记的一律视为漏项退回**。
+   - B1-B4 登记缺口 + 非语义债 4 项（simulation-diagnostics 失修、
+     Event.ts 重生成等待）是否如实登记、无静默吞项。
+   - pin 锚 C1-C11（11 组/15 站点）+ D2 登记 5 处：站点数以
+     `ENGINE_STEP_RUNTIME=1 cargo test -p engine --lib -- --list`/实跑
+     名单为准（历史上交接计数与代码注记有出入）；判定式统一后 =0 时
+     pin 是否仍正确跳过、不再有"生产旧管线但 pin 静默跳过"语义差。
+   - 竞价/市价修复的语义面登记状态：竞价单一清算价已随 41716af9 入
+     trading-rules.md；市价侧 Sol 裁量口径（零成交余量显式 Cancelled、
+     组端 T+1 卖出 skip 回执面、AuctionLimitOrderRequired）是否已按
+     裁量结论同步登记，未登记=漏项。
+4. **wasm 方向 A 行为**：c5bb4a0b（world wasm 门控移除+串行兜底）；
+   wasm32 上 session runtime_driver=None 走串行旧管线（Stage 1 Web 目标
+   形态，用户拍板方向 A）。核实 P4 结果 <WASM_CHECK_RESULT>
+   （`cargo check -p engine --target wasm32-unknown-unknown`）与
+   plans/wasm-gap-verification.md 登记一致；A12 是否已列入批 10 登记
+   候选（ADR-0005/0027 补记）。
+5. **step_frame 分叉解决状态（验收必查项）**：<STEPFRAME_RESULT>
+   - server actor（apps/server/src/actor.rs:1165/:1636）与 desktop actor
+     两处共 5 个 step_frame() 调用位是否已换轨 runtime——不得以 step()
+     绿证代替 step_frame()（视图终裁明确此分界）。
+   - 两路径 TickFrame 等价对照（事件集/seq 单调/tick/账户面，等价面
+     清单=plans/dying-tests-census.md）。
+   - prerequisites 三条处置状态（plans/step-frame-integration-
+     prerequisites.md）：阻断级=Continue 早轮成交 vs drive 同拍投影重复
+     应用（接通前必须逐轮消费/去重+端到端红测试）；登记级=直驱存档
+     不含 desk 游标、NPC Lowest 买 purse 双侧可达性差异。
+   - 回归门槛：lib 双模式全绿+集成绿+sol-103 新锚不破（desk_semantics
+     38/runtime_semantics_anchor 18/scope_boundary 3，含 sol1-5/sol3r/
+     sol4r/sol5r 家族）。
+6. **视图终裁背景与验收范围裁定**：reviews/sol-view-model-verdict.txt
+   （e0258c2b 归档）——双写质疑部分成立（所有权转移不要求会话镜像为
+   读面权威；同拍交付不要求双写），**视图内生立为合并后下一战役**。
+   本终验收只验**当前冻结态**：不要求视图内生落地、不得以其未来收益
+   作可合并论据；当前态的同拍交付/失败零泄漏/资源不可提前复用语义由
+   §二.3 分歧总账与 §二.5 step_frame 项覆盖。Sol 须 Explicitly 确认此
+   范围裁定，防止以"视图内生未做"为由误退回、或以"将来会做"为由
+   放过当前态缺陷。
+7. **送审冻结与批次复核完整性**：翻转后各战役批（性能/sol-103/竞价/
+   市价/step_frame）逐批具备 Sol 复核记录与红绿证据链——发现未复核
+   批次=程序违规退回。市价五轮送审提示词（.tmp/sol-auction-fix-review-
+   prompt.txt、.tmp/sol-market-{fix-recheck,third,fourth,fifth}-review-
+   prompt.txt）与红证（.tmp/sol-103-red-evidence/）、step_frame 交接
+   （.tmp/handoff-stepframe-integration.md）送审前须归档至
+   agents/std-thread-migration/{reviews,plans,evidence}/ 并回填指针——
+   归档完成为必查项。送审 HEAD=<REVIEW_HEAD_SHA> 即最终冻结点，其后
+   不得再塞任何实现提交（runbook §6.5 精神沿用；翻转后追加批次系
+   协调者批准的归因/收口战役，不属违冻，但逐批复核链须完整）。
+8. **trading-rules 登记核验**：docs/trading-rules.md 分支内全部新增/
+   修改条目（至少：自成交限制含游戏简化声明、日终未成交单失效显式
+   OrderCanceled、desk 分段记账口径、散户经历反馈成交事件面、集合
+   竞价单一清算价（41716af9 随提交登记）、市价申报回执面（保护价/
+   AuctionLimitOrderRequired/余量 Cancelled））——官方依据援引与适用
+   日期是否可靠、简化/不支持标注是否如实。
+
+## 三、终裁问题
+
+1. **迁移可否宣告完成并合并 main？** 按标准三问回答：大 A 语义符合且
+   依据可靠 / 改动需求必需且最小 / 有无遗漏边界测试、跨层语义漂移、
+   不必要复杂度。
+2. 若不通过：给出剩余最小修复集与重审路径（修复走新提交+重审，不得
+   原地改已复核提交）。
+3. 批 9（外部清理）/批 10（trading-rules 同步 9 项）/视图内生战役的
+   开工前置是否满足（视图内生以本验收通过+合并 main 为前置，请一并
+   裁定其战役边界与批 9 拆分口径）。
+
+## 四、只读要求与证据指针
+
+- **只读复核**：不写文件、不构建、不跑测试/基准/探针；允许读文件、
+  git log/diff/show、grep。数字核验以归档报告与台账为准，不要求复测。
+- 证据指针（相对工作区根；agents/std-thread-migration/ 下）：
+  - plans/flip-runbook.md（§2 翻转步骤/§3 性能协议/§4 验收范围/§5 回滚）
+  - plans/flip-runbook-baseline-commands.md（318/627 同源勘正+矛盾登记）
+  - plans/intentional-divergences.md（分歧 13/缺口 4/pin 11 组总账）
+  - plans/multi-tick-design.md（D0-D5 全链台账）；plans/d5-triage.md；
+    plans/handoff-d5-finish.md 等 handoff-*
+  - plans/sol-flip-review-verdict.md、plans/sol-recheck-verdict.md 等
+    历代 Sol 裁决（口径勘正需对照）
+  - plans/wasm-gap-verification.md、plans/flip-106-domain-inventory.md、
+    plans/semantic-traceability.md
+  - plans/step-frame-integration-prerequisites.md（step_frame 三条前置）
+  - plans/dying-tests-census.md（两路径等价面清单）
+  - reviews/sol-perf-attribution-verdict.txt（性能归因终裁+P0-P4 路线图）
+  - reviews/sol-view-model-verdict.txt（视图终裁：视图内生=合并后战役、
+    step_frame 生产入口分叉发现）
+  - evidence/perf-p1/MANIFEST.md、evidence/perf-p2/MANIFEST.md（战役
+    红绿链）；evidence/perf-p2/perf-phase1-final.txt（**第一阶段正式
+    终测账本**：A 1409.2/B 302.7/501.5+binary SHA+测量窗声明）
+  - 市价五轮送审提示词与红证（送审前归档并回填指针）：
+    .tmp/sol-auction-fix-review-prompt.txt、
+    .tmp/sol-market-{fix-recheck,third,fourth,fifth}-review-prompt.txt、
+    .tmp/sol-103-red-evidence/；.tmp/handoff-stepframe-integration.md
+  - docs/trading-rules.md；docs/decisions/0042-trade-maker-taker-leg-semantics.md
+
+## 五、Sol 输出要求
+
+逐项回答 §二 1-8（每项"通过/不通过+证据出处"）；§三 终裁给
+"可宣告完成并合并 main / 不可+理由+最小修复集"。有效发现将修复后复核；
+无法修复的明确报告。**未过 Sol 不得宣称迁移完成，也不得开始批 9 与
+视图内生战役。**

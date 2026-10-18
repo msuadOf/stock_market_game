@@ -114,15 +114,15 @@ fn update_units(update: &ProtocolUpdate) -> usize {
         ProtocolUpdate::TickBatch(batch) => batch
             .frames
             .iter()
-            .map(|frame| frame.events.len().max(1))
+            .map(|frame| frame.facts.len().max(1))
             .sum(),
         ProtocolUpdate::CivilUpdate(civil) => {
-            civil.events.len().max(1)
+            civil.facts.len().max(1)
                 + civil
                     .refresh
                     .intraday
                     .iter()
-                    .map(|frame| frame.events.len().max(1))
+                    .map(|frame| frame.facts.len().max(1))
                     .sum::<usize>()
         }
     }

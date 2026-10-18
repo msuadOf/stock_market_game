@@ -69,7 +69,7 @@ pub enum PlanExecutionError {
     #[error("plan {plan_id:?} references unknown account {account:?}")]
     UnknownAccount { plan_id: PlanId, account: AccountId },
     #[error("plan {plan_id:?} references unknown stock {code:?}")]
-    UnknownStock { plan_id: PlanId, code: StockCode },
+    UnknownStock { plan_id: PlanId, code: StockId },
     #[error(
         "plan {plan_id:?} cannot execute on session day {session_day} using day {request_day}"
     )]
@@ -84,7 +84,7 @@ pub enum PlanExecutionError {
     AllocationMismatch {
         plan_id: PlanId,
         allocation_plan_id: PlanId,
-        allocation_code: StockCode,
+        allocation_code: StockId,
     },
     #[error("plan {plan_id:?} has a position-fraction target that was not converted to shares")]
     UnconvertedFractionTarget { plan_id: PlanId },
@@ -118,39 +118,6 @@ pub enum PlanExecutionError {
     },
     #[error("plan {plan_id:?} already has incompatible execution state")]
     IncompatibleExecutionState { plan_id: PlanId },
-}
-
-/// 权威路由捕获、尚未应用到计划簿的事实（随完整存档固化；存档边界
-/// 只保留存活计划的条目）。
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum PendingPlanEvent {
-    Accepted {
-        plan_id: PlanId,
-        order_id: OrderId,
-        trading_day: u64,
-    },
-    Filled {
-        plan_id: PlanId,
-        order_id: OrderId,
-        qty: u32,
-        child_complete: bool,
-        trading_day: u64,
-    },
-    DayEnded {
-        plan_id: PlanId,
-        trading_day: u64,
-    },
-}
-
-impl PendingPlanEvent {
-    /// 事实所属计划。
-    pub fn plan_id(&self) -> PlanId {
-        match *self {
-            Self::Accepted { plan_id, .. }
-            | Self::Filled { plan_id, .. }
-            | Self::DayEnded { plan_id, .. } => plan_id,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]

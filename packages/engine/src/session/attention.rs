@@ -26,34 +26,30 @@ pub struct NpcAttentionState {
     pub rng_state: u64,
 }
 
-pub(super) fn market_attention_signal(market: &MarketView) -> f64 {
-    market
-        .stocks
-        .values()
-        .filter(|stock| stock.is_trading)
-        .fold(0.0, |strongest, stock| {
-            let price_move = stock
-                .recent_prices
-                .first()
-                .filter(|price| price.cents() > 0)
-                .map_or(0.0, |first| {
-                    ((stock.last_price.cents() - first.cents()).unsigned_abs() as f64
-                        / first.cents() as f64
-                        / 0.02)
-                        .min(3.0)
-                });
-            let volume = if stock.relative_volume.is_finite() {
-                (stock.relative_volume - 1.0).clamp(0.0, 3.0)
-            } else {
-                0.0
-            };
-            let imbalance = if stock.order_book_imbalance.is_finite() {
-                stock.order_book_imbalance.abs().min(1.0)
-            } else {
-                0.0
-            };
-            strongest.max(price_move.max(volume).max(imbalance))
-        })
+pub(crate) fn market_attention_signal(market: &MarketView) -> f64 {
+    market.stocks.values().fold(0.0, |strongest, stock| {
+        let price_move = stock
+            .recent_prices
+            .first()
+            .filter(|price| price.cents() > 0)
+            .map_or(0.0, |first| {
+                ((stock.last_price.cents() - first.cents()).unsigned_abs() as f64
+                    / first.cents() as f64
+                    / 0.02)
+                    .min(3.0)
+            });
+        let volume = if stock.relative_volume.is_finite() {
+            (stock.relative_volume - 1.0).clamp(0.0, 3.0)
+        } else {
+            0.0
+        };
+        let imbalance = if stock.order_book_imbalance.is_finite() {
+            stock.order_book_imbalance.abs().min(1.0)
+        } else {
+            0.0
+        };
+        strongest.max(price_move.max(volume).max(imbalance))
+    })
 }
 
 fn effective_observation_probability(kind: AccountKind, base_probability: f64, signal: f64) -> f64 {
@@ -61,23 +57,22 @@ fn effective_observation_probability(kind: AccountKind, base_probability: f64, s
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
         AccountKind::Hot => 1.25,
-        // 玩家与发行人回购账户都不做自主观察采样；回购账户不进入关注集。
-        AccountKind::Player | AccountKind::IssuerRepurchase => 0.0,
+        AccountKind::Player => 0.0,
     };
     (base_probability * (1.0 + sensitivity * signal)).min(1.0)
 }
 
-pub(super) fn maximum_observation_probability(kind: AccountKind, base_probability: f64) -> f64 {
+pub(crate) fn maximum_observation_probability(kind: AccountKind, base_probability: f64) -> f64 {
     let sensitivity = match kind {
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
         AccountKind::Hot => 1.25,
-        AccountKind::Player | AccountKind::IssuerRepurchase => 0.0,
+        AccountKind::Player => 0.0,
     };
     (base_probability * (1.0 + sensitivity * 3.0)).min(1.0)
 }
 
-fn attention_candidate_is_observation(
+pub(crate) fn attention_candidate_is_observation(
     kind: AccountKind,
     base_probability: f64,
     signal: f64,
@@ -88,7 +83,7 @@ fn attention_candidate_is_observation(
     rng.next_f64() < current / maximum
 }
 
-pub(super) fn sample_attention_wait(probability: f64, rng: &mut dyn Rng) -> u64 {
+pub(crate) fn sample_attention_wait(probability: f64, rng: &mut dyn Rng) -> u64 {
     debug_assert!(probability.is_finite() && probability > 0.0 && probability <= 1.0);
     if probability >= 1.0 {
         return 1;
@@ -161,10 +156,10 @@ fn stock_discovery_weight(view: &StockView, announcement_exposed: bool) -> f64 {
 /// 按权重从候选池抽样（BTreeMap 确定性顺序；恰好一次 `next_f64` 抽样）。
 fn pick_weighted(
     market: &MarketView,
-    candidates: &[&StockCode],
-    announcement_exposed: &BTreeSet<StockCode>,
+    candidates: &[&StockId],
+    announcement_exposed: &BTreeSet<StockId>,
     rng: &mut dyn Rng,
-) -> Option<StockCode> {
+) -> Option<StockId> {
     if candidates.is_empty() {
         return None;
     }
@@ -194,46 +189,31 @@ fn pick_weighted(
 /// 一次选择抽样，仅选择抽样由 `next_range_u32` 换成一次加权 `next_f64`。
 fn select_discovery_stock(
     market: &MarketView,
-    held: &BTreeSet<StockCode>,
+    held: &BTreeSet<StockId>,
     watchlist: &PersonalWatchlist,
-    announcement_exposed: &BTreeSet<StockCode>,
+    announcement_exposed: &BTreeSet<StockId>,
     rng: &mut dyn Rng,
-) -> Option<StockCode> {
-    let held_in_market: Vec<&StockCode> = held
+) -> Option<StockId> {
+    let held_in_market: Vec<&StockId> = held
         .iter()
-        .filter(|code| {
-            market
-                .stocks
-                .get(*code)
-                .is_some_and(|stock| stock.is_trading)
-        })
+        .filter(|code| market.stocks.contains_key(*code))
         .collect();
     if !held_in_market.is_empty() && rng.next_f64() < HELD_PRIORITY_PROBABILITY {
         let index = rng.next_range_u32(0, held_in_market.len() as u32) as usize;
         return Some(held_in_market[index].clone());
     }
-    let watched_in_market: Vec<&StockCode> = watchlist
+    let watched_in_market: Vec<&StockId> = watchlist
         .stocks
         .keys()
-        .filter(|code| {
-            market
-                .stocks
-                .get(*code)
-                .is_some_and(|stock| stock.is_trading)
-        })
+        .filter(|code| market.stocks.contains_key(*code))
         .collect();
     if !watched_in_market.is_empty() && rng.next_f64() < WATCHLIST_BIAS_PROBABILITY {
         return pick_weighted(market, &watched_in_market, announcement_exposed, rng);
     }
-    let all: Vec<&StockCode> = market
-        .stocks
-        .iter()
-        .filter(|(_, stock)| stock.is_trading)
-        .map(|(code, _)| code)
-        .collect();
-    if all.is_empty() {
+    if market.stocks.is_empty() {
         return None;
     }
+    let all: Vec<&StockId> = market.stocks.keys().collect();
     pick_weighted(market, &all, announcement_exposed, rng)
 }
 
@@ -244,12 +224,11 @@ impl NpcAttentionState {
     /// 接口派生；公司与股票映射、曝光新鲜度窗口由 GameSession 负责。
     pub fn discovery_weights(
         market: &MarketView,
-        announcement_exposed: &BTreeSet<StockCode>,
-    ) -> BTreeMap<StockCode, f64> {
+        announcement_exposed: &BTreeSet<StockId>,
+    ) -> BTreeMap<StockId, f64> {
         market
             .stocks
             .iter()
-            .filter(|(_, view)| view.is_trading)
             .map(|(code, view)| {
                 (
                     code.clone(),
@@ -269,10 +248,10 @@ impl NpcAttentionState {
     pub fn sample_discovery_stock(
         &mut self,
         market: &MarketView,
-        held: &BTreeSet<StockCode>,
+        held: &BTreeSet<StockId>,
         watchlist: &PersonalWatchlist,
-        announcement_exposed: &BTreeSet<StockCode>,
-    ) -> Option<StockCode> {
+        announcement_exposed: &BTreeSet<StockId>,
+    ) -> Option<StockId> {
         let mut rng = SplitMix64::new(self.rng_state);
         let picked =
             select_discovery_stock(market, held, watchlist, announcement_exposed, &mut rng);
@@ -335,8 +314,10 @@ impl NpcAttentionScheduler {
                 due.push(id);
             }
         }
-        due.sort_unstable();
-        due.dedup();
+        // 用户已授权放宽：到期 NPC 不要求按 ID 排序，只要求每账户恰一次。
+        // HashSet 去重替代 sort+dedup，保留"每账户恰一次"性质。
+        let mut seen = std::collections::HashSet::new();
+        due.retain(|id| seen.insert(*id));
         (due, popped)
     }
 }
@@ -398,9 +379,8 @@ mod attention_tests {
             tick: 7,
             market_minute: 0,
             stocks: [(
-                StockCode("600888".to_string()),
+                StockId(0),
                 StockView {
-                    is_trading: true,
                     best_bid: Some(Money::from_cents(last - 1)),
                     best_ask: Some(Money::from_cents(last + 1)),
                     last_price: Money::from_cents(last),
@@ -420,27 +400,144 @@ mod attention_tests {
         }
     }
 
+    fn visibility_game(opening: u64, closing: u64) -> GameSession {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(opening);
+        setup.npcs.inst_count = 0;
+        setup.ticks_per_day = 8;
+        setup.closing_auction_ticks = closing;
+        GameSession::new(setup, 800).unwrap()
+    }
+
+    fn enqueue(game: &mut GameSession, side: Side, cents: i64, qty: u32) {
+        game.enqueue_player_intent(AccountId(0), Intent::PlaceLimit {
+            code: StockId(0), side, price: LimitPrice::Fixed(Money::from_cents(cents)), qty,
+        }).unwrap();
+    }
+
     #[test]
-    fn closed_stock_has_no_attention_signal_or_discovery_candidate() {
-        let mut market = attention_view(940, 1_000, 2.5, -0.8);
-        market.stocks.values_mut().next().unwrap().is_trading = false;
-        assert_eq!(market_attention_signal(&market), 0.0);
-        assert!(NpcAttentionState::discovery_weights(&market, &BTreeSet::new()).is_empty());
-        let held = market.stocks.keys().cloned().collect();
-        let mut rng = SequenceRng {
-            values: vec![0.0],
-            index: 0,
+    fn opening_hidden_book_does_not_change_public_depth_imbalance_or_attention_probability() {
+        let mut game = visibility_game(6, 0);
+        let public_before = game.build_market_view();
+        let signal_before = market_attention_signal(&public_before);
+        let probability_before = effective_observation_probability(AccountKind::Retail, 0.10, signal_before);
+        enqueue(&mut game, Side::Buy, 1_000, 100);
+        let events = game.step().unwrap();
+        assert!(!events.iter().any(|event| matches!(event, Event::Trade { .. })));
+        if crate::runtime::step_runtime_enabled() {
+            // D5 读面适配：私有真簿权威=desk（session markets 恒空）——
+            /// 镜像承载唯一 book 断言。
+            assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders.len(), 1,
+                "真实活动单仍由唯一 book 拥有（desk 镜像）");
+        } else {
+            assert_eq!(game.state.markets[&StockId(0)].resting_order_count(), 1,
+                "真实活动单仍由唯一 book 拥有");
+        }
+        let public = game.snapshot();
+        assert_eq!(public.markets[&StockId(0)].best_bid, None);
+        assert_eq!(public.markets[&StockId(0)].best_ask, None);
+        assert!(public.markets[&StockId(0)].bids.is_empty() && public.markets[&StockId(0)].asks.is_empty());
+        let npc_view = game.build_market_view();
+        assert_eq!(npc_view.stocks[&StockId(0)].order_book_imbalance, 0.0);
+        assert_eq!(market_attention_signal(&npc_view), signal_before);
+        assert_eq!(effective_observation_probability(AccountKind::Retail, 0.10, market_attention_signal(&npc_view)), probability_before);
+        assert_eq!(game.player_working_orders().len(), 1, "自身订单不能跟随公开门禁被隐藏");
+        assert!(public.accounts[&AccountId(0)].reserved_cash > Money::ZERO);
+    }
+
+    #[test]
+    fn closing_keeps_continuous_orders_public_but_hides_new_auction_orders_and_preserves_self_view() {
+        let mut game = visibility_game(0, 3);
+        game.fixture_account_mut(&AccountId(0)).unwrap().grant_position(
+            StockId(0), 1_000, Money::from_cents(1_000)).unwrap();
+        enqueue(&mut game, Side::Buy, 900, 100);
+        game.step().unwrap();
+        while game.tick() < 5 { game.step().unwrap(); }
+        assert_eq!(game.phase(), TradingPhase::ClosingAuction);
+        let old_seq = if crate::runtime::step_runtime_enabled() {
+            // D5 读面适配：镜像首单的 desk 序号（身份跨档锚）。
+            game.state.desk_book_mirror[&StockId(0)].orders[0].4
+        } else {
+            game.state.markets[&StockId(0)].resting_orders()[0].seq
         };
-        assert_eq!(
-            select_discovery_stock(
-                &market,
-                &held,
-                &PersonalWatchlist::default(),
-                &BTreeSet::new(),
-                &mut rng
-            ),
-            None
-        );
+        let old_public = game.snapshot().markets[&StockId(0)].clone();
+        let old_view = game.build_market_view();
+        let old_probability = effective_observation_probability(AccountKind::Retail, 0.10, market_attention_signal(&old_view));
+        enqueue(&mut game, Side::Sell, 1_100, 300);
+        game.step().unwrap();
+        if crate::runtime::step_runtime_enabled() {
+            assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders.len(), 2);
+            assert!(game.state.desk_book_mirror[&StockId(0)].orders.iter()
+                .any(|(_, side, price, _, _, _, _)| *side == Side::Sell && *price == Money::from_cents(1_100)),
+                "私有真实 book 保留竞价新单（desk 镜像）");
+        } else {
+            let market = &game.state.markets[&StockId(0)];
+            assert_eq!(market.resting_order_count(), 2);
+            assert_eq!(market.best_ask(), Some(Money::from_cents(1_100)), "私有真实 book 保留竞价新单");
+        }
+        let public = game.snapshot();
+        assert_eq!(public.markets[&StockId(0)].best_bid, old_public.best_bid);
+        assert_eq!(public.markets[&StockId(0)].bids, old_public.bids);
+        assert_eq!(public.markets[&StockId(0)].best_ask, None);
+        assert!(public.markets[&StockId(0)].asks.is_empty());
+        let new_view = game.build_market_view();
+        assert_eq!(new_view.stocks[&StockId(0)].order_book_imbalance, old_view.stocks[&StockId(0)].order_book_imbalance);
+        assert_eq!(effective_observation_probability(AccountKind::Retail, 0.10, market_attention_signal(&new_view)), old_probability);
+        assert_eq!(game.player_working_orders().len(), 2);
+        assert_eq!(public.accounts[&AccountId(0)].reserved_sell_qty[&StockId(0)], 300);
+        let mut restored = GameSession::restore(&game.save().unwrap()).unwrap();
+        if crate::runtime::step_runtime_enabled() {
+            // D5 断言面适配：镜像随首拍 desk 权威刷新（截点自档恢复——
+            /// 可见性截点跨档语义不变；恢复时点从静默读面变为一拍后）。
+            restored.step().unwrap();
+            assert_eq!(restored.state.desk_book_mirror[&StockId(0)].orders[0].4, old_seq);
+            assert_eq!(restored.snapshot().markets[&StockId(0)].bids, old_public.bids);
+            assert!(restored.snapshot().markets[&StockId(0)].asks.is_empty(), "恢复必须保留原可见性截点");
+        } else {
+            assert_eq!(restored.state.markets[&StockId(0)].resting_orders()[0].seq, old_seq);
+            assert_eq!(restored.snapshot().markets[&StockId(0)].bids, old_public.bids);
+            assert!(restored.snapshot().markets[&StockId(0)].asks.is_empty(), "恢复必须保留原可见性截点");
+        }
+        while restored.tick() < 8 { restored.step().unwrap(); }
+        // D5 runtime 分支：恢复首拍 step 后 mirror 才重建（desk 权威
+        /// 在线）——日终清簿断言在末拍后成立。
+        assert!(restored.snapshot().markets[&StockId(0)].bids.is_empty());
+        assert!(restored.player_working_orders().is_empty());
+    }
+
+    #[test]
+    fn opening_clearing_makes_original_sequence_remainders_public_without_repricing() {
+        let mut game = visibility_game(6, 0);
+        enqueue(&mut game, Side::Buy, 990, 100);
+        game.step().unwrap();
+        let runtime_mode = crate::runtime::step_runtime_enabled();
+        let (original, original_serial) = if runtime_mode {
+            let order = game.state.desk_book_mirror[&StockId(0)].orders[0];
+            ((order.2, order.3), order.4)
+        } else {
+            let order = game.state.markets[&StockId(0)].resting_orders()[0].clone();
+            ((order.price, order.qty), order.seq)
+        };
+        assert!(game.snapshot().markets[&StockId(0)].bids.is_empty());
+        let mut completed = 0;
+        while game.tick() < 4 {
+            completed += game.step().unwrap().iter().filter(|event| matches!(event, Event::AuctionCompleted { .. })).count();
+        }
+        assert_eq!(completed, 1);
+        assert_eq!(game.phase(), TradingPhase::PreOpen);
+        if runtime_mode {
+            // D5 读面适配：镜像单序/价/量承载揭示后余单锚（desk 权威——
+            /// 原序不变、不重报价）。
+            let order = &game.state.desk_book_mirror[&StockId(0)].orders[0];
+            assert_eq!((order.2, order.3), (Money::from_cents(990), 100));
+            assert_eq!(order.4, original_serial);
+        } else {
+            let order = &game.state.markets[&StockId(0)].resting_orders()[0];
+            assert_eq!((order.price, order.qty, order.seq), (original.0, original.1, original_serial));
+        }
+        assert_eq!(game.snapshot().markets[&StockId(0)].bids, vec![(Money::from_cents(990), 100)]);
+        let view = game.build_market_view();
+        assert_eq!(view.stocks[&StockId(0)].order_book_imbalance, 1.0);
+        assert_eq!(effective_observation_probability(AccountKind::Retail, 0.10, market_attention_signal(&view)), 0.10 * (1.0 + 0.75));
     }
 
     #[test]

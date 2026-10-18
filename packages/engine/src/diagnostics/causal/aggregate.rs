@@ -224,8 +224,18 @@ impl<'a> CausalReportBuilder<'a> {
             .orders
             .get(taker)
             .ok_or(CausalError::OrderMismatch(*taker))?;
+        // 腿方向语义（ADR-0042，2026-10-16）：maker≡卖腿/taker≡买腿——
+        // 主动腿（side=触发意图方向）按 side 选：Buy 查 taker（买腿）、
+        // Sell 查 maker（卖腿）；两腿反向不变量保留。
         if maker_row.origin.side == taker_row.origin.side
-            || side.is_some_and(|side| side != taker_row.origin.side)
+            || side.is_some_and(|side| {
+                let active_leg_side = if side == crate::orderbook::Side::Buy {
+                    taker_row.origin.side
+                } else {
+                    maker_row.origin.side
+                };
+                side != active_leg_side
+            })
         {
             return Err(CausalError::ExecutionMismatch);
         }
@@ -352,7 +362,7 @@ mod tests {
         OrderOrigin {
             order: OrderId(order),
             account: AccountId(order),
-            code: StockCode("600101".to_owned()),
+            code: StockId("600101".to_owned()),
             company: None,
             plan: None,
             decision: None,
@@ -374,7 +384,7 @@ mod tests {
     }
 
     fn bilateral_fill_facts() -> Vec<CausalFact> {
-        let code = StockCode("600101".to_owned());
+        let code = StockId("600101".to_owned());
         let quote = Quote {
             code: code.clone(),
             bid_cents: Some(990),
@@ -469,7 +479,7 @@ mod tests {
                 CausalFactKind::Terminated {
                     order: OrderId(1),
                     account: AccountId(1),
-                    code: StockCode("600101".to_owned()),
+                    code: StockId("600101".to_owned()),
                     qty: 100,
                     reason: Termination::DayEnd,
                 },

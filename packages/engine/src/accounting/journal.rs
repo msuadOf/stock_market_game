@@ -59,29 +59,6 @@ impl BusinessEventId {
     ts_rs::TS,
 )]
 pub enum BusinessKind {
-    /// Simple 汇总收入确认（借 simple_receivable／贷 simple_revenue；非现金，
-    /// 不冒充客户交易；逐项分录，2026-10-10 分录级派生批）。
-    SimpleRevenueAccrual,
-    /// Simple 汇总固定费用计提（借 simple_fixed_expense／贷 simple_payable；
-    /// 非现金，逐项分录）。
-    SimpleFixedExpenseAccrual,
-    /// Simple 汇总变动费用计提（借 simple_variable_expense／贷 simple_payable；
-    /// 非现金，逐项分录）。
-    SimpleVariableExpenseAccrual,
-    CompanyDividendDeclaration,
-    CompanyDividendPayment,
-    /// 送转真实入账（权益内部结转：送股借 4103／转增借资本公积，贷 4001；
-    /// 非现金，N3 批 2026-10-08）。
-    CompanyStockDistributionCredit,
-    /// 配股／增发结算（募集资金挂非现金资产调整，面值贷 4001、溢价贷资本公积；
-    /// 非现金，N3 批 2026-10-08）。
-    CompanyRightsOfferingSettlement,
-    /// 回购注销（按面值核减 4001 并等额归集资本公积；简化口径见
-    /// docs/company-accounting.md，非现金，N3 批 2026-10-08）。
-    CompanyRepurchaseCancellation,
-    /// 缩股重新计值入账（按消灭面值核减 4001 并等额归集资本公积；拆股
-    /// 面值总额不变、不产生分录，非现金，N3 批 2026-10-08）。
-    CompanyShareReDenomination,
     /// 期初余额凭证（显式平衡的开业账套）。
     OpeningBalance,
     /// 取得借款（现金入，负债增）。
@@ -216,13 +193,39 @@ pub struct JournalLine {
 }
 
 /// 一笔分录：来源事件 + 日期 + 业务种类 + 现金流类别 + 借贷行。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct JournalEntry {
     pub source: BusinessEventId,
     pub date: CivilDate,
     pub kind: BusinessKind,
     pub cash_flow: CashFlowClass,
     pub lines: Vec<JournalLine>,
+}
+
+/// 分录深拷贝计数（诊断负控：批次共享改造的规模递增依据）。
+/// 只增不减的 relaxed 计数，不参与业务语义。
+/// 生产开销说明：每次 `JournalEntry::clone` 一次 relaxed 原子自增（无锁、
+/// 无分配），量级远低于克隆本身；迁移到诊断 feature 留作后续批次（迁移会
+/// 使非诊断构建与诊断构建的代码路径分叉，需单独评审）。
+static JOURNAL_ENTRY_CLONES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// 当前累计的 `JournalEntry` 深拷贝次数（测试/诊断读取）。
+pub fn journal_entry_clone_count() -> u64 {
+    JOURNAL_ENTRY_CLONES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Clone for JournalEntry {
+    fn clone(&self) -> Self {
+        JOURNAL_ENTRY_CLONES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            source: self.source,
+            date: self.date,
+            kind: self.kind,
+            cash_flow: self.cash_flow,
+            lines: self.lines.clone(),
+        }
+    }
 }
 
 impl JournalEntry {
@@ -234,18 +237,6 @@ impl JournalEntry {
     /// 复式不变量验证（过账与存档恢复共用同一路径）：
     /// 非空行、每行正金额、借贷两侧俱全、借贷总额相等。
     pub fn validate_invariants(&self) -> Result<(), AccountingError> {
-        if matches!(
-            self.kind,
-            BusinessKind::SimpleRevenueAccrual
-                | BusinessKind::SimpleFixedExpenseAccrual
-                | BusinessKind::SimpleVariableExpenseAccrual
-        ) && self.cash_flow != CashFlowClass::NonCash
-        {
-            return Err(AccountingError::SimpleSettlementCashFlow {
-                event: self.source,
-                cash_flow: self.cash_flow,
-            });
-        }
         if self.lines.is_empty() {
             return Err(AccountingError::EmptyLines { event: self.source });
         }

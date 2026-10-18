@@ -10,13 +10,12 @@ mod commands;
 mod continuation_tests;
 mod interpreter;
 mod routing;
-mod synchronization;
 mod types;
 
 pub(in crate::session) use commands::{PlanCancelCause, PlanRouteCommand, PlanRouteOutcome};
 pub(in crate::session) use interpreter::{PlanExecutionProgress, PlanExecutionRoute};
+pub(in crate::session) use routing::WorkingPlanOrder;
 use types::NewChildSpec;
-pub use types::PendingPlanEvent;
 pub use types::{
     PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport, PlanExecutionRequest,
 };
@@ -35,14 +34,7 @@ impl GameSession {
         ) && plan.status() != PlanStatus::Active
         {
             if plan.status() == PlanStatus::Completed {
-                if plan.active_child_order_id().is_some()
-                    || self
-                        .state
-                        .parent_orders
-                        .get(&plan.account())
-                        .and_then(|parents| parents.get(plan.code()))
-                        .is_some_and(|parent| parent.linked_plan_id() == Some(plan.plan_id()))
-                {
+                if plan.active_child_order_id().is_some() {
                     return Err(PlanExecutionError::IncompatibleExecutionState {
                         plan_id: plan.plan_id(),
                     });
@@ -70,7 +62,7 @@ impl GameSession {
                 },
             })),
             QuoteAction::Keep { order_id } => {
-                self.require_active_child(plan.plan_id(), plan.code(), order_id)?;
+                self.require_active_child(&plan, order_id)?;
                 Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                     disposition: PlanExecutionDisposition::Kept {
                         order_id,
@@ -149,9 +141,7 @@ impl GameSession {
                 code: plan.code().clone(),
             });
         }
-        let session_day = self
-            .stock_trading_day(plan.code())
-            .expect("validated plan stock trading day is valid");
+        let session_day = u64::from(self.state.day);
         if request.trading_day != session_day {
             return Err(PlanExecutionError::TradingDayMismatch {
                 plan_id: plan.plan_id(),

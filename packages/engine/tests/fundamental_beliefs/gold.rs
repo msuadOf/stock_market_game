@@ -10,7 +10,6 @@
 
 use crate::{assumptions_rng, d, hour_after, market, scenario, ISSUED_SHARES};
 use crate::{BeliefIssuerInputs, FundamentalBeliefCase};
-use engine::account::StockCode;
 use engine::accounting::AccountingAmount;
 use engine::calendar::CivilInstant;
 use engine::company::CompanyKind;
@@ -21,9 +20,10 @@ use engine::strategy::{
     PersonalAssumptions, PriorRevenue, StrategyProfile, ValuationOutcome,
 };
 use engine::Money;
+use engine::StockId;
 
-pub(crate) fn stock_code() -> StockCode {
-    StockCode("600101".to_string())
+pub(crate) fn stock_code() -> StockId {
+    StockId(0)
 }
 
 pub(crate) fn momentum_profile() -> StrategyProfile {
@@ -54,7 +54,7 @@ pub(crate) fn hand_facts(equity_cents: i128, opening_cents: i128, ni_cents: i128
     AnnualFacts {
         report_id: PublicationId::new(901),
         scope: engine::accounting::consolidation::ScopeId::Standalone(
-            engine::accounting::consolidation::MemberId(crate::COMPANY.to_owned()),
+            engine::accounting::consolidation::MemberId(0),
         ),
         published_at: CivilInstant::from_hms(d("2031-03-20"), 18, 0, 0).expect("phase"),
         revenue: AccountingAmount::from_cents(200_000_000),

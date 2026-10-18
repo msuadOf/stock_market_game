@@ -1,0 +1,106 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a14cc0-b8e5-7dc0-966d-384ed37a81bd).
+[codex] Turn started (01a14cc0-bac3-75e0-8c83-9d7adb014cff).
+[codex] Assistant message captured: 我会先核对四审判决、送审冻结点和实测产物，再逐项检查 A 类闭合证据与 B/C 台账；全程只读，不构建、不写文件。
+[codex] Running command: /bin/zsh -lc "pwd; git status --short; git rev-parse HEAD; rg --files -g 'AGENTS.md' -g '*sol...
+[codex] Command completed: /bin/zsh -lc "pwd; git status --short; git rev-parse HEAD; rg --files -g 'AGENTS.md' -g '*sol... (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat AGENTS.md docs/principles.md docs/open-questions.md docs/architecture.md; c...
+[codex] Command completed: /bin/zsh -lc 'cat AGENTS.md docs/principles.md docs/open-questions.md docs/architecture.md; c... (exit 0)
+[codex] Running command: /bin/zsh -lc "cat .tmp/sol-stepframe-red-evidence/MANIFEST.md; cat agents/std-thread-migratio...
+[codex] Command completed: /bin/zsh -lc "cat .tmp/sol-stepframe-red-evidence/MANIFEST.md; cat agents/std-thread-migratio... (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff --stat 7ccdb7f0..8a10b5fc; rg --files docs/decisions; cat docs/decisio...
+[codex] Command completed: /bin/zsh -lc "git diff --stat 7ccdb7f0..8a10b5fc; rg --files docs/decisions; cat docs/decisio... (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff --stat 7ccdb7f0..8a10b5fc; sed -n '1,260p' agents/std-thread-migration...
+[codex] Command completed: /bin/zsh -lc "git diff --stat 7ccdb7f0..8a10b5fc; sed -n '1,260p' agents/std-thread-migration... (exit 0)
+[codex] Assistant message captured: 已确认 HEAD 为 `8a10b5fc`，当前工作区干净。台账中有一处分类不一致：四审把 diagnostics 判为 B，本轮摘要却称为 C；我会核对实际剩余失败，以及 `step_...
+[codex] Running command: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/desk.rs packages/eng...
+[codex] Command completed: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/desk.rs packages/eng... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/drive.rs packages/en...
+[codex] Command completed: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/drive.rs packages/en... (exit 0)
+[codex] Running command: /bin/zsh -lc 'head -25 .tmp/sol-stepframe-red-evidence/11-integ-full.txt; tail -110 .tmp/sol-...
+[codex] Command completed: /bin/zsh -lc 'head -25 .tmp/sol-stepframe-red-evidence/11-integ-full.txt; tail -110 .tmp/sol-... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/drive.rs'
+[codex] Command completed: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/drive.rs' (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/session.rs packages/engine/s...
+[codex] Command completed: /bin/zsh -lc "git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/session.rs packages/engine/s... (exit 0)
+[codex] Running command: /bin/zsh -lc "python3 -c 'from pathlib import Path; import re; d=Path(\".tmp/sol-stepframe-re...
+[codex] Command completed: /bin/zsh -lc "python3 -c 'from pathlib import Path; import re; d=Path(\".tmp/sol-stepframe-re... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/tests/session.rs packages/engine...
+[codex] Command completed: /bin/zsh -lc 'git diff 7ccdb7f0..8a10b5fc -- packages/engine/tests/session.rs packages/engine... (exit 0)
+[codex] Assistant message captured: 代码核对发现了 A 类累计字段的剩余缺口：存档用“实际累计成交额 ÷ 委托限价”反推成交量，但连续竞价允许价优成交，因此不能这样换算。我正在核对它在 save/restore 链上的影响...
+[codex] Running command: /bin/zsh -lc "sed -n '3060,3115p' .tmp/sol-stepframe-red-evidence/11-integ-full.txt; nl -ba p...
+[codex] Command completed: /bin/zsh -lc "sed -n '3060,3115p' .tmp/sol-stepframe-red-evidence/11-integ-full.txt; nl -ba p... (exit 0)
+[codex] Running command: /bin/zsh -lc "git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/world.rs packages/en...
+[codex] Command completed: /bin/zsh -lc "git diff 7ccdb7f0..8a10b5fc -- packages/engine/src/runtime/world.rs packages/en... (exit 0)
+[codex] Running command: /bin/zsh -lc "ls -lt target/debug/deps/engine-* target/debug/deps/session-* target/debug/deps...
+[codex] Command completed: /bin/zsh -lc "ls -lt target/debug/deps/engine-* target/debug/deps/session-* target/debug/deps... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n '"'^fn .*'"' packages/engine/tests/session.rs | rg 'candle|trade_stats|fi...
+[codex] Command completed: /bin/zsh -lc "rg -n '"'^fn .*'"' packages/engine/tests/session.rs | rg 'candle|trade_stats|fi... (exit 0)
+[codex] Running command: /bin/zsh -lc 'timeout --kill-after=0.2s 9s env ENGINE_STEP_RUNTIME=1 target/debug/deps/step_s...
+[codex] Running command: /bin/zsh -lc 'timeout --kill-after=0.2s 9s env ENGINE_STEP_RUNTIME=1 target/debug/deps/sessio...
+[codex] Running command: /bin/zsh -lc 'timeout --kill-after=0.2s 9s env ENGINE_STEP_RUNTIME=1 target/debug/deps/engine...
+[codex] Command completed: /bin/zsh -lc 'timeout --kill-after=0.2s 9s env ENGINE_STEP_RUNTIME=1 target/debug/deps/step_s... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'timeout --kill-after=0.2s 9s env ENGINE_STEP_RUNTIME=1 target/debug/deps/sessio... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'timeout --kill-after=0.2s 9s env ENGINE_STEP_RUNTIME=1 target/debug/deps/engine... (exit 0)
+[codex] Running command: /bin/zsh -lc "sed -n '105,225p' packages/engine/src/runtime/fees.rs; nl -ba packages/engine/s...
+[codex] Command completed: /bin/zsh -lc "sed -n '105,225p' packages/engine/src/runtime/fees.rs; nl -ba packages/engine/s... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '2170,2235p'; rg -n 'fn ...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '2170,2235p'; rg -n 'fn ... (exit 0)
+[codex] Assistant message captured: 现有产物的 10 个聚焦用例复跑全过，包括多股票成交、Abort 存活、Drain 对账、cutoff 和 public_step 边界。两名独立复核者仍确认了累计族的两个代码缺口：价优...
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '2180,2263p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '2180,2263p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'pub fn save\\(|save_projection\\(|validate_save|validate_saved_resting_o...
+[codex] Command completed: /bin/zsh -lc "rg -n 'pub fn save\\(|save_projection\\(|validate_save|validate_saved_resting_o... (exit 0)
+[codex] Assistant message captured: **终裁：不通过。`8a10b5fc` 仍有 A 类累计事实缺口，不能宣告 std-thread 迁移完成，不批准合并 main，也不解锁批 9 与视图内生战役。** 两名未参与实现的 ...
+[codex] Turn completed.
+**终裁：不通过。`8a10b5fc` 仍有 A 类累计事实缺口，不能宣告 std-thread 迁移完成，不批准合并 main，也不解锁批 9 与视图内生战役。**
+
+两名未参与实现的 subagent 独立复核确认了以下阻断。
+
+**1. 累计清零／原始委托量：不通过**
+
+[session.rs:3329](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session.rs:3329) 仍用 `filled_value / limit_price` 推算成交股数。限价单允许价优成交，该换算不成立。
+
+合法整手反例：买 **200 股 @1000 分**，先成交 **100 股 @990 分**，余 100 股。当前存档会得到：
+
+| 字段 | 正确值 | 当前计算值 |
+|---|---:|---:|
+| `filled_qty` | 100 | 99 |
+| `original_qty` | 200 | 199 |
+
+该问题此前已在[交接记录第 60 行](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/handoffs/11-runtime-A4-A5-A6.md:60)明确指出，当前仍未修复，独立复核发现的闭合门禁也未满足。
+
+另一个缺口在 restore 接管链：[drive.rs:2454](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:2454) 构造的 `DeskRestingSeed` 不携带累计成交额和费用，[desk.rs:2332](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/desk.rs:2332) 将这些字段重新归零。
+
+按默认费用静态推演：200 股 @1000 分买单首填 100 股后，剩余 purse 为 **100001 分**；restore 后续填剩余 100 股，会重新计算最低佣金，要求 **100501 分**，触发 purse 不足。**此反例为静态确认，未动态复现。** 现有测试只检查 `restore.is_ok()`，没有使用恢复后的会话继续成交。
+
+**2. 四审 A 类逐项裁定**
+
+| 项目 | 判定 | 理由 |
+|---|---|---|
+| shutdown 竞态 | **不通过，缺指定回归** | 提前置永久退出标记的根因已修；四审要求的“超过 50ms、在途非空”确定性测试未补。 |
+| `save_contract` 38 例／day 对齐族 | **通过** | 当前 33 过，重新暴露的五项符合原 C 类裁定。 |
+| candle 三例 | **通过** | 日 K 归档、占位 K 与统计相关既有用例转绿。 |
+| 价格规则／配置五例 | **通过** | 配置透传、cage 拒收类型及受理价真值修复成立。 |
+| 挂单／恢复／预留／游标／累计族 | **不通过** | 预留与游标修复成立；上述数量保存和 restore 累计丢失仍在。 |
+| 多股票成交 | **通过** | StockCode 排序统一了 StockId 与交易部规格；聚焦复跑通过。 |
+| 机构跨日计划 | **通过** | 组权威 PlanBook 执行日终迁移，包含 undo。 |
+| fault2291 | **通过** | cutoff 相位清零及回滚字段补齐；自产档守卫复跑通过。 |
+| public_step／四项 lib 尾巴 | **通过** | 归档收归 `commit_active`，运行期 desk history push 已撤；边界复跑通过。 |
+
+**3. B/C 台账：原判登记存在，但当前冻结点口径不通过**
+
+[台账第 114 行起](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/plans/intentional-divergences.md:114)保留了四审登记，但需更新：
+
+- diagnostics 仍是 **B**，不能归为 C。
+- `step_skeleton` 当前三例均已到达 hash 断言，B 项应由 **2 例更新为 3 例**，保留逐字段取证要求。
+- 旧 tuple 读取已修复，C-1 的“2 例”应登记一项闭合，当前只剩默认资金断言。
+- `scale_restore` 后续校准错误码时，仍须保留拒绝及源状态不变断言。
+
+因此，当前 engine 的 **12 败应计为 B 6／C 6**；server 四败维持 C。上述两个静态 A 缺口未被这份失败名单覆盖。
+
+落盘数字核对一致：双模式 lib 各 **1655/0/11**；engine **67 份结果含 lib，2829/12/17**；server **123/4/1**。本轮另复跑现有产物 **10 个聚焦用例，全部通过**。
+
+重新送审只需闭合明确剩余项：贯穿真实数量及累计费用、补 restore 后续成交测试、补指定 shutdown 回归，并更新 B/C 台账后完成独立复核。全程只读，未构建、未写文件。
+
+[exited with code 0]

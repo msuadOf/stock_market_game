@@ -1,0 +1,7 @@
+主工作区 tracked diff：开始与结束逐字一致（cmp / Python bytes 比较均通过）。
+暂存区：空。
+三口径日志：均完整包含两次共享构建原始日志。
+主工作区 HEAD：868a8fac07b54b11c9c20b9fde89650039b22bca
+主工作区 branch：exp/std-thread-model
+1f5863cd：detached；tracked/untracked 状态为空。
+6dcc25b4：detached；tracked/untracked 状态为空。

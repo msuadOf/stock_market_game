@@ -72,13 +72,9 @@ mod replay {
             closing_auction_ticks: 6,
             history_len: 10,
             t1_enabled: true,
-            report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::Random,
             start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-            dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
         }
     }
 
@@ -349,13 +345,9 @@ mod step {
             closing_auction_ticks: 2,
             history_len: 20,
             t1_enabled: true,
-            report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::Random,
             start_date: CivilDate::from_iso("2030-01-02")?,
             simulation_policy_id: engine::SIMULATION_POLICY_ID.to_owned(),
-            dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::Exempt,
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
         })
     }
 

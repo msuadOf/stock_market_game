@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::error::ValidationFault;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -10,14 +11,15 @@ pub const SIMULATION_POLICY_ID: &str = "a-share-simulation";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedRuntimeState {
-    pub active_minute_history: BTreeMap<StockCode, Vec<MinuteBar>>,
     /// poisoned session 不允许生成存档；显式标记让恢复校验能够识别篡改。
     pub poisoned: bool,
     #[serde(with = "super::super::u64_decimal")]
     pub next_receipt_base: u64,
     pub live_envelopes: Vec<SavedLiveEnvelope>,
+    /// 单 book 的公开可见性受理截点（数值事实，不复制竞价或连续订单集合）。
+    #[serde(with = "super::super::book_sequence_map")]
+    pub book_public_cutoff_sequences: BTreeMap<StockId, u64>,
     pub retail_projection_seen: Vec<SavedRetailReceiptIdentity>,
-    pub personal_trade_confirmations: BTreeMap<AccountId, Vec<PersonalTradeConfirmation>>,
     /// 完整生产策略状态是权威事实；profile 从 enum value 派生，不重复保存。
     pub strategy_states: BTreeMap<AccountId, crate::strategy::StrategyState>,
 }
@@ -27,13 +29,24 @@ pub struct SavedRuntimeState {
 pub struct SavedLiveEnvelope {
     pub key: SavedEnvelopeKey,
     pub charged: SavedFeeComponents,
+    /// D5 restore 链最后一层：desk 在途单的审计数值面（此前仅存 charged
+    /// ——restore 的 runtime_shape 路径无 desk 权威可查，remaining 退 1 股
+    /// 占位使续拍 desk 种子量错）。nominal 不存：由费用表+filled_value
+    /// 决定性重算（runtime_step 尾重建同式）。
+    pub remaining_qty: u32,
+    pub filled_qty: u32,
+    pub filled_value: Money,
+    pub limit: Money,
+    /// 买侧在途 purse（desk 权威占用；卖侧恒 0）——restore 的 live 资源
+    /// 真值（此前 1 分占位过 fault2223）。
+    pub purse: Money,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SavedEnvelopeKey {
     pub account: AccountId,
-    pub stock: StockCode,
+    pub stock: StockId,
     pub order: OrderId,
     pub side: Side,
 }
@@ -93,7 +106,12 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
             session.state.setup.simulation_policy_id
         )));
     }
-    session.state.envelope_ledger.validate_complete_evidence()?;
+    // save 侧完整校验与 restore 侧同源：≥512 行的并行审计必须归入会话 compute
+    // registry（capture 入口持有 session，不得落入 caller 当前的池）。
+    session
+        .state
+        .envelope_ledger
+        .validate_complete_evidence_in(session.compute_context())?;
     if session.state.envelope_ledger.terminal_count() != 0 {
         return Err(invariant(
             "quiet-point envelope ledger retains terminal tick evidence".to_owned(),
@@ -162,17 +180,27 @@ pub fn capture_runtime_state(session: &GameSession) -> Result<SavedRuntimeState,
         .collect::<Result<BTreeMap<_, _>, _>>()?;
 
     let state = SavedRuntimeState {
-        active_minute_history: session.state.retained_market_history.saved_active(),
         poisoned: false,
         next_receipt_base: session.state.next_receipt_base,
         live_envelopes,
+        book_public_cutoff_sequences: if session.state.desk_book_mirror.is_empty() {
+            session
+                .state
+                .markets
+                .iter()
+                .map(|(code, market)| (*code, market.auction_public_cutoff_sequence()))
+                .collect()
+        } else {
+            // D5 attention：runtime 形态（desk 镜像在位）——公开截点自
+            /// 镜像（desk 权威；session market 恒 0）。
+            session
+                .state
+                .desk_book_mirror
+                .iter()
+                .map(|(code, mirror)| (*code, mirror.public_cutoff_serial))
+                .collect()
+        },
         retail_projection_seen,
-        personal_trade_confirmations: session
-            .state
-            .personal_trade_confirmations
-            .iter()
-            .map(|(account, history)| (*account, history.iter().cloned().collect()))
-            .collect(),
         strategy_states,
     };
     validate_runtime_state(session, &state).map_err(session_error_as_invariant)?;
@@ -202,21 +230,51 @@ pub fn validate_runtime_state(
     state: &SavedRuntimeState,
 ) -> Result<(), SessionError> {
     if state.poisoned {
-        return Err(SessionError::InvalidSave(
-            "runtime_state 明确拒绝 poisoned session 状态".to_owned(),
-        ));
+        // fault2200：runtime_state 显式拒绝 poisoned 会话状态。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2200)));
     }
     if session.state.setup.simulation_policy_id != SIMULATION_POLICY_ID {
-        return Err(SessionError::InvalidSave(format!(
-            "当前存档要求 simulation_policy_id 为 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
-            session.state.setup.simulation_policy_id
+        // fault2201：simulation_policy_id 与引擎政策不符；ctx[0] 待 C 批数值化（原文本 "{:?}" 策略 id）。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2201,
+            vec![0],
         )));
     }
 
+    let expected_markets = session
+        .state
+        .markets
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if state
+        .book_public_cutoff_sequences
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        != expected_markets
+    {
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2290)));
+    }
+    for (code, cutoff) in &state.book_public_cutoff_sequences {
+        let market = &session.state.markets[code];
+        // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
+        /// 空、next_sequence=0）——截点不与本簿序对拍（desk 恢复域接管）；
+        /// 相位面（连续/盘前=0 截点）仍按 session 相位判。
+        if (market.book_next_sequence() > 0 && *cutoff > market.book_next_sequence())
+            || (matches!(
+                session.phase(),
+                TradingPhase::Continuous | TradingPhase::PreOpen
+            ) && *cutoff != 0)
+        {
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2291,
+                vec![u64::from(code.0), *cutoff, market.book_next_sequence()],
+            )));
+        }
+    }
     let ledger = state.build_ledger(session)?;
     validate_live_envelopes_against_orders(session, state, &ledger)?;
-    validate_personal_trade_confirmations(session, state)?;
-    session.validate_active_minute_history(&state.active_minute_history)?;
 
     let identities = state
         .retail_projection_seen
@@ -229,24 +287,27 @@ pub fn validate_runtime_state(
                 .map(|key| (identity.index, key))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // fault2202：散户投影回执前缀重建失败；ctx[0] 待 C 批数值化
+    // （原文 "saved retail projection receipt prefix is invalid: {error}"）。
     let seen = pipeline::RetailProjectionSeen::from_authoritative_identities(
         identities,
         state.next_receipt_base,
     )
-    .map_err(|error| invalid_save("saved retail projection receipt prefix", error))?;
+    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2202, vec![0])))?;
+    // fault2203：散户投影规范身份转换失败；ctx[0] 待 C 批数值化
+    // （原文 "saved retail projection canonical identity is invalid: {error}"）。
     let canonical = seen
         .authoritative_identities()
         .into_iter()
         .map(|(index, local_key)| {
             SavedReceiptLocalKey::from_runtime(&local_key)
                 .map(|local_key| SavedRetailReceiptIdentity { index, local_key })
-                .map_err(|error| invalid_save("saved retail projection canonical identity", error))
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2203, vec![0])))
         })
         .collect::<Result<Vec<_>, _>>()?;
     if canonical.as_slice() != state.retail_projection_seen.as_slice() {
-        return Err(SessionError::InvalidSave(
-            "saved retail projection identities are not canonical".to_owned(),
-        ));
+        // fault2204：散户投影身份非规范序。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2204)));
     }
 
     let expected_strategy_accounts: BTreeSet<_> = session
@@ -257,9 +318,8 @@ pub fn validate_runtime_state(
         .collect();
     let saved_strategy_accounts: BTreeSet<_> = state.strategy_states.keys().copied().collect();
     if saved_strategy_accounts != expected_strategy_accounts {
-        return Err(SessionError::InvalidSave(
-            "saved StrategyState account set does not exactly match NPC accounts".to_owned(),
-        ));
+        // fault2205：策略状态账户集合与 NPC 账户不精确一致。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2205)));
     }
     for (account, saved_state) in &state.strategy_states {
         let expected_profile = session
@@ -267,23 +327,20 @@ pub fn validate_runtime_state(
             .accounts
             .get(account)
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState refers to missing account {}",
-                    account.0
-                ))
+                // fault2206：策略状态引用缺失账户；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2206, vec![account.0]))
             })?
             .strategy()
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState refers to strategy-free account {}",
-                    account.0
-                ))
+                // fault2207：策略状态引用无策略账户；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2207, vec![account.0]))
             })?
             .profile();
         if saved_state.profile() != expected_profile {
-            return Err(SessionError::InvalidSave(format!(
-                "saved StrategyState for account {} changes its deterministic strategy identity",
-                account.0
+            // fault2208：策略状态改变确定性策略身份；ctx[0]=AccountId。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2208,
+                vec![account.0],
             )));
         }
         let attention_probability = session
@@ -291,68 +348,26 @@ pub fn validate_runtime_state(
             .npc_attention
             .get(account)
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState for account {} has no NPC attention state",
-                    account.0
-                ))
+                // fault2209：策略状态账户无 NPC 关注状态；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2209, vec![account.0]))
             })?
             .base_probability;
         if saved_state.base_observation_probability().to_bits() != attention_probability.to_bits() {
-            return Err(SessionError::InvalidSave(format!(
-                "saved StrategyState for account {} base observation probability {} disagrees with NPC attention probability {}",
-                account.0,
-                saved_state.base_observation_probability(),
-                attention_probability
+            // fault2210：基础观察概率与 NPC 关注概率不一致；ctx[0]=AccountId，
+            // ctx[1]/ctx[2]=两侧概率 IEEE754 位模式。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2210,
+                vec![
+                    account.0,
+                    saved_state.base_observation_probability().to_bits(),
+                    attention_probability.to_bits(),
+                ],
             )));
         }
-        saved_state.clone().into_strategy().map_err(|error| {
-            SessionError::InvalidSave(format!(
-                "saved StrategyState for account {} is invalid: {error}",
-                account.0
-            ))
+        // fault2211：策略状态重建失败；ctx[0]=AccountId，ctx[1] 待 C 批数值化（原文本 "{error}"）。
+        saved_state.clone().into_strategy().map_err(|_| {
+            SessionError::InvalidSave(ValidationFault::new(2211, vec![account.0, 0]))
         })?;
-    }
-    Ok(())
-}
-
-fn validate_personal_trade_confirmations(
-    session: &GameSession,
-    state: &SavedRuntimeState,
-) -> Result<(), SessionError> {
-    let mut all_receipt_ids = BTreeSet::new();
-    for (account, confirmations) in &state.personal_trade_confirmations {
-        if session.state.accounts.get(account).is_none() {
-            return Err(SessionError::InvalidSave(format!(
-                "personal trade confirmations refer to missing account {}",
-                account.0
-            )));
-        }
-        let mut previous_receipt_id = None;
-        for confirmation in confirmations {
-            if confirmation.receipt_id >= state.next_receipt_base
-                || previous_receipt_id.is_some_and(|previous| confirmation.receipt_id <= previous)
-                || !all_receipt_ids.insert(confirmation.receipt_id)
-                || confirmation.code.0.is_empty()
-                || !session.state.markets.contains_key(&confirmation.code)
-                || confirmation.civil_date < session.state.setup.start_date
-                || confirmation.civil_date > session.civil_date()
-                || confirmation.quantity_shares == 0
-                || confirmation.price.cents() <= 0
-                || confirmation.gross.cents() <= 0
-                || i128::from(confirmation.price.cents())
-                    * i128::from(confirmation.quantity_shares)
-                    != i128::from(confirmation.gross.cents())
-                || confirmation.actual_fees.commission.cents() < 0
-                || confirmation.actual_fees.stamp_tax.cents() < 0
-                || confirmation.actual_fees.transfer_fee.cents() < 0
-            {
-                return Err(SessionError::InvalidSave(format!(
-                    "personal trade confirmation for account {} is invalid",
-                    account.0
-                )));
-            }
-            previous_receipt_id = Some(confirmation.receipt_id);
-        }
     }
     Ok(())
 }
@@ -363,21 +378,28 @@ fn validate_receipt_identity_domain(
 ) -> Result<(), SessionError> {
     let envelope = &identity.local_key.transition.envelope;
     if !session.state.accounts.contains_key(&envelope.account) {
-        return Err(SessionError::InvalidSave(format!(
-            "saved receipt {} refers to unknown account {}",
-            identity.index, envelope.account.0
+        // fault2212：回执引用未知账户；ctx[0]=回执 index，ctx[1]=AccountId。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2212,
+            vec![identity.index, envelope.account.0],
         )));
     }
     if !session.state.markets.contains_key(&envelope.stock) {
-        return Err(SessionError::InvalidSave(format!(
-            "saved receipt {} refers to unknown stock {:?}",
-            identity.index, envelope.stock
+        // fault2213：回执引用未知股票；ctx[0]=回执 index，ctx[1]=StockId。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2213,
+            vec![identity.index, u64::from(envelope.stock.0)],
         )));
     }
     if envelope.order.0 == 0 || envelope.order.0 >= session.state.next_order_id {
-        return Err(SessionError::InvalidSave(format!(
-            "saved receipt {} has invalid order {}; expected 1..{}",
-            identity.index, envelope.order.0, session.state.next_order_id
+        // fault2214：回执订单 id 越界；ctx[0]=回执 index，ctx[1]=订单 id，ctx[2]=next_order_id 上界。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2214,
+            vec![
+                identity.index,
+                envelope.order.0,
+                session.state.next_order_id,
+            ],
         )));
     }
     Ok(())
@@ -400,11 +422,12 @@ pub fn restore_runtime_state(
                 .map(|key| (identity.index, key))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // fault2202：散户投影回执前缀重建失败（同码复用）；ctx[0] 待 C 批数值化。
     let seen = pipeline::RetailProjectionSeen::from_authoritative_identities(
         identities,
         state.next_receipt_base,
     )
-    .map_err(|error| invalid_save("saved retail projection receipt prefix", error))?;
+    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2202, vec![0])))?;
     let strategies = state
         .strategy_states
         .iter()
@@ -414,11 +437,9 @@ pub fn restore_runtime_state(
                 .into_strategy()
                 .map(crate::account::StoredStrategy::production)
                 .map(|strategy| (*account, strategy))
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "saved StrategyState for account {} is invalid: {error}",
-                        account.0
-                    ))
+                // fault2211：策略状态重建失败（同码复用）；ctx[0]=AccountId，ctx[1] 待 C 批数值化。
+                .map_err(|_| {
+                    SessionError::InvalidSave(ValidationFault::new(2211, vec![account.0, 0]))
                 })
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
@@ -431,11 +452,9 @@ pub fn restore_runtime_state(
             value
                 .clone_for_shadow()
                 .map(|value| (*account, value))
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "cannot prepare account {} for atomic strategy restore: {error}",
-                        account.0
-                    ))
+                // fault2215：账户影子克隆失败，无法原子恢复策略；ctx[0]=AccountId，ctx[1] 待 C 批数值化（原文本 "{error}"）。
+                .map_err(|_| {
+                    SessionError::InvalidSave(ValidationFault::new(2215, vec![account.0, 0]))
                 })
         })
         .collect::<Result<AccountBook, _>>()?;
@@ -443,29 +462,51 @@ pub fn restore_runtime_state(
         accounts
             .get_mut(&account)
             .ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved StrategyState refers to missing account {}",
-                    account.0
-                ))
+                // fault2206：策略状态引用缺失账户（同码复用）；ctx[0]=AccountId。
+                SessionError::InvalidSave(ValidationFault::new(2206, vec![account.0]))
             })?
             .restore_strategy(Some(strategy));
     }
+    for (code, cutoff) in &state.book_public_cutoff_sequences {
+        session
+            .state
+            .markets
+            .get_mut(code)
+            .expect("完整键集已校验")
+            .restore_auction_public_cutoff_sequence(*cutoff)
+            .map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(
+                    2291,
+                    vec![u64::from(code.0), *cutoff],
+                ))
+            })?;
+        // D5：镜像档的占位条目带上截点（save 侧镜像分支读
+        /// mirror.public_cutoff_serial——往返一致性；desk 首拍重建）。
+        if let Some(mirror) = session.state.desk_book_mirror.get_mut(code) {
+            mirror.public_cutoff_serial = *cutoff;
+        }
+    }
     session.state.accounts = accounts;
-    session.state.retained_market_history.restore_active(&state.active_minute_history);
     session.state.envelope_ledger = ledger;
     session.state.retail_projection_seen = seen;
-    session.state.personal_trade_confirmations = state
-        .personal_trade_confirmations
-        .iter()
-        .map(|(account, confirmations)| {
-            let mut history = crate::experience::AppendOnlyHistory::default();
-            for confirmation in confirmations {
-                history.push(confirmation.clone());
-            }
-            (*account, history)
-        })
-        .collect();
     session.state.next_receipt_base = state.next_receipt_base;
+    // restore重建的raw行没有serde proof。全部既有类型化fault（2216–2228）已按原优先级
+    // 执行完毕后才在此建立每订单自己的证明；本循环不得先于任何typed检查触发。
+    let config = session.state.setup.config.clone();
+    for (key, envelope) in session.state.envelope_ledger.iter() {
+        // Sol 终审四审符号价族：runtime 重建行不再走"nominal/limit 双零"
+        // 跳过通道——desk 挂簿 purse 收敛（trim_buy_purse_to_exact）后
+        /// live==buy_order_reservation(真 limit, 余量, 成交额) 恒成立，
+        /// runtime 行与旧管线行同过 verified_live（restore 后首拍前的
+        /// 证明空窗登记差异就此闭合）。
+        envelope.verified_live(&config).map_err(|_| {
+            // fault2220：restore末尾财务证明建立失败（同码复用压平）；ctx为订单身份。
+            SessionError::InvalidSave(ValidationFault::new(
+                2220,
+                vec![key.account.0, u64::from(key.stock.0), key.order.0],
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -474,43 +515,114 @@ impl SavedRuntimeState {
         &self,
         session: &GameSession,
     ) -> Result<pipeline::EnvelopeLedger, SessionError> {
+        // fault2216：活跃委托投影子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live order projection is invalid: {error}"）。
         let projected = session
             .project_live_envelopes()
-            .map_err(|error| invalid_save("saved live order projection", error))?
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2216, vec![0])))?
             .into_iter()
             .map(|envelope| (SavedEnvelopeKey::from_runtime(envelope.key()), envelope))
             .collect::<BTreeMap<_, _>>();
         let mut previous = None;
         let mut envelopes = Vec::with_capacity(self.live_envelopes.len());
+        // D5 runtime 形态：restore 后旧簿恒空（desk 权威）——legacy 空
+        // 且账本空时按 saved 自键重建（live 资源=remaining×price 买/余量
+        // 股卖——runtime_step 尾重建的同式近似）。
+        let runtime_shape = projected.is_empty()
+            && session
+                .state
+                .markets
+                .values()
+                .all(|market| market.resting_order_count() == 0);
         for saved in &self.live_envelopes {
             if previous.as_ref().is_some_and(|key| key >= &saved.key) {
-                return Err(SessionError::InvalidSave(
-                    "saved live envelopes are not in strict canonical key order".to_owned(),
-                ));
+                // fault2217：活跃信封非规范键严格序。
+                return Err(SessionError::InvalidSave(ValidationFault::bare(2217)));
             }
             previous = Some(saved.key.clone());
+            if runtime_shape {
+                let key = saved.key.to_runtime();
+                // live 资源真值（买=purse 占用、卖=余量股数——与
+                /// runtime_step 尾重建的 EchoResting 同源；此前 1 股/1 分
+                /// 占位使 restore 后 desk 种子与公开口径失真）。
+                let (cash, shares) = if key.side == Side::Buy {
+                    (saved.purse, 0u32)
+                } else {
+                    (crate::money::Money::ZERO, saved.remaining_qty)
+                };
+                // nominal 自费用表重算（决定性——与 runtime_step 尾重建
+                /// 同式；restore 尾的 verified_live 证明因此可建立，证明
+                /// 空窗登记就此闭合）。
+                let nominal = crate::runtime::fees::FeeQuote::nominal(
+                    &session.state.setup.config,
+                    key.side,
+                    saved.filled_value,
+                )
+                .map_err(|_| {
+                    SessionError::InvalidSave(ValidationFault::new(2219, vec![0]))
+                })?;
+                let audit = pipeline::EnvelopeAudit {
+                    limit: saved.limit,
+                    remaining_qty: saved.remaining_qty,
+                    filled_qty: saved.filled_qty,
+                    filled_value: saved.filled_value,
+                    nominal: pipeline::FeeComponents {
+                        commission: nominal.commission,
+                        stamp_tax: nominal.stamp_tax,
+                        transfer_fee: nominal.transfer_fee,
+                    },
+                    charged: saved.charged.to_runtime(),
+                };
+                let envelope =
+                    pipeline::Envelope::tick_start_existing(key, cash, shares, audit);
+                envelope
+                    .validate()
+                    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2222, vec![0])))?;
+                envelopes.push(envelope);
+                continue;
+            }
             let order_envelope = projected.get(&saved.key).ok_or_else(|| {
-                SessionError::InvalidSave(format!(
-                    "saved live envelope {:?} has no matching active order",
-                    saved.key
+                // fault2218：活跃信封无匹配在场委托；ctx[0]=AccountId，ctx[1]=StockId，
+                // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+                SessionError::InvalidSave(ValidationFault::new(
+                    2218,
+                    vec![
+                        saved.key.account.0,
+                        u64::from(saved.key.stock.0),
+                        saved.key.order.0,
+                        side_rank(saved.key.side),
+                    ],
                 ))
             })?;
             envelopes.push(saved.to_envelope(order_envelope)?);
         }
+        // fault2219：信封账本重建子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live envelope ledger is invalid: {error}"）。
         let ledger = pipeline::EnvelopeLedger::new(self.next_receipt_base, envelopes)
-            .map_err(|error| invalid_save("saved live envelope ledger", error))?;
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2219, vec![0])))?;
+        // fault2220：信封账本完整证据校验子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live envelope ledger evidence is invalid: {error}"）。
+        // 重建的 ledger 是全新缓存，≥512 行时必须走未缓存并行审计：使用
+        // session 自身的 compute 上下文（restore_with_compute 与 save 路径同源），
+        // 不落入 caller 当前的 global/foreign registry。
         ledger
-            .validate_complete_evidence()
-            .map_err(|error| invalid_save("saved live envelope ledger evidence", error))?;
+            .validate_complete_evidence_in(session.compute_context())
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2220, vec![0])))?;
         Ok(ledger)
     }
 }
 
 impl SavedLiveEnvelope {
     fn from_envelope(envelope: &pipeline::Envelope) -> Self {
+        let audit = envelope.audit();
         Self {
             key: SavedEnvelopeKey::from_runtime(envelope.key()),
-            charged: SavedFeeComponents::from_runtime(envelope.audit().charged),
+            charged: SavedFeeComponents::from_runtime(audit.charged),
+            remaining_qty: audit.remaining_qty,
+            filled_qty: audit.filled_qty,
+            filled_value: audit.filled_value,
+            limit: audit.limit,
+            purse: envelope.live().cash,
         }
     }
 
@@ -519,9 +631,16 @@ impl SavedLiveEnvelope {
         projected: &pipeline::Envelope,
     ) -> Result<pipeline::Envelope, SessionError> {
         if projected.key() != &self.key.to_runtime() {
-            return Err(SessionError::InvalidSave(format!(
-                "saved envelope {:?} disagrees with its active order identity",
-                self.key
+            // fault2221：信封与在场委托身份不一致；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2221,
+                vec![
+                    self.key.account.0,
+                    u64::from(self.key.stock.0),
+                    self.key.order.0,
+                    side_rank(self.key.side),
+                ],
             )));
         }
         let mut audit = projected.audit();
@@ -532,13 +651,23 @@ impl SavedLiveEnvelope {
             projected.live().shares,
             audit,
         );
+        // fault2222：活跃信封校验子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved live envelope is invalid: {error}"）。
         envelope
             .validate()
-            .map_err(|error| invalid_save("saved live envelope", error))?;
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2222, vec![0])))?;
         if envelope.live() == pipeline::ResVec::ZERO {
-            return Err(SessionError::InvalidSave(format!(
-                "saved live envelope {:?} has no live resources",
-                envelope.key()
+            // fault2223：活跃信封无在途资源；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            let key = envelope.key();
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2223,
+                vec![
+                    key.account.0,
+                    u64::from(key.stock.0),
+                    key.order.0,
+                    side_rank(key.side),
+                ],
             )));
         }
         Ok(envelope)
@@ -610,19 +739,23 @@ impl SavedFeeComponents {
     }
 
     fn total(self) -> Result<Money, SessionError> {
+        // fault2224：费用审计合计子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved fee audit total is invalid: {error}"）。
         self.commission
             .add(self.stamp_tax)
             .and_then(|subtotal| subtotal.add(self.transfer_fee))
-            .map_err(|error| invalid_save("saved fee audit total", error))
+            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2224, vec![0])))
     }
 
-    fn validate_nonnegative(self, label: &str) -> Result<(), SessionError> {
+    fn validate_nonnegative(self, _label: &str) -> Result<(), SessionError> {
         if [self.commission, self.stamp_tax, self.transfer_fee]
             .into_iter()
             .any(|amount| amount.cents() < 0)
         {
-            return Err(SessionError::InvalidSave(format!(
-                "saved {label} fee audit contains a negative component"
+            // fault2225：费用审计含负分量；ctx[0] 待 C 批数值化（原文本 "{label}"：nominal/charged）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2225,
+                vec![0],
             )));
         }
         Ok(())
@@ -634,9 +767,10 @@ fn validate_live_envelopes_against_orders(
     state: &SavedRuntimeState,
     ledger: &pipeline::EnvelopeLedger,
 ) -> Result<(), SessionError> {
+    // fault2216：活跃委托投影子错误压平（同码复用）；ctx[0] 待 C 批数值化。
     let expected = session
         .project_live_envelopes()
-        .map_err(|error| invalid_save("saved live order projection", error))?
+        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2216, vec![0])))?
         .into_iter()
         .map(|envelope| (envelope.key().clone(), envelope))
         .collect::<BTreeMap<_, _>>();
@@ -644,14 +778,32 @@ fn validate_live_envelopes_against_orders(
         .iter()
         .map(|(key, envelope)| (key.clone(), envelope))
         .collect::<BTreeMap<_, _>>();
-    if actual.len() != state.live_envelopes.len() || actual.len() != expected.len() {
-        return Err(SessionError::InvalidSave(
-            "saved live envelope set does not exactly match live order ownership".to_owned(),
-        ));
+    // D5 runtime 形态：旧簿恒空（desk 权威）——expected 空而 actual==saved
+    // 时为合法（在场委托面=desk，restore 侧由 build_ledger 的 saved 重建
+    // 路径承载）。
+    let runtime_shape = expected.is_empty() && actual.len() == state.live_envelopes.len();
+    if !runtime_shape
+        && (actual.len() != state.live_envelopes.len() || actual.len() != expected.len())
+    {
+        // fault2226：活跃信封集合与在场委托所有权不精确一致。
+        return Err(SessionError::InvalidSave(ValidationFault::bare(2226)));
+    }
+    if runtime_shape {
+        return Ok(());
     }
     for key in expected.keys() {
         let saved = actual.get(key).ok_or_else(|| {
-            SessionError::InvalidSave(format!("live order {key:?} has no saved envelope"))
+            // fault2227：在场委托无已存信封；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            SessionError::InvalidSave(ValidationFault::new(
+                2227,
+                vec![
+                    key.account.0,
+                    u64::from(key.stock.0),
+                    key.order.0,
+                    side_rank(key.side),
+                ],
+            ))
         })?;
         let saved_audit = saved.audit();
         let audit = CumulativeFeeAudit {
@@ -659,9 +811,25 @@ fn validate_live_envelopes_against_orders(
             filled_value: saved_audit.filled_value,
             charged: SavedFeeComponents::from_runtime(saved_audit.charged),
         };
-        if !audit.validate(&session.state.setup.config)? {
-            return Err(SessionError::InvalidSave(format!(
-                "saved envelope {key:?} has inconsistent cumulative charged fee audit"
+        // runtime 形态（desk 簿权威——ledger 非空而旧簿空）分段计费。
+        let desk_staged = !session.state.desk_book_mirror.is_empty()
+            || (session
+                .state
+                .markets
+                .values()
+                .all(|market| market.resting_order_count() == 0)
+                && session.state.envelope_ledger.iter().next().is_some());
+        if !audit.validate(&session.state.setup.config, desk_staged)? {
+            // fault2228：信封累计收费审计不一致；ctx[0]=AccountId，ctx[1]=StockId，
+            // ctx[2]=订单 id，ctx[3]=方向（Buy=0/Sell=1）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                2228,
+                vec![
+                    key.account.0,
+                    u64::from(key.stock.0),
+                    key.order.0,
+                    side_rank(key.side),
+                ],
             )));
         }
     }
@@ -679,37 +847,85 @@ pub(super) struct CumulativeFeeAudit {
 impl CumulativeFeeAudit {
     pub(super) fn nominal(&self, config: &GameConfig) -> Result<SavedFeeComponents, SessionError> {
         if self.filled_value.cents() < 0 {
-            return Err(SessionError::InvalidSave(
-                "saved filled value cannot be negative".to_owned(),
-            ));
+            // fault2229：已成交金额不可为负。
+            return Err(SessionError::InvalidSave(ValidationFault::bare(2229)));
         }
         if self.filled_value == Money::ZERO {
             return Ok(SavedFeeComponents::default());
         }
         Ok(SavedFeeComponents {
+            // fault2230：累计佣金计算子错误压平；ctx[0] 待 C 批数值化
+            // （原文 "saved cumulative commission is invalid: {error}"）。
             commission: config
                 .commission(self.filled_value)
-                .map_err(|error| invalid_save("saved cumulative commission", error))?,
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2230, vec![0])))?,
             stamp_tax: match self.side {
                 Side::Buy => Money::ZERO,
+                // fault2231：累计印花税计算子错误压平；ctx[0] 待 C 批数值化
+                // （原文 "saved cumulative stamp tax is invalid: {error}"）。
                 Side::Sell => config
                     .stamp_tax(self.filled_value)
-                    .map_err(|error| invalid_save("saved cumulative stamp tax", error))?,
+                    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2231, vec![0])))?,
             },
+            // fault2232：累计过户费计算子错误压平；ctx[0] 待 C 批数值化
+            // （原文 "saved cumulative transfer fee is invalid: {error}"）。
             transfer_fee: config
                 .transfer_fee(self.filled_value)
-                .map_err(|error| invalid_save("saved cumulative transfer fee", error))?,
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2232, vec![0])))?,
         })
     }
 
     /// 返回累计分量是否一致，由遍历调用方附加委托身份错误上下文。
-    pub(super) fn validate(&self, config: &GameConfig) -> Result<bool, SessionError> {
+    /// `desk_staged`：runtime 形态（Sol 五审重送批起 desk 买腿 charged
+    /// 为**边际**累计——多笔部分成交望远镜式==nominal(Σ)，与旧管线
+    /// 累计式口径及 fault2228 的 Buy 硬等契约一致；此前的"Σ分笔
+    /// nominal"分段口径（Σ≥nominal(Σ)）已随修复统一退役）。
+    pub(super) fn validate(
+        &self,
+        config: &GameConfig,
+        desk_staged: bool,
+    ) -> Result<bool, SessionError> {
         let nominal = self.nominal(config)?;
         let charged = self.charged;
         nominal.validate_nonnegative("nominal")?;
         charged.validate_nonnegative("charged")?;
         if self.side == Side::Buy {
-            return Ok(charged == nominal);
+            if !desk_staged {
+                return Ok(charged == nominal);
+            }
+            // 分段计费上界（终审三轮修正）：Σᵢ max(r·vᵢ, m) 的真上界=
+            // r·V + n·m，笔数 n 未存——按整手制度推导 n 的上界：每笔
+            // 成交 ≥1 手=lot_size 股×最小价（tick=1 分），故 n ≤
+            // V/(lot_size×1 分)。上界=nominal 的费率部分 + n_max×
+            // commission_min（nominal 自身含一次 min，计入 n_max 内不
+            // 重复计——上界推导独立于 nominal 结构，直接用 rV+n_max·m）。
+            // stamp 买腿恒零；commission/transfer 双边制度面均收。
+            let cents = self.filled_value.cents();
+            // 终审四轮修正：最小笔额=1 股×1 分（A 股零股卖出——零股
+            // 单部分成交笔额可至 1 股×最小 tick，docs/trading-rules.md
+            // 零股登记）；n 上界=V/1 分（每笔≥1 分）。
+            let n_max = u64::try_from(cents.max(1)).expect("成交额分值在 u64");
+            let commission_min = config.commission_min;
+            // 上界=r·V（nominal 的费率部分）+n_max·m：nominal=max(rV, m)，
+            // 拆出费率部分（nominal−m 当 min 生效；否则 nominal 即 rV）
+            // 后加 n_max 次 min——覆盖任意笔数/笔额的合法分段组合。
+            let n_max_i64 = n_max.min(i64::MAX as u64) as i64;
+            let commission_upper_cents = nominal
+                .commission
+                .cents()
+                .saturating_sub(commission_min.cents())
+                .saturating_add(
+                    n_max_i64.saturating_mul(commission_min.cents().max(1)),
+                )
+                .max(nominal.commission.cents());
+            return Ok(charged.stamp_tax == Money::ZERO
+                && charged.commission >= nominal.commission
+                && charged.commission <= Money::from_cents(commission_upper_cents)
+                // 过户费=纯费率（无最低下限）：desk 记 Σround(r·vᵢ)、
+                // nominal=round(r·V)——银行家舍入的累积差 ≤1 分/笔，
+                // 容差 ±n_max 分（终审四轮）。
+                && charged.transfer_fee.cents().abs_diff(nominal.transfer_fee.cents())
+                    <= n_max_i64 as u64);
         }
         let component_bounds_hold = charged.commission <= nominal.commission
             && charged.stamp_tax <= nominal.stamp_tax
@@ -755,7 +971,9 @@ impl SavedReceiptLocalKey {
                 ordinal: self.transition.ordinal,
             },
         )
-        .map_err(|error| invalid_save("saved receipt local key", error))
+        // fault2233：回执本地键重建子错误压平；ctx[0] 待 C 批数值化
+        // （原文 "saved receipt local key is invalid: {error}"）。
+        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2233, vec![0])))
     }
 }
 
@@ -811,6 +1029,10 @@ fn session_error_as_invariant(error: SessionError) -> StepFatal {
     invariant(error.to_string())
 }
 
-fn invalid_save(context: &str, error: impl std::fmt::Display) -> SessionError {
-    SessionError::InvalidSave(format!("{context} is invalid: {error}"))
+/// 信封方向数值化：Buy=0/Sell=1（与 SavedEnvelopeKey::Ord 的 side_rank 序一致）。
+fn side_rank(side: Side) -> u64 {
+    match side {
+        Side::Buy => 0,
+        Side::Sell => 1,
+    }
 }

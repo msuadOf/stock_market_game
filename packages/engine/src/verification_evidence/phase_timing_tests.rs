@@ -10,12 +10,13 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             FloatAllocation, NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec,
             SIMULATION_POLICY_ID,
         },
-        GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StrategyParams,
+        GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StockId, StrategyParams,
     };
 
     crate::GameSession::new(
         SessionSetup {
-            company_system: simple_company_fixture!(crate; ["600888"]),
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600888".to_owned()),
                 exchange: StockExchange::Shanghai,
@@ -54,17 +55,9 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
-            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
-            // 测量市场 tick 的 fixture 从交易日开局，元旦仍按日历休市。
-            start_date: crate::CivilDate::from_ymd(2030, 1, 2).unwrap(),
+            start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_owned(),
-            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-            flat_withholding_bp: Some(1000),
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
-            par_value_per_share: crate::Money::from_cents(100),
-            auto_corporate_foundation: false,
         },
         42,
     )
@@ -198,24 +191,76 @@ fn evidence_serializes_all_measurements_as_decimal_strings() {
     }
 }
 
-#[test]
-fn runnable_thread_samples_follow_the_real_rayon_registry() {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(2)
-        .build()
-        .unwrap();
-    let timing = pool.install(|| {
-        production_session(0)
-            .step_with_phase_timing()
-            .unwrap()
-            .timing
-    });
 
-    for record in timing.records() {
-        assert_eq!(record.runnable_thread_sample().minimum(), 2);
-        assert_eq!(record.runnable_thread_sample().maximum(), 2);
-    }
+#[test]
+fn compute_context_timing_binding_restores_after_error_unwind_and_nested_burst() {
+    with_phase_timing_binding(PhaseTimingBinding(None), || {
+        start_capture().unwrap();
+        let original = current_phase_timing_binding();
+        let alternate = PhaseTimingBinding(Some(std::sync::Arc::new(std::sync::Mutex::new(Collector::new()))));
+        let result: Result<(), ()> = with_phase_timing_binding(alternate.clone(), || {
+            assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), alternate.0.as_ref().unwrap()));
+            with_phase_timing_binding(original.clone(), || {
+                assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+            });
+            Err(())
+        });
+        assert!(result.is_err());
+        assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+        // 只在测试捕获 panic，验证 RAII；生产不把 panic 当可恢复 tick。
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_phase_timing_binding(PhaseTimingBinding(None), || panic!("测试观察绑定 unwind"));
+        }));
+        assert!(panic.is_err());
+        assert!(std::sync::Arc::ptr_eq(current_phase_timing_binding().0.as_ref().unwrap(), original.0.as_ref().unwrap()));
+    });
+    assert!(current_phase_timing_binding().0.is_none());
 }
+
+#[test]
+fn compute_context_shared_host_sessions_keep_timing_isolated() {
+    let compute = crate::ComputeContext::with_workers(2).unwrap();
+    std::thread::scope(|threads| {
+        for _ in 0..2 {
+            let compute = compute.clone();
+            threads.spawn(move || {
+                let mut session = production_session(0);
+                session.rebind_compute_for_verification(compute);
+                for _ in 0..2 {
+                    let timing = session.step_with_phase_timing().unwrap();
+                    assert_eq!(timing.timing().records().len(), 10);
+                    for record in timing.timing().records() {
+                        assert!(record.span_count() > 0);
+                        assert_eq!(record.runnable_thread_sample().maximum(), 2);
+                    }
+                }
+            });
+        }
+    });
+}
+
+#[test]
+fn compute_context_completion_implies_binding_exclusive_no_panic() {
+    let compute = crate::ComputeContext::with_workers(2).unwrap();
+    start_capture().unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    compute.spawn_two_stage(
+        || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            7_u32
+        },
+        move |value| done_tx.send(value).expect("两段式收尾信号必须可达"),
+    );
+    // 协调者收到完成信号 ⇒ 按协议最后一个绑定克隆已析构 ⇒ take_capture 必须成功且不 panic。
+    assert_eq!(done_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), 7);
+    let collector = take_capture().expect("完成信号之后绑定必须独占");
+    assert!(matches!(
+        collector.finish(),
+        Err(PhaseTimingCaptureError::NoCommittedTick)
+    ));
+}
+
+
 
 #[test]
 fn empty_and_nonempty_ingress_both_record_account_validation() {
@@ -226,7 +271,7 @@ fn empty_and_nonempty_ingress_both_record_account_validation() {
                 .enqueue_player_intent(
                     crate::AccountId(0),
                     crate::Intent::PlaceLimit {
-                        code: crate::StockCode("600888".to_owned()),
+                        code: crate::StockId(0),
                         side: crate::Side::Buy,
                         price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                         qty: 100,
@@ -267,7 +312,7 @@ fn phase_timing_identity_keeps_rank_index_names_and_tick_mapping() {
     let tick_phases = [
         TickPhase::ExpiryShadow,
         TickPhase::SealAllocationSnapshot,
-        TickPhase::DecisionShadow,
+        TickPhase::DecisionAndContinuation,
         TickPhase::AccountValidation,
         TickPhase::StockProcessing,
         TickPhase::ReceiptAggregation,
@@ -324,7 +369,7 @@ fn phase_timing_ledger_preserves_overflow_order_and_partial_samples() {
         span_count: u64::MAX,
         ..Accumulator::EMPTY
     };
-    assert_eq!(ledger.record_span(phase, 1), Some("span_count"));
+    assert_eq!(ledger.record_span(phase, 1, 1), Some("span_count"));
     let value = ledger.accumulator(phase);
     assert_eq!(
         (value.wall_time_ns, value.span_count, value.sample_count),
@@ -332,7 +377,7 @@ fn phase_timing_ledger_preserves_overflow_order_and_partial_samples() {
     );
     ledger.accumulator_mut(phase).sample_count = u64::MAX;
     assert_eq!(
-        ledger.record_span(phase, 1),
+        ledger.record_span(phase, 1, 1),
         Some("runnable_thread_sample_count")
     );
     assert_eq!(

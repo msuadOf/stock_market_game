@@ -1,0 +1,10 @@
+rustc 1.96.1 (31fca3adb 2026-06-26)
+binary: rustc
+commit-hash: 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd
+commit-date: 2026-06-26
+host: x86_64-unknown-linux-gnu
+release: 1.96.1
+LLVM version: 22.1.2
+cargo 1.96.1 (356927216 2026-06-26)
+Linux public-Super-Server 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug  1 04:26:38 UTC 2026 x86_64 GNU/Linux
+128

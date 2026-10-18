@@ -9,7 +9,6 @@ import {
   enumValue,
   exact,
   field,
-  boolean,
   finiteNumber,
   nullable,
   record,
@@ -21,7 +20,6 @@ import {
 } from "./guards.ts";
 import { ProtocolError } from "./types.ts";
 import { parseMoney as parseCanonicalMoney } from "../../utils/money.ts";
-import { parseTurnoverCents } from "../../utils/turnover.ts";
 
 export const TRADING_PHASES = ["CallAuction", "PreOpen", "ClosingAuction", "Continuous"] as const;
 export const HOLIDAY_KINDS = [
@@ -90,13 +88,8 @@ export function parseDailyCandle(value: unknown, path: string): DailyCandle {
   if (rawStats === null) return { ...candle, trade_stats: null };
   const stats = record(rawStats, `${path}.trade_stats`);
   exact(stats, ["turnover_cents", "trade_count"], `${path}.trade_stats`);
-  let turnoverCents: string;
-  try {
-    turnoverCents = parseTurnoverCents(field(stats, "turnover_cents", `${path}.trade_stats`), `${path}.trade_stats.turnover_cents`);
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    malformed(`${path}.trade_stats.turnover_cents`, error.message);
-  }
+  const turnoverCents = text(field(stats, "turnover_cents", `${path}.trade_stats`), `${path}.trade_stats.turnover_cents`);
+  if (!isU64Decimal(turnoverCents)) malformed(`${path}.trade_stats.turnover_cents`, "成交额必须是 u64 范围内的无损非负十进制字符串");
   return {
     ...candle,
     trade_stats: {
@@ -108,9 +101,7 @@ export function parseDailyCandle(value: unknown, path: string): DailyCandle {
 
 export function parseMarket(value: unknown, path: string): MarketSnap {
   const source = record(value, path);
-  exact(source, ["last_price", "last_close", "best_bid", "best_ask", "bids", "asks", "cash_ex_reference_pending_trade", "day_market_activity", "last_cash_ex_reference"], path);
-  const rawReference = field(source, "last_cash_ex_reference", path);
-  const reference = nullable(rawReference, parseExReferencePrice, `${path}.last_cash_ex_reference`);
+  exact(source, ["last_price", "last_close", "best_bid", "best_ask", "bids", "asks"], path);
   return {
     last_price: parseMoney(field(source, "last_price", path), `${path}.last_price`),
     last_close: parseMoney(field(source, "last_close", path), `${path}.last_close`),
@@ -118,20 +109,6 @@ export function parseMarket(value: unknown, path: string): MarketSnap {
     best_ask: nullable(field(source, "best_ask", path), parseMoney, `${path}.best_ask`),
     bids: parseDepth(field(source, "bids", path), `${path}.bids`),
     asks: parseDepth(field(source, "asks", path), `${path}.asks`),
-    cash_ex_reference_pending_trade: boolean(field(source, "cash_ex_reference_pending_trade", path), `${path}.cash_ex_reference_pending_trade`),
-    day_market_activity: boolean(field(source, "day_market_activity", path), `${path}.day_market_activity`),
-    last_cash_ex_reference: reference,
-  };
-}
-
-function parseExReferencePrice(value: unknown, path: string): { readonly ex_date: string; readonly reference_price: string } {
-  const source = record(value, path);
-  exact(source, ["ex_date", "reference_price"], path);
-  const referencePrice = parseMoney(field(source, "reference_price", path), `${path}.reference_price`);
-  if (BigInt(referencePrice) <= 0n) malformed(`${path}.reference_price`, `${path}.reference_price 除息参考价必须为正`);
-  return {
-    ex_date: parseIsoDate(field(source, "ex_date", path), `${path}.ex_date`),
-    reference_price: referencePrice,
   };
 }
 

@@ -27,14 +27,6 @@ pub struct OperatingCompany {
     pub(crate) next_flow_seq: i64,
 }
 
-pub struct OperatingReportCorrection<'a> {
-    pub closing: &'a mut crate::accounting::closing::ClosingEngine,
-    pub library: &'a mut crate::information::PublicLibrary,
-    pub correction: crate::accounting::closing::CorrectionRequest,
-    pub publication: crate::information::PublicationRequest,
-    pub posted_on: CivilDate,
-}
-
 impl OperatingCompany {
     pub fn spec(&self) -> &crate::company::spec::CompanySpec {
         &self.spec
@@ -102,7 +94,7 @@ pub(crate) struct CompanyOperationsHashProjection {
 }
 
 #[derive(Default)]
-pub(super) struct CompanyOperationsHashCache(OnceLock<CompanyOperationsHashProjection>);
+struct CompanyOperationsHashCache(OnceLock<CompanyOperationsHashProjection>);
 
 impl Clone for CompanyOperationsHashCache {
     fn clone(&self) -> Self {
@@ -133,11 +125,12 @@ impl PartialEq for CompanyOperationsHashCache {
 impl Eq for CompanyOperationsHashCache {}
 
 /// 经营编排引擎（经营与信息披露）。持有调度器、分流 RNG 与全部公司；serde 全量持久化。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyOperations {
-    #[serde(with = "crate::session::u64_decimal")]
+    #[serde(with = "crate::u64_decimal")]
     pub(crate) seed: u64,
     pub(crate) shock_params: ShockParams,
+    pub(crate) catalog: crate::company::spec::CompanyCatalog,
     pub(crate) scheduler: OperatingScheduler,
     pub(crate) market_rng: OperatingRng,
     pub(crate) industry_rngs: BTreeMap<IndustryId, OperatingRng>,
@@ -146,181 +139,10 @@ pub struct CompanyOperations {
     pub(crate) history: Option<HistoryMeta>,
     pub(crate) payment_failures: BTreeMap<CivilDate, Vec<PaymentFailureRecord>>,
     #[serde(skip, default)]
-    pub(super) hash_projection_cache: CompanyOperationsHashCache,
+    hash_projection_cache: CompanyOperationsHashCache,
 }
 
 impl CompanyOperations {
-    pub(crate) fn correct_company_report_for_session(
-        &mut self,
-        id: &CompanyId,
-        request: OperatingReportCorrection<'_>,
-    ) -> Result<
-        (
-            crate::accounting::closing::ReportHandle,
-            crate::information::PublicationId,
-        ),
-        crate::company::CompanyCorrectionError,
-    > {
-        use crate::company::report_correction::{prepare_correction, CompanyCorrectionInput};
-        use crate::company::CompanyCorrectionError;
-        let reason = request.correction.reason.clone();
-        let invalid = |detail: String| CompanyCorrectionError::InvalidInput {
-            reason: reason.clone(),
-            detail,
-        };
-        let mut trial = self
-            .companies
-            .get(id)
-            .cloned()
-            .ok_or_else(|| invalid(format!("经营公司 {id:?} 不存在")))?;
-        let member = crate::accounting::consolidation::MemberId(id.0.clone());
-        if request.publication.company != *id
-            || request.publication.scope
-                != crate::accounting::consolidation::ScopeId::Standalone(member.clone())
-        {
-            return Err(invalid(
-                "更正公司与单体 Scope 必须来自实际经营 owner".into(),
-            ));
-        }
-        for entry in &request.correction.entries {
-            for line in &entry.lines {
-                let protected = match &trial.books {
-                    IndustryBooks::Industrial(books) => {
-                        [
-                            "1122", "2202", "1403", "1405", "5001", "1601", "1602", "1603", "2001",
-                            "2501", "1811", "222104", "6801",
-                        ]
-                        .contains(&line.account.0.as_str())
-                            || (line.account.0 == "2231" && books.loans().next().is_some())
-                    }
-                    IndustryBooks::Bank(_) => [
-                        "1131", "1301", "1303", "2011", "2601", "2231", "1811", "222104", "6801",
-                    ]
-                    .contains(&line.account.0.as_str()),
-                    IndustryBooks::Insurance(_) => [
-                        "1122", "2501", "2502", "6051", "6451", "6541", "1811", "222104", "6801",
-                    ]
-                    .contains(&line.account.0.as_str()),
-                    IndustryBooks::RealEstate(_) => [
-                        "1122", "1541", "1542", "2001", "2203", "2231", "2501", "1811", "222104",
-                        "6801",
-                    ]
-                    .contains(&line.account.0.as_str()),
-                };
-                if protected {
-                    return Err(invalid(format!(
-                        "科目 {} 需要 {:?} 的结构化子账事实，不能直接通过 Journal 更正",
-                        line.account.0, trial.spec.kind
-                    )));
-                }
-            }
-        }
-        let (books, position, policy, next_event_id) = trial.books.income_tax_owner();
-        let scratch = prepare_correction(CompanyCorrectionInput {
-            books,
-            position,
-            policy,
-            next_event_id,
-            closing: request.closing,
-            library: request.library,
-            member: &member,
-            industry: crate::information::industry_presentation(trial.spec.kind),
-            correction: request.correction,
-            publication: request.publication,
-            posted_on: request.posted_on,
-        })?;
-        trial.books.install_income_tax_owner(
-            scratch.books,
-            scratch.position,
-            scratch.next_event_id,
-        );
-        let encoded = serde_json::to_value(&trial.books).map_err(|cause| {
-            CompanyCorrectionError::Serialization {
-                reason: reason.clone(),
-                cause: Box::new(cause),
-            }
-        })?;
-        trial.books = serde_json::from_value(encoded).map_err(|cause| {
-            CompanyCorrectionError::Serialization {
-                reason: reason.clone(),
-                cause: Box::new(cause),
-            }
-        })?;
-        trial
-            .books
-            .validate_owner_state()
-            .map_err(|cause| CompanyCorrectionError::Owner {
-                reason,
-                cause: Box::new(cause),
-            })?;
-        self.companies.insert(id.clone(), trial);
-        *request.closing = scratch.closing;
-        *request.library = scratch.library;
-        self.invalidate_hash_projection();
-        Ok((scratch.report, scratch.publication))
-    }
-
-    pub fn correct_industrial_report(
-        &mut self,
-        id: &CompanyId,
-        request: OperatingReportCorrection<'_>,
-    ) -> Result<
-        (
-            crate::accounting::closing::ReportHandle,
-            crate::information::PublicationId,
-        ),
-        crate::company::industrial::IndustrialCorrectionError,
-    > {
-        use crate::company::industrial::{
-            IndustrialCorrectionError, IndustrialError, IndustrialReportCorrection,
-        };
-        let reason = request.correction.reason.clone();
-        let invalid = |detail| IndustrialCorrectionError::Industrial {
-            reason: reason.clone(),
-            cause: IndustrialError::IncomeTaxStateInconsistent { detail },
-        };
-        let company = self
-            .companies
-            .get(id)
-            .ok_or_else(|| invalid(format!("经营公司 {id:?} 不存在")))?;
-        if company.spec.group_parent.is_some()
-            || self
-                .companies
-                .values()
-                .any(|candidate| candidate.spec.group_parent.as_ref() == Some(id))
-        {
-            return Err(IndustrialCorrectionError::Industrial {
-                reason,
-                cause: IndustrialError::GroupedTaxCorrectionUnsupported {
-                    company: id.clone(),
-                },
-            });
-        }
-        let member = crate::accounting::consolidation::MemberId(id.0.clone());
-        if request.publication.company != *id
-            || request.publication.scope
-                != crate::accounting::consolidation::ScopeId::Standalone(member.clone())
-        {
-            return Err(invalid(
-                "工商更正公司和单体 Scope 必须来自实际经营 owner".into(),
-            ));
-        }
-        let company = self.companies.get_mut(id).expect("已验证经营公司存在");
-        let IndustryBooks::Industrial(books) = &mut company.books else {
-            return Err(invalid(format!("经营公司 {id:?} 不是工商账套")));
-        };
-        let result = books.correct_and_publish_with_tax(IndustrialReportCorrection {
-            closing: request.closing,
-            library: request.library,
-            member: &member,
-            correction: request.correction,
-            publication: request.publication,
-            posted_on: request.posted_on,
-        })?;
-        self.invalidate_hash_projection();
-        Ok(result)
-    }
-
     /// live 构造：提交首经营日的滚动利息 due（保险无计息承载面，不注册）。
     pub fn new(
         config: CompanyOperationsConfig,
@@ -351,6 +173,7 @@ impl CompanyOperations {
         let CompanyOperationsConfig {
             seed,
             shock_params,
+            catalog,
             companies: company_configs,
         } = config;
         let stream = |stream_kind: RngStream, stable_id: &str| {
@@ -375,8 +198,12 @@ impl CompanyOperations {
             industry_rngs
                 .entry(spec.industry.clone())
                 .or_insert_with(|| stream(RngStream::IndustryShock, &spec.industry.0));
-            let rng = stream(RngStream::CompanyOperating, &spec.id.0);
-            let id = spec.id.clone();
+            let rng = stream(RngStream::CompanyOperating, &spec.code);
+            let id = catalog
+                .id(&spec.code)
+                .ok_or_else(|| OperationsError::InvalidConfig {
+                    detail: format!("company code missing from catalog: {}", spec.code),
+                })?;
             companies.insert(
                 id,
                 OperatingCompany {
@@ -395,6 +222,7 @@ impl CompanyOperations {
             scheduler: OperatingScheduler::new(),
             market_rng: stream(RngStream::MarketShock, "market"),
             industry_rngs,
+            catalog,
             companies,
             next_expected: Some(first_day),
             history: None,
@@ -407,6 +235,14 @@ impl CompanyOperations {
 
     pub fn scheduler(&self) -> &OperatingScheduler {
         &self.scheduler
+    }
+
+    /// 公司 due 单一 authority 的下一到期自然日（转发 [`OperatingScheduler::next_due_date`]）。
+    ///
+    /// 会话时间推进据此取公司侧合法时点并调用 [`Self::advance_civil_day`]；
+    /// 自然日时钟不镜像逐项公司待办。
+    pub fn next_due_date(&self) -> Option<CivilDate> {
+        self.scheduler.next_due_date()
     }
 
     pub fn payment_failures_on(&self, date: CivilDate) -> &[PaymentFailureRecord] {
@@ -444,7 +280,7 @@ impl CompanyOperations {
                 return Err(OperationsError::InvalidPaymentHistory {
                     detail: format!(
                         "payment failure cannot be active economic shock for {:?}",
-                        company.spec.id
+                        company.spec.code
                     ),
                 });
             }
@@ -454,6 +290,11 @@ impl CompanyOperations {
 
     pub fn company(&self, id: &CompanyId) -> Option<&OperatingCompany> {
         self.companies.get(id)
+    }
+
+    /// 公司目录（数值 id ↔ 代码翻译层；公司间交易对手代码 → id 判定用）。
+    pub fn catalog(&self) -> &crate::company::spec::CompanyCatalog {
+        &self.catalog
     }
 
     /// 可变公司访问（会话装配与执行封账接缝：`close_month`/`close_year` 需要

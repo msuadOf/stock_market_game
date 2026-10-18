@@ -1,39 +1,34 @@
 import type { StrictSaveEnvelope } from "../save/schema/root.ts"
-import type { Event } from "../types/generated/Event.ts"
-import type { PlayerWorkingOrder } from "../host/player-working-orders.ts"
-export type { PlayerWorkingOrder } from "../host/player-working-orders.ts"
+import type { CodedEvent as Event } from "../host/protocol/stock-identity.ts"
+import type { Cents } from "../types/engine.ts"
 
-type WorkingOrderSource = Pick<StrictSaveEnvelope, "auction_orders" | "resting_orders">
+export type PlayerWorkingOrder = {
+  readonly id: number
+  readonly code: string
+  readonly side: "Buy" | "Sell"
+  readonly price: Cents
+  readonly remainingQty: number
+  readonly venue: "Auction" | "Continuous"
+  readonly frozen: "Cash" | "Shares"
+}
 
-export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWorkingOrder[] {
+type WorkingOrderSource = Pick<StrictSaveEnvelope, "resting_orders">
+
+export function projectPlayerOrders(slot: WorkingOrderSource, venue: PlayerWorkingOrder["venue"]): readonly PlayerWorkingOrder[] {
   const orders: PlayerWorkingOrder[] = []
-  for (const [code, auctionOrders] of Object.entries(slot.auction_orders)) {
-    for (const order of auctionOrders) {
-      if (order.owner !== "0") continue
-      orders.push({
-        owner: "0",
-        id: order.order_id,
-        code,
-        side: order.side,
-        price: order.limit,
-        remainingQty: order.qty,
-        venue: "auction",
-        frozen: order.side === "Buy" ? "cash" : "shares",
-      })
-    }
-  }
+  // 统一 book 后存档不再携带独立竞价委托集合；投影 resting_orders 的调用方
+  // 必须显式交出权威 venue，不从另一份委托集合或默认值猜测。
   for (const [code, restingOrders] of Object.entries(slot.resting_orders)) {
     for (const order of restingOrders) {
-      if (order.owner !== "0" || order.qty === 0) continue
+      if (order.owner !== 0 || order.qty === 0) continue
       orders.push({
-        owner: "0",
         id: order.id,
         code,
         side: order.side,
         price: order.price,
         remainingQty: order.qty,
-        venue: "continuous",
-        frozen: order.side === "Buy" ? "cash" : "shares",
+        venue,
+        frozen: order.side === "Buy" ? "Cash" : "Shares",
       })
     }
   }
@@ -58,11 +53,11 @@ export class PlayerOrderRefreshGate {
   }
 }
 
-export function playerOrderFactsRequireRefresh(facts: readonly PlayerOrderFact[], accountId: string | null = "0"): boolean {
+export function playerOrderFactsRequireRefresh(facts: readonly PlayerOrderFact[]): boolean {
   return facts.some(({ event }) =>
-    ("OrderAccepted" in event && String(event.OrderAccepted.account) === accountId)
-    || ("OrderCanceled" in event && String(event.OrderCanceled.account) === accountId)
-    || ("Trade" in event && (String(event.Trade.maker) === accountId || String(event.Trade.taker) === accountId))
+    ("OrderAccepted" in event && event.OrderAccepted.account === 0)
+    || ("OrderCanceled" in event && event.OrderCanceled.account === 0)
+    || ("Trade" in event && (event.Trade.maker === 0 || event.Trade.taker === 0))
     || "AuctionCompleted" in event
     || "DayBoundary" in event,
   )

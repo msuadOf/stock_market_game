@@ -94,7 +94,8 @@ impl TradingPlan {
         Ok(())
     }
 
-    /// 委托被权威路由接受：只建立子单引用，绝不推进成交进度。
+    /// 委托被权威路由接受：只建立唯一子单引用，绝不推进成交进度。
+    /// 纯状态机沿用既有事件输入；生产剩余数量由 `record_child_submitted` 登记。
     pub(super) fn record_child_order_accepted(
         &mut self,
         order_id: OrderId,
@@ -111,16 +112,20 @@ impl TradingPlan {
         &mut self,
         order_id: OrderId,
         trading_day: u64,
+        allow_beyond_horizon: bool,
     ) -> Result<(), PlanError> {
-        self.ensure_event_allowed("child-order-canceled", trading_day, false)?;
+        self.ensure_event_allowed("child-order-canceled", trading_day, allow_beyond_horizon)?;
         self.require_linked_child(order_id)?;
         self.active_child_order_id = None;
+        if let Some(leg) = self.execution.as_mut() {
+            leg.active_child_remaining_qty = None;
+        }
         self.last_event_trading_day = trading_day;
         Ok(())
     }
 
     fn require_linked_child(&self, order_id: OrderId) -> Result<(), PlanError> {
-        match self.active_child_order_id {
+        match self.active_child_order_id() {
             Some(linked) if linked == order_id => Ok(()),
             linked => Err(PlanError::FillFromUnknownChildOrder {
                 plan_id: self.plan_id,
@@ -152,15 +157,39 @@ impl TradingPlan {
             .ok_or(PlanError::QuantityOverflow {
                 plan_id: self.plan_id,
             })?;
+        // 先验证执行腿算术，失败不得先改计划进度。纯计划事件没有调度参数时
+        // 沿用既有 child_complete 输入；真实生产执行必有腿与剩余数量。
+        let remaining_after = match self.execution.as_ref() {
+            Some(leg) => {
+                let before = leg.active_child_remaining_qty.ok_or(PlanError::MissingExecutionLeg {
+                    plan_id: self.plan_id,
+                })?;
+                let after = before.checked_sub(qty).ok_or(PlanError::FillExceedsChild {
+                    plan_id: self.plan_id,
+                    order_id,
+                    remaining: before,
+                    fill_qty: qty,
+                })?;
+                if (after == 0) != child_complete {
+                    return Err(PlanError::ChildCompletionMismatch { plan_id: self.plan_id });
+                }
+                Some(after)
+            }
+            None => None,
+        };
         self.filled_qty = new_filled;
         self.last_event_trading_day = trading_day;
-        if let PlanTarget::ShareCount(target_qty) = self.target {
-            if new_filled == target_qty {
-                self.status = PlanStatus::Completed;
-            }
+        if matches!(self.target, PlanTarget::ShareCount(target) if new_filled == target) {
+            self.status = PlanStatus::Completed;
         }
         if child_complete || self.is_terminal() {
             self.active_child_order_id = None;
+        }
+        if let Some(leg) = self.execution.as_mut() {
+            leg.active_child_remaining_qty = remaining_after.filter(|qty| *qty > 0);
+        }
+        if self.is_terminal() {
+            self.execution = None;
         }
         Ok(())
     }
@@ -206,6 +235,80 @@ impl TradingPlan {
             reason: TerminationReason::FilledBeyondTarget,
         };
         self.active_child_order_id = None;
+        self.execution = None;
+        self.last_event_trading_day = trading_day;
+        Ok(())
+    }
+}
+
+
+impl TradingPlan {
+    /// 安装/替换执行腿调度参数（新子单报价前调用）。仅 `Active` 计划可安装；
+    /// 反向修订、终止、到期与日终都会整体结束执行腿（置 `None`）。
+    pub(in crate::plans) fn install_execution_leg(
+        &mut self,
+        child_qty: u32,
+        limit_price: crate::Money,
+        expires_market_minute: u64,
+    ) -> Result<(), PlanError> {
+        if self.status != PlanStatus::Active {
+            return Err(PlanError::InvalidTransition {
+                plan_id: self.plan_id,
+                from: self.status,
+                event: "install-execution-leg",
+            });
+        }
+        if child_qty == 0 || limit_price.cents() <= 0 {
+            return Err(PlanError::InvalidExecutionParameters { plan_id: self.plan_id });
+        }
+        if self.active_child_order_id.is_some() {
+            return Err(PlanError::SecondActiveChild { plan_id: self.plan_id });
+        }
+        self.execution = Some(super::state::PlanExecutionLeg {
+            child_qty,
+            limit_price,
+            expires_market_minute,
+            active_child_remaining_qty: None,
+        });
+        Ok(())
+    }
+
+    /// 提交入口直接登记在途子单身份与剩余数量（权威路由确认后调用）。
+    /// 不同于事件重复，第二张不同子单是类型化错误（对应旧镜像的断言边界）。
+    pub(in crate::plans) fn adopt_child_facts(
+        &mut self,
+        order_id: OrderId,
+        qty: u32,
+        trading_day: u64,
+    ) -> Result<(), PlanError> {
+        self.ensure_event_allowed("child-order-accepted", trading_day, false)?;
+        let leg = self.execution.as_mut().ok_or(PlanError::MissingExecutionLeg {
+            plan_id: self.plan_id,
+        })?;
+        if self.active_child_order_id.is_some() {
+            return Err(PlanError::SecondActiveChild { plan_id: self.plan_id });
+        }
+        if qty == 0 {
+            return Err(PlanError::ZeroFillQuantity {
+                plan_id: self.plan_id,
+            });
+        }
+        // Astra 终审 P1：采纳入口上限防御——目标份额制下，任何来源（计划路由的
+        // typed 命令与普通来源委托同走本收口）的子单数量不得超过 target-filled。
+        // 反例形状（target=400/filled=100/子单已撤腿保留 + 普通 Buy 400）在此被拒。
+        if matches!(self.target, crate::plans::PlanTarget::ShareCount(_) if qty
+            > match self.target {
+                crate::plans::PlanTarget::ShareCount(target) => target.saturating_sub(self.filled_qty),
+                crate::plans::PlanTarget::PositionFractionBp(_) => u32::MAX,
+            })
+        {
+            return Err(PlanError::AdoptionExceedsRemaining {
+                plan_id: self.plan_id,
+                qty,
+            });
+        }
+        self.active_child_order_id = Some(order_id);
+        leg.active_child_remaining_qty = Some(qty);
         self.last_event_trading_day = trading_day;
         Ok(())
     }
@@ -225,6 +328,7 @@ impl TradingPlan {
                 // 反向修订开新进度：旧腿的真实成交已在账户里，不在此重复记账。
                 self.filled_qty = 0;
                 self.active_child_order_id = None;
+                self.execution = None;
                 if self.direction == Side::Buy && revision.direction == Side::Sell {
                     self.status = PlanStatus::Active;
                 }
@@ -254,6 +358,10 @@ impl TradingPlan {
         });
         self.review.last_review_signal_score_bp = revision.opinion.signal_score_bp;
         self.review.last_review_trading_day = revision.trading_day;
+        if self.is_terminal() {
+            self.active_child_order_id = None;
+            self.execution = None;
+        }
         self.last_event_trading_day = revision.trading_day;
         Ok(())
     }
@@ -310,6 +418,7 @@ impl TradingPlan {
             reason: TerminationReason::HorizonExpired,
         };
         self.active_child_order_id = None;
+        self.execution = None;
         self.last_event_trading_day = trading_day;
         Ok(())
     }
@@ -320,6 +429,7 @@ impl TradingPlan {
     pub(super) fn end_of_trading_day(&mut self, trading_day: u64) -> Result<(), PlanError> {
         self.ensure_event_allowed("day-end", trading_day, true)?;
         self.active_child_order_id = None;
+        self.execution = None;
         if trading_day >= self.last_valid_trading_day() {
             self.status = PlanStatus::Terminated {
                 reason: TerminationReason::HorizonExpired,

@@ -1,0 +1,217 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a149dc-bdcf-7200-b5fc-33894b182d72).
+[codex] Turn started (01a149dc-c708-7730-8f8c-8a566231b1ce).
+[codex] Assistant message captured: 我会先核对规范、相关 ADR 和运行时读写链，再逐问区分产品语义、兼容残留与实现选择。此次只读代码、Git 和归档证据，不写文件、不构建。
+[codex] Running command: /bin/zsh -lc "pwd; rg --files -g 'AGENTS.md' -g '*0017*' -g '*0025*' -g '*0042*' -g '*0043*' ...
+[codex] Command completed: /bin/zsh -lc "pwd; rg --files -g 'AGENTS.md' -g '*0017*' -g '*0025*' -g '*0042*' -g '*0043*' ... (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat docs/principles.md docs/open-questions.md docs/architecture.md'
+[codex] Command completed: /bin/zsh -lc 'cat docs/principles.md docs/open-questions.md docs/architecture.md' (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat docs/decisions/0017-escrow-parallel-tick.md docs/decisions/0025-day-end-onl...
+[codex] Command completed: /bin/zsh -lc 'cat docs/decisions/0017-escrow-parallel-tick.md docs/decisions/0025-day-end-onl... (exit 0)
+[codex] Running command: /bin/zsh -lc "wc -l packages/engine/src/runtime/{drive,group,protocol,world,desk,coordinator}...
+[codex] Running command: /bin/zsh -lc 'git status --short; git log -8 --oneline; rg --files packages/engine/src/runtim...
+[codex] Command completed: /bin/zsh -lc "wc -l packages/engine/src/runtime/{drive,group,protocol,world,desk,coordinator}... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git status --short; git log -8 --oneline; rg --files packages/engine/src/runtim... (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat docs/decisions/0043-std-thread-ownership-runtime.md'
+[codex] Command completed: /bin/zsh -lc 'cat docs/decisions/0043-std-thread-ownership-runtime.md' (exit 0)
+[codex] Running command: /bin/zsh -lc "cat docs/decisions/0025-day-end-only-persistence.md docs/decisions/0042-trade-m...
+[codex] Command completed: /bin/zsh -lc "cat docs/decisions/0025-day-end-only-persistence.md docs/decisions/0042-trade-m... (exit 0)
+[codex] Running command: /bin/zsh -lc "git status --short; git log -6 --oneline; wc -l packages/engine/src/runtime/{dr...
+[codex] Command completed: /bin/zsh -lc "git status --short; git log -6 --oneline; wc -l packages/engine/src/runtime/{dr... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '1180,1450p'; nl -ba packa...
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '460,875p'"
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '1180,1450p'; nl -ba packa... (exit 0)
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '460,875p'" (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat agents/std-thread-migration/evidence/perf-p2/perf-p2-p0-breakdown.md agents...
+[codex] Command completed: /bin/zsh -lc 'cat agents/std-thread-migration/evidence/perf-p2/perf-p2-p0-breakdown.md agents... (exit 0)
+[codex] Assistant message captured: 代码中已确认一个关键区别：ADR-0017 要求成功 `step()` 后本拍结算立即可见；ADR-0043 则把“公开账户本拍投影、组内账户下一 `Start` 对齐”写成了双写方案。...
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '760,875p'; nl -ba package...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '760,875p'; nl -ba package... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'pub fn|fn step|runtime|hash' packages/engine/src/session/failure.rs; nl ...
+[codex] Command completed: /bin/zsh -lc "rg -n 'pub fn|fn step|runtime|hash' packages/engine/src/session/failure.rs; nl ... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'pub fn|pub struct|committed|run_tick|report_log|converge|abort|Start|Ech...
+[codex] Command completed: /bin/zsh -lc "rg -n 'pub fn|pub struct|committed|run_tick|report_log|converge|abort|Start|Ech... (exit 0)
+[codex] Running command: /bin/zsh -lc "cat agents/std-thread-migration/evidence/perf-p2/perf-p2-p0-breakdown.md; cat a...
+[codex] Command completed: /bin/zsh -lc "cat agents/std-thread-migration/evidence/perf-p2/perf-p2-p0-breakdown.md; cat a... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '474,571p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '474,571p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '1,205p'; rg -n 'pub fn ru...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '1,205p'; rg -n 'pub fn ru... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '675,1005p'; nl -ba packag...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '675,1005p'; nl -ba packag... (exit 0)
+[codex] Running command: /bin/zsh -lc "cat packages/engine/examples/runtime_s5_probe.rs | head -110; cat agents/std-th...
+[codex] Command completed: /bin/zsh -lc "cat packages/engine/examples/runtime_s5_probe.rs | head -110; cat agents/std-th... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '864,1000p'; nl -ba packag...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/group.rs | sed -n '864,1000p'; nl -ba packag... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '1380,1575p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/world.rs | sed -n '1380,1575p'; nl -ba packa... (exit 0)
+[codex] Assistant message captured: 目前证据支持“会话镜像有大量可移除成本”，但不支持把 1358/263 直接解释为纯会话税：A 探针使用 10 组，且未接入 `belief_seeds`、`root_projectio...
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/protocol.rs | sed -n '1,95p'; nl -ba package...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/protocol.rs | sed -n '1,95p'; nl -ba package... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/snapshot.rs | sed -n '1,250p'; rg -n 'pub fn...
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '395,437p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/snapshot.rs | sed -n '1,250p'; rg -n 'pub fn... (exit 0)
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '395,437p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "cat agents/std-thread-migration/design-docs/migration-design/F-converged-archit...
+[codex] Command completed: /bin/zsh -lc "cat agents/std-thread-migration/design-docs/migration-design/F-converged-archit... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'default-setup|auction_ticks|groups|driver_semantics_probe' agents/std-th...
+[codex] Command completed: /bin/zsh -lc "rg -n 'default-setup|auction_ticks|groups|driver_semantics_probe' agents/std-th... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n '同拍|同 tick|官方|2026|T\\+1|不可见|竞价|费用|简化' docs/trading-rules.md | head -80; ...
+[codex] Command completed: /bin/zsh -lc "rg -n '同拍|同 tick|官方|2026|T\\+1|不可见|竞价|费用|简化' docs/trading-rules.md | head -80; ... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '1236,1322p'; nl -ba packa...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '1236,1322p'; nl -ba packa... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/protocol/commit.rs | sed -n '1,110p'; nl -ba...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/protocol/commit.rs | sed -n '1,110p'; nl -ba... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'execute_authoritative_tick_with_projection|runtime|step_via_runtime' pac...
+[codex] Command completed: /bin/zsh -lc "rg -n 'execute_authoritative_tick_with_projection|runtime|step_via_runtime' pac... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/pipeline/authoritative_tick.rs | sed -n '1,2...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/pipeline/authoritative_tick.rs | sed -n '1,2... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'runtime|step_via|prepare_market_tick_with_evidence|step_frame' packages/...
+[codex] Command completed: /bin/zsh -lc "rg -n 'runtime|step_via|prepare_market_tick_with_evidence|step_frame' packages/... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'fn plan_tick|step_runtime_enabled|runtime_driver|runtime::' packages/eng...
+[codex] Command completed: /bin/zsh -lc "rg -n 'fn plan_tick|step_runtime_enabled|runtime_driver|runtime::' packages/eng... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg --files .tmp agents/std-thread-migration/evidence/perf-p2 -g '*.txt' -g '*.m...
+[codex] Command completed: /bin/zsh -lc "rg --files .tmp agents/std-thread-migration/evidence/perf-p2 -g '*.txt' -g '*.m... (exit 0)
+[codex] Assistant message captured: 还有一项会影响收尾顺序：当前 `ProtocolSession::step_frame()` 进入的是旧 `prepare_market_tick_with_evidence` 管线，s...
+[codex] Running command: /bin/zsh -lc 'perf report --stdio --no-children -i .tmp/perf-records/p14-fp2-after-4a.perf.da...
+[codex] Running command: /bin/zsh -lc "git rev-parse HEAD; git diff --stat; nl -ba agents/std-thread-migration/evidenc...
+[codex] Command completed: /bin/zsh -lc "git rev-parse HEAD; git diff --stat; nl -ba agents/std-thread-migration/evidenc... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'perf report --stdio --no-children -i .tmp/perf-records/p14-fp2-after-4a.perf.da... (exit 0)
+[codex] Running command: /bin/zsh -lc 'perf report --stdio --no-children -i .tmp/perf-records/p14-fp2-after-4a.perf.da...
+[codex] Command completed: /bin/zsh -lc 'perf report --stdio --no-children -i .tmp/perf-records/p14-fp2-after-4a.perf.da... (exit 0)
+[codex] Running command: /bin/zsh -lc "git status --short; nl -ba agents/std-thread-migration/design-docs/migration-de...
+[codex] Command completed: /bin/zsh -lc "git status --short; nl -ba agents/std-thread-migration/design-docs/migration-de... (exit 0)
+[codex] Assistant message captured: **终裁：部分成立，且核心架构质疑成立。** 产品需要完整、同拍、一致的观测结果；它不要求每拍把分布式权威状态搬回 `GameSession`，再由会话维护另一套可读状态。当前双写是现有...
+[codex] Turn completed.
+**终裁：部分成立，且核心架构质疑成立。** 产品需要完整、同拍、一致的观测结果；它不要求每拍把分布式权威状态搬回 `GameSession`，再由会话维护另一套可读状态。当前双写是现有协议时序的补偿方案，不是同拍交付的必然成本。但“外部观测完全没有性能损失”过强：发布一致版本、保留读者所需数据、生成事件和存档仍有成本。
+
+本次只读检查基于 `HEAD=024e93f1` 及当前未提交改动；未写文件、构建或运行测试。263.1/271.6 t/s 属于已归档 P2-4a，不能归给尚未提交的 P2-4b。
+
+**1. B 相对 A 承载哪些必要语义？**
+
+先纠正比较口径：**1358/263 不是严格测得的“纯会话税”。**
+
+A 是 10 组，且 `belief_seeds` 为空、`root_projection=None`；B 归档是 1 组并接入会话决策链。B 的配置还有 `auction_ticks=900`，300 tick 测量全部处于集合竞价申报窗，归档费用为零。因此，这组数字尤其不能证明“同拍成交投影必然导致约 5× 降速”。依据见 [A 探针](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/examples/runtime_s5_probe.rs:40)、[B 配置](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.tmp/driver-semantics-setup.json)、[实测归档](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/evidence/perf-p2/p2-4a-green.txt:24)。
+
+以下区分：a＝产品契约；b＝旧 API／数据布局兼容；c＝迁移实现选择。
+
+| 语义 | 分类与判断 |
+|---|---|
+| 查询行情、盘口、玩家资金持仓、活动委托、历史 K 线 | **a**。但每拍安装全账户、个人态和历史镜像是 **b/c**，查询能力不要求这种存储方式。 |
+| 成功 `step()` 返回后，本拍现金、股份、T+1、成本和计划执行进度可见 | **a**，ADR-0017 的游戏契约。公开投影一次、组内下拍再应用一次是 **c**。 |
+| 事件、拒单反馈、连续 seq、逐 tick 时间序列交付 | **a**。但从会话镜像再次重建这些结果不是必要条件。 |
+| NPC 的认识、经历、attention、计划与 RNG 连续演进 | **a**。A 探针没有覆盖全部链；这些业务计算不能都算成包装浪费。演进后再回传、安装会话副本是 **b/c**。 |
+| 玩家输入截点、owner 路由、撤单反馈、披露投递 | **a**。由会话镜像提供组线程已经拥有的个人输入，是 **c**。 |
+| tick 失败不泄漏业务状态和事件；panic 显式终止 | **a**，且 A 的 `World` 已承担相当部分。会话安装引出的第二套 baseline/undo 是 **c**。 |
+| 完整自然日日结、不可变存档候选、恢复后继续运行 | **a**，ADR-0025。为日终存档而每拍同步全部可持久事实，是 **c**。 |
+| `account() -> &Account`、旧 `Market`／`EnvelopeLedger`／attention heap 数据布局 | 原有调用形态主要是 **b**。其业务含义须保留，具体引用类型与容器不必永久保留。 |
+| 诊断 trace、完整状态哈希、验证证据 | 属于明确的诊断／验证能力；不等于必须每拍全量计算和复制。 |
+
+几个直接依据：
+
+- [snapshot.rs:227](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/snapshot.rs:227) 的高频快照只选玩家账户，生产安装链却维护全名册镜像。
+- [drive.rs:809](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:809) 明确保留“组簿空时不覆盖 session 测试注入计划”的迁移分支，这是兼容安排。
+- [failure.rs:962](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:962) 即使 attention 已稀疏上行，仍每拍从全名册重建旧调度 heap。
+- “每拍全量业务哈希”不能作为当前主要成本解释：[desk.rs:1786](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/desk.rs:1786) 已采用 O(1) 热路径指纹，全量哈希留在冷路径。
+
+**2. 用户提出的视图内生模型能否满足这些语义？**
+
+**可以，没有发现技术上不可行的要求；主要工作是重新设计提交与发布协议。**
+
+行情、K 线、账户读面、计划进度、个人态，本来就能由各数据所有者维护。交易部也已经原生生成 `StockPublic` 和成交事实。自然日、公司经营、披露与全局 seq 可以继续由协调者拥有，不需要强行分散。
+
+真实张力有以下几项：
+
+| 张力 | 本质与必要处理 |
+|---|---|
+| 跨组、跨股票的一致读 | 分别读取各线程“最新值”可能得到账户 N 拍、盘口 N+1 拍。需要一次读取固定的提交版本及其全部分片句柄。 |
+| 本拍实体何时落到账户 | 当前 `GroupReport` 在决策／发单结束时发送，最终成交批次之后才到；收齐 G+N 报告不证明组账户已应用最终成交。需要 owner 完成本拍收尾的确认。 |
+| 同拍可见与同拍资源复用 | 提前完成期末落账不能让续行重新消费本拍释放的资源。必须保留既定预算截点和“下一 tick 才可复用”的游戏简化。 |
+| 失败原子性 | 分片可以准备候选，但全局提交决定前不能对外发布；任何可失败的必要投影和校验都须纳入同一事务边界。 |
+| 宿主注入 | 命令须携带目标 owner、受理截点及结果身份。不能绕过 owner 直接修改共享 view。 |
+| 日结存档 | 所有相关 owner、公司域与披露共同到达日结静点后，组合完整不可变候选；成本按日承担。 |
+
+当前时序的代码证据很明确：[group.rs:3496](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/group.rs:3496) 发出 `GroupReport`；收到 `DeskBatch` 时仅放入 staging；[group.rs:1534](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/group.rs:1534) 到下一 `Start` 才应用最终批次。
+
+因此，**只把现有 Echo 换成共享指针不够**。需要把 owner 的报告或新增收尾确认推进到“该 owner 已准备好完整本拍读面”的位置。这个确认可以与现有收束协议整合，并不必然增加一整轮全局屏障。
+
+外部读取应获得已发布、不可变、生命周期受保护的版本。单独加一个 epoch 数字，不能解决分片一致性和内存生命周期。读者长期持有旧版本，也会带来保留内存或复制成本。这里允许 working／旧 committed 版本并存，但它们不应成为两套独立演进的业务权威。
+
+**3. 当前哪些链可以整体消失？双写还需要吗？**
+
+在 owner 原生维护读面、统一发布版本之后，可以删除：
+
+- 每拍 `EchoAccounts/Belief/Attention/Plans`，仅为会话镜像服务的采集和安装。
+- `account_dirty_prev` 两拍并集及“下拍整值覆盖，修正本拍公开投影”的维护机制。
+- `apply_same_tick_fill_projection`、公开计划成交补写、公开个人记忆裁剪等重复业务应用。
+- `install_market_views/install_candles` 对会话容器的重复安装。
+- 为镜像安装失败准备的账户／个人态 undo，以及行情、历史、K 线 baseline。
+- 每拍从 desk 挂单重建会话 `EnvelopeLedger`、`DeskBookMirror`，以及旧 attention heap 重建。
+
+依据集中在 [drive.rs:532](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:532)、[同拍成交投影](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:1324)、[会话安装链](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:474)、[baseline](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:844)。
+
+仍必须保留：
+
+- 资源实体传递、实际成交结算、费用累计、T+1 和计划事实恰一次应用。
+- 必要的失败回滚或候选隔离。
+- 全局提交裁决、跨 owner 完成确认。
+- 事件身份、seq、逐 tick 时间序列与交付缓冲。
+- 查询时的必要组装／序列化，以及日终存档投影。
+
+**双写不再必要。** [ADR-0043 决策 8](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/docs/decisions/0043-std-thread-ownership-runtime.md) 把双写绑定到了“组内最终批次下拍应用”的现有机制。此前增加同拍公开投影，是在该机制下修复交付缺口；它不能证明双写本身不可删除。
+
+还有一项不能遗漏：查询未必纯读。[`query_stock_history`](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/history_reads.rs:17) 会记录个人历史读取经历。改造后应把这种行为显式路由给 owner，不能因为改用不可变 view 就丢掉副作用。
+
+**4. 成本估计、改造范围与收尾排序**
+
+**定性估计：当前额外安装链的大部分有架构删除路径；整个“约 5× 差距”尚不能可靠拆成可消除与必要成本。**
+
+1358 t/s 对应约 0.736 ms/tick，263–272 对应约 3.68–3.80 ms/tick，表观差约 2.94–3.07 ms。但其中混有分组、完整决策链、交易阶段和负载差异，不能把这约 3 ms 全记给会话。
+
+现有证据支持优先改架构：
+
+- P2-4a 仅消除全量账户 Echo，就有同窗 **82%–104% 吞吐提升**，无需削弱产品语义。
+- 本次只读解析已有 `p14-fp2-after-4a.perf.data`，driver 线程仍占约 **79.85% CPU cycles**，热点包括 ledger 插入、分配／复制和 heap 构造。这支持继续追查串行镜像维护，**不等于 80% wall time 可以删除**。
+- 300 tick 归档没有成交费用，不能把其剩余差距主要归于成交结算双写。
+
+所以我不认可“必要语义占八成”或“架构能拿回四倍”这样的现成比例。需要以**相同完整 `WorldSpec`、分组和输入**，区分 owner 计算、收尾确认、镜像安装、协议发布成本后再估算；不能通过关掉业务链测出一个好看的上限。
+
+改造属于**中大型跨层重构**，核心撮合与费用算法原则上无需重写：
+
+| 范围 | 主要涉及文件／契约 |
+|---|---|
+| owner 收尾与版本发布 | `runtime/group.rs`、`desk.rs`、`protocol.rs`、`coordinator.rs`、`world.rs` |
+| 删除会话重装及补偿投影 | `runtime/drive.rs`、`session/failure.rs`、`session.rs` |
+| 查询与带副作用的读取 | `snapshot.rs`、`history_reads.rs`、活动委托／个人态查询 |
+| 提交、事件与日结候选 | `session/protocol/commit.rs`、`protocol/civil/session.rs`、persistence、hash／验证入口 |
+| 架构文档 | ADR-0043 的提交时序、双写和共享边界必须修订；ADR-0017/0025 保留产品承诺并更新实现映射；ADR-0042 腿方向契约应保持不变 |
+
+另外发现一个**当前收尾门禁问题**：
+
+server actor 调用 [ProtocolSession 的 `step_frame()`](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/apps/server/src/actor.rs:1155)，它经 [协议提交入口](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/protocol/commit.rs:90) 进入 [旧 candidate 管线](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/pipeline/authoritative_tick.rs:27)。B 探针调用的却是 `GameSession::step()`。**当前 B 数字不能证明宿主生产入口已接入 runtime，也未覆盖完整协议交付成本。**
+
+我的排序建议是：
+
+1. **现在先做 #103 语义测试收口**，固定本拍结果、失败零泄漏、资源不可提前复用、跨组账户映射和日结恢复。
+2. **终验收前解决或明确裁定宿主入口分叉**，核对完整 publication 失败是否仍在同一提交边界。不能用 `step()` 的绿证代替 `step_frame()`。
+3. 当前迁移按最终冻结版本做 Sol 终验收；通过后才合并。
+4. **视图内生作为紧接着的下一战役**，避免把协议大改混进当前未提交性能修改和删除批。
+5. **拆分批 9**：已经证明无消费者的内容可以按门禁删除；会话镜像桥接留到新读面替代后删除。WASM 仍使用的串行路径必须保留。
+
+这意味着现在重排验收与删除顺序，但不建议立即在当前混合工作树上展开整套重构。若宿主入口收口本身必须调整提交协议，应单列前置批，先完成再终验收。
+
+**5. 最终理由**
+
+用户的质疑在两个核心点上成立：
+
+- **所有权转移不要求会话镜像成为统一读面权威。**
+- **同拍交付不要求“公开面先结算、内部权威下拍再结算”的双写。**
+
+需要收窄的只有两个断言：
+
+- 所有权转移解决资源归属与写冲突，**不会自动解决跨线程一致发布**。
+- 观测可以很便宜、可以按需、可以复用 owner 已维护的数据，**但不能承诺零成本**。
+
+因此，应把视图内生确立为后续架构方向；不能继续以“这些都是语义必需”维护当前安装链，也不能用两个不同负载的吞吐比值承诺重构收益。本复核不构成当前分支可合并的终验收结论。
+
+[exited with code 0]

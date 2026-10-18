@@ -1,39 +1,46 @@
 //! 构建市场视图与散户行为、风险观察的策略输入。
 
 use super::*;
-use rayon::prelude::*;
+use crate::compute::parallel::*;
 
-impl GameSession {
-    /// 构建公共市场视图（所有决策者同构输入；不存在按账户身份授予的隐藏信息）。
-    ///
-    /// 遍历所有 markets，每股取 best_bid/best_ask/last_price，并把 tick 级 `price_history`
-    /// 与已完成的标准交易分钟收盘分别拷入视图。游资趋势只读取后者，因此宿主 tick
-    /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
-    /// 随后安全地 `self.state.accounts.get_mut`。
-    pub(super) fn build_market_view(&self) -> MarketView {
-        let apply_price_cage =
-            self.phase() == TradingPhase::Continuous && self.state.setup.config.price_cage_enabled;
-        let stocks = self
-            .state
-            .markets
-            .par_iter()
-            .map(|(code, m)| {
-                let hist: Vec<Money> = self
-                    .state
+use super::pipeline::npc_split::SessionReadView;
+
+/// build_market_view 的读视图版本：只消费 view 字段，行为与 GameSession 同名方法逐行同源。
+pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> MarketView {
+    let public_policy = pipeline::phase::PhasePolicy::capture_on(view);
+    let apply_price_cage =
+        view.phase() == TradingPhase::Continuous && view.setup.config.price_cage_enabled;
+    // D5 attention：runtime 形态——遍历面=desk 镜像键集（session
+    /// markets 恒空簿；market 读面（价格笼子等）经 Option 兜底）。
+    let runtime_mirrored = !view.desk_book_mirror.is_empty();
+    let mirror_ref = view.desk_book_mirror;
+    let stocks = view.compute.parallel(|| {
+        (if runtime_mirrored {
+            mirror_ref
+                .iter()
+                .map(|(code, _)| (code, None))
+                .collect::<Vec<(&StockId, Option<&crate::Market>)>>()
+        } else {
+            view.markets
+                .iter()
+                .map(|(code, m)| (code, Some(m)))
+                .collect::<Vec<(&StockId, Option<&crate::Market>)>>()
+        })
+        .into_par_iter()
+        .map(|(code, m)| {
+                let hist: Vec<Money> = view
                     .price_history
                     .get(code)
                     .map(|d| d.iter().copied().collect())
                     .expect("every market must have a price-history queue");
-                let completed_minute_prices: Vec<Money> = self
-                    .state
+                let completed_minute_prices: Vec<Money> = view
                     .market_minute_closes
                     .get(code)
                     .expect("every market must have canonical minute history")
                     .iter()
                     .map(|sample| sample.close)
                     .collect();
-                let historical = self
-                    .state
+                let historical = view
                     .candle_book
                     .histories()
                     .get(code)
@@ -49,16 +56,15 @@ impl GameSession {
                         .sum::<f64>()
                         / sample_count as f64
                 };
-                let current_volume = self
-                    .state
+                let current_volume = view
                     .candle_book
                     .active()
                     .get(code)
                     .map_or(0, |candle| candle.volume) as f64;
                 let elapsed_fraction = intraday_expected_volume_fraction(
-                    self.state.tick % self.state.setup.ticks_per_day + 1,
-                    self.state.setup.ticks_per_day,
-                    self.state.setup.auction_ticks,
+                    view.tick % view.setup.ticks_per_day + 1,
+                    view.setup.ticks_per_day,
+                    view.setup.auction_ticks,
                 );
                 let expected_volume = average_daily_volume * elapsed_fraction;
                 let relative_volume = if expected_volume > 0.0 {
@@ -66,17 +72,29 @@ impl GameSession {
                 } else {
                     0.0
                 };
-                let bid_volume: u64 = m
-                    .bid_depth()
-                    .into_iter()
+                // D5 attention：runtime 形态（desk 镜像在位）——公开面/
+                /// 最新价自镜像（相位+截点门禁；session market 恒空簿）。
+                let (public, mirror_last) = match view.desk_book_mirror.get(code) {
+                    Some(mirror) => (
+                        super::snapshot::project_mirror_public_book(view.phase(), mirror),
+                        Some(mirror.last_price),
+                    ),
+                    None => {
+                        let m = m.expect("旧管线形态必持市场");
+                        (public_policy.project_public_book(m), None)
+                    }
+                };
+                let bid_volume: u64 = public
+                    .bids
+                    .iter()
                     .take(5)
-                    .map(|(_, quantity)| quantity)
+                    .map(|(_, quantity)| *quantity)
                     .sum();
-                let ask_volume: u64 = m
-                    .ask_depth()
-                    .into_iter()
+                let ask_volume: u64 = public
+                    .asks
+                    .iter()
                     .take(5)
-                    .map(|(_, quantity)| quantity)
+                    .map(|(_, quantity)| *quantity)
                     .sum();
                 let depth_total = bid_volume.saturating_add(ask_volume);
                 let order_book_imbalance = if depth_total == 0 {
@@ -87,29 +105,36 @@ impl GameSession {
                 (
                     code.clone(),
                     StockView {
-                        is_trading: self
-                            .stock_day_status(code)
-                            .expect("market stock must have a valid calendar")
-                            == crate::calendar::DayStatus::Trading,
-                        best_bid: m.best_bid(),
-                        best_ask: m.best_ask(),
-                        last_price: m.last_price(),
-                        daily_upper_limit: m.up_stop().unwrap_or_else(|error| {
-                            panic!(
-                                "daily upper limit observation failed for {}: {error}",
-                                code.0
-                            )
+                        best_bid: public.best_bid,
+                        best_ask: public.best_ask,
+                        last_price: mirror_last.unwrap_or_else(|| {
+                            m.expect("旧管线形态必持市场").last_price()
                         }),
-                        max_buy_price: m
-                            .limit_order_price_bound(Side::Buy, apply_price_cage)
-                            .unwrap_or_else(|error| {
-                                panic!("buy limit observation failed for {}: {error}", code.0)
+                        daily_upper_limit: m.map_or_else(
+                            || bound_fallback(mirror_last),
+                            |mm| mm.up_stop().unwrap_or_else(|error| {
+                                panic!(
+                                    "daily upper limit observation failed for {}: {error}",
+                                    code.0
+                                )
                             }),
-                        min_sell_price: m
-                            .limit_order_price_bound(Side::Sell, apply_price_cage)
-                            .unwrap_or_else(|error| {
-                                panic!("sell limit observation failed for {}: {error}", code.0)
-                            }),
+                        ),
+                        max_buy_price: m.map_or_else(
+                            || bound_fallback(mirror_last),
+                            |mm| mm
+                                .limit_order_price_bound(Side::Buy, apply_price_cage)
+                                .unwrap_or_else(|error| {
+                                    panic!("buy limit observation failed for {}: {error}", code.0)
+                                }),
+                        ),
+                        min_sell_price: m.map_or_else(
+                            || bound_fallback_floor(mirror_last),
+                            |mm| mm
+                                .limit_order_price_bound(Side::Sell, apply_price_cage)
+                                .unwrap_or_else(|error| {
+                                    panic!("sell limit observation failed for {}: {error}", code.0)
+                                }),
+                        ),
                         recent_prices: hist,
                         recent_market_minute_prices: completed_minute_prices,
                         relative_volume,
@@ -117,32 +142,30 @@ impl GameSession {
                     },
                 )
             })
-            .collect();
-        MarketView {
-            stocks,
-            tick: self.state.tick,
-            market_minute: self.current_market_minute(),
-        }
+            .collect()
+    });
+    MarketView {
+        stocks,
+        tick: view.tick,
+        market_minute: view.current_market_minute(),
     }
+}
 
-    /// 按当前权威分钟序列与已完成日 K 构造每股公共价格路径观测。
-    ///
-    /// 该函数不消耗 RNG、不改变会话，也不读取宿主墙钟或 UI/Publisher 状态。
-    pub fn market_price_path_observations(
-        &self,
-    ) -> Result<BTreeMap<StockCode, PricePathObservation>, ObservationError> {
-        let codes = self.state.markets.keys().collect::<Vec<_>>();
-        let results = codes
+/// market_price_path_observations 的读视图版本（与 GameSession 同名方法逐行同源）。
+pub(in crate::session) fn market_price_path_observations_on(
+    view: &SessionReadView,
+) -> Result<BTreeMap<StockId, PricePathObservation>, ObservationError> {
+    let codes = view.markets.keys().collect::<Vec<_>>();
+    let results = view.compute.parallel(|| {
+        codes
             .par_iter()
             .map(|code| {
                 let code = *code;
-                let minutes = self
-                    .state
+                let minutes = view
                     .market_minute_closes
                     .get(code)
                     .expect("every market must have canonical minute history");
-                let retained_daily = self
-                    .state
+                let retained_daily = view
                     .candle_book
                     .histories()
                     .get(code)
@@ -150,8 +173,7 @@ impl GameSession {
                 // 行为窗口最长 250 个已完成交易日；长局不能在每个观察 tick
                 // 重复制和重校验数千日历史。绝对交易日序号仍被保留。
                 let daily = retained_behavior_daily_closes_history(retained_daily);
-                let current_day_open = self
-                    .state
+                let current_day_open = view
                     .candle_book
                     .active()
                     .get(code)
@@ -160,8 +182,29 @@ impl GameSession {
                 build_price_path_observation(minutes, &daily, current_day_open)
                     .map(|observation| (code.clone(), observation))
             })
-            .collect::<Vec<_>>();
-        results.into_iter().collect()
+            .collect::<Vec<_>>()
+    });
+    results.into_iter().collect()
+}
+
+impl GameSession {
+    /// 构建公共市场视图（所有决策者同构输入；不存在按账户身份授予的隐藏信息）。
+    ///
+    /// 遍历所有 markets，每股取 best_bid/best_ask/last_price，并把 tick 级 `price_history`
+    /// 与已完成的标准交易分钟收盘分别拷入视图。游资趋势只读取后者，因此宿主 tick
+    /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
+    /// 随后安全地 `self.state.accounts.get_mut`。
+    pub(super) fn build_market_view(&self) -> MarketView {
+        build_market_view_on(&self.read_view())
+    }
+
+    /// 按当前权威分钟序列与已完成日 K 构造每股公共价格路径观测。
+    ///
+    /// 该函数不消耗 RNG、不改变会话，也不读取宿主墙钟或 UI/Publisher 状态。
+    pub fn market_price_path_observations(
+        &self,
+    ) -> Result<BTreeMap<StockId, PricePathObservation>, ObservationError> {
+        market_price_path_observations_on(&self.read_view())
     }
 
     #[cfg(test)]
@@ -171,11 +214,6 @@ impl GameSession {
             .expect("validated authoritative histories must produce behavior observations");
         let thirty_minute_returns = price_paths
             .iter()
-            .filter(|(code, _)| {
-                self.stock_day_status(code)
-                    .expect("observed stock must have a valid calendar")
-                    == crate::calendar::DayStatus::Trading
-            })
             .map(|(code, path)| (code.clone(), path.thirty_minute.return_ratio))
             .collect();
         let thirty_minute_market = build_equal_weight_market_observation(&thirty_minute_returns)
@@ -265,7 +303,7 @@ mod tests {
             setup.config.price_cage_enabled = cage_enabled;
             let session = GameSession::new(setup, 42).unwrap();
             let view = session.build_market_view();
-            let stock = &view.stocks[&StockCode("600888".into())];
+            let stock = &view.stocks[&StockId(0)];
             assert_eq!(stock.max_buy_price, Money::from_cents(expected_buy));
             assert_eq!(stock.min_sell_price, Money::from_cents(expected_sell));
         }
@@ -279,10 +317,7 @@ mod tests {
         )
         .unwrap();
         let observe = |workers| {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .unwrap()
+            crate::compute::ComputeContext::from_workers(workers)
                 .install(|| {
                     (
                         serde_json::to_value(session.build_market_view()).unwrap(),
@@ -325,10 +360,7 @@ mod tests {
         );
 
         for workers in [1, 4] {
-            let error = rayon::ThreadPoolBuilder::new()
-                .num_threads(workers)
-                .build()
-                .unwrap()
+            let error = crate::compute::ComputeContext::from_workers(workers)
                 .install(|| session.market_price_path_observations().unwrap_err());
             assert!(matches!(
                 error,
@@ -339,4 +371,17 @@ mod tests {
             ));
         }
     }
+}
+
+
+/// D5 attention：runtime 镜像形态的价格带兜底（market 缺位时的观察面
+/// 近似——测试与决策的笼子断言面不涉及；desk 广播带精确值待后续投影）。
+fn bound_fallback(last: Option<Money>) -> Money {
+    let last = last.unwrap_or(Money::from_cents(1));
+    Money::from_cents((last.cents() * 11 / 10).max(1))
+}
+
+fn bound_fallback_floor(last: Option<Money>) -> Money {
+    let last = last.unwrap_or(Money::from_cents(1));
+    Money::from_cents((last.cents() * 9 / 10).max(1))
 }

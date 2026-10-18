@@ -282,7 +282,7 @@ fn unknown_intercompany_member_is_rejected() {
     assert_eq!(
         err,
         ConsolidationError::UnknownIntercompanyMember {
-            member: MemberId("GHOST".to_string()),
+            member: crate::member_id("GHOST"),
         }
     );
 }

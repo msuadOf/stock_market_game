@@ -174,8 +174,133 @@ impl StrategyFactory {
                 );
                 Ok(Some(Box::new(strategy)))
             }
-            // 玩家与发行人回购账户都不注入策略；回购委托由回购方案执行器产生。
-            AccountKind::Player | AccountKind::IssuerRepurchase => Ok(None),
+            AccountKind::Player => Ok(None),
+        }
+    }
+}
+
+#[cfg(test)]
+mod r22b_tests {
+    //! R22b 计划分类观察节奏（trading-rules.md「计划策略（游戏规则）」）：
+    //! 深度价值/防御型机构不因普通开盘自动复核、随机观察频率低于每天一次；
+    //! 成长/均衡型每日观察（可跨日）。手算 oracle：逐 tick 观察概率
+    //! p(x)=1−e^(−x/240)（`daily_observations_to_tick_probability`，泊松
+    //! 到达近似），采样区间端点取自工厂风格表（factory.rs 观察次数区间）：
+    //! DeepValue (0.1,0.4)、Growth (20,55)、Balanced (20,50)、
+    //! Defensive (0.25,0.75)、ActiveTrader (50,100)。低频/高频的判别线
+    //! =p(1.0/日)=0.004157998155。
+    use super::*;
+    use crate::account::AccountKind;
+
+    /// 固定序列 RNG（确定性、非极端值：f64∈{0.3,0.7}，区间取中点）。
+    struct FixedRng(bool);
+    impl Rng for FixedRng {
+        fn next_f64(&mut self) -> f64 {
+            self.0 = !self.0;
+            if self.0 { 0.7 } else { 0.3 }
+        }
+        fn next_range_u32(&mut self, lo: u32, hi: u32) -> u32 {
+            lo + (hi - lo) / 2
+        }
+    }
+
+    fn build_institution(ordinal: u32) -> Box<dyn ProductionStrategy> {
+        let params = StrategyParams {
+            retail: crate::strategy::RetailParams {
+                arrival_rate: 1.0,
+                order_size_mean: 100,
+                chase_prob: 0.0,
+            },
+            inst: crate::strategy::InstParams {
+                margin: 0.01,
+                order_size: 100,
+            },
+            hot: crate::strategy::HotParams {
+                lookback: 2,
+                trend_threshold: 0.01,
+                order_size: 100,
+            },
+        };
+        StrategyFactory::build_for_market_day_with_ordinal(
+            AccountKind::Inst,
+            &params,
+            240,
+            ordinal,
+            &mut FixedRng(false),
+        )
+        .expect("参数合法")
+        .expect("机构必产策略")
+    }
+
+    /// 风格身份 + 观察节奏 + 复核旗标逐风格锚定（ordinal%5 风格映射）。
+    #[test]
+    fn r22b_classification_cadence_matches_registered_policy() {
+        // (ordinal, 期望风格, daily_plan_review, 观察概率区间 [lo, hi))
+        // 数值手算：p(x)=1−e^(−x/240)（python: 1-math.exp(-x/240)）。
+        let cases: [(u32, InstitutionStyle, bool, f64, f64); 5] = [
+            // p(0.1)=0.000416579873、p(0.4)=0.001665278549
+            (0, InstitutionStyle::DeepValue, false, 0.000416579873, 0.001665278549),
+            // p(20)=0.079955585371、p(55)=0.204804010205
+            (1, InstitutionStyle::Growth, true, 0.079955585371, 0.204804010205),
+            // p(20)=0.079955585371、p(50)=0.188063653849
+            (2, InstitutionStyle::Balanced, true, 0.079955585371, 0.188063653849),
+            // p(0.25)=0.001041124320、p(0.75)=0.003120122270
+            (3, InstitutionStyle::Defensive, false, 0.001041124320, 0.003120122270),
+            // p(50)=0.188063653849、p(100)=0.340759369800
+            (4, InstitutionStyle::ActiveTrader, true, 0.188063653849, 0.340759369800),
+        ];
+        const ONE_PER_DAY: f64 = 0.004157998155; // p(1.0/日)——低/高频判别线
+        for (ordinal, want_style, want_review, lo, hi) in cases {
+            let s = build_institution(ordinal);
+            assert_eq!(s.profile(), StrategyProfile::Institution(want_style), "ordinal {ordinal}");
+            let params = s.belief_chain_params().expect("机构必有链参数");
+            assert_eq!(
+                params.daily_plan_review, want_review,
+                "{want_style:?}：开盘自动复核旗标（深值/防御=false）"
+            );
+            let state = s.state().expect("状态合法");
+            let StrategyState::BeliefInstitution(bis) = state else {
+                panic!("机构策略状态形态：{state:?}")
+            };
+            assert!(
+                bis.base_observation_probability >= lo && bis.base_observation_probability < hi,
+                "{want_style:?} 观察概率 {:?} 不在 [{lo}, {hi})",
+                bis.base_observation_probability
+            );
+            // 判别线：深值/防御恒 < 1 次/日；成长/均衡/积极恒 > 1 次/日。
+            if !want_review {
+                assert!(
+                    bis.base_observation_probability < ONE_PER_DAY,
+                    "{want_style:?}：随机观察频率必须低于每天一次"
+                );
+            } else {
+                assert!(
+                    bis.base_observation_probability > ONE_PER_DAY,
+                    "{want_style:?}：每日多次观察"
+                );
+            }
+        }
+    }
+
+    /// 估值期限（跨日计划的上界来源）：深值/防御 60、均衡/成长 20、其他 5
+    ///（ActiveTrader 的计划 horizon 在 lifecycle 开仓时强制 1=当日到期，
+    /// 由 session 域测试承载——R22a 面）。
+    #[test]
+    fn r22b_belief_horizon_days_by_classification() {
+        let cases = [
+            (0, InstitutionStyle::DeepValue, 60u16),
+            (1, InstitutionStyle::Growth, 20),
+            (2, InstitutionStyle::Balanced, 20),
+            (3, InstitutionStyle::Defensive, 60),
+            (4, InstitutionStyle::ActiveTrader, 5),
+        ];
+        for (ordinal, style, want) in cases {
+            let s = build_institution(ordinal);
+            assert_eq!(
+                super::super::fundamental::belief_horizon_days(&s.profile()),
+                want,
+                "{style:?} 估值期限（计划可跨日的上界）"
+            );
         }
     }
 }

@@ -1,0 +1,68 @@
+# Sol 中点复核请求：D3a 决策链移植（开仓路径+生产接线，6a5ed768^..c903f63e）
+
+日期：2026-10-15。请求人：协调者。这是 D3 决策链深移植（方向 A 已拍板：
+计划状态机迁入组线程 PlanChain，依据=用户模型"决策内联组线程+所有权转移"）
+的中点检查点：D3a 两件（2c 开仓路径五件套 + 3 生产接线/执行腿）落地后的
+里程碑复核。只读复核：不写文件、不构建；允许读文件/git/复跑已有测试产物。
+
+工作区=/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model，
+branch=exp/std-thread-model，工作区干净，HEAD=c903f63e。
+台账=.tmp/multi-tick-design.md（尾部 D3 执行记录含完整登记）。
+交接=.tmp/handoff-d3a-2c.md（第 7 任的行号级移植图）。
+
+## 复核范围（约 11 提交）
+
+- D3a-2c（6a5ed768→a27b0ad2，7 提交）：组成本基（invested/recovered，
+  FillFact 落账+undo 冲回）/RootReadContext 组装（红证抓到 spec.library
+  漏设真分叉）/observe 提 pub(crate) 直调（EchoOpenDerivation 同输入铁证）/
+  开仓落地（open_position_action 提取共享，session 行为保持）/EchoPlans
+  交付点投影
+- D3a-3（3643ebaf→c903f63e，4 提交）：件4b 生产接线（run_chain_decision：
+  observe→组态可逆写回[GroupUndo::Personal/PlanBook]→开仓→预算+报价→
+  PendingOp 并入扣除；decide_plan_quote 提取共享）；执行腿（install_execution
+  +FillFact 推进+child_in_flight 在途集）；两轮独立复核九项修复
+  （退款 undo 条件入账[高]/笼子信号/tick 投影等）
+- fork 独立复核已跑两轮（实现方声称全修）——你抽查修复质量
+
+## 声称数字（交叉核验）
+
+默认 lib **1574/0/11**；翻转批 10/13/14/14/15；**env=1=55 持平**（名单与
+基线逐条一致）——持平解释见下。
+
+## 重点一：decision_chain 27 未消化的归因（实现方停在此处等你审）
+
+实现方归因：chain_restructure_tests 的注入钩子（force_attention/seed_order/
+queue_npc）全部改 session 侧；但组 due=NpcProfile.next_due（P1-10 组权威）
+**无下行通道**——产物面（plans 投影）已就绪，接上注入通道即应消化。
+请核：归因是否成立（抽 2-3 个失败 case 看首因）；"注入通道"设计方向是否
+生产安全（会话→组单向下行、不成为静默改组态的后门、测试专用面与生产面
+分离）——这是 D3a 收尾首件，你的意见直接定型。
+
+## 重点二：登记差异清单（逐项裁：可接受登记/须收口/须修）
+
+exposed=空集；首子单 urgency=initial+pause=Unavailable（登记 D3b）；
+frozen_cash=0；qty 口径差（在途卖单）；fundamental_ready 三处复制；
+adopt qty 弱化；4b 红证自参照性；DeskTradeFact maker/taker 语义备忘
+（desk.rs:1109）；撤销/到期腿清理（未接 Cancel 前无场景）；成交场景
+红证 fixture 缺。
+
+## 重点三：语义符合性
+
+1. 开仓决策链组内版与 session 版逐字段同源（红证模式抽查 2-3 条：
+   成本基投影置零红/library 缺失红/机制红）
+2. TDD 纪律：新断言先红后绿（抽 4b 红证自参照性问题——实现方自己登记了
+   一条红证的自参照性，评估严重度）
+3. undo 可逆性：GroupUndo::Personal/PlanBook 覆盖面（Abort 重跑同 tick
+   时组态/计划态完整还原？）
+
+## 终裁问题
+
+1. D3a 两件：语义真实/表面/未修复（逐件）。
+2. 登记差异清单逐项裁定。
+3. 注入通道归因与设计方向：成立/不成立+理由。
+4. 终裁：D3a 可否宣告闭合，进入收尾（注入通道）→D3b→D3c。
+   若不通过：剩余最小修复集。
+
+## 输出要求
+
+逐项回答+终裁"通过/不通过+理由"。你的结论决定 D3 后半程开工。

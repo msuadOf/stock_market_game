@@ -1,23 +1,28 @@
 use engine::session::protocol::*;
-use engine::{AccountId, Event, Money, StockCode, TradingPhase};
+use engine::{AccountId, Event, Money, StockId, TradingPhase};
 
 fn events() -> Vec<Event> {
     (1..=3)
         .map(|seq| Event::IntentRejected {
             seq,
             account: AccountId(0),
-            code: StockCode("600001".into()),
+            code: StockId(0),
             reason: engine::RejectionReason::UnknownStock,
         })
         .collect()
 }
 
+/// 独立测试 fixture 的 producer：事实身份在此一次分配。
+fn fixture_facts(events: &[Event]) -> Vec<EventFact> {
+    SessionFactCursor::default()
+        .assign_session_facts(events.to_vec())
+        .unwrap()
+}
+
 fn frame() -> TickFrame {
-    let events = events();
     TickFrame {
         tick: 1,
-        facts: attach_facts(&events).unwrap(),
-        events,
+        facts: fixture_facts(&events()),
         timeseries_payload: Default::default(),
         seq_from: 0,
         seq_to: 3,
@@ -53,12 +58,12 @@ fn optional_imbalance_rejects_unsafe_wire_values() {
         seq: 1,
         tick: 1,
         phase: TradingPhase::CallAuction,
-        code: StockCode("600001".into()),
+        code: StockId(0),
         indicative_price: Some(Money::from_cents(1000)),
         matched_volume: 100,
         imbalance: 0,
     };
-    let key = attach_facts(&[event]).unwrap().remove(0).key;
+    let key = fixture_facts(&[event]).remove(0).key;
     let mut point = AuctionPoint {
         key,
         tick: 1,
@@ -92,7 +97,6 @@ fn fact_correspondence_preserves_multiplicity_and_rejects_substitutions() {
     original.validate().unwrap();
     let mut reversed = original.clone();
     reversed.facts.reverse();
-    reversed.events.reverse();
     reversed.validate().unwrap();
     for variant in 0..5 {
         let mut malformed = original.clone();
@@ -104,20 +108,30 @@ fn fact_correspondence_preserves_multiplicity_and_rejects_substitutions() {
                 malformed.facts[1] = malformed.facts[0].clone();
             }
             2 => {
-                malformed.events[1] = malformed.events[0].clone();
+                // 同一事实记录整体重复：seq 重复即身份失败
+                malformed.facts[1] = malformed.facts[0].clone();
+                malformed.facts[1].key = engine::session::pipeline::EventStableKey::for_event(
+                    &malformed.facts[0].event,
+                    1,
+                );
             }
             3 => {
                 malformed.facts[0].key = engine::session::pipeline::EventStableKey::for_event(
                     &Event::IntentRejected {
                         seq: 1,
                         account: AccountId(99),
-                        code: StockCode("600001".into()),
+                        code: StockId(0),
                         reason: engine::RejectionReason::UnknownStock,
                     },
                     0,
                 );
             }
-            4 => malformed.facts[0].canonical_payload.push(' '),
+            // 载荷篡改：改动事件字段使 canonical 内容与首次发布不一致（原 canonical_payload 负例）
+            4 => {
+                if let Event::IntentRejected { account, .. } = &mut malformed.facts[0].event {
+                    *account = AccountId(9);
+                }
+            }
             _ => unreachable!(),
         }
         assert!(malformed.validate().is_err(), "variant {variant}");
@@ -134,16 +148,18 @@ fn coherent_mutation_is_replay_mismatch_not_identity_failure() {
     );
     let mut reordered = original.clone();
     reordered.facts.reverse();
-    reordered.events.reverse();
     assert_eq!(
         guard.ingest(&update(reordered)).unwrap(),
         ReplayDecision::ExactRetry
     );
     let mut changed = original;
-    if let Event::IntentRejected { code, .. } = &mut changed.events[0] {
-        *code = StockCode("600002".into());
+    if let Event::IntentRejected { code, .. } = &mut changed.facts[0].event {
+        *code = StockId(1);
+        changed.facts[0].key = engine::session::pipeline::EventStableKey::for_event(
+            &changed.facts[0].event,
+            changed.facts[0].key.local_event_index(),
+        );
     }
-    changed.facts = attach_facts(&changed.events).unwrap();
     changed.validate().unwrap();
     assert_eq!(
         guard.ingest(&update(changed)),
@@ -164,7 +180,6 @@ fn starting_context_rejects_stale_future_and_sequence_gaps() {
 #[test]
 fn equal_sets_with_different_multiplicity_are_rejected() {
     let mut malformed = frame();
-    malformed.events[2] = malformed.events[0].clone();
     malformed.facts[2] = malformed.facts[1].clone();
     malformed.facts[2].key =
         engine::session::pipeline::EventStableKey::for_event(&malformed.facts[2].event, 2);

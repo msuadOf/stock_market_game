@@ -1,5 +1,3 @@
-include!("../test-support/simple_company.rs");
-
 use engine::{
     CivilDate, FloatAllocation, GameConfig, HotParams, InstParams, Money, NpcSetup, RetailParams,
     SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec, StrategyParams,
@@ -14,7 +12,8 @@ fn session() -> ProtocolSession {
 fn session_on(date: &str) -> ProtocolSession {
     ProtocolSession::new(
         SessionSetup {
-            company_system: simple_company_fixture!(engine; ["600001"]),
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600001".into()),
                 exchange: StockExchange::Shanghai,
@@ -53,16 +52,9 @@ fn session_on(date: &str) -> ProtocolSession {
             closing_auction_ticks: 2,
             history_len: 20,
             t1_enabled: true,
-            report_frequency: engine::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: CivilDate::from_iso(date).unwrap(),
             simulation_policy_id: engine::SIMULATION_POLICY_ID.into(),
-            dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-            flat_withholding_bp: Some(1000),
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
-            par_value_per_share: engine::Money::from_cents(100),
-            auto_corporate_foundation: false,
         },
         42,
     )
@@ -94,7 +86,7 @@ fn quiet_preopen_ticks_are_not_dropped() {
     }
     let before = game.game().seq();
     let frame = game.step_frame().unwrap();
-    assert!(frame.events.is_empty());
+    assert!(frame.facts.is_empty());
     assert_eq!(frame.tick, 5);
     assert_eq!((frame.seq_from, frame.seq_to), (before, before));
     assert!(frame.validate().is_ok());
@@ -215,9 +207,9 @@ fn completion_is_explicit_in_auction_projection() {
     for _ in 0..20 {
         let frame = game.step_frame().unwrap();
         if frame
-            .events
+            .facts
             .iter()
-            .any(|event| matches!(event, engine::Event::AuctionCompleted { .. }))
+            .any(|fact| matches!(&fact.event, engine::Event::AuctionCompleted { .. }))
         {
             let wire = serde_json::to_string(&frame.timeseries_payload).unwrap();
             assert!(wire.contains("Completion"));
@@ -264,7 +256,7 @@ fn continuous_points_match_authoritative_price_tick() {
         game.step_frame().unwrap();
     }
     let frame = game.step_frame().unwrap();
-    for event in &frame.events {
+    for event in frame.events() {
         if let engine::Event::PriceTick {
             code,
             tick,

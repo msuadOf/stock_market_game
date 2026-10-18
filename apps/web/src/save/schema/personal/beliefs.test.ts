@@ -3,7 +3,7 @@ import test from "node:test"
 import { parseBeliefBook } from "./beliefs.ts"
 
 const base = {
-  npc: "1",
+  npc: 1,
   institution_account_risk_paused: false,
   profile: { Institution: "Balanced" },
   analysis: {
@@ -72,43 +72,14 @@ test("belief confidence rejects values above 10000 at the save boundary", () => 
     last_cause: null, applied_experience_orders: [],
   }
   const withConfidence = (confidence: number) => ({
-    ...base, entries: { "600001": { ...entry, confidence_bp: confidence } },
+    ...base, entries: { "0": { ...entry, confidence_bp: confidence } },
   })
   for (const confidence of [0, 10_000]) {
-    assert.equal(parseBeliefBook(withConfidence(confidence), "book").entries["600001"].confidence_bp, confidence)
+    assert.equal(parseBeliefBook(withConfidence(confidence), "book").entries["0"].confidence_bp, confidence)
   }
   for (const confidence of [10_001, 65_535]) {
     assert.throws(() => parseBeliefBook(withConfidence(confidence), "book"), /confidence_bp/)
   }
-})
-
-test("annual baseline unavailable belief variants round-trip strictly", () => {
-  const entry = {
-    company: "company", method: null,
-    forecast: { growth_bp: null, basis: "AnnualBaselineUnavailable" },
-    valuation: { Unavailable: { reason: "AnnualBaselineNotOwnKnown" } },
-    confidence_bp: 0, used_report_ids: [1], anchor_trading_day: 1,
-    horizon_trading_days: 1, last_cause: null, applied_experience_orders: [],
-  } as const
-  const book = { ...base, entries: { "600001": entry } }
-
-  assert.deepEqual(parseBeliefBook(book, "book"), book)
-  assert.throws(() => parseBeliefBook({
-    ...book,
-    entries: { "600001": { ...entry, forecast: { ...entry.forecast, basis: { FutureVariant: {} } } } },
-  }, "book"), /不是已知预测依据/)
-  assert.throws(() => parseBeliefBook({
-    ...book,
-    entries: { "600001": { ...entry, forecast: { ...entry.forecast, basis: "FutureVariant" } } },
-  }, "book"), /forecast\.basis/)
-  assert.throws(() => parseBeliefBook({
-    ...book,
-    entries: { "600001": { ...entry, valuation: { Unavailable: { reason: { FutureVariant: {} } } } } },
-  }, "book"), /无效估值不可用原因/)
-  assert.throws(() => parseBeliefBook({
-    ...book,
-    entries: { "600001": { ...entry, valuation: { Unavailable: { reason: "FutureVariant" } } } },
-  }, "book"), /Unavailable\.reason/)
 })
 const withExitFact = {
   ...base,
@@ -119,7 +90,7 @@ const withExitFact = {
       failure_events: [],
       stocks: {},
       exit_records: [{
-        code: "600001",
+        code: 0,
         order_id: "9",
         cooldown_until_market_minute: null,
         realized_profit: true,

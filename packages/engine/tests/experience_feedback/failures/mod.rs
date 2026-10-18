@@ -4,7 +4,7 @@
 mod clocks;
 
 use engine::experience::ExitRecord;
-use engine::{ExperienceError, Money, RetailExperienceState, Side, StockCode};
+use engine::{ExperienceError, Money, RetailExperienceState, Side, StockId};
 
 use super::{code, moment, price};
 
@@ -78,9 +78,7 @@ fn buy_from_zero_over_an_active_entry_is_rejected() {
         .unwrap_err();
     assert_eq!(
         err,
-        ExperienceError::ActiveEntryAlreadyExists {
-            code: code.0.clone()
-        }
+        ExperienceError::ActiveEntryAlreadyExists { code: code }
     );
     assert!(
         state.feedback.stocks.contains_key(&code),
@@ -104,12 +102,7 @@ fn exit_without_an_active_entry_is_rejected() {
             moment(0, 10),
         )
         .unwrap_err();
-    assert_eq!(
-        err,
-        ExperienceError::NoActiveEntry {
-            code: code.0.clone()
-        }
-    );
+    assert_eq!(err, ExperienceError::NoActiveEntry { code: code });
     assert!(state.feedback.exit_records.is_empty());
 }
 
@@ -121,12 +114,7 @@ fn observation_without_an_active_entry_is_rejected() {
     let err = state
         .observe_position_dated(&code, price(940), moment(0, 10))
         .unwrap_err();
-    assert_eq!(
-        err,
-        ExperienceError::NoActiveEntry {
-            code: code.0.clone()
-        }
-    );
+    assert_eq!(err, ExperienceError::NoActiveEntry { code: code });
     assert!(state.feedback.failure_events.is_empty());
     assert_eq!(state.consecutive_failed_buys, 0);
 
@@ -135,9 +123,7 @@ fn observation_without_an_active_entry_is_rejected() {
         state
             .is_long_stuck(&code, price(1_000), &moment(0, 11))
             .unwrap_err(),
-        ExperienceError::NoActiveEntry {
-            code: code.0.clone()
-        }
+        ExperienceError::NoActiveEntry { code: code }
     );
 }
 
@@ -230,8 +216,8 @@ fn cooldown_minute_overflow_propagates_without_touching_feedback() {
 fn dedup_guard_uses_stock_code_from_the_fill_not_a_stale_copy() {
     // 多股并存时各股生命周期互不串扰：B 股建仓不得被 A 股既有周期拦截，
     // 也不得让 A 股的失败登记记到 B 股头上。
-    let a = StockCode("600101".into());
-    let b = StockCode("600102".into());
+    let a = StockId(0);
+    let b = StockId(1);
     let mut state = err_state();
     crate::buy_fill!(&mut state, &a, 1_000, 0, 100, 1, 0, 10);
     crate::buy_fill!(&mut state, &b, 2_000, 0, 100, 2, 0, 10);

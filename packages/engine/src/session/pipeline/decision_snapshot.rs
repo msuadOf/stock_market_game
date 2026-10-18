@@ -29,8 +29,23 @@ pub struct DecisionAccountInput {
     strategy_state: StrategyState,
     account_risk: Option<AccountRiskObservation>,
     retail_experience: Option<Arc<RetailExperienceState>>,
-    retail_analysis: Option<BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>>,
+    retail_analysis: Option<BTreeMap<crate::StockId, crate::plans::CandidateAssessment>>,
     failure_influence: Option<u16>,
+}
+
+/// T1·两阶段（ADR-0042 §T1）：决策**共享**输入的只读借用视图——queue 链由
+/// 协调线程捕获一次（MarketView 等不复制给每账户），账户任务组装个人
+/// `DecisionAccountInput` 后经 [`decide_npc_account_from_shared`] 直接进入
+/// decide 核心；单账户快照（[`DecisionSnapshot`]）路径经 `shared_inputs()`
+/// 复用同一核心。
+pub(in crate::session) struct DecisionSharedInputs<'a> {
+    pub(in crate::session) tick: u64,
+    pub(in crate::session) npc_seed_base: u64,
+    pub(in crate::session) phase: TradingPhase,
+    pub(in crate::session) market_minute: u64,
+    pub(in crate::session) market: &'a MarketView,
+    pub(in crate::session) behavior_market: Option<&'a BehaviorMarketObservation>,
+    pub(in crate::session) urgency_policy: &'a crate::plans::UrgencyPolicy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -52,7 +67,7 @@ pub enum DecisionSnapshotError {
     #[error("retail account {account:?} analysis references unknown market stock {code:?}")]
     UnknownRetailAnalysisStock {
         account: AccountId,
-        code: crate::StockCode,
+        code: crate::StockId,
     },
     #[error("retail account {0:?} personal analysis requires a retail execution strategy")]
     InvalidRetailAnalysisStrategy(AccountId),
@@ -104,7 +119,7 @@ impl DecisionAccountInput {
 
     pub fn with_retail_analysis(
         mut self,
-        analysis: Option<BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>>,
+        analysis: Option<BTreeMap<crate::StockId, crate::plans::CandidateAssessment>>,
     ) -> Self {
         self.retail_analysis = analysis;
         self
@@ -112,7 +127,7 @@ impl DecisionAccountInput {
 
     pub fn retail_analysis(
         &self,
-    ) -> Option<&BTreeMap<crate::StockCode, crate::plans::CandidateAssessment>> {
+    ) -> Option<&BTreeMap<crate::StockId, crate::plans::CandidateAssessment>> {
         self.retail_analysis.as_ref()
     }
 
@@ -166,7 +181,9 @@ impl DecisionSnapshot {
                 market_view_minute: market.market_minute,
             });
         }
-        if due_npc_ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+        // 用户已授权放宽：到期账户不要求按 ID 排序，只要求唯一不重复。
+        let mut seen = std::collections::HashSet::new();
+        if due_npc_ids.iter().any(|account| !seen.insert(*account)) {
             return Err(DecisionSnapshotError::NonCanonicalDueAccounts);
         }
         if let Some(missing) = due_npc_ids
@@ -276,5 +293,18 @@ impl DecisionSnapshot {
         self.accounts
             .get(&account)
             .ok_or(DecisionSnapshotError::MissingAccount(account))
+    }
+
+    /// 共享半边的只读借用视图（T1：与账户任务共享同一 decide 核心）。
+    pub(in crate::session) fn shared_inputs(&self) -> DecisionSharedInputs<'_> {
+        DecisionSharedInputs {
+            tick: self.tick,
+            npc_seed_base: self.npc_seed_base,
+            phase: self.phase,
+            market_minute: self.market_minute,
+            market: &self.market,
+            behavior_market: self.behavior_market.as_ref(),
+            urgency_policy: &self.urgency_policy,
+        }
     }
 }

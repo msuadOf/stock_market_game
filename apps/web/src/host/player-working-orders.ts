@@ -1,15 +1,15 @@
 import { parseMoney, compareMoney } from "../utils/money.ts";
 import type { Cents } from "../types/engine.ts";
+import { stockCodeOf } from "./protocol/stock-identity.ts";
 
 export type PlayerWorkingOrder = {
-  readonly owner: string;
   readonly id: number;
   readonly code: string;
   readonly side: "Buy" | "Sell";
   readonly price: Cents;
   readonly remainingQty: number;
-  readonly venue: "auction" | "continuous";
-  readonly frozen: "cash" | "shares";
+  readonly venue: "Auction" | "Continuous";
+  readonly frozen: "Cash" | "Shares";
 };
 
 function record(value: unknown, path: string): Readonly<Record<string, unknown>> {
@@ -31,27 +31,24 @@ export function normalizePlayerWorkingOrders(value: unknown): readonly PlayerWor
   return value.map((item, index) => {
     const path = `玩家活动委托[${index}]`;
     const order = record(item, path);
-    const expected = ["owner", "id", "code", "side", "price", "remainingQty", "venue", "frozen"];
+    const expected = ["id", "code", "side", "price", "remainingQty", "venue", "frozen"];
     if (Object.keys(order).length !== expected.length || expected.some((key) => !Object.hasOwn(order, key))) {
       throw new TypeError(`${path} 字段不符合 DTO 契约`);
     }
-    if (typeof order.code !== "string" || order.code.length === 0) throw new TypeError(`${path}.code 必须是非空证券代码`);
-    if (typeof order.owner !== "string" || !/^(0|[1-9][0-9]*)$/.test(order.owner) || BigInt(order.owner) > 18446744073709551615n) {
-      throw new TypeError(`${path}.owner 必须是规范 u64 AccountID 字符串`);
-    }
+    // wire 的 code 为数值 StockId（ADR 0041）；摄入时译回非空代码串。
+    if (typeof order.code !== "number" || !Number.isSafeInteger(order.code) || order.code < 0) throw new TypeError(`${path}.code 必须是数值 StockId`);
     if (order.side !== "Buy" && order.side !== "Sell") throw new TypeError(`${path}.side 无效`);
-    if (order.venue !== "auction" && order.venue !== "continuous") throw new TypeError(`${path}.venue 无效`);
-    if (order.frozen !== "cash" && order.frozen !== "shares") throw new TypeError(`${path}.frozen 无效`);
-    if (order.frozen !== (order.side === "Buy" ? "cash" : "shares")) throw new TypeError(`${path}.frozen 与 side 不一致`);
+    if (order.venue !== "Auction" && order.venue !== "Continuous") throw new TypeError(`${path}.venue 无效`);
+    if (order.frozen !== "Cash" && order.frozen !== "Shares") throw new TypeError(`${path}.frozen 无效`);
+    if (order.frozen !== (order.side === "Buy" ? "Cash" : "Shares")) throw new TypeError(`${path}.frozen 与 side 不一致`);
     const price = parseMoney(order.price, `${path}.price`);
     if (compareMoney(price, "0") <= 0) throw new TypeError(`${path}.price 必须是正数（Money 原始分值）`);
     const remainingQty = nonnegativeSafeInteger(order.remainingQty, `${path}.remainingQty`);
     if (remainingQty === 0) throw new TypeError(`${path}.remainingQty 必须是正股数`);
     if (remainingQty > 0xffff_ffff) throw new TypeError(`${path}.remainingQty 必须是 u32`);
     return {
-      owner: order.owner,
       id: nonnegativeSafeInteger(order.id, `${path}.id`),
-      code: order.code,
+      code: stockCodeOf(order.code, `${path}.code`),
       side: order.side,
       price,
       remainingQty,

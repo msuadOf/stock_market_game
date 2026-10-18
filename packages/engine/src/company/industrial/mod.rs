@@ -22,7 +22,6 @@ pub(crate) mod chart;
 mod config;
 mod error;
 mod expenses;
-mod income_tax;
 mod interest;
 mod inventory_sources;
 mod loans;
@@ -37,7 +36,6 @@ mod trade_events;
 pub use config::{IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem};
 pub use error::IndustrialError;
 pub use expenses::{ExpenseKind, IncomeTaxOutcome};
-pub use income_tax::{IndustrialCorrectionError, IndustrialReportCorrection};
 pub use loans::{InterestAccrualItem, LoanState, RepaymentOutcome, OPENING_DEBT_CONTRACT_ID};
 pub use purchasing::{PurchaseOutcome, Settlement};
 
@@ -55,7 +53,7 @@ use crate::company::counterparty::{
 };
 use crate::company::opening::opening_event_id;
 use error::map_post_error;
-use income_tax::IncomeTaxPosition;
+use expenses::IncomeTaxPosition;
 use loans::LoanPortfolio;
 
 /// 工商账套：Books + 子账 + 税务/借款状态（全部随存档序列化；`Books` 恢复走
@@ -118,8 +116,6 @@ impl IndustrialBooks {
             })
             .collect();
 
-        let income_tax_position =
-            IncomeTaxPosition::new(&books).map_err(income_tax::map_owner_error)?;
         Ok(Self {
             books,
             inventory,
@@ -130,7 +126,7 @@ impl IndustrialBooks {
             counterparties,
             budget: config.budget,
             tax_policy: config.tax_policy,
-            income_tax_position,
+            income_tax_position: IncomeTaxPosition::default(),
             loans,
             next_event_id: 2,
             trade_counterparty_events: Vec::new(),
@@ -324,10 +320,6 @@ impl<'de> serde::Deserialize<'de> for IndustrialBooks {
         restored
             .income_tax_position
             .validate(&restored.tax_policy.income_tax)
-            .map_err(serde::de::Error::custom)?;
-        restored
-            .income_tax_position
-            .validate_books(&restored.books)
             .map_err(serde::de::Error::custom)?;
         restored
             .validate_trade_counterparty_events()

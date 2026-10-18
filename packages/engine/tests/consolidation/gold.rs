@@ -118,7 +118,7 @@ fn mixed_industry_group_80_20_minority_split_is_exact() {
     assert_eq!(
         out.scope,
         ScopeId::Consolidated(engine::accounting::consolidation::MemberId(
-            "MIX-PARENT".to_string()
+            crate::member_id("MIX-PARENT").0
         ))
     );
     assert!(out.worksheet.is_empty());
@@ -160,8 +160,8 @@ fn mixed_industry_group_80_20_minority_split_is_exact() {
     assert_eq!(
         out.members,
         vec![
-            engine::accounting::consolidation::MemberId("MIX-BANK".to_string()),
-            engine::accounting::consolidation::MemberId("MIX-PARENT".to_string()),
+            engine::accounting::consolidation::MemberId(crate::member_id("MIX-BANK").0),
+            engine::accounting::consolidation::MemberId(crate::member_id("MIX-PARENT").0),
         ]
     );
 }

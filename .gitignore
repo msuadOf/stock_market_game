@@ -128,3 +128,5 @@ artifacts/market-ui-performance/
 
 # Agent 机器生成的 JSON 记录；其他中文 Markdown 审计文档仍纳入版本管理
 /agents/**/*.json
+# 基准默认负载配置是正式基准的输入而非机器产物，必须入库保证可复现
+!/agents/engine-max-performance/default-setup.json

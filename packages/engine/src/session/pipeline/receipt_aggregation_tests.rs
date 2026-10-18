@@ -1,10 +1,17 @@
 use super::ledger_tests::*;
-use super::receipt_aggregation::{apply_receipt_transaction, apply_session_receipt_transaction};
-use super::{
-    Envelope, EnvelopeLedger, JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey,
-    ReceiptSource, ReceiptTransition, ResVec, StepFatal,
+use super::receipt_aggregation::{
+    apply_receipt_transaction as apply_receipt_transaction_with_compute,
+    apply_session_receipt_transaction,
 };
-use crate::{GameSession, Money};
+use super::{
+    Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, JournalRank, ReceiptDelta, ReceiptKind,
+    ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
+};
+use crate::{AccountId, GameSession, Money, OrderId, Side, StockId};
+
+fn audit_compute() -> std::sync::Arc<crate::compute::ComputeContext> {
+    crate::compute::ComputeContext::with_workers(2).unwrap()
+}
 
 fn game_with_ledger(ledger: EnvelopeLedger) -> GameSession {
     let cursor = ledger.next_receipt_index();
@@ -246,6 +253,27 @@ fn illegal_source_kind_and_noncontiguous_local_ordinal_are_transactional() {
     );
     assert_eq!(ledger, before);
 }
+
+/// 既有单 ledger 用例的等价入口：审计固定落在独立测试 compute registry。
+/// 统一事务返回 ReceiptBatch（raw + typed Fill 事实）；既有用例只消费 raw 审计链，
+/// 这里交出 raw 所有权，typed 事实派生语义由 fill_fact_tests 覆盖。
+fn apply_receipt_transaction(
+    ledger: &mut EnvelopeLedger,
+    created_envelopes: Vec<Envelope>,
+    worker_batches: Vec<Vec<EnvelopeReceipt>>,
+    terminal_keys: Vec<EnvelopeKey>,
+) -> Result<Vec<EnvelopeReceipt>, StepFatal> {
+    apply_receipt_transaction_with_compute(
+        ledger,
+        created_envelopes,
+        worker_batches,
+        terminal_keys,
+        &audit_compute(),
+    )
+    .map(super::fill_fact::ReceiptBatch::into_raw)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 
 #[test]
 fn journal_source_mismatch_is_rejected_before_a_worker_receipt_can_exist() {

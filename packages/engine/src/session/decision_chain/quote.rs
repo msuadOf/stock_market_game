@@ -5,9 +5,10 @@ impl GameSession {
         &self,
         cursor: &mut crate::session::plan_chain_candidates::QuotePlans,
         plans: &PlanBook,
-        unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
+        unfinished_routes: &BTreeSet<(AccountId, StockId)>,
     ) -> Option<PlanExecutionRequest> {
         let id = cursor.account;
+        let trading_day = u64::from(self.state.day);
         let lot = self.state.setup.config.lot_size;
         let chain_params = self.chain_strategy_params(id);
         let available = cursor.plans.len();
@@ -19,16 +20,6 @@ impl GameSession {
             let plan = plans
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("plan quote cursor lost its plan: {error}"));
-            if self
-                .stock_day_status(plan.code())
-                .expect("plan stock calendar is valid")
-                != crate::calendar::DayStatus::Trading
-            {
-                continue;
-            }
-            let trading_day = self
-                .stock_trading_day(plan.code())
-                .expect("plan stock trading day is valid");
             if unfinished_routes.contains(&(id, plan.code().clone())) {
                 cursor.plans.push_back(plan_id);
                 continue;
@@ -90,32 +81,23 @@ impl GameSession {
                 .get(plan.code())
                 .unwrap_or_else(|| panic!("plan stock {:?} must have a view", plan.code()));
             let price = view.last_price;
-            let mut book_top = BookTop {
-                best_bid: view.best_bid,
-                best_ask: view.best_ask,
-            };
-            if book_top.best_bid.is_none()
-                && book_top.best_ask.is_none()
-                && matches!(
-                    self.phase(),
-                    TradingPhase::CallAuction | TradingPhase::ClosingAuction
-                )
-            {
-                book_top.best_bid = Some(price);
-                book_top.best_ask = Some(price);
-            }
             let market = self
                 .state
                 .markets
                 .get(plan.code())
                 .unwrap_or_else(|| panic!("plan stock {:?} must have a market", plan.code()));
+            let plan_code = self
+                .state
+                .stocks
+                .code(*plan.code())
+                .expect("plan stock must be cataloged");
             let stock = self
                 .state
                 .setup
                 .stocks
                 .iter()
-                .find(|stock| &stock.code == plan.code())
-                .unwrap_or_else(|| panic!("plan stock {:?} must have a spec", plan.code()));
+                .find(|stock| stock.code.0 == *plan_code)
+                .unwrap_or_else(|| panic!("plan stock {:?} must have a spec", plan_code));
             let (urgency, _) = self.plan_execution_urgency_at_view(
                 plan,
                 cursor.thirty_minute_bp.get(plan.code()).copied().flatten(),
@@ -138,98 +120,50 @@ impl GameSession {
                         plan.code()
                     )
                 });
-            let cage_bound = apply_price_cage.then_some(legal_bound);
+            // D3a-3 件4b：报价决策段提取共享（组线程首子单同一函数——
+            // 报价字段不得分叉）。band/cage/合法界/protection/数量/决策/
+            // affordable 复核全部收口在 decide_plan_quote。
+            let active_child = plan.execution().and_then(|leg| {
+                plan.active_child_order_id().map(|order_id| ActiveQuote {
+                    order_id,
+                    price: leg.limit_price(),
+                    qty: leg.active_child_remaining_qty().unwrap_or(leg.child_qty()),
+                })
+            });
             let per_share = self.belief_per_share(id, plan.code());
-            let protection_limit = match plan.direction() {
-                Side::Buy => {
-                    per_share.map_or(legal_bound, |range| range.optimistic.min(legal_bound))
-                }
-                Side::Sell => {
-                    per_share.map_or(legal_bound, |range| range.pessimistic.max(legal_bound))
-                }
-            };
             let sellable = cursor.sellable.get(plan.code()).copied().unwrap_or(0);
             let max_order_qty = stock.category.max_order_qty(false);
-            let desired_qty = match plan.direction() {
-                Side::Buy => super::next_routable_buy_qty(
-                    remaining,
-                    chain_params.order_size,
-                    lot,
-                    max_order_qty,
-                )
-                .unwrap_or_default(),
-                Side::Sell => {
-                    super::next_routable_sell_qty(remaining, sellable, lot, max_order_qty)
-                        .unwrap_or_default()
-                }
-            };
-            if desired_qty == 0 {
-                continue;
-            }
-            let active_child = self
-                .state
-                .parent_orders
-                .get(&id)
-                .and_then(|parents| parents.get(plan.code()))
-                .filter(|parent| parent.linked_plan_id() == Some(plan.plan_id()))
-                .and_then(|parent| {
-                    parent.active_child_order_id().map(|order_id| ActiveQuote {
-                        order_id,
-                        price: parent.limit_price(),
-                        qty: parent
-                            .active_child_remaining_qty()
-                            .unwrap_or(parent.child_qty()),
-                    })
-                });
-            let mut quote_inputs = QuoteDecisionInputs {
-                side: plan.direction(),
+            let decision = super::decide_plan_quote(super::PlanQuoteInputs {
+                account: id,
+                plan,
+                price,
+                best_bid: view.best_bid,
+                best_ask: view.best_ask,
+                auction_book_fallback: matches!(
+                    self.phase(),
+                    TradingPhase::CallAuction | TradingPhase::ClosingAuction
+                ),
+                band_up,
+                band_down,
+                legal_bound,
+                apply_price_cage,
+                per_share: per_share.as_ref(),
                 urgency: urgency.urgency,
                 pause: urgency.pause,
-                book: book_top,
-                protection_limit,
-                band_down,
-                band_up,
-                tick: stock.tick,
-                cage_bound,
-                desired_qty,
-                lot_size: lot,
+                remaining,
+                order_size: chain_params.order_size,
+                lot,
                 max_order_qty,
-                available_sell_qty: sellable,
-                active_order: active_child,
+                sellable,
+                active_child,
                 cancellable_now: self.plan_child_is_cancellable_now(),
+                tick_size: stock.tick,
+                allocation_cash: allocation.allocated_cash,
+                config: &self.state.setup.config,
+            });
+            let Some(decision) = decision else {
+                continue;
             };
-            let mut decision = decide_quote(&quote_inputs)
-                .unwrap_or_else(|error| panic!("quote decision failed for {id:?}: {error}"));
-            if plan.direction() == Side::Buy {
-                if let crate::plans::QuoteAction::Submit { price, qty }
-                | crate::plans::QuoteAction::Replace { price, qty, .. } = decision.action
-                {
-                    match crate::strategy::affordable_buy_qty(
-                        qty,
-                        price,
-                        allocation.allocated_cash,
-                        &self.state.setup.config,
-                    ) {
-                        Some(funded_qty) => {
-                            quote_inputs.desired_qty = funded_qty;
-                            decision = decide_quote(&quote_inputs).unwrap_or_else(|error| {
-                                panic!("funded quote decision failed for {id:?}: {error}")
-                            });
-                        }
-                        None => {
-                            decision = crate::plans::QuoteDecision {
-                                action: match active_child {
-                                    Some(active) => crate::plans::QuoteAction::Keep {
-                                        order_id: active.order_id,
-                                    },
-                                    None => crate::plans::QuoteAction::Wait,
-                                },
-                                reason: crate::plans::QuoteReason::InsufficientBudget,
-                            };
-                        }
-                    }
-                }
-            }
             return Some(PlanExecutionRequest {
                 plan_id: plan.plan_id(),
                 allocation,

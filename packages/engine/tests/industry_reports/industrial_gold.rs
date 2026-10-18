@@ -61,7 +61,7 @@ fn industrial_june_monthly_gold() {
     let set = generate_report_set(original_request(
         "2030-06",
         ReportKind::Monthly,
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
     ))
     .expect("report generation must succeed");
     set.validate().expect("generated set must cross-foot");
@@ -188,7 +188,7 @@ fn industrial_annual_gold() {
     let set = generate_report_set(original_request(
         "2030-12",
         ReportKind::Annual,
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
     ))
     .expect("annual report must generate");
     set.validate().expect("annual set must cross-foot");
@@ -235,7 +235,7 @@ fn industrial_q2_snapshot_gold() {
     let set = generate_report_set(original_request(
         "2030-06",
         ReportKind::Quarter,
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
     ))
     .expect("quarter snapshot must generate");
     set.validate().expect("quarter set must cross-foot");
@@ -257,13 +257,13 @@ fn reconstruction_is_byte_equal() {
     let a = generate_report_set(original_request(
         "2030-06",
         ReportKind::Monthly,
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
     ))
     .expect("first generation");
     let b = generate_report_set(original_request(
         "2030-06",
         ReportKind::Monthly,
-        standalone("C-IND", &books, IndustryPresentation::Industrial),
+        standalone(0, &books, IndustryPresentation::Industrial),
     ))
     .expect("second generation");
     assert_eq!(a, b, "same journal must derive equal ReportSet");
@@ -276,7 +276,7 @@ fn reconstruction_is_byte_equal() {
     let c = generate_report_set(ReportRequest {
         period: period("2030-06"),
         kind: ReportKind::Monthly,
-        source: standalone("C-IND", &books, IndustryPresentation::Industrial),
+        source: standalone(0, &books, IndustryPresentation::Industrial),
         version: ReportVersion {
             sequence: 1,
             supersedes: None,

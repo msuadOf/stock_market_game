@@ -17,8 +17,6 @@
 
 pub mod actor;
 pub mod deployment;
-pub mod identity;
-pub mod identity_routes;
 pub mod publisher;
 pub mod routes;
 #[cfg(feature = "web-ui")]
@@ -61,27 +59,10 @@ pub fn app_router_with_manager(manager: SessionManager) -> Router {
 
 /// 内部：由 `AppState` 装配完整路由树。
 fn app_router_with_state(state: AppState) -> Router {
-    let identities =
-        identity_routes::identity_router(identity::IdentityService::new(state.manager.database()));
     let router = Router::new()
-        .merge(routes::archive_router())
         .route("/healthz", get(healthz))
         .route("/api/new", post(routes::api_new))
-        .route("/api/markets", get(routes::api_markets))
-        .route("/api/market/context", get(routes::api_market_context))
-        .route("/api/markets/join", post(routes::api_join_market))
-        .route("/api/market/reset", post(routes::api_reset_market))
-        .route(
-            "/api/market/admission-cash",
-            post(routes::api_admission_cash),
-        )
         .route("/api/intent", post(routes::api_intent))
-        .route(
-            "/api/market/report-corrections",
-            get(routes::api_report_corrections)
-                .post(routes::api_submit_report_correction)
-                .delete(routes::api_cancel_report_correction),
-        )
         .route("/api/snapshot", get(routes::api_snapshot))
         .route(
             "/api/player-working-orders",
@@ -95,47 +76,12 @@ fn app_router_with_state(state: AppState) -> Router {
         .route("/api/host-capabilities", get(routes::api_host_capabilities))
         .route("/api/indicators", post(routes::api_calculate_indicators))
         .route(
-            "/api/intraday-average",
-            post(routes::api_calculate_intraday_average),
-        )
-        .route(
-            "/api/intraday-average-curve",
-            post(routes::api_calculate_intraday_average_curve),
-        )
-        .route(
-            "/api/personal-trade-confirmations",
-            get(routes::api_personal_trade_confirmations),
-        )
-        .route("/api/personal-trade-history", post(routes::api_personal_trade_history))
-        .route("/api/market-history", post(routes::api_market_history))
-        .route("/api/current-minute-history", post(routes::api_current_minute_history))
-        .route(
             "/api/companies/:company_id/reports",
             get(routes::api_public_report_page),
         )
         .route(
-            "/api/companies/:company_id/reports/availability",
-            post(routes::api_public_report_availability),
-        )
-        .route(
             "/api/companies/:company_id/reports/:report_id",
             get(routes::api_public_report),
-        )
-        .route(
-            "/api/companies/:company_id/capabilities",
-            get(routes::api_company_capabilities),
-        )
-        .route(
-            "/api/companies/:company_id/period-explanation",
-            get(routes::api_company_period_explanation),
-        )
-        .route(
-            "/api/owner/rights-offerings",
-            get(routes::api_owner_rights_offerings),
-        )
-        .route(
-            "/api/owner/flat-withholding-receipts",
-            get(routes::api_owner_flat_withholding_receipts),
         )
         .route(
             "/api/diagnostics/npc/:account",
@@ -167,7 +113,6 @@ fn app_router_with_state(state: AppState) -> Router {
         .layer(cors_layer())
         .layer(DefaultBodyLimit::max(routes::MAX_LOAD_BODY_BYTES))
         .with_state(state)
-        .merge(identities.layer(cors_layer()))
 }
 
 /// 构造 CORS 层。
@@ -196,3 +141,7 @@ pub fn init_tracing() {
         .try_init()
         .ok();
 }
+
+
+
+

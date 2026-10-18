@@ -6,8 +6,9 @@ const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 const lifecycle = readFileSync(new URL("./useSessionHostLifecycle.ts", import.meta.url), "utf8");
 const controls = readFileSync(new URL("./session-control-commands.ts", import.meta.url), "utf8");
 
-test("受控浏览器验收每页面保留双线程，生产继续使用浏览器并发能力", { timeout: 10000 }, () => {
-  assert.match(lifecycle, /threadCount: tradingE2EMode \? 2 : undefined/);
+test("受控浏览器验收保留受控单步；WASM 线程池参数已随 rayon 退役移除", { timeout: 10000 }, () => {
+  assert.match(lifecycle, /enableE2EStepping: tradingE2EMode/);
+  assert.doesNotMatch(lifecycle, /threadCount/);
 });
 
 test("外层 App 先选择，再挂载游戏；一次读档源在外层生命周期共享", () => {
@@ -26,9 +27,7 @@ test("WASM 校验在快速槽读取和 Worker 创建前，远程地址显式传�
   assert.ok(initialization.indexOf("checkWasmEnvironment()") < initialization.indexOf("initialSaveSourceRef.current.read("));
   assert.ok(initialization.indexOf("checkWasmEnvironment()") < initialization.indexOf("await createHost("));
   assert.match(initialization, /if \(startupTarget.kind === "wasm"\) checkWasmEnvironment/);
-  assert.match(lifecycle, /return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget.baseUrl, token: startupTarget.token, context: startupTarget.context \}\)/);
-  assert.match(source, /<RemoteLoginScreen/);
-  assert.match(source, /setStartupTarget\(\{ kind: "remote", baseUrl: remoteLoginAddress, token, context \}\)/);
+  assert.match(lifecycle, /return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget.baseUrl \}\)/);
   assert.doesNotMatch(initialization, /VITE_ENGINE_HOST|VITE_REMOTE_BASE_URL/);
 });
 
@@ -48,8 +47,7 @@ test("重选先关闭当前实例并等待外层日终屏障，显式新局配�
   assert.ok(app.includes("new DayEndPersistence()"));
   assert.equal(shell.includes("new DayEndPersistence()"), false);
   assert.ok(app.includes("dayEndPersistenceRef={dayEndPersistenceRef}"));
-  assert.ok(app.includes("sessionSetup={sessionSetup} chosenSessionSeed={sessionCreation.draft.seed}"));
-  assert.ok(app.includes("setSessionCreation={setSessionCreation}"));
+  assert.ok(app.includes("sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}"));
   const returning = app.slice(app.indexOf("const returnToStartup"), app.indexOf("if (startupTarget === null)"));
   assert.ok(returning.indexOf("stopSession()") < returning.indexOf("dayEndPersistenceRef.current.invalidate()"));
   assert.ok(returning.indexOf("await dayEndPersistenceRef.current.idle()") < returning.indexOf("setStartupTarget(null)"));

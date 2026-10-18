@@ -20,7 +20,7 @@ fn period(iso: &str) -> AccountingPeriod {
 }
 
 fn member() -> MemberId {
-    MemberId("C-LIFE".to_string())
+    MemberId(0)
 }
 
 /// 推进到「FY2030 已年结 + 2031-01 更正年报（遗漏收入 +300）」的状态，
@@ -326,30 +326,39 @@ fn report_arithmetic_overflow_restores_correction_transaction() {
                 "2031-01-15",
                 BusinessKind::CreditSale,
                 CashFlowClass::NonCash,
-                &[("1122", PostingSide::Debit, 1), ("6001", PostingSide::Credit, 1)],
+                &[
+                    ("1122", PostingSide::Debit, 1),
+                    ("6001", PostingSide::Credit, 1),
+                ],
             )],
             reason: "派生报表合计溢出更正".to_string(),
         },
     );
 
-    assert!(matches!(
-        &result,
-        Err(ClosingError::CorrectionFailed { reason, cause })
-            if reason == "派生报表合计溢出更正"
-                && matches!(
-                    cause.as_ref(),
-                    ClosingError::Report(report)
-                        if matches!(
-                            report.as_ref(),
-                            engine::accounting::reports::ReportError::Accounting(accounting)
-                                if matches!(
-                                    accounting.as_ref(),
-                                    engine::accounting::AccountingError::AmountOverflow { op: "add", .. }
-                                )
-                        )
-                )
-    ), "派生报表的加法溢出必须拒绝更正");
-    assert_eq!(serde_json::to_vec(&books).expect("账套可序列化"), books_before);
+    assert!(
+        matches!(
+            &result,
+            Err(ClosingError::CorrectionFailed { reason, cause })
+                if reason == "派生报表合计溢出更正"
+                    && matches!(
+                        cause.as_ref(),
+                        ClosingError::Report(report)
+                            if matches!(
+                                report.as_ref(),
+                                engine::accounting::reports::ReportError::Accounting(accounting)
+                                    if matches!(
+                                        accounting.as_ref(),
+                                        engine::accounting::AccountingError::AmountOverflow { op: "add", .. }
+                                    )
+                            )
+                    )
+        ),
+        "派生报表的加法溢出必须拒绝更正"
+    );
+    assert_eq!(
+        serde_json::to_vec(&books).expect("账套可序列化"),
+        books_before
+    );
     assert_eq!(
         serde_json::to_vec(&closing).expect("结账状态可序列化"),
         closing_before

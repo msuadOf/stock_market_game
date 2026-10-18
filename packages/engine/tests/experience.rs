@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
-use engine::{Money, RetailExperienceState, Side, StockCode};
+use engine::{Money, RetailExperienceState, Side, StockId};
 
-fn code() -> StockCode {
-    StockCode("600101".into())
+fn code() -> StockId {
+    StockId(0)
 }
 
 #[test]
@@ -91,8 +91,8 @@ fn unheld_observation_is_a_watchlist_entry_without_a_trade_reference() {
 
 #[test]
 fn seeded_holdings_do_not_change_buy_failure_experience_when_partially_sold() {
-    let loss_code = StockCode("600102".into());
-    let profit_code = StockCode("600103".into());
+    let loss_code = StockId(1);
+    let profit_code = StockId(2);
     let reference = Money::from_cents(1_000);
 
     let mut losing = RetailExperienceState::new(Money::from_cents(1_000_000)).unwrap();
@@ -237,7 +237,7 @@ fn account_and_position_peaks_only_move_up_and_survive_serde_roundtrip() {
 fn watchlist_pruning_keeps_every_holding_and_only_the_most_recent_unheld_stocks() {
     let mut state = RetailExperienceState::new(Money::from_cents(1_000_000)).unwrap();
     for index in 0..12_u32 {
-        let code = StockCode(format!("60{index:04}"));
+        let code = StockId(index);
         state
             .record_fill(
                 &code,
@@ -261,7 +261,7 @@ fn watchlist_pruning_keeps_every_holding_and_only_the_most_recent_unheld_stocks(
             )
             .unwrap();
     }
-    let held = StockCode("600000".into());
+    let held = StockId(0);
     state
         .record_fill(&held, Side::Buy, Money::from_cents(1_000), 0, 100, None, 20)
         .unwrap();
@@ -270,6 +270,6 @@ fn watchlist_pruning_keeps_every_holding_and_only_the_most_recent_unheld_stocks(
 
     assert!(state.stocks.contains_key(&held));
     assert_eq!(state.stocks.keys().filter(|code| **code != held).count(), 8);
-    assert!(!state.stocks.contains_key(&StockCode("600001".into())));
-    assert!(state.stocks.contains_key(&StockCode("600011".into())));
+    assert!(!state.stocks.contains_key(&StockId(1)));
+    assert!(state.stocks.contains_key(&StockId(11)));
 }

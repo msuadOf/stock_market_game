@@ -1,11 +1,6 @@
 export class InitialSaveSource<Value> {
   private consumed = false;
   private pending: Promise<Value | null> | null = null;
-  private selected = false;
-
-  shouldResume(): boolean {
-    return !this.consumed && !this.selected;
-  }
 
   read(load: () => Promise<Value | null>): Promise<Value | null> {
     if (this.consumed) return Promise.resolve(null);
@@ -19,7 +14,6 @@ export class InitialSaveSource<Value> {
   }
 
   select(value: Value): void {
-    this.selected = true;
     this.consumed = false;
     this.pending = Promise.resolve(value);
   }

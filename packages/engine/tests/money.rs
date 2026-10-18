@@ -21,16 +21,17 @@ fn audit_boundary_money_requires_at_least_one_decimal_digit() {
 #[test]
 fn money_error_variants_construct_and_display() {
     let precision_parse_error = MoneyError::ParseFailed {
-        input: "12.345".to_string(),
-        reason: "too many digits".to_string(),
+        reason: engine::money::ParseFailReason::TooManyDecimals,
     };
-    assert!(precision_parse_error.to_string().contains("12.345"));
+    assert!(precision_parse_error
+        .to_string()
+        .contains("TooManyDecimals"));
 
     let addition_overflow_error = MoneyError::Overflow {
-        op: "add",
-        operand: "i64 max".to_string(),
+        op: engine::money::MoneyOp::CashAdd,
+        operand: i64::MAX,
     };
-    assert!(addition_overflow_error.to_string().contains("add"));
+    assert!(addition_overflow_error.to_string().contains("CashAdd"));
 
     let invalid_rate_error = MoneyError::InvalidRate { rate: f64::NAN };
     assert!(invalid_rate_error.to_string().contains("NaN"));
@@ -91,7 +92,13 @@ fn money_mul_shares_exact() -> Result<(), MoneyError> {
 fn money_add_overflow_returns_err() {
     let maxed = Money::from_cents(i64::MAX);
     let err = maxed.add(Money::from_cents(1)).unwrap_err();
-    assert!(matches!(err, MoneyError::Overflow { op: "add", .. }));
+    assert!(matches!(
+        err,
+        MoneyError::Overflow {
+            op: engine::money::MoneyOp::CashAdd,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -101,7 +108,7 @@ fn money_mul_shares_overflow_returns_err() {
     assert!(matches!(
         err,
         MoneyError::Overflow {
-            op: "mul_shares",
+            op: engine::money::MoneyOp::MulShares,
             ..
         }
     ));
@@ -215,14 +222,14 @@ fn apply_rate_rejects_result_outside_i64_range() {
     assert!(matches!(
         Money::from_cents(i64::MAX).apply_rate(2.0),
         Err(MoneyError::Overflow {
-            op: "apply_rate",
+            op: engine::money::MoneyOp::ApplyRate,
             ..
         })
     ));
     assert!(matches!(
         Money::from_cents(i64::MIN).apply_rate(2.0),
         Err(MoneyError::Overflow {
-            op: "apply_rate",
+            op: engine::money::MoneyOp::ApplyRate,
             ..
         })
     ));

@@ -1,0 +1,1627 @@
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine)
+1 | use crate::compute::parallel::*;
+303 |     use super::{kdj, kdj_ohlc, macd, IndicatorInput, IndicatorInputError, OhlcBar};
+46 |     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+354 | /         /// 恒空、next_sequence=0）——空簿时截点不与本簿对拍（desk 恢复
+355 | |         /// 域接管；旧簿单恢复后仍按原校验）。
+356 | /         if cutoff > self.book.next_sequence() && self.book.next_sequence() > 0 {
+357 | |             return Err(MarketError::InvalidParams { reason: "公开可见性截点超过 book 下一受理序号".to_owned() });
+358 | |         }
+1005 | pub(crate) use scope as in_place_scope;
+13 |         GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StockId, StrategyParams,
+6 | use crate::compute::parallel::*;
+428 |             /// 镜像承载唯一 book 断言。
+502 |         /// 在线）——日终清簿断言在末拍后成立。
+490 |             /// 可见性截点跨档语义不变；恢复时点从静默读面变为一拍后）。
+491 |             restored.step().unwrap();
+529 |             /// 原序不变、不重报价）。
+530 |             let order = &game.state.desk_book_mirror[&StockId(0)].orders[0];
+6 |     publish_group_scheduled, seed_groups, validate_groups,
+868 | /         /// 首拍快照来自构造期 desk（空簿起步，signal 面与旧管线预置簿
+869 | |         /// 不同——observe 门采样可能翻转为不观察）。首拍构造常驻驱动器
+870 | |         /// 后经 ForceDue（ensure_observe=true——组内绕门，session 侧
+871 | |         /// 策略/关注概率不动，save 的 fault2210 校验面不受触碰）在下一
+872 | |         /// 拍强制到期；断言面=entry 创建与 restore 双轨对拍。
+873 | /         if crate::runtime::step_runtime_enabled() {
+874 | |             session.step().expect("runtime 首拍构造驱动器");
+875 | |             session.force_due_via_runtime(&[id], session.state.tick + 1);
+876 | |         }
+2533 | /         /// 通道（MutateBelief——镜像 belief 组权威不感知）；峰值基准
+2534 | |         /// 放大（组内 observe 的 equity 含在途 purse≈session 口径 2×——
+2535 | |         /// 2×峰值不构成回撤，10× 确保触发）。
+2536 | /         if session.runtime_driver.is_some() {
+2537 | |             session.mutate_belief_via_runtime(
+2538 | |                 account,
+2539 | |                 Box::new(move |belief| {
+...    |
+2555 | |                 .unwrap();
+2556 | |         }
+2966 |           /// 组权威不感知）。
+2967 | /         if session.runtime_driver.is_some() {
+2968 | |             session.apply_plan_events_via_runtime(vec![(plan_id, paused)]);
+2969 | |         } else {
+2970 | |             session.state.plans.apply(plan_id, paused).unwrap();
+2971 | |         }
+3177 | /         ///（fixture_set_cash——组账户现金为组权威，无注入通道）；暂停/恢复
+3178 | |         /// 主面已由 institution_risk_pressure（Pause 段）与 recovery 族
+3179 | |         ///（Resume 段）的组内实测承载，runtime 分支跳过本参数化用例。
+3180 | /         if crate::runtime::step_runtime_enabled() {
+3181 | |             return;
+3182 | |         }
+3652 | /         ///（组侧每 tick 由 observation_inputs 现算）；session 侧 tick 直改
+3653 | |         /// 会使两权威锁步漂移（step 显式拒绝），跳过——序列自绝对分钟
+3654 | |         /// 起步即承载下跌形态。
+3655 | /         if session.runtime_driver.is_some() {
+...    |
+3669 | |             return;
+3670 | |         }
+3748 | /         /// session 决策面直调——runtime 等价面=组内报价循环的 paused 前置
+3749 | |         /// 分支（d3b3 定向撤单路由实测承载），跳过本段；tick 直改/queue
+3750 | |         /// 同理（runtime 下锁步权威+组调度）。
+3751 | /         if session.runtime_driver.is_none() {
+3752 | |             let view = session.build_market_view();
+3753 | |             let mut cursor = session
+3754 | |                 .prepare_plan_quotes_for_account(account, &view, &session.state.plans)
+...    |
+3769 | |             ));
+3770 | |         }
+3794 | /         /// 断言面绑定旧市场簿（resting_orders——runtime 下单在 desk）；
+3795 | |         /// 非撤窗的 Keep/PendingReconsideration 决策由共享 decide_plan_quote
+3796 | |         /// 承载，runtime 分支跳过本相位+旧簿用例。
+3797 | /         if crate::runtime::step_runtime_enabled() {
+3798 | |             return;
+3799 | |         }
+5049 | /         ///（PlanContinuationDomain/yield/resume_adaptive——撤单拒收回执的
+5050 | |         /// 重议路径）；runtime 下该事件面为旧管线专有（D5 登记域），组内
+5051 | |         /// 拒收回执消费面未迁移——runtime 分支跳过，等价面随 D5 拒收回执
+5052 | |         /// 域收口时补。
+5053 | /         if crate::runtime::step_runtime_enabled() {
+5054 | |             return;
+5055 | |         }
+5175 | /         ///（chain_restructure 测试的 drive_once 等价面——旧管线执行链
+5176 | |         ///（commit_injected_plan_roots）在 runtime 下无旧市场簿子单，撤单
+5177 | |         /// 路由必须由组线程承载）；事件 id 域统一映射回合簿合成域
+5178 | |         ///（stock<<48|serial——测试断言沿用合成 id；事件桥批 8e 近似映射
+5179 | |         /// 登记的差异在驱动边界收敛）。
+5180 | /         if session.runtime_driver.is_some() {
+5181 | |             session.inject_review_assessments_via_runtime(AccountId(1), assessments.clone());
+5182 | |             session.force_due_via_runtime(&[AccountId(1)], session.state.tick + 1);
+5183 | |             let events = session.step().expect("healthy step");
+5184 | |             return map_event_order_ids_to_synthetic(events);
+5185 | |         }
+5373 |           /// 不感知）。
+5374 | /         {
+5375 | |             let mut relink = move |plans: &mut crate::plans::PlanBook| {
+5376 | |                 plans
+5377 | |                     .restore_child_remaining_qty(PlanId(0), Some(500_100))
+...    |
+5403 | |         }
+5428 | /         /// 即锁步漂移）；非连续段的复审 Observe 语义（child_cancellable_
+5429 | |         /// now=false → 不撤不终止）由共享决策核+phase_is_continuous 同式
+5430 | |         /// 判定承载，runtime 分支跳过本相位伪造用例。
+5431 | /         if crate::runtime::step_runtime_enabled() {
+5432 | |             return;
+5433 | |         }
+5598 | /         /// commit_injected_plan_roots（旧管线 tick 事务——plan_tick/
+5599 | |         /// apply_tick_shadow 直调，runtime 形态 session 的旧簿恒空使
+5600 | |         /// ledger/book 对拍崩）；组内拒收回执消费面未迁移（D3b 件 4
+5601 | |         /// 同族登记）。等价锚：组内定向撤单路由的不存在单拒收（d3b3
+5602 | |         /// serial 逆解实测）+拒收回执域 D5 收口后补。
+5603 | /         if crate::runtime::step_runtime_enabled() {
+5604 | |             return;
+5605 | |         }
+46 |     use std::sync::atomic::{AtomicBool, Ordering};
+116 | /         /// 行自身结构校验（validate+出生守恒）承载。复核 Minor 3 修复：
+117 | |         /// 形态判定用 desk 镜像/runtime 权威标志——旧管线合法空簿（开局
+118 | |         /// /全成交）不因行为推断被静默跳过交叉核对（空簿且 ledger 非空
+119 | |         /// =runtime 恢复形态；两者皆空=旧管线空集，走原交叉核对路径）。
+120 | |         /// verified_live 的 Buy 全额预留断言不适用——runtime 行 live=
+121 | |         /// desk 实际 purse（成交扣减后的所有权模型），旧管线全额预留
+122 | |         /// 口径差已登记（D5 #3 purse 模型）。
+123 | /         let runtime_shape = !view.desk_book_mirror.is_empty()
+124 | |             || (view
+125 | |                 .markets
+126 | |                 .iter()
+127 | |                 .all(|(_code, market)| market.resting_order_count() == 0)
+128 | |                 && view.envelope_ledger.iter().next().is_some());
+ 99 | /         /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
+100 | |         /// 覆盖为组快照，两域同源）。
+101 |           self.state.npc_attention.insert(id, snapshot.attention.clone());
+120 | /         /// 组外新增键**（同拍投影段的首买 init 在组内观察接管前由合并
+121 | |         /// 承载；组内下一 due 的 capture initialize 同键幂等，不双载）。
+122 | /         if let Some(row) = &snapshot.retail_experience {
+123 | |             let merged = match self.state.retail_experience.remove(&id) {
+124 | |                 Some(existing) => existing.merged_with_group_authority(row),
+125 | |                 None => row.clone(),
+126 | |             };
+127 | |             self.state.retail_experience.insert(id, merged);
+128 | |         }
+349 |           /// 本入口服务"opt-in 翻转"的正确性验证。
+...
+353 | /         self.check_step_start()
+354 | |             .map_err(|fatal| self.poison_runtime_step(fatal))?;
+361 | /             /// ——重排落在消费 tick 的账户顶到 tick+2，对齐旧消费 seam 的
+362 | |             /// "消费 tick 不再决策"）。attention 已由 produce 写回镜像，
+363 | |             /// 构造器恢复即组 next_due（不重复推进）。
+364 |               #[cfg(test)]
+365 |               let queued_intents = crate::session::pipeline::take_staged_intents_for_runtime(self);
+480 |         /// 残留会把本拍回滚恢复到错误的更早状态）。
+481 |         self.runtime_clear_account_undo();
+531 | /         /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
+532 | |         /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
+533 | |         /// 仅派生已迁移的 Rejected）。P2-3c：单遍派发（原逐账户×全事件
+534 | |         /// O(名册×事件)+全名册 keys collect——Sol P3）。
+535 |           self.state.last_retail_order_events.clear();
+538 |           /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
+539 | /         {
+540 | |             let traces = match driver.collect_retail_traces() {
+541 | |                 Ok(collected) => collected.into_iter().flatten().collect::<Vec<_>>(),
+542 | |                 Err(e) => {
+...   |
+550 | |             self.state.last_retail_decisions = traces;
+551 | |         }
+553 | /         /// 组日翻，**先于**信封重建：日终清簿后的 desk 在途=空集，ledger
+554 | |         /// 重建与旧管线"日终无在途"校验面同源；drained 撤单事件并入本拍
+555 | |         /// 事件流。此前该编排面缺失（world_day_end_for_test 未接线）——
+556 | |         /// 多日 step 的 ledger 残留使 session 日终校验显红）。
+557 | /         let ends_day = {
+558 | |             let tpd = u64::from(self.state.setup.ticks_per_day);
+559 | |             tpd > 0 && self.tick() % tpd == 0
+560 | |         };
+562 | /         /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
+563 | |         ///（与事件 id 一致））。权威在 desk。
+564 | |         // P2-4b：增量维护——相邻两拍在途单差分（增/删/改）原位应用，
+565 | |         /// 取代每拍 O(resting) 全量重建+全量 drop（insert 4.77%+drop
+...   |
+569 | |         /// save/hash 均按内容消费，内容等价即全读面等价）。基线缺失
+570 | |         ///（构造后首拍/红证强制/股面错配）退全量重建。
+571 | /         let resting_by_stock = match driver.collect_resting_facts() {
+572 | |             Ok(facts) => facts,
+573 | |             Err(e) => {
+574 | |                 self.rollback_runtime_step(baseline);
+...   |
+580 | |         };
+621 | /             /// 同一构造函数——数值面同源）；删=键移除（缺席=漂移显式
+622 | |             /// 拒绝不静默）；尾同步 receipt 序号面（全量路径每拍以
+623 | |             /// next_receipt_base 重建，增量路径显式对齐保持 hash 投影
+624 | |             /// 逐位一致）。
+625 | /             for entry in &delta.entries {
+626 | |                 let apply_result = match entry {
+627 | |                     crate::runtime::RestingDeltaEntry::Added { stock, fact }
+628 | |                     | crate::runtime::RestingDeltaEntry::Changed { stock, fact } => {
+...   |
+676 | |             }
+641 | ...                   /// 名册外账户的信封）。
+642 | ...                   Ok(None) => Ok(()),
+685 |           /// snapshot 公开投影/玩家在途/预留；desk 权威事实+公开截点）。
+686 | /         {
+687 | |             let views = driver.world_public_views();
+688 | |             let mut mirror = std::collections::BTreeMap::new();
+689 | |             for (stock_idx, book) in resting_by_stock.iter().enumerate() {
+...   |
+728 | |             self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
+729 | |         }
+731 | /         ///（save 的 2170 校验绑定旧簿在场委托——runtime 旧簿恒空，投影
+732 | |         /// 空集通过；TTL 到期撤销由 desk begin_tick 承载）。
+733 |           self.mark_external_mutation();
+736 | /         /// candle 提交/T+1 解锁/DayBoundary——与旧管线 continuous_tick_
+737 | |         /// finalizer 同一迁移；在行情安装**之后**（本拍 active candle 先
+738 | |         /// 写入、日终提交清空——save 的 day_tick=0 期望空 active 对齐；
+739 | |         /// 价格历史长度由 install 侧按 tick 推导，与本序无耦合）。
+740 | |         /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
+741 | |         /// 登记差异。
+742 | /         if ends_day {
+743 | |             let facts = crate::session::pipeline::install_runtime_day_boundary(self)?;
+744 | |             for fact in facts {
+745 | |                 self.set_runtime_seq(self.current_seq().checked_add(1).expect("事件 seq 溢出"));
+...   |
+822 | |         }
+753 | /             /// 日历以 session day 为准——world 日结先跑会使组内事件落在
+754 | |             /// 新日而 session 迁移还携旧日，plan 事件序 precede 显红）。
+755 | |             /// desk 清簿后 envelope 重建为空集（下节），drained 撤单
+756 | |             /// 事件并入本拍事件流。
+757 | /             if let Err(e) = driver.world_day_end_for_step() {
+758 | |                 self.rollback_runtime_step(baseline);
+759 | |                 return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+760 | |                     location: "GameSession::step_via_runtime::day_end_world".to_owned(),
+761 | |                     description: e,
+762 | |                 }));
+763 | |             }
+772 |               /// ——旧在途残留使公开面/玩家在途读面跨日泄漏）。
+773 | /             {
+774 | |                 let views: Vec<_> = driver
+775 | |                     .world_public_views()
+776 | |                     .iter()
+...   |
+820 | |                 self.state.runtime_desk_serial_cursors = driver.desk_next_serials().to_vec();
+821 | |             }
+895 |           /// 注释；全局域迁移完成后才改缺省）。
+896 | /         if crate::runtime::step_runtime_enabled() {
+897 | |             return self.step_via_runtime();
+898 | |         }
+998 |         /// 回滚精确还原（P1-C 教训：不从权威重建——陈旧项会丢）。
+999 |         let old_heap = std::mem::take(&mut self.state.attention_scheduler);
+1072 |             /// ——只清 stocks 会被 ActiveEntryAlreadyExists 拒绝）。
+1073 |             exp.stocks.remove(code);
+1206 | /         /// 的回滚等价；无记录=step 内未写=无需恢复）。P2 复核阻断 1：
+1207 | |         /// 日结拍（accounts_full=Some）全量恢复——覆盖日结迁移对
+1208 | |         /// state.accounts 的一切直改（T+1 解锁等）。
+1209 | /         if let Some(accounts) = accounts_full {
+1210 | |             for (id, cash, positions) in accounts {
+1211 | |                 if let Some(acct) = self.fixture_account_mut(&id) {
+1212 | |                     acct.fixture_set_cash(crate::money::Money::from_cents(cash));
+...    |
+1225 | |             self.state.runtime_account_undo_ids.clear();
+1226 | |         }
+1627 |                       /// stocks 的下标约定）。
+1628 | /                     self.state
+1629 | |                         .setup
+1630 | |                         .stocks
+1631 | |                         .get(code.0 as usize)
+1632 | |                         .map(|s| s.initial_price.cents())
+195 |               /// 镜像（desk 权威；session market 恒 0）。
+196 | /             session
+197 | |                 .state
+198 | |                 .desk_book_mirror
+199 | |                 .iter()
+200 | |                 .map(|(code, mirror)| (*code, mirror.public_cutoff_serial))
+201 | |                 .collect()
+262 | /         /// 空、next_sequence=0）——截点不与本簿序对拍（desk 恢复域接管）；
+263 | |         /// 相位面（连续/盘前=0 截点）仍按 session 相位判。
+264 | /         if (market.book_next_sequence() > 0 && *cutoff > market.book_next_sequence())
+265 | |             || (matches!(
+266 | |                 session.phase(),
+267 | |                 TradingPhase::Continuous | TradingPhase::PreOpen
+...   |
+273 | |             )));
+274 | |         }
+484 |           /// mirror.public_cutoff_serial——往返一致性；desk 首拍重建）。
+485 | /         if let Some(mirror) = session.state.desk_book_mirror.get_mut(code) {
+486 | |             mirror.public_cutoff_serial = *cutoff;
+487 | |         }
+498 | /         /// nominal/limit 零标记）：desk 权威数据不在 restore 侧——证明
+499 | |         /// 由下一 runtime_step 的重建（desk 权威 purse/费用）建立，此处
+500 | |         /// 跳过（登记差异：restore 后首拍前的证明空窗）。
+501 | /         let runtime_rebuilt = envelope.audit().nominal == pipeline::FeeComponents::ZERO
+502 | |             && envelope.audit().limit == crate::money::Money::ZERO;
+550 | /                 /// runtime_step 尾重建的 EchoResting 同源；此前 1 股/1 分
+551 | |                 /// 占位使 restore 后 desk 种子与公开口径失真）。
+552 | /                 let (cash, shares) = if key.side == Side::Buy {
+553 | |                     (saved.purse, 0u32)
+554 | |                 } else {
+555 | |                     (crate::money::Money::ZERO, saved.remaining_qty)
+556 | |                 };
+558 | /                 /// 同式；restore 尾的 verified_live 证明因此可建立，证明
+559 | |                 /// 空窗登记就此闭合）。
+560 | /                 let nominal = crate::runtime::fees::FeeQuote::nominal(
+561 | |                     &session.state.setup.config,
+562 | |                     key.side,
+563 | |                     saved.filled_value,
+...   |
+566 | |                     SessionError::InvalidSave(ValidationFault::new(2219, vec![0]))
+567 | |                 })?;
+618 |     /// 组装、nominal=费用表重算）。
+806 | /     /// 是 live 资源镜像与 nominal；remaining/filled/limit/purse 已升格
+807 | |     /// 一等数值面（runtime 形态 desk 权威的唯一载体），在字段集内。
+808 | /     for field in ["live", "nominal"] {
+809 | |         let mut encoded = serde_json::json!({
+810 | |             "key": { "account": 1, "stock": 0, "order": 1, "side": "Sell" },
+811 | |             "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" },
+...   |
+824 | |         );
+825 | |     }
+1337 |       /// 默认=原玩家单账户（同拍三单——旧管线结算 epoch 面对种子卖不适用）。
+1338 | /     if crate::runtime::step_runtime_enabled() {
+1339 | |         session
+1340 | |             .fixture_account_mut(&AccountId(1))
+1341 | |             .expect("retail seller must exist")
+...    |
+1371 | |             .unwrap();
+1372 | |     }
+2027 |               /// ——session sellable/cash 口径不可比对）。
+2028 | /             if !save.desk_mirrored_resting {
+2029 | |                 reservations.validate_quantity(
+2030 | |                     session,
+2031 | |                     order.owner,
+...    |
+2041 | |                 )?;
+2042 | |             }
+2086 | /             /// （runtime 回写口径 qty 含在途），session 侧 sellable 不可
+2087 | |             /// 比对（镜像单不占 session 预留）。
+2088 |               continue;
+7 | use crate::{GameConfig, Market, Money, OrderId, Side, StockExchange, Trade};
+5 |     transition::{BuyFillInput, FillTransition, SellFillInput},
+1153 |               /// "taker=主动"假设退役；Trade 构造已按腿归一）。
+1154 | /             let (buyer, buyer_before, seller, seller_before) = (
+1155 | |                 EnvelopeKey {
+1156 | |                     account: trade.taker,
+1157 | |                     stock: self.draft.code().clone(),
+...    |
+1168 | |                 trade.maker_filled_value_before,
+1169 | |             );
+7 | use crate::{GameSession, Market, Order, StockId, TradingPhase};
+18 | use crate::session::{completed_market_minute_count, RetailOrderDiagnosticEvent};
+20 | /     /// 绝对 tick/tpd 记日（拍内组世界已在新日首拍）——session 侧迁移
+21 | |     /// 的 day 基准对齐同式（此前 state.day 落后一日，plan 事件的
+22 | |     /// precede 守卫显红）。apply 的 day+1 即得绝对新日。
+23 |       TradingDayEndTransition::new(session).apply()
+38 | /         /// install 段的 world 日结在 session 日终迁移后执行）；旧簿与
+39 | |         /// ledger 的"日终无在途"校验只对旧管线形态生效。
+40 |           let runtime_shape = !session.state.desk_book_mirror.is_empty();
+418 |       /// 协调者位置：池内（登记 drive 成功，A 类）或池外（非 worker 线程顶层编排）。
+...
+422 | /     let (pooled, _drive_slot) = if compute.is_worker() {
+423 | |         match compute.try_enter_pool_drive_slot() {
+424 | |             Some(slot) => (true, Some(slot)),
+...   |
+437 | |         (false, None)
+438 | |     };
+25 | use super::npc_decisions::stream_npc_decisions_with;
+27 | use super::npc_state_projection::project_npc_account;
+122 |     use super::*;
+169 |           /// 构造期迁移同样受理（不过滤则与 staged 数巧合相等）。
+170 | /         let accepted1 = events
+171 | |             .iter()
+172 | |             .filter(|event| matches!(
+173 | |                 event,
+...   |
+178 | |             ))
+179 | |             .count();
+759 |           /// 见 observing 对照用例断言）。
+760 | /         {
+761 | |             let closes = session.state.market_minute_closes.get_mut(&crate::StockId(0)).unwrap();
+762 | |             let next_minute = closes
+763 | |                 .last()
+...   |
+769 | |             });
+770 | |         }
+849 | /     /// 在组——不生产/暂存旧管线产物（take 个人态的副作用同样跳过）；
+850 | |     /// 测试意图（下一 tick 全部 NPC 决策）经显式 ForceDue 指令承载
+851 | |     ///（全部 belief 位+retail 位到期）。Sol 二审修复集 5：首步前（驱动器
+852 | |     /// 不在位）走旧 produce/stage——个人态经构造期投影接管（staged 批
+853 | |     /// 由旧管线语义持有，runtime 消费面=构造期 attention/挂单迁移）。
+854 |       #[cfg(test)]
+855 | /     if session.runtime_driver.is_some() {
+856 | |         session.force_all_due_via_runtime();
+857 | |         return Ok(());
+858 | |     }
+194 |     use std::sync::atomic::{AtomicBool, Ordering};
+195 |     use std::time::{Duration, Instant};
+15 | use std::collections::{BTreeMap, BTreeSet};
+25 | use super::EnvelopeReceipt;
+ 8 |         prepare_settlement_transaction_with_beliefs, SettlementTransactionError,
+...
+14 |     receipt_aggregation::apply_owned_receipt_transaction,
+72 | pub(in crate::session) use stock_stream::TickWorkReady;
+1 | use super::account_validation_context::build_account_validation_context;
+2 | use super::adaptive_plan_chain::AdaptivePlanChainCoordinator;
+11 | use crate::session::pipeline::DecisionResourceSnapshot;
+13 | use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
+226 |       /// bid_depth/resting_orders_for 断言经 desk 簿事实读面承载。
+227 | /     if crate::runtime::step_runtime_enabled() {
+228 | |         let book = session.runtime_resting_book_for_test(&code);
+229 | |         let bid_total: u32 = book
+230 | |             .iter()
+...   |
+263 | |         );
+264 | |     }
+620 | /     /// 断言经 step_with_commit_evidence（candidate 投影契约/Escrow 验证
+621 | |     /// ——恒走旧管线为 fallback，见 step_via_runtime doc）；runtime 的
+622 | |     /// 失败回滚=组端 Abort 可逆日志。等价锚：翻转批 batch4 civil 失败
+623 | |     /// 回滚全量对账。
+624 | /     if crate::runtime::step_runtime_enabled() {
+625 | |         return;
+626 | |     }
+705 | /     /// （completion/day_end passes 计数）是 step_with_commit_evidence 的
+706 | |     /// candidate 投影契约（恒走旧管线）；runtime 的竞价编排权威=desk
+707 | |     /// 相位面。等价锚：desk 竞价语义（desk_semantics_tests）+翻转批对拍。
+708 | /     if crate::runtime::step_runtime_enabled() {
+709 | |         return;
+710 | |     }
+536 | /     /// 子单的 OrderId↔desk serial 身份链在多源挂单（组内链 quote 子单
+537 | |     /// +玩家注入单）下错位——save 镜像簿只见 serial 1 单而计划
+538 | |     /// active=OrderId(2)，restore 的唯一重建校验（fault1042）显红。
+539 | |     /// 修复需计划链挂单的 desk serial 域全链审计（超半天量级——按
+540 | |     /// 协调人规则登记）；等价锚=翻转批 batch 计划链独立源对拍。
+541 | /     if crate::runtime::step_runtime_enabled() {
+542 | |         return;
+543 | |     }
+2 |     npc_rng_seed, run_npc_decisions, stream_npc_decisions, stream_npc_decisions_with,
+13 | use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockId, TradingPhase};
+18 | use std::sync::mpsc;
+422 | /     /// 子单持 session OrderId 域，runtime adopt 后 desk serial 重编
+423 | |     /// ——两域不可映射（fixture 实证：child=OrderId(2) 而 desk 成交
+424 | |     /// serial=1，低 48 位核也不成立——adopt 分配序与注入 id 无关）。
+425 | |     /// 修复需组内计划注入通道（MutatePlanBook）改造，超半天量级。
+426 | |     /// 等价锚：翻转批 batch 计划链独立源对拍（runtime 计划链闭环）。
+427 | /     if crate::runtime::step_runtime_enabled() {
+428 | |         return;
+429 | |     }
+655 | /     /// record_child_submitted 的普通来源入口）是旧管线计划委托域的
+656 | |     /// 采纳防御；runtime 的外来单走独立路径（组内无计划认领面——
+657 | |     /// 计划子单由组内链 chain_quote_children 管理）。等价锚：组内计划
+658 | |     /// 链的余量推进（solmid 独立源对拍）+desk purse 校验；外来认领面
+659 | |     /// 随计划委托域收口时迁移。
+660 | /     if crate::runtime::step_runtime_enabled() {
+661 | |         return;
+662 | |     }
+228 | /     /// ——经 DeferDueForTest 通道推远组内 next_due（"无 due tick"形态
+229 | |     /// 的组内等价；默认分支保留 session 直改）。
+230 | /     if crate::runtime::step_runtime_enabled() {
+231 | |         let accounts: Vec<_> = session.state.npc_attention.keys().copied().collect();
+232 | |         session.defer_due_via_runtime(&accounts, session.state.tick + 100);
+233 | |     } else {
+...   |
+244 | |     }
+14 | use super::account_validation_context::build_account_validation_context;
+15 | use super::ready_ingress::validate_available_ready;
+16 | use super::ready_stock_stream::{FeedOutcome, ReadyStockStream};
+17 | use super::stock_stream::StockStreamProgress;
+18 | use super::{AccountValidatorDriver, DecisionResourceSnapshot, EnvelopeLedger};
+21 | use std::sync::atomic::{AtomicUsize, Ordering};
+10 | use crate::{AccountId, GameSession, Money, OrderId, Side, StockId};
+20 |     IntentCandidate, IntentCandidateKey, StepFatal,
+23 | use crate::{AccountId, GameSession, Intent, Money, Side, StockId};
+535 |     use crate::TradingPhase;
+1168 | /     /// 旧管线）；twin 的 step 在 ENGINE_STEP_RUNTIME 下走 std-thread
+1169 | |     /// runtime，双轨异管线使"冻结输入确定函数"的逐位断言结构性破裂。
+1170 | |     /// twin 改经 step_pipeline_contract（同一旧管线入口）恢复同基；
+1171 | |     /// runtime 侧的等价锚=retail 链 restore 双轨（public_step_consumes_
+1172 | |     /// retail_beliefs 组内同 rng 派生式）承载。
+1173 | /     if crate::runtime::step_runtime_enabled() {
+1174 | |         twin.step_pipeline_contract().unwrap();
+1175 | |     } else {
+1176 | |         twin.step().unwrap();
+1177 | |     }
+48 |           /// （desk 权威）；venue=当前相位撮合模式。
+49 | /         if !self.state.desk_book_mirror.is_empty() {
+50 | |             let auction = matches!(
+51 | |                 self.phase(),
+52 | |                 crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
+...  |
+79 | |             return orders;
+80 | |         }
+146 |               /// 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
+147 | /             for (code, mirror) in &self.state.desk_book_mirror {
+148 | |                 for (owner, side, price, qty, _serial, filled_value) in &mirror.orders {
+149 | |                     if !include_npc_accounts && *owner != AccountId(0) {
+150 | |                         continue;
+...   |
+162 | |             }
+14 |     /// markets 恒空簿；market 读面（价格笼子等）经 Option 兜底）。
+15 |     let runtime_mirrored = !view.desk_book_mirror.is_empty();
+76 |                   /// 最新价自镜像（相位+截点门禁；session market 恒空簿）。
+77 | /                 let (public, mirror_last) = match view.desk_book_mirror.get(code) {
+78 | |                     Some(mirror) => (
+79 | |                         super::snapshot::project_mirror_public_book(view.phase(), mirror),
+80 | |                         Some(mirror.last_price),
+...  |
+86 | |                 };
+136 |     PlanQuoteInputs, PlanRootDiagnostics, RootReadContext, buy_allocation_request,
+137 |     decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty, next_routable_sell_qty,
+3317 | /             /// 也保留已耗序号）：旧簿 book_next_sequence（旧管线/restore
+3318 | |             /// 载入）、desk 镜像 next_serial（runtime 权威）、会话级
+3319 | |             /// 缓存 runtime_desk_serial_cursors（镜像瞬态缺席的兜底）。
+3320 | /             book_next_sequences: {
+3321 | |                 let mut out: std::collections::BTreeMap<StockId, u64> = self
+3322 | |                     .state
+3323 | |                     .markets
+...    |
+3336 | |                 out
+3337 | |             },
+3288 | /                 ///（session 旧簿恒空——计划在途子单的重建校验需要）。
+3289 | |                 /// filled 面置零（镜像不承载 desk 成交累计——审计面由
+3290 | |                 /// ledger（desk 事实）承载；置零使 Order 出生校验自洽）。
+3291 | /                 self.state
+3292 | |                     .desk_book_mirror
+3293 | |                     .iter()
+3294 | |                     .map(|(code, mirror)| {
+...    |
+3313 | |                     })
+3314 | |                     .collect()
+3368 | /                 /// next_order_id 须严格大于全部（session 域与 desk serial
+3369 | |                 /// 域取 max）。
+3370 | /                 let mirror_max = self
+3371 | |                     .state
+3372 | |                     .desk_book_mirror
+3373 | |                     .values()
+3374 | |                     .flat_map(|mirror| mirror.orders.iter().map(|(_, _, _, _, serial, _)| *serial))
+3375 | |                     .max()
+3376 | |                     .unwrap_or(0);
+3497 | /                 /// 旧簿装载跳过（镜像单重建会与 desk 双载且交叉簿形态
+3498 | |                 /// 使 set_matching_mode 显红 fault1038）；簿序游标仍装载
+3499 | |                 /// （save 对拍的 book_next_sequences 域一致性）。
+3500 | /                 market
+3501 | |                     .restore_resting_orders(&[], save.book_next_sequences[code])
+3502 | |                     .map_err(|_error| {
+3503 | |                         SessionError::InvalidSave(ValidationFault::new(
+...    |
+3506 | |                         ))
+3507 | |                     })?;
+3509 | /                 /// !mirror.is_empty() 的往返一致性；desk 种子在首拍
+3510 | |                 /// install 重建真实镜像）。
+3511 | /                 sess.state
+3512 | |                     .desk_book_mirror
+3513 | |                     .entry(code.clone())
+3514 | |                     .or_default();
+4066 | /         /// 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
+4067 | |         /// session book 在 runtime 模式下不可见——裁决"book fixture
+4068 | |         /// 分别适配"）。Sol 二审修复集 5：首步前（驱动器不在位）的注入
+4069 | |         /// 走旧簿+构造期迁移（RuntimeDriver::adopt_session_resting_orders
+4070 | |         /// ——免全局分流破坏旧管线 fixture 面）。事件面：runtime 模式的
+4071 | |         /// 受理事件由下一 step 产出（seed 调用方的 events 缓冲不在此
+4072 | |         /// 伪造就地事件——如实空）。
+4073 |           #[cfg(test)]
+4074 | /         if self.runtime_driver.is_some() {
+4075 | |             let mut intents = vec![crate::session::ReceiptBearingIntent {
+4076 | |                 owner: account,
+4077 | |                 intent: intent.clone(),
+...    |
+4104 | |             return;
+4105 | |         }
+4555 | /         /// 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
+4556 | |         /// session 镜像）。旧管线（无驱动器）路径不变。Sol 二审修复集 5：
+4557 | |         /// 首步前（驱动器不在位）走旧镜像路径——构造器自会话 attention
+4558 | |         /// 恢复 next_due（镜像值即组权威起点）。
+4559 |           #[cfg(test)]
+4560 | /         if session.runtime_driver.is_some() {
+4561 | |             let target = tick.max(session.state.tick + 1);
+4562 | |             session.force_due_via_runtime(&[account], target);
+4563 | |             return;
+4564 | |         }
+36 |     default_companies, CompanyConfig, CompanyId, CompanyKind, CompanyRegistry, CompanySpec,
+16 | use crate::company::spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
+8 | use crate::company::CompanyId;
+16 | use crate::company::CompanyId;
+125 |                 /// evaluate 门消费；生产路径经 from_session 投影个体值）。
+126 |                 attention_base: 0.30,
+24 | use crate::strategy::Rng as _;
+87 | /     /// NPC 相同（同 snapshot 的纯函数），此前每 due NPC 重建全市场视图
+88 | |     /// 只为算一个公共 signal（构造次数 ≈3.4× 放大，见
+89 | |     /// .tmp/perf-p0-diff-profile.md）。signal 构建不消费 RNG——共享后
+90 | |     /// RNG 流与门判定逐位不变。
+91 |       let kind = profile.strategy.kind;
+116 | /     /// 本函数纯决策（此前内嵌 due 判在 evaluate 排期后恒假）。
+117 | |     // 决策 RNG：注意力流（evaluate 续传）经组混合因子派生——决策流与
+118 | |     /// 调度流分离（旧管线策略流独立于 attention rng；组内经派生确定化）。
+119 | |     // P1-B（性能修复）：market 由调用方每轮共享传入（同 snapshot 的纯
+120 | |     /// 函数投影——逐位等价，RNG 流不变）。
+121 |       let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
+874 |         /// 修复 1：保护边界不含笼子——笼子内限价与带外拒收口径不变）。
+875 |         let cage = self.config.price_cage_enabled;
+894 | /         /// 每笔申报消耗一个序号）——此前仅在挂簿路径（rest_inner）推进，
+895 | |         /// 即成/即撤的即时单不推进，同账户同股连续两笔空盘市价单产生
+896 | |         /// **同一订单 ID** 的两条 Cancelled，后续挂簿单复用该 ID。
+897 |           let order_ref = (self.setup.stock, self.next_serial);
+928 | /                     /// 复审修复 2：玩家逐请求可见结果——OrderCanceled
+929 | |                     /// 的 remaining=余量，部分成交时注明撤销的是余量）。
+930 |                       self.note_terminated(&order, super::protocol::LifecycleKind::Cancelled);
+1163 |         /// 预留——组端现金实扣走外来成交落账面，Sol 六/七审外来路径），
+1164 |         // purse 记账维持 0（不透支簿面）。
+1165 |         let adopt_foreign_buy = buy_purse_before == 0;
+1191 | /         /// charged==nominal 契约——desk 此前只扣 purse 不记分项，买腿
+1192 | |         /// RestingFact 的 charged 恒 0 使 restore 审计显红）。
+1193 | /         let buy_fees = if taker.side == Side::Buy || maker.side == Side::Buy {
+1194 | |             super::fees::FeeQuote::nominal(&self.config, Side::Buy, Money::from_cents(value))
+1195 | |                 .map_err(|_| over("买腿名义费用失败"))?
+1196 | |         } else {
+1197 | |             Default::default()
+1198 | |         };
+1511 | /         /// （旧管线相位门禁在路由层先拒——PreOpen 的 Cancel 不论单存否
+1512 | |         /// 一律 NotCancelable；desk 先查存在会把窗口关闭误报成
+1513 | |         /// OrderNotFound/已全成）。
+1514 | /         if !self.setup.allows_cancel(tick.saturating_sub(1)) {
+1515 | |             self.receipts_out[owner.0 as usize].push(DeskReceipt {
+1516 | |                 order,
+1517 | |                 owner,
+...    |
+1520 | |             return Ok(());
+1521 | |         }
+1808 | /         ///（老单公开、竞价新单隐藏——旧管线 set_matching_mode 的 cutoff
+1809 | |         /// 语义等价，desk 权威域承载）。
+1810 | /         if phase == DeskPhase::ClosingAuction
+1811 | |             && self.last_phase.is_some_and(|p| p != DeskPhase::ClosingAuction)
+1812 | |         {
+1813 | |             self.public_cutoff_serial = self.next_serial;
+1814 | |         }
+1868 | /         /// 公开簿=空（不揭示买卖盘）；收盘竞价只揭示截点前老单；盘前/
+1869 | |         /// 连续全公开（竞价清算后的揭示=簿全量）。desk 广播是组内观察
+1870 | |         /// （signal/imbalance）与路由（best/depth）的输入——公开面与
+1871 | |         /// 真实簿分离。
+1872 |           let phase = self.setup.phase_at(tick);
+2250 | /     /// live 构造期 adopt 照记 Accepted（对齐旧管线 enqueue 后首拍交付
+2251 | |     /// 面），restore 形态不重放（save 前事件历史已含，重发即重复）；
+2252 | |     /// serial 序=构造期前段，与消息链首单同起 0）。
+2253 | /     for seed in initial_orders {
+2254 | |         // D5 复核修复（Major 1）：serial 域延续（restore=原值；adopt=
+2255 | |         // 构造期自然序）——公开截点语义依赖 serial 单调连续。
+2256 | |         let order_ref = (state.setup.stock, seed.serial);
+...    |
+2276 | |     }
+2283 |       /// 续拍在 save 聚合之上演进，不再从构造零点覆盖）。
+2284 | /     if let Some(seed) = initial_market {
+2285 | |         let m = &mut state.market;
+2286 | |         m.last_price = seed.last_price;
+2287 | |         m.last_close = seed.last_close;
+...    |
+2302 | |         m.minute_closes = seed.minute_closes;
+2303 | |     }
+2282 | / /// P2-4b 判别面前置（cfg(test)）：差分三面计数（Added/Removed/Changed）
+2283 | | /// ——等价守卫的 fixture 前置断言数据源。
+119 |         /// 均分、尾组余位零填充；单组 n_groups=1 时与原全量单行等价）。
+120 |         let n_groups = n_groups.max(1);
+207 |                   /// 值；无 attention 态的位（玩家惯例位）不消费 evaluate。
+208 | /                 let attention_base = id
+209 | |                     .map(|id| session.runtime_attention_base_for(&id))
+210 | |                     .unwrap_or(None)
+...   |
+213 | |                     .unwrap_or(1.0);
+318 | /         /// （构造期旧簿种子）演化同构：
+319 | |         /// · 卖种子余量 → initial_shares（「在手+在途卖」口径——live 轨
+320 | |         ///   的组 shares 演进天然含在途，restore 投影 positions 只含
+321 | |         ///   在手，不补则成交回写双计下穿）；
+322 | |         /// · 买种子 purse → 组现金扣减 + buy_purse_held 登记（公开现金
+323 | |         ///   =组现金+占用口径；构造期旧簿种子形态不补——grant 投影已
+324 | |         ///   含在途面，补则双计）。
+325 | /         {
+326 | |             let restore_shape = session
+327 | |                 .runtime_resting_orders_snapshot()
+328 | |                 .iter()
+...   |
+366 | |         }
+389 | /         /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
+390 | |         /// 续拍在 save 聚合之上演进）。
+391 | /         {
+392 | |             let market_seeds = session.runtime_market_seeds();
+393 | |             for (idx, (stock_spec, history)) in spec
+394 | |                 .stocks
+...   |
+406 | |         }
+421 |             /// 组权威镜像基线；此后按事实 dirty 增量）。
+422 |             force_full_accounts: true,
+519 |                 /// 真买方缺 VWAP 退用上一价，经历入场价错）。
+520 |                 let legs = [(fact.taker, true), (fact.maker, false)];
+549 | /         /// tick 事实 owner"（组端 staging 落账滞后一拍，两拍并集覆盖；
+550 | |         /// 多装等值无害，漏装才会镜像陈旧）∪ 日结强制全量（Drain/T+1/
+551 | |         /// AdminBatch 无逐账户事实事件）。等价不变式：非 dirty ⇒ 组端
+552 | |         /// 账户==session 镜像（首拍全量建立基线后，两侧只经事实通道
+553 | |         /// 同步）。省每 tick 全名册 positions 深拷贝回写。
+554 |           let fact_rec = self.world.report_log.last().cloned();
+586 | /         /// 每拍全名册回声（组端 20000×8 堆 Vec 克隆 + 主线程全量 drop
+587 | |         /// 的双热点：组线程 Vec::clone+memmove ≈17%、主线程
+588 | |         /// drop_in_place≈10% 样本）。非 force_full 拍只请求 dirty 账户
+589 | |         /// ——取回的恰是原来要写的同一批值，逐位等价由构造保证（守卫
+...   |
+593 | |         /// =RuntimeError 不静默）。全量读面（调试纵切/日结）用
+594 | |         /// EchoAccounts 不变。
+595 | /         let snapshots: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> = if skip_all {
+596 | |             let n_groups = self.world.n_groups();
+597 | |             let mut wanted: Vec<Vec<super::LocalIdx>> = vec![Vec::new(); n_groups];
+598 | |             for (global, &dirty) in dirty_union.iter().enumerate() {
+...   |
+634 | |             pairs
+635 | |         };
+618 |               /// 对形态与稀疏路径共用回写循环。
+619 | /             let dense = self
+620 | |                 .world
+621 | |                 .snapshot_accounts()
+622 | |                 .map_err(|e| format!("账户快照失败：{e:?}"))?;
+643 |                 /// 全名册账户快照）。
+644 |                 session.runtime_record_account_undo(id);
+662 | /                     /// ——qty 口径差收口；session 域 cost_price/权益观察
+663 | |                     /// 因此与组读面同源）。
+664 | /                     let qty = qty_raw
+665 | |                         .saturating_add(
+666 | |                             acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
+667 | |                         );
+688 |                         /// 经验行整态覆盖会冲掉先行写入——同拍投影段同式）。
+689 |                         pending_hold_inits.push((id, code, qty, entry));
+703 | /                     /// 实付减、终结不变——旧管线 reservation 观同口径；组
+704 | |                     /// 内部 purse 所有权口径不因此改变）。
+705 | /                     engine_acct.fixture_set_cash(Money::from_cents(
+706 | |                         acct.cash + acct.buy_purse_held_cents,
+707 | |                     ));
+720 | /         /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
+721 | |         /// 权威随后对齐——下一拍回写为整值同步，天然不重复入账）。
+722 | /         if let Some(rec) = &rec {
+723 | |             self.apply_same_tick_fill_projection(
+724 | |                 session,
+725 | |                 &rec.desk_trades,
+...   |
+728 | |             )?;
+729 | |         }
+743 |           /// desk 回执同入事件流（IntentRejected 映射）。
+744 | /         if let Some(r) = rec.as_ref() {
+745 | |             receipts.extend(r.group_rejections.iter().copied());
+746 | |         }
+791 | /                     /// dirty——上行即 dirty）。逐条重装 session 镜像并
+792 | |                     /// 增量维护全量缓存（读面语义）。等价不变式：
+793 | |                     /// 缓存/镜像与组端只在 dirty 通道同步、构造期同源。
+794 | /                     for (local, snapshot) in states {
+795 | |                         let global =
+796 | |                             group as usize * self.accounts_per_group + local as usize;
+797 | |                         let Some(&id) = self.id_map.get(global) else {
+...   |
+807 | |                         session.set_runtime_personal_state(id, &snapshot);
+808 | |                     }
+814 |           /// 执行，组权威经验行不冲掉首买条目）。
+815 | /         {
+816 | |             let mut inits = std::mem::take(&mut self.pending_hold_inits);
+817 | |             for (id, code, qty, entry) in inits.drain(..) {
+818 | |                 session
+...   |
+822 | |         }
+845 | /                     /// session 旧镜像）即安装。
+846 | |                     // Sol 五审修复 1：本拍成交事实合入执行腿（组内
+847 | |                     /// staging 下一 Start 合并——公开计划读面同拍；
+848 | |                     /// 下一拍被组权威整值覆盖，不双计）。
+849 | /                     if !trades.is_empty() {
+850 | |                         let day = u64::from(session.day());
+851 | |                         self.apply_same_tick_plan_fills(&mut plans, &trades, day)?;
+852 | |                     }
+856 | /                     /// session 侧测试注入的计划）时，本拍成交事实对
+857 | |                     /// session plans 同拍合入（与组簿非空路径同式；
+858 | |                     /// 下一拍组权威接管后此分支自然失效）。
+859 |                       let day = u64::from(session.day());
+897 |         /// ——无 stock 高位编码；组内链子单为全等核，见下方 fn）。
+898 |         let result = self.apply_same_tick_plan_fills_inner(&mut plans, trades, day, false);
+1096 |           ///（不静默截断差分）。前置判——zip 截断不产生半截差分。
+1097 | /         if prev.len() != current.len() {
+1098 | |             self.resting_echo_prev = Some(current.to_vec());
+1099 | |             return super::protocol::RestingDelta {
+1100 | |                 full_rebuild: true,
+1101 | |                 entries: Vec::new(),
+1102 | |             };
+1103 | |         }
+1106 | /             /// 每股每拍 2200 万次比较，1000 tick 长跑 271→135 显著回退，
+1107 | |             /// 实测打回）。
+1108 | /             let mut prev_index: std::collections::HashMap<
+1109 | |                 (super::Owner, crate::orderbook::Side, u64),
+1110 | |                 &super::protocol::RestingFact,
+1111 | |             > = prev_book
+1112 | |                 .iter()
+1113 | |                 .map(|f| ((f.owner, f.side, f.order_serial), f))
+1114 | |                 .collect();
+1277 |               /// 组端直转 DeskIn::Cancel；撤单窗/存在性由 desk 权威判定）。
+1278 | /             if let crate::Intent::Cancel { code, id } = &r.intent {
+1279 | |                 let local = self
+1280 | |                     .id_map
+1281 | |                     .iter()
+...    |
+1290 | |                 continue;
+1291 | |             }
+1326 |                   /// 的 NPC 市价路径同口径，F §1.5）。
+1327 | /                 ops.push(super::decision::PendingOp {
+1328 | |                     local,
+1329 | |                     stock: code.0 as super::StockIdx,
+1330 | |                     side: *side,
+...    |
+1333 | |                     qty: *qty,
+1334 | |                 });
+1357 | /                 /// 会解析到涨停）。purse 最坏情况（Sol 复审修复 4，
+1358 | |                 /// ADR-0022 裁定）：Highest=日涨停；**Lowest=日跌停**
+1359 | |                 /// （Lowest 买等效跌停限价单，永远不可能高于跌停成交，
+1360 | |                 /// 预留跌停即足够——F §1.5"统一涨停"属过度预留，已按
+1361 | |                 /// 裁定对齐并同步 F 文档注记）。
+1362 | /                 crate::strategy::LimitPrice::Highest => {
+1363 | |                     (super::protocol::RoutedPrice::Highest, upper)
+1364 | |                 }
+1375 | /             /// ——组端先验，拒收事件入本拍事件流——旧管线 InvalidQuantity
+1376 | |             /// 回执的 runtime 等价）。
+1377 | /             if *qty == 0 {
+1378 | |                 self.pending_rejections.push((*code, r.owner));
+1379 | |                 continue;
+1380 | |             }
+1482 | /             /// 直接建条目，下一拍条目已在使 is_new_hold 永假，retail
+1483 | |             /// 首次持有永久缺经历条目→fault2038 保存校验）。收集后在
+1484 | |             /// 账户借用外执行。
+1485 |               let mut new_hold_inits: Vec<(crate::StockId, i64, u32)> = Vec::new();
+1506 | /                     ///（qty 已含在途卖余量口径的回写面；本拍卖增量后归零
+1507 | |                     /// 即真清仓）。
+1508 | /                     if new_qty < 0 || new_frozen < 0 {
+1509 | |                         return Err(format!(
+1510 | |                             "同拍投影持仓下穿：{id:?} {code:?} qty={new_qty} frozen={new_frozen}"
+1511 | |                         ));
+1512 | |                     }
+1993 | /         /// state.day——日界安装序在 install 之后时 day 尚未推进，而 save
+1994 | |         /// 校验口径（persistence.rs）以含日界的绝对 tick 计——两序下
+1995 | |         /// tick 推导恒一致）。
+1996 |           let day = tick / tpd.max(1);
+2039 | /         ///（只回本 tick 演进位；非演进位 session 镜像==组权威——不变式
+2040 | |         /// 同 belief P2-2a。B fixture due≈20-40/tick vs 名册 20000）。
+2041 | /         let collected = self
+2042 | |             .world
+2043 | |             .collect_group_attention_sparse()
+2044 | |             .map_err(|e| format!("注意力收集失败：{e:?}"))?;
+2092 | /             /// 日历）——追加段用 session 日历的当日 time 重写（save 校验
+2093 | |             /// fault2065 非严格递增显红）。多日一次归档未支持（显式失败
+2094 | |             /// ——生产一次 step 至多跨一日）。
+2095 |               let new_days = candles.len().saturating_sub(skip);
+2202 |               /// （desk 权威——此前 remaining 退 1 股占位使续拍种子量错）。
+2203 | /             let price = if envelope.audit().limit.cents() > 0 {
+2204 | |                 envelope.audit().limit.cents()
+2205 | |             } else {
+2206 | |                 1
+2207 | |             };
+2254 |               /// envelope live 资源面）。
+2255 | /             let purse = if order.side == crate::orderbook::Side::Buy {
+2256 | |                 order.price.cents() * i64::from(order.qty)
+2257 | |             } else {
+2258 | |                 0
+2259 | |             };
+1563 |       /// 投影——构造后 grant 组不感知，挂卖被组端 sellable 校验跳过）。
+1564 | /     session
+1565 | |         .fixture_account_mut(&seller)
+1566 | |         .unwrap()
+1567 | |         .grant_position(code.clone(), 100, price)
+1568 | |         .unwrap();
+1915 | /     /// filled_qty：Sol 八审——此前只断言 Active+余量读组簿，误推进后
+1916 | |     /// 照样 Active、下一拍组权威又抹掉，判别力为零。投影 filled 未被
+1917 | |     /// 外来成交推进=身份核生效的直接证据）。
+1918 | /     let session_filled = session
+1919 | |         .plans_debug()
+1920 | |         .into_iter()
+1921 | |         .find(|(a, c, ..)| *a == account && *c == code)
+1922 | |         .map(|(.., filled, _)| filled)
+1923 | |         .expect("session 投影簿中计划在册");
+2485 | /     /// 突变（组侧稀疏回全量）时 installs=8 显红。缓存等价由
+2486 | |     /// d3a2b/d3b5 读面测试承载。
+2701 |       /// Abort 不触安装、缓存不变，判别力为零，已登记）。
+2702 | /     let sparse = driver
+2703 | |         .collect_group_belief_for_test()
+2704 | |         .expect("组端 belief 读面");
+2778 |           /// 低于涨停 2200，与成交腿不同股避开唯一挂出守卫）。挂出使
+...
+2782 | /         let mut intents = vec![
+2783 | |             crate::session::ReceiptBearingIntent {
+2784 | |                 owner: buyer,
+2785 | |                 intent: crate::Intent::PlaceLimit {
+...    |
+2804 | |             },
+2805 | |         ];
+3000 | /         /// 800 股限价买逐拍部分成交（Changed 面每拍发生且**期末仍在册**
+3001 | |         ///——中间态被期末对账吞掉的教训：瞬时 Changed 单期末已清空，
+3002 | |         /// 跳过更新不改变终态）。
+3003 | /         let mut intents: Vec<(crate::AccountId, crate::Intent)> = vec![(
+3004 | |             seller,
+3005 | |             crate::Intent::PlaceLimit {
+3006 | |                 code: crate::StockId(0),
+...    |
+3012 | |             },
+3013 | |         )];
+7 | use super::group::{GroupAccount, GroupScript, PlaceSpec, TickPlan};
+10 | use super::world::{DayEndCandidate, World};
+174 |     /// wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
+175 |     let market = build_market_view(&snapshot);
+227 |         /// due 循环保证）。P1-B：signal/market 调用方共享构建。
+228 |         let market = build_market_view(&snapshot);
+248 |             /// 既有断言面；signal 概率语义由 attention_gap 测试承载。
+249 |             attention_base: 1.0,
+300 |                       /// desk 扣减溢出——票/簿推进失同步，显式失败）。
+301 | /                     let occupancy = purse
+302 | |                         .cents()
+303 | |                         .checked_sub(ticket.charged_cents)
+304 | |                         .unwrap_or_else(|| {
+...   |
+309 | |                         });
+865 |         /// 需重发）；已入日志域的由上方 undo 逆序回放冲回。
+866 |         self.pending_force_due.clear();
+966 | /             /// candidate_commit 的逐账户 prune_plan_personal_memory——
+967 | |             /// completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
+968 | /             for (local, _) in &touched {
+969 | |                 self.prune_personal_memory_after_completion(*local);
+970 | |             }
+1092 | /         /// 意图路由/测试注入的合法形态——ticket 只承载本单事实）：跳过
+1093 | |         /// 不误挂（与 release 的身份关联语义一致；原"显式失败"形态会
+1094 | |         /// 杀死合法外来单的拍——sol7th_foreign 红证实测）。
+1095 | /         if order_id_of(&fill.order) != order_id {
+1096 | |             return Ok(());
+1097 | |         }
+1120 |           /// =票/簿推进失同步，显式失败（铁律二）。
+1121 | /         {
+1122 | |             let prev_ticket = ticket.clone();
+1123 | |             ticket.remaining = ticket.remaining.checked_sub(fill.qty).unwrap_or_else(|| {
+1124 | |                 panic!(
+...    |
+1156 | |             self.child_in_flight.insert((account, code.clone()), ticket.clone());
+1157 | |         }
+1190 | /         /// 删条目后售出股不在保护集；在途卖单期间条目保留=保护）∪活跃
+1191 | |         /// 计划股。**不含**曾持有（ever_held 是组侧观察面位——清仓后
+1192 | |         /// session 条目已删，误入保护集会使售出股永不被裁剪）。
+1193 | /         let mut protected: std::collections::BTreeSet<crate::StockId> = self.accounts
+1194 | |             [local as usize]
+1195 | |             .shares
+1196 | |             .iter()
+...    |
+1201 | |             .map(|(idx, _)| crate::StockId(idx as u32))
+1202 | |             .collect();
+1320 |               /// 的豁免面——horizon 外仍须可达）。
+1321 | /             let released = self
+1322 | |                 .plan_book
+1323 | |                 .record_child_released(account, &code, order_id, day, true)
+1324 | |                 .unwrap_or_else(|error| {
+1325 | |                     panic!("组内子单释放失败 {account:?} {code:?}: {error}")
+1326 | |                 });
+1329 |                 /// 已换新单（旧票身份不再匹配——非漂移；无害跳过）。
+1330 |                 return Ok(());
+1395 | /                 ///（Sol 五审：实体驱动——全额终结后占用归零；卖腿现金走
+1396 | |                 /// CashProceeds）。
+1397 |                   let acct = self.acct_mut(local)?;
+1522 |           /// 每 tick 整值刷新，无累积无窗口截断——与 session 读面同源）。
+1523 | /         if let Some(snapshot) = &self.snapshot {
+1524 | |             #[cfg(test)]
+1525 | |             let overrides = self.observation_overrides.clone();
+1526 | |             for (stock_idx, (inputs, stock)) in self
+...    |
+1549 | |         }
+1555 |         /// 上行消费；新 tick 的演进面重新标记）。
+1556 |         self.belief_dirty.iter_mut().for_each(|f| *f = false);
+1584 |         /// 本 tick 生产写入存活到提交，无新产出 tick 返回后读数为空）。
+1585 |         self.retail_traces.clear();
+1610 |         /// 的标记——留待下一 Start 前的正常安装轮完成）。
+1611 |         self.belief_dirty.iter_mut().for_each(|f| *f = false);
+1754 | /         /// 归一（journal 先记拍前值再消费；错误/panic 路径 Abort 重放
+1755 | |         /// GroupUndo::Personal 无条件恢复 Some(prev)，槽空窗仅函数内——
+1756 | |         /// 组线程单线程，run_round 期无并发读面）。journal 相对序不变
+1757 | |         ///（本函数此前唯一 undo 条目=Personal，前后无其他条目交错）。
+1758 | /         let mut snap = match self
+1759 | |             .belief_states
+1760 | |             .get_mut(local as usize)
+1761 | |             .and_then(Option::take)
+...    |
+1777 | |         };
+1805 | /         /// qty 口径=在手+在途卖（回写同式）；零量条目按曾持有位保留
+1806 | |         /// （旧管线 positions 的清仓残留键语义）。
+1807 |           let acct = &self.accounts[local as usize];
+1869 |         /// 演进+候选评估。P2-3a：公共观察=本轮共享（调用方一次构造）。
+1870 |         let observation = chain;
+1872 | /         /// capture_from_row 等价——equity 观测/持仓 dated 演进/首建；
+1873 | |         /// 观察 core 与决策消费演进后的行）。
+1874 | /         {
+1875 | |             let moment = crate::experience::ExperienceMoment {
+1876 | |                 civil_date: snapshot.civil_date,
+1877 | |                 market_minute: minute,
+...    |
+1917 | |         }
+1941 | /         /// behavior+risk+dated 经验输入；rng=npc_seed_base 同式派生。
+1942 | |         // own 自 ctx.positions 同源组装（决策内核要求 own.positions ⊆
+1943 | |         /// risk.positions——build_self_view 不过滤零量股，多股/零仓形态
+1944 | |         /// 集合漂移即 panic）。
+1945 | /         let own = crate::strategy::SelfView {
+1946 | |             cash: ctx.cash,
+1947 | |             positions: ctx
+1948 | |                 .positions
+...    |
+1960 | |                 .collect(),
+1961 | |         };
+1963 |         /// 一次——下游 decide_* 直接消费共享引用）。
+1964 |         let mut risk_inputs = std::collections::BTreeMap::new();
+2013 |           /// PositionDecision → intents/reviewed/trace 三面）。
+2014 | /         let original = crate::behavior::decide_retail_position_with_experience(
+2015 | |             &data,
+2016 | |             retail_style,
+2017 | |             market,
+...    |
+2023 | |             &mut rng,
+2024 | |         );
+2029 |               /// 仓位修订）。
+2030 | /             crate::behavior::apply_personal_analysis(
+2031 | |                 original.clone(),
+2032 | |                 &assessments,
+2033 | |                 &own,
+...    |
+2039 | |                 &mut rng,
+2040 | |             )
+2079 |           /// 写回字段自 personal move（personal 此后无消费——六件 clone 归零）。
+2080 | /         if let Some(slot) = self.belief_states.get_mut(local as usize) {
+2081 | |             *slot = Some(super::world::BeliefParticipantSnapshot {
+2082 | |                 watchlist: personal.watchlist,
+2083 | |                 price_memory: personal.price_memory,
+...    |
+2089 | |             });
+2090 | |         }
+2286 |                     /// 同源——belief_states 是 observe 前旧态）。
+2287 |                     belief: &out.belief,
+2290 |                     /// 字段借用下的生命周期独立）。
+2291 |                     minutes_by_code: minutes_by_code.clone(),
+2398 | /                 /// Create 动作同式：record_review/record_resource_review 后
+2399 | |                 /// 按 PauseAssessment 判停——组内此前缺失，quiet 首拍无基线）。
+2400 | /                 let price = observation
+2401 | |                     .market
+2402 | |                     .stocks
+2403 | |                     .get(code)
+2404 | |                     .map(|v| v.last_price)
+2405 | |                     .unwrap_or_else(|| panic!("组内新计划复审缺股 {code:?} 行情"));
+2424 |                 /// return + 组内 urgency 面共享函数——判停即 Paused）。
+2425 |                 let minutes = minutes_by_code.get(code).cloned().unwrap_or_default();
+2495 |                     /// 的决策段演进）。
+2496 |                     retail_experience: slot.as_ref().and_then(|s| s.retail_experience.clone()),
+2570 |                     /// frozen=ZERO 同式——保守预算，登记差异）。
+2571 |                     frozen_cash: crate::money::Money::ZERO,
+2616 |                   /// 的撤单即清语义，Closed 落账的 release 幂等跳过）。
+2617 | /                 if let Some(order_id) = child_order_id {
+2618 | |                     cancels.push((
+2619 | |                         local,
+2620 | |                         code.0 as StockIdx,
+...    |
+2631 | |                 }
+2624 |                       /// 迁移）显式失败——铁律二。
+2625 | /                     let released = self
+2626 | |                         .plan_book
+2627 | |                         .record_child_released(account, &code, order_id, trading_day, true);
+2649 | /                 /// 同向 Forward 修订不清腿，簿侧腿引用随撤单同拍释放——
+2650 | |                 /// session 执行链语义，Closed 落账的 release 幂等跳过）。
+2651 | /                 if let Some(order_id) = child_order_id {
+2652 | |                     cancels.push((
+2653 | |                         local,
+2654 | |                         code.0 as StockIdx,
+...    |
+2665 | |                 }
+2658 |                       /// 迁移）显式失败——铁律二。
+2659 | /                     let released = self
+2660 | |                         .plan_book
+2661 | |                         .record_child_released(account, &code, order_id, trading_day, true);
+2709 |         /// identity 匹配路径已有）。
+2710 |         let mut cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
+2728 | /         /// 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
+2729 | |         /// 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
+2730 | |         /// NewOpportunity 不可达）。
+2731 |           let cash = crate::money::Money::from_cents(group_account.cash);
+2743 | /             /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+2744 | |             /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+2745 | |             /// Cancel 的触发形态，不得跳过。
+2746 | /             if matches!(
+2747 | |                 plan.status(),
+2748 | |                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
+2749 | |             ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
+...    |
+2754 | |                 continue;
+2755 | |             }
+2853 | /             /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+2854 | |             /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+2855 | |             /// Cancel 的触发形态，不得跳过。
+2856 | /             if matches!(
+2857 | |                 plan.status(),
+2858 | |                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
+2859 | |             ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
+...    |
+2864 | |                 continue;
+2865 | |             }
+2870 | /             /// 头段的组内等价——共享 decide_plan_quote 不含该面）：Paused
+2871 | |             /// 或（买方向且非反手信号 ≤0）→ Cancel/Keep/Wait + 撤买终止。
+2872 | |             /// 位置在预算查找**之前**（撤单不是下单——不依赖软预算分配；
+2873 | |             /// Sell 计划 sellable 不足时无 grant，暂停撤单不得被预算挡住，
+2874 | |             /// session 头段同序）。
+2875 |               let code = plan.code();
+2900 |                         /// 借用冲突，收集后循环外 apply。
+2901 |                         withdrawals.push(plan_id);
+3125 | /                 /// 此前每 due NPC 各自 build_market_view（重建全市场
+3126 | |                 /// BTreeMap+复制价格/分钟历史）只为算一个对全组相同的
+3127 | |                 /// 公共 signal，observe 通过后 decide 再建一次（构造次数
+3128 | |                 /// ≈3.4× 放大，见 .tmp/perf-p0-diff-profile.md）。两者均为
+3129 | |                 /// snapshot 的纯函数且不消费 RNG——共享后决策序列/RNG 流
+3130 | |                 /// 逐位不变（等价守卫=同种子终态逐字段对比）。
+3131 |                   let shared_market = super::decision::build_market_view(&snapshot);
+3139 |                 /// 决策延后到借用释放（组态写回与决策档案借用互斥）。
+3140 |                 let mut retail_due: Vec<LocalIdx> = Vec::new();
+3148 |                           /// 但无机构链参数，走 retail 链（观察+behavior 决策）。
+3149 | /                         let chain_params_seeded = self
+3150 | |                             .root_projection
+3151 | |                             .as_ref()
+3152 | |                             .is_some_and(|p| {
+3153 | |                                 p.chain_params.get(self.roster_offset + local as usize).is_some_and(|c| c.is_some())
+3154 | |                             });
+3167 | / ...                   /// evaluate_candidate_with_signal 同式：共享续流+
+3168 | | ...                   /// observe 门+wait 采样；observe=false 只重排不
+3169 | | ...                   /// 决策（链轮跳过——决策频率语义与旧管线对齐，
+3170 | | ...                   /// 此前均匀 gap 近似使 epoch 双轨显红）。
+3171 | / ...                   let (observes, prev_due) =
+3172 | | ...                       super::decision::evaluate_attention(
+3173 | | ...                           &mut profiles[local as usize],
+3174 | | ...                           shared_signal,
+3175 | | ...                           tick,
+3176 | | ...                       );
+3180 | ...                   /// 稀疏上行演进位标记（observe=false 也演进）。
+3181 | ...                   self.attention_evolved.push(local);
+3193 |                           /// 移除——调用方控制契约）。
+3194 | /                         if tick < profiles[local as usize].next_due {
+3195 | |                             continue;
+3196 | |                         }
+3199 |                           /// 重排不决策）。
+3200 | /                         let (observes, prev_due) = super::decision::evaluate_attention(
+3201 | |                             &mut profiles[local as usize],
+3202 | |                             shared_signal,
+3203 | |                             tick,
+3204 | |                         );
+3243 | /                 /// 同 snapshot 纯函数，逐位等价）。
+3244 | |                 // P2-3a：链观察/等权聚合/behavior 价径面同样上移每轮一次
+3245 | |                 ///（原每位 build_chain_observation+聚合+paths 克隆——组线程
+3246 | |                 /// 拷贝放大主源；同轮输入逐位相同 ⇒ 等价论证同 P1-B）。
+3247 | /                 if !retail_due.is_empty() {
+3248 | |                     let projection = self.root_projection.as_ref().ok_or_else(|| {
+3249 | |                         RuntimeError::ProtocolInvariant {
+3250 | |                             detail: format!(
+...    |
+3296 | |                 }
+3327 |         /// 的 desk 到达序——Cancel 须晚于 Place 才能命中）。
+3328 |         let external_cancels = std::mem::take(&mut self.external_cancels);
+3352 | /         /// 下单共用分段 flush 缓冲；票保留至 Closed 实体释放——identity
+3353 | |         /// 匹配的 release 路径已有）。
+3354 | /         for (local, stock, serial) in chain_cancels {
+3355 | |             buffers[stock as usize].push(DeskIn::Cancel {
+3356 | |                 owner: (group, local),
+3357 | |                 order: (stock, serial),
+3358 | |             });
+3359 | |         }
+3387 | /             /// 校验——保证相位显式回执可达（资源不足不误吞相位拒收；
+3388 | |             /// 对齐旧管线相位门禁在市场层入口的次序）。相位基准
+3389 | |             /// phase_at(tick−1)（与 desk 受理同窗——D5 off-by-one 口径）。
+3390 | /             if matches!(p.routed, super::protocol::RoutedPrice::Market) {
+3391 | |                 let day_tick = (tick.saturating_sub(1)) % self.ticks_per_day;
+3392 | |                 let entry = self.auction_ticks - self.auction_ticks / 3;
+3393 | |                 let closing_start =
+...    |
+3406 | |             }
+3544 |           /// 序——Cancel 晚于 Place 才能命中簿内单）。
+3545 | /         for (local, stock, serial) in std::mem::take(&mut external_cancel_buffer) {
+3546 | |             buffers[stock as usize].push(DeskIn::Cancel {
+3547 | |                 owner: (group, local),
+3548 | |                 order: (stock, serial),
+3549 | |             });
+3550 | |         }
+3565 |             /// 时由校验路径重新产生（run_round 起点清零）。
+3566 |             rejections: std::mem::take(&mut self.round_rejections),
+3673 |           /// 的 observe 输出面）。
+3674 | /         let acquired = group_review_acquired(
+3675 | |             self.state.root_projection.as_ref().expect("复审位投影在"),
+3676 | |             self.information,
+3677 | |             code,
+3678 | |         );
+3722 | /         /// observations 同式 c.max(1)——字段不得分叉）；非候选股兜底
+3723 | |         /// 空切片（session 版 get().unwrap_or(&[]) 同式）。
+3724 | /         self.minutes_by_code
+3725 | |             .get(code)
+3726 | |             .map(|v| v.as_slice())
+3727 | |             .unwrap_or(&[])
+3731 |           /// 与 belief_states 旧态值恒同，时点统一消分叉面）。
+3732 | /         match self.belief.profile() {
+3733 | |             crate::strategy::StrategyProfile::Institution(style) => Some(*style),
+3734 | |             _ => None,
+3735 | |         }
+3872 |                   /// ——组侧曾持有/清仓面在 shares 中为 0）。
+3873 | /                 if qty == 0 {
+3874 | |                     continue;
+3875 | |                 }
+4087 |           /// 缩水，对齐旧管线 escrow 口径）。
+4088 | /         let mut account = crate::account::Account::new(
+4089 | |             account_id,
+4090 | |             crate::account::AccountKind::Inst,
+4091 | |             crate::money::Money::from_cents(cash_with_pending_at(
+...    |
+4097 | |             )),
+4098 | |         );
+4102 | /             /// 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
+4103 | |             /// 卖时建条目（held 集成员参与发现采样）。
+4104 | /             let qty = held_qty_with_pending_at(
+4105 | |                 &group_account.shares,
+4106 | |                 child_in_flight,
+4107 | |                 &projection.account_ids,
+4108 | |                 local as LocalIdx,
+4109 | |                 stock,
+4110 | |             );
+4194 |       /// 与 session 版同一共享函数 exposed_stocks_shared）。
+4195 | /     let exposed =
+4196 | |         crate::session::exposed_stocks_shared(library, company_registry, stock_codes, now);
+4454 |   ...                   /// 驱动器重装面）。
+4455 | / ...                   if let Some(flag) = state.belief_dirty.get_mut(li) {
+4456 | | ...                       *flag = true;
+4457 | | ...                   }
+4559 |                 /// Abort 冲回后需重发）。缺位/越界=注入面漂移，显式失败。
+4560 |                 let prev = state.belief_states.get(local as usize).cloned().flatten();
+4571 |                         /// 的 belief_dirty——注入态由 pending 承载到上行消费）。
+4572 |                         state.belief_pending_dirty.push(local);
+4622 |                 /// ——Abort 冲回后指令失效需重发）。
+4623 |                 state.save_plan_book_undo();
+4635 |                   /// 经投影名册映射——目标位缺失=显式失败）。
+4636 | /                 let local = state
+4637 | |                     .root_projection
+4638 | |                     .as_ref()
+4639 | |                     .and_then(|p| {
+...    |
+4646 | |                         panic!("MutateBeliefForTest 目标账户 {account:?} 不在组名册")
+4647 | |                     });
+4663 |                   /// tick"形态构造（组权威调度面的测试控制；效果入可逆日志）。
+4664 | /                 for local in locals {
+4665 | |                     if let Some((profiles, _)) = &mut state.decision {
+4666 | |                         if let Some(p) = profiles.get_mut(local as usize) {
+4667 | |                             let prev = p.next_due;
+...    |
+4677 | |                 }
+4797 |                   /// build_technical_observation_from_recent_trades）。
+4798 | /                 let observations: Vec<(
+4799 | |                     crate::observation::PricePathObservation,
+4800 | |                     crate::observation::TechnicalObservation,
+4801 | |                 )> = state
+...    |
+4804 | |                     .map(|inputs| inputs.build_observations())
+4805 | |                     .collect();
+4821 | /                 /// session rng_state 同源写回）。D5 restore 链最后一层：
+4822 | |                 /// 构造期组因子混入在回传时逆运算——session 面存纯值
+4823 | |                 ///（restore 再构造混入恰一次，不叠加）。
+4824 | /                 let attention = match &state.decision {
+4825 | |                     Some((profiles, _)) => profiles
+4826 | |                         .iter()
+4827 | |                         .enumerate()
+...    |
+4835 | |                     None => Vec::new(),
+4836 | |                 };
+4851 | /                 ///（evaluate 消费 RNG/重排 next_due，或 ForceDue 改排的位）。
+4852 | |                 /// 非演进位 session 镜像==组权威（构造期同源+只经本通道
+4853 | |                 /// 同步——不变式同 belief P2-2a），全量语义由驱动器缓存/
+4854 | |                 /// session 镜像承载。全量读面用 EchoAttention（构造恢复/
+4855 | |                 /// Abort 测试锚）不变。
+4856 |                   let evolved = std::mem::take(&mut state.attention_evolved);
+4883 |                   /// 生产写入存活到提交）。
+4884 | /                 let msg = UpMsg::RetailTraces {
+4885 | |                     group: state.group,
+4886 | |                     traces: state.retail_traces.clone(),
+4887 | |                 };
+4898 |                   /// apply_staging 成交与退款驱动——全部买单，不限计划链票）。
+4899 | /                 let echo = UpMsg::GroupEcho {
+4900 | |                     group: state.group,
+4901 | |                     accounts: state.accounts.clone(),
+4902 | |                 };
+4913 | /                 /// 账户（P2-1b 已把**写回**稀疏化，但全量回声仍是每拍
+4914 | |                 /// 全名册 20000×8 堆 Vec 克隆+主线程 drop 的双热点）。
+4915 | |                 /// 全量语义由驱动器 dirty 写回承载（等价构造：取回的恰是
+4916 | |                 /// 原来要写的同一批值）；全量读面用 EchoAccounts 不变。
+4917 | |                 /// 回执集与请求集的精确一致由收集端校验（缺项
+4918 | |                 /// =RuntimeError 不静默）。
+4919 | /                 let mut accounts: Vec<(LocalIdx, GroupAccount)> =
+4920 | |                     Vec::with_capacity(wanted.len());
+5185 | /         /// 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
+5186 | |         /// 杀死合法外来单的拍——sol7th_foreign 场景红证）。
+5187 | /         state
+5188 | |             .apply_staging(1, 0)
+5189 | |             .expect("外来单成交跳过（不构成失败）");
+475 |                   /// 当日冻结面——组侧冻结权威自此起步）。
+476 | /                 if let Some(frozen) = initial_frozen_today
+477 | |                     .get(g as usize)
+478 | |                     .and_then(|by_group| by_group.get(l))
+...   |
+483 | |                 }
+485 | /                 /// purse——组现金已同步扣减，公开现金=组现金+占用口径
+486 | |                 /// 因此成立）。
+487 | /                 if let Some(&purse) = initial_purse_held
+488 | |                     .get(g as usize)
+489 | |                     .and_then(|by_group| by_group.get(l))
+...   |
+492 | |                 }
+759 |               /// observe 门——rng 续流照常）。
+760 | /             let _ = tx.send(GroupIn::ForceDue {
+761 | |                 locals,
+762 | |                 tick,
+763 | |                 ensure_observe: true,
+764 | |             });
+19 | use std::time::Duration;
+346 |             /// step(N) 的受理窗=N-1 相位——PreOpen 拒收的申报须在 tick5
+347 |             // （phase(4)=PreOpen；tick4 申报按 phase(3)=CallAuction 受理）。
+348 |             5 => place_at(5, vec![buy(0, 0, 1000, 100)]),
+1890 | /     /// 队列），重跑由调用方重播（drive 层等价=restore_runtime_player_
+1891 | |     /// intents 回灌后重注入）。
+1892 | /     world.broadcast_external_plan(
+1893 | |         vec![PendingOp {
+1894 | |             local: 0,
+1895 | |             stock: 0,
+...    |
+1901 | |         vec![],
+1902 | |     );
+1975 |       /// 接受限价申报、不可撤、日终一次撮合）。
+1976 | /     let script = |_g: GroupIdx| -> GroupScript {
+1977 | |         Box::new(|tick, _round| match tick {
+1978 | |             27 => place_at(
+1979 | |                 27,
+...    |
+1987 | |         })
+1988 | |     };
+475 | /     /// 载体）、组 1 也产生自己的受理（定向断言载体——复核建议：组 1
+476 | |     /// 桶恒空时"无外来观察"近乎恒真，须有本组受理才能判别"只收自己的"）。
+477 | /     let script = |g: GroupIdx| -> GroupScript {
+478 | |         Box::new(move |tick, round| {
+479 | |             let mut plan = TickPlan::default();
+480 | |             if tick == 1 && round == 0 {
+...   |
+487 | |         })
+488 | |     };
+507 | /     /// 各组观察到的每条 ChildAccepted 的 owner 必属本组（外来泄漏即红），
+508 | |     /// 且两组都确实观察到受理（批发不丢非声明续行的组）。
+509 | /     for (g, final_) in report.group_finals.iter().enumerate() {
+510 | |         let accepted: Vec<_> = final_
+511 | |             .observed
+512 | |             .iter()
+...   |
+528 | |     }
+475 |         plans: &crate::plans::PlanBook,
+4276 |         let mut plans = std::mem::take(&mut session.state.plans);
+4496 |         let mut plans = std::mem::take(&mut session.state.plans);
+5326 |             let mut advance = move |plans: &mut crate::plans::PlanBook| {
+5375 |             let mut relink = move |plans: &mut crate::plans::PlanBook| {
+5576 |         let mut plans = std::mem::take(&mut session.state.plans);
+1686 |         qty: u32,
+731 |     let (mut authority, plan_id, _code) = live_child_case();
+752 |     let (mut authority, plan_id, _code) = live_child_case();
+775 |     let (mut authority, plan_id, _code) = live_child_case();
+790 |     let (mut authority, plan_id, _code) = live_child_case();
+1114 |           cash_before_fill = session.state.accounts[&AccountId(0)].cash();
+...
+1122 | /         cash_before_fill = session
+1123 | |             .state
+1124 | |             .accounts[&AccountId(0)]
+1125 | |             .cash()
+1126 | |             .add(pre_cost)
+1127 | |             .unwrap();
+594 |     let first_institution = u64::from(save.setup.npcs.retail_count) + 1;
+595 |     let last_institution = u64::from(save.setup.npcs.retail_count)
+1102 |     let mut intents = save.pending_player.clone();
+1779 |     let saved_day = context.saved_day;
+70 |     let (mut plan, has_conflicts) =
+256 |     fn finish_layout(mut self) -> Result<Vec<IntentCandidate>, StepFatal> {
+521 | ...                   consumer_failed = true;
+327 |         let (view, mut writes) = npc_split(&mut session);
+1377 |     let (mut personal, mut attention);
+186 |             let mut plan = plan_tick(PhaseInput { session: &game }).unwrap();
+119 |         let mut roots = match roots_override {
+76 |         let (stock, round, matched) = match progress {
+707 |         expected: Vec<super::CandidateValidationOutcome>,
+1159 |         let pool = shared.clone();
+1244 |             let pool = Arc::clone(&pool);
+1363 |         let pool = shared.clone();
+1809 |                     let detached = move |code: &StockId| {
+1795 |         let pool = shared.clone();
+1873 |         let pool = shared.clone();
+617 |     let code = request.allocation.code.clone();
+274 |     let code = request.allocation.code.clone();
+36 |         crate::session::StepFatal::InvariantViolation { description, .. } => description.clone(),
+37 |         other => format!("{other:?}"),
+479 |             move |account, result: Result<(), ()>, _errors: &mut Vec<(
+593 |                 move |account,
+151 |         let mut s = boundary_setup();
+410 |     let mut market = super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code);
+487 |     let mut shadow = TickShadowPlan {
+540 |     let phase = authority.phase();
+742 |         while let Some((account, personal)) = pending.front() {
+1050 |                         receiver,
+330 |     let account = plan.account();
+331 |     let code = plan.code().clone();
+568 |     let (mut session, mut plans, plan, child) = fixture();
+15 |                 terminating,
+96 |             Continuation::Submit { plan, child } => {
+208 |         let mut probe_session = session;
+208 |         let mut probe_session = session;
+226 |     session: &ProtocolSession,
+227 |     account: AccountId,
+228 |     tick: u64,
+402 |     let a = AccountId(1);
+403 |     let b = AccountId(2);
+434 |     let (_, state_b6) = probe_chain_from(&session, b, &attention_before, &[(6, signal_at_epoch6)]);
+439 |     let after_b = attention_after
+650 |     let mut npc_admissions_total = 0u64;
+676 |         npc_admissions_total += admissions;
+1262 |         for (active, name, quantity) in [
+1356 |             for (value, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
+5131 |             desk_book_mirror,
+5132 |             runtime_desk_serial_cursors,
+216 |     for (owner, stock, serial, reason) in &input.rejections {
+552 |     let (catalog, registry, operations) = session.runtime_company_handles();
+552 |     let (catalog, registry, operations) = session.runtime_company_handles();
+132 |     let mut profile = NpcProfile {
+163 |     let config = GameConfig::proposed_defaults();
+165 |     let account = GroupAccount::new(1_000_000, 1);
+398 |     let probe = std::sync::Arc::clone(&fired);
+939 | /     pub(crate) fn step_on_context(
+940 | |         &mut self,
+941 | |         capture_commit_evidence: bool,
+942 | |     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
+note: but type `AuthoritativeTickCommit` is only usable at visibility `pub(in crate::session)`
+ 10 | pub(in crate::session) struct AuthoritativeTickCommit {
+1191 |     pub fn rollback_runtime_step(&mut self, baseline: RuntimeInstallBaseline) {
+note: but type `RuntimeInstallBaseline` is only usable at visibility `pub(crate)`
+  14 | pub(crate) struct RuntimeInstallBaseline {
+1481 | /     pub fn runtime_personal_states(
+1482 | |         &self,
+1483 | |     ) -> std::collections::BTreeMap<
+1484 | |         crate::AccountId,
+1485 | |         crate::session::decision_chain::personal_state::PlanPersonalState,
+1486 | |     > {
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+  80 | pub(crate) struct PlanPersonalState {
+ 96 | /     pub(in crate::session) fn insert(
+ 97 | |         &mut self,
+ 98 | |         index: u64,
+ 99 | |         local_key: ReceiptLocalKey,
+100 | |     ) -> Result<(), RetailProjectionError> {
+note: but type `RetailProjectionError` is only usable at visibility `pub(in crate::session::pipeline)`
+282 | pub(super) enum RetailProjectionError {
+2212 | / pub fn desk_main(
+2213 | |     mut setup: DeskSetup,
+2214 | |     n_groups: usize,
+2215 | |     config: Arc<GameConfig>,
+...    |
+2221 | |     capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+2222 | | ) -> Result<(), RuntimeError> {
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+4249 | / pub fn group_main(
+4250 | |     state: GroupState,
+4251 | |     desk_txs: Vec<Sender<super::protocol::DeskMsg>>,
+4252 | |     rx: Receiver<GroupIn>,
+...    |
+4256 | |     capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+4257 | | ) -> Result<(), RuntimeError> {
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+121 |     pub personal_in: crate::session::PlanPersonalState,
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+ 80 | pub(crate) struct PlanPersonalState {
+123 |     pub personal_out: crate::session::PlanPersonalState,
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+ 80 | pub(crate) struct PlanPersonalState {
+1136 | /     pub fn set_tick_capture(
+1137 | |         &mut self,
+1138 | |         binding: crate::verification_evidence::PhaseTimingBinding,
+1139 | |     ) {
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+386 | impl OrderBook {
+...
+916 |     pub(crate) fn resting_orders_for_owners(&self, owners: &BTreeSet<AccountId>) -> Vec<Order> {
+ 79 | impl Market {
+...
+270 |     pub(crate) fn apply_auction_price(&mut self, price: Money) {
+...
+513 |     pub(crate) fn resting_orders_for_owners(
+361 | impl ComputeContext {
+...
+640 |     pub(crate) fn scope<'scope, R: Send>(
+1071 |     pub trait ParallelRefMutIterator<'a>: 'a
+973 | impl SecurityCategory {
+...
+994 |     fn display_limit(self) -> &'static str {
+1531 | pub(in crate::session) enum FieldId {
+...
+1551 |     NpcDecisionTraces,
+1552 |     Causal,
+1578 | pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
+70 | impl<Value: Clone> AccountPagedMap<Value> {
+71 |     pub(super) fn replace_existing_shared_parallel(
+325 | impl GameSession {
+326 |     pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
+ 48 | impl GameSession {
+...
+131 |     fn observe_retail_analysis(
+...
+424 |     fn retail_candidate_signals(
+...
+450 |     fn retail_candidate_signals_on(
+...
+548 |     fn retail_cost_signal(
+...
+571 |     fn retail_cost_signal_on(
+270 | impl TickShadowPlan {
+...
+326 |     pub(super) fn into_session(self) -> Result<GameSession, StepFatal> {
+85 | impl StockFinishFatal {
+86 |     /// 归并为其承载的 fatal（分类判定已在上游完成）。
+87 |     pub(in crate::session::pipeline) fn into_fatal(self) -> StepFatal {
+56 | pub(super) fn prepare_inputs_with_observer(
+164 | impl DecisionSnapshot {
+...
+256 |     pub(super) fn urgency_policy(&self) -> &crate::plans::UrgencyPolicy {
+273 | fn validate_market_view_inputs(
+394 | impl CapturedExperienceObservation {
+395 |     fn capture(
+...
+409 |     fn capture_on(
+72 | impl ExecutorBinding {
+...
+89 |     pub(super) fn strong_count(&self) -> usize {
+ 30 | impl<V> LedgerPagedMap<V> {
+...
+127 |     pub(super) fn values_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut V>
+710 | fn stream_npc_decisions_inline<E>(
+393 | pub(in crate::session) fn project_npc_account(
+403 | pub(in crate::session) fn project_npc_account_on(
+902 | pub(in crate::session::pipeline) fn queue_npc_on_for_test(
+79 | pub(super) fn apply_to_auction_order(
+12 | pub(in crate::session) struct ReadOnlyStart {
+13 |     /// 捕获的交易制度截点与输入共同移交，不能只凭外层 tick/revision 猜测 shard 模式。
+14 |     pub(super) policy: super::phase::PhasePolicy,
+31 | pub(in crate::session::pipeline) fn inline_prepare_calls() -> usize {
+282 | pub(super) enum RetailProjectionError {
+...
+289 |     QuantityRegression { index: u64 },
+290 |     #[error("retail receipt {index} has non-positive gross")]
+291 |     NonPositiveGross { index: u64 },
+190 | fn invariant(description: &str) -> StepFatal {
+886 |     struct MockRound {
+887 |         order: OrderId,
+1110 |     struct SaturatedPairShard {
+36 | type RootGate = Arc<(Mutex<u8>, Condvar)>;
+49 | impl<'a> PlanContinuationDomain<'a> {
+...
+61 |     pub(in crate::session) fn new(session: &'a mut GameSession) -> Self {
+134 | type SerialDispatchGate = Arc<(Mutex<u8>, Condvar, AtomicUsize)>;
+136 | fn install_serial_dispatch_gate(
+159 | fn dispatch_gate_calls(gate: &SerialDispatchGate) -> usize {
+164 | fn release_serial_dispatch_to(gate: &SerialDispatchGate, level: u8) {
+460 | fn release_gate_to(gate: &Arc<(Mutex<u8>, Condvar)>, level: u8) {
+ 367 | impl DeskState {
+...
+ 941 |     fn note_accepted(&mut self, order: &DeskOrder) {
+...
+1956 |     fn top5_imbalance(&self) -> f64 {
+2198 | fn count_qty(level: &VecDeque<DeskOrder>) -> u64 {
+ 72 | impl RuntimeDriver {
+...
+442 |     fn adopt_session_resting_orders(&mut self, session: &GameSession) -> Result<(), String> {
+3592 | fn equity_cents(
+3622 | struct GroupReviewHost<'a> {
+...
+3625 |     account: crate::AccountId,
+4016 | fn context_day(tick: u64, ticks_per_day: u64) -> u64 {
+4021 | fn self_lot(config: &std::sync::Arc<crate::config::GameConfig>) -> u32 {
+13 | fn buy(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
+1000 | /         session.state.game.fixture_append_auction_orders(
+1001 | |             StockId(0),
+1002 | |             vec![
+1003 | |                 crate::AuctionOrderSnap {
+...    |
+1017 | |             ],
+1018 | |         );
+help: use `let _ = ...` to ignore the resulting value
+1000 |         let _ = session.state.game.fixture_append_auction_orders(
+1527 |             drop(engine_acct);
+help: use `let _ = ...` to ignore the expression or result
+1527 -             drop(engine_acct);
+1527 +             let _ = engine_acct;
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.69s
+     Running unittests src/lib.rs (target/debug/deps/engine-e2b004eecda01d2b)
+running 1 test
+test session::committable_state_tests::sol5r_commit_from_transfers_runtime_cache_domains ... FAILED
+failures:
+---- session::committable_state_tests::sol5r_commit_from_transfers_runtime_cache_domains stdout ----
+thread 'session::committable_state_tests::sol5r_commit_from_transfers_runtime_cache_domains' (2086843) panicked at packages/engine/src/session.rs:5317:9:
+assertion `left == right` failed: 游标缓存必须跨 shadow/commit 交接（不丢弃 shadow 新值）
+  left: [5]
+ right: [9]
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+             at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/panicking.rs:434:23
+   3: core::panicking::assert_failed
+             at /home/baiyifan/.rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panicking.rs:394:5
+   4: engine::session::committable_state_tests::sol5r_commit_from_transfers_runtime_cache_domains
+             at ./src/session.rs:5317:9
+   5: engine::session::committable_state_tests::sol5r_commit_from_transfers_runtime_cache_domains::{{closure}}
+             at ./src/session.rs:5295:59
+   6: core::ops::function::FnOnce::call_once
+             at /home/baiyifan/.rustup/toolchains/1.96.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5
+   7: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+failures:
+    session::committable_state_tests::sol5r_commit_from_transfers_runtime_cache_domains
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 0.39s
+error: test failed, to rerun pass `-p engine --lib`
+
+=== Sol 五轮·修后绿（原始输出）===
+
+=== Sol 五轮·修后绿（原始输出）===
+test session::committable_state_tests::sol5r_commit_from_transfers_runtime_cache_domains ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 0.19s
+--- 端到端游标（复装后复跑）---
+test sol4r_serial_cursor_survives_save_restore_roundtrip ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 1.60s

@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
-import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, requestWorkerIntradayAverage, requestWorkerIntradayAverageCurve, requestWorkerPersonalTradeConfirmations, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
+import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerStockHistory, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import { WorkerRequestScope, type WorkerRequestPort } from "./worker-request.ts";
 import { ProtocolCoordinator } from "./protocol-coordinator.ts";
 import { frame, snapshot as protocolSnapshot, tickBatch } from "./protocol-test-fixtures.ts";
 import { currentSaveFixture } from "../save/current-save-fixture.ts";
-import { requestWorkerPersonalTradeHistory } from "./worker-host.ts";
-import { requestWorkerMarketHistory } from "./worker-host.ts";
-import { requestWorkerCurrentMinuteHistory } from "./worker-host.ts";
-import { WasmSessionSlot } from "./wasm-session-slot.ts";
 
 class FakeWorker implements WorkerRequestPort {
   readonly listeners = new Set<(event: MessageEvent) => void>();
@@ -19,77 +15,6 @@ class FakeWorker implements WorkerRequestPort {
   postMessage(message: unknown): void { this.sent.push(message); }
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
-
-test("Worker当前分钟绑定本人宿主与generation，不混已归档历史", { timeout: 10000 }, async () => {
-  const worker = new FakeWorker(), scope = new WorkerRequestScope(worker), query = { code: "600000" };
-  const pending = requestWorkerCurrentMinuteHistory(scope, 73, 3, query);
-  assert.deepEqual(worker.sent[0], { type: "currentMinuteHistory", requestId: 73, generation: 3, query });
-  const response = { code: "600000", date: "2030-01-02", observed_at: { date: "2030-01-02", second_of_day: 0 }, live: true, status: "Trading", phase: "Continuous", bars: [] };
-  worker.emit({ type: "currentMinuteHistory", requestId: 73, generation: 2, response: { ...response, code: "000001" } });
-  worker.emit({ type: "currentMinuteHistory", requestId: 73, generation: 3, response });
-  assert.deepEqual(await pending, response);
-});
-
-test("Worker永久量价历史绑定generation且不携带账户", { timeout: 10000 }, async () => {
-  const worker = new FakeWorker(), scope = new WorkerRequestScope(worker);
-  const query = { code: "600000", date_from: "2030-01-02", date_to: "2030-01-03", after: null, page_size: 2 };
-  const pending = requestWorkerMarketHistory(scope, 72, 3, query);
-  assert.deepEqual(worker.sent[0], { type: "marketHistory", requestId: 72, generation: 3, query });
-  const page = { code: "600000", entries: ["2030-01-02", "2030-01-03"].map(date => ({ date, availability: "NotEnded", bars: [], daily_candle: null })), next_cursor: null, settled_through: null };
-  worker.emit({ type: "marketHistory", requestId: 72, generation: 2, page: { ...page, code: "000001" } });
-  worker.emit({ type: "marketHistory", requestId: 72, generation: 3, page });
-  assert.deepEqual(await pending, page);
-});
-
-test("Worker本人日期页携带完整filters与receipt ceiling且拒绝旧generation", { timeout: 10000 }, async () => {
-  const worker = new FakeWorker();
-  const scope = new WorkerRequestScope(worker);
-  const query = { date_from: "2030-01-02", date_to: "2030-01-04", code: null, side: null, before_receipt: "9007199254740993", as_of_receipt: "9007199254741000", page_size: 100 };
-  const pending = requestWorkerPersonalTradeHistory(scope, 71, 3, query);
-  assert.deepEqual(worker.sent[0], { type: "personalTradeHistory", requestId: 71, generation: 3, query });
-  const page = { request: query, confirmations: [], next_cursor: null, as_of_receipt: query.as_of_receipt, start_date: "2030-01-02", current_date: "2030-01-05", settled_through: "2030-01-04" };
-  worker.emit({ type: "personalTradeHistory", requestId: 71, generation: 2, page: { ...page, as_of_receipt: "1" } });
-  worker.emit({ type: "personalTradeHistory", requestId: 71, generation: 3, page });
-  assert.deepEqual(await pending, page);
-  assert.equal((worker.sent[0] as Record<string, unknown>).account, undefined);
-});
-
-test("WASM Worker 按需请求Rust VWAP和本人交割单，旧generation结果不匹配", { timeout: 10000 }, async () => {
-  const worker = new FakeWorker();
-  const scope = new WorkerRequestScope(worker);
-  const average = requestWorkerIntradayAverage(scope, 1, 3, { turnoverCents: "260000", tradeCount: 2, volumeShares: 300 });
-  assert.deepEqual(worker.sent[0], {
-    type: "calculateIntradayAverage", requestId: 1, generation: 3,
-    turnoverCents: "260000", tradeCount: 2, volumeShares: 300,
-  });
-  worker.emit({ type: "intradayAverageCalculated", requestId: 1, generation: 2, result: { turnover_cents: "1", volume_shares: 1 } });
-  worker.emit({ type: "intradayAverageCalculated", requestId: 1, generation: 3, result: { turnover_cents: "260000", volume_shares: 300 } });
-  assert.deepEqual(await average, { turnoverCents: "260000", volumeShares: 300 });
-
-  const history = requestWorkerPersonalTradeConfirmations(scope, 2, 3);
-  assert.deepEqual(worker.sent[1], { type: "personalTradeConfirmations", requestId: 2, generation: 3, beforeReceipt: null });
-  worker.emit({ type: "personalTradeConfirmations", requestId: 2, generation: 3, confirmations: [] });
-  assert.deepEqual(await history, []);
-});
-
-test("WASM Worker 一次请求完整VWAP曲线并校验seriesKey与结果数量", { timeout: 10000 }, async () => {
-  const worker = new FakeWorker();
-  const scope = new WorkerRequestScope(worker);
-  const curve = requestWorkerIntradayAverageCurve(scope, 7, 3, { seriesKey: "600000:3:2:901", samples: [
-    { turnoverCents: "100000", tradeCount: 1, volumeShares: 100 },
-    { turnoverCents: "260000", tradeCount: 2, volumeShares: 300 },
-  ] });
-  assert.deepEqual(worker.sent[0], {
-    type: "calculateIntradayAverageCurve", requestId: 7, generation: 3, seriesKey: "600000:3:2:901",
-    samples: [{ turnoverCents: "100000", tradeCount: 1, volumeShares: 100 }, { turnoverCents: "260000", tradeCount: 2, volumeShares: 300 }],
-  });
-  worker.emit({ type: "intradayAverageCurveCalculated", requestId: 7, generation: 3, seriesKey: "600000:3:2:901", results: [
-    { turnover_cents: "100000", volume_shares: 100 }, { turnover_cents: "260000", volume_shares: 300 },
-  ] });
-  assert.deepEqual(await curve, [
-    { turnoverCents: "100000", volumeShares: 100 }, { turnoverCents: "260000", volumeShares: 300 },
-  ]);
-});
 
 test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
@@ -112,14 +37,16 @@ test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确�
     const binding = intake.sent[0];
     assert.equal(binding.type, "bindIngress");
     intake.emit({ type: "ingressBound", requestId: binding.requestId, generation: 1 });
+    // ADR 0041: baseline wire 契约携带 civilDate，E8 改写时遗漏导致协议解析失败
     engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
-    const intent = { Cancel: { code: "600000", id: 7 } } as Parameters<typeof host.submitIntent>[0];
+    const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
     const submitting = host.submitIntent(intent);
     await Promise.resolve();
     const request = intake.sent.at(-1)!;
     assert.equal(request.type, "enqueue");
-    assert.deepEqual(request.intent, intent);
+    // 公共 Intent（代码串）入队前已译为 wire 数值 StockId（ADR 0041）。
+    assert.deepEqual(request.intent, { Cancel: { code: 0, id: 7 } });
     assert.equal(engine.sent.some((message) => message.type === "enqueue"), false);
     intake.emit({ type: "enqueued", requestId: request.requestId, generation: 1 });
     await submitting;
@@ -164,6 +91,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
         return;
       }
       intake.emit({ type: "ingressBound", requestId: intake.sent[0].requestId, generation: 1 });
+      // ADR 0041: baseline wire 契约携带 civilDate，E8 改写时遗漏导致协议解析失败
       engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
       host = await creating;
       const intent = { Cancel: { code: "600101", id: 7 } } as Parameters<typeof host.submitIntent>[0];
@@ -176,7 +104,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
         engine.emit({ type: "started", generation: 1, requestId: engine.sent.at(-1)!.requestId });
         await starting;
         accept = false;
-        engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)) });
+        engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)) });
       } else {
         const request = intake.sent.at(-1)!;
         intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
@@ -201,10 +129,10 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
 test("Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户", { timeout: 10000 }, async () => {
   const worker = new FakeWorker();
   const requests = new WorkerRequestScope(worker);
-  const pending = readWorkerStockHistory(requests, 12, 3, "600000");
-  assert.deepEqual(worker.sent, [{ type: "stockHistory", requestId: 12, generation: 3, code: "600000" }]);
-  worker.emit({ type: "stockHistory", requestId: 12, generation: 3, data: { code: "600000", daily_candles: [], active_daily_candle: null } });
-  assert.deepEqual(await pending, { code: "600000", daily_candles: [], active_daily_candle: null });
+  const pending = readWorkerStockHistory(requests, 12, 3, "000812");
+  assert.deepEqual(worker.sent, [{ type: "stockHistory", requestId: 12, generation: 3, code: "000812" }]);
+  worker.emit({ type: "stockHistory", requestId: 12, generation: 3, data: { code: 0, daily_candles: [], active_daily_candle: null } });
+  assert.deepEqual(await pending, { code: "000812", daily_candles: [], active_daily_candle: null });
   assert.equal(requests.pendingCount(), 0);
 });
 
@@ -257,119 +185,6 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
     }
   });
 }
-
-test("F2 保会话 fallback 形状经真实 notifyFailure 分流：REPORT_CORRECTION_REJECTED+recoverable 不销毁会话", { timeout: 10000 }, async () => {
-  // 诊断降级不能把可恢复拒绝变成销毁会话的 fatal failure。
-  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class RecoverableFailureWorker extends EventTarget {
-    static current: RecoverableFailureWorker;
-    readonly sent: Record<string, unknown>[] = [];
-    terminations = 0;
-    constructor() { super(); RecoverableFailureWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
-    terminate() { this.terminations++; }
-    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
-  }
-  Object.defineProperty(globalThis, "Worker", { configurable: true, value: RecoverableFailureWorker });
-  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
-  try {
-    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
-    const worker = RecoverableFailureWorker.current;
-    worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
-    host = await creating;
-    const failures: unknown[] = [];
-    const starting = host.start(() => true, (failure) => failures.push(failure));
-    worker.emit({ type: "started", requestId: worker.sent.at(-1)!.requestId, generation: 1 });
-    await starting;
-    const preserved = {
-      code: "REPORT_CORRECTION_REJECTED", where: "engine::report_corrections",
-      message: "现金不足，无法受理财报更正", recoverable: true,
-      recoveryActions: ["核对现金余额后重新提交"],
-      cause: {
-        code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.submitReportCorrection",
-        message: "发送结构化错误详情失败：function uncloneableCause() {} could not be cloned.",
-        cause: { code: "REPORT_CORRECTION_REJECTED", message: "现金不足，无法受理财报更正", where: "engine::report_corrections" },
-      },
-    };
-    worker.emit({ type: "failure", generation: 1, ...preserved });
-    assert.equal(worker.terminations, 0, "可恢复拒绝不得销毁会话");
-    assert.equal(failures.length, 1);
-    assert.deepEqual(failures[0], preserved);
-    const query = host.queryReportCorrections();
-    worker.emit({ type: "reportCorrections", requestId: worker.sent.at(-1)!.requestId, generation: 1, value: { pending: [], completed: {} } });
-    assert.deepEqual(await query, { pending: [], completed: {} });
-  } finally {
-    await host?.dispose();
-    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
-    else Object.defineProperty(globalThis, "Worker", original);
-  }
-});
-
-test("真实 Worker failure 投影经 structuredClone 与 notifyFailure 保会话：自有 map/every、空洞及第二读 getter", { timeout: 10000 }, async (context) => {
-  const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  const originalSelf = Object.getOwnPropertyDescriptor(globalThis, "self");
-  class RecoveryWorker extends EventTarget {
-    static current: RecoveryWorker;
-    readonly sent: Record<string, unknown>[] = [];
-    terminations = 0;
-    constructor() { super(); RecoveryWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
-    terminate() { this.terminations++; }
-    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
-  }
-  Object.defineProperty(globalThis, "Worker", { configurable: true, value: RecoveryWorker });
-  Object.defineProperty(globalThis, "self", {
-    configurable: true,
-    value: { postMessage: (message: unknown) => RecoveryWorker.current.emit(structuredClone(message)), addEventListener() {} },
-  });
-  context.mock.method(WasmSessionSlot.prototype, "readGeneration", () => 1);
-  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
-  try {
-    const { postFailure } = await import("./wasm-worker.ts");
-    for (const scenario of ["map", "every", "sparse", "changing", "custom-success", "custom-fallback", "custom-invalid"] as const) {
-      const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
-      const worker = RecoveryWorker.current;
-      worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot: protocolSnapshot(0, 0) });
-      host = await creating;
-      const failures: unknown[] = [];
-      const starting = host.start(() => true, (failure) => { failures.push(failure); });
-      worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
-      await starting;
-      let reads = 0, mapCalls = 0;
-      const actions = ["核对现金余额后重新提交"];
-      if (scenario === "sparse") actions.length = 2;
-      else if (scenario === "changing") Object.defineProperty(actions, "0", { enumerable: true, get() { return ++reads === 1 ? "核对现金余额后重新提交" : 17; } });
-      else if (scenario.startsWith("custom-")) {
-        if (scenario === "custom-invalid") Object.defineProperty(actions, "0", { value: 17 });
-        Object.assign(actions, { map() { mapCalls++; return Object.assign(["核对现金余额后重新提交"], { map: 17 }); } });
-      } else Object.assign(actions, { [scenario]: 17, extra: "不应穿过 Worker 边界" });
-      postFailure("wasm-worker.submitReportCorrection", {
-        code: "REPORT_CORRECTION_REJECTED", message: "更正被拒绝", recoverable: true,
-        cause: scenario === "custom-success" || scenario === "custom-invalid" ? { receipt: "可克隆详情" } : function uncloneableCause() {}, recoveryActions: actions,
-      });
-      assert.equal(worker.terminations, 0, scenario);
-      assert.equal(failures.length, 1, scenario);
-      const reported = failures[0] as Record<string, unknown>;
-      assert.equal(reported.code, "REPORT_CORRECTION_REJECTED", scenario);
-      assert.equal(reported.recoverable, true, scenario);
-      if (["map", "every", "custom-success", "custom-fallback"].includes(scenario)) assert.deepEqual(reported.recoveryActions, ["核对现金余额后重新提交"], scenario);
-      else assert.equal(reported.recoveryActions, undefined, scenario);
-      if (scenario === "changing") assert.equal(reads, 2);
-      assert.equal(mapCalls, 0, scenario);
-      const query = host.queryReportCorrections();
-      worker.emit({ type: "reportCorrections", requestId: worker.sent.at(-1)!.requestId, generation: 1, value: { pending: [], completed: {} } });
-      assert.deepEqual(await query, { pending: [], completed: {} }, scenario);
-      await host.dispose();
-      host = undefined;
-    }
-  } finally {
-    await host?.dispose();
-    if (originalWorker === undefined) delete (globalThis as { Worker?: unknown }).Worker;
-    else Object.defineProperty(globalThis, "Worker", originalWorker);
-    if (originalSelf === undefined) delete (globalThis as { self?: unknown }).self;
-    else Object.defineProperty(globalThis, "self", originalSelf);
-  }
-});
 
 test("审计G53：Worker恢复必须推进generation，不能接受相同或更小代", async () => {
   for (const nextGeneration of [1, 2, 3]) {
@@ -441,7 +256,7 @@ test("Worker save pins candidate generation and rejects an old saved response af
     const ready = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = SaveWorker.current;
     const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true } });
+    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } });
     worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     const host = await ready;
     const candidate = { seq: 42, settledDate: "2030-01-05" };
@@ -471,10 +286,10 @@ test("Given a generation-correlated Worker order response, when read, then it pr
   const worker = new FakeWorker();
   const pending = readWorkerPlayerWorkingOrders(new WorkerRequestScope(worker), 5, 2);
   worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
-    owner: "0", id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
+    id: 7, code: 0, side: "Buy", price: "1234", remainingQty: 200, venue: "Auction", frozen: "Cash",
   }] });
   assert.deepEqual(await pending, [{
-    owner: "0", id: 7, code: "600000", side: "Buy", price: "1234", remainingQty: 200, venue: "auction", frozen: "cash",
+    id: 7, code: "000812", side: "Buy", price: "1234", remainingQty: 200, venue: "Auction", frozen: "Cash",
   }]);
 });
 
@@ -559,7 +374,7 @@ test("Given production or a missing injected capability, Worker E2E stepping is 
   assert.doesNotThrow(() => assertWorkerE2EStepAllowed(true, true));
 });
 
-test("Worker initialization passes the requested pool size and reports startup failure immediately", async () => {
+test("Worker initialization sends init without pool size and reports startup failure immediately", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class StartupWorker extends EventTarget {
     static current: StartupWorker;
@@ -574,11 +389,11 @@ test("Worker initialization passes the requested pool size and reports startup f
   }
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: StartupWorker });
   try {
-    const pending = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n, { threadCount: 128 });
+    const pending = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = StartupWorker.current;
-    assert.deepEqual(worker.sent, [{ type: "init", threads: 128 }]);
-    worker.emit({ type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "线程池启动失败" });
-    await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 线程池启动失败/);
+    assert.deepEqual(worker.sent, [{ type: "init" }]);
+    worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "初始化失败" });
+    await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 初始化失败/);
     assert.equal(worker.terminated, true);
   } finally {
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
@@ -771,7 +586,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
       const dateAssertion = assert.rejects(date, /已被销毁|TEST_FATAL/);
       void date.then(() => { settled = true; }, () => { settled = true; });
       if (reason === "dispose") host.dispose();
-      else worker.emit({ type: "failure", generation: 1, code: "TEST_FATAL", where: "worker-test", message: "失败" });
+      else worker.emit({ type: "failure", code: "TEST_FATAL", where: "worker-test", message: "失败" });
       await dateAssertion;
       assert.equal(settled, true);
       assert.equal(worker.terminations, 1);
@@ -810,9 +625,9 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     await starting;
     const pending = assert.rejects(host.setSpeed(10), /消费者拒绝/);
     worker.emit({ type: "protocolBatch", generation: 1, deliveryId: 7, updates: [
-      tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)),
-      tickBatch([frame(3, 1, ["600000"])], protocolSnapshot(3, 2)),
-      tickBatch([frame(2, 1, ["600000"])], protocolSnapshot(2, 2)),
+      tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)),
+      tickBatch([frame(3, 1, [0])], protocolSnapshot(3, 2)),
+      tickBatch([frame(2, 1, [0])], protocolSnapshot(2, 2)),
     ] });
     await pending;
     assert.equal(applications, 1);
@@ -820,7 +635,7 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     assert.equal(coordinator.status().kind, "failure");
     assert.equal(worker.sent.filter((message) => message.type === "uiFrame").length, 0);
     assert.equal(worker.terminations, 1);
-    worker.emit({ type: "protocol", generation: 1, deliveryId: 8, update: tickBatch([frame(1, 0, ["600000"])], protocolSnapshot(1, 1)) });
+    worker.emit({ type: "protocol", generation: 1, deliveryId: 8, update: tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)) });
     assert.equal(applications, 1);
     await host.dispose();
     assert.equal(worker.terminations, 1);

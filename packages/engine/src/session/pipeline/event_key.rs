@@ -1,5 +1,5 @@
 use super::super::Event;
-use crate::{AccountId, StockCode};
+use crate::{AccountId, StockId};
 use std::cmp::Ordering;
 
 #[cfg(test)]
@@ -53,12 +53,8 @@ pub(crate) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum EntityTag {
     Session,
-    Stock(StockCode),
-    Account(
-        #[serde(with = "crate::session::memberships::account_id_decimal")]
-        #[ts(type = "string")]
-        AccountId,
-    ),
+    Stock(StockId),
+    Account(AccountId),
 }
 
 impl EntityTag {
@@ -132,10 +128,9 @@ pub struct EventStableKey {
 impl EventStableKey {
     pub fn for_event(event: &Event, local_event_index: u64) -> Self {
         let (phase_rank, entity, source) = match event {
-            Event::Trade { code, .. } | Event::PublicTrade { code, .. } => {
+            Event::Trade { code, .. } => {
                 (4, EntityTag::Stock(code.clone()), EventSourceIndex::Sealed)
             }
-            Event::PrivateEventOmitted { .. } => (4, EntityTag::Session, EventSourceIndex::Sealed),
             Event::AuctionTick { code, .. }
             | Event::AuctionCompleted { code, .. }
             | Event::PriceTick { code, .. } => (
@@ -172,5 +167,11 @@ impl EventStableKey {
     }
     pub const fn local_event_index(&self) -> u64 {
         self.local_event_index
+    }
+
+    /// producer 在已确定的域中填入局部序号，不再次从事件生成身份；域本身不可改变。
+    pub(in crate::session) fn with_local_event_index(mut self, index: u64) -> Self {
+        self.local_event_index = index;
+        self
     }
 }

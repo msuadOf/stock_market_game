@@ -22,10 +22,10 @@ fn announcement_timing_rejected() {
     let phase = CivilInstant::from_hms(d("2030-04-20"), 18, 0, 0).unwrap();
     // 发生日之前公布。
     let mut req = AnnouncementRequest {
-        company: CompanyId(COMPANY.to_string()),
+        company: CompanyId(0),
         occurred_on: d("2030-04-21"),
         published_at: phase,
-        content: engine::information::AnnouncementContent::Shock(event.clone()),
+        event: event.clone(),
     };
     assert!(matches!(
         library.publish_announcement(req.clone()).unwrap_err(),

@@ -1,0 +1,136 @@
+[codex] Starting Codex task thread.
+[codex] Thread ready (01a14b68-cb12-7033-8e82-e1d7b9f03137).
+[codex] Turn started (01a14b68-cf3e-71d2-81a8-b740ca81a139).
+[codex] Assistant message captured: 我会按只读终审核对冻结点、代码与归档证据，逐项给出裁决。仓库要求独立 subagent 复核，我会安排其检查部分证据链；全程不写文件、不构建、不运行测试或探针。
+[codex] Running command: /bin/zsh -lc "pwd; git status --short; git rev-parse HEAD; rg --files -g AGENTS.md -g 'docs/p...
+[codex] Command completed: /bin/zsh -lc "pwd; git status --short; git rev-parse HEAD; rg --files -g AGENTS.md -g 'docs/p... (exit 0)
+[codex] Running command: /bin/zsh -lc 'cat /home/baiyifan/.agents/skills/explain/SKILL.md'
+[codex] Command completed: /bin/zsh -lc 'cat /home/baiyifan/.agents/skills/explain/SKILL.md' (exit 0)
+[codex] Assistant message captured: 冻结点已核对：HEAD 为 `b801fd7c`，工作区仅有已声明的 `SaveSlot.ts` 修改。我会用 explain skill 整理终裁文字，保留明确的证据出处和未核实项。
+[codex] Running command: /bin/zsh -lc 'cat AGENTS.md docs/principles.md docs/open-questions.md docs/architecture.md do...
+[codex] Command completed: /bin/zsh -lc 'cat AGENTS.md docs/principles.md docs/open-questions.md docs/architecture.md do... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg --files agents/std-thread-migration .tmp | rg '(sol-|handoff-stepframe|perf-...
+[codex] Command completed: /bin/zsh -lc "rg --files agents/std-thread-migration .tmp | rg '(sol-|handoff-stepframe|perf-... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba agents/std-thread-migration/plans/flip-runbook.md | sed -n '1,300p'; nl ...
+[codex] Command completed: /bin/zsh -lc "nl -ba agents/std-thread-migration/plans/flip-runbook.md | sed -n '1,300p'; nl ... (exit 0)
+[codex] Running command: /bin/zsh -lc 'nl -ba agents/std-thread-migration/reviews/sol-view-model-verdict.txt | head -2...
+[codex] Command completed: /bin/zsh -lc 'nl -ba agents/std-thread-migration/reviews/sol-view-model-verdict.txt | head -2... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff a6001494..HEAD --stat; git rev-list --count a6001494..HEAD; git log --...
+[codex] Command completed: /bin/zsh -lc 'git diff a6001494..HEAD --stat; git rev-list --count a6001494..HEAD; git log --... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba agents/std-thread-migration/plans/flip-runbook.md | sed -n '80,220p'; nl...
+[codex] Command completed: /bin/zsh -lc "nl -ba agents/std-thread-migration/plans/flip-runbook.md | sed -n '80,220p'; nl... (exit 0)
+[codex] Running command: /bin/zsh -lc 'git diff a6001494..HEAD --shortstat; git rev-list --count a6001494..HEAD; git l...
+[codex] Running command: /bin/zsh -lc 'nl -ba agents/std-thread-migration/plans/intentional-divergences.md; nl -ba age...
+[codex] Command completed: /bin/zsh -lc 'nl -ba agents/std-thread-migration/plans/intentional-divergences.md; nl -ba age... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git diff a6001494..HEAD --shortstat; git rev-list --count a6001494..HEAD; git l... (exit 0)
+[codex] Assistant message captured: 目前发现两处需要重点核实：runbook 仍把 `318.0` 归到口径 B，并保留“低于 318.0 属预期”的预警；step_frame 前置台账仍引用 `.tmp` 红绿证据。两处...
+[codex] Running command: /bin/zsh -lc 'git diff a6001494..HEAD --numstat -- packages/engine/src/runtime packages/engin...
+[codex] Running command: /bin/zsh -lc 'git diff 5c1f4cd7''^..ec5c04b5 --stat; git show 7419c39b --; git show 5c1f4cd7 ...
+[codex] Running command: /bin/zsh -lc 'nl -ba agents/std-thread-migration/plans/dying-tests-census.md | head -210; nl ...
+[codex] Command completed: /bin/zsh -lc 'nl -ba agents/std-thread-migration/plans/dying-tests-census.md | head -210; nl ... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git diff 5c1f4cd7''^..ec5c04b5 --stat; git show 7419c39b --; git show 5c1f4cd7 ... (exit 0)
+[codex] Command completed: /bin/zsh -lc 'git diff a6001494..HEAD --numstat -- packages/engine/src/runtime packages/engin... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/protocol/commit.rs | sed -n '1,245p'; nl -ba...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/protocol/commit.rs | sed -n '1,245p'; nl -ba... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '620,875p'; nl -ba packa...
+[codex] Command failed: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '620,875p'; nl -ba packa... (exit 1)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '1,85p'; nl -ba packages...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '1,85p'; nl -ba packages... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'runtime_group_count|account_by_local\\(|account_by_owner\\(|from_session...
+[codex] Command completed: /bin/zsh -lc "rg -n 'runtime_group_count|account_by_local\\(|account_by_owner\\(|from_session... (exit 0)
+[codex] Assistant message captured: 已确认一处代码阻断：日结会推进 `day`，但 runtime 回滚基线没有保存或恢复它。日结后的 frame 投影若失败，tick、seq、账户等会回滚，`day` 却留在新日，违反“...
+[codex] Running command: /bin/zsh -lc "git show 6dcc25b4 --; git show 7209fdfd --stat; nl -ba docs/trading-rules.md | ...
+[codex] Command completed: /bin/zsh -lc "git show 6dcc25b4 --; git show 7209fdfd --stat; nl -ba docs/trading-rules.md | ... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg --files .tmp agents/std-thread-migration | rg '(perf.*(final|phase1)|p14.*(f...
+[codex] Command completed: /bin/zsh -lc "rg --files .tmp agents/std-thread-migration | rg '(perf.*(final|phase1)|p14.*(f... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'stepframe4|test result:|running [0-9]+ tests|FAILED|test result: FAILED'...
+[codex] Command completed: /bin/zsh -lc "rg -n 'stepframe4|test result:|running [0-9]+ tests|FAILED|test result: FAILED'... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba agents/std-thread-migration/plans/intentional-divergences.md | sed -n '1...
+[codex] Command completed: /bin/zsh -lc "nl -ba agents/std-thread-migration/plans/intentional-divergences.md | sed -n '1... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -n 'single_pool_actor_filled|tick.?218|STEP_FATAL|day overflow|envelope.*失败|...
+[codex] Command completed: /bin/zsh -lc "rg -n 'single_pool_actor_filled|tick.?218|STEP_FATAL|day overflow|envelope.*失败|... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/examples/driver_semantics_probe.rs | head -160; nl -ba p...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/examples/driver_semantics_probe.rs | head -160; nl -ba p... (exit 0)
+[codex] Assistant message captured: step_frame 的验收证据还有缺口：`04-parity-green.txt` 是空文件；默认 runtime 的最终 lib 日志没有新增 parity 用例，显式旧模式日志才有...
+[codex] Running command: /bin/zsh -lc "nl -ba apps/server/tests/actor.rs | sed -n '110,225p'; nl -ba agents/std-thread...
+[codex] Command completed: /bin/zsh -lc "nl -ba apps/server/tests/actor.rs | sed -n '110,225p'; nl -ba agents/std-thread... (exit 0)
+[codex] Running command: /bin/zsh -lc "rg -c '"'^#'"\\[test\\]' packages/engine/src/runtime/desk_semantics_tests.rs pa...
+[codex] Command completed: /bin/zsh -lc "rg -c '"'^#'"\\[test\\]' packages/engine/src/runtime/desk_semantics_tests.rs pa... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '635,725p'; nl -ba package...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/runtime/drive.rs | sed -n '635,725p'; nl -ba package... (exit 0)
+[codex] Running command: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '1852,1904p'; nl -ba pac...
+[codex] Command completed: /bin/zsh -lc "nl -ba packages/engine/src/session/failure.rs | sed -n '1852,1904p'; nl -ba pac... (exit 0)
+[codex] Assistant message captured: **终裁：不通过。当前不可宣告 std-thread 迁移完成，不可合并 main；批 9 与视图内生战役的开工前置尚未满足。** 冻结点核对为 `b801fd7c`，工作区仅有已登记的...
+[codex] Turn completed.
+**终裁：不通过。当前不可宣告 std-thread 迁移完成，不可合并 main；批 9 与视图内生战役的开工前置尚未满足。**
+
+冻结点核对为 `b801fd7c`，工作区仅有已登记的 `SaveSlot.ts` 修改。全链为 309 个提交、961 个文件变更。本轮完成只读审查，并由四名未参与实现的 subagent 独立检查重点实现与证据链；未写文件、构建、运行测试或探针。以下缺陷为静态发现，未声称已经实跑复现。
+
+**需要先修复的实现问题：**
+
+1. **P1：日结后的投影失败泄漏 `day`。**  
+   [日结迁移](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/pipeline/day_end.rs:60) 已执行 `day += 1`，但 [RuntimeInstallBaseline](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:14) 与 [rollback_runtime_step](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:1346) 均未保存、恢复 `day`。随后 frame 投影失败会回滚 tick、seq 等并丢弃 driver，却保留新日，违反失败零泄漏及重试契约。  
+   此外，同文件 `:883` 的日结调用和 `:930` 的日结后快照收集通过 `?` 直接退出，绕过统一回滚。它们虽在接轨前已存在，仍属于本次全链验收范围。
+
+2. **P1：Continue 早轮首买会丢失 retail 经历初始化。**  
+   [drive.rs:658](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/runtime/drive.rs:658) 创建局部 `pending_hold_inits`，收集后直接丢弃；`:824` 消费的却是成员 `self.pending_hold_inits`。早轮成交已进入组快照，又被正确排除出 `unsettled_trades`，因此终轮投影不会补初始化。结果可形成“有持仓、无经历”，影响保存恢复的 fault2038 校验。  
+   这是已承诺的首持仓配对不变量缺口，不能归入 A5 已登记的成交反馈简化。现有 Continue 测试与首买测试分别覆盖，漏了组合场景。
+
+3. **P2：多组委托投影仍丢失 owner 的组号。**  
+   [常规镜像刷新](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:832) 和 [信封构造](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/packages/engine/src/session/failure.rs:2097) 使用 `account_by_local(owner.1)`，把其他组的同 local 委托归给组 0；删除分支却使用 `account_by_owner`，增删键不一致。适用范围是公开多组构造及探针，生产缺省为单组。首买 VWAP 查找也有写死 group=0 的同族问题。
+
+**§二 1–8 逐项裁决：**
+
+| 项目 | 裁决 | 证据与理由 |
+|---|---|---|
+| **1. 双口径性能** | **不通过：构建来源未闭合** | [正式账本](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/evidence/perf-p2/perf-phase1-final.txt:3) 的均值、倍率计算正确，两条 SHA 与现存 SHA 记录一致，外部负载窗口如实登记。但账本绑定 `1f5863cd`，后继 `6dcc25b4` 明确承认漏提交 re-export、此前工作树掩盖不可编译状态，故 binary 不能直接归为该纯 HEAD 构建。正式五轮原始 stdout 也未找到，无法独立核验逐轮守恒。**未发现守恒红证，不按正确性事故裁定。** |
+| **2. 318/627 勘正** | **不通过；明确裁决旧判词有误** | [命令重建](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/plans/flip-runbook-baseline-commands.md:82) 支持二者同属口径 A、同命令同负载，318 采于空档防御之前。`sol-recheck-verdict.md:38` 的“不同口径”判断错误，应追加勘误。[runbook:110](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/plans/flip-runbook.md:110) 仍误归入口径 B，`:113` 的预警尚未撤除。终测账本未引用318，不存在该处遗漏勘正的问题。 |
+| **3. 分歧、缺口、pin 总账** | **不通过** | [总账](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/plans/intentional-divergences.md:64) 仍称两种 pin 判定并存，代码已统一；`=0` 会正确执行旧路径。C 表加总为11组15站点，但未取得当前运行名单。D2 已从登记5处增长到**定义1处、调用14处**。A6–A10及B4已随 `7209fdfd` 入正式文档，A12也已进入 architecture/ADR-0043，原8/9状态未回填。市价部分回执裁量尚未正式登记。 |
+| **4. wasm 方向 A** | **不通过：登记未闭合；实现及历史 check 子项通过** | wasm 恒关闭 runtime，world 门控已移除；现存 nightly engine、web-wasm 日志均正常结束。绿证位于 `.tmp/sol-d5-red-evidence/`，而[正式核实报告](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/plans/wasm-gap-verification.md:7) 仍以“25错、编译不过”为现状。需要归档绿证、追加修复结论。A12的ADR-0005/0027补记候选已登记。 |
+| **5. step_frame 接轨** | **不通过** | 分叉及四个生产调用位确已接轨，第五处是 desktop 协议测试；Escrow evidence 恒旧路径也有明确登记。但存在上述回滚及 Continue 缺陷。`04-parity-green.txt` **为空文件**；[runtime最终日志](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.tmp/sol-stepframe-red-evidence/04-final-lib-runtime.txt:6139) 未含新增 parity，legacy日志含该用例，而 `=0` 下两臂均走旧路径。源码 parity 使用无对手买单，期末仅比较玩家 cash，不能证明“期末账户全等”。38/18/3的源码用例数吻合，不能替代最终冻结态绿证。已登记5个失败及 desktop 阻断也不能写成集成全绿。 |
+| **6. 视图战役范围** | **通过** | 明确接受[视图终裁的范围与排序](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/reviews/sol-view-model-verdict.txt:189)：本次验当前冻结态；视图内生不要求本轮实施，其未来收益不构成合并依据。当前同拍交付、回滚、资源时序仍须独立成立。 |
+| **7. 冻结及逐批复核链** | **不通过** | 冻结点子项通过。市价红证已有 `evidence/market-chain/` 归档；但五轮 prompt、step_frame handoff及红绿目录尚未完成归档、回填。[合并说明:105](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/agents/std-thread-migration/plans/merge-pr-description.md:105) 仍明确列为待办。性能、sol-103、竞价、市价、step_frame未形成可逐批核对的完整真实 Sol 判决链；prompt及实施方“通过”摘要不能替代判决。现存材料**不能证明复核闭合**，不推断复核从未发生。 |
+| **8. trading-rules** | **不通过** | 竞价单一清算价、市价涨跌停保护及余量显式取消已登记。仍缺竞价市价 `AuctionLimitOrderRequired`、相位校验优先，以及组端T+1/可卖不足的显式拒绝回执登记。另有三处错误表述，见下。 |
+
+性能数字可保留为**历史测量报告值**：A **1409.2**；B300 **302.7**、B1000 **501.5**。A与B负载不同构；B300全处竞价申报窗、费用为零。B测的是 `GameSession::step()`，尚不能代表接轨后的生产 `step_frame()` 完整成本。原型962仅作背景。
+
+A1–A13的分歧本身逐条裁定如下；相关实现缺陷仍须修复：
+
+| 分歧 | 裁定与理由 |
+|---|---|
+| A1 | **维持**腿方向契约；修正文档“买腿可推出真实主动方向”的错误。 |
+| A2 | **维持**。日终失效显式取消符合可观测性要求。 |
+| A3 | **维持**已批准的游戏硬限制；官方条款仍标未经核验，不能称依据全部可靠。 |
+| A4 | **维持**。实扣与分段审计口径已区分登记。 |
+| A5 | **维持**迁移期功能缺口；专项测试仍欠，须如实写明。 |
+| A6 | **维持**实体在途、`frozen_cash=0`口径；更新总账。 |
+| A7 | **维持**已登记的due子集策略调度变化。 |
+| A8 | **维持**日结编排；失败回滚缺陷必须修复。 |
+| A9 | **维持**冻结态可见性方案；需区分收盘老单展示与新申报隐藏。 |
+| A10 | **维持**已公开的展示、预检查近似；不得当作精确边界。 |
+| A11 | **维持**迁移期投影策略；当前投影缺陷不能留给未来战役。 |
+| A12 | **维持**wasm串行旧路径；保留其依赖。 |
+| A13 | **维持**已登记的构造观察、到达测试口径；到达不保证成交。 |
+
+B1–B4及四项非语义债均有登记，B4状态需更新。§二.8另外必须修正：
+
+- [ADR-0042:40](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/docs/decisions/0042-trade-maker-taker-leg-semantics.md:40)：买卖腿方向不能推导主动、被动方向。
+- [trading-rules:83](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/docs/trading-rules.md:83)：收盘保留老单展示与“竞价期间公开面为空”表述矛盾；保留展示的性质应明确。
+- [trading-rules:250](/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/docs/trading-rules.md:250)：R31专项测试仍欠，应撤回“回归以专项测试承载”的完成式表述。
+
+**§三标准三问：**
+
+1. **大A语义及依据：未整体通过。** 竞价清算、市价保护、T+1方向正确，但日界回滚、持仓经历配对和跨组归户存在缺口；依据可靠性也有明确未核验边界。
+2. **需求必要性及范围：主体通过。** 接轨、回执、游标和性能修复具有必要性；不要求本轮实施视图内生。
+3. **遗漏边界及跨层漂移：存在。** 主要是日结投影失败、Continue首买、多组归户、真实成交parity及文档、证据状态漂移。
+
+最小修复与重审路径：
+
+1. **新提交修复三个实现问题**，统一日结错误回滚出口；先补失败测试，覆盖日结投影失败与重试、Continue早轮首买、多组委托增删和归户。
+2. 补真实 runtime/legacy 成交parity，比较双方现金、持仓、T+1及成本；取得最终冻结点的双模式及集成证据。5个遗留失败需逐项闭合归因与门槛；其中 server `single_pool` 仍等待旧 `ComputeWork` 探针，必须迁移验证机制，保留实际成交与交付断言。
+3. 补性能binary实际构建状态。能恢复历史工作树补丁与来源即可补证；无法恢复绑定时，再在新冻结点重测。不得仅改账本HEAD。
+4. 修订勘误、分歧计数和领域登记；归档真实逐批判决、红绿原文及索引。无法恢复判决的批次，重新独立审查完整diff。完成后指定新冻结点重审，不改写已复核提交。
+
+**批次边界裁定：** 批9仍按A/B/C拆分：A桶仅删已证明无消费者的外部暴露面；B桶镜像、安装、双写须等视图替代成立后删除；C桶wasm串行、逃生门、测试及验证依赖继续保留。当前不得开工批9或视图战役。批10已有 `7209fdfd` 实际提交，不能再称九项全部待做；本次登记修复应先完成并纳入重审。视图内生战役仍以**终验收通过并合并main**为前置。
+
+[exited with code 0]

@@ -78,9 +78,8 @@ mod tests {
             stocks: (0..stock_count)
                 .map(|index| {
                     (
-                        StockCode(format!("600{index:03}")),
+                        StockId(index),
                         StockView {
-                            is_trading: true,
                             best_bid: Some(price),
                             best_ask: Some(price),
                             last_price: price,
@@ -126,7 +125,7 @@ mod tests {
     #[test]
     fn funded_buy_is_independent_of_existing_concentration_and_market_stock_count() {
         let price = Money::from_cents(1_000);
-        let code = StockCode("600000".to_owned());
+        let code = StockId(0);
         let own = SelfView {
             cash: Money::from_cents(200_000),
             positions: [(

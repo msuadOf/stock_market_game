@@ -1,0 +1,3683 @@
+=== P1-A 突变红（AcceptedBatch 分支吞批 no-op）===
+命令：cargo test -p engine --lib accepted_batch_keeps
+基准：当前工作树（P1-A 实现+新守卫测试在位）+ 突变=group.rs AcceptedBatch 分支替换为 { let _ = entries; }
+c7cd0eb7306e0fc5e233724785e98f2fc9e6f3cb
+warning: unused import: `crate::compute::parallel::*`
+ --> packages/engine/src/indicators.rs:1:5
+  |
+1 | use crate::compute::parallel::*;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `IndicatorInput`
+   --> packages/engine/src/indicators.rs:303:38
+    |
+303 |     use super::{kdj, kdj_ohlc, macd, IndicatorInput, IndicatorInputError, OhlcBar};
+    |                                      ^^^^^^^^^^^^^^
+
+warning: unused import: `Serialize`
+  --> packages/engine/src/stock.rs:46:44
+   |
+46 |     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+   |                                            ^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/market.rs:354:9
+    |
+354 | /         /// 恒空、next_sequence=0）——空簿时截点不与本簿对拍（desk 恢复
+355 | |         /// 域接管；旧簿单恢复后仍按原校验）。
+    | |______________________________________________^
+356 | /         if cutoff > self.book.next_sequence() && self.book.next_sequence() > 0 {
+357 | |             return Err(MarketError::InvalidParams { reason: "公开可见性截点超过 book 下一受理序号".to_owned() });
+358 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `scope as in_place_scope`
+    --> packages/engine/src/compute.rs:1005:16
+     |
+1005 | pub(crate) use scope as in_place_scope;
+     |                ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `StockId`
+  --> packages/engine/src/verification_evidence/phase_timing_tests.rs:13:76
+   |
+13 |         GameConfig, HotParams, InstParams, Money, RetailParams, StockCode, StockId, StrategyParams,
+   |                                                                            ^^^^^^^
+
+warning: unused import: `crate::compute::parallel::*`
+ --> packages/engine/src/session/account_book.rs:6:5
+  |
+6 | use crate::compute::parallel::*;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/attention.rs:428:13
+    |
+428 |             /// 镜像承载唯一 book 断言。
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> packages/engine/src/session/attention.rs:502:9
+    |
+502 |         /// 在线）——日终清簿断言在末拍后成立。
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> packages/engine/src/session/attention.rs:490:13
+    |
+490 |             /// 可见性截点跨档语义不变；恢复时点从静默读面变为一拍后）。
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+491 |             restored.step().unwrap();
+    |             ------------------------ rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/attention.rs:529:13
+    |
+529 |             /// 原序不变、不重报价）。
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+530 |             let order = &game.state.desk_book_mirror[&StockId(0)].orders[0];
+    |             ---------------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `seed_groups`
+ --> packages/engine/src/session/company_groups.rs:6:30
+  |
+6 |     publish_group_scheduled, seed_groups, validate_groups,
+  |                              ^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/decision_chain/retail_analysis.rs:868:9
+    |
+868 | /         /// 首拍快照来自构造期 desk（空簿起步，signal 面与旧管线预置簿
+869 | |         /// 不同——observe 门采样可能翻转为不观察）。首拍构造常驻驱动器
+870 | |         /// 后经 ForceDue（ensure_observe=true——组内绕门，session 侧
+871 | |         /// 策略/关注概率不动，save 的 fault2210 校验面不受触碰）在下一
+872 | |         /// 拍强制到期；断言面=entry 创建与 restore 双轨对拍。
+    | |______________________________________________________________^
+873 | /         if crate::runtime::step_runtime_enabled() {
+874 | |             session.step().expect("runtime 首拍构造驱动器");
+875 | |             session.force_due_via_runtime(&[id], session.state.tick + 1);
+876 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:2533:9
+     |
+2533 | /         /// 通道（MutateBelief——镜像 belief 组权威不感知）；峰值基准
+2534 | |         /// 放大（组内 observe 的 equity 含在途 purse≈session 口径 2×——
+2535 | |         /// 2×峰值不构成回撤，10× 确保触发）。
+     | |______________________________________________^
+2536 | /         if session.runtime_driver.is_some() {
+2537 | |             session.mutate_belief_via_runtime(
+2538 | |                 account,
+2539 | |                 Box::new(move |belief| {
+...    |
+2555 | |                 .unwrap();
+2556 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:2966:9
+     |
+2966 |           /// 组权威不感知）。
+     |           ^^^^^^^^^^^^^^^^^^^^
+2967 | /         if session.runtime_driver.is_some() {
+2968 | |             session.apply_plan_events_via_runtime(vec![(plan_id, paused)]);
+2969 | |         } else {
+2970 | |             session.state.plans.apply(plan_id, paused).unwrap();
+2971 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:3177:9
+     |
+3177 | /         ///（fixture_set_cash——组账户现金为组权威，无注入通道）；暂停/恢复
+3178 | |         /// 主面已由 institution_risk_pressure（Pause 段）与 recovery 族
+3179 | |         ///（Resume 段）的组内实测承载，runtime 分支跳过本参数化用例。
+     | |______________________________________________________________________^
+3180 | /         if crate::runtime::step_runtime_enabled() {
+3181 | |             return;
+3182 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:3652:9
+     |
+3652 | /         ///（组侧每 tick 由 observation_inputs 现算）；session 侧 tick 直改
+3653 | |         /// 会使两权威锁步漂移（step 显式拒绝），跳过——序列自绝对分钟
+3654 | |         /// 起步即承载下跌形态。
+     | |________________________________^
+3655 | /         if session.runtime_driver.is_some() {
+...    |
+3669 | |             return;
+3670 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:3748:9
+     |
+3748 | /         /// session 决策面直调——runtime 等价面=组内报价循环的 paused 前置
+3749 | |         /// 分支（d3b3 定向撤单路由实测承载），跳过本段；tick 直改/queue
+3750 | |         /// 同理（runtime 下锁步权威+组调度）。
+     | |_______________________________________________^
+3751 | /         if session.runtime_driver.is_none() {
+3752 | |             let view = session.build_market_view();
+3753 | |             let mut cursor = session
+3754 | |                 .prepare_plan_quotes_for_account(account, &view, &session.state.plans)
+...    |
+3769 | |             ));
+3770 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:3794:9
+     |
+3794 | /         /// 断言面绑定旧市场簿（resting_orders——runtime 下单在 desk）；
+3795 | |         /// 非撤窗的 Keep/PendingReconsideration 决策由共享 decide_plan_quote
+3796 | |         /// 承载，runtime 分支跳过本相位+旧簿用例。
+     | |___________________________________________________^
+3797 | /         if crate::runtime::step_runtime_enabled() {
+3798 | |             return;
+3799 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:5049:9
+     |
+5049 | /         ///（PlanContinuationDomain/yield/resume_adaptive——撤单拒收回执的
+5050 | |         /// 重议路径）；runtime 下该事件面为旧管线专有（D5 登记域），组内
+5051 | |         /// 拒收回执消费面未迁移——runtime 分支跳过，等价面随 D5 拒收回执
+5052 | |         /// 域收口时补。
+     | |________________________^
+5053 | /         if crate::runtime::step_runtime_enabled() {
+5054 | |             return;
+5055 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:5175:9
+     |
+5175 | /         ///（chain_restructure 测试的 drive_once 等价面——旧管线执行链
+5176 | |         ///（commit_injected_plan_roots）在 runtime 下无旧市场簿子单，撤单
+5177 | |         /// 路由必须由组线程承载）；事件 id 域统一映射回合簿合成域
+5178 | |         ///（stock<<48|serial——测试断言沿用合成 id；事件桥批 8e 近似映射
+5179 | |         /// 登记的差异在驱动边界收敛）。
+     | |________________________________________^
+5180 | /         if session.runtime_driver.is_some() {
+5181 | |             session.inject_review_assessments_via_runtime(AccountId(1), assessments.clone());
+5182 | |             session.force_due_via_runtime(&[AccountId(1)], session.state.tick + 1);
+5183 | |             let events = session.step().expect("healthy step");
+5184 | |             return map_event_order_ids_to_synthetic(events);
+5185 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:5373:9
+     |
+5373 |           /// 不感知）。
+     |           ^^^^^^^^^^^^^^
+5374 | /         {
+5375 | |             let mut relink = move |plans: &mut crate::plans::PlanBook| {
+5376 | |                 plans
+5377 | |                     .restore_child_remaining_qty(PlanId(0), Some(500_100))
+...    |
+5403 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:5428:9
+     |
+5428 | /         /// 即锁步漂移）；非连续段的复审 Observe 语义（child_cancellable_
+5429 | |         /// now=false → 不撤不终止）由共享决策核+phase_is_continuous 同式
+5430 | |         /// 判定承载，runtime 分支跳过本相位伪造用例。
+     | |______________________________________________________^
+5431 | /         if crate::runtime::step_runtime_enabled() {
+5432 | |             return;
+5433 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/decision_chain.rs:5598:9
+     |
+5598 | /         /// commit_injected_plan_roots（旧管线 tick 事务——plan_tick/
+5599 | |         /// apply_tick_shadow 直调，runtime 形态 session 的旧簿恒空使
+5600 | |         /// ledger/book 对拍崩）；组内拒收回执消费面未迁移（D3b 件 4
+5601 | |         /// 同族登记）。等价锚：组内定向撤单路由的不存在单拒收（d3b3
+5602 | |         /// serial 逆解实测）+拒收回执域 D5 收口后补。
+     | |______________________________________________________^
+5603 | /         if crate::runtime::step_runtime_enabled() {
+5604 | |             return;
+5605 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused import: `Ordering`
+  --> packages/engine/src/session/deferred_drop.rs:46:41
+   |
+46 |     use std::sync::atomic::{AtomicBool, Ordering};
+   |                                         ^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/envelope_projection.rs:116:9
+    |
+116 | /         /// 行自身结构校验（validate+出生守恒）承载。复核 Minor 3 修复：
+117 | |         /// 形态判定用 desk 镜像/runtime 权威标志——旧管线合法空簿（开局
+118 | |         /// /全成交）不因行为推断被静默跳过交叉核对（空簿且 ledger 非空
+119 | |         /// =runtime 恢复形态；两者皆空=旧管线空集，走原交叉核对路径）。
+120 | |         /// verified_live 的 Buy 全额预留断言不适用——runtime 行 live=
+121 | |         /// desk 实际 purse（成交扣减后的所有权模型），旧管线全额预留
+122 | |         /// 口径差已登记（D5 #3 purse 模型）。
+    | |______________________________________________^
+123 | /         let runtime_shape = !view.desk_book_mirror.is_empty()
+124 | |             || (view
+125 | |                 .markets
+126 | |                 .iter()
+127 | |                 .all(|(_code, market)| market.resting_order_count() == 0)
+128 | |                 && view.envelope_ledger.iter().next().is_some());
+    | |_________________________________________________________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> packages/engine/src/session/failure.rs:78:9
+   |
+78 | /         /// 镜像同步；information 域经 Belief-1b 投递演进——此处整态
+79 | |         /// 覆盖为组快照，两域同源）。
+   | |______________________________________^
+80 |           self.state.npc_attention.insert(id, snapshot.attention.clone());
+   |           --------------------------------------------------------------- rustdoc does not generate documentation for expressions
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:99:9
+    |
+ 99 | /         /// 组外新增键**（同拍投影段的首买 init 在组内观察接管前由合并
+100 | |         /// 承载；组内下一 due 的 capture initialize 同键幂等，不双载）。
+    | |_________________________________________________________________________^
+101 | /         if let Some(row) = &snapshot.retail_experience {
+102 | |             let merged = match self.state.retail_experience.remove(&id) {
+103 | |                 Some(existing) => existing.merged_with_group_authority(row),
+104 | |                 None => row.clone(),
+105 | |             };
+106 | |             self.state.retail_experience.insert(id, merged);
+107 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:328:9
+    |
+328 |           /// 本入口服务"opt-in 翻转"的正确性验证。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+332 | /         self.check_step_start()
+333 | |             .map_err(|fatal| self.poison_runtime_step(fatal))?;
+    | |______________________________________________________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:340:13
+    |
+340 | /             /// ——重排落在消费 tick 的账户顶到 tick+2，对齐旧消费 seam 的
+341 | |             /// "消费 tick 不再决策"）。attention 已由 produce 写回镜像，
+342 | |             /// 构造器恢复即组 next_due（不重复推进）。
+    | |_______________________________________________________^
+343 |               #[cfg(test)]
+344 |               let queued_intents = crate::session::pipeline::take_staged_intents_for_runtime(self);
+    |               ------------------------------------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:506:9
+    |
+506 | /         /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
+507 | |         /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
+508 | |         /// 仅派生已迁移的 Rejected）。
+    | |_______________________________________^
+509 |           self.state.last_retail_order_events.clear();
+    |           ------------------------------------------- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:514:9
+    |
+514 |           /// 「本 tick 最新」瞬态语义；收集失败按段面显式失败不静默）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+515 | /         {
+516 | |             let traces = match driver.collect_retail_traces() {
+517 | |                 Ok(collected) => collected.into_iter().flatten().collect::<Vec<_>>(),
+518 | |                 Err(e) => {
+...   |
+526 | |             self.state.last_retail_decisions = traces;
+527 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:529:9
+    |
+529 | /         /// 组日翻，**先于**信封重建：日终清簿后的 desk 在途=空集，ledger
+530 | |         /// 重建与旧管线"日终无在途"校验面同源；drained 撤单事件并入本拍
+531 | |         /// 事件流。此前该编排面缺失（world_day_end_for_test 未接线）——
+532 | |         /// 多日 step 的 ledger 残留使 session 日终校验显红）。
+    | |_______________________________________________________________^
+533 | /         let ends_day = {
+534 | |             let tpd = u64::from(self.state.setup.ticks_per_day);
+535 | |             tpd > 0 && self.tick() % tpd == 0
+536 | |         };
+    | |__________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:538:9
+    |
+538 | /         /// nominal 自费用表重算、charged 直取 desk 累计；OrderId=serial 域
+539 | |         ///（与事件 id 一致）。下拍重建覆盖（权威在 desk）。
+    | |____________________________________________________________^
+540 | /         let resting_by_stock = match driver.collect_resting_facts() {
+541 | |             Ok(facts) => facts,
+542 | |             Err(e) => {
+543 | |                 self.rollback_runtime_step(baseline);
+...   |
+549 | |         };
+    | |__________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:624:9
+    |
+624 |           /// snapshot 公开投影/玩家在途/预留；desk 权威事实+公开截点）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+625 | /         {
+626 | |             let views = driver.world_public_views();
+627 | |             let mut mirror = std::collections::BTreeMap::new();
+628 | |             for (stock_idx, book) in resting_by_stock.iter().enumerate() {
+...   |
+657 | |             self.state.desk_book_mirror = mirror;
+658 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:660:9
+    |
+660 | /         ///（save 的 2170 校验绑定旧簿在场委托——runtime 旧簿恒空，投影
+661 | |         /// 空集通过；TTL 到期撤销由 desk begin_tick 承载）。
+    | |_____________________________________________________________^
+662 |           self.mark_external_mutation();
+    |           ----------------------------- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:665:9
+    |
+665 | /         /// candle 提交/T+1 解锁/DayBoundary——与旧管线 continuous_tick_
+666 | |         /// finalizer 同一迁移；在行情安装**之后**（本拍 active candle 先
+667 | |         /// 写入、日终提交清空——save 的 day_tick=0 期望空 active 对齐；
+668 | |         /// 价格历史长度由 install 侧按 tick 推导，与本序无耦合）。
+669 | |         /// world 侧日结编排不在 step 内（生产由 driver.day_end 承载），
+670 | |         /// 登记差异。
+    | |______________________^
+671 | /         if ends_day {
+672 | |             let facts = crate::session::pipeline::install_runtime_day_boundary(self)?;
+673 | |             for fact in facts {
+674 | |                 self.set_runtime_seq(self.current_seq().checked_add(1).expect("事件 seq 溢出"));
+...   |
+738 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:682:13
+    |
+682 | /             /// 日历以 session day 为准——world 日结先跑会使组内事件落在
+683 | |             /// 新日而 session 迁移还携旧日，plan 事件序 precede 显红）。
+684 | |             /// desk 清簿后 envelope 重建为空集（下节），drained 撤单
+685 | |             /// 事件并入本拍事件流。
+    | |____________________________________^
+686 | /             if let Err(e) = driver.world_day_end_for_step() {
+687 | |                 self.rollback_runtime_step(baseline);
+688 | |                 return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+689 | |                     location: "GameSession::step_via_runtime::day_end_world".to_owned(),
+690 | |                     description: e,
+691 | |                 }));
+692 | |             }
+    | |_____________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:696:13
+    |
+696 |               /// ——旧在途残留使公开面/玩家在途读面跨日泄漏）。
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+697 | /             {
+698 | |                 let views: Vec<_> = driver
+699 | |                     .world_public_views()
+700 | |                     .iter()
+...   |
+736 | |                 self.state.desk_book_mirror = mirror;
+737 | |             }
+    | |_____________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:759:13
+    |
+759 |             /// 基线必须覆盖，否则失败拍泄漏个人态演进）。
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+760 |             belief_participants: self.state.belief_participants.clone(),
+    |             ----------------------------------------------------------- rustdoc does not generate documentation for expression fields
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:774:9
+    |
+774 |           /// 注释；全局域迁移完成后才改缺省）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+775 | /         if crate::runtime::step_runtime_enabled() {
+776 | |             return self.step_via_runtime();
+777 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/failure.rs:930:13
+    |
+930 |             /// ——只清 stocks 会被 ActiveEntryAlreadyExists 拒绝）。
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+931 |             exp.stocks.remove(code);
+    |             ----------------------- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/failure.rs:1354:21
+     |
+1354 |                       /// stocks 的下标约定）。
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+1355 | /                     self.state
+1356 | |                         .setup
+1357 | |                         .stocks
+1358 | |                         .get(code.0 as usize)
+1359 | |                         .map(|s| s.initial_price.cents())
+     | |_________________________________________________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime.rs:195:13
+    |
+195 |               /// 镜像（desk 权威；session market 恒 0）。
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+196 | /             session
+197 | |                 .state
+198 | |                 .desk_book_mirror
+199 | |                 .iter()
+200 | |                 .map(|(code, mirror)| (*code, mirror.public_cutoff_serial))
+201 | |                 .collect()
+    | |__________________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime.rs:262:9
+    |
+262 | /         /// 空、next_sequence=0）——截点不与本簿序对拍（desk 恢复域接管）；
+263 | |         /// 相位面（连续/盘前=0 截点）仍按 session 相位判。
+    | |___________________________________________________________^
+264 | /         if (market.book_next_sequence() > 0 && *cutoff > market.book_next_sequence())
+265 | |             || (matches!(
+266 | |                 session.phase(),
+267 | |                 TradingPhase::Continuous | TradingPhase::PreOpen
+...   |
+273 | |             )));
+274 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime.rs:484:9
+    |
+484 |           /// mirror.public_cutoff_serial——往返一致性；desk 首拍重建）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+485 | /         if let Some(mirror) = session.state.desk_book_mirror.get_mut(code) {
+486 | |             mirror.public_cutoff_serial = *cutoff;
+487 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime.rs:498:9
+    |
+498 | /         /// nominal/limit 零标记）：desk 权威数据不在 restore 侧——证明
+499 | |         /// 由下一 runtime_step 的重建（desk 权威 purse/费用）建立，此处
+500 | |         /// 跳过（登记差异：restore 后首拍前的证明空窗）。
+    | |__________________________________________________________^
+501 | /         let runtime_rebuilt = envelope.audit().nominal == pipeline::FeeComponents::ZERO
+502 | |             && envelope.audit().limit == crate::money::Money::ZERO;
+    | |___________________________________________________________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime.rs:550:17
+    |
+550 | /                 /// runtime_step 尾重建的 EchoResting 同源；此前 1 股/1 分
+551 | |                 /// 占位使 restore 后 desk 种子与公开口径失真）。
+    | |_________________________________________________________________^
+552 | /                 let (cash, shares) = if key.side == Side::Buy {
+553 | |                     (saved.purse, 0u32)
+554 | |                 } else {
+555 | |                     (crate::money::Money::ZERO, saved.remaining_qty)
+556 | |                 };
+    | |__________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime.rs:558:17
+    |
+558 | /                 /// 同式；restore 尾的 verified_live 证明因此可建立，证明
+559 | |                 /// 空窗登记就此闭合）。
+    | |________________________________________^
+560 | /                 let nominal = crate::runtime::fees::FeeQuote::nominal(
+561 | |                     &session.state.setup.config,
+562 | |                     key.side,
+563 | |                     saved.filled_value,
+...   |
+566 | |                     SessionError::InvalidSave(ValidationFault::new(2219, vec![0]))
+567 | |                 })?;
+    | |____________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:618:5
+    |
+618 |     /// 组装、nominal=费用表重算）。
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:806:5
+    |
+806 | /     /// 是 live 资源镜像与 nominal；remaining/filled/limit/purse 已升格
+807 | |     /// 一等数值面（runtime 形态 desk 权威的唯一载体），在字段集内。
+    | |____________________________________________________________________^
+808 | /     for field in ["live", "nominal"] {
+809 | |         let mut encoded = serde_json::json!({
+810 | |             "key": { "account": 1, "stock": 0, "order": 1, "side": "Sell" },
+811 | |             "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" },
+...   |
+824 | |         );
+825 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/persistence/saved_runtime_tests.rs:1337:5
+     |
+1337 |       /// 默认=原玩家单账户（同拍三单——旧管线结算 epoch 面对种子卖不适用）。
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1338 | /     if crate::runtime::step_runtime_enabled() {
+1339 | |         session
+1340 | |             .fixture_account_mut(&AccountId(1))
+1341 | |             .expect("retail seller must exist")
+...    |
+1371 | |             .unwrap();
+1372 | |     }
+     | |_____- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/persistence.rs:2027:13
+     |
+2027 |               /// ——session sellable/cash 口径不可比对）。
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2028 | /             if !save.desk_mirrored_resting {
+2029 | |                 reservations.validate_quantity(
+2030 | |                     session,
+2031 | |                     order.owner,
+...    |
+2041 | |                 )?;
+2042 | |             }
+     | |_____________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session/persistence.rs:2086:13
+     |
+2086 | /             /// （runtime 回写口径 qty 含在途），session 侧 sellable 不可
+2087 | |             /// 比对（镜像单不占 session 预留）。
+     | |_________________________________________________^
+2088 |               continue;
+     |               -------- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused import: `Side`
+ --> packages/engine/src/session/pipeline/book_auction_boundary.rs:7:49
+  |
+7 | use crate::{GameConfig, Market, Money, OrderId, Side, StockExchange, Trade};
+  |                                                 ^^^^
+
+warning: unused imports: `BuyFillInput`, `FillTransition`, and `SellFillInput`
+ --> packages/engine/src/session/pipeline/continuous_matching.rs:5:18
+  |
+5 |     transition::{BuyFillInput, FillTransition, SellFillInput},
+  |                  ^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^
+
+warning: unused doc comment
+    --> packages/engine/src/session/pipeline/continuous_matching.rs:1153:13
+     |
+1153 |               /// "taker=主动"假设退役；Trade 构造已按腿归一）。
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1154 | /             let (buyer, buyer_before, seller, seller_before) = (
+1155 | |                 EnvelopeKey {
+1156 | |                     account: trade.taker,
+1157 | |                     stock: self.draft.code().clone(),
+...    |
+1168 | |                 trade.maker_filled_value_before,
+1169 | |             );
+     | |______________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused import: `TradingPhase`
+ --> packages/engine/src/session/pipeline/continuous_matching_adapter.rs:7:50
+  |
+7 | use crate::{GameSession, Market, Order, StockId, TradingPhase};
+  |                                                  ^^^^^^^^^^^^
+
+warning: unused import: `completed_market_minute_count`
+  --> packages/engine/src/session/pipeline/continuous_tick_finalizer.rs:18:22
+   |
+18 | use crate::session::{completed_market_minute_count, RetailOrderDiagnosticEvent};
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+  --> packages/engine/src/session/pipeline/day_end.rs:20:5
+   |
+20 | /     /// 绝对 tick/tpd 记日（拍内组世界已在新日首拍）——session 侧迁移
+21 | |     /// 的 day 基准对齐同式（此前 state.day 落后一日，plan 事件的
+22 | |     /// precede 守卫显红）。apply 的 day+1 即得绝对新日。
+   | |_________________________________________________________^
+23 |       TradingDayEndTransition::new(session).apply()
+   |       --------------------------------------------- rustdoc does not generate documentation for expressions
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> packages/engine/src/session/pipeline/day_end.rs:38:9
+   |
+38 | /         /// install 段的 world 日结在 session 日终迁移后执行）；旧簿与
+39 | |         /// ledger 的"日终无在途"校验只对旧管线形态生效。
+   | |_________________________________________________________^
+40 |           let runtime_shape = !session.state.desk_book_mirror.is_empty();
+   |           --------------------------------------------------------------- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:418:5
+    |
+418 |       /// 协调者位置：池内（登记 drive 成功，A 类）或池外（非 worker 线程顶层编排）。
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+422 | /     let (pooled, _drive_slot) = if compute.is_worker() {
+423 | |         match compute.try_enter_pool_drive_slot() {
+424 | |             Some(slot) => (true, Some(slot)),
+...   |
+437 | |         (false, None)
+438 | |     };
+    | |______- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `super::npc_decisions::stream_npc_decisions_with`
+  --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:25:5
+   |
+25 | use super::npc_decisions::stream_npc_decisions_with;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::npc_state_projection::project_npc_account`
+  --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:27:5
+   |
+27 | use super::npc_state_projection::project_npc_account;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::*`
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:122:9
+    |
+122 |     use super::*;
+    |         ^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:169:9
+    |
+169 |           /// 构造期迁移同样受理（不过滤则与 staged 数巧合相等）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+170 | /         let accepted1 = events
+171 | |             .iter()
+172 | |             .filter(|event| matches!(
+173 | |                 event,
+...   |
+178 | |             ))
+179 | |             .count();
+    | |_____________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:759:9
+    |
+759 |           /// 见 observing 对照用例断言）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+760 | /         {
+761 | |             let closes = session.state.market_minute_closes.get_mut(&crate::StockId(0)).unwrap();
+762 | |             let next_minute = closes
+763 | |                 .last()
+...   |
+769 | |             });
+770 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:849:5
+    |
+849 | /     /// 在组——不生产/暂存旧管线产物（take 个人态的副作用同样跳过）；
+850 | |     /// 测试意图（下一 tick 全部 NPC 决策）经显式 ForceDue 指令承载
+851 | |     ///（全部 belief 位+retail 位到期）。Sol 二审修复集 5：首步前（驱动器
+852 | |     /// 不在位）走旧 produce/stage——个人态经构造期投影接管（staged 批
+853 | |     /// 由旧管线语义持有，runtime 消费面=构造期 attention/挂单迁移）。
+    | |______________________________________________________________________^
+854 |       #[cfg(test)]
+855 | /     if session.runtime_driver.is_some() {
+856 | |         session.force_all_due_via_runtime();
+857 | |         return Ok(());
+858 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused imports: `AtomicBool` and `Ordering`
+   --> packages/engine/src/session/pipeline/read_only_start.rs:194:29
+    |
+194 |     use std::sync::atomic::{AtomicBool, Ordering};
+    |                             ^^^^^^^^^^  ^^^^^^^^
+
+warning: unused imports: `Duration` and `Instant`
+   --> packages/engine/src/session/pipeline/read_only_start.rs:195:21
+    |
+195 |     use std::time::{Duration, Instant};
+    |                     ^^^^^^^^  ^^^^^^^
+
+warning: unused import: `BTreeSet`
+  --> packages/engine/src/session/pipeline/ready_stock_stream.rs:15:34
+   |
+15 | use std::collections::{BTreeMap, BTreeSet};
+   |                                  ^^^^^^^^
+
+warning: unused import: `super::EnvelopeReceipt`
+  --> packages/engine/src/session/pipeline/session_execution_transaction.rs:25:5
+   |
+25 | use super::EnvelopeReceipt;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `prepare_settlement_transaction_with_beliefs` and `receipt_aggregation::apply_owned_receipt_transaction`
+  --> packages/engine/src/session/pipeline/stock_execution_transaction.rs:8:9
+   |
+ 8 |         prepare_settlement_transaction_with_beliefs, SettlementTransactionError,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+14 |     receipt_aggregation::apply_owned_receipt_transaction,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `stock_stream::TickWorkReady`
+  --> packages/engine/src/session/pipeline/mod.rs:72:28
+   |
+72 | pub(in crate::session) use stock_stream::TickWorkReady;
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::account_validation_context::build_account_validation_context`
+ --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:1:5
+  |
+1 | use super::account_validation_context::build_account_validation_context;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::adaptive_plan_chain::AdaptivePlanChainCoordinator`
+ --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:2:5
+  |
+2 | use super::adaptive_plan_chain::AdaptivePlanChainCoordinator;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::session::pipeline::DecisionResourceSnapshot`
+  --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:11:5
+   |
+11 | use crate::session::pipeline::DecisionResourceSnapshot;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PlanExecutionDisposition`
+  --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:13:22
+   |
+13 | use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/authoritative_tick_tests.rs:226:5
+    |
+226 |       /// bid_depth/resting_orders_for 断言经 desk 簿事实读面承载。
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+227 | /     if crate::runtime::step_runtime_enabled() {
+228 | |         let book = session.runtime_resting_book_for_test(&code);
+229 | |         let bid_total: u32 = book
+230 | |             .iter()
+...   |
+263 | |         );
+264 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/authoritative_tick_tests.rs:620:5
+    |
+620 | /     /// 断言经 step_with_commit_evidence（candidate 投影契约/Escrow 验证
+621 | |     /// ——恒走旧管线为 fallback，见 step_via_runtime doc）；runtime 的
+622 | |     /// 失败回滚=组端 Abort 可逆日志。等价锚：翻转批 batch4 civil 失败
+623 | |     /// 回滚全量对账。
+    | |______________________^
+624 | /     if crate::runtime::step_runtime_enabled() {
+625 | |         return;
+626 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/authoritative_tick_tests.rs:705:5
+    |
+705 | /     /// （completion/day_end passes 计数）是 step_with_commit_evidence 的
+706 | |     /// candidate 投影契约（恒走旧管线）；runtime 的竞价编排权威=desk
+707 | |     /// 相位面。等价锚：desk 竞价语义（desk_semantics_tests）+翻转批对拍。
+    | |__________________________________________________________________________^
+708 | /     if crate::runtime::step_runtime_enabled() {
+709 | |         return;
+710 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:536:5
+    |
+536 | /     /// 子单的 OrderId↔desk serial 身份链在多源挂单（组内链 quote 子单
+537 | |     /// +玩家注入单）下错位——save 镜像簿只见 serial 1 单而计划
+538 | |     /// active=OrderId(2)，restore 的唯一重建校验（fault1042）显红。
+539 | |     /// 修复需计划链挂单的 desk serial 域全链审计（超半天量级——按
+540 | |     /// 协调人规则登记）；等价锚=翻转批 batch 计划链独立源对拍。
+    | |________________________________________________________________^
+541 | /     if crate::runtime::step_runtime_enabled() {
+542 | |         return;
+543 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `stream_npc_decisions_with`
+ --> packages/engine/src/session/pipeline/npc_decisions_tests.rs:2:60
+  |
+2 |     npc_rng_seed, run_npc_decisions, stream_npc_decisions, stream_npc_decisions_with,
+  |                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Intent`
+  --> packages/engine/src/session/pipeline/npc_decisions_tests.rs:13:37
+   |
+13 | use crate::{AccountId, AccountKind, Intent, Money, SplitMix64, StockId, TradingPhase};
+   |                                     ^^^^^^
+
+warning: unused import: `std::sync::mpsc`
+  --> packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:18:5
+   |
+18 | use std::sync::mpsc;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/plan_owner_tests.rs:422:5
+    |
+422 | /     /// 子单持 session OrderId 域，runtime adopt 后 desk serial 重编
+423 | |     /// ——两域不可映射（fixture 实证：child=OrderId(2) 而 desk 成交
+424 | |     /// serial=1，低 48 位核也不成立——adopt 分配序与注入 id 无关）。
+425 | |     /// 修复需组内计划注入通道（MutatePlanBook）改造，超半天量级。
+426 | |     /// 等价锚：翻转批 batch 计划链独立源对拍（runtime 计划链闭环）。
+    | |_____________________________________________________________________^
+427 | /     if crate::runtime::step_runtime_enabled() {
+428 | |         return;
+429 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/plan_owner_tests.rs:655:5
+    |
+655 | /     /// record_child_submitted 的普通来源入口）是旧管线计划委托域的
+656 | |     /// 采纳防御；runtime 的外来单走独立路径（组内无计划认领面——
+657 | |     /// 计划子单由组内链 chain_quote_children 管理）。等价锚：组内计划
+658 | |     /// 链的余量推进（solmid 独立源对拍）+desk purse 校验；外来认领面
+659 | |     /// 随计划委托域收口时迁移。
+    | |________________________________^
+660 | /     if crate::runtime::step_runtime_enabled() {
+661 | |         return;
+662 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/pipeline/t3_boundary_tests.rs:228:5
+    |
+228 | /     /// ——经 DeferDueForTest 通道推远组内 next_due（"无 due tick"形态
+229 | |     /// 的组内等价；默认分支保留 session 直改）。
+    | |_________________________________________________^
+230 | /     if crate::runtime::step_runtime_enabled() {
+231 | |         let accounts: Vec<_> = session.state.npc_attention.keys().copied().collect();
+232 | |         session.defer_due_via_runtime(&accounts, session.state.tick + 100);
+233 | |     } else {
+...   |
+244 | |     }
+    | |_____- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `super::account_validation_context::build_account_validation_context`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:14:5
+   |
+14 | use super::account_validation_context::build_account_validation_context;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::ready_ingress::validate_available_ready`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:15:5
+   |
+15 | use super::ready_ingress::validate_available_ready;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `FeedOutcome` and `ReadyStockStream`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:16:33
+   |
+16 | use super::ready_stock_stream::{FeedOutcome, ReadyStockStream};
+   |                                 ^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::stock_stream::StockStreamProgress`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:17:5
+   |
+17 | use super::stock_stream::StockStreamProgress;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AccountValidatorDriver`, `DecisionResourceSnapshot`, and `EnvelopeLedger`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:18:13
+   |
+18 | use super::{AccountValidatorDriver, DecisionResourceSnapshot, EnvelopeLedger};
+   |             ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^
+
+warning: unused imports: `AtomicUsize` and `Ordering`
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:21:25
+   |
+21 | use std::sync::atomic::{AtomicUsize, Ordering};
+   |                         ^^^^^^^^^^^  ^^^^^^^^
+
+warning: unused imports: `AccountId`, `OrderId`, `Side`, and `StockId`
+  --> packages/engine/src/session/pipeline/receipt_aggregation_tests.rs:10:13
+   |
+10 | use crate::{AccountId, GameSession, Money, OrderId, Side, StockId};
+   |             ^^^^^^^^^                      ^^^^^^^  ^^^^  ^^^^^^^
+
+warning: unused import: `StepFatal`
+  --> packages/engine/src/session/pipeline/t4inc76_route_cross_batch_tests.rs:20:42
+   |
+20 |     IntentCandidate, IntentCandidateKey, StepFatal,
+   |                                          ^^^^^^^^^
+
+warning: unused import: `Intent`
+  --> packages/engine/src/session/pipeline/t4inc76_route_cross_batch_tests.rs:23:37
+   |
+23 | use crate::{AccountId, GameSession, Intent, Money, Side, StockId};
+   |                                     ^^^^^^
+
+warning: unused import: `crate::TradingPhase`
+   --> packages/engine/src/session/pipeline/mod.rs:535:9
+    |
+535 |     use crate::TradingPhase;
+    |         ^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+    --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:1168:5
+     |
+1168 | /     /// 旧管线）；twin 的 step 在 ENGINE_STEP_RUNTIME 下走 std-thread
+1169 | |     /// runtime，双轨异管线使"冻结输入确定函数"的逐位断言结构性破裂。
+1170 | |     /// twin 改经 step_pipeline_contract（同一旧管线入口）恢复同基；
+1171 | |     /// runtime 侧的等价锚=retail 链 restore 双轨（public_step_consumes_
+1172 | |     /// retail_beliefs 组内同 rng 派生式）承载。
+     | |________________________________________________^
+1173 | /     if crate::runtime::step_runtime_enabled() {
+1174 | |         twin.step_pipeline_contract().unwrap();
+1175 | |     } else {
+1176 | |         twin.step().unwrap();
+1177 | |     }
+     | |_____- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> packages/engine/src/session/protocol/player_orders.rs:48:9
+   |
+48 |           /// （desk 权威）；venue=当前相位撮合模式。
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+49 | /         if !self.state.desk_book_mirror.is_empty() {
+50 | |             let auction = matches!(
+51 | |                 self.phase(),
+52 | |                 crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
+...  |
+79 | |             return orders;
+80 | |         }
+   | |_________- rustdoc does not generate documentation for expressions
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/session/snapshot.rs:146:13
+    |
+146 |               /// 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+147 | /             for (code, mirror) in &self.state.desk_book_mirror {
+148 | |                 for (owner, side, price, qty, _serial, filled_value) in &mirror.orders {
+149 | |                     if !include_npc_accounts && *owner != AccountId(0) {
+150 | |                         continue;
+...   |
+162 | |             }
+    | |_____________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> packages/engine/src/session/views.rs:14:5
+   |
+14 |     /// markets 恒空簿；market 读面（价格笼子等）经 Option 兜底）。
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+15 |     let runtime_mirrored = !view.desk_book_mirror.is_empty();
+   |     --------------------------------------------------------- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> packages/engine/src/session/views.rs:76:17
+   |
+76 |                   /// 最新价自镜像（相位+截点门禁；session market 恒空簿）。
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+77 | /                 let (public, mirror_last) = match view.desk_book_mirror.get(code) {
+78 | |                     Some(mirror) => (
+79 | |                         super::snapshot::project_mirror_public_book(view.phase(), mirror),
+80 | |                         Some(mirror.last_price),
+...  |
+86 | |                 };
+   | |__________________- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+
+warning: unused imports: `PlanRootDiagnostics` and `next_routable_buy_qty`
+   --> packages/engine/src/session.rs:136:22
+    |
+136 |     PlanQuoteInputs, PlanRootDiagnostics, RootReadContext, buy_allocation_request,
+    |                      ^^^^^^^^^^^^^^^^^^^
+137 |     decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty, next_routable_sell_qty,
+    |                                               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:3231:17
+     |
+3231 | /                 ///（session 旧簿恒空——计划在途子单的重建校验需要）。
+3232 | |                 /// filled 面置零（镜像不承载 desk 成交累计——审计面由
+3233 | |                 /// ledger（desk 事实）承载；置零使 Order 出生校验自洽）。
+     | |__________________________________________________________________________^
+3234 | /                 self.state
+3235 | |                     .desk_book_mirror
+3236 | |                     .iter()
+3237 | |                     .map(|(code, mirror)| {
+...    |
+3256 | |                     })
+3257 | |                     .collect()
+     | |______________________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:3267:17
+     |
+3267 |                   /// 1038 的序域一致性与旧簿解耦）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3268 | /                 self.state
+3269 | |                     .desk_book_mirror
+3270 | |                     .iter()
+3271 | |                     .map(|(code, mirror)| {
+...    |
+3279 | |                     })
+3280 | |                     .collect()
+     | |______________________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:3312:17
+     |
+3312 | /                 /// next_order_id 须严格大于全部（session 域与 desk serial
+3313 | |                 /// 域取 max）。
+     | |________________________________^
+3314 | /                 let mirror_max = self
+3315 | |                     .state
+3316 | |                     .desk_book_mirror
+3317 | |                     .values()
+3318 | |                     .flat_map(|mirror| mirror.orders.iter().map(|(_, _, _, _, serial, _)| *serial))
+3319 | |                     .max()
+3320 | |                     .unwrap_or(0);
+     | |__________________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:3441:17
+     |
+3441 | /                 /// 旧簿装载跳过（镜像单重建会与 desk 双载且交叉簿形态
+3442 | |                 /// 使 set_matching_mode 显红 fault1038）；簿序游标仍装载
+3443 | |                 /// （save 对拍的 book_next_sequences 域一致性）。
+     | |__________________________________________________________________^
+3444 | /                 market
+3445 | |                     .restore_resting_orders(&[], save.book_next_sequences[code])
+3446 | |                     .map_err(|_error| {
+3447 | |                         SessionError::InvalidSave(ValidationFault::new(
+...    |
+3450 | |                         ))
+3451 | |                     })?;
+     | |_______________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:3453:17
+     |
+3453 | /                 /// !mirror.is_empty() 的往返一致性；desk 种子在首拍
+3454 | |                 /// install 重建真实镜像）。
+     | |____________________________________________^
+3455 | /                 sess.state
+3456 | |                     .desk_book_mirror
+3457 | |                     .entry(code.clone())
+3458 | |                     .or_default();
+     | |_________________________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:4010:9
+     |
+4010 | /         /// 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
+4011 | |         /// session book 在 runtime 模式下不可见——裁决"book fixture
+4012 | |         /// 分别适配"）。Sol 二审修复集 5：首步前（驱动器不在位）的注入
+4013 | |         /// 走旧簿+构造期迁移（RuntimeDriver::adopt_session_resting_orders
+4014 | |         /// ——免全局分流破坏旧管线 fixture 面）。事件面：runtime 模式的
+4015 | |         /// 受理事件由下一 step 产出（seed 调用方的 events 缓冲不在此
+4016 | |         /// 伪造就地事件——如实空）。
+     | |____________________________________^
+4017 |           #[cfg(test)]
+4018 | /         if self.runtime_driver.is_some() {
+4019 | |             let mut intents = vec![crate::session::ReceiptBearingIntent {
+4020 | |                 owner: account,
+4021 | |                 intent: intent.clone(),
+...    |
+4048 | |             return;
+4049 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/session.rs:4499:9
+     |
+4499 | /         /// 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
+4500 | |         /// session 镜像）。旧管线（无驱动器）路径不变。Sol 二审修复集 5：
+4501 | |         /// 首步前（驱动器不在位）走旧镜像路径——构造器自会话 attention
+4502 | |         /// 恢复 next_due（镜像值即组权威起点）。
+     | |_________________________________________________^
+4503 |           #[cfg(test)]
+4504 | /         if session.runtime_driver.is_some() {
+4505 | |             let target = tick.max(session.state.tick + 1);
+4506 | |             session.force_due_via_runtime(&[account], target);
+4507 | |             return;
+4508 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused import: `CompanyId`
+  --> packages/engine/src/company/assembly.rs:36:39
+   |
+36 |     default_companies, CompanyConfig, CompanyId, CompanyKind, CompanyRegistry, CompanySpec,
+   |                                       ^^^^^^^^^
+
+warning: unused import: `CompanyId`
+  --> packages/engine/src/company/defaults.rs:16:28
+   |
+16 | use crate::company::spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
+   |                            ^^^^^^^^^
+
+warning: unused import: `crate::company::CompanyId`
+ --> packages/engine/src/company/groups/sales.rs:8:5
+  |
+8 | use crate::company::CompanyId;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::company::CompanyId`
+  --> packages/engine/src/information/schedule.rs:16:5
+   |
+16 | use crate::company::CompanyId;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/bridge.rs:124:17
+    |
+124 |                 /// evaluate 门消费；生产路径经 from_session 投影个体值）。
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+125 |                 attention_base: 0.30,
+    |                 -------------------- rustdoc does not generate documentation for expression fields
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `crate::strategy::Rng as _`
+  --> packages/engine/src/runtime/decision.rs:24:5
+   |
+24 | use crate::strategy::Rng as _;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/decision.rs:113:5
+    |
+113 | /     /// 本函数纯决策（此前内嵌 due 判在 evaluate 排期后恒假）。
+114 | |     // 决策 RNG：注意力流（evaluate 续传）经组混合因子派生——决策流与
+115 | |     /// 调度流分离（旧管线策略流独立于 attention rng；组内经派生确定化）。
+    | |__________________________________________________________________________^
+116 |       let mut rng = SplitMix64::new(profile.seed ^ group_seed_mix ^ tick ^ local as u64);
+    |       ----------------------------------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/desk.rs:1132:9
+     |
+1132 |         /// 预留——组端现金实扣走外来成交落账面，Sol 六/七审外来路径），
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1133 |         // purse 记账维持 0（不透支簿面）。
+1134 |         let adopt_foreign_buy = buy_purse_before == 0;
+     |         ---------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/desk.rs:1160:9
+     |
+1160 | /         /// charged==nominal 契约——desk 此前只扣 purse 不记分项，买腿
+1161 | |         /// RestingFact 的 charged 恒 0 使 restore 审计显红）。
+     | |_______________________________________________________________^
+1162 | /         let buy_fees = if taker.side == Side::Buy || maker.side == Side::Buy {
+1163 | |             super::fees::FeeQuote::nominal(&self.config, Side::Buy, Money::from_cents(value))
+1164 | |                 .map_err(|_| over("买腿名义费用失败"))?
+1165 | |         } else {
+1166 | |             Default::default()
+1167 | |         };
+     | |__________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/desk.rs:1480:9
+     |
+1480 | /         /// （旧管线相位门禁在路由层先拒——PreOpen 的 Cancel 不论单存否
+1481 | |         /// 一律 NotCancelable；desk 先查存在会把窗口关闭误报成
+1482 | |         /// OrderNotFound/已全成）。
+     | |____________________________________^
+1483 | /         if !self.setup.allows_cancel(tick.saturating_sub(1)) {
+1484 | |             self.receipts_out[owner.0 as usize].push(DeskReceipt {
+1485 | |                 order,
+1486 | |                 owner,
+...    |
+1489 | |             return Ok(());
+1490 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/desk.rs:1776:9
+     |
+1776 | /         ///（老单公开、竞价新单隐藏——旧管线 set_matching_mode 的 cutoff
+1777 | |         /// 语义等价，desk 权威域承载）。
+     | |_________________________________________^
+1778 | /         if phase == DeskPhase::ClosingAuction
+1779 | |             && self.last_phase.is_some_and(|p| p != DeskPhase::ClosingAuction)
+1780 | |         {
+1781 | |             self.public_cutoff_serial = self.next_serial;
+1782 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/desk.rs:1836:9
+     |
+1836 | /         /// 公开簿=空（不揭示买卖盘）；收盘竞价只揭示截点前老单；盘前/
+1837 | |         /// 连续全公开（竞价清算后的揭示=簿全量）。desk 广播是组内观察
+1838 | |         /// （signal/imbalance）与路由（best/depth）的输入——公开面与
+1839 | |         /// 真实簿分离。
+     | |________________________^
+1840 |           let phase = self.setup.phase_at(tick);
+     |           -------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/desk.rs:2216:5
+     |
+2216 | /     /// live 构造期 adopt 照记 Accepted（对齐旧管线 enqueue 后首拍交付
+2217 | |     /// 面），restore 形态不重放（save 前事件历史已含，重发即重复）；
+2218 | |     /// serial 序=构造期前段，与消息链首单同起 0）。
+     | |____________________________________________________^
+2219 | /     for seed in initial_orders {
+2220 | |         // D5 复核修复（Major 1）：serial 域延续（restore=原值；adopt=
+2221 | |         // 构造期自然序）——公开截点语义依赖 serial 单调连续。
+2222 | |         let order_ref = (state.setup.stock, seed.serial);
+...    |
+2242 | |     }
+     | |_____- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/desk.rs:2246:5
+     |
+2246 |       /// 续拍在 save 聚合之上演进，不再从构造零点覆盖）。
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2247 | /     if let Some(seed) = initial_market {
+2248 | |         let m = &mut state.market;
+2249 | |         m.last_price = seed.last_price;
+2250 | |         m.last_close = seed.last_close;
+...    |
+2265 | |         m.minute_closes = seed.minute_closes;
+2266 | |     }
+     | |_____- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+  --> packages/engine/src/runtime/drive.rs:91:9
+   |
+91 |         /// 均分、尾组余位零填充；单组 n_groups=1 时与原全量单行等价）。
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+92 |         let n_groups = n_groups.max(1);
+   |         ------------------------------- rustdoc does not generate documentation for statements
+   |
+   = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:179:17
+    |
+179 |                   /// 值；无 attention 态的位（玩家惯例位）不消费 evaluate。
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+180 | /                 let attention_base = id
+181 | |                     .map(|id| session.runtime_attention_base_for(&id))
+182 | |                     .unwrap_or(None)
+...   |
+185 | |                     .unwrap_or(1.0);
+    | |____________________________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:285:9
+    |
+285 | /         /// （构造期旧簿种子）演化同构：
+286 | |         /// · 卖种子余量 → initial_shares（「在手+在途卖」口径——live 轨
+287 | |         ///   的组 shares 演进天然含在途，restore 投影 positions 只含
+288 | |         ///   在手，不补则成交回写双计下穿）；
+289 | |         /// · 买种子 purse → 组现金扣减 + buy_purse_held 登记（公开现金
+290 | |         ///   =组现金+占用口径；构造期旧簿种子形态不补——grant 投影已
+291 | |         ///   含在途面，补则双计）。
+    | |____________________________________^
+292 | /         {
+293 | |             let restore_shape = session
+294 | |                 .runtime_resting_orders_snapshot()
+295 | |                 .iter()
+...   |
+333 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:356:9
+    |
+356 | /         /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
+357 | |         /// 续拍在 save 聚合之上演进）。
+    | |________________________________________^
+358 | /         {
+359 | |             let market_seeds = session.runtime_market_seeds();
+360 | |             for (idx, (stock_spec, history)) in spec
+361 | |                 .stocks
+...   |
+373 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:471:17
+    |
+471 |                 /// 真买方缺 VWAP 退用上一价，经历入场价错）。
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+472 |                 let legs = [(fact.taker, true), (fact.maker, false)];
+    |                 ----------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:526:21
+    |
+526 | /                     /// ——qty 口径差收口；session 域 cost_price/权益观察
+527 | |                     /// 因此与组读面同源）。
+    | |____________________________________________^
+528 | /                     let qty = qty_raw
+529 | |                         .saturating_add(
+530 | |                             acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
+531 | |                         );
+    | |__________________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:552:25
+    |
+552 |                         /// 经验行整态覆盖会冲掉先行写入——同拍投影段同式）。
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+553 |                         pending_hold_inits.push((id, code, qty, entry));
+    |                         ----------------------------------------------- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:567:21
+    |
+567 | /                     /// 实付减、终结不变——旧管线 reservation 观同口径；组
+568 | |                     /// 内部 purse 所有权口径不因此改变）。
+    | |___________________________________________________________^
+569 | /                     engine_acct.fixture_set_cash(Money::from_cents(
+570 | |                         acct.cash + acct.buy_purse_held_cents,
+571 | |                     ));
+    | |______________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:580:9
+    |
+580 | /         /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
+581 | |         /// 权威随后对齐——下一拍回写为整值同步，天然不重复入账）。
+    | |__________________________________________________________________^
+582 | /         if let Some(rec) = &rec {
+583 | |             self.apply_same_tick_fill_projection(
+584 | |                 session,
+585 | |                 &rec.desk_trades,
+...   |
+588 | |             )?;
+589 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:661:9
+    |
+661 |           /// 执行，组权威经验行不冲掉首买条目）。
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+662 | /         {
+663 | |             let mut inits = std::mem::take(&mut self.pending_hold_inits);
+664 | |             for (id, code, qty, entry) in inits.drain(..) {
+665 | |                 session
+...   |
+669 | |         }
+    | |_________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:692:21
+    |
+692 | /                     /// session 旧镜像）即安装。
+693 | |                     // Sol 五审修复 1：本拍成交事实合入执行腿（组内
+694 | |                     /// staging 下一 Start 合并——公开计划读面同拍；
+695 | |                     /// 下一拍被组权威整值覆盖，不双计）。
+    | |__________________________________________________________^
+696 | /                     if !trades.is_empty() {
+697 | |                         let day = u64::from(session.day());
+698 | |                         self.apply_same_tick_plan_fills(&mut plans, &trades, day)?;
+699 | |                     }
+    | |_____________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:703:21
+    |
+703 | /                     /// session 侧测试注入的计划）时，本拍成交事实对
+704 | |                     /// session plans 同拍合入（与组簿非空路径同式；
+705 | |                     /// 下一拍组权威接管后此分支自然失效）。
+    | |____________________________________________________________^
+706 |                       let day = u64::from(session.day());
+    |                       ----------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/drive.rs:744:9
+    |
+744 |         /// ——无 stock 高位编码；组内链子单为全等核，见下方 fn）。
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+745 |         let result = self.apply_same_tick_plan_fills_inner(&mut plans, trades, day, false);
+    |         ----------------------------------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1013:13
+     |
+1013 |               /// 组端直转 DeskIn::Cancel；撤单窗/存在性由 desk 权威判定）。
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1014 | /             if let crate::Intent::Cancel { code, id } = &r.intent {
+1015 | |                 let local = self
+1016 | |                     .id_map
+1017 | |                     .iter()
+...    |
+1026 | |                 continue;
+1027 | |             }
+     | |_____________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1053:13
+     |
+1053 | /             /// ——组端先验，拒收事件入本拍事件流——旧管线 InvalidQuantity
+1054 | |             /// 回执的 runtime 等价）。
+     | |_______________________________________^
+1055 | /             if *qty == 0 {
+1056 | |                 self.pending_rejections.push((*code, r.owner));
+1057 | |                 continue;
+1058 | |             }
+     | |_____________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1158:13
+     |
+1158 | /             /// 直接建条目，下一拍条目已在使 is_new_hold 永假，retail
+1159 | |             /// 首次持有永久缺经历条目→fault2038 保存校验）。收集后在
+1160 | |             /// 账户借用外执行。
+     | |________________________________^
+1161 |               let mut new_hold_inits: Vec<(crate::StockId, i64, u32)> = Vec::new();
+     |               --------------------------------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1182:21
+     |
+1182 | /                     ///（qty 已含在途卖余量口径的回写面；本拍卖增量后归零
+1183 | |                     /// 即真清仓）。
+     | |____________________________________^
+1184 | /                     if new_qty < 0 || new_frozen < 0 {
+1185 | |                         return Err(format!(
+1186 | |                             "同拍投影持仓下穿：{id:?} {code:?} qty={new_qty} frozen={new_frozen}"
+1187 | |                         ));
+1188 | |                     }
+     | |_____________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1622:9
+     |
+1622 | /         /// state.day——日界安装序在 install 之后时 day 尚未推进，而 save
+1623 | |         /// 校验口径（persistence.rs）以含日界的绝对 tick 计——两序下
+1624 | |         /// tick 推导恒一致）。
+     | |_______________________________^
+1625 |           let day = tick / tpd.max(1);
+     |           ---------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1719:13
+     |
+1719 | /             /// 日历）——追加段用 session 日历的当日 time 重写（save 校验
+1720 | |             /// fault2065 非严格递增显红）。多日一次归档未支持（显式失败
+1721 | |             /// ——生产一次 step 至多跨一日）。
+     | |______________________________________________^
+1722 |               let new_days = candles.len().saturating_sub(skip);
+     |               -------------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1829:13
+     |
+1829 |               /// （desk 权威——此前 remaining 退 1 股占位使续拍种子量错）。
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1830 | /             let price = if envelope.audit().limit.cents() > 0 {
+1831 | |                 envelope.audit().limit.cents()
+1832 | |             } else {
+1833 | |                 1
+1834 | |             };
+     | |______________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive.rs:1881:13
+     |
+1881 |               /// envelope live 资源面）。
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1882 | /             let purse = if order.side == crate::orderbook::Side::Buy {
+1883 | |                 order.price.cents() * i64::from(order.qty)
+1884 | |             } else {
+1885 | |                 0
+1886 | |             };
+     | |______________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive_tests.rs:1558:5
+     |
+1558 |       /// 投影——构造后 grant 组不感知，挂卖被组端 sellable 校验跳过）。
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1559 | /     session
+1560 | |         .fixture_account_mut(&seller)
+1561 | |         .unwrap()
+1562 | |         .grant_position(code.clone(), 100, price)
+1563 | |         .unwrap();
+     | |_________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/drive_tests.rs:1910:5
+     |
+1910 | /     /// filled_qty：Sol 八审——此前只断言 Active+余量读组簿，误推进后
+1911 | |     /// 照样 Active、下一拍组权威又抹掉，判别力为零。投影 filled 未被
+1912 | |     /// 外来成交推进=身份核生效的直接证据）。
+     | |_____________________________________________^
+1913 | /     let session_filled = session
+1914 | |         .plans_debug()
+1915 | |         .into_iter()
+1916 | |         .find(|(a, c, ..)| *a == account && *c == code)
+1917 | |         .map(|(.., filled, _)| filled)
+1918 | |         .expect("session 投影簿中计划在册");
+     | |____________________________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused import: `GroupAccount`
+ --> packages/engine/src/runtime/day_end_tests.rs:7:20
+  |
+7 | use super::group::{GroupAccount, GroupScript, PlaceSpec, TickPlan};
+  |                    ^^^^^^^^^^^^
+
+warning: unused import: `DayEndCandidate`
+  --> packages/engine/src/runtime/day_end_tests.rs:10:20
+   |
+10 | use super::world::{DayEndCandidate, World};
+   |                    ^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/decision_tests.rs:169:5
+    |
+169 |     /// wait 采样决定——均匀 gap 机制已由 signal 公式替代）。
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+170 |     let (_, _) = evaluate_attention(&mut profile, &snapshot, 1);
+    |     ------------------------------------------------------------ rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/decision_tests.rs:220:9
+    |
+220 |         /// due 循环保证）。
+    |         ^^^^^^^^^^^^^^^^^^^^
+221 |         let _ = evaluate_attention(&mut profile, &snapshot, 1);
+    |         ------------------------------------------------------- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/decision_tests.rs:239:13
+    |
+239 |             /// 既有断言面；signal 概率语义由 attention_gap 测试承载。
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+240 |             attention_base: 1.0,
+    |             ------------------- rustdoc does not generate documentation for expression fields
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/group.rs:300:21
+    |
+300 |                       /// desk 扣减溢出——票/簿推进失同步，显式失败）。
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+301 | /                     let occupancy = purse
+302 | |                         .cents()
+303 | |                         .checked_sub(ticket.charged_cents)
+304 | |                         .unwrap_or_else(|| {
+...   |
+309 | |                         });
+    | |___________________________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/group.rs:820:9
+    |
+820 |         /// 需重发）；已入日志域的由上方 undo 逆序回放冲回。
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+821 |         self.pending_force_due.clear();
+    |         ------------------------------ rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/group.rs:921:13
+    |
+921 | /             /// candidate_commit 的逐账户 prune_plan_personal_memory——
+922 | |             /// completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
+    | |________________________________________________________________________^
+923 | /             for (local, _) in &touched {
+924 | |                 self.prune_personal_memory_after_completion(*local);
+925 | |             }
+    | |_____________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1047:9
+     |
+1047 | /         /// 意图路由/测试注入的合法形态——ticket 只承载本单事实）：跳过
+1048 | |         /// 不误挂（与 release 的身份关联语义一致；原"显式失败"形态会
+1049 | |         /// 杀死合法外来单的拍——sol7th_foreign 红证实测）。
+     | |___________________________________________________________^
+1050 | /         if order_id_of(&fill.order) != order_id {
+1051 | |             return Ok(());
+1052 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1075:9
+     |
+1075 |           /// =票/簿推进失同步，显式失败（铁律二）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1076 | /         {
+1077 | |             let prev_ticket = ticket.clone();
+1078 | |             ticket.remaining = ticket.remaining.checked_sub(fill.qty).unwrap_or_else(|| {
+1079 | |                 panic!(
+...    |
+1111 | |             self.child_in_flight.insert((account, code.clone()), ticket.clone());
+1112 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1145:9
+     |
+1145 | /         /// 删条目后售出股不在保护集；在途卖单期间条目保留=保护）∪活跃
+1146 | |         /// 计划股。**不含**曾持有（ever_held 是组侧观察面位——清仓后
+1147 | |         /// session 条目已删，误入保护集会使售出股永不被裁剪）。
+     | |________________________________________________________________^
+1148 | /         let mut protected: std::collections::BTreeSet<crate::StockId> = self.accounts
+1149 | |             [local as usize]
+1150 | |             .shares
+1151 | |             .iter()
+...    |
+1156 | |             .map(|(idx, _)| crate::StockId(idx as u32))
+1157 | |             .collect();
+     | |_______________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1275:13
+     |
+1275 |               /// 的豁免面——horizon 外仍须可达）。
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1276 | /             let released = self
+1277 | |                 .plan_book
+1278 | |                 .record_child_released(account, &code, order_id, day, true)
+1279 | |                 .unwrap_or_else(|error| {
+1280 | |                     panic!("组内子单释放失败 {account:?} {code:?}: {error}")
+1281 | |                 });
+     | |___________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1284:17
+     |
+1284 |                 /// 已换新单（旧票身份不再匹配——非漂移；无害跳过）。
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1285 |                 return Ok(());
+     |                 ------------- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1350:17
+     |
+1350 | /                 ///（Sol 五审：实体驱动——全额终结后占用归零；卖腿现金走
+1351 | |                 /// CashProceeds）。
+     | |____________________________________^
+1352 |                   let acct = self.acct_mut(local)?;
+     |                   --------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1477:9
+     |
+1477 |           /// 每 tick 整值刷新，无累积无窗口截断——与 session 读面同源）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1478 | /         if let Some(snapshot) = &self.snapshot {
+1479 | |             #[cfg(test)]
+1480 | |             let overrides = self.observation_overrides.clone();
+1481 | |             for (stock_idx, (inputs, stock)) in self
+...    |
+1504 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1533:9
+     |
+1533 |         /// 本 tick 生产写入存活到提交，无新产出 tick 返回后读数为空）。
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1534 |         self.retail_traces.clear();
+     |         -------------------------- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1717:9
+     |
+1717 | /         /// qty 口径=在手+在途卖（回写同式）；零量条目按曾持有位保留
+1718 | |         /// （旧管线 positions 的清仓残留键语义）。
+     | |___________________________________________________^
+1719 |           let acct = &self.accounts[local as usize];
+     |           ------------------------------------------ rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1781:9
+     |
+1781 |           /// 演进+候选评估。
+     |           ^^^^^^^^^^^^^^^^^^^
+1782 | /         let observation = build_chain_observation(
+1783 | |             &self.observation_inputs,
+1784 | |             snapshot,
+1785 | |             self.ticks_per_day,
+...    |
+1790 | |             &projection.stock_codes,
+1791 | |         );
+     | |__________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1793:9
+     |
+1793 | /         /// capture_from_row 等价——equity 观测/持仓 dated 演进/首建；
+1794 | |         /// 观察 core 与决策消费演进后的行）。
+     | |______________________________________________^
+1795 | /         {
+1796 | |             let moment = crate::experience::ExperienceMoment {
+1797 | |                 civil_date: snapshot.civil_date,
+1798 | |                 market_minute: minute,
+...    |
+1838 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1870:9
+     |
+1870 | /         /// behavior+risk+dated 经验输入；rng=npc_seed_base 同式派生。
+1871 | |         // own 自 ctx.positions 同源组装（决策内核要求 own.positions ⊆
+1872 | |         /// risk.positions——build_self_view 不过滤零量股，多股/零仓形态
+1873 | |         /// 集合漂移即 panic）。
+     | |________________________________^
+1874 | /         let own = crate::strategy::SelfView {
+1875 | |             cash: ctx.cash,
+1876 | |             positions: ctx
+1877 | |                 .positions
+...    |
+1889 | |                 .collect(),
+1890 | |         };
+     | |__________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1944:9
+     |
+1944 |           /// PositionDecision → intents/reviewed/trace 三面）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1945 | /         let original = crate::behavior::decide_retail_position_with_experience(
+1946 | |             &data,
+1947 | |             retail_style,
+1948 | |             market,
+...    |
+1954 | |             &mut rng,
+1955 | |         );
+     | |__________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:1960:13
+     |
+1960 |               /// 仓位修订）。
+     |               ^^^^^^^^^^^^^^^^
+1961 | /             crate::behavior::apply_personal_analysis(
+1962 | |                 original.clone(),
+1963 | |                 &assessments,
+1964 | |                 &own,
+...    |
+1970 | |                 &mut rng,
+1971 | |             )
+     | |_____________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2216:21
+     |
+2216 |                     /// 同源——belief_states 是 observe 前旧态）。
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2217 |                     belief: &out.belief,
+     |                     ------------------- rustdoc does not generate documentation for expression fields
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2220:21
+     |
+2220 |                     /// 字段借用下的生命周期独立）。
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2221 |                     minutes_by_code: minutes_by_code.clone(),
+     |                     ---------------------------------------- rustdoc does not generate documentation for expression fields
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2328:17
+     |
+2328 | /                 /// Create 动作同式：record_review/record_resource_review 后
+2329 | |                 /// 按 PauseAssessment 判停——组内此前缺失，quiet 首拍无基线）。
+     | |_______________________________________________________________________________^
+2330 | /                 let price = observation
+2331 | |                     .market
+2332 | |                     .stocks
+2333 | |                     .get(code)
+2334 | |                     .map(|v| v.last_price)
+2335 | |                     .unwrap_or_else(|| panic!("组内新计划复审缺股 {code:?} 行情"));
+     | |___________________________________________________________________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2354:17
+     |
+2354 |                 /// return + 组内 urgency 面共享函数——判停即 Paused）。
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2355 |                 let minutes = minutes_by_code.get(code).cloned().unwrap_or_default();
+     |                 --------------------------------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2425:21
+     |
+2425 |                     /// 的决策段演进）。
+     |                     ^^^^^^^^^^^^^^^^^^^^
+2426 |                     retail_experience: slot.as_ref().and_then(|s| s.retail_experience.clone()),
+     |                     -------------------------------------------------------------------------- rustdoc does not generate documentation for expression fields
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2496:21
+     |
+2496 |                     /// frozen=ZERO 同式——保守预算，登记差异）。
+     |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2497 |                     frozen_cash: crate::money::Money::ZERO,
+     |                     -------------------------------------- rustdoc does not generate documentation for expression fields
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2542:17
+     |
+2542 |                   /// 的撤单即清语义，Closed 落账的 release 幂等跳过）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2543 | /                 if let Some(order_id) = child_order_id {
+2544 | |                     cancels.push((
+2545 | |                         local,
+2546 | |                         code.0 as StockIdx,
+...    |
+2557 | |                 }
+     | |_________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2550:21
+     |
+2550 |                       /// 迁移）显式失败——铁律二。
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2551 | /                     let released = self
+2552 | |                         .plan_book
+2553 | |                         .record_child_released(account, &code, order_id, trading_day, true);
+     | |____________________________________________________________________________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2575:17
+     |
+2575 | /                 /// 同向 Forward 修订不清腿，簿侧腿引用随撤单同拍释放——
+2576 | |                 /// session 执行链语义，Closed 落账的 release 幂等跳过）。
+     | |__________________________________________________________________________^
+2577 | /                 if let Some(order_id) = child_order_id {
+2578 | |                     cancels.push((
+2579 | |                         local,
+2580 | |                         code.0 as StockIdx,
+...    |
+2591 | |                 }
+     | |_________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2584:21
+     |
+2584 |                       /// 迁移）显式失败——铁律二。
+     |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2585 | /                     let released = self
+2586 | |                         .plan_book
+2587 | |                         .record_child_released(account, &code, order_id, trading_day, true);
+     | |____________________________________________________________________________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2635:9
+     |
+2635 |         /// identity 匹配路径已有）。
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2636 |         let mut cancels: Vec<(LocalIdx, StockIdx, u64)> = Vec::new();
+     |         ------------------------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2654:9
+     |
+2654 | /         /// 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
+2655 | |         /// 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
+2656 | |         /// NewOpportunity 不可达）。
+     | |_____________________________________^
+2657 |           let cash = crate::money::Money::from_cents(group_account.cash);
+     |           --------------------------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2669:13
+     |
+2669 | /             /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+2670 | |             /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+2671 | |             /// Cancel 的触发形态，不得跳过。
+     | |_____________________________________________^
+2672 | /             if matches!(
+2673 | |                 plan.status(),
+2674 | |                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
+2675 | |             ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
+...    |
+2680 | |                 continue;
+2681 | |             }
+     | |_____________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2779:13
+     |
+2779 | /             /// 的暂停分支产出 Cancel——定向撤单路由）；terminal 跳过。
+2780 | |             /// 在途票跳过仅对 Active（防重复挂单）——Paused+在途恰是
+2781 | |             /// Cancel 的触发形态，不得跳过。
+     | |_____________________________________________^
+2782 | /             if matches!(
+2783 | |                 plan.status(),
+2784 | |                 crate::plans::PlanStatus::Completed | crate::plans::PlanStatus::Terminated { .. }
+2785 | |             ) || (matches!(plan.status(), crate::plans::PlanStatus::Active)
+...    |
+2790 | |                 continue;
+2791 | |             }
+     | |_____________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2796:13
+     |
+2796 | /             /// 头段的组内等价——共享 decide_plan_quote 不含该面）：Paused
+2797 | |             /// 或（买方向且非反手信号 ≤0）→ Cancel/Keep/Wait + 撤买终止。
+2798 | |             /// 位置在预算查找**之前**（撤单不是下单——不依赖软预算分配；
+2799 | |             /// Sell 计划 sellable 不足时无 grant，暂停撤单不得被预算挡住，
+2800 | |             /// session 头段同序）。
+     | |____________________________________^
+2801 |               let code = plan.code();
+     |               ----------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:2826:25
+     |
+2826 |                         /// 借用冲突，收集后循环外 apply。
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2827 |                         withdrawals.push(plan_id);
+     |                         ------------------------- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3056:17
+     |
+3056 |                 /// 决策延后到借用释放（组态写回与决策档案借用互斥）。
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3057 |                 let mut retail_due: Vec<LocalIdx> = Vec::new();
+     |                 ----------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3065:25
+     |
+3065 |                           /// 但无机构链参数，走 retail 链（观察+behavior 决策）。
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3066 | /                         let chain_params_seeded = self
+3067 | |                             .root_projection
+3068 | |                             .as_ref()
+3069 | |                             .is_some_and(|p| {
+3070 | |                                 p.chain_params.get(self.roster_offset + local as usize).is_some_and(|c| c.is_some())
+3071 | |                             });
+     | |_______________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3084:29
+     |
+3084 | / ...                   /// evaluate_candidate_with_signal 同式：共享续流+
+3085 | | ...                   /// observe 门+wait 采样；observe=false 只重排不
+3086 | | ...                   /// 决策（链轮跳过——决策频率语义与旧管线对齐，
+3087 | | ...                   /// 此前均匀 gap 近似使 epoch 双轨显红）。
+     | |________________________________________________________________^
+3088 | / ...                   let (observes, prev_due) =
+3089 | | ...                       super::decision::evaluate_attention(
+3090 | | ...                           &mut profiles[local as usize],
+3091 | | ...                           &snapshot,
+3092 | | ...                           tick,
+3093 | | ...                       );
+     | |____________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3107:25
+     |
+3107 |                           /// 移除——调用方控制契约）。
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3108 | /                         if tick < profiles[local as usize].next_due {
+3109 | |                             continue;
+3110 | |                         }
+     | |_________________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3113:25
+     |
+3113 |                           /// 重排不决策）。
+     |                           ^^^^^^^^^^^^^^^^^^
+3114 | /                         let (observes, prev_due) = super::decision::evaluate_attention(
+3115 | |                             &mut profiles[local as usize],
+3116 | |                             &snapshot,
+3117 | |                             tick,
+3118 | |                         );
+     | |__________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3193:9
+     |
+3193 |         /// 的 desk 到达序——Cancel 须晚于 Place 才能命中）。
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3194 |         let external_cancels = std::mem::take(&mut self.external_cancels);
+     |         ------------------------------------------------------------------ rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3218:9
+     |
+3218 | /         /// 下单共用分段 flush 缓冲；票保留至 Closed 实体释放——identity
+3219 | |         /// 匹配的 release 路径已有）。
+     | |_______________________________________^
+3220 | /         for (local, stock, serial) in chain_cancels {
+3221 | |             buffers[stock as usize].push(DeskIn::Cancel {
+3222 | |                 owner: (group, local),
+3223 | |                 order: (stock, serial),
+3224 | |             });
+3225 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3371:9
+     |
+3371 |           /// 序——Cancel 晚于 Place 才能命中簿内单）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3372 | /         for (local, stock, serial) in std::mem::take(&mut external_cancel_buffer) {
+3373 | |             buffers[stock as usize].push(DeskIn::Cancel {
+3374 | |                 owner: (group, local),
+3375 | |                 order: (stock, serial),
+3376 | |             });
+3377 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3497:9
+     |
+3497 |           /// 的 observe 输出面）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+3498 | /         let acquired = group_review_acquired(
+3499 | |             self.state.root_projection.as_ref().expect("复审位投影在"),
+3500 | |             self.information,
+3501 | |             code,
+3502 | |         );
+     | |__________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3546:9
+     |
+3546 | /         /// observations 同式 c.max(1)——字段不得分叉）；非候选股兜底
+3547 | |         /// 空切片（session 版 get().unwrap_or(&[]) 同式）。
+     | |____________________________________________________________^
+3548 | /         self.minutes_by_code
+3549 | |             .get(code)
+3550 | |             .map(|v| v.as_slice())
+3551 | |             .unwrap_or(&[])
+     | |___________________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3555:9
+     |
+3555 |           /// 与 belief_states 旧态值恒同，时点统一消分叉面）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3556 | /         match self.belief.profile() {
+3557 | |             crate::strategy::StrategyProfile::Institution(style) => Some(*style),
+3558 | |             _ => None,
+3559 | |         }
+     | |_________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3696:17
+     |
+3696 |                   /// ——组侧曾持有/清仓面在 shares 中为 0）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3697 | /                 if qty == 0 {
+3698 | |                     continue;
+3699 | |                 }
+     | |_________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3911:9
+     |
+3911 |           /// 缩水，对齐旧管线 escrow 口径）。
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3912 | /         let mut account = crate::account::Account::new(
+3913 | |             account_id,
+3914 | |             crate::account::AccountKind::Inst,
+3915 | |             crate::money::Money::from_cents(cash_with_pending_at(
+...    |
+3921 | |             )),
+3922 | |         );
+     | |__________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:3926:13
+     |
+3926 | /             /// 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
+3927 | |             /// 卖时建条目（held 集成员参与发现采样）。
+     | |_______________________________________________________^
+3928 | /             let qty = held_qty_with_pending_at(
+3929 | |                 &group_account.shares,
+3930 | |                 child_in_flight,
+3931 | |                 &projection.account_ids,
+3932 | |                 local as LocalIdx,
+3933 | |                 stock,
+3934 | |             );
+     | |______________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4018:5
+     |
+4018 |       /// 与 session 版同一共享函数 exposed_stocks_shared）。
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4019 | /     let exposed =
+4020 | |         crate::session::exposed_stocks_shared(library, company_registry, stock_codes, now);
+     | |___________________________________________________________________________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4346:17
+     |
+4346 |                 /// Abort 冲回后需重发）。缺位/越界=注入面漂移，显式失败。
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4347 |                 let prev = state.belief_states.get(local as usize).cloned().flatten();
+     |                 ---------------------------------------------------------------------- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4406:17
+     |
+4406 |                 /// ——Abort 冲回后指令失效需重发）。
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4407 |                 state.save_plan_book_undo();
+     |                 --------------------------- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4419:17
+     |
+4419 |                   /// 经投影名册映射——目标位缺失=显式失败）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4420 | /                 let local = state
+4421 | |                     .root_projection
+4422 | |                     .as_ref()
+4423 | |                     .and_then(|p| {
+...    |
+4430 | |                         panic!("MutateBeliefForTest 目标账户 {account:?} 不在组名册")
+4431 | |                     });
+     | |_______________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4447:17
+     |
+4447 |                   /// tick"形态构造（组权威调度面的测试控制；效果入可逆日志）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4448 | /                 for local in locals {
+4449 | |                     if let Some((profiles, _)) = &mut state.decision {
+4450 | |                         if let Some(p) = profiles.get_mut(local as usize) {
+4451 | |                             let prev = p.next_due;
+...    |
+4461 | |                 }
+     | |_________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4581:17
+     |
+4581 |                   /// build_technical_observation_from_recent_trades）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4582 | /                 let observations: Vec<(
+4583 | |                     crate::observation::PricePathObservation,
+4584 | |                     crate::observation::TechnicalObservation,
+4585 | |                 )> = state
+...    |
+4588 | |                     .map(|inputs| inputs.build_observations())
+4589 | |                     .collect();
+     | |_______________________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4605:17
+     |
+4605 | /                 /// session rng_state 同源写回）。D5 restore 链最后一层：
+4606 | |                 /// 构造期组因子混入在回传时逆运算——session 面存纯值
+4607 | |                 ///（restore 再构造混入恰一次，不叠加）。
+     | |_________________________________________________________^
+4608 | /                 let attention = match &state.decision {
+4609 | |                     Some((profiles, _)) => profiles
+4610 | |                         .iter()
+4611 | |                         .enumerate()
+...    |
+4619 | |                     None => Vec::new(),
+4620 | |                 };
+     | |__________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4635:17
+     |
+4635 |                   /// 生产写入存活到提交）。
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+4636 | /                 let msg = UpMsg::RetailTraces {
+4637 | |                     group: state.group,
+4638 | |                     traces: state.retail_traces.clone(),
+4639 | |                 };
+     | |__________________- rustdoc does not generate documentation for statements
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+    --> packages/engine/src/runtime/group.rs:4889:9
+     |
+4889 | /         /// 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
+4890 | |         /// 杀死合法外来单的拍——sol7th_foreign 场景红证）。
+     | |___________________________________________________________^
+4891 | /         state
+4892 | |             .apply_staging(1, 0)
+4893 | |             .expect("外来单成交跳过（不构成失败）");
+     | |___________________________________________________- rustdoc does not generate documentation for expressions
+     |
+     = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/world.rs:469:17
+    |
+469 |                   /// 当日冻结面——组侧冻结权威自此起步）。
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+470 | /                 if let Some(frozen) = initial_frozen_today
+471 | |                     .get(g as usize)
+472 | |                     .and_then(|by_group| by_group.get(l))
+...   |
+477 | |                 }
+    | |_________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/world.rs:479:17
+    |
+479 | /                 /// purse——组现金已同步扣减，公开现金=组现金+占用口径
+480 | |                 /// 因此成立）。
+    | |________________________________^
+481 | /                 if let Some(&purse) = initial_purse_held
+482 | |                     .get(g as usize)
+483 | |                     .and_then(|by_group| by_group.get(l))
+...   |
+486 | |                 }
+    | |_________________- rustdoc does not generate documentation for expressions
+    |
+    = help: use `//` for a plain comment
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/world.rs:745:13
+    |
+745 |               /// observe 门——rng 续流照常）。
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+746 | /             let _ = tx.send(GroupIn::ForceDue {
+747 | |                 locals,
+748 | |                 tick,
+749 | |                 ensure_observe: true,
+750 | |             });
+    | |_______________- rustdoc does not generate documentation for statements
+    |
+    = help: use `//` for a plain comment
+
+warning: unused import: `std::time::Duration`
+  --> packages/engine/src/runtime/desk_semantics_tests.rs:19:5
+   |
+19 | use std::time::Duration;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> packages/engine/src/runtime/desk_semantics_tests.rs:346:13
+    |
+346 |             /// step(N) 的受理窗=N-1 相位——PreOpen 拒收的申报须在 tick5
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+347 |             // （phase(4)=PreOpen；tick4 申报按 phase(3)=CallAuction 受理）。
+348 |             5 => place_at(5, vec![buy(0, 0, 1000, 100)]),
+    |             -------------------------------------------- rustdoc does not generate documentation for match arms
+    |
+    = help: use `//` for a plain comment
+
+warning: unused variable: `plans`
+   --> packages/engine/src/session/decision_chain/retail_analysis.rs:475:9
+    |
+475 |         plans: &crate::plans::PlanBook,
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_plans`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:4276:13
+     |
+4276 |         let mut plans = std::mem::take(&mut session.state.plans);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:4496:13
+     |
+4496 |         let mut plans = std::mem::take(&mut session.state.plans);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:5326:17
+     |
+5326 |             let mut advance = move |plans: &mut crate::plans::PlanBook| {
+     |                 ----^^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:5375:17
+     |
+5375 |             let mut relink = move |plans: &mut crate::plans::PlanBook| {
+     |                 ----^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/decision_chain.rs:5576:13
+     |
+5576 |         let mut plans = std::mem::take(&mut session.state.plans);
+     |             ----^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `qty`
+    --> packages/engine/src/session/failure.rs:1413:9
+     |
+1413 |         qty: u32,
+     |         ^^^ help: if this is intentional, prefix it with an underscore: `_qty`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:731:10
+    |
+731 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:752:10
+    |
+752 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:775:10
+    |
+775 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/persistence/saved_runtime_tests.rs:790:10
+    |
+790 |     let (mut authority, plan_id, _code) = live_child_case();
+    |          ----^^^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: value assigned to `cash_before_fill` is never read
+    --> packages/engine/src/session/persistence/saved_runtime_tests.rs:1114:9
+     |
+1114 |           cash_before_fill = session.state.accounts[&AccountId(0)].cash();
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this value is reassigned later and never used
+...
+1122 | /         cash_before_fill = session
+1123 | |             .state
+1124 | |             .accounts[&AccountId(0)]
+1125 | |             .cash()
+1126 | |             .add(pre_cost)
+1127 | |             .unwrap();
+     | |_____________________- `cash_before_fill` is overwritten here before the previous value is read
+     |
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `first_institution`
+   --> packages/engine/src/session/persistence.rs:594:9
+    |
+594 |     let first_institution = u64::from(save.setup.npcs.retail_count) + 1;
+    |         ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_first_institution`
+
+warning: unused variable: `last_institution`
+   --> packages/engine/src/session/persistence.rs:595:9
+    |
+595 |     let last_institution = u64::from(save.setup.npcs.retail_count)
+    |         ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_last_institution`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/persistence.rs:1102:9
+     |
+1102 |     let mut intents = save.pending_player.clone();
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: unused variable: `saved_day`
+    --> packages/engine/src/session/persistence.rs:1779:9
+     |
+1779 |     let saved_day = context.saved_day;
+     |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_saved_day`
+
+warning: variable does not need to be mutable
+  --> packages/engine/src/session/pipeline/local_admission.rs:70:10
+   |
+70 |     let (mut plan, has_conflicts) =
+   |          ----^^^^
+   |          |
+   |          help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/local_admission.rs:256:22
+    |
+256 |     fn finish_layout(mut self) -> Result<Vec<IntentCandidate>, StepFatal> {
+    |                      ----^^^^
+    |                      |
+    |                      help: remove this `mut`
+
+warning: value assigned to `consumer_failed` is never read
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:521:33
+    |
+521 | ...                   consumer_failed = true;
+    |                       ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/npc_split.rs:327:20
+    |
+327 |         let (view, mut writes) = npc_split(&mut session);
+    |                    ----^^^^^^
+    |                    |
+    |                    help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:1377:24
+     |
+1377 |     let (mut personal, mut attention);
+     |                        ----^^^^^^^^^
+     |                        |
+     |                        help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/read_only_start.rs:186:17
+    |
+186 |             let mut plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    |                 ----^^^^
+    |                 |
+    |                 help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/ready_ingress.rs:119:13
+    |
+119 |         let mut roots = match roots_override {
+    |             ----^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `stock`
+  --> packages/engine/src/session/pipeline/ready_stock_stream.rs:76:14
+   |
+76 |         let (stock, round, matched) = match progress {
+   |              ^^^^^ help: if this is intentional, prefix it with an underscore: `_stock`
+
+warning: unused variable: `expected`
+   --> packages/engine/src/session/pipeline/stock_stream.rs:707:9
+    |
+707 |         expected: Vec<super::CandidateValidationOutcome>,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_expected`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1159:13
+     |
+1159 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1244:17
+     |
+1244 |             let pool = Arc::clone(&pool);
+     |                 ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1363:13
+     |
+1363 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `code`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1809:42
+     |
+1809 |                     let detached = move |code: &StockId| {
+     |                                          ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1795:13
+     |
+1795 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `pool`
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1873:13
+     |
+1873 |         let pool = shared.clone();
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_pool`
+
+warning: unused variable: `code`
+   --> packages/engine/src/session/pipeline/auction_tick_transaction_tests.rs:617:9
+    |
+617 |     let code = request.allocation.code.clone();
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unused variable: `code`
+   --> packages/engine/src/session/pipeline/continuous_tick_transaction_tests.rs:274:9
+    |
+274 |     let code = request.allocation.code.clone();
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unreachable pattern
+  --> packages/engine/src/session/pipeline/decision_output_tests.rs:37:9
+   |
+36 |         crate::session::StepFatal::InvariantViolation { description, .. } => description.clone(),
+   |         ----------------------------------------------------------------- matches all the relevant values
+37 |         other => format!("{other:?}"),
+   |         ^^^^^ no value can reach this
+   |
+   = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:479:19
+    |
+479 |             move |account, result: Result<(), ()>, _errors: &mut Vec<(
+    |                   ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/pipeline/npc_decisions_quota_tests.rs:593:23
+    |
+593 |                 move |account,
+    |                       ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/t3_boundary_tests.rs:151:13
+    |
+151 |         let mut s = boundary_setup();
+    |             ----^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/t4_market_data_owner_tests.rs:410:9
+    |
+410 |     let mut market = super::continuous_matching::incremental_continuous_stock_shadow::tests::empty_market(&code);
+    |         ----^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/pipeline/mod.rs:487:9
+    |
+487 |     let mut shadow = TickShadowPlan {
+    |         ----^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `phase`
+   --> packages/engine/src/session/pipeline/mod.rs:540:9
+    |
+540 |     let phase = authority.phase();
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_phase`
+
+warning: unused variable: `personal`
+   --> packages/engine/src/session/plan_chain_candidates.rs:742:34
+    |
+742 |         while let Some((account, personal)) = pending.front() {
+    |                                  ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_personal`
+
+warning: unused variable: `receiver`
+    --> packages/engine/src/session/plan_chain_candidates.rs:1050:25
+     |
+1050 |                         receiver,
+     |                         ^^^^^^^^ help: try ignoring the field: `receiver: _`
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/plan_execution/continuation_tests.rs:330:9
+    |
+330 |     let account = plan.account();
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: unused variable: `code`
+   --> packages/engine/src/session/plan_execution/continuation_tests.rs:331:9
+    |
+331 |     let code = plan.code().clone();
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/plan_execution/continuation_tests.rs:568:10
+    |
+568 |     let (mut session, mut plans, plan, child) = fixture();
+    |          ----^^^^^^^
+    |          |
+    |          help: remove this `mut`
+
+warning: unused variable: `terminating`
+  --> packages/engine/src/session/plan_execution/interpreter/resume.rs:15:17
+   |
+15 |                 terminating,
+   |                 ^^^^^^^^^^^ help: try ignoring the field: `terminating: _`
+
+warning: unused variable: `plan`
+  --> packages/engine/src/session/plan_execution/interpreter/resume.rs:96:36
+   |
+96 |             Continuation::Submit { plan, child } => {
+   |                                    ^^^^ help: try ignoring the field: `plan: _`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:208:13
+    |
+208 |         let mut probe_session = session;
+    |             ----^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `probe_session`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:208:13
+    |
+208 |         let mut probe_session = session;
+    |             ^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_probe_session`
+
+warning: unused variable: `session`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:226:5
+    |
+226 |     session: &ProtocolSession,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_session`
+
+warning: unused variable: `account`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:227:5
+    |
+227 |     account: AccountId,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: unused variable: `tick`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:228:5
+    |
+228 |     tick: u64,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_tick`
+
+warning: unused variable: `a`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:402:9
+    |
+402 |     let a = AccountId(1);
+    |         ^ help: if this is intentional, prefix it with an underscore: `_a`
+
+warning: unused variable: `b`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:403:9
+    |
+403 |     let b = AccountId(2);
+    |         ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `state_b6`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:434:13
+    |
+434 |     let (_, state_b6) = probe_chain_from(&session, b, &attention_before, &[(6, signal_at_epoch6)]);
+    |             ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_state_b6`
+
+warning: unused variable: `after_b`
+   --> packages/engine/src/session/protocol/civil/epoch_alignment_tests.rs:439:9
+    |
+439 |     let after_b = attention_after
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_after_b`
+
+warning: variable `npc_admissions_total` is assigned to, but never used
+   --> packages/engine/src/session/protocol/civil/decision_failure_witness_tests.rs:650:9
+    |
+650 |     let mut npc_admissions_total = 0u64;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_npc_admissions_total` instead
+
+warning: value assigned to `npc_admissions_total` is never read
+   --> packages/engine/src/session/protocol/civil/decision_failure_witness_tests.rs:676:9
+    |
+676 |         npc_admissions_total += admissions;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `name`
+    --> packages/engine/src/session.rs:1262:22
+     |
+1262 |         for (active, name, quantity) in [
+     |                      ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `name`
+    --> packages/engine/src/session.rs:1356:25
+     |
+1356 |             for (value, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
+     |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `desk_book_mirror`
+    --> packages/engine/src/session.rs:5051:13
+     |
+5051 |             desk_book_mirror,
+     |             ^^^^^^^^^^^^^^^^ help: try ignoring the field: `desk_book_mirror: _`
+
+warning: unused variable: `serial`
+   --> packages/engine/src/runtime/event_bridge.rs:214:24
+    |
+214 |     for (owner, stock, serial, reason) in &input.rejections {
+    |                        ^^^^^^ help: if this is intentional, prefix it with an underscore: `_serial`
+
+warning: unused variable: `catalog`
+   --> packages/engine/src/runtime/drive_tests.rs:552:10
+    |
+552 |     let (catalog, registry, operations) = session.runtime_company_handles();
+    |          ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_catalog`
+
+warning: unused variable: `operations`
+   --> packages/engine/src/runtime/drive_tests.rs:552:29
+    |
+552 |     let (catalog, registry, operations) = session.runtime_company_handles();
+    |                             ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_operations`
+
+warning: variable does not need to be mutable
+   --> packages/engine/src/runtime/decision_tests.rs:131:9
+    |
+131 |     let mut profile = NpcProfile {
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `config`
+   --> packages/engine/src/runtime/decision_tests.rs:158:9
+    |
+158 |     let config = GameConfig::proposed_defaults();
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_config`
+
+warning: unused variable: `account`
+   --> packages/engine/src/runtime/decision_tests.rs:160:9
+    |
+160 |     let account = GroupAccount::new(1_000_000, 1);
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_account`
+
+warning: unused variable: `code`
+   --> packages/engine/src/runtime/equivalence_tests.rs:262:13
+    |
+262 |         let code = crate::StockId(idx as u32);
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_code`
+
+warning: unused variable: `probe`
+   --> packages/engine/src/runtime/equivalence_tests.rs:346:9
+    |
+346 |     let probe = std::sync::Arc::clone(&fired);
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_probe`
+
+warning: type `AuthoritativeTickCommit` is more private than the item `failure::<impl session::GameSession>::step_on_context`
+   --> packages/engine/src/session/failure.rs:818:5
+    |
+818 | /     pub(crate) fn step_on_context(
+819 | |         &mut self,
+820 | |         capture_commit_evidence: bool,
+821 | |     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
+    | |____________________________________________________________________^ method `failure::<impl session::GameSession>::step_on_context` is reachable at visibility `pub(crate)`
+    |
+note: but type `AuthoritativeTickCommit` is only usable at visibility `pub(in crate::session)`
+   --> packages/engine/src/session/pipeline/authoritative_tick.rs:10:1
+    |
+ 10 | pub(in crate::session) struct AuthoritativeTickCommit {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `RuntimeInstallBaseline` is more private than the item `failure::<impl session::GameSession>::rollback_runtime_step`
+   --> packages/engine/src/session/failure.rs:978:5
+    |
+978 |     pub fn rollback_runtime_step(&mut self, baseline: RuntimeInstallBaseline) {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method `failure::<impl session::GameSession>::rollback_runtime_step` is reachable at visibility `pub`
+    |
+note: but type `RuntimeInstallBaseline` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/session/failure.rs:14:1
+    |
+ 14 | pub(crate) struct RuntimeInstallBaseline {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `personal_state::PlanPersonalState` is more private than the item `failure::<impl session::GameSession>::runtime_personal_states`
+    --> packages/engine/src/session/failure.rs:1208:5
+     |
+1208 | /     pub fn runtime_personal_states(
+1209 | |         &self,
+1210 | |     ) -> std::collections::BTreeMap<
+1211 | |         crate::AccountId,
+1212 | |         crate::session::decision_chain::personal_state::PlanPersonalState,
+1213 | |     > {
+     | |_____^ method `failure::<impl session::GameSession>::runtime_personal_states` is reachable at visibility `pub`
+     |
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+    --> packages/engine/src/session/decision_chain/personal_state.rs:78:1
+     |
+  78 | pub(crate) struct PlanPersonalState {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `RetailProjectionError` is more private than the item `RetailProjectionSeen::insert`
+   --> packages/engine/src/session/pipeline/retail_projection.rs:96:5
+    |
+ 96 | /     pub(in crate::session) fn insert(
+ 97 | |         &mut self,
+ 98 | |         index: u64,
+ 99 | |         local_key: ReceiptLocalKey,
+100 | |     ) -> Result<(), RetailProjectionError> {
+    | |__________________________________________^ method `RetailProjectionSeen::insert` is reachable at visibility `pub(in crate::session)`
+    |
+note: but type `RetailProjectionError` is only usable at visibility `pub(in crate::session::pipeline)`
+   --> packages/engine/src/session/pipeline/retail_projection.rs:282:1
+    |
+282 | pub(super) enum RetailProjectionError {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `phase_timing::PhaseTimingBinding` is more private than the item `desk_main`
+    --> packages/engine/src/runtime/desk.rs:2179:1
+     |
+2179 | / pub fn desk_main(
+2180 | |     mut setup: DeskSetup,
+2181 | |     n_groups: usize,
+2182 | |     config: Arc<GameConfig>,
+...    |
+2188 | |     capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+2189 | | ) -> Result<(), RuntimeError> {
+     | |_____________________________^ function `desk_main` is reachable at visibility `pub`
+     |
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+    --> packages/engine/src/verification_evidence/phase_timing.rs:424:1
+     |
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `phase_timing::PhaseTimingBinding` is more private than the item `group_main`
+    --> packages/engine/src/runtime/group.rs:4073:1
+     |
+4073 | / pub fn group_main(
+4074 | |     state: GroupState,
+4075 | |     desk_txs: Vec<Sender<super::protocol::DeskMsg>>,
+4076 | |     rx: Receiver<GroupIn>,
+...    |
+4080 | |     capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+4081 | | ) -> Result<(), RuntimeError> {
+     | |_____________________________^ function `group_main` is reachable at visibility `pub`
+     |
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+    --> packages/engine/src/verification_evidence/phase_timing.rs:424:1
+     |
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `personal_state::PlanPersonalState` is more private than the item `OpenDerivationRecord::personal_in`
+   --> packages/engine/src/runtime/world.rs:121:5
+    |
+121 |     pub personal_in: crate::session::PlanPersonalState,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `OpenDerivationRecord::personal_in` is reachable at visibility `pub`
+    |
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/session/decision_chain/personal_state.rs:78:1
+    |
+ 78 | pub(crate) struct PlanPersonalState {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `personal_state::PlanPersonalState` is more private than the item `OpenDerivationRecord::personal_out`
+   --> packages/engine/src/runtime/world.rs:123:5
+    |
+123 |     pub personal_out: crate::session::PlanPersonalState,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `OpenDerivationRecord::personal_out` is reachable at visibility `pub`
+    |
+note: but type `personal_state::PlanPersonalState` is only usable at visibility `pub(crate)`
+   --> packages/engine/src/session/decision_chain/personal_state.rs:78:1
+    |
+ 78 | pub(crate) struct PlanPersonalState {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `phase_timing::PhaseTimingBinding` is more private than the item `World::set_tick_capture`
+    --> packages/engine/src/runtime/world.rs:1118:5
+     |
+1118 | /     pub fn set_tick_capture(
+1119 | |         &mut self,
+1120 | |         binding: crate::verification_evidence::PhaseTimingBinding,
+1121 | |     ) {
+     | |_____^ method `World::set_tick_capture` is reachable at visibility `pub`
+     |
+note: but type `phase_timing::PhaseTimingBinding` is only usable at visibility `pub(crate)`
+    --> packages/engine/src/verification_evidence/phase_timing.rs:424:1
+     |
+ 424 | pub(crate) struct PhaseTimingBinding(Option<std::sync::Arc<std::sync::Mutex<Collector>>>);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `resting_orders_for_owners` is never used
+   --> packages/engine/src/orderbook.rs:914:19
+    |
+384 | impl OrderBook {
+    | -------------- method in this implementation
+...
+914 |     pub(crate) fn resting_orders_for_owners(&self, owners: &BTreeSet<AccountId>) -> Vec<Order> {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `apply_auction_price` and `resting_orders_for_owners` are never used
+   --> packages/engine/src/market.rs:270:19
+    |
+ 79 | impl Market {
+    | ----------- methods in this implementation
+...
+270 |     pub(crate) fn apply_auction_price(&mut self, price: Money) {
+    |                   ^^^^^^^^^^^^^^^^^^^
+...
+513 |     pub(crate) fn resting_orders_for_owners(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `scope` is never used
+   --> packages/engine/src/compute.rs:640:19
+    |
+361 | impl ComputeContext {
+    | ------------------- method in this implementation
+...
+640 |     pub(crate) fn scope<'scope, R: Send>(
+    |                   ^^^^^
+
+warning: trait `ParallelRefMutIterator` is never used
+    --> packages/engine/src/compute.rs:1071:15
+     |
+1071 |     pub trait ParallelRefMutIterator<'a>: 'a
+     |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `display_limit` is never used
+   --> packages/engine/src/session.rs:994:8
+    |
+973 | impl SecurityCategory {
+    | --------------------- method in this implementation
+...
+994 |     fn display_limit(self) -> &'static str {
+    |        ^^^^^^^^^^^^^
+
+warning: variants `NpcDecisionTraces` and `Causal` are never constructed
+    --> packages/engine/src/session.rs:1525:5
+     |
+1505 | pub(in crate::session) enum FieldId {
+     |                             ------- variants in this enum
+...
+1525 |     NpcDecisionTraces,
+     |     ^^^^^^^^^^^^^^^^^
+1526 |     Causal,
+     |     ^^^^^^
+     |
+     = note: `FieldId` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: constant `COMMIT_FIELD_EXPECTED` is never used
+    --> packages/engine/src/session.rs:1552:30
+     |
+1552 | pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
+     |                              ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `replace_existing_shared_parallel` is never used
+  --> packages/engine/src/session/account_paged_map.rs:71:19
+   |
+70 | impl<Value: Clone> AccountPagedMap<Value> {
+   | ----------------------------------------- method in this implementation
+71 |     pub(super) fn replace_existing_shared_parallel(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `pop_due_npc_ids` is never used
+   --> packages/engine/src/session/attention.rs:326:19
+    |
+325 | impl GameSession {
+    | ---------------- method in this implementation
+326 |     pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
+    |                   ^^^^^^^^^^^^^^^
+
+warning: associated items `observe_retail_analysis`, `retail_candidate_signals`, `retail_candidate_signals_on`, `retail_cost_signal`, and `retail_cost_signal_on` are never used
+   --> packages/engine/src/session/decision_chain/retail_analysis.rs:131:8
+    |
+ 48 | impl GameSession {
+    | ---------------- associated items in this implementation
+...
+131 |     fn observe_retail_analysis(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+...
+424 |     fn retail_candidate_signals(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+450 |     fn retail_candidate_signals_on(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+548 |     fn retail_cost_signal(
+    |        ^^^^^^^^^^^^^^^^^^
+...
+571 |     fn retail_cost_signal_on(
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `into_session` is never used
+   --> packages/engine/src/session/pipeline/mod.rs:326:19
+    |
+270 | impl TickShadowPlan {
+    | ------------------- method in this implementation
+...
+326 |     pub(super) fn into_session(self) -> Result<GameSession, StepFatal> {
+    |                   ^^^^^^^^^^^^
+
+warning: method `into_fatal` is never used
+  --> packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:87:41
+   |
+85 | impl StockFinishFatal {
+   | --------------------- method in this implementation
+86 |     /// 归并为其承载的 fatal（分类判定已在上游完成）。
+87 |     pub(in crate::session::pipeline) fn into_fatal(self) -> StepFatal {
+   |                                         ^^^^^^^^^^
+
+warning: function `prepare_inputs_with_observer` is never used
+  --> packages/engine/src/session/pipeline/continuous_matching_adapter.rs:56:15
+   |
+56 | pub(super) fn prepare_inputs_with_observer(
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `urgency_policy` is never used
+   --> packages/engine/src/session/pipeline/decision_snapshot.rs:256:19
+    |
+164 | impl DecisionSnapshot {
+    | --------------------- method in this implementation
+...
+256 |     pub(super) fn urgency_policy(&self) -> &crate::plans::UrgencyPolicy {
+    |                   ^^^^^^^^^^^^^^
+
+warning: function `validate_market_view_inputs` is never used
+   --> packages/engine/src/session/pipeline/decision_snapshot_capture.rs:273:4
+    |
+273 | fn validate_market_view_inputs(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated functions `capture` and `capture_on` are never used
+   --> packages/engine/src/session/pipeline/decision_snapshot_capture.rs:395:8
+    |
+394 | impl CapturedExperienceObservation {
+    | ---------------------------------- associated functions in this implementation
+395 |     fn capture(
+    |        ^^^^^^^
+...
+409 |     fn capture_on(
+    |        ^^^^^^^^^^
+
+warning: method `strong_count` is never used
+  --> packages/engine/src/session/pipeline/executor_perturbation.rs:89:19
+   |
+72 | impl ExecutorBinding {
+   | -------------------- method in this implementation
+...
+89 |     pub(super) fn strong_count(&self) -> usize {
+   |                   ^^^^^^^^^^^^
+
+warning: method `values_mut` is never used
+   --> packages/engine/src/session/pipeline/ledger_paged_map.rs:127:19
+    |
+ 30 | impl<V> LedgerPagedMap<V> {
+    | ------------------------- method in this implementation
+...
+127 |     pub(super) fn values_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut V>
+    |                   ^^^^^^^^^^
+
+warning: function `stream_npc_decisions_inline` is never used
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:710:4
+    |
+710 | fn stream_npc_decisions_inline<E>(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `project_npc_account` is never used
+   --> packages/engine/src/session/pipeline/npc_state_projection.rs:393:27
+    |
+393 | pub(in crate::session) fn project_npc_account(
+    |                           ^^^^^^^^^^^^^^^^^^^
+
+warning: function `project_npc_account_on` is never used
+   --> packages/engine/src/session/pipeline/npc_state_projection.rs:403:27
+    |
+403 | pub(in crate::session) fn project_npc_account_on(
+    |                           ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `queue_npc_on_for_test` is never used
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:902:37
+    |
+902 | pub(in crate::session::pipeline) fn queue_npc_on_for_test(
+    |                                     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `apply_to_auction_order` is never used
+  --> packages/engine/src/session/pipeline/price_resolution.rs:79:15
+   |
+79 | pub(super) fn apply_to_auction_order(
+   |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `policy` is never read
+  --> packages/engine/src/session/pipeline/read_only_start.rs:14:16
+   |
+12 | pub(in crate::session) struct ReadOnlyStart {
+   |                               ------------- field in this struct
+13 |     /// 捕获的交易制度截点与输入共同移交，不能只凭外层 tick/revision 猜测 shard 模式。
+14 |     pub(super) policy: super::phase::PhasePolicy,
+   |                ^^^^^^
+
+warning: function `inline_prepare_calls` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:31:37
+   |
+31 | pub(in crate::session::pipeline) fn inline_prepare_calls() -> usize {
+   |                                     ^^^^^^^^^^^^^^^^^^^^
+
+warning: variants `QuantityRegression` and `NonPositiveGross` are never constructed
+   --> packages/engine/src/session/pipeline/retail_projection.rs:289:5
+    |
+282 | pub(super) enum RetailProjectionError {
+    |                 --------------------- variants in this enum
+...
+289 |     QuantityRegression { index: u64 },
+    |     ^^^^^^^^^^^^^^^^^^
+290 |     #[error("retail receipt {index} has non-positive gross")]
+291 |     NonPositiveGross { index: u64 },
+    |     ^^^^^^^^^^^^^^^^
+    |
+    = note: `RetailProjectionError` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `invariant` is never used
+   --> packages/engine/src/session/pipeline/stock_execution_transaction.rs:190:4
+    |
+190 | fn invariant(description: &str) -> StepFatal {
+    |    ^^^^^^^^^
+
+warning: field `order` is never read
+   --> packages/engine/src/session/pipeline/stock_stream.rs:887:9
+    |
+886 |     struct MockRound {
+    |            --------- field in this struct
+887 |         order: OrderId,
+    |         ^^^^^
+
+warning: struct `SaturatedPairShard` is never constructed
+    --> packages/engine/src/session/pipeline/stock_stream.rs:1110:12
+     |
+1110 |     struct SaturatedPairShard {
+     |            ^^^^^^^^^^^^^^^^^^
+
+warning: type alias `RootGate` is never used
+  --> packages/engine/src/session/pipeline/plan_quota_dead_zone_tests.rs:36:6
+   |
+36 | type RootGate = Arc<(Mutex<u8>, Condvar)>;
+   |      ^^^^^^^^
+
+warning: associated function `new` is never used
+  --> packages/engine/src/session/plan_continuation_domain.rs:61:31
+   |
+49 | impl<'a> PlanContinuationDomain<'a> {
+   | ----------------------------------- associated function in this implementation
+...
+61 |     pub(in crate::session) fn new(session: &'a mut GameSession) -> Self {
+   |                               ^^^
+
+warning: type alias `SerialDispatchGate` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:134:6
+    |
+134 | type SerialDispatchGate = Arc<(Mutex<u8>, Condvar, AtomicUsize)>;
+    |      ^^^^^^^^^^^^^^^^^^
+
+warning: function `install_serial_dispatch_gate` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:136:4
+    |
+136 | fn install_serial_dispatch_gate(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `dispatch_gate_calls` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:159:4
+    |
+159 | fn dispatch_gate_calls(gate: &SerialDispatchGate) -> usize {
+    |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `release_serial_dispatch_to` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:164:4
+    |
+164 | fn release_serial_dispatch_to(gate: &SerialDispatchGate, level: u8) {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `release_gate_to` is never used
+   --> packages/engine/src/session/plan_root_quota_wave_tests.rs:460:4
+    |
+460 | fn release_gate_to(gate: &Arc<(Mutex<u8>, Condvar)>, level: u8) {
+    |    ^^^^^^^^^^^^^^^
+
+warning: methods `note_accepted` and `top5_imbalance` are never used
+    --> packages/engine/src/runtime/desk.rs:917:8
+     |
+ 365 | impl DeskState {
+     | -------------- methods in this implementation
+...
+ 917 |     fn note_accepted(&mut self, order: &DeskOrder) {
+     |        ^^^^^^^^^^^^^
+...
+1923 |     fn top5_imbalance(&self) -> f64 {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `count_qty` is never used
+    --> packages/engine/src/runtime/desk.rs:2165:4
+     |
+2165 | fn count_qty(level: &VecDeque<DeskOrder>) -> u64 {
+     |    ^^^^^^^^^
+
+warning: method `adopt_session_resting_orders` is never used
+   --> packages/engine/src/runtime/drive.rs:394:8
+    |
+ 44 | impl RuntimeDriver {
+    | ------------------ method in this implementation
+...
+394 |     fn adopt_session_resting_orders(&mut self, session: &GameSession) -> Result<(), String> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `equity_cents` is never used
+    --> packages/engine/src/runtime/group.rs:3416:4
+     |
+3416 | fn equity_cents(
+     |    ^^^^^^^^^^^^
+
+warning: field `account` is never read
+    --> packages/engine/src/runtime/group.rs:3449:5
+     |
+3446 | struct GroupReviewHost<'a> {
+     |        --------------- field in this struct
+...
+3449 |     account: crate::AccountId,
+     |     ^^^^^^^
+
+warning: function `context_day` is never used
+    --> packages/engine/src/runtime/group.rs:3840:4
+     |
+3840 | fn context_day(tick: u64, ticks_per_day: u64) -> u64 {
+     |    ^^^^^^^^^^^
+
+warning: function `self_lot` is never used
+    --> packages/engine/src/runtime/group.rs:3845:4
+     |
+3845 | fn self_lot(config: &std::sync::Arc<crate::config::GameConfig>) -> u32 {
+     |    ^^^^^^^^
+
+warning: function `buy` is never used
+  --> packages/engine/src/runtime/plans_tests.rs:13:4
+   |
+13 | fn buy(local: u32, stock: u16, price: i64, qty: u32) -> PlaceSpec {
+   |    ^^^
+
+warning: unused `Result` that must be used
+    --> packages/engine/src/session/protocol/civil/session.rs:1000:9
+     |
+1000 | /         session.state.game.fixture_append_auction_orders(
+1001 | |             StockId(0),
+1002 | |             vec![
+1003 | |                 crate::AuctionOrderSnap {
+...    |
+1017 | |             ],
+1018 | |         );
+     | |_________^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+1000 |         let _ = session.state.game.fixture_append_auction_orders(
+     |         +++++++
+
+warning: calls to `std::mem::drop` with a reference instead of an owned value does nothing
+    --> packages/engine/src/runtime/drive.rs:1203:13
+     |
+1203 |             drop(engine_acct);
+     |             ^^^^^-----------^
+     |                  |
+     |                  argument has type `&mut account::Account`
+     |
+     = note: `#[warn(dropping_references)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+1203 -             drop(engine_acct);
+1203 +             let _ = engine_acct;
+     |
+
+warning: `engine` (lib test) generated 338 warnings (run `cargo fix --lib -p engine --tests` to apply 111 suggestions)
+     Running unittests src/lib.rs (target/debug/deps/engine-e2b004eecda01d2b)
+
+running 1 test
+test runtime::skeleton_tests::accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group ... FAILED
+
+failures:
+
+---- runtime::skeleton_tests::accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group stdout ----
+
+thread 'runtime::skeleton_tests::accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group' (362669) panicked at packages/engine/src/runtime/skeleton_tests.rs:496:10:
+组 0 的受理事实必须下行（批发不丢条目）
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::skeleton_tests::accepted_batch_keeps_continuation_timing_and_owner_targeting_in_multi_group
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1616 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p engine --lib`

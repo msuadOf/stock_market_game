@@ -1,0 +1,10 @@
+=== 修复 1（竞价单一价格）红证 ===
+# 修前：auction_fills_settle_at_single_clearing_price FAILED
+#   left: 900 right: 950（成交价=maker 价 900 ≠ 清算价 950）
+# 修后：绿（买方 904_499=95_000+500+1、卖方 1_094_451=95_000−549、last=950）
+
+=== 修复 2（玩家市价路由）红证 ===
+# 修前：player_market_intent_is_never_silently_dropped_by_step FAILED（无 IntentRejected——静默）
+#       player_market_and_symbolic_intents_route_into_runtime_world FAILED（无成交）
+# 修后：绿（竞价相位显式 AuctionLimitOrderRequired 回执；连续相位成交 100@1000
+#       taker=玩家、余量退款 100_501 实付、bids 空；Lowest 解析=笼子 980∧跌停 900 取严）

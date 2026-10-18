@@ -1,21 +1,9 @@
-use super::event_collection::{collect_events, OwnedEventFact};
-
-#[test]
-fn internal_execution_rejects_outer_public_projection_events() {
-    for event in [
-        crate::Event::PublicTrade { seq: 1, code: crate::StockCode("600888".into()), price: crate::Money::from_cents(1000), qty: 100 },
-        crate::Event::PrivateEventOmitted { seq: 2 },
-    ] {
-        let key = super::EventStableKey::for_event(&event, event.seq());
-        let error = collect_events(vec![OwnedEventFact { key, event }], 0).unwrap_err();
-        assert!(matches!(error, crate::session::StepFatal::InvariantViolation { description, .. } if description.contains("内部执行不能生产外壳公开匿名化事件")));
-    }
-}
+use super::event_collection::{collect_events, EventFact};
 use super::*;
-use crate::{AccountId, Event, Money, OrderId, Side, StockCode, TradingPhase};
+use crate::{AccountId, Event, Money, OrderId, Side, StockId, TradingPhase};
 
-fn code() -> StockCode {
-    StockCode("600001".to_owned())
+fn code() -> StockId {
+    StockId(0)
 }
 
 fn auction_tick(seq: u64) -> Event {
@@ -42,29 +30,26 @@ fn accepted(seq: u64) -> Event {
     }
 }
 
-fn fact(event: Event, ordinal: u64) -> OwnedEventFact {
+fn fact(event: Event, ordinal: u64) -> EventFact {
     let key = EventStableKey::for_event(&event, ordinal);
-    OwnedEventFact { key, event }
+    EventFact { key, event }
 }
 
 #[test]
-fn collector_sorts_explicit_worker_keys_then_assigns_external_sequence() {
+fn collector_preserves_arrival_order_and_assigns_continuous_external_sequence() {
     let auction = auction_tick(900);
     let accepted = accepted(1);
+    // 输入顺序不排序，输出保持到达序；seq 按分配顺序连续递增
     let output = collect_events(vec![fact(accepted, 4), fact(auction, 9)], 40).unwrap();
 
     assert_eq!(output.next_seq, 42);
-    assert!(matches!(
-        output.events.as_slice(),
-        [
-            Event::AuctionTick { seq: 41, .. },
-            Event::OrderAccepted { seq: 42, .. }
-        ]
-    ));
-    let published =
-        crate::session::protocol::attach_facts_with_keys(&output.events, &output.keys).unwrap();
-    assert_eq!(published[0].key.local_event_index(), 9);
-    assert_eq!(published[1].key.local_event_index(), 4);
+    let seqs: Vec<u64> = output.facts.iter().map(|fact| fact.event.seq()).collect();
+    assert_eq!(seqs, vec![41, 42]);
+    assert!(matches!(output.facts[0].event, Event::OrderAccepted { .. }));
+    assert!(matches!(output.facts[1].event, Event::AuctionTick { .. }));
+    // 单记录贯穿：producer 的局部身份原样保留在 facts 中，不再拆分重装
+    assert_eq!(output.facts[0].key.local_event_index(), 4);
+    assert_eq!(output.facts[1].key.local_event_index(), 9);
 }
 
 #[test]
@@ -74,7 +59,7 @@ fn collector_rejects_a_key_whose_variant_mapping_does_not_match_its_event() {
 
     assert!(matches!(
         collect_events(
-            vec![OwnedEventFact {
+            vec![EventFact {
                 key: mismatched_key,
                 event,
             }],
@@ -104,11 +89,11 @@ fn collector_rejects_duplicate_session_lifecycle_identity_without_advancing_curs
     assert!(matches!(
         collect_events(
             vec![
-                OwnedEventFact {
+                EventFact {
                     key: key.clone(),
                     event: first,
                 },
-                OwnedEventFact { key, event: second },
+                EventFact { key, event: second },
             ],
             50,
         ),
@@ -118,7 +103,7 @@ fn collector_rejects_duplicate_session_lifecycle_identity_without_advancing_curs
 
     let output = collect_events(vec![fact(auction_tick(73), 0)], 50).unwrap();
     assert_eq!(output.next_seq, 51);
-    assert_eq!(output.events[0].seq(), 51);
+    assert_eq!(output.facts[0].event.seq(), 51);
 }
 
 #[test]

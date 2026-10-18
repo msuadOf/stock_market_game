@@ -3,19 +3,23 @@
 //! Adjacent account pages share a directory group across tick candidates.
 //! Changing an account detaches its group and page, leaving unrelated groups shared.
 
+use crate::compute::parallel::*;
 use crate::strategy::StrategyStateError;
 use crate::{Account, AccountId};
-use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::ops::Index;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-const PAGE_SHIFT: u32 = 5;
+const PAGE_SHIFT: u32 = super::pipeline::RESERVATION_PAGE_SHIFT;
 const GROUP_SHIFT: u32 = 4;
+#[cfg(test)]
+thread_local! {
+    static STRATEGY_PRESENCE_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 type PageGroup = BTreeMap<u64, Arc<AccountPage>>;
 
 #[derive(Clone, Default)]
-pub(super) struct AccountBook {
+pub(crate) struct AccountBook {
     groups: BTreeMap<u64, Arc<PageGroup>>,
     len: usize,
 }
@@ -24,6 +28,13 @@ pub(super) struct AccountBook {
 struct AccountPage {
     accounts: BTreeMap<AccountId, Account>,
     validated: OnceLock<Result<(), StrategyStateError>>,
+    missing_npc_strategy: OnceLock<bool>,
+    resource_validation: Mutex<Option<ResourceValidationCache>>,
+}
+
+struct ResourceValidationCache {
+    prices: Arc<BTreeMap<crate::StockId, crate::Money>>,
+    reservations: Option<Arc<super::pipeline::ReservationPage>>,
 }
 
 impl Clone for AccountPage {
@@ -31,6 +42,8 @@ impl Clone for AccountPage {
         Self {
             accounts: self.accounts.clone(),
             validated: OnceLock::new(),
+            missing_npc_strategy: OnceLock::new(),
+            resource_validation: Mutex::new(None),
         }
     }
 }
@@ -51,21 +64,85 @@ impl AccountPage {
 
     fn invalidate(&mut self) {
         self.validated = OnceLock::new();
+        self.missing_npc_strategy = OnceLock::new();
+        self.resource_validation = Mutex::new(None);
     }
 }
 
 impl AccountBook {
-    /// Install the committed account directory and release detached old pages
-    /// across the worker pool. Each group owns disjoint account pages.
-    pub(super) fn replace_and_drop_parallel(&mut self, replacement: Self) {
-        let old = std::mem::replace(self, replacement);
-        old.groups
-            .into_values()
-            .collect::<Vec<_>>()
-            .into_par_iter()
-            .for_each(drop);
+    pub(super) fn has_missing_npc_strategy(&self) -> bool {
+        self.groups
+            .values()
+            .flat_map(|group| group.values())
+            .any(|page| {
+                *page.missing_npc_strategy.get_or_init(|| {
+                    page.accounts.values().any(|account| {
+                        #[cfg(test)]
+                        STRATEGY_PRESENCE_SCANS.with(|count| count.set(count.get() + 1));
+                        account.kind() != crate::AccountKind::Player && account.strategy().is_none()
+                    })
+                })
+            })
+    }
+    /// 在相同账户页、价格及预留事实下校验资源。
+    /// 方向B·宽度封顶：页级校验经 scatter-gather（min(页数, active_width)
+    /// 个粗 chunk、协调线程阻塞归并）——`compute` 为会话计算上下文。
+    pub(super) fn validate_resources(
+        &self,
+        compute: &std::sync::Arc<crate::compute::ComputeContext>,
+        prices: &BTreeMap<crate::StockId, crate::Money>,
+        reservations: &super::pipeline::LiveReservations,
+        validate: impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync,
+    ) -> Result<(), super::StepFatal> {
+        let prices = Arc::new(prices.clone());
+        let pages: Vec<_> = self.groups.values().flat_map(|group| group.iter()).collect();
+        // 方向A·任务粗化（宽度税治理）：页级资源校验原先按单页分裂（s5 实测
+        // 每_tick ~627 单页任务，多为缓存命中微任务）。方向B 改走
+        // scatter-gather：min(页数, active_width) 个粗 chunk、阻塞归并零
+        // 自旋；首错按页序（比 par try_for_each 的完成序更确定）。
+        // 页数不超过参与宽度时 gather 原语自身退化为串行。
+        compute.parallel_map_chunks(pages.len(), |index| {
+            let (page_id, page) = pages[index];
+            Self::validate_resources_page(&prices, reservations, &validate, *page_id, page)
+        })?;
+        Ok(())
     }
 
+    /// 单页资源校验（方向A 抽取：串行/并行同体，错误合同单点承载；
+    /// 行为与原内联闭包逐字一致——缓存命中短路、逐账户 validate、缓存回填）。
+    fn validate_resources_page(
+        prices: &Arc<BTreeMap<crate::StockId, crate::Money>>,
+        reservations: &super::pipeline::LiveReservations,
+        validate: &(impl Fn(AccountId, &Account) -> Result<(), super::StepFatal> + Sync),
+        page_id: u64,
+        page: &AccountPage,
+    ) -> Result<(), super::StepFatal> {
+        let projection = reservations.page(page_id);
+        let mut cache = page.resource_validation.lock().map_err(|error| {
+            super::StepFatal::InvariantViolation {
+                description: format!("账户资源校验缓存锁失败：{error}"),
+                location: "AccountBook::validate_resources".to_owned(),
+            }
+        })?;
+        if cache.as_ref().is_some_and(|cached| {
+            cached.prices.as_ref() == prices.as_ref()
+                && match (&cached.reservations, projection) {
+                    (None, None) => true,
+                    (Some(old), Some(current)) => Arc::ptr_eq(old, current) || old == current,
+                    _ => false,
+                }
+        }) {
+            return Ok(());
+        }
+        for (id, account) in &page.accounts {
+            validate(*id, account)?;
+        }
+        *cache = Some(ResourceValidationCache {
+            prices: prices.clone(),
+            reservations: projection.cloned(),
+        });
+        Ok(())
+    }
     pub(super) fn clone_for_shadow(&self) -> Result<Self, StrategyStateError> {
         for group in self.groups.values() {
             for page in group.values() {
@@ -88,15 +165,6 @@ impl AccountBook {
         self.groups
             .values()
             .flat_map(|group| group.values().flat_map(|page| page.accounts.iter()))
-    }
-
-    pub(super) fn par_iter(&self) -> impl ParallelIterator<Item = (&AccountId, &Account)> {
-        self.groups
-            .values()
-            .flat_map(|group| group.values())
-            .collect::<Vec<_>>()
-            .into_par_iter()
-            .flat_map_iter(|page| page.accounts.iter())
     }
 
     pub(super) fn keys(&self) -> impl DoubleEndedIterator<Item = &AccountId> {
@@ -136,7 +204,6 @@ impl AccountBook {
         self.get(id).is_some()
     }
 
-    #[cfg(test)]
     pub(super) fn unlock_t1_positions(&mut self) {
         let locked_accounts = self
             .iter()
@@ -155,16 +222,7 @@ impl AccountBook {
         }
     }
 
-    pub(super) fn unlock_t1_for_stocks(&mut self, open: &std::collections::BTreeSet<crate::StockCode>) {
-        let locked = self.iter().filter_map(|(id, account)| {
-            account.positions().iter().any(|(code, position)| open.contains(code) && position.t1_locked() > 0).then_some(*id)
-        }).collect::<Vec<_>>();
-        for account in locked {
-            self.get_mut(&account).expect("已从当前账户簿取得锁定账户").unlock_t1_for_stocks(open);
-        }
-    }
-
-    pub(super) fn insert(&mut self, id: AccountId, account: Account) -> Option<Account> {
+    pub(crate) fn insert(&mut self, id: AccountId, account: Account) -> Option<Account> {
         let group = Arc::make_mut(self.groups.entry(group_id(id)).or_default());
         let page = group.entry(page_id(id)).or_default();
         let page = Arc::make_mut(page);
@@ -230,9 +288,182 @@ fn group_id(id: AccountId) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// 方向B·测试上下文（2 worker，进程内共享单例——避免逐用例建池放大
+    /// 并行测试的线程/调度噪声；页数≤active_width 时 gather 退化为串行，
+    /// 与原串行测试语义一致）。
+    fn test_compute() -> std::sync::Arc<crate::compute::ComputeContext> {
+        static SHARED: std::sync::OnceLock<std::sync::Arc<crate::compute::ComputeContext>> =
+            std::sync::OnceLock::new();
+        SHARED
+            .get_or_init(|| crate::compute::ComputeContext::with_workers(2).unwrap())
+            .clone()
+    }
     use super::*;
     use crate::strategy::{MomentumStrategy, StrategyState};
-    use crate::{AccountKind, Money, StockCode};
+    use crate::{AccountKind, Money, StockId};
+
+    #[test]
+    fn strategy_presence_reuses_unchanged_pages_and_rechecks_mutation() {
+        let mut accounts = AccountBook::default();
+        for id in [0, 32] {
+            accounts.insert(
+                AccountId(id),
+                Account::new(AccountId(id), AccountKind::Player, Money::ZERO),
+            );
+        }
+        STRATEGY_PRESENCE_SCANS.with(|count| count.set(0));
+        assert!(!accounts.has_missing_npc_strategy());
+        let mut candidate = accounts.clone_for_shadow().unwrap();
+        assert!(!candidate.has_missing_npc_strategy());
+        assert_eq!(
+            STRATEGY_PRESENCE_SCANS.with(|count| count.get()),
+            2,
+            "共享页不应重复全账户检查"
+        );
+        candidate
+            .get_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_kind(AccountKind::Retail);
+        assert!(candidate.has_missing_npc_strategy());
+        assert_eq!(STRATEGY_PRESENCE_SCANS.with(|count| count.get()), 3);
+        assert!(!accounts.has_missing_npc_strategy());
+        candidate
+            .get_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_kind(AccountKind::Player);
+        assert!(!candidate.has_missing_npc_strategy());
+        assert_eq!(
+            STRATEGY_PRESENCE_SCANS.with(|count| count.get()),
+            4,
+            "恢复策略合法性后只重验变化页"
+        );
+    }
+
+    #[test]
+    fn resource_validation_reuses_immutable_pages_and_invalidates_every_input() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut accounts = AccountBook::default();
+        for id in [0, 32] {
+            accounts.insert(
+                AccountId(id),
+                Account::new(AccountId(id), AccountKind::Player, Money::from_cents(100)),
+            );
+        }
+        let calls = AtomicUsize::new(0);
+        let validate = |_: AccountId, _: &Account| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        };
+        let mut prices = BTreeMap::from([(StockId(0), Money::from_cents(100))]);
+        let mut cash = BTreeMap::new();
+        let mut sell = BTreeMap::new();
+        accounts
+            .validate_resources(&test_compute(),
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
+            .unwrap();
+        let mut shadow = accounts.clone_for_shadow().unwrap();
+        shadow
+            .validate_resources(&test_compute(),
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 2, "未变化的页不应重复计算");
+        shadow
+            .get_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_cash(Money::from_cents(90));
+        shadow
+            .validate_resources(&test_compute(),
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 3, "只重验发生 mutation 的页");
+        prices.insert(StockId(0), Money::from_cents(101));
+        shadow
+            .validate_resources(&test_compute(),
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 5, "价格变化必须重验全部页");
+        cash.insert(AccountId(32), Money::from_cents(5));
+        shadow
+            .validate_resources(&test_compute(),
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 6, "现金预留只使受影响页失效");
+        sell.insert(AccountId(0), BTreeMap::from([(StockId(0), 100)]));
+        shadow
+            .validate_resources(&test_compute(),
+                &prices,
+                &super::super::pipeline::LiveReservations::fixture(&cash, &sell),
+                &validate,
+            )
+            .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 7, "股份预留只使受影响页失效");
+        accounts
+            .validate_resources(&test_compute(),
+                &BTreeMap::from([(StockId(0), Money::from_cents(100))]),
+                &super::super::pipeline::LiveReservations::fixture(
+                    &BTreeMap::new(),
+                    &BTreeMap::new(),
+                ),
+                &validate,
+            )
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            8,
+            "shadow 的预留缓存不得错误适用于旧 authority"
+        );
+    }
+
+    #[test]
+    fn failed_resource_validation_is_not_cached_as_success() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut accounts = AccountBook::default();
+        accounts.insert(
+            AccountId(0),
+            Account::new(AccountId(0), AccountKind::Player, Money::ZERO),
+        );
+        let prices = BTreeMap::from([(StockId(0), Money::from_cents(100))]);
+        let reservations =
+            super::super::pipeline::LiveReservations::fixture(&BTreeMap::new(), &BTreeMap::new());
+        let calls = AtomicUsize::new(0);
+        let error = super::super::StepFatal::InvariantViolation {
+            description: "资源校验必须重复报告同一个错误".to_owned(),
+            location: "test::resource_validation".to_owned(),
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                accounts.validate_resources(&test_compute(),&prices, &reservations, |_, _| {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    Err(error.clone())
+                }),
+                Err(error.clone())
+            );
+        }
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert!(accounts
+            .page_arc(0)
+            .unwrap()
+            .resource_validation
+            .lock()
+            .unwrap()
+            .is_none());
+    }
 
     #[test]
     fn shadow_detaches_only_a_changed_group_and_account_page() {
@@ -313,7 +544,7 @@ mod tests {
 
     #[test]
     fn day_end_unlock_detaches_only_pages_with_locked_shares() {
-        let code = StockCode("600001".to_owned());
+        let code = StockId(0);
         let mut authority = AccountBook::default();
         for id in [1, 32] {
             let mut account = Account::new(AccountId(id), AccountKind::Player, Money::ZERO);

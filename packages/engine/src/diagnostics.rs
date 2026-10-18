@@ -31,13 +31,11 @@ use crate::{
     session::RetailOrderDiagnosticEvent,
     strategy::{HotStyle, InstitutionStyle, RetailStyle, StrategyProfile},
     AccountId, DailyCandle, Event, GameSession, Money, RejectionReason, SessionError, SessionSetup,
-    StockCode, TradingPhase,
+    StockId, TradingPhase,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum BaselineError {
-    #[error("seed {seed} 的内部诊断不能消费外壳公开匿名化事件")]
-    PublicProjectionInInternalDiagnostics { seed: u64 },
     #[error("量价基线至少需要一个 seed")]
     EmptySeeds,
     #[error("量价基线的交易日数必须大于 0")]
@@ -60,20 +58,20 @@ pub enum BaselineError {
     #[error("seed {seed} 的股票 {code:?} 仅归档 {actual} 个交易日，期望 {expected} 个")]
     MissingDailyCandles {
         seed: u64,
-        code: StockCode,
+        code: StockId,
         expected: u32,
         actual: usize,
     },
     #[error("seed {seed} 的股票 {code:?} 成交量统计溢出")]
-    VolumeOverflow { seed: u64, code: StockCode },
+    VolumeOverflow { seed: u64, code: StockId },
     #[error("seed {seed} 的股票 {code:?} 成交额统计溢出")]
-    TurnoverOverflow { seed: u64, code: StockCode },
+    TurnoverOverflow { seed: u64, code: StockId },
     #[error(
         "seed {seed} 的股票 {code:?} Trade 成交量 {event_volume} 与日 K 成交量 {daily_volume} 不一致"
     )]
     VolumeMismatch {
         seed: u64,
-        code: StockCode,
+        code: StockId,
         event_volume: u64,
         daily_volume: u64,
     },
@@ -82,18 +80,14 @@ pub enum BaselineError {
     )]
     TurnoverMismatch {
         seed: u64,
-        code: StockCode,
-        event_turnover_cents: u128,
-        daily_turnover_cents: u128,
+        code: StockId,
+        event_turnover_cents: u64,
+        daily_turnover_cents: u64,
     },
     #[error("seed {seed} 的股票 {code:?} 第 {day} 日缺少权威成交统计")]
-    MissingDailyTradeStats {
-        seed: u64,
-        code: StockCode,
-        day: u32,
-    },
+    MissingDailyTradeStats { seed: u64, code: StockId, day: u32 },
     #[error("seed {seed} 的股票 {code:?} 在盘前静默阶段出现了成交")]
-    TradeDuringPreOpen { seed: u64, code: StockCode },
+    TradeDuringPreOpen { seed: u64, code: StockId },
     #[error("seed {seed} 的诊断计数器 {counter} 溢出")]
     CounterOverflow { seed: u64, counter: &'static str },
     #[error("seed {seed} 的成交引用未知账户 {account:?}")]
@@ -129,7 +123,7 @@ pub struct PriceVolumeBaselineReport {
     pub ticks_per_day: u64,
     pub runs: Vec<PriceVolumeRunReport>,
     /// 跨 seed 的确定性汇总；不合并或隐藏逐 seed 原始报告。
-    pub stocks: BTreeMap<StockCode, StockEnsembleReport>,
+    pub stocks: BTreeMap<StockId, StockEnsembleReport>,
     /// 每只股票保留最差流动性、最大绝对终值偏移和最大回撤对应的 seed。
     pub extreme_cases: Vec<ExtremeSeedCase>,
 }
@@ -175,7 +169,7 @@ pub struct StockEnsembleReport {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct ExtremeSeedCase {
-    pub code: StockCode,
+    pub code: StockId,
     pub metric: &'static str,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub seed: u64,
@@ -202,7 +196,7 @@ pub struct PriceVolumeRunReport {
     /// 成交的双边参与量按玩家或 NPC 公开策略档案归因；每笔成交会同时计入 maker 和 taker，
     /// 不可将该量与单边成交量或市场成交量直接比较。
     pub participant_execution: ParticipantExecutionRunReport,
-    pub stocks: BTreeMap<StockCode, StockPriceVolumeReport>,
+    pub stocks: BTreeMap<StockId, StockPriceVolumeReport>,
 }
 
 #[cfg(feature = "simulation-diagnostics")]
@@ -234,14 +228,14 @@ pub struct CombinedRunSource {
     pub trade_receipt_count: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub trade_receipt_shares: u64,
-    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
-    pub trade_receipt_turnover_cents: u128,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub trade_receipt_turnover_cents: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub causal_execution_count: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub causal_execution_shares: u64,
-    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
-    pub causal_execution_turnover_cents: u128,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub causal_execution_turnover_cents: u64,
 }
 
 /// 单个 seed 的成交参与归因。仅使用权威 `Trade` 事件和公开策略档案，不读取 NPC 私有资产。
@@ -324,10 +318,10 @@ pub struct StockPriceVolumeReport {
     pub trade_event_volume: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub total_daily_volume: u64,
-    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
-    pub trade_event_turnover_cents: u128,
-    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
-    pub total_daily_turnover_cents: u128,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub trade_event_turnover_cents: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub total_daily_turnover_cents: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub auction_volume: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
@@ -390,11 +384,11 @@ struct StockSummaryInput {
     initial_price: Money,
     candles: Vec<DailyCandle>,
     trade_event_volume: u64,
-    trade_event_turnover_cents: u128,
+    trade_event_turnover_cents: u64,
     float_shares: u32,
     market_diagnostics: MarketDiagnosticsAccumulator,
     seed: u64,
-    code: StockCode,
+    code: StockId,
 }
 
 /// 用相同 setup 依次运行多个 seed，并统计权威成交事件和每日收盘 K 线。
@@ -453,7 +447,7 @@ pub fn run_combined_diagnostics(
         let (price_volume, session) =
             run_one_seed(setup, seed, trading_days, total_ticks, run_id.clone())?;
         let mut receipt_shares = 0_u64;
-        let mut receipt_turnover = 0_u128;
+        let mut receipt_turnover = 0_u64;
         for stock in price_volume.stocks.values() {
             receipt_shares = receipt_shares.checked_add(stock.trade_event_volume).ok_or(
                 BaselineError::CounterOverflow {
@@ -471,7 +465,7 @@ pub fn run_combined_diagnostics(
         let receipt_count = price_volume.trade_events;
         let mut execution_count = 0_u64;
         let mut execution_shares = 0_u64;
-        let mut execution_turnover = 0_u128;
+        let mut execution_turnover = 0_u64;
         for fact in session.causal_facts() {
             if let causal::CausalFactKind::Execution {
                 qty, price_cents, ..
@@ -490,9 +484,9 @@ pub fn run_combined_diagnostics(
                         counter: "combined causal execution shares",
                     },
                 )?;
-                let gross = u128::try_from(*price_cents)
+                let gross = u64::try_from(*price_cents)
                     .ok()
-                    .and_then(|price| price.checked_mul(u128::from(*qty)))
+                    .and_then(|price| price.checked_mul(u64::from(*qty)))
                     .ok_or(BaselineError::CounterOverflow {
                         seed,
                         counter: "combined causal execution turnover",
@@ -583,15 +577,17 @@ fn diagnostic_run_id(index: usize, seed: u64) -> String {
 struct StockRunDiagnostics {
     candles: Vec<DailyCandle>,
     trade_event_volume: u64,
-    trade_event_turnover: u128,
+    trade_event_turnover: u64,
     market: MarketDiagnosticsAccumulator,
 }
 
 struct SeedDiagnostics {
+    /// 股票目录：边界代码 ↔ 数值 id 翻译（诊断汇总用）。
+    catalog: crate::stock::StockCatalog,
     run_id: String,
     seed: u64,
     trading_days: u32,
-    stocks: BTreeMap<StockCode, StockRunDiagnostics>,
+    stocks: BTreeMap<StockId, StockRunDiagnostics>,
     trade_events: u64,
     rejection_events: u64,
     engine_error_events: u64,
@@ -609,12 +605,13 @@ impl SeedDiagnostics {
         run_id: String,
         session: &GameSession,
     ) -> Self {
+        let catalog = session.stock_catalog().clone();
         let stocks = setup
             .stocks
             .iter()
             .map(|stock| {
                 (
-                    stock.code.clone(),
+                    catalog.id(&stock.code.0).expect("配置股票必须已入目录"),
                     StockRunDiagnostics {
                         candles: Vec::with_capacity(trading_days as usize),
                         trade_event_volume: 0,
@@ -631,6 +628,7 @@ impl SeedDiagnostics {
             .collect();
         participant_profiles.insert(AccountId(0), "player");
         Self {
+            catalog,
             run_id,
             seed,
             trading_days,
@@ -703,9 +701,6 @@ impl SeedDiagnostics {
         let mut traded_codes = BTreeSet::new();
         for event in events {
             match event {
-                Event::PublicTrade { .. } | Event::PrivateEventOmitted { .. } => {
-                    return Err(BaselineError::PublicProjectionInInternalDiagnostics { seed });
-                }
                 Event::Trade {
                     code,
                     price,
@@ -743,9 +738,9 @@ impl SeedDiagnostics {
                             seed,
                             code: code.clone(),
                         })?;
-                    let turnover = u128::try_from(price.cents())
+                    let turnover = u64::try_from(price.cents())
                         .ok()
-                        .and_then(|price_cents| price_cents.checked_mul(u128::from(qty)))
+                        .and_then(|price_cents| price_cents.checked_mul(u64::from(qty)))
                         .and_then(|fill_turnover| {
                             stock.trade_event_turnover.checked_add(fill_turnover)
                         })
@@ -950,18 +945,28 @@ impl SeedDiagnostics {
                 market: diagnostics,
             } = self
                 .stocks
-                .remove(&stock.code)
+                .remove(
+                    &self
+                        .catalog
+                        .id(&stock.code.0)
+                        .expect("配置股票必须已入目录"),
+                )
                 .expect("setup stocks initialized the diagnostics candle map");
             if candles.len() != trading_days as usize {
                 return Err(BaselineError::MissingDailyCandles {
                     seed,
-                    code: stock.code.clone(),
+                    code: self
+                        .catalog
+                        .id(&stock.code.0)
+                        .expect("配置股票必须已入目录"),
                     expected: trading_days,
                     actual: candles.len(),
                 });
             }
             stocks.insert(
-                stock.code.clone(),
+                self.catalog
+                    .id(&stock.code.0)
+                    .expect("配置股票必须已入目录"),
                 summarize_stock(StockSummaryInput {
                     initial_price: stock.initial_price,
                     candles,
@@ -970,7 +975,10 @@ impl SeedDiagnostics {
                     float_shares: stock.float_shares,
                     market_diagnostics: diagnostics,
                     seed,
-                    code: stock.code.clone(),
+                    code: self
+                        .catalog
+                        .id(&stock.code.0)
+                        .expect("配置股票必须已入目录"),
                 })?,
             );
         }
@@ -1383,7 +1391,6 @@ fn rejection_reason_name(reason: &RejectionReason) -> &'static str {
         RejectionReason::LimitExceeded => "limit_exceeded",
         RejectionReason::PriceCageExceeded => "price_cage_exceeded",
         RejectionReason::UnknownStock => "unknown_stock",
-        RejectionReason::ExchangeClosed => "exchange_closed",
         RejectionReason::AuctionLimitOrderRequired => "auction_limit_order_required",
         RejectionReason::AuctionOrderNotCancelable => "auction_order_not_cancelable",
         RejectionReason::AuctionOrderEntryClosed => "auction_order_entry_closed",
@@ -1411,7 +1418,7 @@ fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, B
     let mut max_zero_volume_streak = 0_u32;
     let mut current_zero_volume_streak = 0_u32;
     let mut total_daily_volume = 0_u64;
-    let mut total_daily_turnover_cents = 0_u128;
+    let mut total_daily_turnover_cents = 0_u64;
     for (day_index, candle) in candles.iter().enumerate() {
         total_daily_volume = total_daily_volume
             .checked_add(candle.volume)
@@ -1563,16 +1570,24 @@ fn summarize_ensemble(
     setup: &SessionSetup,
     runs: &[PriceVolumeRunReport],
     seed_count: u32,
-) -> (
-    BTreeMap<StockCode, StockEnsembleReport>,
-    Vec<ExtremeSeedCase>,
-) {
+) -> (BTreeMap<StockId, StockEnsembleReport>, Vec<ExtremeSeedCase>) {
+    let catalog = setup
+        .stock_catalog()
+        .map_err(|_| BaselineError::MissingDailyCandles {
+            seed: 0,
+            code: StockId(u32::MAX),
+            expected: 0,
+            actual: 0,
+        })
+        .ok()
+        .expect("汇总前 setup 已验证，目录必须可构造");
     let mut stocks = BTreeMap::new();
     let mut extreme_cases = Vec::with_capacity(setup.stocks.len() * 3);
     for stock in &setup.stocks {
+        let id = catalog.id(&stock.code.0).expect("配置股票必须已入目录");
         let samples: Vec<_> = runs
             .iter()
-            .map(|run| (run.seed, &run.stocks[&stock.code]))
+            .map(|run| (run.seed, &run.stocks[&id]))
             .collect();
         let collect = |metric: fn(&StockPriceVolumeReport) -> f64| {
             samples
@@ -1593,7 +1608,7 @@ fn summarize_ensemble(
             )
         };
         stocks.insert(
-            stock.code.clone(),
+            id,
             StockEnsembleReport {
                 seed_count,
                 mean_daily_volume: distribution(&collect(|report| report.mean_daily_volume)),
@@ -1667,7 +1682,7 @@ fn summarize_ensemble(
                 .max_by(|left, right| value_of(left.1).total_cmp(&value_of(right.1)))
                 .expect("empty seeds were rejected before ensemble summarization");
             extreme_cases.push(ExtremeSeedCase {
-                code: stock.code.clone(),
+                code: id,
                 metric,
                 seed,
                 value: value_of(report),
@@ -1870,7 +1885,7 @@ mod tests {
         distribution, lag_one_correlation, summarize_stock, BaselineError,
         MarketDiagnosticsAccumulator, ParticipantExecutionAccumulator, StockSummaryInput,
     };
-    use crate::{DailyCandle, DailyTradeStats, Money, StockCode};
+    use crate::{DailyCandle, DailyTradeStats, Money, StockId};
 
     fn candle(open: i64, close: i64, volume: u64) -> DailyCandle {
         DailyCandle {
@@ -1881,7 +1896,7 @@ mod tests {
             close: Money::from_cents(close),
             volume,
             trade_stats: Some(DailyTradeStats {
-                turnover_cents: u128::try_from(open).unwrap() * u128::from(volume),
+                turnover_cents: u64::try_from(open).unwrap() * volume,
                 trade_count: u64::from(volume > 0),
             }),
         }
@@ -1890,7 +1905,7 @@ mod tests {
     fn retail_event(order: u64, qty: u32, kind: &str) -> super::RetailOrderDiagnosticEvent {
         use crate::{AccountId, OrderId, Side};
         let account = AccountId(1);
-        let code = StockCode("600101".to_owned());
+        let code = StockId(0);
         let order_id = OrderId(order);
         match kind {
             "submitted" => super::RetailOrderDiagnosticEvent::Submitted {
@@ -1972,10 +1987,11 @@ mod tests {
     fn seed_projection_fixture() -> (super::SeedDiagnostics, crate::SessionSetup) {
         use crate::{
             FloatAllocation, GameConfig, HotParams, InstParams, NpcSetup, RetailParams,
-            SecurityCategory, StockExchange, StockSpec, StrategyParams,
+            SecurityCategory, StockCode, StockExchange, StockSpec, StrategyParams,
         };
         let setup = crate::SessionSetup {
-            company_system: simple_company_fixture!(crate; ["600101"]),
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
                 code: StockCode("600101".to_owned()),
                 exchange: StockExchange::Shanghai,
@@ -2014,16 +2030,9 @@ mod tests {
             closing_auction_ticks: 0,
             history_len: 2,
             t1_enabled: true,
-            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: crate::CivilDate::from_ymd(2030, 1, 1).unwrap(),
             simulation_policy_id: crate::SIMULATION_POLICY_ID.to_owned(),
-            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-            flat_withholding_bp: Some(1000),
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
-            par_value_per_share: crate::Money::from_cents(100),
-            auto_corporate_foundation: false,
         };
         let session = crate::GameSession::new(setup.clone(), 7).unwrap();
         (
@@ -2035,7 +2044,7 @@ mod tests {
     #[test]
     fn seed_projection_keeps_empty_book_and_day_boundary_no_trade_statistics() {
         let (mut projection, setup) = seed_projection_fixture();
-        let code = setup.stocks[0].code.clone();
+        let code = StockId(0);
         let quote = |bids, asks| crate::Event::PriceTick {
             seq: 0,
             tick: 1,
@@ -2107,7 +2116,7 @@ mod tests {
     #[test]
     fn seed_projection_preserves_partial_trade_counters_before_preopen_error() {
         let (mut projection, setup) = seed_projection_fixture();
-        let code = setup.stocks[0].code.clone();
+        let code = StockId(0);
         let event = crate::Event::Trade {
             seq: 0,
             code: code.clone(),
@@ -2141,21 +2150,9 @@ mod tests {
     }
 
     #[test]
-    fn seed_projection_preserves_aggregate_turnover_above_u64() {
-        let (mut projection, setup) = seed_projection_fixture();
-        let code = setup.stocks[0].code.clone();
-        let events = (0..4).map(|seq| crate::Event::Trade { seq, code: code.clone(), price: Money::from_cents(5_000_000_000_000_000_000), qty: 1, maker: crate::AccountId(0), taker: crate::AccountId(0) }).collect();
-        projection.observe_committed_events(events, crate::TradingPhase::Continuous, 1, &setup).unwrap();
-        let stock = &projection.stocks[&code];
-        assert_eq!(stock.trade_event_turnover, 20_000_000_000_000_000_000);
-        assert_eq!(stock.trade_event_volume, 4);
-        assert_eq!(projection.trade_events, 4);
-    }
-
-    #[test]
     fn seed_projection_unknown_taker_preserves_only_the_known_maker_participation() {
         let (mut projection, setup) = seed_projection_fixture();
-        let code = setup.stocks[0].code.clone();
+        let code = StockId(0);
         let event = crate::Event::Trade {
             seq: 0,
             code: code.clone(),
@@ -2214,7 +2211,7 @@ mod tests {
 
     #[test]
     fn known_candles_produce_expected_returns_and_population_stddev() {
-        let code = StockCode("600101".to_string());
+        let code = StockId(0);
         let market_diagnostics = MarketDiagnosticsAccumulator {
             auction_volume: 30,
             opening_auction_volume: 30,
@@ -2295,7 +2292,7 @@ mod tests {
 
     #[test]
     fn stock_summary_rejects_trade_and_daily_turnover_disagreement() {
-        let code = StockCode("600101".to_string());
+        let code = StockId(0);
         let market_diagnostics = MarketDiagnosticsAccumulator {
             continuous_volume: 100,
             continuous_volume_by_decile: [100, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -2319,7 +2316,7 @@ mod tests {
 
     #[test]
     fn stock_summary_rejects_missing_daily_statistics_and_volume_classification_drift() {
-        let code = StockCode("600101".to_string());
+        let code = StockId(0);
         let mut missing_stats = candle(10_000, 10_000, 100);
         missing_stats.trade_stats = None;
         let result = summarize_stock(StockSummaryInput {
@@ -2372,7 +2369,7 @@ mod tests {
                 ..MarketDiagnosticsAccumulator::default()
             },
             seed: 42,
-            code: StockCode("600101".to_string()),
+            code: StockId(0),
         })
         .unwrap();
         assert_eq!(report.mean_daily_turnover_rate_bps, None);

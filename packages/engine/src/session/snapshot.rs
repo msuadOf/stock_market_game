@@ -4,15 +4,10 @@
 use super::*;
 
 /// 市场快照子结构（单股）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct MarketSnap {
     pub last_price: Money,
     pub last_close: Money,
-    pub cash_ex_reference_pending_trade: bool,
-    pub day_market_activity: bool,
-    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
-    #[ts(type = "import(\"../../save/schema/company/ex-reference-price\").ExReferencePrice | null")]
-    pub last_cash_ex_reference: Option<crate::company::ex_reference_price::ExReferencePrice>,
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
     /// 买盘深度（价高→低，每价聚合总量）。前端取前 N 档渲染五档盘口。
@@ -26,7 +21,7 @@ pub struct MarketSnap {
 }
 
 /// 持仓快照子结构（单只股票）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct PositionSnap {
     pub qty: u32,
     pub t1_locked: u32,
@@ -39,18 +34,18 @@ pub struct PositionSnap {
 }
 
 /// 账户快照子结构。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct AccountSnap {
     pub cash: Money,
-    pub positions: BTreeMap<StockCode, PositionSnap>,
+    pub positions: BTreeMap<StockId, PositionSnap>,
     /// 已被当日全部未成交委托占用的资金。
     pub reserved_cash: Money,
     /// 已被当日未成交卖单占用的股数，按股票汇总。
-    pub reserved_sell_qty: BTreeMap<StockCode, u32>,
+    pub reserved_sell_qty: BTreeMap<StockId, u32>,
 }
 
 /// 完整玩家状态快照（首次连接/重连）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct Snapshot {
     #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -61,19 +56,24 @@ pub struct Snapshot {
     pub tick: u64,
     pub day: u32,
     pub phase: TradingPhase,
-    pub markets: BTreeMap<StockCode, MarketSnap>,
+    pub markets: BTreeMap<StockId, MarketSnap>,
     pub accounts: BTreeMap<AccountId, AccountSnap>,
     /// Rust 引擎持有的已完成日 K；首次连接、重连与存档恢复均由快照同步。
-    pub daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
+    pub daily_candles: BTreeMap<StockId, Vec<DailyCandle>>,
     /// 当前交易日正在形成的日 K。
-    pub active_daily_candles: BTreeMap<StockCode, DailyCandle>,
+    pub active_daily_candles: BTreeMap<StockId, DailyCandle>,
 }
 
 /// 单次 Snapshot 构建中，由全部在簿订单派生的资源预留总额。
 #[derive(Default)]
 struct LiveOrderReservations {
     reserved_cash: BTreeMap<AccountId, Money>,
-    reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>>,
+    reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockId, u32>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESERVATION_RECORD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl LiveOrderReservations {
@@ -82,13 +82,15 @@ impl LiveOrderReservations {
     fn record_order(
         &mut self,
         owner: AccountId,
-        code: &StockCode,
+        code: &StockId,
         side: Side,
         price: Money,
         remaining_qty: u32,
         filled_value: Money,
         config: &GameConfig,
     ) {
+        #[cfg(test)]
+        RESERVATION_RECORD_COUNT.with(|count| count.set(count.get() + 1));
         if side == Side::Sell {
             let reserved = self
                 .reserved_sell_qty
@@ -108,7 +110,7 @@ impl LiveOrderReservations {
             .expect("validated live cash reservations cannot exceed account cash");
     }
 
-    fn take_for(&mut self, account: AccountId) -> (Money, BTreeMap<StockCode, u32>) {
+    fn take_for(&mut self, account: AccountId) -> (Money, BTreeMap<StockId, u32>) {
         (
             self.reserved_cash.remove(&account).unwrap_or(Money::ZERO),
             self.reserved_sell_qty.remove(&account).unwrap_or_default(),
@@ -137,59 +139,106 @@ impl GameSession {
         include_daily_candles: bool,
         include_npc_accounts: bool,
     ) -> Snapshot {
+        let runtime_mirrored = !self.state.desk_book_mirror.is_empty();
         let mut reservations = LiveOrderReservations::default();
-        for (code, market) in &self.state.markets {
-            for order in market.resting_orders() {
-                reservations.record_order(
-                    order.owner,
-                    code,
-                    order.side,
-                    order.price,
-                    order.qty,
-                    order.filled_value,
-                    &self.state.setup.config,
-                );
+        if runtime_mirrored {
+            // D5 attention：desk 簿镜像承载（runtime 形态——公开面/预留
+            /// 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
+            for (code, mirror) in &self.state.desk_book_mirror {
+                for (owner, side, price, qty, _serial, filled_value, _fq) in &mirror.orders {
+                    if !include_npc_accounts && *owner != AccountId(0) {
+                        continue;
+                    }
+                    reservations.record_order(
+                        *owner,
+                        code,
+                        *side,
+                        *price,
+                        *qty,
+                        crate::Money::from_cents(*filled_value),
+                        &self.state.setup.config,
+                    );
+                }
+            }
+        } else {
+            for (code, market) in &self.state.markets {
+                for order in market
+                    .resting_order_refs()
+                    .filter(|order| include_npc_accounts || order.owner == AccountId(0))
+                {
+                    reservations.record_order(
+                        order.owner,
+                        code,
+                        order.side,
+                        order.price,
+                        order.qty,
+                        order.filled_value,
+                        &self.state.setup.config,
+                    );
+                }
             }
         }
-        for (code, orders) in &self.state.auction_orders {
-            for order in orders {
-                reservations.record_order(
-                    order.owner,
-                    code,
-                    order.side,
-                    order.limit,
-                    order.qty,
-                    Money::ZERO,
-                    &self.state.setup.config,
-                );
-            }
-        }
-        let markets = self
-            .state
-            .markets
-            .iter()
-            .map(|(code, m)| {
-                (
-                    code.clone(),
-                    MarketSnap {
-                        last_price: m.last_price(),
-                        last_close: m.last_close(),
-                        cash_ex_reference_pending_trade: m.cash_ex_reference_pending_trade(),
-                        day_market_activity: m.day_market_activity(),
-                        last_cash_ex_reference: m.last_cash_ex_reference(),
-                        best_bid: m.best_bid(),
-                        best_ask: m.best_ask(),
-                        bids: m.bid_depth(),
-                        asks: m.ask_depth(),
-                    },
+        let public_policy = pipeline::phase::PhasePolicy::capture(self);
+        let markets = if runtime_mirrored {
+            self.state
+                .desk_book_mirror
+                .iter()
+                .map(|(code, mirror)| {
+                    let public = project_mirror_public_book(self.phase(), mirror);
+                    let last_close = self
+                        .state
+                        .markets
+                        .get(code)
+                        .map(|m| m.last_close())
+                        .unwrap_or(mirror.last_price);
+                    (
+                        code.clone(),
+                        MarketSnap {
+                            last_price: mirror.last_price,
+                            last_close,
+                            best_bid: public.best_bid,
+                            best_ask: public.best_ask,
+                            bids: public.bids,
+                            asks: public.asks,
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            self.state
+                .markets
+                .iter()
+                .map(|(code, m)| {
+                    let public = public_policy.project_public_book(m);
+                    (
+                        code.clone(),
+                        MarketSnap {
+                            last_price: m.last_price(),
+                            last_close: m.last_close(),
+                            best_bid: public.best_bid,
+                            best_ask: public.best_ask,
+                            bids: public.bids,
+                            asks: public.asks,
+                        },
+                    )
+                })
+                .collect()
+        };
+        // 高频 protocol 只发布玩家账户；直接查找，避免每帧扫描全部 NPC 账户。
+        let player = AccountId(0);
+        let selected_accounts: Box<dyn Iterator<Item = (&AccountId, &Account)> + '_> =
+            if include_npc_accounts {
+                Box::new(self.state.accounts.iter())
+            } else {
+                Box::new(
+                    self.state
+                        .accounts
+                        .get(&player)
+                        .map(|account| (&player, account))
+                        .into_iter(),
                 )
-            })
-            .collect();
-        let accounts = self
-            .state
-            .accounts
-            .iter()
-            .filter(|(_, account)| include_npc_accounts || account.kind() == AccountKind::Player)
+            };
+        let accounts = selected_accounts
             .map(|(id, a)| {
                 let (reserved_cash, reserved_sell_qty) = reservations.take_for(*id);
                 (
@@ -246,16 +295,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn player_snapshot_projects_only_player_reservations_but_full_snapshot_keeps_npcs() {
+        let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+        setup.npcs.inst_count = 1;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let code = session.stock_id("600888").unwrap();
+        for owner in [AccountId(0), AccountId(1)] {
+            session
+                .state
+                .markets
+                .get_mut(&code)
+                .unwrap()
+                .place(Order {
+                    id: OrderId(owner.0 + 1),
+                    owner,
+                    side: Side::Buy,
+                    price: Money::from_cents(900),
+                    qty: 100,
+                    original_qty: 100,
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                    seq: owner.0 + 1,
+                })
+                .unwrap();
+            session
+                .fixture_append_auction_orders(
+                    code,
+                    vec![AuctionOrderSnap {
+                        order_id: owner.0 + 3,
+                        owner,
+                        side: Side::Sell,
+                        limit: Money::from_cents(1100),
+                        qty: 200,
+                    }],
+                )
+                .unwrap();
+        }
+        RESERVATION_RECORD_COUNT.with(|count| count.set(0));
+        let player = session.runtime_snapshot();
+        assert_eq!(
+            RESERVATION_RECORD_COUNT.with(|count| count.get()),
+            2,
+            "只发布玩家账户时，不应计算并分配 NPC 的资源预留"
+        );
+        RESERVATION_RECORD_COUNT.with(|count| count.set(0));
+        let full = session.snapshot_inner(false, true);
+        assert_eq!(RESERVATION_RECORD_COUNT.with(|count| count.get()), 4);
+        assert_eq!(player.accounts.len(), 1);
+        for owner in [AccountId(0), AccountId(1)] {
+            assert_eq!(
+                full.accounts[&owner].reserved_cash,
+                Money::from_cents(90_501)
+            );
+            assert_eq!(full.accounts[&owner].reserved_sell_qty[&code], 200);
+        }
+        assert_eq!(
+            serde_json::to_value(&player.accounts[&AccountId(0)]).unwrap(),
+            serde_json::to_value(&full.accounts[&AccountId(0)]).unwrap()
+        );
+    }
+
+    #[test]
     fn snapshot_reservations_combine_continuous_auction_and_partial_orders() {
         let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
         setup.npcs.inst_count = 0;
         let mut second = setup.stocks[0].clone();
-        second.code = StockCode("600889".to_string());
+        second.code = StockCode("600889".to_owned());
         setup.stocks.push(second);
-        setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
         let mut session = GameSession::new(setup, 42).unwrap();
-        let first = session.state.setup.stocks[0].code.clone();
-        let second = session.state.setup.stocks[1].code.clone();
+        let first = session.stock_id("600888").unwrap();
+        let second = session.stock_id("600889").unwrap();
         let owner = AccountId(0);
         for (code, id, side, price, qty, filled_qty, filled_value) in [
             (&first, 1, Side::Buy, 900, 150, 50, 45_000),
@@ -286,17 +395,17 @@ mod tests {
             (&second, 6, Side::Buy, 100),
         ] {
             session
-                .state
-                .auction_orders
-                .entry(code.clone())
-                .or_default()
-                .push(AuctionOrderSnap {
-                    order_id: id,
-                    owner,
-                    side,
-                    limit: Money::from_cents(1_000),
-                    qty,
-                });
+                .fixture_append_auction_orders(
+                    *code,
+                    vec![AuctionOrderSnap {
+                        order_id: id,
+                        owner,
+                        side,
+                        limit: Money::from_cents(1_000),
+                        qty,
+                    }],
+                )
+                .unwrap();
         }
         let snapshot = session.runtime_snapshot();
         let account = &snapshot.accounts[&owner];
@@ -316,7 +425,7 @@ mod tests {
     #[test]
     fn live_order_reservations_take_is_isolated_and_empty_accounts_have_zero() {
         let config = GameConfig::proposed_defaults();
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut reservations = LiveOrderReservations::default();
         reservations.record_order(
             AccountId(1),
@@ -358,7 +467,7 @@ mod tests {
     #[should_panic(expected = "validated live sell reservations cannot exceed u32 holdings")]
     fn live_order_reservations_sell_overflow_is_explicit() {
         let config = GameConfig::proposed_defaults();
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut reservations = LiveOrderReservations::default();
         for qty in [u32::MAX, 1] {
             reservations.record_order(
@@ -379,7 +488,7 @@ mod tests {
         let mut config = GameConfig::proposed_defaults();
         config.commission_rate = 0.0;
         config.commission_min = Money::ZERO;
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut reservations = LiveOrderReservations::default();
         for _ in 0..2 {
             reservations.record_order(
@@ -392,5 +501,49 @@ mod tests {
                 &config,
             );
         }
+    }
+}
+
+
+/// D5 attention：镜像公开投影（desk 簿镜像+相位/截点门禁——与 desk
+/// build_public 的公开面同式：CallAuction 公开簿空、ClosingAuction 揭示
+/// 截点前老单、PreOpen/Continuous 全簿）。
+pub(super) fn project_mirror_public_book(
+    phase: crate::TradingPhase,
+    mirror: &super::DeskBookMirror,
+) -> pipeline::phase::PublicBookProjection {
+    use std::collections::BTreeMap;
+    let cutoff = mirror.public_cutoff_serial;
+    #[allow(clippy::type_complexity)]
+    let visible: Box<
+        dyn Iterator<Item = &(crate::AccountId, crate::Side, crate::Money, u32, u64, i64, u32)>,
+    > = match phase {
+        crate::TradingPhase::CallAuction => Box::new(std::iter::empty()),
+        crate::TradingPhase::ClosingAuction => Box::new(
+            mirror
+                .orders
+                .iter()
+                .filter(|(_, _, _, _, serial, _, _)| *serial < cutoff),
+        ),
+        crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
+            Box::new(mirror.orders.iter())
+        }
+    };
+    let mut bids: BTreeMap<crate::Money, u64> = BTreeMap::new();
+    let mut asks: BTreeMap<crate::Money, u64> = BTreeMap::new();
+    for (_, side, price, qty, _, _, _) in visible {
+        let level = match side {
+            crate::Side::Buy => &mut bids,
+            crate::Side::Sell => &mut asks,
+        };
+        *level.entry(*price).or_default() += u64::from(*qty);
+    }
+    let bids: Vec<(crate::Money, u64)> = bids.into_iter().rev().collect();
+    let asks: Vec<(crate::Money, u64)> = asks.into_iter().collect();
+    pipeline::phase::PublicBookProjection {
+        best_bid: bids.first().map(|(price, _)| *price),
+        best_ask: asks.first().map(|(price, _)| *price),
+        bids,
+        asks,
     }
 }

@@ -20,7 +20,7 @@ const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "simulation-source-fingerprint";
 const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "simulation-determinism-receipt";
 const SIMULATION_RESOURCE_POLICY_SCHEMA = "simulation-resource-policy";
 const SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
-const SIMULATION_MIN_RAYON_THREADS_PER_SEED = 4;
+// 批 9 A7：SIMULATION_MIN_RAYON_THREADS_PER_SEED 退役（子进程 CPU 约束改 OS 级）。
 const REQUIRED_SOURCE_FILES = [
   "Cargo.lock",
   "Cargo.toml",
@@ -153,7 +153,8 @@ function validateGit(git) {
 }
 
 function validateResourcePolicy(policy) {
-  requireExactKeys(policy, ["schema", "schema_version", "available_cpu_count", "available_cpu_source", "maximum_thread_count", "max_concurrent_child_executions", "rayon_threads_per_seed", "ordinary_test_max_ms", "child_timeout_ms", "batch_timeout_ms", "execution_timeout_ms", "cleanup_reserve_ms"], "manifest.resource_policy");
+  // 批 9 A7：resource_policy schema 去 rayon_threads_per_seed 键（与 baseline-run 同步）。
+  requireExactKeys(policy, ["schema", "schema_version", "available_cpu_count", "available_cpu_source", "maximum_thread_count", "max_concurrent_child_executions", "ordinary_test_max_ms", "child_timeout_ms", "batch_timeout_ms", "execution_timeout_ms", "cleanup_reserve_ms"], "manifest.resource_policy");
   if (policy.schema !== SIMULATION_RESOURCE_POLICY_SCHEMA || policy.schema_version !== 7) fail(`unsupported simulation acceptance resource policy schema: ${JSON.stringify(policy.schema)}`);
   if (!Number.isInteger(policy.available_cpu_count) || policy.available_cpu_count <= 0) fail("resource policy CPU count must be positive");
   if (typeof policy.available_cpu_source !== "string" || policy.available_cpu_source.length === 0) fail("resource policy CPU source is missing");
@@ -165,14 +166,9 @@ function validateResourcePolicy(policy) {
     : Math.min(policy.available_cpu_count, policy.maximum_thread_count);
   const expectedConcurrentSeeds = Math.min(
     SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS,
-    Math.max(1, Math.floor(totalThreadBudget / SIMULATION_MIN_RAYON_THREADS_PER_SEED)),
+    Math.max(1, totalThreadBudget),
   );
   if (policy.max_concurrent_child_executions !== expectedConcurrentSeeds) fail("resource policy concurrent child budget is inconsistent");
-  const expectedRayonThreads = Math.max(1, Math.floor(totalThreadBudget / expectedConcurrentSeeds));
-  if (policy.rayon_threads_per_seed !== expectedRayonThreads) fail("resource policy Rayon thread budget is inconsistent");
-  if (policy.max_concurrent_child_executions * policy.rayon_threads_per_seed > totalThreadBudget) {
-    fail("resource policy aggregate Rayon budget exceeds its detected CPU limit");
-  }
   if (policy.ordinary_test_max_ms !== SIMULATION_ORDINARY_TEST_MAX_MS
     || policy.child_timeout_ms !== SIMULATION_CHILD_TIMEOUT_MS
     || policy.batch_timeout_ms !== SIMULATION_BATCH_TIMEOUT_MS

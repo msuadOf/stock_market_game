@@ -1,7 +1,8 @@
-import type { MarketSnap, PriceTickEvent } from "../types/engine.ts";
+import type { MarketSnap } from "../types/engine.ts";
+import type { CodedEvent } from "../host/protocol/stock-identity.ts";
 
 /** 用权威价格 tick 原子刷新成交价与五档盘口，避免只更新价格而留下启动快照。 */
-export function applyPriceTickMarket(market: MarketSnap, tick: PriceTickEvent): void {
+export function applyPriceTickMarket(market: MarketSnap, tick: Extract<CodedEvent, { PriceTick: unknown }>["PriceTick"]): void {
   if (!Array.isArray(tick.bids) || !Array.isArray(tick.asks)) {
     throw new TypeError(`股票 ${tick.code} 的 PriceTick 缺少权威五档盘口`);
   }

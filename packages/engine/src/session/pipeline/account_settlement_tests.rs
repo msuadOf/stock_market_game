@@ -12,7 +12,7 @@ use super::{
 use crate::session::decision_chain::personal_state::BeliefParticipantState;
 use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{
-    Account, AccountId, AccountKind, Money, OrderId, RetailExperienceState, Side, StockCode,
+    Account, AccountId, AccountKind, Money, OrderId, RetailExperienceState, Side, StockId,
 };
 use std::collections::BTreeMap;
 
@@ -28,8 +28,8 @@ fn retail_session(cash: i64) -> crate::GameSession {
     game
 }
 
-fn stock() -> StockCode {
-    StockCode("600001".to_owned())
+fn stock() -> StockId {
+    StockId(0)
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_histo
         Some(Money::from_cents(101))
     );
     let mut missing = serde_json::to_value(&experience).unwrap();
-    missing["feedback"]["stocks"]["600001"]
+    missing["feedback"]["stocks"][code.0.to_string()]
         .as_object_mut()
         .unwrap()
         .remove("institutional_fees_paid");
@@ -379,6 +379,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
     let receipt = fill(1, Side::Buy, 10, 100, 100_000);
 
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -411,6 +412,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
 
     let exit = fill(2, Side::Sell, 11, 100, 120_000);
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -436,6 +438,7 @@ fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
     let before_replay = experience.clone();
 
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -476,6 +479,7 @@ fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
         (12, fill(3, Side::Sell, 12, 4, 4_080)),
     ] {
         apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
             &mut accounts,
             &mut retail_experience,
             &mut books,
@@ -521,6 +525,7 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
     let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
     let buy = fill(1, Side::Buy, 10, 1, 100_000);
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -537,6 +542,7 @@ fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds
 
     let sell = fill(2, Side::Sell, 11, 1, 1);
     apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut retail_experience,
         &mut books,
@@ -611,11 +617,11 @@ fn settlement_without_new_fills_prepares_no_account_or_retail_state_patch() {
 fn settlement_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement() {
     let mut accounts = accounts(200_000);
     let mut experience = retail();
-    for index in 0..9 {
+    for index in 0..9u64 {
         experience
             .get_mut(&AccountId(1))
             .unwrap()
-            .observe_stock(&StockCode(format!("6000{index:02}")), index);
+            .observe_stock(&StockId(index as u32), index);
     }
     let mut seen = RetailProjectionSeen::default();
     let prepared =
@@ -630,17 +636,19 @@ fn settlement_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement
     setup.stocks = (0..9)
         .map(|index| {
             let mut stock = template.clone();
-            stock.code = StockCode(format!("6000{index:02}"));
+            // 规格位保持 StockCode 边界；目录按升序分配 id 0..8，与上方观察的 id 一致。
+            stock.code = crate::account::StockCode(format!("6000{index:02}"));
             stock
         })
         .collect();
-    setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let game = crate::GameSession::new(setup, 42).unwrap();
     let mut save = game.save().unwrap();
     save.retail_experience = experience.to_map();
+    // 数值断言替代原文本断言 "unheld watchlist limit"
+    // （fault2039：未持仓观察股票数超上限）。
     assert!(matches!(
         crate::GameSession::restore(&save),
-        Err(crate::SessionError::InvalidSave(reason)) if reason.contains("unheld watchlist limit")
+        Err(crate::SessionError::InvalidSave(fault)) if fault.code == 2039
     ));
 }
 
@@ -655,7 +663,8 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
     let mut experience = retail();
     let state = experience.get_mut(&AccountId(1)).unwrap();
     for index in 0..8 {
-        state.observe_stock(&StockCode(format!("6010{index:02}")), index);
+        // 纯 fixture：持股市 stock()=StockId(0)，观察列表用 id 1..8 保持互异。
+        state.observe_stock(&StockId(index as u32 + 1), index);
     }
     state
         .initialize_holding_dated(
@@ -685,9 +694,7 @@ fn settlement_final_sell_prunes_only_the_affected_retail_account() {
     assert!(!accounts[&AccountId(1)].positions().contains_key(&stock()));
     assert_eq!(experience[&AccountId(1)].stocks.len(), 8);
     assert!(experience[&AccountId(1)].stocks.contains_key(&stock()));
-    assert!(!experience[&AccountId(1)]
-        .stocks
-        .contains_key(&StockCode("601000".to_owned())));
+    assert!(!experience[&AccountId(1)].stocks.contains_key(&StockId(1)));
 }
 
 #[test]
@@ -1131,6 +1138,7 @@ fn settlement_plan_account_failure_preserves_all_four_transaction_containers() {
     )
     .unwrap();
     let error = apply_settlement_transaction_with_beliefs(
+        &crate::ComputeContext::shared_default().unwrap(),
         &mut accounts,
         &mut experience,
         &mut books,

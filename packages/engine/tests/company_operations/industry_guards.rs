@@ -10,15 +10,15 @@ fn production_sampling_never_activates_inapplicable_industry_shocks() {
         engine::company::ShockParams::stress_parameters(),
         date.prev().unwrap(),
     );
-    let ids: Vec<_> = config
+    let codes: Vec<_> = config
         .companies
         .iter()
-        .map(|company| company.spec.id.clone())
+        .map(|company| company.spec.code.clone())
         .collect();
     let mut ops = CompanyOperations::new(config, date).unwrap();
     ops.advance_civil_day(date).unwrap();
-    for id in ids {
-        let company = ops.company(&id).unwrap();
+    for code in codes {
+        let company = ops.company(&ops.catalog().id(&code).unwrap()).unwrap();
         assert!(company
             .economy()
             .active()
@@ -47,7 +47,7 @@ fn unsupported_production_or_payment_fact_cannot_be_injected_as_bank_shock() {
         let before = serde_json::to_value(&ops).unwrap();
         assert!(ops
             .apply_company_shock(
-                &CompanyId("C-BANK".into()),
+                &CompanyId(0),
                 ActiveShock {
                     kind,
                     amplitude_bp: 0,

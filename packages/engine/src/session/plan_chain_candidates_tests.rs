@@ -3,14 +3,27 @@ use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
 use crate::plans::{AllocationGrant, PlanOpen, PlanOpinion, PlanTarget, Urgency};
 
 pub(super) fn execution_fixture() -> (GameSession, PlanExecutionRequest) {
-    execution_fixture_on(crate::CivilDate::from_ymd(2030, 1, 2).unwrap())
+    execution_fixture_with_compute(crate::compute::ComputeContext::shared_default().unwrap())
 }
 
-pub(super) fn execution_fixture_on(start_date: crate::CivilDate) -> (GameSession, PlanExecutionRequest) {
+/// 增量二十：wave 系 a1 真实事务用例改用专用小池（确定性容量/观察者形态，
+/// 隔离共享默认池的环境占槽），并置 inst_count=2（AccountId(2) 作为第二 root
+/// 必须真实存在）。
+pub(super) fn execution_fixture_with_compute(
+    compute: std::sync::Arc<crate::compute::ComputeContext>,
+) -> (GameSession, PlanExecutionRequest) {
+    execution_fixture_with_compute_and_insts(compute, 2)
+}
+
+/// 增量二十一：三 root 形态（F/panic/other）需要 inst_count=3。
+pub(super) fn execution_fixture_with_compute_and_insts(
+    compute: std::sync::Arc<crate::compute::ComputeContext>,
+    inst_count: u32,
+) -> (GameSession, PlanExecutionRequest) {
     let mut setup = npc_working_quote_tests::quote_setup(0);
-    setup.start_date = start_date;
-    let mut session = GameSession::new(setup, 47).unwrap();
-    let code = StockCode("600888".to_owned());
+    setup.npcs.inst_count = inst_count;
+    let mut session = GameSession::new_with_compute(setup, 47, compute).unwrap();
+    let code = StockId(0);
     let plan_id = session
         .state
         .plans

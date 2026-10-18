@@ -12,84 +12,75 @@ mod candles;
 mod causal;
 mod civil_clock;
 mod company_assembly;
-mod company_contract_views;
-mod company_corrections;
+#[cfg(test)]
+mod company_closing_tests;
 mod company_groups;
-#[cfg(test)]
-mod company_mechanism_switch_tests;
-#[cfg(test)]
-mod company_contract_views_tests;
-#[cfg(test)]
-mod company_simple_session_tests;
-mod corporate_actions;
-#[cfg(test)]
-mod dividend_tax_mode_tests;
-#[cfg(test)]
-mod issuer_repurchase_session_tests;
-#[cfg(test)]
-mod issuer_repurchase_transaction_probe_tests;
-#[cfg(test)]
-mod rights_offering_session_tests;
-#[cfg(test)]
-mod share_split_session_tests;
-mod exchange_calendar;
-#[cfg(test)]
-mod exchange_calendar_tests;
-#[cfg(test)]
-mod simple_preferences_session_tests;
-#[cfg(test)]
-mod auto_registry_session_tests;
-pub mod player_proposals;
-#[cfg(test)]
-mod player_proposal_session_tests;
-pub use company_corrections::{
-    CompanyReportCorrection, CompletedReportCorrection, ReportCorrectionEpoch,
-    ReportCorrectionError, ReportCorrectionStatus,
-};
-mod company_operations;
 mod continuous_cancellation;
 mod decision_chain;
+mod deferred_drop;
+use crate::u64_decimal;
+pub use deferred_drop::defer as defer_destruction;
+use deferred_drop::defer_swap;
+#[doc(hidden)]
+pub use deferred_drop::host_deferred_count as deferred_destruction_count;
+#[doc(hidden)]
+pub use deferred_drop::host_deferred_degradation as deferred_destruction_degradation;
+pub use deferred_drop::DeferredDropDegradation;
 mod disclosures;
 mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
 mod history_reads;
-mod intraday_disclosures;
-mod trade_confirmation_query;
-pub use trade_confirmation_query::{
-    PersonalTradeHistoryPage, PersonalTradeHistoryRequest, TradeHistoryReceiptCursor,
-};
-mod live_minute_history;
-mod retained_history;
-pub use live_minute_history::{
-    CurrentMinuteHistoryPhase, CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse,
-};
-pub use retained_history::{
-    HistorySessionStatus, HistoryTradingPhase, MarketHistoryAvailability, MarketHistoryEntry,
-    MarketHistoryPage, MarketHistoryRequest, MinuteBar, MinuteHistorySession, RetainedHistoryDay,
-};
 mod shared_ingress;
 pub use shared_ingress::SharedSessionIngress;
+#[cfg(feature = "verification-harness")]
+mod verify_metrics;
+#[cfg(feature = "verification-harness")]
+pub use deferred_drop::{drain as verification_drain, DrainFailure};
+#[cfg(feature = "verification-harness")]
+pub use verify_metrics::records as verification_job_records;
+#[cfg(feature = "verification-harness")]
+pub use verify_metrics::snapshot as verification_metrics_snapshot;
+#[cfg(feature = "verification-harness")]
+pub use verify_metrics::{JobKind, JobRecord, TraceInvalid, VerifySnapshot};
+
+/// 仅诊断构建记录 actor producer 的完整 lifetime；普通构建为零大小空操作。
+/// P2②：私有字段防止绕过工厂构造（无登记构造 + Drop 递减会破坏 drain 前提：
+/// 1→0 隐藏活 producer，0→MAX 静默回绕）。只有 [`verification_actor_guard`] 能构造。
+#[doc(hidden)]
+pub struct VerificationActorGuard(());
+#[doc(hidden)]
+#[inline(always)]
+pub fn verification_actor_guard() -> VerificationActorGuard {
+    #[cfg(feature = "verification-harness")]
+    verify_metrics::METRICS
+        .actor_producers
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    VerificationActorGuard(())
+}
+impl Drop for VerificationActorGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        #[cfg(feature = "verification-harness")]
+        verify_metrics::METRICS.producer_exit();
+    }
+}
 mod initial_allocation;
 mod institutional_behavior;
-mod memberships;
 mod minimal_snapshot;
-pub use memberships::{
-    AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId,
-};
-#[cfg(test)]
-mod memberships_tests;
 mod observation_clock;
 mod persistence;
 pub mod pipeline;
 mod plan_chain_candidates;
+mod plan_continuation_domain;
 mod plan_execution;
 mod player_candidates;
 pub mod protocol;
 mod self_views;
 mod snapshot;
 mod views;
+pub use crate::stock::StockId;
 pub use failure::StepFatal;
 pub use hash::StateHash;
 pub use history_reads::HistoricalStockData;
@@ -105,11 +96,13 @@ mod envelope_projection_tests;
 #[cfg(test)]
 mod failure_tests;
 #[cfg(test)]
-mod financial_hash_contract_tests;
-#[cfg(test)]
 mod hash_contract_tests;
 #[cfg(test)]
 mod plan_chain_candidates_tests;
+#[cfg(test)]
+mod plan_root_quota_tests;
+#[cfg(test)]
+mod plan_root_quota_wave_tests;
 #[cfg(test)]
 mod player_candidates_tests;
 #[cfg(test)]
@@ -117,7 +110,6 @@ mod reconciliation_plan_phase_tests;
 #[cfg(test)]
 mod reconciliation_plan_tests;
 
-use account_book::AccountBook;
 use account_paged_map::AccountPagedMap;
 use attention::NpcAttentionScheduler;
 use candles::{
@@ -128,23 +120,39 @@ use decision_chain::personal_state::BeliefParticipantState;
 use persistence::{validate_save_slot, validate_saved_order_state};
 
 pub use attention::NpcAttentionState;
-mod notices;
-pub use civil_clock::{
-    CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase, DueBusiness,
-    DueBusinessId, DueKind,
-};
+pub(crate) mod notices;
+pub use civil_clock::{CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase};
 pub use company_groups::{GroupHolding, GroupStructure};
-pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
-pub use corporate_actions::{
-    AppliedExReferenceGroup, ExternalDividendReceipt, SessionCorporateActions,
-    SessionCorporateActionsError,
-};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
+pub(crate) use decision_chain::retail_analysis::{RetailAnalysisCtx, RetailStrategyInstance};
+pub(crate) use pipeline::npc_decisions::npc_rng_seed;
+// D3a-2c 件2/3：组线程组装/直调的承载类型（AccountBook 投影 + 时间映射）。
+pub(crate) use account_book::AccountBook;
+pub(crate) use observation_clock::intraday_observation_second;
+// D3a-2c 件2/3：组线程直调 observe 的类型面（决策链深移植——方向 A；
+// crate 内可见——runtime 组线程组装/直调）。
+pub(crate) use decision_chain::{
+    DecisionChainObservation, InstitutionDecisionRoot, PlanLifecycleAction, PlanPersonalState,
+    PlanQuoteInputs, PlanRootDiagnostics, RootReadContext, buy_allocation_request,
+    decide_plan_quote, exposed_stocks_shared, next_routable_buy_qty, next_routable_sell_qty,
+    open_position_action,
+};
+// D3b 件 4：组线程复审宿主的共享类型面（trait+行为结构——两宿主实现
+// 同一 trait，行为不得分叉）。
+pub(crate) use institutional_behavior::InstitutionBehavior;
+pub(crate) use institutional_behavior::assess_institution_behavior;
+// 转发 decision_chain 的 re-export（组线程经 crate::session 使用）。
+pub(crate) use decision_chain::{PlanLifecycleReview, PlanReviewHost, ratio_to_bp};
+// D5 #2：组线程 attention evaluate 共用面（signal 概率+observe 门+wait
+/// 采样——旧管线 evaluate_candidate_with_signal 同式，字段不得分叉）。
+pub(crate) use attention::{
+    attention_candidate_is_observation, market_attention_signal,
+    maximum_observation_probability, sample_attention_wait,
+};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,
 };
-pub use execution::ParentOrderPlan;
 pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
 pub use notices::NpcInformationCadence;
 pub use persistence::{
@@ -153,12 +161,9 @@ pub use persistence::{
     SavedRetailReceiptIdentity, SavedRuntimeState, MAX_SAVE_DECODE_BYTES, SIMULATION_POLICY_ID,
 };
 pub use plan_execution::{
-    PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
-    PlanExecutionRequest,
+    PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport, PlanExecutionRequest,
 };
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
-
-use attention::{maximum_observation_probability, sample_attention_wait};
 
 use crate::account::{Account, AccountError, AccountKind, StockCode};
 #[cfg(test)]
@@ -168,6 +173,7 @@ use crate::calendar::{CivilDate, CivilInstant, DayStatus, TradingCalendar};
 use crate::company::CompanyId;
 pub(crate) use crate::config::{buy_order_reservation, fee_delta};
 use crate::config::{ConfigError, GameConfig};
+use crate::error::ValidationFault;
 use crate::experience::{ExperienceError, RetailExperienceState};
 use crate::information::PublicationId;
 use crate::market::{Market, MarketError};
@@ -182,6 +188,7 @@ use crate::observation::{
     MarketMinuteClose, ObservationError, PricePathObservation, GAME_INTRADAY_MINUTES_PER_DAY,
 };
 use crate::orderbook::{AccountId, Order, OrderError, OrderId, Side};
+use crate::stock::StockCatalog;
 use crate::strategy::Rng;
 use crate::strategy::{
     Intent, LimitPrice, MarketView, StockView, StrategyError, StrategyFactory, StrategyParams,
@@ -192,7 +199,6 @@ use thiserror::Error;
 
 /// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
 /// 日终所有剩余子单和计划都会失效，绝不跨日沿用旧观点。
-pub const PARENT_ORDER_HORIZON_MINUTES: u64 = GAME_INTRADAY_MINUTES_PER_DAY as u64;
 
 /// SplitMix64：确定性 PRNG。种子化、可重放（同种子同序列）。
 #[derive(Clone)]
@@ -203,6 +209,11 @@ pub struct SplitMix64 {
 impl SplitMix64 {
     pub fn new(seed: u64) -> Self {
         SplitMix64 { state: seed }
+    }
+    /// 流状态读面（D5 #2 组内 evaluate 续传写回——与 session rng_state
+    /// 同源投影，字段不得分叉）。
+    pub fn state(&self) -> u64 {
+        self.state
     }
     /// 标准 SplitMix64 算法（常量固定，确定性依赖）。
     pub fn next_u64(&mut self) -> u64 {
@@ -239,8 +250,6 @@ pub enum RejectionReason {
     PriceCageExceeded,
     /// 意图指向不存在的股票代码。
     UnknownStock,
-    /// 本证券所属交易所当前自然日休市。
-    ExchangeClosed,
     /// 集合竞价只接受限价委托，市价单无法确定保护价格。
     AuctionLimitOrderRequired,
     /// 当前处于集合竞价不可撤单时段（A 股 09:20 后）。
@@ -276,25 +285,13 @@ pub enum TradingPhase {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum Event {
-    PublicTrade {
-        #[serde(with = "crate::orderbook::js_safe_u64")]
-        #[ts(type = "number")]
-        seq: u64,
-        code: StockCode,
-        price: Money,
-        qty: u32,
-    },
-    PrivateEventOmitted {
-        #[serde(with = "crate::orderbook::js_safe_u64")]
-        #[ts(type = "number")]
-        seq: u64,
-    },
-    /// 成交：code 来自路由（orderbook.Trade 无 code 字段），maker/taker 双方结算。
+    /// 成交：code 来自路由（orderbook.Trade 无 code 字段）——maker=卖腿/
+    /// taker=买腿（ADR-0042 腿方向语义，2026-10-16）。
     Trade {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
-        code: StockCode,
+        code: StockId,
         price: Money,
         qty: u32,
         maker: AccountId,
@@ -310,7 +307,7 @@ pub enum Event {
         tick: u64,
         /// `CallAuction`（开盘）或 `ClosingAuction`（收盘）；消费者不得按事件名猜测时段。
         phase: TradingPhase,
-        code: StockCode,
+        code: StockId,
         indicative_price: Option<Money>,
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
@@ -329,7 +326,7 @@ pub enum Event {
         tick: u64,
         /// 完成这一笔集合竞价的交易阶段。
         phase: TradingPhase,
-        code: StockCode,
+        code: StockId,
         clearing_price: Option<Money>,
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
@@ -344,7 +341,7 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         tick: u64,
-        code: StockCode,
+        code: StockId,
         last_price: Money,
         /// Rust 聚合的权威当日日 K；宿主只同步，不再自行重算 OHLCV。
         daily_candle: DailyCandle,
@@ -364,7 +361,7 @@ pub enum Event {
         seq: u64,
         day: u32,
         /// 刚刚收盘的每股日 K，供增量客户端提交历史而无需拉取 360 日全量快照。
-        closed_daily_candles: BTreeMap<StockCode, DailyCandle>,
+        closed_daily_candles: BTreeMap<StockId, DailyCandle>,
     },
     /// 权威自然日已完成日结并前进；休市日同样产生，不能由交易事件替代。
     CivilDateAdvanced {
@@ -390,10 +387,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
-        #[serde(with = "memberships::account_id_decimal")]
-        #[ts(type = "string")]
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         reason: RejectionReason,
     },
     /// 结算失败（账户侧异常，透传 AccountError 文案）。
@@ -401,10 +396,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
-        #[serde(with = "memberships::account_id_decimal")]
-        #[ts(type = "string")]
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         reason: String,
     },
 
@@ -413,10 +406,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
-        #[serde(with = "memberships::account_id_decimal")]
-        #[ts(type = "string")]
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         id: OrderId,
         remaining_qty: u32,
     },
@@ -425,10 +416,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         seq: u64,
-        #[serde(with = "memberships::account_id_decimal")]
-        #[ts(type = "string")]
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         id: OrderId,
         side: Side,
         price: Money,
@@ -441,8 +430,6 @@ impl Event {
     pub fn seq(&self) -> u64 {
         match self {
             Self::Trade { seq, .. }
-            | Self::PublicTrade { seq, .. }
-            | Self::PrivateEventOmitted { seq, .. }
             | Self::AuctionTick { seq, .. }
             | Self::AuctionCompleted { seq, .. }
             | Self::PriceTick { seq, .. }
@@ -488,49 +475,51 @@ pub struct DailyCandle {
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq, ts_rs::TS)]
 #[ts(export)]
 pub struct DailyTradeStats {
-    #[serde(with = "crate::orderbook::canonical_u128_decimal")]
+    #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
-    pub turnover_cents: u128,
+    pub turnover_cents: u64,
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub trade_count: u64,
 }
 
-/// 当前契约的状态槽。公共持久档仅接受完整日结；低层内存 checkpoint 另保留活动状态。
-/// 真实分钟量价、日 K 和交割事实永久保留；前端展示采样不冒充真实成交历史。
+/// 存档槽：保存权威市场、账户、集合竞价及连续竞价未成交委托。
+/// 前端分时采样属于派生 UI 数据，不进入权威存档；日 K 由 engine 持久化。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SaveSlot {
-    pub retained_market_history: Vec<RetainedHistoryDay>,
-    pub market_memberships: MarketMembershipState,
-    #[ts(skip)]
-    pub report_correction_operations: BTreeMap<String, CompletedReportCorrection>,
     /// Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
     /// parser 共同维护，避免把策略私有结构扩成通用宿主命令。
     #[ts(type = "import(\"../../save/schema/runtime-state\").SavedRuntimeState")]
     pub runtime_state: SavedRuntimeState,
+    /// D5：desk 镜像档标记（runtime 形态的在场委托=desk 事实重建——
+    /// restore 侧旧簿装载跳过，desk 种子自 ledger 恢复；旧档缺省
+    /// false 走旧簿重建）。
+    #[serde(default)]
+    pub desk_mirrored_resting: bool,
     pub setup: SessionSetup,
+    #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
+    pub groups: Vec<GroupStructure>,
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
     pub seed: u64,
     pub snapshot: SaveSnapshot,
     /// 日内存档恢复集合竞价所需的完整委托队列。
-    pub auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     /// 连续竞价未成交委托。
-    pub resting_orders: BTreeMap<StockCode, Vec<Order>>,
+    pub resting_orders: BTreeMap<StockId, Vec<Order>>,
     /// 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
     /// 十进制字符串保留完整 u64 游标，不受 JSON number 精度限制。
     #[serde(with = "book_sequence_map")]
     #[ts(type = "Record<string, string>")]
-    pub book_next_sequences: BTreeMap<StockCode, u64>,
+    pub book_next_sequences: BTreeMap<StockId, u64>,
     /// 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
-    pub filled_orders: BTreeMap<StockCode, Vec<FilledOrderSnap>>,
+    pub filled_orders: BTreeMap<StockId, Vec<FilledOrderSnap>>,
     /// 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
-    pub price_history: BTreeMap<StockCode, Vec<Money>>,
+    pub price_history: BTreeMap<StockId, Vec<Money>>,
     /// 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
     /// 到日界后清空，跨日窗口读取已经完成的日 K。
-    pub market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
+    pub market_minute_closes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
     /// 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
@@ -539,15 +528,15 @@ pub struct SaveSlot {
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
-    /// 机构策略已经形成、但尚未完全成交的母单执行计划。
-    /// 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
-    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, SaveParentOrderPlan>>,
+    /// D5 attention 公开可见性门禁：desk 簿权威的瞬态镜像（runtime
+    /// install 段每拍刷新；不入档不入 hash——snapshot 公开投影/玩家
+    /// 在途/预留读面的源。旧管线读面（session markets 簿）在 runtime
+    /// 下恒空，公开面（A 股竞价隐藏/截点揭示）自此承载。
     /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
     pub pending_player: Vec<ReceiptBearingIntent>,
     /// 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求；日界处尚未生成。
-    pub pending_npc: Option<PendingNpcBatch>,
     pub ingress_receipt_cursors: IngressReceiptCursors,
     /// 保持订单 id/到达序继续单调递增。
     #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -555,13 +544,15 @@ pub struct SaveSlot {
     pub next_order_id: u64,
     /// 自然日经营时钟权威状态；完整存档携带冻结的日历政策。
     pub civil_clock: CivilClockSave,
-    #[ts(type = "import(\"../../save/schema/corporate-actions\").SessionCorporateActions")]
-    pub corporate_actions: SessionCorporateActions,
     /// ── 权威状态连续性（完整存档）：公司域与个体决策链权威状态。全部必填；缺失任一字段
     ///    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
-    /// 新局选定的公司系统、财务事实与独立随机状态。
-    #[ts(type = "import(\"../../save/schema/company/system\").CompanySystem")]
-    pub company_system: crate::company::CompanySystem,
+    /// 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
+    /// 余额在反序列化重放边界校验）。
+    #[ts(type = "import(\"../../save/schema/company/operations\").CompanyOperations")]
+    pub company_operations: crate::company::operations::CompanyOperations,
+    /// 结账版本登记簿（不可变期间版本 + 重述底稿）。
+    #[ts(skip)]
+    pub closing_registry: crate::accounting::closing::ClosingEngine,
     /// 公开信息库（报告 + 公告；恢复走 from_parts 逐条重验）。
     #[ts(skip)]
     pub public_library: crate::information::PublicLibrary,
@@ -581,61 +572,15 @@ pub struct SaveSlot {
     pub watchlists: BTreeMap<AccountId, crate::experience::PersonalWatchlist>,
     pub price_memories: BTreeMap<AccountId, crate::experience::PersonalPriceMemory>,
     pub history_reads: BTreeMap<AccountId, crate::experience::PersonalHistoryReadLedger>,
-    /// 计划执行待应用事实队列（存档边界只保留「计划簿中仍存活」的条目；
-    /// 未知/已终止计划的迟到条目按完整存档契约显式丢弃。
-    #[ts(skip)]
-    pub pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-#[ts(export)]
-pub struct SaveParentOrderPlan {
-    pub code: StockCode,
-    pub side: Side,
-    pub target_qty: u32,
-    pub filled_qty: u32,
-    pub child_qty: u32,
-    pub active_child_order_id: Option<OrderId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub linked_plan_id: Option<crate::plans::PlanId>,
-    pub limit_price: Money,
-    #[serde(with = "u64_decimal")]
-    #[ts(type = "string")]
-    pub expires_market_minute: u64,
-}
-
-impl From<&ParentOrderPlan> for SaveParentOrderPlan {
-    fn from(plan: &ParentOrderPlan) -> Self {
-        Self {
-            code: plan.code().clone(),
-            side: plan.side(),
-            target_qty: plan.target_qty(),
-            filled_qty: plan.filled_qty(),
-            child_qty: plan.child_qty(),
-            active_child_order_id: plan.active_child_order_id(),
-            linked_plan_id: plan.linked_plan_id(),
-            limit_price: plan.limit_price(),
-            expires_market_minute: plan.expires_market_minute(),
-        }
-    }
-}
-
-impl From<SaveParentOrderPlan> for ParentOrderPlan {
-    fn from(plan: SaveParentOrderPlan) -> Self {
-        Self::from_saved_facts(
-            plan.code,
-            plan.side,
-            plan.target_qty,
-            plan.filled_qty,
-            plan.child_qty,
-            plan.active_child_order_id,
-            None,
-            plan.linked_plan_id,
-            plan.limit_price,
-            plan.expires_market_minute,
-        )
+impl SaveSlot {
+    /// 边界便捷：按代码查 id（目录由 setup 构造）。未知代码返回 None。
+    pub fn stock_id(&self, code: &str) -> Option<StockId> {
+        self.setup
+            .stock_catalog()
+            .ok()
+            .and_then(|catalog| catalog.id(code))
     }
 }
 
@@ -649,7 +594,7 @@ impl From<SaveParentOrderPlan> for ParentOrderPlan {
 #[ts(export)]
 pub struct NpcOrderLifecycle {
     pub account: AccountId,
-    pub code: StockCode,
+    pub code: StockId,
     pub order_id: OrderId,
     /// 委托进入连续竞价簿时的绝对标准交易分钟。
     pub placed_market_minute: u64,
@@ -657,7 +602,7 @@ pub struct NpcOrderLifecycle {
     pub expires_market_minute: u64,
 }
 
-pub(crate) mod u64_decimal {
+mod canonical_u64_decimal {
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
@@ -671,23 +616,30 @@ pub(crate) mod u64_decimal {
     where
         D: Deserializer<'de>,
     {
-        String::deserialize(deserializer)?
-            .parse::<u64>()
-            .map_err(serde::de::Error::custom)
+        let value = String::deserialize(deserializer)?;
+        let bytes = value.as_bytes();
+        let nonzero_prefix = bytes
+            .first()
+            .is_some_and(|byte| (b'1'..=b'9').contains(byte));
+        let canonical = bytes == b"0" || (nonzero_prefix && bytes.iter().all(u8::is_ascii_digit));
+        if !canonical {
+            return Err(serde::de::Error::custom(
+                "u64 must use canonical decimal notation",
+            ));
+        }
+        value.parse::<u64>().map_err(serde::de::Error::custom)
     }
 }
 
-use crate::orderbook::canonical_u64_decimal;
-
 mod book_sequence_map {
-    use super::{u64_decimal, StockCode};
+    use super::{u64_decimal, StockId};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::BTreeMap;
 
     #[derive(Serialize, Deserialize)]
     struct Cursor(#[serde(with = "u64_decimal")] u64);
 
-    pub fn serialize<S>(value: &BTreeMap<StockCode, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &BTreeMap<StockId, u64>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -698,11 +650,11 @@ mod book_sequence_map {
             .serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockCode, u64>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockId, u64>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Ok(BTreeMap::<StockCode, Cursor>::deserialize(deserializer)?
+        Ok(BTreeMap::<StockId, Cursor>::deserialize(deserializer)?
             .into_iter()
             .map(|(code, cursor)| (code, cursor.0))
             .collect())
@@ -740,14 +692,14 @@ mod account_ordinal_map {
 }
 
 mod stock_ordinal_map {
-    use super::{canonical_u64_decimal, StockCode};
+    use super::{canonical_u64_decimal, StockId};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::BTreeMap;
 
     #[derive(Serialize, Deserialize)]
     struct Cursor(#[serde(with = "canonical_u64_decimal")] u64);
 
-    pub fn serialize<S>(value: &BTreeMap<StockCode, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &BTreeMap<StockId, u64>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -758,11 +710,11 @@ mod stock_ordinal_map {
             .serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockCode, u64>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockId, u64>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Ok(BTreeMap::<StockCode, Cursor>::deserialize(deserializer)?
+        Ok(BTreeMap::<StockId, Cursor>::deserialize(deserializer)?
             .into_iter()
             .map(|(code, cursor)| (code, cursor.0))
             .collect())
@@ -829,18 +781,6 @@ pub struct FilledOrderSnap {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
-pub struct PendingNpcBatch {
-    #[serde(with = "crate::orderbook::js_safe_u64")]
-    #[ts(type = "number")]
-    pub observed_tick: u64,
-    pub observed_accounts: Vec<AccountId>,
-    pub intents: Vec<ReceiptBearingIntent>,
-    /// Reconciliation cancellation -> replacement admission, by intent position.
-    pub dependencies: Vec<(usize, usize)>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
 pub struct ReceiptBearingIntent {
     pub owner: AccountId,
     pub intent: Intent,
@@ -860,7 +800,7 @@ pub struct IngressReceiptCursors {
     pub next_account_ordinal: BTreeMap<AccountId, u64>,
     #[serde(with = "stock_ordinal_map")]
     #[ts(type = "Record<string, string>")]
-    pub next_stock_ordinal: BTreeMap<StockCode, u64>,
+    pub next_stock_ordinal: BTreeMap<StockId, u64>,
 }
 
 impl IngressReceiptCursors {
@@ -876,11 +816,13 @@ impl IngressReceiptCursors {
         };
         let account_ordinal = self.next_account_ordinal.get(&owner).copied().unwrap_or(0);
         let account_next = account_ordinal.checked_add(1).ok_or_else(|| {
-            SessionError::ResourceLimit(format!("account {owner:?} ingress ordinal overflow"))
+            // fault1003: 账户受理回执序号 u64 溢出。ctx[0] = AccountId。
+            SessionError::ResourceLimit(ValidationFault::new(1003, vec![owner.0]))
         })?;
         let stock_ordinal = self.next_stock_ordinal.get(&code).copied().unwrap_or(0);
         let stock_next = stock_ordinal.checked_add(1).ok_or_else(|| {
-            SessionError::ResourceLimit(format!("stock {code:?} ingress ordinal overflow"))
+            // fault1004: 股票受理回执序号 u64 溢出。ctx[0] = StockId。
+            SessionError::ResourceLimit(ValidationFault::new(1004, vec![u64::from(code.0)]))
         })?;
         self.next_account_ordinal.insert(owner, account_next);
         self.next_stock_ordinal.insert(code, stock_next);
@@ -893,69 +835,30 @@ impl IngressReceiptCursors {
     }
 }
 
-impl PendingNpcBatch {
-    pub(super) fn validate_dependencies(&self) -> Result<(), String> {
-        let mut seen = BTreeSet::new();
-        for &(before, after) in &self.dependencies {
-            let prefix = format!("pending NPC dependency {before}->{after}");
-            if before >= after || after >= self.intents.len() {
-                return Err(format!(
-                    "{prefix} must reference earlier and later queued intents"
-                ));
-            }
-            if !seen.insert((before, after)) {
-                return Err(format!("{prefix} is duplicated"));
-            }
-            let before = &self.intents[before];
-            let after = &self.intents[after];
-            let Intent::Cancel {
-                code: before_code, ..
-            } = &before.intent
-            else {
-                return Err(format!("{prefix} predecessor is not a cancellation"));
-            };
-            let after_code = match &after.intent {
-                Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. } => code,
-                Intent::Cancel { .. } => {
-                    return Err(format!("{prefix} successor is not a placement"));
-                }
-            };
-            if before.owner != after.owner || before_code != after_code {
-                return Err(format!(
-                    "{prefix} must belong to the same account and stock"
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-type ContinuousOrdersByAccount = BTreeMap<AccountId, Vec<(StockCode, Order)>>;
-type AuctionOrdersByAccount = BTreeMap<AccountId, Vec<(StockCode, AuctionOrderSnap)>>;
+type ContinuousOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, Order)>>;
+type AuctionOrdersByAccount = BTreeMap<AccountId, Vec<(StockId, AuctionOrderSnap)>>;
 
 enum ReconcileScope {
     AllWorkingOrders,
-    ReviewedStocks(BTreeSet<StockCode>),
+    ReviewedStocks(BTreeSet<StockId>),
 }
 
 #[derive(Clone, Copy)]
 struct WorkingOrderSlices<'a> {
-    continuous: &'a [(StockCode, Order)],
-    auction: &'a [(StockCode, AuctionOrderSnap)],
+    continuous: &'a [(StockId, Order)],
+    auction: &'a [(StockId, AuctionOrderSnap)],
 }
 
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
 #[derive(Debug, Error)]
 pub enum SessionError {
-    #[error("报表更正失败：{0}")]
-    ReportCorrection(#[source] ReportCorrectionError),
-    #[error("报表更正内部不变量失败：{0}")]
-    CorrectionInvariant(#[source] Box<crate::company::CompanyCorrectionError>),
+    #[error(transparent)]
+    ComputeInitialization(#[from] crate::compute::ComputeInitError),
     #[error(transparent)]
     Step(#[from] StepFatal),
-    /// 构造参数非法（stocks 空 / ticks_per_day==0 等）。
+    /// 构造参数非法（stocks 空 / ticks_per_day==0 等）。数值码+数值上下文（ADR 0041）。
     #[error("invalid setup: {0}")]
-    InvalidSetup(String),
+    InvalidSetup(crate::error::ValidationFault),
     /// 入队意图时玩家 id 不存在。
     #[error("unknown player: {0:?}")]
     UnknownPlayer(AccountId),
@@ -965,15 +868,11 @@ pub enum SessionError {
     #[error("unknown account for history request: {0:?}")]
     UnknownHistoryAccount(AccountId),
     #[error("unknown stock for history request: {0:?}")]
-    UnknownHistoryStock(StockCode),
-    #[error("intraday average could not be calculated: {0}")]
-    InvalidIntradayAverage(String),
-    #[error("本人交割历史查询无效：{0}")]
-    InvalidTradeHistoryQuery(String),
+    UnknownHistoryStock(StockId),
     #[error("history read could not be recorded: {0}")]
-    InvalidHistoryRead(String),
+    InvalidHistoryRead(crate::error::ValidationFault),
     #[error("session resource limit exceeded: {0}")]
-    ResourceLimit(String),
+    ResourceLimit(crate::error::ValidationFault),
     /// 透传 market 错误。
     #[error(transparent)]
     Market(#[from] MarketError),
@@ -992,18 +891,18 @@ pub enum SessionError {
     /// 透传游戏配置错误。
     #[error(transparent)]
     Config(#[from] ConfigError),
-    /// 存档 schema 或领域不变量不合法。
+    /// 存档 schema 或领域不变量不合法。数值码+数值上下文（ADR 0041）。
     #[error("invalid save: {0}")]
-    InvalidSave(String),
+    InvalidSave(crate::error::ValidationFault),
     /// 透传交易日历错误（冻结日历与双时钟 开局日期门等）。
     #[error(transparent)]
     Calendar(#[from] crate::calendar::CalendarError),
     /// 透传自然日时钟错误（冻结日历与双时钟 日结验证/原子失败）。
     #[error(transparent)]
     CivilClock(#[from] CivilClockError),
-    /// 透传公司经营接线错误（会话装配与执行接线 日终编排）。
+    /// 透传公司经营错误（会话装配与执行接线 日终编排：装配校验与逐日经营推进）。
     #[error(transparent)]
-    CompanyOperations(#[from] company_operations::CompanyOperationsSeamError),
+    CompanyOperations(Box<crate::company::operations::OperationsError>),
     /// 透传披露派发错误（会话装配与执行接线 日终编排）。
     #[error(transparent)]
     Disclosure(#[from] DisclosureError),
@@ -1016,6 +915,12 @@ pub enum SessionError {
     /// 透传只读公开信息查询错误。
     #[error(transparent)]
     Information(#[from] Box<crate::information::InformationError>),
+}
+
+impl From<crate::company::operations::OperationsError> for SessionError {
+    fn from(source: crate::company::operations::OperationsError) -> Self {
+        Self::CompanyOperations(Box::new(source))
+    }
 }
 
 /// A 股证券类别；类别决定涨跌幅与差异化申报数量上限。
@@ -1096,7 +1001,7 @@ impl SecurityCategory {
 }
 
 /// 单只股票初始规格（行情/涨跌停/tick/总股本/流通盘）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct StockSpec {
     pub code: StockCode,
     /// 上市交易所；配置与存档必须显式提供。
@@ -1214,12 +1119,17 @@ pub struct NpcSetup {
 
 /// session 初始化参数。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SessionSetup {
     pub stocks: Vec<StockSpec>,
-    #[ts(type = "import(\"../../save/schema/company/system\").CompanySystemConfig")]
-    pub company_system: crate::company::config::CompanySystemConfig,
+    #[serde(default)]
+    #[ts(optional)]
+    #[ts(type = "import(\"../../save/schema/company/operations\").CompanyOperationsConfig | null")]
+    pub company_operations: Option<crate::company::operations::CompanyOperationsConfig>,
+    #[serde(default)]
+    #[ts(optional)]
+    #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
+    pub groups: Vec<GroupStructure>,
     pub npcs: NpcSetup,
     pub config: GameConfig,
     pub strategy_params: StrategyParams,
@@ -1239,7 +1149,6 @@ pub struct SessionSetup {
     pub t1_enabled: bool,
     /// 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
     pub float_allocation: FloatAllocation,
-    pub report_frequency: crate::information::ReportFrequency,
     /// 开局自然日。缺省为政策默认 2030-01-01；合法开局 2000-01-01..2099-12-31
     /// （1998–1999 仅供初始化前史查询）。休市起点保持原日，不挪到开市日。
     /// serde 缺省仅供宿主过渡期不发送该字段时使用；存档总是显式写出。
@@ -1249,90 +1158,75 @@ pub struct SessionSetup {
     /// 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
     /// 与任何“最新默认”比对或迁移——身份不匹配的档由宿主层拒绝。
     pub simulation_policy_id: String,
-    /// 新局现金分红税务模式（2026-10-08 三层产品决策）：默认简税比例代扣
-    /// （`FlatWithholding`，装配期不建任何税账，付款日按比例代扣），可选大 A
-    /// 个人差别化（`AShareIndividual`，自动开账/FIFO/三档/转让补缴/追缴）与
-    /// 不扣税（`Exempt`，无个人股息税事实且卖出印花税免征）。严格持久化字段：
-    /// 新档必填、无 serde 默认，缺失该字段的旧档被显式拒绝；旧两变体枚举值
-    /// 已整体删除，携带旧值的档显式拒绝；恢复后自动配置与计税语义不变。
-    pub dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode,
-    /// 简税比例（basis points，1000bp = 10%）。严格三态契约：仅
-    /// `FlatWithholding` 模式必填（合法域 0..=10000bp，即最高全额代扣）；
-    /// 其他模式显式拒绝携带（序列化形态为 `null`，携带数值即拒绝）。
-    /// 默认值 1000bp 由 DEFAULT_SETUP / UI 草稿层提供，不设 serde 默认。
-    pub flat_withholding_bp: Option<u32>,
-    /// 新局「配股／增发」机制开关（2026-10-07 产品决策，ADR-0039）：
-    /// 关闭（UI 默认）时配股／增发机制不触发，显式 API 调用被显式拒绝
-    /// （错误指明本局未启用）。严格持久化字段：新档必填、无 serde 默认，
-    /// 缺失该字段的旧档被显式拒绝；恢复后开关语义不变。
-    pub rights_offering_enabled: bool,
-    /// 新局「发行人回购」机制开关（2026-10-07 产品决策，ADR-0038）：
-    /// 独立于配股／增发开关，默认关闭。关闭时回购机制不触发，显式 API
-    /// 调用被显式拒绝（错误指明本局未启用）。严格持久化字段：新档必填、
-    /// 无 serde 默认，缺失该字段的旧档被显式拒绝；恢复后开关语义不变。
-    pub issuer_repurchase_enabled: bool,
-    /// 每股面值（`Money` 分；2026-10-08 N2a 决策：默认 1 元/股 = 100 分，
-    /// 新局可编辑）。开局自动装配用它推定各 Simple 上市公司的注册资本
-    /// 法定事实：注册资本 = 面值 × 总股本（`define_dividend_legal_facts`
-    /// 既有路径，bind-once）。严格持久化字段：新档必填、无 serde 默认，
-    /// 缺失该字段的旧档被显式拒绝；默认值 100 分由 Web DEFAULT_SETUP 与
-    /// UI 草稿层提供，不设 serde 默认，杜绝旧档静默取默认的兼容路径。
-    pub par_value_per_share: Money,
-    /// 开局自动装配公司行为基础（2026-10-08 N2a 决策：开局自动建名册，
-    /// 产品默认开启）：`true` 时 `GameSession::new` 在初始筹码分配完成后
-    /// 为每家 Simple 上市公司自动装配——按分配结果构建全流通名册（无发行人
-    /// 自持股；未分配余量登记为具名外部股东）、按面值推定注册资本法定事实、
-    /// 并按三层税制模式自动开个人税账（仅 `AShareIndividual`）。`false` 保持
-    /// 显式装配入口（`configure_share_registry` / `define_dividend_legal_facts`
-    /// / `configure_cash_dividend_tax_book`），供测试与特殊场景精确控制。
-    /// 严格持久化字段：新档必填、无 serde 默认；恢复后装配语义不变。
-    pub auto_corporate_foundation: bool,
 }
 
 impl SessionSetup {
+    /// 由规格构造股票目录（ADR 0041）：按代码升序分配 id，id 序即代码序。
+    /// `GameSession::new` 与读档路径共用，保证两端 id 分配一致。
+    pub fn stock_catalog(&self) -> Result<StockCatalog, SessionError> {
+        StockCatalog::from_metas(
+            self.stocks
+                .iter()
+                .map(|spec| crate::stock::StockMeta::new(spec.code.0.clone()))
+                .collect(),
+        )
+        .map_err(|_| SessionError::InvalidSetup(ValidationFault::new(1001, vec![0])))
+    }
+
+    /// 全部股票 id（按代码序）。构造/装配路径的便捷视图。
+    pub fn stock_ids(&self, catalog: &StockCatalog) -> Result<Vec<StockId>, SessionError> {
+        self.stocks
+            .iter()
+            .enumerate()
+            .map(|(spec_index, spec)| {
+                catalog.id(&spec.code.0).ok_or_else(|| {
+                    // 1002：规格代码未入目录；ctx[0]=规格下标。
+                    SessionError::InvalidSetup(ValidationFault::new(1002, vec![spec_index as u64]))
+                })
+            })
+            .collect()
+    }
     /// 校验所有启动期外部输入。serde 可绕过各子类型构造器，因此 session 创建和恢复
     /// 都必须从这里进入，验证成功后才构造权威状态。
     pub fn validate(&self) -> Result<(), SessionError> {
-        let issuers =
-            crate::company::identity::IssuerRegistry::new(company_assembly::issuer_specs(self)?)
-                .map_err(|error| SessionError::InvalidSetup(format!("发行人身份非法：{error}")))?;
-        match &self.company_system {
-            crate::company::config::CompanySystemConfig::Simple(config) => config
-                .validate_for_issuers(&issuers)
-                .map_err(|error| SessionError::InvalidSetup(format!("Simple 参数非法：{error}")))?,
-            crate::company::config::CompanySystemConfig::Simulation => {
-                return Err(SessionError::InvalidSetup(
-                    "Simulation 将在独立分支实现，当前不能创建".into(),
-                ))
-            }
-        }
-        if let crate::information::ReportFrequency::Monthly { schedule } = self.report_frequency {
-            schedule
-                .validate()
-                .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        }
         if self.stocks.is_empty() {
-            return Err(SessionError::InvalidSetup(
-                "stocks must be non-empty".to_string(),
-            ));
+            // fault1005: 股票规格列表为空。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1005)));
+        }
+        // Sol 六审 v6 方案 A 守卫：股数上限=desk 域 OrderId 编码域容量
+        /// （stock 位宽 2^21=2_097_152 股——`(stock<<32)|serial` 最大
+        /// 2^53−2 恰内含 js_safe wire 域；股数超编码域=订单身份无法
+        /// 在 wire 域内合成）。StockIdx 的 u16 类型已先验限制股数
+        /// <65536≪2^21，本校验为防御性显式化（不经 StockIdx 的注入
+        /// 面同被拦）。所有 setup 入口（含测试注入）经此校验。
+        if self.stocks.len() >= (1usize << 21) {
+            // fault1035: 股数超出 desk 域 OrderId 编码容量。ctx[0] = 实际
+            // 股数；ctx[1] = 容量上限 2^21（stock 位宽——超域即拒，显式
+            /// 报错而非静默产生超 wire 域的订单身份）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1035,
+                vec![self.stocks.len() as u64, 1 << 21],
+            )));
         }
         if self.simulation_policy_id != SIMULATION_POLICY_ID {
-            return Err(SessionError::InvalidSetup(format!(
-                "simulation_policy_id 必须为当前政策 {SIMULATION_POLICY_ID:?}，实际为 {:?}",
-                self.simulation_policy_id
+            // fault1006: 模拟政策身份不匹配。槽0/槽1 待 C 批数值化
+            // （原文本为期望政策 id "{SIMULATION_POLICY_ID}" 与实际政策 id "{:?}"）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1006,
+                vec![0, 0],
             )));
         }
         // 冻结日历与双时钟 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
         TradingCalendar::current_default_calendar()?.validate_runtime_start(self.start_date)?;
         if self.ticks_per_day == 0 {
-            return Err(SessionError::InvalidSetup(
-                "ticks_per_day must be > 0".to_string(),
-            ));
+            // fault1007: ticks_per_day 必须为正。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1007)));
         }
         if self.auction_ticks >= self.ticks_per_day {
-            return Err(SessionError::InvalidSetup(format!(
-                "auction_ticks ({}) must be < ticks_per_day ({})",
-                self.auction_ticks, self.ticks_per_day
+            // fault1008: auction_ticks 必须 < ticks_per_day。ctx = [auction_ticks, ticks_per_day]。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1008,
+                vec![self.auction_ticks, self.ticks_per_day],
             )));
         }
         if self
@@ -1340,106 +1234,43 @@ impl SessionSetup {
             .checked_add(self.closing_auction_ticks)
             .is_none_or(|total| total >= self.ticks_per_day)
         {
-            return Err(SessionError::InvalidSetup(format!(
-                "auction_ticks ({}) + closing_auction_ticks ({}) must be < ticks_per_day ({})",
-                self.auction_ticks, self.closing_auction_ticks, self.ticks_per_day
+            // fault1009: auction_ticks + closing_auction_ticks 必须 < ticks_per_day。
+            // ctx = [auction_ticks, closing_auction_ticks, ticks_per_day]。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1009,
+                vec![
+                    self.auction_ticks,
+                    self.closing_auction_ticks,
+                    self.ticks_per_day,
+                ],
             )));
         }
         if self.history_len == 0 {
-            return Err(SessionError::InvalidSetup(
-                "history_len must be > 0".to_string(),
-            ));
+            // fault1010: history_len 必须为正。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1010)));
         }
         if self.npcs.retail_cash_median.cents() < 0 {
-            return Err(SessionError::InvalidSetup(
-                "retail_cash_median must be >= 0".to_string(),
-            ));
+            // fault1011: 散户现金中位数必须非负（i64 分负值，幅值由配置侧自证）。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1011)));
         }
         self.config.validate()?;
-        // 三层税制（2026-10-08 决策）的简税比例三态契约：仅 Flat 模式必填、
-        // 其他模式显式拒绝携带；比例域 0..=10000bp（最高全额代扣，超过会破坏
-        // 原子代扣不变量）。默认值 1000bp 由 DEFAULT_SETUP / UI 草稿层提供，
-        // 不设 serde 默认，杜绝旧档静默取默认的兼容路径。
-        match (
-            self.dividend_tax_mode,
-            self.flat_withholding_bp,
-        ) {
-            (
-                crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-                None,
-            ) => {
-                return Err(SessionError::InvalidSetup(
-                    "FlatWithholding 模式必须携带 flat_withholding_bp（简税比例，bp）"
-                        .to_string(),
-                ));
-            }
-            (
-                crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-                Some(rate_bp),
-            ) => {
-                if rate_bp > crate::company::cash_dividend_tax::MAX_FLAT_WITHHOLDING_BP {
-                    return Err(SessionError::InvalidSetup(format!(
-                        "flat_withholding_bp={rate_bp} 超出合法域 0..={}bp（最高全额代扣）",
-                        crate::company::cash_dividend_tax::MAX_FLAT_WITHHOLDING_BP
-                    )));
-                }
-            }
-            (_, Some(_)) => {
-                return Err(SessionError::InvalidSetup(format!(
-                    "flat_withholding_bp 仅 FlatWithholding 模式可携带，模式 {:?} 不得携带",
-                    self.dividend_tax_mode
-                )));
-            }
-            _ => {}
-        }
         if !self.t1_enabled {
-            return Err(SessionError::InvalidSetup(
-                "formal A-share sessions require T+1 settlement".to_string(),
-            ));
+            // fault1012: 正式 A 股局必须启用 T+1 结算。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1012)));
         }
-        // 印花税按税务模式门禁（2026-10-08 决策）：不扣税模式连印花税也免，
-        // 佣金与过户费照付。该配对在 setup 校验的单一入口强制，费用管线
-        // （结算、名义费用、NPC 估算与恢复重放）全部经 GameConfig 传播，
-        // 不存在绕过配对的第二条计费路径。
-        let expected_stamp_rate = if self.dividend_tax_mode
-            == crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt
-        {
-            0.0
-        } else {
-            0.0005
-        };
-        if (self.config.stamp_tax_rate - expected_stamp_rate).abs() > f64::EPSILON {
-            return Err(SessionError::InvalidSetup(format!(
-                "dividend_tax_mode={:?} 要求 stamp_tax_rate={expected_stamp_rate}，实际为 {}",
-                self.dividend_tax_mode, self.config.stamp_tax_rate
+        if (self.config.stamp_tax_rate - 0.0005).abs() > f64::EPSILON {
+            // fault1013: 卖出印花税率必须为 0.0005。ctx[0] = 实际税率 f64 的 IEEE-754 位模式
+            // （C 批可改定点点表示）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1013,
+                vec![self.config.stamp_tax_rate.to_bits()],
             )));
-        }
-        // 面值参数域（2026-10-08 N2a 决策）：面值必须为正；开局自动装配按
-        // 「面值 × 总股本」推定注册资本法定事实，乘积必须可表示为 i128 分
-        // （AccountingAmount 的值域），否则在创建与恢复两端显式拒绝。
-        if self.par_value_per_share.cents() <= 0 {
-            return Err(SessionError::InvalidSetup(format!(
-                "par_value_per_share={} 分必须为正数（面值不得为零或负）",
-                self.par_value_per_share.cents()
-            )));
-        }
-        for stock in &self.stocks {
-            // AccountingAmount 的值域是完整 i128 分，只需排除乘法溢出。
-            i128::from(self.par_value_per_share.cents())
-                .checked_mul(i128::from(stock.total_shares))
-                .ok_or_else(|| {
-                    SessionError::InvalidSetup(format!(
-                        "股票 {} 的注册资本（面值 {} 分 × 总股本 {}）溢出 i128 分",
-                        stock.code.0, self.par_value_per_share.cents(), stock.total_shares
-                    ))
-                })?;
         }
         if (self.config.default_limit - 0.10).abs() > f64::EPSILON
             || (self.config.st_limit - 0.10).abs() > f64::EPSILON
         {
-            return Err(SessionError::InvalidSetup(
-                "formal A-share sessions require default_limit=10% and st_limit=10%".to_string(),
-            ));
+            // fault1014: 主板/风险警示涨跌幅限制必须均为 10%。
+            return Err(SessionError::InvalidSetup(ValidationFault::bare(1014)));
         }
         self.strategy_params.validate()?;
         let lot_size = self.config.lot_size;
@@ -1461,58 +1292,76 @@ impl SessionSetup {
             ),
         ] {
             if active && quantity % lot_size != 0 {
-                return Err(SessionError::InvalidSetup(format!(
-                    "{name}={quantity} must be a multiple of A-share lot_size={lot_size}"
+                // fault1015: 活跃类别下单均值必须是 A 股 lot_size 的整数倍。
+                // 槽0 待 C 批数值化（原文本为参数名 "{name}"，取值
+                // "strategy_params.retail.order_size_mean"/"strategy_params.inst.order_size"/
+                // "strategy_params.hot.order_size"）；ctx[1] = 下单均值，ctx[2] = lot_size。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1015,
+                    vec![0, u64::from(quantity), u64::from(lot_size)],
                 )));
             }
         }
         let mut codes = BTreeSet::new();
         for stock in &self.stocks {
             if !codes.insert(stock.code.clone()) {
-                return Err(SessionError::InvalidSetup(format!(
-                    "duplicate stock code: {}",
-                    stock.code.0
+                // fault1016: 股票代码重复。槽0 待 C 批数值化（原文本为代码串 "{}"）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1016,
+                    vec![0],
                 )));
             }
             if stock.tick != Money::from_cents(1) {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} must use the A-share 0.01 yuan tick",
-                    stock.code.0
+                // fault1017: 最小价位必须为 A 股 0.01 元。槽0 待 C 批数值化（原文本为代码串 "{}"）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1017,
+                    vec![0],
                 )));
             }
             if stock.total_shares == 0 {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} total_shares must be > 0",
-                    stock.code.0
+                // fault1018: 总股本必须为正。槽0 待 C 批数值化（原文本为代码串 "{}"）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1018,
+                    vec![0],
                 )));
             }
             if u64::from(stock.float_shares) > stock.total_shares {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} float_shares={} must not exceed total_shares={}",
-                    stock.code.0, stock.float_shares, stock.total_shares
+                // fault1019: 流通盘不得超过总股本。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = float_shares，ctx[2] = total_shares。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1019,
+                    vec![0, u64::from(stock.float_shares), stock.total_shares],
                 )));
             }
+            // fault1020: 代码不是受支持的六位沪深 A 股代码（前缀识别失败）。
+            // 槽0 待 C 批数值化（原文本为内层 String 错误，含代码串）。
             let inferred_exchange = StockExchange::from_a_share_code(&stock.code)
-                .map_err(SessionError::InvalidSetup)?;
+                .map_err(|_| SessionError::InvalidSetup(ValidationFault::new(1020, vec![0])))?;
             if stock.exchange != inferred_exchange {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} is assigned to {:?}, but its code belongs to {:?}",
-                    stock.code.0, stock.exchange, inferred_exchange
+                // fault1021: 配置交易所与代码所属板块不一致。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = 配置交易所（StockExchange 判别值 0=Shanghai/1=Shenzhen），
+                // ctx[2] = 代码推导交易所。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1021,
+                    vec![0, stock.exchange as u64, inferred_exchange as u64],
                 )));
             }
             let is_chinext_code = matches!(&stock.code.0[..3], "300" | "301");
             if (stock.category == SecurityCategory::ChiNext) != is_chinext_code {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} category {:?} conflicts with its board code",
-                    stock.code.0, stock.category
+                // fault1022: 证券类别与代码板块冲突。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = SecurityCategory 判别值（0=MainBoard/1=StMainBoard/2=ChiNext）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1022,
+                    vec![0, stock.category as u64],
                 )));
             }
             if (stock.limit_pct - stock.category.limit_pct()).abs() > f64::EPSILON {
-                return Err(SessionError::InvalidSetup(format!(
-                    "stock {} category {:?} requires a {} price limit",
-                    stock.code.0,
-                    stock.category,
-                    stock.category.display_limit()
+                // fault1023: 涨跌幅与类别要求不符。槽0 待 C 批数值化（原文本为代码串 "{}"）；
+                // ctx[1] = SecurityCategory 判别值；类别对应涨跌幅（"10%"/"20%"）由 ctx[1] 唯一决定，
+                // 原文本第三个参数无数值化必要。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1023,
+                    vec![0, stock.category as u64],
                 )));
             }
         }
@@ -1521,8 +1370,12 @@ impl SessionSetup {
         {
             for (value, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
                 if !value.is_finite() || value < 0.0 {
-                    return Err(SessionError::InvalidSetup(format!(
-                        "float_allocation between_kinds Percentage {name}={value} invalid (must be finite >=0)"
+                    // fault1024: 类间流通盘比例必须为有限非负 f64。槽0 待 C 批数值化
+                    // （原文本为类别名 "{name}"，取值 "retail"/"inst"/"hot"）；
+                    // ctx[1] = 比例值 f64 的 IEEE-754 位模式（C 批可改定点点表示）。
+                    return Err(SessionError::InvalidSetup(ValidationFault::new(
+                        1024,
+                        vec![0, value.to_bits()],
                     )));
                 }
             }
@@ -1541,10 +1394,8 @@ impl SessionSetup {
                 .map(|(_, weight)| weight)
                 .sum::<f64>();
                 if !effective_weight.is_finite() || effective_weight <= 0.0 {
-                    return Err(SessionError::InvalidSetup(
-                        "float_allocation between_kinds Percentage weights for existing NPC kinds must have a finite sum > 0"
-                            .to_string(),
-                    ));
+                    // fault1025: 存在 NPC 类别时类间比例之和必须为有限正数。
+                    return Err(SessionError::InvalidSetup(ValidationFault::bare(1025)));
                 }
             }
         }
@@ -1558,69 +1409,127 @@ impl SessionSetup {
 /// 会话 RNG、按 tick 派生的决策 RNG 与可存档的个体注意力 RNG 都源于同一 seed，
 /// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
-    report_correction_epoch: std::sync::Arc<()>,
+    compute: std::sync::Arc<crate::compute::ComputeContext>,
     ingress: Option<shared_ingress::IngressBinding>,
+    /// 外部直改计数（X1 新鲜度校验）：任何绕过 tick 管线、在 commit 与下个
+    /// plan_tick 之间改权威状态的行为必须自增（直改入口统一标记）。
+    /// 不入 state 克隆链——shadow 克隆取值快照，commit 不回写。
+    revision: std::sync::atomic::AtomicU64,
     poison: Option<StepFatal>,
     fresh_initial_allocation: bool,
     #[cfg(test)]
     injected_failure: Option<StepFatal>,
     #[cfg(test)]
     post_shadow_failure: Option<StepFatal>,
+    /// 测试注入：runtime 步进成功后强制安装失败（Sol 二审修复集 3——
+    /// 与 inject_post_shadow_failure 同型的安装面失败注入）。
+    #[cfg(test)]
+    runtime_install_failure: bool,
+    /// D0 常驻 runtime 驱动器：step_via_runtime 惰性构造、跨 step 复用
+    /// （world tick 与 session.tick 锁步）。不进 CommittableSessionState
+    /// ——线程句柄不是可提交状态；shadow 置 None、commit_tick_shadow
+    /// 只换 ingress/state ⇒ 常驻实例穿越日结不被覆盖。
+    runtime_driver: Option<std::sync::Mutex<crate::runtime::drive::RuntimeDriver>>,
+    /// 翻转批组参数化：runtime 世界的组数（探针负载用；生产默认 1——
+    /// from_session 单组语义不变）。
+    runtime_group_count: usize,
+    /// step_frame 接轨件 4：投影段失败后丢弃驱动器的标志（body 内设置、
+    /// 驱动器共用段消费——world tick 已转正而会话已回滚，锁步断裂的
+    /// 常驻实例不可复用；重试经 from_session 重建，等价旧管线"candidate
+    /// 丢弃+可重试"）。不进 state 克隆链（随 runtime_driver 同生命周期）。
+    pub(crate) runtime_discard_driver_flag: bool,
     state: CommittableSessionState,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[serde(deny_unknown_fields)]
-#[ts(export)]
-pub struct PersonalTradeConfirmation {
-    #[serde(with = "canonical_u64_decimal")]
-    #[ts(type = "string")]
-    pub receipt_id: u64,
-    pub civil_date: CivilDate,
-    pub code: StockCode,
-    pub side: Side,
-    pub price: Money,
-    pub quantity_shares: u32,
-    pub gross: Money,
-    pub actual_fees: pipeline::FeeComponents,
 }
 
 /// tick shadow 与自然日日结共同提交的唯一状态集合。
 struct CommittableSessionState {
-    retained_market_history: retained_history::RetainedMarketHistory,
-    memberships: MarketMembershipState,
-    pending_report_corrections: Vec<CompanyReportCorrection>,
-    report_correction_operations: BTreeMap<String, CompletedReportCorrection>,
     setup: SessionSetup,
+    /// Sol 六审段 1.3（weekend_publish）：信息投递权威标志——runtime
+    /// 驱动器构造后置 true 并**随 state 克隆链走**（clone_for_tick_
+    /// shadow 会把 runtime_driver 置 None，旧门判 self.runtime_driver
+    /// 使 candidate 内 deliver_public_information 误走旧管线全量投递
+    /// ——休市日零市场副作用的 attention 面漂移显红）。不参与存档
+    /// （CommittableSessionState 无 serde derive，档投影逐域投影）
+    /// 与 business_state_hash（hash.rs 通配 _）。
+    runtime_information_authority: bool,
+    /// 运行时-only 费率快照（任务65 #1 前置条件守卫）：于 GameSession::new（含恢复重建）
+    /// 时固定，不参与存档/business_state_hash。逐 tick 与 `setup.config` O(1) 比对，
+    /// 任何静默热改 → capture/校验门禁 fail closed（见 envelope_projection 守卫）。
+    validated_config: GameConfig,
+    /// 股票目录（ADR 0041）：id ↔ 代码/显示名的唯一翻译层，构造后不可变。
+    stocks: StockCatalog,
     rng: SplitMix64,
     seed: u64,
-    markets: BTreeMap<StockCode, Market>,
+    markets: BTreeMap<StockId, Market>,
     accounts: AccountBook,
     history_reads: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
-    price_history: BTreeMap<StockCode, VecDeque<Money>>,
-    market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
+    price_history: BTreeMap<StockId, VecDeque<Money>>,
+    market_minute_closes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
     candle_book: SessionCandleBook,
-    auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     pending_player: Vec<ReceiptBearingIntent>,
-    pending_npc: Option<PendingNpcBatch>,
     ingress_receipt_cursors: IngressReceiptCursors,
     npc_attention: AccountPagedMap<NpcAttentionState>,
     retail_experience: AccountPagedMap<RetailExperienceState>,
-    parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
-    pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 上一 tick 中实际观察并判断目标仓位与经历调整的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
     last_retail_decisions: Vec<RetailDecisionTrace>,
+    /// D5 attention 公开可见性门禁：desk 簿权威的瞬态镜像（runtime
+    /// install 段每拍刷新；不进入存档与业务 hash——snapshot 公开投影/
+    /// 玩家在途/预留读面的源。旧管线读面（session markets 簿）在
+    /// runtime 下恒空，公开面（A 股竞价隐藏/截点揭示）自此承载。
+    pub desk_book_mirror: BTreeMap<StockId, DeskBookMirror>,
+    /// runtime desk 序号游标的会话级缓存（Sol 四轮修复：save 投影权威
+    /// ——镜像瞬态（install 段刷新、特定相位拍后可能缺席），游标只增
+    /// 不减须持久于会话生命周期；不入 SaveSlot——save 落
+    /// book_next_sequences，restore 经旧簿游标回读）。
+    pub runtime_desk_serial_cursors: Vec<u64>,
     last_retail_order_events: Vec<RetailOrderDiagnosticEvent>,
     #[cfg(feature = "simulation-diagnostics")]
     npc_decision_traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
     #[cfg(feature = "simulation-diagnostics")]
     causal: crate::diagnostics::causal::CausalCollector,
     attention_scheduler: NpcAttentionScheduler,
+    /// P2-2b：账户写时 undo（runtime 安装基线的账户域回滚源——首写
+    /// 前值；瞬态不入存档/hash）。
+    runtime_account_undo:
+        Vec<(AccountId, i64, std::collections::BTreeMap<StockId, crate::account::Position>)>,
+    runtime_account_undo_ids: std::collections::HashSet<AccountId>,
+    /// P2-3b：安装基线五域写时 undo（替代每 tick 全名册 clone——clone 使
+    /// AccountPagedMap 页 Arc 共享，后续 get_mut 全部触发 COW 页组深拷贝，
+    /// 驱动线程画像 get_mut 8.6%+jemalloc 家族 ~20% 的主源）。首写前值
+    /// 幂等记录（None=拍前不在册墓碑——回滚移除）；heap 整体替换域用
+    /// move-undo（旧堆搬入槽位，零拷贝）。瞬态不入存档/hash。
+    runtime_attention_undo: Vec<(AccountId, Option<NpcAttentionState>)>,
+    runtime_attention_undo_ids: std::collections::HashSet<AccountId>,
+    runtime_heap_undo: Option<NpcAttentionScheduler>,
+    runtime_belief_undo:
+        Vec<(AccountId, Option<decision_chain::personal_state::BeliefParticipantState>)>,
+    runtime_belief_undo_ids: std::collections::HashSet<AccountId>,
+    runtime_retail_undo: Vec<(AccountId, Option<RetailExperienceState>)>,
+    runtime_retail_undo_ids: std::collections::HashSet<AccountId>,
+    runtime_history_undo:
+        Vec<(AccountId, Option<crate::experience::PersonalHistoryReadLedger>)>,
+    runtime_history_undo_ids: std::collections::HashSet<AccountId>,
+    /// step_frame 接轨件 4b：投影失败回滚面扩展（malformed_frame 契约
+    /// ——失败后 save==步前）。整值替换域的 move/clone-undo（幂等首写
+    /// get_or_insert；ledger clone 仅 step_frame 分叉路径记录——见
+    /// runtime_step_with_install_inner 的 capture_undo 门控）。瞬态不入
+    /// 存档/hash；shadow/commit 有意丢弃（与五域 undo 同生命周期）。
+    runtime_mirror_undo:
+        Option<(BTreeMap<StockId, DeskBookMirror>, Vec<u64>)>,
+    runtime_plans_undo: Option<crate::plans::PlanBook>,
+    runtime_envelope_undo: Option<pipeline::EnvelopeLedger>,
+    runtime_lifecycles_undo: Option<Vec<NpcOrderLifecycle>>,
+    runtime_retail_diag_undo: Option<(Vec<RetailOrderDiagnosticEvent>, Vec<RetailDecisionTrace>)>,
     // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
-    company_system: std::sync::Arc<crate::company::CompanySystem>,
-    corporate_actions: SessionCorporateActions,
+    /// 发行人注册表（公司规格与开局账套）：股票 ↔ 公司映射与开局账套。
+    company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
+    /// 自然日经营编排（自然日经营演化；前史已推进到开局日）。
+    operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
+    groups: Vec<GroupStructure>,
+    /// 结账版本登记簿（结账与报表）。
+    closing: std::sync::Arc<crate::accounting::closing::ClosingEngine>,
     /// 公开信息库（公开信息；前史已播种）。
     library: std::sync::Arc<crate::information::PublicLibrary>,
     /// 披露派发游标。
@@ -1634,8 +1543,6 @@ struct CommittableSessionState {
     envelope_ledger: pipeline::EnvelopeLedger,
     /// 已由原子 Settlement 账户/经历投影消费的回执；随 tick shadow 提交的权威去重事实。
     retail_projection_seen: pipeline::RetailProjectionSeen,
-    personal_trade_confirmations:
-        BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
     /// 下一个全局回执索引；跨存档由 `SavedRuntimeState` 的 `next_receipt_base` 持久恢复。
     next_receipt_base: u64,
     next_order_id: u64,
@@ -1645,6 +1552,140 @@ struct CommittableSessionState {
     /// 冻结日历与双时钟 自然日经营时钟：与 tick/交易日计数分离的权威自然日推进。
     civil_clock: CivilClock,
 }
+
+/// commit_from 逐字段移交的字段身份（Luna 修复1 + Astra 修复2升级 + 增量五复检收窄）。
+/// 仅 verification-harness 计量消费；析构语义零变化。完整性契约（如实范围，不称
+/// 无条件保证）：
+/// a) 防护面：任何 defer_swap 调用点的删除、字段集成员/数量变化（含加字段不
+///    更新全集、FieldId variant 复用）必然让
+///    verify_metrics_classifies_real_defer_swap_fields_as_commit_field 变红；
+/// b) 盲区 1（已知，如实登记）：FieldId 是调用点自报标签，未与真实字段做类型级
+///    绑定——错标（把 A 字段的 swap 标成 B 的 FieldId）叠加"删一换一"可绕过本绊线；
+/// c) 盲区 2（已知，如实登记）：新增重字段若不经 defer_swap 而直接赋值（commit
+///    路径同步析构），本绊线不拦截——它只观测走 defer_swap 的移交。
+/// 同步清单：给 CommittableSessionState 增删字段时 ①增删枚举项 ②commit_from 的
+/// defer_swap 传新项 ③同步更新两个 cfg 变体的 COMMIT_FIELD_EXPECTED 全集。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[repr(u8)]
+pub(in crate::session) enum FieldId {
+    Setup = 0,
+    ValidatedConfig,
+    Stocks,
+    Rng,
+    Markets,
+    Accounts,
+    HistoryReads,
+    PriceHistory,
+    MarketMinuteCloses,
+    CandleBook,
+    PendingPlayer,
+    IngressReceiptCursors,
+    NpcAttention,
+    RetailExperience,
+    // owner8 引擎闭包（批次④）删除 parent_orders/pending_plan_events 两个 state 字段，
+    // 其 FieldId 变体随之移除（设计内更新，非弱化——见下方 COMMIT_FIELD_EXPECTED）。
+    NpcOrderLifecycles,
+    LastRetailDecisions,
+    LastRetailOrderEvents,
+    NpcDecisionTraces,
+    Causal,
+    AttentionScheduler,
+    CompanyRegistry,
+    Operations,
+    Groups,
+    Closing,
+    Library,
+    Disclosures,
+    Plans,
+    BeliefParticipants,
+    EnvelopeLedger,
+    RetailProjectionSeen,
+    CivilClock,
+    SpeculativePrepare,
+}
+
+/// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
+/// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
+/// 默认 features 为 30 项；开启 simulation-diagnostics 时为 32 项（追加
+/// NpcDecisionTraces/Causal）。owner8 批次④删除两字段后由 33/35 收窄为 31/33
+///（Astra 终审口径校正：下文一律按现行 31/33 口径表述）。一致性要求（Astra
+/// 增量六措辞校正；批四删除 PendingNpc 字段后 30/32 口径）：32 项变体去掉两个
+/// 诊断项（NpcDecisionTraces/Causal）后，其余 30 项与默认变体逐项一致——诊断项插在默认变体第 20 项
+/// （LastRetailOrderEvents）之后，其后的项在 33 项变体中下标后移，逐下标位置
+/// 并不一致（人工同步维护，盲区 1 的自报标签性质同样适用于此处清单）。
+#[cfg(not(feature = "simulation-diagnostics"))]
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
+    FieldId::Setup,
+    FieldId::ValidatedConfig,
+    FieldId::Stocks,
+    FieldId::Rng,
+    FieldId::Markets,
+    FieldId::Accounts,
+    FieldId::HistoryReads,
+    FieldId::PriceHistory,
+    FieldId::MarketMinuteCloses,
+    FieldId::CandleBook,
+    FieldId::PendingPlayer,
+    FieldId::IngressReceiptCursors,
+    FieldId::NpcAttention,
+    FieldId::RetailExperience,
+    FieldId::NpcOrderLifecycles,
+    FieldId::LastRetailDecisions,
+    FieldId::LastRetailOrderEvents,
+    FieldId::AttentionScheduler,
+    FieldId::CompanyRegistry,
+    FieldId::Operations,
+    FieldId::Groups,
+    FieldId::Closing,
+    FieldId::Library,
+    FieldId::Disclosures,
+    FieldId::Plans,
+    FieldId::BeliefParticipants,
+    FieldId::EnvelopeLedger,
+    FieldId::RetailProjectionSeen,
+    FieldId::CivilClock,
+    FieldId::SpeculativePrepare,
+];
+
+#[cfg(feature = "simulation-diagnostics")]
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
+    FieldId::Setup,
+    FieldId::ValidatedConfig,
+    FieldId::Stocks,
+    FieldId::Rng,
+    FieldId::Markets,
+    FieldId::Accounts,
+    FieldId::HistoryReads,
+    FieldId::PriceHistory,
+    FieldId::MarketMinuteCloses,
+    FieldId::CandleBook,
+    FieldId::PendingPlayer,
+    FieldId::IngressReceiptCursors,
+    FieldId::NpcAttention,
+    FieldId::RetailExperience,
+    FieldId::NpcOrderLifecycles,
+    FieldId::LastRetailDecisions,
+    FieldId::LastRetailOrderEvents,
+    FieldId::NpcDecisionTraces,
+    FieldId::Causal,
+    FieldId::AttentionScheduler,
+    FieldId::CompanyRegistry,
+    FieldId::Operations,
+    FieldId::Groups,
+    FieldId::Closing,
+    FieldId::Library,
+    FieldId::Disclosures,
+    FieldId::Plans,
+    FieldId::BeliefParticipants,
+    FieldId::EnvelopeLedger,
+    FieldId::RetailProjectionSeen,
+    FieldId::CivilClock,
+    FieldId::SpeculativePrepare,
+];
+
+/// FieldId 全变体数（含 simulation-diagnostics 两项），verify_metrics 计数数组长度。
+pub(in crate::session) const FIELD_ID_COUNT: usize = 32;
+const _: () = assert!(FieldId::SpeculativePrepare as usize == FIELD_ID_COUNT - 1);
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
 ///
@@ -1661,34 +1702,34 @@ pub struct RetailDecisionTrace {
 pub enum RetailOrderDiagnosticEvent {
     Submitted {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         side: Side,
         order_id: OrderId,
         qty: u32,
     },
     Filled {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         side: Side,
         order_id: OrderId,
         qty: u32,
     },
     Canceled {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         remaining_qty: u32,
     },
     /// 集合竞价原子提交失败后未写入连续订单簿的剩余委托；它不是“仍在簿中”。
     Aborted {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         remaining_qty: u32,
     },
     Rejected {
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         reason: RejectionReason,
     },
 }
@@ -1716,8 +1757,7 @@ fn sample_npc_cash(
         AccountKind::Retail => (1.0, 1.0),
         AccountKind::Inst => (25_000.0, 0.35),
         AccountKind::Hot => (5_000.0, 0.50),
-        // 玩家与回购账户不从该采样入口生成现金（各自由显式配置/合成入账）。
-        AccountKind::Player | AccountKind::IssuerRepurchase => (1.0, 0.0),
+        AccountKind::Player => (1.0, 0.0),
     };
     let mut rng = SplitMix64::new(
         seed ^ account.0.wrapping_mul(0xD1B5_4A32_D192_ED03) ^ 0xC45A_5EED_5CA1_E001,
@@ -1728,9 +1768,11 @@ fn sample_npc_cash(
     let wealth_factor = (normal * log_std_dev).exp().clamp(0.05, 20.0);
     let cents = retail_cash_median.cents() as f64 * kind_multiplier * wealth_factor;
     if !cents.is_finite() || cents > i64::MAX as f64 {
-        return Err(SessionError::InvalidSetup(format!(
-            "initial cash overflow for {kind:?} account {}",
-            account.0
+        // fault1026: NPC 初始现金采样超出 i64 分表示范围。
+        // ctx[0] = AccountKind 判别值（0=Retail/1=Inst/2=Hot/3=Player），ctx[1] = AccountId。
+        return Err(SessionError::InvalidSetup(ValidationFault::new(
+            1026,
+            vec![kind as u64, account.0],
         )));
     }
     Ok(Money::from_cents(cents.round() as i64))
@@ -1780,9 +1822,42 @@ fn retained_behavior_daily_closes_history(history: &DailyCandleHistory) -> Vec<C
 }
 
 impl GameSession {
+    /// 外部直改计数当前值（X1 新鲜度校验）。
+    pub(crate) fn external_revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 标记一次绕过 tick 管线的权威直改（X1 红线：直改必须先 mark）。
+    pub(crate) fn mark_external_mutation(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// 测试夹具对 markets 的直改入口：标记外部直改后返回可变市场。
+    #[cfg(test)]
+    pub(crate) fn fixture_market_mut(
+        &mut self,
+        code: &crate::StockId,
+    ) -> Option<&mut crate::Market> {
+        self.mark_external_mutation();
+        self.state.markets.get_mut(code)
+    }
+
+    /// 直改入口：等价于 state.accounts.get_mut 并标记外部直改
+    /// （测试夹具与存档恢复共用；X1 红线——直改必须经此标记）。
+    pub(crate) fn fixture_account_mut(
+        &mut self,
+        id: &crate::AccountId,
+    ) -> Option<&mut crate::Account> {
+        self.mark_external_mutation();
+        self.state.accounts.get_mut(id)
+    }
+}
+
+impl GameSession {
     pub(super) fn clone_for_tick_shadow(&self) -> Result<Self, StepFatal> {
         Ok(Self {
-            report_correction_epoch: self.report_correction_epoch.clone(),
+            compute: self.compute.clone(),
             ingress: self
                 .ingress
                 .as_ref()
@@ -1790,11 +1865,19 @@ impl GameSession {
                 .transpose()
                 .map_err(shared_ingress::ingress_fatal)?,
             poison: None,
+            revision: std::sync::atomic::AtomicU64::new(
+                self.revision.load(std::sync::atomic::Ordering::Relaxed),
+            ),
             fresh_initial_allocation: self.fresh_initial_allocation,
             #[cfg(test)]
             injected_failure: None,
             #[cfg(test)]
             post_shadow_failure: None,
+            #[cfg(test)]
+            runtime_install_failure: false,
+            runtime_driver: None,
+            runtime_group_count: 1,
+            runtime_discard_driver_flag: false,
             state: self.state.clone_for_shadow()?,
         })
     }
@@ -1810,7 +1893,56 @@ impl GameSession {
     /// - 玩家 `AccountId(0)`：`Account::new`（strategy 默认 None）。
     /// - NPC 按 retail/inst/hot 计数逐个生成（id 递增），`StrategyFactory::build` 注入策略。
     pub fn new(setup: SessionSetup, seed: u64) -> Result<GameSession, SessionError> {
-        Self::new_with_company_event_multiplier(setup, seed, 10_000)
+        Self::new_with_compute(
+            setup,
+            seed,
+            crate::compute::ComputeContext::shared_default()?,
+        )
+    }
+
+    /// 宿主明确提供资源；整个会话、candidate 与读视图共享此上下文。
+    /// 翻转批组参数化：多组 runtime 世界构造（探针负载；生产默认单组）。
+    pub fn new_with_runtime_groups(
+        setup: SessionSetup,
+        seed: u64,
+        runtime_groups: usize,
+    ) -> Result<GameSession, SessionError> {
+        // 批 9 A6：compute 参数退役——内部 shared_default（wasm 串行/OS 级
+        /// CPU 约束同 A5 口径）。
+        let mut session = Self::new(setup, seed)?;
+        if runtime_groups == 0 {
+            return Err(SessionError::InvalidSetup(crate::error::ValidationFault::bare(
+                1001,
+            )));
+        }
+        session.runtime_group_count = runtime_groups;
+        Ok(session)
+    }
+
+    pub fn new_with_compute(
+        setup: SessionSetup,
+        seed: u64,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<GameSession, SessionError> {
+        // T3 批四·staged 决策槽防串扰：libtest 复用线程，上一用例残留的
+        // staged 批不得泄漏进本会话的 produce（cfg(test) 适配面专属）。
+        #[cfg(test)]
+        crate::session::pipeline::staged_decision::clear();
+        Self::new_configured(setup, seed, 10_000, compute)
+    }
+
+    pub fn compute_context(&self) -> &std::sync::Arc<crate::compute::ComputeContext> {
+        &self.compute
+    }
+
+    /// 验证/测试专用：把克隆会话重绑到实验用的执行上下文（按线程数对比执行边界）。
+    /// 生产路径的资源所有权不经过此入口；不影响业务状态与存档。
+    #[cfg(any(test, feature = "verification-harness"))]
+    pub fn rebind_compute_for_verification(
+        &mut self,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+    ) {
+        self.compute = compute;
     }
 
     /// Creates a fresh session with a validated diagnostic-only company-event multiplier.
@@ -1820,24 +1952,45 @@ impl GameSession {
         seed: u64,
         event_multiplier_bp: u16,
     ) -> Result<GameSession, SessionError> {
+        Self::new_configured(
+            setup,
+            seed,
+            event_multiplier_bp,
+            crate::compute::ComputeContext::shared_default()?,
+        )
+    }
+
+    fn new_configured(
+        setup: SessionSetup,
+        seed: u64,
+        event_multiplier_bp: u16,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<GameSession, SessionError> {
         if !matches!(event_multiplier_bp, 5_000 | 10_000 | 20_000) {
-            return Err(SessionError::InvalidSetup(format!(
-                "company event multiplier must be 5000, 10000, or 20000 bp, got {event_multiplier_bp}"
+            // fault1027: 公司事件倍率只允许 5000/10000/20000 bp。ctx[0] = 实际倍率（bp）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1027,
+                vec![u64::from(event_multiplier_bp)],
             )));
         }
         setup.validate()?;
+        // 股票目录（ADR 0041）：按代码升序分配 id，id 序即代码序；
+        // 重复代码在此显式报错，绝不静默去重。
+        let stocks = setup.stock_catalog()?;
         let mut markets = BTreeMap::new();
         let mut price_history = BTreeMap::new();
         let mut market_minute_closes = BTreeMap::new();
-        for s in &setup.stocks {
-            markets.insert(
-                s.code.clone(),
-                Market::new(s.code.clone(), s.initial_price, s.limit_pct, s.tick)?,
-            );
-            price_history.insert(s.code.clone(), VecDeque::new());
-            market_minute_closes.insert(s.code.clone(), Vec::new());
+        for (spec_index, s) in setup.stocks.iter().enumerate() {
+            // 边界代码 → 数值 id；目录刚由同一批 specs 构造，查不到即内部不变量破损。
+            // 1002：规格代码未入目录；ctx[0]=规格下标。
+            let id = stocks.id(&s.code.0).ok_or_else(|| {
+                SessionError::InvalidSetup(ValidationFault::new(1002, vec![spec_index as u64]))
+            })?;
+            markets.insert(id, Market::new(id, s.initial_price, s.limit_pct, s.tick)?);
+            price_history.insert(id, VecDeque::new());
+            market_minute_closes.insert(id, Vec::new());
         }
-        let daily_candles = generate_preset_daily_candles(&setup, seed)?;
+        let daily_candles = generate_preset_daily_candles(&setup, &stocks, seed)?;
         let mut accounts = AccountBook::default();
         accounts.insert(
             AccountId(0),
@@ -1853,42 +2006,56 @@ impl GameSession {
             crate::experience::PersonalHistoryReadLedger::default(),
         );
         let rng = SplitMix64::new(seed);
-        let civil_clock = CivilClock::new_for_stocks(
+        let civil_clock = CivilClock::new(
             setup.start_date,
-            setup.stocks.iter().map(|stock| {
-                (
-                    stock.code.clone(),
-                    session_calendar_exchange(stock.exchange),
-                )
-            }),
+            session_calendar_exchange(setup.stocks[0].exchange),
         )?;
         // 会话装配与执行接线 新局装配：公司注册表 + 前史经营 + 公开库 + 时钟/披露接线。
-        let company_assembly::CompanyAssembly { system, library } =
-            company_assembly::assemble_companies(&setup, seed)?;
-        let seeded_through = library.latest_published_instant();
+        let company_assembly::CompanyAssembly {
+            registry,
+            prehistory,
+        } = company_assembly::assemble_companies(&setup, seed, event_multiplier_bp)?;
+        let seeded_through = prehistory.last_published_instant();
+        let crate::information::SeededPrehistory {
+            ops,
+            closing,
+            library,
+            ..
+        } = prehistory;
+        company_groups::validate_groups(&setup.groups, &ops).map_err(|_error| {
+            // fault1028: 公司分组配置校验失败。槽0 待 C 批数值化（原文本为内层校验错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1028, vec![0]))
+        })?;
         let mut civil_clock = civil_clock;
+        // 公司 due 单一 authority 后，装配边界仍按本局冻结日历校验全部待办 horizon。
+        for due in ops.scheduler().pending() {
+            civil_clock.validate_due_horizon(due.due_date)?;
+        }
         let disclosures = DisclosureDispatch::new(seeded_through);
         disclosures.install(&mut civil_clock);
-        let issuer_repurchase_enabled_at_creation = setup.issuer_repurchase_enabled;
-        let issuer_repurchase_npc_count_at_creation = u64::from(setup.npcs.retail_count)
-            + u64::from(setup.npcs.inst_count)
-            + u64::from(setup.npcs.hot_count);
         let mut sess = GameSession {
-            report_correction_epoch: std::sync::Arc::new(()),
+            compute,
             ingress: None,
+            revision: std::sync::atomic::AtomicU64::new(0),
             poison: None,
             fresh_initial_allocation: true,
             #[cfg(test)]
             injected_failure: None,
             #[cfg(test)]
             post_shadow_failure: None,
+            #[cfg(test)]
+            runtime_install_failure: false,
+            runtime_driver: None,
+            runtime_group_count: 1,
+            runtime_discard_driver_flag: false,
             state: CommittableSessionState {
-                memberships: MarketMembershipState::local_owner(setup.config.starting_cash),
-                pending_report_corrections: Vec::new(),
-                report_correction_operations: BTreeMap::new(),
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),
+                groups: setup.groups.clone(),
+                runtime_information_authority: false,
+                validated_config: setup.config.clone(),
                 setup,
+                stocks,
                 rng,
                 seed,
                 markets,
@@ -1897,15 +2064,12 @@ impl GameSession {
                 price_history,
                 market_minute_closes,
                 candle_book: SessionCandleBook::new(daily_candles, BTreeMap::new()),
-                retained_market_history: retained_history::RetainedMarketHistory::default(),
-                auction_orders: BTreeMap::new(),
                 pending_player: Vec::new(),
-                pending_npc: None,
                 ingress_receipt_cursors: IngressReceiptCursors::default(),
                 npc_attention: AccountPagedMap::default(),
                 retail_experience: AccountPagedMap::default(),
-                parent_orders: BTreeMap::new(),
-                pending_plan_events: Vec::new(),
+                desk_book_mirror: BTreeMap::new(),
+                runtime_desk_serial_cursors: Vec::new(),
                 npc_order_lifecycles: Vec::new(),
                 last_retail_decisions: Vec::new(),
                 last_retail_order_events: Vec::new(),
@@ -1913,8 +2077,25 @@ impl GameSession {
                 npc_decision_traces:
                     crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
                 attention_scheduler: NpcAttentionScheduler::default(),
-                company_system: std::sync::Arc::new(system),
-                corporate_actions: SessionCorporateActions::default(),
+                runtime_account_undo: Vec::new(),
+                runtime_account_undo_ids: std::collections::HashSet::new(),
+                runtime_attention_undo: Vec::new(),
+                runtime_attention_undo_ids: std::collections::HashSet::new(),
+                runtime_heap_undo: None,
+                runtime_belief_undo: Vec::new(),
+                runtime_belief_undo_ids: std::collections::HashSet::new(),
+                runtime_retail_undo: Vec::new(),
+                runtime_retail_undo_ids: std::collections::HashSet::new(),
+                runtime_history_undo: Vec::new(),
+                runtime_history_undo_ids: std::collections::HashSet::new(),
+                runtime_mirror_undo: None,
+                runtime_plans_undo: None,
+                runtime_envelope_undo: None,
+                runtime_lifecycles_undo: None,
+                runtime_retail_diag_undo: None,
+                company_registry: std::sync::Arc::new(registry),
+                operations: std::sync::Arc::new(ops),
+                closing: std::sync::Arc::new(closing),
                 library: std::sync::Arc::new(library),
                 disclosures,
                 plans: crate::plans::PlanBook::default(),
@@ -1923,7 +2104,6 @@ impl GameSession {
                 envelope_ledger: pipeline::EnvelopeLedger::new(0, [])
                     .expect("an empty envelope ledger is valid"),
                 retail_projection_seen: pipeline::RetailProjectionSeen::default(),
-                personal_trade_confirmations: BTreeMap::new(),
                 next_receipt_base: 0,
                 next_order_id: 1,
                 tick: 0,
@@ -1932,214 +2112,21 @@ impl GameSession {
                 civil_clock,
             },
         };
+        let mode = pipeline::phase::PhasePolicy::capture(&sess).matching_mode();
+        for market in sess.state.markets.values_mut() {
+            market
+                .set_matching_mode(mode)
+                .expect("新局空簿可以进入配置交易阶段");
+        }
         sess.populate_npcs(AccountKind::Retail)?;
         sess.populate_npcs(AccountKind::Inst)?;
         sess.populate_npcs(AccountKind::Hot)?;
-        if issuer_repurchase_enabled_at_creation {
-            // 发行人回购专用账户（ADR-0038）：确定性创建于 NPC 序列之后，零现金
-            // 起步；获批回购计划时按额度合成入账。名册身份为 IssuerTreasury。
-            let npc_count = issuer_repurchase_npc_count_at_creation;
-            let repurchase_id = AccountId(npc_count.saturating_add(1));
-            sess.accounts_insert_with_history_reads(
-                repurchase_id,
-                Account::new(repurchase_id, AccountKind::IssuerRepurchase, Money::ZERO),
-            );
-        }
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
-        // 开局自动装配公司行为基础（2026-10-08 N2a 决策，产品默认开启）：
-        // 名册 + 注册资本法定事实 + 按三层税制模式的个人税账。任一步失败
-        // 显式失败，不静默跳过（铁律二）。
-        if sess.state.setup.auto_corporate_foundation {
-            sess.assemble_corporate_foundation()?;
-        }
         sess.initialize_retail_experience()?;
         sess.reconcile_institutional_holdings()?;
         // 日界不提前生成日内请求，首个 tick 在隔离 shadow 上基于日结后的版本准备。
         // 因此休市日日结和交易日日结都能产生不含待处理请求的公共存档。
         Ok(sess)
-    }
-
-    /// 开局自动装配公司行为基础（N2a，2026-10-08 用户决策「开局自动建名册」）：
-    ///
-    /// 对每家 Simple 上市公司，在初始筹码分配（`seed_float`）完成后：
-    /// 1. 按分配结果（NPC 账户真实持仓 lot）构建**全流通名册**——无发行人
-    ///    自持股（Simple 无发行人真实账户，自持股语义留给 Simulation 分支）；
-    ///    未分配余量（总股本 − 流通盘）登记为单一具名外部股东（无游戏账户、
-    ///    不参与交易），发行股数守恒由 `configure_share_registry` 既有校验承担；
-    /// 2. 按 `par_value_per_share` 推定注册资本法定事实（注册资本 = 面值 ×
-    ///    总股本），走 `define_dividend_legal_facts` 既有 bind-once 路径；
-    /// 3. 税账按三层税制模式自动开账——`configure_share_registry` 既有逻辑：
-    ///    仅 `AShareIndividual` 为「个人」身份持有人自动开
-    ///    `IndividualPublicMarket` 税账；`FlatWithholding` / `Exempt` 不开。
-    ///
-    /// 全部复用既有状态机入口，不复制任何校验；任何失败原样上抛，整个
-    /// 新局创建失败，不留半装配状态。
-    fn assemble_corporate_foundation(&mut self) -> Result<(), SessionError> {
-        let par_cents = self.state.setup.par_value_per_share.cents();
-        // 名册结算日取开局自然日的**前一自然日**：`close_registries_through`
-        // 只推进 (settled_on, through] 区间，开局日自身的成交也要进入名册
-        // 日结；批次取得日同取该日（开局前的筹码分配，早于任何交易日）。
-        let settled_on = self.civil_date().prev().map_err(|error| {
-            SessionError::InvalidSetup(format!("开局自动装配无法回退自然日：{error}"))
-        })?;
-        // 先按股票建名册（同一候选事务内逐只推进；任一失败显式失败）。
-        for spec in self.state.setup.stocks.clone() {
-            let issuer = self
-                .state
-                .company_system
-                .issuers()
-                .issuer_of(&spec.code)
-                .cloned()
-                .ok_or_else(|| {
-                    SessionError::InvalidSetup(format!(
-                        "股票 {} 缺少发行人身份，无法开局自动装配股东名册",
-                        spec.code.0
-                    ))
-                })?;
-            let mut granted: u64 = 0;
-            let mut holdings = Vec::new();
-            let account_ids: Vec<AccountId> = self.state.accounts.keys().copied().collect();
-            for account in account_ids {
-                let qty = u64::from(
-                    self.state.accounts[&account]
-                        .positions()
-                        .get(&spec.code)
-                        .map(|position| position.qty())
-                        .unwrap_or(0),
-                );
-                if qty == 0 {
-                    continue;
-                }
-                granted = granted.checked_add(qty).ok_or_else(|| {
-                    SessionError::InvalidSetup(format!(
-                        "股票 {} 的初始筹码分配总量溢出 u64",
-                        spec.code.0
-                    ))
-                })?;
-                holdings.push(crate::company::share_registry::ShareHolding {
-                    holder: crate::company::share_registry::HolderId::Account(account),
-                    lots: vec![crate::company::share_registry::ShareLot {
-                        id: format!("initial:{}:{}", spec.code.0, account.0),
-                        qty,
-                        acquired_on: settled_on,
-                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
-                            evidence: format!(
-                                "session-auto:initial-allocation:{}",
-                                spec.code.0
-                            ),
-                        },
-                        restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
-                    }],
-                });
-            }
-            let remainder = spec
-                .total_shares
-                .checked_sub(granted)
-                .ok_or_else(|| {
-                    SessionError::InvalidSetup(format!(
-                        "股票 {} 的初始筹码分配总量 {} 超过总股本 {}",
-                        spec.code.0, granted, spec.total_shares
-                    ))
-                })?;
-            if remainder > 0 {
-                // 全流通口径的未分配余量：登记为单一具名外部股东（非发行人
-                // 自持股）。外部股东无游戏账户、不参与交易、不代扣，其分红
-                // 走既有外部回执事实。
-                holdings.push(crate::company::share_registry::ShareHolding {
-                    holder: crate::company::share_registry::HolderId::External(format!(
-                        "session-auto:founding:{}",
-                        spec.code.0
-                    )),
-                    lots: vec![crate::company::share_registry::ShareLot {
-                        id: format!("initial:{}:founding", spec.code.0),
-                        qty: remainder,
-                        acquired_on: settled_on,
-                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
-                            evidence: format!(
-                                "session-auto:initial-allocation:{}:founding",
-                                spec.code.0
-                            ),
-                        },
-                        restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
-                    }],
-                });
-            }
-            let registry = crate::company::share_registry::ShareRegistry::new(
-                spec.code.clone(),
-                issuer,
-                spec.total_shares,
-                settled_on,
-                holdings,
-            )
-            .map_err(|error| {
-                SessionError::InvalidSetup(format!(
-                    "股票 {} 开局自动名册装配失败：{error}",
-                    spec.code.0
-                ))
-            })?;
-            self.configure_share_registry(registry).map_err(|error| {
-                SessionError::InvalidSetup(format!(
-                    "股票 {} 开局自动名册装配失败：{error}",
-                    spec.code.0
-                ))
-            })?;
-        }
-        // 名册全部就位后，按面值推定各发行人的注册资本法定事实。
-        let issuers: Vec<crate::company::CompanyId> = self
-            .state
-            .company_system
-            .issuers()
-            .iter()
-            .map(|(id, _)| id.clone())
-            .collect();
-        for issuer in issuers {
-            let stock = self
-                .state
-                .company_system
-                .issuers()
-                .get(&issuer)
-                .and_then(|issuer| issuer.listed_stock.clone())
-                .ok_or_else(|| {
-                    SessionError::InvalidSetup(format!(
-                        "公司 {} 缺少上市证券，无法推定注册资本法定事实",
-                        issuer.0
-                    ))
-                })?;
-            let total_shares = self
-                .state
-                .setup
-                .stocks
-                .iter()
-                .find(|spec| spec.code == stock)
-                .map(|spec| spec.total_shares)
-                .ok_or_else(|| {
-                    SessionError::InvalidSetup(format!(
-                        "公司 {} 的上市证券 {} 不在 setup 股票清单内",
-                        issuer.0, stock.0
-                    ))
-                })?;
-            let registered_capital_cents =
-                i128::from(par_cents).checked_mul(i128::from(total_shares)).ok_or_else(|| {
-                    SessionError::InvalidSetup(format!(
-                        "公司 {} 的注册资本（面值 {} 分 × 总股本 {}）溢出",
-                        issuer.0, par_cents, total_shares
-                    ))
-                })?;
-            self.define_dividend_legal_facts(
-                &issuer,
-                crate::accounting::AccountingAmount::from_cents(registered_capital_cents),
-                format!(
-                    "session-auto:registered-capital:par-cents={par_cents}:shares={total_shares}"
-                ),
-            )
-            .map_err(|error| {
-                SessionError::InvalidSetup(format!(
-                    "公司 {} 开局自动注册资本法定事实装配失败：{error}",
-                    issuer.0
-                ))
-            })?;
-        }
-        Ok(())
     }
 
     fn account_equity(&self, id: AccountId) -> Result<Money, MoneyError> {
@@ -2162,7 +2149,7 @@ impl GameSession {
             })
     }
 
-    fn current_market_minute(&self) -> u64 {
+    pub fn current_market_minute(&self) -> u64 {
         let day_start = u64::from(self.state.day)
             .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
             .expect("u32 session day times 240 fits u64");
@@ -2277,9 +2264,11 @@ impl GameSession {
                         .institutional_fees_paid
                         .is_none()
                     {
-                        return Err(SessionError::InvalidSave(format!(
-                            "institution account {} held stock {} has unknown fee history",
-                            account_id.0, code.0
+                        // fault1029: 机构持仓缺乏费用史（institutional_fees_paid 缺失）。
+                        // ctx[0] = AccountId，ctx[1] = StockId。
+                        return Err(SessionError::InvalidSave(ValidationFault::new(
+                            1029,
+                            vec![account_id.0, u64::from(code.0)],
                         )));
                     }
                 } else {
@@ -2353,14 +2342,18 @@ impl GameSession {
             if spec.float_shares == 0 {
                 continue;
             }
-            let code = spec.code.clone();
+            let code = self
+                .state
+                .stocks
+                .id(&spec.code.0)
+                .expect("流通盘分配的股票必须已入目录");
             let price = spec.initial_price;
             let allocation = self.state.setup.float_allocation.clone();
             let alloc = self.split_float(spec.float_shares, &npc_ids, &allocation);
             for (id, qty) in alloc {
                 if qty > 0 {
                     if let Some(acc) = self.state.accounts.get_mut(&id) {
-                        acc.grant_position(code.clone(), qty, price)?;
+                        acc.grant_position(code, qty, price)?;
                     }
                 }
             }
@@ -2450,7 +2443,7 @@ impl GameSession {
                         AccountKind::Retail => 1.5,
                         AccountKind::Inst => 2.0,
                         AccountKind::Hot => 1.7,
-                        AccountKind::Player | AccountKind::IssuerRepurchase => 3.0,
+                        AccountKind::Player => 3.0,
                     };
                     self.split_random_with_tail(kind_float, &eligible_ids, tail_exponent)
                 }
@@ -2502,15 +2495,6 @@ impl GameSession {
         out
     }
 
-    /// 插入账户并同步建立历史读取台账（存档契约要求两集合恰好一致）。
-    fn accounts_insert_with_history_reads(&mut self, id: AccountId, account: Account) {
-        self.state.accounts.insert(id, account);
-        self.state.history_reads.insert(
-            id,
-            crate::experience::PersonalHistoryReadLedger::default(),
-        );
-    }
-
     /// 按 `kind` 生成 NPC 账户并注入策略。
     ///
     /// `next_id = accounts.keys().max() + 1`：保证 id 单调递增且不冲突。
@@ -2520,7 +2504,7 @@ impl GameSession {
             AccountKind::Retail => self.state.setup.npcs.retail_count,
             AccountKind::Inst => self.state.setup.npcs.inst_count,
             AccountKind::Hot => self.state.setup.npcs.hot_count,
-            AccountKind::Player | AccountKind::IssuerRepurchase => 0,
+            AccountKind::Player => 0,
         };
         let first_id = self
             .state
@@ -2529,7 +2513,8 @@ impl GameSession {
             .next_back()
             .map_or(1, |id| id.0 + 1);
         let end_id = first_id.checked_add(u64::from(count)).ok_or_else(|| {
-            SessionError::InvalidSetup("NPC account id range overflow".to_string())
+            // fault1030: NPC 账户 id 区间 u64 溢出。
+            SessionError::InvalidSetup(ValidationFault::bare(1030))
         })?;
         for (ordinal, next_id) in (first_id..end_id).enumerate() {
             let id = AccountId(next_id);
@@ -2545,7 +2530,8 @@ impl GameSession {
                 &self.state.setup.strategy_params,
                 self.state.setup.ticks_per_day,
                 u32::try_from(ordinal).map_err(|_| {
-                    SessionError::InvalidSetup("NPC ordinal exceeds u32".to_string())
+                    // fault1031: NPC 序号超出 u32。
+                    SessionError::InvalidSetup(ValidationFault::bare(1031))
                 })?,
                 &mut self.state.rng,
             )? {
@@ -2560,16 +2546,14 @@ impl GameSession {
                     }));
                 }
                 let mut strategy_state = crate::strategy::StrategyState::from_strategy(s.as_ref())
-                    .map_err(|error| {
-                        SessionError::InvalidSetup(format!(
-                            "generated NPC strategy state is invalid: {error}"
-                        ))
+                    .map_err(|_error| {
+                        // fault1032: 生成的 NPC 策略状态非法。槽0 待 C 批数值化（原文本为内层错误文本）。
+                        SessionError::InvalidSetup(ValidationFault::new(1032, vec![0]))
                     })?;
                 strategy_state.set_base_observation_probability(base_probability);
-                let s = strategy_state.into_strategy().map_err(|error| {
-                    SessionError::InvalidSetup(format!(
-                        "canonical NPC strategy state is invalid: {error}"
-                    ))
+                let s = strategy_state.into_strategy().map_err(|_error| {
+                    // fault1033: 规范化 NPC 策略状态非法。槽0 待 C 批数值化（原文本为内层错误文本）。
+                    SessionError::InvalidSetup(ValidationFault::new(1033, vec![0]))
                 })?;
                 acc.set_strategy(s);
                 // 计划型机构的决策链状态：分析档案 + 信念簿 +
@@ -2674,7 +2658,21 @@ impl GameSession {
     pub fn market_count(&self) -> usize {
         self.state.markets.len()
     }
+    /// runtime 驱动器导出：确定性配置面副本（批 8d 纵切）。
+    pub fn export_setup_for_runtime(&self) -> SessionSetup {
+        self.state.setup.clone()
+    }
+
     /// 账户数量（含玩家）。
+    /// P2-4b 红证旋钮通道（cfg(test)）：常驻 runtime 驱动器的测试面
+    /// 访问（跨模块测试驱动旋钮——字段私有，经此受控暴露）。
+    #[cfg(test)]
+    pub fn runtime_driver_for_test(
+        &self,
+    ) -> Option<&std::sync::Mutex<crate::runtime::drive::RuntimeDriver>> {
+        self.runtime_driver.as_ref()
+    }
+
     pub fn account_count(&self) -> usize {
         self.state.accounts.len()
     }
@@ -2694,2229 +2692,6 @@ impl GameSession {
     pub fn account(&self, id: AccountId) -> Option<&Account> {
         self.state.accounts.get(&id)
     }
-
-    /// 配置某只证券的完整股东登记事实；账户、外部股东及股份来源必须由调用方明确提供。
-    /// 默认税务模式（大 A 个人差别化）下，登记成功后立即为每个「个人」身份的账户持有人
-    /// （玩家与自然人散户 NPC）走既有 `configure_cash_dividend_tax_book` 自动配置
-    /// `IndividualPublicMarket` 税账；机构/游资保持 `TreatmentNotConfigured`
-    /// （企业/机构税未实现）。名册与税账在同一候选副本上落账，任一步失败都不留半配置状态。
-    pub fn configure_share_registry(
-        &mut self,
-        registry: crate::company::share_registry::ShareRegistry,
-    ) -> Result<(), SessionCorporateActionsError> {
-        let positions = self
-            .state
-            .accounts
-            .iter()
-            .map(|(id, account)| {
-                (
-                    *id,
-                    account
-                        .positions()
-                        .iter()
-                        .map(|(code, position)| (code.clone(), u64::from(position.qty())))
-                        .collect(),
-                )
-            })
-            .collect();
-        let mut candidate = self.state.corporate_actions.clone();
-        candidate.configure_registry(
-            registry.clone(),
-            &positions,
-            self.state.company_system.issuers(),
-        )?;
-        if self.state.setup.dividend_tax_mode
-            == crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual
-        {
-            let stock = registry.stock().clone();
-            let personal_accounts: Vec<AccountId> = registry
-                .holdings()
-                .iter()
-                .filter_map(|holding| {
-                    let crate::company::share_registry::HolderId::Account(account) =
-                        &holding.holder
-                    else {
-                        return None;
-                    };
-                    Some(*account)
-                })
-                .filter(|account| {
-                    matches!(
-                        corporate_actions::taxpayer_identity_of_kind(
-                            self.state
-                                .accounts
-                                .get(account)
-                                .expect("configure_registry 已验证名册持有人账户存在")
-                                .kind()
-                        ),
-                        corporate_actions::TaxpayerIdentity::Personal
-                    )
-                })
-                .collect();
-            for account in personal_accounts {
-                candidate.configure_cash_dividend_tax_book(
-                    account,
-                    stock.clone(),
-                    crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
-                )?;
-            }
-        }
-        self.state.corporate_actions = candidate;
-        Ok(())
-    }
-
-    /// 查询单账户的现金分红税务状态：会话税务模式、按账户种类映射的纳税人身份
-    /// 与每个已配置完整名册证券上的税账状态。只读汇总既有事实，不产生新事实；
-    /// 未知账户显式报错，不静默返回空视图。
-    pub fn account_dividend_tax_status(
-        &self,
-        account: AccountId,
-    ) -> Result<corporate_actions::AccountDividendTaxStatusView, SessionError> {
-        let identity = corporate_actions::taxpayer_identity_of_kind(
-            self.state
-                .accounts
-                .get(&account)
-                .map(Account::kind)
-                .ok_or_else(|| {
-                    SessionError::InvalidSetup(format!("查询股息税状态的账户 {account:?} 不存在"))
-                })?,
-        );
-        let stocks =
-            self.state
-                .corporate_actions
-                .registries
-                .iter()
-                .map(
-                    |registry| corporate_actions::AccountStockDividendTaxStatus {
-                        stock: registry.stock().clone(),
-                        status: match self.state.setup.dividend_tax_mode {
-                            crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding => {
-                                corporate_actions::DividendTaxStatus::FlatWithholding
-                            }
-                            _ if self.state.corporate_actions.dividend_tax_books.iter().any(
-                                |book| book.account() == account && book.stock() == registry.stock(),
-                            ) =>
-                            {
-                                corporate_actions::DividendTaxStatus::IndividualPublicMarket
-                            }
-                            _ => corporate_actions::DividendTaxStatus::TreatmentNotConfigured,
-                        },
-                    },
-                )
-                .collect();
-        Ok(corporate_actions::AccountDividendTaxStatusView {
-            mode: self.state.setup.dividend_tax_mode,
-            identity,
-            stocks,
-        })
-    }
-
-    /// 显式配置账户在指定证券下的现金分红税务身份；调用方不得由账户类型或策略风格推断。
-    /// 仅限会话装配期调用：名册已有历史日结回执或已登记分红时会拒绝，
-    /// 因为事后配置无法重建 FIFO 税事实并会令后续日终永久失败。
-    /// `FlatWithholding` 模式显式拒绝：简税模式的代扣已覆盖全部持有人，
-    /// 叠加个人差别化税账会对同一笔分红双重计税。
-    pub fn configure_cash_dividend_tax_book(
-        &mut self,
-        account: AccountId,
-        stock: crate::account::StockCode,
-        profile: crate::company::cash_dividend_tax::DividendTaxProfile,
-    ) -> Result<(), SessionCorporateActionsError> {
-        if self.state.setup.dividend_tax_mode
-            == crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "FlatWithholding（简税）模式不支持显式配置个人差别化税账：代扣已覆盖全部持有人，叠加会对同一笔分红双重计税"
-                    .into(),
-            ));
-        }
-        self.state
-            .corporate_actions
-            .configure_cash_dividend_tax_book(account, stock, profile)
-    }
-
-    /// 查询各账户证券的个人现金分红税未划收税额与资金不足原因；
-    /// 只读汇总税账既有事实，不产生新事实，UI 呈现由后续批次接线。
-    pub fn dividend_tax_outstanding_views(
-        &self,
-    ) -> Result<Vec<corporate_actions::DividendTaxOutstandingView>, SessionCorporateActionsError>
-    {
-        self.state
-            .corporate_actions
-            .dividend_tax_outstanding_views()
-    }
-
-    /// 完整共同契约能力面（F 批收口）：公司当前事实 + 未完成方案 + 各行为
-    /// 业务条件 + 本人权利摘要（owner 隔离：`owner_rights` 只含查询账户的
-    /// 事实）。只读投影既有事实，不产生新状态；不可用字段显式给 reason。
-    pub fn company_capabilities(
-        &self,
-        company: &crate::company::CompanyId,
-        account: AccountId,
-    ) -> Result<crate::company::capabilities::CompanyCapabilities, SessionError> {
-        if !self.state.accounts.contains_key(&account) {
-            return Err(SessionError::InvalidSetup(format!(
-                "查询能力面的账户 {account:?} 不存在"
-            )));
-        }
-        company_contract_views::company_capabilities_view(
-            company,
-            account,
-            &self.state.company_system,
-            &self.state.corporate_actions,
-            self.state.setup.rights_offering_enabled,
-            self.state.setup.issuer_repurchase_enabled,
-            self.civil_date(),
-        )
-        .map_err(|error| SessionError::InvalidSetup(error.to_string()))
-    }
-
-    /// 账户维度的当前配股权证/额度/缴款窗口查询（F 批共同契约；复用
-    /// rights_offering books 与排队认购既有事实的只读投影，Settled 终态
-    /// 不再出现）。未知账户显式报错。
-    pub fn owner_rights_offerings(
-        &self,
-        account: AccountId,
-    ) -> Result<Vec<corporate_actions::OwnerRightsOfferingView>, SessionError> {
-        if !self.state.accounts.contains_key(&account) {
-            return Err(SessionError::InvalidSetup(format!(
-                "查询配股权益的账户 {account:?} 不存在"
-            )));
-        }
-        company_contract_views::owner_rights_views(
-            &self.state.corporate_actions,
-            account,
-            self.civil_date(),
-        )
-        .map_err(|error| SessionError::InvalidSetup(error.to_string()))
-    }
-
-    /// Flat（简税）模式的付款日代扣回执查询（owner 隔离；复用
-    /// `flat_withholding_receipts` 既有事实）。非 Flat 模式显式拒绝，
-    /// 不冒充空台账。
-    pub fn owner_flat_withholding_receipts(
-        &self,
-        account: AccountId,
-    ) -> Result<Vec<corporate_actions::FlatWithholdingReceipt>, SessionError> {
-        if self.state.setup.dividend_tax_mode
-            != crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding
-        {
-            return Err(SessionError::InvalidSetup(
-                "当前会话现金分红税务模式非 FlatWithholding（简税），无付款日代扣回执可查"
-                    .into(),
-            ));
-        }
-        if !self.state.accounts.contains_key(&account) {
-            return Err(SessionError::InvalidSetup(format!(
-                "查询简税代扣回执的账户 {account:?} 不存在"
-            )));
-        }
-        Ok(self
-            .state
-            .corporate_actions
-            .flat_withholding_receipts
-            .iter()
-            .filter(|receipt| receipt.account == account)
-            .cloned()
-            .collect())
-    }
-
-    /// 按公司+期间读取期间变化解释（委托 [`crate::company::CompanySystem::period_change_explanation`]；
-    /// 复用既有 history，只读不新建状态）。
-    pub fn company_period_explanation(
-        &self,
-        company: &crate::company::CompanyId,
-        period_end: crate::calendar::CivilDate,
-    ) -> Result<crate::company::simple::period::PeriodChangeExplanation, SessionError> {
-        self.state
-            .company_system
-            .period_change_explanation(company, period_end)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))
-    }
-
-    /// 显式绑定公司注册资本及其来源证据；不会从股本或账户持仓推断法定事实。
-    pub fn define_dividend_legal_facts(
-        &mut self,
-        company: &crate::company::CompanyId,
-        registered_capital: crate::accounting::AccountingAmount,
-        source_evidence: String,
-    ) -> Result<(), SessionCorporateActionsError> {
-        let mut candidate = self.state.company_system.as_ref().clone();
-        candidate
-            .define_dividend_legal_facts(company, registered_capital, source_evidence)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        self.state.company_system = std::sync::Arc::new(candidate);
-        Ok(())
-    }
-
-    /// 当前会话共同股东登记与分红结算状态；空登记表表示尚未配置完整股份来源事实。
-    pub fn corporate_actions(&self) -> &SessionCorporateActions {
-        &self.state.corporate_actions
-    }
-
-    /// 以 SimpleFinanceState 的已结算财务与显式注册资本事实受理现金分红决议。
-    pub fn approve_cash_dividend(
-        &mut self,
-        declaration: crate::company::DividendDeclaration,
-        plan: crate::company::cash_dividend::CashDividendPlan,
-    ) -> Result<(), SessionCorporateActionsError> {
-        if declaration.plan_id != plan.plan_id
-            || declaration.approved_on != plan.approved_on
-            || plan.approved_on > self.civil_date()
-            || plan.announced_on < self.civil_date()
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "分红决议与计划的身份、批准日期、授权总额或公告日期不一致".into(),
-            ));
-        }
-        let registry = self
-            .state
-            .corporate_actions
-            .registries
-            .iter()
-            .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
-            .ok_or_else(|| {
-                SessionCorporateActionsError::Invalid("现金分红需要已显式配置的完整股东名册".into())
-            })?;
-        if registry.settled_on() > self.civil_date() {
-            return Err(SessionCorporateActionsError::Invalid(
-                "股东名册日期晚于当前会话日期".into(),
-            ));
-        }
-        let eligible_shares = registry
-            .holdings()
-            .iter()
-            .filter(|holding| {
-                !matches!(
-                    &holding.holder,
-                    crate::company::share_registry::HolderId::IssuerTreasury
-                )
-            })
-            .try_fold(0_u64, |total, holding| {
-                holding
-                    .lots
-                    .iter()
-                    .try_fold(total, |sum, lot| sum.checked_add(lot.qty))
-            })
-            .ok_or_else(|| SessionCorporateActionsError::Invalid("可分红股数溢出".into()))?;
-        let calculated_gross_cents = i128::from(plan.gross_per_share.cents())
-            .checked_mul(i128::from(eligible_shares))
-            .and_then(|cents| i64::try_from(cents).ok())
-            .ok_or_else(|| SessionCorporateActionsError::Invalid("现金分红总额溢出".into()))?;
-        if declaration
-            .total_gross
-            .to_money()
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-            != Money::from_cents(calculated_gross_cents)
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "决议总额必须等于完整名册中非库存股的税前每股金额乘以股数".into(),
-            ));
-        }
-        if declaration
-            .total_gross
-            .to_money()
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-            > plan.distributable_amount
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "决议总额超过计划明确授权的可分配金额".into(),
-            ));
-        }
-        if plan.formula
-            == crate::company::ex_reference_price::CashDividendFormula::ExchangeApprovedAdjustment
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "尚不支持交易所批准的特殊除息调整公式".into(),
-            ));
-        }
-        let mut candidate_system = self.state.company_system.as_ref().clone();
-        let issuer = candidate_system
-            .issuers()
-            .get(&plan.issuer)
-            .ok_or_else(|| SessionCorporateActionsError::Invalid("分红计划发行人不存在".into()))?;
-        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-            return Err(SessionCorporateActionsError::Invalid(
-                "分红计划证券与发行人不匹配".into(),
-            ));
-        }
-        let approved = candidate_system
-            .distributable_profit(&plan.issuer)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        let authorized = approved
-            .available_for_distribution
-            .to_money()
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        if declaration
-            .total_gross
-            .to_money()
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-            > authorized
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "决议总额超过已核定的 Simple 可分配利润".into(),
-            ));
-        }
-        plan.validate_calendar(self.state.civil_clock.calendar())
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        candidate_system
-            .declare_dividend(&plan.issuer, declaration)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        let book = crate::company::cash_dividend::CashDividendBook::new(plan)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        if self
-            .state
-            .corporate_actions
-            .dividends
-            .iter()
-            .any(|existing| existing.plan().plan_id == book.plan().plan_id)
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "分红计划 id 已存在".into(),
-            ));
-        }
-        self.state.company_system = std::sync::Arc::new(candidate_system);
-        self.state.corporate_actions.dividends.push(book);
-        self.state
-            .corporate_actions
-            .dividends
-            .sort_by(|left, right| left.plan().plan_id.cmp(&right.plan().plan_id));
-        Ok(())
-    }
-
-    /// 以 SimpleFinanceState 的显式注册资本面值事实受理送转方案（显式计划入口）。
-    ///
-    /// 面值口径遵循现实语义：每股面值恒定，送转入账后注册资本按 面值×新增股数
-    /// 演进（见 `SimpleFinanceState::record_stock_distribution_credit`）。首次送转
-    /// 声明的面值由「已绑定注册资本法定事实 ÷ 名册当前已发行股数」整除推导并就此
-    /// 固定；同一发行人后续送转必须沿用同一面值，不得用增大后的发行股数反推缩小
-    /// 面值。送股（股票股利）额外受可分配利润上限约束并预留未入账占用额；真实
-    /// 入账回填时过账权益内部结转分录并计提法定公积金（N3 批起进 `Books`），
-    /// 不产生投资者现金。
-    pub fn approve_stock_distribution(
-        &mut self,
-        plan: crate::company::stock_distribution::StockDistributionEventPlan,
-    ) -> Result<(), SessionCorporateActionsError> {
-        plan.validate()
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
-            return Err(SessionCorporateActionsError::Invalid(
-                "送转方案的批准日期或公告日期与当前会话日期不一致".into(),
-            ));
-        }
-        // 同一发行人同证券同除权日的第二起送转事件在受理时直接拒绝：同日多起送转
-        // 的合并除权口径（比例相加还是复合）未在官方材料核实，不能推迟到 R+1 首
-        // tick 的除权准备才以致命错误暴露。
-        if self
-            .state
-            .corporate_actions
-            .stock_distributions
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "同一发行人同证券同除权日已存在送转事件；同日多起送转的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        // 同一发行人同证券同除权日已受理配股事件时同样直接拒绝：配股×送转
-        // 同日的合并除权口径未核实，除权日日结会以 StepFatal 显式失败，不能
-        // 推迟到 R+1 首 tick 的除权准备才暴露（与 approve_rights_offering 的
-        // 碰撞预检对称）。
-        if self
-            .state
-            .corporate_actions
-            .rights_offerings
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "同一发行人同证券同除权日已存在配股事件；配股×送转同日的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        // 拆股／缩股×送转同除权日的合并除权口径同样未核实：受理时显式拒绝
-        // （与 approve_share_split 的碰撞预检对称）。
-        if self
-            .state
-            .corporate_actions
-            .share_splits
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "同一发行人同证券同除权日已存在拆股／缩股事件；拆股／缩股×送转同日的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        let registry = self
-            .state
-            .corporate_actions
-            .registries
-            .iter()
-            .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
-            .ok_or_else(|| {
-                SessionCorporateActionsError::Invalid("送转需要已显式配置的完整股东名册".into())
-            })?;
-        if registry.settled_on() > self.civil_date() {
-            return Err(SessionCorporateActionsError::Invalid(
-                "股东名册日期晚于当前会话日期".into(),
-            ));
-        }
-        plan.validate_calendar(self.state.civil_clock.calendar())
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        let mut candidate_system = self.state.company_system.as_ref().clone();
-        let issuer = candidate_system
-            .issuers()
-            .get(&plan.issuer)
-            .ok_or_else(|| SessionCorporateActionsError::Invalid("送转计划发行人不存在".into()))?;
-        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-            return Err(SessionCorporateActionsError::Invalid(
-                "送转计划证券与发行人不匹配".into(),
-            ));
-        }
-        let legal_facts = candidate_system
-            .dividend_legal_facts(&plan.issuer)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-            .ok_or_else(|| {
-                SessionCorporateActionsError::Invalid(
-                    "送转面值推导需要先显式绑定公司注册资本法定事实".into(),
-                )
-            })?;
-        let prior_facts = candidate_system
-            .stock_distribution_facts(&plan.issuer)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        let par_cents = match candidate_system
-            .current_par_value(&plan.issuer)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-        {
-            Some(par) => {
-                // 面值权威：最近一次拆股／缩股重锚后的面值，或既有送转声明的
-                // bind-once 面值（拆股后的送转沿用重锚面值，送转本身不改变面值）。
-                let _ = &prior_facts;
-                i128::from(par.cents())
-            }
-            None => {
-                // 首次声明：由注册资本法定事实与当前发行股数整除推导面值。
-                let issued_shares = registry.issued_shares();
-                let registered_capital_cents = legal_facts
-                    .registered_capital
-                    .to_money()
-                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-                    .cents();
-                let capital_cents_i128 = i128::from(registered_capital_cents);
-                let shares_i128 = i128::from(issued_shares);
-                if capital_cents_i128 % shares_i128 != 0 {
-                    return Err(SessionCorporateActionsError::Invalid(
-                        "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
-                    ));
-                }
-                capital_cents_i128 / shares_i128
-            }
-        };
-        let par_value_per_share = Money::from_cents(
-            i64::try_from(par_cents)
-                .map_err(|_| SessionCorporateActionsError::Invalid("每股面值溢出".into()))?,
-        );
-        if par_value_per_share <= Money::ZERO {
-            return Err(SessionCorporateActionsError::Invalid(
-                "推导出的每股面值必须为正数".into(),
-            ));
-        }
-        let capital_increase_cents = par_cents
-            .checked_mul(i128::from(plan.approved_total_new_shares))
-            .ok_or_else(|| SessionCorporateActionsError::Invalid("送转股本增加金额溢出".into()))?;
-        let declaration = crate::company::stock_distribution::StockDistributionDeclaration {
-            event_id: plan.event_id.clone(),
-            approval_reference: plan.approval_reference.clone(),
-            kind: plan.kind.clone(),
-            approved_on: plan.approved_on,
-            new_shares: plan.approved_total_new_shares,
-            par_value_per_share,
-            capital_increase: crate::accounting::AccountingAmount::from_cents(
-                capital_increase_cents,
-            ),
-            registered_capital_at_approval: legal_facts.registered_capital,
-        };
-        candidate_system
-            .declare_stock_distribution(&plan.issuer, declaration)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        if self
-            .state
-            .corporate_actions
-            .stock_distributions
-            .iter()
-            .any(|existing| existing.plan().event_id == plan.event_id)
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "送转事件 id 已存在".into(),
-            ));
-        }
-        let book = crate::company::stock_distribution::StockDistributionBook::new(plan)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        self.state.company_system = std::sync::Arc::new(candidate_system);
-        self.state.corporate_actions.stock_distributions.push(book);
-        self.state
-            .corporate_actions
-            .stock_distributions
-            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
-        Ok(())
-    }
-
-    /// 以 SimpleFinanceState 的面值权威链受理拆股／缩股方案（显式计划入口）。
-    ///
-    /// 面值口径：拆股面值按整数比例整除缩小、注册资本不变；缩股面值按整数比例
-    /// 放大、注册资本在真实换算入账后按「旧股口径消灭面值：
-    /// par_before×(S_before−ratio×S_after)」核减。当前面值权威
-    /// 由 `current_par_value` 给出（最近一次拆股／缩股重锚；否则沿用送转 bind-once
-    /// 面值；再否则由注册资本法定事实 ÷ 当前发行股数整除推导）。A 股无拆股常规
-    /// 通道与先例，本机制按标准股份拆细语义登记为游戏实现口径（ADR-0039 决策 3
-    /// 核验结论；依据分级见 docs/trading-rules.md「拆股／缩股」节）。
-    pub fn approve_share_split(
-        &mut self,
-        plan: crate::company::share_split::ShareSplitEventPlan,
-    ) -> Result<(), SessionCorporateActionsError> {
-        use crate::company::share_split::{ShareSplitDirection, ShareSplitError};
-        plan.validate()
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
-            return Err(SessionCorporateActionsError::Invalid(
-                "拆股／缩股方案的批准日期或公告日期与当前会话日期不一致".into(),
-            ));
-        }
-        if self
-            .state
-            .corporate_actions
-            .share_splits
-            .iter()
-            .any(|existing| existing.plan().event_id == plan.event_id)
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "拆股／缩股事件 id 已存在".into(),
-            ));
-        }
-        // 同除权日碰撞三层预检（对齐 0a38e52e 送转×配股先例）：拆股／缩股与
-        // 送转、配股或另一起拆股／缩股同日的合并除权口径均未在官方材料核实，
-        // 受理时直接拒绝，不推迟到除权日日结。
-        let collides = |existing: &crate::company::share_split::ShareSplitEventPlan| {
-            existing.issuer == plan.issuer
-                && existing.stock == plan.stock
-                && existing.ex_rights_on == plan.ex_rights_on
-        };
-        if self
-            .state
-            .corporate_actions
-            .stock_distributions
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "同一发行人同证券同除权日已存在送转事件；送转×拆股／缩股同日的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        if self
-            .state
-            .corporate_actions
-            .rights_offerings
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "同一发行人同证券同除权日已存在配股事件；配股×拆股／缩股同日的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        if self
-            .state
-            .corporate_actions
-            .share_splits
-            .iter()
-            .any(|existing| collides(existing.plan()))
-        {
-            return Err(SessionCorporateActionsError::Invalid(
-                "同一发行人同证券同除权日已存在拆股／缩股事件；同日多起重新计值的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        let registry = self
-            .state
-            .corporate_actions
-            .registries
-            .iter()
-            .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
-            .ok_or_else(|| {
-                SessionCorporateActionsError::Invalid(
-                    "拆股／缩股需要已显式配置的完整股东名册".into(),
-                )
-            })?;
-        if registry.settled_on() > self.civil_date() {
-            return Err(SessionCorporateActionsError::Invalid(
-                "股东名册日期晚于当前会话日期".into(),
-            ));
-        }
-        plan.validate_calendar(self.state.civil_clock.calendar())
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        let mut candidate_system = self.state.company_system.as_ref().clone();
-        let issuer = candidate_system
-            .issuers()
-            .get(&plan.issuer)
-            .ok_or_else(|| {
-                SessionCorporateActionsError::Invalid("拆股／缩股计划发行人不存在".into())
-            })?;
-        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-            return Err(SessionCorporateActionsError::Invalid(
-                "拆股／缩股计划证券与发行人不匹配".into(),
-            ));
-        }
-        let legal_facts = candidate_system
-            .dividend_legal_facts(&plan.issuer)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-            .ok_or_else(|| {
-                SessionCorporateActionsError::Invalid(
-                    "拆股／缩股面值推导需要先显式绑定公司注册资本法定事实".into(),
-                )
-            })?;
-        // 面值权威：拆股／缩股重锚链 → 送转 bind-once → 法定事实整除推导。
-        let par_cents = match candidate_system
-            .current_par_value(&plan.issuer)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-        {
-            Some(par) => i128::from(par.cents()),
-            None => {
-                let issued_shares = registry.issued_shares();
-                let capital_cents =
-                    i128::from(legal_facts.registered_capital.to_money().map_err(|error| {
-                        SessionCorporateActionsError::Invalid(error.to_string())
-                    })?.cents());
-                if capital_cents % i128::from(issued_shares) != 0 {
-                    return Err(SessionCorporateActionsError::Invalid(
-                        "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
-                    ));
-                }
-                capital_cents / i128::from(issued_shares)
-            }
-        };
-        let par_value_before = crate::money::Money::from_cents(
-            i64::try_from(par_cents).map_err(|_| {
-                SessionCorporateActionsError::Invalid("每股面值溢出".into())
-            })?,
-        );
-        if par_value_before <= crate::money::Money::ZERO {
-            return Err(SessionCorporateActionsError::Invalid(
-                "推导出的每股面值必须为正数".into(),
-            ));
-        }
-        let par_value_after = match plan.direction {
-            ShareSplitDirection::Split => {
-                if par_cents % i128::from(plan.ratio) != 0 {
-                    return Err(SessionCorporateActionsError::Invalid(format!(
-                        "拆股面值 {} 分不能按 1 拆 {} 整除缩小；面值最小单位为分",
-                        par_cents, plan.ratio
-                    )));
-                }
-                crate::money::Money::from_cents(
-                    i64::try_from(par_cents / i128::from(plan.ratio)).map_err(|_| {
-                        SessionCorporateActionsError::Invalid("拆股面值溢出".into())
-                    })?,
-                )
-            }
-            ShareSplitDirection::Consolidate => crate::money::Money::from_cents(
-                i64::try_from(
-                    par_cents
-                        .checked_mul(i128::from(plan.ratio))
-                        .ok_or_else(|| {
-                            SessionCorporateActionsError::Invalid("缩股面值溢出".into())
-                        })?,
-                )
-                .map_err(|_| SessionCorporateActionsError::Invalid("缩股面值溢出".into()))?,
-            ),
-        };
-        let declaration = crate::company::share_split::ShareSplitDeclaration {
-            event_id: plan.event_id.clone(),
-            approval_reference: plan.approval_reference.clone(),
-            direction: plan.direction.clone(),
-            approved_on: plan.approved_on,
-            ratio: plan.ratio,
-            par_value_before,
-            par_value_after,
-            registered_capital_at_approval: legal_facts.registered_capital,
-        };
-        candidate_system
-            .declare_share_split(&plan.issuer, declaration)
-            .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-        let book = crate::company::share_split::ShareSplitBook::new(plan)
-            .map_err(|error| {
-                SessionCorporateActionsError::Invalid(match error {
-                    ShareSplitError::InvalidPlan { detail } => {
-                        format!("拆股／缩股方案非法：{detail}")
-                    }
-                    other => other.to_string(),
-                })
-            })?;
-        self.state.company_system = std::sync::Arc::new(candidate_system);
-        self.state.corporate_actions.share_splits.push(book);
-        self.state
-            .corporate_actions
-            .share_splits
-            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
-        Ok(())
-    }
-
-    /// 偏好自动提案（ADR-0037）：在 simple 结算周期完成后的同一日结候选事务内，
-    /// 按每公司显式配置的偏好评估并构造方案，提交给与显式 API 完全相同的
-    /// [`Self::approve_cash_dividend`] / [`Self::approve_stock_distribution`] 入口
-    /// （同一状态机、同一制度校验；偏好触发不减少任何校验）。
-    ///
-    /// 提案被制度拒绝时把原因如实记入 Simple 偏好台账（同周期同因幂等，不产生
-    /// 重试风暴），不令日结失败；结构前置不满足（未上市、无完整名册）时不评估，
-    /// 不产生方案也不记录拒绝。评估仅在结算周期末日发生一次，全部为轻量整数
-    /// 比较与既有事实扫描，无每 tick 开销。
-    fn process_simple_preference_proposals(
-        &mut self,
-        settled_date: crate::calendar::CivilDate,
-    ) -> Result<(), SessionCorporateActionsError> {
-        use crate::company::simple::preferences::{
-            self as preference_api, SimplePreferenceProposalKind,
-        };
-        let approve_on = self.civil_date();
-        debug_assert_eq!(
-            approve_on,
-            settled_date
-                .next()
-                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?,
-            "偏好评估时点的会话自然日必须为结算周期末日的次日"
-        );
-        let cycle_months = match self.state.company_system.config() {
-            crate::company::config::CompanySystemConfig::Simple(config) => {
-                config.settlement_cycle.months()
-            }
-            crate::company::config::CompanySystemConfig::Simulation => {
-                return Err(SessionCorporateActionsError::Invalid(
-                    "Simulation 模型尚不能创建，不应进入偏好评估".into(),
-                ));
-            }
-        };
-        let companies: Vec<crate::company::CompanyId> = self
-            .state
-            .company_system
-            .issuers()
-            .iter()
-            .map(|(id, _)| id.clone())
-            .collect();
-        for company in companies {
-            let preference = self
-                .state
-                .company_system
-                .simple_preferences(&company)
-                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-            if preference.cash_dividend.is_none() && preference.stock_distribution.is_none() {
-                continue;
-            }
-            let Some(stock) = self
-                .state
-                .company_system
-                .issuers()
-                .get(&company)
-                .and_then(|issuer| issuer.listed_stock.clone())
-            else {
-                // 结构前置：未上市发行人无公司行为通道，不评估（非制度拒绝）。
-                continue;
-            };
-            let Some(registry_index) = self
-                .state
-                .corporate_actions
-                .registries
-                .iter()
-                .position(|registry| registry.stock() == &stock)
-            else {
-                // 结构前置：无完整股东名册时无法构造或登记任何方案，不评估。
-                continue;
-            };
-            let exchange = self
-                .state
-                .civil_clock
-                .stock_exchange(&stock)
-                .ok_or_else(|| {
-                    SessionCorporateActionsError::Invalid(format!(
-                        "偏好评估缺少 {stock:?} 的交易所日历映射"
-                    ))
-                })?;
-            let eligible_shares = self.state.corporate_actions.registries[registry_index]
-                .holdings()
-                .iter()
-                .filter(|holding| {
-                    !matches!(
-                        &holding.holder,
-                        crate::company::share_registry::HolderId::IssuerTreasury
-                    )
-                })
-                .try_fold(0_u64, |total, holding| {
-                    holding
-                        .lots
-                        .iter()
-                        .try_fold(total, |sum, lot| sum.checked_add(lot.qty))
-                })
-                .ok_or_else(|| {
-                    SessionCorporateActionsError::Invalid("偏好评估可分红股数溢出".into())
-                })?;
-            // 每公司每类别每周期只取一次事实向量并在幂等判定、频率归并间复用
-            // （行为不变；避免同一周期对 facts 的重复取用与 Vec 克隆）。
-            let dividend_facts = match &preference.cash_dividend {
-                Some(_) => Some(
-                    self.state
-                        .company_system
-                        .dividend_plan_facts(&company)
-                        .map_err(|error| {
-                            SessionCorporateActionsError::Invalid(error.to_string())
-                        })?,
-                ),
-                None => None,
-            };
-            let stock_facts = match &preference.stock_distribution {
-                Some(_) => Some(
-                    self.state
-                        .company_system
-                        .stock_distribution_facts(&company)
-                        .map_err(|error| {
-                            SessionCorporateActionsError::Invalid(error.to_string())
-                        })?,
-                ),
-                None => None,
-            };
-            // 行情敞口上下文：提案锚收盘、涨跌幅限制与最小价位（跌停链迭代
-            // 与引擎 price_bound 同一取整口径），以及按本周期日程推导的
-            // 除息/除权日上既有的同日方案（显式 + 自动）合并事实。日程推导失败
-            // 时返回 None，由评估函数自行推导日程并以同一失败原因如实拒绝。
-            let market_anchor = self
-                .state
-                .markets
-                .get(&stock)
-                .map(|market| (market.last_close(), market.limit_bps(), market.tick()));
-            let same_ex_date =
-                self.same_ex_date_preference_context(&stock, exchange, approve_on)?;
-            let (same_ex_gross, same_ex_ratio_micros, same_ex_stock_event, same_ex_rights_event, same_ex_split_event) =
-                same_ex_date.unwrap_or((Money::ZERO, None, false, false, false));
-            if let Some(cash_preference) = preference.cash_dividend.clone() {
-                let facts = dividend_facts
-                    .as_ref()
-                    .expect("配置了现金分红偏好时必须已取分红事实");
-                let plan_id = preference_api::cash_dividend_plan_id(&company, settled_date);
-                let already_proposed = facts.iter().any(|fact| fact.plan_id == plan_id);
-                // 已有现金分红提案（接受或被拒）所属结算周期末日：接受的提案按
-                // 「批准日的前一自然日」归并周期（自动提案批准日 = 周期末日次日），
-                // 被拒提案直接取台账评估日。
-                let last_cash_proposal_on = self.last_simple_proposal_period_end(
-                    &company,
-                    SimplePreferenceProposalKind::CashDividend,
-                    facts.iter().map(|fact| fact.approved_on),
-                )?;
-                let distributable = self.state.company_system.distributable_profit(&company);
-                let legal_capital = self
-                    .state
-                    .company_system
-                    .dividend_legal_facts(&company)
-                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?
-                    .map(|facts| facts.registered_capital);
-                let exposure = market_anchor.map(|(last_close, limit_bps, tick)| {
-                    preference_api::SimpleCashDividendExposure {
-                        last_close,
-                        limit_bps,
-                        tick,
-                        same_ex_date_gross_per_share: same_ex_gross,
-                        same_ex_date_ratio_micros: same_ex_ratio_micros,
-                    }
-                });
-                let rejection = match distributable {
-                    Ok(distributable) => {
-                        let input = preference_api::SimpleCashDividendEvaluation {
-                            preference: &cash_preference,
-                            company: &company,
-                            stock: &stock,
-                            exchange,
-                            period_end: settled_date,
-                            approve_on,
-                            calendar: self.state.civil_clock.calendar(),
-                            distributable,
-                            eligible_shares,
-                            exposure,
-                            registered_capital: legal_capital,
-                            last_proposal_period_end: last_cash_proposal_on,
-                            cycle_months,
-                            suppress_duplicate: already_proposed,
-                        };
-                        match preference_api::evaluate_cash_dividend_preference(&input) {
-                            preference_api::SimpleCashDividendOutcome::Skip => None,
-                            preference_api::SimpleCashDividendOutcome::Proposal {
-                                declaration,
-                                plan,
-                            } => self
-                                .approve_cash_dividend(declaration, plan)
-                                .err()
-                                .map(|error| error.to_string()),
-                            preference_api::SimpleCashDividendOutcome::Rejected { detail } => {
-                                Some(detail)
-                            }
-                        }
-                    }
-                    Err(error) => Some(error.to_string()),
-                };
-                if let Some(detail) = rejection {
-                    std::sync::Arc::make_mut(&mut self.state.company_system)
-                        .record_preference_rejection(
-                            &company,
-                            SimplePreferenceProposalKind::CashDividend,
-                            settled_date,
-                            detail,
-                        )
-                        .map_err(|error| {
-                            SessionCorporateActionsError::Invalid(error.to_string())
-                        })?;
-                }
-            }
-            if let Some(stock_preference) = preference.stock_distribution.clone() {
-                let facts = stock_facts
-                    .as_ref()
-                    .expect("配置了送转偏好时必须已取送转事实");
-                let event_id = preference_api::stock_distribution_event_id(&company, settled_date);
-                let already_proposed = facts.iter().any(|fact| fact.event_id == event_id);
-                let cumulative_shares = facts
-                    .iter()
-                    .try_fold(0_u64, |total, fact| total.checked_add(fact.new_shares))
-                    .ok_or_else(|| {
-                        SessionCorporateActionsError::Invalid("偏好评估送转累计股数溢出".into())
-                    })?;
-                let last_stock_proposal_on = self.last_simple_proposal_period_end(
-                    &company,
-                    SimplePreferenceProposalKind::StockDistribution,
-                    facts.iter().map(|fact| fact.approved_on),
-                )?;
-                let initial_issued_shares = self
-                    .state
-                    .setup
-                    .stocks
-                    .iter()
-                    .find(|spec| spec.code == stock)
-                    .map(|spec| spec.total_shares)
-                    .ok_or_else(|| {
-                        SessionCorporateActionsError::Invalid(format!(
-                            "偏好评估缺少 {stock:?} 的开局发行股数"
-                        ))
-                    })?;
-                // 行情敞口上下文：同除权日现金红利按**当前**账簿重扫合计——现金
-                // 分红偏好先评估，若本轮刚批准自动现金方案，其 gross 已入账簿
-                // 并被计入（显式 + 自动合并口径）。
-                let same_ex_cash_gross = self
-                    .same_ex_date_preference_context(&stock, exchange, approve_on)?
-                    .map(|(gross, _ratio, _stock_event, _rights_event, _split_event)| gross)
-                    .unwrap_or(Money::ZERO);
-                let exposure = market_anchor.map(|(last_close, limit_bps, tick)| {
-                    preference_api::SimpleStockDistributionExposure {
-                        last_close,
-                        limit_bps,
-                        tick,
-                        same_ex_date_gross_per_share: same_ex_cash_gross,
-                        same_ex_date_stock_event: same_ex_stock_event,
-                        same_ex_date_rights_event: same_ex_rights_event,
-                        same_ex_date_split_event: same_ex_split_event,
-                    }
-                });
-                // 现金分红批准会核减可分配利润，送转评估必须读取最新账面。
-                let distributable = self.state.company_system.distributable_profit(&company);
-                let rejection = match distributable {
-                    Ok(distributable) => {
-                        let input = preference_api::SimpleStockDistributionEvaluation {
-                            preference: &stock_preference,
-                            company: &company,
-                            stock: &stock,
-                            exchange,
-                            period_end: settled_date,
-                            approve_on,
-                            calendar: self.state.civil_clock.calendar(),
-                            distributable,
-                            eligible_shares,
-                            initial_issued_shares,
-                            cumulative_distributed_shares: cumulative_shares,
-                            exposure,
-                            last_proposal_period_end: last_stock_proposal_on,
-                            cycle_months,
-                            suppress_duplicate: already_proposed,
-                        };
-                        match preference_api::evaluate_stock_distribution_preference(&input) {
-                            preference_api::SimpleStockDistributionOutcome::Skip => None,
-                            preference_api::SimpleStockDistributionOutcome::Proposal { plan } => {
-                                self.approve_stock_distribution(plan)
-                                    .err()
-                                    .map(|error| error.to_string())
-                            }
-                            preference_api::SimpleStockDistributionOutcome::Rejected { detail } => {
-                                Some(detail)
-                            }
-                        }
-                    }
-                    Err(error) => Some(error.to_string()),
-                };
-                if let Some(detail) = rejection {
-                    std::sync::Arc::make_mut(&mut self.state.company_system)
-                        .record_preference_rejection(
-                            &company,
-                            SimplePreferenceProposalKind::StockDistribution,
-                            settled_date,
-                            detail,
-                        )
-                        .map_err(|error| {
-                            SessionCorporateActionsError::Invalid(error.to_string())
-                        })?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// 发行人回购专用账户 id（开关开启时创建于 NPC 序列之后）；未启用为 None。
-    pub fn issuer_repurchase_account_id(&self) -> Option<AccountId> {
-        self.state
-            .setup
-            .issuer_repurchase_enabled
-            .then(|| {
-                let npc_count = u64::from(self.state.setup.npcs.retail_count)
-                    + u64::from(self.state.setup.npcs.inst_count)
-                    + u64::from(self.state.setup.npcs.hot_count);
-                AccountId(npc_count.saturating_add(1))
-            })
-            .filter(|id| self.state.accounts.contains_key(id))
-    }
-
-    /// 单位锚只读已应用的除权事实，不能把到达 ex 日期当作已经应用。
-    pub fn current_trading_unit_anchor(
-        &self,
-        stock: &StockCode,
-        date: crate::calendar::CivilDate,
-    ) -> Option<String> {
-        self.state
-            .corporate_actions
-            .applied_ex_reference_groups
-            .iter()
-            .filter(|group| {
-                group.stock == *stock && group.date <= date && !group.split_event_ids.is_empty()
-            })
-            .max_by_key(|group| group.date)
-            .and_then(|group| group.split_event_ids.first())
-            .cloned()
-    }
-
-    /// 汇总发行人回购账户当日买入成交（真实回执；卖出恒不可能——回购只买不卖）。
-    fn collect_issuer_repurchase_fills(
-        &self,
-        day: crate::calendar::CivilDate,
-    ) -> Result<Vec<crate::company::issuer_repurchase::RepurchaseFillRecord>, StepFatal> {
-        let Some(account) = self.issuer_repurchase_account_id() else {
-            return Ok(Vec::new());
-        };
-        let mut by_stock = std::collections::BTreeMap::<StockCode, (u64, i64, i64)>::new();
-        if let Some(confirmations) = self.state.personal_trade_confirmations.get(&account) {
-            for confirmation in confirmations.iter() {
-                if confirmation.civil_date != day
-                    || confirmation.side != crate::orderbook::Side::Buy
-                {
-                    continue;
-                }
-                let entry = by_stock
-                    .entry(confirmation.code.clone())
-                    .or_insert((0, 0, 0));
-                entry.0 += u64::from(confirmation.quantity_shares);
-                entry.1 += confirmation.gross.cents();
-                entry.2 += confirmation
-                    .actual_fees
-                    .total()
-                    .map(|fees| fees.cents())
-                    .map_err(|fatal| {
-                        StepFatal::InvariantViolation {
-                            description: format!("回购成交费用汇总失败：{fatal}"),
-                            location: "GameSession::collect_issuer_repurchase_fills".into(),
-                        }
-                    })?;
-            }
-        }
-        Ok(by_stock
-            .into_iter()
-            .filter(|(_, (shares, _, _))| *shares > 0)
-            .map(|(stock, (shares, gross, fees))| {
-                crate::company::issuer_repurchase::RepurchaseFillRecord {
-                    stock,
-                    day,
-                    shares,
-                    gross: Money::from_cents(gross),
-                    fees: Money::from_cents(fees),
-                }
-            })
-            .collect())
-    }
-
-    /// 受理配股／增发方案（显式计划入口；新局开关 `rights_offering_enabled`）。
-    ///
-    /// 面值口径与送转一致：首次声明由「已绑定注册资本法定事实 ÷ 名册当前发行股数」
-    /// 整除推导并固定；发行价不得低于面值（《公司法》第 148 条）。发行人侧只记
-    /// Simple 账面声明事实（ADR-0035/0039），真实现金只在缴款期日终从投资者划扣。
-    pub fn approve_rights_offering(
-        &mut self,
-        plan: crate::company::rights_offering::RightsOfferingEventPlan,
-    ) -> Result<(), SessionError> {
-        if !self.state.setup.rights_offering_enabled {
-            return Err(SessionError::InvalidSetup(
-                "本局未启用配股／增发机制（新局开关 rights_offering_enabled=false），显式拒绝"
-                    .into(),
-            ));
-        }
-        plan.validate()
-            .map_err(|error| SessionError::InvalidSetup(format!("配股方案非法：{error}")))?;
-        if let crate::company::rights_offering::RightsSubscriptionStrategy::StrategyBased =
-            plan.npc_subscription_strategy
-        {
-            return Err(SessionError::InvalidSetup(
-                "配股 NPC 认购策略 StrategyBased 未实现：当前仅支持默认足额认购（FullByDefault）"
-                    .into(),
-            ));
-        }
-        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
-            return Err(SessionError::InvalidSetup(
-                "配股方案的批准日期或公告日期与当前会话日期不一致".into(),
-            ));
-        }
-        plan.validate_calendar(self.state.civil_clock.calendar())
-            .map_err(|error| SessionError::InvalidSetup(format!("配股日程非法：{error}")))?;
-        if self
-            .state
-            .corporate_actions
-            .rights_offerings
-            .iter()
-            .any(|existing| existing.plan().event_id == plan.event_id)
-        {
-            return Err(SessionError::InvalidSetup("配股事件 id 已存在".into()));
-        }
-        // 同一发行人同证券同除权日的既有事件预检：同日多起配股、或配股与送转
-        // 同日的合并除权口径未在官方材料核实，受理时直接拒绝，不推迟到除权日
-        // 日结才以 StepFatal 暴露（与 approve_stock_distribution 的碰撞预检
-        // 对称）。
-        if self
-            .state
-            .corporate_actions
-            .stock_distributions
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionError::InvalidSetup(
-                "同一发行人同证券同除权日已存在送转事件；配股×送转同日的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        if self
-            .state
-            .corporate_actions
-            .rights_offerings
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionError::InvalidSetup(
-                "同一发行人同证券同除权日已存在配股事件；同日多起配股的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        // 拆股／缩股×配股同除权日的合并除权口径同样未核实：受理时显式拒绝。
-        if self
-            .state
-            .corporate_actions
-            .share_splits
-            .iter()
-            .any(|existing| {
-                let existing = existing.plan();
-                existing.issuer == plan.issuer
-                    && existing.stock == plan.stock
-                    && existing.ex_rights_on == plan.ex_rights_on
-            })
-        {
-            return Err(SessionError::InvalidSetup(
-                "同一发行人同证券同除权日已存在拆股／缩股事件；拆股／缩股×配股同日的合并除权口径未核实，受理时显式拒绝"
-                    .into(),
-            ));
-        }
-        let registry = self
-            .state
-            .corporate_actions
-            .registries
-            .iter()
-            .find(|registry| registry.stock() == &plan.stock && registry.issuer() == &plan.issuer)
-            .ok_or_else(|| {
-                SessionError::InvalidSetup("配股需要已显式配置的完整股东名册".into())
-            })?;
-        if registry.settled_on() > self.civil_date() {
-            return Err(SessionError::InvalidSetup(
-                "股东名册日期晚于当前会话日期".into(),
-            ));
-        }
-        let mut candidate_system = self.state.company_system.as_ref().clone();
-        let issuer = candidate_system
-            .issuers()
-            .get(&plan.issuer)
-            .ok_or_else(|| SessionError::InvalidSetup("配股计划发行人不存在".into()))?;
-        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-            return Err(SessionError::InvalidSetup("配股计划证券与发行人不匹配".into()));
-        }
-        let legal_facts = candidate_system
-            .dividend_legal_facts(&plan.issuer)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
-            .ok_or_else(|| {
-                SessionError::InvalidSetup(
-                    "配股面值推导需要先显式绑定公司注册资本法定事实".into(),
-                )
-            })?;
-        // 面值口径：优先沿用送转/配股已绑定面值，否则整除推导并就此固定。
-        let par_cents = if let Some(first) = candidate_system
-            .stock_distribution_facts(&plan.issuer)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
-            .first()
-        {
-            i128::from(first.par_value_per_share.cents())
-        } else if let Some(first) = candidate_system
-            .rights_offering_facts(&plan.issuer)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
-            .first()
-        {
-            i128::from(first.par_value_per_share.cents())
-        } else {
-            let registered_capital_cents = i128::from(
-                legal_facts
-                    .registered_capital
-                    .to_money()
-                    .map_err(|error| SessionError::InvalidSetup(error.to_string()))?
-                    .cents(),
-            );
-            let shares = i128::from(registry.issued_shares());
-            if registered_capital_cents % shares != 0 {
-                return Err(SessionError::InvalidSetup(
-                    "注册资本与发行股数不能整除为每股面值；需先提供可整除的法定事实".into(),
-                ));
-            }
-            registered_capital_cents / shares
-        };
-        let par_value_per_share = Money::from_cents(
-            i64::try_from(par_cents)
-                .map_err(|_| SessionError::InvalidSetup("每股面值溢出".into()))?,
-        );
-        if par_value_per_share <= Money::ZERO || plan.price_per_share < par_value_per_share {
-            return Err(SessionError::InvalidSetup(
-                "配股发行价不得低于推导出的每股面值（面值必须为正）".into(),
-            ));
-        }
-        candidate_system
-            .declare_rights_offering(
-                &plan.issuer,
-                crate::company::rights_offering::RightsOfferingDeclaration {
-                    event_id: plan.event_id.clone(),
-                    approval_reference: plan.approval_reference.clone(),
-                    approved_on: plan.approved_on,
-                    price_per_share: plan.price_per_share,
-                    par_value_per_share,
-                    registered_capital_at_approval: legal_facts.registered_capital,
-                },
-            )
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        let book = crate::company::rights_offering::RightsOfferingBook::new(plan)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        self.state.company_system = std::sync::Arc::new(candidate_system);
-        self.state.corporate_actions.rights_offerings.push(book);
-        self.state
-            .corporate_actions
-            .rights_offerings
-            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
-        Ok(())
-    }
-
-    /// 玩家／宿主显式认购配股（缴款期内当日日终划扣；现金不足时部分放弃并如实记录）。
-    pub fn subscribe_rights_offering(
-        &mut self,
-        event_id: &str,
-        account: AccountId,
-        shares: u64,
-    ) -> Result<(), SessionError> {
-        if !self.state.setup.rights_offering_enabled {
-            return Err(SessionError::InvalidSetup(
-                "本局未启用配股／增发机制（新局开关 rights_offering_enabled=false），显式拒绝"
-                    .into(),
-            ));
-        }
-        if shares == 0 {
-            return Err(SessionError::InvalidSetup("认购股数必须为正数".into()));
-        }
-        let book = self
-            .state
-            .corporate_actions
-            .rights_offerings
-            .iter()
-            .find(|book| book.plan().event_id == event_id)
-            .ok_or_else(|| SessionError::InvalidSetup(format!("未知配股事件 {event_id}")))?;
-        let plan = book.plan().clone();
-        let today = self.civil_date();
-        if !plan.payment_window_contains(today) {
-            return Err(SessionError::InvalidSetup(
-                "认购只能在缴款期窗口内提交".into(),
-            ));
-        }
-        if book.status()
-            != &crate::company::rights_offering::RightsOfferingStatus::Entitled
-        {
-            return Err(SessionError::InvalidSetup(
-                "配股尚未完成权证派发或已关窗".into(),
-            ));
-        }
-        let account_state = self
-            .state
-            .accounts
-            .get(&account)
-            .ok_or(SessionError::UnknownPlayer(account))?;
-        let cost = Money::from_cents(
-            i64::try_from(
-                u128::from(shares) * u128::from(plan.price_per_share.cents().unsigned_abs()),
-            )
-            .map_err(|_| SessionError::InvalidSetup("认购金额溢出".into()))?,
-        );
-        if account_state.cash() < cost {
-            return Err(SessionError::InvalidSetup(format!(
-                "认购金额 {cost:?} 超过账户真实现金（不足显式拒绝，不补认购资金）"
-            )));
-        }
-        // 权利额度预检（日终复核）：具名权利或公开配售额度。
-        let entitlement = book
-            .entitlement()
-            .ok_or_else(|| SessionError::InvalidSetup("配股缺少权证回执".into()))?;
-        let holder = crate::company::share_registry::HolderId::Account(account);
-        if let Some(holder_rights) = entitlement
-            .entitlements
-            .iter()
-            .find(|entry| entry.holder == holder)
-        {
-            if shares > holder_rights.rights_shares {
-                return Err(SessionError::InvalidSetup(
-                    "认购股数超过持有权利（不超权利认购）".into(),
-                ));
-            }
-        } else {
-            if entitlement.open_subscription_shares == 0 {
-                return Err(SessionError::InvalidSetup(
-                    "该账户无配股权利且方案无公开配售额度".into(),
-                ));
-            }
-            // 公开配售：按「剩余公开额度 − 已排队未结算量」受理，超额显式拒绝
-            // （不静默、不截断、不入队）——否则日终 record_subscription 的额度
-            // 校验会令整个日终失败且回滚后队列仍在，一次超额提交即永久卡死。
-            let settled_open_used: u64 = self
-                .state
-                .corporate_actions
-                .rights_offerings
-                .iter()
-                .find(|existing| existing.plan().event_id == event_id)
-                .map(|existing| {
-                    existing
-                        .subscriptions()
-                        .iter()
-                        .filter(|record| {
-                            !entitlement
-                                .entitlements
-                                .iter()
-                                .any(|entry| entry.holder == record.holder)
-                        })
-                        .map(|record| record.requested_shares)
-                        .try_fold(0_u64, |sum, requested| sum.checked_add(requested))
-                })
-                .unwrap_or(Some(0))
-                .ok_or_else(|| SessionError::InvalidSetup("公开配售已入账认购合计溢出".into()))?;
-            let queued_open_used: u64 = self
-                .state
-                .corporate_actions
-                .rights_subscription_queue
-                .iter()
-                .filter(|queued| {
-                    queued.event_id == event_id
-                        && !entitlement.entitlements.iter().any(|entry| {
-                            entry.holder
-                                == crate::company::share_registry::HolderId::Account(queued.account)
-                        })
-                })
-                .map(|queued| queued.requested_shares)
-                .try_fold(0_u64, |sum, requested| sum.checked_add(requested))
-                .ok_or_else(|| SessionError::InvalidSetup("公开配售排队认购合计溢出".into()))?;
-            let remaining = entitlement
-                .open_subscription_shares
-                .checked_sub(settled_open_used)
-                .and_then(|value| value.checked_sub(queued_open_used))
-                .ok_or_else(|| {
-                    SessionError::InvalidSetup("公开配售额度与已受理认购不一致".into())
-                })?;
-            if shares > remaining {
-                return Err(SessionError::InvalidSetup(format!(
-                    "公开配售剩余额度 {remaining} 股，本次申请 {shares} 股超出剩余额度；超额部分显式拒绝，不截断不入队，请调减后重试"
-                )));
-            }
-        }
-        if self
-            .state
-            .corporate_actions
-            .rights_offerings
-            .iter()
-            .any(|book| {
-                book.subscriptions()
-                    .iter()
-                    .any(|record| record.holder == holder)
-                    && book.plan().event_id == event_id
-            })
-            || self
-                .state
-                .corporate_actions
-                .rights_subscription_queue
-                .iter()
-                .any(|queued| {
-                    queued.event_id == event_id && queued.account == account
-                })
-        {
-            return Err(SessionError::InvalidSetup(
-                "同一持有人只能提交一条净认购记录".into(),
-            ));
-        }
-        self.state
-            .corporate_actions
-            .rights_subscription_queue
-            .push(crate::session::corporate_actions::QueuedRightsSubscription {
-                event_id: event_id.to_owned(),
-                account,
-                requested_shares: shares,
-                submitted_on: today,
-            });
-        Ok(())
-    }
-
-    /// 受理发行人回购方案（独立开关 `issuer_repurchase_enabled`；ADR-0038）。
-    ///
-    /// 批准即按计划额度向发行人回购专用账户合成入账结算资金（凭空生成、专款
-    /// 语义）；其后由执行器在窗口内以真实委托进入既有订单簿（不伪造成交、
-    /// 不绕过涨跌停/笼子/撮合规则），卖方投资者真实收到资金。
-    pub fn approve_issuer_repurchase(
-        &mut self,
-        plan: crate::company::issuer_repurchase::IssuerRepurchasePlan,
-    ) -> Result<(), SessionError> {
-        if !self.state.setup.issuer_repurchase_enabled {
-            return Err(SessionError::InvalidSetup(
-                "本局未启用发行人回购机制（新局开关 issuer_repurchase_enabled=false），显式拒绝"
-                    .into(),
-            ));
-        }
-        plan.validate()
-            .map_err(|error| SessionError::InvalidSetup(format!("回购方案非法：{error}")))?;
-        if plan.approved_on > self.civil_date() || plan.announced_on < self.civil_date() {
-            return Err(SessionError::InvalidSetup(
-                "回购方案的批准日期或公告日期与当前会话日期不一致".into(),
-            ));
-        }
-        // 批准锚取审批当刻已应用的交易事实，日期到达 ex 日不能替代实际应用。
-        let session_anchor = self.current_trading_unit_anchor(&plan.stock, self.civil_date());
-        if plan.approval_unit_event_id != session_anchor {
-            return Err(SessionError::InvalidSetup(format!(
-                "回购批准单位锚 {:?} 与审批当刻真实交易单位锚 {session_anchor:?} 不一致",
-                plan.approval_unit_event_id
-            )));
-        }
-        plan.validate_calendar(self.state.civil_clock.calendar())
-            .map_err(|error| SessionError::InvalidSetup(format!("回购日程非法：{error}")))?;
-        if self
-            .state
-            .corporate_actions
-            .issuer_repurchases
-            .iter()
-            .any(|existing| existing.plan().event_id == plan.event_id)
-        {
-            return Err(SessionError::InvalidSetup("回购方案 id 已存在".into()));
-        }
-        // 同一证券同时只能有一个未完成回购方案：日终成交回执按证券聚合、不区分
-        // 方案，第二个未完成方案会把同一笔真实成交记入多本账簿，完成勾稽必然
-        // 失真（完成或取消后才可批准同证券新方案；H 批起完成方案于完成判定后
-        // 的首个日终自动注销——「完成并自动注销后可提新方案」）。
-        if self
-            .state
-            .corporate_actions
-            .issuer_repurchases
-            .iter()
-            .any(|existing| {
-                existing.plan().stock == plan.stock
-                    && !matches!(
-                        existing.status(),
-                        crate::company::issuer_repurchase::IssuerRepurchaseStatus::Completed
-                            | crate::company::issuer_repurchase::IssuerRepurchaseStatus::Cancelled
-                    )
-            })
-        {
-            return Err(SessionError::InvalidSetup(
-                "该证券已有未完成的回购方案；同一证券同时只能有一个未完成方案，既有方案完成后的首个日终自动注销（默认注销策略），之后才能批准新方案".into(),
-            ));
-        }
-        let repurchase_account = self.issuer_repurchase_account_id().ok_or_else(|| {
-            SessionError::InvalidSetup("回购专用账户缺失（开关开启时应确定性创建）".into())
-        })?;
-        let mut candidate_system = self.state.company_system.as_ref().clone();
-        let issuer = candidate_system
-            .issuers()
-            .get(&plan.issuer)
-            .ok_or_else(|| SessionError::InvalidSetup("回购计划发行人不存在".into()))?;
-        if issuer.listed_stock.as_ref() != Some(&plan.stock) {
-            return Err(SessionError::InvalidSetup("回购计划证券与发行人不匹配".into()));
-        }
-        let registry_index = self
-            .state
-            .corporate_actions
-            .registries
-            .iter()
-            .position(|registry| registry.stock() == &plan.stock)
-            .ok_or_else(|| {
-                SessionError::InvalidSetup("回购需要已显式配置的完整股东名册".into())
-            })?;
-        // 非减资用途：合计持有不得超过已发行股份 10%（63 号第 17 条）；
-        // 减资注销用途不受 10% 限制（注销不长期持有）。
-        if !matches!(
-            plan.purpose,
-            crate::company::issuer_repurchase::RepurchasePurpose::ReduceCapital
-        ) && plan.max_shares * 10 > self.state.corporate_actions.registries[registry_index].issued_shares()
-        {
-            return Err(SessionError::InvalidSetup(
-                "非减资用途回购数量上限超过已发行股份 10%（证监会回购规则第 17 条）".into(),
-            ));
-        }
-        // 建立回购专户事实（bind-once，H 批口径）：专户事实描述**账户存在性**
-        // （同一局内回购专用账户只创建一次），首次批准绑定，此后不随方案重复
-        // 绑定——否则第二方案因 `source_evidence`/`established_on` 必然不同而被
-        // 「immutable once set」拒绝，自动注销后新方案将永远无法受理。
-        // `established_on` 取名册最近结算日（`settled_on`）：日内恒不晚于结算日，
-        // 局中任意日（含多个日终之后）均可受理玩家提案（与「持仓即可」语义
-        // 一致）；名册结算日恰有登记快照（分红/配股登记）时该绑定被既有
-        // 「不得跨登记快照回溯」守卫显式拒绝，属结构性事实冲突而非静默回溯。
-        // 在候选副本上执行，后续任何失败都不留部分状态。
-        let account_reference = format!("issuer-repurchase-account-{}", repurchase_account.0);
-        let mut candidate_registry = self.state.corporate_actions.registries[registry_index].clone();
-        if candidate_registry.issuer_repurchase_account().is_none() {
-            candidate_registry
-                .set_issuer_repurchase_account(crate::company::share_registry::IssuerRepurchaseAccountFacts {
-                    account_reference,
-                    source_evidence: plan.event_id.clone(),
-                    established_on: candidate_registry.settled_on(),
-                })
-                .map_err(|error| {
-                    SessionError::InvalidSetup(format!("回购专户事实非法：{error}"))
-                })?;
-        }
-        candidate_system
-            .declare_issuer_repurchase(
-                &plan.issuer,
-                crate::company::issuer_repurchase::IssuerRepurchaseFinanceFact {
-                    event_id: plan.event_id.clone(),
-                    approval_reference: plan.approval_reference.clone(),
-                    approved_on: plan.approved_on,
-                    synthetic_funding: crate::accounting::AccountingAmount::from_money(
-                        plan.total_budget,
-                    ),
-                    purpose: plan.purpose.clone(),
-                    spent: None,
-                    withdrawn_remainder: None,
-                    completed_on: None,
-                    cancelled_shares: 0,
-                    cancelled_on: None,
-                    capital_reduction: None,
-                },
-            )
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        // 合成资金凭空入账（ADR-0038：获批计划额度；投资者资金池注入的唯一来源侧）。
-        let synthetic_budget = plan.total_budget;
-        let book = crate::company::issuer_repurchase::IssuerRepurchaseBook::new(plan)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        self.state.corporate_actions.registries[registry_index] = candidate_registry;
-        self.state.company_system = std::sync::Arc::new(candidate_system);
-        self.state.corporate_actions.issuer_repurchases.push(book);
-        self.state
-            .corporate_actions
-            .issuer_repurchases
-            .sort_by(|left, right| left.plan().event_id.cmp(&right.plan().event_id));
-        self.state
-            .accounts
-            .get_mut(&repurchase_account)
-            .ok_or_else(|| {
-                SessionError::InvalidSetup("回购专用账户缺失（开关开启时应确定性创建）".into())
-            })?
-            .credit_cash(synthetic_budget)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        Ok(())
-    }
-
-    /// 执行回购注销（减资用途）：核减专户股份、总股本与注册资本；不除权
-    /// （无官方除权条文，市场实践不除权——登记口径见 docs/trading-rules.md）。
-    pub fn execute_issuer_repurchase_cancellation(
-        &mut self,
-        event_id: &str,
-        shares: u64,
-        on: crate::calendar::CivilDate,
-    ) -> Result<(), SessionError> {
-        let repurchase_account = self
-            .issuer_repurchase_account_id()
-            .ok_or_else(|| SessionError::InvalidSetup("本局未启用发行人回购机制".into()))?;
-        let index = self
-            .state
-            .corporate_actions
-            .issuer_repurchases
-            .iter()
-            .position(|book| book.plan().event_id == event_id)
-            .ok_or_else(|| SessionError::InvalidSetup(format!("未知回购方案 {event_id}")))?;
-        let stock = self.state.corporate_actions.issuer_repurchases[index]
-            .plan()
-            .stock
-            .clone();
-        let issuer = self.state.corporate_actions.issuer_repurchases[index]
-            .plan()
-            .issuer
-            .clone();
-        // 先按候选事务执行名册与账户核减，任何失败整体回滚（借用 clone 兜底）。
-        let registry_checkpoint = self
-            .state
-            .corporate_actions
-            .registries
-            .iter()
-            .find(|registry| registry.stock() == &stock)
-            .cloned()
-            .ok_or_else(|| SessionError::InvalidSetup("回购注销缺少股东名册".into()))?;
-        let issued_before = registry_checkpoint.issued_shares();
-        // 显式 lot 消耗选择：只核减本 plan 仍持有的份额（真实净买入 market lot +
-        // 既往拆股/缩股增量 lot），名册不再无条件 FIFO 吃 initial 残桶或别的 plan。
-        let split_context = self.state.corporate_actions.split_unit_context(&stock);
-        let current_inventory = self.state.corporate_actions.issuer_repurchases[index]
-            .current_inventory_shares(&split_context)
-            .map_err(|error| SessionError::InvalidSetup(format!("回购库存重放失败：{error}")))?;
-        if shares > current_inventory {
-            return Err(SessionError::InvalidSetup(format!(
-                "回购注销 {shares} 股超过方案 {event_id} 当前库存 {current_inventory} 股"
-            )));
-        }
-        let treasury_lots: Vec<crate::company::share_registry::ShareLot> = registry_checkpoint
-            .holdings()
-            .iter()
-            .find(|holding| {
-                holding.holder == crate::company::share_registry::HolderId::IssuerTreasury
-            })
-            .map(|holding| holding.lots.clone())
-            .unwrap_or_default();
-        let lot_ids: std::collections::BTreeSet<String> = self
-            .state
-            .corporate_actions
-            .plan_treasury_lot_ids(event_id, &stock)
-            .into_iter()
-            .collect();
-        let mut ordered: Vec<&crate::company::share_registry::ShareLot> = treasury_lots
-            .iter()
-            .filter(|lot| lot_ids.contains(&lot.id))
-            .collect();
-        ordered.sort_by(|left, right| {
-            (left.acquired_on, &left.id).cmp(&(right.acquired_on, &right.id))
-        });
-        let mut remaining = shares;
-        let mut selection = Vec::new();
-        for lot in ordered {
-            if remaining == 0 {
-                break;
-            }
-            let consumed = remaining.min(lot.qty);
-            if consumed == 0 {
-                continue;
-            }
-            selection.push(crate::company::share_registry::LotConsumption {
-                lot_id: lot.id.clone(),
-                qty: consumed,
-            });
-            remaining -= consumed;
-        }
-        if remaining != 0 {
-            return Err(SessionError::InvalidSetup(format!(
-                "回购方案 {event_id} 名册可归属 lot 不足以核减 {shares} 股（缺 {remaining}）"
-            )));
-        }
-        let mut candidate_registry = registry_checkpoint.clone();
-        candidate_registry
-            .close_day(crate::company::share_registry::ShareDayRequest {
-                event_id: format!("issuer-repurchase-cancellation:{event_id}"),
-                day: on,
-                scope: crate::company::share_registry::MovementScope::IssuerRepurchaseCancellation {
-                    basis: self.state.corporate_actions.issuer_repurchases[index]
-                        .plan()
-                        .approval_reference
-                        .clone(),
-                },
-                changes: vec![crate::company::share_registry::DayNetChange {
-                    holder: crate::company::share_registry::HolderId::IssuerTreasury,
-                    change: -i128::try_from(shares).map_err(|_| {
-                        SessionError::InvalidSetup("回购注销股数超出范围".to_string())
-                    })?,
-                    acquisition: None,
-                    consume: Some(selection),
-                }],
-            })
-            .map_err(|error| SessionError::InvalidSetup(format!("回购注销名册核减失败：{error}")))?;
-        let mut candidate_accounts = self.state.accounts.clone();
-        candidate_accounts
-            .get_mut(&repurchase_account)
-            .ok_or_else(|| {
-                SessionError::InvalidSetup("回购专用账户缺失（开关开启时应确定性创建）".into())
-            })?
-            .write_down_position_shares(stock.clone(), shares)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        let mut candidate_system = self.state.company_system.as_ref().clone();
-        candidate_system
-            .record_issuer_repurchase_cancellation(
-                &issuer,
-                event_id,
-                on,
-                shares,
-                issued_before,
-            )
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        // 全部成功后一次性安装候选状态并推进账簿状态机；record_cancellation 的
-        // 库存上界校验失败时不安装任何候选（无部分状态泄露）。
-        let mut candidate_books = self.state.corporate_actions.issuer_repurchases.clone();
-        candidate_books[index]
-            .record_cancellation(on, shares, &split_context)
-            .map_err(|error| SessionError::InvalidSetup(error.to_string()))?;
-        let registry_index = self
-            .state
-            .corporate_actions
-            .registries
-            .iter()
-            .position(|registry| registry.stock() == &stock)
-            .expect("registry presence was checked above");
-        self.state.corporate_actions.registries[registry_index] = candidate_registry;
-        self.state.accounts = candidate_accounts;
-        self.state.company_system = std::sync::Arc::new(candidate_system);
-        self.state.corporate_actions.issuer_repurchases = candidate_books;
-        Ok(())
-    }
-
-    /// 完成即默认注销（H 批 2026-10-08 用户决策「目前暂时回购默认注销」）：
-    /// 到达 `Completed` 的方案（完成判定于**更早**的日终——`completed_on < day`，
-    /// 完成判定当日本身不注销）在本次日终自动执行注销，**复用既有手动注销路径**
-    /// `execute_issuer_repurchase_cancellation`（候选事务、名册/账户/账面核减、
-    /// 面值核减注册资本、不除权），不复制任何核减逻辑。「Completed 未注销」
-    /// 因此只是完成日终到次日终之间的短暂过渡态。
-    ///
-    /// 显式登记的边界：
-    /// - **在途委托竞态**：完成判定当日仍有回购账户的在途未成交委托残留时，
-    ///   该日不自动注销（Completed 保留），下一日终重试。正常时序下市场日终
-    ///   已清空订单簿（`Market::end_of_day` 清 book），该守卫防御的是日终
-    ///   时序错位，不是常规路径。
-    /// - **零成交**：注销以正股数为前提（`record_cancellation` 拒绝 0 股），
-    ///   零成交方案无股份可核减，保持 `Completed` 终态，不阻塞新方案。
-    /// - 处置策略由方案的 `completion_policy` 决定（当前唯一变体
-    ///   `CancelOnCompletion`；新增变体时必须在此同步处置逻辑）。
-    fn auto_cancel_completed_repurchases(
-        &mut self,
-        day: crate::calendar::CivilDate,
-    ) -> Result<(), SessionError> {
-        let Some(repurchase_account) = self.issuer_repurchase_account_id() else {
-            return Ok(());
-        };
-        let owners = std::collections::BTreeSet::from([repurchase_account]);
-        let mut pending: Vec<(String, u64)> = Vec::new();
-        for book in &self.state.corporate_actions.issuer_repurchases {
-            if *book.status()
-                != crate::company::issuer_repurchase::IssuerRepurchaseStatus::Completed
-                || book
-                    .completed_on()
-                    .is_none_or(|completed_on| completed_on >= day)
-            {
-                continue;
-            }
-            match book.plan().completion_policy {
-                crate::company::issuer_repurchase::RepurchaseCompletionPolicy::CancelOnCompletion => {}
-            }
-            // 读当前重放库存（含单位调整与历史部分注销残量），不读历史成交合计：
-            // 拆股/缩股后注销必须按当前单位股数执行（Task174）；重放失败属事实
-            // 损坏，显式上抛不静默跳过。
-            let split_context = self
-                .state
-                .corporate_actions
-                .split_unit_context(&book.plan().stock);
-            let shares = book
-                .current_inventory_shares(&split_context)
-                .map_err(|error| {
-                    SessionError::InvalidSetup(format!("回购库存重放失败：{error}"))
-                })?;
-            if shares == 0 {
-                // 零库存（零成交或残量已尽）：无股份可核减，保持 Completed 终态。
-                continue;
-            }
-            // 在途委托竞态守卫：回购账户在该证券订单簿仍有未成交委托 → 该日
-            // 不自动注销，下一日终重试。
-            if self
-                .state
-                .markets
-                .get(&book.plan().stock)
-                .is_some_and(|market| !market.resting_orders_for_owners(&owners).is_empty())
-            {
-                continue;
-            }
-            pending.push((book.plan().event_id.clone(), shares));
-        }
-        for (event_id, shares) in pending {
-            self.execute_issuer_repurchase_cancellation(&event_id, shares, day)?;
-        }
-        Ok(())
-    }
-
-    /// 回购执行器：窗口内每个交易日的连续竞价阶段以真实委托进入既有订单簿。
-    ///
-    /// 只在 tick shadow 内调用（freeze 之后，见 `pipeline::plan_tick`）：全部写入
-    /// （pending_player 回执、受理游标消耗、`last_order_day`）随候选提交或丢弃。
-    /// 委托约束（63 号第 30 条）：申报价格不得为当日涨幅限制价格——取
-    /// min(方案价格上限, 涨停价−1 个最小价位)；不得在集合竞价时段申报（仅
-    /// Continuous 阶段执行）。数量按剩余额度（预留费用余量）、数量上限与
-    /// 单笔上限取整手。每日至多一单（`last_order_day` 幂等去重）。
-    pub(super) fn place_issuer_repurchase_orders(&mut self) -> Result<(), StepFatal> {
-        if !self.state.setup.issuer_repurchase_enabled {
-            return Ok(());
-        }
-        if self.phase() != TradingPhase::Continuous {
-            return Ok(());
-        }
-        let Some(repurchase_account) = self.issuer_repurchase_account_id() else {
-            return Ok(());
-        };
-        let day = self.civil_date();
-        let lot_size = u64::from(self.state.setup.config.lot_size.max(1));
-        let mut orders = Vec::new();
-        for book in &self.state.corporate_actions.issuer_repurchases {
-            let plan = book.plan();
-            if !matches!(
-                book.status(),
-                crate::company::issuer_repurchase::IssuerRepurchaseStatus::Announced
-                    | crate::company::issuer_repurchase::IssuerRepurchaseStatus::Executing
-            ) || !plan.window_contains(day)
-                || book.last_order_day() == Some(day)
-            {
-                continue;
-            }
-            let Ok(remaining) = book.remaining_budget() else {
-                continue;
-            };
-            // 执行数量/价格上限按「批准锚单位 → 当日交易单位」精确比例换算
-            // （Task174）；库存读重放值，ex 当日盘中调整尚未入账时按
-            // 「已记录链尾 → 当日」再取整换算（合法碎股奖励只会把 room 压到 0）。
-            let split_context = self.state.corporate_actions.split_unit_context(&plan.stock);
-            let execution_cap =
-                plan.execution_max_shares(day, &split_context)
-                    .map_err(|error| StepFatal::InvariantViolation {
-                        description: format!("回购数量上限换算失败：{error}"),
-                        location: "GameSession::place_issuer_repurchase_orders".into(),
-                    })?;
-            let recorded_inventory = match book.current_inventory_shares(&split_context) {
-                Ok(inventory) => inventory,
-                // tick shadow 内不能静默吞错：库存重放失败属权威事实损坏。
-                Err(error) => {
-                    return Err(StepFatal::InvariantViolation {
-                        description: format!("回购库存重放失败：{error}"),
-                        location: "GameSession::place_issuer_repurchase_orders".into(),
-                    });
-                }
-            };
-            let recorded_anchor = split_context
-                .iter()
-                .filter(|entry| {
-                    book.share_unit_adjustments()
-                        .iter()
-                        .any(|adjustment| adjustment.split_event_id == entry.event_id)
-                })
-                .max_by(|left, right| {
-                    (left.ex_on, &left.event_id).cmp(&(right.ex_on, &right.event_id))
-                })
-                .map(|entry| entry.event_id.clone())
-                .or_else(|| plan.approval_unit_event_id.clone());
-            let (tail_num, tail_den) =
-                match crate::company::issuer_repurchase::unit_conversion_factor(
-                    recorded_anchor.as_deref(),
-                    day,
-                    &split_context,
-                ) {
-                    Ok(factor) => factor,
-                    Err(error) => {
-                        return Err(StepFatal::InvariantViolation {
-                            description: format!("回购单位换算失败：{error}"),
-                            location: "GameSession::place_issuer_repurchase_orders".into(),
-                        });
-                    }
-                };
-            let inventory_today = crate::company::issuer_repurchase::convert_shares_floor(
-                recorded_inventory,
-                tail_num,
-                tail_den,
-            )
-            .map_err(|error| StepFatal::InvariantViolation {
-                description: format!("回购库存换算失败：{error}"),
-                location: "GameSession::place_issuer_repurchase_orders".into(),
-            })?;
-            let share_room = execution_cap.saturating_sub(inventory_today);
-            if share_room == 0 {
-                continue;
-            }
-            let market = match self.state.markets.get(&plan.stock) {
-                Some(market) => market,
-                None => continue,
-            };
-            // 委托价上界取三者最小：方案价格上限（按当日交易单位换算并向下取
-            // 最小价位）、涨停价−1 个最小价位（63 号第 30 条（一）：申报价格不得
-            // 为当日涨幅限制的价格）、连续竞价买入价格笼子上界（不绕过既有申报规则）。
-            let up_stop = match market.up_stop() {
-                Ok(up_stop) => up_stop,
-                Err(_) => continue,
-            };
-            // 最小价位取自该证券的显式配置（不猜测市场内部状态）。
-            let tick = self
-                .state
-                .setup
-                .stocks
-                .iter()
-                .find(|spec| spec.code == plan.stock)
-                .map(|spec| spec.tick)
-                .unwrap_or(Money::from_cents(1));
-            let plan_cap_cents =
-                match plan.execution_price_cap_cents(day, tick.cents(), &split_context) {
-                    Ok(cents) => cents,
-                    Err(error) => {
-                        return Err(StepFatal::InvariantViolation {
-                            description: format!("回购价格上限换算失败：{error}"),
-                            location: "GameSession::place_issuer_repurchase_orders".into(),
-                        });
-                    }
-                };
-            if plan_cap_cents <= 0 {
-                continue;
-            }
-            let plan_cap = Money::from_cents(plan_cap_cents);
-            // 价格笼子上界：max(参考价×102%, 参考价+10 个最小价位)（既有交易规则）。
-            let reference = market.continuous_limit_reference(crate::orderbook::Side::Buy);
-            let cage_upper = reference.apply_rate(1.02).unwrap_or(reference).max(
-                reference
-                    .add(tick.mul_shares(10).unwrap_or(tick))
-                    .unwrap_or(reference),
-            );
-            let cap = plan_cap
-                .min(up_stop.sub(tick).unwrap_or(plan_cap))
-                .min(cage_upper);
-            if cap <= Money::ZERO {
-                continue;
-            }
-            // 预留 0.5% 费用余量后按剩余额度取整手。
-            let usable = (remaining.cents().max(0) as u128) * 995 / 1000;
-            let mut qty = (usable / (u128::from(cap.cents().unsigned_abs()) * u128::from(lot_size)))
-                * u128::from(lot_size);
-            qty = qty.min(u128::from(share_room));
-            // 主板单笔上限 1,000,000 股（既有申报规则的保守钳制；实际由受理校验）。
-            qty = qty.min(1_000_000);
-            if qty < u128::from(lot_size) {
-                continue;
-            }
-            orders.push((
-                plan.stock.clone(),
-                cap,
-                u32::try_from(qty).map_err(|_| StepFatal::InvariantViolation {
-                    description: "回购委托数量超出 u32 申报域".into(),
-                    location: "GameSession::place_issuer_repurchase_orders".into(),
-                })?,
-            ));
-        }
-        for (stock, price, qty) in orders {
-            let event_ids: Vec<String> = self
-                .state
-                .corporate_actions
-                .issuer_repurchases
-                .iter()
-                .filter(|book| {
-                    let plan = book.plan();
-                    plan.stock == stock
-                        && plan.window_contains(day)
-                        && book.last_order_day() != Some(day)
-                        && matches!(
-                            book.status(),
-                            crate::company::issuer_repurchase::IssuerRepurchaseStatus::Announced
-                                | crate::company::issuer_repurchase::IssuerRepurchaseStatus::Executing
-                        )
-                })
-                .map(|book| book.plan().event_id.clone())
-                .collect();
-            let intent = crate::strategy::Intent::PlaceLimit {
-                code: stock.clone(),
-                side: crate::orderbook::Side::Buy,
-                price: crate::strategy::LimitPrice::Fixed(price),
-                qty,
-            };
-            self.validate_player_calendar(&intent).map_err(|error| {
-                StepFatal::InvariantViolation {
-                    description: format!("回购委托日历校验失败：{error}"),
-                    location: "GameSession::place_issuer_repurchase_orders".into(),
-                }
-            })?;
-            // 回执走 receive_private_intent：绑定共享 ingress 时从 source 的单一
-            // 受理域分配 ordinal（ADR-0032），不与 source 已受理玩家输入撞
-            // stock ordinal；提交游标同步计入回购消耗。未绑定时退回本地游标，
-            // 与玩家 enqueue 同域。
-            let received = self
-                .receive_private_intent(repurchase_account, intent)
-                .map_err(|error| StepFatal::InvariantViolation {
-                    description: format!("回购委托回执登记失败：{error}"),
-                    location: "GameSession::place_issuer_repurchase_orders".into(),
-                })?;
-            self.state.pending_player.push(received);
-            for event_id in event_ids {
-                if let Some(book) = self
-                    .state
-                    .corporate_actions
-                    .issuer_repurchases
-                    .iter_mut()
-                    .find(|book| book.plan().event_id == event_id)
-                {
-                    book.set_last_order_day(day);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// 按本周期自动提案日程推导的除息/除权日上，既有同日方案（显式 + 自动）
-    /// 的合并事实：(同日现金分红合计税前每股红利, 同日送转事件比例, 是否已
-    /// 存在同日送转事件, 是否已存在同日配股事件, 是否已存在同日拆股／缩股事件)。
-    /// 日程推导失败返回 `None`（评估函数会以同一失败原因如实拒绝，不静默）。
-    fn same_ex_date_preference_context(
-        &self,
-        stock: &crate::account::StockCode,
-        exchange: crate::calendar::CalendarExchange,
-        approve_on: crate::calendar::CivilDate,
-    ) -> Result<Option<(Money, Option<u64>, bool, bool, bool)>, SessionCorporateActionsError> {
-        use crate::company::simple::preferences as preference_api;
-        let Some((_registered_on, ex_on)) = preference_api::preference_ex_dates(
-            self.state.civil_clock.calendar(),
-            exchange,
-            approve_on,
-        )
-        .ok() else {
-            return Ok(None);
-        };
-        let mut cash_gross = Money::ZERO;
-        let mut stock_ratio_micros = None;
-        let mut stock_event_exists = false;
-        let mut rights_event_exists = false;
-        let mut split_event_exists = false;
-        for book in &self.state.corporate_actions.dividends {
-            let plan = book.plan();
-            if plan.stock == *stock && plan.ex_dividend_on == ex_on {
-                cash_gross = cash_gross
-                    .add(plan.gross_per_share)
-                    .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-            }
-        }
-        for book in &self.state.corporate_actions.stock_distributions {
-            let plan = book.plan();
-            if plan.stock == *stock && plan.ex_rights_on == ex_on {
-                stock_event_exists = true;
-                stock_ratio_micros = Some(plan.shares_per_existing_share_micros);
-            }
-        }
-        // 同除权日配股事件：配股×送转同日的合并除权口径未核实（除权日日结会
-        // 以 StepFatal 显式失败），自动送转提案同样不得叠加；受理时的实际认
-        // 购比例尚未确定，配股比例不并入送转比例分量，仅以事件存在性守卫。
-        for book in &self.state.corporate_actions.rights_offerings {
-            let plan = book.plan();
-            if plan.stock == *stock && plan.ex_rights_on == ex_on {
-                rights_event_exists = true;
-            }
-        }
-        // 同除权日拆股／缩股事件：重新计值×送转同日的合并除权口径同样未核实，
-        // 自动送转提案按事件存在性保守守卫。
-        for book in &self.state.corporate_actions.share_splits {
-            let plan = book.plan();
-            if plan.stock == *stock && plan.ex_rights_on == ex_on {
-                split_event_exists = true;
-            }
-        }
-        Ok(Some((
-            cash_gross,
-            stock_ratio_micros,
-            stock_event_exists,
-            rights_event_exists,
-            split_event_exists,
-        )))
-    }
-
-    /// 该公司该类别最近一次提案（接受或被拒）所属结算周期末日。
-    /// 接受的提案以「批准日的前一自然日」归并（自动提案批准日 = 周期末日次日；
-    /// 显式方案按其批准日的前一日就近归并），被拒提案取台账评估日。
-    /// 批准日序列由调用方传入（facts 每周期已取一次，避免重复取用与克隆）。
-    fn last_simple_proposal_period_end(
-        &self,
-        company: &crate::company::CompanyId,
-        kind: crate::company::simple::preferences::SimplePreferenceProposalKind,
-        approved_on_dates: impl Iterator<Item = crate::calendar::CivilDate>,
-    ) -> Result<Option<crate::calendar::CivilDate>, SessionCorporateActionsError> {
-        let map_err = |error: crate::company::CompanySystemError| {
-            SessionCorporateActionsError::Invalid(error.to_string())
-        };
-        let mut latest = self
-            .state
-            .company_system
-            .last_preference_rejection_on(company, kind)
-            .map_err(map_err)?;
-        for approved_on in approved_on_dates {
-            let proposal_day = approved_on
-                .prev()
-                .map_err(|error| SessionCorporateActionsError::Invalid(error.to_string()))?;
-            if latest.is_none_or(|known| proposal_day > known) {
-                latest = Some(proposal_day);
-            }
-        }
-        Ok(latest)
-    }
-
     /// 当前 tick（从 0 起，step 后自增）。
     pub fn tick(&self) -> u64 {
         self.state.tick
@@ -4964,77 +2739,16 @@ impl GameSession {
         self.state.civil_clock.current_date()
     }
 
-    pub fn personal_trade_confirmations(
-        &self,
-        account: AccountId,
-    ) -> Vec<PersonalTradeConfirmation> {
-        self.state
-            .personal_trade_confirmations
-            .get(&account)
-            .map(|history| history.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    pub fn personal_trade_confirmations_page(
-        &self,
-        account: AccountId,
-        before_receipt: Option<u64>,
-    ) -> Vec<PersonalTradeConfirmation> {
-        self.state
-            .personal_trade_confirmations
-            .get(&account)
-            .map(|history| {
-                history
-                    .iter_rev()
-                    .filter(|confirmation| {
-                        before_receipt.is_none_or(|cursor| confirmation.receipt_id < cursor)
-                    })
-                    .take(100)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn query_intraday_average(
-        &self,
-        code: &StockCode,
-    ) -> Result<Option<crate::IntradayAverage>, SessionError> {
-        if !self.state.markets.contains_key(code) {
-            return Err(SessionError::UnknownHistoryStock(code.clone()));
-        }
-        let candle = self.state.candle_book.active().get(code);
-        crate::calculate_intraday_average(
-            candle.and_then(|value| value.trade_stats.as_ref()),
-            candle.map_or(0, |value| value.volume),
-        )
-        .map_err(|error| SessionError::InvalidIntradayAverage(error.to_string()))
-    }
-
     /// Returns one host-safe page of reports visible at the current civil instant.
     pub fn query_public_reports(
         &self,
         query: &crate::company::PublicReportQuery,
     ) -> Result<crate::company::PublicReportPage, SessionError> {
-        let as_of = self.observation_civil_instant();
+        let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
+            .map_err(crate::calendar::CalendarError::from)?;
         self.state
             .library
             .query_public_reports(query, as_of)
-            .map_err(|error| SessionError::Information(Box::new(error)))
-    }
-
-    pub fn query_public_report_availability(
-        &self,
-        query: &crate::company::PublicReportAvailabilityQuery,
-    ) -> Result<crate::company::PublicReportAvailability, SessionError> {
-        self.state
-            .library
-            .query_report_availability(
-                &self.state.company_system,
-                query,
-                self.state.setup.report_frequency,
-                self.observation_civil_instant(),
-            )
             .map_err(|error| SessionError::Information(Box::new(error)))
     }
 
@@ -5043,7 +2757,8 @@ impl GameSession {
         &self,
         id: String,
     ) -> Result<crate::company::PublicReportSummary, SessionError> {
-        let as_of = self.observation_civil_instant();
+        let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
+            .map_err(crate::calendar::CalendarError::from)?;
         self.state
             .library
             .public_report_by_id(id, as_of)
@@ -5061,28 +2776,28 @@ impl GameSession {
         &mut self.state.civil_clock
     }
 
-    /// 自然日日结（冻结日历与双时钟）：当日经营终局窗口 → 更正过账 →（月/年末封账）→ 18:00 披露 → 前进次日。
+    /// 自然日日结（冻结日历与双时钟）：当日经营终局窗口 →（月/年末封账）→ 18:00 披露 → 前进次日。
     ///
     /// 交易日必须先完成当日会话（`ticks_per_day` 个 step，`day` 已自增到位）；
     /// 休市日直接调用。先全量验证（会话同步 + 时钟规则）后原子应用，任何
     /// `Err` 不改变会话与时钟状态。step 的 tick 循环完全不变——日结是新接在
     /// 收盘之后的自然日权威推进，不是 tick 循环的一部分。
     ///
-    /// 日终 candidate 依次推进 CivilClock、选中 CompanySystem、公开披露与个人获知。
-    /// 公司系统失败或公开材料校验失败时，候选状态整体回滚。
+    /// 会话装配与执行接线（经营与信息披露顺序）：时钟日结（自然日推进 + 18:00 相位）→
+    /// 经营终局（`CompanyOperations::advance_civil_day` 在单一 authority 调度器内
+    /// 恰好一次派发当日公司到期）→ 月/年末封账（`close_accounting_periods`）→
+    /// 披露派发（`DisclosureDispatch::run_day_end`，公告先于定期报告）。
     pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
-        self.end_civil_day_inner(true)
+        self.with_prepared_civil_day(|_, report| Ok(report))
     }
 
-    pub(in crate::session) fn end_civil_day_without_ingress_publication(
+    /// 自然日与 market tick 一样先在同版 candidate 完成全部 publication callback，
+    /// 成功后一次安装；失败不得先触发 observer 再靠 checkpoint 回滚。
+    pub(in crate::session) fn with_prepared_civil_day<P>(
         &mut self,
-    ) -> Result<CivilDayEndReport, SessionError> {
-        self.end_civil_day_inner(false)
-    }
-
-    fn end_civil_day_inner(&mut self, publish: bool) -> Result<CivilDayEndReport, SessionError> {
+        project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,
+    ) -> Result<P, SessionError> {
         self.require_healthy()?;
-        let publication = self.ingress_calendar_publication()?;
         let expected_sessions = self
             .state
             .civil_clock
@@ -5096,281 +2811,92 @@ impl GameSession {
                 },
             ));
         }
-        let checkpoint = self.clone_for_tick_shadow().map_err(|error| {
-            SessionError::InvalidSave(format!("cannot create civil day-end checkpoint: {error}"))
+        let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
+            // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
+            SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
         })?;
-        let result = self.end_civil_day_after_session_check().and_then(|report| {
-            if publish {
-                self.publish_ingress_calendar(publication)?;
-            }
-            Ok(report)
-        });
-        match result {
-            Ok(report) => {
-                if publish {
-                    for observer in self.state.civil_clock.disclosure_observers() {
-                        observer(report.disclosure_instant);
-                    }
-                }
-                Ok(report)
-            }
-            Err(error) => {
-                *self = checkpoint;
-                Err(error)
-            }
+        let report = candidate.end_civil_day_after_session_check()?;
+        let instant = report.disclosure_instant;
+        let publication = project(&candidate, report)?;
+        self.commit_tick_shadow(candidate);
+        for observer in self.state.civil_clock.disclosure_observers() {
+            observer(instant);
         }
+        Ok(publication)
     }
 
     fn end_civil_day_after_session_check(&mut self) -> Result<CivilDayEndReport, SessionError> {
-        let mut report = self
-            .state
-            .civil_clock
-            .end_day(self.state.civil_clock.current_date())?;
-        let account_positions = self
-            .state
-            .accounts
-            .iter()
-            .map(|(id, account)| {
-                (
-                    *id,
-                    account
-                        .positions()
-                        .iter()
-                        .map(|(code, position)| (code.clone(), u64::from(position.qty())))
-                        .collect(),
-                )
-            })
-            .collect();
-        // 后入股东自动开税账的资格集合（N2a，2026-10-08 决策）：仅
-        // AShareIndividual 模式传入「个人」身份账户全集（玩家与自然人散户
-        // NPC）；Flat/Exempt 模式传 None（Flat 付款日按名册代扣、Exempt 无税，
-        // 均不建个人税账）。集合按账户种类过滤，不按策略风格推断
-        // （`taxpayer_identity_of_kind` 权威映射）。
-        let late_holder_tax_accounts = if self.state.setup.dividend_tax_mode
-            == crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual
-        {
-            Some(
-                self.state
-                    .accounts
-                    .iter()
-                    .filter(|(_, account)| {
-                        matches!(
-                            corporate_actions::taxpayer_identity_of_kind(account.kind()),
-                            corporate_actions::TaxpayerIdentity::Personal
-                        )
-                    })
-                    .map(|(id, _)| *id)
-                    .collect::<BTreeSet<AccountId>>(),
-            )
-        } else {
-            None
+        // Session 合并公司 due、每日经营与其他 civil 事件的下一工作自然日；
+        // 各 authority 仍只持有自己的队列/日历，不复制或镜像逐项公司待办。
+        let next_company_day = self.state.operations.next_expected_date();
+        let company_work_date = match self.state.operations.next_due_date() {
+            Some(due_date) => due_date.min(next_company_day),
+            None => next_company_day,
         };
-        self.state
-            .corporate_actions
-            .close_registries_through(
-                report.settled_date,
-                &account_positions,
-                &self.state.personal_trade_confirmations,
-                self.issuer_repurchase_account_id(),
-                late_holder_tax_accounts.as_ref(),
-            )
-            .map_err(|error| SessionError::InvalidSave(format!("股东名册日终推进失败：{error}")))?;
-        let correction_publications = self.apply_report_corrections_at_day_end(&report)?;
-        let issuers = self.state.company_system.issuers().clone();
-        self.state
-            .corporate_actions
-            .process_dividends_on_day_end(
-                report.settled_date,
-                self.state.civil_clock.calendar(),
-                &issuers,
-                std::sync::Arc::make_mut(&mut self.state.company_system),
-                &mut self.state.accounts,
-                // 简税代扣上下文：Some(rate) ⇔ FlatWithholding 模式（由 SessionSetup
-                // 三态校验保证），付款日按比例对每位账户持有人原子代扣。
-                self.state.setup.flat_withholding_bp,
-            )
-            .map_err(|error| SessionError::InvalidSave(format!("现金分红日终结算失败：{error}")))?;
-        self.state
-            .corporate_actions
-            .process_stock_distributions_on_day_end(
-                report.settled_date,
-                self.state.civil_clock.calendar(),
-                std::sync::Arc::make_mut(&mut self.state.company_system),
-                &mut self.state.accounts,
-            )
-            .map_err(|error| SessionError::InvalidSave(format!("送转日终结算失败：{error}")))?;
-        // 拆股／缩股两相位（Task174）：入账相位（ex 日换算冻结 R 库存并记录各
-        // 回购 plan 的单位调整）先于当日到期回购注销——注销随后按当前单位股数
-        // 执行；登记相位（R 日冻结快照）后于注销——R 快照必须反映已完成的到期
-        // 注销，避免 R+1 按旧快照复活已注销库存桶。
-        let repurchase_account_for_phases = self.issuer_repurchase_account_id();
-        self.state
-            .corporate_actions
-            .settle_share_splits_on_day_end(
-                report.settled_date,
-                std::sync::Arc::make_mut(&mut self.state.company_system),
-                &mut self.state.accounts,
-                repurchase_account_for_phases,
-            )
-            .map_err(|error| {
-                SessionError::InvalidSave(format!("拆股／缩股日终结算失败：{error}"))
-            })?;
-        // 完成即默认注销（H 批 2026-10-08 用户决策）：完成判定（上一日终或更早）
-        // 的方案在本次日终自动注销，复用既有手动注销路径（候选事务、显式 lot
-        // 消耗、当前单位股数）。置于入账相位之后、登记相位之前。
-        self.auto_cancel_completed_repurchases(report.settled_date)
-            .map_err(|error| {
-                SessionError::InvalidSave(format!("发行人回购自动注销失败：{error}"))
-            })?;
-        self.state
-            .corporate_actions
-            .register_share_splits_on_day_end(
-                report.settled_date,
-                self.state.civil_clock.calendar(),
-                std::sync::Arc::make_mut(&mut self.state.company_system),
-            )
-            .map_err(|error| SessionError::InvalidSave(format!("拆股／缩股日终结算失败：{error}")))?;
-        self.state
-            .corporate_actions
-            .process_rights_offerings_on_day_end(
-                report.settled_date,
-                self.state.civil_clock.calendar(),
-                std::sync::Arc::make_mut(&mut self.state.company_system),
-                &mut self.state.accounts,
-            )
-            .map_err(|error| SessionError::InvalidSave(format!("配股日终结算失败：{error}")))?;
-        let issuer_fills = self.collect_issuer_repurchase_fills(report.settled_date)?;
-        let repurchase_account_id = self.issuer_repurchase_account_id();
-        let repurchase_lot_size = self.state.setup.config.lot_size;
-        // 价格上限换算取各证券自身最小价位（不用全市场 max tick，否则大 tick
-        // 股票会低估其他股票的整手下限、误判提前完成）。
-        let repurchase_price_tick_cents: BTreeMap<StockCode, i64> = self
-            .state
-            .setup
-            .stocks
-            .iter()
-            .map(|spec| (spec.code.clone(), spec.tick.cents()))
-            .collect();
-        let repurchase_account_for_validate = repurchase_account_id;
-        self.state
-            .corporate_actions
-            .process_issuer_repurchases_on_day_end(
-                report.settled_date,
-                &issuer_fills,
-                &mut self.state.accounts,
-                repurchase_account_id,
-                repurchase_lot_size,
-                &repurchase_price_tick_cents,
-                Some(std::sync::Arc::make_mut(&mut self.state.company_system)),
-            )
-            .map_err(|error| {
-                SessionError::InvalidSave(format!("发行人回购日终结算失败：{error}"))
-            })?;
-        let account_positions = self
-            .state
-            .accounts
-            .iter()
-            .map(|(id, account)| {
-                (
-                    *id,
-                    account
-                        .positions()
-                        .iter()
-                        .map(|(code, position)| (code.clone(), u64::from(position.qty())))
-                        .collect(),
-                )
-            })
-            .collect();
-        self.state
-            .corporate_actions
-            .validate(
-                &account_positions,
-                &self.state.company_system,
-                report.settled_date,
-                repurchase_account_for_validate,
-                self.state.setup.flat_withholding_bp,
-            )
-            .map_err(|error| {
-                SessionError::InvalidSave(format!("日终公司行为与Simple账务勾稽失败：{error}"))
-            })?;
-        std::sync::Arc::make_mut(&mut self.state.company_system)
-            .advance_day(report.settled_date)
-            .map_err(|error| SessionError::InvalidSave(format!("公司日终推进失败：{error}")))?;
-        if self
-            .state
-            .company_system
-            .settlement_completed_on(report.settled_date)
-            .map_err(|error| SessionError::InvalidSave(format!("结算周期判定失败：{error}")))?
-        {
-            self.process_simple_preference_proposals(report.settled_date)
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!("公司行为偏好提案失败：{error}"))
-                })?;
+        let next_work_date = company_work_date.min(self.state.civil_clock.next_civil_event_date());
+        // CivilClock 对合并时点执行重复/回拨/跳日/上界校验；过期公司 due
+        // 因此不能被当日推进静默跨过，且不产生新的运行时 String 错误载体。
+        let mut report = self.state.civil_clock.end_day(next_work_date)?;
+        // 公司经营日（单一 authority：OperatingScheduler 在内部恰好一次派发
+        // 当日到期；跳日/次序守卫由 next_expected 序列与 (due_date, id) 排序承担）。
+        // next_due 为 None 或未来日期不改变当日经营/封账/披露的执行。
+        std::sync::Arc::make_mut(&mut self.state.operations)
+            .advance_civil_day(report.settled_date)?;
+        // 日结新增待办仍须落在冻结日历适用范围内（日结新增边界）。
+        for due in self.state.operations.scheduler().pending() {
+            self.state.civil_clock.validate_due_horizon(due.due_date)?;
         }
-        let mut disclosures = self
+        std::sync::Arc::make_mut(&mut self.state.operations)
+            .close_accounting_periods(
+                report.settled_date,
+                &self.state.groups,
+                std::sync::Arc::make_mut(&mut self.state.closing),
+            )
+            .map_err(|source| match source {
+                crate::company::operations::CompanyCloseError::Date(date) => {
+                    SessionError::CivilClock(CivilClockError::CivilDate(date))
+                }
+                crate::company::operations::CompanyCloseError::Closing(closing) => {
+                    SessionError::Closing(*closing)
+                }
+                crate::company::operations::CompanyCloseError::Information(information) => {
+                    SessionError::Information(information)
+                }
+                crate::company::operations::CompanyCloseError::Fault(fault) => {
+                    SessionError::InvalidSetup(fault)
+                }
+            })?;
+        let disclosures = self
             .state
             .disclosures
-            .run_simple_day_end(disclosures::SimpleDayEndDisclosureCtx {
-                report_frequency: self.state.setup.report_frequency,
+            .run_day_end(DayEndDisclosureCtx {
                 report: &report,
-                system: &self.state.company_system,
-                seed: self.state.seed,
-                dividends: &self.state.corporate_actions.dividends,
-                rights_offerings: &self.state.corporate_actions.rights_offerings,
-                issuer_repurchases: &self.state.corporate_actions.issuer_repurchases,
-                share_splits: &self.state.corporate_actions.share_splits,
-                stock_distributions: &self.state.corporate_actions.stock_distributions,
+                ops: &self.state.operations,
+                groups: &self.state.groups,
+                closing: std::sync::Arc::make_mut(&mut self.state.closing),
                 library: std::sync::Arc::make_mut(&mut self.state.library),
             })
             .map_err(SessionError::Disclosure)?;
-        disclosures
-            .reports_published
-            .extend(correction_publications);
-        let disclosure_limit = if matches!(
-            self.state.setup.report_frequency,
-            crate::information::ReportFrequency::Monthly { .. }
-        ) {
-            CivilInstant::new(report.settled_date, 86399)
-                .map_err(crate::calendar::CalendarError::from)?
-        } else {
-            report.disclosure_instant
-        };
-        let mut information_instants =
-            std::collections::BTreeSet::from([report.disclosure_instant]);
-        for id in &disclosures.reports_published {
-            information_instants.insert(
-                self.state
-                    .library
-                    .report(*id, disclosure_limit)
-                    .map_err(|error| SessionError::Information(Box::new(error)))?
-                    .published_at,
-            );
-        }
-        for instant in information_instants {
-            self.deliver_public_information(instant)?;
-        }
         self.record_civil_day_events(&mut report, disclosures)?;
+        self.deliver_public_information(report.disclosure_instant)?;
         self.prune_all_personal_memories();
-        self.finish_retained_history(report.settled_date)?;
         Ok(report)
     }
 
-    fn record_civil_day_events(
-        &mut self,
-        report: &mut CivilDayEndReport,
-        disclosures: DayEndDisclosures,
-    ) -> Result<(), SessionError> {
-        self.record_company_disclosure_events(report, disclosures)?;
-        report.events.push(Event::CivilDateAdvanced {
-            seq: self.next_seq(),
-            settled_date: report.settled_date,
-            next_date: report.next_date,
-            next_status: report.next_status.clone(),
-        });
-        Ok(())
+    fn next_civil_seq(&mut self) -> Result<u64, SessionError> {
+        self.state.seq = self
+            .state
+            .seq
+            .checked_add(1)
+            .filter(|seq| *seq <= crate::orderbook::js_safe_u64::MAX)
+            .ok_or_else(|| StepFatal::InvariantViolation {
+                location: "GameSession::record_civil_day_events".to_owned(),
+                description: "civil event seq 超出可发布整数范围".to_owned(),
+            })?;
+        Ok(self.state.seq)
     }
 
-    fn record_company_disclosure_events(
+    fn record_civil_day_events(
         &mut self,
         report: &mut CivilDayEndReport,
         disclosures: DayEndDisclosures,
@@ -5383,7 +2909,7 @@ impl GameSession {
                 .map(|announcement| (announcement.company.clone(), announcement.published_at))
                 .map_err(|error| SessionError::Information(Box::new(error)))?;
             report.events.push(Event::CompanyDisclosurePublished {
-                seq: self.next_seq(),
+                seq: self.next_civil_seq()?,
                 publication_id,
                 company,
                 published_at,
@@ -5391,12 +2917,10 @@ impl GameSession {
             });
         }
         for publication_id in disclosures.reports_published {
-            let limit = CivilInstant::new(report.settled_date, 86399)
-                .map_err(crate::calendar::CalendarError::from)?;
             let (company, published_at, report_revision) = self
                 .state
                 .library
-                .report(publication_id, limit)
+                .report(publication_id, report.disclosure_instant)
                 .map(|published| {
                     (
                         published.company.clone(),
@@ -5406,13 +2930,19 @@ impl GameSession {
                 })
                 .map_err(|error| SessionError::Information(Box::new(error)))?;
             report.events.push(Event::CompanyDisclosurePublished {
-                seq: self.next_seq(),
+                seq: self.next_civil_seq()?,
                 publication_id,
                 company,
                 published_at,
                 kind: CompanyDisclosureKind::Report { report_revision },
             });
         }
+        report.events.push(Event::CivilDateAdvanced {
+            seq: self.next_civil_seq()?,
+            settled_date: report.settled_date,
+            next_date: report.next_date,
+            next_status: report.next_status.clone(),
+        });
         Ok(())
     }
 
@@ -5460,7 +2990,7 @@ impl GameSession {
     fn record_retail_order_canceled(
         &mut self,
         account: AccountId,
-        code: StockCode,
+        code: StockId,
         order_id: OrderId,
         remaining_qty: u32,
     ) {
@@ -5476,53 +3006,47 @@ impl GameSession {
         }
     }
 
-    fn record_retail_intent_rejections(&mut self, account: AccountId, events: &[Event]) {
-        if !self.state.retail_experience.contains_key(&account) {
-            return;
-        }
+    /// D5 诊断面派生：retail 拒收（Sol P3 单遍派发——原逐账户 × 全事件
+    /// O(名册×事件) 扫描+每 tick 全名册 keys collect；拒收事件通常 0-几条，
+    /// 只对事件涉及账户查 retail_experience）。**输出序逐位等价**：按
+    /// 账户升序分组（=原 retail_experience.keys() 迭代序）、组内事件序。
+    fn record_retail_intent_rejections(&mut self, events: &[Event]) {
+        let mut by_account: std::collections::BTreeMap<
+            AccountId,
+            Vec<(StockId, crate::RejectionReason)>,
+        > = std::collections::BTreeMap::new();
         for event in events {
             if let Event::IntentRejected {
-                account: rejected_account,
-                code,
-                reason,
-                ..
+                account, code, reason, ..
             } = event
             {
-                if *rejected_account == account {
-                    self.state.last_retail_order_events.push(
-                        RetailOrderDiagnosticEvent::Rejected {
-                            account,
-                            code: code.clone(),
-                            reason: reason.clone(),
-                        },
-                    );
+                if self.state.retail_experience.contains_key(account) {
+                    by_account
+                        .entry(*account)
+                        .or_default()
+                        .push((code.clone(), reason.clone()));
                 }
+            }
+        }
+        for (account, items) in by_account {
+            for (code, reason) in items {
+                self.state
+                    .last_retail_order_events
+                    .push(RetailOrderDiagnosticEvent::Rejected {
+                        account,
+                        code,
+                        reason,
+                    });
             }
         }
     }
 
     fn reserved_cash_for_account(&self, account: AccountId) -> Result<Money, MoneyError> {
-        let auction_reserved = self
-            .state
-            .auction_orders
-            .values()
-            .flatten()
-            .filter(|order| order.owner == account)
-            .try_fold(Money::ZERO, |total, order| {
-                let required = live_cash_reservation(
-                    &self.state.setup.config,
-                    order.side,
-                    order.limit,
-                    order.qty,
-                    Money::ZERO,
-                )?;
-                total.add(required)
-            })?;
         self.state
             .markets
             .values()
             .flat_map(|market| market.resting_orders_for(account))
-            .try_fold(auction_reserved, |total, order| {
+            .try_fold(Money::ZERO, |total, order| {
                 let required = live_cash_reservation(
                     &self.state.setup.config,
                     order.side,
@@ -5534,10 +3058,20 @@ impl GameSession {
             })
     }
 
+    /// 股票目录（ADR 0041）只读访问：id ↔ 代码/显示名翻译的权威来源。
+    pub fn stock_catalog(&self) -> &StockCatalog {
+        &self.state.stocks
+    }
+
+    /// 边界便捷：按代码查 id。未知代码返回 None，由调用方显式处理。
+    pub fn stock_id(&self, code: &str) -> Option<StockId> {
+        self.state.stocks.id(code)
+    }
+
     fn register_npc_order_lifecycle_at_quote(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order: &Order,
         last_price: Money,
         best_bid: Option<Money>,
@@ -5548,12 +3082,7 @@ impl GameSession {
                 .state
                 .accounts
                 .get(&account)
-                .is_none_or(|candidate| {
-                    candidate.kind() == AccountKind::Player
-                        // 发行人回购委托的挂单生命周期不走 NPC quote 撤单模型：
-                        // 与下方 panic 臂的声明意图一致，跳过登记而不是 panic。
-                        || candidate.kind() == AccountKind::IssuerRepurchase
-                })
+                .is_none_or(|candidate| candidate.kind() == AccountKind::Player)
             || self.is_active_parent_child(account, code, order.id)
         {
             return;
@@ -5582,12 +3111,7 @@ impl GameSession {
     }
 
     #[cfg(test)]
-    fn npc_quote_lifetime_minutes(
-        &self,
-        account: AccountId,
-        code: &StockCode,
-        order: &Order,
-    ) -> u64 {
+    fn npc_quote_lifetime_minutes(&self, account: AccountId, code: &StockId, order: &Order) -> u64 {
         let market = self
             .state
             .markets
@@ -5608,7 +3132,7 @@ impl GameSession {
     fn npc_quote_lifetime_minutes_at_quote(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order: &Order,
         last_price: Money,
         best_bid: Option<Money>,
@@ -5624,16 +3148,19 @@ impl GameSession {
             AccountKind::Retail => 18_u64,
             AccountKind::Inst => 36_u64,
             AccountKind::Hot => 8_u64,
-            AccountKind::Player | AccountKind::IssuerRepurchase => {
-                panic!("player/issuer orders must not receive NPC quote lifecycles")
-            }
+            AccountKind::Player => panic!("player orders must not receive NPC quote lifecycles"),
         };
+        let code_str = self
+            .state
+            .stocks
+            .code(*code)
+            .expect("lifecycle registration only accepts a cataloged stock");
         let tick_cents = self
             .state
             .setup
             .stocks
             .iter()
-            .find(|stock| stock.code == *code)
+            .find(|stock| stock.code.0 == *code_str)
             .expect("lifecycle registration only accepts a configured stock")
             .tick
             .cents();
@@ -5660,10 +3187,18 @@ impl GameSession {
                 }
             })
             .unwrap_or(0);
+        // 抖动种子按代码字符串派生（保持既有数值路径不变，ADR 0041）。
+        let jitter_code = StockCode(
+            self.state
+                .stocks
+                .code(*code)
+                .expect("lifecycle registration only accepts a cataloged stock")
+                .to_string(),
+        );
         let deterministic_jitter = self.state.seed
             ^ account.0.rotate_left(17)
             ^ order.id.0.rotate_left(31)
-            ^ stock_code_hash(code);
+            ^ stock_code_hash(&jitter_code);
         let jitter = deterministic_jitter % (base / 2 + 1);
         base.saturating_add(u64::try_from(spread_ticks).unwrap_or(u64::MAX).min(8))
             .saturating_add(quote_distance_ticks.min(12))
@@ -5679,20 +3214,19 @@ impl GameSession {
     fn is_active_parent_child(
         &self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order_id: OrderId,
     ) -> bool {
         self.state
-            .parent_orders
-            .get(&account)
-            .and_then(|plans| plans.get(code))
+            .plans
+            .active_plan(account, code)
             .is_some_and(|plan| plan.active_child_order_id() == Some(order_id))
     }
 
     fn remove_npc_order_lifecycle(
         &mut self,
         account: AccountId,
-        code: &StockCode,
+        code: &StockId,
         order_id: OrderId,
     ) {
         pipeline::quote_expiry::NpcOrderLifecycleBook::new(&mut self.state.npc_order_lifecycles)
@@ -5717,7 +3251,6 @@ impl GameSession {
         if account.kind() != AccountKind::Player {
             return Err(SessionError::NotPlayer(player_id));
         }
-        self.validate_player_calendar(&intent)?;
         let received = self
             .state
             .ingress_receipt_cursors
@@ -5742,10 +3275,6 @@ impl GameSession {
                         SaveMarketSnap {
                             last_price: market.last_price(),
                             last_close: market.last_close(),
-                            cash_ex_reference_pending_trade: market
-                                .cash_ex_reference_pending_trade(),
-                            day_market_activity: market.day_market_activity(),
-                            last_cash_ex_reference: market.last_cash_ex_reference(),
                         },
                     )
                 })
@@ -5791,26 +3320,82 @@ impl GameSession {
 
     fn save_projection(&self, runtime_state: SavedRuntimeState) -> SaveSlot {
         SaveSlot {
-            retained_market_history: self.state.retained_market_history.saved_days(),
-            market_memberships: self.state.memberships.clone(),
-            report_correction_operations: self.state.report_correction_operations.clone(),
             runtime_state,
             setup: self.state.setup.clone(),
             seed: self.state.seed,
             snapshot: self.save_snapshot_projection(),
-            auction_orders: self.state.auction_orders.clone(),
-            resting_orders: self
-                .state
-                .markets
-                .iter()
-                .map(|(code, market)| (code.clone(), market.resting_orders()))
-                .collect(),
-            book_next_sequences: self
-                .state
-                .markets
-                .iter()
-                .map(|(code, market)| (code.clone(), market.book_next_sequence()))
-                .collect(),
+            desk_mirrored_resting: !self.state.desk_book_mirror.is_empty(),
+            resting_orders: if self.state.desk_book_mirror.is_empty() {
+                self.state
+                    .markets
+                    .iter()
+                    .map(|(code, market)| (code.clone(), market.resting_orders()))
+                    .collect()
+            } else {
+                // D5 fault1042 收口：runtime 形态的在场委托=desk 镜像
+                ///（session 旧簿恒空——计划在途子单的重建校验需要）。
+                /// filled 面置零（镜像不承载 desk 成交累计——审计面由
+                /// ledger（desk 事实）承载；置零使 Order 出生校验自洽）。
+                self.state
+                    .desk_book_mirror
+                    .iter()
+                    .map(|(code, mirror)| {
+                        (
+                            code.clone(),
+                            mirror
+                                .orders
+                                .iter()
+                                .map(|(owner, side, price, qty, serial, fv, fq)| {
+                                    // Sol 终审四审 A3→五审件 1 修正：
+                                    /// original=余量+**真实**成交量（desk
+                                    /// 权威计数——限价单允许价优成交，
+                                    /// 此前"成交额÷限价"换算在价优下
+                                    /// 失真：100@990 存成 99——判决反例）。
+                                    Order {
+                                        id: OrderId(*serial),
+                                        owner: *owner,
+                                        side: *side,
+                                        price: *price,
+                                        qty: *qty,
+                                        original_qty: qty.saturating_add(*fq),
+                                        filled_qty: *fq,
+                                        filled_value: Money::from_cents(*fv),
+                                        // 收官再复核建议 1：seq 保留**本地时间序**
+                                        ///（desk serial——"每股下一时间序"域，
+                                        /// orderbook.rs 恢复约束 seq<next_seq
+                                        /// 与游标链同基）；id 才是 wire 编码
+                                        /// 身份。此前写编码值使 seq≈2^32 域
+                                        /// 漂移。
+                                        seq: crate::runtime::group::desk_order_serial(*serial),
+                                    }
+                                })
+                                .collect::<Vec<Order>>(),
+                        )
+                    })
+                    .collect()
+            },
+            // Sol 四轮修复：序号游标=三源逐股 max（只增不减——R26 空簿
+            /// 也保留已耗序号）：旧簿 book_next_sequence（旧管线/restore
+            /// 载入）、desk 镜像 next_serial（runtime 权威）、会话级
+            /// 缓存 runtime_desk_serial_cursors（镜像瞬态缺席的兜底）。
+            book_next_sequences: {
+                let mut out: std::collections::BTreeMap<StockId, u64> = self
+                    .state
+                    .markets
+                    .iter()
+                    .map(|(code, market)| (code.clone(), market.book_next_sequence()))
+                    .collect();
+                for (code, mirror) in &self.state.desk_book_mirror {
+                    let slot = out.entry(code.clone()).or_insert(0);
+                    *slot = (*slot).max(mirror.next_serial);
+                }
+                for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
+                    let code = StockId(idx as u32);
+                    let slot = out.entry(code).or_insert(0);
+                    *slot = (*slot).max(*cursor);
+                }
+                out
+            },
             filled_orders: self
                 .state
                 .markets
@@ -5836,29 +3421,51 @@ impl GameSession {
             rng_state: self.state.rng.state,
             npc_attention: self.state.npc_attention.to_map(),
             retail_experience: self.state.retail_experience.to_map(),
-            parent_orders: self
-                .state
-                .parent_orders
-                .iter()
-                .map(|(account, plans)| {
-                    (
-                        *account,
-                        plans
-                            .iter()
-                            .map(|(code, plan)| (code.clone(), SaveParentOrderPlan::from(plan)))
-                            .collect(),
-                    )
-                })
-                .collect(),
             npc_order_lifecycles: self.state.npc_order_lifecycles.clone(),
             pending_player: self.state.pending_player.clone(),
-            pending_npc: self.state.pending_npc.clone(),
             ingress_receipt_cursors: self.state.ingress_receipt_cursors.clone(),
-            next_order_id: self.state.next_order_id,
+            next_order_id: {
+                // D5 fault2079：desk 镜像档的在场委托 id=desk serial——
+                /// next_order_id 须严格大于全部（session 域与 desk serial
+                /// 域取 max）。
+                let mirror_max = self
+                    .state
+                    .desk_book_mirror
+                    .values()
+                    .flat_map(|mirror| {
+                        mirror
+                            .orders
+                            .iter()
+                            .map(|(_, _, _, _, serial, _, _)| *serial)
+                    })
+                    .max()
+                    .unwrap_or(0);
+                // Sol 五审复核收口→六审 v6 方案 A：desk 游标域（next_serial
+                /// >全部已耗序号——含已闭合单）与经历行/计划链的 desk 域
+                /// OrderId（`(stock<<32)|serial`——新编码域最大 2^53−2
+                /// 恒内含 js_safe wire 域，夹取退役）一并入下界——此前
+                /// 仅镜像在册 serial+1：闭合单 id 使 fault2044 显红。
+                let mut floor = mirror_max.saturating_add(1);
+                for (code, mirror) in &self.state.desk_book_mirror {
+                    floor = floor
+                        .max(crate::runtime::group::desk_order_id(
+                            code.0 as crate::runtime::StockIdx,
+                            mirror.next_serial,
+                        ));
+                }
+                for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
+                    floor = floor.max(crate::runtime::group::desk_order_id(
+                        idx as crate::runtime::StockIdx,
+                        *cursor,
+                    ));
+                }
+                self.state.next_order_id.max(floor)
+            },
             civil_clock: self.state.civil_clock.save(),
-            corporate_actions: self.state.corporate_actions.clone(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
-            company_system: self.state.company_system.export_state(),
+            company_operations: self.state.operations.as_ref().clone(),
+            groups: self.state.groups.clone(),
+            closing_registry: self.state.closing.as_ref().clone(),
             public_library: self.state.library.as_ref().clone(),
             disclosures: self.state.disclosures.clone(),
             plans: self.state.plans.clone(),
@@ -5888,20 +3495,6 @@ impl GameSession {
                 .map(|(id, participant)| (*id, participant.price_memory().clone()))
                 .collect(),
             history_reads: self.state.history_reads.to_map(),
-            // 存档契约只保留「计划簿中仍存活」的待应用事实；未知/已终止计划
-            // 的迟到条目在此按完整存档契约显式丢弃（永不适用）。
-            pending_plan_events: self
-                .state
-                .pending_plan_events
-                .iter()
-                .copied()
-                .filter(|event| {
-                    self.state
-                        .plans
-                        .plan(event.plan_id())
-                        .is_ok_and(|plan| !plan.is_terminal())
-                })
-                .collect(),
         }
     }
 
@@ -5915,24 +3508,24 @@ impl GameSession {
     ///
     /// 不保留：前端派生的分时采样。策略价格窗口和 RNG 状态会被精确恢复。
     pub fn restore(save: &SaveSlot) -> Result<GameSession, SessionError> {
-        save.urgency_policy
-            .validate()
-            .map_err(|error| SessionError::InvalidSave(format!("urgency_policy: {error}")))?;
+        Self::restore_with_compute(save, crate::compute::ComputeContext::shared_default()?)
+    }
+
+    /// 恢复路径与宿主计算资源显式绑定；restore 继续使用 direct-engine 默认上下文。
+    pub fn restore_with_compute(
+        save: &SaveSlot,
+        compute: std::sync::Arc<crate::compute::ComputeContext>,
+    ) -> Result<GameSession, SessionError> {
+        // T3 批四·staged 决策槽防串扰（同 new_with_compute）。
+        #[cfg(test)]
+        crate::session::pipeline::staged_decision::clear();
+        save.urgency_policy.validate().map_err(|_error| {
+            // fault1037: 存档 urgency_policy 校验失败。槽0 待 C 批数值化（原文本为内层校验错误文本）。
+            SessionError::InvalidSave(ValidationFault::new(1037, vec![0]))
+        })?;
         validate_save_slot(save)?;
-        retained_history::validate_saved_history(save)?;
-        let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
-        sess.state.retained_market_history =
-            retained_history::RetainedMarketHistory::restore_days(&save.retained_market_history);
+        let mut sess = GameSession::new_with_compute(save.setup.clone(), save.seed, compute)?;
         sess.fresh_initial_allocation = false;
-        sess.state.memberships = save.market_memberships.clone();
-        for member in save.market_memberships.members.values() {
-            if !sess.state.accounts.contains_key(&member.account_id) {
-                sess.state.accounts.insert(
-                    member.account_id,
-                    Account::new(member.account_id, AccountKind::Player, Money::ZERO),
-                );
-            }
-        }
 
         // 清空初始持仓分配 → 用快照精确覆盖
         for acc in sess.state.accounts.values_mut() {
@@ -5942,9 +3535,7 @@ impl GameSession {
         // 恢复账户状态（cash + positions 精确值）
         for (id, snap_acc) in &save.snapshot.accounts {
             let acc = sess
-                .state
-                .accounts
-                .get_mut(id)
+                .fixture_account_mut(id)
                 .expect("validated save account set exactly matches setup");
             acc.restore_balances(
                 snap_acc.cash,
@@ -5968,60 +3559,81 @@ impl GameSession {
 
         // 恢复市场状态（last_price/last_close）
         for (code, snap_mkt) in &save.snapshot.markets {
-            let configured_tick = save
-                .setup
-                .stocks
-                .iter()
-                .find(|spec| &spec.code == code)
-                .expect("validated save market set exactly matches setup")
-                .tick;
-            Market::validate_restored_facts(
-                code,
-                save.civil_clock.current_date,
-                snap_mkt.last_price,
-                snap_mkt.last_close,
-                snap_mkt.cash_ex_reference_pending_trade,
-                snap_mkt.last_cash_ex_reference,
-                configured_tick,
-            )
-            .map_err(|error| {
-                SessionError::InvalidSave(format!(
-                    "market {:?} restore facts invalid: {error}",
-                    code
-                ))
-            })?;
-            if !snap_mkt.day_market_activity
-                && (save
-                    .resting_orders
-                    .get(code)
-                    .is_some_and(|orders| !orders.is_empty())
-                    || save
-                        .auction_orders
-                        .get(code)
-                        .is_some_and(|orders| !orders.is_empty()))
-            {
-                return Err(SessionError::InvalidSave(format!(
-                    "market {:?} has active orders without day market activity",
-                    code
-                )));
-            }
             let market = sess
                 .state
                 .markets
                 .get_mut(code)
                 .expect("validated save market set exactly matches setup");
-            market.restore_prices(
-                snap_mkt.last_price,
-                snap_mkt.last_close,
-                snap_mkt.cash_ex_reference_pending_trade,
-                snap_mkt.day_market_activity,
-                snap_mkt.last_cash_ex_reference,
-            );
+            market.restore_prices(snap_mkt.last_price, snap_mkt.last_close);
         }
 
+        sess.state.tick = save.snapshot.tick;
+        let restored_mode = pipeline::phase::PhasePolicy::capture(&sess).matching_mode();
+        for (code, market) in &mut sess.state.markets {
+            market.set_matching_mode(restored_mode).map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(1038, vec![u64::from(code.0), 0]))
+            })?;
+        }
         // 保留原始时间排序键与历史游标；空簿也可能已有已撤/已成交委托。
         // 在私有订单簿内验证，不允许恢复过程产生新的成交。
         for (code, market) in &mut sess.state.markets {
+            if save.desk_mirrored_resting {
+                // D5：desk 镜像档——在场委托权威=desk（ledger 种子恢复），
+                /// 旧簿装载跳过（镜像单重建会与 desk 双载且交叉簿形态
+                /// 使 set_matching_mode 显红 fault1038）；簿序游标仍装载
+                /// （save 对拍的 book_next_sequences 域一致性）。
+                market
+                    .restore_resting_orders(&[], save.book_next_sequences[code])
+                    .map_err(|_error| {
+                        SessionError::InvalidSave(ValidationFault::new(
+                            1038,
+                            vec![u64::from(code.0), 0],
+                        ))
+                    })?;
+                // Sol 终审四审游标族：镜像档回装**携带在场委托**——
+                /// 此前空条目占位使 restore 静点（未 step）的 save 投影
+                /// resting_orders 丢失挂单（sparse FIFO key 族显红）；
+                /// desk 种子仍由首拍 install 重建权威，此处回填仅为
+                /// 静点读面/存档往返一致（filled_value 档面已按 A3 修
+                /// 复承载真实累计）。
+                let orders = save
+                    .resting_orders
+                    .get(code)
+                    .map(|orders| {
+                        orders
+                            .iter()
+                            .map(|o| {
+                                (
+                                    o.owner,
+                                    o.side,
+                                    o.price,
+                                    o.qty,
+                                    o.id.0,
+                                    o.filled_value.cents(),
+                                    o.filled_qty,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let next_serial = save.book_next_sequences[code];
+                let last_price = market.last_price();
+                sess.state.desk_book_mirror.insert(
+                    code.clone(),
+                    DeskBookMirror {
+                        orders,
+                        last_price,
+                        public_cutoff_serial: save
+                            .runtime_state
+                            .book_public_cutoff_sequences
+                            .get(code)
+                            .copied()
+                            .unwrap_or(0),
+                        next_serial,
+                    },
+                );
+                continue;
+            }
             let orders = save
                 .resting_orders
                 .get(code)
@@ -6029,10 +3641,12 @@ impl GameSession {
                 .unwrap_or(&[]);
             market
                 .restore_resting_orders(orders, save.book_next_sequences[code])
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "cannot restore resting orders for {}: {error}",
-                        code.0
+                .map_err(|_error| {
+                    // fault1038: 恢复连续竞价挂单失败。ctx[0] = StockId；
+                    // 槽1 待 C 批数值化（原文本为内层错误文本）。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        1038,
+                        vec![u64::from(code.0), 0],
                     ))
                 })?;
         }
@@ -6042,31 +3656,30 @@ impl GameSession {
                 .get_mut(code)
                 .expect("validated filled-order market must exist")
                 .restore_filled_orders(filled.iter().map(|order| (order.id, order.owner)))
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "cannot restore filled orders for {}: {error}",
-                        code.0
+                .map_err(|_error| {
+                    // fault1039: 恢复已成交委托记录失败。ctx[0] = StockId；
+                    // 槽1 待 C 批数值化（原文本为内层错误文本）。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        1039,
+                        vec![u64::from(code.0), 0],
                     ))
                 })?;
         }
         // 恢复进度
         sess.state.tick = save.snapshot.tick;
-        sess.state.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day)
-            .map_err(|_| SessionError::InvalidSave("saved trading day exceeds u32".to_owned()))?;
+        sess.state.day =
+            u32::try_from(save.snapshot.tick / save.setup.ticks_per_day).map_err(|_| {
+                // fault1040: 存档交易日序号超出 u32。
+                SessionError::InvalidSave(ValidationFault::bare(1040))
+            })?;
         sess.state.seq = save.snapshot.seq;
         // 恢复自然日时钟；全量校验其自洽性，并使用随存档冻结的政策。
-        sess.state.civil_clock = CivilClock::from_parts_for_stocks(
+        sess.state.civil_clock = CivilClock::from_parts(
             save.setup.start_date,
             &save.civil_clock,
-            save.setup.stocks.iter().map(|stock| {
-                (
-                    stock.code.clone(),
-                    session_calendar_exchange(stock.exchange),
-                )
-            }),
+            session_calendar_exchange(save.setup.stocks[0].exchange),
         )?;
         validate_saved_order_state(&sess, save)?;
-        sess.state.auction_orders = save.auction_orders.clone();
         sess.state.next_order_id = save.next_order_id;
 
         // 当前存档完整覆盖所有影响后续演进的确定性状态。
@@ -6102,9 +3715,16 @@ impl GameSession {
                 (reconstructed.base_probability - saved_state.base_probability).abs()
                     > probability_scale * f64::EPSILON * 4.0;
             if differs_beyond_json_roundtrip {
-                return Err(SessionError::InvalidSave(format!(
-                    "NPC {} attention probability {} does not match its deterministic profile {}",
-                    id.0, saved_state.base_probability, reconstructed.base_probability
+                // fault1041: 恢复的 NPC 注意力基础概率与确定性重建值不符（超出 JSON 往返容差）。
+                // ctx[0] = AccountId；ctx[1] = 存档值 f64 位模式，ctx[2] = 重建值 f64 位模式
+                // （f64 以 IEEE-754 位模式入槽，C 批可改定点点表示）。
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    1041,
+                    vec![
+                        id.0,
+                        saved_state.base_probability.to_bits(),
+                        reconstructed.base_probability.to_bits(),
+                    ],
                 )));
             }
             // 基础概率来自账户的确定性行为档案，不是随时间演进的状态。JSON 数字
@@ -6128,61 +3748,8 @@ impl GameSession {
             .map(|(id, state)| (state.next_attention_candidate_tick, *id))
             .collect();
         sess.state.retail_experience = save.retail_experience.clone().into();
-        sess.state.parent_orders = save
-            .parent_orders
-            .iter()
-            .map(|(account, plans)| {
-                (
-                    *account,
-                    plans
-                        .iter()
-                        .map(|(code, plan)| (code.clone(), ParentOrderPlan::from(plan.clone())))
-                        .collect(),
-                )
-            })
-            .collect();
-        for (account, plans) in &mut sess.state.parent_orders {
-            for (code, plan) in plans {
-                let Some(active_id) = plan.active_child_order_id() else {
-                    plan.restore_active_child_remaining_qty(None);
-                    continue;
-                };
-                let active_quantities = save
-                    .auction_orders
-                    .get(code)
-                    .into_iter()
-                    .flatten()
-                    .filter(|order| {
-                        order.order_id == active_id.0
-                            && order.owner == *account
-                            && order.side == plan.side()
-                    })
-                    .map(|order| order.qty)
-                    .chain(
-                        save.resting_orders
-                            .get(code)
-                            .into_iter()
-                            .flatten()
-                            .filter(|order| {
-                                order.id == active_id
-                                    && order.owner == *account
-                                    && order.side == plan.side()
-                            })
-                            .map(|order| order.qty),
-                    )
-                    .collect::<Vec<_>>();
-                let [remaining_qty] = active_quantities.as_slice() else {
-                    return Err(SessionError::InvalidSave(format!(
-                        "parent-order account {} stock {} active child cannot be uniquely rebuilt",
-                        account.0, code.0
-                    )));
-                };
-                plan.restore_active_child_remaining_qty(Some(*remaining_qty));
-            }
-        }
         sess.state.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.state.pending_player = save.pending_player.clone();
-        sess.state.pending_npc = save.pending_npc.clone();
         sess.state.ingress_receipt_cursors = save.ingress_receipt_cursors.clone();
         // 诊断缓存不属于存档事实，恢复后由实际 tick 重新生成。
         sess.state.last_retail_decisions.clear();
@@ -6190,16 +3757,27 @@ impl GameSession {
         // 权威状态连续性（完整存档）：公司域与个体决策链权威状态直接从档恢复——不再前史
         // 重放、不再复位信念/计划/信息集、不再剥离 linked_plan_id。new() 重建
         // 的 prehistory/时钟接线是确定性产物，被下列赋值整体覆盖。
-        if sess.state.company_system.issuers() != save.company_system.issuers()
-            && !persistence::issuer_increase_matches_non_trading_issuance(
-                save,
-                sess.state.company_system.issuers(),
-            )?
-        {
-            return Err(SessionError::InvalidSave(
-                "saved company set does not exactly match the issuers rebuilt from setup"
-                    .to_string(),
-            ));
+        let expected_issuers: BTreeSet<&crate::company::CompanyId> =
+            sess.state.operations.companies.keys().collect();
+        let saved_issuers: BTreeSet<&crate::company::CompanyId> =
+            save.company_operations.companies.keys().collect();
+        if expected_issuers != saved_issuers {
+            // fault1043: 存档公司集合与 setup 重建的发行人集合不一致。
+            // 槽0/槽1 待 C 批数值化（原文本为两个 CompanyId 集合的 Debug 文本——公司域字符串身份）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                1043,
+                vec![0, 0],
+            )));
+        }
+        for (id, company) in &save.company_operations.companies {
+            if company.spec() != sess.state.operations.companies[id].spec() {
+                // fault1044: 存档公司规格与 setup 重建不一致。
+                // 槽0 待 C 批数值化（原文本为公司 id "{id:?}"——公司域字符串身份）。
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    1044,
+                    vec![0],
+                )));
+            }
         }
         // 个体状态账户集合精确匹配确定性重建（populate_npcs 按 seed+ordinal
         // 重建信念机构集合）：缺失任一账户的个人状态 = 不完整存档。
@@ -6208,17 +3786,100 @@ impl GameSession {
         let saved_belief_accounts: BTreeSet<AccountId> =
             save.belief_books.keys().copied().collect();
         if expected_belief_accounts != saved_belief_accounts {
-            return Err(SessionError::InvalidSave(format!(
-                "saved personal-state account set {saved_belief_accounts:?} does not match the \
-                 reconstructed belief accounts {expected_belief_accounts:?}"
+            // fault1045: 存档个人状态账户集合与确定性重建集合不一致。
+            // 槽0/槽1 待 C 批数值化（原文本为两个 AccountId 集合的 Debug 文本——集合差异无数值槽）。
+            return Err(SessionError::InvalidSave(ValidationFault::new(
+                1045,
+                vec![0, 0],
             )));
         }
-        sess.state.company_system = std::sync::Arc::new(save.company_system.export_state());
-        sess.state.corporate_actions = save.corporate_actions.clone();
-        sess.state.report_correction_operations = save.report_correction_operations.clone();
+        sess.state.operations = std::sync::Arc::new(save.company_operations.clone());
+        sess.state.groups = save.groups.clone();
+        sess.state.closing = std::sync::Arc::new(save.closing_registry.clone());
         sess.state.library = std::sync::Arc::new(save.public_library.clone());
         sess.state.disclosures = save.disclosures.clone();
         sess.state.plans = save.plans.clone();
+        // 执行腿在途子单的剩余数量从真实订单簿/竞价队列重建（唯一 owner 的
+        // restore 路径；旧 `parent_orders` 镜像已删除）。
+        let active_plan_ids = sess.state.plans.active_plan_ids();
+        for plan_id in active_plan_ids {
+            let (account, code, direction, active_id) = {
+                let plan = sess
+                    .state
+                    .plans
+                    .plan(plan_id)
+                    .expect("active plan ids resolve");
+                match plan.active_child_order_id() {
+                    Some(active_id) => (
+                        plan.account(),
+                        plan.code().clone(),
+                        plan.direction(),
+                        active_id,
+                    ),
+                    None => continue,
+                }
+            };
+            let active_quantities = save
+                .resting_orders
+                .get(&code)
+                .into_iter()
+                .flatten()
+                .filter(|order| {
+                    order.id == active_id && order.owner == account && order.side == direction
+                })
+                .map(|order| order.qty)
+                .collect::<Vec<_>>();
+            let [remaining_qty] = active_quantities.as_slice() else {
+                // fault1042: 计划在途子委托无法唯一重建（竞价/连续簿命中数 ≠ 1）。
+                // ctx[0] = AccountId，ctx[1] = StockId。
+                return Err(SessionError::InvalidSave(ValidationFault::new(
+                    1042,
+                    vec![account.0, u64::from(code.0)],
+                )));
+            };
+            // 以真实订单余量做 checked exposure 校验：恢复不得用簿上余量盖过
+            // 计划份额目标（旧 fault2173 的语义迁移到唯一 owner）。
+            let filled = sess
+                .state
+                .plans
+                .plan(plan_id)
+                .expect("active plan ids resolve")
+                .filled_qty();
+            let exposure = u64::from(filled)
+                .checked_add(u64::from(*remaining_qty))
+                .ok_or_else(|| {
+                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=AccountId，ctx[1]=StockId。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        2185,
+                        vec![account.0, u64::from(code.0)],
+                    ))
+                })?;
+            if let crate::plans::PlanTarget::ShareCount(target) = sess
+                .state
+                .plans
+                .plan(plan_id)
+                .expect("active plan ids resolve")
+                .target()
+            {
+                if exposure > u64::from(target) {
+                    // fault2185：执行腿在途风险敞口溢出或超目标；ctx[0]=AccountId，ctx[1]=StockId。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2185,
+                        vec![account.0, u64::from(code.0)],
+                    )));
+                }
+            }
+            sess.state
+                .plans
+                .restore_child_remaining_qty(plan_id, Some(*remaining_qty))
+                .map_err(|_error| {
+                    // fault1042：执行腿与真实订单簿不一致。
+                    SessionError::InvalidSave(ValidationFault::new(
+                        1042,
+                        vec![account.0, u64::from(code.0)],
+                    ))
+                })?;
+        }
         sess.state.urgency_policy = save.urgency_policy;
         sess.state.belief_participants = save
             .belief_books
@@ -6237,7 +3898,6 @@ impl GameSession {
             .collect();
         sess.state.history_reads = save.history_reads.clone().into_iter().collect();
         sess.reconcile_institutional_holdings()?;
-        sess.state.pending_plan_events = save.pending_plan_events.clone();
         // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
         sess.state.disclosures.install(&mut sess.state.civil_clock);
 
@@ -6256,11 +3916,14 @@ impl GameSession {
 /// `NpcAttentionState` 会进入存档；若运行时直接保留原始计算结果，JSON 数字格式的
 /// 舍入可能让恢复后静态概率的最低有效位不同，从而破坏后续确定性重放。
 fn json_canonical_f64(value: f64) -> Result<f64, SessionError> {
-    let encoded = serde_json::to_string(&value).map_err(|error| {
-        SessionError::InvalidSetup(format!("cannot encode finite f64: {error}"))
+    let encoded = serde_json::to_string(&value).map_err(|_error| {
+        // fault1046: f64 JSON 编码失败。槽0 待 C 批数值化（原文本为内层 serde 错误文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1046, vec![0]))
     })?;
-    serde_json::from_str(&encoded)
-        .map_err(|error| SessionError::InvalidSetup(format!("cannot decode finite f64: {error}")))
+    serde_json::from_str(&encoded).map_err(|_error| {
+        // fault1047: f64 JSON 解码失败。槽0 待 C 批数值化（原文本为内层 serde 错误文本）。
+        SessionError::InvalidSetup(ValidationFault::new(1047, vec![0]))
+    })
 }
 
 /// A 股日内成交通常在开盘和尾盘更活跃。集合竞价分配 5% 的日量预期，连续竞价
@@ -6296,9 +3959,10 @@ mod candle_open_tests {
 
     fn gap_stock_setup() -> SessionSetup {
         SessionSetup {
-            company_system: simple_company_fixture!(crate; ["600999"]),
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
-                code: StockCode("600999".to_string()),
+                code: StockCode("600102".to_owned()),
                 exchange: StockExchange::Shanghai,
                 initial_price: Money::from_cents(1_000),
                 category: SecurityCategory::MainBoard,
@@ -6335,22 +3999,15 @@ mod candle_open_tests {
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
-            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
-            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-            flat_withholding_bp: Some(1000),
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
-            par_value_per_share: crate::Money::from_cents(100),
-            auto_corporate_foundation: false,
         }
     }
 
     #[test]
     fn first_auction_trade_replaces_provisional_previous_close_on_gap_up_days() {
-        let code = StockCode("600999".to_string());
+        let code = StockId(1);
         let mut session = GameSession::new(gap_stock_setup(), 7).unwrap();
         let mut previous_close = Money::from_cents(1_000);
 
@@ -6378,7 +4035,7 @@ mod candle_open_tests {
 
     #[test]
     fn first_auction_trade_replaces_provisional_previous_close_on_gap_down_days() {
-        let code = StockCode("600999".to_string());
+        let code = StockId(1);
         let mut session = GameSession::new(gap_stock_setup(), 11).unwrap();
         let mut previous_close = Money::from_cents(1_000);
 
@@ -6432,7 +4089,74 @@ mod intraday_volume_curve_tests {
 
 #[cfg(test)]
 impl GameSession {
-    /// Seed a passive order for tests of downstream stages without advancing a market tick.
+    pub(crate) fn auction_order_projection_for_test(
+        &self,
+    ) -> BTreeMap<StockId, Vec<AuctionOrderSnap>> {
+        self.state
+            .markets
+            .iter()
+            .filter(|(_, market)| market.matching_mode() == crate::orderbook::MatchingMode::Auction)
+            .filter_map(|(code, market)| {
+                let orders = market
+                    .resting_orders()
+                    .into_iter()
+                    .map(|order| AuctionOrderSnap {
+                        owner: order.owner,
+                        side: order.side,
+                        limit: order.price,
+                        qty: order.qty,
+                        order_id: order.id.0,
+                    })
+                    .collect::<Vec<_>>();
+                (!orders.is_empty()).then_some((*code, orders))
+            })
+            .collect()
+    }
+
+    /// cfg(test) fixture 辅助：直接改写 tick/setup 后，把每只股票的 book 模式
+    /// 重新对齐当前 PhasePolicy，保持统一不变量（模式只由交易阶段决定）。
+    pub(crate) fn fixture_sync_market_modes_for_test(&mut self) {
+        let mode = pipeline::phase::PhasePolicy::capture(self).matching_mode();
+        for market in self.state.markets.values_mut() {
+            market
+                .set_matching_mode(mode)
+                .expect("测试跳时后的空/未交叉簿可以进入目标阶段模式");
+        }
+    }
+
+    pub(crate) fn fixture_append_auction_orders(
+        &mut self,
+        code: StockId,
+        orders: Vec<AuctionOrderSnap>,
+    ) -> Result<Option<Vec<AuctionOrderSnap>>, crate::MarketError> {
+        let previous = self.auction_order_projection_for_test().remove(&code);
+        let market = self
+            .state
+            .markets
+            .get_mut(&code)
+            .expect("竞价fixture股票必须存在");
+        market.set_matching_mode(crate::orderbook::MatchingMode::Auction)?;
+        let mut restored = market.resting_orders();
+        let mut next_seq = market.book_next_sequence();
+        for order in orders {
+            restored.push(Order {
+                id: OrderId(order.order_id),
+                side: order.side,
+                price: order.limit,
+                qty: order.qty,
+                original_qty: order.qty,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: order.owner,
+                seq: next_seq,
+            });
+            next_seq = next_seq.checked_add(1).expect("竞价fixture序号不能溢出");
+        }
+        market.restore_resting_orders(&restored, next_seq)?;
+        Ok(previous)
+    }
+
+    /// 在真实book中放置下游测试所需的被动单，不推进市场 tick。
     pub(crate) fn seed_order_for_test(
         &mut self,
         account: AccountId,
@@ -6458,6 +4182,47 @@ impl GameSession {
         events: &mut Vec<Event>,
         auction: bool,
     ) {
+        // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时挂单
+        /// 权威在组/desk——经 D2 意图注入路由进 runtime 世界（写旧
+        /// session book 在 runtime 模式下不可见——裁决"book fixture
+        /// 分别适配"）。Sol 二审修复集 5：首步前（驱动器不在位）的注入
+        /// 走旧簿+构造期迁移（RuntimeDriver::adopt_session_resting_orders
+        /// ——免全局分流破坏旧管线 fixture 面）。事件面：runtime 模式的
+        /// 受理事件由下一 step 产出（seed 调用方的 events 缓冲不在此
+        /// 伪造就地事件——如实空）。
+        #[cfg(test)]
+        if self.runtime_driver.is_some() {
+            let mut intents = vec![crate::session::ReceiptBearingIntent {
+                owner: account,
+                intent: intent.clone(),
+                account_ordinal: 0,
+                stock_ordinal: 0,
+            }];
+            let _ = &mut intents;
+            let upper: Vec<i64> = {
+                let driver = self
+                    .runtime_driver
+                    .as_ref()
+                    .and_then(|cell| cell.lock().ok())
+                    .expect("runtime 驱动器在位（上方已判）");
+                driver
+                    .world_public_views()
+                    .iter()
+                    .map(|v| v.daily_upper_limit)
+                    .collect()
+            };
+            let mut driver = self
+                .runtime_driver
+                .as_mut()
+                .and_then(|cell| cell.lock().ok())
+                .expect("runtime 驱动器在位（上方已判）");
+            driver
+                .inject_player_intents(&intents, &upper)
+                .expect("runtime 意图注入（seed_order 分流）");
+            intents.clear();
+            let _ = events;
+            return;
+        }
         match intent {
             Intent::PlaceLimit {
                 code,
@@ -6473,17 +4238,17 @@ impl GameSession {
                     .expect("fixture order IDs");
                 let seq = self.next_seq();
                 if auction {
-                    self.state
-                        .auction_orders
-                        .entry(code.clone())
-                        .or_default()
-                        .push(AuctionOrderSnap {
+                    self.fixture_append_auction_orders(
+                        code,
+                        vec![AuctionOrderSnap {
                             owner: account,
                             side,
                             limit: price,
                             qty,
                             order_id: id.0,
-                        });
+                        }],
+                    )
+                    .expect("fixture 竞价挂入不得重复身份");
                 } else {
                     let (last_price, best_bid, best_ask) = {
                         let market = self.state.markets.get(&code).expect("fixture stock exists");
@@ -6563,7 +4328,8 @@ impl GameSession {
                         .cancel(id)
                         .expect("fixture cancellation succeeds");
                     self.remove_npc_order_lifecycle(account, &code, id);
-                    self.record_parent_order_canceled(account, &code, id);
+                    self.record_parent_order_canceled(account, &code, id)
+                        .expect("fixture plan cancellation succeeds");
                     events.push(Event::OrderCanceled {
                         seq: self.next_seq(),
                         account,
@@ -6572,16 +4338,13 @@ impl GameSession {
                         remaining_qty: order.qty,
                     });
                 } else {
-                    let orders = self
+                    let order = self
                         .state
-                        .auction_orders
+                        .markets
                         .get_mut(&code)
-                        .expect("fixture stock exists");
-                    let index = orders
-                        .iter()
-                        .position(|order| order.order_id == id.0)
+                        .expect("fixture stock exists")
+                        .cancel(id)
                         .expect("fixture auction order exists");
-                    let order = orders.remove(index);
                     events.push(Event::OrderCanceled {
                         seq: self.next_seq(),
                         account,
@@ -6608,11 +4371,11 @@ mod npc_working_quote_tests {
     use crate::{HotParams, InstParams, RetailParams};
 
     pub(super) fn quote_setup(auction_ticks: u64) -> SessionSetup {
-        let code = StockCode("600888".to_string());
         SessionSetup {
-            company_system: simple_company_fixture!(crate; ["600888"]),
+            company_operations: None,
+            groups: Vec::new(),
             stocks: vec![StockSpec {
-                code: code.clone(),
+                code: StockCode("600888".to_owned()),
                 exchange: StockExchange::Shanghai,
                 initial_price: Money::from_cents(1_000),
                 category: SecurityCategory::MainBoard,
@@ -6649,17 +4412,9 @@ mod npc_working_quote_tests {
             closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
-            report_frequency: crate::information::ReportFrequency::Quarterly,
             float_allocation: FloatAllocation::random(),
-            // 委托与市场 tick fixture 必须在交易日；政策默认元旦休市，不改产品默认。
-            start_date: crate::CivilDate::from_ymd(2030, 1, 2).unwrap(),
+            start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
-            dividend_tax_mode: crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-            flat_withholding_bp: Some(1000),
-            rights_offering_enabled: false,
-            issuer_repurchase_enabled: false,
-            par_value_per_share: crate::Money::from_cents(100),
-            auto_corporate_foundation: false,
         }
     }
 
@@ -6668,7 +4423,7 @@ mod npc_working_quote_tests {
         let session = GameSession::new(quote_setup(0), 42).unwrap();
         let mut save = session.save().unwrap();
         let account_id = *save.belief_books.keys().next().unwrap();
-        let code = save.setup.stocks[0].code.clone();
+        let code = StockId(0);
         save.snapshot
             .accounts
             .get_mut(&account_id)
@@ -6754,12 +4509,18 @@ mod npc_working_quote_tests {
         }
     }
 
+    // 下列断言的 fault 产生于 persistence 分片（码段 2000-2199）。码值已按
+    // persistence.rs 实际站点注释核对回填（S2 预测值 2132/2133/2134 整体偏移 +1）。
+    const FAULT_FUTURE_EXPERIENCE_CLOCKS: u16 = 2131;
+    const FAULT_INVALID_FAILURE_EXPERIENCE: u16 = 2132;
+    const FAULT_INVALID_TRADE_EXPERIENCE: u16 = 2133;
+
     #[test]
     fn saved_institution_feedback_rejects_future_clocks_and_invalid_failure_references() {
         let session = GameSession::new(quote_setup(0), 42).unwrap();
         let save = session.save().unwrap();
         let account_id = *save.belief_books.keys().next().unwrap();
-        let code = save.setup.stocks[0].code.clone();
+        let code = StockId(0);
         let current = crate::experience::ExperienceMoment {
             civil_date: save.civil_clock.current_date,
             market_minute: 0,
@@ -6777,13 +4538,14 @@ mod npc_working_quote_tests {
         feedback
             .failure_events
             .push(crate::experience::FailureEventRecord {
-                code: StockCode("999999".to_owned()),
+                code: StockId(9),
                 order_id: Some(0),
                 moment: current,
             });
         assert!(matches!(
             persistence::validate_save_slot(&invalid_reference),
-            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")
+            // 数值断言替代原文本断言 "invalid failure experience"。
+            Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_INVALID_FAILURE_EXPERIENCE
         ));
 
         let mut future = save;
@@ -6807,8 +4569,10 @@ mod npc_working_quote_tests {
             });
         assert!(matches!(
             persistence::validate_save_slot(&future),
-            Err(SessionError::InvalidSave(message)) if message.contains("future experience clocks")
-                || message.contains("invalid failure experience")
+            // 数值断言替代原文本断言 "future experience clocks" || "invalid failure experience"
+            // （首错序由哪个码先出现验证）。
+            Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_FUTURE_EXPERIENCE_CLOCKS
+                || fault.code == FAULT_INVALID_FAILURE_EXPERIENCE
         ));
     }
 
@@ -6832,12 +4596,13 @@ mod npc_working_quote_tests {
         feedback
             .failure_events
             .push(crate::experience::FailureEventRecord {
-                code: save.setup.stocks[0].code.clone(),
+                code: StockId(0),
                 order_id: None,
                 moment,
             });
         assert!(matches!(GameSession::restore(&save),
-            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")));
+            // 数值断言替代原文本断言 "invalid failure experience"。
+            Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_INVALID_FAILURE_EXPERIENCE));
     }
 
     #[test]
@@ -6859,7 +4624,7 @@ mod npc_working_quote_tests {
                 .experience_mut()
                 .stocks
                 .insert(
-                    save.setup.stocks[0].code.clone(),
+                    StockId(0),
                     crate::experience::RetailStockExperience {
                         last_buy_price: price,
                         last_buy_order_id: order,
@@ -6869,7 +4634,8 @@ mod npc_working_quote_tests {
                 );
             assert!(
                 matches!(GameSession::restore(&invalid),
-                Err(SessionError::InvalidSave(message)) if message.contains("invalid trade experience")),
+                // 数值断言替代原文本断言 "invalid trade experience"。
+                Err(SessionError::InvalidSave(fault)) if fault.code == FAULT_INVALID_TRADE_EXPERIENCE),
                 "unpaired buy memory {price:?}/{order:?} or unsupported adverse flag must be rejected"
             );
         }
@@ -6882,7 +4648,7 @@ mod npc_working_quote_tests {
         setup
     }
 
-    fn buy(code: &StockCode, price: i64) -> Intent {
+    fn buy(code: &StockId, price: i64) -> Intent {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
@@ -6893,11 +4659,10 @@ mod npc_working_quote_tests {
 
     pub(super) fn two_stock_quote_setup() -> SessionSetup {
         let mut setup = quote_setup(0);
-        let second = StockCode("600889".to_string());
+        let second = StockCode("600889".to_owned());
         let mut spec = setup.stocks[0].clone();
         spec.code = second;
         setup.stocks.push(spec);
-        setup.company_system = simple_company_fixture!(crate; ["600888", "600889"]);
         setup
     }
 
@@ -6906,15 +4671,250 @@ mod npc_working_quote_tests {
         account: AccountId,
         tick: u64,
     ) {
+        // Sol 整改注入通道（cfg(test) 分流）：runtime 驱动器在位时调度
+        /// 权威在组（P1-10）——显式 ForceDue 指令（组验证执行；不偷改
+        /// session 镜像）。旧管线（无驱动器）路径不变。Sol 二审修复集 5：
+        /// 首步前（驱动器不在位）走旧镜像路径——构造器自会话 attention
+        /// 恢复 next_due（镜像值即组权威起点）。
+        #[cfg(test)]
+        if session.runtime_driver.is_some() {
+            let target = tick.max(session.state.tick + 1);
+            session.force_due_via_runtime(&[account], target);
+            return;
+        }
         let attention = session.state.npc_attention.get_mut(&account).unwrap();
         attention.base_probability = 1.0;
         attention.next_attention_candidate_tick = tick;
         session.state.attention_scheduler.enqueue(tick, account);
     }
 
+    // Sol 二审修复集 5 红证：首步前 seed 的挂单经**构造期迁移**进入
+    // runtime 世界（RuntimeDriver::adopt_session_resting_orders——组 0
+    // 下一 tick round 0 经 ExternalPlan 挂出）——首步的受理事件面可见。
+    // 此前首构造不迁入旧挂单：seed 只写 session 旧簿，runtime 世界不可见。
+    // 仅 runtime 翻转模式有意义（缺省走旧管线，seed 本就在旧簿生效）。
+    #[test]
+    fn sol5_seed_before_first_step_reaches_runtime_world() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = GameSession::new(retail_quote_setup(), 311).unwrap();
+        let code = StockId(0);
+        let mut events = Vec::new();
+        session.seed_order_for_test(AccountId(1), buy(&code, 900), &mut events);
+        let step_events = session.step().expect("healthy step");
+        assert!(
+            step_events.iter().any(|event| matches!(
+                event,
+                Event::OrderAccepted {
+                    account: AccountId(1),
+                    ..
+                }
+            )),
+            "首步前 seed 的挂单经构造期迁移进入 runtime 世界（首步即受理）"
+        );
+    }
+
+    // Sol 三审修复 3：terminal 投影覆盖旧 Active 镜像——小型确定性
+    // fixture（组簿 terminal 记录经 set_runtime_plans 交付点覆盖 session
+    // 侧残留的旧 Active 镜像；不依赖巨量成交——全额成交即 Completed）。
+    #[test]
+    fn sol4th_terminal_projection_overwrites_stale_active_mirror() {
+        let mut session = GameSession::new(quote_setup(0), 71).unwrap();
+        let account = AccountId(1);
+        let code = StockId(0);
+        // session 侧残留旧 Active 镜像（迁移期注入面保护语义的对照起点）。
+        session
+            .state
+            .plans
+            .create(crate::plans::PlanOpen {
+                account,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(100),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .expect("旧镜像计划创建");
+        assert!(
+            session.plans_debug().iter().any(|(.., status)| status == "Active"),
+            "前置：session 侧旧 Active 镜像在册"
+        );
+        // 组簿权威：同键计划的 terminal 记录（全额成交 ⇒ Completed）。
+        let mut book = crate::plans::PlanBook::default();
+        let pid = book
+            .create(crate::plans::PlanOpen {
+                account,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(100),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .expect("组簿计划创建");
+        book.install_execution(pid, 100, Money::from_cents(1_000), 240)
+            .expect("执行腿登记");
+        book.record_child_submitted(account, &code, Side::Buy, crate::OrderId(7), 100, 0)
+            .expect("子单身份登记");
+        book.record_child_fill(account, &code, Side::Buy, crate::OrderId(7), 100, 0)
+            .expect("全额成交推进");
+        assert!(
+            matches!(
+                book.plan(pid).unwrap().status(),
+                crate::plans::PlanStatus::Completed
+            ),
+            "前置：组簿记录为 terminal（Completed）"
+        );
+        session.set_runtime_plans(book);
+        let debug = session.plans_debug();
+        assert!(
+            debug.iter().any(|(.., status)| status == "Completed"),
+            "terminal 记录经交付点投影可见：{debug:?}"
+        );
+        assert!(
+            debug.iter().all(|(.., status)| status != "Active"),
+            "旧 Active 镜像不残留（最后计划结束后被 terminal 覆盖）：{debug:?}"
+        );
+    }
+
+    // Sol 五审修复 1/2 红证：同拍完整结算——step() 返回时本拍成交的
+    // 持仓/T+1/现金/成本已在公开 session 面（ADR-0017；此前买腿持仓/现金
+    // 迟一拍）。**不许多跑一拍让断言通过**（Sol 点名）——全部断言在本拍
+    // 返回值上；随后仅验证下一拍不双计、失败拍不泄漏。
+    #[test]
+    fn sol6th_same_tick_settlement_full_projection() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        use crate::orderbook::Side;
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 1;
+        let mut session = GameSession::new(setup, 71).unwrap();
+        let seller = AccountId(1);
+        let buyer = AccountId(0);
+        let code = StockId(0);
+        let price = session.state.markets[&code].last_price();
+        session
+            .fixture_account_mut(&seller)
+            .unwrap()
+            .grant_position(code.clone(), 100, price)
+            .unwrap();
+        session.seed_order_for_test(
+            seller,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(price),
+                qty: 100,
+            },
+            &mut Vec::new(),
+        );
+        let seller_cash = session.state.accounts[&seller].cash();
+        let buyer_cash = session.state.accounts[&buyer].cash();
+        let gross = price.mul_shares(100).unwrap();
+        let config = &session.state.setup.config;
+        let seller_net = gross
+            .sub(config.commission(gross).unwrap())
+            .unwrap()
+            .sub(config.stamp_tax(gross).unwrap())
+            .unwrap()
+            .sub(config.transfer_fee(gross).unwrap())
+            .unwrap();
+        let buyer_total = crate::session::buy_order_reservation(
+            config,
+            price,
+            100,
+            Money::ZERO,
+        )
+        .unwrap();
+        session
+            .enqueue_player_intent(
+                buyer,
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Fixed(price),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let events = session.step().expect("healthy step");
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::Trade {
+                    maker: AccountId(1),
+                    taker: AccountId(0),
+                    qty: 100,
+                    ..
+                }
+            )),
+            "fixture 前提：本拍成交发生"
+        );
+        // 同拍全面断言（本拍返回值——不补拍）。
+        let buyer_pos = session.state.accounts[&buyer].positions();
+        assert_eq!(buyer_pos[&code].qty(), 100, "同拍：买方持仓入账");
+        assert_eq!(
+            buyer_pos[&code].t1_locked(),
+            100,
+            "同拍：T+1 冻结入账（买入当日不可卖）"
+        );
+        assert_eq!(
+            session.state.accounts[&buyer].sellable_qty(&code),
+            0,
+            "同拍：可卖量=0（T+1）"
+        );
+        assert_eq!(
+            buyer_pos[&code].invested_cents(),
+            gross.cents(),
+            "同拍：买方成本基（成交额）"
+        );
+        assert_eq!(
+            session.state.accounts[&buyer].cash(),
+            buyer_cash.sub(buyer_total).unwrap(),
+            "同拍：买方现金扣全额预留（限价=成交价，全额成交）"
+        );
+        assert!(
+            !session.state.accounts[&seller].positions().contains_key(&code),
+            "同拍：卖方清仓条目删除"
+        );
+        assert_eq!(
+            session.state.accounts[&seller].cash(),
+            seller_cash.add(seller_net).unwrap(),
+            "同拍：卖方现金净得入账"
+        );
+        // 下一拍不双计（整值回写对齐——值保持）。
+        session.step().expect("下一拍（无成交）");
+        assert_eq!(
+            session.state.accounts[&buyer].positions()[&code].qty(),
+            100,
+            "下一拍不双计：持仓保持"
+        );
+        assert_eq!(
+            session.state.accounts[&buyer].cash(),
+            buyer_cash.sub(buyer_total).unwrap(),
+            "下一拍不双计：现金保持"
+        );
+        // Abort 不泄漏部分见 drive_tests::sol6th_same_tick_abort_leaks_nothing
+        // （驱动器直连持有——世界校验器注入口在驱动器面）。
+    }
+
     #[test]
     fn accepted_retail_observation_persists_an_unheld_watchlist_stock() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let retail = AccountId(1);
         let mut session = GameSession::new(retail_quote_setup(), 124).unwrap();
         force_attention_candidate(&mut session, retail, 0);
@@ -6928,280 +4928,22 @@ mod npc_working_quote_tests {
             .expect("accepted observation must persist the reviewed unheld stock");
         assert_eq!(stock.entry_reference_price, None);
         assert_eq!(stock.last_buy_price, None);
-        assert_eq!(
+        // T3（ADR-0042 §9.3/§9.7，A4 失败 2 双契约登记）：观察分钟一律 stamp
+        // f(epoch)——本观察在 epoch 0 受理（D(0) 于消费 tick 入口生产同 tick
+        // 消费），写入=day0 的 epoch-0 分钟（0）；step 返回后的
+        // current_market_minute() 已推进到 f(1)，不再与观察 stamp 同拍。禁止
+        // 加一/减 tick 修绿——按同一决策 epoch 的冻结观察基精确比较（v3）。
+        assert_eq!(stock.last_observed_market_minute, 0);
+        assert_ne!(
             stock.last_observed_market_minute,
-            session.current_market_minute()
+            session.current_market_minute(),
+            "发布节奏差：观察 stamp 停留在决策 epoch 的冻结分钟"
         );
-    }
-
-    #[test]
-    fn parent_buy_does_not_overbuy_when_an_odd_lot_partial_fill_leaves_a_sub_lot_target() {
-        let code = StockCode("600888".to_string());
-        let institution = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 992).unwrap();
-        session
-            .state
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan::from_saved_facts(
-                    code.clone(),
-                    Side::Buy,
-                    400,
-                    350,
-                    100,
-                    None,
-                    None,
-                    None,
-                    Money::from_cents(1_000),
-                    PARENT_ORDER_HORIZON_MINUTES,
-                ),
-            );
-
-        let mut desired = Vec::new();
-        session.append_parent_child_or_working_intent(
-            institution,
-            &code,
-            0,
-            WorkingOrderSlices {
-                continuous: &[],
-                auction: &[],
-            },
-            &mut desired,
-        );
-
-        assert!(desired.is_empty(), "不足一手的残余不得触发超额或非法买单");
-        assert_eq!(
-            session.state.parent_orders[&institution][&code].remaining_qty(),
-            50
-        );
-    }
-
-    #[test]
-    fn institution_symbolic_intent_bypasses_parent_order_and_supersedes_old_target() {
-        let code = StockCode("600888".to_string());
-        let institution = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 994).unwrap();
-        let empty_working = WorkingOrderSlices {
-            continuous: &[],
-            auction: &[],
-        };
-        let fixed = buy(&code, 1_000);
-        let initial =
-            session.materialize_parent_order_intents(institution, vec![fixed], 0, empty_working);
-        assert!(matches!(
-            initial.as_slice(),
-            [Intent::PlaceLimit {
-                price: LimitPrice::Fixed(_),
-                ..
-            }]
-        ));
-        assert!(session.state.parent_orders[&institution].contains_key(&code));
-
-        let symbolic = Intent::PlaceLimit {
-            code: code.clone(),
-            side: Side::Buy,
-            price: LimitPrice::Highest,
-            qty: 100,
-        };
-        let desired =
-            session.materialize_parent_order_intents(institution, vec![symbolic], 0, empty_working);
-        assert!(matches!(
-            desired.as_slice(),
-            [Intent::PlaceLimit {
-                price: LimitPrice::Highest,
-                ..
-            }]
-        ));
-        assert!(!session.state.parent_orders.contains_key(&institution));
-    }
-
-    #[test]
-    fn mixed_fixed_and_symbolic_intents_survive_with_or_without_an_old_parent() {
-        let code = StockCode("600888".to_string());
-        let institution = AccountId(1);
-        let empty_working = WorkingOrderSlices {
-            continuous: &[],
-            auction: &[],
-        };
-        let mut baseline = None;
-        for with_old_parent in [false, true] {
-            let mut session = GameSession::new(quote_setup(0), 995).unwrap();
-            if with_old_parent {
-                session.materialize_parent_order_intents(
-                    institution,
-                    vec![Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Buy,
-                        price: LimitPrice::Fixed(Money::from_cents(950)),
-                        qty: 400,
-                    }],
-                    0,
-                    empty_working,
-                );
-            }
-            let desired = session.materialize_parent_order_intents(
-                institution,
-                vec![
-                    buy(&code, 1_000),
-                    Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Buy,
-                        price: LimitPrice::Highest,
-                        qty: 100,
-                    },
-                ],
-                0,
-                empty_working,
-            );
-            assert!(matches!(
-                desired.as_slice(),
-                [
-                    Intent::PlaceLimit {
-                        price: LimitPrice::Highest,
-                        ..
-                    },
-                    Intent::PlaceLimit {
-                        price: LimitPrice::Fixed(price),
-                        ..
-                    }
-                ] if *price == Money::from_cents(1_000)
-            ));
-            let parent = &session.state.parent_orders[&institution][&code];
-            assert_eq!(parent.target_qty(), 100);
-            assert_eq!(parent.limit_price(), Money::from_cents(1_000));
-            let result = (
-                serde_json::to_value(&desired).unwrap(),
-                serde_json::to_value(parent).unwrap(),
-            );
-            if let Some(expected) = &baseline {
-                assert_eq!(&result, expected);
-            } else {
-                baseline = Some(result);
-            }
-        }
-    }
-
-    #[test]
-    fn closing_auction_does_not_duplicate_a_parent_child_still_resting_in_continuous_book() {
-        let code = StockCode("600888".to_string());
-        let institution = AccountId(1);
-        let mut setup = quote_setup(0);
-        setup.ticks_per_day = 100;
-        setup.closing_auction_ticks = 10;
-        let mut session = GameSession::new(setup, 993).unwrap();
-        session.state.tick = 90;
-        session
-            .state
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan::from_saved_facts(
-                    code.clone(),
-                    Side::Buy,
-                    400,
-                    0,
-                    100,
-                    Some(OrderId(1)),
-                    Some(100),
-                    None,
-                    Money::from_cents(1_000),
-                    PARENT_ORDER_HORIZON_MINUTES * 2,
-                ),
-            );
-        let continuous = [(
-            code.clone(),
-            Order {
-                id: OrderId(1),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-                original_qty: 100,
-                filled_qty: 0,
-                filled_value: Money::ZERO,
-                owner: institution,
-                seq: 0,
-            },
-        )];
-        let mut desired = Vec::new();
-        session.append_parent_child_or_working_intent(
-            institution,
-            &code,
-            0,
-            WorkingOrderSlices {
-                continuous: &continuous,
-                auction: &[],
-            },
-            &mut desired,
-        );
-
-        assert!(desired.is_empty(), "收盘集合竞价不得复制连续簿中的母单子单");
-    }
-
-    #[test]
-    fn closing_auction_restores_a_parent_child_that_remains_in_continuous_book() {
-        let code = StockCode("600888".to_string());
-        let institution = AccountId(1);
-        let mut setup = quote_setup(0);
-        setup.ticks_per_day = 2;
-        setup.closing_auction_ticks = 1;
-        let mut session = GameSession::new(setup, 994).unwrap();
-        session.step().expect("healthy step");
-        assert_eq!(session.phase(), TradingPhase::ClosingAuction);
-        session
-            .state
-            .markets
-            .get_mut(&code)
-            .unwrap()
-            .place(Order {
-                id: OrderId(1),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-                original_qty: 100,
-                filled_qty: 0,
-                filled_value: Money::ZERO,
-                owner: institution,
-                seq: 0,
-            })
-            .unwrap();
-        session.state.next_order_id = 2;
-        session
-            .state
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan::from_saved_facts(
-                    code.clone(),
-                    Side::Buy,
-                    400,
-                    0,
-                    100,
-                    Some(OrderId(1)),
-                    Some(100),
-                    None,
-                    Money::from_cents(1_000),
-                    PARENT_ORDER_HORIZON_MINUTES * 2,
-                ),
-            );
-
-        session
-            .hydrate_or_validate_envelope_ledger()
-            .expect("direct order-book fixture must synchronize current save authority");
-
-        let restored = GameSession::restore(&session.save().expect("healthy save")).unwrap();
-        assert_eq!(restored.state.parent_orders, session.state.parent_orders);
     }
 
     #[test]
     fn market_view_keeps_tick_samples_separate_from_completed_market_minutes() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut session = GameSession::new(quote_setup(0), 1_001).unwrap();
         session.state.price_history.insert(
             code.clone(),
@@ -7236,7 +4978,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn behavior_observation_remains_bounded_after_six_thousand_completed_days() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
         let template = session.state.candle_book.histories()[&code][0].clone();
         session.state.candle_book.replace_history(
@@ -7283,7 +5025,7 @@ mod npc_working_quote_tests {
 
     #[test]
     fn closing_day_keeps_history_beyond_the_preset_window() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
         let first = session.state.candle_book.histories()[&code][0].clone();
         let previous = session.state.candle_book.histories()[&code].len();
@@ -7315,11 +5057,11 @@ mod npc_working_quote_tests {
 
     #[test]
     fn realized_profit_can_make_cost_return_unavailable_without_breaking_observation() {
-        let code = StockCode("600888".to_string());
+        let code = StockId(0);
         let account = AccountId(1);
         let mut session = GameSession::new(retail_quote_setup(), 121).unwrap();
         let config = session.state.setup.config.clone();
-        let holder = session.state.accounts.get_mut(&account).unwrap();
+        let holder = session.fixture_account_mut(&account).unwrap();
         holder
             .grant_position(code.clone(), 1_000, Money::from_cents(1_000))
             .unwrap();
@@ -7354,13 +5096,18 @@ mod npc_working_quote_tests {
 }
 
 impl CommittableSessionState {
+    /// 按数值 id 查发行人公司（公司域仍以 StockCode 关联，翻译在会话侧完成；
+    /// 公司域数值化后此助手消亡——见 string-free-inventory.md A 表）。
+    fn issuer_of_stock(&self, id: StockId) -> Option<crate::company::CompanyId> {
+        let code = self.stocks.code(id)?;
+        self.company_registry
+            .issuer_of(&crate::account::StockCode(code.to_string()))
+    }
     fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
         let Self {
-            retained_market_history,
-            memberships,
-            pending_report_corrections,
-            report_correction_operations,
             setup,
+            validated_config,
+            stocks,
             rng,
             seed,
             markets,
@@ -7369,24 +5116,40 @@ impl CommittableSessionState {
             price_history,
             market_minute_closes,
             candle_book,
-            auction_orders,
             pending_player,
-            pending_npc,
             ingress_receipt_cursors,
             npc_attention,
             retail_experience,
-            parent_orders,
-            pending_plan_events,
             npc_order_lifecycles,
             last_retail_decisions,
             last_retail_order_events,
+            desk_book_mirror,
+            runtime_desk_serial_cursors,
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces,
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
-            company_system,
-            corporate_actions,
+            runtime_account_undo: _,
+            runtime_account_undo_ids: _,
+            runtime_attention_undo: _,
+            runtime_attention_undo_ids: _,
+            runtime_heap_undo: _,
+            runtime_belief_undo: _,
+            runtime_belief_undo_ids: _,
+            runtime_retail_undo: _,
+            runtime_retail_undo_ids: _,
+            runtime_history_undo: _,
+            runtime_history_undo_ids: _,
+            runtime_mirror_undo: _,
+            runtime_plans_undo: _,
+            runtime_envelope_undo: _,
+            runtime_lifecycles_undo: _,
+            runtime_retail_diag_undo: _,
+            company_registry,
+            operations,
+            groups,
+            closing,
             library,
             disclosures,
             plans,
@@ -7394,13 +5157,13 @@ impl CommittableSessionState {
             belief_participants,
             envelope_ledger,
             retail_projection_seen,
-            personal_trade_confirmations,
             next_receipt_base,
             next_order_id,
             tick,
             day,
             seq,
             civil_clock,
+            runtime_information_authority,
         } = self;
         let accounts =
             accounts
@@ -7410,11 +5173,9 @@ impl CommittableSessionState {
                     location: "GameSession::clone_for_tick_shadow".to_owned(),
                 })?;
         Ok(Self {
-            retained_market_history: retained_market_history.clone(),
-            memberships: memberships.clone(),
-            pending_report_corrections: pending_report_corrections.clone(),
-            report_correction_operations: report_correction_operations.clone(),
             setup: setup.clone(),
+            validated_config: validated_config.clone(),
+            stocks: stocks.clone(),
             rng: rng.clone(),
             seed: *seed,
             markets: markets.clone(),
@@ -7423,24 +5184,40 @@ impl CommittableSessionState {
             price_history: price_history.clone(),
             market_minute_closes: market_minute_closes.clone(),
             candle_book: candle_book.clone(),
-            auction_orders: auction_orders.clone(),
             pending_player: pending_player.clone(),
-            pending_npc: pending_npc.clone(),
             ingress_receipt_cursors: ingress_receipt_cursors.clone(),
             npc_attention: npc_attention.clone(),
             retail_experience: retail_experience.clone(),
-            parent_orders: parent_orders.clone(),
-            pending_plan_events: pending_plan_events.clone(),
             npc_order_lifecycles: npc_order_lifecycles.clone(),
             last_retail_decisions: last_retail_decisions.clone(),
             last_retail_order_events: last_retail_order_events.clone(),
+            desk_book_mirror: desk_book_mirror.clone(),
+            runtime_desk_serial_cursors: runtime_desk_serial_cursors.clone(),
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces: npc_decision_traces.clone(),
             #[cfg(feature = "simulation-diagnostics")]
             causal: causal.clone(),
             attention_scheduler: attention_scheduler.clone(),
-            company_system: company_system.clone(),
-            corporate_actions: corporate_actions.clone(),
+            runtime_account_undo: Vec::new(),
+            runtime_account_undo_ids: std::collections::HashSet::new(),
+            runtime_attention_undo: Vec::new(),
+            runtime_attention_undo_ids: std::collections::HashSet::new(),
+            runtime_heap_undo: None,
+            runtime_belief_undo: Vec::new(),
+            runtime_belief_undo_ids: std::collections::HashSet::new(),
+            runtime_retail_undo: Vec::new(),
+            runtime_retail_undo_ids: std::collections::HashSet::new(),
+            runtime_history_undo: Vec::new(),
+            runtime_history_undo_ids: std::collections::HashSet::new(),
+            runtime_mirror_undo: None,
+            runtime_plans_undo: None,
+            runtime_envelope_undo: None,
+            runtime_lifecycles_undo: None,
+            runtime_retail_diag_undo: None,
+            company_registry: company_registry.clone(),
+            groups: groups.clone(),
+            operations: operations.clone(),
+            closing: closing.clone(),
             library: library.clone(),
             disclosures: disclosures.clone(),
             plans: plans.clone(),
@@ -7448,23 +5225,26 @@ impl CommittableSessionState {
             belief_participants: belief_participants.clone(),
             envelope_ledger: envelope_ledger.clone(),
             retail_projection_seen: retail_projection_seen.clone(),
-            personal_trade_confirmations: personal_trade_confirmations.clone(),
             next_receipt_base: *next_receipt_base,
             next_order_id: *next_order_id,
             tick: *tick,
             day: *day,
             seq: *seq,
             civil_clock: civil_clock.clone(),
+            runtime_information_authority: *runtime_information_authority,
         })
     }
 
     fn commit_from(&mut self, shadow: Self) {
+        #[cfg(feature = "verification-harness")]
+        let _commit_scope = verify_metrics::Scope::new(
+            &verify_metrics::METRICS.commit_from_calls,
+            &verify_metrics::METRICS.commit_from_ns,
+        );
         let Self {
-            retained_market_history,
-            memberships,
-            pending_report_corrections,
-            report_correction_operations,
             setup,
+            validated_config,
+            stocks,
             rng,
             seed,
             markets,
@@ -7473,86 +5253,183 @@ impl CommittableSessionState {
             price_history,
             market_minute_closes,
             candle_book,
-            auction_orders,
             pending_player,
-            pending_npc,
             ingress_receipt_cursors,
             npc_attention,
             retail_experience,
-            parent_orders,
-            pending_plan_events,
             npc_order_lifecycles,
             last_retail_decisions,
             last_retail_order_events,
+            desk_book_mirror,
+            runtime_desk_serial_cursors,
             #[cfg(feature = "simulation-diagnostics")]
             npc_decision_traces,
             #[cfg(feature = "simulation-diagnostics")]
             causal,
             attention_scheduler,
-            company_system,
-            corporate_actions,
+            runtime_account_undo: _,
+            runtime_account_undo_ids: _,
+            runtime_attention_undo: _,
+            runtime_attention_undo_ids: _,
+            runtime_heap_undo: _,
+            runtime_belief_undo: _,
+            runtime_belief_undo_ids: _,
+            runtime_retail_undo: _,
+            runtime_retail_undo_ids: _,
+            runtime_history_undo: _,
+            runtime_history_undo_ids: _,
+            runtime_mirror_undo: _,
+            runtime_plans_undo: _,
+            runtime_envelope_undo: _,
+            runtime_lifecycles_undo: _,
+            runtime_retail_diag_undo: _,
+            company_registry,
+            operations,
+            groups,
+            closing,
             library,
             disclosures,
             plans,
             belief_participants,
             envelope_ledger,
             retail_projection_seen,
-            personal_trade_confirmations,
             next_receipt_base,
             next_order_id,
             tick,
             day,
             seq,
             civil_clock,
+            runtime_information_authority,
             urgency_policy,
         } = shadow;
-        self.retained_market_history = retained_market_history;
-        self.memberships = memberships;
-        self.pending_report_corrections = pending_report_corrections;
-        self.report_correction_operations = report_correction_operations;
+        // 专用析构线程（E7 复活路径）：旧权威值的析构整体移交池外线程，
+        // actor 只做字段交接。四个分页容器原先走 rayon 池内 par drop，
+        // 池外移交后也不再产生池交互。Copy 字段仍直接赋值。
         self.urgency_policy = urgency_policy;
-        self.setup = setup;
-        self.rng = rng;
+        defer_swap(&mut self.setup, setup, FieldId::Setup);
+        // 运行时费率快照随 shadow 原样回流（shadow 从权威克隆而来，二者恒相等；
+        // 会话外的静默改写在下一 tick 门禁被指纹比对拒绝）。
+        defer_swap(
+            &mut self.validated_config,
+            validated_config,
+            FieldId::ValidatedConfig,
+        );
+        defer_swap(&mut self.stocks, stocks, FieldId::Stocks);
+        defer_swap(&mut self.rng, rng, FieldId::Rng);
         self.seed = seed;
-        self.markets = markets;
-        self.accounts.replace_and_drop_parallel(accounts);
-        self.history_reads.replace_and_drop_parallel(history_reads);
-        self.price_history = price_history;
-        self.market_minute_closes = market_minute_closes;
-        self.candle_book = candle_book;
-        self.auction_orders = auction_orders;
-        self.pending_player = pending_player;
-        self.pending_npc = pending_npc;
-        self.ingress_receipt_cursors = ingress_receipt_cursors;
-        self.npc_attention.replace_and_drop_parallel(npc_attention);
-        self.retail_experience
-            .replace_and_drop_parallel(retail_experience);
-        self.parent_orders = parent_orders;
-        self.pending_plan_events = pending_plan_events;
-        self.npc_order_lifecycles = npc_order_lifecycles;
-        self.last_retail_decisions = last_retail_decisions;
-        self.last_retail_order_events = last_retail_order_events;
+        defer_swap(&mut self.markets, markets, FieldId::Markets);
+        defer_swap(&mut self.accounts, accounts, FieldId::Accounts);
+        defer_swap(
+            &mut self.history_reads,
+            history_reads,
+            FieldId::HistoryReads,
+        );
+        defer_swap(
+            &mut self.price_history,
+            price_history,
+            FieldId::PriceHistory,
+        );
+        defer_swap(
+            &mut self.market_minute_closes,
+            market_minute_closes,
+            FieldId::MarketMinuteCloses,
+        );
+        defer_swap(&mut self.candle_book, candle_book, FieldId::CandleBook);
+        defer_swap(
+            &mut self.pending_player,
+            pending_player,
+            FieldId::PendingPlayer,
+        );
+        defer_swap(
+            &mut self.ingress_receipt_cursors,
+            ingress_receipt_cursors,
+            FieldId::IngressReceiptCursors,
+        );
+        defer_swap(
+            &mut self.npc_attention,
+            npc_attention,
+            FieldId::NpcAttention,
+        );
+        defer_swap(
+            &mut self.retail_experience,
+            retail_experience,
+            FieldId::RetailExperience,
+        );
+        defer_swap(
+            &mut self.npc_order_lifecycles,
+            npc_order_lifecycles,
+            FieldId::NpcOrderLifecycles,
+        );
+        defer_swap(
+            &mut self.last_retail_decisions,
+            last_retail_decisions,
+            FieldId::LastRetailDecisions,
+        );
+        defer_swap(
+            &mut self.last_retail_order_events,
+            last_retail_order_events,
+            FieldId::LastRetailOrderEvents,
+        );
+        // Sol 五轮修复：runtime 缓存域交接——desk 簿镜像与序号游标缓存
+        // 此前只解构不赋回（shadow 新值被丢弃、authority 保留旧值；
+        // runtime step 原地安装不经此边界故未显红——红证
+        // sol5th-red-commit.txt：left [5] right [9]）。直接赋值（与
+        // seed/tick 先例一致——不扩 FieldId/COMMIT_FIELD_EXPECTED 清单）。
+        // 缓存域清单核对（Sol 要求）：undo 槽位（account/attention/heap/
+        // belief/retail/history）为逐拍回滚产物、有意丢弃（`: _`）；
+        // retail_projection_seen/next_receipt_base 已有交接；镜像+游标
+        // 即全部需交接的 runtime 缓存域。
+        self.desk_book_mirror = desk_book_mirror;
+        self.runtime_desk_serial_cursors = runtime_desk_serial_cursors;
         #[cfg(feature = "simulation-diagnostics")]
         {
-            self.npc_decision_traces = npc_decision_traces;
-            self.causal = causal;
+            defer_swap(
+                &mut self.npc_decision_traces,
+                npc_decision_traces,
+                FieldId::NpcDecisionTraces,
+            );
+            defer_swap(&mut self.causal, causal, FieldId::Causal);
         }
-        self.attention_scheduler = attention_scheduler;
-        self.company_system = company_system;
-        self.corporate_actions = corporate_actions;
-        self.library = library;
-        self.disclosures = disclosures;
-        self.plans = plans;
-        self.belief_participants = belief_participants;
-        self.envelope_ledger = envelope_ledger;
-        self.retail_projection_seen = retail_projection_seen;
-        self.personal_trade_confirmations = personal_trade_confirmations;
+        defer_swap(
+            &mut self.attention_scheduler,
+            attention_scheduler,
+            FieldId::AttentionScheduler,
+        );
+        defer_swap(
+            &mut self.company_registry,
+            company_registry,
+            FieldId::CompanyRegistry,
+        );
+        defer_swap(&mut self.operations, operations, FieldId::Operations);
+        defer_swap(&mut self.groups, groups, FieldId::Groups);
+        defer_swap(&mut self.closing, closing, FieldId::Closing);
+        defer_swap(&mut self.library, library, FieldId::Library);
+        defer_swap(&mut self.disclosures, disclosures, FieldId::Disclosures);
+        defer_swap(&mut self.plans, plans, FieldId::Plans);
+        defer_swap(
+            &mut self.belief_participants,
+            belief_participants,
+            FieldId::BeliefParticipants,
+        );
+        defer_swap(
+            &mut self.envelope_ledger,
+            envelope_ledger,
+            FieldId::EnvelopeLedger,
+        );
+        defer_swap(
+            &mut self.retail_projection_seen,
+            retail_projection_seen,
+            FieldId::RetailProjectionSeen,
+        );
         self.next_receipt_base = next_receipt_base;
         self.next_order_id = next_order_id;
         self.tick = tick;
         self.day = day;
         self.seq = seq;
-        self.civil_clock = civil_clock;
+        defer_swap(&mut self.civil_clock, civil_clock, FieldId::CivilClock);
+        // Sol 六审段 1.3：运行时权威标志随 shadow 交接（Copy 直赋——
+        // 与 seed/tick 先例同式，不扩 FieldId/COMMIT_FIELD_EXPECTED）。
+        self.runtime_information_authority = runtime_information_authority;
     }
 }
 
@@ -7560,10 +5437,326 @@ impl CommittableSessionState {
 mod committable_state_tests {
     use super::*;
 
+    /// Sol 五轮修复：commit_from 游标/镜像交接——shadow 期间演进的
+    /// runtime 缓存域（desk 序号游标、簿镜像）提交时不得丢弃（此前
+    /// 只解构不赋回，authority 保留旧值；runtime step 原地安装不经此
+    /// 边界故未显红——shadow 边界的直接锚）。镜像缺席（瞬态缺席拍）
+    /// 时游标缓存仍须跨 shadow/commit 保留。
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn sol5r_commit_from_transfers_runtime_cache_domains() {
+        let mut session = GameSession::new(
+            npc_working_quote_tests::retail_quote_setup(),
+            4242,
+        )
+        .expect("会话构造");
+        // 基线：缓存游标=5，镜像缺席（瞬态缺席静止点形态）。
+        session.state.runtime_desk_serial_cursors = vec![5];
+        assert!(session.state.desk_book_mirror.is_empty());
+        let mut shadow = session.state.clone_for_shadow().expect("shadow 克隆");
+        // shadow 期间游标演进到 9、镜像建立（install 段形态）。
+        shadow.runtime_desk_serial_cursors = vec![9];
+        shadow.desk_book_mirror.insert(
+            StockId(0),
+            DeskBookMirror {
+                orders: Vec::new(),
+                last_price: crate::money::Money::from_cents(1000),
+                public_cutoff_serial: 0,
+                next_serial: 9,
+            },
+        );
+        session.state.commit_from(shadow);
+        assert_eq!(
+            session.state.runtime_desk_serial_cursors,
+            vec![9],
+            "游标缓存必须跨 shadow/commit 交接（不丢弃 shadow 新值）"
+        );
+        assert_eq!(
+            session.state.desk_book_mirror[&StockId(0)].next_serial,
+            9,
+            "镜像（含 next_serial）必须跨 shadow/commit 交接"
+        );
+        // save 静止点游标=缓存值（镜像缺席场景的兜底链）。
+        let save = session.save().expect("存档");
+        assert_eq!(
+            save.book_next_sequences[&StockId(0)],
+            9,
+            "镜像缺席时 save 游标由会话缓存承载"
+        );
+    }
+
     fn fatal(description: &str) -> StepFatal {
         StepFatal::InvariantViolation {
             description: description.to_owned(),
             location: "committable_state_tests".to_owned(),
+        }
+    }
+
+    /// 观察真实成功 step 的移交值与实际 Job，不依赖其他实例的累计计数。
+    /// 裁决 (d)（逐字段 defer_swap）形态：旧状态以完整字段 Job 集离开 commit 关键路径。
+    /// 原 #23 断言「恰一个完整 CommittableSessionState Job（携带 (tick,cash)）」属被
+    /// 否决的 replace 形态，随该形态失效（leader 裁决 2026-10-10 登记项）；本版以字段
+    /// Job 等价覆盖其意图：字段集完整（≥30 Job）、旧状态真实（旧 AccountBook 携带步前
+    /// 现金）、Arc lease 恰一次释放、drain 后无残留。
+    /// 覆盖局限（Astra 登记）：Job 在测试线程手动执行（受控 backend），本测试自身
+    /// 不能证明执行线程在池外——池外专用线程路径由 deferred_drop 测试组的
+    /// defer_runs_on_dedicated_thread_and_counts（真实 backend）覆盖。
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn successful_step_transfers_one_complete_old_state_and_releases_it_once() {
+        // D5 pin+登记（旧管线专有机制）：defer_swap/Job 计数=旧管线关键
+        // 路径的旧状态转移机制（runtime 无对应面——std-thread 所有权
+        // 模型无 tick shadow 交换）。等价锚：翻转批 batch1-5 的 tick/
+        // 账户/事件对拍承载权威等价；本机制面在 runtime 不存在，非
+        // 未迁移缺口。
+        if crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 719).unwrap();
+        let before_tick = session.state.tick;
+        let before_cash = session.state.accounts[&AccountId(0)].cash();
+        let owners = Arc::strong_count(&session.state.company_registry);
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let evidence = observed.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+        deferred_drop::controlled::with_backend(
+            sender,
+            move |value| {
+                evidence.borrow_mut().push((
+                    value.downcast_ref::<CommittableSessionState>().is_some(),
+                    value
+                        .downcast_ref::<AccountBook>()
+                        .map(|old| old[&AccountId(0)].cash()),
+                ));
+            },
+            || session.step().unwrap(),
+        );
+        let observed = observed.borrow();
+        assert!(
+            observed.len() >= 29,
+            "旧状态必须以完整字段集离开关键路径（当前字段表 32 个 defer_swap；批四删除 PendingNpc），实际 {} 个 Job",
+            observed.len()
+        );
+        assert!(
+            observed.iter().all(|(whole, _)| !*whole),
+            "裁决 (d)：移交单位是字段 Job，不得出现整状态 Job"
+        );
+        let old_cash_jobs: Vec<_> = observed.iter().filter_map(|&(_, cash)| cash).collect();
+        assert_eq!(
+            old_cash_jobs,
+            vec![before_cash],
+            "恰一个旧 AccountBook Job，且必须携带步前现金"
+        );
+        assert_eq!(session.state.tick, before_tick + 1);
+        assert_eq!(
+            Arc::strong_count(&session.state.company_registry),
+            owners + 1,
+            "未执行的 company_registry 字段 Job 必须仍持有真实旧状态 Arc"
+        );
+        let jobs: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(jobs.len(), observed.len(), "全部字段 Job 必须成功入队");
+        for job in jobs {
+            job();
+        }
+        assert_eq!(
+            Arc::strong_count(&session.state.company_registry),
+            owners,
+            "旧状态的 Arc lease 必须恰一次释放"
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn failed_step_does_not_transfer_authority_to_drop_backend() {
+        // D5 pin+登记（旧管线专有机制）：defer_swap/Job 计数=旧管线关键
+        // 路径的旧状态转移机制（runtime 无对应面——std-thread 所有权
+        // 模型无 tick shadow 交换）。等价锚：翻转批 batch1-5 的 tick/
+        // 账户/事件对拍承载权威等价；本机制面在 runtime 不存在，非
+        // 未迁移缺口。
+        if crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 720).unwrap();
+        let before = session.business_state_hash().unwrap();
+        let revision = session.external_revision();
+        session.post_shadow_failure = Some(fatal("controlled post-shadow failure"));
+        let attempts = Rc::new(RefCell::new(0));
+        let evidence = attempts.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+        let result = deferred_drop::controlled::with_backend(
+            sender,
+            move |_| *evidence.borrow_mut() += 1,
+            || session.step(),
+        );
+        assert!(result.is_err());
+        assert_eq!(*attempts.borrow(), 0);
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+        assert_eq!(session.business_state_hash().unwrap(), before);
+        assert_eq!(session.external_revision(), revision);
+        assert!(session.poison.is_some());
+    }
+
+    /// 64 条是 Job 数上限而不是字节上限；用 65 次连续 commit 实测受控 backlog 与 drain。
+    /// 裁决 (d) 形态：每次 commit 移交一个完整字段 Job 集（K≥30），队列容量语义不变。
+    /// 原 #23 的「每旧 State 恰一个 Job + State 本体字节记账」断言属被否决的 replace
+    /// 形态，随该形态失效（leader 裁决 2026-10-10 登记项）；字节证据改为最重字段
+    /// （npc_order_lifecycles，4096 条/次）容量记账 + 全字段 Job 计数。
+    /// 覆盖局限（Astra 登记）：Job 在测试线程手动 drain，本测试自身不能证明执行
+    /// 线程在池外——同上，由真实 backend 的专用线程测试覆盖。
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn complete_state_backlog_is_bounded_and_full_queue_releases_inline() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 721).unwrap();
+        session.state.npc_order_lifecycles = (0..4096)
+            .map(|id| NpcOrderLifecycle {
+                account: AccountId(1),
+                code: StockId(0),
+                order_id: OrderId(id),
+                placed_market_minute: 0,
+                expires_market_minute: 100,
+            })
+            .collect();
+        let baseline_owners = Arc::strong_count(&session.state.company_registry);
+        let observed_jobs = Rc::new(RefCell::new(0_usize));
+        let counter = observed_jobs.clone();
+        let lifecycle_bytes = Rc::new(RefCell::new(Vec::<usize>::new()));
+        let lifecycles = lifecycle_bytes.clone();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(64);
+        deferred_drop::controlled::with_backend(
+            sender,
+            move |value| {
+                *counter.borrow_mut() += 1;
+                if let Some(old) = value.downcast_ref::<Vec<NpcOrderLifecycle>>() {
+                    lifecycles
+                        .borrow_mut()
+                        .push(old.capacity() * std::mem::size_of::<NpcOrderLifecycle>());
+                }
+            },
+            || {
+                for _ in 0..65 {
+                    let shadow = session.clone_for_tick_shadow().unwrap();
+                    session.commit_tick_shadow(shadow);
+                }
+            },
+        );
+        let total = *observed_jobs.borrow();
+        assert_eq!(total % 65, 0, "每次 commit 的字段 Job 数必须一致");
+        let per_commit = total / 65;
+        assert!(
+            per_commit >= 29,
+            "每次 commit 必须移交完整字段集（≥29 Job；字段表 32——批四删除 PendingNpc），实际 {per_commit}"
+        );
+        assert_eq!(
+            lifecycle_bytes.borrow().len(),
+            65,
+            "65 次 commit 每次恰一个 lifecycle 字段 Job"
+        );
+        assert!(
+            lifecycle_bytes
+                .borrow()
+                .iter()
+                .all(|&bytes| bytes >= 4096 * std::mem::size_of::<NpcOrderLifecycle>()),
+            "旧 lifecycle 容器必须完整移交（4096 条容量）"
+        );
+        let jobs: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(
+            jobs.len(),
+            64,
+            "积压上界=队列容量：65×{per_commit} 个 Job 中只有 64 个留在队列"
+        );
+        let enqueued = jobs.len();
+        let inline_released = total - enqueued;
+        assert!(inline_released >= 1, "满队列后其余 Job 必须就地释放");
+        let before_drain = Arc::strong_count(&session.state.company_registry);
+        assert!(
+            before_drain > baseline_owners && before_drain <= baseline_owners + 64,
+            "未析构旧 Arc 有界（≤队列容量 64）且非空"
+        );
+        // Astra 小修 a)：65 次尝试的 lifecycle 容量总计是"移交总量"而非"队列保留量"
+        // （受控队列只持有最先入队的 64 个字段 Job，其中含 ~2 份 lifecycle Job）。
+        let lifecycle_transferred_bytes_total: usize = lifecycle_bytes.borrow().iter().sum();
+        let drain_start = std::time::Instant::now();
+        for job in jobs {
+            job();
+        }
+        let drain_ns = drain_start.elapsed().as_nanos();
+        assert_eq!(
+            Arc::strong_count(&session.state.company_registry),
+            baseline_owners,
+            "drain 后旧状态必须完全析构，无残留"
+        );
+        println!(
+            "{}",
+            serde_json::json!({"commits":65,"jobs_per_commit":per_commit,"attempted_jobs":total,"enqueued":enqueued,"inline":inline_released,"pending_before_drain":enqueued,"pending_after_drain":0,"lifecycle_transferred_bytes_total":lifecycle_transferred_bytes_total,"transferred_bytes_scope":"65 次 lifecycle 尝试容量总计（非队列保留量：队列仅持最先入队的 64 个字段 Job，含 ~2 份 lifecycle）","drain_ns":drain_ns})
+        );
+    }
+
+    /// 修复1（Luna：CommitField 生产路径可达性）+ 修复2升级（Astra：字段集合级
+    /// 完整性，取代纯计数绊线）。走真实 commit_from→defer_swap 路径断言：
+    /// ①JobKind 分类为 CommitField 且计数 == COMMIT_FIELD_EXPECTED 全集大小；
+    /// ②per-FieldId 计数的**集合相等**：一次 commit 的观测字段多重集恰为期望全集
+    /// 每项一次——任何单字段 defer_swap→直接赋值的回退（反例：把 markets 改回
+    /// `self.markets = markets;`，重容器回 commit 路径同步析构）必然红：Markets
+    /// 的 per-FieldId 增量为 0 ≠ 1；纯计数绊线可被"删一个+换一个"绕过，集合
+    /// 相等不能（被删字段的计数缺失即红）。给结构体加字段而不更新
+    /// COMMIT_FIELD_EXPECTED 同样红（新字段观测到、期望集没有）。红绿反例
+    /// 证据见 logs/red-green-astra-counterexample-{red,green}.log。
+    /// ③CommitState 增量必须为 0（裁决 (d)：逐字段形态不存在整状态移交）。
+    /// 期望集随 cfg 条件化（默认 33 / simulation-diagnostics 35，与 commit_from
+    /// 条件 swap 对齐——Astra 增量四复检修复1）。已知盲区与如实边界见 FieldId
+    /// 注释 b/c：自报标签可被错标绕过、绕过 defer_swap 的直接赋值新字段不被拦。
+    /// 运行现状：verification-harness+simulation-diagnostics 同开在本链树上因
+    /// 既有 simdiag 编译债务（16 处，全部位于 simdiag 专属代码，见增量二登记）
+    /// 无法构建，该组合的绊线执行验证待该债务修复后补（logs/
+    /// simdiag-both-features-check.log 为本轮实测证据）。
+    /// 运行口径：本测试读全局 METRICS 的 snapshot（ledger 派生 by_kind），
+    /// 必须以独立过滤运行（cargo test -p engine --lib --features
+    /// verification-harness verify_metrics_classifies）：同模块的
+    /// producer_registration_pairs_and_underflow_exit_faults_explicitly 会按
+    /// 预期语义对全局台账落 sticky fault（code=5，加固冻结 limits 登记项），
+    /// 同进程并发/先后运行都会使 snapshot 永久 Err，与本测试的正确性无关。
+    #[test]
+    #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
+    fn verify_metrics_classifies_real_defer_swap_fields_as_commit_field() {
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 723).unwrap();
+        let before = verify_metrics::snapshot().expect("计量台账一致");
+        session.step().unwrap();
+        let after = verify_metrics::snapshot().expect("计量台账一致");
+        let classified = after.by_kind[JobKind::CommitField as usize].registered
+            - before.by_kind[JobKind::CommitField as usize].registered;
+        assert_eq!(
+            classified,
+            COMMIT_FIELD_EXPECTED.len() as u64,
+            "修复1：真实 defer_swap 路径必须全部计量为 CommitField"
+        );
+        let whole_states = after.by_kind[JobKind::CommitState as usize].registered
+            - before.by_kind[JobKind::CommitState as usize].registered;
+        assert_eq!(whole_states, 0, "裁决 (d)：不得出现整状态 Job");
+        for expected in COMMIT_FIELD_EXPECTED {
+            let delta = after.by_field[expected as usize] - before.by_field[expected as usize];
+            assert_eq!(
+                delta, 1,
+                "修复2升级：字段 {expected:?} 的移交计数必须恰为 1（集合级完整性绊线）"
+            );
         }
     }
 
@@ -7575,7 +5768,7 @@ mod committable_state_tests {
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::Cancel {
-                    code: StockCode("600888".to_owned()),
+                    code: StockId(0),
                     id: OrderId(101),
                 },
             )
@@ -7602,12 +5795,21 @@ mod committable_state_tests {
     fn state_commit_installs_candidate_facts_and_keeps_authority_hooks() {
         let mut session =
             GameSession::new(npc_working_quote_tests::retail_quote_setup(), 718).unwrap();
+        session.shared_ingress();
+        session
+            .revision
+            .store(17, std::sync::atomic::Ordering::Relaxed);
+        let original_allocation = session.fresh_initial_allocation;
         let mut shadow = session.clone_for_tick_shadow().unwrap();
+        shadow
+            .revision
+            .store(99, std::sync::atomic::Ordering::Relaxed);
+        shadow.fresh_initial_allocation = !original_allocation;
         shadow
             .enqueue_player_intent(
                 AccountId(0),
                 Intent::Cancel {
-                    code: StockCode("600888".to_owned()),
+                    code: StockId(0),
                     id: OrderId(102),
                 },
             )
@@ -7618,7 +5820,7 @@ mod committable_state_tests {
             .last_retail_order_events
             .push(RetailOrderDiagnosticEvent::Canceled {
                 account: AccountId(1),
-                code: StockCode("600888".to_owned()),
+                code: StockId(0),
                 order_id: OrderId(103),
                 remaining_qty: 100,
             });
@@ -7630,6 +5832,10 @@ mod committable_state_tests {
 
         session.commit_tick_shadow(shadow);
 
+        // ingress 的具体 fork/cutoff/receipt 不重不丢由 shared_ingress 的真实输入
+        // 测试验证；这里只断言外层 authority 的 revision/生命周期/故障钩子未被替换。
+        assert_eq!(session.external_revision(), 17);
+        assert_eq!(session.fresh_initial_allocation, original_allocation);
         assert_eq!(session.poison, Some(fatal("preserved poison")));
         assert_eq!(session.injected_failure, Some(fatal("preserved injection")));
         assert_eq!(
@@ -7644,4 +5850,39 @@ mod committable_state_tests {
             expected
         );
     }
+
+    /// 后台创建失败是性能退化，不是交易提交失败：真实 step 成功、authority 安装完整。
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn real_step_commits_successfully_when_drop_thread_cannot_spawn() {
+        let mut session =
+            GameSession::new(npc_working_quote_tests::retail_quote_setup(), 720).unwrap();
+        let before_tick = session.tick();
+        let before_cash = session.state.accounts[&AccountId(0)].cash();
+        let (result, degradation) =
+            deferred_drop::controlled::with_failed_backend(Some(11), || session.step());
+        assert!(result.is_ok(), "defer 退化不能把已提交 tick 变成失败");
+        assert_eq!(session.tick(), before_tick + 1);
+        assert_eq!(session.state.accounts[&AccountId(0)].cash(), before_cash);
+        assert!(session.poison.is_none());
+        assert_eq!(
+            degradation,
+            Some(DeferredDropDegradation::SpawnFailed { os_errno: Some(11) })
+        );
+    }
+}/// D5 attention：desk 簿镜像的单股条目（瞬态——install 段刷新）。
+#[derive(Clone, Debug, Default)]
+pub struct DeskBookMirror {
+    /// 在途单事实（owner/方向/价/余量/desk 序号/累计成交额/累计成交量
+    /// ——Sol 五审件 1：真实成交量贯穿，价优下不可由成交额反推）。
+    pub orders: Vec<(AccountId, Side, Money, u32, u64, i64, u32)>,
+    /// 最新价（desk 广播）。
+    pub last_price: Money,
+    /// 收盘竞价公开截点（老单 serial<截点公开；连续段=0）。
+    pub public_cutoff_serial: u64,
+    /// desk 序号游标（真实 next_serial——空簿也保留已耗序号；Sol 四轮
+    /// 修复：save 的 book_next_sequences 权威源，不再从存活单重算）。
+    pub next_serial: u64,
 }
+
+

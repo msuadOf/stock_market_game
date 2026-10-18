@@ -1,17 +1,18 @@
+use super::fill_fact::{derive_refs, FillFact, FillFactView};
 use super::retail_projection::{
-    project_retail_receipts, RetailProjectionError, RetailProjectionInput, RetailProjectionSeen,
-    RetailReceiptEvent,
+    canonical_unseen_receipts, project_retail_receipts, RetailProjectionError,
+    RetailProjectionInput, RetailProjectionSeen, RetailReceiptEvent,
 };
 use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, FeeComponents,
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
-    ResVec,
+    ResVec, StepFatal,
 };
-use crate::{AccountId, Money, OrderId, Position, RetailExperienceState, Side, StockCode};
+use crate::{AccountId, Money, OrderId, Position, RetailExperienceState, Side, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
-fn code() -> StockCode {
-    StockCode("600001".to_owned())
+fn code() -> StockId {
+    StockId(0)
 }
 
 fn fill(index: u64, side: Side, order: u64, qty: u32, gross: i64) -> EnvelopeReceipt {
@@ -291,7 +292,7 @@ fn chained_buy_fill(
     }
 }
 
-fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
+fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockId, Position>> {
     BTreeMap::from([(
         AccountId(1),
         BTreeMap::from([(
@@ -313,9 +314,21 @@ fn retail_accounts() -> BTreeSet<AccountId> {
     BTreeSet::from([AccountId(1)])
 }
 
+/// 任务65 #11 后投影是 facts 的纯函数：测试内用同一唯一派生入口构造 facts
+/// （canonical-unseen 过滤仍由 canonical_unseen_receipts 承担，见重放门测试）。
+fn facts(receipts: &[EnvelopeReceipt]) -> Vec<FillFact> {
+    let canonical = canonical_unseen_receipts(receipts, &RetailProjectionSeen::default()).unwrap();
+    derive_refs(&canonical).unwrap()
+}
+
 #[test]
 fn duplicate_receipt_identity_is_seen_once_and_never_repeats_experience() {
     let receipt = fill(7, Side::Buy, 10, 100, 100_000);
+    // canonical 单遍去重：同一身份只保留一条（任务65 #11 起 seen 门在 settlement 边界）。
+    let batch = [receipt.clone(), receipt.clone()];
+    let canonical = canonical_unseen_receipts(&batch, &RetailProjectionSeen::default()).unwrap();
+    assert_eq!(canonical.len(), 1);
+
     let before = BTreeMap::new();
     let after = positions(100);
     let first = project_retail_receipts(RetailProjectionInput {
@@ -323,9 +336,8 @@ fn duplicate_receipt_identity_is_seen_once_and_never_repeats_experience() {
         retail_accounts: &retail_accounts(),
         positions_before: &before,
         positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[receipt.clone(), receipt.clone()],
+        fill_facts: FillFactView::all(&derive_refs(&canonical).unwrap()),
     })
     .unwrap();
 
@@ -335,20 +347,31 @@ fn duplicate_receipt_identity_is_seen_once_and_never_repeats_experience() {
         [RetailReceiptEvent::Filled { charged, .. }]
             if charged.commission == Money::from_cents(100)
     ));
-    assert_eq!(first.seen.len(), 1);
 
+    // 已消费身份再次出现时被 canonical 过滤为空批次：投影不重复经验。
+    let replay_batch = [receipt];
+    let replay = canonical_unseen_receipts(&replay_batch, &insert_seen_once(&canonical)).unwrap();
+    assert!(replay.is_empty());
     let second = project_retail_receipts(RetailProjectionInput {
         retail_experience: &first.retail_experience.clone().into(),
         retail_accounts: &retail_accounts(),
         positions_before: &before,
         positions_after: &after,
-        seen: &first.seen,
         market_minute: 10,
-        receipts: &[receipt],
+        fill_facts: FillFactView::all(&[]),
     })
     .unwrap();
     assert!(second.events.is_empty());
     assert_eq!(second.retail_experience, first.retail_experience);
+}
+
+/// 测试辅助：把 canonical 批按序插入空 seen，模拟 settlement 单遍后的重放保护。
+fn insert_seen_once(canonical: &[&EnvelopeReceipt]) -> RetailProjectionSeen {
+    let mut seen = RetailProjectionSeen::default();
+    for receipt in canonical {
+        seen.insert_test_identity(receipt.index, receipt.local_key.clone());
+    }
+    seen
 }
 
 #[test]
@@ -361,9 +384,8 @@ fn later_receipt_for_the_same_order_projects_the_later_partial_fill() {
         retail_accounts: &retail_accounts(),
         positions_before: &empty,
         positions_after: &after_first,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[first_receipt],
+        fill_facts: FillFactView::all(&facts(&[first_receipt])),
     })
     .unwrap();
 
@@ -373,9 +395,8 @@ fn later_receipt_for_the_same_order_projects_the_later_partial_fill() {
         retail_accounts: &retail_accounts(),
         positions_before: &after_first,
         positions_after: &after_second,
-        seen: &first.seen,
         market_minute: 11,
-        receipts: &[second_receipt],
+        fill_facts: FillFactView::all(&facts(&[second_receipt])),
     })
     .unwrap();
 
@@ -387,7 +408,8 @@ fn later_receipt_for_the_same_order_projects_the_later_partial_fill() {
             ..
         }]
     ));
-    assert_eq!(second.seen.len(), 2);
+    let (chain_first, chain_second) = buy_fill_chain(10);
+    assert_eq!(facts(&[chain_first, chain_second]).len(), 2);
 }
 
 #[test]
@@ -395,15 +417,15 @@ fn multiple_receipts_for_one_order_in_one_batch_produce_one_aggregated_experienc
     let (first_leg, second_leg) = buy_fill_chain(10);
     let before = BTreeMap::new();
     let after = positions(100);
+    let fill_facts = facts(&[second_leg, first_leg]);
 
     let result = project_retail_receipts(RetailProjectionInput {
         retail_experience: &retail(),
         retail_accounts: &retail_accounts(),
         positions_before: &before,
         positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[second_leg, first_leg],
+        fill_facts: FillFactView::all(&fill_facts),
     })
     .unwrap();
 
@@ -418,7 +440,7 @@ fn multiple_receipts_for_one_order_in_one_batch_produce_one_aggregated_experienc
         }] if *gross == Money::from_cents(100_000)
             && charged.commission == Money::from_cents(200)
     ));
-    assert_eq!(result.seen.len(), 2);
+    assert_eq!(fill_facts.len(), 2);
 }
 
 #[test]
@@ -432,9 +454,8 @@ fn unordered_receipts_project_in_buy_before_sell_order() {
         retail_accounts: &retail_accounts(),
         positions_before: &before,
         positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[sell, buy],
+        fill_facts: FillFactView::all(&facts(&[sell, buy])),
     })
     .unwrap();
 
@@ -454,25 +475,30 @@ fn unordered_receipts_project_in_buy_before_sell_order() {
 }
 
 #[test]
-fn non_fill_kinds_are_seen_and_explicitly_ignored() {
+fn non_fill_kinds_produce_no_fill_facts_and_are_explicitly_ignored() {
     let release = non_fill(1, ReceiptKind::Release);
     let reject = non_fill(2, ReceiptKind::Reject);
     let rollover = non_fill(3, ReceiptKind::Rollover);
     let empty = BTreeMap::new();
+
+    // 非 Fill 收据进入 seen（重放门）但不产生 fill 事实；投影保持无事件。
+    let batch = [rollover, reject, release];
+    let canonical = canonical_unseen_receipts(&batch, &RetailProjectionSeen::default()).unwrap();
+    assert_eq!(canonical.len(), 3);
+    let fill_facts = derive_refs(&canonical).unwrap();
+    assert!(fill_facts.is_empty());
 
     let result = project_retail_receipts(RetailProjectionInput {
         retail_experience: &retail(),
         retail_accounts: &retail_accounts(),
         positions_before: &empty,
         positions_after: &empty,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[rollover, reject, release],
+        fill_facts: FillFactView::all(&fill_facts),
     })
     .unwrap();
 
     assert!(result.events.is_empty());
-    assert_eq!(result.seen.len(), 3);
     assert_eq!(result.retail_experience, retail().to_map());
 }
 
@@ -481,21 +507,15 @@ fn malformed_fill_returns_a_typed_error_without_a_partial_result() {
     let good = fill(1, Side::Buy, 1, 100, 100_000);
     let mut bad = fill(2, Side::Buy, 2, 100, 100_000);
     bad.value_after = Money::ZERO;
-    let before = BTreeMap::new();
-    let after = positions(200);
 
-    let error = project_retail_receipts(RetailProjectionInput {
-        retail_experience: &retail(),
-        retail_accounts: &retail_accounts(),
-        positions_before: &before,
-        positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
-        market_minute: 10,
-        receipts: &[good, bad],
-    })
-    .unwrap_err();
+    // 边界前移（任务65 #11）：非法腿在 fill_fact 唯一派生入口被拒，无部分结果。
+    let error = derive_refs(&[&good, &bad]).unwrap_err();
 
-    assert!(error.to_string().contains("non-positive gross"));
+    assert!(matches!(
+        error,
+        StepFatal::InvariantViolation { ref description, .. }
+            if description.contains("成交额非正")
+    ));
 }
 
 #[test]
@@ -504,19 +524,10 @@ fn conflicting_payload_for_one_receipt_identity_is_rejected() {
     let mut conflicting = first.clone();
     conflicting.charged.commission = Money::from_cents(101);
     conflicting.charged_after.commission = Money::from_cents(101);
-    let before = BTreeMap::new();
-    let after = positions(100);
 
-    let error = project_retail_receipts(RetailProjectionInput {
-        retail_experience: &retail(),
-        retail_accounts: &retail_accounts(),
-        positions_before: &before,
-        positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
-        market_minute: 10,
-        receipts: &[first, conflicting],
-    })
-    .unwrap_err();
+    // canonical 重放门仍在 settlement 边界拒绝同 index 冲突 payload。
+    let batch = [first, conflicting];
+    let error = canonical_unseen_receipts(&batch, &RetailProjectionSeen::default()).unwrap_err();
 
     assert_eq!(
         error,
@@ -535,9 +546,8 @@ fn final_position_disagreement_is_a_typed_error() {
         retail_accounts: &retail_accounts(),
         positions_before: &before,
         positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[receipt],
+        fill_facts: FillFactView::all(&facts(&[receipt])),
     })
     .unwrap_err();
 
@@ -564,6 +574,7 @@ fn independent_retail_accounts_project_identically_with_one_or_four_workers() {
     )
     .unwrap();
     let receipts = [second, first];
+    let fill_facts = facts(&receipts);
     let accounts = BTreeSet::from([AccountId(1), AccountId(2)]);
     let experience = crate::session::account_paged_map::AccountPagedMap::<
         crate::RetailExperienceState,
@@ -582,21 +593,16 @@ fn independent_retail_accounts_project_identically_with_one_or_four_workers() {
         (AccountId(1), positions(100).remove(&AccountId(1)).unwrap()),
         (AccountId(2), positions(200).remove(&AccountId(1)).unwrap()),
     ]);
-    let seen = RetailProjectionSeen::default();
     let run = |workers| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .build()
-            .unwrap()
+        crate::compute::ComputeContext::from_workers(workers)
             .install(|| {
                 project_retail_receipts(RetailProjectionInput {
                     retail_experience: &experience,
                     retail_accounts: &accounts,
                     positions_before: &before,
                     positions_after: &after,
-                    seen: &seen,
                     market_minute: 10,
-                    receipts: &receipts,
+                    fill_facts: FillFactView::all(&fill_facts),
                 })
             })
     };
@@ -617,7 +623,7 @@ fn independent_retail_accounts_project_identically_with_one_or_four_workers() {
             ..
         }
     ));
-    assert_eq!(single.seen.len(), 2);
+    assert_eq!(fill_facts.len(), 2);
 }
 
 #[test]
@@ -642,9 +648,8 @@ fn retail_processing_error_precedes_another_accounts_final_position_error() {
         retail_accounts: &accounts,
         positions_before: &before,
         positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[first, second],
+        fill_facts: FillFactView::all(&facts(&[first, second])),
     })
     .unwrap_err();
     assert_eq!(
@@ -663,9 +668,8 @@ fn retail_order_average_truncates_fractional_cents_without_changing_gross() {
         retail_accounts: &retail_accounts(),
         positions_before: &BTreeMap::new(),
         positions_after: &positions(100),
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[receipt],
+        fill_facts: FillFactView::all(&facts(&[receipt])),
     })
     .unwrap();
 
@@ -681,7 +685,7 @@ fn retail_order_average_truncates_fractional_cents_without_changing_gross() {
 #[test]
 fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
     let account = AccountId(1);
-    let held = StockCode("600002".to_owned());
+    let held = StockId(1);
     let mut second = fill(2, Side::Buy, 11, 100, 100_000);
     second.envelope.stock = held.clone();
     second.local_key = ReceiptLocalKey::new(
@@ -695,12 +699,12 @@ fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
     .unwrap();
     let mut experience = RetailExperienceState::without_equity_reference();
     let unheld = (0..9)
-        .map(|index| StockCode(format!("watch-{index}")))
+        .map(|index| StockId(u32::MAX - 10 - index as u32))
         .collect::<Vec<_>>();
     for (index, stock) in unheld.iter().enumerate() {
         experience.observe_stock(stock, index as u64);
     }
-    let untouched = StockCode("600003".to_owned());
+    let untouched = StockId(2);
     experience
         .initialize_holding(
             &untouched,
@@ -726,9 +730,8 @@ fn retail_multiple_stock_fills_prune_only_unheld_watchlist_entries() {
         retail_accounts: &retail_accounts(),
         positions_before: &BTreeMap::new(),
         positions_after: &after,
-        seen: &RetailProjectionSeen::default(),
         market_minute: 10,
-        receipts: &[second, fill(1, Side::Buy, 10, 100, 100_000)],
+        fill_facts: FillFactView::all(&facts(&[second, fill(1, Side::Buy, 10, 100, 100_000)])),
     })
     .unwrap();
 
@@ -755,16 +758,15 @@ fn institutional_exit_missing_actual_fee_history_returns_no_patch() {
         .unwrap();
     let original = experience.clone();
     let experience = BTreeMap::from([(account, experience)]).into();
-    let seen = RetailProjectionSeen::default();
     let error = super::retail_projection::project_institutional_receipts(
+        &crate::ComputeContext::shared_default().unwrap(),
         RetailProjectionInput {
             retail_experience: &experience,
             retail_accounts: &retail_accounts(),
             positions_before: &positions(100),
             positions_after: &BTreeMap::new(),
-            seen: &seen,
             market_minute: 10,
-            receipts: &[fill(1, Side::Sell, 10, 100, 100_000)],
+            fill_facts: FillFactView::all(&facts(&[fill(1, Side::Sell, 10, 100, 100_000)])),
         },
         crate::experience::ExperienceMoment {
             civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
@@ -779,22 +781,19 @@ fn institutional_exit_missing_actual_fee_history_returns_no_patch() {
         if detail == "institutional exit is missing actual fee history")
     );
     assert_eq!(experience[&account], original);
-    assert!(seen.is_empty());
 }
 
 #[test]
 fn retail_sell_beyond_the_running_position_returns_no_patch() {
     let experience = retail();
     let original = experience.clone();
-    let seen = RetailProjectionSeen::default();
     let error = project_retail_receipts(RetailProjectionInput {
         retail_experience: &experience,
         retail_accounts: &retail_accounts(),
         positions_before: &positions(100),
         positions_after: &BTreeMap::new(),
-        seen: &seen,
         market_minute: 10,
-        receipts: &[fill(1, Side::Sell, 10, 200, 200_000)],
+        fill_facts: FillFactView::all(&facts(&[fill(1, Side::Sell, 10, 200, 200_000)])),
     })
     .unwrap_err();
 
@@ -805,23 +804,19 @@ fn retail_sell_beyond_the_running_position_returns_no_patch() {
         }
     );
     assert_eq!(experience, original);
-    assert!(seen.is_empty());
 }
 
 #[test]
-fn retail_zero_quantity_fill_reports_non_positive_gross() {
+fn retail_zero_quantity_fill_fails_closed_at_the_derivation_boundary() {
     let mut receipt = fill(1, Side::Buy, 10, 100, 100_000);
     receipt.qty_after = receipt.qty_before;
-    let error = project_retail_receipts(RetailProjectionInput {
-        retail_experience: &retail(),
-        retail_accounts: &retail_accounts(),
-        positions_before: &BTreeMap::new(),
-        positions_after: &positions(100),
-        seen: &RetailProjectionSeen::default(),
-        market_minute: 10,
-        receipts: &[receipt],
-    })
-    .unwrap_err();
+    // 边界前移（任务65 #11）：零数量 Fill 腿在唯一派生入口 fail closed，
+    // 与生产路径 fill_receipt 拒绝 fill_qty == 0 的既有防御一致。
+    let error = derive_refs(&[&receipt]).unwrap_err();
 
-    assert_eq!(error, RetailProjectionError::NonPositiveGross { index: 1 });
+    assert!(matches!(
+        error,
+        StepFatal::InvariantViolation { ref description, .. }
+            if description.contains("数量回退或为零")
+    ));
 }

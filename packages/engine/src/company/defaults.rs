@@ -88,13 +88,13 @@ struct CompanyRow {
 impl CompanyRow {
     fn into_config(self, as_of: CivilDate) -> Result<CompanyConfig, CompanyError> {
         let spec = CompanySpec {
-            id: CompanyId(self.id.to_string()),
+            code: self.id.to_string(),
             name: self.name.to_string(),
             industry: IndustryId(self.industry.to_string()),
             kind: self.kind,
             listed_stock: self.listed_stock.map(|code| StockCode(code.to_string())),
             issued_shares: self.issued_shares,
-            group_parent: self.group_parent.map(|id| CompanyId(id.to_string())),
+            group_parent: self.group_parent.map(|id| id.to_string()),
         };
         let mut counterparties = Vec::new();
         if let Some((lender_id, _)) = self.lender {

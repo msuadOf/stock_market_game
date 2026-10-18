@@ -1,0 +1,6 @@
+
+running 1 test
+test session::pipeline::npc_tick_preparation::t1_account_task_tests::sol4th_queue_before_first_step_executes_intents_exactly_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 0.37s
+

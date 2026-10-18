@@ -8,13 +8,13 @@ use crate::observation::{
     AccountRiskObservation, EqualWeightMarketObservation, PricePathObservation,
 };
 use crate::strategy::{MarketView, RetailStyle, Rng, SelfView, StrategyData};
-use crate::{RetailExperienceState, StockCode};
+use crate::{RetailExperienceState, StockId};
 pub(crate) use heuristics::apply_personal_analysis;
 
 /// 一个 tick 内可由所有 NPC 共享的只读市场背景。
 #[derive(Clone, Debug, PartialEq)]
 pub struct BehaviorMarketObservation {
-    pub price_paths: BTreeMap<StockCode, PricePathObservation>,
+    pub price_paths: BTreeMap<StockId, PricePathObservation>,
     pub thirty_minute_market: EqualWeightMarketObservation,
 }
 
@@ -57,7 +57,7 @@ pub enum DecisionReason {
 /// 判断层输出。数量是相对当前持仓的目标差额，正数买入、负数卖出。
 #[derive(Clone, Debug, PartialEq)]
 pub struct PositionDecision {
-    pub code: Option<StockCode>,
+    pub code: Option<StockId>,
     pub action: PositionAction,
     pub reason: DecisionReason,
     pub target_position_fraction: f64,

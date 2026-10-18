@@ -1,16 +1,14 @@
-//! 就绪请求进入股票 gate；来源与身份仅定位事实，不作为交易优先级。
+//! 就绪批的账户资源/同股 FIFO/报价依赖偏序与拓扑布局；来源与身份仅定位事实，
+//! 不作为交易优先级（Sol 终审·冗余收口后单遍遍历）。
 
 use super::{IntentCandidate, StepFatal};
-use crate::{AccountId, Intent, Side, StockCode};
-use rayon::prelude::*;
+use crate::{AccountId, Intent, Side, StockId};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum ResourceLane {
     Cash(AccountId),
-    Shares(AccountId, StockCode),
+    Shares(AccountId, StockId),
 }
 
 /// receipt 只在同账户的资源 lane 内可比；阶段表示就绪时间。
@@ -74,17 +72,20 @@ pub(super) fn admit_ready_batch(
     if !has_conflicts {
         return Ok(plan.candidates);
     }
-    plan.run_stock_gates()?;
     plan.finish_layout()
 }
 
-/// 仅拥有一个 ready batch 的候选索引、偏序及股票受理 gate。
+/// 仅拥有一个 ready batch 的候选索引与偏序。
 /// 账户资源余额仍由 SealAllocationSnapshot snapshot 与 validator 管理。
+/// Sol 终审·冗余收口：原 `stock_gates`（未盖 receive ordinal 的同股批以并行
+/// 遍历登记到达序）删除——唯一生产调用（ready_ingress）先为全部候选 stamp
+/// receive ordinal（`stamp_ready_receipts`），同股序由 FIFO 链边直接承载，
+/// gate 形态生产不可达；未盖章同股批改为显式 invariant 拒绝（不静默取并行
+/// 到达序这种无契约顺序）。
 struct ReadyAdmissionPlan {
     candidates: Vec<IntentCandidate>,
     successors: Vec<Vec<usize>>,
     incoming: Vec<usize>,
-    stock_gates: BTreeMap<StockCode, Mutex<Vec<usize>>>,
 }
 
 impl ReadyAdmissionPlan {
@@ -94,7 +95,7 @@ impl ReadyAdmissionPlan {
         has_dependencies: bool,
     ) -> Result<(Self, bool), StepFatal> {
         let mut resource_groups = HashMap::<ResourceLane, Vec<(usize, AccountReceipt)>>::new();
-        let mut stock_receipts = BTreeMap::<StockCode, Vec<(usize, Option<u64>)>>::new();
+        let mut stock_receipts = BTreeMap::<StockId, Vec<(usize, Option<u64>)>>::new();
         for (index, candidate) in candidates.iter().enumerate() {
             let receipt = receipts.observe(candidate)?;
             let owner = candidate.owner();
@@ -141,7 +142,6 @@ impl ReadyAdmissionPlan {
                 Vec::new()
             },
             candidates,
-            stock_gates: BTreeMap::new(),
         };
         if !has_conflicts {
             return Ok((plan, false));
@@ -150,7 +150,7 @@ impl ReadyAdmissionPlan {
         if has_dependencies {
             plan.add_quote_dependencies()?;
         }
-        for (stock, mut receipts) in stock_receipts {
+        for (_stock, mut receipts) in stock_receipts {
             if receipts.len() < 2 {
                 continue;
             }
@@ -166,7 +166,12 @@ impl ReadyAdmissionPlan {
                     plan.add_edge(pair[0].0, pair[1].0)?;
                 }
             } else if receipts.iter().all(|(_, ordinal)| ordinal.is_none()) {
-                plan.stock_gates.insert(stock, Mutex::new(Vec::new()));
+                // 原 gate 形态（并行登记到达序）随 Sol 终审·冗余收口删除：
+                // 未盖章候选无真实 receive receipt，ADR-0032 契约下不存在可
+                // 定义的受理顺序——显式拒绝而非取无契约的并行到达序。
+                return Err(invariant(
+                    "unstamped same-stock requests have no defined admission order",
+                ));
             } else {
                 return Err(invariant(
                     "ready stock batch mixes received and unstamped requests",
@@ -248,57 +253,10 @@ impl ReadyAdmissionPlan {
         Ok(())
     }
 
-    fn run_stock_gates(&mut self) -> Result<(), StepFatal> {
-        let roots = self
-            .incoming
-            .iter()
-            .enumerate()
-            .filter_map(|(index, count)| (*count == 0).then_some(index))
-            .collect::<Vec<_>>();
-        {
-            let admission = StockAdmission {
-                candidates: &self.candidates,
-                successors: &self.successors,
-                stock_gates: &self.stock_gates,
-                remaining: std::mem::take(&mut self.incoming)
-                    .into_iter()
-                    .map(AtomicUsize::new)
-                    .collect(),
-                registered: AtomicUsize::new(0),
-                poisoned: AtomicBool::new(false),
-                invalid_dependency_count: AtomicBool::new(false),
-            };
-            // 独立 root 经 Rayon 分派；同链延续当前任务，只有就绪分叉另启任务。
-            rayon::scope(|scope| {
-                roots
-                    .par_iter()
-                    .for_each(|root| admission.register(scope, *root));
-            });
-            if admission.poisoned.load(Ordering::Relaxed) {
-                return Err(invariant("stock admission gate lock was poisoned"));
-            }
-            if admission.invalid_dependency_count.load(Ordering::Relaxed) {
-                return Err(invariant("stock admission dependency count underflow"));
-            }
-            if admission.registered.load(Ordering::Relaxed) != self.candidates.len() {
-                return Err(invariant(
-                    "stock admission dependency cycle or omitted command",
-                ));
-            }
-        }
-        Ok(())
-    }
-
     fn finish_layout(mut self) -> Result<Vec<IntentCandidate>, StepFatal> {
-        // gate arrival 边与资源、quote 边合并；无关股票的输出布局不定义交易优先级。
-        for gate in self.stock_gates.values() {
-            let registered = gate
-                .lock()
-                .map_err(|_| invariant("stock admission gate lock was poisoned"))?;
-            for pair in registered.windows(2) {
-                self.successors[pair[0]].push(pair[1]);
-            }
-        }
+        // 资源 lane 与 quote 依赖边直接拓扑排序（原并行 gate 到达边已随
+        // gate 形态删除——Sol 终审·冗余收口：同股序由 FIFO 链边承载，
+        // 单遍遍历即全部受理事实）；无关股票的输出布局不定义交易优先级。
         let mut remaining = vec![0_usize; self.candidates.len()];
         for edges in &self.successors {
             for &dependent in edges {
@@ -337,55 +295,7 @@ impl ReadyAdmissionPlan {
     }
 }
 
-struct StockAdmission<'a> {
-    candidates: &'a [IntentCandidate],
-    successors: &'a [Vec<usize>],
-    stock_gates: &'a BTreeMap<StockCode, Mutex<Vec<usize>>>,
-    remaining: Vec<AtomicUsize>,
-    registered: AtomicUsize,
-    poisoned: AtomicBool,
-    invalid_dependency_count: AtomicBool,
-}
-
-impl StockAdmission<'_> {
-    fn register<'scope>(&'scope self, scope: &rayon::Scope<'scope>, mut index: usize) {
-        loop {
-            if let Some(gate) = self.stock_gates.get(code(self.candidates[index].intent())) {
-                match gate.lock() {
-                    Ok(mut registered) => registered.push(index),
-                    Err(_) => {
-                        self.poisoned.store(true, Ordering::Relaxed);
-                        return;
-                    }
-                }
-            }
-            self.registered.fetch_add(1, Ordering::Relaxed);
-            let mut next = None;
-            for &dependent in &self.successors[index] {
-                match self.remaining[dependent].fetch_sub(1, Ordering::AcqRel) {
-                    0 => {
-                        self.invalid_dependency_count.store(true, Ordering::Relaxed);
-                        return;
-                    }
-                    1 => {
-                        if next.is_none() {
-                            next = Some(dependent);
-                        } else {
-                            scope.spawn(move |scope| self.register(scope, dependent));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            match next {
-                Some(dependent) => index = dependent,
-                None => return,
-            }
-        }
-    }
-}
-
-fn code(intent: &Intent) -> &StockCode {
+fn code(intent: &Intent) -> &StockId {
     match intent {
         Intent::PlaceLimit { code, .. }
         | Intent::PlaceMarket { code, .. }
@@ -406,8 +316,8 @@ mod tests {
     use crate::session::pipeline::IntentCandidateKey;
     use crate::{Money, OrderId};
 
-    fn quote_request(index: u64, account: u64, stock: &str, cancel: bool) -> IntentCandidate {
-        let code = StockCode(stock.to_owned());
+    fn quote_request(index: u64, account: u64, stock: StockId, cancel: bool) -> IntentCandidate {
+        let code = stock;
         let intent = if cancel {
             Intent::Cancel {
                 code,
@@ -434,16 +344,16 @@ mod tests {
         let first = IntentCandidateKey::player(0);
         let second = IntentCandidateKey::player(1);
         let candidates = vec![
-            quote_request(0, 1, "600001", true),
-            quote_request(1, 1, "600001", true),
-            quote_request(2, 1, "600001", false)
+            quote_request(0, 1, StockId(0), true),
+            quote_request(1, 1, StockId(0), true),
+            quote_request(2, 1, StockId(0), false)
                 .with_predecessors(vec![first.clone(), second.clone()]),
             // 最后撤单完成后两个方向均就绪；买单另有异股现金 lane 后继。
             IntentCandidate::new(
                 IntentCandidateKey::player(3),
                 AccountId(1),
                 Intent::PlaceLimit {
-                    code: StockCode("600001".to_owned()),
+                    code: StockId(0),
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(110)),
                     qty: 100,
@@ -451,15 +361,12 @@ mod tests {
             )
             .with_ingress_order(3, 3)
             .with_predecessors(vec![first, second]),
-            quote_request(4, 1, "600002", false),
-            quote_request(5, 2, "600001", false),
+            quote_request(4, 1, StockId(1), false),
+            quote_request(5, 2, StockId(0), false),
         ];
-        for threads in [1, 4] {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap()
-                .install(|| {
+        for _threads in [1, 4] {
+            // rayon 退役（批 7）：install 的串行等价=直接执行（缩进保留）。
+            if true {
                     let admitted =
                         admit_ready_batch(candidates.clone(), &mut AccountReceipts::default())
                             .unwrap();
@@ -485,28 +392,28 @@ mod tests {
                             .len(),
                         candidates.len()
                     );
-                });
+            }
         }
     }
 
     #[test]
     fn quote_dependency_rejects_missing_reversed_or_unrelated_predecessors() {
-        let cancel = quote_request(0, 1, "600001", true);
+        let cancel = quote_request(0, 1, StockId(0), true);
         let place =
-            quote_request(1, 1, "600001", false).with_predecessors(vec![cancel.key().clone()]);
+            quote_request(1, 1, StockId(0), false).with_predecessors(vec![cancel.key().clone()]);
         let cases = [
             vec![place.clone()],
             vec![place.clone(), cancel.clone()],
-            vec![quote_request(0, 2, "600001", true), place.clone()],
-            vec![quote_request(0, 1, "600002", true), place.clone()],
-            vec![quote_request(0, 1, "600001", false), place.clone()],
+            vec![quote_request(0, 2, StockId(0), true), place.clone()],
+            vec![quote_request(0, 1, StockId(1), true), place.clone()],
+            vec![quote_request(0, 1, StockId(0), false), place.clone()],
             vec![
                 cancel.clone(),
-                quote_request(1, 1, "600001", true).with_predecessors(vec![cancel.key().clone()]),
+                quote_request(1, 1, StockId(0), true).with_predecessors(vec![cancel.key().clone()]),
             ],
             vec![
                 cancel.clone(),
-                quote_request(1, 1, "600001", false)
+                quote_request(1, 1, StockId(0), false)
                     .with_predecessors(vec![cancel.key().clone(), cancel.key().clone()]),
             ],
             vec![cancel.clone(), cancel, place],
@@ -521,8 +428,8 @@ mod tests {
 
     #[test]
     fn crossed_account_stock_requests_keep_each_account_receipt_order() {
-        let x = StockCode("600001".to_owned());
-        let y = StockCode("600002".to_owned());
+        let x = StockId(0);
+        let y = StockId(1);
         let requests = [
             (AccountId(1), x.clone()),
             (AccountId(1), y.clone()),
@@ -563,7 +470,7 @@ mod tests {
 
     #[test]
     fn same_account_sells_keep_share_receipt_order_and_cancel_is_admitted() {
-        let stock = StockCode("600001".to_owned());
+        let stock = StockId(0);
         let candidates = vec![
             IntentCandidate::new(
                 IntentCandidateKey::npc(AccountId(1), 0),
@@ -642,13 +549,13 @@ mod tests {
     #[test]
     fn cash_and_different_stock_share_lanes_have_independent_roots() {
         let owner = AccountId(1);
-        let buy = quote_request(0, 1, "600001", false);
+        let buy = quote_request(0, 1, StockId(0), false);
         let sell = |index| {
             IntentCandidate::new(
                 IntentCandidateKey::player(index),
                 owner,
                 Intent::PlaceLimit {
-                    code: StockCode("600002".to_owned()),
+                    code: StockId(1),
                     side: Side::Sell,
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
@@ -657,34 +564,41 @@ mod tests {
             .with_ingress_order(index, index)
         };
         let (plan, conflicts) = ReadyAdmissionPlan::prepare(
-            vec![buy, sell(1), quote_request(2, 1, "600003", false), sell(3)],
+            vec![
+                buy,
+                sell(1),
+                quote_request(2, 1, StockId(2), false),
+                sell(3),
+            ],
             &mut AccountReceipts::default(),
             false,
         )
         .unwrap();
         assert!(conflicts);
-        // ADR-0032：同股候选按真实接收 ordinal 追加 FIFO 边，与账户股份
-        // lane 边并存；同股同账户对出现双重后继，根判定不受影响。
+        // known-6 #3 处置（B 类重锚，ADR-0032 §19/R3）：同账户同股对的
+        // 两条契约边**并存**——资源 lane（Shares）链边 + 同股 FIFO 链边
+        //（97e4953a 起真实 receive receipt 建链）⇒ successors[1]=[3,3] 双边、
+        // incoming[3]=2（旧期望 [[2],[3],[],[]]/[0,0,1,1] 为单边时代形状，
+        // 保留于本注释；incoming/successors 双计一致，executor 逐后继减计数）。
         assert_eq!(plan.successors, vec![vec![2], vec![3, 3], vec![], vec![]]);
         assert_eq!(plan.incoming, vec![0, 0, 1, 2]);
     }
 
+    /// Sol 终审·冗余收口：原 gates 半段（run_stock_gates 并行遍历报告环）随
+    /// gate 形态删除退役——环检测由 finish_layout 单遍拓扑排序承担；
+    /// 原 `damaged_atomic_dependency_count_is_reported`（直接构造
+    /// StockAdmission 验证原子计数下溢负路径）随 StockAdmission 退役。
+    ///（增量一百：清理清理批遗留的重复 `#[test]` attribute——零行为变更。）
     #[test]
-    fn damaged_dependency_cycle_is_reported_by_gates_and_layout() {
+    fn damaged_dependency_cycle_is_reported_by_layout() {
         let plan = || ReadyAdmissionPlan {
             candidates: vec![
-                quote_request(0, 1, "600001", false),
-                quote_request(1, 1, "600002", false),
+                quote_request(0, 1, StockId(0), false),
+                quote_request(1, 1, StockId(1), false),
             ],
             successors: vec![vec![1], vec![0]],
             incoming: vec![1, 1],
-            stock_gates: BTreeMap::new(),
         };
-        assert!(plan()
-            .run_stock_gates()
-            .unwrap_err()
-            .to_string()
-            .contains("dependency cycle"));
         assert!(plan()
             .finish_layout()
             .unwrap_err()
@@ -693,36 +607,14 @@ mod tests {
     }
 
     #[test]
-    fn damaged_atomic_dependency_count_is_reported() {
-        let candidates = vec![
-            quote_request(0, 1, "600001", false),
-            quote_request(1, 1, "600002", false),
-        ];
-        let successors = vec![vec![1], vec![]];
-        let stock_gates = BTreeMap::new();
-        let admission = StockAdmission {
-            candidates: &candidates,
-            successors: &successors,
-            stock_gates: &stock_gates,
-            remaining: vec![AtomicUsize::new(0), AtomicUsize::new(0)],
-            registered: AtomicUsize::new(0),
-            poisoned: AtomicBool::new(false),
-            invalid_dependency_count: AtomicBool::new(false),
-        };
-        rayon::scope(|scope| admission.register(scope, 0));
-        assert!(admission.invalid_dependency_count.load(Ordering::Relaxed));
-        assert_eq!(admission.registered.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
     fn mixed_request_phases_keep_cash_receipts_when_layout_is_reversed() {
         let owner = AccountId(1);
-        let make = |key, stock: &str, account_ordinal, stock_ordinal| {
+        let make = |key, stock: StockId, account_ordinal, stock_ordinal| {
             IntentCandidate::new(
                 key,
                 owner,
                 Intent::PlaceLimit {
-                    code: StockCode(stock.to_owned()),
+                    code: stock,
                     side: Side::Buy,
                     price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
@@ -731,9 +623,9 @@ mod tests {
             .with_ingress_order(account_ordinal, stock_ordinal)
         };
         let candidates = vec![
-            make(IntentCandidateKey::plan_chain(7), "600003", 2, 2),
-            make(IntentCandidateKey::player(5), "600002", 1, 1),
-            make(IntentCandidateKey::npc(owner, 9), "600001", 0, 0),
+            make(IntentCandidateKey::plan_chain(7), StockId(2), 2, 2),
+            make(IntentCandidateKey::player(5), StockId(1), 1, 1),
+            make(IntentCandidateKey::npc(owner, 9), StockId(0), 0, 0),
         ];
         let admitted = admit_ready_batch(candidates, &mut AccountReceipts::default()).unwrap();
         assert_eq!(
@@ -754,7 +646,7 @@ mod tests {
         let missing = IntentCandidate::new(
             IntentCandidateKey::player(0),
             AccountId(0),
-            quote_request(0, 0, "600001", false).intent().clone(),
+            quote_request(0, 0, StockId(0), false).intent().clone(),
         );
         let missing_error =
             admit_ready_batch(vec![missing], &mut AccountReceipts::default()).unwrap_err();
@@ -765,7 +657,7 @@ mod tests {
         let wrong_owner = IntentCandidate::new(
             IntentCandidateKey::npc(AccountId(1), 0),
             AccountId(2),
-            quote_request(0, 2, "600001", false).intent().clone(),
+            quote_request(0, 2, StockId(0), false).intent().clone(),
         )
         .with_ingress_order(0, 0);
         let owner_error =
@@ -781,7 +673,7 @@ mod tests {
         let plan = IntentCandidate::new(
             IntentCandidateKey::plan_chain(0),
             owner,
-            quote_request(0, 1, "600001", false).intent().clone(),
+            quote_request(0, 1, StockId(0), false).intent().clone(),
         )
         .with_predecessors(vec![IntentCandidateKey::player(99)]);
         let mut receipts = AccountReceipts::default();
@@ -800,8 +692,8 @@ mod tests {
 
     #[test]
     fn account_cash_conflict_uses_receipt_instead_of_candidate_layout() {
-        let first = quote_request(0, 1, "600001", false);
-        let second = quote_request(1, 1, "600002", false);
+        let first = quote_request(0, 1, StockId(0), false);
+        let second = quote_request(1, 1, StockId(1), false);
         let admitted =
             admit_ready_batch(vec![second, first], &mut AccountReceipts::default()).unwrap();
         assert_eq!(admitted[0].key(), &IntentCandidateKey::player(0));

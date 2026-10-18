@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::session::decision_chain::PlanLifecycleAction;
+use crate::session::plan_continuation_domain::PlanContinuationDomain;
 #[cfg(feature = "simulation-diagnostics")]
 use crate::session::plan_execution::PlanCancelCause;
 use crate::session::plan_execution::PlanRouteOutcome;
@@ -10,8 +11,7 @@ use crate::session::plan_execution::PlanRouteOutcome;
 /// Parent orders, PlanBook, information acquisition and attention remain private execution state.
 pub(in crate::session) struct FrozenPlanChainObservation {
     accounts: account_book::AccountBook,
-    markets: BTreeMap<StockCode, Market>,
-    auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
+    markets: BTreeMap<StockId, Market>,
 }
 
 impl FrozenPlanChainObservation {
@@ -25,30 +25,32 @@ impl FrozenPlanChainObservation {
         Ok(Self {
             accounts,
             markets: session.state.markets.clone(),
-            auction_orders: session.state.auction_orders.clone(),
         })
     }
 
-    fn observe<T>(
+    /// 增量一百（ADR-0042 §10）：冻结容器交换只经
+    /// `PlanContinuationDomain::observe_frozen` 驱动——观察动作收到的是
+    /// 窄写域视图，continuation 代码不再接触 `&mut GameSession`。
+    /// 每个根与报价重用同一组报价过期后容器，不创建新的 allocation
+    /// snapshot；即使动作返回 typed 失败，也须归还这些容器（对称双交换
+    /// 由 `observe_frozen` 保证）。
+    pub(in crate::session) fn swap_session_containers(&mut self, session: &mut GameSession) {
+        std::mem::swap(&mut session.state.accounts, &mut self.accounts);
+        std::mem::swap(&mut session.state.markets, &mut self.markets);
+    }
+
+    /// 测试侧冻结容器检视（cfg(test)）：测试直接观察交换视图（账户现金/
+    /// 冻结订单簿等）；生产 continuation 一律经
+    /// `PlanContinuationDomain::observe_frozen`（增量一百收窄）。
+    #[cfg(test)]
+    pub(in crate::session) fn observe<T>(
         &mut self,
-        execution: &mut GameSession,
+        session: &mut GameSession,
         action: impl FnOnce(&mut GameSession) -> T,
     ) -> T {
-        // 每个根与报价重用同一组报价过期后容器，不创建新的 allocation snapshot。
-        // 即使动作返回 typed 失败，也须归还这些容器。
-        std::mem::swap(&mut execution.state.accounts, &mut self.accounts);
-        std::mem::swap(&mut execution.state.markets, &mut self.markets);
-        std::mem::swap(
-            &mut execution.state.auction_orders,
-            &mut self.auction_orders,
-        );
-        let result = action(execution);
-        std::mem::swap(
-            &mut execution.state.auction_orders,
-            &mut self.auction_orders,
-        );
-        std::mem::swap(&mut execution.state.markets, &mut self.markets);
-        std::mem::swap(&mut execution.state.accounts, &mut self.accounts);
+        self.swap_session_containers(session);
+        let result = action(session);
+        self.swap_session_containers(session);
         result
     }
 }
@@ -57,10 +59,10 @@ impl PlanChainOperationBatch {
     #[cfg(test)]
     pub(in crate::session) fn yield_adaptive_candidates(
         &mut self,
-        session: &mut GameSession,
+        domain: &mut PlanContinuationDomain<'_>,
         observation: &mut FrozenPlanChainObservation,
     ) -> Result<Vec<PlanChainCandidateBatch>, StepFatal> {
-        self.yield_adaptive_candidates_with_root_wait(session, observation, true, &BTreeSet::new())
+        self.yield_adaptive_candidates_after_capture_drain(domain, observation, &BTreeSet::new())
     }
 
     #[cfg(feature = "simulation-diagnostics")]
@@ -74,31 +76,31 @@ impl PlanChainOperationBatch {
     /// Drains independent roots until each account/stock has at most one command
     /// awaiting a typed result. Account-wide allocation still precedes quote
     /// generation; separate stocks can use those grants in the same ready batch.
-    pub(in crate::session) fn yield_adaptive_candidates_with_root_wait(
+    /// Sol 终审·冗余收口：执行期 root-wait 穿透删除——生产 root 全部在
+    /// capture 期 `drain_ready_accounts_at_capture` 闭环（含容量等待），
+    /// 本方法只消费已入队 operations（continuation 不重建 root）。root
+    /// 决策期的容量等待保留在 drain 内部；`AdaptiveYield::PendingCapacity`/
+    /// `blocking_roots` 穿透链（NextReady→FeedOutcome→drive 循环容量等待）
+    /// 已失去生产依赖，一并退役。yield 时 roots 非空=capture 未排空=显式
+    /// invariant 错误（防御：不再静默回落到执行期懒计算）。
+    pub(in crate::session) fn yield_adaptive_candidates_after_capture_drain(
         &mut self,
-        session: &mut GameSession,
+        domain: &mut PlanContinuationDomain<'_>,
         observation: &mut FrozenPlanChainObservation,
-        blocking_roots: bool,
-        unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
+        unfinished_routes: &BTreeSet<(AccountId, StockId)>,
     ) -> Result<Vec<PlanChainCandidateBatch>, StepFatal> {
         let mut ready = Vec::new();
         let mut deferred = VecDeque::new();
         loop {
             let Some(operation) = self.operations.pop_front() else {
-                if self.roots.is_empty() {
-                    break;
+                if !self.roots.is_empty() {
+                    return Err(route_invariant(
+                        "plan-chain roots exist at execution yield (must be drained at capture)",
+                    ));
                 }
-                // Once a route is ready, collect any other roots already complete
-                // without waiting for a slow, unrelated account.
-                let wait_for_root = blocking_roots && ready.is_empty();
-                if !observation.observe(session, |session| {
-                    self.prepare_ready_accounts(session, wait_for_root)
-                })? {
-                    break;
-                }
-                continue;
+                break;
             };
-            if self.operation_blocked(&operation, session, unfinished_routes)? {
+            if self.operation_blocked(&operation, domain, unfinished_routes)? {
                 deferred.push_back(operation);
                 continue;
             }
@@ -118,34 +120,28 @@ impl PlanChainOperationBatch {
                 | PlanChainOperation::AccountExecution { account, .. } => *account,
                 PlanChainOperation::QuotePlans(cursor) => cursor.account,
                 PlanChainOperation::Restructure { plan_id, .. }
-                | PlanChainOperation::Execute(PlanExecutionRequest { plan_id, .. }) => session
-                    .state
-                    .plans
+                | PlanChainOperation::Execute(PlanExecutionRequest { plan_id, .. }) => domain
+                    .plans()
                     .plan(*plan_id)
                     .expect("diagnostic operation plan exists")
                     .account(),
                 PlanChainOperation::ExecutionRoute(_) => unreachable!("route handled above"),
             };
             #[cfg(feature = "simulation-diagnostics")]
-            let trace_before = super::super::decision_chain::plan_trace_states(
-                trace_account,
-                &session.state.plans,
-            );
-            let mut plans = std::mem::take(&mut session.state.plans);
+            let trace_before =
+                super::super::decision_chain::plan_trace_states(trace_account, domain.plans());
             let progress = match operation {
                 PlanChainOperation::QuotePlans(mut cursor) => {
-                    session
-                        .synchronize_owned_plan_execution(&mut plans)
-                        .map_err(execution)?;
-                    let request = observation.observe(session, |session| {
-                        session.generate_next_plan_quote(&mut cursor, &plans, unfinished_routes)
+                    let request = domain.observe_frozen(observation, |domain| {
+                        domain.generate_next_plan_quote(&mut cursor, unfinished_routes)
                     });
                     if let Some(request) = request {
-                        let plan = plans
+                        let plan = domain
+                            .plans()
                             .plan(request.plan_id)
                             .map_err(|error| invariant(&error.to_string()))?;
                         if plan.active_child_order_id().is_some()
-                            || !session
+                            || !domain
                                 .plan_working_orders(plan.account(), plan.code())
                                 .is_empty()
                         {
@@ -178,8 +174,8 @@ impl PlanChainOperationBatch {
                         });
                     if !ready.is_empty() {
                         let mut generated = PlanChainOperationBatch::empty();
-                        let actions = observation.observe(session, |session| {
-                            session.collect_plan_lifecycle_actions(account, &ready, &market, &plans)
+                        let actions = domain.observe_frozen(observation, |domain| {
+                            domain.collect_plan_lifecycle_actions(account, &ready, &market)
                         });
                         for action in &actions {
                             if let PlanLifecycleAction::Restructure { code, .. }
@@ -194,13 +190,7 @@ impl PlanChainOperationBatch {
                                 }
                             }
                         }
-                        crate::session::decision_chain::apply_plan_lifecycle_actions(
-                            actions,
-                            session,
-                            &market,
-                            &mut plans,
-                            &mut generated,
-                        );
+                        domain.apply_plan_lifecycle_actions(actions, &market, &mut generated);
                         if !pending.is_empty() {
                             self.operations.push_front(PlanChainOperation::Lifecycle {
                                 account,
@@ -221,7 +211,8 @@ impl PlanChainOperationBatch {
                     event,
                 } => match child_order_id {
                     Some(order_id) => Some(PlanExecutionProgress::restructure_event(
-                        plans
+                        domain
+                            .plans()
                             .plan(plan_id)
                             .map_err(|error| invariant(&error.to_string()))?,
                         order_id,
@@ -229,44 +220,34 @@ impl PlanChainOperationBatch {
                         terminating,
                     )),
                     None => {
-                        plans
+                        domain
+                            .plans_mut()
                             .apply(plan_id, event)
                             .map_err(|error| invariant(&error.to_string()))?;
-                        if terminating {
-                            session.remove_linked_parent(plan_id);
-                        }
                         None
                     }
                 },
                 PlanChainOperation::AccountExecution { account, market } => {
-                    session
-                        .synchronize_owned_plan_execution(&mut plans)
-                        .map_err(execution)?;
-                    session.prune_plan_personal_memory(account, &plans);
-                    let cursor = observation.observe(session, |session| {
-                        session.prepare_classified_plan_quotes_for_account(
+                    domain.prune_plan_personal_memory(account);
+                    let cursor = domain.observe_frozen(observation, |domain| {
+                        domain.prepare_classified_plan_quotes(
                             account,
                             &market,
-                            &plans,
                             &self.existing_plan_ids,
                         )
                     });
                     if let Some(cursor) = cursor {
                         #[cfg(feature = "simulation-diagnostics")]
                         if let Some(result) = &cursor.grants {
-                            session.state.npc_decision_traces.enrich(
+                            domain.enrich_npc_decision_trace_constraints(
                                 account,
-                                session.state.tick,
-                                [],
-                                [],
-                                [],
                                 result.grants.iter().filter_map(|grant| {
                                     grant.constraint.map(|constraint| {
                                         format!("{:?}: {constraint:?}", grant.plan_id)
                                     })
                                 }),
                             );
-                            session.causal_record(
+                            domain.causal_record(
                                 crate::diagnostics::causal::CausalFactKind::Budget {
                                     account,
                                     available_cents: result.available_cash.cents(),
@@ -284,25 +265,19 @@ impl PlanChainOperationBatch {
                 }
                 // The execution adapter observes current working orders and parent facts,
                 // while its quote/allocation request was made from the frozen observation.
-                PlanChainOperation::Execute(request) => {
-                    session
-                        .synchronize_owned_plan_execution(&mut plans)
-                        .map_err(execution)?;
-                    Some(
-                        session
-                            .prepare_plan_observation(&plans, request)
-                            .map_err(execution)?,
-                    )
-                }
+                PlanChainOperation::Execute(request) => Some(
+                    domain
+                        .prepare_plan_observation(request)
+                        .map_err(execution)?,
+                ),
                 PlanChainOperation::ExecutionRoute(_) => unreachable!("route handled above"),
             };
             let progress = progress
-                .map(|progress| session.materialize_plan_progress(&mut plans, progress))
+                .map(|progress| domain.materialize_plan_progress(progress))
                 .transpose()
                 .map_err(execution)?;
             #[cfg(feature = "simulation-diagnostics")]
-            session.record_plan_trace_changes(trace_account, &trace_before, &plans);
-            session.state.plans = plans;
+            domain.record_plan_trace_changes(trace_account, &trace_before);
             self.append_progress(progress);
         }
         self.operations = deferred;
@@ -312,8 +287,8 @@ impl PlanChainOperationBatch {
     fn operation_blocked(
         &self,
         operation: &PlanChainOperation,
-        session: &GameSession,
-        unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
+        domain: &PlanContinuationDomain<'_>,
+        unfinished_routes: &BTreeSet<(AccountId, StockId)>,
     ) -> Result<bool, StepFatal> {
         Ok(match operation {
             PlanChainOperation::ExecutionRoute(route) => {
@@ -336,9 +311,8 @@ impl PlanChainOperationBatch {
             }
             PlanChainOperation::Restructure { plan_id, .. }
             | PlanChainOperation::Execute(PlanExecutionRequest { plan_id, .. }) => {
-                let plan = session
-                    .state
-                    .plans
+                let plan = domain
+                    .plans()
                     .plan(*plan_id)
                     .map_err(|error| invariant(&error.to_string()))?;
                 self.routes
@@ -348,12 +322,11 @@ impl PlanChainOperationBatch {
             // It must see prior lifecycle results before constructing the quote cursor.
             PlanChainOperation::AccountExecution { account, .. } => {
                 self.routes.pending_for_account(*account)
-                    || session
-                        .state
-                        .plans
+                    || domain
+                        .plans()
                         .active_plan_ids_for_account(*account)
                         .into_iter()
-                        .filter_map(|plan_id| session.state.plans.plan(plan_id).ok())
+                        .filter_map(|plan_id| domain.plans().plan(plan_id).ok())
                         .any(|plan| unfinished_routes.contains(&(*account, plan.code().clone())))
             }
         })
@@ -361,15 +334,15 @@ impl PlanChainOperationBatch {
 
     pub(in crate::session) fn install_accepted_submit_parents(
         &self,
-        session: &mut GameSession,
-        outcomes: &[(AccountId, StockCode, u64, PlanRouteOutcome)],
+        domain: &mut PlanContinuationDomain<'_>,
+        outcomes: &[(AccountId, StockId, u64, PlanRouteOutcome)],
     ) -> Result<(), StepFatal> {
         for (account, code, generation_index, outcome) in outcomes {
             let route = self
                 .routes
                 .pending_for_outcome(&(*account, code.clone()), *generation_index)?;
-            route
-                .install_accepted_submit_parent(session, outcome)
+            domain
+                .install_accepted_route(route, outcome)
                 .map_err(execution)?;
         }
         Ok(())
@@ -377,8 +350,8 @@ impl PlanChainOperationBatch {
 
     pub(in crate::session) fn resume_adaptive_candidates(
         &mut self,
-        session: &mut GameSession,
-        outcomes: impl IntoIterator<Item = (AccountId, StockCode, u64, PlanRouteOutcome)>,
+        domain: &mut PlanContinuationDomain<'_>,
+        outcomes: impl IntoIterator<Item = (AccountId, StockId, u64, PlanRouteOutcome)>,
     ) -> Result<(), StepFatal> {
         let mut followups = Vec::new();
         for (account, code, generation_index, outcome) in outcomes {
@@ -387,7 +360,7 @@ impl PlanChainOperationBatch {
                 .take_pending(&(account, code.clone()), generation_index)?;
             #[cfg(feature = "simulation-diagnostics")]
             let trace_before =
-                super::super::decision_chain::plan_trace_states(account, &session.state.plans);
+                super::super::decision_chain::plan_trace_states(account, domain.plans());
             #[cfg(feature = "simulation-diagnostics")]
             let trace_order = match &outcome {
                 PlanRouteOutcome::Accepted(order) | PlanRouteOutcome::Canceled(order) => {
@@ -395,23 +368,14 @@ impl PlanChainOperationBatch {
                 }
                 PlanRouteOutcome::Rejected(_) => None,
             };
-            let mut plans = std::mem::take(&mut session.state.plans);
-            let progress = route
-                .resume(session, &mut plans, outcome)
-                .and_then(|progress| session.materialize_plan_progress(&mut plans, progress));
+            let progress = domain
+                .resume_route(*route, outcome)
+                .and_then(|progress| domain.materialize_plan_progress(progress));
             #[cfg(feature = "simulation-diagnostics")]
             {
-                session.record_plan_trace_changes(account, &trace_before, &plans);
-                session.state.npc_decision_traces.enrich(
-                    account,
-                    session.state.tick,
-                    trace_order,
-                    [],
-                    [],
-                    [],
-                );
+                domain.record_plan_trace_changes(account, &trace_before);
+                domain.enrich_npc_decision_trace_order(account, trace_order);
             }
-            session.state.plans = plans;
             match progress.map_err(execution)? {
                 PlanExecutionProgress::Complete(report) => {
                     let needs_reconsideration = matches!(
@@ -422,8 +386,7 @@ impl PlanChainOperationBatch {
                             reason: RejectionReason::OrderAlreadyFilled
                         }
                     );
-                    if needs_reconsideration
-                        && session.state.plans.active_plan(account, &code).is_some()
+                    if needs_reconsideration && domain.plans().active_plan(account, &code).is_some()
                     {
                         if let Some(followup) = self.routes.take_follow_up((account, code)) {
                             followups.push(followup);
@@ -476,7 +439,7 @@ impl PlanChainOperationBatch {
     }
 }
 
-fn route_resource(command: &PlanRouteCommand) -> (AccountId, StockCode) {
+fn route_resource(command: &PlanRouteCommand) -> (AccountId, StockId) {
     match command {
         PlanRouteCommand::Cancel { account, code, .. }
         | PlanRouteCommand::SubmitLimit { account, code, .. } => (*account, code.clone()),

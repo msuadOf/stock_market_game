@@ -1,4 +1,4 @@
-use super::continuous_tick_transaction::prepare_continuous_tick;
+use super::market_tick_transaction::prepare_market_tick;
 use crate::{AccountId, Event, GameSession, Intent, Money, Side, TradingPhase};
 
 fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
@@ -7,7 +7,8 @@ fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
     setup.ticks_per_day = ticks_per_day;
     setup.closing_auction_ticks = closing_ticks;
     setup.history_len = 2;
-    setup.start_date = crate::CivilDate::from_ymd(2030, 1, 2).unwrap();
+    // 直接测试交易 tick 的 fixture 必须从交易日开始，避免绕过休市日推进。
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
     GameSession::new(setup, 42).unwrap()
 }
 
@@ -15,12 +16,12 @@ fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
 fn empty_tick_records_each_stock_once_and_restores_at_the_commit_boundary() {
     let mut game = session(481, 1);
     for tick in 1..=4 {
-        let result = prepare_continuous_tick(&mut game).unwrap().commit();
+        let result = prepare_market_tick(&mut game).unwrap().commit();
         assert_eq!(game.tick(), tick);
-        assert_eq!(result.commit.tick.events, result.output.events);
-        assert_eq!(result.output.events.len(), 2);
+        assert_eq!(result.commit.tick.event_values(), result.output.event_values());
+        assert_eq!(result.output.event_values().len(), 2);
         for (index, (code, market)) in game.state.markets.iter().enumerate() {
-            assert!(matches!(&result.output.events[index], Event::PriceTick {
+            assert!(matches!(&result.output.event_values()[index], Event::PriceTick {
                 seq, tick: event_tick, code: event_code, last_price, daily_candle, bids, asks,
             } if *seq == (tick - 1) * 2 + index as u64 + 1
                 && *event_tick == tick && event_code == code && *last_price == market.last_price()
@@ -45,7 +46,7 @@ fn empty_tick_records_each_stock_once_and_restores_at_the_commit_boundary() {
 fn last_continuous_tick_keeps_its_price_point_before_closing_auction() {
     let mut game = session(4, 1);
     for _ in 0..3 {
-        prepare_continuous_tick(&mut game).unwrap().commit();
+        prepare_market_tick(&mut game).unwrap().commit();
     }
     assert_eq!(game.tick(), 3);
     assert_eq!(game.day(), 0);
@@ -72,7 +73,7 @@ fn no_closing_auction_finishes_day_and_releases_new_orders_once() {
         },
     )
     .unwrap();
-    let result = prepare_continuous_tick(&mut game).unwrap().commit();
+    let result = prepare_market_tick(&mut game).unwrap().commit();
     assert_eq!(game.tick(), 1);
     assert_eq!(game.day(), 1);
     assert_eq!(result.output.receipts.len(), 1);
@@ -81,15 +82,15 @@ fn no_closing_auction_finishes_day_and_releases_new_orders_once() {
         super::ReceiptSource::DayEnd(0)
     ));
     assert_eq!(result.output.settlement.settlement.applied_receipts, 0);
-    assert!(result.output.events.iter().any(|event| matches!(event,
+    assert!(result.output.event_values().iter().any(|event| matches!(event,
         Event::PriceTick { code: actual, bids, .. }
         if actual == &code && bids == &vec![(Money::from_cents(990), 100)])));
-    assert!(result.output.events.iter().any(|event| matches!(event,
+    assert!(result.output.event_values().iter().any(|event| matches!(event,
         Event::OrderCanceled { code: actual, remaining_qty: 100, .. } if actual == &code)));
     assert_eq!(
         result
             .output
-            .events
+            .event_values()
             .iter()
             .filter(|event| matches!(event, Event::DayBoundary { .. }))
             .count(),
@@ -135,7 +136,7 @@ fn day_end_release_terminates_the_causal_lifecycle() {
         .unwrap();
     }
 
-    prepare_continuous_tick(&mut game).unwrap().commit();
+    prepare_market_tick(&mut game).unwrap().commit();
 
     let facts = game.causal_facts();
     let day_end = facts
@@ -197,12 +198,7 @@ fn day_end_causal_facts_keep_the_completed_continuous_phase() {
     let mut game = session(2, 0);
     game.state.setup.auction_ticks = 1;
     game.state.tick = 1;
-    game.state.pending_npc = Some(crate::session::PendingNpcBatch {
-        dependencies: Vec::new(),
-        observed_tick: game.state.tick,
-        observed_accounts: Vec::new(),
-        intents: Vec::new(),
-    });
+    crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.state.tick, Vec::new(), Vec::new(), Vec::new()));
     let code = game.state.markets.keys().next().unwrap().clone();
     let order_id = crate::OrderId(game.state.next_order_id);
     let expected_civil = crate::CivilInstant::from_hms(game.civil_date(), 15, 0, 0).unwrap();
@@ -217,7 +213,7 @@ fn day_end_causal_facts_keep_the_completed_continuous_phase() {
     )
     .unwrap();
 
-    prepare_continuous_tick(&mut game).unwrap().commit();
+    prepare_market_tick(&mut game).unwrap().commit();
 
     let facts = game.causal_facts();
     let termination = facts
@@ -257,9 +253,8 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
     setup.ticks_per_day = 1;
     setup.history_len = 2;
     let mut third = setup.stocks[0].clone();
-    third.code = crate::StockCode("600890".to_owned());
+    third.code = crate::StockId("600890".to_owned());
     setup.stocks.push(third);
-    setup.company_system = simple_company_fixture!(crate; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let mut game = GameSession::new(setup, 42).unwrap();
     let codes = game.state.markets.keys().cloned().collect::<Vec<_>>();
     for code in &codes[..2] {
@@ -275,7 +270,7 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
         .unwrap();
     }
 
-    prepare_continuous_tick(&mut game).unwrap().commit();
+    prepare_market_tick(&mut game).unwrap().commit();
 
     let facts = game.causal_facts();
     let last_termination = facts
@@ -301,13 +296,11 @@ fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
     assert!(!closing_quote_codes.contains(&codes[2]));
 }
 
-fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
+fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockId) {
     let mut game = session(ticks_per_day, 0);
     let code = game.state.markets.keys().next().unwrap().clone();
     // Existing player inventory avoids adding an account absent from the save setup.
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 400, Money::from_cents(1_000))
         .unwrap();
@@ -332,7 +325,7 @@ fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
 fn multi_round_trades_record_first_real_open_and_final_depth_once() {
     let (mut game, code) = trade_session(4);
     game.update_active_daily_candle(&code, Money::from_cents(1_000), 0);
-    let result = prepare_continuous_tick(&mut game).unwrap().commit();
+    let result = prepare_market_tick(&mut game).unwrap().commit();
     let candle = &game.state.candle_book.active()[&code];
     assert_eq!(
         (candle.open, candle.low),
@@ -350,7 +343,7 @@ fn multi_round_trades_record_first_real_open_and_final_depth_once() {
         game.state.accounts[&AccountId(0)].positions()[&code].t1_locked(),
         200
     );
-    assert!(result.output.events.iter().any(|event| matches!(event,
+    assert!(result.output.event_values().iter().any(|event| matches!(event,
         Event::PriceTick { code: actual, last_price, bids, asks, daily_candle, .. }
         if actual == &code && *last_price == Money::from_cents(1_020)
             && bids.is_empty() && asks.is_empty() && daily_candle == candle)));
@@ -365,9 +358,9 @@ fn multi_round_trades_record_first_real_open_and_final_depth_once() {
 
     let saved = game.save().unwrap();
     let mut restored = GameSession::restore(&saved).unwrap();
-    let expected = prepare_continuous_tick(&mut game).unwrap().commit();
-    let actual = prepare_continuous_tick(&mut restored).unwrap().commit();
-    assert_eq!(actual.output.events, expected.output.events);
+    let expected = prepare_market_tick(&mut game).unwrap().commit();
+    let actual = prepare_market_tick(&mut restored).unwrap().commit();
+    assert_eq!(actual.output.event_values(), expected.output.event_values());
     assert_eq!(
         serde_json::to_value(restored.save().unwrap()).unwrap(),
         serde_json::to_value(game.save().unwrap()).unwrap()
@@ -377,7 +370,7 @@ fn multi_round_trades_record_first_real_open_and_final_depth_once() {
 #[test]
 fn final_tick_settles_before_t1_unlock_and_commits_the_trade_candle_once() {
     let (mut game, code) = trade_session(1);
-    let result = prepare_continuous_tick(&mut game).unwrap().commit();
+    let result = prepare_market_tick(&mut game).unwrap().commit();
     assert_eq!(
         game.state.accounts[&AccountId(0)].positions()[&code].t1_locked(),
         0
@@ -389,9 +382,9 @@ fn final_tick_settles_before_t1_unlock_and_commits_the_trade_candle_once() {
         game.state.markets[&code].last_close(),
         Money::from_cents(1_020)
     );
-    assert_eq!(result.output.events.iter().filter(|event| matches!(event,
+    assert_eq!(result.output.event_values().iter().filter(|event| matches!(event,
         Event::PriceTick { code: actual, daily_candle, .. } if actual == &code && daily_candle == candle)).count(), 1);
-    assert!(result.output.events.iter().any(|event| matches!(event,
+    assert!(result.output.event_values().iter().any(|event| matches!(event,
         Event::DayBoundary { day: 1, closed_daily_candles, .. } if &closed_daily_candles[&code] == candle)));
     GameSession::restore(&game.save().unwrap()).unwrap();
 }
@@ -404,9 +397,12 @@ fn late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
         game.business_state_hash().unwrap(),
         game.session_state_hash().unwrap(),
     );
-    let mut plan = super::plan_tick(super::PhaseInput { session: &game }).unwrap();
+    let mut plan = super::plan_tick(super::PhaseInput {
+        session: &game,
+    })
+    .unwrap();
     let error =
-        super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(&mut plan)
+        super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan)
             .err()
             .expect("DerivationAudit 序号耗尽必须在私有收尾之后失败");
     assert!(
@@ -414,8 +410,9 @@ fn late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
         if location == "pipeline::event_collection::collect_events" && description.contains("sequence overflow"))
     );
     assert!(plan.event_outbox.is_empty());
-    assert!(plan.receipt_keys.is_empty());
-    assert!(plan.state.execute(|_| Ok(())).is_err());
+    // T2：receipt 事实单载体（key 由 applied_receipts 派生）。
+        assert!(plan.applied_receipts.is_empty());
+    assert!(plan.execute(|_| Ok(())).is_err());
     assert!(super::candidate_commit::prepare_tick_shadow_plan_commit(&mut game, plan).is_err());
     assert_eq!(
         (
@@ -432,12 +429,7 @@ fn tick_and_day_overflow_are_typed_and_atomic() {
         let mut game = session(1, 0);
         if overflow_tick {
             game.state.tick = u64::MAX;
-            game.state.pending_npc = Some(crate::session::PendingNpcBatch {
-                dependencies: Vec::new(),
-                observed_tick: game.state.tick,
-                observed_accounts: Vec::new(),
-                intents: Vec::new(),
-            });
+            crate::session::pipeline::staged_decision::stage(crate::session::pipeline::NpcDecisionHandover::new(game.state.tick, Vec::new(), Vec::new(), Vec::new()));
         } else {
             game.state.day = u32::MAX;
         }
@@ -449,12 +441,12 @@ fn tick_and_day_overflow_are_typed_and_atomic() {
                 game.session_state_hash().unwrap(),
             ))
         };
-        let error = prepare_continuous_tick(&mut game)
+        let error = prepare_market_tick(&mut game)
             .err()
             .expect("clock overflow must fail");
         assert!(
             matches!(error.into_fatal(), super::StepFatal::InvariantViolation { location, description }
-            if location == "pipeline::continuous_tick_finalizer" && description.contains("overflow"))
+            if location == "pipeline::PhasePolicy::boundary" && description.contains("溢出"))
         );
         if let Some(before) = before {
             assert_eq!(
@@ -477,15 +469,18 @@ fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
         let (mut game, code) = trade_session(4);
         game.update_active_daily_candle(&code, Money::from_cents(1_000), 100);
         let before = game.business_state_hash().unwrap();
-        let mut plan = super::plan_tick(super::PhaseInput { session: &game }).unwrap();
+        let mut plan = super::plan_tick(super::PhaseInput {
+            session: &game,
+        })
+        .unwrap();
         // Inject only into the private candidate: MAX volume/count are deliberately outside
         // the save protocol's JS-safe range; the authority must remain healthy on failure.
-        plan.state
+        plan
             .execute(|candidate| {
                 let mut candle = candidate.state.candle_book.active()[&code].clone();
                 match counter {
                     "volume" => candle.volume = u64::MAX,
-                    "turnover" => candle.trade_stats.as_mut().unwrap().turnover_cents = u128::MAX,
+                    "turnover" => candle.trade_stats.as_mut().unwrap().turnover_cents = u64::MAX,
                     "count" => candle.trade_stats.as_mut().unwrap().trade_count = u64::MAX,
                     _ => unreachable!(),
                 }
@@ -494,16 +489,27 @@ fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
             })
             .unwrap();
         let error =
-            super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(&mut plan)
+            super::market_tick_transaction::apply_tick_shadow_market_transaction(&mut plan)
                 .err()
                 .expect("candle overflow must fail");
+        // T4（行情面）+Astra T4 节点审·必修 2：candle 溢出预检随行情计算移入
+        // 股票 owner（先验经 candidate view 注入），location 前缀随属主更名；
+        // **错误分类恢复迁移前形态**——行情面错误保持 Finalization variant
+        // （迁移前=finalize_continuous_tick 的 finalize_error 包装）。
         assert!(
-            matches!(error.into_fatal(), super::StepFatal::InvariantViolation { location, description }
-            if location == "pipeline::continuous_tick_finalizer" && description.contains("overflow"))
+            matches!(
+                &error,
+                super::market_tick_transaction::MarketTransactionError::Finalization(
+                    super::StepFatal::InvariantViolation { location, description }
+                )
+                if location == "pipeline::incremental_continuous_stock_shadow"
+                    && description.contains("overflow")
+            ),
+            "行情面错误必须保持 Finalization 分类（实际 {error:?}）"
         );
         assert_eq!(game.business_state_hash().unwrap(), before);
         assert!(plan.event_outbox.is_empty());
-        assert!(plan.state.execute(|_| Ok(())).is_err());
+        assert!(plan.execute(|_| Ok(())).is_err());
     }
 }
 
@@ -511,7 +517,7 @@ fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
 fn dropping_prepared_tick_keeps_the_previous_save_quiescent() {
     let mut game = session(4, 0);
     let before = serde_json::to_value(game.save().unwrap()).unwrap();
-    drop(prepare_continuous_tick(&mut game).unwrap());
+    drop(prepare_market_tick(&mut game).unwrap());
     assert_eq!(serde_json::to_value(game.save().unwrap()).unwrap(), before);
     assert_eq!(game.tick(), 0);
 }
@@ -526,9 +532,7 @@ fn partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quanti
 fn partial_fill_then_day_end(maker: Side, taker: Side) {
     let mut game = session(2, 0);
     let code = game.state.markets.keys().next().unwrap().clone();
-    game.state
-        .accounts
-        .get_mut(&AccountId(0))
+    game.fixture_account_mut(&AccountId(0))
         .unwrap()
         .grant_position(code.clone(), 200, Money::from_cents(1_000))
         .unwrap();
@@ -544,14 +548,14 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
         )
         .unwrap();
         if side == maker {
-            prepare_continuous_tick(&mut game).unwrap().commit();
+            prepare_market_tick(&mut game).unwrap().commit();
         }
     }
     let saved = game.save().unwrap();
     let mut restored = GameSession::restore(&saved).unwrap();
-    let result = prepare_continuous_tick(&mut game).unwrap().commit();
-    let replay = prepare_continuous_tick(&mut restored).unwrap().commit();
-    assert_eq!(result.output.events, replay.output.events);
+    let result = prepare_market_tick(&mut game).unwrap().commit();
+    let replay = prepare_market_tick(&mut restored).unwrap().commit();
+    assert_eq!(result.output.event_values(), replay.output.event_values());
     assert_eq!(
         format!("{:?}", result.output.receipts),
         format!("{:?}", replay.output.receipts)
@@ -580,14 +584,14 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
         released.delta.released.shares,
         if maker == Side::Sell { 100 } else { 0 }
     );
-    assert!(result.output.events.iter().any(|event| matches!(
+    assert!(result.output.event_values().iter().any(|event| matches!(
         event,
         Event::OrderCanceled {
             remaining_qty: 100,
             ..
         }
     )));
-    assert!(result.output.events.iter().any(|event| matches!(event,
+    assert!(result.output.event_values().iter().any(|event| matches!(event,
         Event::PriceTick { code: actual, asks, bids, .. }
         if actual == &code
             && (if maker == Side::Sell { asks } else { bids }) == &vec![(Money::from_cents(1_000), 100)])));
@@ -615,7 +619,7 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
 fn fatal_conversion_preserves_nested_receipt_aggregation_and_settlement_identity() {
     use super::{
         account_settlement::SettlementTransactionError as Settlement,
-        continuous_tick_transaction::ContinuousTransactionError as Continuous,
+        market_tick_transaction::MarketTransactionError as Continuous,
         session_execution_transaction::SessionExecutionTransactionError as SessionExecution,
         stock_execution_transaction::StockExecutionTransactionError as StockExecution,
     };

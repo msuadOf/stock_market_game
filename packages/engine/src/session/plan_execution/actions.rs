@@ -79,45 +79,29 @@ impl GameSession {
         &self,
         plan: &crate::plans::TradingPlan,
     ) -> Result<Option<PlanExecutionProgress>, PlanExecutionError> {
-        if let Some(parent) = self
-            .state
-            .parent_orders
-            .get(&plan.account())
-            .and_then(|parents| parents.get(plan.code()))
-        {
-            if parent.linked_plan_id() != Some(plan.plan_id()) {
+        if let Some(order_id) = plan.active_child_order_id() {
+            let leg = plan
+                .execution()
+                .expect("an active child implies an installed execution leg");
+            let working = self
+                .plan_working_orders(plan.account(), plan.code())
+                .into_iter()
+                .find(|working| working.id == order_id);
+            if !matches!(working, Some(order)
+                if order.side == plan.direction()
+                    && leg.limit_price() == order.price
+                    && leg.active_child_remaining_qty() == Some(order.qty))
+            {
                 return Err(PlanExecutionError::IncompatibleExecutionState {
                     plan_id: plan.plan_id(),
                 });
             }
-            if let Some(order_id) = parent.active_child_order_id() {
-                let working = self
-                    .plan_working_orders(plan.account(), plan.code())
-                    .into_iter()
-                    .find(|working| working.id == order_id);
-                if !matches!(working, Some(order)
-                    if plan.active_child_order_id() == Some(order_id)
-                        && parent.side() == plan.direction()
-                        && order.side == plan.direction()
-                        && parent.limit_price() == order.price
-                        && parent.active_child_remaining_qty() == Some(order.qty))
-                {
-                    return Err(PlanExecutionError::IncompatibleExecutionState {
-                        plan_id: plan.plan_id(),
-                    });
-                }
-                // A quote prepared before an earlier route completed can now
-                // find this plan's child in flight. Ask the plan to re-evaluate
-                // it instead of treating a normal timing change as a fatal tick.
-                return Ok(Some(PlanExecutionProgress::Complete(
-                    self.pending_reconsideration(order_id, QuoteReason::PendingReconsideration),
-                )));
-            }
-        }
-        if plan.active_child_order_id().is_some() {
-            return Err(PlanExecutionError::IncompatibleExecutionState {
-                plan_id: plan.plan_id(),
-            });
+            // A quote prepared before an earlier route completed can now
+            // find this plan's child in flight. Ask the plan to re-evaluate
+            // it instead of treating a normal timing change as a fatal tick.
+            return Ok(Some(PlanExecutionProgress::Complete(
+                self.pending_reconsideration(order_id, QuoteReason::PendingReconsideration),
+            )));
         }
         Ok(None)
     }
@@ -148,18 +132,13 @@ impl GameSession {
                         plan_id: plan.plan_id(),
                     });
                 }
-                self.install_plan_parent(&plan, child, Some((order_id, child.qty)))?;
+                self.install_plan_execution(
+                    plans,
+                    &plan,
+                    child,
+                    Some((order_id, child.qty)),
+                )?;
                 self.remove_npc_order_lifecycle(plan.account(), plan.code(), order_id);
-                self.state
-                    .pending_plan_events
-                    .push(PendingPlanEvent::Accepted {
-                        plan_id: plan.plan_id(),
-                        order_id,
-                        trading_day: self
-                            .stock_trading_day(plan.code())
-                            .expect("adopted plan stock trading day is valid"),
-                    });
-                self.synchronize_owned_plan_execution(plans)?;
                 let disposition = match replaced {
                     Some(canceled_order_id) => PlanExecutionDisposition::Replaced {
                         canceled_order_id,
@@ -181,17 +160,11 @@ impl GameSession {
 
     pub(super) fn require_active_child(
         &self,
-        plan_id: PlanId,
-        code: &StockCode,
+        plan: &crate::plans::TradingPlan,
         order_id: OrderId,
     ) -> Result<(), PlanExecutionError> {
-        let active = self
-            .state
-            .parent_orders
-            .values()
-            .flat_map(|parents| parents.get(code))
-            .find(|parent| parent.linked_plan_id() == Some(plan_id))
-            .and_then(|parent| parent.active_child_order_id());
+        let plan_id = plan.plan_id();
+        let active = plan.active_child_order_id();
         if active != Some(order_id) {
             return Err(PlanExecutionError::ChildMismatch {
                 plan_id,

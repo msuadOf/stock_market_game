@@ -64,7 +64,9 @@ const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "simulation-source-fingerprint";
 const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "simulation-determinism-receipt";
 const SIMULATION_RESOURCE_POLICY_SCHEMA = "simulation-resource-policy";
 const SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
-const SIMULATION_MIN_RAYON_THREADS_PER_SEED = 4;
+// 批 9 A7：SIMULATION_MIN_RAYON_THREADS_PER_SEED 退役——子进程 CPU 约束
+// 改 OS 级口径（cgroup/taskset），并发上限由 SIMULATION_MAX_CONCURRENT_
+// CHILD_EXECUTIONS 与 CPU 数直接决定。
 const SIMULATION_SOURCE_INPUTS = [
   ".cargo",
   "Cargo.lock",
@@ -118,7 +120,7 @@ export function buildSimulationResourcePolicy(availableCpuCount, availableCpuSou
     : Math.min(availableCpuCount, maximumThreadCount);
   const maxConcurrentChildExecutions = Math.min(
     SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS,
-    Math.max(1, Math.floor(totalThreadBudget / SIMULATION_MIN_RAYON_THREADS_PER_SEED)),
+    Math.max(1, totalThreadBudget),
   );
   return {
     schema: SIMULATION_RESOURCE_POLICY_SCHEMA, schema_version: 7,
@@ -126,7 +128,6 @@ export function buildSimulationResourcePolicy(availableCpuCount, availableCpuSou
     available_cpu_source: availableCpuSource,
     maximum_thread_count: maximumThreadCount,
     max_concurrent_child_executions: maxConcurrentChildExecutions,
-    rayon_threads_per_seed: Math.max(1, Math.floor(totalThreadBudget / maxConcurrentChildExecutions)),
     ordinary_test_max_ms: SIMULATION_ORDINARY_TEST_MAX_MS,
     child_timeout_ms: SIMULATION_CHILD_TIMEOUT_MS,
     batch_timeout_ms: SIMULATION_BATCH_TIMEOUT_MS,
@@ -298,13 +299,12 @@ function validateSimulationResourcePolicy(resourcePolicy) {
     || (resourcePolicy.maximum_thread_count !== "auto"
       && (!Number.isInteger(resourcePolicy.maximum_thread_count) || resourcePolicy.maximum_thread_count <= 0))
     || resourcePolicy.max_concurrent_child_executions !== expected?.max_concurrent_child_executions
-    || resourcePolicy.rayon_threads_per_seed !== expected?.rayon_threads_per_seed
     || resourcePolicy.ordinary_test_max_ms !== SIMULATION_ORDINARY_TEST_MAX_MS
     || resourcePolicy.child_timeout_ms !== SIMULATION_CHILD_TIMEOUT_MS
     || resourcePolicy.batch_timeout_ms !== SIMULATION_BATCH_TIMEOUT_MS
     || resourcePolicy.execution_timeout_ms !== SIMULATION_BATCH_TIMEOUT_MS - SIMULATION_CLEANUP_RESERVE_MS
     || resourcePolicy.cleanup_reserve_ms !== SIMULATION_CLEANUP_RESERVE_MS) {
-    throw new Error("simulation acceptance resource policy must bound concurrent seed processes and their aggregate Rayon CPU budget");
+    throw new Error("simulation acceptance resource policy must bound concurrent seed processes (批 9 A7：Rayon 预算键退役)");
   }
 }
 
@@ -1087,7 +1087,7 @@ async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, prepa
       TMPDIR: preparedFixture.process_tmp_dir,
       TMP: preparedFixture.process_tmp_dir,
       TEMP: preparedFixture.process_tmp_dir,
-      RAYON_NUM_THREADS: String(resourcePolicy.rayon_threads_per_seed),
+      // 批 9 A7：RAYON_NUM_THREADS 注入退役（同上）。
       SIMULATION_SOURCE_FINGERPRINT_DIGEST: preparedFixture.embedded_source_fingerprint_digest,
     },
   }));

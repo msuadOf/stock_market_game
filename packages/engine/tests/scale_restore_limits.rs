@@ -6,13 +6,14 @@ use engine::session::{
 };
 use engine::{AccountId, Intent, Side};
 
-#[macro_use]
-#[path = "../test-support/simple_company.rs"]
-mod simple_company_fixture;
+#[path = "company_operations/fixtures.rs"]
+#[allow(dead_code)] // This collection test only needs the industrial opening fixture.
+mod company_fixtures;
 
 fn setup(retail_count: u32) -> SessionSetup {
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
             exchange: StockExchange::Shanghai,
@@ -51,16 +52,9 @@ fn setup(retail_count: u32) -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::random(),
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 
@@ -78,9 +72,11 @@ fn restore_rejects_deleted_account_state_without_mutating_the_source_session() {
         serde_json::to_vec(&session.save().expect("healthy save")).expect("source save serializes");
     save.retail_experience.remove(&AccountId(10_000));
 
+    // 数值断言替代原文本断言 "retail experience account set"
+    // （fault2025：散户经历账户集合与 setup 不完全一致）。
     assert!(matches!(
         GameSession::restore(&save),
-        Err(SessionError::InvalidSave(message)) if message.contains("retail experience account set")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2025
     ));
     assert_eq!(
         serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
@@ -97,7 +93,11 @@ fn restore_rejects_tampered_report_reference_without_mutating_the_source_session
         .keys()
         .next()
         .expect("institution information state exists");
-    let company = engine::company::CompanyId("C-600101".to_string());
+    let company = save
+        .company_operations
+        .catalog()
+        .id("C-600101")
+        .expect("默认目录含 C-600101");
     let report = *save
         .public_library
         .reports_for_company(
@@ -144,9 +144,11 @@ fn restore_rejects_tampered_report_reference_without_mutating_the_source_session
     let bytes = serde_json::to_vec(&value).expect("tampered JSON serializes");
     let decoded = decode_save_slot(&bytes, &SaveDecodeLimits::default()).expect("shape decodes");
 
+    // 数值断言替代原文本断言 "missing from the library"
+    // （fault2115：引用的披露不在公开库）。
     assert!(matches!(
         GameSession::restore(&decoded),
-        Err(SessionError::InvalidSave(message)) if message.contains("missing from the library")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2115
     ));
     assert_eq!(
         serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
@@ -162,9 +164,10 @@ fn decode_rejects_configured_body_limit_without_constructing_a_partial_save() {
         max_total_bytes: bytes.len() - 1,
     };
 
+    // 数值断言替代原文本断言 "decode limit"（fault1253：存档解码超字节上限）。
     assert!(matches!(
         decode_save_slot(&bytes, &limit),
-        Err(SessionError::ResourceLimit(message)) if message.contains("decode limit")
+        Err(SessionError::ResourceLimit(fault)) if fault.code == 1253
     ));
 }
 
@@ -175,72 +178,46 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
     let mut save = session.save().expect("healthy save");
     let stock = &save.setup.stocks[0];
     let start = save.civil_clock.current_date;
-    let stock_code = stock.code.clone();
-    let total_shares = stock.total_shares;
-    let companies: Vec<_> = (0..COMPANY_COUNT)
-        .map(|index| engine::company::CompanySpec {
-            id: engine::company::CompanyId(format!("collection-{index:03}")),
-            name: format!("独立规模测试公司{index}"),
-            industry: engine::company::IndustryId("industrial".into()),
-            kind: engine::company::CompanyKind::Industrial,
-            listed_stock: (index == 0).then(|| stock_code.clone()),
-            issued_shares: total_shares,
-            group_parent: None,
+    let mut template = company_fixtures::industrial_a(start);
+    template.spec.listed_stock = Some(stock.code.clone());
+    template.spec.issued_shares = stock.total_shares;
+    // Only opening books are needed to exercise collection decoding. Generating two
+    // years of company history here would add unrelated work to this short test.
+    let companies = (0..COMPANY_COUNT)
+        .map(|index| {
+            let mut company = template.clone();
+            company.spec.code = format!("collection-{index:03}");
+            company
         })
-        .collect();
-    let engine::company::config::CompanySystemConfig::Simple(mut config) = simple_company_fixture!(engine; codes = companies.iter().map(|company| company.id.0.clone()))
-    else {
-        panic!("规模测试必须使用明确的 Simple fixture");
-    };
-    config.prehistory_periods = 1;
-    for (parameters, company) in config.companies.iter_mut().zip(&companies) {
-        parameters.company = company.id.clone();
-    }
-    let config = engine::company::config::CompanySystemConfig::Simple(config);
-    let system = engine::company::CompanySystem::create(companies, config, start, 39)
-        .expect("独立 Simple 公司系统不因公司数量设置配额");
-    let encoded = serde_json::to_vec(&system).unwrap();
-    let restored: engine::company::CompanySystem =
-        serde_json::from_slice(&encoded).expect("257 家公司结构必须可解码");
-    assert_eq!(restored, system);
-    let mut conflicting = serde_json::to_value(&system).unwrap();
-    for issuer in conflicting["issuers"].as_object_mut().unwrap().values_mut() {
-        issuer["listed_stock"] = serde_json::to_value(&stock_code).unwrap();
-    }
-    let error = serde_json::from_value::<engine::company::CompanySystem>(conflicting).unwrap_err();
-    assert!(
-        error.to_string().contains("duplicate issuer stock"),
-        "{error}"
-    );
-    let mut mismatched = save
-        .company_system
-        .issuers()
-        .iter()
-        .map(|(_, issuer)| issuer.clone())
         .collect::<Vec<_>>();
-    mismatched[0].issued_shares += 1;
-    save.company_system = engine::company::CompanySystem::create(
-        mismatched,
-        save.setup.company_system.clone(),
+    save.company_operations = engine::company::CompanyOperations::new(
+        engine::company::CompanyOperationsConfig {
+            seed: 39,
+            shock_params: company_fixtures::quiet_params(),
+            catalog: company_fixtures::catalog_for(&companies),
+            companies,
+        },
         start,
-        39,
     )
-    .unwrap();
+    .expect("independent opening books construct");
 
     let bytes = serde_json::to_vec(&save).expect("company collection serializes");
     let decoded = decode_save_slot(&bytes, &SaveDecodeLimits::default())
         .expect("company count alone must not prevent decoding");
+    // The collection is structurally decodable, but these companies deliberately
+    // share one listed stock. Removing the quota must preserve this actual error.
+    // 数值断言替代原文本断言 "share count or mapping conflicts with setup stock"
+    // （fault2098：公司股本或映射与 setup 股票冲突）。
     assert!(matches!(
         GameSession::restore(&decoded),
-        Err(SessionError::InvalidSave(message))
-            if message == "公司系统发行人身份与股票配置不一致"
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2098
     ));
 }
 
 #[test]
 fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
     let mut session = GameSession::new(setup(1), 39).expect("fixture constructs");
-    let code = StockCode("600101".to_string());
+    let code = session.stock_id("600101").expect("夹具股票必须在目录中");
     for _ in 0..2 {
         session
             .enqueue_player_intent(
@@ -270,12 +247,13 @@ fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
     let error = GameSession::restore(&save)
         .err()
         .expect("duplicate order id must be rejected");
-    let expected = format!(
-        "cannot restore resting orders for {}: duplicate order id: {duplicate_id:?}",
-        code.0
-    );
+    // 数值断言替代原文本等值断言 "…duplicate order id: {duplicate_id:?}"
+    // （v5 判 B 校准：runtime/desk 镜像档的同 id 重复先于旧簿装载命中
+    // 结构断言 fault2162——跨集合 id 重复；旧管线的 fault1038 为旧簿
+    // 装载路径 DuplicateOrderId 压平码，runtime 下不可达。保留"重复
+    /// id 仍被拒绝"+"源会话状态不变"两断言，仅校准错误码）。
     assert!(
-        matches!(&error, SessionError::InvalidSave(message) if message == &expected),
+        matches!(&error, SessionError::InvalidSave(fault) if fault.code == 2162),
         "unexpected duplicate-order rejection: {error:?}"
     );
     assert_eq!(

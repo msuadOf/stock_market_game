@@ -188,25 +188,26 @@ it("partitions the detected CPU budget across concurrent binaries without overse
     available_cpu_count: 128,
     binary_count: 80,
     max_concurrent_binaries: 8,
-    worker_budgets: Array.from({ length: 8 }, () => ({ cpu_budget: 16, test_threads: 12, rayon_threads: 4 })),
+    // 批 9 A7：rayon_threads 分量退役——CPU 预算全额给 test_threads。
+    worker_budgets: Array.from({ length: 8 }, () => ({ cpu_budget: 16, test_threads: 16 })),
     aggregate_configured_thread_budget: 128,
   });
   const small = buildRustTestExecutionPolicy(4, 40);
   assert.equal(small.max_concurrent_binaries, 2);
   assert.deepEqual(small.worker_budgets, [
-    { cpu_budget: 2, test_threads: 1, rayon_threads: 1 },
-    { cpu_budget: 2, test_threads: 1, rayon_threads: 1 },
+    { cpu_budget: 2, test_threads: 2 },
+    { cpu_budget: 2, test_threads: 2 },
   ]);
   for (let cpuCount = 2; cpuCount <= 129; cpuCount += 1) {
     const policy = buildRustTestExecutionPolicy(cpuCount, 80);
     assert.equal(policy.aggregate_configured_thread_budget, cpuCount, `CPU ${cpuCount} is misbudgeted by ${JSON.stringify(policy)}`);
     assert.ok(policy.max_concurrent_binaries <= 8);
-    assert.ok(policy.worker_budgets.every((budget) => budget.test_threads + budget.rayon_threads === budget.cpu_budget));
+    assert.ok(policy.worker_budgets.every((budget) => budget.test_threads === budget.cpu_budget));
   }
   assert.deepEqual(buildRustTestExecutionPolicy(5, 80).worker_budgets.map((budget) => budget.cpu_budget), [3, 2]);
   const singleCpu = buildRustTestExecutionPolicy(1, 80);
-  assert.deepEqual(singleCpu.worker_budgets, [{ cpu_budget: 1, test_threads: 1, rayon_threads: 1 }]);
-  assert.equal(singleCpu.aggregate_configured_thread_budget, 2, "the one-CPU Rayon and harness minimum must be reported honestly");
+  assert.deepEqual(singleCpu.worker_budgets, [{ cpu_budget: 1, test_threads: 1 }]);
+  assert.equal(singleCpu.aggregate_configured_thread_budget, 1, "批 9 A7：rayon 最低 1 线程的加计退役——1 CPU 预算如实上报 1");
 });
 
 it("fingerprints Rust, Web, package-manager, and deadline-runner inputs", () => {
@@ -305,12 +306,15 @@ it("CI invokes the sealed build/execute regression phases without Corepack", asy
   for (const host of ["windows", "linux"]) {
     const plan = createFrontendPlan({ jobs: 4 }, { host });
     const wasmPosition = plan.commands.findIndex(({ command }) => command === "wasm-pack");
-    const sourceCheck = plan.commands.findIndex(({ args }) => args[0].endsWith("check-wasm-threading.mjs"));
+    // 批 9 A10 收尾：check-wasm-threading 步骤退役——复制后仍经
+    // check-web-release-wasm 校验。
     const copyPosition = plan.commands.findIndex(({ action }) => action === "copy-wasm");
-    const copiedCheck = plan.commands.findIndex(({ args }) => args[1] === path.join(plan.frontend, "wasm-pkg/web_wasm.js"));
     const uiPosition = plan.commands.findIndex(({ args }) => args[0].endsWith("vite.js"));
-    assert.ok(wasmPosition >= 0 && sourceCheck > wasmPosition && copyPosition > sourceCheck && copiedCheck > copyPosition && uiPosition > copiedCheck,
-      `${host} must build and verify real WASM before copying, checking the copy and building the UI`);
+    // 批 9 A10 收尾：复制后校验改由 dist 级 check-web-release-wasm 承载
+    ///（wasm-pkg 级 threading 检查退役）。
+    const distCheck = plan.commands.findIndex(({ args }) => args[1] === path.join(plan.frontend, "dist"));
+    assert.ok(wasmPosition >= 0 && copyPosition > wasmPosition && uiPosition > copyPosition && distCheck > uiPosition,
+      `${host} must build real WASM before copying, building the UI and verifying dist`);
   }
 });
 
@@ -632,7 +636,7 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
       run: async ({ args }) => {
         calls += 1;
         return { stdout: args.includes("--list")
-          ? (args.includes("--exact") ? "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative: test\n" : (args.includes("--ignored") ? "" : "ordinary: test\n"))
+          ? (args.includes("--exact") ? "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative: test\n" : (args.includes("--ignored") ? "" : "ordinary: test\n"))
           : "" };
       },
     });
@@ -706,7 +710,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
         nowMs += 1;
         return { stdout: options.args.includes("--list")
           ? (options.args.includes("--exact")
-            ? "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative: test\n"
+            ? "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative: test\n"
             : (options.args.includes("--ignored") ? "" : "ordinary::case: test\n"))
           : "", stderr: "" };
       },
@@ -715,23 +719,24 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     const ordinaryBinary = calls.find((call) => call.args.includes("ordinary::case"));
     assert.equal(ordinaryBinary.timeoutMs, 10_000);
     assert.deepEqual(ordinaryBinary.args, ["ordinary::case", "--exact", "--test-threads=1"]);
-    assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, "7");
+    // 批 9 A7：RAYON_NUM_THREADS 导出退役——断言缺省。
+    assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, undefined);
     const longValidationListing = calls.find((call) => call.command === fixture.artifact && call.args.includes("--list") && call.args.includes("--exact"));
     assert.deepEqual(longValidationListing.args, [
       "--list",
       "--format=terse",
       "--exact",
       "--ignored",
-      "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative",
+      "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
     ]);
     const longValidation = calls.find((call) => call.command === fixture.artifact && !call.args.includes("--list") && call.args.includes("--ignored"));
     assert.deepEqual(longValidation.args, [
-      "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative",
+      "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
       "--exact",
       "--ignored",
       "--test-threads=1",
     ]);
-    assert.equal(longValidation.env.RAYON_NUM_THREADS, "7");
+    assert.equal(longValidation.env.RAYON_NUM_THREADS, undefined);
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
     assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_995);
     const web = calls.find((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
@@ -847,7 +852,7 @@ it("rejects source drift detected after the shared execution phase", async () =>
         ? fixture.fingerprint
         : { ...fixture.fingerprint, digest: "d".repeat(64) },
       run: async ({ args }) => ({ stdout: args.includes("--list") && args.includes("--exact")
-        ? "lifecycle::year_boundary_keeps_company_system_and_disclosure_state_authoritative: test\n"
+        ? "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative: test\n"
         : "", stderr: "" }),
     }), /source changed during test execution/i);
   } finally {

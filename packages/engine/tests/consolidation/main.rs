@@ -78,8 +78,8 @@ pub(crate) fn member<'a>(
 ) -> GroupMember<'a> {
     GroupMember {
         spec: MemberSpec {
-            id: MemberId(id.to_string()),
-            group_parent: parent.map(|p| MemberId(p.to_string())),
+            id: member_id(id),
+            group_parent: parent.map(|p| member_id(p)),
             issued_shares,
             parent_held_shares,
         },
@@ -87,10 +87,74 @@ pub(crate) fn member<'a>(
     }
 }
 
+/// 夹具成员名 → 数值 MemberId：按固定清单序号分配（同名同 id、异名异 id；
+/// 新名字加入清单即生效，未登记即 panic 防止夹具语义静默漂移）。
+const MEMBER_NAMES: &[&str] = &[
+    "CASH-ROOT",
+    "CASH-SUB",
+    "COST-ROOT",
+    "COST-SUB",
+    "CY-B",
+    "CY-C",
+    "CY-ROOT",
+    "DUP-A",
+    "DUP-ROOT",
+    "DUP-SUB",
+    "ELM-ROOT",
+    "ELM-SUB",
+    "FRAC-ROOT",
+    "FRAC-SUB",
+    "GHOST",
+    "GRP-PARENT",
+    "GRP-SUB",
+    "HELD-ROOT",
+    "HELD-SUB",
+    "IC-ROOT",
+    "IC-SUB",
+    "KEEP-ROOT",
+    "KEEP-SUB",
+    "LIMIT-ROOT",
+    "LIMIT-SUB",
+    "MIX-BANK",
+    "MIX-PARENT",
+    "NST-B",
+    "NST-C",
+    "NST-ROOT",
+    "ONE-ROOT",
+    "ONE-SUB",
+    "OUT-OTHER",
+    "OUT-ROOT",
+    "OUT-SUB",
+    "OWN-ROOT",
+    "OWN-SUB",
+    "PER-ROOT",
+    "PER-SUB",
+    "RWH-ROOT",
+    "RWH-SUB",
+    "SAME-ROOT",
+    "SAME-SUB",
+    "SOLO",
+    "UNK-ROOT",
+    "UNK-SUB",
+    "UNS-ROOT",
+    "UNS-SUB",
+    "first",
+    "root",
+    "second",
+];
+
+pub(crate) fn member_id(name: &str) -> MemberId {
+    let index = MEMBER_NAMES
+        .iter()
+        .position(|candidate| *candidate == name)
+        .unwrap_or_else(|| panic!("未登记的夹具成员名：{name}"));
+    MemberId(index as u32)
+}
+
 /// 无内部交易的合并请求。
 pub(crate) fn request<'a>(root: &str, members: Vec<GroupMember<'a>>) -> ConsolidationRequest<'a> {
     ConsolidationRequest {
-        root: MemberId(root.to_string()),
+        root: member_id(root),
         members,
         intercompany_balances: Vec::new(),
         intercompany_sales: Vec::new(),
@@ -105,8 +169,8 @@ pub(crate) fn ic_balance(
     amount_yuan: i128,
 ) -> IntercompanyBalance {
     IntercompanyBalance {
-        member: MemberId(holder.to_string()),
-        counterparty: MemberId(counterparty.to_string()),
+        member: member_id(holder),
+        counterparty: member_id(counterparty),
         account: LedgerAccountId(account.to_string()),
         amount: yuan(amount_yuan),
     }
@@ -122,8 +186,8 @@ pub(crate) fn ic_sale(
     unsold: i128,
 ) -> IntercompanySale {
     IntercompanySale {
-        seller: MemberId(seller.to_string()),
-        buyer: MemberId(buyer.to_string()),
+        seller: member_id(seller),
+        buyer: member_id(buyer),
         revenue_account: LedgerAccountId("6001".to_string()),
         cost_account: LedgerAccountId("6401".to_string()),
         inventory_account: LedgerAccountId("1405".to_string()),

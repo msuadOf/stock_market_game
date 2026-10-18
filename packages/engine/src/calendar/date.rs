@@ -87,6 +87,11 @@ pub struct CivilDate {
 }
 
 impl CivilDate {
+    /// 数值三元组访问（错误上下文/序列化用，ADR 0041）。
+    pub fn ymd(self) -> (i32, u8, u8) {
+        (self.year, self.month, self.day)
+    }
+
     /// 由年/月/日构造，完整校验（闰月、月天数、年份窗）。非法输入一律 `Err`。
     pub fn from_ymd(year: i32, month: u8, day: u8) -> Result<Self, CivilDateError> {
         if !(CIVIL_YEAR_MIN..=CIVIL_YEAR_MAX).contains(&year) {
@@ -316,7 +321,7 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
-pub(crate) fn days_in_month(year: i32, month: u8) -> u8 {
+fn days_in_month(year: i32, month: u8) -> u8 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,

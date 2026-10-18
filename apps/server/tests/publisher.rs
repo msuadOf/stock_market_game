@@ -1,5 +1,5 @@
 use engine::session::protocol::{
-    attach_facts, EngineUpdate as ProtocolUpdate, TickBatch, TickFrame,
+    EventFact, EngineUpdate as ProtocolUpdate, TickBatch, TickFrame,
 };
 use engine::{Event, Money, StockCode, TradingPhase};
 use server::{ClientFrameBuffer, EngineUpdate, MAX_BUFFERED_EVENTS_PER_CLIENT};
@@ -9,7 +9,7 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
         seq,
         tick,
         phase: TradingPhase::ClosingAuction,
-        code: StockCode("600101".into()),
+        code: engine::StockId(0),
         indicative_price: Some(Money::from_cents(1001)),
         matched_volume: 100,
         imbalance: 0,
@@ -19,8 +19,9 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
             TickBatch {
                 frames: vec![TickFrame {
                     tick,
-                    facts: attach_facts(&events).unwrap(),
-                    events,
+                    facts: events.into_iter().map(|event| EventFact {
+                        key: engine::session::pipeline::EventStableKey::for_event(&event, 0), event,
+                    }).collect(),
                     timeseries_payload: Default::default(),
                     seq_from: seq - 1,
                     seq_to: seq,
@@ -157,7 +158,6 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
     batch.frames = (1..=MAX_BUFFERED_EVENTS_PER_CLIENT + 1)
         .map(|tick| TickFrame {
             tick: u64::try_from(tick).unwrap(),
-            events: vec![],
             facts: vec![],
             timeseries_payload: Default::default(),
             seq_from: 0,
@@ -171,8 +171,7 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
             TickBatch {
                 frames: vec![TickFrame {
                     tick: next_tick,
-                    events: vec![],
-                    facts: vec![],
+                            facts: vec![],
                     timeseries_payload: Default::default(),
                     seq_from: 0,
                     seq_to: 0,

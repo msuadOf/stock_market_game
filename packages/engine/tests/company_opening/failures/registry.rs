@@ -10,7 +10,7 @@ use engine::company::{CompanyError, CompanyRegistry};
 fn unknown_issuer_stock_rejected() {
     let registry = CompanyRegistry::new(vec![bare_config(
         CompanySpec {
-            id: CompanyId("T-SSE".to_string()),
+            code: "T-SSE".to_string(),
             name: "虚构发行人".to_string(),
             industry: IndustryId("machinery".to_string()),
             kind: CompanyKind::Industrial,
@@ -32,7 +32,7 @@ fn unknown_issuer_stock_rejected() {
         .collect();
     match registry.validate_issuer_mapping(&stock_refs) {
         Err(CompanyError::UnknownIssuerStock { company, stock }) => {
-            assert_eq!(company, CompanyId("T-SSE".to_string()));
+            assert_eq!(company, CompanyId(0));
             assert_eq!(stock.0, "688001");
         }
         other => panic!("expected UnknownIssuerStock, got {other:?}"),
@@ -72,8 +72,8 @@ fn duplicate_company_id_rejected() {
         ]),
     );
     match CompanyRegistry::new(vec![first, second]) {
-        Err(CompanyError::DuplicateCompanyId { company }) => {
-            assert_eq!(company, CompanyId("T-DUP".to_string()))
+        Err(CompanyError::DuplicateCompanyId { company_code }) => {
+            assert_eq!(company_code, "T-DUP")
         }
         other => panic!("expected DuplicateCompanyId, got {other:?}"),
     }
@@ -85,7 +85,7 @@ fn duplicate_issuer_stock_rejected() {
     let issuer = || {
         bare_config(
             CompanySpec {
-                id: CompanyId("T-ISS".to_string()),
+                code: "T-ISS".to_string(),
                 name: "虚构发行人".to_string(),
                 industry: IndustryId("machinery".to_string()),
                 kind: CompanyKind::Industrial,
@@ -100,16 +100,16 @@ fn duplicate_issuer_stock_rejected() {
         )
     };
     let mut other = issuer();
-    other.spec.id = CompanyId("T-ISS-2".to_string());
+    other.spec.code = "T-ISS-2".to_string();
     match CompanyRegistry::new(vec![issuer(), other]) {
         Err(CompanyError::DuplicateIssuerStock {
             stock,
-            company,
-            first,
+            company_code,
+            first_code,
         }) => {
             assert_eq!(stock.0, "600101");
-            assert_eq!(company, CompanyId("T-ISS-2".to_string()));
-            assert_eq!(first, CompanyId("T-ISS".to_string()));
+            assert_eq!(company_code, "T-ISS-2");
+            assert_eq!(first_code, "T-ISS");
         }
         other => panic!("expected DuplicateIssuerStock, got {other:?}"),
     }
@@ -120,7 +120,7 @@ fn duplicate_issuer_stock_rejected() {
 fn group_cycle_and_unknown_parent_rejected() {
     let config = |id: &str, parent: Option<&str>| {
         let mut spec = unlisted_spec(id, CompanyKind::Industrial, 100);
-        spec.group_parent = parent.map(|parent_id| CompanyId(parent_id.to_string()));
+        spec.group_parent = parent.map(str::to_string);
         bare_config(
             spec,
             generic_opening(vec![
@@ -131,10 +131,8 @@ fn group_cycle_and_unknown_parent_rejected() {
     };
     // A → B → A：环。
     match CompanyRegistry::new(vec![config("T-A", Some("T-B")), config("T-B", Some("T-A"))]) {
-        Err(CompanyError::GroupCycle { company }) => {
-            assert!(
-                company == CompanyId("T-A".to_string()) || company == CompanyId("T-B".to_string())
-            )
+        Err(CompanyError::GroupCycle { company_code }) => {
+            assert!(company_code == "T-A" || company_code == "T-B")
         }
         other => panic!("expected GroupCycle, got {other:?}"),
     }
@@ -145,9 +143,12 @@ fn group_cycle_and_unknown_parent_rejected() {
     }
     // 母公司不在集合内。
     match CompanyRegistry::new(vec![config("T-A", Some("T-GHOST"))]) {
-        Err(CompanyError::UnknownGroupParent { company, parent }) => {
-            assert_eq!(company, CompanyId("T-A".to_string()));
-            assert_eq!(parent, CompanyId("T-GHOST".to_string()));
+        Err(CompanyError::UnknownGroupParent {
+            company_code,
+            parent_code,
+        }) => {
+            assert_eq!(company_code, "T-A");
+            assert_eq!(parent_code, "T-GHOST");
         }
         other => panic!("expected UnknownGroupParent, got {other:?}"),
     }
@@ -167,7 +168,7 @@ fn group_cycle_and_unknown_parent_rejected() {
 fn issued_shares_mismatch_rejected() {
     let registry = CompanyRegistry::new(vec![bare_config(
         CompanySpec {
-            id: CompanyId("T-MISMATCH".to_string()),
+            code: "T-MISMATCH".to_string(),
             name: "虚构发行人".to_string(),
             industry: IndustryId("machinery".to_string()),
             kind: CompanyKind::Industrial,
@@ -189,7 +190,7 @@ fn issued_shares_mismatch_rejected() {
             total_shares,
             ..
         }) => {
-            assert_eq!(company, CompanyId("T-MISMATCH".to_string()));
+            assert_eq!(company, CompanyId(0));
             assert_eq!(issued_shares, 100);
             assert_eq!(total_shares, 8_928_571_429);
         }
@@ -216,7 +217,7 @@ fn unbalanced_opening_rejected() {
     );
     match CompanyRegistry::new(vec![good, bad]) {
         Err(CompanyError::OpeningPost { company, source }) => {
-            assert_eq!(company, CompanyId("T-BAD".to_string()));
+            assert_eq!(company, CompanyId(0));
             match source {
                 AccountingError::BatchAborted { cause, .. } => {
                     assert!(

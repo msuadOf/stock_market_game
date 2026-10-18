@@ -1,7 +1,6 @@
-import type { Event } from "../../types/generated/Event.ts";
-import type { EventFact } from "../../types/generated/EventFact.ts";
 import { isRecord } from "./guards.ts";
 import { ProtocolError } from "./types.ts";
+import type { WireEvent, WireEventFact } from "./stock-identity.ts";
 
 function unsupported(value: unknown): never {
   throw new ProtocolError(
@@ -39,13 +38,7 @@ export function canonicalJson(value: unknown): string {
   return stableValue(value);
 }
 
-export function eventStableKey(event: Event, localEventIndex: number): EventFact["key"] {
-  if ("PublicTrade" in event) {
-    return { phase_rank: 4, entity: { Stock: event.PublicTrade.code }, source: "Sealed", local_event_index: localEventIndex };
-  }
-  if ("PrivateEventOmitted" in event) {
-    return { phase_rank: 4, entity: "Session", source: "Sealed", local_event_index: event.PrivateEventOmitted.seq };
-  }
+export function eventStableKey(event: WireEvent, localEventIndex: number): WireEventFact["key"] {
   if ("Trade" in event) {
     return { phase_rank: 4, entity: { Stock: event.Trade.code }, source: "Sealed", local_event_index: localEventIndex };
   }
@@ -83,11 +76,11 @@ function assertNever(value: never): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.canonical", `未处理协议变体：${String(value)}`);
 }
 
-export function factIdentity(fact: EventFact): string {
+export function factIdentity(fact: WireEventFact): string {
   return canonicalJson(fact.key);
 }
 
-export function canonicalFacts(facts: readonly EventFact[]): readonly EventFact[] {
+export function canonicalFacts(facts: readonly WireEventFact[]): readonly WireEventFact[] {
   const identities = new Set<string>();
   for (const fact of facts) {
     const identity = factIdentity(fact);

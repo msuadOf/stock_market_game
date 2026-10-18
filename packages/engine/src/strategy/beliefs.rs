@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::accounting::reports::ReportKind;
 use crate::company::{CompanyId, CompanyKind};
 use crate::experience::RetailExperienceState;
@@ -91,7 +91,7 @@ pub struct BeliefBook {
     pub(super) profile: StrategyProfile,
     pub(super) analysis: AnalysisProfile,
     pub(super) assumptions: PersonalAssumptions,
-    pub(super) entries: BTreeMap<StockCode, BeliefEntry>,
+    pub(super) entries: BTreeMap<StockId, BeliefEntry>,
     /// 机构本人真实成交与本人观察的事实容器；复用散户的通用事实结构，不赋予机构散户买卖规则。
     pub(super) experience: RetailExperienceState,
     #[serde(deserialize_with = "deserialize_institution_policy")]
@@ -239,12 +239,12 @@ impl BeliefBook {
         &self.analysis
     }
 
-    pub fn entry(&self, stock: &StockCode) -> Option<&BeliefEntry> {
+    pub fn entry(&self, stock: &StockId) -> Option<&BeliefEntry> {
         self.entries.get(stock)
     }
 
-    /// 已有信念条目的股票键（StockCode 序；候选集组装用）。
-    pub fn entry_stocks(&self) -> impl Iterator<Item = &StockCode> {
+    /// 已有信念条目的股票键（StockId 序；候选集组装用）。
+    pub fn entry_stocks(&self) -> impl Iterator<Item = &StockId> {
         self.entries.keys()
     }
 
@@ -253,7 +253,7 @@ impl BeliefBook {
     /// 由测试以字节对比锁定）。
     pub fn apply_cause<M>(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         inputs: &BeliefInputs<'_, M>,
     ) -> Result<&BeliefEntry, BeliefError> {
@@ -344,7 +344,7 @@ mod risk_owner_tests {
                     .feedback
                     .failure_events
                     .push(FailureEventRecord {
-                        code: StockCode("600101".to_owned()),
+                        code: StockId(0),
                         order_id: Some(order),
                         moment: moment(order, 0),
                     });

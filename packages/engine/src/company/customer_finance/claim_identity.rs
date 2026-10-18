@@ -89,7 +89,6 @@ impl CompanyClaimIdentity {
         company: CompanyId,
         source: CompanyClaimSource,
     ) -> Result<Self, CustomerFinanceError> {
-        validate_id(&company.0, "claim company")?;
         source.validate()?;
         Ok(Self { company, source })
     }
@@ -104,7 +103,7 @@ impl CompanyClaimIdentity {
 
     pub(super) fn encode(&self) -> String {
         let mut encoded = format!("{CLAIM_PREFIX}{}:", self.source.kind_name());
-        append_segment(&mut encoded, &self.company.0);
+        append_segment(&mut encoded, &self.company.0.to_string());
         match &self.source {
             CompanyClaimSource::IndustrialReceivable { receivable }
             | CompanyClaimSource::RealEstateFinalReceivable { receivable } => {
@@ -132,7 +131,11 @@ impl CompanyClaimIdentity {
         let (kind, mut remaining) = body
             .split_once(':')
             .ok_or_else(|| invalid("missing claim source category"))?;
-        let company = CompanyId(read_segment(&mut remaining)?.to_string());
+        let company = CompanyId(
+            read_segment(&mut remaining)?
+                .parse::<u32>()
+                .map_err(|_| invalid("claim company id must be numeric"))?,
+        );
         let source = match kind {
             "industrial-receivable" => CompanyClaimSource::IndustrialReceivable {
                 receivable: OpenItemId(read_segment(&mut remaining)?.to_string()),
@@ -236,9 +239,9 @@ mod tests {
     use crate::company::customer_finance::{CustomerFinanceBook, CustomerFinanceEventId, DebtId};
     use crate::company::{CounterpartyId, DebtCreditor};
 
-    fn claim(company: &str, receivable: &str) -> CompanyClaimIdentity {
+    fn claim(company: u32, receivable: &str) -> CompanyClaimIdentity {
         CompanyClaimIdentity::new(
-            CompanyId(company.to_string()),
+            CompanyId(company),
             CompanyClaimSource::IndustrialReceivable {
                 receivable: OpenItemId(receivable.to_string()),
             },
@@ -248,7 +251,7 @@ mod tests {
 
     #[test]
     fn company_claim_id_roundtrip_is_stable_and_preserves_unicode_and_delimiters() {
-        for (company, receivable) in [("甲:1😀", "AR:1:尾款😀"), (" a:b ", " 1:2 ")] {
+        for (company, receivable) in [(0u32, "AR:1:尾款😀"), (1u32, " 1:2 ")] {
             let identity = claim(company, receivable);
             let debt = DebtId::for_company_claim(&identity).expect("联合身份编码");
             assert_eq!(
@@ -270,12 +273,12 @@ mod tests {
     fn company_claim_id_has_no_company_or_delimiter_collisions() {
         let mut ids = std::collections::BTreeSet::new();
         for (company, receivable) in [
-            ("issuer-a", "AR-2"),
-            ("issuer-b", "AR-2"),
-            ("a:b", "c"),
-            ("a", "b:c"),
-            ("a:1", "2:c"),
-            ("a", "1:2:c"),
+            (0u32, "AR-2"),
+            (1u32, "AR-2"),
+            (0u32, "a:b"),
+            (0u32, "b:c"),
+            (1u32, "2:c"),
+            (1u32, "1:2:c"),
         ] {
             assert!(
                 ids.insert(
@@ -318,8 +321,7 @@ mod tests {
                 group: ContractId("same-id".into()),
             },
         ] {
-            let identity =
-                CompanyClaimIdentity::new(CompanyId("issuer".into()), source).expect("明确来源");
+            let identity = CompanyClaimIdentity::new(CompanyId(0), source).expect("明确来源");
             let debt = DebtId::for_company_claim(&identity).expect("来源编码");
             assert_eq!(debt.company_claim().expect("严格解码"), Some(identity));
             assert!(ids.insert(debt), "本金、每笔利息及其他行业来源不能覆盖彼此");
@@ -332,8 +334,8 @@ mod tests {
         let mut book = CustomerFinanceBook::new();
         book.register_customer(customer.clone(), AccountingAmount::from_cents(150))
             .expect("只有一份现金");
-        let first = claim("issuer-a", "AR-2");
-        let second = claim("issuer-b", "AR-2");
+        let first = claim(0, "AR-2");
+        let second = claim(1, "AR-2");
         let opened = CivilDate::from_iso("2030-01-01").expect("日期");
         let due = CivilDate::from_iso("2030-01-02").expect("日期");
         let first_id = book
@@ -413,13 +415,13 @@ mod tests {
     fn typed_claim_restore_requires_valid_identity_and_decimal_accrual_source() {
         for invalid in [
             r#"{"source":{"IndustrialReceivable":{"receivable":"AR-2"}}}"#,
-            r#"{"company":"issuer"}"#,
-            r#"{"company":"issuer","source":{"IndustrialReceivable":{}}}"#,
-            r#"{"company":"issuer","source":{"LoanInterest":{"loan":"LN-1"}}}"#,
-            r#"{"company":"issuer","source":{"IndustrialReceivable":{"receivable":"AR-2"}},"unexpected":true}"#,
-            r#"{"company":"issuer","source":{"IndustrialReceivable":{"receivable":"AR-2","unexpected":true}}}"#,
-            r#"{"company":"issuer","company":"other","source":{"IndustrialReceivable":{"receivable":"AR-2"}}}"#,
-            r#"{"company":"issuer","source":{"LoanInterest":{"loan":"LN-1","loan":"LN-2","accrual":"12"}}}"#,
+            r#"{"company":0}"#,
+            r#"{"company":0,"source":{"IndustrialReceivable":{}}}"#,
+            r#"{"company":0,"source":{"LoanInterest":{"loan":"LN-1"}}}"#,
+            r#"{"company":0,"source":{"IndustrialReceivable":{"receivable":"AR-2"}},"unexpected":true}"#,
+            r#"{"company":0,"source":{"IndustrialReceivable":{"receivable":"AR-2","unexpected":true}}}"#,
+            r#"{"company":0,"company":1,"source":{"IndustrialReceivable":{"receivable":"AR-2"}}}"#,
+            r#"{"company":0,"source":{"LoanInterest":{"loan":"LN-1","loan":"LN-2","accrual":"12"}}}"#,
         ] {
             let _: serde_json::Value =
                 serde_json::from_str(invalid).expect("合法JSON，仅业务结构非法");
@@ -428,26 +430,27 @@ mod tests {
                 "缺字段／未知字段／重复字段须明确拒绝：{invalid}"
             );
         }
+        // 数值公司 id 恒合法（无空白校验面）；构造必须成功。
         assert!(CompanyClaimIdentity::new(
-            CompanyId(" ".into()),
+            CompanyId(u32::MAX),
             CompanyClaimSource::IndustrialReceivable {
                 receivable: OpenItemId("AR-2".into())
             }
         )
-        .is_err());
+        .is_ok());
         assert!(CompanyClaimIdentity::new(
-            CompanyId("issuer".into()),
+            CompanyId(0),
             CompanyClaimSource::LoanPrincipal {
                 loan: ContractId(" ".into())
             }
         )
         .is_err());
         for invalid in ["12", "\"012\"", "\"+12\"", "\"18446744073709551616\""] {
-            let input = format!("{{\"company\":\"issuer\",\"source\":{{\"LoanInterest\":{{\"loan\":\"LN-1\",\"accrual\":{invalid}}}}}}}");
+            let input = format!("{{\"company\":0,\"source\":{{\"LoanInterest\":{{\"loan\":\"LN-1\",\"accrual\":{invalid}}}}}}}");
             assert!(serde_json::from_str::<CompanyClaimIdentity>(&input).is_err());
         }
         let identity = CompanyClaimIdentity::new(
-            CompanyId("issuer".into()),
+            CompanyId(0),
             CompanyClaimSource::LoanInterest {
                 loan: ContractId("LN-1".into()),
                 accrual: BusinessEventId::new(u64::MAX),
@@ -477,7 +480,7 @@ mod tests {
             opened,
             due,
             AccountingAmount::from_cents(100),
-            DebtCreditor::Company(CompanyId("issuer-b".into())),
+            DebtCreditor::Company(CompanyId(1)),
         );
         assert!(attempted.is_err(), "编码来源公司必须等于实际债权人");
         assert_eq!(book, before);
@@ -497,7 +500,7 @@ mod tests {
             opened,
             due,
             AccountingAmount::from_cents(100),
-            DebtCreditor::Company(CompanyId("issuer-b".into())),
+            DebtCreditor::Company(CompanyId(1)),
         )
         .expect("显式自定义债务");
         let mut forged = serde_json::to_value(book).expect("合法账簿");

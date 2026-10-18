@@ -9,65 +9,60 @@ use serde_json::json;
 use server::{app_router_with_manager, SessionManager};
 use tower::ServiceExt;
 
-#[path = "identity_fixture.rs"]
-mod identity_fixture;
-
 #[tokio::test]
 async fn pause_preferences_requires_owner_and_current_canonical_generation() {
     let manager = SessionManager::default();
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    let (id, subject, credential) = identity_fixture::create_market(&manager, setup, 1).await;
+    let id = manager.new_session(setup, 1).unwrap();
     let handles = manager.lookup(&id).unwrap();
-    let generation = identity_fixture::generation(&handles, subject).await;
-    let (_unjoined_subject, unjoined_credential) = identity_fixture::guest(&manager);
     let app = app_router_with_manager(manager.clone());
     for (session, token, generation, expected, code) in [
         (
             id.as_str(),
             None,
-            generation.as_str(),
+            "1",
             StatusCode::UNAUTHORIZED,
             "UNAUTHORIZED",
         ),
         (
             &id,
-            Some(unjoined_credential.as_str()),
-            generation.as_str(),
+            Some("invalid-session-token"),
+            "1",
             StatusCode::FORBIDDEN,
-            "MARKET_CONTROL_FORBIDDEN",
+            "SESSION_FORBIDDEN",
         ),
         (
             &id,
-            Some(credential.as_str()),
+            Some(handles.session_token.as_str()),
             "01",
             StatusCode::BAD_REQUEST,
             "INVALID_GENERATION",
         ),
         (
             &id,
-            Some(credential.as_str()),
+            Some(handles.session_token.as_str()),
             "+1",
             StatusCode::BAD_REQUEST,
             "INVALID_GENERATION",
         ),
         (
             &id,
-            Some(credential.as_str()),
+            Some(handles.session_token.as_str()),
             "0",
             StatusCode::BAD_REQUEST,
             "PAUSE_PREFERENCES_REJECTED",
         ),
         (
             "absent",
-            Some(credential.as_str()),
-            generation.as_str(),
+            Some(handles.session_token.as_str()),
+            "1",
             StatusCode::FORBIDDEN,
             "SESSION_FORBIDDEN",
         ),
         (
             &id,
-            Some(credential.as_str()),
-            generation.as_str(),
+            Some(handles.session_token.as_str()),
+            "1",
             StatusCode::NO_CONTENT,
             "",
         ),

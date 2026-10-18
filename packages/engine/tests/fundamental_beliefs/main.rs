@@ -23,13 +23,13 @@ use engine::accounting::{
     JournalEntry, JournalLine, LedgerAccountId, PostingSide,
 };
 use engine::calendar::{CivilDate, CivilInstant};
-use engine::company::CompanyKind;
 use engine::company::industrial::industrial_account_chart;
+use engine::company::CompanyKind;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
-    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, PublicLibrary, PublicationId,
-    PublicationOrigin, PublicationRequest, ScheduledReportKind, scheduled_instant,
-    stable_company_offset,
+    scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
+    AnnouncementRequest, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
+    ScheduledReportKind,
 };
 use engine::information::{
     AcquisitionError, AcquisitionOutcome, NpcInformationState, NpcObservationContext,
@@ -37,7 +37,7 @@ use engine::information::{
 use engine::strategy::{
     AnalysisProfile, BeliefBook, BeliefCause, BeliefError, BeliefInputs, Rng, StrategyProfile,
 };
-use engine::{AccountId, StockCode};
+use engine::{AccountId, StockId};
 
 /// 披露域种子（测试固定值，确定性钉死）。
 pub(crate) const OPS_SEED: u64 = 21;
@@ -93,7 +93,6 @@ pub(crate) fn market(float_shares: u64) -> BeliefMarket {
 }
 
 /// 完整披露场景：四年度账套 + 逐年结账公开 + 一条临时公告。
-#[derive(Clone)]
 pub(crate) struct Scenario {
     pub company: CompanyId,
     pub library: PublicLibrary,
@@ -152,7 +151,7 @@ impl FundamentalBeliefCase {
 
     pub fn apply_cause(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         as_of: u64,
     ) -> Result<(), BeliefError> {
@@ -174,9 +173,9 @@ impl FundamentalBeliefCase {
 }
 
 pub(crate) fn scenario() -> Scenario {
-    let company = CompanyId(COMPANY.to_string());
-    let member = MemberId(COMPANY.to_string());
-    let offset = stable_company_offset(OPS_SEED, &company);
+    let company = CompanyId(0);
+    let member = MemberId(0);
+    let offset = stable_company_offset(OPS_SEED, COMPANY);
 
     let mut books = Books::new(industrial_account_chart());
     let revenues = [100_000i128, 80_000, 180_000, 198_000];
@@ -260,12 +259,12 @@ pub(crate) fn scenario() -> Scenario {
             company: company.clone(),
             occurred_on: announcement_date,
             published_at: CivilInstant::from_hms(announcement_date, 18, 0, 0).expect("phase"),
-            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
+            event: AnnouncedEvent {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 1_200,
                 starts_on: announcement_date,
                 expires_on: d("2031-04-10"),
-            }),
+            },
         })
         .expect("announcement publishes");
 

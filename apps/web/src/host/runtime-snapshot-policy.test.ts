@@ -8,8 +8,9 @@ import {
 
 describe("runtime snapshot policy", () => {
   it("refreshes authoritative account state after every trade", () => {
+    // EngineEvent 已是 Coded* 形态（ADR 0041）：code 用代码串（StockId 3 = "600101"）。
     const trade = {
-      Trade: { seq: 1, code: "600101", price: "1000", qty: 100, maker: "1", taker: "0" },
+      Trade: { seq: 1, code: "600101", price: "1000", qty: 100, maker: 1, taker: 0 },
     } as EngineEvent;
     assert.equal(requiresRuntimeSnapshot([trade]), true);
   });
@@ -36,6 +37,7 @@ describe("runtime snapshot policy", () => {
       AuctionCompleted: {
         seq: 4,
         tick: 600,
+        phase: "ClosingAuction",
         code: "600101",
         clearing_price: null,
         matched_volume: 0,
@@ -48,7 +50,7 @@ describe("runtime snapshot policy", () => {
     const accepted = {
       OrderAccepted: {
         seq: 5,
-        account: "0",
+        account: 0,
         code: "600101",
         id: 1,
         side: "Sell",
@@ -59,7 +61,7 @@ describe("runtime snapshot policy", () => {
     const canceled = {
       OrderCanceled: {
         seq: 6,
-        account: "0",
+        account: 0,
         code: "600101",
         id: 1,
         remaining_qty: 100,
@@ -75,7 +77,7 @@ describe("runtime snapshot policy", () => {
     const event = {
       OrderAccepted: {
         seq: 7,
-        account: "0",
+        account: 0,
         code: "600101",
         id: 2,
         side: "Buy",

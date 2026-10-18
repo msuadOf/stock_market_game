@@ -10,7 +10,7 @@ use super::{
     IntentCandidateBatch, IntentCandidateKey, ReceiptKind, ReceiptSource, StepFatal,
 };
 use crate::session::RetailOrderDiagnosticEvent;
-use crate::{GameSession, Intent, OrderId, RejectionReason, StockCode};
+use crate::{GameSession, Intent, OrderId, RejectionReason, StockId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn project_continuous_retail_lifecycle(
@@ -18,13 +18,13 @@ pub(super) fn project_continuous_retail_lifecycle(
     candidates: &IntentCandidateBatch,
     validation: &AccountValidationOutput,
     execution_facts: &[ContinuousExecutionFact],
-    receipts: &[EnvelopeReceipt],
+    receipts: &super::fill_fact::ReceiptBatch,
     consumed: &PlanChainFactConsumption,
 ) -> Result<(), StepFatal> {
     let candidates = index_candidates(candidates)?;
     if candidates.len() != validation.results().len() {
         return Err(invariant(
-            "AccountValidation 结果数量与 Continuous DecisionShadow 候选批次不一致",
+            "AccountValidation 结果数量与 Continuous DecisionAndContinuation 候选批次不一致",
         ));
     }
     let mut facts = BTreeMap::new();
@@ -75,7 +75,7 @@ pub(super) fn project_continuous_retail_lifecycle(
     let mut fill_quantities = BTreeMap::new();
     for result in validation.results() {
         let candidate = candidates.get(result.key()).ok_or_else(|| {
-            invariant("Continuous AccountValidation 结果缺少 DecisionShadow 候选")
+            invariant("Continuous AccountValidation 结果缺少 DecisionAndContinuation 候选")
         })?;
         match result {
             CandidateValidationResult::Rejected { reason, .. } => {
@@ -88,13 +88,7 @@ pub(super) fn project_continuous_retail_lifecycle(
                 validate_operation(candidate, fact)?;
                 project_operation(session, &mut events, fact)?;
                 for receipt in fills_by_request.remove(sealed_index).unwrap_or_default() {
-                    let qty = receipt
-                        .qty_before
-                        .checked_sub(receipt.qty_after)
-                        .filter(|qty| *qty > 0)
-                        .ok_or_else(|| {
-                            invariant("continuous retail fill has no positive quantity")
-                        })?;
+                    let qty = receipts.fill_for(receipt)?.qty();
                     if session
                         .state
                         .retail_experience
@@ -311,7 +305,7 @@ fn validate_operation(
 ) -> Result<(), StepFatal> {
     if fact.candidate_key() != candidate.key() {
         return Err(invariant(
-            "Continuous StockProcessing 事实属于其他 DecisionShadow 候选",
+            "Continuous StockProcessing 事实属于其他 DecisionAndContinuation 候选",
         ));
     }
     let valid = match (candidate.intent(), fact.outcome()) {
@@ -391,12 +385,12 @@ fn validate_operation(
         Ok(())
     } else {
         Err(invariant(
-            "Continuous StockProcessing payload 与其 DecisionShadow 候选不一致",
+            "Continuous StockProcessing payload 与其 DecisionAndContinuation 候选不一致",
         ))
     }
 }
 
-fn place_identity(fact: &ContinuousPlaceFact) -> (crate::AccountId, &StockCode, crate::OrderId) {
+fn place_identity(fact: &ContinuousPlaceFact) -> (crate::AccountId, &StockId, crate::OrderId) {
     match fact {
         ContinuousPlaceFact::Resting {
             account,
@@ -419,7 +413,7 @@ fn place_identity(fact: &ContinuousPlaceFact) -> (crate::AccountId, &StockCode, 
     }
 }
 
-fn cancel_identity(fact: &ContinuousCancelFact) -> (crate::AccountId, &StockCode, crate::OrderId) {
+fn cancel_identity(fact: &ContinuousCancelFact) -> (crate::AccountId, &StockId, crate::OrderId) {
     match fact {
         ContinuousCancelFact::Canceled {
             account,
@@ -442,7 +436,7 @@ fn index_candidates(
     let mut indexed = BTreeMap::new();
     for candidate in candidates.candidates() {
         if indexed.insert(candidate.key(), candidate).is_some() {
-            return Err(invariant("Continuous DecisionShadow 批次含有重复 key"));
+            return Err(invariant("Continuous DecisionAndContinuation 批次含有重复 key"));
         }
     }
     Ok(indexed)
@@ -537,7 +531,7 @@ fn push_rejected_payload(
     session: &GameSession,
     events: &mut Vec<RetailOrderDiagnosticEvent>,
     account: crate::AccountId,
-    code: &StockCode,
+    code: &StockId,
     reason: RejectionReason,
 ) {
     if session.state.retail_experience.contains_key(&account) {
@@ -597,7 +591,8 @@ mod tests {
 
     #[test]
     fn fill_waits_for_its_own_new_submission_without_sorting_unrelated_orders() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let a = OrderId(10);
         let b = OrderId(11);
         let submitted = |order_id| RetailOrderDiagnosticEvent::Submitted {
@@ -634,7 +629,8 @@ mod tests {
 
     #[test]
     fn one_order_keeps_receipt_fill_order_when_results_arrive_reversed() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
@@ -662,7 +658,8 @@ mod tests {
 
     #[test]
     fn old_order_fill_precedes_its_cancel_even_when_results_are_reversed() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let order_id = OrderId(10);
         let filled = RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
@@ -688,7 +685,8 @@ mod tests {
     }
     #[test]
     fn lifecycle_batch_preserves_quantity_and_dependency_first_errors() {
-        let code = StockCode("600001".to_owned());
+        // 数值身份后无字符串可断言：纯 fixture 单股按目录 rank 取 StockId(0)。
+        let code = StockId(0);
         let order_id = OrderId(10);
         let submitted = RetailOrderDiagnosticEvent::Submitted {
             account: AccountId(1),
@@ -754,7 +752,7 @@ mod tests {
         let order_id = OrderId(10);
         let fill = RetailOrderDiagnosticEvent::Filled {
             account: AccountId(1),
-            code: StockCode("600001".to_owned()),
+            code: StockId(0),
             side: Side::Buy,
             order_id,
             qty: 100,

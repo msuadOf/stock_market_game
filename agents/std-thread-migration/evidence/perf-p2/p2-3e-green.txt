@@ -1,0 +1,44 @@
+# P2-3e 绿证据：注意力上行稀疏化（2ca944c5）
+
+## 改动
+
+- protocol：新增 GroupIn::EchoAttentionSparse（生产稀疏上行面；全量
+  EchoAttention 保留——构造恢复/Abort 测试读面锚）。
+- group：GroupState.attention_evolved（本 tick 演进位集）；标记面=
+  run_round 两处 evaluate（observe=false 也演进——RNG 已消费）+
+  handle_start ForceDue 改排；Start/DayEnd 清（Drain 期上行消费）。
+- world：collect_group_attention_sparse。
+- drive：install_market_views 生产接线切稀疏。
+
+## 数据先行（due 率插桩实证）
+
+B fixture（20001 名册）稳态 due=15-33/tick、decide=3-19/tick（tick
+1-1000 全程采样）——原全名册上行+写 99.8% 幂等空转。此数据同时修正
+早前画像叙事：零售决策每 tick 仅 ~8 个，「每决策重建=组线程拷贝主源」
+的机制归因需按 due 率重估（P2-3a/3d 的同窗配对增益成立，但贡献主体
+另在——attention 面即本刀）。
+
+## 守卫
+
+- p2_3e_sparse_attention_uplink_keeps_session_mirror_equal：三拍稀疏
+  安装后，组端全量读面（collect_attention——权威）与 session 镜像
+  （runtime_attention_state）逐 NPC 逐字段一致（next_due+rng_state）。
+- 突变红（p2-3e-red.txt）：稀疏上行恒空 → AccountId(2) next_due
+  left=8（组权威）vs right=0（镜像停滞）——位置精确。
+- 既有读面测试（drive_tests 构造恢复/decision_tests sol5 Abort 恢复/
+  npc_tick_preparation queue 语义）全量回归双绿 1617/0/11——全量
+  EchoAttention 未动。
+
+## 等价
+
+- B 探针 300/1000 tick events/fees 逐位（3336/0、11119/5705）。
+
+## 性能（负载 16-21 时段，如实登记）
+
+- 300 tick：108.0/106.2/140.0（mean 118.1）与 126.6/109.3/109.3
+  （mean 115.1）；含插桩轮 123.4/138.3/117.3（mean 126.3）。
+- 1000 tick：113.3/108.6/114.2/127.6（mean 115.9；一轮 73.1 为负载
+  峰值伪影剔除）。
+- 对照 P2-3d（300 tick 91.3 / 1000 ~89）：+25-38%。
+- B 账本（300 tick mean）：4.3 → 78.1（P2-2b）→ 84.1 → ~86 → 91.3
+  → 115-126（P2-3e）。1000 tick：69.5 → 116。

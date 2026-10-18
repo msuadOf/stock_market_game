@@ -5,9 +5,10 @@
 //! 约定：同类业务可在同一日期注册多条）。股东动作（分红/回购/清算分配）是
 //! 行业会计红线：结算仅设计，无运行时队列——送入即类型化拒绝。
 //!
-//! 时钟集成经会话接缝（`session::company_operations`）：调度器待办镜像为
-//! `CivilClock` 的 `DueKind::InterestAccrual/ContractMaturity`，恰好一次
-//! 语义与跳日守卫由时钟承担；本队列承载业务载荷（公司 + 引用）。
+//! 本队列是公司 due 的**单一 authority**：不向自然日时钟镜像逐项待办；
+//! `next_due_date` 向会话时间推进暴露下一到期自然日，会话按自然日逐日调用
+//! `CompanyOperations::advance_civil_day`，由本队列在日内恰好一次派发
+//! （跳日守卫见 `pop_due_on` 的 `DueSkipped`）。
 
 use std::collections::BTreeSet;
 
@@ -23,14 +24,19 @@ use thiserror::Error;
 pub struct ScheduledDueId(u64);
 
 impl ScheduledDueId {
+    /// 数值访问（错误上下文用，ADR 0041）。
+    pub(crate) fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl ScheduledDueId {
     pub fn value(self) -> u64 {
         self.0
     }
 }
 
-/// 到期业务动作（业务载荷；时钟侧只看到 [`DueKind`] 映射）。
-///
-/// [`DueKind`]: crate::session::DueKind
+/// 到期业务动作（业务载荷；本队列是唯一 authority，不向时钟投影种类）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum ScheduledAction {
     /// 滚动计提利息至到期日（ACT/365F 自然日）。
@@ -87,6 +93,9 @@ pub enum SchedulerError {
     SaveInconsistent { detail: String },
     #[error("scheduler due id sequence exhausted")]
     SequenceExhausted,
+    /// 已派发、已取消或未知的 due 不可再次取消；只保留数值 id。
+    #[error("scheduler due {id:?} is not pending")]
+    DueNotPending { id: ScheduledDueId },
 }
 
 /// 持久化到期队列。serde 保存 `{next_seq, settled_through, pending}`；恢复走
@@ -116,6 +125,20 @@ impl OperatingScheduler {
 
     pub fn settled_through(&self) -> Option<CivilDate> {
         self.settled_through
+    }
+
+    /// 下一到期自然日（待办按 `(due_date, id)` 升序，首项即最早）；空队列为 `None`。
+    ///
+    /// 会话时间推进据此取公司侧的合法时点；不镜像任何待办到时钟。
+    pub fn next_due_date(&self) -> Option<CivilDate> {
+        self.pending.first().map(|due| due.due_date)
+    }
+
+    /// 取消一项仍待办的 due；取消后来源 key 可再次提交，但 id 游标不回退。
+    pub fn cancel_due(&mut self, id: ScheduledDueId) -> Result<ScheduledDue, SchedulerError> {
+        let position = self.pending.iter().position(|due| due.id == id)
+            .ok_or(SchedulerError::DueNotPending { id })?;
+        Ok(self.pending.remove(position))
     }
 
     /// 提交（先验证后落地）：股东动作一律拒绝；due 不得早于等于已结算日；

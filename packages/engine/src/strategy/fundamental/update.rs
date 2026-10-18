@@ -2,17 +2,17 @@
 //! 更新只由显式 [`BeliefCause`] 驱动——信念模块不存在任何 per-tick /
 //! per-observation 变更路径。
 
-use crate::account::StockCode;
-use crate::accounting::AccountingPeriod;
+use crate::account::StockId;
 use crate::accounting::reports::ReportKind;
+use crate::accounting::AccountingPeriod;
 use crate::calendar::CivilInstant;
 use crate::information::{NpcObservationContext, PublicationId, PublishedReport};
 use crate::orderbook::OrderId;
 
-use super::facts::{AnnualFacts, extract_annual_facts};
+use super::facts::{extract_annual_facts, AnnualFacts};
 use super::{
-    ValuationOutcome, ValuationUnavailable, belief_horizon_days, capability_center,
-    estimate_by_method, initial_forecast, observe_growth, revise_forecast, revision_lambda_bp,
+    belief_horizon_days, capability_center, estimate_by_method, initial_forecast, observe_growth,
+    revise_forecast, revision_lambda_bp, ValuationOutcome, ValuationUnavailable,
 };
 
 use crate::strategy::beliefs::{BeliefBook, BeliefEntry, BeliefError, BeliefInputs};
@@ -109,7 +109,7 @@ impl BeliefBook {
     /// 不动；同一订单只更新一次（重复触发幂等——字节不变）。
     pub(crate) fn apply_experience(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         order: OrderId,
         delta_bp: i32,
@@ -134,7 +134,7 @@ impl BeliefBook {
     /// `direct = true`（更正）直接重估，丢弃旧预测并重置信心。
     pub(crate) fn apply_material(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         report_id: PublicationId,
         inputs: &BeliefInputs<'_, impl Sized>,
@@ -164,7 +164,7 @@ impl BeliefBook {
                         if latest_annual.is_some_and(|(latest, _)| latest == report_id)
                             && matches!(
                                 preferred.reports.kind,
-                                ReportKind::Monthly | ReportKind::Quarter | ReportKind::HalfYear
+                                ReportKind::Quarter | ReportKind::HalfYear
                             )
                         {
                             return self.apply_interim_material(
@@ -188,7 +188,7 @@ impl BeliefBook {
         }
         if matches!(
             report.reports.kind,
-            ReportKind::Monthly | ReportKind::Quarter | ReportKind::HalfYear
+            ReportKind::Quarter | ReportKind::HalfYear
         ) {
             return self.apply_interim_material(stock, cause, report_id, inputs, direct);
         }
@@ -209,7 +209,7 @@ impl BeliefBook {
 
     fn apply_interim_material(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         report_id: PublicationId,
         inputs: &BeliefInputs<'_, impl Sized>,
@@ -221,17 +221,9 @@ impl BeliefBook {
             &inputs.company,
             observed_at_of(inputs, report_id),
         )?;
-        let Some((annual_id, annual_at)) =
-            self.latest_own_annual_for_scope(inputs, Some(&report.reports.scope))?
-        else {
-            return self.record_annual_baseline_unavailable(
-                stock,
-                cause,
-                Some(report_id),
-                inputs,
-                direct,
-            );
-        };
+        let (annual_id, annual_at) = self
+            .latest_own_annual_for_scope(inputs, Some(&report.reports.scope))?
+            .ok_or(BeliefError::NoOwnAnnualMaterial)?;
         let facts =
             extract_annual_facts(inputs.ctx.report(annual_id)?, &inputs.company, annual_at)?;
         if !self.entries.contains_key(stock) {
@@ -245,14 +237,11 @@ impl BeliefBook {
             );
         }
         let entry = self.entries.get(stock).ok_or(BeliefError::NoBeliefEntry)?;
-        let material_already_used = entry.used_report_ids.contains(&report_id);
-        if material_already_used && entry.used_report_ids.first() == Some(&annual_id) && !direct {
+        if entry.used_report_ids.contains(&report_id) && !direct {
             return Ok(());
         }
         let forecast = if direct {
             initial_forecast(observation, self.assumptions.growth_deviation_bp)
-        } else if material_already_used {
-            entry.forecast
         } else {
             revise_forecast(
                 &entry.forecast,
@@ -280,64 +269,10 @@ impl BeliefBook {
         Ok(())
     }
 
-    fn record_annual_baseline_unavailable(
-        &mut self,
-        stock: &StockCode,
-        cause: BeliefCause,
-        report_id: Option<PublicationId>,
-        inputs: &BeliefInputs<'_, impl Sized>,
-        direct: bool,
-    ) -> Result<(), BeliefError> {
-        if let Some(report_id) = report_id {
-            if !direct
-                && self
-                    .entries
-                    .get(stock)
-                    .is_some_and(|entry| entry.used_report_ids.contains(&report_id))
-            {
-                return Ok(());
-            }
-        }
-        let old = self.entries.get(stock);
-        let forecast = super::ForecastState {
-            growth_bp: None,
-            basis: super::ForecastBasis::AnnualBaselineUnavailable,
-        };
-        let entry = BeliefEntry {
-            company: inputs.company.clone(),
-            method: old
-                .map(|entry| entry.method)
-                .unwrap_or_else(|| self.analysis.method_for_company_kind(inputs.kind)),
-            confidence_bp: old.map_or_else(
-                || forecast.initial_confidence_bp(),
-                |entry| entry.confidence_bp,
-            ),
-            forecast,
-            valuation: ValuationOutcome::Unavailable {
-                reason: ValuationUnavailable::AnnualBaselineNotOwnKnown,
-            },
-            used_report_ids: report_id.into_iter().collect(),
-            anchor_trading_day: inputs.as_of_trading_day,
-            horizon_trading_days: old.map_or_else(
-                || belief_horizon_days(&self.profile),
-                |entry| entry.horizon_trading_days,
-            ),
-            last_cause: Some(CauseRecord {
-                cause,
-                as_of_trading_day: inputs.as_of_trading_day,
-            }),
-            applied_experience_orders: old
-                .map(|entry| entry.applied_experience_orders.clone())
-                .unwrap_or_default(),
-        };
-        self.entries.insert(stock.clone(), entry);
-        Ok(())
-    }
-
     /// 信用违约：公告须属本公司；以本人已知**最新年报**直接重估。
     pub(crate) fn apply_credit_default(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         announcement_id: PublicationId,
         inputs: &BeliefInputs<'_, impl Sized>,
@@ -349,19 +284,9 @@ impl BeliefBook {
                 company: inputs.company.clone(),
             });
         }
-        let Some((report_id, observed_at)) = self.latest_own_annual_for_scope(
-            inputs,
-            self.entries
-                .get(stock)
-                .and_then(|entry| entry.used_report_ids.first())
-                .map(|report| inputs.ctx.report(*report))
-                .transpose()?
-                .map(|report| report.reports.scope.clone())
-                .as_ref(),
-        )?
-        else {
-            return self.record_annual_baseline_unavailable(stock, cause, None, inputs, true);
-        };
+        let (report_id, observed_at) = self
+            .latest_own_annual(inputs)?
+            .ok_or(BeliefError::NoOwnAnnualMaterial)?;
         let report = inputs.ctx.report(report_id)?;
         let facts = extract_annual_facts(report, &inputs.company, observed_at)?;
         self.write_derived_entry(stock, cause, report_id, facts, inputs, true);
@@ -371,7 +296,7 @@ impl BeliefBook {
     /// 到期：同事实重估（预测/信心不动），锚推进到当前日。
     pub(crate) fn apply_horizon_expiry(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         inputs: &BeliefInputs<'_, impl Sized>,
     ) -> Result<(), BeliefError> {
@@ -396,40 +321,18 @@ impl BeliefBook {
                     .map(|report| report.reports.scope.clone())
             })
             .transpose()?;
-        let Some((report_id, observed_at)) =
-            self.latest_own_annual_for_scope(inputs, baseline_scope.as_ref())?
-        else {
-            if entry.forecast.basis != super::ForecastBasis::AnnualBaselineUnavailable {
-                return Err(BeliefError::NoOwnAnnualMaterial);
-            }
-            let entry = self
-                .entries
-                .get_mut(stock)
-                .ok_or(BeliefError::NoBeliefEntry)?;
-            entry.anchor_trading_day = inputs.as_of_trading_day;
-            entry.last_cause = Some(CauseRecord {
-                cause,
-                as_of_trading_day: inputs.as_of_trading_day,
-            });
-            return Ok(());
-        };
+        let (report_id, observed_at) = self
+            .latest_own_annual_for_scope(inputs, baseline_scope.as_ref())?
+            .ok_or(BeliefError::NoOwnAnnualMaterial)?;
         let report = inputs.ctx.report(report_id)?;
         let facts = extract_annual_facts(report, &inputs.company, observed_at)?;
-        let forming_annual_baseline =
-            entry.forecast.basis == super::ForecastBasis::AnnualBaselineUnavailable;
-        let forecast = if forming_annual_baseline {
-            initial_forecast(observe_growth(&facts), self.assumptions.growth_deviation_bp)
-        } else {
-            entry.forecast
-        };
-        let valuation = self.valuation_for(&facts, forecast.growth_bp, inputs);
+        let valuation = self.valuation_for(&facts, entry.forecast.growth_bp, inputs);
         let entry = self
             .entries
             .get_mut(stock)
             .ok_or(BeliefError::NoBeliefEntry)?;
-        entry.forecast = forecast;
         entry.valuation = valuation;
-        if forming_annual_baseline || entry.used_report_ids.first() != Some(&report_id) {
+        if entry.used_report_ids.first() != Some(&report_id) {
             entry.used_report_ids = vec![report_id];
         }
         entry.anchor_trading_day = inputs.as_of_trading_day;
@@ -444,7 +347,7 @@ impl BeliefBook {
     /// 信心、按初始规则重来；否则 λ 修订且信心保持。
     fn write_derived_entry(
         &mut self,
-        stock: &StockCode,
+        stock: &StockId,
         cause: BeliefCause,
         report_id: PublicationId,
         facts: AnnualFacts,
@@ -454,14 +357,8 @@ impl BeliefBook {
         let deviation_bp = self.assumptions.growth_deviation_bp;
         let observation = observe_growth(&facts);
         let old = self.entries.get(stock);
-        let forming_annual_baseline = old.is_some_and(|entry| {
-            entry.forecast.basis == super::ForecastBasis::AnnualBaselineUnavailable
-        });
         let forecast = match (direct, old) {
             (true, _) | (false, None) => initial_forecast(observation, deviation_bp),
-            (false, Some(_)) if forming_annual_baseline => {
-                initial_forecast(observation, deviation_bp)
-            }
             (false, Some(old)) => revise_forecast(
                 &old.forecast,
                 observation,
@@ -469,7 +366,7 @@ impl BeliefBook {
                 deviation_bp,
             ),
         };
-        let confidence_bp = if direct || forming_annual_baseline {
+        let confidence_bp = if direct {
             forecast.initial_confidence_bp()
         } else {
             old.map(|old| old.confidence_bp)
@@ -538,6 +435,14 @@ impl BeliefBook {
         Ok(())
     }
 
+    /// 本人已知最新年报（期间序，同期取最高版本序——更正版本优先）。
+    fn latest_own_annual(
+        &self,
+        inputs: &BeliefInputs<'_, impl Sized>,
+    ) -> Result<Option<(PublicationId, CivilInstant)>, BeliefError> {
+        self.latest_own_annual_for_scope(inputs, None)
+    }
+
     fn latest_own_annual_for_scope(
         &self,
         inputs: &BeliefInputs<'_, impl Sized>,
@@ -585,8 +490,8 @@ mod material_priority_tests {
     use super::*;
     use crate::accounting::consolidation::MemberId;
     use crate::accounting::reports::{
-        IndustryPresentation, ReportRequest, ReportSource, ReportVersion, VersionKind,
-        generate_report_set,
+        generate_report_set, IndustryPresentation, ReportRequest, ReportSource, ReportVersion,
+        VersionKind,
     };
     use crate::accounting::{
         AccountingAmount, Books, BusinessEventId, BusinessKind, CashFlowClass, JournalEntry,
@@ -638,8 +543,8 @@ mod material_priority_tests {
                 ],
             }])
             .unwrap();
-        let root = MemberId("company".into());
-        let subsidiary = MemberId("subsidiary".into());
+        let root = MemberId(0);
+        let subsidiary = MemberId(1);
         let subsidiary_books = books.clone();
         let source = if consolidated {
             ReportSource::Consolidated {
@@ -702,8 +607,7 @@ mod material_priority_tests {
             crate::information::scheduled_instant(ScheduledReportKind::Annual, year, 0).unwrap();
         PublishedReport {
             id: PublicationId::new(if kind == ReportKind::Annual { 0 } else { 1000 }),
-            company: CompanyId("company".into()),
-            source: crate::information::PublicationSource::SimulationAccounting,
+            company: CompanyId(0),
             policy: AccountingPolicyRef { chart_version: 2 },
             approved_at: CivilInstant::from_hms(published_at.date(), 8, 0, 0).unwrap(),
             published_at,
@@ -804,7 +708,7 @@ mod material_priority_tests {
             .unwrap();
         let context = NpcObservationContext::new(owner, &information, &library, &()).unwrap();
         assert_eq!(
-            preferred_own_report(&context, &CompanyId("company".into())).unwrap(),
+            preferred_own_report(&context, &CompanyId(0)).unwrap(),
             Some(ids[0])
         );
         information
@@ -812,7 +716,7 @@ mod material_priority_tests {
             .unwrap();
         let context = NpcObservationContext::new(owner, &information, &library, &()).unwrap();
         assert_eq!(
-            preferred_own_report(&context, &CompanyId("company".into())).unwrap(),
+            preferred_own_report(&context, &CompanyId(0)).unwrap(),
             Some(ids[1])
         );
     }

@@ -5,7 +5,7 @@ import { inspectWasmUpdateDelivery } from "./wasm-update-delivery.ts";
 
 test("Given a TickBatch, when classified for WASM delivery, then it counts one market tick and never pauses", () => {
   const delivery = inspectWasmUpdateDelivery(
-    tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)),
+    tickBatch([frame(1, 0, [0])], snapshot(1, 1)),
     { pause_after_close: true, pause_before_open: true },
   );
 

@@ -59,8 +59,16 @@ fn same_seed_replays_identical_event_and_entry_sequence() {
     assert_eq!(first.scheduler().pending(), second.scheduler().pending());
 }
 
+/// 夹具代码 → 目录 id（与 four_company_config 的代码序目录一致）。
 fn cid(id: &str) -> engine::company::CompanyId {
-    engine::company::CompanyId(id.to_string())
+    engine::company::CompanyId(match id {
+        "C-BANK" => 0,
+        "C-IND-A" => 1,
+        "C-IND-B" => 2,
+        "C-INS" => 3,
+        "C-RE" => 4,
+        other => panic!("未登记的夹具代码：{other}"),
+    })
 }
 
 /// 不同 seed → 事件序列分歧（压力参数下每日冲击幅度/持续期由 seed 决定）。

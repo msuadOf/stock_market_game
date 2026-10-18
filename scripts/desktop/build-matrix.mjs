@@ -172,10 +172,9 @@ function requireWasmThreadingContract() {
   } catch {
     fail("generated frontend/WASM binary is invalid; rerun scripts/wasm-build.sh on Linux/macOS or scripts\\wasm-build.bat on Windows.");
   }
-  const result = spawnSync(process.execPath, [resolve(repoRoot, "scripts/check-wasm-threading.mjs"), gluePath], { cwd: repoRoot, stdio: "ignore" });
-  if (result.error !== undefined || result.status !== 0) {
-    fail("generated frontend/WASM threading contract is invalid; rerun scripts/wasm-build.sh on Linux/macOS or scripts\\wasm-build.bat on Windows.");
-  }
+  // 批 9 A10 收尾：wasm 线程 glue 契约检查随 wasm-bindgen-rayon 退役
+  // 删除——串行 wasm 无共享内存 glue。
+  const _ = gluePath;
 }
 
 function runCommand(command, arguments_, options = {}) {

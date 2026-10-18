@@ -1,0 +1,16 @@
+口径: A
+历史性能报告值: 1409.2 t/s；3000 tick、10 组×2000 NPC、5 股
+账本提交: 1f5863cda997e01fce1b57c0149e7bff5ac1e302
+账本 binary: runtime_s5_probe
+账本 SHA256: ced474fac39be2a1c613b921553b8db481cc0b40997255798ed1b398154ee92d
+原始纯提交树: 构建失败（退出码 101，E0433/E0425）；未生成 binary，无可比 SHA，不伪称 hash 不同。
+补丁树提交: 6dcc25b4174a112fca053a933affe5d1ec05a47a
+结论: 补丁树重建 SHA==账本 SHA（逐位一致）。
+
+命令: sha256sum <worktree binary> <保留副本>
+ced474fac39be2a1c613b921553b8db481cc0b40997255798ed1b398154ee92d  /data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.worktree/perf-bind-6dcc25b4/target/release/examples/runtime_s5_probe
+ced474fac39be2a1c613b921553b8db481cc0b40997255798ed1b398154ee92d  /data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.tmp/perf-binding/6dcc25b4/binaries/runtime_s5_probe
+
+命令: sha256sum --check /data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.tmp/perf-binding/A/expected.sha256
+/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.worktree/perf-bind-6dcc25b4/target/release/examples/runtime_s5_probe: OK
+/data1/baiyifan/workplace/stock_market_game/.worktree/std-thread-model/.tmp/perf-binding/6dcc25b4/binaries/runtime_s5_probe: OK

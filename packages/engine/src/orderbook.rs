@@ -21,12 +21,54 @@ use resting_index::{RestingKey, RestingOrderIndex};
 use crate::money::{Money, MoneyError};
 
 /// 买卖方向。
-#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(
+    Copy, Clone, Eq, PartialEq, Hash, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS,
+)]
 pub enum Side {
     /// 买单（愿意买入）。
     Buy,
     /// 卖单（愿意卖出）。
     Sell,
+}
+
+/// 撮合模式：集合竞价挂入不撮合，连续竞价立即撮合。
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub enum MatchingMode {
+    /// 集合竞价：新单挂入簿但不触发撮合，仅更新参考匹配价。
+    Auction,
+    /// 连续竞价：新单挂入并立刻与对手盘撮合。
+    #[default]
+    Continuous,
+}
+
+/// 集合竞价清算拒绝原因。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum AuctionClearingReject {
+    #[error("book is not in Auction mode")]
+    NotInAuctionMode,
+    #[error("crossed quotes cannot enter Continuous mode")]
+    CrossedContinuous,
+    #[error("auction quantity overflow")]
+    QuantityOverflow,
+    #[error("auction selection and execution disagree")]
+    SelectionMismatch,
+    #[error("auction price tick must be positive")]
+    InvalidPriceTick,
+    #[error("auction midpoint does not fit Money")]
+    PriceOverflow,
+}
+
+pub(crate) mod auction_clearing;
+
+/// 集合竞价清算结果。
+#[derive(Clone, Debug)]
+pub struct AuctionClearingResult {
+    /// 清算价（无成交时为 None）。
+    pub price: Option<Money>,
+    /// 所有成交 Trade。
+    pub trades: Vec<Trade>,
+    /// 总成交量（股）。
+    pub matched_volume: u64,
 }
 
 /// 订单 id（单调自增）。本模块自带 newtype，不依赖未来 account 模块。
@@ -79,6 +121,43 @@ pub(crate) mod js_safe_u64 {
 }
 
 /// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
+/// 委托价格被拒原因（数值枚举，ADR 0041）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[repr(u16)]
+pub enum PriceReject {
+    #[error("non-positive")]
+    NonPositive,
+    #[error("not a multiple of tick")]
+    NotTickMultiple,
+}
+
+/// 存档投影不一致类别（数值枚举，ADR 0041）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[repr(u16)]
+pub enum ProjectionMismatchKind {
+    #[error("duplicate saved book sequence")]
+    DuplicateSeq,
+    #[error("saved book sequence not JavaScript-safe or above cursor")]
+    UnsafeSeq,
+    #[error("saved resting orders cross during restore")]
+    CrossDuringRestore,
+    #[error("candidate book time sequence differs from stock worker")]
+    TimeSeqDiffers,
+    #[error("bid price-time key already exists")]
+    BidKeyExists,
+    #[error("ask price-time key already exists")]
+    AskKeyExists,
+    #[error("live order index points at an absent order")]
+    AbsentLiveOrder,
+    #[error("candidate order differs from stock worker")]
+    CandidateDiffers,
+    #[error("continuous stock round changed yesterday close")]
+    YesterdayCloseChanged,
+    #[error("candidate market version differs from stock worker")]
+    MarketVersionDiffers,
+}
+
+/// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
 #[derive(Debug, Error)]
 pub enum OrderError {
     /// 价格非法：为负 / 非 tick 整数倍 / 超范围。
@@ -88,8 +167,8 @@ pub enum OrderError {
         price: Money,
         /// 当前簿的最小变动单位（用于诊断「非整数倍」）。
         tick: Money,
-        /// 失败原因（如 "negative" / "not a multiple of tick"）。
-        reason: String,
+        /// 失败原因（数值枚举，ADR 0041）。
+        reason: PriceReject,
     },
     /// 数量非法：qty == 0。
     #[error("invalid qty: {0} (must be > 0)")]
@@ -111,7 +190,14 @@ pub enum OrderError {
     DuplicateOrderId(OrderId),
     /// A tick-private stock result cannot be applied to the expected book version.
     #[error("stock book projection mismatch: {reason}")]
-    ProjectionMismatch { reason: String },
+    /// 投影不一致（数值枚举 + 数值上下文，ADR 0041）。
+    ProjectionMismatch {
+        reason: ProjectionMismatchKind,
+        context: Vec<u64>,
+    },
+    /// 集合竞价清算被拒绝。
+    #[error("auction clearing rejected: {reason}")]
+    InvalidAuctionClearing { reason: AuctionClearingReject },
     #[error("order book time sequence exhausted")]
     SequenceOverflow,
     /// 撤单时 id 不存在。
@@ -145,59 +231,9 @@ pub enum OrderError {
     serde::Deserialize,
     ts_rs::TS,
 )]
-#[ts(type = "string")]
+#[ts(type = "number")]
 #[serde(transparent)]
-pub struct AccountId(#[serde(with = "canonical_u64_decimal")] pub u64);
-
-pub(crate) mod canonical_u128_decimal {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn parse(value: &str) -> Result<u128, String> {
-        let bytes = value.as_bytes();
-        let nonzero_prefix = bytes.first().is_some_and(|byte| (b'1'..=b'9').contains(byte));
-        if bytes != b"0" && !(nonzero_prefix && bytes.iter().all(u8::is_ascii_digit)) {
-            return Err("成交额必须使用规范非负十进制分字符串".to_owned());
-        }
-        value.parse::<u128>().map_err(|error| format!("成交额超出 u128 范围：{error}"))
-    }
-
-    pub fn serialize<S: Serializer>(value: &u128, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&value.to_string())
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
-        parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
-
-pub(crate) mod canonical_u64_decimal {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&value.to_string())
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        let bytes = value.as_bytes();
-        let nonzero_prefix = bytes
-            .first()
-            .is_some_and(|byte| (b'1'..=b'9').contains(byte));
-        let canonical = bytes == b"0" || (nonzero_prefix && bytes.iter().all(u8::is_ascii_digit));
-        if !canonical {
-            return Err(serde::de::Error::custom(
-                "u64 must use canonical decimal notation",
-            ));
-        }
-        value.parse::<u64>().map_err(serde::de::Error::custom)
-    }
-}
+pub struct AccountId(#[serde(with = "js_safe_u64")] pub u64);
 
 /// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
 ///
@@ -264,26 +300,33 @@ impl Order {
     }
 }
 
-/// 一笔成交。成交价取被动方（maker）的价格。
+/// 一笔成交。成交价取被动方（resting）挂单价（连续撮合）；集合竞价为
+/// 清算价（不隶属任何一方挂单价）。
+///
+/// **字段语义（2026-10-16 契约变更，与 runtime DeskTradeFact 统一）**：
+/// `maker`/`taker` 表达**腿方向**——maker≡卖腿、taker≡买腿（与到簿
+/// 先后无关）；A 股无 maker/taker 费差（佣金双边/印花卖方/过户双边），
+/// 腿方向无歧义且与费用归户一致。依据：`.tmp/maker-taker-consumer-scan.md`
+/// （前端消费面全部对称/透传，无主动被动假设）。
 ///
 /// 派生 `Eq`+`PartialEq` 便于测试整体比较与去重；可序列化供成交历史/存档。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Trade {
-    /// 成交价（= maker 挂单价）。
+    /// 成交价（连续撮合=resting 挂单价；集合竞价=清算价）。
     pub price: Money,
     /// 本次成交数量（股）。
     pub qty: u32,
-    /// 被动方（较早挂单、提供流动性）。
+    /// 卖腿账户（卖出方——与到簿先后无关，见结构体契约注记）。
     pub maker: AccountId,
-    /// 主动方（新进入、吃流动性）。
+    /// 买腿账户（买入方）。
     pub taker: AccountId,
-    /// 被动委托 id。
+    /// 卖腿委托 id。
     pub maker_order_id: OrderId,
-    /// 主动委托 id。
+    /// 买腿委托 id。
     pub taker_order_id: OrderId,
-    /// 本次成交前，被动委托的累计成交金额。
+    /// 本次成交前，卖腿委托的累计成交金额。
     pub maker_filled_value_before: Money,
-    /// 本次成交前，主动委托的累计成交金额。
+    /// 本次成交前，买腿委托的累计成交金额。
     pub taker_filled_value_before: Money,
 }
 
@@ -336,6 +379,8 @@ pub struct OrderBook {
     next_seq: u64,
     /// 价格最小变动单位（必须 > 0）。
     tick: Money,
+    /// 当前撮合模式：Auction 挂入不撮合，Continuous 立即撮合。
+    mode: MatchingMode,
 }
 
 impl OrderBook {
@@ -343,6 +388,7 @@ impl OrderBook {
         (
             &self.tick,
             &self.next_seq,
+            self.mode as u8,
             self.state.filled_orders().entries(),
             self.state.bids().iter().collect::<Vec<_>>(),
             self.state.asks().iter().collect::<Vec<_>>(),
@@ -359,7 +405,29 @@ impl OrderBook {
             state: BookState::default(),
             next_seq: 0,
             tick,
+            mode: MatchingMode::Continuous,
         })
+    }
+
+    /// 返回当前撮合模式。
+    pub fn mode(&self) -> MatchingMode {
+        self.mode
+    }
+
+    /// 交易阶段由调用方控制；交叉委托必须先清算，才能进入 Continuous。
+    pub fn set_mode(&mut self, mode: MatchingMode) -> Result<(), OrderError> {
+        if mode == MatchingMode::Continuous
+            && self
+                .best_bid()
+                .zip(self.best_ask())
+                .is_some_and(|(bid, ask)| bid >= ask)
+        {
+            return Err(OrderError::InvalidAuctionClearing {
+                reason: AuctionClearingReject::CrossedContinuous,
+            });
+        }
+        self.mode = mode;
+        Ok(())
     }
 
     /// 买盘最优价（最高买价）。空簿返回 None。
@@ -386,11 +454,50 @@ impl OrderBook {
     /// - `price <= 0` 或非 tick 整数倍 → [`OrderError::InvalidPrice`]（reason 区分 non-positive /
     ///   not a multiple of tick）。价格全程整数分取模，无 f64（money 模块铁律）。
     pub fn place(&mut self, order: Order) -> Result<MatchResult, OrderError> {
-        self.place_inner(order, false)
+        match self.mode {
+            MatchingMode::Auction => self.place_auction(order),
+            MatchingMode::Continuous => self.place_inner(order, false),
+        }
     }
 
     pub(crate) fn place_recording(&mut self, order: Order) -> Result<MatchResult, OrderError> {
-        self.place_inner(order, true)
+        match self.mode {
+            MatchingMode::Auction => self.place_auction(order),
+            MatchingMode::Continuous => self.place_inner(order, true),
+        }
+    }
+
+    /// 集合竞价模式：挂入簿但不撮合。校验与 Continuous 相同（数量/价格/重复 id）。
+    fn place_auction(&mut self, mut order: Order) -> Result<MatchResult, OrderError> {
+        if self.state.filled_orders().owner(order.id).is_some()
+            || self.state.live_by_id().get(order.id).is_some()
+        {
+            return Err(OrderError::DuplicateOrderId(order.id));
+        }
+        order.validate_progress()?;
+        if order.price.cents() <= 0 || order.price.cents() % self.tick.cents() != 0 {
+            return Err(OrderError::InvalidPrice {
+                price: order.price,
+                tick: self.tick,
+                reason: if order.price.cents() <= 0 {
+                    PriceReject::NonPositive
+                } else {
+                    PriceReject::NotTickMultiple
+                },
+            });
+        }
+        let seq = self.next_seq;
+        self.next_seq = self
+            .next_seq
+            .checked_add(1)
+            .ok_or(OrderError::SequenceOverflow)?;
+        order.seq = seq;
+        self.insert_resting(order.clone())?;
+        Ok(MatchResult {
+            trades: Vec::new(),
+            resting: Some(order),
+            maker_before: Vec::new(),
+        })
     }
 
     fn place_inner(
@@ -410,9 +517,9 @@ impl OrderBook {
                 price: order.price,
                 tick: self.tick,
                 reason: if order.price.cents() <= 0 {
-                    "non-positive".to_string()
+                    PriceReject::NonPositive
                 } else {
-                    "not a multiple of tick".to_string()
+                    PriceReject::NotTickMultiple
                 },
             });
         }
@@ -487,15 +594,22 @@ impl OrderBook {
             self.state
                 .apply_maker_fill(side, &maker, fill_qty, maker_filled_value_after)?;
 
+            // 腿方向语义（2026-10-16 契约）：maker≡卖腿/taker≡买腿——
+            // incoming=Sell 时 resting（maker 变量）为买方，成组互换。
+            let (sell_leg, buy_leg) = if side == Side::Buy {
+                ((maker.owner, maker.id, maker_filled_value_before), (taker, order.id, taker_filled_value_before))
+            } else {
+                ((taker, order.id, taker_filled_value_before), (maker.owner, maker.id, maker_filled_value_before))
+            };
             trades.push(Trade {
                 price: fill_price,
                 qty: fill_qty,
-                maker: maker.owner,
-                taker,
-                maker_order_id: maker.id,
-                taker_order_id: order.id,
-                maker_filled_value_before,
-                taker_filled_value_before,
+                maker: sell_leg.0,
+                taker: buy_leg.0,
+                maker_order_id: sell_leg.1,
+                taker_order_id: buy_leg.1,
+                maker_filled_value_before: sell_leg.2,
+                taker_filled_value_before: buy_leg.2,
             });
         }
 
@@ -545,7 +659,138 @@ impl OrderBook {
         self.state.filled_orders().owner(id)
     }
 
-    /// The durable status index is saved separately from still resting orders.
+    /// 在唯一订单簿上按既有沪深选价规则清算，不改变交易阶段。
+    /// 开盘余单保留原始 seq；收盘余单由调用方日界释放，不能自动进入 Continuous。
+    pub fn execute_auction_clearing(
+        &mut self,
+        previous_close: Money,
+        exchange: crate::StockExchange,
+    ) -> Result<AuctionClearingResult, OrderError> {
+        if self.mode != MatchingMode::Auction {
+            return Err(OrderError::InvalidAuctionClearing {
+                reason: AuctionClearingReject::NotInAuctionMode,
+            });
+        }
+        let Some(selection) = self.clearing_selection(previous_close, exchange)? else {
+            return Ok(AuctionClearingResult {
+                price: None,
+                trades: Vec::new(),
+                matched_volume: 0,
+            });
+        };
+        let mut trades = Vec::new();
+        let mut matched_volume = 0_u64;
+        while matched_volume < selection.volume {
+            let buy = self
+                .state
+                .bids()
+                .first_key_value()
+                .map(|(_, order)| order.clone())
+                .filter(|order| order.price >= selection.price)
+                .ok_or(OrderError::InvalidAuctionClearing {
+                    reason: AuctionClearingReject::SelectionMismatch,
+                })?;
+            let sell = self
+                .state
+                .asks()
+                .first_key_value()
+                .map(|(_, order)| order.clone())
+                .filter(|order| order.price <= selection.price)
+                .ok_or(OrderError::InvalidAuctionClearing {
+                    reason: AuctionClearingReject::SelectionMismatch,
+                })?;
+            let qty = buy.qty.min(sell.qty);
+            let fill_value = selection.price.mul_shares(qty)?;
+            let buy_after = buy.filled_value_after(fill_value)?;
+            let sell_after = sell.filled_value_after(fill_value)?;
+            buy.filled_qty_after(qty)?;
+            sell.filled_qty_after(qty)?;
+            let volume_after = matched_volume.checked_add(u64::from(qty)).ok_or(
+                OrderError::InvalidAuctionClearing {
+                    reason: AuctionClearingReject::QuantityOverflow,
+                },
+            )?;
+            if qty == 0 || volume_after > selection.volume {
+                return Err(OrderError::InvalidAuctionClearing {
+                    reason: AuctionClearingReject::SelectionMismatch,
+                });
+            }
+            self.state
+                .apply_maker_fill(Side::Sell, &buy, qty, buy_after)?;
+            self.state
+                .apply_maker_fill(Side::Buy, &sell, qty, sell_after)?;
+            // 腿方向语义（2026-10-16 契约）：maker≡卖腿/taker≡买腿
+            //（此前按到簿 seq 取 maker——语义退役）。
+            trades.push(Trade {
+                price: selection.price,
+                qty,
+                maker: sell.owner,
+                taker: buy.owner,
+                maker_order_id: sell.id,
+                taker_order_id: buy.id,
+                maker_filled_value_before: sell.filled_value,
+                taker_filled_value_before: buy.filled_value,
+            });
+            matched_volume = volume_after;
+        }
+        Ok(AuctionClearingResult {
+            price: Some(selection.price),
+            trades,
+            matched_volume,
+        })
+    }
+
+    /// 参考价是不成交投影，不消耗序号、不修改 last_trade 或 Envelope。
+    pub fn indicative_clearing_price(
+        &self,
+        previous_close: Money,
+        exchange: crate::StockExchange,
+    ) -> Result<Option<Money>, OrderError> {
+        Ok(self
+            .clearing_selection(previous_close, exchange)?
+            .map(|selection| selection.price))
+    }
+
+    pub(crate) fn auction_indicative(
+        &self,
+        previous_close: Money,
+        exchange: crate::StockExchange,
+    ) -> Result<(Option<(Money, u64)>, u64), OrderError> {
+        let selection = self.clearing_selection(previous_close, exchange)?;
+        let imbalance = if let Some(selection) = selection {
+            selection.imbalance
+        } else {
+            let orders = self
+                .resting_order_refs()
+                .map(|order| auction_clearing::ClearingOrder {
+                    side: order.side,
+                    limit: order.price,
+                    qty: u64::from(order.qty),
+                })
+                .collect::<Vec<_>>();
+            auction_clearing::checked_total_imbalance(&orders)?
+        };
+        Ok((
+            selection.map(|selection| (selection.price, selection.volume)),
+            imbalance,
+        ))
+    }
+
+    pub(crate) fn clearing_selection(
+        &self,
+        previous_close: Money,
+        exchange: crate::StockExchange,
+    ) -> Result<Option<auction_clearing::ClearingSelection>, OrderError> {
+        let orders = self
+            .resting_order_refs()
+            .map(|order| auction_clearing::ClearingOrder {
+                side: order.side,
+                limit: order.price,
+                qty: u64::from(order.qty),
+            })
+            .collect::<Vec<_>>();
+        auction_clearing::select_clearing(&orders, previous_close, exchange, self.tick)
+    }
     pub fn filled_orders(&self) -> Vec<(OrderId, AccountId)> {
         self.state.filled_orders().entries()
     }
@@ -600,25 +845,26 @@ impl OrderBook {
         for pair in ordered.windows(2) {
             if pair[0].seq == pair[1].seq {
                 return Err(OrderError::ProjectionMismatch {
-                    reason: format!("duplicate saved book sequence {}", pair[0].seq),
+                    reason: ProjectionMismatchKind::DuplicateSeq,
+                    context: vec![pair[0].seq],
                 });
             }
         }
         let mut candidate = Self::new(self.tick)?;
+        candidate.mode = self.mode;
         for order in ordered {
             if order.seq >= next_seq || order.seq > js_safe_u64::MAX {
                 return Err(OrderError::ProjectionMismatch {
-                    reason: format!(
-                        "saved book sequence {} must be JavaScript-safe and below cursor {next_seq}",
-                        order.seq
-                    ),
+                    reason: ProjectionMismatchKind::UnsafeSeq,
+                    context: vec![order.seq, next_seq],
                 });
             }
             candidate.next_seq = order.seq;
             let result = candidate.place(order.clone())?;
             if !result.trades.is_empty() || result.resting.as_ref() != Some(order) {
                 return Err(OrderError::ProjectionMismatch {
-                    reason: "saved resting orders cross during restore".to_owned(),
+                    reason: ProjectionMismatchKind::CrossDuringRestore,
+                    context: Vec::new(),
                 });
             }
         }
@@ -643,7 +889,8 @@ impl OrderBook {
     pub(crate) fn apply_changes(&mut self, delta: OrderBookDelta) -> Result<(), OrderError> {
         if self.next_seq != delta.expected_next_seq {
             return Err(OrderError::ProjectionMismatch {
-                reason: "candidate book time sequence differs from stock worker".to_owned(),
+                reason: ProjectionMismatchKind::TimeSeqDiffers,
+                context: Vec::new(),
             });
         }
         self.state.apply_changes(delta.changes)?;
@@ -738,5 +985,326 @@ impl OrderBook {
             out.push((o.price, u64::from(o.qty)));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod matching_mode_tests {
+    use super::*;
+
+    fn make_order(id: u64, side: Side, price: i64, qty: u32, owner: u64) -> Order {
+        Order {
+            id: OrderId(id),
+            side,
+            price: Money::from_cents(price),
+            qty,
+            original_qty: qty,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: crate::AccountId(owner),
+            seq: 0,
+        }
+    }
+
+    #[test]
+    fn clearing_keeps_phase_control_with_caller() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+        book.place(make_order(1, Side::Buy, 1000, 300, 10)).unwrap();
+        book.place(make_order(2, Side::Sell, 1000, 100, 20))
+            .unwrap();
+        book.execute_auction_clearing(Money::from_cents(1000), crate::StockExchange::Shanghai)
+            .unwrap();
+        assert_eq!(
+            book.mode(),
+            MatchingMode::Auction,
+            "收盘清算不授权再次连续交易"
+        );
+        let result = book
+            .place(make_order(3, Side::Sell, 1000, 100, 30))
+            .unwrap();
+        assert!(result.trades.is_empty());
+    }
+
+    #[test]
+    fn auction_multi_leg_fill_preserves_age_progress_and_filled_identity() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+        book.place(make_order(1, Side::Buy, 1000, 350, 10)).unwrap();
+        book.place(make_order(2, Side::Sell, 1000, 100, 20))
+            .unwrap();
+        book.place(make_order(3, Side::Sell, 1000, 200, 30))
+            .unwrap();
+        let cursor = book.next_sequence();
+        let before = book.resting_order_by_id(OrderId(1)).unwrap().clone();
+        let result = book
+            .execute_auction_clearing(Money::from_cents(1000), crate::StockExchange::Shanghai)
+            .unwrap();
+        assert_eq!(result.matched_volume, 300);
+        assert_eq!(result.trades.len(), 2);
+        // 腿方向语义（2026-10-16）：maker=卖腿/taker=买腿——买单 1 恒
+        // taker（此前按 seq 先到簿取 maker）。
+        assert_eq!(result.trades[1].taker_order_id, OrderId(1));
+        assert_eq!(
+            result.trades[1].taker_filled_value_before,
+            Money::from_cents(100_000)
+        );
+        let remaining = book.resting_order_by_id(OrderId(1)).unwrap();
+        assert_eq!(
+            (remaining.original_qty, remaining.filled_qty, remaining.qty),
+            (350, 300, 50)
+        );
+        assert_eq!(remaining.filled_value, Money::from_cents(300_000));
+        assert_eq!(remaining.seq, before.seq);
+        assert_eq!(book.next_sequence(), cursor);
+        remaining.validate_progress().unwrap();
+        assert_eq!(book.filled_order_owner(OrderId(2)), Some(AccountId(20)));
+        assert_eq!(book.filled_order_owner(OrderId(3)), Some(AccountId(30)));
+        assert!(matches!(
+            book.cancel(OrderId(2)),
+            Err(OrderError::OrderAlreadyFilled(OrderId(2)))
+        ));
+    }
+
+    #[test]
+    fn auction_restore_accepts_crossed_quotes_without_executing_them() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+        book.place(make_order(1, Side::Buy, 1001, 100, 10)).unwrap();
+        book.place(make_order(2, Side::Sell, 1000, 100, 20))
+            .unwrap();
+        let orders = book.resting_orders();
+        let mut restored = OrderBook::new(Money::from_cents(1)).unwrap();
+        restored.set_mode(MatchingMode::Auction).unwrap();
+        restored
+            .restore_resting_orders(&orders, book.next_sequence())
+            .unwrap();
+        assert_eq!(restored.resting_orders(), orders);
+        assert_eq!(restored.mode(), MatchingMode::Auction);
+        let mut continuous = OrderBook::new(Money::from_cents(1)).unwrap();
+        assert!(continuous
+            .restore_resting_orders(&orders, book.next_sequence())
+            .is_err());
+    }
+
+    #[test]
+    fn shanghai_half_tick_rounds_up_without_money_overflow() {
+        for (low, high, expected) in [(1000, 1001, 1001), (i64::MAX - 2, i64::MAX, i64::MAX - 1)] {
+            let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+            book.set_mode(MatchingMode::Auction).unwrap();
+            book.place(make_order(1, Side::Buy, high, 1, 10)).unwrap();
+            book.place(make_order(2, Side::Sell, low, 1, 20)).unwrap();
+            assert_eq!(
+                book.indicative_clearing_price(
+                    Money::from_cents(low),
+                    crate::StockExchange::Shanghai
+                )
+                .unwrap(),
+                Some(Money::from_cents(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn auction_mode_place_does_not_match() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+
+        // 挂入买和卖，即使交叉也不撮合
+        let result = book.place(make_order(1, Side::Buy, 1000, 100, 10)).unwrap();
+        assert!(result.trades.is_empty(), "Auction 模式不应产生成交");
+        assert!(result.resting.is_some());
+
+        let result = book.place(make_order(2, Side::Sell, 900, 50, 20)).unwrap();
+        assert!(result.trades.is_empty(), "Auction 模式不应产生成交");
+        assert!(result.resting.is_some());
+
+        // 簿里有 2 张挂单
+        assert_eq!(book.resting_orders().len(), 2);
+    }
+
+    #[test]
+    fn auction_clearing_computes_correct_price_and_volume() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+
+        // 构造一个经典场景：清算价应为 10.00
+        // 买方：3 张 10.00×100 + 1 张 10.01×50 = 350 股 >= 10.00
+        // 卖方：2 张 10.00×80 + 1 张 9.99×120 = 280 股 <= 10.00
+        book.place(make_order(1, Side::Buy, 1000, 100, 10)).unwrap();
+        book.place(make_order(2, Side::Buy, 1000, 100, 11)).unwrap();
+        book.place(make_order(3, Side::Buy, 1000, 100, 12)).unwrap();
+        book.place(make_order(4, Side::Buy, 1001, 50, 13)).unwrap();
+        book.place(make_order(5, Side::Sell, 1000, 80, 20)).unwrap();
+        book.place(make_order(6, Side::Sell, 1000, 80, 21)).unwrap();
+        book.place(make_order(7, Side::Sell, 999, 120, 22)).unwrap();
+
+        let result = book
+            .execute_auction_clearing(
+                Money::from_cents(1000),
+                crate::session::StockExchange::Shenzhen,
+            )
+            .unwrap();
+
+        // 清算价 10.00，成交量 = min(350, 280) = 280
+        assert_eq!(result.price, Some(Money::from_cents(1000)));
+        assert_eq!(result.matched_volume, 280);
+        assert!(!result.trades.is_empty());
+
+        // 清算只生成 Fill，不决定开盘/收盘之后的交易阶段。
+        assert_eq!(book.mode(), MatchingMode::Auction);
+        book.set_mode(MatchingMode::Continuous).unwrap();
+
+        // 部分成交的买单（3×100+50=350 只成交 280）剩余留在簿里
+        let remaining = book.resting_orders();
+        assert!(
+            !remaining.is_empty(),
+            "未成交部分应留在簿里成为连续模式挂单"
+        );
+    }
+
+    #[test]
+    fn auction_clearing_no_eligible_orders_keeps_mode_and_sequence() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+
+        // 只挂买无卖 → 无可成交
+        book.place(make_order(1, Side::Buy, 1000, 100, 10)).unwrap();
+
+        let result = book
+            .execute_auction_clearing(
+                Money::from_cents(1000),
+                crate::session::StockExchange::Shenzhen,
+            )
+            .unwrap();
+
+        assert_eq!(result.price, None);
+        assert_eq!(result.matched_volume, 0);
+        assert!(result.trades.is_empty());
+        assert_eq!(book.mode(), MatchingMode::Auction);
+        assert_eq!(book.next_sequence(), 1);
+        // 原始单仍在簿里
+        assert_eq!(book.resting_orders().len(), 1);
+    }
+
+    #[test]
+    fn auction_clearing_fails_in_continuous_mode() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        assert_eq!(book.mode(), MatchingMode::Continuous);
+
+        let err = book
+            .execute_auction_clearing(
+                Money::from_cents(1000),
+                crate::session::StockExchange::Shenzhen,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            OrderError::InvalidAuctionClearing {
+                reason: AuctionClearingReject::NotInAuctionMode
+            }
+        ));
+    }
+
+    #[test]
+    fn after_clearing_remaining_orders_match_continuously() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+
+        // 买卖不平衡：买 100@10.00、买 100@10.01 vs 卖 50@10.00
+        // 清算价 10.00，成交 50；买 100@10.01 中 50 成交后剩余 50 留在簿
+        book.place(make_order(1, Side::Buy, 1000, 100, 10)).unwrap();
+        book.place(make_order(2, Side::Buy, 1001, 100, 11)).unwrap();
+        book.place(make_order(3, Side::Sell, 1000, 50, 20)).unwrap();
+
+        let _ = book
+            .execute_auction_clearing(
+                Money::from_cents(1000),
+                crate::session::StockExchange::Shenzhen,
+            )
+            .unwrap();
+
+        // 由开盘后的交易阶段显式授权 Continuous，再执行新卖单。
+        assert_eq!(book.mode(), MatchingMode::Auction);
+        book.set_mode(MatchingMode::Continuous).unwrap();
+        assert_eq!(book.mode(), MatchingMode::Continuous);
+        let result = book.place(make_order(4, Side::Sell, 1000, 30, 30)).unwrap();
+        assert!(
+            !result.trades.is_empty(),
+            "清算后剩余买单应能被连续模式撮合"
+        );
+    }
+
+    #[test]
+    fn indicative_price_during_auction() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+
+        // 空簿 → None
+        assert!(book
+            .indicative_clearing_price(
+                Money::from_cents(1000),
+                crate::session::StockExchange::Shenzhen
+            )
+            .unwrap()
+            .is_none());
+
+        // 挂入买卖单后可查参考价
+        book.place(make_order(1, Side::Buy, 1000, 100, 10)).unwrap();
+        book.place(make_order(2, Side::Sell, 1000, 80, 20)).unwrap();
+
+        let price = book
+            .indicative_clearing_price(
+                Money::from_cents(1000),
+                crate::session::StockExchange::Shenzhen,
+            )
+            .unwrap();
+        assert_eq!(price, Some(Money::from_cents(1000)));
+
+        // indicative 不改变簿状态
+        assert_eq!(book.resting_orders().len(), 2);
+        assert_eq!(book.mode(), MatchingMode::Auction);
+    }
+
+    #[test]
+    fn auction_cancel_removes_from_book() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+
+        book.place(make_order(1, Side::Buy, 1000, 100, 10)).unwrap();
+        assert_eq!(book.resting_orders().len(), 1);
+
+        let cancelled = book.cancel(OrderId(1)).unwrap();
+        assert_eq!(cancelled.qty, 100);
+        assert_eq!(book.resting_orders().len(), 0);
+    }
+
+    #[test]
+    fn shanghai_clearing_picks_midpoint_on_tie() {
+        let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+        book.set_mode(MatchingMode::Auction).unwrap();
+
+        // 构造两个同最大成交量候选价：10.00 和 10.02
+        // 买方：1 张 10.00×100 + 1 张 10.02×100
+        // 卖方：1 张 10.00×100 + 1 张 10.02×100
+        // 在 10.00：买 200 卖 100 → 成交 100
+        // 在 10.02：买 100 卖 200 → 成交 100
+        // 上海规则取中间价 → 10.01
+        book.place(make_order(1, Side::Buy, 1000, 100, 10)).unwrap();
+        book.place(make_order(2, Side::Buy, 1002, 100, 11)).unwrap();
+        book.place(make_order(3, Side::Sell, 1000, 100, 20))
+            .unwrap();
+        book.place(make_order(4, Side::Sell, 1002, 100, 21))
+            .unwrap();
+
+        let result = book
+            .execute_auction_clearing(
+                Money::from_cents(1000),
+                crate::session::StockExchange::Shanghai,
+            )
+            .unwrap();
+        // 上海规则应选某个有效价格（可能是 10.01 中间价或 10.00/10.02 之一）
+        assert!(result.price.is_some());
+        assert!(result.matched_volume > 0);
     }
 }

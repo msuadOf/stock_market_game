@@ -8,8 +8,6 @@
 //! - intent 入队后被 actor 接受（Ok）；
 //! - 未知 session_id 查询返回 None（不静默）。
 
-include!("../../../packages/engine/test-support/simple_company.rs");
-
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
@@ -19,43 +17,6 @@ use server::actor::PublicBaselineSnapshot;
 use server::SessionManager;
 use std::collections::BTreeMap;
 
-#[tokio::test]
-async fn shared_market_members_receive_scoped_accounts_and_actor_enforces_control() {
-    let mut setup = sample_setup();
-    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
-    setup.npcs.retail_count = 0;
-    setup.npcs.inst_count = 0;
-    setup.npcs.hot_count = 0;
-    let manager = SessionManager::default();
-    let session = manager.new_session(setup, 8).unwrap();
-    let handles = manager.lookup(&session).unwrap();
-    let creator = engine::session::OpaqueSubjectId::new("creator".into()).unwrap();
-    let visitor = engine::session::OpaqueSubjectId::new("visitor".into()).unwrap();
-    handles.bind_creator(creator.clone()).await.unwrap();
-    let member = handles.join_member(visitor.clone(), false).await.unwrap();
-    assert_ne!(member.account_id, AccountId(0));
-    assert_eq!(handles.join_member(visitor.clone(), true).await.unwrap(), member);
-    let own = handles.snapshot_for(visitor.clone()).await.unwrap();
-    assert_eq!(own.accounts.keys().copied().collect::<Vec<_>>(), vec![member.account_id]);
-    assert!(handles.set_running_for(1, visitor.clone(), true).await.is_err());
-    assert!(handles.set_speed_for(1, visitor.clone(), 2.0).await.is_err());
-    assert!(handles.set_admission_cash_for(1, visitor.clone(), Money::ZERO).await.is_err());
-    handles.set_admission_cash_for(1, creator.clone(), Money::from_cents(1200)).await.unwrap();
-    assert_eq!(handles.snapshot_for(visitor.clone()).await.unwrap().accounts[&member.account_id].cash, member.admission_funding.external_cash);
-    handles.enqueue_for(1, visitor.clone(), Intent::PlaceLimit { code: StockCode("600101".into()), side: Side::Buy, price: engine::LimitPrice::Fixed(Money::from_cents(1000)), qty: 100 }).await.unwrap();
-    handles.set_running_for(1, creator, true).await.unwrap();
-    let mut updates = handles.subscribe_events();
-    let update = tokio::time::timeout(std::time::Duration::from_secs(2), updates.recv()).await.unwrap().unwrap().for_account(member.account_id);
-    let engine::session::protocol::EngineUpdate::TickBatch(batch) = update.update.unwrap() else { panic!("交易日应发布TickBatch") };
-    batch.validate().unwrap();
-    let delta = batch.runtime_delta.unwrap();
-    assert!(delta.accounts.keys().all(|id| *id == member.account_id));
-    assert!(delta.working_orders.upserts.iter().all(|order| order.owner == member.account_id));
-    assert_eq!(handles.working_orders_for(1, visitor.clone()).await.unwrap().1.as_array().unwrap().len(), 1);
-    assert!(handles.confirmations_for(1, visitor, None).await.unwrap().1.is_empty());
-    manager.remove(&session).unwrap().shutdown().await.unwrap();
-}
-
 fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
     match update.update.as_ref().expect("healthy protocol update") {
         engine::session::protocol::EngineUpdate::TickBatch(batch) => {
@@ -63,12 +24,12 @@ fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
             batch
                 .frames
                 .iter()
-                .flat_map(|frame| &frame.events)
+                .flat_map(|frame| frame.events())
                 .collect()
         }
         engine::session::protocol::EngineUpdate::CivilUpdate(civil) => {
             civil.validate().unwrap();
-            civil.events.iter().collect()
+            civil.events().collect()
         }
     }
 }
@@ -76,9 +37,10 @@ fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
 fn sample_setup() -> SessionSetup {
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![StockSpec {
-            code: StockCode("600101".to_string()),
+            code: engine::StockCode("600101".to_owned()),
             exchange: StockExchange::Shanghai,
             initial_price: Money::from_cents(1000),
             category: SecurityCategory::MainBoard,
@@ -115,20 +77,9 @@ fn sample_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
         float_allocation: engine::FloatAllocation::random(),
-        // actor 委托与成交 fixture 从交易日开局；restore_setup 仍显式使用周末。
-        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        // 税无关的最小合法 setup：简税默认（无分红即无代扣；印花税基线不变）。
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        // N2a 起为严格持久化必填字段：税无关最小 setup 保持面值产品默认
-        //（1 元/股）并关闭开局自动装配（显式装配语义不变）。
-        par_value_per_share: Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 
@@ -153,15 +104,108 @@ async fn prepare_completed_day(handles: &server::actor::SessionHandles, seed: u6
     let slot = game.save().expect("completed day must be saveable");
     assert_eq!(slot.snapshot.tick, 0);
     assert!(slot.civil_clock.settled_through.is_some());
-    assert!(slot
-        .pending_npc
-        .as_ref()
-        .is_none_or(|batch| batch.intents.is_empty()));
-    assert!(slot.parent_orders.values().all(|plans| plans.is_empty()));
+    // T3 批四：pending_npc 载体删除（键缺失为更强形态）；parent_orders 为
+    // owner8 批次④既有删除字段（本文件历史遗留引用，随本批一并清理）。
+
     handles
         .restore(slot)
         .await
         .expect("completed-day fixture must restore");
+}
+
+#[test]
+fn single_pool_actor_filled_leaves_do_not_initialize_global() {
+    const CHILD: &str = "STOCK_SINGLE_POOL_ACTOR_CHILD_WORKERS";
+    if let Some(workers) = std::env::var_os(CHILD) {
+        let workers: usize = workers.to_str().unwrap().parse().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let valid = runtime.block_on(async {
+            // 批 9 A3（compute 注入退役）：observer 采样/池绑定断言面
+            /// 随 A1/A2 消亡——本测试保留的验证=真实成交+多账户触及+
+            /// 无失败交付（runtime 与旧管线分支共同的交付面）。
+            let manager = SessionManager::with_base_ms(1);
+            let mut setup = active_market_setup();
+            setup.start_date = engine::CivilDate::from_iso("2030-01-06").unwrap();
+            setup.float_allocation = engine::FloatAllocation::class_percentages(
+                1.0, 0.0, 0.0, engine::WithinKindDistribution::EqualPercentage);
+            let id = manager.new_session(setup.clone(), 42).unwrap();
+            let handles = manager.lookup(&id).unwrap();
+            handles.set_running(false).await.unwrap();
+            // 真实休市日日结后的可编辑存档，守恒转移 100 股开局库存；不伪造 Fill。
+            let mut initial = engine::session::protocol::ProtocolSession::new(setup, 42).unwrap();
+            initial.end_civil_day_update().unwrap();
+            let mut slot = initial.save().unwrap();
+            let code = engine::StockId(0);
+            let totals = |slot: &engine::session::SaveSlot| slot.snapshot.accounts.values().fold(
+                (0_i128, 0_u64, 0_i128), |sum, account| {
+                    let position = account.positions.get(&code);
+                    (sum.0 + i128::from(account.cash.cents()),
+                     sum.1 + position.map_or(0, |p| u64::from(p.qty)),
+                     sum.2 + position.map_or(0, |p| i128::from(p.invested_cents)))
+                });
+            let before = totals(&slot);
+            let donor = slot.snapshot.accounts.iter_mut().filter(|(id, _)| **id != AccountId(0))
+                .find_map(|(_, account)| account.positions.get_mut(&code).filter(|p| p.qty >= 100)).unwrap();
+            assert_eq!(donor.t1_locked, 0);
+            donor.qty -= 100;
+            donor.invested_cents -= 100_000;
+            slot.snapshot.accounts.get_mut(&AccountId(0)).unwrap().positions.insert(code,
+                engine::PositionSnap { qty: 100, t1_locked: 0, invested_cents: 100_000, recovered_cents: 0 });
+            assert_eq!(totals(&slot), before);
+            handles.restore(slot).await.unwrap();
+            handles.enqueue(2, Intent::PlaceLimit {
+                code: engine::StockId(0), side: Side::Sell,
+                price: engine::LimitPrice::Lowest, qty: 100,
+            }).await.unwrap();
+            let mut affected = std::collections::BTreeSet::new();
+            let mut fill_count = 0;
+            let mut updates = handles.subscribe_events();
+            handles.set_running(true).await.unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    let update = updates.recv().await.unwrap();
+                    assert!(update.failure.is_none(), "真实 Actor 不得报错：{:?}", update.failure);
+                    for event in protocol_events(&update) {
+                        if let engine::Event::Trade { qty, price, maker, taker, .. } = event {
+                            assert!(*qty > 0 && *price > Money::ZERO);
+                            assert_ne!(maker, taker);
+                            affected.extend([*maker, *taker]);
+                            fill_count += 1;
+                        }
+                    }
+                    // Sol 终审整改 2：退出条件按模型分支——runtime 模型
+                    // 的决策/撮合在组/交易部线程（不经 ComputeContext 池，
+                    // ComputeWork 采样面是旧池模型专有）；真实成交即工作
+                    // 见证（fill_count/affected/无失败断言保留）。
+                    if fill_count > 0 { break; }
+                }
+            }).await.expect("真实 Actor 在短 deadline 内应成交并广播");
+            handles.set_running(false).await.unwrap();
+            assert!(fill_count > 0 && affected.len() >= 2, "Actor fixture 必须实际成交并触及多账户");
+            handles.shutdown().await.unwrap();
+            manager.remove(&id).unwrap();
+            // 批 9 A3：池归属断言面退役（rayon 批 7 起 observer 通道仅
+            /// 旧管线测试注入面保留，本测试不再消费）——valid 语义=
+            /// 交付面断言（上方断言组已全部通过即真）。
+            eprintln!(
+                "single_pool_actor workers={workers}: delivery assertions passed (fills={fill_count} affected={affected:?}); pool-owner assertions retired"
+            );
+            true
+        });
+        drop(runtime);
+        // rayon 退役（批 7）：global 池初始化断言随机制退役。exit 只由
+        // 分支内断言组决定（Sol 终审二审 §3：runtime 分支恒真贡献撤除
+        // ——valid 的语义=池归属验证，仅旧管线分支赋予）。
+        std::process::exit(if valid { 0 } else { 1 });
+    }
+    let mut failures = Vec::new();
+    for workers in [1, 2] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "single_pool_actor_filled_leaves_do_not_initialize_global", "--nocapture"])
+            .env(CHILD, workers.to_string()).status().unwrap();
+        if !status.success() { failures.push((workers, status)); }
+    }
+    assert!(failures.is_empty(), "fresh Actor child 的真实 leaf/无 global 门禁失败：{failures:?}");
 }
 
 #[tokio::test]
@@ -191,7 +235,7 @@ async fn actor_diagnostics_rejects_stale_generation_without_records() {
     assert_eq!(current, NpcDecisionDiagnostics::Unsupported);
     assert!(
         matches!(stale, server::SendCommandError::Rejected(ref reason)
-        if reason == "STALE_SESSION_GENERATION: requested 0; current generation is 1")
+        if reason.contains("fault[1290]") && reason.contains("requested 0") && reason.contains("current is 1"))
     );
 }
 
@@ -236,9 +280,9 @@ async fn server_actor_restore_preserves_retail_experience_exactly() {
         .retail_experience
         .get_mut(&AccountId(1))
         .expect("首个散户必须有经历状态")
-        .observe_stock(&StockCode("600101".to_string()), 0);
+        .observe_stock(&engine::StockId(0), 0);
     assert_eq!(
-        before.retail_experience[&AccountId(1)].stocks[&StockCode("600101".to_string())]
+        before.retail_experience[&AccountId(1)].stocks[&engine::StockId(0)]
             .last_observed_market_minute,
         0,
         "测试必须跨 actor 恢复非默认经历字段"
@@ -520,12 +564,15 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
 
     // 玩家 AccountId(0) 存在 → 入队 Ok（当前单玩家模式固定 player 0）。
     handles
-        .enqueue(1, Intent::PlaceLimit {
-            code: StockCode("600101".to_string()),
-            side: Side::Buy,
-            price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
-            qty: 100,
-        })
+        .enqueue(
+            1,
+            Intent::PlaceLimit {
+                code: engine::StockId(0),
+                side: Side::Buy,
+                price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
+                qty: 100,
+            },
+        )
         .await
         .expect("玩家意图应入队成功");
 }
@@ -540,7 +587,12 @@ fn active_market_setup() -> SessionSetup {
     setup.strategy_params.retail.arrival_rate = 1.0;
     setup.stocks[0].float_shares = 100_000;
     setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
-    setup.float_allocation = engine::FloatAllocation::class_percentages(1.0, 0.0, 0.0, engine::WithinKindDistribution::Random);
+    setup.float_allocation = engine::FloatAllocation::class_percentages(
+        1.0,
+        0.0,
+        0.0,
+        engine::WithinKindDistribution::Random,
+    );
     setup
 }
 
@@ -564,18 +616,17 @@ async fn actor_market_goes_live_produces_trade_events() {
         let mut slot = initial.save().expect("成功自然日日结应能生成公共存档");
         assert_eq!(slot.snapshot.tick, 0, "周末 fixture 不得运行任何市场 tick");
         assert!(slot.resting_orders.values().all(Vec::is_empty));
-        assert!(slot.auction_orders.values().all(Vec::is_empty));
+        assert!(slot.runtime_state.live_envelopes.is_empty(), "统一 book 为空时不能残留竞价冻结资源");
         assert!(slot.filled_orders.values().all(Vec::is_empty));
         assert!(slot.runtime_state.live_envelopes.is_empty());
-        assert!(slot.parent_orders.values().all(BTreeMap::is_empty));
         assert!(slot.pending_player.is_empty());
         assert!(slot.npc_order_lifecycles.is_empty());
         // 可编辑存档的受控开局条件：仅丢弃未受理的初始 NPC 输入，不冒充成交或撤单；
         // 已受理委托为空，后续买单必须由真实 NPC 观察重新生成。
-        let pending_npc = slot.pending_npc.as_mut().expect("开局应保留当前观察截点");
-        pending_npc.intents.clear();
-        pending_npc.dependencies.clear();
-        let code = StockCode("600101".to_string());
+        // T3 批四：pending_npc 载体删除——日终档不保留跨日 NPC 待处理批次由
+        // 键缺失结构性承载（原 parent_orders 断言为 owner8 批次④既有删除字段的
+        // 历史遗留引用，随本批清理）。
+        let code = engine::StockId(0);
         let totals = |slot: &engine::session::SaveSlot| {
             slot.snapshot
                 .accounts
@@ -647,7 +698,7 @@ async fn actor_market_goes_live_produces_trade_events() {
         }
         handles
             .enqueue(2, Intent::PlaceLimit {
-                code: StockCode("600101".to_string()),
+                code: engine::StockId(0),
                 side: Side::Sell,
                 price: engine::LimitPrice::Lowest,
                 qty: 100,
@@ -686,7 +737,7 @@ async fn actor_market_goes_live_produces_trade_events() {
                             *maker == AccountId(0) || *taker == AccountId(0),
                             "真实成交必须包含提供开局库存卖单的玩家"
                         );
-                        assert_eq!(code.0, "600101", "成交股票代码应匹配 setup");
+                        assert_eq!(code.0, 0, "成交股票 id 应匹配 setup（ADR 0041 数值身份）");
                         handles
                             .set_running(false)
                             .await

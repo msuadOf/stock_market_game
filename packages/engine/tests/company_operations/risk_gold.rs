@@ -23,16 +23,11 @@ fn run_days(ops: &mut CompanyOperations, start: CivilDate, days: i64) {
     }
 }
 
-fn ind_a() -> CompanyId {
-    CompanyId("C-IND-A".to_string())
-}
-
-fn bank_id() -> CompanyId {
-    CompanyId("C-BANK".to_string())
-}
-
-fn c_ins() -> CompanyId {
-    CompanyId("C-INS".to_string())
+/// 按目录代码序解析夹具公司 id：单公司目录恒 0；four_company 目录
+/// C-BANK=0/C-IND-A=1/C-IND-B=2/C-INS=3/C-RE=4；two_industrial 目录
+/// C-IND-A=0/C-IND-B=1。
+fn id_in(catalog: &engine::company::CompanyCatalog, code: &str) -> CompanyId {
+    catalog.id(code).unwrap_or_else(|| panic!("目录含 {code}"))
 }
 
 #[test]
@@ -74,6 +69,7 @@ fn audit_insurance_expired_coverage_stops_new_claims_but_old_claim_can_be_paid()
         CompanyOperationsConfig {
             seed: 17,
             shock_params: quiet_params(),
+            catalog: catalog_for(std::slice::from_ref(&company)),
             companies: vec![company],
         },
         start,
@@ -81,7 +77,7 @@ fn audit_insurance_expired_coverage_stops_new_claims_but_old_claim_can_be_paid()
     .unwrap();
     run_days(&mut operations, start, 3);
     let before = operations
-        .insurance_books(&c_ins())
+        .insurance_books(&CompanyId(0))
         .unwrap()
         .group(&group)
         .unwrap()
@@ -89,7 +85,7 @@ fn audit_insurance_expired_coverage_stops_new_claims_but_old_claim_can_be_paid()
         .count();
     assert_eq!(before, 3);
     run_days(&mut operations, d("2030-01-04"), 2);
-    let mut books = operations.insurance_books(&c_ins()).unwrap().clone();
+    let mut books = operations.insurance_books(&CompanyId(0)).unwrap().clone();
     assert_eq!(books.group(&group).unwrap().claims().count(), before);
     assert_eq!(
         books
@@ -133,7 +129,7 @@ fn credit_deterioration_creates_business_risk_without_shareholder_distribution()
     .expect("shocked assembles");
     shocked
         .apply_company_shock(
-            &ind_a(),
+            &id_in(shocked.catalog(), "C-IND-A"),
             ActiveShock {
                 kind: ShockKind::CreditDeterioration,
                 amplitude_bp: 500,
@@ -144,7 +140,7 @@ fn credit_deterioration_creates_business_risk_without_shareholder_distribution()
         .expect("company shock injects");
     shocked
         .apply_company_shock(
-            &bank_id(),
+            &id_in(shocked.catalog(), "C-BANK"),
             ActiveShock {
                 kind: ShockKind::CreditDeterioration,
                 amplitude_bp: 500,
@@ -160,14 +156,14 @@ fn credit_deterioration_creates_business_risk_without_shareholder_distribution()
     // 工商 A：ECL 率 1% → 6%；5 日应收 565,000 分 → 准备恰 33,900 分。
     let base_allow = net(
         baseline
-            .industrial_books(&ind_a())
+            .industrial_books(&id_in(baseline.catalog(), "C-IND-A"))
             .expect("A present")
             .books(),
         "1231",
     );
     let shock_allow = net(
         shocked
-            .industrial_books(&ind_a())
+            .industrial_books(&id_in(shocked.catalog(), "C-IND-A"))
             .expect("A present")
             .books(),
         "1231",
@@ -180,14 +176,14 @@ fn credit_deterioration_creates_business_risk_without_shareholder_distribution()
     // rhe(账面×10%)：LN-1 (80,000+35)→8,004、LN-4 (80,000+9)→8,001。
     let base_ecl = net(
         baseline
-            .bank_books(&bank_id())
+            .bank_books(&id_in(baseline.catalog(), "C-BANK"))
             .expect("bank present")
             .books(),
         "1303",
     );
     let shock_ecl = net(
         shocked
-            .bank_books(&bank_id())
+            .bank_books(&id_in(shocked.catalog(), "C-BANK"))
             .expect("bank present")
             .books(),
         "1303",
@@ -199,21 +195,27 @@ fn credit_deterioration_creates_business_risk_without_shareholder_distribution()
     for ops in [&baseline, &shocked] {
         assert_eq!(
             net(
-                ops.industrial_books(&ind_a()).expect("A present").books(),
+                ops.industrial_books(&id_in(ops.catalog(), "C-IND-A"))
+                    .expect("A present")
+                    .books(),
                 "4001"
             ),
             amt(-4_100_000)
         );
         assert_eq!(
             net(
-                ops.bank_books(&bank_id()).expect("bank present").books(),
+                ops.bank_books(&id_in(ops.catalog(), "C-BANK"))
+                    .expect("bank present")
+                    .books(),
                 "4001"
             ),
             amt(-5_000_000)
         );
         assert_eq!(
             net(
-                ops.insurance_books(&c_ins()).expect("INS present").books(),
+                ops.insurance_books(&id_in(ops.catalog(), "C-INS"))
+                    .expect("INS present")
+                    .books(),
                 "4001"
             ),
             amt(-2_000_000)
@@ -237,7 +239,7 @@ fn production_interruption_halts_and_recovers() {
     .expect("halted assembles");
     halted
         .apply_company_shock(
-            &ind_a(),
+            &id_in(halted.catalog(), "C-IND-A"),
             ActiveShock {
                 kind: ShockKind::ProductionInterruption,
                 amplitude_bp: 0,
@@ -252,12 +254,12 @@ fn production_interruption_halts_and_recovers() {
 
     // 中断 3 日：产成品 50 −3×10 +2×(8−10) = 16；基线 50 +5×(8−10) = 40。
     let halted_fg = halted
-        .industrial_books(&ind_a())
+        .industrial_books(&id_in(halted.catalog(), "C-IND-A"))
         .expect("A present")
         .inventory()
         .quantity(&engine::accounting::InventoryItemCode("FG-1".to_string()));
     let baseline_fg = baseline
-        .industrial_books(&ind_a())
+        .industrial_books(&id_in(baseline.catalog(), "C-IND-A"))
         .expect("A present")
         .inventory()
         .quantity(&engine::accounting::InventoryItemCode("FG-1".to_string()));
@@ -275,7 +277,7 @@ fn asset_impairment_signal_posts_impairment() {
     )
     .expect("ops assembles");
     ops.apply_company_shock(
-        &ind_a(),
+        &id_in(ops.catalog(), "C-IND-A"),
         ActiveShock {
             kind: ShockKind::AssetImpairmentSignal,
             amplitude_bp: 2_000,
@@ -288,7 +290,9 @@ fn asset_impairment_signal_posts_impairment() {
 
     assert_eq!(
         net(
-            ops.industrial_books(&ind_a()).expect("A present").books(),
+            ops.industrial_books(&id_in(ops.catalog(), "C-IND-A"))
+                .expect("A present")
+                .books(),
             "1603"
         ),
         amt(-200_000)

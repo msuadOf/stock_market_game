@@ -2,15 +2,14 @@
 //! 市场行为。夹具用**默认 5 股票的精确股本**（命中公司域默认表开局数字）
 //! + 全部三类 NPC（5 种机构风格轮换、散户六风格、游资两风格）。
 
-include!("../../test-support/simple_company.rs");
-
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     FloatAllocation, GameSession, NpcSetup, SecurityCategory, SessionSetup, StockExchange,
-    StockSpec, WithinKindDistribution,
+    StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
+use engine::WithinKindDistribution;
 
 mod failures;
 mod gold;
@@ -37,7 +36,8 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
 /// 压缩时钟的多风格场景（默认 5 股票 × 真实默认股本——公司域默认表命中）。
 pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
             stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),
@@ -73,16 +73,14 @@ pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
         closing_auction_ticks: 3,
         history_len: 10,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
-        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
+        float_allocation: FloatAllocation::class_percentages(
+            0.4,
+            0.5,
+            0.1,
+            WithinKindDistribution::Random,
+        ),
         start_date: engine::CivilDate::from_iso(start_iso).unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 

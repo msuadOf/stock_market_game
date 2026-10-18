@@ -6,7 +6,7 @@
 use super::revision::PlanRevision;
 use super::state::{PlanId, PlanOpen, PlanOpinion, PlanStatus, PlanTarget, TradingPlan};
 use super::PlanPolicy;
-use crate::account::StockCode;
+use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId, Side};
 
 /// 计划模块操作失败。绝不静默吞掉（铁律二），错误携带完整上下文。
@@ -15,11 +15,13 @@ pub enum PlanError {
     #[error("unknown plan id {plan_id:?}")]
     UnknownPlan { plan_id: PlanId },
     #[error("account {account:?} already has a non-terminal plan for {code:?}")]
-    DuplicateActivePlan { account: AccountId, code: StockCode },
+    DuplicateActivePlan { account: AccountId, code: StockId },
     #[error("invalid target: {reason}")]
     InvalidTarget { reason: &'static str },
     #[error("invalid confidence {value} bp: must be within 0..=10000")]
     InvalidConfidenceBp { value: u32 },
+    #[error("adoption of {qty} shares exceeds plan {plan_id:?} remaining quantity")]
+    AdoptionExceedsRemaining { plan_id: PlanId, qty: u32 },
     #[error("invalid signal score {value} bp: must be within -10000..=10000")]
     InvalidSignalScoreBp { value: i32 },
     #[error("invalid horizon of {value} trading days: must be at least 1")]
@@ -35,6 +37,29 @@ pub enum PlanError {
     InvalidPolicyThreshold { field: &'static str, value: i32 },
     #[error("plan {plan_id:?}: fill quantity must be positive")]
     ZeroFillQuantity { plan_id: PlanId },
+    #[error(
+        "plan {plan_id:?}: child-order facts require an installed execution leg (install it before submitting)"
+    )]
+    MissingExecutionLeg { plan_id: PlanId },
+    #[error("plan {plan_id:?}: execution quantity or limit is invalid")]
+    InvalidExecutionParameters { plan_id: PlanId },
+    #[error("plan {plan_id:?}: child completion disagrees with remaining quantity")]
+    ChildCompletionMismatch { plan_id: PlanId },
+    #[error("plan {plan_id:?}: restored child identity and quantity disagree")]
+    InvalidChildRestore { plan_id: PlanId },
+    #[error(
+        "plan {plan_id:?}: a second active child was submitted before the first resolved"
+    )]
+    SecondActiveChild { plan_id: PlanId },
+    #[error(
+        "plan {plan_id:?}: fill {fill_qty} from order {order_id:?} exceeds the child remaining {remaining}"
+    )]
+    FillExceedsChild {
+        plan_id: PlanId,
+        order_id: OrderId,
+        remaining: u32,
+        fill_qty: u32,
+    },
     #[error(
         "plan {plan_id:?}: fill from order {order_id:?} does not match the linked child {linked_order_id:?}"
     )]

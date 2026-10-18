@@ -1,7 +1,7 @@
 use super::execution::reconcile_plan::{ReconciliationPlan, WorkingOrderDecision};
 use super::*;
 
-fn buy(code: &StockCode, price: i64) -> Intent {
+fn buy(code: &StockId, price: i64) -> Intent {
     Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
@@ -10,9 +10,9 @@ fn buy(code: &StockCode, price: i64) -> Intent {
     }
 }
 
-fn resting_buy() -> (GameSession, AccountId, StockCode, OrderId) {
+fn resting_buy() -> (GameSession, AccountId, StockId, OrderId) {
     let account = AccountId(1);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
     let mut events = Vec::new();
     session.seed_order_for_test(account, buy(&code, 900), &mut events);
@@ -61,9 +61,9 @@ fn continuous_plan(
     )
 }
 
-fn resting_auction_buy() -> (GameSession, AccountId, StockCode, OrderId) {
+fn resting_auction_buy() -> (GameSession, AccountId, StockId, OrderId) {
     let account = AccountId(1);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(900), 92).unwrap();
     let mut events = Vec::new();
     session.seed_auction_order_for_test(account, buy(&code, 900), &mut events);
@@ -91,7 +91,7 @@ fn reconciliation_plan_keeps_exact_quote_and_consumes_only_that_target() {
 #[test]
 fn symbolic_buy_replaces_equal_fixed_quote_without_consuming_raw_intent() {
     let account = AccountId(1);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
     let mut events = Vec::new();
     session.seed_order_for_test(account, buy(&code, 1_100), &mut events);
@@ -126,12 +126,10 @@ fn symbolic_buy_replaces_equal_fixed_quote_without_consuming_raw_intent() {
 #[test]
 fn symbolic_sell_replaces_equal_fixed_quote_without_consuming_raw_intent() {
     let account = AccountId(1);
-    let code = StockCode("600888".to_owned());
+    let code = StockId(0);
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();
@@ -196,9 +194,7 @@ fn reconciliation_plan_links_replace_without_consuming_residual_target() {
 fn reconciliation_plan_cancels_cross_side_without_consuming_opposite_target() {
     let (mut session, account, code, order_id) = resting_buy();
     session
-        .state
-        .accounts
-        .get_mut(&account)
+        .fixture_account_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();
@@ -301,7 +297,7 @@ fn reconciliation_plan_locked_auction_suppresses_same_side_and_crossing_targets(
 #[test]
 fn reconciliation_plan_locked_reviewed_auction_suppresses_only_reviewed_stock() {
     let (mut session, account, code, _order_id) = resting_auction_buy();
-    let other = StockCode("600889".to_owned());
+    let other = StockId(1);
     session.state.tick = 300;
     let plan = auction_plan(
         &session,

@@ -1,5 +1,5 @@
 import { money as parseCanonicalMoney } from "../primitives.ts"
-import { accountId, SaveSchemaError, decimal, exact, integer, record, safeIntegerKey, string } from "../primitives.ts"
+import { SaveSchemaError, decimal, exact, integer, record, safeIntegerKey, string } from "../primitives.ts"
 
 export type StringMap<T> = { readonly [key: string]: T }
 
@@ -9,7 +9,7 @@ const U16_MAX = 65_535n
 const U64_MAX = 18_446_744_073_709_551_615n
 
 export function accountKey(key: string, path: string): void {
-  accountId(key, path)
+  boundedDecimalKey(key, path, ACCOUNT_ID_MAX)
 }
 
 export function planKey(key: string, path: string): void {
@@ -17,7 +17,9 @@ export function planKey(key: string, path: string): void {
 }
 
 export function stockKey(key: string, path: string): void {
-  if (!/^\d{6}$/.test(key)) throw new SaveSchemaError(path, "必须是六码股票代码")
+  if (!/^(0|[1-9]\d*)$/.test(key) || BigInt(key) > U32_MAX) {
+    throw new SaveSchemaError(path, "必须是数值 StockId 的规范十进制字符串形态（ADR 0041）")
+  }
 }
 
 export function companyKey(key: string, path: string): void {

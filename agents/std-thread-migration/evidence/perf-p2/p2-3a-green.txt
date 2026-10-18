@@ -1,0 +1,58 @@
+# P2-3a 绿证据：零售链公共观察每轮共享（93752be5）
+
+## 改动
+
+group.rs：run_round 零售循环上移共享构造（build_chain_observation+等权市场
+聚合+BehaviorMarketObservation paths 克隆——每轮一次），run_retail_decision
+改为消费共享引用（签名 +chain/+behavior）。chain 决策路径（run_chain_decision，
+B fixture 无 chain NPC）保留原每决策构建，登记为后续候选。
+
+## 守卫（drive_tests.rs p2_3a_retail_chain_shared_observation_golden）
+
+- fixture：retail_count=32、arrival_rate=1.0、ticks=5、seed=157；聚合黄金值
+  (traces=13, volume=100, cash=1_000_065_568_818)，落地前实测锁定。
+- 前置断言 traces>0（守卫空转=fixture 失效防护）。
+- 观测面登记（如实）：逐 tick 挂簿节奏不参与 golden——驱动器路径订单跨拍
+  边界落簿存在跨线程竞态（7 轮实测节奏位置漂移、聚合量稳定；拍内任意政策
+  见 memory/project_concurrent_matching_policy）。
+- 突变红（p2-3a-red.txt）：腐蚀共享 chain 行情价 → golden 红
+  (12/0/cash 漂移 vs 13/100)。
+- 判别边界登记（如实）：首选突变【behavior.price_paths 置空】在本 fixture
+  零判别——插桩实证 13 个决策者全部带持仓，决策在风险/回撤分支早退、
+  price_paths 面不可达（paths=0 仍绿）。换腐蚀共享行情价（决策 equity/风险
+  输入必经面）显红。
+
+## 等价
+
+- B 探针：300 tick events=3336/fees=0、1000 tick events=11119/fees=5705
+  ——与基线逐位一致（改动前后同值）。
+- 全量回归：默认与 ENGINE_STEP_RUNTIME=1 双绿 1613/0/11。
+- A 探针抽查：1439.6 t/s，成交量 6438600/费用桶 647541185/冻结 6438600
+  逐位一致（裸 World 不走零售链，预期不受影响）。
+
+## 性能（如实登记：收益小但正）
+
+净机基线（开工首测，load 1.7）：B 300 tick 三轮 76.6/83.6/77.1（mean 79.1）；
+A 3000 tick 三轮 mean 1377。
+
+同窗配对二进制 A/B（免编译余温，交替执行）：
+- 300 tick：baseline 76.2/75.8 vs changed 79.8/80.9（+5.7%）
+- 1000 tick：baseline 77.5 vs changed 81.4/81.1（+5.1%）
+- perf stat 配对循环数（6 轮）：中位增量 −5.8%（15.98G→15.69G，5/6 轮负）
+
+测量噪声登记：300 tick 轮间波动 ±15%（68.6-83.6 都出现过；52.9 慢轮在
+baseline/changed 都复现——50s 16 线程编译后立即跑探针必现慢轮，正式测量
+须静置；k8s/containerd 背景负载周期性干扰）。+5% 效应在噪声边缘，循环数
+配对口径（对调度噪声不敏感）支持真实小幅正收益。
+
+画像预估落差登记：改动前画像组线程 Vec::clone 12.8%+memmove 9.4%，预估
+收益 15-40%（Sol）；实测 +5%——组线程面已消，但驱动线程（AccountPagedMap
+get_mut 5.7%/get 2.3%/缺页 ~11%/jemalloc 家族 ~17%）为下一段关键路径，
+单人共享放量的墙钟收益被并行段稀释。
+
+## 后续候选（本轮登记）
+
+- run_chain_decision 每 chain NPC 重建链观察（B fixture 无 chain 位未测）。
+- 零售决策个人态克隆链：snap 六件×2（读+undo 写回）、experience×2、
+  strategy×2、positions/issuer_of BTreeMap——结构性优化需单独设计。
+- 候选②（attention 全名册上行+写）与候选①（baseline 其余域快照）未动。

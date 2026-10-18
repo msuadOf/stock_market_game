@@ -1,0 +1,16 @@
+test common::flip_helpers::closure_tests::sol3r_cancel_exceeding_accept_is_rejected ... ok
+test common::flip_helpers::closure_tests::sol3r_double_cancel_same_id_is_rejected ... ok
+test common::flip_helpers::closure_tests::sol3r_one_cancel_per_order_passes ... ok
+test fee_settlement_formulas_with_minimum_commission_and_marginal_split ... FAILED
+test auction_window_gates_and_closing_phase_events ... FAILED
+test civil_day_end_failure_rolls_back_and_retries_once ... FAILED
+test exact_closure_on_no_trade_fixture ... FAILED
+test t1_today_buy_frozen_and_day_end_unfreeze ... FAILED
+test day_end_drain_closes_all_resting ... ok
+test second_day_auction_window_resumes ... FAILED
+test trades_never_self_cross ... FAILED
+test seq_vocabulary_day_and_conservation_anchors ... FAILED
+test scheduling_invariants_hold_across_runs ... FAILED
+test result: FAILED. 4 passed; 9 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.70s
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1639 filtered out; finished in 0.01s
+# 第三类（死亡断言再锚定）红证：round4——锚定文件 9 处 + r07 desk 1 处 oracle 偏移突变全红（9 failed 见上）后逆回

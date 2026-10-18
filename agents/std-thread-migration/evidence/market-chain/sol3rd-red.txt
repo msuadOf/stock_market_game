@@ -1,0 +1,38 @@
+=== Sol 三轮·逆回修复取红（原始输出）===
+--- cargo test -p engine --lib desk_semantics_tests::sol3r_continue_preserves ---
+test runtime::desk_semantics_tests::sol3r_continue_preserves_early_round_facts ... FAILED
+thread 'runtime::desk_semantics_tests::sol3r_continue_preserves_early_round_facts' (1966971) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:1754:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1650 filtered out; finished in 0.01s
+--- cargo test -p engine --lib desk_semantics_tests::sol3r_immediate ---
+test runtime::desk_semantics_tests::sol3r_immediate_orders_consume_unique_serials ... FAILED
+thread 'runtime::desk_semantics_tests::sol3r_immediate_orders_consume_unique_serials' (1967274) panicked at packages/engine/src/runtime/desk_semantics_tests.rs:1821:5:
+assertion `left != right` failed: 两笔即时单的订单 ID 必须互异：[1, 1]
+  left: 1
+ right: 1
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1650 filtered out; finished in 0.00s
+--- cargo test -p engine --test runtime_semantics_anchor sol3r_multi_request ---
+681 | fn intents_equal(left: &Intent, right: &Intent) -> bool {
+test sol3r_multi_request_exact_receipt_counts_and_unique_ids ... FAILED
+thread 'sol3r_multi_request_exact_receipt_counts_and_unique_ids' (1968041) panicked at packages/engine/tests/runtime_semantics_anchor.rs:1099:5:
+assertion `left != right` failed: 订单 ID 必须互异（序号推进）
+  left: 1
+ right: 1
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.74s
+
+=== 修复复装后全绿（原始输出）===
+--- cargo test -p engine --lib desk_semantics_tests::sol3r ---
+test runtime::desk_semantics_tests::sol3r_failed_tick_retry_emits_facts_exactly_once ... ok
+test runtime::desk_semantics_tests::sol3r_immediate_orders_consume_unique_serials ... ok
+test runtime::desk_semantics_tests::sol3r_market_sell_walks_bids_below_cage ... ok
+test runtime::desk_semantics_tests::sol3r_continue_preserves_early_round_facts ... ok
+test runtime::desk_semantics_tests::sol3r_closing_multi_level_settles_at_clearing_price ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1646 filtered out; finished in 0.01s
+--- cargo test -p engine --test runtime_semantics_anchor sol3r ---
+test common::flip_helpers::closure_tests::sol3r_cancel_exceeding_accept_is_rejected ... ok
+test common::flip_helpers::closure_tests::sol3r_double_cancel_same_id_is_rejected ... ok
+test common::flip_helpers::closure_tests::sol3r_one_cancel_per_order_passes ... ok
+test sol3r_multi_request_exact_receipt_counts_and_unique_ids ... ok
+test sol3r_lowest_buy_penny_boundary_at_drive_level ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 1.51s
+--- lib 全量（默认）---
+test result: ok. 1640 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 32.52s

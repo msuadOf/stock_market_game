@@ -133,11 +133,12 @@ fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
 
     let mut wrong_owner = serde_json::to_value(&resaved).expect("save serializes");
     let institution_key = institution.0.to_string();
-    wrong_owner["belief_books"][institution_key]["npc"] = serde_json::to_value(retail).unwrap();
+    wrong_owner["belief_books"][institution_key]["npc"] = serde_json::json!(retail.0);
     let wrong_owner: SaveSlot = serde_json::from_value(wrong_owner).expect("typed edited save");
+    // 数值断言替代原文本断言 "belief book owner"（fault2124：信念账 owner 与键不一致）。
     assert!(matches!(
         GameSession::restore(&wrong_owner),
-        Err(SessionError::InvalidSave(message)) if message.contains("belief book owner")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2124
     ));
 
     let mut wrong_kind = serde_json::to_value(&resaved).expect("save serializes");
@@ -146,9 +147,11 @@ fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
     )
     .expect("retail profile serializes");
     let wrong_kind: SaveSlot = serde_json::from_value(wrong_kind).expect("typed edited save");
+    // 数值断言替代原文本断言 "belief profile conflicts with account kind"
+    // （fault2125：信念画像与账户类别冲突）。
     assert!(matches!(
         GameSession::restore(&wrong_kind),
-        Err(SessionError::InvalidSave(message)) if message.contains("belief profile conflicts with account kind")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2125
     ));
 }
 
@@ -161,10 +164,9 @@ fn saved_fee_components(fees: FeeComponents) -> SavedFeeComponents {
 }
 
 #[test]
-fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
+fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
     let mut session = session_with_runtime_state();
-    prepare_live_order_fixture(&mut session);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let institution = AccountId(1);
     let mut events = Vec::new();
     session.seed_order_for_test(
@@ -184,40 +186,44 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
             _ => None,
         })
         .expect("fixture player order must be accepted");
+    let plan_id = session
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account: institution,
+            code: code.clone(),
+            direction: Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(100),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
     session
         .state
-        .parent_orders
-        .entry(institution)
-        .or_default()
-        .insert(
-            code.clone(),
-            ParentOrderPlan::from_saved_facts(
-                code.clone(),
-                Side::Buy,
-                100,
-                0,
-                100,
-                None,
-                None,
-                None,
-                Money::from_cents(1_000),
-                480,
-            ),
-        );
+        .plans
+        .install_execution(plan_id, 100, Money::from_cents(1_000), 480)
+        .unwrap();
     let mut forged = session
         .save()
-        .expect("unlinked parent without a child is valid");
-    let plan = forged
-        .parent_orders
-        .get_mut(&institution)
-        .unwrap()
-        .get_mut(&code)
-        .unwrap();
-    plan.active_child_order_id = Some(player_order);
+        .expect("an execution leg without a child is valid");
+    {
+        let mut encoded = serde_json::to_value(&forged).unwrap();
+        encoded["plans"]["plans"][&plan_id.0.to_string()]["active_child_order_id"] =
+            serde_json::json!(player_order.0);
+        forged = serde_json::from_value(encoded).unwrap();
+    }
 
+    // 数值断言替代原文本断言 "active child does not match a live order"
+    // （fault1042：计划在途子委托无法唯一重建）。
     assert!(matches!(
         GameSession::restore(&forged),
-        Err(SessionError::InvalidSave(reason)) if reason.contains("active child does not match a live order")
+        Err(SessionError::InvalidSave(fault)) if fault.code == 1042
     ));
 }
 
@@ -236,16 +242,8 @@ fn gross_capped_fee_session() -> GameSession {
     GameSession::new(setup, 42).expect("gross-capped runtime_state fixture 必须有效")
 }
 
-// 首个真实市场 tick 建立日内时钟，后续 Market::place 建立活动事实，不手补保存标记。
-fn prepare_live_order_fixture(session: &mut GameSession) {
-    if session.tick() == 0 {
-        session.step().expect("日内委托 fixture 的首个交易 tick 必须成功");
-    }
-}
-
 fn install_live_buy(session: &mut GameSession) -> EnvelopeKey {
-    prepare_live_order_fixture(session);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -303,8 +301,7 @@ fn install_receipt_prefix(session: &mut GameSession, envelope: EnvelopeKey) {
 }
 
 fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
-    prepare_live_order_fixture(session);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -313,9 +310,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
     };
     let filled_value = Money::from_cents(50_001);
     session
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
@@ -375,8 +370,7 @@ fn install_partially_filled_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
-    prepare_live_order_fixture(session);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -385,9 +379,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
     };
     let filled_value = Money::from_cents(100);
     session
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
@@ -447,8 +439,7 @@ fn install_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
 }
 
 fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey {
-    prepare_live_order_fixture(session);
-    let code = session.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -456,9 +447,7 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
         side: Side::Sell,
     };
     session
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .expect("fixture seller must exist")
         .grant_position(code.clone(), 2, Money::from_cents(1))
         .expect("fixture historical holding must be valid");
@@ -488,12 +477,12 @@ fn install_unfilled_gross_capped_sell(session: &mut GameSession) -> EnvelopeKey 
     key
 }
 
-fn assert_invalid_save(error: SessionError, message: &str) {
+/// 断言解压/解码层拒绝为指定数字错误码（数值断言替代原文本 contains 助手）。
+fn assert_invalid_save(error: SessionError, code: u16) {
     match error {
-        SessionError::InvalidSave(description) => assert!(
-            description.contains(message),
-            "expected {message:?} in {description:?}"
-        ),
+        SessionError::InvalidSave(fault) => {
+            assert!(fault.code == code, "expected fault {code} in {fault:?}")
+        }
         other => panic!("corrupt persisted input must be InvalidSave, got {other}"),
     }
 }
@@ -525,9 +514,11 @@ fn save_decoder_accepts_current_structure_and_rejects_version_markers() {
             .unwrap()
             .insert("schema_version".to_owned(), marker);
         let json = serde_json::to_vec(&value).unwrap();
+        // 数值断言替代原文本断言 "schema_version"
+        // （fault2080：存档 JSON 不可解码，schema_version 版本标记被严格结构拒绝）。
         assert_invalid_save(
             decode_save_slot(&json, &SaveDecodeLimits::default()).unwrap_err(),
-            "schema_version",
+            2080,
         );
     }
 }
@@ -546,9 +537,11 @@ fn new_session_rejects_legacy_and_unknown_simulation_policies() {
             Err(error) => error,
         };
         match error {
-            SessionError::InvalidSetup(description) => assert!(
-                description.contains(SIMULATION_POLICY_ID),
-                "policy rejection must name the supported policy: {description}"
+            // 数值断言替代原文本断言 contains(SIMULATION_POLICY_ID)
+            // （fault1006：模拟政策身份不匹配；期望/实际政策 id 槽位待 C 批数值化）。
+            SessionError::InvalidSetup(fault) => assert!(
+                fault.code == 1006,
+                "policy rejection must be the simulation policy identity fault: {fault:?}"
             ),
             other => panic!("unsupported policy must be InvalidSetup, got {other}"),
         }
@@ -618,9 +611,22 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
     let envelope = encoded["runtime_state"]["live_envelopes"][0]
         .as_object()
         .unwrap();
+    // D5 restore 链最后一层：remaining/filled/limit/purse 自"派生镜像"
+    // 升格为一等数值面（runtime 形态 desk 权威不在 restore 侧——旧簿
+    // 空时它们是唯一载体，remaining 退占位使续拍种子量错）。live 资源
+    // 与 nominal 仍是派生面不入档（restore 重建：live= purse/remaining
+    /// 组装、nominal=费用表重算）。
     assert_eq!(
         envelope.keys().cloned().collect::<Vec<_>>(),
-        ["charged", "key"]
+        [
+            "charged",
+            "filled_qty",
+            "filled_value",
+            "key",
+            "limit",
+            "purse",
+            "remaining_qty"
+        ]
     );
     assert_eq!(
         envelope["charged"]["commission"],
@@ -637,47 +643,178 @@ fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
 }
 
 #[test]
-fn parent_plan_save_omits_rebuilt_child_quantity_and_rejects_injected_legacy_field() {
-    let plan = crate::session::SaveParentOrderPlan {
-        code: StockCode("600888".to_owned()),
-        side: Side::Buy,
-        target_qty: 200,
-        filled_qty: 0,
-        child_qty: 100,
-        active_child_order_id: Some(OrderId(1)),
-        linked_plan_id: None,
-        limit_price: Money::from_cents(1_000),
-        expires_market_minute: 500,
-    };
-    let mut encoded = serde_json::to_value(&plan).expect("parent plan must encode");
-    assert!(!encoded
-        .as_object()
+fn execution_leg_wire_rejects_injected_unknown_fields() {
+    let leg = crate::plans::PlanExecutionLeg::from_facts_for_tests(
+        100,
+        Money::from_cents(1_000),
+        500,
+        Some(100),
+    );
+    let mut encoded = serde_json::to_value(&leg).expect("execution leg must encode");
+    encoded["legacy_parent_field"] = serde_json::json!(1);
+    assert!(
+        serde_json::from_value::<crate::plans::PlanExecutionLeg>(encoded).is_err(),
+        "legacy parent mirror fields must be rejected by the leg contract"
+    );
+}
+
+/// 唯一 owner 在途子单存档 fixture：计划 400 股、已成交 100、真实簿余量 300。
+fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
+    let mut session = low_price_session();
+    let code = StockId(0);
+    let account = crate::AccountId(1);
+    let plan_id = session
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account,
+            code: code.clone(),
+            direction: Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(400),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    session
+        .state
+        .plans
+        .install_execution(plan_id, 400, Money::from_cents(1), 480)
+        .unwrap();
+    session
+        .state
+        .plans
+        .record_child_submitted(account, &code, Side::Buy, OrderId(1), 400, 0)
+        .unwrap();
+    session
+        .state
+        .plans
+        .apply(
+            plan_id,
+            crate::plans::PlanEvent::ChildOrderFilled {
+                order_id: OrderId(1),
+                qty: 100,
+                child_complete: false,
+                trading_day: 0,
+            },
+        )
+        .unwrap();
+    session
+        .state
+        .markets
+        .get_mut(&code)
         .unwrap()
-        .contains_key("active_child_remaining_qty"));
-    encoded["active_child_remaining_qty"] = serde_json::json!(99);
-    assert!(serde_json::from_value::<crate::session::SaveParentOrderPlan>(encoded).is_err());
+        .place(crate::Order {
+            id: OrderId(1),
+            side: Side::Buy,
+            price: Money::from_cents(1),
+            qty: 300,
+            original_qty: 400,
+            filled_qty: 100,
+            filled_value: Money::from_cents(100),
+            owner: account,
+            seq: 0,
+        })
+        .unwrap();
+    session.state.next_order_id = 2;
+    session.hydrate_or_validate_envelope_ledger().unwrap();
+    (session, plan_id, code)
+}
+
+#[test]
+fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+        ["active_child_remaining_qty"] = serde_json::json!(1);
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    let restored = GameSession::restore(&forged).expect("stale serialized remaining is rebuilt");
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+}
+
+#[test]
+fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // 字段缺失：唯一 owner 从真实订单簿重建。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+        .as_object_mut()
+        .unwrap()
+        .remove("active_child_remaining_qty");
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    let restored = GameSession::restore(&forged).expect("absent remaining is rebuilt");
+    assert_eq!(
+        restored
+            .state
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_remaining_qty(),
+        Some(300)
+    );
+}
+
+#[test]
+fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // filled=350（≤ target 400，2144 不触发），真实余量 300 ⇒ exposure 650 > 400。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["filled_qty"] = serde_json::json!(350);
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    assert!(matches!(
+        GameSession::restore(&forged),
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+    ));
+    assert!(authority.state.plans.plan(plan_id).is_ok());
+}
+
+#[test]
+fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
+    let (mut authority, plan_id, _code) = live_child_case();
+    let saved = authority.save().unwrap();
+    let mut encoded = serde_json::to_value(&saved).unwrap();
+    // 序列化余量(999) > 真实余量(300)：虚增敞口直接拒绝。
+    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+        ["active_child_remaining_qty"] = serde_json::json!(999);
+    let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
+    assert!(matches!(
+        GameSession::restore(&forged),
+        Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+    ));
 }
 
 #[test]
 fn runtime_envelope_rejects_injected_derived_fields() {
-    for field in [
-        "live",
-        "limit",
-        "remaining_qty",
-        "filled_qty",
-        "filled_value",
-        "nominal",
-    ] {
-        // 用当前 typed codec 构造合法 key，防止旧数字／字符串 fixture 先于派生字段守卫失败。
-        let mut encoded = serde_json::to_value(SavedLiveEnvelope {
-            key: SavedEnvelopeKey {
-                account: AccountId(1),
-                stock: StockCode("600888".into()),
-                order: OrderId(1),
-                side: Side::Sell,
-            },
-            charged: SavedFeeComponents::default(),
-        }).unwrap();
+    // D5 restore 链最后一层后，仍属派生面（restore 重建，拒绝注入）的
+    /// 是 live 资源镜像与 nominal；remaining/filled/limit/purse 已升格
+    /// 一等数值面（runtime 形态 desk 权威的唯一载体），在字段集内。
+    for field in ["live", "nominal"] {
+        let mut encoded = serde_json::json!({
+            "key": { "account": 1, "stock": 0, "order": 1, "side": "Sell" },
+            "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" },
+            "remaining_qty": 100,
+            "filled_qty": 0,
+            "filled_value": "0",
+            "limit": "1000",
+            "purse": "0"
+        });
         serde_json::from_value::<SavedLiveEnvelope>(encoded.clone())
             .expect("完整当前 envelope 在注入派生字段前应可解码");
         encoded[field] = serde_json::json!(0);
@@ -689,41 +826,66 @@ fn runtime_envelope_rejects_injected_derived_fields() {
 }
 
 #[test]
-fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
+fn partial_plan_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
     let mut source = low_price_session();
     let key = install_partially_filled_sell(&mut source);
+    let plan_id = source
+        .state
+        .plans
+        .create(crate::plans::PlanOpen {
+            account: key.account,
+            code: key.stock.clone(),
+            direction: Side::Sell,
+            target: crate::plans::PlanTarget::ShareCount(50_100),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: -3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
     source
         .state
-        .parent_orders
-        .entry(key.account)
-        .or_default()
-        .insert(
-            key.stock.clone(),
-            ParentOrderPlan::from_saved_facts(
-                key.stock.clone(),
-                key.side,
-                50_100,
-                50_001,
-                50_100,
-                Some(key.order),
-                Some(1),
-                None,
-                Money::from_cents(1),
-                480,
-            ),
-        );
-    let saved = source.save().expect("partially filled parent must save");
-    let encoded = serde_json::to_value(&saved).unwrap();
-    assert!(
-        encoded["parent_orders"][key.account.0.to_string()][&key.stock.0]
-            .get("active_child_remaining_qty")
-            .is_none()
+        .plans
+        .install_execution(plan_id, 50_100, Money::from_cents(1), 480)
+        .unwrap();
+    source
+        .state
+        .plans
+        .record_child_submitted(
+            key.account,
+            &key.stock,
+            Side::Sell,
+            key.order,
+            50_002,
+            0,
+        )
+        .unwrap();
+    source
+        .state
+        .plans
+        .apply(
+            plan_id,
+            crate::plans::PlanEvent::ChildOrderFilled {
+                order_id: key.order,
+                qty: 50_001,
+                child_complete: false,
+                trading_day: 0,
+            },
+        )
+        .unwrap();
+    let saved = source.save().expect("partially filled plan must save");
+    let restored = GameSession::restore(&saved).expect("plan must rebuild from its live child");
+    let plan = restored.state.plans.plan(plan_id).unwrap();
+    assert_eq!(plan.active_child_remaining_qty(), Some(1));
+    assert_eq!(
+        plan.target(),
+        crate::plans::PlanTarget::ShareCount(50_100)
     );
-    let restored = GameSession::restore(&saved).expect("parent must rebuild from its live child");
-    let parent = &restored.state.parent_orders[&key.account][&key.stock];
-    assert_eq!(parent.active_child_remaining_qty(), Some(1));
-    assert_eq!(parent.target_qty(), 50_100);
-    assert_eq!(parent.filled_qty(), 50_001);
+    assert_eq!(plan.filled_qty(), 50_001);
     assert_eq!(
         restored.state.markets[&key.stock].resting_orders_for(key.account)[0].qty,
         1
@@ -768,8 +930,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     setup.config.commission_min = Money::ZERO;
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
     let mut source = GameSession::new(setup, 43).expect("fee-history fixture must be valid");
-    prepare_live_order_fixture(&mut source);
-    let code = source.state.setup.stocks[0].code.clone();
+    let code = StockId(0);
     let key = EnvelopeKey {
         account: AccountId(1),
         stock: code.clone(),
@@ -805,9 +966,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
     assert_eq!(transition.charged_after.transfer_fee, Money::from_cents(1));
 
     source
-        .state
-        .accounts
-        .get_mut(&key.account)
+        .fixture_account_mut(&key.account)
         .unwrap()
         .grant_position(code.clone(), 1, Money::from_cents(1))
         .unwrap();
@@ -900,52 +1059,127 @@ fn complete_restore_rejects_live_sell_when_edited_assets_cannot_cover_it() {
         .get_mut(&key.stock)
         .expect("saved seller must hold the sold stock")
         .qty = 1;
-    assert_invalid_save(restore_error(&assets_tampered), "over-reserve shares");
+    // fault2168：存档卖单股份预留超可卖（数值断言替代原文本 "over-reserve shares"）。
+    assert_invalid_save(restore_error(&assets_tampered), 2168);
 }
 
 #[test]
 fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation() {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // D5 自成交拍板 A：retail 位承接卖家（双账户）。
+    setup.npcs.retail_count = 1;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(10_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
-    let code = setup.stocks[0].code.clone();
+    let code = StockId(0);
     let mut session = GameSession::new(setup, 42).expect("runtime_state fixture 必须有效");
-    session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
-        .expect("player must exist")
-        .grant_position(code.clone(), 200, Money::from_cents(1))
-        .expect("fixture holding must be valid");
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: LimitPrice::Fixed(Money::from_cents(1)),
-                qty: 100,
-            },
-        )
-        .unwrap();
-    session.step().expect("buyer order tick must commit");
-
-    let cash_before_fill = session.state.accounts[&AccountId(0)].cash();
-    session
-        .enqueue_player_intent(
-            AccountId(0),
+    // D5 自成交拍板 A（双轨）：runtime 分支双账户（retail 位承接卖家——
+    // desk 按 A 股自成交限制不撮同账户对手；旧管线缺口登记台账：旧管线
+    // 缺自成交限制，随退役消亡）；默认分支保留原单账户形态（旧管线
+    // 结算链的零售持仓 epoch 面对种子卖不适用——原序即原语义）。
+    let runtime_mode = crate::runtime::step_runtime_enabled();
+    let mut cash_before_fill;
+    if runtime_mode {
+        session
+            .fixture_account_mut(&AccountId(1))
+            .expect("retail seller must exist")
+            // Sol 终审四审预留族：desk 卖种子组端扣减持仓（checked_sub）
+            // 后，种子挂量不得超过持有（此前的 100 持有挂 200 卖依赖
+            // 种子通道绕过校验——做空形态；改为足额持有，"余 100 在途"
+            // 的部分成交形态不变）。
+            .grant_position(code.clone(), 200, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        // fault2038（持仓必有经历）：测试中途 grant 的持仓需同步经历
+        /// 条目（真实流量的持仓来自构造期分配或买腿成交——各自带条目）。
+        session
+            .state
+            .retail_experience
+            .get_mut(&AccountId(1))
+            .expect("retail seller must have an experience row")
+            .initialize_holding_dated(
+                &code,
+                Some(Money::from_cents(1)),
+                Money::from_cents(1),
+                crate::experience::ExperienceMoment {
+                    civil_date: session.state.civil_clock.current_date(),
+                    market_minute: 0,
+                    trading_day: 0,
+                },
+            )
+            .expect("fixture experience entry must be valid");
+        let mut seed_events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
+                // 200 挂出、买 100——余 100 在途（"partially-filled seller
+                // envelope must remain live" 的 runtime 形态）。
                 qty: 200,
             },
-        )
-        .unwrap();
-    session.step().expect("partial-fill tick must commit");
+            &mut seed_events,
+        );
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        session.step().expect("buyer crosses seeded seller tick must commit");
+        cash_before_fill = session.state.accounts[&AccountId(0)].cash();
+        // 双账户下买方首拍即付（gross 断言的"卖拍后现金"基线=首拍后值）。
+        let gross_pre = Money::from_cents(100);
+        let pre_cost = gross_pre
+            .add(session.state.setup.config.commission(gross_pre).unwrap())
+            .unwrap()
+            .add(session.state.setup.config.transfer_fee(gross_pre).unwrap())
+            .unwrap();
+        cash_before_fill = session
+            .state
+            .accounts[&AccountId(0)]
+            .cash()
+            .add(pre_cost)
+            .unwrap();
+    } else {
+        session
+            .fixture_account_mut(&AccountId(0))
+            .expect("player must exist")
+            .grant_position(code.clone(), 200, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        session.step().expect("buyer order tick must commit");
+        cash_before_fill = session.state.accounts[&AccountId(0)].cash();
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 200,
+                },
+            )
+            .unwrap();
+        session.step().expect("partial-fill tick must commit");
+    }
+    // 默认分支后续断言的"卖拍后现金"——runtime 分支已推到等价基线。
     let gross = Money::from_cents(100);
     let expected_buy_cost = gross
         .add(session.state.setup.config.commission(gross).unwrap())
@@ -1008,30 +1242,51 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
 fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit() {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // D5 自成交拍板 A：retail 位承接卖家（双账户）。
+    setup.npcs.retail_count = 1;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
-    let code = setup.stocks[0].code.clone();
+    let code = StockId(0);
     let mut session = GameSession::new(setup, 43).expect("runtime_state fixture 必须有效");
-    session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
-        .expect("player must exist")
-        .grant_position(code.clone(), 1_300, Money::from_cents(1))
-        .expect("fixture holding must be valid");
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
+    // D5 自成交拍板 A（双轨）：runtime=retail 位双账户种子卖（desk A 股
+    // 自成交限制；旧管线缺口登记台账）；默认=原玩家单账户 enqueue（旧
+    // 管线结算 epoch 面对种子卖不适用）。
+    if crate::runtime::step_runtime_enabled() {
+        session
+            .fixture_account_mut(&AccountId(1))
+            .expect("retail seller must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        let mut seed_events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
             },
-        )
-        .unwrap();
+            &mut seed_events,
+        );
+    } else {
+        session
+            .fixture_account_mut(&AccountId(0))
+            .expect("player must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 1_300,
+                },
+            )
+            .unwrap();
+    }
     session.step().expect("resting seller tick must commit");
 
     for qty in [100, 1_000] {
@@ -1093,30 +1348,50 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
 fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 0;
+    // D5 自成交拍板 A：retail 位承接卖家（双账户）。
+    setup.npcs.retail_count = 1;
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.starting_cash = Money::from_cents(20_000);
     setup.simulation_policy_id = SIMULATION_POLICY_ID.to_owned();
-    let code = setup.stocks[0].code.clone();
+    let code = StockId(0);
     let mut session = GameSession::new(setup, 44).expect("runtime_state fixture 必须有效");
-    session
-        .state
-        .accounts
-        .get_mut(&AccountId(0))
-        .expect("player must exist")
-        .grant_position(code.clone(), 1_300, Money::from_cents(1))
-        .expect("fixture holding must be valid");
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
+    // D5 自成交拍板 A（双轨）：runtime=retail 位双账户种子卖（同上登记）；
+    /// 默认=原玩家单账户（同拍三单——旧管线结算 epoch 面对种子卖不适用）。
+    if crate::runtime::step_runtime_enabled() {
+        session
+            .fixture_account_mut(&AccountId(1))
+            .expect("retail seller must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        let mut seed_events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
                 price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
             },
-        )
-        .unwrap();
+            &mut seed_events,
+        );
+    } else {
+        session
+            .fixture_account_mut(&AccountId(0))
+            .expect("player must exist")
+            .grant_position(code.clone(), 1_300, Money::from_cents(1))
+            .expect("fixture holding must be valid");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
+                    qty: 1_300,
+                },
+            )
+            .unwrap();
+    }
     for qty in [100, 1_000] {
         session
             .enqueue_player_intent(
@@ -1173,10 +1448,8 @@ fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(-1);
 
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        "negative component",
-    );
+    // fault2225：费用审计含负分量（数值断言替代原文本 "negative component"）。
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2225);
 }
 
 #[test]
@@ -1186,10 +1459,8 @@ fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(2);
 
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        "inconsistent cumulative charged fee audit",
-    );
+    // fault2228：信封累计收费审计不一致（数值断言替代原文本 "inconsistent cumulative charged fee audit"）。
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2228);
 }
 
 #[test]
@@ -1212,10 +1483,7 @@ fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal(
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes[0].charged.commission = Money::from_cents(101);
 
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        "inconsistent cumulative charged fee audit",
-    );
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2228);
 }
 
 #[test]
@@ -1224,10 +1492,8 @@ fn receipt_gap_is_rejected_as_corrupt_save() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.next_receipt_base = 1;
 
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        "receipt prefix",
-    );
+    // fault2202：散户投影回执前缀重建失败（数值断言替代原文本 "receipt prefix"）。
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2202);
 }
 
 #[test]
@@ -1243,9 +1509,10 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .transition
         .envelope
         .account = AccountId(999);
+    // fault2212：回执引用未知账户（数值断言替代原文本 "unknown account"）。
     assert_invalid_save(
         validate_runtime_state(&session, &unknown_account).unwrap_err(),
-        "unknown account",
+        2212,
     );
 
     let mut unknown_stock = state.clone();
@@ -1253,10 +1520,11 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .local_key
         .transition
         .envelope
-        .stock = StockCode("600999".to_owned());
+        .stock = StockId(9);
+    // fault2213：回执引用未知股票（数值断言替代原文本 "unknown stock"）。
     assert_invalid_save(
         validate_runtime_state(&session, &unknown_stock).unwrap_err(),
-        "unknown stock",
+        2213,
     );
 
     let mut zero_order = state.clone();
@@ -1265,9 +1533,10 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .transition
         .envelope
         .order = OrderId(0);
+    // fault2214：回执订单 id 越界（数值断言替代原文本 "invalid order"，order id = 0）。
     assert_invalid_save(
         validate_runtime_state(&session, &zero_order).unwrap_err(),
-        "invalid order",
+        2214,
     );
 
     let mut future_order = state;
@@ -1276,9 +1545,10 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
         .transition
         .envelope
         .order = OrderId(session.state.next_order_id);
+    // fault2214：回执订单 id 越界（数值断言替代原文本 "invalid order"，order id ≥ next_order_id）。
     assert_invalid_save(
         validate_runtime_state(&session, &future_order).unwrap_err(),
-        "invalid order",
+        2214,
     );
 }
 
@@ -1289,10 +1559,8 @@ fn duplicate_live_envelope_key_is_rejected_as_noncanonical() {
     let mut state = capture_runtime_state(&session).unwrap();
     state.live_envelopes.push(state.live_envelopes[0].clone());
 
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        "strict canonical key order",
-    );
+    // fault2217：活跃信封非规范键严格序（数值断言替代原文本 "strict canonical key order"）。
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2217);
 }
 
 #[test]
@@ -1305,9 +1573,10 @@ fn live_envelope_tampering_is_rejected_without_partial_restore() {
     let mut target = session_with_runtime_state();
     install_live_buy(&mut target);
     let before = capture_runtime_state(&target).unwrap();
+    // fault2228：信封累计收费审计不一致（数值断言替代原文本 "inconsistent cumulative charged fee audit"）。
     assert_invalid_save(
         restore_runtime_state(&mut target, &state).unwrap_err(),
-        "inconsistent cumulative charged fee audit",
+        2228,
     );
     assert_eq!(capture_runtime_state(&target).unwrap(), before);
 }
@@ -1317,10 +1586,8 @@ fn poisoned_marker_and_unknown_runtime_fields_fail_closed() {
     let session = session_with_runtime_state();
     let mut state = capture_runtime_state(&session).unwrap();
     state.poisoned = true;
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        "poisoned",
-    );
+    // fault2200：runtime_state 显式拒绝 poisoned 会话状态（数值断言替代原文本 "poisoned"）。
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2200);
 
     let mut encoded = serde_json::to_value(capture_runtime_state(&session).unwrap()).unwrap();
     encoded
@@ -1355,7 +1622,8 @@ fn decode_rejects_unknown_nested_strategy_state_fields() {
 
     let error = decode_save_slot(&bytes, &SaveDecodeLimits::default())
         .expect_err("unknown nested strategy state fields must fail closed");
-    assert_invalid_save(error, "unknown field");
+    // fault2080：存档 JSON 不可解码（数值断言替代原文本 "unknown field"）。
+    assert_invalid_save(error, 2080);
 }
 
 #[test]
@@ -1382,7 +1650,8 @@ fn decode_rejects_noncanonical_strategy_float_bit_strings() {
 
         let error = decode_save_slot(&bytes, &SaveDecodeLimits::default())
             .expect_err("noncanonical exact-float strings must fail closed");
-        assert_invalid_save(error, "16 lowercase hexadecimal digits");
+        // fault2080：存档 JSON 不可解码（数值断言替代原文本 "16 lowercase hexadecimal digits"）。
+        assert_invalid_save(error, 2080);
     }
 }
 
@@ -1420,7 +1689,8 @@ fn decode_rejects_strategy_integers_outside_javascript_safe_range() {
         &SaveDecodeLimits::default(),
     )
     .expect_err("unsafe Momentum integer in a save must be rejected");
-    assert_invalid_save(save_error, "JavaScript safe integer range");
+    // fault2080：存档 JSON 不可解码（数值断言替代原文本 "JavaScript safe integer range"）。
+    assert_invalid_save(save_error, 2080);
 
     let state_error = serde_json::from_slice::<crate::strategy::StrategyState>(
         &serde_json::to_vec(&hot_json).unwrap(),
@@ -1458,7 +1728,9 @@ fn restore_rejects_strategy_attention_probability_drift() {
         .expect("canonical same-profile StrategyState must decode");
 
     let error = restore_error(&decoded);
-    assert_invalid_save(error, "disagrees with NPC attention probability");
+    // fault2210：基础观察概率与 NPC 关注概率不一致（数值断言替代原文本
+    // "disagrees with NPC attention probability"）。
+    assert_invalid_save(error, 2210);
 }
 
 #[test]
@@ -1472,10 +1744,8 @@ fn strategy_state_identity_tampering_is_rejected() {
         ),
     );
 
-    assert_invalid_save(
-        validate_runtime_state(&session, &state).unwrap_err(),
-        "deterministic strategy identity",
-    );
+    // fault2208：策略状态改变确定性策略身份（数值断言替代原文本 "deterministic strategy identity"）。
+    assert_invalid_save(validate_runtime_state(&session, &state).unwrap_err(), 2208);
 }
 
 #[test]
@@ -1506,7 +1776,7 @@ fn cumulative_fee_audit_buyer_requires_every_nominal_component() {
         filled_value: gross,
         charged: nominal
     }
-    .validate(&config)
+    .validate(&config, false)
     .unwrap());
     for charged in [
         SavedFeeComponents {
@@ -1527,7 +1797,7 @@ fn cumulative_fee_audit_buyer_requires_every_nominal_component() {
             filled_value: gross,
             charged
         }
-        .validate(&config)
+        .validate(&config, false)
         .unwrap());
     }
 }
@@ -1545,16 +1815,14 @@ fn cumulative_fee_audit_zero_and_negative_gross_keep_existing_boundaries() {
             zero.nominal(&config).unwrap(),
             SavedFeeComponents::default()
         );
-        assert!(zero.validate(&config).unwrap());
+        assert!(zero.validate(&config, false).unwrap());
         let negative = CumulativeFeeAudit {
             side,
             filled_value: Money::from_cents(-1),
             charged: SavedFeeComponents::default(),
         };
-        assert_invalid_save(
-            negative.nominal(&config).unwrap_err(),
-            "saved filled value cannot be negative",
-        );
+        // fault2229：已成交金额不可为负（数值断言替代原文本 "saved filled value cannot be negative"）。
+        assert_invalid_save(negative.nominal(&config).unwrap_err(), 2229);
     }
 }
 
@@ -1588,4 +1856,320 @@ fn save_slot_uses_current_structure_and_rejects_legacy_runtime_key() {
         .unwrap()
         .insert("runtime_v2".to_owned(), runtime);
     assert!(serde_json::from_value::<SaveSlot>(legacy).is_err());
+}
+
+// ═══ Sol 五审重送件 1/2：真实数量与累计费用贯穿 + restore 后续成交 ═══
+
+/// 五审判决静态反例（动态化）：限价 1000 买 200，价优成交 100@990——
+/// 存档侧 filled_value÷限价 换算 filled_qty 不成立（99≠100，判决表）；
+/// restore 接管链 DeskRestingSeed 此前不携带累计成交额/费用（desk 种子
+/// 归零），续填余量会重算最低佣金（charge 100_501 > purse 100_001——
+/// purse 不足显式失败）。本测静态断言真实数量贯穿 + 恢复后续成交链路。
+#[test]
+fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
+    // runtime 专属契约（desk 权威累计域的贯穿链）；旧管线模式无该链路
+    /// ——同 real_step_settles 的 runtime_mode 双轨先例，此处整体跳过。
+    if !crate::runtime::step_runtime_enabled() {
+        return;
+    }
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    setup.npcs.retail_count = 1;
+    setup.stocks[0].initial_price = crate::money::Money::from_cents(1_000);
+    setup.config.starting_cash = crate::money::Money::from_cents(1_000_000);
+    let code = StockId(0);
+    let mut session = GameSession::new(setup, 42).expect("fixture 必须有效");
+    // 卖方 NPC：200 股 + fault2038 经历条目；注意力推后（不自发交易）。
+    session
+        .fixture_account_mut(&AccountId(1))
+        .expect("retail seller must exist")
+        .grant_position(code.clone(), 400, crate::money::Money::from_cents(990))
+        .expect("fixture holding must be valid");
+    session
+        .state
+        .retail_experience
+        .get_mut(&AccountId(1))
+        .expect("retail seller must have an experience row")
+        .initialize_holding_dated(
+            &code,
+            Some(crate::money::Money::from_cents(990)),
+            crate::money::Money::from_cents(990),
+            crate::experience::ExperienceMoment {
+                civil_date: session.state.civil_clock.current_date(),
+                market_minute: 0,
+                trading_day: 0,
+            },
+        )
+        .expect("fixture experience entry must be valid");
+    if let Some(attention) = session.state.npc_attention.get_mut(&AccountId(1)) {
+        attention.next_attention_candidate_tick = 10;
+    }
+    // 三段链（Sol 五审复核阻断 2 回归）：玩家限价 1000 买 300；每段
+    /// 卖方挂 100@990 → 价优/平价各成交 100，段间 save/restore——
+    /// 多笔部分成交的**中间静点**（第二次 restore 时 charged 累计若按
+    /// 每笔完整 nominal 叠加（两笔各 500=1000）超过累计 nominal（500）
+    /// → verified_live 拒绝 → fault2220 显红）。
+    let mut current = session;
+    let mut expected_filled = 0u32;
+    for leg in 1..=3u32 {
+        let mut seed_events = Vec::new();
+        if leg == 1 {
+            current.seed_order_for_test(
+                AccountId(1),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
+                    qty: 100,
+                },
+                &mut seed_events,
+            );
+            current
+                .enqueue_player_intent(
+                    AccountId(0),
+                    Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
+                        qty: 300,
+                    },
+                )
+                .expect("玩家买单入队");
+        } else {
+            current.seed_order_for_test(
+                AccountId(1),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
+                    qty: 100,
+                },
+                &mut seed_events,
+            );
+        }
+        current.step().expect("段内步进必须成功");
+        expected_filled += 100;
+        // 段末静点：真实数量/累计额断言（leg1 即判决反例——价优换算
+        /// 99_000÷1000=99 显红）。leg3 全成离册——余量断言仅前两段。
+        let save = current.save().expect("段末静点存档");
+        let remaining = 300 - expected_filled;
+        if remaining > 0 {
+            let buy = save
+                .resting_orders
+                .get(&code)
+                .and_then(|orders| {
+                    orders
+                        .iter()
+                        .find(|order| order.owner == AccountId(0) && order.side == Side::Buy)
+                })
+                .unwrap_or_else(|| panic!("leg{leg} 买余量在册"));
+            assert_eq!(buy.qty, remaining, "leg{leg} 余量");
+            assert_eq!(
+                buy.filled_qty,
+                expected_filled,
+                "leg{leg} 真实成交数量贯穿（价优换算不成立——判决反例 99）"
+            );
+            assert_eq!(buy.original_qty, 300, "原始委托量=余量+真实成交量");
+            if leg == 1 {
+                assert_eq!(buy.filled_value, crate::money::Money::from_cents(99_000));
+            }
+        }
+        // 段间往返（含最终段后的档恢复）——中间静点的信封审计
+        ///（charged 边际 telescoping==nominal(累计)）在此显红。
+        let restored = GameSession::restore(&save)
+            .unwrap_or_else(|e| panic!("leg{leg} 静点恢复失败（累计审计口径）：{e}"));
+        current = restored;
+        if leg < 3 {
+            current.step().expect("恢复后首拍（驱动器构造/种子装载）");
+        }
+    }
+    assert!(
+        current
+            .save()
+            .expect("期末存档")
+            .resting_orders
+            .get(&code)
+            .map(|orders| orders.is_empty())
+            .unwrap_or(true),
+        "期末无余量"
+    );
+    assert_eq!(
+        current
+            .account(AccountId(0))
+            .expect("玩家在")
+            .positions()
+            .get(&code)
+            .expect("持仓在")
+            .qty(),
+        300,
+        "期末买家 300 股"
+    );
+}
+
+/// Sol 五审复核阻断 1 回归：adopt（旧簿档）的部分成交买腿——种子
+/// purse 必须取信封精确 escrow（buy_order_reservation(限价, 余量,
+/// **真实累计成交额**)）。此前按零成交额式计算：种子 100_501 vs
+/// 精确 100_001，静点存档的 verified_live 期望失配 → fault2220。
+#[test]
+fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
+    if !crate::runtime::step_runtime_enabled() {
+        return;
+    }
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    setup.npcs.retail_count = 1;
+    setup.config.starting_cash = crate::money::Money::from_cents(1_000_000);
+    let code = StockId(0);
+    let base = GameSession::new(setup, 42).expect("fixture 必须有效");
+    let mut save = base.save().expect("基线档");
+    {
+        let account = save.snapshot.accounts.get_mut(&AccountId(1)).expect("NPC 买方");
+        account.cash = crate::money::Money::from_cents(500_000);
+        account.positions.insert(
+            code.clone(),
+            crate::session::PositionSnap {
+                qty: 100,
+                t1_locked: 0,
+                invested_cents: 99_000,
+                recovered_cents: 0,
+            },
+        );
+    }
+    // fault2038：已成交持仓的经历条目；注意力推后（不自发交易）。
+    save.retail_experience
+        .get_mut(&AccountId(1))
+        .expect("经历行在")
+        .initialize_holding_dated(
+            &code,
+            Some(crate::money::Money::from_cents(990)),
+            crate::money::Money::from_cents(990),
+            crate::experience::ExperienceMoment {
+                civil_date: save.setup.start_date,
+                market_minute: 0,
+                trading_day: 0,
+            },
+        )
+        .expect("经历条目合法");
+    if let Some(attention) = save.npc_attention.get_mut(&AccountId(1)) {
+        attention.next_attention_candidate_tick = 10;
+    }
+    // 部分成交买腿（100@990 已成交、余 100@1000）——旧簿档（adopt 形态）。
+    save.resting_orders.insert(
+        code.clone(),
+        vec![Order {
+            id: OrderId(1),
+            side: Side::Buy,
+            price: crate::money::Money::from_cents(1_000),
+            qty: 100,
+            original_qty: 200,
+            filled_qty: 100,
+            filled_value: crate::money::Money::from_cents(99_000),
+            owner: AccountId(1),
+            seq: 1,
+        }],
+    );
+    // 簿序游标覆盖 crafted 序号（restore_resting_orders 的 seq<next 校验）。
+    save.book_next_sequences.insert(code.clone(), 2);
+    save.next_order_id = 2;
+    // 活跃信封（fault2226 集合一致）：escrow=buy_order_reservation(限价,
+    // 余量, 真实累计)=100_001；Buy charged==nominal(累计) 契约。
+    {
+        let config = save.setup.config.clone();
+        let purse = crate::session::buy_order_reservation(
+            &config,
+            crate::money::Money::from_cents(1_000),
+            100,
+            crate::money::Money::from_cents(99_000),
+        )
+        .expect("escrow 计算");
+        let nominal = crate::runtime::fees::FeeQuote::nominal(
+            &config,
+            Side::Buy,
+            crate::money::Money::from_cents(99_000),
+        )
+        .expect("名义费用");
+        save.runtime_state.live_envelopes.push(SavedLiveEnvelope {
+            key: SavedEnvelopeKey {
+                account: AccountId(1),
+                stock: code.clone(),
+                order: OrderId(1),
+                side: Side::Buy,
+            },
+            charged: SavedFeeComponents {
+                commission: nominal.commission,
+                stamp_tax: crate::money::Money::ZERO,
+                transfer_fee: nominal.transfer_fee,
+            },
+            remaining_qty: 100,
+            filled_qty: 100,
+            filled_value: crate::money::Money::from_cents(99_000),
+            limit: crate::money::Money::from_cents(1_000),
+            purse,
+        });
+    }
+    let mut session = GameSession::restore(&save).expect("旧簿档恢复");
+    session.step().expect("adopt 拍（驱动器构造/种子装载）");
+    let saved = session.save().expect("静点存档");
+    GameSession::restore(&saved)
+        .expect("adopt 静点档必须可恢复（种子 purse=精确 escrow——fault2220 即 purse 口径错）");
+}
+
+/// Sol 六审 v6 判 B 必修（OrderId 编码域）：33 股局（股序 0..=32）的
+/// 合成 id `(stock<<48)|serial` 在第 33 股起超 js_safe wire 域——事件
+/// id/存档往返全链红证（next_order_id 夹取只修下界，未修编码域）。
+#[test]
+fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
+    if !crate::runtime::step_runtime_enabled() {
+        return;
+    }
+    // 33 股主板（代码序=输入序，StockId 0..=32）。
+    let stocks = (0..33u32)
+        .map(|i| StockSpec {
+            code: StockCode(format!("600{:03}", i)),
+            exchange: StockExchange::Shanghai,
+            initial_price: crate::money::Money::from_cents(1_000),
+            category: SecurityCategory::MainBoard,
+            limit_pct: 0.10,
+            tick: crate::money::Money::from_cents(1),
+            total_shares: 1_000_000,
+            float_shares: 800_000,
+        })
+        .collect();
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.stocks = stocks;
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.config.starting_cash = crate::money::Money::from_cents(1_000_000);
+    let mut session = GameSession::new(setup, 42).expect("33 股 fixture 必须有效");
+    // 第 33 股（idx 32）玩家限价单——受理事件的 id 即超域编码。
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockId(32),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
+                qty: 100,
+            },
+        )
+        .expect("入队");
+    let events = session.step().expect("步进");
+    let json = serde_json::to_value(&events)
+        .expect("事件面序列化");
+    assert!(json.to_string().len() > 0);
+    let save = session.save().expect("存档");
+    GameSession::restore(&save).expect("33 股局档往返");
+    // 编码域断言（v6 方案 A 修复后）：新合成 `(stock<<32)|serial`
+    /// 在最大股序（2^21−1）与最大 serial（2^32−1）处仍内含 OrderId
+    /// 的 js_safe wire 域；旧编码 (32<<48)|1 的超限红证见
+    /// .tmp/sol-stepframe-red-evidence/13-v6-orderid-red.txt。
+    let encoded = serde_json::to_value(OrderId(crate::runtime::group::desk_order_id(
+        u16::MAX,
+        0xFFFF_FFFF,
+    )));
+    assert!(
+        encoded.is_ok(),
+        "新编码域最大 id 须在 wire 域内——{encoded:?}"
+    );
 }

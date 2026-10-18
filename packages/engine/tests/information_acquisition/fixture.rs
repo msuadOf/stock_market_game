@@ -17,9 +17,9 @@ use engine::calendar::{CivilDate, CivilInstant};
 use engine::company::industrial::industrial_account_chart;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
-    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, PublicLibrary, PublicationId,
-    PublicationOrigin, PublicationRequest, ScheduledReportKind, scheduled_instant,
-    stable_company_offset,
+    scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
+    AnnouncementRequest, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
+    ScheduledReportKind,
 };
 use engine::orderbook::AccountId;
 use std::collections::BTreeMap;
@@ -146,9 +146,10 @@ pub(crate) struct Scenario {
 impl Scenario {
     /// 组装场景（确定性：同 seed 同公司 ⇒ 同偏移 ⇒ 同公布时点/id 序列）。
     pub(crate) fn new() -> Self {
-        let company = CompanyId(COMPANY.to_string());
-        let member = MemberId(COMPANY.to_string());
-        let offset = stable_company_offset(OPS_SEED, &company);
+        // 单公司独立夹具：目录位 0。
+        let company = CompanyId(0);
+        let member = MemberId(0);
+        let offset = stable_company_offset(OPS_SEED, COMPANY);
         let annual_instant = scheduled_instant(ScheduledReportKind::Annual, 2030, offset)
             .expect("annual 2030 schedule legal");
         let correction_instant = scheduled_instant(ScheduledReportKind::Q1, 2031, offset)
@@ -237,12 +238,12 @@ impl Scenario {
                 company: company.clone(),
                 occurred_on: announcement_date,
                 published_at: announcement_instant,
-                content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
+                event: AnnouncedEvent {
                     kind: ShockKind::ContractWon,
                     amplitude_bp: 1_200,
                     starts_on: announcement_date,
                     expires_on: d("2031-04-10"),
-                }),
+                },
             })
             .expect("announcement publishes");
 

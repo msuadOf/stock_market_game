@@ -71,9 +71,20 @@ fn cp(id: &str, kind: CounterpartyKind) -> ExternalCounterparty {
     }
 }
 
+/// 由公司配置推导目录（代码序分配 id；重复代码由 from_codes 显式报错）。
+pub(crate) fn catalog_for<'a>(
+    companies: impl IntoIterator<Item = &'a engine::company::operations::OperatingCompanyConfig>,
+) -> engine::company::CompanyCatalog {
+    let codes: Vec<&str> = companies
+        .into_iter()
+        .map(|company| company.spec.code.as_str())
+        .collect();
+    engine::company::CompanyCatalog::from_codes(&codes).unwrap()
+}
+
 fn spec(id: &str, industry: &str, kind: CompanyKind) -> CompanySpec {
     CompanySpec {
-        id: CompanyId(id.to_string()),
+        code: id.to_string(),
         name: format!("虚构公司{id}"),
         industry: IndustryId(industry.to_string()),
         kind,
@@ -253,7 +264,6 @@ pub(crate) fn bank_c(as_of: CivilDate) -> OperatingCompanyConfig {
                 lgd_bp: 6_000,
             }],
         },
-        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     };
     OperatingCompanyConfig {
         spec: spec("C-BANK", "banking", CompanyKind::Bank),
@@ -292,7 +302,6 @@ pub(crate) fn insurance_c(as_of: CivilDate) -> OperatingCompanyConfig {
             cent_line("4001", PostingSide::Credit, 2_000_000),
         ],
         counterparties: vec![cp("EXT-POL", CounterpartyKind::Customer)],
-        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2_500, loss_carryforward_years: 5 },
         discount: DiscountAssumption {
             version: 1,
             rate_bp: 400,
@@ -338,7 +347,6 @@ pub(crate) fn real_estate_c(as_of: CivilDate) -> OperatingCompanyConfig {
             suspension_min_days: 90,
         },
         max_projects: 2,
-        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     };
     OperatingCompanyConfig {
         spec: spec("C-RE", "residential-development", CompanyKind::RealEstate),
@@ -450,6 +458,10 @@ pub(crate) fn four_company_config(
     CompanyOperationsConfig {
         seed,
         shock_params: params,
+        catalog: engine::company::CompanyCatalog::from_codes(&[
+            "C-BANK", "C-IND-A", "C-IND-B", "C-INS", "C-RE",
+        ])
+        .unwrap(),
         companies: vec![
             industrial_a(as_of),
             industrial_b(as_of),
@@ -469,6 +481,7 @@ pub(crate) fn two_industrial_config(
     CompanyOperationsConfig {
         seed,
         shock_params: params,
+        catalog: engine::company::CompanyCatalog::from_codes(&["C-IND-A", "C-IND-B"]).unwrap(),
         companies: vec![industrial_a(as_of), industrial_b(as_of)],
     }
 }

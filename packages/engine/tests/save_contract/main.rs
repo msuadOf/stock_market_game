@@ -5,11 +5,6 @@
 //! 仅接受完整当前结构；额外版本标记、旧字段与缺失字段显式拒绝，不提供兼容迁移。
 //! 恢复保留已发生事实与随机状态，未来自由并发受理不承诺仅凭同 seed 字节相等。
 
-include!("../../test-support/simple_company.rs");
-
-#[path = "../company_operations/fixtures.rs"]
-mod company_operations_fixture;
-
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
@@ -18,6 +13,7 @@ use engine::session::{
     SIMULATION_POLICY_ID,
 };
 
+mod bank_policy;
 mod failures;
 mod restore_guards;
 
@@ -46,7 +42,8 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
 /// 增强这些断言。仍保留完整的公司账本、公开信息与个人决策状态。
 fn contract_setup() -> SessionSetup {
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![stock(
             "600101",
             1_120,
@@ -81,16 +78,14 @@ fn contract_setup() -> SessionSetup {
         closing_auction_ticks: 0,
         history_len: 10,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
-        float_allocation: FloatAllocation::class_percentages(0.4, 0.5, 0.1, WithinKindDistribution::Random),
+        float_allocation: FloatAllocation::class_percentages(
+            0.4,
+            0.5,
+            0.1,
+            WithinKindDistribution::Random,
+        ),
         start_date: engine::CivilDate::from_iso("2030-01-07").unwrap(),
         simulation_policy_id: SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
-        par_value_per_share: engine::Money::from_cents(100),
-        auto_corporate_foundation: false,
     }
 }
 
@@ -272,7 +267,7 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
 }
 
 #[test]
-fn restore_is_byte_continuous_with_uninterrupted_run() {
+fn restore_continues_independently_with_valid_saves() {
     const CONTINUITY_TICKS_PER_DAY: usize = 1;
     let mut original = GameSession::new(continuity_setup(), SEED).unwrap();
     for _ in 0..CONTINUITY_TICKS_PER_DAY {
@@ -284,30 +279,23 @@ fn restore_is_byte_continuous_with_uninterrupted_run() {
         GameSession::restore(&decode_save_slot(&bytes, &SaveDecodeLimits::default()).unwrap())
             .expect("mid-scenario save must restore");
 
-    for tick in 0..CONTINUITY_TICKS_PER_DAY {
-        let uninterrupted: Vec<Event> = original.step().expect("healthy step");
-        let recovered: Vec<Event> = restored.step().expect("healthy step");
-        assert_eq!(
-            serde_json::to_vec(&uninterrupted).unwrap(),
-            serde_json::to_vec(&recovered).unwrap(),
-            "tick {tick}: restored run must stay byte-identical to the uninterrupted run"
-        );
+    // 用户已授权不要求跨运行字节一致；各自独立推进验证健康
+    for _ in 0..CONTINUITY_TICKS_PER_DAY {
+        original.step().expect("original healthy step");
+        restored.step().expect("restored healthy step");
     }
     original.end_civil_day().unwrap();
     restored.end_civil_day().unwrap();
-    assert_eq!(
-        serde_json::to_vec(&original.save().expect("healthy save")).unwrap(),
-        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap(),
-        "authoritative saves must stay byte-identical after day end"
-    );
 
-    let uninterrupted: Vec<Event> = original.step().expect("healthy next-day step");
-    let recovered: Vec<Event> = restored.step().expect("healthy next-day step");
-    assert_eq!(
-        serde_json::to_vec(&uninterrupted).unwrap(),
-        serde_json::to_vec(&recovered).unwrap(),
-        "the first tick after the restored day boundary must remain byte-identical"
-    );
+    // 各自的存档必须可解码恢复（合法状态）
+    for session in [&original, &restored] {
+        let save_bytes = serde_json::to_vec(&session.save().expect("healthy save")).unwrap();
+        decode_save_slot(&save_bytes, &SaveDecodeLimits::default())
+            .expect("save must decode after continuation");
+    }
+
+    original.step().expect("original healthy next-day step");
+    restored.step().expect("restored healthy next-day step");
 }
 
 #[test]
@@ -331,51 +319,37 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
     let phase = engine::CivilInstant::from_hms(settled, 18, 0, 0).unwrap();
     assert_eq!(save.disclosures.published_through(), Some(phase));
     assert_eq!(save.disclosures.announced_through(), Some(settled));
-    // 存档保留当前选择的 Simple 公司系统事实及其推进日期。
-    assert_eq!(save.company_system.config(), save.setup.company_system);
-    assert_eq!(
-        save.company_system.advanced_through(),
-        save.civil_clock.current_date.prev().unwrap()
+    // 经营「存档后演化」状态在场：滚动利息类待办非空且不早于当前自然日。
+    let pending = save.company_operations.scheduler().pending();
+    assert!(
+        !pending.is_empty(),
+        "rolling operations dues must be pending"
     );
-    // 待应用事实队列的保留规则：只保留计划簿中仍存活的计划条目。
-    for event in &save.pending_plan_events {
-        let plan = save
-            .plans
-            .plan(event.plan_id())
-            .expect("saved pending event must reference a book plan");
-        assert!(
-            !plan.is_terminal(),
-            "save boundary must drop events of terminal plans"
-        );
-    }
-}
-
-#[test]
-fn operating_scheduler_state_roundtrips_in_its_own_company_operations_fixture() {
-    use engine::company::operations::CompanyOperations;
-
-    let start = engine::CivilDate::from_iso("2030-01-07").unwrap();
-    let mut operations = CompanyOperations::new(
-        company_operations_fixture::four_company_config(
-            SEED,
-            company_operations_fixture::quiet_params(),
-            start.prev().unwrap(),
-        ),
-        start,
-    )
-    .expect("independent operating fixture must assemble");
-    operations.advance_civil_day(start).expect("first day advances");
-    let next = start.next().unwrap();
-    operations.advance_civil_day(next).expect("second day advances");
-
-    let pending = operations.scheduler().pending();
-    assert!(!pending.is_empty(), "rolling operating dues must be scheduled");
-    assert!(pending.iter().all(|due| due.due_date >= next));
-    assert_eq!(operations.next_expected_date(), next.next().unwrap());
-
-    let serialized = serde_json::to_vec(&operations).expect("operations serialize");
-    let restored: CompanyOperations =
-        serde_json::from_slice(&serialized).expect("operations restore");
-    assert_eq!(restored.scheduler().pending(), pending);
-    assert_eq!(restored.next_expected_date(), operations.next_expected_date());
+    assert!(pending
+        .iter()
+        .all(|due| due.due_date >= save.civil_clock.current_date));
+    // 架构项 8（统一交易计划的可变所有者）删除了存档边界的待应用事实队列与
+    // 旧母单镜像：wire 上不得再出现这两个键，执行状态只存在于 plans 的执行腿。
+    // （批次③保守合成时保留旧断言；owner8 engine 闭包（批次④）落地字段删除后恢复。）
+    assert!(
+        value
+            .as_object()
+            .expect("save wire must be a JSON object")
+            .get("pending_plan_events")
+            .is_none(),
+        "save wire must not carry the removed pending_plan_events queue"
+    );
+    assert!(
+        value
+            .as_object()
+            .expect("save wire must be a JSON object")
+            .get("parent_orders")
+            .is_none(),
+        "save wire must not carry the removed parent_orders mirror"
+    );
+    // 经营推进时点与自然日时钟一致。
+    assert_eq!(
+        save.company_operations.next_expected_date(),
+        save.civil_clock.current_date
+    );
 }

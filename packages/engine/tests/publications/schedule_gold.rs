@@ -33,13 +33,12 @@ fn schedule_base_dates_follow_operating_calendar() {
 /// 稳定偏移域：0..=7，且同 seed 同公司恒等（纯函数，两次调用一致）。
 #[test]
 fn stable_offsets_bounded_and_deterministic() {
-    for id in [INDUSTRIAL_ID, BANK_ID] {
-        let company = CompanyId(id.to_string());
-        let offset = stable_company_offset(OPS_SEED, &company);
-        assert!(offset <= 7, "offset {offset} out of 0..=7 for {id}");
+    for code in [INDUSTRIAL_ID, BANK_ID] {
+        let offset = stable_company_offset(OPS_SEED, code);
+        assert!(offset <= 7, "offset {offset} out of 0..=7 for {code}");
         assert_eq!(
             offset,
-            stable_company_offset(OPS_SEED, &company),
+            stable_company_offset(OPS_SEED, code),
             "same seed + same company must re-derive the same offset"
         );
     }
@@ -49,15 +48,12 @@ fn stable_offsets_bounded_and_deterministic() {
 /// （种子 7 vs 202——固定种子固定结果，无随机性）。
 #[test]
 fn same_seed_same_schedule_across_companies() {
-    let companies: Vec<CompanyId> = [INDUSTRIAL_ID, BANK_ID]
-        .iter()
-        .map(|id| CompanyId((*id).to_string()))
-        .collect();
+    let companies: Vec<&str> = [INDUSTRIAL_ID, BANK_ID].to_vec();
     let schedule_of = |seed: u64| -> Vec<(u8, engine::calendar::CivilInstant)> {
         companies
             .iter()
-            .map(|company| {
-                let offset = stable_company_offset(seed, company);
+            .map(|code| {
+                let offset = stable_company_offset(seed, code);
                 let instant = scheduled_instant(ScheduledReportKind::Annual, 2030, offset)
                     .expect("annual 2030 legal");
                 (offset, instant)

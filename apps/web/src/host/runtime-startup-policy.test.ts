@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as policy from "./startup-policy.ts";
 
-const supported = { isSecureContext: true, crossOriginIsolated: true, sharedArrayBufferAvailable: true };
+// 批 9 A10：crossOriginIsolated/sharedArrayBufferAvailable 门禁随 wasm
+// 多核退役——环境面仅剩 isSecureContext。
+const supported = { isSecureContext: true };
 
 test("生产和开发构建必须等待选择，只有明确 e2e 构建自动进入 Worker", () => {
   assert.equal(typeof policy.initialStartupTarget, "function");
@@ -25,14 +27,13 @@ test("本地浏览器验证全部多线程前置条件，桌面和远程不读�
   assert.throws(() => policy.resolveStartupTarget("wasm", "", false, forbiddenProbe), /未知启动模式/);
 });
 
-test("不安全上下文、未隔离或缺少共享内存明确拒绝，无单线程或主线程降级", () => {
+test("不安全上下文明确拒绝，无降级", () => {
   assert.equal(typeof policy.resolveStartupTarget, "function");
   for (const missing of Object.keys(supported)) {
     assert.throws(() => policy.resolveStartupTarget("local", "", false, () => ({ ...supported, [missing]: false })), (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, new RegExp(missing === "sharedArrayBufferAvailable" ? "SharedArrayBuffer" : missing));
+      assert.match(error.message, new RegExp(missing));
       assert.match(error.message, /HTTPS/);
-      assert.match(error.message, /COOP\/COEP/);
       assert.match(error.message, /远程/);
       assert.match(error.message, /不会降级/);
       return true;

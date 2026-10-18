@@ -70,7 +70,6 @@ export class MarketChartProjection {
           ...(tradeStats === undefined || tradeStats === null ? {} : {
             cumulativeTurnoverCents: tradeStats.turnover_cents,
             cumulativeVolumeShares: candle.volume,
-            cumulativeTradeCount: tradeStats.trade_count,
           }),
         });
         if (!samePoint(previous, projected)) this.pricesByCode[code] = freezeHistory(mergeMinutePoints(history, [projected]));
@@ -147,9 +146,7 @@ function samePoint(previous: PricePoint | AuctionPoint | undefined, next: PriceP
     && ("cumulativeTurnoverCents" in previous ? previous.cumulativeTurnoverCents : undefined)
       === ("cumulativeTurnoverCents" in next ? next.cumulativeTurnoverCents : undefined)
     && ("cumulativeVolumeShares" in previous ? previous.cumulativeVolumeShares : undefined)
-      === ("cumulativeVolumeShares" in next ? next.cumulativeVolumeShares : undefined)
-    && ("cumulativeTradeCount" in previous ? previous.cumulativeTradeCount : undefined)
-      === ("cumulativeTradeCount" in next ? next.cumulativeTradeCount : undefined);
+      === ("cumulativeVolumeShares" in next ? next.cumulativeVolumeShares : undefined);
 }
 
 function sameCandle(previous: KlinePoint | undefined, next: KlinePoint): boolean {

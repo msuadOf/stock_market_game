@@ -120,10 +120,11 @@ export function validatePerformanceWorkload(workload) {
 }
 
 export function validateEnvironmentContract(environmentContract) {
-  exactKeys(environmentContract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs", "rayon_threads"], "performance environment contract");
+  // 批 9 A7/A10 收尾：rayon_threads 键退役（与 baseline-run/prepare-config 同步）。
+  exactKeys(environmentContract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs"], "performance environment contract");
   for (const field of ["cargo", "rustc", "target", "rustflags"]) if (typeof environmentContract[field] !== "string") fail(`performance environment contract ${field} must be a string`);
   if (!Number.isSafeInteger(environmentContract.cargo_jobs) || environmentContract.cargo_jobs <= 0) fail("performance environment contract cargo_jobs must be positive");
-  if (!Number.isSafeInteger(environmentContract.rayon_threads) || environmentContract.rayon_threads <= 0) fail("performance environment contract rayon_threads must be positive");
+  // rayon_threads 校验随键退役。
   return environmentContract;
 }
 
@@ -300,9 +301,7 @@ export function validateMeasuredSample(measured, endpoint, workload, label, isAf
   if (sample.source_fingerprint !== endpoint.source_fingerprint) fail(`${label} source fingerprint differs from the configured endpoint`);
   if (isAfter && (sample.phase_wall_ns === null || sample.runnable_samples === null)) fail(`${label} new engine sample must include phase wall and runnable samples`);
   if (isAfter && JSON.stringify(Object.keys(sample.phase_wall_ns).sort()) !== JSON.stringify([...REQUIRED_PHASES].sort())) fail(`${label} new engine phase wall must include all PhaseTimingPhase names exactly once`);
-  if (isAfter && !sample.runnable_samples.every((capacity) => capacity === environmentContract.rayon_threads)) {
-    fail(`${label} Rayon registry-capacity samples differ from the configured pool size`);
-  }
+  // 批 9 A7 收尾：Rayon registry-capacity 对照退役（垫片无全局注册表）。
   const ticksPerSecond = sample.completed_ticks * 1_000_000_000 / Number(wallNs);
   if (!Number.isFinite(ticksPerSecond) || ticksPerSecond <= 0) fail(`${label} ticks_per_second is not finite and positive`);
   return {
@@ -314,7 +313,6 @@ export function validateMeasuredSample(measured, endpoint, workload, label, isAf
     ticks_per_second: ticksPerSecond,
     phase_wall_ns: sample.phase_wall_ns,
     process_tree_thread_state: measured.process_tree_thread_state,
-    rayon_registry_capacity_samples: sample.runnable_samples,
     stderr: measured.stderr,
   };
 }

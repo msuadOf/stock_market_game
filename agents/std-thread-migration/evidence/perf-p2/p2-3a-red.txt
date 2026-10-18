@@ -1,0 +1,22 @@
+# P2-3a 突变红证据
+# 基准：HEAD=2495d250 工作树+P2-3a 共享化实现（group.rs run_round 共享链观察构建）
+# 突变：共享 chain.market.stocks 全部 last_price 置 1 分（共享观察内容腐蚀——决策 equity/风险输入必经面）
+# 判别面登记（如实）：首选突变【behavior.price_paths 置空】在本 fixture 零判别——插桩实证 13 个决策者全部带持仓，
+#   决策在风险/回撤分支早退、price_paths 面不可达（paths=0 仍绿）；换腐蚀共享行情价后显红。
+# 命令：cargo test -p engine --lib p2_3a
+
+---- runtime::drive_tests::p2_3a_retail_chain_shared_observation_golden stdout ----
+
+thread 'runtime::drive_tests::p2_3a_retail_chain_shared_observation_golden' (1124865) panicked at packages/engine/src/runtime/drive_tests.rs:2640:5:
+assertion `left == right` failed: P2-3a 决策序列等价守卫（公共观察内容/时点/RNG 流漂移即红）
+  left: (12, 0, 1000065569869)
+ right: (13, 100, 1000065568818)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::drive_tests::p2_3a_retail_chain_shared_observation_golden
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1623 filtered out; finished in 1.43s
+
+error: test failed, to rerun pass `-p engine --lib`

@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PublicReportAvailabilityQuery, PublicReportSummary } from "../types/engine.ts";
-import { DEFAULT_SETUP } from "../config/defaults.ts";
+import type { PublicReportSummary, SessionSetup } from "../types/engine.ts";
 import { publicReportGold } from "../components/company/public-report-fixture.ts";
-import { remoteTestContext } from "./remote-test-context.ts";
 import { createRemoteHost } from "./remote-host.ts";
 
 function reportFixture(): PublicReportSummary {
@@ -14,14 +12,15 @@ function json(value: unknown): Response {
   return new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
 }
 
-async function remoteFixture(respond: (request: number) => Response | Promise<Response>, token = "session-token") {
+async function remoteFixture(respond: (request: number) => Response | Promise<Response>, token?: string) {
   const requests: { url: URL; init: RequestInit | undefined }[] = [];
-  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { context: remoteTestContext("session /?&"),
+  const host = await createRemoteHost({} as SessionSetup, 1n, {
     baseUrl: "https://reports.example",
     token,
     fetchFn: async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
-      if (url.pathname === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true });
+      if (url.pathname === "/api/new") return json({ session_id: "session /?&", session_token: "session-token" });
+      if (url.pathname === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false });
       requests.push({ url, init });
       return respond(requests.length);
     },
@@ -54,19 +53,19 @@ test("remote report ownership cannot survive a restored timeline with reused IDs
       } }) } as MessageEvent));
     },
   };
-  const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "1", "1"),
+  const host = await createRemoteHost({} as SessionSetup, 1n, {
     baseUrl: "https://reports.example",
     webSocketFactory: () => socket as unknown as WebSocket,
     fetchFn: async (input) => {
       const url = new URL(String(input));
-      if (url.pathname === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true });
-      if (url.pathname === "/api/market/context") return json(remoteTestContext("session-1", restored ? "2" : "1"));
+      if (url.pathname === "/api/new") return json({ session_id: "session", session_token: "token" });
+      if (url.pathname === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false });
       if (url.pathname === "/api/load") { restored = true; return json({}); }
       if (url.pathname.endsWith(`/reports/${old.id}`)) return json(restored ? replacement : old);
       return json({ reports: [restored ? replacement : old], next_cursor: null });
     },
   });
-  await host.start(() => {});
+  host.start(() => {});
   await host.queryPublicReports!({ company_id: old.company_id, cursor: null, page_size: null });
   await host.load({});
   await assert.rejects(host.publicReportById!(old.id), /公司.*先查询/);
@@ -90,20 +89,6 @@ test("remote page uses the company route, opaque cursor, server limit and owning
   assert.deepEqual([...requests[0]!.url.searchParams], [["session_id", "session /?&"], ["cursor", report.id], ["limit", "1"]]);
   assert.equal(requests[0]!.init?.method, "GET");
   assert.equal(new Headers(requests[0]!.init?.headers).get("authorization"), "Bearer session-token");
-});
-
-test("remote availability posts the required query and strictly parses tagged results", async () => {
-  const companyId = "C-600101";
-  const query = { company_id: companyId, period_end: "2030-03-31", kind: "Quarter", scope: { Standalone: { entity_id: companyId } } } satisfies PublicReportAvailabilityQuery;
-  const available = { status: "Available", report: { ...reportFixture(), company_id: companyId } };
-  const { host, requests } = await remoteFixture(() => json(available));
-  assert.deepEqual(await host.queryPublicReportAvailability!(query), available);
-  assert.equal(requests[0]!.url.pathname, `/api/companies/${encodeURIComponent(companyId)}/reports/availability`);
-  assert.deepEqual([...requests[0]!.url.searchParams], [["session_id", "session /?&"]]);
-  assert.equal(requests[0]!.init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(requests[0]!.init?.body)), query);
-  const bad = await remoteFixture(() => json({ status: "Unavailable", reason: "NotYetPublished", future_facts: { income: "999.00" } }));
-  await assert.rejects(bad.host.queryPublicReportAvailability!(query), /字段不符合公共 DTO 契约/);
 });
 
 test("remote omits null pagination rather than sending null or inventing limits", { concurrency: true }, async () => {
@@ -193,13 +178,13 @@ for (const queryKind of ["page", "by-id"] as const) {
     let delayed = false;
     let finish: ((response: Response) => void) | null = null;
     const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
-    const host = await createRemoteHost(DEFAULT_SETUP, 1n, { token: "token-1", context: remoteTestContext("session-1", "1", "1"),
+    const host = await createRemoteHost({} as SessionSetup, 1n, {
       baseUrl: "https://reports.example",
       webSocketFactory: () => socket,
       fetchFn: async (input) => {
         const path = new URL(String(input)).pathname;
-        if (path === "/api/market/context") return json(remoteTestContext("session-1", "2"));
-        if (path === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true });
+        if (path === "/api/new") return json({ session_id: "session", session_token: "token" });
+        if (path === "/api/host-capabilities") return json({ npcDecisionDiagnostics: false });
         if (path.includes("/reports")) {
           if (delayed) return new Promise<Response>((resolve) => { finish = resolve; });
           return json({ reports: [report], next_cursor: null });
@@ -221,12 +206,11 @@ for (const queryKind of ["page", "by-id"] as const) {
     const pending = queryKind === "page" ? host.queryPublicReports!(query) : host.publicReportById!(report.id);
     const rejected = assert.rejects(pending, /时间线变更失效/);
     publishBaseline(2);
-    await new Promise<void>((resolve) => setImmediate(resolve));
     finish!(json(queryKind === "page" ? { reports: [report], next_cursor: null } : report));
     await rejected;
     await assert.rejects(host.publicReportById!(report.id), /公司.*先查询/);
     delayed = false;
     assert.deepEqual((await host.queryPublicReports!(query)).reports, [report]);
-    await host.dispose();
+    host.dispose();
   });
 }

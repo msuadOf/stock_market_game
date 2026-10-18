@@ -25,7 +25,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     game.enqueue_player_intent(
         engine::AccountId(0),
         engine::Intent::PlaceLimit {
-            code: engine::StockCode("600101".into()),
+            code: engine::StockId(0),
             side: engine::Side::Buy,
             price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
             qty: 100,
@@ -87,7 +87,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code: StockCode("600101".into()),
+                code: engine::StockId(0),
                 id: engine::OrderId(1)
             }
         )
@@ -114,11 +114,10 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     assert_eq!(actor.game.business_state_hash().unwrap(), business);
     assert!(notices_rx.try_recv().is_err());
     assert!(events_rx.try_recv().is_err());
-    let mut verification = actor.game.fork_for_verification().unwrap();
     for _ in tick..30 {
-        verification.step_frame().unwrap();
+        actor.game.step_frame().unwrap();
     }
-    let civil = verification.end_civil_day_update().unwrap();
+    let civil = actor.game.end_civil_day_update().unwrap();
     assert_eq!(civil.refresh.intraday.len(), 30);
     assert_eq!(
         serde_json::to_value(&civil.refresh.intraday[0]).unwrap(),
@@ -301,7 +300,7 @@ fn step_fatal_maps_to_the_stable_host_code() {
 #[test]
 fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
     let failure = super::failure::HostFailure::civil(engine::SessionError::InvalidSave(
-        "civil boundary is inconsistent".into(),
+        engine::error::ValidationFault::bare(3012),
     ));
     assert_eq!(failure.code, "CIVIL_DAY_SETTLEMENT_FAILED");
     assert_eq!(

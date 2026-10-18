@@ -62,9 +62,9 @@ fn seed_active_plans(
         save.plans
             .create(PlanOpen {
                 account: *account,
-                code: save.setup.stocks[index % save.setup.stocks.len()]
-                    .code
-                    .clone(),
+                code: game
+                    .stock_id(&save.setup.stocks[index % save.setup.stocks.len()].code.0)
+                    .expect("计划股票必须已入目录"),
                 direction: Side::Buy,
                 target: PlanTarget::ShareCount(10_000),
                 opinion: PlanOpinion {
@@ -84,7 +84,6 @@ fn seed_active_plans(
 
 fn execute(
     workload: Workload,
-    threads: usize,
     input_fingerprint: String,
 ) -> Result<serde_json::Value, String> {
     if workload.ticks == 0 || workload.plan_accounts == 0 || workload.player_orders_per_tick == 0 {
@@ -94,19 +93,20 @@ fn execute(
         .setup
         .validate()
         .map_err(|error| error.to_string())?;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .map_err(|error| error.to_string())?;
-    pool.install(|| {
-        let game = GameSession::new(workload.setup.clone(), workload.seed)
+    // 批 9 A6：ComputeContext/rayon-threads 参数退役——std-thread 模型
+    /// 线程数由引擎内部决定，CPU 约束走 OS 级 cgroup/taskset。
+    {
+        let game = engine::GameSession::new(workload.setup.clone(), workload.seed)
             .map_err(|error| error.to_string())?;
         let (mut game, plan_accounts) = seed_active_plans(game, workload.plan_accounts)?;
         let stock_codes = workload
             .setup
             .stocks
             .iter()
-            .map(|stock| stock.code.clone())
+            .map(|stock| {
+                game.stock_id(&stock.code.0)
+                    .expect("工作负载股票必须已入目录")
+            })
             .collect::<Vec<_>>();
         let run_start = Instant::now();
         let mut step_wall_ns = 0_u128;
@@ -220,7 +220,6 @@ fn execute(
             "ticks": workload.ticks,
             "plan_accounts": workload.plan_accounts,
             "player_orders_per_tick": workload.player_orders_per_tick,
-            "rayon_threads": rayon::current_num_threads(),
             "step_wall_ns": step_wall_ns.to_string(),
             "run_wall_ns": run_wall_ns.to_string(),
             "phase_wall_ns": phase_wall_ns,
@@ -230,13 +229,13 @@ fn execute(
             "plan_account_resting_orders": plan_account_resting_orders,
             "plan_children_or_fills": plan_children_or_fills,
         }))
-    })
+    }
 }
 
 fn run() -> Result<(), String> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    let [input, threads] = args.as_slice() else {
-        return Err("usage: production_entry_performance <workload.json> <rayon-threads>".into());
+    let [input] = args.as_slice() else {
+        return Err("usage: production_entry_performance <workload.json>".into());
     };
     let input_bytes = fs::read(input).map_err(|e| e.to_string())?;
     let workload: Workload =
@@ -246,11 +245,7 @@ fn run() -> Result<(), String> {
         .fold(0xcbf29ce484222325_u64, |hash, byte| {
             (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
         });
-    let output = execute(
-        workload,
-        positive_usize(threads, "rayon-threads")?,
-        format!("{fingerprint:016x}"),
-    )?;
+    let output = execute(workload, format!("{fingerprint:016x}"))?;
     println!("{output}");
     Ok(())
 }

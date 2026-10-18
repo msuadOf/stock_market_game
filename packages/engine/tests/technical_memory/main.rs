@@ -19,16 +19,37 @@ mod memory;
 
 use engine::observation::TechnicalDailyInput;
 use engine::strategy::TechnicalDailyBar;
-use engine::{Money, StockCode};
+use engine::{Money, StockId};
 
 /// 分 → Money。
 pub(crate) fn price(cents: i64) -> Money {
     Money::from_cents(cents)
 }
 
-/// 测试用证券代码。
-pub(crate) fn code(name: &str) -> StockCode {
-    StockCode(name.into())
+/// 测试用股票身份。本夹具不构造目录，按代码字符串升序手工分配稠密 rank
+/// （与 `StockCatalog` 的升序规则同构），保证 `Ord` 语义与原 StockCode 一致；
+/// 未登记的代码显式失败，不静默编造身份（铁律二）。
+pub(crate) fn code(name: &str) -> StockId {
+    let rank = match name {
+        "000001" => 0,
+        "000002" => 1,
+        "600001" => 2,
+        "600100" => 3,
+        "600101" => 4,
+        "600102" => 5,
+        "600103" => 6,
+        "600104" => 7,
+        "600105" => 8,
+        "600106" => 9,
+        "600107" => 10,
+        "600108" => 11,
+        "600109" => 12,
+        "600110" => 13,
+        "600111" => 14,
+        "600112" => 15,
+        other => panic!("测试夹具未登记代码 {other} 的 StockId rank"),
+    };
+    StockId(rank)
 }
 
 /// 分数组 → 收盘价序列。

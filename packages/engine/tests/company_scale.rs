@@ -1,5 +1,3 @@
-include!("../test-support/simple_company.rs");
-
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
@@ -48,7 +46,8 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
 
 fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSetup {
     SessionSetup {
-        company_system: simple_company_fixture!(engine; ["600101", "002156", "300260", "600610", "000812"]),
+        company_operations: None,
+        groups: Vec::new(),
         stocks: vec![
             stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
             stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),
@@ -84,14 +83,14 @@ fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSet
         closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
-        report_frequency: engine::information::ReportFrequency::Quarterly,
-        float_allocation: engine::FloatAllocation::class_percentages(0.45, 0.53, 0.02, engine::WithinKindDistribution::Random),
+        float_allocation: engine::FloatAllocation::class_percentages(
+            0.45,
+            0.53,
+            0.02,
+            engine::WithinKindDistribution::Random,
+        ),
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
         simulation_policy_id: engine::SIMULATION_POLICY_ID.to_string(),
-        dividend_tax_mode: engine::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding,
-        flat_withholding_bp: Some(1000),
-        rights_offering_enabled: false,
-        issuer_repurchase_enabled: false,
     }
 }
 
@@ -128,7 +127,6 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
     // 单股、两个 tick 足以生成真实计划，避免短引用校验重复构建五股历史。
     let mut setup = default_five_stock_setup(2, 2);
     setup.stocks.truncate(1);
-    setup.company_system = simple_company_fixture!(engine; codes = setup.stocks.iter().map(|stock| stock.code.0.as_str()));
     let mut session = GameSession::new(setup, SEED).expect("representative session constructs");
     settle_natural_days(&mut session, 1, 2);
     let save = session.save().expect("healthy save");
@@ -142,16 +140,18 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
     let original = serde_json::to_value(&save).expect("save value serializes");
 
     // 保持 PlanBook 本身可解码，只破坏计划对会话权威账户/股票的引用。
-    for (field, value, expected_error) in [
+    // 数值断言替代原文本断言 "unknown account"/"unknown stock"
+    // （fault2142：计划属于未知账户；fault2143：计划指向未知股票）。
+    for (field, value, expected_code) in [
         (
             "account",
             serde_json::to_value(engine::AccountId(999_999)).unwrap(),
-            "unknown account",
+            2142_u16,
         ),
         (
             "code",
             serde_json::to_value(StockCode("600999".to_string())).unwrap(),
-            "unknown stock",
+            2143_u16,
         ),
     ] {
         let mut tampered = original.clone();
@@ -160,8 +160,8 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
         let decoded = engine::decode_save_slot(&tampered_bytes, &Default::default())
             .expect("plan reference tampering remains structurally decodable");
         assert!(
-            matches!(GameSession::restore(&decoded), Err(engine::session::SessionError::InvalidSave(message)) if message.contains(expected_error)),
-            "restore must reject plan {field} reference tampering as {expected_error}"
+            matches!(GameSession::restore(&decoded), Err(engine::session::SessionError::InvalidSave(fault)) if fault.code == expected_code),
+            "restore must reject plan {field} reference tampering as fault {expected_code}"
         );
     }
     assert_eq!(

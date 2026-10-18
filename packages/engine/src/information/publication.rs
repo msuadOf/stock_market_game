@@ -14,13 +14,13 @@
 //! 该时点已确认事实（事件条款）；未来合同现金流是预测，类型上就没有
 //! 「已实现」标记位。
 
-use crate::accounting::AccountingPeriod;
 use crate::accounting::consolidation::ScopeId;
 use crate::accounting::reports::{ReportKind, ReportSet};
+use crate::accounting::AccountingPeriod;
 use crate::calendar::{CivilDate, CivilInstant};
 use crate::company::CompanyId;
 use crate::information::{
-    InformationError, SCHEDULE_OFFSET_MAX, ScheduledReportKind, scheduled_instant,
+    scheduled_instant, InformationError, ScheduledReportKind, SCHEDULE_OFFSET_MAX,
 };
 
 /// 批准时点的游戏约定（公布日 08:00；排期/装配/派发统一使用）。
@@ -28,7 +28,7 @@ pub const APPROVAL_HOUR: u32 = 8;
 /// 18:00 披露相位的当日秒。
 pub const DISCLOSURE_PHASE_SECOND: u32 = 18 * 3600;
 
-/// 公布 id：库内单调分配，绝不复用（`PlanId`/`DueBusinessId` 先例）。
+/// 公布 id：库内单调分配，绝不复用（`PlanId`/`ScheduledDueId` 先例）。
 #[derive(
     Copy,
     Clone,
@@ -45,6 +45,13 @@ pub const DISCLOSURE_PHASE_SECOND: u32 = 18 * 3600;
 #[serde(transparent)]
 #[ts(export, type = "number")]
 pub struct PublicationId(u32);
+
+impl PublicationId {
+    /// 数值访问（错误上下文用，ADR 0041）。
+    pub(crate) fn as_u32(self) -> u32 {
+        self.0
+    }
+}
 
 impl PublicationId {
     /// 测试/恢复边界构造（生产路径由库单调分配）。
@@ -69,7 +76,6 @@ pub struct AccountingPolicyRef {
 
 /// 公布来源。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 pub enum PublicationOrigin {
     /// 开局前已按真实历史排期公布的版本（前史装配注入）。
     SeededPrehistory {
@@ -82,11 +88,6 @@ pub enum PublicationOrigin {
         fiscal_year: i32,
         kind: ScheduledReportKind,
         offset_days: u8,
-    },
-    MonthlyDisclosure {
-        schedule: super::MonthlyReportSchedule,
-        delay_days: u8,
-        seeded: bool,
     },
     /// 公开更正（必须且只能伴随 `supersedes` 链接）。
     Correction,
@@ -106,25 +107,17 @@ impl PublicationOrigin {
                 kind,
                 offset_days,
             } => Some((*fiscal_year, *kind, *offset_days)),
-            Self::Correction | Self::MonthlyDisclosure { .. } => None,
+            Self::Correction => None,
         }
     }
 }
 
 /// 已公开的定期报告（不可变值；scope/period/kind/version 由内嵌 `reports`
 /// 单一承载）。库永不删除被引用版本。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub enum PublicationSource {
-    SimpleGenerated,
-    SimulationAccounting,
-}
-
 #[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PublishedReport {
     pub id: PublicationId,
     pub company: CompanyId,
-    pub source: PublicationSource,
     pub policy: AccountingPolicyRef,
     pub approved_at: CivilInstant,
     pub published_at: CivilInstant,
@@ -181,45 +174,7 @@ pub struct Announcement {
     pub company: CompanyId,
     pub occurred_on: CivilDate,
     pub published_at: CivilInstant,
-    pub content: AnnouncementContent,
-}
-
-/// 公告内容按业务事实类型区分；现金分红不是经营冲击。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", content = "value", deny_unknown_fields)]
-pub enum AnnouncementContent {
-    Shock(AnnouncedEvent),
-    CashDividend(CashDividendAnnouncement),
-    RightsOffering(RightsOfferingAnnouncement),
-    IssuerRepurchase(IssuerRepurchaseAnnouncement),
-    ShareSplit(crate::company::share_split::ShareSplitEventPlan),
-    /// 已批准送转（股票股利与资本公积转增）方案公告：与拆股／缩股同构，
-    /// 枚举负载是方案本体（无 `{ plan }` 包装），披露事实只含方案条款；
-    /// 分配与入账结果由后续回执事实承载。
-    StockDistribution(crate::company::stock_distribution::StockDistributionEventPlan),
-}
-
-/// 已批准配股／增发方案公告（面向全体股东配股或定向增发；披露事实只含方案
-/// 条款，认购与结算结果由后续事实承载）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RightsOfferingAnnouncement {
-    pub plan: crate::company::rights_offering::RightsOfferingEventPlan,
-}
-
-/// 已批准发行人回购方案公告。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct IssuerRepurchaseAnnouncement {
-    pub plan: crate::company::issuer_repurchase::IssuerRepurchasePlan,
-}
-
-/// 已批准现金分红方案公告；实际总额与授权上限分别保留。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CashDividendAnnouncement {
-    pub plan: crate::company::cash_dividend::CashDividendPlan,
-    pub total_gross: crate::money::Money,
+    pub event: AnnouncedEvent,
 }
 
 /// 定期报告公布请求（显式时点——类型上无默认值，杜绝补默认日期）。
@@ -244,7 +199,7 @@ pub struct AnnouncementRequest {
     pub company: CompanyId,
     pub occurred_on: CivilDate,
     pub published_at: CivilInstant,
-    pub content: AnnouncementContent,
+    pub event: AnnouncedEvent,
 }
 
 /// 报告期末自然日（窗口末月的最后一天）。
@@ -275,11 +230,8 @@ pub(crate) fn ensure_publication_times(
     period: AccountingPeriod,
     approved_at: CivilInstant,
     published_at: CivilInstant,
-    origin: &PublicationOrigin,
 ) -> Result<(), InformationError> {
-    if !matches!(origin, PublicationOrigin::MonthlyDisclosure { .. })
-        && published_at.second_of_day() != DISCLOSURE_PHASE_SECOND
-    {
+    if published_at.second_of_day() != DISCLOSURE_PHASE_SECOND {
         return Err(InformationError::PublicationOutsidePhase { published_at });
     }
     if published_at < approved_at {
@@ -326,23 +278,7 @@ pub(crate) fn ensure_schedule_window(
 pub(crate) fn ensure_schedule_instant(
     origin: &PublicationOrigin,
     published_at: CivilInstant,
-    period: AccountingPeriod,
 ) -> Result<(), InformationError> {
-    if let PublicationOrigin::MonthlyDisclosure {
-        schedule,
-        delay_days,
-        ..
-    } = origin
-    {
-        let expected = schedule.instant(period, *delay_days)?;
-        if expected != published_at {
-            return Err(InformationError::OffSchedulePublication {
-                expected,
-                actual: published_at,
-            });
-        }
-        return Ok(());
-    }
     let Some((fiscal_year, kind, offset_days)) = origin.scheduled() else {
         return Ok(());
     };
@@ -399,40 +335,14 @@ pub(crate) fn ensure_announcement_timing(
 /// 已存报告的完整形状校验（publish 与恢复边界共用；不含 id/链接检查）。
 pub(crate) fn ensure_report_shape(report: &PublishedReport) -> Result<(), InformationError> {
     ensure_origin_supersedes(&report.origin, report.supersedes)?;
-    let corrected = matches!(report.origin, PublicationOrigin::Correction);
-    match &report.reports.version.kind {
-        crate::accounting::reports::VersionKind::Original
-            if !corrected && report.reports.version.supersedes.is_none() => {}
-        crate::accounting::reports::VersionKind::Correction { reason }
-            if corrected
-                && !reason.trim().is_empty()
-                && report
-                    .reports
-                    .version
-                    .supersedes
-                    .is_some_and(|previous| previous < report.reports.version.sequence) => {}
-        _ => {
-            return Err(InformationError::InconsistentLibrary {
-                detail: "公开更正来源与报表版本关系不一致".into(),
-            });
-        }
-    }
     ensure_scope_mirrors_company(&report.company, &report.reports.scope)?;
     ensure_schedule_window(&report.origin, report.reports.period)?;
     ensure_publication_times(
         report.reports.period,
         report.approved_at,
         report.published_at,
-        &report.origin,
     )?;
-    ensure_schedule_instant(&report.origin, report.published_at, report.reports.period)?;
-    if matches!(report.origin, PublicationOrigin::MonthlyDisclosure { .. })
-        && report.reports.kind != ReportKind::Monthly
-    {
-        return Err(InformationError::InconsistentLibrary {
-            detail: "月报公布来源不得用于非Monthly报告".into(),
-        });
-    }
+    ensure_schedule_instant(&report.origin, report.published_at)?;
     report
         .reports
         .validate()

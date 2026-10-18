@@ -44,34 +44,29 @@ async function createFixture(
   const bindings = {
     default: async () => ({ memory: new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }) }),
     ingress_token: (current: number) => current,
-    initThreadPool: async (threads: number) => { calls.push(`threads:${threads}`); },
     create_session: () => { calls.push(`create:${handle}`); return handle; },
     civil_date: (current: number) => current === 7 ? "2030-01-02" : "2031-02-03",
     snapshot: (current: number) => { calls.push(`snapshot:${current}`); if (failing === "snapshot") throw new Error("snapshot failed"); return { handle: current }; },
     prepare_public_baseline: (current: number) => { calls.push(`prepare:${current}`); if (failing === "prepare") throw new Error("prepare failed"); },
     drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop") throw new Error("drop failed"); },
     restore_json: (encoded: string) => { assert.deepEqual(JSON.parse(encoded), saved); calls.push(`restore:${handle}`); return handle; },
-    host_capabilities: () => ({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true }),
-    step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, ["600000"])], snapshot(1, 1)); },
+    host_capabilities: () => ({ npcDecisionDiagnostics: false }),
+    step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, [0])], snapshot(1, 1)); },
     tick: () => 1n,
     save: (current: number) => { calls.push(`save:${current}`); return saved; },
     end_civil_day: () => civilUpdate(),
   };
   replace(bindingsKey, bindings);
   replace("self", { postMessage: (message: Message) => { posted.push(message); if (message.type === "ready" || message.type === "failure") initialized(); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
-  replace("navigator", { hardwareConcurrency: 4 });
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0]).buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
   replace("clearTimeout", (id: number) => { timers.delete(id); });
   const id = ++fixtureId;
   register(registerHooks({
     resolve(specifier, context, nextResolve) {
-      // mock bindings 在文件解析之前接管，不依赖被忽略的实际 WASM 构建产物。
-      if (specifier.endsWith("/wasm-pkg/web_wasm.js")) {
-        const url = new URL(specifier, context.parentURL).href;
-        return { shortCircuit: true, url: `${url}?owner-test=${id}` };
-      }
-      return nextResolve(specifier, context);
+      const resolved = nextResolve(specifier, context);
+      if (resolved.url.endsWith("/wasm-pkg/web_wasm.js")) return { ...resolved, url: `${resolved.url}?owner-test=${id}` };
+      return resolved;
     },
     load(url, context, nextLoad) {
       if (url.includes("/wasm-pkg/web_wasm.js?owner-test=")) {
@@ -90,9 +85,9 @@ async function createFixture(
   await import(`./wasm-worker.ts?owner-test=${id}`);
   assert.ok(listener);
   const send = (message: Message) => { listener!({ data: message }); };
-  send({ type: "init", threads: 2 });
+  send({ type: "init" });
   await ready;
-  assert.deepEqual(posted, [{ type: "ready", threads: 2 }]);
+  assert.deepEqual(posted, [{ type: "ready" }]);
   posted.length = 0;
   return { send, calls, posted: posted as Message[], timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; } };
 }
@@ -106,7 +101,7 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     assert.ok(f.posted[0].module instanceof WebAssembly.Module);
     assert.ok((f.posted[0].memory as WebAssembly.Memory).buffer instanceof SharedArrayBuffer);
     assert.deepEqual(f.posted.slice(1), [
-      { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, personalTradeHistory: true } },
+      { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } },
       { type: "baseline", generation: 1, snapshot: { handle: 7 }, civilDate: "2030-01-02" },
     ]);
     f.posted.length = 0;
