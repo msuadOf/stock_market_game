@@ -248,3 +248,9 @@ local——driver 侧优化面）；InlineVec pub 变体可见性（低风险）
 **第 21 任**：①静置窗补 A 正式数字（s5-arc 二进制 .tmp/eager/）②若
 spread 仍 >100μs：刀 C taskset 复测（零代码）③ensure_fact 优化面
 ④剩余登记项。
+
+**刀 C 定性复测（182de608，收尾指令）**：绑核=方差收紧器（±85→±26）非
+spread 解（137→136——真源=消息链级联+load 扰动）；热窗减弱后 A 单轮
+**1057.9**/mean 963——静置窗正式预期 1000-1100+。第 21 任指令模板
+（静置条件+命令+基线+判读）在 evidence/p2/sealtop/knife-c-taskset.txt。
+本任停手。
