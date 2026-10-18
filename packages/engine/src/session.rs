@@ -3414,12 +3414,20 @@ impl GameSession {
                 /// 计划链的 desk 域 OrderId（(stock<<48)|serial）一并
                 /// 入下界——此前仅镜像在册 serial+1：闭合单 id 使
                 /// fault2044（id≥next_order_id）显红。
+                // 再复核 P1 修正：编码值夹取 js_safe_u64 上限
+                /// （SaveSlot wire 域）——股序 ≥32 时 (idx<<48)|cursor
+                /// 超 2^53；该域 desk OrderId 编码本身超 wire 域为
+                /// 预存在缺口（登记台账），下界不因夹取而引入超界值。
                 let mut floor = mirror_max.saturating_add(1);
                 for (code, mirror) in &self.state.desk_book_mirror {
-                    floor = floor.max((u64::from(code.0) << 48) | mirror.next_serial);
+                    let encoded = ((u64::from(code.0) << 48) | mirror.next_serial)
+                        .min(crate::orderbook::js_safe_u64::MAX);
+                    floor = floor.max(encoded);
                 }
                 for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
-                    floor = floor.max((u64::from(idx as u64) << 48) | cursor);
+                    let encoded = ((u64::from(idx as u64) << 48) | cursor)
+                        .min(crate::orderbook::js_safe_u64::MAX);
+                    floor = floor.max(encoded);
                 }
                 self.state.next_order_id.max(floor)
             },

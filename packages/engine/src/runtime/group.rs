@@ -5327,12 +5327,40 @@ mod v5_shutdown_idle_window_tests {
 
 }
 
-// 局限登记（Sol 五审复核阻断 3）：World 级"标记在协议窗内置位"无可
-// 确定性观察面——shutdown(self) 消费所有权、Drop 清场在协议完成后
-// 合法置位；Drain→Shutdown 广播间 >50ms 停顿也无注入缝（desk Drain
-// 无延迟 seam）。确定性锚由本模块循环级测试承载（worker 机制面：
-// 标记置位+空闲 50ms 片界⇒提前退出不处理 Shutdown——正是缺陷形态）；
-// World 级观察日志测试作为协议路径的行为面补充（概率性抓重引）。
+/// Sol 五审再复核 P1-2（确定性 seam 落地后的 World 级回归）：
+/// 组 Shutdown 广播前注入 120ms 停顿（World::shutdown_stall_
+/// for_test——四审竞态窗"协调者停顿>50ms"的真实复现）。若重引
+/// "关停前置永久标记"缺陷，空闲组在停顿窗内被标记驱退提前退出、
+/// Shutdown 消息不被处理 → observed 缺项显红（此前无 seam 时该
+/// 缺陷被 32/32 漏检——再复核实证）。
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn v5_world_shutdown_stall_window_keeps_message_protocol() {
+    let spec = crate::runtime::skeleton_tests::basic_spec(
+        2,
+        1,
+        1,
+        Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
+    );
+    let mut world = crate::runtime::world::World::spawn(spec).expect("世界构造");
+    world.run_ticks(1).expect("首拍");
+    world.shutdown_stall_for_test = Some(std::time::Duration::from_millis(120));
+    let report = world.shutdown().expect("正常关停成功（停顿窗不破坏协议）");
+    assert_eq!(report.group_finals.len(), 2, "两组期末态齐");
+    for final_state in &report.group_finals {
+        assert!(
+            final_state
+                .observed
+                .iter()
+                .any(|o| matches!(o, Observed::Shutdown)),
+            "组 {} 的 Shutdown 经消息协议处理（停顿窗内不被标记驱退）",
+            final_state.group
+        );
+    }
+    for (who, result) in &report.worker_results {
+        assert!(result.is_ok(), "worker {who:?} 正常退出：{result:?}");
+    }
+}
 
 #[cfg(test)]
 mod sol_recheck3_tests {

@@ -27,6 +27,7 @@ use crate::config::GameConfig;
 use crate::money::Money;
 use crate::StockExchange;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
@@ -328,6 +329,12 @@ pub struct World {
     /// worker_recv 的退出判定源（与 abort 正交：abort=tick 级回滚语义，
     /// 可重试 Abort 窗口内 worker 存活）。
     worker_shutdown: Arc<AtomicBool>,
+    /// Sol 五审再复核 P1-2（四审 A1 指定回归的确定性 seam）：正常关停
+    /// 序列在组 Shutdown 广播**前**的可控停顿（cfg(test)——复现四审
+    /// 竞态窗"协调者停顿>50ms 时空闲 worker 提前退出"）。None=不停顿
+    /// （生产语义零变化）。
+    #[cfg(test)]
+    pub shutdown_stall_for_test: Option<Duration>,
     watchdog: WatchdogConfig,
     validator: Validator,
     rounds_cap: u32,
@@ -662,6 +669,8 @@ impl World {
             handles,
             abort,
             worker_shutdown,
+            #[cfg(test)]
+            shutdown_stall_for_test: None,
             watchdog,
             validator: no_op_validator(),
             rounds_cap,
@@ -1876,6 +1885,13 @@ impl World {
                         });
                     }
                 }
+            }
+            // Sol 五审再复核 P1-2：组 Shutdown 广播前的受控停顿（仅测试
+            /// 装配；复现四审竞态窗——若重引"关停前置永久标记"，空闲组
+            /// 在此窗内被标记驱退提前退出、Shutdown 消息不被处理）。
+            #[cfg(test)]
+            if let Some(stall) = self.shutdown_stall_for_test {
+                std::thread::sleep(stall);
             }
             for tx in &self.group_txs {
                 tx.send(GroupIn::Shutdown)
