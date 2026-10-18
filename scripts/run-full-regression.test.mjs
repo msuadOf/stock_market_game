@@ -306,12 +306,15 @@ it("CI invokes the sealed build/execute regression phases without Corepack", asy
   for (const host of ["windows", "linux"]) {
     const plan = createFrontendPlan({ jobs: 4 }, { host });
     const wasmPosition = plan.commands.findIndex(({ command }) => command === "wasm-pack");
-    const sourceCheck = plan.commands.findIndex(({ args }) => args[0].endsWith("check-wasm-threading.mjs"));
+    // 批 9 A10 收尾：check-wasm-threading 步骤退役——复制后仍经
+    // check-web-release-wasm 校验。
     const copyPosition = plan.commands.findIndex(({ action }) => action === "copy-wasm");
-    const copiedCheck = plan.commands.findIndex(({ args }) => args[1] === path.join(plan.frontend, "wasm-pkg/web_wasm.js"));
     const uiPosition = plan.commands.findIndex(({ args }) => args[0].endsWith("vite.js"));
-    assert.ok(wasmPosition >= 0 && sourceCheck > wasmPosition && copyPosition > sourceCheck && copiedCheck > copyPosition && uiPosition > copiedCheck,
-      `${host} must build and verify real WASM before copying, checking the copy and building the UI`);
+    // 批 9 A10 收尾：复制后校验改由 dist 级 check-web-release-wasm 承载
+    ///（wasm-pkg 级 threading 检查退役）。
+    const distCheck = plan.commands.findIndex(({ args }) => args[1] === path.join(plan.frontend, "dist"));
+    assert.ok(wasmPosition >= 0 && copyPosition > wasmPosition && uiPosition > copyPosition && distCheck > uiPosition,
+      `${host} must build real WASM before copying, building the UI and verifying dist`);
   }
 });
 

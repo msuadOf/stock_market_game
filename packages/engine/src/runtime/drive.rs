@@ -999,7 +999,9 @@ impl RuntimeDriver {
                     continue;
                 };
                 let identity_ok = if strict_identity {
-                    child_order.0 == super::group::desk_order_id(tr.stock, order_serial)
+                    // Sol 六审收官复核阻断 2：trade facts 的 order_serial
+                    // 已是 wire 编码 id——直接全等比较。
+                    child_order.0 == order_serial
                 } else {
                     super::group::desk_order_serial(child_order.0)
                         == super::group::desk_order_serial(order_serial)
@@ -1320,18 +1322,23 @@ impl RuntimeDriver {
 
     /// 清簿撤单事实转事件（seq 分配），并入待取缓冲。
     fn collect_drained_events(&mut self) {
+        // Sol 六审收官复核阻断 3：seq 分配序=输出序——先给竞价事件
+        //（收盘清算 AuctionTick/AuctionCompleted，输出在 DayBoundary
+        // 之前）编号，再给撤单事件（DayBoundary 之后）编号。此前先
+        // 给撤单编号再重排输出，末拍 seq 呈 22→23→24→21 非单调
+        //（batch4_seq 族判别面）。
+        let drained_auction = std::mem::take(&mut self.world.drained_auction);
+        let mut auction_events = Vec::new();
+        if !drained_auction.is_empty() {
+            auction_events = project_auction_events(&drained_auction, &mut self.next_seq);
+        }
         let drained = std::mem::take(&mut self.world.drained_lifecycle);
         if !drained.is_empty() {
             let input = collect_lifecycle(&drained, &[]);
             self.drained_events
                 .extend(project_lifecycle_events(&input, &mut self.next_seq));
         }
-        // Sol 六审段 1.2 取证修复：日结 Drain 的收盘竞价清算事件
-        ///（末拍 AuctionTick/AuctionCompleted——与旧管线日结拍竞价
-        /// 事件序列对齐；序：竞价事件先于撤单事件，与拍内投影同序）。
-        let drained_auction = std::mem::take(&mut self.world.drained_auction);
-        if !drained_auction.is_empty() {
-            let mut auction_events = project_auction_events(&drained_auction, &mut self.next_seq);
+        if !auction_events.is_empty() {
             self.drained_events.append(&mut auction_events);
         }
     }
@@ -1719,10 +1726,8 @@ impl RuntimeDriver {
                     /// save 面由此双写闭合；无经历账账户内建跳过）。
                     if d.qty < 0 && pre_qty > 0 {
                         if let Some(&(price, serial)) = last_sell.get(&(id, *code)) {
-                            let order = crate::OrderId(super::group::desk_order_id(
-                                code.0 as super::StockIdx,
-                                serial,
-                            ));
+                            // serial（tr.maker_order_serial）已是 wire 编码 id。
+                            let order = crate::OrderId(serial);
                             full_exits.push((code.clone(), price, pre_qty, pre_cost, order.0));
                         }
                     }

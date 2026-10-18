@@ -1736,6 +1736,11 @@ impl World {
     pub fn abort_day_end(&mut self) {
         let tick = self.global.committed_tick;
         self.abort_tick(tick);
+        // Sol 六审收官复核阻断 4：日结 Drain 期间上行的事实缓冲随冲回
+        /// 清空——Abort 重跑会重新 Drain 产生同名事实，残留使缓冲
+        /// 双载（竞价事实 2→4 条实测）。
+        self.drained_lifecycle.clear();
+        self.drained_auction.clear();
         self.last_day_end_candidate = None;
         self.last_day_end_tick = None;
     }

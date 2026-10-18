@@ -14,12 +14,12 @@ export function createFrontendCommands({ root, host, jobs, frontend, wasmPackage
     host === "windows"
       ? { command: "cmd.exe", args: ["/d", "/s", "/c", [packageManager, ...installArgs].join(" ")], cwd: root, env: buildEnv }
       : { command: packageManager, args: installArgs, cwd: root, env: buildEnv },
-    { command: "wasm-pack", args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", wasmPackage, "-Z", "build-std=panic_abort,std"], cwd: root,
-      env: { ...buildEnv, CARGO_TARGET_DIR: staged ? path.join(env.CARGO_TARGET_DIR, "wasm") : env.CARGO_TARGET_DIR, RUSTUP_TOOLCHAIN: "nightly-2026-09-05" } },
-    nodeCommand([path.join(root, "scripts/check-wasm-threading.mjs"), path.join(wasmPackage, "web_wasm.js")]),
+    // 批 9 A10 收尾：build-std/nightly 与 wasm 线程 glue 检查随
+    // wasm-bindgen-rayon 退役删除——串行 wasm 走稳定工具链。
+    { command: "wasm-pack", args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", wasmPackage], cwd: root,
+      env: { ...buildEnv, CARGO_TARGET_DIR: staged ? path.join(env.CARGO_TARGET_DIR, "wasm") : env.CARGO_TARGET_DIR } },
     nodeCommand([path.join(root, "scripts/check-web-release-wasm.mjs"), wasmPackage]),
     { action: staged ? "stage-frontend" : "copy-wasm", command: staged ? "stage-frontend" : "copy-wasm", args: [frontend], cwd: root, env: buildEnv },
-    nodeCommand([path.join(root, "scripts/check-wasm-threading.mjs"), path.join(copiedPackage, "web_wasm.js")]),
     nodeCommand([path.join(root, "apps/web/node_modules/typescript/bin/tsc"), "--build", "--force"], frontend),
     nodeCommand([path.join(root, "apps/web/node_modules/vite/bin/vite.js"), "build", "--outDir", path.join(frontend, "dist"), ...(pagesBase === undefined ? [] : ["--mode", "pages", "--base", pagesBase])], frontend),
     nodeCommand([path.join(root, "scripts/check-web-release-wasm.mjs"), path.join(frontend, "dist")]),

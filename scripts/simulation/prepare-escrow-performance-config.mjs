@@ -107,14 +107,13 @@ export async function preparePerformanceConfig({
     target: toolchain.target,
     rustflags: process.env.RUSTFLAGS ?? "",
     cargo_jobs: Number(process.env.CARGO_BUILD_JOBS ?? 1),
-    rayon_threads: rayonThreads,
   };
   if (!environmentContract.cargo || !environmentContract.rustc || !environmentContract.target) {
     throw new Error("actual Cargo/Rust toolchain probe was incomplete");
   }
-  if (!Number.isSafeInteger(environmentContract.cargo_jobs) || environmentContract.cargo_jobs <= 0
-    || !Number.isSafeInteger(rayonThreads) || rayonThreads <= 0) {
-    throw new Error("cargo_jobs and rayon_threads must be positive safe integers");
+  if (!Number.isSafeInteger(environmentContract.cargo_jobs) || environmentContract.cargo_jobs <= 0) {
+    // 批 9 A7/A10 收尾：rayon_threads 校验随键退役。
+    throw new Error("cargo_jobs must be a positive safe integer");
   }
   // 两侧完整 source manifest 冻结后才编译；endpoint 嵌入 fingerprint，
   // 拒绝来自其他 source tree 的请求。两次 release build 共用同一完整 build slot，

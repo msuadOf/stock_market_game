@@ -1415,7 +1415,9 @@ impl GroupState {
         }
         let side = ticket.side;
         let qty = ticket.qty;
-        let order_id = order_id_of(&(stock, order_serial));
+        // Sol 六审收官复核阻断 2：desk 侧 lifecycle/facts 的 order_serial
+        /// 已是 wire 编码 id（(stock<<32)|serial）——不再二次合成。
+        let order_id = crate::OrderId(order_serial);
         let day = self.cur_tick.saturating_sub(1) / self.ticks_per_day;
         self.save_plan_book_undo();
         self.plan_book
@@ -1467,7 +1469,7 @@ impl GroupState {
             .get(&(account, code))
             .and_then(|ticket| ticket.order_id)
         {
-            if known != order_id_of(&(stock, order_serial)) {
+            if known != crate::OrderId(order_serial) {
                 // 终结的是他单（票不归属本单）——保留本票，仅落资源实体。
                 return Ok(());
             }

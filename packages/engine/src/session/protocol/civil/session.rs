@@ -174,6 +174,17 @@ impl ProtocolSession {
         ))
     }
 
+    /// C 桶（escrow 验证面）注入通道：宿主提供已绑定指定 ComputeContext
+    /// 的 GameSession 构造协议会话——验证 harness 的预算隔离经此保留
+    ///（A5 退役的是 crate 外生产注入面；此面 cfg verification-harness）。
+    #[cfg(feature = "verification-harness")]
+    pub fn from_game_for_verification(
+        game: GameSession,
+        day_end_save: Option<Arc<crate::SaveSlot>>,
+    ) -> Self {
+        Self::from_game(game, day_end_save)
+    }
+
     fn from_game(mut game: GameSession, day_end_save: Option<Arc<crate::SaveSlot>>) -> Self {
         game.shared_ingress();
         Self {

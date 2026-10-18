@@ -69,10 +69,10 @@ pub(super) fn execute(config: &Config) -> Result<CaptureBundle, String> {
     };
     let threads = compute.workers();
     if config.mode == Mode::NegativeControl {
-        return compute.install(|| negative_control(config, policy, threads));
+        return compute.install(|| negative_control(config, policy, threads, compute.clone()));
     }
     let (capture, records) = compute.install(|| {
-        with_executor_perturbation(policy, || capture_runtime(config.seed))
+        with_executor_perturbation(policy, || capture_runtime(config.seed, compute.clone()))
             .map_err(|error| error.to_string())
     })?;
     let mut capture = capture?;
@@ -84,8 +84,9 @@ fn negative_control(
     config: &Config,
     policy: ExecutorPerturbation,
     threads: usize,
+    compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<CaptureBundle, String> {
-    let mut session = initial_session(config.seed)?;
+    let mut session = initial_session(config.seed, compute.clone())?;
     let mut capture = Accumulator::default();
     let mut records = Vec::new();
     for _ in 0..13 {
@@ -189,8 +190,11 @@ fn negative_control(
     ))
 }
 
-pub(super) fn capture_runtime(seed: u64) -> Result<RuntimeCapture, String> {
-    capture_runtime_with_session(seed, initial_session(seed)?)
+pub(super) fn capture_runtime(
+    seed: u64,
+    compute: std::sync::Arc<engine::ComputeContext>,
+) -> Result<RuntimeCapture, String> {
+    capture_runtime_with_session(seed, initial_session(seed, compute)?)
 }
 
 #[cfg(test)]
@@ -204,7 +208,7 @@ pub(super) fn capture_short_restore_runtime(seed: u64) -> Result<RuntimeCapture,
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
     setup.strategy_params.retail.arrival_rate = 0.0;
-    let mut session = initial_session_with_setup(seed, setup)?;
+    let mut session = initial_session_with_setup(seed, setup, compute)?;
     let code = session.game().stock_id("600101").expect("短恢复夹具股票必须已入目录");
     session
         .enqueue_player_intent(
@@ -458,15 +462,25 @@ fn decimal_identity_json(value: Value) -> Value {
     }
 }
 
-fn initial_session(seed: u64) -> Result<ProtocolSession, String> {
-    initial_session_with_setup(seed, frozen_setup()?)
+fn initial_session(
+    seed: u64,
+    compute: std::sync::Arc<engine::ComputeContext>,
+) -> Result<ProtocolSession, String> {
+    initial_session_with_setup(seed, frozen_setup()?, compute)
 }
 
 fn initial_session_with_setup(
     seed: u64,
     setup: engine::SessionSetup,
+    compute: std::sync::Arc<engine::ComputeContext>,
 ) -> Result<ProtocolSession, String> {
-    let session = ProtocolSession::new(setup, seed).map_err(|error| error.to_string())?;
+    // C 桶预算注入修复（收官复核阻断 9）：会话经 GameSession::
+    /// new_with_compute 绑定 harness 预算池，再以
+    /// from_game_for_verification 装协议面——A5 退役生产注入面后
+    /// shared_default 恒绑 128 核全局池，预算隔离失效。
+    let game =
+        engine::GameSession::new_with_compute(setup, seed, compute).map_err(|e| e.to_string())?;
+    let session = engine::session::protocol::ProtocolSession::from_game_for_verification(game, None);
     let mut initial = session.game().save().map_err(|error| error.to_string())?;
     // A declared initial allocation, not a runtime mutation: transfer 1,000
     // already-settled shares per stock from an NPC to the player. Total supply
@@ -613,7 +627,11 @@ mod receipt_journal_tests {
 
     #[test]
     fn committed_receipt_journal_emits_expiry_count_without_legacy_key() {
-        let mut session = initial_session(17).expect("构造当前测试会话");
+        let mut session = initial_session(
+            17,
+            engine::ComputeContext::shared_default().map_err(|error| error.to_string()).unwrap(),
+        )
+        .expect("构造当前测试会话");
         let (frame, evidence) = step_scripted(&mut session).expect("实际提交一次 tick");
         let journal = receipt_journal(frame.tick, &evidence).expect("序列化已提交 receipt journal");
         assert_eq!(

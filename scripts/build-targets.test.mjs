@@ -58,14 +58,14 @@ test("Web plans compile real TypeScript, shared WASM and Rust web-ui, without fi
     assert.match(serialized, /tsc/);
     assert.match(serialized, /--build/);
     assert.match(serialized, /wasm-pack/);
-    assert.match(serialized, /check-wasm-threading/);
+    // 批 9 A10 收尾：check-wasm-threading 断言随脚本退役。
     assert.match(serialized, /check-web-release-wasm/);
     assert.match(serialized, /web-ui/);
     assert.doesNotMatch(serialized, /VITE_HOST|vite preview|regression|\.tmp/);
     const wasm = plan.commands.find(({ command }) => command === "wasm-pack");
     assert.match(wasm.args[wasm.args.indexOf("--out-dir") + 1], /apps[/\\]web-wasm[/\\]wasm-pack-output[/\\]fixture[/\\]wasm[/\\]pkg$/);
     assert.equal(wasm.env.CARGO_BUILD_JOBS, "4");
-    assert.equal(wasm.env.RUSTUP_TOOLCHAIN, "nightly-2026-09-05");
+    // 批 9 A10 收尾：nightly 工具链断言退役——稳定工具链串行构建。
     assert.deepEqual(plan.artifact.files, ["server", "webui/", "LICENSE"]);
     assert.deepEqual(plan.artifact.startArgs, ["--services", target === "webui" ? "webui" : "all"]);
     assert.match(plan.artifact.directory, new RegExp(`${target}$`));

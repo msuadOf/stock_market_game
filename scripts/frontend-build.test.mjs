@@ -12,8 +12,9 @@ test("shared frontend plan owns install, threaded WASM, copy, TypeScript, Vite a
     const plan = createFrontendPlan({ jobs: 4 }, { host });
     assert.match(JSON.stringify(plan.commands), /--frozen-lockfile/);
     const wasm = plan.commands.find(({ command }) => command === "wasm-pack");
-    assert.ok(wasm.args.includes("build-std=panic_abort,std"));
-    assert.equal(wasm.env.RUSTUP_TOOLCHAIN, "nightly-2026-09-05");
+    // 批 9 A10 收尾：build-std/nightly 断言退役——稳定工具链串行构建。
+    assert.ok(!wasm.args.includes("-Z"));
+    assert.equal(wasm.env.RUSTUP_TOOLCHAIN, undefined);
     assert.equal(wasm.env.CARGO_BUILD_JOBS, "4");
     // 批 9 A7：RAYON 分量退役——断言缺省。
     assert.equal(wasm.env.RAYON_NUM_THREADS, undefined);

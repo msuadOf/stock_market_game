@@ -924,7 +924,18 @@ impl DeskState {
         /// 即成/即撤的即时单不推进，同账户同股连续两笔空盘市价单产生
         /// **同一订单 ID** 的两条 Cancelled，后续挂簿单复用该 ID。
         let order_ref = (self.setup.stock, self.next_serial);
-        self.next_serial += 1;
+        // Sol 六审收官复核阻断 1：place 取号同守 2^32 checked（v6 方案 A
+        // 的"低 32 位恒等"前提——reject 路径已有，此处遗漏）。
+        self.next_serial = self
+            .next_serial
+            .checked_add(1)
+            .filter(|next| *next <= 0xFFFF_FFFF)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "交易部 {} desk 序号耗尽 2^32 编码域（订单身份无法再合成 wire 域内 id）",
+                    self.setup.stock
+                ),
+            })?;
         self.undo.push(DeskUndo::Serial);
         let order = DeskOrder {
             order_ref,
@@ -976,7 +987,7 @@ impl DeskState {
             .push(super::protocol::DeskLifecycleFact {
                 stock: self.setup.stock,
                 owner: order.owner,
-                order_serial: order.order_ref.1,
+                order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
                 remaining: order.qty,
                 side: order.side,
                 price: order.price,
@@ -990,7 +1001,7 @@ impl DeskState {
             .push(super::protocol::DeskLifecycleFact {
                 stock: self.setup.stock,
                 owner: order.owner,
-                order_serial: order.order_ref.1,
+                order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
                 remaining: order.qty,
                 side: order.side,
                 price: order.price,
@@ -1026,7 +1037,7 @@ impl DeskState {
         let fact = super::protocol::DeskLifecycleFact {
             stock: self.setup.stock,
             owner: order.owner,
-            order_serial: order.order_ref.1,
+            order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
             remaining: order.qty,
             side: order.side,
             price: order.price,
@@ -1299,8 +1310,8 @@ impl DeskState {
             taker_side,
             maker_fees_cents: sell_fees,
             taker_fees_cents: buy_fees,
-            maker_order_serial: maker_order.1,
-            taker_order_serial: taker_order.1,
+            maker_order_serial: (u64::from(maker_order.0) << 32) | maker_order.1,
+            taker_order_serial: (u64::from(taker_order.0) << 32) | taker_order.1,
         });
         // 实体互换：买方得股票、卖方得净额。
         let bg = buy_owner.0 as usize;
@@ -1424,7 +1435,7 @@ impl DeskState {
             }
             self.out[g].push(Entity::Closed {
                 local: after.owner.1,
-                order_serial: after.order_ref.1,
+                order_serial: (u64::from(after.order_ref.0) << 32) | after.order_ref.1,
             });
         } else {
             *front = after;
@@ -1500,7 +1511,7 @@ impl DeskState {
         }
         self.out[g].push(Entity::Closed {
             local: order.owner.1,
-            order_serial: order.order_ref.1,
+            order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
         });
     }
 
@@ -1661,7 +1672,7 @@ impl DeskState {
         // 关联释放，Sol 二审修复集 3）。
         self.out[g].push(Entity::Closed {
             local: owner.1,
-            order_serial: self.next_serial,
+            order_serial: (u64::from(self.setup.stock) << 32) | self.next_serial,
         });
         let order = (self.setup.stock, self.next_serial);
         // 同上：2^32 checked（v6 方案 A 守卫——拒收回执身份同域）。
@@ -2580,7 +2591,7 @@ fn process_msg(
                             charged_commission: order.charged_commission,
                             charged_stamp_tax: order.charged_stamp_tax,
                             charged_transfer_fee: order.charged_transfer_fee,
-                            order_serial: order.order_ref.1,
+                            order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
                         });
                     }
                 }
