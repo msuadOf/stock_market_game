@@ -467,7 +467,7 @@ mod attention_tests {
         if crate::runtime::step_runtime_enabled() {
             assert_eq!(game.state.desk_book_mirror[&StockId(0)].orders.len(), 2);
             assert!(game.state.desk_book_mirror[&StockId(0)].orders.iter()
-                .any(|(_, side, price, _, _, _)| *side == Side::Sell && *price == Money::from_cents(1_100)),
+                .any(|(_, side, price, _, _, _, _)| *side == Side::Sell && *price == Money::from_cents(1_100)),
                 "私有真实 book 保留竞价新单（desk 镜像）");
         } else {
             let market = &game.state.markets[&StockId(0)];

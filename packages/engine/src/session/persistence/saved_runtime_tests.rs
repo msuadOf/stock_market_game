@@ -1857,3 +1857,139 @@ fn save_slot_uses_current_structure_and_rejects_legacy_runtime_key() {
         .insert("runtime_v2".to_owned(), runtime);
     assert!(serde_json::from_value::<SaveSlot>(legacy).is_err());
 }
+
+// ═══ Sol 五审重送件 1/2：真实数量与累计费用贯穿 + restore 后续成交 ═══
+
+/// 五审判决静态反例（动态化）：限价 1000 买 200，价优成交 100@990——
+/// 存档侧 filled_value÷限价 换算 filled_qty 不成立（99≠100，判决表）；
+/// restore 接管链 DeskRestingSeed 此前不携带累计成交额/费用（desk 种子
+/// 归零），续填余量会重算最低佣金（charge 100_501 > purse 100_001——
+/// purse 不足显式失败）。本测静态断言真实数量贯穿 + 恢复后续成交链路。
+#[test]
+fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
+    // runtime 专属契约（desk 权威累计域的贯穿链）；旧管线模式无该链路
+    /// ——同 real_step_settles 的 runtime_mode 双轨先例，此处整体跳过。
+    if !crate::runtime::step_runtime_enabled() {
+        return;
+    }
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    setup.npcs.retail_count = 1;
+    setup.stocks[0].initial_price = crate::money::Money::from_cents(1_000);
+    setup.config.starting_cash = crate::money::Money::from_cents(1_000_000);
+    let code = StockId(0);
+    let mut session = GameSession::new(setup, 42).expect("fixture 必须有效");
+    // 卖方 NPC：200 股 + fault2038 经历条目；注意力推后（不自发交易）。
+    session
+        .fixture_account_mut(&AccountId(1))
+        .expect("retail seller must exist")
+        .grant_position(code.clone(), 200, crate::money::Money::from_cents(990))
+        .expect("fixture holding must be valid");
+    session
+        .state
+        .retail_experience
+        .get_mut(&AccountId(1))
+        .expect("retail seller must have an experience row")
+        .initialize_holding_dated(
+            &code,
+            Some(crate::money::Money::from_cents(990)),
+            crate::money::Money::from_cents(990),
+            crate::experience::ExperienceMoment {
+                civil_date: session.state.civil_clock.current_date(),
+                market_minute: 0,
+                trading_day: 0,
+            },
+        )
+        .expect("fixture experience entry must be valid");
+    if let Some(attention) = session.state.npc_attention.get_mut(&AccountId(1)) {
+        attention.next_attention_candidate_tick = 10;
+    }
+    // tick1：NPC 挂 100@990 卖（首步前 seed 走旧簿 adopt）；玩家限价
+    // 1000 买 200 → 价优成交 100@990、余 100 在簿（purse 收敛 100_001）。
+    let mut seed_events = Vec::new();
+    session.seed_order_for_test(
+        AccountId(1),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
+            qty: 100,
+        },
+        &mut seed_events,
+    );
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
+                qty: 200,
+            },
+        )
+        .expect("玩家买单入队");
+    session.step().expect("tick1 必须成功");
+    // 静态断言（判决反例）：真实数量贯穿——价优换算 99_000÷1000=99 显红。
+    let save = session.save().expect("tick1 静点存档");
+    let buy = save
+        .resting_orders
+        .get(&code)
+        .expect("买余量在册")
+        .iter()
+        .find(|order| order.owner == AccountId(0) && order.side == Side::Buy)
+        .expect("玩家买余量");
+    assert_eq!(buy.qty, 100, "余量");
+    assert_eq!(
+        buy.filled_qty, 100,
+        "真实成交数量贯穿（价优换算不成立——判决反例 99）"
+    );
+    assert_eq!(buy.original_qty, 200, "原始委托量=余量+真实成交量");
+    assert_eq!(buy.filled_value, crate::money::Money::from_cents(99_000));
+    // restore + 驱动器构造拍 + 第二拍：卖方再卖 100@990 吃掉恢复的买
+    /// 余量（maker 价 1000×100=100_000）——累计费用承载下边际费用
+    /// Δcomm=0/Δtransfer=1，charge 100_001==purse 恰可付；seed 归零
+    /// 则重算最低佣金 100_501>purse，desk 显式失败（本 expect 显红）。
+    let mut restored = GameSession::restore(&save).expect("tick1 静点恢复");
+    restored.step().expect("恢复后首拍（驱动器构造/种子装载）");
+    let mut seed_events = Vec::new();
+    restored.seed_order_for_test(
+        AccountId(1),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
+            qty: 100,
+        },
+        &mut seed_events,
+    );
+    let events = restored
+        .step()
+        .expect("恢复后续成交必须成功（累计费用承载——purse 不足即 seed 归零显红）");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Trade { qty: 100, .. })),
+        "恢复的买余量成交：{events:?}"
+    );
+    assert!(
+        restored
+            .save()
+            .expect("期末存档")
+            .resting_orders
+            .get(&code)
+            .map(|orders| orders.is_empty())
+            .unwrap_or(true),
+        "期末无余量"
+    );
+    assert_eq!(
+        restored
+            .account(AccountId(0))
+            .expect("玩家在")
+            .positions()
+            .get(&code)
+            .expect("持仓在")
+            .qty(),
+        200,
+        "期末买家 200 股"
+    );
+}

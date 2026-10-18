@@ -480,6 +480,9 @@ pub struct RestingFact {
     /// 买腿 purse（卖恒 0）。
     pub purse: i64,
     pub filled_value: i64,
+    /// 累计成交数量（Sol 五审件 1：真实数量贯穿——价优下不可由
+    /// filled_value 反推）。
+    pub filled_qty: u32,
     pub charged_commission: i64,
     pub charged_stamp_tax: i64,
     pub charged_transfer_fee: i64,

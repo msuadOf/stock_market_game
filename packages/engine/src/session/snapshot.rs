@@ -145,7 +145,7 @@ impl GameSession {
             // D5 attention：desk 簿镜像承载（runtime 形态——公开面/预留
             /// 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
             for (code, mirror) in &self.state.desk_book_mirror {
-                for (owner, side, price, qty, _serial, filled_value) in &mirror.orders {
+                for (owner, side, price, qty, _serial, filled_value, _fq) in &mirror.orders {
                     if !include_npc_accounts && *owner != AccountId(0) {
                         continue;
                     }
@@ -514,19 +514,24 @@ pub(super) fn project_mirror_public_book(
 ) -> pipeline::phase::PublicBookProjection {
     use std::collections::BTreeMap;
     let cutoff = mirror.public_cutoff_serial;
-    let visible: Box<dyn Iterator<Item = &(crate::AccountId, crate::Side, crate::Money, u32, u64, i64)>> =
-        match phase {
-            crate::TradingPhase::CallAuction => Box::new(std::iter::empty()),
-            crate::TradingPhase::ClosingAuction => {
-                Box::new(mirror.orders.iter().filter(|(_, _, _, _, serial, _)| *serial < cutoff))
-            }
-            crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
-                Box::new(mirror.orders.iter())
-            }
-        };
+    #[allow(clippy::type_complexity)]
+    let visible: Box<
+        dyn Iterator<Item = &(crate::AccountId, crate::Side, crate::Money, u32, u64, i64, u32)>,
+    > = match phase {
+        crate::TradingPhase::CallAuction => Box::new(std::iter::empty()),
+        crate::TradingPhase::ClosingAuction => Box::new(
+            mirror
+                .orders
+                .iter()
+                .filter(|(_, _, _, _, serial, _, _)| *serial < cutoff),
+        ),
+        crate::TradingPhase::PreOpen | crate::TradingPhase::Continuous => {
+            Box::new(mirror.orders.iter())
+        }
+    };
     let mut bids: BTreeMap<crate::Money, u64> = BTreeMap::new();
     let mut asks: BTreeMap<crate::Money, u64> = BTreeMap::new();
-    for (_, side, price, qty, _, _) in visible {
+    for (_, side, price, qty, _, _, _) in visible {
         let level = match side {
             crate::Side::Buy => &mut bids,
             crate::Side::Sell => &mut asks,

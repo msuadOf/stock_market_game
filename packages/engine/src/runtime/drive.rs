@@ -2451,12 +2451,21 @@ fn resting_order_seeds_from_session(
             } else {
                 0
             };
+            // Sol 五审件 1：累计事实（成交额/数量/费用分项）自 audit
+            /// 直取——desk 种子归零会使续填重算最低佣金（purse 不足
+            /// 显式失败）与费用口径漂移。
+            let audit = envelope.audit();
             seeds[stock].push(super::desk::DeskRestingSeed {
                 owner: (g, local),
                 side: key.side,
                 price,
                 qty,
                 purse,
+                filled_value: audit.filled_value.cents(),
+                filled_qty: audit.filled_qty,
+                charged_commission: audit.charged.commission.cents(),
+                charged_stamp_tax: audit.charged.stamp_tax.cents(),
+                charged_transfer_fee: audit.charged.transfer_fee.cents(),
                 // restore 形态：受理事件已随此前世界交付（save 前事件
                 // 历史），直入不重放 Accepted。
                 accepted_delivered: true,
@@ -2479,6 +2488,21 @@ fn resting_order_seeds_from_session(
     // 递增自然序（与 desk next_serial 起始衔接；0 字面量会使多单共享
     // (stock, 0) 身份——组端 Cancel/释放按 order_serial 关联错乱）。
     let mut adopt_serial: u64 = 1;
+    // Sol 五审件 1：adopt 单的累计事实自信封账本 join（旧簿 Order 不
+    /// 携费用分项；restore 侧 build_ledger 对每张在场委托都建有信封
+    /// ——fault2218 缺失即显式拒绝，join 恒命中）。
+    // 键 Side 无 Ord——方向入键用秩（Buy=0/Sell=1，与会话侧 side_rank 同式）。
+    let ledger: std::collections::BTreeMap<
+        (crate::AccountId, crate::StockId, crate::OrderId, u8),
+        crate::session::pipeline::Envelope,
+    > = session
+        .runtime_envelope_ledger_snapshot()
+        .into_iter()
+        .map(|(key, envelope)| {
+            let side_rank = u8::from(matches!(key.side, crate::orderbook::Side::Sell));
+            ((key.account, key.stock, key.order, side_rank), envelope)
+        })
+        .collect();
     for (code, orders) in snapshot {
         for order in orders {
             // Sol 终审修复 1c 同族：owner 用真实组号（同上）。
@@ -2518,12 +2542,31 @@ fn resting_order_seeds_from_session(
             } else {
                 0
             };
+            let envelope = ledger
+                .get(&(
+                    order.owner,
+                    code.clone(),
+                    order.id,
+                    u8::from(matches!(order.side, crate::orderbook::Side::Sell)),
+                ))
+                .ok_or_else(|| {
+                    format!(
+                        "adopt 旧簿挂单缺信封账本条目（累计费用无法迁移）：owner={:?}, code={code:?}, order={:?}",
+                        order.owner, order.id
+                    )
+                })?;
+            let audit = envelope.audit();
             seeds[code.0 as usize].push(super::desk::DeskRestingSeed {
                 owner: (g, local),
                 side: order.side,
                 price: order.price.cents(),
                 qty: order.qty,
                 purse,
+                filled_value: audit.filled_value.cents(),
+                filled_qty: audit.filled_qty,
+                charged_commission: audit.charged.commission.cents(),
+                charged_stamp_tax: audit.charged.stamp_tax.cents(),
+                charged_transfer_fee: audit.charged.transfer_fee.cents(),
                 // live 构造期 adopt：受理事实照记（对齐旧管线 enqueue 后
                 // 首拍交付面）。
                 accepted_delivered: false,

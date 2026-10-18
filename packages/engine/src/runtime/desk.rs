@@ -45,6 +45,16 @@ pub struct DeskRestingSeed {
     pub qty: u32,
     /// 买腿 purse（卖恒 0）——adopt 单的 live 资源面。
     pub purse: i64,
+    /// 累计成交额（分）——Sol 五审件 1：restore 接管链贯穿累计费用
+    ///（此前归零使续填重算最低佣金、purse 不足显式失败）。
+    pub filled_value: i64,
+    /// 累计成交数量（真实数量贯穿——存档链以此为准，价优下不可由
+    /// filled_value 反推）。
+    pub filled_qty: u32,
+    /// 累计实收费用分项（卖腿封顶分配/买腿审计面的续填基准）。
+    pub charged_commission: i64,
+    pub charged_stamp_tax: i64,
+    pub charged_transfer_fee: i64,
     /// D5 restore 链最后一层：受理事实已随此前世界交付（save 前的事件
     /// 历史含 Accepted——restore 重放即重复）。true=直入不记 Accepted
     /// 生命周期事实；false=live 构造期 adopt 形态（受理事实照记）。
@@ -197,6 +207,9 @@ pub struct DeskOrder {
     pub purse: i64,
     /// 累计成交额（分）。
     pub filled_value: i64,
+    /// 累计成交数量（Sol 五审件 1：真实数量贯穿——价优成交下
+    /// filled_value÷限价不可反推，存档/restore 链以此为准）。
+    pub filled_qty: u32,
     /// 卖腿累计实收费用（分项）。
     pub charged_commission: i64,
     /// 卖腿累计实收印花税。
@@ -483,6 +496,7 @@ impl DeskState {
                 h = fnv(h, o.qty as u64);
                 h = fnv(h, o.purse as u64);
                 h = fnv(h, o.filled_value as u64);
+                h = fnv(h, u64::from(o.filled_qty));
             }
         }
         h
@@ -920,6 +934,7 @@ impl DeskState {
             qty,
             purse,
             filled_value: 0,
+            filled_qty: 0,
             charged_commission: 0,
             charged_stamp_tax: 0,
             charged_transfer_fee: 0,
@@ -1217,12 +1232,14 @@ impl DeskState {
         // 应用到 taker/maker 副本（写回簿/订单）。
         if taker.side == Side::Buy {
             taker.filled_value += value;
+            taker.filled_qty += qty;
             taker.purse = buy_purse_after;
             taker.charged_commission += buy_fees.commission.cents();
             taker.charged_transfer_fee += buy_fees.transfer_fee.cents();
             taker.qty -= qty;
         } else {
             taker.filled_value = sell_filled_after;
+            taker.filled_qty += qty;
             taker.charged_commission += charged.commission.cents();
             taker.charged_stamp_tax += charged.stamp_tax.cents();
             taker.charged_transfer_fee += charged.transfer_fee.cents();
@@ -1232,12 +1249,14 @@ impl DeskState {
             let mut m = maker.clone();
             if m.side == Side::Buy {
                 m.filled_value += value;
+                m.filled_qty += qty;
                 m.purse = buy_purse_after;
                 m.charged_commission += buy_fees.commission.cents();
                 m.charged_transfer_fee += buy_fees.transfer_fee.cents();
                 m.qty -= qty;
             } else {
                 m.filled_value = sell_filled_after;
+                m.filled_qty += qty;
                 m.charged_commission += charged.commission.cents();
                 m.charged_stamp_tax += charged.stamp_tax.cents();
                 m.charged_transfer_fee += charged.transfer_fee.cents();
@@ -2329,10 +2348,13 @@ pub fn desk_main(
             price: seed.price,
             qty: seed.qty,
             purse: seed.purse,
-            filled_value: 0,
-            charged_commission: 0,
-            charged_stamp_tax: 0,
-            charged_transfer_fee: 0,
+            // Sol 五审件 1：累计事实随种子装载（此前归零使续填重算
+            /// 最低佣金——purse 不足/费用口径漂移）。
+            filled_value: seed.filled_value,
+            filled_qty: seed.filled_qty,
+            charged_commission: seed.charged_commission,
+            charged_stamp_tax: seed.charged_stamp_tax,
+            charged_transfer_fee: seed.charged_transfer_fee,
             expire_tick: initial_tick.saturating_add(state.setup.order_ttl_ticks),
         };
         if seed.accepted_delivered {
@@ -2462,6 +2484,7 @@ fn process_msg(
                             qty: order.qty,
                             purse: order.purse,
                             filled_value: order.filled_value,
+                            filled_qty: order.filled_qty,
                             charged_commission: order.charged_commission,
                             charged_stamp_tax: order.charged_stamp_tax,
                             charged_transfer_fee: order.charged_transfer_fee,

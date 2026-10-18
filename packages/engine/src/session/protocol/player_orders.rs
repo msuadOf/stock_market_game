@@ -52,7 +52,7 @@ impl crate::session::GameSession {
                 crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
             );
             for (code, mirror) in &self.state.desk_book_mirror {
-                for (owner, side, price, qty, serial, _) in &mirror.orders {
+                for (owner, side, price, qty, serial, _, _) in &mirror.orders {
                     if *owner != crate::AccountId(0) || *qty == 0 {
                         continue;
                     }

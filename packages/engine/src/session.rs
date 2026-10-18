@@ -3320,25 +3320,20 @@ impl GameSession {
                             mirror
                                 .orders
                                 .iter()
-                                .map(|(owner, side, price, qty, serial, fv)| {
-                                    // Sol 终审四审 A3：original/filled 按
-                                    /// 事实推算（限价单恒价）——此前 original=
-                                    /// 余量、filled=0（部分成交的 100 存成 75，
-                                    /// 事实损失）。余量 qty+成交量 filled=
-                                    /// 原始委托量；成交额除价=量（限价单）。
-                                    let filled_qty = if price.cents() > 0 {
-                                        u32::try_from(fv / price.cents()).unwrap_or(0)
-                                    } else {
-                                        0
-                                    };
+                                .map(|(owner, side, price, qty, serial, fv, fq)| {
+                                    // Sol 终审四审 A3→五审件 1 修正：
+                                    /// original=余量+**真实**成交量（desk
+                                    /// 权威计数——限价单允许价优成交，
+                                    /// 此前"成交额÷限价"换算在价优下
+                                    /// 失真：100@990 存成 99——判决反例）。
                                     Order {
                                         id: OrderId(*serial),
                                         owner: *owner,
                                         side: *side,
                                         price: *price,
                                         qty: *qty,
-                                        original_qty: qty.saturating_add(filled_qty),
-                                        filled_qty,
+                                        original_qty: qty.saturating_add(*fq),
+                                        filled_qty: *fq,
                                         filled_value: Money::from_cents(*fv),
                                         seq: *serial,
                                     }
@@ -3406,7 +3401,12 @@ impl GameSession {
                     .state
                     .desk_book_mirror
                     .values()
-                    .flat_map(|mirror| mirror.orders.iter().map(|(_, _, _, _, serial, _)| *serial))
+                    .flat_map(|mirror| {
+                        mirror
+                            .orders
+                            .iter()
+                            .map(|(_, _, _, _, serial, _, _)| *serial)
+                    })
                     .max()
                     .unwrap_or(0);
                 self.state.next_order_id.max(mirror_max.saturating_add(1))
@@ -3560,6 +3560,7 @@ impl GameSession {
                                     o.qty,
                                     o.id.0,
                                     o.filled_value.cents(),
+                                    o.filled_qty,
                                 )
                             })
                             .collect::<Vec<_>>()
@@ -5816,8 +5817,9 @@ mod committable_state_tests {
 }/// D5 attention：desk 簿镜像的单股条目（瞬态——install 段刷新）。
 #[derive(Clone, Debug, Default)]
 pub struct DeskBookMirror {
-    /// 在途单事实（owner/方向/价/余量/desk 序号/累计成交额）。
-    pub orders: Vec<(AccountId, Side, Money, u32, u64, i64)>,
+    /// 在途单事实（owner/方向/价/余量/desk 序号/累计成交额/累计成交量
+    /// ——Sol 五审件 1：真实成交量贯穿，价优下不可由成交额反推）。
+    pub orders: Vec<(AccountId, Side, Money, u32, u64, i64, u32)>,
     /// 最新价（desk 广播）。
     pub last_price: Money,
     /// 收盘竞价公开截点（老单 serial<截点公开；连续段=0）。

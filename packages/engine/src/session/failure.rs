@@ -848,6 +848,7 @@ impl GameSession {
                         fact.qty,
                         fact.order_serial,
                         fact.filled_value,
+                        fact.filled_qty,
                     ));
                 }
                 mirror.insert(
@@ -968,6 +969,7 @@ impl GameSession {
                                 fact.qty,
                                 fact.order_serial,
                                 fact.filled_value,
+                                fact.filled_qty,
                             ))
                         })
                         .collect::<Vec<_>>();
@@ -2203,7 +2205,9 @@ fn runtime_resting_envelope(
         /// 就此退役。
         limit: crate::money::Money::from_cents(fact.price),
         remaining_qty: fact.qty,
-        filled_qty: 0,
+        // Sol 五审件 1：真实成交量入审计（desk 权威计数——restore 侧
+        /// desk 种子/存档链的 filled_qty 源；此前恒 0）。
+        filled_qty: fact.filled_qty,
         filled_value: crate::money::Money::from_cents(fact.filled_value),
         nominal: crate::session::pipeline::FeeComponents {
             commission: nominal.commission,
