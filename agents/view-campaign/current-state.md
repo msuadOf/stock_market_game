@@ -254,3 +254,21 @@ spread 解（137→136——真源=消息链级联+load 扰动）；热窗减弱
 **1057.9**/mean 963——静置窗正式预期 1000-1100+。第 21 任指令模板
 （静置条件+命令+基线+判读）在 evidence/p2/sealtop/knife-c-taskset.txt。
 本任停手。
+
+## 第 21 任：登记项收口（2026-10-19 凌晨）
+
+七条登记项逐条处置（1 落地 / 6 维持登记——每条附结论依据）：
+
+| 登记项 | 处置 | 依据 |
+|---|---|---|
+| ensure_fact_owners_covered_arc 每拍值拷贝（sealtop 复核） | **落地 b271f9bd** | 覆盖校验核心抽 local 下标单源（ensure_fact_owners_covered_locals），Arc/值形态薄包装共享；判别面 p2_4a_arc_shard_cover_check_matches_value_form（正/负/None+与值形态错误逐字等价），突变红实证（短路版负例红）；双模式 1689/0/11 |
+| InlineVec pub 变体可见性（sealtop 复核） | 维持登记 | 收口牵连 GroupAccount→UpMsg→decision pub fn 整条 pub 可达链（runtime mod 必须保持 pub——apps/server 消费 step_runtime_enabled）；crate 外零消费者，无现实风险面。触发条件：engine 出现外部库消费时一并收 |
+| GroupDayDone state_hash O(N) tpd=1 边缘（Q2 复核） | 维持登记 | state_hash=Abort 回滚等价判据（正确性承载面非纯诊断）；增量哈希需 34 写点+undo 逆更新，断链即静默放行漂移（违背铁律 2 精神）；tpd=1 边缘形态现役口径无触发，单次日结 O(N)≈几十 μs 占比 <5% |
+| 首拍 force_full 全量往返（Q2 复核） | 维持登记 | 正确性必需：构造后 account_dirty_set 为空，首拍读 Seal 分片=装空镜像；全量往返=一次性成本（非每拍税），保守面无害 |
+| "Seal 后 desk 静止"前置无运行时守卫（candle 复核） | 维持登记 | 结构性保证已存在：DeskIn 仅 Place/CancelAll/Cancel——desk 纯输入驱动，Seal 后协调者无输入面即无演进；加守卫需给 desk 引入 Seal 感知（协议面改动）为不存在路径付税。未来协议引入 Seal 后 desk 演进（异步盘后处理类）时此登记升格为必做守卫项 |
+| 迟到 AcceptedBatch 日结转正语义（r20 复核） | 维持登记 | 保守方向语义决策已定（日结 Abort 冲回迟到受理）；正常路径无观察面 |
+| handle_start apply_deferred 冗余（r20 复核） | 维持登记 | 纵深防御保留（显式意图） |
+
+全量回归过程如实记：debug 首轮 1 failed（单发 flake 复跑绿）；release
+中间轮 npc_decisions_tests 家族 3 failed（既有登记的 npc rayon flake——
+隔离复跑 19/19 绿+全量复跑 1689/0/11 绿，高负载窗跨测试污染，不批改）。
