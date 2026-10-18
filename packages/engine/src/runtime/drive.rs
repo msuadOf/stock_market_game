@@ -1326,6 +1326,14 @@ impl RuntimeDriver {
             self.drained_events
                 .extend(project_lifecycle_events(&input, &mut self.next_seq));
         }
+        // Sol 六审段 1.2 取证修复：日结 Drain 的收盘竞价清算事件
+        ///（末拍 AuctionTick/AuctionCompleted——与旧管线日结拍竞价
+        /// 事件序列对齐；序：竞价事件先于撤单事件，与拍内投影同序）。
+        let drained_auction = std::mem::take(&mut self.world.drained_auction);
+        if !drained_auction.is_empty() {
+            let mut auction_events = project_auction_events(&drained_auction, &mut self.next_seq);
+            self.drained_events.append(&mut auction_events);
+        }
     }
 
     /// 日结失败全量回滚（Sol 二审修复集 2）：撤销 World 日结（Abort——
@@ -1349,6 +1357,24 @@ impl RuntimeDriver {
     /// 取日终清簿事件（清空式——调用方拼进 tick 帧或日结帧）。
     pub fn take_drained_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.drained_events)
+    }
+
+    /// Sol 六审段 1.2（事件序）：分离取走日结 drained 事件中的**竞价**
+    /// 事件（AuctionTick/AuctionCompleted——需先于 DayBoundary；余下
+    /// 撤单事件仍由 take_drained_events 按原序取走）。
+    pub fn take_drained_auction_events(&mut self) -> Vec<Event> {
+        let mut out = Vec::new();
+        self.drained_events.retain(|event| {
+            let is_auction = matches!(
+                event,
+                Event::AuctionTick { .. } | Event::AuctionCompleted { .. }
+            );
+            if is_auction {
+                out.push(event.clone());
+            }
+            !is_auction
+        });
+        out
     }
 
     /// 日结编排（runtime 市场侧 day 同步版）：runtime DayEnd → 会话

@@ -1914,9 +1914,24 @@ impl DeskState {
     }
 
     /// 竞价窗收束：产出指示价预演事实（AuctionTick——每轮虚拟撮合）。
+    /// Sol 六审段 1.2 取证修复（相位基准）：窗判定用**N−1 基准**
+    /// （phase_at(tick−1)——与 place() 的受理窗同式；此前 N 基准使
+    /// 收盘窗首受理拍多产一拍、日结拍误入新日开盘窗多产指示价——
+    /// step_skeleton 逐字段取证实证 a0/a3/a6 t17 多一条、t19 拍内
+    /// 多一条）。日结拍（tick%tpd==0）不产窗指示价——其竞价事件由
+    /// 日终 Drain 清算承载（AuctionTick+AuctionCompleted）。
     fn note_auction_indicative(&mut self, tick: u64) {
-        let phase = self.setup.phase_at(tick);
+        if tick % self.setup.ticks_per_day.max(1) == 0 {
+            return;
+        }
+        let phase = self.setup.phase_at(tick.saturating_sub(1));
         if phase != DeskPhase::CallAuction && phase != DeskPhase::ClosingAuction {
+            return;
+        }
+        // 开盘清算已完成的拍不再产申报窗指示价（09:25 清算后申报窗
+        /// 结束——旧管线同语义；此前清算拍多产一条尾随指示价，
+        /// step_skeleton 取证实证 a3 t1/a6 t3）。
+        if phase == DeskPhase::CallAuction && self.opening_cleared {
             return;
         }
         let orders: Vec<ClearingOrder> = self
@@ -2153,7 +2168,16 @@ impl DeskState {
 
     /// 强撤全部挂单（Drain 日终清簿）。收盘竞价先一次清算再清余单。
     fn drain_all(&mut self) -> Result<Option<(i64, u64)>, RuntimeError> {
-        if self.setup.phase_at(self.cur_tick) == DeskPhase::ClosingAuction && !self.opening_cleared
+        // Sol 六审段 1.2 取证修复（相位口径）：日结 Drain 拍的
+        /// phase_at 已翻入新日 tick0——收盘清算判定按**上一拍相位**
+        /// （phase_at(cur_tick−1)，与 place() 的受理窗 N−1 基准同式）
+        /// 且不与开盘清算共用 opening_cleared 标记（开盘已清算的局
+        /// 收盘 drain 会被误拦——a3 t19 Completed 缺失的第二根因）。
+        /// 此前按 phase_at(cur_tick)+!opening_cleared 判定使日结拍恒走
+        /// 强撤分支：末拍 AuctionTick/AuctionCompleted 全缺
+        /// （a0/a3/a6 t19 取证实证）。
+        if self.cur_tick > 0
+            && self.setup.phase_at(self.cur_tick - 1) == DeskPhase::ClosingAuction
         {
             self.opening_cleared = true;
             let orders: Vec<ClearingOrder> = self
@@ -2176,13 +2200,67 @@ impl DeskState {
             .map_err(|e| RuntimeError::ProtocolInvariant {
                 detail: format!("收盘清算选价失败：{e:?}"),
             })?;
+            // Sol 六审段 1.2 取证修复：收盘竞价 Drain 清算补齐竞价事件
+            /// 事实（末拍 AuctionTick 指示价 + AuctionCompleted——与
+            /// execute_opening_clearing 同形态；此前 Drain 清算只撮合
+            /// 不产事实，日结拍事件流缺 AuctionTick/Completed，与旧
+            /// 管线 finish 的末拍序列不一致——step_skeleton 逐字段
+            /// 取证实证 a0/a3 t19 缺两条）。
+            let (indicative, matched, imbalance) = match &selection {
+                Some(sel) => (Some(sel.price.cents()), sel.volume, sel.imbalance),
+                None => (None, 0, 0),
+            };
+            // 末次指示价预演（事实序：AuctionTick 先于 Completed——
+            /// 与开盘清算的 D4 注释同序）。
+            self.auction_facts.push(super::protocol::DeskAuctionFact {
+                stock: self.setup.stock,
+                tick: self.cur_tick,
+                phase: crate::TradingPhase::ClosingAuction,
+                indicative_price: indicative,
+                matched_volume: matched,
+                completed: false,
+                imbalance,
+            });
             if let Some(sel) = selection {
                 let price = sel.price.cents();
                 let actual = self.execute_clearing_at(price, sel.volume)?;
-                return Ok(Some((price, actual)));
+                self.auction_facts.push(super::protocol::DeskAuctionFact {
+                    stock: self.setup.stock,
+                    tick: self.cur_tick,
+                    phase: crate::TradingPhase::ClosingAuction,
+                    indicative_price: Some(price),
+                    matched_volume: actual,
+                    completed: true,
+                    imbalance: sel.imbalance,
+                });
+                let cleared = Ok(Some((price, actual)));
+                // 清算后**继续清余单**（收盘竞价一次清算后清簿——模块
+                /// 语义；此前清算分支提前 return 使余单跨日残留，
+                /// sol3r 余 100 不退回/closing_keeps bids 不空两测显红）。
+                self.drain_remaining_orders();
+                return cleared;
             }
+            // 空簿清算也产 Completed（清算发生、量恰为零——开盘清算
+            /// 空簿分支同语义）。
+            self.auction_facts.push(super::protocol::DeskAuctionFact {
+                stock: self.setup.stock,
+                tick: self.cur_tick,
+                phase: crate::TradingPhase::ClosingAuction,
+                indicative_price: None,
+                matched_volume: 0,
+                completed: true,
+                imbalance: 0,
+            });
+            self.drain_remaining_orders();
             return Ok(None);
         }
+        self.drain_remaining_orders();
+        Ok(None)
+    }
+
+    /// 清簿余单（撤单事实+实体回流——收盘清算后的余量与无竞价日的
+    /// 全簿同路径）。
+    fn drain_remaining_orders(&mut self) {
         let targets: Vec<DeskOrder> = self
             .bids
             .values()
@@ -2195,7 +2273,6 @@ impl DeskState {
             self.remove_order(&o);
             self.close_order_entities(&o);
         }
-        Ok(None)
     }
 
     /// K 线投影（回写 candle_book 用）。
@@ -2669,6 +2746,15 @@ fn process_msg(
                     fee_sink: state.fee_sink,
                     last_price: state.market.last_price,
                     drained_lifecycle: std::mem::take(&mut state.lifecycle_facts),
+                    // 只上行 **drain 自产**的收盘竞价事实——auction_facts
+                    /// 可能残留拍内窗指示价（日结拍相位窗的 CallAuction
+                    /// 指示价，其上行随拍内 DeskReport 承载或随 Abort 丢弃；
+                    /// 混入日结帧会造成事件双载）。
+                    drained_auction: state
+                        .auction_facts
+                        .drain(..)
+                        .filter(|f| f.phase == crate::TradingPhase::ClosingAuction)
+                        .collect(),
                 })
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),

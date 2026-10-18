@@ -157,17 +157,27 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
 // Keep each complete-day fixture independently bounded and runnable in parallel.
 #[test]
 fn characterization_complete_projection_without_opening_auction() {
-    assert_complete_projection(0, 14_183_549_150_061_140_820);
+    // Sol 六审段 1.2 重锚（逐字段取证后）：对齐批修复日结竞价事件序
+    /// （AuctionTick/AuctionCompleted 先于 DayBoundary、窗相位 N−1
+    /// 基准、drain 收盘清算事实上行——60/60 拍事件序列与基线零差，
+    /// 取证落盘 /tmp/forensic-final vs forensic-baseline）后，残余
+    /// 字节差=3 类已判表示面：desk serial 游标起点 0→1（v5 E 提交）、
+    /// desk_mirrored_resting 新键（runtime 形态标记）、收盘 cutoff
+    /// 跨日残留值 1（新日 CallAuction 窗全隐藏——值无消费面）。
+    /// 旧锚保留：14_183_549_150_061_140_820。
+    assert_complete_projection(0, 16_114_484_025_310_678_034);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
-    assert_complete_projection(3, 862_635_824_146_359_871);
+    // 同上重锚；旧锚保留：862_635_824_146_359_871。
+    assert_complete_projection(3, 15_244_279_962_941_296_384);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
-    assert_complete_projection(6, 7_784_286_686_475_819_964);
+    // 同上重锚；旧锚保留：7_784_286_686_475_819_964。
+    assert_complete_projection(6, 12_603_764_770_532_460_219);
 }
 
 #[test]

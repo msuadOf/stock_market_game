@@ -582,6 +582,10 @@ pub enum UpMsg {
         last_price: i64,
         /// 清簿撤单事实（OrderCanceled 映射输入）。
         drained_lifecycle: Vec<DeskLifecycleFact>,
+        /// Sol 六审段 1.2 取证修复：日结 Drain 的收盘竞价清算事实
+        ///（末拍 AuctionTick/AuctionCompleted——此前 Drain 只上行
+        /// lifecycle，竞价事实无人收集）。
+        drained_auction: Vec<DeskAuctionFact>,
     },
     /// 组日结完成（权益落账后的账户投影）。
     GroupDayDone {

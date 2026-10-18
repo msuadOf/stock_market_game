@@ -891,6 +891,15 @@ impl GameSession {
             // Sol 终审修复 1a：日结段的全部可失败出口统一走
             /// rollback+poison（此前 `?` 直出绕过回滚——day/candle/T+1
             /// 等已写域泄漏；判决 :883/:930 两处）。
+            // Sol 六审段 1.2 取证修复（事件序）：日结拍事件序=竞价事件
+            /// （收盘清算 AuctionTick/AuctionCompleted）先于 DayBoundary
+            /// ——与旧管线日结拍序列一致（此前 DayBoundary 先 push、
+            /// drained 竞价后 extend，序颠倒——step_skeleton 逐字段
+            /// 取证实证）。drained 撤单事件保持 DayBoundary 之后
+            ///（清簿语义属"日结后"面，与竞价清算不同）。故执行序：
+            /// 迁移（facts 收集不 push）→ world 日结（drain 事实收集）
+            /// → 竞价事件 → DayBoundary 事件。迁移先行仍满足"组内/
+            /// 计划事件日历以 session day 为准"（world 日结在迁移后）。
             let facts = match crate::session::pipeline::install_runtime_day_boundary(self) {
                 Ok(facts) => facts,
                 Err(fatal) => {
@@ -898,6 +907,14 @@ impl GameSession {
                     return Err(self.poison_runtime_step(fatal));
                 }
             };
+            if let Err(e) = driver.world_day_end_for_step() {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::day_end_world".to_owned(),
+                    description: e,
+                }));
+            }
+            events.extend(driver.take_drained_auction_events());
             for fact in facts {
                 // step_frame 接轨件 4：分配走驱动器游标（take_event_seq
                 /// 先加后取）再同步会话权威——此前直改 state.seq 而不推进
@@ -910,18 +927,6 @@ impl GameSession {
                     *event_seq = seq;
                 }
                 events.push(event);
-            }
-            // D5 日界·world 段在 session 日终迁移**之后**（组内/计划事件
-            /// 日历以 session day 为准——world 日结先跑会使组内事件落在
-            /// 新日而 session 迁移还携旧日，plan 事件序 precede 显红）。
-            /// desk 清簿后 envelope 重建为空集（下节），drained 撤单
-            /// 事件并入本拍事件流。
-            if let Err(e) = driver.world_day_end_for_step() {
-                self.rollback_runtime_step(baseline);
-                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::day_end_world".to_owned(),
-                    description: e,
-                }));
             }
             // P2 复核阻断 2：生产日结路径（此前仅手动 driver.day_end 设
             // force_full，生产 ends_day 段不设——组端 Drain 回流/

@@ -361,6 +361,8 @@ pub struct World {
     pub last_day_end_candidate: Option<DayEndCandidate>,
     /// 日终清簿撤单事实（驱动器事件拼装读取）。
     pub drained_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
+    /// Sol 六审段 1.2：日结 Drain 的收盘竞价清算事实（末拍事件源）。
+    pub drained_auction: Vec<super::protocol::DeskAuctionFact>,
     /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
     /// 自然日权威在会话 civil clock）。
     civil_date: crate::calendar::CivilDate,
@@ -686,6 +688,7 @@ impl World {
             capture_slot,
             last_day_end_candidate: None,
             drained_lifecycle: Vec::new(),
+            drained_auction: Vec::new(),
             civil_date: civil_start_date,
         })
     }
@@ -1755,9 +1758,12 @@ impl World {
                     fee_sink,
                     last_price,
                     drained_lifecycle,
+                    drained_auction,
                 } => {
                     desks.push((stock, fee_sink, last_price));
                     self.drained_lifecycle.extend(drained_lifecycle);
+                    // Sol 六审段 1.2：日结收盘竞价事实（末拍清算事件源）。
+                    self.drained_auction.extend(drained_auction);
                     drained += 1;
                 }
                 UpMsg::Failed { who, error } => {
