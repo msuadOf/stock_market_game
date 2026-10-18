@@ -1,0 +1,32 @@
+# Q2 批 3：账户稀疏分片随 SealAck 上行——EchoAccountsSparse 往返退役
+
+## 机制
+SealAck 增 accounts_sparse 字段；组端 handle_seal 在 apply_staging 后
+从 undo 日志收集账户面变体（Cash/Shares/ForeignActive/Frozen/CostBasis/
+EverHeld/PendingSell/BuyPurseHeld）构建分片（Seal 落账后 undo 集即本拍
+全部写点——**竞态根因（组报告时点批次在途）由 S4 不变量消除**——
+上一批撤回的根因闭合）。seal_round 收集→install_tick 进 PublishedTick.
+groups[].accounts；驱动器 acct 段读发布版本+ensure_fact_owners_covered
+覆盖校验（原 validate_sparse_echo_reply"缺项=Err"语义的等价物，请求集
+改述为本拍事实集）。**D2 退役**（account_dirty_prev 两拍并集——Seal
+同拍落账使跨拍滞后消失）。force_full（日结/首拍）仍走 EchoAccounts。
+
+## 测量（load 34 高负载窗——只登记；净机复测随批 4 统一做）
+- B 300：351.5/357.6/362.8 → mean 357.3（批 2 后 344.5/355.6——回升）
+- B 1000：751.0（批 2 后 747.7——acct 段 62μs 往返已退役，增益部分
+  被 Seal 消息税对冲）
+- A 3000：791.2（批 2 后 1124——**显著回退**！嫌疑：A 的 10 组形态下
+  组端 Seal 相位内分片构建（活跃决策账户 undo 集大）串行放大屏障税
+  ——高负载窗混杂，净机配对归因留待；若坐实，方向=分片构建移出
+  SealAck 临界路径（增量维护/或 SealcAck 先回执后补片））
+
+## 守卫与回归
+- p2_4a_sparse_echo_missing_item_fails_loud 改述覆盖校验负控（直击
+  ensure_fact_owners_covered：缺项 Err+None 恒过）。
+- p2_4a bitwise（稀疏 vs force_full 逐位）继续绿——分片同源。
+- 双模式全量 1673/0/11 双绿（一轮 npc_decisions flake 复跑绿）。
+- corrupt_sparse_echo_omit_last_for_test 旋钮成死代码（登记清理）。
+
+## 未尽项（批 4 处理）
+- D3 退役（unsettled_trades 字段删除+投影/补写/裁剪分支删）。
+- A 口径 Seal+分片税的净机归因与优化（屏障内构建移出）。

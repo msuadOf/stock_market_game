@@ -1642,8 +1642,8 @@ impl World {
                     evidence.entities_out = acc_entities_out;
                     // Q2 Seal 收尾确认：组 drain+落账（S4/S2）→SealAck
                     // 收齐 → install_tick（发布=提交=Abort 窗口关闭）。
-                    self.seal_round(tick, rounds)?;
-                    self.install_tick(tick, rounds, evidence, unsettled_trades);
+                    let seal_accounts = self.seal_round(tick, rounds)?;
+                    self.install_tick(tick, rounds, evidence, unsettled_trades, seal_accounts);
                     break;
                 }
             }
@@ -1662,7 +1662,17 @@ impl World {
     /// - **组端 Seal 处理失败**（Failed 上行=数据损坏类）：组 worker 已
     ///   退出——撤退收齐 Final + 标记死亡（与 converge_or_die 的
     ///   Failed 分支同式）。
-    fn seal_round(&mut self, tick: u64, round_final: u32) -> Result<(), RuntimeError> {
+    fn seal_round(
+        &mut self,
+        tick: u64,
+        round_final: u32,
+    ) -> Result<
+        Vec<(
+            GroupIdx,
+            std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>,
+        )>,
+        RuntimeError,
+    > {
         // 存活契约测试注入（one-shot）：模拟一次 SealAck 收集失败——
         // Abort 语义（worker 全存活，同 tick 重试成功）。
         #[cfg(test)]
@@ -1681,15 +1691,17 @@ impl World {
             }
         }
         let mut left = self.n_groups;
+        let mut seal_accounts = Vec::with_capacity(self.n_groups);
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog) {
-                Ok(UpMsg::SealAck { group, tick: t, .. }) => {
+                Ok(UpMsg::SealAck { group, tick: t, accounts_sparse, .. }) => {
                     if t != tick {
                         self.abort_tick(tick);
                         return Err(RuntimeError::ProtocolInvariant {
                             detail: format!("SealAck 错位：期望 tick={tick}，收到组 {group} tick={t}"),
                         });
                     }
+                    seal_accounts.push((group, accounts_sparse));
                     left -= 1;
                 }
                 Ok(UpMsg::Failed { who, error }) => {
@@ -1725,7 +1737,7 @@ impl World {
                 }
             }
         }
-        Ok(())
+        Ok(seal_accounts)
     }
 
     /// 收束一轮；TaskDied ⇒ 撤退 + 收齐 Final + join + `resume_unwind` 原 payload
@@ -1811,6 +1823,10 @@ impl World {
         rounds: u32,
         evidence: TickEvidence,
         unsettled_trades: Vec<super::protocol::DeskTradeFact>,
+        seal_accounts: Vec<(
+            GroupIdx,
+            std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>,
+        )>,
     ) {
         // tick 成功转正：清除可能残留的全局中止标记（上一次 Abort 已回滚收敛）。
         self.abort.store(false, Ordering::SeqCst);
@@ -1879,14 +1895,23 @@ impl World {
         ///（事件迁移时填充）。
         let group_shards: Vec<super::publication::GroupShard> = group_belief
             .into_iter()
-            .map(|(group, belief)| super::publication::GroupShard {
-                committed_hash: group_hashes
+            .map(|(group, belief)| {
+                // Q2 批 3：账户分片自 SealAck（Seal 落账后 undo 集口径）。
+                let accounts = seal_accounts
                     .iter()
                     .find(|(g, _)| *g == group)
-                    .map(|(_, h)| *h)
-                    .unwrap_or(0),
-                group,
-                belief,
+                    .map(|(_, a)| std::sync::Arc::clone(a))
+                    .unwrap_or_else(|| std::sync::Arc::new(Vec::new()));
+                super::publication::GroupShard {
+                    committed_hash: group_hashes
+                        .iter()
+                        .find(|(g, _)| *g == group)
+                        .map(|(_, h)| *h)
+                        .unwrap_or(0),
+                    group,
+                    belief,
+                    accounts,
+                }
             })
             .collect();
         self.publication.publish(std::sync::Arc::new(

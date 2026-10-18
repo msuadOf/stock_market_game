@@ -2897,82 +2897,52 @@ fn p2_4a_sparse_account_writeback_matches_force_full_bitwise() {
     assert_eq!(sparse_hash, full_hash, "期末业务哈希必须逐位一致");
     assert_eq!(sparse_events, full_events, "事件序列必须逐位一致");
 }
-
-/// P2-4a 显式失败守卫（铁律二）：组端稀疏回声回执缺项（红证注入通道
-/// 丢最后一项）时，生产步进必须以显式错误失败——不静默丢账户。
+/// Q2 批 3 改述：分片上行后"缺项"=组端 undo 集漏标（写点漏 undo push）。
+/// 判别面=驱动器覆盖校验 ensure_fact_owners_covered（本拍 desk 事实
+/// owner 必须在分片——缺=显式失败不静默装陈旧镜像）。负控直击校验
+/// 函数：事实 owner 不在分片必须 Err。
 #[test]
 fn p2_4a_sparse_echo_missing_item_fails_loud() {
-    let mut setup = setup_fixture();
-    setup.npcs.retail_count = 4;
-    setup.auction_ticks = 1;
-    let mut session = GameSession::new(setup, 21).expect("会话构造");
-    let seller = [crate::AccountId(1), crate::AccountId(2)]
-        .into_iter()
-        .find(|id| {
-            session
-                .account(*id)
-                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
-        })
-        .expect("至少一个 NPC 开局持有股 0");
-    let buyer = if seller == crate::AccountId(1) {
-        crate::AccountId(2)
-    } else {
-        crate::AccountId(1)
+    use crate::runtime::drive::ensure_fact_owners_covered;
+    use crate::runtime::world::TickRecord;
+    let record = TickRecord {
+        tick: 1,
+        rounds: 0,
+        group_hashes: Vec::new(),
+        desk_hashes: Vec::new(),
+        desk_resting: Vec::new(),
+        desk_trades: vec![crate::runtime::protocol::DeskTradeFact {
+            stock: 0,
+            price: 1000,
+            qty: 100,
+            maker: (0u16, 0u32),
+            taker: (0u16, 3u32),
+            taker_side: crate::orderbook::Side::Buy,
+            maker_fees_cents: 0,
+            taker_fees_cents: 0,
+            maker_order_serial: 1,
+            taker_order_serial: 2,
+        }],
+        unsettled_trades: Vec::new(),
+        desk_lifecycle: Vec::new(),
+        desk_receipts: Vec::new(),
+        group_rejections: Vec::new(),
+        desk_auction: Vec::new(),
     };
-    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
-    driver.adopt_session_seq(&session);
-    // 走一拍建立基线（force_full 构造默认），再打开缺项注入。
-    let intents = || {
-        vec![
-            crate::session::ReceiptBearingIntent {
-                owner: buyer,
-                intent: crate::Intent::PlaceLimit {
-                    code: crate::StockId(0),
-                    side: crate::orderbook::Side::Buy,
-                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
-                    qty: 100,
-                },
-                account_ordinal: 0,
-                stock_ordinal: 0,
-            },
-            crate::session::ReceiptBearingIntent {
-                owner: seller,
-                intent: crate::Intent::PlaceLimit {
-                    code: crate::StockId(0),
-                    side: crate::orderbook::Side::Sell,
-                    price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
-                    qty: 100,
-                },
-                account_ordinal: 0,
-                stock_ordinal: 0,
-            },
-        ]
-    };
-    let upper: Vec<i64> = driver
-        .world_public_views()
-        .iter()
-        .map(|v| v.daily_upper_limit)
-        .collect();
-    driver
-        .inject_player_intents(&intents(), &upper)
-        .expect("意图注入");
-    driver
-        .step_frame_equivalent(&mut session)
-        .expect("首拍步进");
-    driver.install_market_views(&mut session).expect("行情安装");
-    driver.install_candles(&mut session).expect("K 安装");
-    // 打开组端缺项注入（丢稀疏回执最后一项）——下一拍 dirty 集非空
-    //（上一拍成交+本拍再成交），稀疏回声必然被请求。
-    driver.corrupt_sparse_echo_omit_last_for_test();
-    driver
-        .inject_player_intents(&intents(), &upper)
-        .expect("意图注入");
-    let outcome = driver.step_frame_equivalent(&mut session);
-    let err = outcome.expect_err("缺项回声必须显式失败（不静默丢账户）");
+    // 分片只含 local 0（maker）——taker local 3 缺项必须显式失败。
+    let snapshots: Vec<Vec<(crate::runtime::LocalIdx, crate::runtime::group::GroupAccount)>> =
+        vec![vec![(
+            0,
+            crate::runtime::group::GroupAccount::new(1_000_000, 1),
+        )]];
+    let err = ensure_fact_owners_covered(Some(&record), &snapshots, 8)
+        .expect_err("缺项必须显式失败（不静默丢账户）");
     assert!(
-        format!("{err}").contains("稀疏回声"),
-        "错误必须指明稀疏回声缺项（got: {err}）"
+        format!("{err}").contains("分片缺项"),
+        "错误必须指明分片缺项（got: {err}）"
     );
+    // 全量形态（None 记录）恒过。
+    assert!(ensure_fact_owners_covered(None, &snapshots, 8).is_ok());
 }
 
 /// P2-4b 等价守卫辅助：同 fixture 同种子经 session 侧 step_via_runtime

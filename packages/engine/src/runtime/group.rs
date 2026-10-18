@@ -5263,11 +5263,44 @@ pub fn group_main(
                 let final_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick ^ ((round_final as u64) << 32))
                     .wrapping_mul(0x100000001b3)
                     ^ (state.undo.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                // Q2 批 3：账户稀疏分片随 SealAck 上行——Seal 落账后
+                /// undo 集即本拍全部账户写点（决策扣除+全部轮成交+退款
+                /// 终结；staging 已 drain 落账）。竞态根因（组报告时点
+                /// 批次在途）由 Seal 的 S4 不变量消除。
+                let mut account_dirty: std::collections::BTreeSet<u32> = Default::default();
+                for entry in &state.undo {
+                    match entry {
+                        GroupUndo::Cash { local, .. }
+                        | GroupUndo::Shares { local, .. }
+                        | GroupUndo::ForeignActive { local, .. }
+                        | GroupUndo::Frozen { local, .. }
+                        | GroupUndo::CostBasis { local, .. }
+                        | GroupUndo::EverHeld { local, .. }
+                        | GroupUndo::PendingSell { local, .. }
+                        | GroupUndo::BuyPurseHeld { local, .. } => {
+                            account_dirty.insert(*local);
+                        }
+                        GroupUndo::NextDue { .. }
+                        | GroupUndo::Personal { .. }
+                        | GroupUndo::PlanBook { .. }
+                        | GroupUndo::ChildInFlight { .. } => {}
+                    }
+                }
+                let accounts_sparse: Vec<(_, _)> = account_dirty
+                    .into_iter()
+                    .filter_map(|local| {
+                        state
+                            .accounts
+                            .get(local as usize)
+                            .map(|acct| (local as LocalIdx, acct.clone()))
+                    })
+                    .collect();
                 if up_tx
                     .send(UpMsg::SealAck {
                         group: state.group,
                         tick,
                         final_hash,
+                        accounts_sparse: std::sync::Arc::new(accounts_sparse),
                     })
                     .is_err()
                 {

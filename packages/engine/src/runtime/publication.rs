@@ -58,6 +58,9 @@ pub struct GroupShard {
             super::world::BeliefParticipantSnapshot,
         )>,
     >,
+    /// Q2 批 3：账户稀疏条目（SealAck 上行——Seal 落账后 undo 集口径；
+    /// 替代驱动器 EchoAccountsSparse 往返；全量读面走 EchoAccounts）。
+    pub accounts: std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>,
 }
 
 /// 本拍事件段（P2 填充——R4 事件身份/seq/交付缓冲语义不变）。

@@ -20,6 +20,58 @@ use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
 
+
+/// Q2 批 3：账户分片覆盖校验——本拍 desk 事实（成交双腿/生命周期/回执）
+/// 的每个 owner 必须在对应组分片中（组端 undo 集漏标即红——不静默装
+/// 陈旧镜像；原 validate_sparse_echo_reply"缺项=RuntimeError"语义的
+/// 等价物，请求集改述为本拍事实集）。独立自由函数供负控单测直击。
+pub(crate) fn ensure_fact_owners_covered(
+    fact_rec: Option<&super::world::TickRecord>,
+    snapshots: &[Vec<(super::LocalIdx, super::group::GroupAccount)>],
+    accounts_per_group: usize,
+) -> Result<(), String> {
+    let Some(rec) = fact_rec else {
+        return Ok(());
+    };
+    let mut covered: Vec<Vec<bool>> = snapshots
+        .iter()
+        .map(|group| {
+            let mut flags = vec![false; accounts_per_group];
+            for (local, _) in group {
+                if let Some(flag) = flags.get_mut(*local as usize) {
+                    *flag = true;
+                }
+            }
+            flags
+        })
+        .collect();
+    let mut check = |owner: crate::runtime::Owner, what: &str| -> Result<(), String> {
+        let (g, local) = (owner.0 as usize, owner.1 as usize);
+        let ok = covered
+            .get(g)
+            .and_then(|flags| flags.get(local))
+            .copied()
+            .unwrap_or(false);
+        if !ok {
+            return Err(format!(
+                "账户分片缺项（组端 undo 集漏标？）：{what} owner=(g={g}, local={local}) 不在分片"
+            ));
+        }
+        Ok(())
+    };
+    for fact in &rec.desk_trades {
+        check(fact.maker, "成交 maker")?;
+        check(fact.taker, "成交 taker")?;
+    }
+    for fact in &rec.desk_lifecycle {
+        check(fact.owner, "生命周期")?;
+    }
+    for fact in &rec.desk_receipts {
+        check(fact.owner, "回执")?;
+    }
+    Ok(())
+}
+
 /// 常驻 runtime 驱动器。
 pub struct RuntimeDriver {
     world: World,
@@ -37,9 +89,6 @@ pub struct RuntimeDriver {
     /// 次数——守卫测试断言"安装数==dirty 位计数"（全量重装突变即红）。
     #[cfg(test)]
     personal_installs: u64,
-    /// P2-1b 账户回写 dirty 状态：上一 tick 事实 owner 集（组端 staging
-    /// 落账滞后一拍——fill owner 的整值同步发生在下一拍，两拍并集覆盖）。
-    account_dirty_prev: Vec<bool>,
     /// P2-1b：日结（Drain/T+1/AdminBatch 改账户但无逐账户事实事件）后
     /// 置 true——下一 step 全量回写一次（低频路径，语义安全优先）。
     /// P2 复核阻断 2 后改 pub(crate)：生产日结路径（session/failure.rs
@@ -444,7 +493,6 @@ impl RuntimeDriver {
             next_seq: 0,
             #[cfg(test)]
             personal_installs: 0,
-            account_dirty_prev: Vec::new(),
             // 首拍全量（初始镜像同步——构造后首 step 建立 session 侧
             /// 组权威镜像基线；此后按事实 dirty 增量）。
             force_full_accounts: true,
@@ -590,100 +638,61 @@ impl RuntimeDriver {
         // 期间 qty=0 条目由 ever_held 保留观察面，权益/目标量读面已含
         // 在途（Sol 整改 3 组侧收口——回写侧不再加回，避免 session 旧
         // 管线代码读到双计）。
-        // P2-1b：账户回写 dirty 过滤——只重写"本 tick 事实 owner ∪ 上一
-        /// tick 事实 owner"（组端 staging 落账滞后一拍，两拍并集覆盖；
-        /// 多装等值无害，漏装才会镜像陈旧）∪ 日结强制全量（Drain/T+1/
-        /// AdminBatch 无逐账户事实事件）。等价不变式：非 dirty ⇒ 组端
-        /// 账户==session 镜像（首拍全量建立基线后，两侧只经事实通道
-        /// 同步）。省每 tick 全名册 positions 深拷贝回写。
+        // Q2 批 3（视图内生战役）：账户稀疏分片随 SealAck 上行（Seal
+        /// 落账后 undo 集口径——决策扣除/全部轮成交/退款终结全含；
+        /// acct 竞态根因由 Seal 的 S4 不变量消除）。驱动器读发布版本，
+        /// EchoAccountsSparse 独立往返退役；覆盖校验承接原"缺项=
+        /// RuntimeError"语义（请求集改述为本拍事实集）。全量读面
+        ///（force_full/日结/调试）仍走 EchoAccounts。
         let fact_rec = self.world.report_log.last().cloned();
-        let roster = self.id_map.len();
-        // 【P0 画像】acct_echo_collect 段（D1 EchoAccounts：dirty 标记 +
-        /// 稀疏/全量账户快照上行收集；fact_rec 的 clone 归 remainder——
-        /// 事件面 R4 必留，不属可删链）。
-        let (dirty_now, snapshots) = {
+        let _ = self.id_map.len();
+        // 【P0 画像】acct_echo_collect 段（残余=发布版本分片重组；
+        /// fact_rec 的 clone 归 remainder——事件面 R4 必留）。
+        let snapshots = {
             let _seg = step_profile::scope(StepSegment::AcctEchoCollect);
-            let mut dirty_now: Vec<bool> = vec![false; roster];
-            let mark = |dirty: &mut Vec<bool>, owner: crate::runtime::Owner| {
-                let idx = owner.0 as usize * self.accounts_per_group + owner.1 as usize;
-                if let Some(flag) = dirty.get_mut(idx) {
-                    *flag = true;
-                }
-            };
-            if let Some(rec) = &fact_rec {
-                for fact in &rec.desk_trades {
-                    mark(&mut dirty_now, fact.maker);
-                    mark(&mut dirty_now, fact.taker);
-                }
-                for fact in &rec.desk_lifecycle {
-                    mark(&mut dirty_now, fact.owner);
-                }
-                for fact in &rec.desk_receipts {
-                    mark(&mut dirty_now, fact.owner);
-                }
-            }
             let skip_all = !self.force_full_accounts;
-            let dirty_union: Vec<bool> = if skip_all {
-                dirty_now
-                    .iter()
-                    .zip(self.account_dirty_prev.iter().chain(std::iter::repeat(&false)))
-                    .map(|(a, b)| *a || *b)
-                    .collect()
-            } else {
-                vec![true; roster]
-            };
-        // P2-4a：账户回声稀疏化——P2-1b 只稀疏化了**写回**，读面仍是
-        /// 每拍全名册回声（组端 20000×8 堆 Vec 克隆 + 主线程全量 drop
-        /// 的双热点：组线程 Vec::clone+memmove ≈17%、主线程
-        /// drop_in_place≈10% 样本）。非 force_full 拍只请求 dirty 账户
-        /// ——取回的恰是原来要写的同一批值，逐位等价由构造保证（守卫
-        /// p2_4a_sparse_account_writeback_matches_force_full_bitwise：
-        /// 稀疏 vs 每拍 force_full 全量两条运行期末哈希+事件序列逐位
-        /// 一致）；回执集与请求集的精确一致由收集端校验（缺项
-        /// =RuntimeError 不静默）。全量读面（调试纵切/日结）用
-        /// EchoAccounts 不变。
-        let snapshots: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> = if skip_all {
-            let n_groups = self.world.n_groups();
-            let mut wanted: Vec<Vec<super::LocalIdx>> = vec![Vec::new(); n_groups];
-            for (global, &dirty) in dirty_union.iter().enumerate() {
-                if !dirty {
-                    continue;
-                }
-                // 与 mark 同式映射：global = g*accounts_per_group + local。
-                let g = global / self.accounts_per_group.max(1);
-                let local = global % self.accounts_per_group.max(1);
-                let Some(slot) = wanted.get_mut(g) else {
+            if skip_all {
+                let published = self.world.publication().load();
+                if published.tick != self.world.global.committed_tick {
                     return Err(format!(
-                        "账户回写 dirty 位越界：global={global} → 组 {g} 不存在（组数 {n_groups}，每组 {}）",
-                        self.accounts_per_group
+                        "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                        published.tick, self.world.global.committed_tick
                     ));
-                };
-                slot.push(local as super::LocalIdx);
+                }
+                let n_groups = self.world.n_groups();
+                let mut pairs: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> =
+                    vec![Vec::new(); n_groups];
+                for shard in &published.groups {
+                    let Some(slot) = pairs.get_mut(shard.group as usize) else {
+                        return Err(format!(
+                            "账户分片组号越界：g={}（组数 {n_groups}）",
+                            shard.group
+                        ));
+                    };
+                    *slot = shard.accounts.iter().cloned().collect();
+                }
+                ensure_fact_owners_covered(fact_rec.as_ref(), &pairs, self.accounts_per_group)?;
+                pairs
+            } else {
+                // 日结/首拍全量（EchoAccounts 全量读面不变）——转 (组,
+                // 下标) 对形态与稀疏路径共用回写循环。
+                let dense = self
+                    .world
+                    .snapshot_accounts()
+                    .map_err(|e| format!("账户快照失败：{e:?}"))?;
+                let mut pairs = vec![Vec::new(); self.world.n_groups()];
+                for (g, accounts) in dense {
+                    let slot = pairs
+                        .get_mut(g as usize)
+                        .ok_or_else(|| format!("全量账户快照组号越界：g={g}"))?;
+                    *slot = accounts
+                        .into_iter()
+                        .enumerate()
+                        .map(|(local, acct)| (local as super::LocalIdx, acct))
+                        .collect();
+                }
+                pairs
             }
-            self.world
-                .snapshot_accounts_sparse(&wanted)
-                .map_err(|e| format!("稀疏账户回声收集失败：{e:?}"))?
-        } else {
-            // 日结/首拍全量（EchoAccounts 全量读面不变）——转 (组, 下标)
-            /// 对形态与稀疏路径共用回写循环。
-            let dense = self
-                .world
-                .snapshot_accounts()
-                .map_err(|e| format!("账户快照失败：{e:?}"))?;
-            let mut pairs = vec![Vec::new(); self.world.n_groups()];
-            for (g, accounts) in dense {
-                let slot = pairs
-                    .get_mut(g as usize)
-                    .ok_or_else(|| format!("全量账户快照组号越界：g={g}"))?;
-                *slot = accounts
-                    .into_iter()
-                    .enumerate()
-                    .map(|(local, acct)| (local as super::LocalIdx, acct))
-                    .collect();
-            }
-            pairs
-            };
-            (dirty_now, snapshots)
         };
         // 【P0 画像】acct_writeback 段（session 镜像回写循环）。
         {
@@ -777,7 +786,6 @@ impl RuntimeDriver {
             }
             // P2-1b：本 tick 事实集传下一拍（并集自身不传递——否则一旦
             // dirty 永远 dirty）；日结强制标记在此消费（本次已全量）。
-            self.account_dirty_prev = dirty_now;
             self.force_full_accounts = false;
         }
         // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
