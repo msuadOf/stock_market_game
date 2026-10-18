@@ -1,8 +1,26 @@
 # MEMORY.md
 
 - [协作分工模式](feedback_collaboration_mode.md) — 主 agent 只对话协调，开发交给 subagent，允许二级 agent
-- [engine 1000x 性能主线](project_engine_perf_1000x.md) — 16核 ~220x→1000x，worktree .worktree/engine-max-performance，台账 current-state.md
+- [团队角色配置](project_team_operating_model.md) — 角色唯一权威=仓库根ROLE.md（上司/Leader/Astra/Luna/员工/Haiku实习生），勿他处复制
+- [engine 1000x 性能主线](project_engine_perf_1000x.md) — 现状：std-thread 迁移已完成+性能恢复战役 A 1358/B 118.7-121.1（~28×）第14任续推；里程碑 tag 链已打；收尾队列在文件内
 - [不用 /tmp](feedback_no_tmp_dir.md) — 产物放工作区 .tmp/（perf 主线：.worktree/engine-max-performance/.tmp/）
 - [大白话汇报](feedback_plain_language.md) — 结论要让外行看懂："通过什么方式达成什么结果"，不堆术语
 - [不需要确定性](feedback_no_determinism.md) — 并发下不要求可复现，16 线程结果不一致不算 bug
 - [无版本概念](feedback_no_versions.md) — 不用 v1/v2，一切可破坏性修改，不考虑兼容性
+- [基准独占全机](feedback_benchmark_exclusivity.md) — 正式基准期间其他 agent 一律暂停，核段隔离不能防测量污染
+- [Engine 无字符串](project_engine_string_free.md) — 用户设计决策：核心运行时零 String，标识数值化、错误结构化，字符串只留边界
+- [禁止 git add -A](feedback_no_git_add_all.md) — 提交用显式 pathspec；工作区常驻外来文件，范围失控会夹带（已两次事故）
+- [负结果先归因](feedback_negative_result_attribution.md) — 无收益≠方向死：先核查机制是否真生效/是否打中成本/测量公平，与用户讨论后才关闭
+- [worktree 独占](feedback_worktree_exclusivity.md) — 主工作区同一时间一个实现 agent；并行 agent 只在自己 worktree 跑 git，主区只许写 .tmp 产物
+- [并行参数不写死](feedback_no_hardcoded_parallelism.md) — worker 数按负载自适应（扩到 50~100 股/128 核），任务交 OS 调度，不许经验魔数
+- [并发撮合规则](project_concurrent_matching_policy.md) — 取消价格优先与固定赢家；跨 tick 同价老单先后待对照测量
+- [同价赢家分层](project_same_price_winner_policy.md) — tick内任意（已定）/组间FIFO组=1~N tick（默认）/完全任意（严重修改需批准）
+- [机械任务用 Haiku](feedback_haiku_for_mechanical.md) — Haiku实习生规则唯一来源=仓库根ROLE.md，此为指针
+- [否定前先验证](feedback_verify_before_reject.md) — 并行失败≠方向死，先用Codex astra交叉验证代码和测试，深究并发模型
+- [资源实体模型](project_resource_entity_model.md) — 现金/持仓做可转移实体，NPC→交易部→NPC 所有权流动，消除共享写
+- [带数据来决策](feedback_data_driven_decisions.md) — 需要用户拍板时先做实验拿数据，不空口问；实验做完不停
+- [长跑agent轮换](feedback_long_run_agent_rotation.md) — 实现 agent 连跑 10+ 增量出现报告失实即换人；报告逐条注出处日志
+- [不允许池宽封顶](feedback_no_pool_width_cap.md) — 128=真实128线程池不许缩；宽度税止步A+B；rayon硬编码如实登记
+- [std-thread迁移](project_std_thread_migration.md) — 一股一持久线程+内联决策；代码本体无线程数概念；CPU限制走OS级（cgroup/taskset）
+- [NPC分组+放松延迟](project_npc_grouping_relaxed_latency.md) — 备选方案：NPC分组线程+决策→执行延迟1~2tick；基础迁移后视性能再试
+- [两阶段循环模型](project_two_phase_loop_model.md) — 用户判定：tick=决策∥→撮合∥+commit前同步；多核倒退=并行模型不对；一股一核
