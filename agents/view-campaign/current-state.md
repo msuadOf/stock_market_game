@@ -170,3 +170,17 @@ tpd=1 边缘/首拍 force_full）。
 
 **本任复核**：fork 独立复核已发（四提交），结果见 reviews/（归来后
 补录）。事故与教训：无（regex 批删改用 python 括号配对+逐轮编译门禁）。
+
+## 第 20 任收尾（复核+登记项清理）
+
+- **独立复核**（reviews/independent-review-r20.txt）：**无阻断**。2 条
+  登记级建议：①迟到 AcceptedBatch 的 undo 在日结转正后落入保留段=
+  日结 Abort 现在会冲回迟到受理（原版不可冲回——**保守方向语义决策**，
+  正常路径无观察面，特此登记）；②handle_start 防御性 apply_deferred
+  冗余留作纵深。
+- **登记项清理**（fb869ede）：死旋钮 corrupt_sparse_echo_omit_last
+  四件面类型级删除（P2-4a 红证测试随 Q2 批 3 退役后零消费者）。
+- wasm check 通过；双模式 1675/0/11 ×2（本任全程）。
+
+**继承登记项（第 21 任）**：组端 Seal Failed 注入测试；GroupDayDone
+O(N) 哈希 tpd=1 边缘；首拍 force_full 保守面。
