@@ -5,6 +5,14 @@
 //! 本探针每 tick 走 session 侧安装链（install_market_views/install_candles/
 //! 个人态回写/信封投影）。守恒判据对齐 s5 探针形态（终态对账）。
 //!
+//! **测量口径协议（协调者裁决 2026-10-19，双报）**：一次性冷启动
+//!（World/线程 spawn 构造+jemalloc 预热+缺页集中）≈330ms——1000 tick
+//! 口径摊 330μs/tick（**27% 税**），3000 tick 摊 110μs。**正式数字以
+//! 3000 tick 为主口径**；短局（≤1000 tick）数字必须附注冷启动摊销，
+//! 不得与 3000 tick 口径直比。依据：agents/view-campaign/evidence/
+//! p2/sealtop/b-profile-3000.txt（X≈330ms 实测：1000 tick wall−step=330、
+//! 3000 tick=112，摊薄关系成立）。
+//!
 //! 用法：driver_semantics_probe <setup.json> <ticks> <runtime_groups>
 //!（ENGINE_STEP_RUNTIME=1 运行；批 9 A6 起 threads 参数退役——CPU 约束
 //! 走 OS 级 cgroup/taskset）。
