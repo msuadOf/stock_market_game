@@ -207,3 +207,19 @@ belief 72.8 / retail 19 / acct_writeback 12 / acct_echo_collect 11。
 换向合并/COW，需新报批）②belief 深刀（72.8μs=cache clone+session
 内部——Arc 化条目协议面或容器整态化，负担递增评估）③剩余登记项
 （GroupDayDone O(N) tpd=1 边缘/首拍 force_full 保守面/复核前置条件①）。
+
+## 第 20 任续 3：Seal 地板分解+验证批（2026-10-19 夜末）
+
+| 提交 | 内容 | 数据 |
+|---|---|---|
+| 198fd2d1 | Seal 地板插桩+攻顶设计报批（归因修正：长尾非协议固有） | 链路 17-18μs；spread 219-261μs；组端 2/19/154-156μs（G=10）、4/42/191（G=5） |
+| 0106b712 | 验证批：H1/H2 排除+H3 实锤——设计稿 §3 更新选刀 A-1' | 组 0（唯一活跃组）handle 241μs=分片 226μs（7-Vec 深拷贝×活跃集）；drain 恒 0（等待窗消化完全——分域按设计工作）；闲组 2.5-7.9μs |
+
+**A 主线新推算**：刀 A-1'（GroupAccount 7 Vec 域 SmallVec 内联化——
+现有全部 fixture 股数 ≤5 恒内联，clone=栈拷贝零堆分配；零依赖手写
+优先，smallvec 需 ADR）——H3 226μs 全消 ⇒ 长尾组 241→~15μs ⇒
+**A 890-913→~1090-1180，单刀触 1100 线**。等协调者批复
+plans/seal-floor-decomposition-design.md（数据节已按验证批更新）。
+
+第 21 任接手面：①Seal 攻顶批（批后按 §3 刀 A-1'）②belief 深刀
+（72.8μs）③剩余登记项+复核前置条件（"Seal 后 desk 静止"协议前置）。
