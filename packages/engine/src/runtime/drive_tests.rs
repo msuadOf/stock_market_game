@@ -2987,57 +2987,46 @@ fn p2_4b_run(force_full_envelope: bool) -> (crate::session::StateHash, Vec<Strin
     setup.npcs.retail_count = 4;
     setup.auction_ticks = 1;
     let mut game = GameSession::new(setup, 21).expect("会话构造");
-    let seller = [crate::AccountId(1), crate::AccountId(2)]
+    // Sol 终审四审 p2_4b 判型修正（探针实证）：desk 自成交硬排除（分歧
+    /// 台账 A3）下卖腿与挂单买腿**必须不同账户**——此前 seller 与
+    /// resting_owner 可选同一账户（seed 21 下同为 (0,2)），卖单永不吃
+    /// 800 买、Changed 面恒零；t2-4 buyer 腿现金不足被组端静默跳过，
+    /// 连续窗整体失效。重写角色约束：不相交 + 卖量（7×100 股）与
+    /// 800 买 worst purse（≈81 万分）双阈值。
+    let (seller, resting_owner) = [1u64, 2, 3, 4]
         .into_iter()
-        .find(|id| {
-            game.account(*id)
-                .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 100)
+        .flat_map(|s| [1u64, 2, 3, 4].into_iter().map(move |r| (s, r)))
+        .find(|(s, r)| {
+            s != r
+                && game
+                    .account(crate::AccountId(*s))
+                    .is_some_and(|a| a.sellable_qty(&crate::StockId(0)) >= 700)
+                && game.account(crate::AccountId(*r)).is_some_and(|a| {
+                    a.sellable_qty(&crate::StockId(1)) >= 100 && a.cash().cents() >= 900_000
+                })
         })
-        .expect("至少一个 NPC 开局持有股 0");
-    let buyer = if seller == crate::AccountId(1) {
-        crate::AccountId(2)
-    } else {
-        crate::AccountId(1)
-    };
-    let resting_owner = [crate::AccountId(1), crate::AccountId(2), crate::AccountId(3)]
-        .into_iter()
-        .find(|id| {
-            game.account(*id).is_some_and(|a| {
-                // 判别面前置：t==5 的 800 股限价买 purse ≈ 81 万分（涨停
-                // 1100 保护价×1.001 费率上限）——现金须覆盖，否则组端
-                // 静默跳过、Changed 面消失。
-                a.sellable_qty(&crate::StockId(1)) >= 100
-                    && a.cash().cents() >= 900_000
-            })
-        })
-        .expect("至少一个 NPC 开局持有股 1 且现金 ≥90 万分");
+        .map(|(s, r)| (crate::AccountId(s), crate::AccountId(r)))
+        .expect("须存在不相交的 (持股 0 ≥700, 持股 1 且现金 ≥90 万分) NPC 对");
     crate::runtime::drive::RESTING_DELTA_FACE_COUNTS.with(|slot| {
         *slot.borrow_mut() = Some(std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0))))
     });
     let mut digest = Vec::new();
     let mut resting_order_id: Option<crate::OrderId> = None;
     for t in 1..=11u64 {
-        // 逐拍成交驱动：t2-t4 买卖交叉；t5 起卖腿持续对 t==5 挂出的
-        /// 800 股限价买逐拍部分成交（Changed 面每拍发生且**期末仍在册**
-        ///——中间态被期末对账吞掉的教训：瞬时 Changed 单期末已清空，
-        /// 跳过更新不改变终态）。
-        let mut intents: Vec<(crate::AccountId, crate::Intent)> = vec![(
-            seller,
-            crate::Intent::PlaceLimit {
-                code: crate::StockId(0),
-                side: crate::orderbook::Side::Sell,
-                price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
-                    1000,
-                )),
-                qty: 100,
-            },
-        )];
-        if (2..=4).contains(&t) {
+        // 逐拍成交驱动（Sol 终审四审节奏重排）：t2-t5 卖腿挂 @1000 累积
+        /// 卖盘（Added 面）；t5 的 800 股限价买一拍吃掉全部站簿卖盘
+        /// （Removed 面）后余量在簿；t6/8/10 卖腿逐拍部分成交（Changed
+        /// 面——期末余量 800−400−300=100 仍在册：中间态被期末对账吞掉
+        /// 的教训，瞬时 Changed 单期末已清空则跳过更新不改变终态）。
+        /// 卖腿与挂单买腿分属 seller/resting_owner 两账户（A3 自成交
+        /// 硬排除——同账户不撮合）。
+        let mut intents: Vec<(crate::AccountId, crate::Intent)> = Vec::new();
+        if t == 2 || t == 3 || t == 4 || t == 5 || t == 6 || t == 8 || t == 10 {
             intents.push((
-                buyer,
+                seller,
                 crate::Intent::PlaceLimit {
                     code: crate::StockId(0),
-                    side: crate::orderbook::Side::Buy,
+                    side: crate::orderbook::Side::Sell,
                     price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
                         1000,
                     )),
