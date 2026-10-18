@@ -1746,6 +1746,8 @@ impl World {
         self.global.events_installed += evidence.entities_out;
         let group_hashes = evidence.group_hashes;
         let desk_hashes = evidence.desk_hashes;
+        // P2-2：组 belief 分片进发布版本（句柄共享零拷贝）。
+        let group_belief = evidence.group_belief;
         let record = TickRecord {
             tick,
             rounds,
@@ -1761,13 +1763,26 @@ impl World {
         };
         self.report_log.push(record);
         // Q1 单点发布（唯一 publish 调用点）：组装不可变版本并原子交换。
-        // P1 v1：groups/events 占位（P2 随 D1 拆迁与事件迁移填充）。
+        // P2-2：groups 分片=belief 稀疏观察面（随报告上行）；events 占位
+        ///（事件迁移时填充）。
+        let group_shards: Vec<super::publication::GroupShard> = group_belief
+            .into_iter()
+            .map(|(group, belief)| super::publication::GroupShard {
+                committed_hash: group_hashes
+                    .iter()
+                    .find(|(g, _)| *g == group)
+                    .map(|(_, h)| *h)
+                    .unwrap_or(0),
+                group,
+                belief,
+            })
+            .collect();
         self.publication.publish(std::sync::Arc::new(
             super::publication::PublishedTick {
                 tick,
                 global: self.global,
                 desks: desk_shards,
-                groups: Vec::new(),
+                groups: group_shards,
                 events: super::publication::EventSegment::default(),
                 hashes: super::publication::TickHashes {
                     groups: group_hashes,

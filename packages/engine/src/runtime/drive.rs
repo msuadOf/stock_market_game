@@ -860,16 +860,32 @@ impl RuntimeDriver {
         // Sol 整改个人态交付投影：组权威个人态（observe 演进）上行→
         // session 镜像回写（reference/peak equity 等读面；Belief-1b 的
         // information 域投递回写保持——整态覆盖与其同源）。
-        // 【P0 画像】belief_echo 段（D1 EchoBelief：上行+session 整态安装）。
+        // 【P0 画像】belief_echo 段（D1 EchoBelief 残余=session 整态安装；
+        /// P2-2：独立 EchoBelief 往返退役——稀疏分片已随 GroupReport 上行
+        /// 进发布版本，此处从发布版本读（读面归 owner 内生维护）。
         {
             let _seg = step_profile::scope(StepSegment::BeliefEcho);
-            let belief_states = self
-                .world
-                .collect_group_belief()
-                .map_err(|e| format!("个人态交付投影失败：{e:?}"));
-            match belief_states {
-            Ok(collected) => {
-                for (group, states) in collected {
+            let belief_states = {
+                let published = self.world.publication().load();
+                if published.tick != self.world.global.committed_tick {
+                    return Err(format!(
+                        "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                        published.tick, self.world.global.committed_tick
+                    ));
+                }
+                published
+                    .groups
+                    .iter()
+                    .map(|shard| {
+                        (
+                            shard.group,
+                            shard.belief.iter().cloned().collect::<Vec<_>>(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            {
+                for (group, states) in belief_states {
                     // P2-2a：稀疏条目=本 tick 生产演进位（组端已滤非
                     /// dirty——上行即 dirty）。逐条重装 session 镜像并
                     /// 增量维护全量缓存（读面语义）。等价不变式：
@@ -890,8 +906,6 @@ impl RuntimeDriver {
                         session.set_runtime_personal_state(id, &snapshot);
                     }
                 }
-            }
-            Err(projection_error) => return Err(projection_error),
             }
         }
         // D5 #4：首买经历 init（回写/投影段收集——个人态整态回写之后

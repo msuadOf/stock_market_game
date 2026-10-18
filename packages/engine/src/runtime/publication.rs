@@ -38,13 +38,22 @@ pub struct DeskShard {
     pub resting_count: u64,
 }
 
-/// 组读面分片（P2 接 D1 拆迁时填充——账户投影/计划进度/个人态观察面）。
+/// 组读面分片（P2-2 起 belief 稀疏观察面随报告上行；账户投影/计划
+/// 进度为后续接入面）。
 #[derive(Clone, Debug)]
 pub struct GroupShard {
     /// 组索引。
     pub group: GroupIdx,
     /// 组提交态哈希（验证观察点——与 report_log 一致）。
     pub committed_hash: u64,
+    /// belief 稀疏条目（本 tick 生产演进位——P2-2a 语义；全量读面由
+    /// 驱动器增量缓存承载）。
+    pub belief: std::sync::Arc<
+        Vec<(
+            super::LocalIdx,
+            super::world::BeliefParticipantSnapshot,
+        )>,
+    >,
 }
 
 /// 本拍事件段（P2 填充——R4 事件身份/seq/交付缓冲语义不变）。

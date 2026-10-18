@@ -92,6 +92,12 @@ pub struct TickEvidence {
     pub group_rejections: Vec<super::DeskReceipt>,
     /// 本轮竞价事实。
     pub desk_auction: Vec<super::protocol::DeskAuctionFact>,
+    /// P2-2：各组 belief 稀疏分片句柄（随 GroupReport 上行——读面
+    /// 发布源；Abort 时随 evidence 丢弃，candidate 不外泄）。
+    pub group_belief: Vec<(
+        super::GroupIdx,
+        std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>>,
+    )>,
 }
 
 /// PreCommit 校验器（骨架注入点；批 3+ 换 PreCommitValidation）。
@@ -144,6 +150,8 @@ pub fn converge_round(
     let mut desk_receipts = Vec::new();
     let mut group_rejections = Vec::new();
     let mut desk_auction = Vec::new();
+    // P2-2：belief 稀疏分片句柄收集（随报告上行——Arc 零拷贝）。
+    let mut group_belief = Vec::with_capacity(n_groups);
     while groups_left > 0 || desks_left > 0 {
         let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
             Ok(m) => m,
@@ -163,6 +171,7 @@ pub fn converge_round(
                 continuation_any |= r.continuation;
                 group_hashes.push((r.group, r.committed_hash));
                 group_rejections.extend(r.rejections.iter().copied());
+                group_belief.push((r.group, std::sync::Arc::clone(&r.belief_sparse)));
             }
             UpMsg::DeskReport(r) => {
                 if r.tick != tick || r.round != round {
@@ -216,6 +225,7 @@ pub fn converge_round(
         desk_receipts,
         group_rejections,
         desk_auction,
+        group_belief,
     }))
 }
 

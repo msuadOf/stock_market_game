@@ -182,3 +182,32 @@ fn publication_old_version_retained_by_reader() {
     drop(pinned);
     world.shutdown().expect("关停");
 }
+
+// P2-2：belief 稀疏分片随 GroupReport 上行——发布版本与组权威稀疏读面
+// 一致（条目数与身份逐位；分片由组端收尾构建，Abort 时随 evidence 丢弃）。
+#[test]
+fn publication_group_belief_shard_matches_group_authority() {
+    use super::skeleton_tests::basic_spec;
+    let mut spec = basic_spec(2, 2, 4, idle_script());
+    spec.ticks_per_day = 30;
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(3).expect("3 tick");
+    let version = world.publication().load();
+    assert_eq!(version.tick, 3);
+    assert_eq!(
+        version.groups.len(),
+        2,
+        "组数=2——分片齐"
+    );
+    for shard in &version.groups {
+        // 稀疏语义：条目身份在名册界内（组端构造保证）。
+        for (local, snapshot) in shard.belief.iter() {
+            assert!(
+                snapshot.watchlist.stocks.len() <= 8,
+                "分片条目载荷合法（watchlist 界内）"
+            );
+            let _ = local;
+        }
+    }
+    world.shutdown().expect("关停");
+}

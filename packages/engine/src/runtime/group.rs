@@ -3744,6 +3744,29 @@ impl GroupState {
         }
         // 名册末尾：每股发 final_flush 空批作为本组本轮提交标记（可空）。
         ops_sent += flush_buffers(&mut buffers, desk_txs, tick, round, group, true)?;
+        // P2-2（视图内生战役）：belief 稀疏分片随报告上行（替代驱动器每拍
+        // EchoBelief 独立往返）。组装口径与 EchoBelief 应答逐字同源
+        //（dirty ∪ 跨 Start pending——P2-2a 语义）。跨轮保留机制：dirty
+        // 在 Continue 轮间不清（清点在 Start）→ 终轮分片天然含全部轮的
+        // 演进位；pending 在首轮构建时并入 dirty（消费一次、随 dirty 跨
+        // 轮到终轮——跨 Start 注入窗口语义保持）。
+        let pending_belief = std::mem::take(&mut self.belief_pending_dirty);
+        for local in pending_belief {
+            if let Some(flag) = self.belief_dirty.get_mut(local as usize) {
+                *flag = true;
+            }
+        }
+        let belief_sparse: Vec<(_, _)> = self
+            .belief_states
+            .iter()
+            .zip(self.belief_dirty.iter())
+            .enumerate()
+            .filter_map(|(i, (slot, dirty))| {
+                (*dirty)
+                    .then(|| slot.as_ref().map(|s| (i as super::LocalIdx, s.clone())))
+                    .flatten()
+            })
+            .collect();
         let report = GroupReport {
             group,
             tick,
@@ -3758,6 +3781,7 @@ impl GroupState {
             // 组端业务拒绝（Sol 复审修复 2）：本轮排空上行——Abort 重跑
             /// 时由校验路径重新产生（run_round 起点清零）。
             rejections: std::mem::take(&mut self.round_rejections),
+            belief_sparse: std::sync::Arc::new(belief_sparse),
         };
         up_tx
             .send(UpMsg::GroupReport(report))

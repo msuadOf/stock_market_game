@@ -767,7 +767,8 @@ impl std::fmt::Debug for UpMsg {
 }
 
 /// 组线程本轮报告。
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// P2-2：belief_sparse 含 f64 域（attention 概率）——Eq 退役，PartialEq 保持。
+#[derive(Clone, Debug, PartialEq)]
 pub struct GroupReport {
     /// 组索引。
     pub group: GroupIdx,
@@ -793,6 +794,12 @@ pub struct GroupReport {
     pub rejections: Vec<DeskReceipt>,
     /// 提交态哈希（Start 转正后立即计算；回滚后 Final 哈希应与之相等）。
     pub committed_hash: u64,
+    /// P2-2（视图内生战役）：组读面分片随报告上行（替代驱动器每拍
+    /// EchoBelief 独立往返——P0 画像 belief_collect 120μs/tick）。稀疏
+    /// 条目=本 tick 生产演进位（dirty ∪ 跨 Start pending——P2-2a 语义
+    /// 原样搬迁；全量读面仍由驱动器增量缓存承载）。
+    pub belief_sparse:
+        std::sync::Arc<Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>>,
 }
 
 /// 双腿成交事实（批 8b 撮合域接线地基）：单笔成交的 maker/taker 双方身份
