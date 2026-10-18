@@ -5188,6 +5188,143 @@ pub fn group_main(
 
 /// Sol 二审修复集 3 红证（受理身份关联）：组内最小决策链态直调
 /// apply_staging——外来单的成交/终结事实不得触碰本票执行腿。
+// ═══ Sol 五审件 3（四审 A1 指定回归）：正常关停 >50ms 空闲窗 × 在途资源 ═══
+
+mod v5_shutdown_idle_window_tests {
+    use super::*;
+
+    /// 四审 A1 关停竞态的确定性回归：正常关停（Drain→Shutdown→Final
+    /// 消息协议）期间 **不置** worker_shutdown 永久标记——空闲 worker
+    /// 的 50ms 分片轮询必须持续等待 Shutdown 消息（协议退出），且
+    /// Shutdown 处理 apply_staging 把在途回流实体落账。此前标记驱退
+    /// 会使空闲 worker 在 >50ms 窗内提前退出上交 Final，漏合入退款。
+    /// 构造：真实组线程通道；Batch（CashRefund 500）入 staging 未落账；
+    /// 闲置 120ms（跨 50ms 分片轮询片界——竞态窗）；发 Shutdown；
+    /// 断言 Final 经协议上交且退款已落账（旧缺陷形态=提前 Final 且
+    /// 现金停留在 10_000_000）。
+    #[test]
+    fn v5_shutdown_over_50ms_idle_window_applies_staged_refunds() {
+        let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+        let (desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+        let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+        let abort = Arc::new(AtomicBool::new(false));
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let capture = Arc::new(std::sync::Mutex::new(
+            crate::verification_evidence::current_phase_timing_binding(),
+        ));
+        let mut state = GroupState::new(
+            0,
+            vec![GroupAccount::new(10_000_000, 1)],
+            8,
+            100,
+            Arc::new(crate::config::GameConfig::proposed_defaults()),
+            240,
+            None,
+            Vec::new(),
+            Box::new(|_t, _r| TickPlan::default()),
+        );
+        state.cur_tick = 1;
+        state.cur_round = 0;
+        let handle = {
+            let abort = Arc::clone(&abort);
+            let shutdown_flag = Arc::clone(&shutdown_flag);
+            let capture = Arc::clone(&capture);
+            std::thread::spawn(move || {
+                group_main(
+                    state,
+                    vec![desk_tx],
+                    group_rx,
+                    up_tx,
+                    abort,
+                    shutdown_flag,
+                    crate::runtime::watchdog::WatchdogConfig {
+                        normal: std::time::Duration::from_secs(30),
+                        long: std::time::Duration::from_secs(120),
+                    },
+                    capture,
+                )
+            })
+        };
+        // 在途资源：退款实体入 staging（未落账——正常关停的典型在途面）。
+        group_tx
+            .send(GroupIn::Batch(DeskBatch {
+                stock: 0,
+                tick: 1,
+                round: 0,
+                entities: vec![Entity::CashRefund {
+                    local: 0,
+                    amount: 500,
+                }],
+                fills: Vec::new(),
+                receipts: Vec::new(),
+            }))
+            .expect("Batch 入队");
+        // >50ms 空闲窗：worker_recv 分片轮询跨片等待（四审竞态窗——
+        /// 旧缺陷形态在此窗内提前退出）。
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        // 正常关停消息（协议路径——不置永久标记）。
+        group_tx
+            .send(GroupIn::Shutdown)
+            .expect("Shutdown 发送");
+        let outcome = handle.join().expect("组线程退出");
+        outcome.expect("正常关停协议成功（无失败）");
+        // Final 必经协议上交；期末账户含在途回流落账。
+        let final_state = match up_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(UpMsg::GroupFinal(f)) => *f,
+            other => panic!("期望 GroupFinal，收到 {other:?}"),
+        };
+        assert_eq!(
+            final_state.accounts[0].cash,
+            10_000_500,
+            "在途退款实体在 Shutdown 处 apply_staging 落账（>50ms 空闲窗不丢回流）"
+        );
+        assert!(
+            final_state
+                .observed
+                .iter()
+                .any(|o| matches!(o, Observed::Shutdown)),
+            "Shutdown 消息被协议处理（非标记驱退）"
+        );
+        // 永久标记全程未置位（正常关停不旁路协议）。
+        assert!(
+            !shutdown_flag.load(Ordering::SeqCst),
+            "正常关停不置 worker_shutdown 永久标记"
+        );
+        assert!(!abort.load(Ordering::SeqCst), "无 Abort");
+    }
+
+    /// World 级正常关停协议回归（与上行循环级测试互补）：真实世界跑一拍
+    /// 后正常 shutdown——全部组的期末观察日志必须含 Shutdown（消息协议
+    /// 路径；重引"关停前置永久标记"的缺陷形态下，空闲组在标记驱退中
+    /// 提前退出、Shutdown 消息不被处理，observed 缺项即显红）。
+    #[test]
+    fn v5_world_shutdown_reaches_all_groups_via_message_protocol() {
+        let spec = crate::runtime::skeleton_tests::basic_spec(
+            2,
+            1,
+            1,
+            Box::new(|_g| Box::new(|_t, _r| TickPlan::default())),
+        );
+        let mut world = crate::runtime::world::World::spawn(spec).expect("世界构造");
+        world.run_ticks(1).expect("首拍");
+        let report = world.shutdown().expect("正常关停成功");
+        assert_eq!(report.group_finals.len(), 2, "两组期末态齐");
+        for final_state in &report.group_finals {
+            assert!(
+                final_state
+                    .observed
+                    .iter()
+                    .any(|o| matches!(o, Observed::Shutdown)),
+                "组 {} 的 Shutdown 经消息协议处理（非标记驱退提前退出）",
+                final_state.group
+            );
+        }
+        for (who, result) in &report.worker_results {
+            assert!(result.is_ok(), "worker {who:?} 正常退出：{result:?}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod sol_recheck3_tests {
     use super::*;
