@@ -73,9 +73,8 @@ fn inline_vec_content_equivalence() {
         (InlineVec::Heap(_), InlineVec::Heap(_)) => {}
         other => panic!("len=9 恒堆变体（构造不变量）：{other:?}"),
     }
-    // 同内容异构判等（用 length 相同的两实例：一个构造期即堆、一个
-    /// 由内联 clone 后扩……——本类型无扩容接口，此面由 PartialEq 按内容
-    /// 的实现直接验证：同长度同内容必等）。
+    // 同内容判等（PartialEq 按 as_slice 实现——变体不参与判等；
+    /// 异构对不可构造：同长度恒同变体，由构造不变量承载）。
     let x = IV::filled(5, 3);
     let y = IV::filled(5, 3);
     assert_eq!(x, y, "同构造内容相等");
