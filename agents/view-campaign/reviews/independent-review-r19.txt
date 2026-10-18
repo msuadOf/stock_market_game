@@ -1,0 +1,33 @@
+# 第 19 任四提交独立复核（fork subagent，未实施者，2026-10-18）
+
+对象：main..HEAD（e4e4c6fb P0 / d9cfa655 P1 / 3bda2835 P2-1 / 4474fc25 P2-2）
+
+## 判定：无阻断
+
+## 非阻断建议与处置
+
+1. wasm 编译未验证 → **已闭合**：cargo check -p engine --target
+   wasm32-unknown-unknown 通过（24.6s，RwLock 集成 wasm 可编译）。
+2. hash 派生等价依赖"旧管线堆=每账户恰一项"注释级不变量 → 登记：
+   下任补旧管线形态 hash 双源对照守卫（heap 派生 vs npc_attention
+   派生逐位一致）。
+3. 死字段残留：runtime_heap_undo 槽（P2-1 后恒 None）+ failure.rs
+   消费段 no-op → 登记：随下一批清理。
+4. 跨 Continue 多轮注入无专属守卫（d3b5 覆盖单轮；多轮靠 dirty 跨轮
+   保留论证）→ 登记：下任经 ForceContinuationForTest 基建补守卫。
+
+## 复核依据摘要（复核者原文要点）
+
+- hash 等价：save 不序列化 heap；restore 从权威重建；runtime 写点均置
+  dirty；pop_due 以权威候选核对——两模式下派生值逐位一致成立。
+- belief 同源：组端组装与 EchoBelief 应答逐字同源；多轮靠 dirty 跨轮
+  （Start 清点在 run_round 前、Continue 不清）；Abort 重跑分片读
+  belief_states 当前值（冲回+重演后），语义正确。
+- 失败原子性：分片随 TickEvidence 局部丢弃；publish 唯一调用点
+  install_tick；回滚不触碰发布槽；J5 突变红可信。
+- 边界：日结不经 install_tick（读者见旧版本=未提交语义正确）；多组
+  每组一份分片；clone_for_shadow/commit_from 的 dirty 保真传播正确。
+- 最小范围：插桩为任务书授权探针（零默认开销）；无夹带。
+- 判别力：J5 突变（validator 前发布→红）、d3b5 突变（pending 不并入
+  →红）、ensure no-op 对 sol5 红均实际执行；mirror_growth 零判别已
+  如实登记；J4 断言修正（<= 改 <）语义正确。
