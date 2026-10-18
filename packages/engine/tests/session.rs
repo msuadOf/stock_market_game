@@ -5350,31 +5350,89 @@ fn symbolic_limit_request(side: Side, price: &str, qty: u32) -> Intent {
 #[test]
 fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixed_resting_price() {
     let code = sid();
-    let mut session = player_session_with_position(100, 10_000_000);
-    let highest = symbolic_limit_request(Side::Buy, "Highest", 200);
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: code.clone(),
+    // 自成交拍板 A（分歧台账 A3/B1）：desk 对同账户买卖互成交硬排除
+    /// （真实沪深语义的游戏额外限制；旧管线缺失——原 fixture 依赖玩家
+    /// 双侧自成交）。9.90 卖侧改由 retail NPC 承接（双账户 fixture 化，
+    /// saved_runtime_tests 同模式）；"先受理的 Ask 定 Highest 解析价"
+    /// 的到达序语义不变。
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 1,
+        inst_count: 0,
+        hot_count: 0,
+        retail_cash_median: Money::ZERO,
+    };
+    setup.config.starting_cash = Money::from_cents(10_000_000);
+    let mut fixture = TestOrderSaveFixture::new(setup, 42);
+    fixture.add_position(
+        AccountId(1),
+        code.clone(),
+        engine::PositionSnap {
+            qty: 100,
+            t1_locked: 0,
+            invested_cents: 100_000,
+            recovered_cents: 0,
+        },
+    );
+    {
+        let save = fixture.save_mut();
+        // fault2038（持仓必有经历）：卖方持仓的经历条目。
+        save.retail_experience
+            .get_mut(&AccountId(1))
+            .unwrap()
+            .initialize_holding_dated(
+                &code,
+                Some(Money::from_cents(1_000)),
+                Money::from_cents(1_000),
+                engine::experience::ExperienceMoment {
+                    civil_date: save.setup.start_date,
+                    market_minute: 0,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        // 在先卖单（9.90×100）——受理先于 Highest（到达序即原语义）。
+        save.resting_orders.insert(
+            code.clone(),
+            vec![engine::Order {
+                id: engine::OrderId(1),
                 side: Side::Sell,
-                price: LimitPrice::Fixed(Money::from_cents(990)),
+                price: Money::from_cents(990),
                 qty: 100,
-            },
-        )
-        .unwrap();
-    // 入队先后不固定同股实际受理先后；先确认 Sell 已受理，再提交 Highest。
+                original_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: AccountId(1),
+                seq: 0,
+            }],
+        );
+        // 卖方 NPC 本拍不重挂/撤夹具单。
+        for attention in save.npc_attention.values_mut() {
+            attention.next_attention_candidate_tick = save.snapshot.tick + 10;
+        }
+        save.next_order_id = 2;
+    }
+    let mut session = fixture.restore().unwrap();
+    // 先拍：在先卖单进入 desk 权威簿（先于 Highest 受理——解析参考在位）。
     let earlier_events = session.step().unwrap();
-    assert!(earlier_events.iter().any(|event| matches!(event,
-        Event::OrderAccepted { side: Side::Sell, price, remaining_qty: 100, .. }
-            if *price == Money::from_cents(990))));
+    assert!(earlier_events
+        .iter()
+        .all(|event| !matches!(event, Event::IntentRejected { .. })));
+    assert_eq!(
+        session.snapshot().markets[&code].asks,
+        vec![(Money::from_cents(990), 100)]
+    );
+    let highest = symbolic_limit_request(Side::Buy, "Highest", 200);
     session
         .enqueue_player_intent(AccountId(0), highest)
         .unwrap();
     let pending = session.save().unwrap();
     let pending_json = serde_json::to_value(&pending).unwrap();
+    // ReceiptBearingIntent 为结构体（map 形态序列化——owner/intent/
+    /// account_ordinal/stock_ordinal 四字段）；此前的 [0][1] 元组下标
+    /// 读法是结构化前的旧前提（四审 C 类判定的同一处，基线同红）。
     assert_eq!(
-        pending_json["pending_player"][0][1]["PlaceLimit"]["price"],
+        pending_json["pending_player"][0]["intent"]["PlaceLimit"]["price"],
         "Highest"
     );
     let mut session = GameSession::restore(&pending).unwrap();
@@ -5563,3 +5621,40 @@ fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
     );
 }
 
+
+// ===== 临时探针（17 任取证用，跑完即删）=====
+#[test]
+fn zz_probe_s7_events() {
+    let code = sid();
+    let mut session = player_session_with_position(100, 10_000_000);
+    let highest = symbolic_limit_request(Side::Buy, "Highest", 200);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(990)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session.step().unwrap();
+    session
+        .enqueue_player_intent(AccountId(0), highest)
+        .unwrap();
+    let pending = session.save().unwrap();
+    let mut session = GameSession::restore(&pending).unwrap();
+    eprintln!(
+        "PROBE s7 pending after restore={:?}",
+        session.save().unwrap().pending_player
+    );
+    eprintln!(
+        "PROBE s7 resting={:?}",
+        session.save().unwrap().resting_orders.values().collect::<Vec<_>>()
+    );
+    let events = session.step().unwrap();
+    for event in &events {
+        eprintln!("PROBE s7 event: {event:?}");
+    }
+}
