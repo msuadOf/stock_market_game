@@ -3409,7 +3409,19 @@ impl GameSession {
                     })
                     .max()
                     .unwrap_or(0);
-                self.state.next_order_id.max(mirror_max.saturating_add(1))
+                // Sol 五审复核收口：desk 游标域（next_serial>全部已耗
+                /// 序号——**含已闭合单**，如清仓卖/全成买）与经历行/
+                /// 计划链的 desk 域 OrderId（(stock<<48)|serial）一并
+                /// 入下界——此前仅镜像在册 serial+1：闭合单 id 使
+                /// fault2044（id≥next_order_id）显红。
+                let mut floor = mirror_max.saturating_add(1);
+                for (code, mirror) in &self.state.desk_book_mirror {
+                    floor = floor.max((u64::from(code.0) << 48) | mirror.next_serial);
+                }
+                for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
+                    floor = floor.max((u64::from(idx as u64) << 48) | cursor);
+                }
+                self.state.next_order_id.max(floor)
             },
             civil_clock: self.state.civil_clock.save(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。

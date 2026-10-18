@@ -5190,6 +5190,7 @@ pub fn group_main(
 /// apply_staging——外来单的成交/终结事实不得触碰本票执行腿。
 // ═══ Sol 五审件 3（四审 A1 指定回归）：正常关停 >50ms 空闲窗 × 在途资源 ═══
 
+#[cfg(not(target_family = "wasm"))]
 mod v5_shutdown_idle_window_tests {
     use super::*;
 
@@ -5323,7 +5324,15 @@ mod v5_shutdown_idle_window_tests {
             assert!(result.is_ok(), "worker {who:?} 正常退出：{result:?}");
         }
     }
+
 }
+
+// 局限登记（Sol 五审复核阻断 3）：World 级"标记在协议窗内置位"无可
+// 确定性观察面——shutdown(self) 消费所有权、Drop 清场在协议完成后
+// 合法置位；Drain→Shutdown 广播间 >50ms 停顿也无注入缝（desk Drain
+// 无延迟 seam）。确定性锚由本模块循环级测试承载（worker 机制面：
+// 标记置位+空闲 50ms 片界⇒提前退出不处理 Shutdown——正是缺陷形态）；
+// World 级观察日志测试作为协议路径的行为面补充（概率性抓重引）。
 
 #[cfg(test)]
 mod sol_recheck3_tests {

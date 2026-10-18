@@ -12,7 +12,6 @@
 
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
-use super::fees::buy_purse_limit;
 use super::event_bridge::{
     collect_lifecycle, project_auction_events, project_lifecycle_events, project_trade_events,
 };
@@ -2410,7 +2409,6 @@ fn resting_order_seeds_from_session(
     // 账本（save 的 live_envelopes）——desk 种子从账本键恢复（purse 与
     // 价格面自 audit 真值直取——runtime 信封已收口真 limit/精确 escrow
     /// purse，A2 时期的零标记/1 分占位形态退役）。
-    let config = session.export_setup_for_runtime().config;
     let snapshot = session.runtime_resting_orders_snapshot();
     let from_ledger = snapshot.iter().all(|(_, orders)| orders.is_empty());
     let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = Vec::new();
@@ -2519,29 +2517,13 @@ fn resting_order_seeds_from_session(
                 (global / accounts_per_group.max(1)) as super::GroupIdx,
                 (global % accounts_per_group.max(1)) as super::LocalIdx,
             );
-            // 买腿 purse=精确 escrow（buy_purse_limit=挂单价×余量+费用
-            /// 边际——与旧管线 buy_order_reservation/restore 账本 purse
-            /// 同式；desk 成交扣减权威，组端现金同步扣减+占用登记）。
-            /// desk 种子侧 filled_value 从零起（成交累计不入 desk 种子），
-            /// purse 亦按零成交额式计算。此前价×量缺费用边际：escrow
-            /// 审计（fault2220）下穿、费用边际滞留组内可再消费。
-            let purse = if order.side == crate::orderbook::Side::Buy {
-                buy_purse_limit(
-                    &config,
-                    order.price,
-                    order.qty,
-                    crate::money::Money::ZERO,
-                )
-                .map_err(|e| {
-                    format!(
-                        "adopt 买种子 purse 计算失败：owner={:?}, code={code:?}：{e:?}",
-                        order.owner
-                    )
-                })?
-                .cents()
-            } else {
-                0
-            };
+            // Sol 五审复核阻断 1 修正：adopt 买腿 purse 自信封 live 直取
+            /// （=旧管线 buy_order_reservation(限价, 余量, **真实累计
+            /// 成交额**) 的精确 escrow——含按真实累计的费用边际）。此前
+            /// 按零成交额式 buy_purse_limit 计算：部分成交单的种子
+            /// purse 偏大（如 100@990 已成交、余 100@1000：种子 100_501
+            /// vs 精确 100_001），空跑存档的 verified_live 期望失配 →
+            /// fault2220。
             let envelope = ledger
                 .get(&(
                     order.owner,
@@ -2551,11 +2533,16 @@ fn resting_order_seeds_from_session(
                 ))
                 .ok_or_else(|| {
                     format!(
-                        "adopt 旧簿挂单缺信封账本条目（累计费用无法迁移）：owner={:?}, code={code:?}, order={:?}",
+                        "adopt 旧簿挂单缺信封账本条目（累计费用/资源无法迁移）：owner={:?}, code={code:?}, order={:?}",
                         order.owner, order.id
                     )
                 })?;
             let audit = envelope.audit();
+            let purse = if order.side == crate::orderbook::Side::Buy {
+                envelope.live().cash.cents()
+            } else {
+                0
+            };
             seeds[code.0 as usize].push(super::desk::DeskRestingSeed {
                 owner: (g, local),
                 side: order.side,

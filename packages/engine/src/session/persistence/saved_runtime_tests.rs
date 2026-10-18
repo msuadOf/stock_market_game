@@ -1883,7 +1883,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
     session
         .fixture_account_mut(&AccountId(1))
         .expect("retail seller must exist")
-        .grant_position(code.clone(), 200, crate::money::Money::from_cents(990))
+        .grant_position(code.clone(), 400, crate::money::Money::from_cents(990))
         .expect("fixture holding must be valid");
     session
         .state
@@ -1904,75 +1904,87 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
     if let Some(attention) = session.state.npc_attention.get_mut(&AccountId(1)) {
         attention.next_attention_candidate_tick = 10;
     }
-    // tick1：NPC 挂 100@990 卖（首步前 seed 走旧簿 adopt）；玩家限价
-    // 1000 买 200 → 价优成交 100@990、余 100 在簿（purse 收敛 100_001）。
-    let mut seed_events = Vec::new();
-    session.seed_order_for_test(
-        AccountId(1),
-        Intent::PlaceLimit {
-            code: code.clone(),
-            side: Side::Sell,
-            price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
-            qty: 100,
-        },
-        &mut seed_events,
-    );
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
-                qty: 200,
-            },
-        )
-        .expect("玩家买单入队");
-    session.step().expect("tick1 必须成功");
-    // 静态断言（判决反例）：真实数量贯穿——价优换算 99_000÷1000=99 显红。
-    let save = session.save().expect("tick1 静点存档");
-    let buy = save
-        .resting_orders
-        .get(&code)
-        .expect("买余量在册")
-        .iter()
-        .find(|order| order.owner == AccountId(0) && order.side == Side::Buy)
-        .expect("玩家买余量");
-    assert_eq!(buy.qty, 100, "余量");
-    assert_eq!(
-        buy.filled_qty, 100,
-        "真实成交数量贯穿（价优换算不成立——判决反例 99）"
-    );
-    assert_eq!(buy.original_qty, 200, "原始委托量=余量+真实成交量");
-    assert_eq!(buy.filled_value, crate::money::Money::from_cents(99_000));
-    // restore + 驱动器构造拍 + 第二拍：卖方再卖 100@990 吃掉恢复的买
-    /// 余量（maker 价 1000×100=100_000）——累计费用承载下边际费用
-    /// Δcomm=0/Δtransfer=1，charge 100_001==purse 恰可付；seed 归零
-    /// 则重算最低佣金 100_501>purse，desk 显式失败（本 expect 显红）。
-    let mut restored = GameSession::restore(&save).expect("tick1 静点恢复");
-    restored.step().expect("恢复后首拍（驱动器构造/种子装载）");
-    let mut seed_events = Vec::new();
-    restored.seed_order_for_test(
-        AccountId(1),
-        Intent::PlaceLimit {
-            code: code.clone(),
-            side: Side::Sell,
-            price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
-            qty: 100,
-        },
-        &mut seed_events,
-    );
-    let events = restored
-        .step()
-        .expect("恢复后续成交必须成功（累计费用承载——purse 不足即 seed 归零显红）");
+    // 三段链（Sol 五审复核阻断 2 回归）：玩家限价 1000 买 300；每段
+    /// 卖方挂 100@990 → 价优/平价各成交 100，段间 save/restore——
+    /// 多笔部分成交的**中间静点**（第二次 restore 时 charged 累计若按
+    /// 每笔完整 nominal 叠加（两笔各 500=1000）超过累计 nominal（500）
+    /// → verified_live 拒绝 → fault2220 显红）。
+    let mut current = session;
+    let mut expected_filled = 0u32;
+    for leg in 1..=3u32 {
+        let mut seed_events = Vec::new();
+        if leg == 1 {
+            current.seed_order_for_test(
+                AccountId(1),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
+                    qty: 100,
+                },
+                &mut seed_events,
+            );
+            current
+                .enqueue_player_intent(
+                    AccountId(0),
+                    Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
+                        qty: 300,
+                    },
+                )
+                .expect("玩家买单入队");
+        } else {
+            current.seed_order_for_test(
+                AccountId(1),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: LimitPrice::Fixed(crate::money::Money::from_cents(990)),
+                    qty: 100,
+                },
+                &mut seed_events,
+            );
+        }
+        current.step().expect("段内步进必须成功");
+        expected_filled += 100;
+        // 段末静点：真实数量/累计额断言（leg1 即判决反例——价优换算
+        /// 99_000÷1000=99 显红）。leg3 全成离册——余量断言仅前两段。
+        let save = current.save().expect("段末静点存档");
+        let remaining = 300 - expected_filled;
+        if remaining > 0 {
+            let buy = save
+                .resting_orders
+                .get(&code)
+                .and_then(|orders| {
+                    orders
+                        .iter()
+                        .find(|order| order.owner == AccountId(0) && order.side == Side::Buy)
+                })
+                .unwrap_or_else(|| panic!("leg{leg} 买余量在册"));
+            assert_eq!(buy.qty, remaining, "leg{leg} 余量");
+            assert_eq!(
+                buy.filled_qty,
+                expected_filled,
+                "leg{leg} 真实成交数量贯穿（价优换算不成立——判决反例 99）"
+            );
+            assert_eq!(buy.original_qty, 300, "原始委托量=余量+真实成交量");
+            if leg == 1 {
+                assert_eq!(buy.filled_value, crate::money::Money::from_cents(99_000));
+            }
+        }
+        // 段间往返（含最终段后的档恢复）——中间静点的信封审计
+        ///（charged 边际 telescoping==nominal(累计)）在此显红。
+        let restored = GameSession::restore(&save)
+            .unwrap_or_else(|e| panic!("leg{leg} 静点恢复失败（累计审计口径）：{e}"));
+        current = restored;
+        if leg < 3 {
+            current.step().expect("恢复后首拍（驱动器构造/种子装载）");
+        }
+    }
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, Event::Trade { qty: 100, .. })),
-        "恢复的买余量成交：{events:?}"
-    );
-    assert!(
-        restored
+        current
             .save()
             .expect("期末存档")
             .resting_orders
@@ -1982,14 +1994,122 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
         "期末无余量"
     );
     assert_eq!(
-        restored
+        current
             .account(AccountId(0))
             .expect("玩家在")
             .positions()
             .get(&code)
             .expect("持仓在")
             .qty(),
-        200,
-        "期末买家 200 股"
+        300,
+        "期末买家 300 股"
     );
+}
+
+/// Sol 五审复核阻断 1 回归：adopt（旧簿档）的部分成交买腿——种子
+/// purse 必须取信封精确 escrow（buy_order_reservation(限价, 余量,
+/// **真实累计成交额**)）。此前按零成交额式计算：种子 100_501 vs
+/// 精确 100_001，静点存档的 verified_live 期望失配 → fault2220。
+#[test]
+fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
+    if !crate::runtime::step_runtime_enabled() {
+        return;
+    }
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    setup.npcs.retail_count = 1;
+    setup.config.starting_cash = crate::money::Money::from_cents(1_000_000);
+    let code = StockId(0);
+    let base = GameSession::new(setup, 42).expect("fixture 必须有效");
+    let mut save = base.save().expect("基线档");
+    {
+        let account = save.snapshot.accounts.get_mut(&AccountId(1)).expect("NPC 买方");
+        account.cash = crate::money::Money::from_cents(500_000);
+        account.positions.insert(
+            code.clone(),
+            crate::session::PositionSnap {
+                qty: 100,
+                t1_locked: 0,
+                invested_cents: 99_000,
+                recovered_cents: 0,
+            },
+        );
+    }
+    // fault2038：已成交持仓的经历条目；注意力推后（不自发交易）。
+    save.retail_experience
+        .get_mut(&AccountId(1))
+        .expect("经历行在")
+        .initialize_holding_dated(
+            &code,
+            Some(crate::money::Money::from_cents(990)),
+            crate::money::Money::from_cents(990),
+            crate::experience::ExperienceMoment {
+                civil_date: save.setup.start_date,
+                market_minute: 0,
+                trading_day: 0,
+            },
+        )
+        .expect("经历条目合法");
+    if let Some(attention) = save.npc_attention.get_mut(&AccountId(1)) {
+        attention.next_attention_candidate_tick = 10;
+    }
+    // 部分成交买腿（100@990 已成交、余 100@1000）——旧簿档（adopt 形态）。
+    save.resting_orders.insert(
+        code.clone(),
+        vec![Order {
+            id: OrderId(1),
+            side: Side::Buy,
+            price: crate::money::Money::from_cents(1_000),
+            qty: 100,
+            original_qty: 200,
+            filled_qty: 100,
+            filled_value: crate::money::Money::from_cents(99_000),
+            owner: AccountId(1),
+            seq: 1,
+        }],
+    );
+    // 簿序游标覆盖 crafted 序号（restore_resting_orders 的 seq<next 校验）。
+    save.book_next_sequences.insert(code.clone(), 2);
+    save.next_order_id = 2;
+    // 活跃信封（fault2226 集合一致）：escrow=buy_order_reservation(限价,
+    // 余量, 真实累计)=100_001；Buy charged==nominal(累计) 契约。
+    {
+        let config = save.setup.config.clone();
+        let purse = crate::session::buy_order_reservation(
+            &config,
+            crate::money::Money::from_cents(1_000),
+            100,
+            crate::money::Money::from_cents(99_000),
+        )
+        .expect("escrow 计算");
+        let nominal = crate::runtime::fees::FeeQuote::nominal(
+            &config,
+            Side::Buy,
+            crate::money::Money::from_cents(99_000),
+        )
+        .expect("名义费用");
+        save.runtime_state.live_envelopes.push(SavedLiveEnvelope {
+            key: SavedEnvelopeKey {
+                account: AccountId(1),
+                stock: code.clone(),
+                order: OrderId(1),
+                side: Side::Buy,
+            },
+            charged: SavedFeeComponents {
+                commission: nominal.commission,
+                stamp_tax: crate::money::Money::ZERO,
+                transfer_fee: nominal.transfer_fee,
+            },
+            remaining_qty: 100,
+            filled_qty: 100,
+            filled_value: crate::money::Money::from_cents(99_000),
+            limit: crate::money::Money::from_cents(1_000),
+            purse,
+        });
+    }
+    let mut session = GameSession::restore(&save).expect("旧簿档恢复");
+    session.step().expect("adopt 拍（驱动器构造/种子装载）");
+    let saved = session.save().expect("静点存档");
+    GameSession::restore(&saved)
+        .expect("adopt 静点档必须可恢复（种子 purse=精确 escrow——fault2220 即 purse 口径错）");
 }
