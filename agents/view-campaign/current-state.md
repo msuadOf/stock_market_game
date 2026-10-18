@@ -77,3 +77,24 @@ Continue 多轮注入守卫（登记，经 ForceContinuationForTest 基建）。
 
 A 口径收尾：load 15-17 窗口 1280-1319（只登记）；分片构建成本对 A 的
 净机净效应待下任静置复测（预期 −2% 内=组端每轮 dirty∪pending 组装）。
+
+## 第 19 任续（协调者批复后推进：envelope→acct→Q2）
+
+新增三刀（61c0ea1c 起）：
+- 61c0ea1c P2-3 D6-resting：观察面随 DeskReport 上行，collect 往返
+  退役。B 1000 691→713.5（+3.3%）；A 配对 −2.3% 带内（desk 组装税）。
+- d1ae4693 P2-4 D6-envelope 惰性化：ledger 每拍维护退役，查询/hash/
+  save 派生（restore 回退分支保 hydrate 语义）。B 1000→750.3
+  （+5.2%，累计 +37.7%）；envelope 段 80.5→2.7μs。
+- **acct 分片刀撤回**（负结果归因）：红证=组报告时点 desk 终轮批次
+  可能在途（undo∪staging 集不含终轮成交 owner——时序竞态），完整
+  形态依赖 Q2 Seal（S4 不变量）。**Q2 实施设计已出**：
+  plans/q2-seal-implementation-design.md（报批）。回退后双模式
+  1669/0/11 双绿复核。
+
+B 1000 进度：544.7（基线）→750.3（累计 +37.7%，高负载窗数字）——
+净机复测待补；距 912 推算上限余 162μs（acct 62+candle 47+belief 安装
+82+缝隙）——其中 acct/D3/D2 约 100μs 由 Q2 批回收。
+
+事故登记：P2-4 批删死代码切坏 drive.rs（checkout+重放恢复）；P2-5
+缝合残留两轮编译红——教训：regex 批删必 assert 锚+逐批编译门禁。
