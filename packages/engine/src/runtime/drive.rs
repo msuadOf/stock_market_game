@@ -875,7 +875,11 @@ impl RuntimeDriver {
         /// 进发布版本，此处从发布版本读（读面归 owner 内生维护）。
         {
             let _seg = step_profile::scope(StepSegment::BeliefEcho);
-            let belief_states = {
+            // P2-2e（bel 刀 a，零等价负担）：发布版本直接借用迭代——
+            /// 原 collect 逐条 clone 出中间 Vec+cache 再 clone 共两层冗余
+            /// 深拷贝；改为借用安装（&snapshot）后 cache move（同值所有权
+            /// 转移，语义不变：缓存条目==安装条目==发布条目）。
+            {
                 let published = self.world.publication().load();
                 if published.tick != self.world.global.committed_tick {
                     return Err(format!(
@@ -883,26 +887,14 @@ impl RuntimeDriver {
                         published.tick, self.world.global.committed_tick
                     ));
                 }
-                published
-                    .groups
-                    .iter()
-                    .map(|shard| {
-                        (
-                            shard.group,
-                            shard.belief.iter().cloned().collect::<Vec<_>>(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            };
-            {
-                for (group, states) in belief_states {
+                for shard in &published.groups {
                     // P2-2a：稀疏条目=本 tick 生产演进位（组端已滤非
                     /// dirty——上行即 dirty）。逐条重装 session 镜像并
                     /// 增量维护全量缓存（读面语义）。等价不变式：
                     /// 缓存/镜像与组端只在 dirty 通道同步、构造期同源。
-                    for (local, snapshot) in states {
+                    for (local, snapshot) in shard.belief.iter() {
                         let global =
-                            group as usize * self.accounts_per_group + local as usize;
+                            shard.group as usize * self.accounts_per_group + *local as usize;
                         let Some(&id) = self.id_map.get(global) else {
                             continue;
                         };
@@ -910,10 +902,12 @@ impl RuntimeDriver {
                         {
                             self.personal_installs += 1;
                         }
+                        // 先借用安装、后 move 入缓存——省原顺序的
+                        /// snapshot.clone()（缓存持有的是安装的同一份值）。
+                        session.set_runtime_personal_state(id, snapshot);
                         if let Some(slot) = self.belief_cache.get_mut(global) {
                             *slot = Some(snapshot.clone());
                         }
-                        session.set_runtime_personal_state(id, &snapshot);
                     }
                 }
             }
