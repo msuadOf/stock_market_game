@@ -110,6 +110,8 @@ impl NpcAttentionState {
         &mut self,
         now: CivilInstant,
     ) -> Result<(), CivilDateError> {
+        #[cfg(test)]
+        eprintln!("PROBE info-check now={:?} cadence={:?}", now, self.information_cadence);
         self.next_information_check = self.information_cadence.next_after(now)?;
         Ok(())
     }
@@ -305,8 +307,12 @@ impl GameSession {
         // Belief-1b·下 权威调和：runtime 驱动器在位时投递计算下沉组内
         //（驱动器在日结编排后稀疏下行——见 RuntimeDriver::deliver_
         // information）；session 侧停跑防双权威漂移。旧管线（无驱动器）
-        // 路径不变。
-        if self.runtime_driver.is_some() {
+        // 路径不变。Sol 六审段 1.3（weekend_publish）：门改判 state 的
+        /// runtime_information_authority（随克隆链走）——此前判
+        /// self.runtime_driver，而 clone_for_tick_shadow 把驱动器置
+        /// None，使自然日 candidate 内误走旧管线全量投递（休市日
+        /// 零市场副作用的 attention 面漂移显红）。
+        if self.state.runtime_information_authority {
             return Ok(());
         }
         let market = self.build_market_view();

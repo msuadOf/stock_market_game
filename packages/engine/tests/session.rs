@@ -4570,7 +4570,24 @@ fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
     // 「seed 须产出真实零售决策样本」前提不变（实测 seed 42 首样仍在窗内）。
     let mut setup = sample_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
-    let mut original = GameSession::new(setup, 42).unwrap();
+    let session = GameSession::new(setup, 42).unwrap();
+    // B 类重锚（六审段 1.3）：「seed 20 拍内须产生样本」的前提在 runtime
+    // 下不可复现（组端 evaluate 观察门为 RNG 采样——retail 位 next_due
+    // 初始 11/16，seed 42 的 20 拍窗内观察门 0 次通过；v4 判 B 的
+    /// "后置构造可靠采样 fixture"）。改确定性采样：retail 位注意力
+    /// 候选 tick 钉 1（首拍到期）+rng_state 钉使首次观察抽样必过的
+    /// 种子（SplitMix64(seed) 首抽 f64 已验证 <0.004<观察概率下界）
+    /// ——经存档往返通道注入（base_probability 不可钉：restore 侧
+    /// fault1041 确定性重建校验）。样本仍来自生产决策路径，断言强度
+    /// 不降。
+    let mut save = session.save().expect("healthy base save");
+    for (id, attention) in save.npc_attention.iter_mut() {
+        if id.0 == 1 || id.0 == 2 {
+            attention.next_attention_candidate_tick = 1;
+            attention.rng_state = 196;
+        }
+    }
+    let mut original = GameSession::restore(&save).unwrap();
     for _ in 0..20 {
         advance_civil_to_session_start(&mut original);
         original.step().expect("healthy step");
@@ -4580,7 +4597,7 @@ fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
     }
     assert!(
         !original.last_retail_decisions().is_empty(),
-        "test seed must produce at least one real retail decision sample"
+        "deterministic sampling fixture must produce real retail decision samples"
     );
 
     let saved = original.save().expect("healthy save");
@@ -5658,3 +5675,4 @@ fn zz_probe_s7_events() {
         eprintln!("PROBE s7 event: {event:?}");
     }
 }
+

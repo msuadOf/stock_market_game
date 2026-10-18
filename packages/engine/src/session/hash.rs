@@ -95,6 +95,8 @@ impl GameSession {
             groups: _,
             plans: _,
             urgency_policy: _,
+            // Sol 六审段 1.3：运行时权威标志（非业务事实——不参与哈希）。
+            runtime_information_authority: _,
             belief_participants: _,
             envelope_ledger: _,
             retail_projection_seen: _,

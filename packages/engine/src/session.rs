@@ -1444,6 +1444,14 @@ pub struct GameSession {
 /// tick shadow 与自然日日结共同提交的唯一状态集合。
 struct CommittableSessionState {
     setup: SessionSetup,
+    /// Sol 六审段 1.3（weekend_publish）：信息投递权威标志——runtime
+    /// 驱动器构造后置 true 并**随 state 克隆链走**（clone_for_tick_
+    /// shadow 会把 runtime_driver 置 None，旧门判 self.runtime_driver
+    /// 使 candidate 内 deliver_public_information 误走旧管线全量投递
+    /// ——休市日零市场副作用的 attention 面漂移显红）。不参与存档
+    /// （CommittableSessionState 无 serde derive，档投影逐域投影）
+    /// 与 business_state_hash（hash.rs 通配 _）。
+    runtime_information_authority: bool,
     /// 运行时-only 费率快照（任务65 #1 前置条件守卫）：于 GameSession::new（含恢复重建）
     /// 时固定，不参与存档/business_state_hash。逐 tick 与 `setup.config` O(1) 比对，
     /// 任何静默热改 → capture/校验门禁 fail closed（见 envelope_projection 守卫）。
@@ -2043,6 +2051,7 @@ impl GameSession {
                 #[cfg(feature = "simulation-diagnostics")]
                 causal: crate::diagnostics::causal::CausalCollector::default(),
                 groups: setup.groups.clone(),
+                runtime_information_authority: false,
                 validated_config: setup.config.clone(),
                 setup,
                 stocks,
@@ -5147,6 +5156,7 @@ impl CommittableSessionState {
             day,
             seq,
             civil_clock,
+            runtime_information_authority,
         } = self;
         let accounts =
             accounts
@@ -5214,6 +5224,7 @@ impl CommittableSessionState {
             day: *day,
             seq: *seq,
             civil_clock: civil_clock.clone(),
+            runtime_information_authority: *runtime_information_authority,
         })
     }
 
@@ -5281,6 +5292,7 @@ impl CommittableSessionState {
             day,
             seq,
             civil_clock,
+            runtime_information_authority,
             urgency_policy,
         } = shadow;
         // 专用析构线程（E7 复活路径）：旧权威值的析构整体移交池外线程，
@@ -5408,6 +5420,9 @@ impl CommittableSessionState {
         self.day = day;
         self.seq = seq;
         defer_swap(&mut self.civil_clock, civil_clock, FieldId::CivilClock);
+        // Sol 六审段 1.3：运行时权威标志随 shadow 交接（Copy 直赋——
+        // 与 seed/tick 先例同式，不扩 FieldId/COMMIT_FIELD_EXPECTED）。
+        self.runtime_information_authority = runtime_information_authority;
     }
 }
 

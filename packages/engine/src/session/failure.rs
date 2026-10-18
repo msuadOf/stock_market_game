@@ -415,6 +415,9 @@ impl GameSession {
                 }
             }
             self.runtime_driver = Some(std::sync::Mutex::new(driver));
+            // Sol 六审段 1.3：信息投递权威归组（deliver_public_information
+            // 的停跑门随 state 克隆链走——见字段注记）。
+            self.state.runtime_information_authority = true;
         }
         // 取出锁单元（避免 &mut self 与 guard 交叉借用）；失败/成功都
         // 放回——Abort 语义下 worker 存活，driver 可重跑。例外：body 内
@@ -1557,6 +1560,8 @@ impl GameSession {
         &mut self,
         updates: &[(crate::AccountId, crate::session::NpcAttentionState)],
     ) {
+        #[cfg(test)]
+        eprintln!("PROBE set-info-checks n={} first={:?}", updates.len(), updates.first().map(|u| (u.0, u.1.next_information_check)));
         self.mark_external_mutation();
         for (id, updated) in updates {
             // P2-3b：首写前值入 undo（改写前记录——回滚源）。
