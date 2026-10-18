@@ -24,6 +24,16 @@ use crate::{AccountId, Event, GameSession, SessionSetup};
 /// 的每个 owner 必须在对应组分片中（组端 undo 集漏标即红——不静默装
 /// 陈旧镜像；原 validate_sparse_echo_reply"缺项=RuntimeError"语义的
 /// 等价物，请求集改述为本拍事实集）。独立自由函数供负控单测直击。
+pub(crate) fn ensure_fact_owners_covered_arc(
+    fact_rec: Option<&super::world::TickRecord>,
+    snapshots: &[std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>],
+    accounts_per_group: usize,
+) -> Result<(), String> {
+    let snapshots_vec: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> =
+        snapshots.iter().map(|arc| (**arc).clone()).collect();
+    ensure_fact_owners_covered(fact_rec, &snapshots_vec, accounts_per_group)
+}
+
 pub(crate) fn ensure_fact_owners_covered(
     fact_rec: Option<&super::world::TickRecord>,
     snapshots: &[Vec<(super::LocalIdx, super::group::GroupAccount)>],
@@ -659,46 +669,55 @@ impl RuntimeDriver {
                     ));
                 }
                 let n_groups = self.world.n_groups();
-                let mut pairs: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> =
-                    vec![Vec::new(); n_groups];
+                // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
+                /// clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
+                let mut shards: Vec<std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>> =
+                    vec![std::sync::Arc::new(Vec::new()); n_groups];
                 for shard in &published.groups {
-                    let Some(slot) = pairs.get_mut(shard.group as usize) else {
+                    let Some(slot) = shards.get_mut(shard.group as usize) else {
                         return Err(format!(
                             "账户分片组号越界：g={}（组数 {n_groups}）",
                             shard.group
                         ));
                     };
-                    *slot = shard.accounts.iter().cloned().collect();
+                    *slot = std::sync::Arc::clone(&shard.accounts);
                 }
-                ensure_fact_owners_covered(fact_rec.as_ref(), &pairs, self.accounts_per_group)?;
-                pairs
+                ensure_fact_owners_covered_arc(
+                    fact_rec.as_ref(),
+                    &shards,
+                    self.accounts_per_group,
+                )?;
+                shards
             } else {
                 // 日结/首拍全量（EchoAccounts 全量读面不变）——转 (组,
-                // 下标) 对形态与稀疏路径共用回写循环。
+                // 下标) Arc 形态与稀疏路径共用回写循环。
                 let dense = self
                     .world
                     .snapshot_accounts()
                     .map_err(|e| format!("账户快照失败：{e:?}"))?;
-                let mut pairs = vec![Vec::new(); self.world.n_groups()];
+                let mut shards =
+                    vec![std::sync::Arc::new(Vec::new()); self.world.n_groups()];
                 for (g, accounts) in dense {
-                    let slot = pairs
+                    let slot = shards
                         .get_mut(g as usize)
                         .ok_or_else(|| format!("全量账户快照组号越界：g={g}"))?;
-                    *slot = accounts
-                        .into_iter()
-                        .enumerate()
-                        .map(|(local, acct)| (local as super::LocalIdx, acct))
-                        .collect();
+                    *slot = std::sync::Arc::new(
+                        accounts
+                            .into_iter()
+                            .enumerate()
+                            .map(|(local, acct)| (local as super::LocalIdx, acct))
+                            .collect(),
+                    );
                 }
-                pairs
+                shards
             }
         };
-        // 【P0 画像】acct_writeback 段（session 镜像回写循环）。
+        // 【P0 画像】acct_writeback 段（session 镜像回写循环——Arc 借用）。
         {
             let _seg = step_profile::scope(StepSegment::AcctWriteback);
-            for (g, accounts) in snapshots.into_iter().enumerate() {
-            for (local, acct) in accounts {
-                let global = g * self.accounts_per_group + local as usize;
+            for (g, accounts_arc) in snapshots.iter().enumerate() {
+            for (local, acct) in accounts_arc.iter() {
+                let global = g * self.accounts_per_group + *local as usize;
                 let Some(id) = self.id_map.get(global).copied() else {
                     continue;
                 };
@@ -747,7 +766,7 @@ impl RuntimeDriver {
                         let entry = buy_vwap
                                 .get(&(
                                     g as super::GroupIdx,
-                                    local as super::LocalIdx,
+                                    *local,
                                     idx as super::StockIdx,
                                 ))
                                 .copied()
