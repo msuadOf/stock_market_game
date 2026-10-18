@@ -1826,7 +1826,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
     setup.npcs.inst_count = 3;
     // 大子单（1000）：买入腿每拍被注入吃 ~200——小单在外来拍 Start 即被
     // 前拍成交耗尽（测试前提失效）；1000 保证存活到外来拍之后。
-    setup.strategy_params.inst.order_size = 1_000;
+    setup.strategy_params.inst.order_size = 4_000;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
@@ -1862,6 +1862,16 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
         driver.install_market_views(&mut session).expect("行情");
         driver.install_candles(&mut session).expect("K");
     }
+    // Sol 终审四审 sol7th 判型修正（探针实证）：组内成交的最终 staging
+    // 在**下一拍 Start** 落账——warmup 末拍的子单自有成交滞后一步；原
+    /// fixture 在落账前读 f0/r0 基线（陈旧 400 vs 落账后真值 1100——
+    /// 身份核 0 次误匹配，session 投影无辜）。插入静默冲刷拍使基线=
+    /// 结算真值，身份核判别力恢复（外来成交两拍均不推进）。
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("静默冲刷拍（滞后 staging 落账）");
+    driver.install_market_views(&mut session).expect("行情");
+    driver.install_candles(&mut session).expect("K");
     // 找一个有活动子单的**买入**计划（在簿挂单——本拍无对手成交）。
     let plans = driver.collect_plans().expect("组簿").remove(0).1;
     // 目标选择：**买入**计划、活动子单余量充足（>500——小单在外来拍
@@ -1921,6 +1931,7 @@ fn sol7th_foreign_same_key_fill_does_not_advance_plan_child() {
         .find(|(a, c, ..)| *a == account && *c == code)
         .map(|(.., filled, _)| filled)
         .expect("session 投影簿中计划在册");
+
     assert_eq!(
         session_filled, f0,
         "同拍投影 filled_qty 不被外来同键成交推进（身份核——误推进则 +100 显红）"
