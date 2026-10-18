@@ -83,6 +83,9 @@ pub fn world_spec_from_setup(
         // 覆盖（bridge 缺省零——无会话来源的世界从零起）。
         initial_frozen_today: Vec::new(),
         initial_purse_held: Vec::new(),
+        // Sol 终审四审预留族：在途卖余量镜像由 from_session 覆盖（bridge
+        // 缺省零——无会话来源的世界从零起）。
+        initial_pending_sell: Vec::new(),
         script_for,
         chunk: 512,
         watchdog: WatchdogConfig {

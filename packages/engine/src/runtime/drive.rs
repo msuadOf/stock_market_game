@@ -12,6 +12,7 @@
 
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
+use super::fees::buy_purse_limit;
 use super::event_bridge::{
     collect_lifecycle, project_auction_events, project_lifecycle_events, project_trade_events,
 };
@@ -320,56 +321,62 @@ impl RuntimeDriver {
                 }
             }
         }
-        // D5 restore 链最后一层：restore 形态（旧簿空——desk 权威在
-        // ledger）下，desk 种子单的在途面补进组初始账户，与 live 轨
-        /// （构造期旧簿种子）演化同构：
-        /// · 卖种子余量 → initial_shares（「在手+在途卖」口径——live 轨
-        ///   的组 shares 演进天然含在途，restore 投影 positions 只含
-        ///   在手，不补则成交回写双计下穿）；
+        // D5 restore 链最后一层（Sol 终审四审预留族重述）：desk 种子的
+        // 组端资源预留——**restore 账本与 adopt 旧簿两形态统一**。基线
+        /// 投影（accounts_projection）读的是 session 公开面：现金=组现金
+        /// +在途买占用（escrow 加回）、持仓=组 shares+在途卖余量（qty
+        /// 含在途口径）。组端严格口径须在基线之上反向扣除：
         /// · 买种子 purse → 组现金扣减 + buy_purse_held 登记（公开现金
-        ///   =组现金+占用口径；构造期旧簿种子形态不补——grant 投影已
-        ///   含在途面，补则双计）。
+        ///   =组现金+占用重建，face 不变；adopt 形态此前不扣——费用
+        ///   边际滞留组内可再消费）；
+        /// · 卖种子余量 → 组 shares 扣减 + pending_sell_qty 登记（face
+        ///   不变；restore 形态此前在 face 之上**加**余量=双计使可卖
+        ///   翻倍——resting_sell_orders_reserve 显红；adopt 形态不扣
+        ///   则成交后组侧幻影股，日结全量回写复活已卖持仓）。
+        let desk_order_seeds = resting_order_seeds_from_session(session, &ids, per_group)?;
         {
-            let restore_shape = session
-                .runtime_resting_orders_snapshot()
-                .iter()
-                .all(|(_, orders)| orders.is_empty());
-            if restore_shape {
-                // 组参数化：全局名册 local → (组, 组内 l) 寻址。
-                let mut purse_by_group = vec![vec![0i64; per_group]; n_groups];
-                for (key, envelope) in session.runtime_envelope_ledger_snapshot() {
-                    let local = ids
-                        .iter()
-                        .position(|id| *id == key.account)
-                        .ok_or_else(|| {
-                            format!(
-                                "账本挂单 owner 不在世界名册（无法投影）：{:?}",
-                                key.account
-                            )
-                        })?;
-                    let (g, l) = (local / per_group, local % per_group);
-                    let stock = key.stock.0 as usize;
-                    if stock >= n_stocks {
+            let mut purse_by_group = vec![vec![0i64; per_group]; n_groups];
+            let mut pending_sell_by_group = vec![vec![vec![0u32; n_stocks]; per_group]; n_groups];
+            for (stock, seeds) in desk_order_seeds.iter().enumerate() {
+                if stock >= n_stocks {
+                    return Err(format!(
+                        "desk 种子股索引越界（无法投影）：stock={stock}（股数 {n_stocks}）"
+                    ));
+                }
+                for seed in seeds {
+                    let (g, l) = (seed.owner.0 as usize, seed.owner.1 as usize);
+                    if g >= n_groups || l >= per_group {
                         return Err(format!(
-                            "账本挂单股索引越界（无法投影）：{:?}",
-                            key.stock
+                            "desk 种子组位越界（无法投影）：owner={:?}（组数 {n_groups}，每组 {per_group}）",
+                            seed.owner
                         ));
                     }
-                    let audit = envelope.audit();
-                    match key.side {
-                        crate::orderbook::Side::Sell => {
-                            shares[g][l][stock] =
-                                shares[g][l][stock].saturating_add(audit.remaining_qty);
-                        }
+                    match seed.side {
                         crate::orderbook::Side::Buy => {
-                            let purse = envelope.live().cash.cents();
-                            purse_by_group[g][l] += purse;
-                            cash[g][l] -= purse;
+                            let slot = &mut cash[g][l];
+                            *slot = (*slot).checked_sub(seed.purse).ok_or_else(|| {
+                                format!(
+                                    "desk 买种子 purse 超过组现金（档损坏）：owner={:?}, stock={stock}, purse={}",
+                                    seed.owner, seed.purse
+                                )
+                            })?;
+                            purse_by_group[g][l] += seed.purse;
+                        }
+                        crate::orderbook::Side::Sell => {
+                            let slot = &mut shares[g][l][stock];
+                            *slot = (*slot).checked_sub(seed.qty).ok_or_else(|| {
+                                format!(
+                                    "desk 卖种子余量超过组持仓（档损坏）：owner={:?}, stock={stock}, qty={}",
+                                    seed.owner, seed.qty
+                                )
+                            })?;
+                            pending_sell_by_group[g][l][stock] += seed.qty;
                         }
                     }
                 }
-                spec.initial_purse_held = purse_by_group;
             }
+            spec.initial_purse_held = purse_by_group;
+            spec.initial_pending_sell = pending_sell_by_group;
         }
         // D0：世界从会话当前 tick 起步（锁步不变量的构造期对齐——
         // 全新会话即 0；恢复/接管场景相位按绝对 tick 推导）。
@@ -401,7 +408,8 @@ impl RuntimeDriver {
         // 构造期直入 desk 初始簿——先于本 tick 新单（此前经 ExternalPlan
         // 消息链晚于外部新单到达，maker/taker 身分颠倒——live_plan_
         // partial_fill 红证）。owner 不在名册=投影缺口，显式失败。
-        spec.initial_desk_orders = resting_order_seeds_from_session(session, &ids, per_group)?;
+        // （种子已在预留段先行计算——组端现金/持仓扣减与之同源。）
+        spec.initial_desk_orders = desk_order_seeds;
         // D5 restore 等价：tick 价格历史投影（save fault2010 长度面）+
         /// 日内行情聚合种子（最后一层——活动 K/日内高低调/分钟收盘/昨收，
         /// 续拍在 save 聚合之上演进）。
@@ -2424,10 +2432,10 @@ fn resting_order_seeds_from_session(
     accounts_per_group: usize,
 ) -> Result<Vec<Vec<super::desk::DeskRestingSeed>>, String> {
     // D5 restore 等价：runtime 形态（旧簿空）下单权威=restore 重建的信封
-    // 账本（save 的 live_envelopes）——desk 种子从账本键恢复（purse 由
-    // buy_order_reservation 与 resource 占位同式；价格面以 charged 下界
-    // 无法精确——用 audit.limit==ZERO 的重建标记形态时退 1 分占位，
-    // 真实价格面由卖/买腿的 desk 撮合域重建（后续 step 覆盖））。
+    // 账本（save 的 live_envelopes）——desk 种子从账本键恢复（purse 与
+    // 价格面自 audit 真值直取——runtime 信封已收口真 limit/精确 escrow
+    /// purse，A2 时期的零标记/1 分占位形态退役）。
+    let config = session.export_setup_for_runtime().config;
     let snapshot = session.runtime_resting_orders_snapshot();
     let from_ledger = snapshot.iter().all(|(_, orders)| orders.is_empty());
     let mut seeds: Vec<Vec<super::desk::DeskRestingSeed>> = Vec::new();
@@ -2512,10 +2520,26 @@ fn resting_order_seeds_from_session(
                 (global / accounts_per_group.max(1)) as super::GroupIdx,
                 (global % accounts_per_group.max(1)) as super::LocalIdx,
             );
-            // 买腿 purse=全额预留（挂单价×量——desk 侧扣减权威；
-            /// envelope live 资源面）。
+            // 买腿 purse=精确 escrow（buy_purse_limit=挂单价×余量+费用
+            /// 边际——与旧管线 buy_order_reservation/restore 账本 purse
+            /// 同式；desk 成交扣减权威，组端现金同步扣减+占用登记）。
+            /// desk 种子侧 filled_value 从零起（成交累计不入 desk 种子），
+            /// purse 亦按零成交额式计算。此前价×量缺费用边际：escrow
+            /// 审计（fault2220）下穿、费用边际滞留组内可再消费。
             let purse = if order.side == crate::orderbook::Side::Buy {
-                order.price.cents() * i64::from(order.qty)
+                buy_purse_limit(
+                    &config,
+                    order.price,
+                    order.qty,
+                    crate::money::Money::ZERO,
+                )
+                .map_err(|e| {
+                    format!(
+                        "adopt 买种子 purse 计算失败：owner={:?}, code={code:?}：{e:?}",
+                        order.owner
+                    )
+                })?
+                .cents()
             } else {
                 0
             };

@@ -188,6 +188,10 @@ pub struct WorldSpec {
     /// D5 restore 链最后一层：初始在途买占用 `[group][local]`（i64 分
     /// 聚合额——restore 形态的 ledger 买种子 purse 投影；缺省零）。
     pub initial_purse_held: Vec<Vec<i64>>,
+    /// Sol 终审四审预留族：初始在途卖余量镜像 `[group][local][stock]`
+    /// （desk 卖种子的组端 pending_sell_qty 投影——公开持仓=组 shares+
+    /// 在途卖余量口径的加回面；缺省零）。
+    pub initial_pending_sell: Vec<Vec<Vec<u32>>>,
     /// 组决策脚本工厂。
     pub script_for: Box<dyn Fn(GroupIdx) -> GroupScript>,
     /// 组端分段 flush 粒度（op 数）。
@@ -392,6 +396,7 @@ impl World {
             initial_ever_held,
             initial_frozen_today,
             initial_purse_held,
+            initial_pending_sell,
             script_for,
             chunk,
             watchdog,
@@ -508,6 +513,18 @@ impl World {
                     .and_then(|by_group| by_group.get(l))
                 {
                     acct.buy_purse_held_cents = purse;
+                }
+                // Sol 终审四审预留族：在途卖余量镜像投影（desk 卖种子
+                /// 的组端 pending_sell_qty——组 shares 已同步扣减，公开
+                /// 持仓=组 shares+余量口径因此成立；可卖=组 shares−冻结
+                /// 不含在途）。
+                if let Some(pending) = initial_pending_sell
+                    .get(g as usize)
+                    .and_then(|by_group| by_group.get(l))
+                {
+                    for (slot, &qty) in acct.pending_sell_qty.iter_mut().zip(pending) {
+                        *slot = qty;
+                    }
                 }
                 accounts.push(acct);
             }
