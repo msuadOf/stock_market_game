@@ -17,7 +17,7 @@
 //! - 失败原子性：撤销日志覆盖簿/序号/计数/费用桶/行情（快照条目）——Abort 逆序
 //!   回放 + 清出口缓冲；转正 = 下一 tick 首批 Ops（隐式）。
 
-use super::fees::{buyer_charge, seller_charge, FeeQuote};
+use super::fees::{buy_purse_limit, buyer_charge, seller_charge, FeeQuote};
 use super::protocol::{
     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
@@ -927,7 +927,9 @@ impl DeskState {
         };
         match phase {
             DeskPhase::CallAuction | DeskPhase::ClosingAuction => {
-                // 集合竞价：只积累不撮合。
+                // 集合竞价：只积累不撮合（受理价已解析——purse 先收敛）。
+                let mut order = order;
+                self.trim_buy_purse_to_exact(&mut order)?;
                 self.rest(order);
             }
             DeskPhase::PreOpen | DeskPhase::Continuous => {
@@ -937,6 +939,7 @@ impl DeskState {
                     // 全成：purse slack（最坏情况预留 − 实际扣费）退款 + Closed。
                     self.close_order_entities(&order);
                 } else if rest_remainder {
+                    self.trim_buy_purse_to_exact(&mut order)?;
                     self.rest(order);
                 } else {
                     // 市价余量不进簿：原路退回 + **显式撤销事实**（Sol
@@ -1409,6 +1412,50 @@ impl DeskState {
             });
         } else {
             *front = after;
+        }
+        Ok(())
+    }
+
+    /// 挂簿前买腿 purse 收敛（Sol 终审四审符号价族修复）：组端按最坏
+    /// 情况预留 purse（符号价/市价=日涨跌停参考，F §1.5）；desk 解析出
+    /// 受理价后，挂簿余量的精确需求 = `buy_purse_limit(受理价, 余量,
+    /// 累计成交额)`（与旧管线 escrow 预留公式 `buy_order_reservation`
+    /// 同式——价优部分成交的价差沉淀一并收敛）。差额即时以 CashRefund
+    /// 退回组端（旧管线"超额预留下一拍释放"的 runtime 等价：组内现金
+    /// 经 staging 落账回收，同拍后续意图仍按最坏占用拒收，时序与旧
+    /// 管线一致）。purse 低于精确需求=组端/交易部失同步，显式失败。
+    fn trim_buy_purse_to_exact(&mut self, order: &mut DeskOrder) -> Result<(), RuntimeError> {
+        if order.side != Side::Buy {
+            return Ok(());
+        }
+        let required = buy_purse_limit(
+            &self.config,
+            Money::from_cents(order.price.max(1)),
+            order.qty,
+            Money::from_cents(order.filled_value.max(0)),
+        )
+        .map_err(|e| RuntimeError::ProtocolInvariant {
+            detail: format!(
+                "交易部 {} purse 精确需求计算失败：owner={:?}, price={}, qty={}：{e:?}",
+                self.setup.stock, order.owner, order.price, order.qty
+            ),
+        })?
+        .cents();
+        if order.purse < required {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "交易部 {} 买腿 purse 低于精确需求（组端预留失同步）：owner={:?}, purse={}, required={required}",
+                    self.setup.stock, order.owner, order.purse
+                ),
+            });
+        }
+        let refund = order.purse - required;
+        if refund > 0 {
+            order.purse = required;
+            self.out[order.owner.0 as usize].push(Entity::CashRefund {
+                local: order.owner.1,
+                amount: refund,
+            });
         }
         Ok(())
     }
