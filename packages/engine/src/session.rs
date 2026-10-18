@@ -1193,6 +1193,21 @@ impl SessionSetup {
             // fault1005: 股票规格列表为空。
             return Err(SessionError::InvalidSetup(ValidationFault::bare(1005)));
         }
+        // Sol 六审 v6 方案 A 守卫：股数上限=desk 域 OrderId 编码域容量
+        /// （stock 位宽 2^21=2_097_152 股——`(stock<<32)|serial` 最大
+        /// 2^53−2 恰内含 js_safe wire 域；股数超编码域=订单身份无法
+        /// 在 wire 域内合成）。StockIdx 的 u16 类型已先验限制股数
+        /// <65536≪2^21，本校验为防御性显式化（不经 StockIdx 的注入
+        /// 面同被拦）。所有 setup 入口（含测试注入）经此校验。
+        if self.stocks.len() >= (1usize << 21) {
+            // fault1035: 股数超出 desk 域 OrderId 编码容量。ctx[0] = 实际
+            // 股数；ctx[1] = 容量上限 2^21（stock 位宽——超域即拒，显式
+            /// 报错而非静默产生超 wire 域的订单身份）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1035,
+                vec![self.stocks.len() as u64, 1 << 21],
+            )));
+        }
         if self.simulation_policy_id != SIMULATION_POLICY_ID {
             // fault1006: 模拟政策身份不匹配。槽0/槽1 待 C 批数值化
             // （原文本为期望政策 id "{SIMULATION_POLICY_ID}" 与实际政策 id "{:?}"）。
@@ -3409,25 +3424,24 @@ impl GameSession {
                     })
                     .max()
                     .unwrap_or(0);
-                // Sol 五审复核收口：desk 游标域（next_serial>全部已耗
-                /// 序号——**含已闭合单**，如清仓卖/全成买）与经历行/
-                /// 计划链的 desk 域 OrderId（(stock<<48)|serial）一并
-                /// 入下界——此前仅镜像在册 serial+1：闭合单 id 使
-                /// fault2044（id≥next_order_id）显红。
-                // 再复核 P1 修正：编码值夹取 js_safe_u64 上限
-                /// （SaveSlot wire 域）——股序 ≥32 时 (idx<<48)|cursor
-                /// 超 2^53；该域 desk OrderId 编码本身超 wire 域为
-                /// 预存在缺口（登记台账），下界不因夹取而引入超界值。
+                // Sol 五审复核收口→六审 v6 方案 A：desk 游标域（next_serial
+                /// >全部已耗序号——含已闭合单）与经历行/计划链的 desk 域
+                /// OrderId（`(stock<<32)|serial`——新编码域最大 2^53−2
+                /// 恒内含 js_safe wire 域，夹取退役）一并入下界——此前
+                /// 仅镜像在册 serial+1：闭合单 id 使 fault2044 显红。
                 let mut floor = mirror_max.saturating_add(1);
                 for (code, mirror) in &self.state.desk_book_mirror {
-                    let encoded = ((u64::from(code.0) << 48) | mirror.next_serial)
-                        .min(crate::orderbook::js_safe_u64::MAX);
-                    floor = floor.max(encoded);
+                    floor = floor
+                        .max(crate::runtime::group::desk_order_id(
+                            code.0 as crate::runtime::StockIdx,
+                            mirror.next_serial,
+                        ));
                 }
                 for (idx, cursor) in self.state.runtime_desk_serial_cursors.iter().enumerate() {
-                    let encoded = ((u64::from(idx as u64) << 48) | cursor)
-                        .min(crate::orderbook::js_safe_u64::MAX);
-                    floor = floor.max(encoded);
+                    floor = floor.max(crate::runtime::group::desk_order_id(
+                        idx as crate::runtime::StockIdx,
+                        *cursor,
+                    ));
                 }
                 self.state.next_order_id.max(floor)
             },

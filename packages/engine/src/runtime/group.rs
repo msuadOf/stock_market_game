@@ -318,7 +318,22 @@ fn cash_with_pending_at(
 /// FillFact.order 的确定性身份合成（Sol 整改 2：不另造计数器——
 /// OrderRef=(股, desk 本地序号) → OrderId 高位编码股索引）。
 fn order_id_of(order: &OrderRef) -> crate::OrderId {
-    crate::OrderId((u64::from(order.0) << 48) | (order.1 & 0x0000_FFFF_FFFF_FFFF))
+    crate::OrderId(desk_order_id(order.0, order.1))
+}
+
+/// desk 域 OrderId 合成（Sol 六审 v6 判 B 必修·方案 A：压缩 stock 位宽）
+/// `(stock<<32)|(serial 低 32 位)`——域容量 stock<2^21 × serial<2^32，
+/// 最大 id=2^53−2 恰内含 js_safe wire 域（此前的 `(stock<<48)|serial`
+/// 第 33 股起超域）。serial 低 32 位取的是**恒等值**（desk 取号路径
+/// 的 next_serial 均 checked<2^32——超界显式失败，不存在先增长后
+/// 截断的路径）；drive/decision_chain 的合成与掩码同式复用本函数。
+pub(crate) fn desk_order_id(stock: super::StockIdx, serial: u64) -> u64 {
+    (u64::from(stock) << 32) | (serial & 0xFFFF_FFFF)
+}
+
+/// desk 域 OrderId 的 serial 分量提取（与 desk_order_id 同式反解）。
+pub(crate) fn desk_order_serial(id: u64) -> u64 {
+    id & 0xFFFF_FFFF
 }
 
 /// 组端可逆日志条目：记录“已施加的增量”，回滚时逆序施加 `-delta`。
@@ -2788,7 +2803,7 @@ impl GroupState {
                     cancels.push((
                         local,
                         code.0 as StockIdx,
-                        order_id.0 & 0x0000_FFFF_FFFF_FFFF,
+                        desk_order_serial(order_id.0),
                     ));
                     // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
                     /// 迁移）显式失败——铁律二。
@@ -2822,7 +2837,7 @@ impl GroupState {
                     cancels.push((
                         local,
                         code.0 as StockIdx,
-                        order_id.0 & 0x0000_FFFF_FFFF_FFFF,
+                        desk_order_serial(order_id.0),
                     ));
                     // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
                     /// 迁移）显式失败——铁律二。
@@ -3060,7 +3075,7 @@ impl GroupState {
                 if paused || withdraw {
                     match plan.active_child_order_id() {
                         Some(order_id) if cancellable_now => {
-                            let serial = order_id.0 & 0x0000_FFFF_FFFF_FFFF;
+                            let serial = desk_order_serial(order_id.0);
                             cancels.push((local, code.0 as StockIdx, serial));
                         }
                         _ => {}
@@ -3175,7 +3190,7 @@ impl GroupState {
                 crate::plans::QuoteAction::Cancel { order_id } => {
                     // D3b 件 3：定向撤单路由（OrderRef 合成逆——serial=
                     // 低 48 位；票保留至 Closed 释放）。
-                    let serial = order_id.0 & 0x0000_FFFF_FFFF_FFFF;
+                    let serial = desk_order_serial(order_id.0);
                     cancels.push((local, stock_idx as StockIdx, serial));
                 }
                 _ => {}

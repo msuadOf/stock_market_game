@@ -2113,3 +2113,63 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
     GameSession::restore(&saved)
         .expect("adopt 静点档必须可恢复（种子 purse=精确 escrow——fault2220 即 purse 口径错）");
 }
+
+/// Sol 六审 v6 判 B 必修（OrderId 编码域）：33 股局（股序 0..=32）的
+/// 合成 id `(stock<<48)|serial` 在第 33 股起超 js_safe wire 域——事件
+/// id/存档往返全链红证（next_order_id 夹取只修下界，未修编码域）。
+#[test]
+fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
+    if !crate::runtime::step_runtime_enabled() {
+        return;
+    }
+    // 33 股主板（代码序=输入序，StockId 0..=32）。
+    let stocks = (0..33u32)
+        .map(|i| StockSpec {
+            code: StockCode(format!("600{:03}", i)),
+            exchange: StockExchange::Shanghai,
+            initial_price: crate::money::Money::from_cents(1_000),
+            category: SecurityCategory::MainBoard,
+            limit_pct: 0.10,
+            tick: crate::money::Money::from_cents(1),
+            total_shares: 1_000_000,
+            float_shares: 800_000,
+        })
+        .collect();
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.stocks = stocks;
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.config.starting_cash = crate::money::Money::from_cents(1_000_000);
+    let mut session = GameSession::new(setup, 42).expect("33 股 fixture 必须有效");
+    // 第 33 股（idx 32）玩家限价单——受理事件的 id 即超域编码。
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockId(32),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(crate::money::Money::from_cents(1_000)),
+                qty: 100,
+            },
+        )
+        .expect("入队");
+    let events = session.step().expect("步进");
+    let json = serde_json::to_value(&events)
+        .expect("事件面序列化");
+    assert!(json.to_string().len() > 0);
+    let save = session.save().expect("存档");
+    GameSession::restore(&save).expect("33 股局档往返");
+    // 编码域断言（v6 方案 A 修复后）：新合成 `(stock<<32)|serial`
+    /// 在最大股序（2^21−1）与最大 serial（2^32−1）处仍内含 OrderId
+    /// 的 js_safe wire 域；旧编码 (32<<48)|1 的超限红证见
+    /// .tmp/sol-stepframe-red-evidence/13-v6-orderid-red.txt。
+    let encoded = serde_json::to_value(OrderId(crate::runtime::group::desk_order_id(
+        u16::MAX,
+        0xFFFF_FFFF,
+    )));
+    assert!(
+        encoded.is_ok(),
+        "新编码域最大 id 须在 wire 域内——{encoded:?}"
+    );
+}

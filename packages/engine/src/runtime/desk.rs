@@ -845,7 +845,7 @@ impl DeskState {
         let is_market = matches!(rp, RoutedPrice::Market);
         // 相位门禁：盘前拒收；竞价阶段只收限价。
         if phase == DeskPhase::PreOpen {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::PhaseRejected);
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::PhaseRejected)?;
             return Ok(());
         }
         if phase == DeskPhase::CallAuction || phase == DeskPhase::ClosingAuction {
@@ -876,18 +876,18 @@ impl DeskState {
             });
         }
         if qty > cap {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::ExceedsOrderCap);
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::ExceedsOrderCap)?;
             return Ok(());
         }
         // 买入整手（卖出零股一次性由组端校验——持仓知识在本组）。
         if side == Side::Buy && qty % self.config.lot_size != 0 {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::NotRoundLot);
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::NotRoundLot)?;
             return Ok(());
         }
         // 价格：正数 + tick 整数倍（最小价位 0.01 元）。
         let (price, rest_remainder) = self.resolve_price(rp, side, tick)?;
         if price <= 0 || price % 1 != 0 {
-            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand);
+            self.reject(tick, owner, side, qty, purse, ReceiptKind::PriceOutOfBand)?;
             return Ok(());
         }
         // 涨跌停带（闭区间）与价格笼子。市价按纯带校验（Sol 复审
@@ -908,7 +908,7 @@ impl DeskState {
             } else {
                 ReceiptKind::PriceOutOfBand
             };
-            self.reject(tick, owner, side, qty, purse, kind);
+            self.reject(tick, owner, side, qty, purse, kind)?;
             return Ok(());
         }
         if purse < 0 || (side == Side::Sell && purse != 0) {
@@ -1641,7 +1641,7 @@ impl DeskState {
         qty: u32,
         purse: i64,
         kind: ReceiptKind,
-    ) {
+    ) -> Result<(), RuntimeError> {
         let g = owner.0 as usize;
         match side {
             Side::Buy => {
@@ -1664,11 +1664,22 @@ impl DeskState {
             order_serial: self.next_serial,
         });
         let order = (self.setup.stock, self.next_serial);
-        self.next_serial += 1;
+        // 同上：2^32 checked（v6 方案 A 守卫——拒收回执身份同域）。
+        self.next_serial = self
+            .next_serial
+            .checked_add(1)
+            .filter(|next| *next <= 0xFFFF_FFFF)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "交易部 {} desk 序号耗尽 2^32 编码域（拒收回执身份无法再合成）",
+                    self.setup.stock
+                ),
+            })?;
         self.undo.push(DeskUndo::Serial);
         self.receipts_out[g].push(DeskReceipt { order, owner, kind });
         self.skipped_orders += 1;
         self.undo.push(DeskUndo::Skipped(1));
+        Ok(())
     }
 
     /// 到期撤销：tick 起点先于本 tick 新意图（对齐 ExpiryShadow 相位时点）。

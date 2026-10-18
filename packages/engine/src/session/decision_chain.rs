@@ -5216,7 +5216,10 @@ mod chain_restructure_tests {
                     seq,
                     account,
                     code: code.clone(),
-                    id: OrderId((u64::from(code.0) << 48) | (id.0 & 0x0000_FFFF_FFFF_FFFF)),
+                    id: OrderId(crate::runtime::group::desk_order_id(
+                        code.0 as crate::runtime::StockIdx,
+                        crate::runtime::group::desk_order_serial(id.0),
+                    )),
                     remaining_qty,
                 },
                 Event::OrderAccepted {
@@ -5231,7 +5234,10 @@ mod chain_restructure_tests {
                     seq,
                     account,
                     code: code.clone(),
-                    id: OrderId((u64::from(code.0) << 48) | (id.0 & 0x0000_FFFF_FFFF_FFFF)),
+                    id: OrderId(crate::runtime::group::desk_order_id(
+                        code.0 as crate::runtime::StockIdx,
+                        crate::runtime::group::desk_order_serial(id.0),
+                    )),
                     side,
                     price,
                     remaining_qty,

@@ -999,9 +999,10 @@ impl RuntimeDriver {
                     continue;
                 };
                 let identity_ok = if strict_identity {
-                    child_order.0 == ((u64::from(tr.stock) << 48) | (order_serial & 0x0000_FFFF_FFFF_FFFF))
+                    child_order.0 == super::group::desk_order_id(tr.stock, order_serial)
                 } else {
-                    child_order.0 & 0x0000_FFFF_FFFF_FFFF == order_serial & 0x0000_FFFF_FFFF_FFFF
+                    super::group::desk_order_serial(child_order.0)
+                        == super::group::desk_order_serial(order_serial)
                 };
                 if !identity_ok {
                     continue;
@@ -1431,7 +1432,7 @@ impl RuntimeDriver {
                 cancels[g as usize].push((
                     local,
                     code.0 as super::StockIdx,
-                    id.0 & 0x0000_FFFF_FFFF_FFFF,
+                    super::group::desk_order_serial(id.0),
                 ));
                 continue;
             }
@@ -1686,9 +1687,10 @@ impl RuntimeDriver {
                     /// save 面由此双写闭合；无经历账账户内建跳过）。
                     if d.qty < 0 && pre_qty > 0 {
                         if let Some(&(price, serial)) = last_sell.get(&(id, *code)) {
-                            let order = crate::OrderId(
-                                (u64::from(code.0) << 48) | (serial & 0x0000_FFFF_FFFF_FFFF),
-                            );
+                            let order = crate::OrderId(super::group::desk_order_id(
+                                code.0 as super::StockIdx,
+                                serial,
+                            ));
                             full_exits.push((code.clone(), price, pre_qty, pre_cost, order.0));
                         }
                     }
@@ -2471,7 +2473,7 @@ fn resting_order_seeds_from_session(
                 // =desk 本地序号（高位为 stock 域——group.rs order_id_of
                 // 的编码式；直取整值会使 stock≥1 时 serial 跳天、截点
                 // 过滤反向失真）。
-                serial: key.order.0 & 0x0000_FFFF_FFFF_FFFF,
+                serial: super::group::desk_order_serial(key.order.0),
             });
         }
         return Ok(seeds);
