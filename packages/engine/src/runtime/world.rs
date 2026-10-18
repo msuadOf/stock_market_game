@@ -1709,6 +1709,9 @@ impl World {
             }
         }
         let mut left = self.n_groups;
+        // 复核建议 ④：计数仅供 cfg(test) 注入阈值消费——非测试构建
+        // 不落地（免死写）。
+        #[cfg(test)]
         let mut acks_seen = 0usize;
         let mut acked_groups = vec![false; self.n_groups];
         let mut seal_accounts = Vec::with_capacity(self.n_groups);
@@ -1762,7 +1765,10 @@ impl World {
                         belief: belief_sparse,
                     });
                     left -= 1;
-                    acks_seen += 1;
+                    #[cfg(test)]
+                    {
+                        acks_seen += 1;
+                    }
                 }
                 Ok(UpMsg::Failed { who, error }) => {
                     // 组端 Seal 处理失败（apply_staging 数据损坏类）——
