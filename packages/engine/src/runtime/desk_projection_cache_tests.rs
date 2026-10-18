@@ -95,49 +95,46 @@ fn run_and_collect(disable_cache: bool) -> (Vec<Vec<StockPublic>>, i128, u64) {
     (snapshots, cash, volume)
 }
 
-/// 双跑对照（刀 2a 主合同）：禁缓存（直构建独立权威源）vs 默认（缓存
-/// 路径），同 fixture 同种子——逐 tick view 序列**整结构相等**（缓存
-/// 不得改变任何观察面值），终态守恒锚双跑一致（缓存不得扰动结算面）。
+/// 刀 2a 合同（等价+突变判别合并——旋钮为进程级 static，两判据必须
+/// 串行防并行测试互相污染）：
+/// ①双跑等价：禁缓存（直构建独立权威源）vs 默认（缓存路径），同
+/// fixture 同种子——逐 tick view 序列**整结构相等**（缓存不得改变
+/// 任何观察面值），终态守恒锚双跑一致（缓存不得扰动结算面）。
+/// ②突变判别（批 1 红先行锚——桩阶段本段红=缓存未接入的证据；批 2
+/// 实现后绿）：失效跳过（写点不推进版本）时缓存臂必须陈旧分叉。
 #[test]
-fn desk_projection_cache_matches_full_rebuild() {
+fn desk_projection_cache_contract_equivalence_and_stale_mutation() {
+    // ── ① 等价（双跑对照） ──
     let (direct, cash_a, vol_a) = run_and_collect(true);
     let (cached, cash_b, vol_b) = run_and_collect(false);
     assert_eq!(direct.len(), 13);
     assert_eq!(cached.len(), 13, "双跑 tick 数一致");
     for (tick, (a, b)) in direct.iter().zip(cached.iter()).enumerate() {
-        assert_eq!(a, b, "tick {} 发布面 desks view 必须整结构相等（缓存不得改值）", tick + 1);
+        assert_eq!(
+            a, b,
+            "tick {} 发布面 desks view 必须整结构相等（缓存不得改值）",
+            tick + 1
+        );
     }
     assert_eq!(cash_a, cash_b, "终态现金守恒锚双跑一致");
     assert_eq!(vol_a, vol_b, "终态成交量锚双跑一致");
-    if vol_a == 0 {
-        // 临时调试面（fixture 校准期）：打印关键 tick 快照定位零成交原因。
-        for (i, snap) in direct.iter().enumerate().take(6) {
-            let v = &snap[0];
-            eprintln!(
-                "tick {} last={} best_bid={:?} best_ask={:?} vol={} depth_bids={:?} cutoff={}",
-                i + 1, v.last_price, v.best_bid, v.best_ask, v.volume_today,
-                v.depth_bids, v.public_cutoff_serial
-            );
-        }
-    }
     assert!(vol_a > 0, "fixture 必须产生成交（否则失效路径无覆盖）");
-}
-
-/// 突变判别面（旋钮②——红先行）：失效跳过（写点不推进版本）时缓存
-/// 臂必须陈旧（与直构建臂分叉）。**批 1（旋钮桩无消费）本测试红**
-///——缓存未接入/失效无效果的直接证据；批 2 实现后转绿（旋钮真跳过
-/// 失效→陈旧分叉成立）。fixture 含成交失效场景是分叉前提（上方
-/// 合同 1 的 vol>0 锚已保证）。
-#[test]
-fn desk_projection_cache_skip_invalidation_makes_cache_stale() {
+    // ── ② 突变判别（红先行→批 2 绿） ──
     set_desk_projection_invalidation_skip_for_test(true);
     // 直构建臂不受 skip 旋钮影响（正交：skip 只作用于缓存命中的失效判定）。
-    let (direct, _, _) = run_and_collect(true);
+    let (direct2, _, _) = run_and_collect(true);
     // 缓存臂+跳过失效：写点不推进版本 ⇒ 成交后缓存不失效 ⇒ 陈旧。
     let (stale_cached, _, _) = run_and_collect(false);
     set_desk_projection_invalidation_skip_for_test(false);
     assert_ne!(
-        direct, stale_cached,
+        direct2, stale_cached,
         "跳过失效必须使缓存臂陈旧（两臂相等=缓存未接入或失效无效果——判别面红）"
+    );
+    // 旋钮复位无残留：复位后缓存臂恢复与直构建等价。
+    let (direct3, _, _) = run_and_collect(true);
+    let (cached3, _, _) = run_and_collect(false);
+    assert_eq!(
+        direct3, cached3,
+        "旋钮复位后缓存臂必须恢复等价（无残留污染）"
     );
 }

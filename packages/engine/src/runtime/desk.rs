@@ -377,6 +377,23 @@ pub struct DeskState {
     /// 最近一次 Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 committed_hash；
     /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据）。
     rollback_hash: Option<u64>,
+    /// 刀 2a（协调者刀单②）：投影内容版本——簿/行情分键。推进策略
+    /// **宁多勿漏**（多推=多一次重建的性能小损；漏推=陈旧投影——
+    /// 双跑等价合同红）。写点=簿变更方法（挂/撤/成交/回滚/清簿）与
+    /// 行情变更方法（成交/finish_round 值敏感/日结/回滚）。
+    book_ver: u64,
+    /// 行情内容版本（view 的 K 线/价格/量域依赖）。
+    market_ver: u64,
+    /// view 投影缓存（键=(book_ver, market_ver, 相位)——相位影响公开
+    /// 揭示面：CallAuction 空簿/ClosingAuction 截点前老单）。
+    view_cache: Option<(
+        u64,
+        u64,
+        DeskPhase,
+        std::sync::Arc<super::protocol::StockPublic>,
+    )>,
+    /// resting 投影缓存（键=book_ver——只依赖簿）。
+    resting_cache: Option<(u64, std::sync::Arc<Vec<super::protocol::RestingFact>>)>,
 }
 
 /// 刀 2a 判别旋钮（cfg(test)）——desk 投影轮间缓存（dirty 化）：
@@ -413,6 +430,68 @@ impl DeskState {
     #[cfg(test)]
     pub(crate) fn projection_invalidation_skip() -> bool {
         DESK_PROJECTION_INVALIDATION_SKIP.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 刀 2a：簿内容版本推进（一切簿变更写点调用——宁多勿漏）。
+    fn bump_book_ver(&mut self) {
+        #[cfg(test)]
+        if Self::projection_invalidation_skip() {
+            return;
+        }
+        self.book_ver = self.book_ver.wrapping_add(1);
+    }
+
+    /// 刀 2a：行情内容版本推进（成交/值敏感 finish_round/日结/回滚）。
+    fn bump_market_ver(&mut self) {
+        #[cfg(test)]
+        if Self::projection_invalidation_skip() {
+            return;
+        }
+        self.market_ver = self.market_ver.wrapping_add(1);
+    }
+
+    /// 刀 2a：view 投影快照（版本+相位键缓存——命中免 O(簿+K 历史)
+    /// 重建，未命中构建并缓存）。等价面由 desk_projection_cache_tests
+    /// 双跑合同+J6 发布面守卫承载。
+    fn public_snapshot(&mut self, tick: u64) -> super::protocol::StockPublic {
+        let phase = self.setup.phase_at(tick);
+        #[cfg(test)]
+        let disabled = Self::projection_cache_disabled();
+        #[cfg(not(test))]
+        let disabled = false;
+        if !disabled {
+            if let Some((bv, mv, ph, cached)) = &self.view_cache {
+                if *bv == self.book_ver && *mv == self.market_ver && *ph == phase {
+                    return (**cached).clone();
+                }
+            }
+        }
+        let built = self.build_public(tick);
+        self.view_cache = Some((
+            self.book_ver,
+            self.market_ver,
+            phase,
+            std::sync::Arc::new(built.clone()),
+        ));
+        built
+    }
+
+    /// 刀 2a：resting 投影快照（簿版本键缓存）。
+    fn resting_snapshot(&mut self) -> Vec<super::protocol::RestingFact> {
+        #[cfg(test)]
+        let disabled = Self::projection_cache_disabled();
+        #[cfg(not(test))]
+        let disabled = false;
+        if !disabled {
+            if let Some((bv, cached)) = &self.resting_cache {
+                if *bv == self.book_ver {
+                    return (**cached).clone();
+                }
+            }
+        }
+        let built = build_resting_facts(self);
+        self.resting_cache = Some((self.book_ver, std::sync::Arc::new(built.clone())));
+        built
     }
 
     /// 构造交易部状态。
@@ -473,6 +552,10 @@ impl DeskState {
             self_asks: std::collections::HashMap::new(),
             self_bids: std::collections::HashMap::new(),
             rollback_hash: None,
+            book_ver: 0,
+            market_ver: 0,
+            view_cache: None,
+            resting_cache: None,
         }
     }
 
@@ -560,6 +643,9 @@ impl DeskState {
 
     /// 逆序回放撤销日志 + 清出口缓冲（Abort/panic 回滚）。
     fn rollback(&mut self) {
+        // 刀 2a：Abort/panic 回滚——簿+行情整体恢复（保守双推）。
+        self.bump_book_ver();
+        self.bump_market_ver();
         let undo = std::mem::take(&mut self.undo);
         for entry in undo.into_iter().rev() {
             match entry {
@@ -632,6 +718,8 @@ impl DeskState {
     }
 
     fn remove_by_ref(&mut self, order_ref: &OrderRef) {
+        // 刀 2a：撤单/成交/TTL/清簿移除——簿内容变。
+        self.bump_book_ver();
         let mut removed: Option<DeskOrder> = None;
         for book in [&mut self.bids, &mut self.asks] {
             let mut hit_price: Option<i64> = None;
@@ -683,6 +771,8 @@ impl DeskState {
     }
 
     fn restore_fields(&mut self, snapshot: &DeskOrder) {
+        // 刀 2a：undo 回放恢复订单域（purse/量等 resting 面）。
+        self.bump_book_ver();
         for book in [&mut self.bids, &mut self.asks] {
             for level in book.values_mut() {
                 for o in level.iter_mut() {
@@ -1060,6 +1150,8 @@ impl DeskState {
     /// 序号已在 place() 取号点消费（Sol 三轮修复 2）——此处不再推进；
     /// restore 种子路径的 next_serial 由 seed.serial+1 的 max 维护。
     fn rest_inner(&mut self, order: DeskOrder) -> super::protocol::DeskLifecycleFact {
+        // 刀 2a：挂单入簿。
+        self.bump_book_ver();
         let idx = if order.side == Side::Buy {
             &mut self.self_bids
         } else {
@@ -1160,6 +1252,8 @@ impl DeskState {
         qty: u32,
         fill_price: i64,
     ) -> Result<(), RuntimeError> {
+        // 刀 2a：成交行情写（last/high/low/量/额/K 演进）。
+        self.bump_market_ver();
         let price = fill_price;
         let value = Money::from_cents(price)
             .mul_shares(qty)
@@ -1408,6 +1502,8 @@ impl DeskState {
         maker: &DeskOrder,
         after: DeskOrder,
     ) -> Result<(), RuntimeError> {
+        // 刀 2a：成交改 maker 单量（簿）。
+        self.bump_book_ver();
         let book = if maker.side == Side::Buy {
             &mut self.bids
         } else {
@@ -1487,6 +1583,8 @@ impl DeskState {
     /// 经 staging 落账回收，同拍后续意图仍按最坏占用拒收，时序与旧
     /// 管线一致）。purse 低于精确需求=组端/交易部失同步，显式失败。
     fn trim_buy_purse_to_exact(&mut self, order: &mut DeskOrder) -> Result<(), RuntimeError> {
+        // 刀 2a：买 purse 精确化（RestingFact purse 域）。
+        self.bump_book_ver();
         if order.side != Side::Buy {
             return Ok(());
         }
@@ -1552,6 +1650,8 @@ impl DeskState {
 
     /// 移除挂单（记 Removed）。
     fn remove_order(&mut self, order: &DeskOrder) {
+        // 刀 2a：直接簿移除（drain/撤单路径——不走 remove_by_ref）。
+        self.bump_book_ver();
         // 自成交索引同步移除。
         {
             let idx = if order.side == Side::Buy {
@@ -1750,6 +1850,9 @@ impl DeskState {
     /// 开盘集合竞价一次清算（相位离开申报窗的首个 tick 触发）：
     /// 沪深选价（`select_clearing` 复用）→ 按清算价 FIFO 配对 → 余单保留原档转连续。
     fn execute_opening_clearing(&mut self) -> Result<Option<(i64, u64)>, RuntimeError> {
+        // 刀 2a：开盘竞价清算——簿大变+清算价成交。
+        self.bump_book_ver();
+        self.bump_market_ver();
         self.opening_cleared = true;
         let orders: Vec<ClearingOrder> = self
             .bids
@@ -1901,6 +2004,9 @@ impl DeskState {
     /// 日界重置：昨收=最新价、日内高低/量清零、活动 K 入历史（F §6.2 步骤 5
     /// 的下一交易日视图；撤销日志的 Market 快照覆盖本重置——Abort 可回退）。
     fn roll_day(&mut self) {
+        // 刀 2a：日结重置——簿清空+行情跨日。
+        self.bump_book_ver();
+        self.bump_market_ver();
         // Sol 六审段 1.2 取证修复收尾：新交易日重置开盘清算标记——
         // opening_cleared 只约束本交易日申报窗末的指示价停发与清算触发，
         // 跨日不残留（此前第二日开盘窗被首日标记抑制，
@@ -2073,18 +2179,15 @@ impl DeskState {
             recent_prices: self.market.recent_prices.iter().copied().collect(),
             minute_closes: self.market.minute_closes.clone(),
             // D3a-2 观察基：已完成日 K 尾部 250（不过滤）+绝对计数。
+            // 刀 2a：尾部 250 直取（原全历史 collect 再 drain 头部——
+            /// O(全历史)/轮×每股；361 日档每轮多遍历 111 条）。
             daily_bars: {
-                let mut bars: Vec<(i64, i64, i64, i64, u64)> = self
-                    .market
-                    .candles
+                let candles = &self.market.candles;
+                let start = candles.len().saturating_sub(250);
+                candles[start..]
                     .iter()
                     .map(|c| (c.open, c.high, c.low, c.close, c.volume))
-                    .collect();
-                let len = bars.len();
-                if len > 250 {
-                    bars.drain(..len - 250);
-                }
-                bars
+                    .collect()
             },
             daily_active: self
                 .market
@@ -2133,6 +2236,21 @@ impl DeskState {
     fn finish_round(&mut self, tick: u64) -> Result<(), RuntimeError> {
         // 零成交也建立占位 K（对齐 record_trade_or_mark 的 or_insert 语义）。
         let last = self.market.last_price;
+        // 刀 2a 值敏感失效：finish_round 每轮跑（幂等写为主）——只在
+        /// view 依赖域内容实际变化时推进 market_ver（占位 K 建立/close
+        /// 变化/recent 窗口滑动不同值/分钟回填），保证零成交稳态轮的
+        /// view 缓存命中。判定收敛到函数末尾统一 bump。
+        let candle_close_changed = self
+            .market
+            .candle
+            .as_ref()
+            .is_none_or(|c| c.close != last);
+        let window_full = self.market.recent_prices.len() >= self.setup.history_len;
+        let popped_front = if window_full {
+            self.market.recent_prices.front().copied()
+        } else {
+            None
+        };
         let candle = self.market.candle.get_or_insert(DeskCandle {
             open: last,
             high: last,
@@ -2145,6 +2263,8 @@ impl DeskState {
         self.note_auction_indicative(tick);
         // tick 收盘价历史（容量裁剪）。
         self.market.recent_prices.push_back(last);
+        let mut content_changed =
+            candle_close_changed || !window_full || popped_front != Some(last);
         if self.market.recent_prices.len() > self.setup.history_len {
             self.market.recent_prices.pop_front();
         }
@@ -2176,8 +2296,12 @@ impl DeskState {
                 while (self.market.minute_closes.len() as u64) < target_local {
                     let idx = self.market.minute_closes.len() as u64;
                     self.market.minute_closes.push((day_base + idx, last));
+                    content_changed = true;
                 }
             }
+        }
+        if content_changed {
+            self.bump_market_ver();
         }
         Ok(())
     }
@@ -2643,7 +2767,7 @@ fn process_msg(
             // D5 envelope 投影：在途单快照（bids+asks 全量——费用
             // 累计/余量直取 desk 权威）。P2-3 后生产读面走 DeskReport
             /// 携带；本应答保留给日结/测试的 live 收集通道。
-            let orders = build_resting_facts(state);
+            let orders = state.resting_snapshot();
             if up_tx
                 .send(UpMsg::DeskResting {
                     stock: state.setup.stock,
@@ -2772,14 +2896,14 @@ fn process_msg(
                         volume_today: state.market.volume_today,
                         trade_count: state.market.trade_count,
                         fee_sink: state.fee_sink,
-                        view: state.build_public(tick),
+                        view: state.public_snapshot(tick),
                         trades: std::mem::take(&mut state.trade_facts),
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
                         receipts_out_list: receipts_detail,
                         auction: std::mem::take(&mut state.auction_facts),
                         // P2-3：在途单观察面随报告上行（组装与 DeskResting
                         // 应答同源——EchoResting 应答处同式，见该分支）。
-                        resting_orders: build_resting_facts(state),
+                        resting_orders: state.resting_snapshot(),
                         next_serial: state.next_serial,
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {
