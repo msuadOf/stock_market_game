@@ -1084,8 +1084,30 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         session
             .fixture_account_mut(&AccountId(1))
             .expect("retail seller must exist")
-            .grant_position(code.clone(), 100, Money::from_cents(1))
+            // Sol 终审四审预留族：desk 卖种子组端扣减持仓（checked_sub）
+            // 后，种子挂量不得超过持有（此前的 100 持有挂 200 卖依赖
+            // 种子通道绕过校验——做空形态；改为足额持有，"余 100 在途"
+            // 的部分成交形态不变）。
+            .grant_position(code.clone(), 200, Money::from_cents(1))
             .expect("fixture holding must be valid");
+        // fault2038（持仓必有经历）：测试中途 grant 的持仓需同步经历
+        /// 条目（真实流量的持仓来自构造期分配或买腿成交——各自带条目）。
+        session
+            .state
+            .retail_experience
+            .get_mut(&AccountId(1))
+            .expect("retail seller must have an experience row")
+            .initialize_holding_dated(
+                &code,
+                Some(Money::from_cents(1)),
+                Money::from_cents(1),
+                crate::experience::ExperienceMoment {
+                    civil_date: session.state.civil_clock.current_date(),
+                    market_minute: 0,
+                    trading_day: 0,
+                },
+            )
+            .expect("fixture experience entry must be valid");
         let mut seed_events = Vec::new();
         session.seed_order_for_test(
             AccountId(1),

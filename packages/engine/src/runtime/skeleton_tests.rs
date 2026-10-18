@@ -37,6 +37,7 @@ pub(crate) fn basic_spec(
         initial_ever_held: Vec::new(),
         initial_frozen_today: Vec::new(),
         initial_purse_held: Vec::new(),
+        initial_pending_sell: Vec::new(),
         root_projection: None,
         civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         script_for,

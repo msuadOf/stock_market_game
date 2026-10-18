@@ -908,6 +908,32 @@ impl GroupState {
             // D3a-2c 件1：成本基先行（FillFact 逐笔记 invested/recovered，
             // 仅成交额——对齐 Account::apply_buy/apply_sell 口径）。
             // D3a-3：计划成交推进（执行腿——同股同方向唯一活跃计划）。
+            // Sol 终审四审经历族：卖腿 fill 前成本基/面快照（清仓转移的
+            // cost_before 输入——fill 循环内 apply_fill_cost_basis 先行
+            // 推进 invested/recovered，期末值不可反推）。
+            let mut pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)> =
+                std::collections::BTreeMap::new();
+            for fill in &batch.fills {
+                if fill.side != Side::Sell || fill.owner.0 != self.group {
+                    continue;
+                }
+                let local = fill.owner.1;
+                if pre_exit_basis.contains_key(&local) {
+                    continue;
+                }
+                if let Some(acct) = self.accounts.get(local as usize) {
+                    pre_exit_basis.insert(
+                        local,
+                        (
+                            acct.invested_cents.get(stock).copied().unwrap_or(0),
+                            acct.recovered_cents.get(stock).copied().unwrap_or(0),
+                            acct.shares.get(stock).copied().unwrap_or(0).saturating_add(
+                                acct.pending_sell_qty.get(stock).copied().unwrap_or(0),
+                            ),
+                        ),
+                    );
+                }
+            }
             let mut touched: Vec<(LocalIdx, StockIdx)> = Vec::new();
             for fill in &batch.fills {
                 self.apply_fill_cost_basis(stock as StockIdx, fill)?;
@@ -969,11 +995,129 @@ impl GroupState {
             // 清仓清零（实体落账后按期末 shares 判定：对齐 session 清仓删除
             // 条目——下次买入从零新建，避免再持有后 cost_price 漂移）。
             self.clear_flat_cost_basis(&touched);
+            // Sol 终审四审经历族（fault2051）：清仓 retail 经历转移——旧
+            // 管线结算面 record_fill（Sell 且 after_qty==0）清观察字段并设
+            // 退出冷静期；runtime 组权威此前只在决策拍 observe 演进，清仓
+            // 后经验行残留持仓观察态使存档校验（fault2051）显红。
+            self.apply_full_exit_experience(stock as StockIdx, &batch.fills, &pre_exit_basis)?;
             // Sol D3b 件 1：fill 触达账户的个人记忆裁剪（对齐 session
             /// candidate_commit 的逐账户 prune_plan_personal_memory——
             /// completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
             for (local, _) in &touched {
                 self.prune_personal_memory_after_completion(*local);
+            }
+        }
+        Ok(())
+    }
+
+    /// Sol 终审四审经历族（fault2051）：清仓边界的 retail 经历转移。
+    /// 对齐旧管线 record_fill 的 Sell 且 after_qty==0 分支：清
+    /// entry_reference_price/peak_price_since_entry/last_buy_price/
+    /// last_buy_order_id/adverse_move_recorded，设退出冷静期
+    /// （cooldown_until_market_minute）与 last_sell_order_id/
+    /// last_trade_market_minute。覆盖面=**清仓边界**（期末
+    /// face=组 shares+在途卖余量 归零的最后一条卖腿）；加仓/部分
+    /// 卖出的经历迁移仍按 D5 登记近似承载（首买 init 走回写段）。
+    /// failed_buys 逆境计数按 fill 前仓均成本（pre_exit_basis——与旧
+    /// 管线 cost_before 同式，银行家舍入同口径）判定。
+    fn apply_full_exit_experience(
+        &mut self,
+        stock: StockIdx,
+        fills: &[FillFact],
+        pre_exit_basis: &std::collections::BTreeMap<LocalIdx, (i64, i64, u32)>,
+    ) -> Result<(), RuntimeError> {
+        let group = self.group;
+        let idx = stock as usize;
+        let minute = market_minute_at(
+            self.cur_tick,
+            self.ticks_per_day,
+            self.auction_ticks,
+            self.closing_auction_ticks,
+        );
+        // 倒序取每账户**最后**一条卖腿；期末 face 归零=清仓边界。
+        let mut seen: std::collections::BTreeSet<LocalIdx> = Default::default();
+        for fill in fills.iter().rev() {
+            if fill.owner.0 != group || fill.side != Side::Sell || !seen.insert(fill.owner.1) {
+                continue;
+            }
+            let local = fill.owner.1;
+            let face = {
+                let acct = self
+                    .accounts
+                    .get(local as usize)
+                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {group} 经历转移账户越界：local={local}"),
+                    })?;
+                acct.shares.get(idx).copied().unwrap_or(0).saturating_add(
+                    acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
+                )
+            };
+            if face != 0 {
+                continue;
+            }
+            // 槽位在席且持 retail 经历行（inst/hot/玩家位无行——原样跳过）。
+            let Some(mut snapshot) = self
+                .belief_states
+                .get_mut(local as usize)
+                .and_then(Option::take)
+            else {
+                continue;
+            };
+            // 拍前值（undo 用——变异前克隆）。
+            let prev = snapshot.clone();
+            let Some(experience) = snapshot.retail_experience.as_mut() else {
+                if let Some(slot) = self.belief_states.get_mut(local as usize) {
+                    *slot = Some(snapshot);
+                }
+                continue;
+            };
+            // cost_before=fill 前仓均成本（银行家舍入同 Position::cost_price；
+            /// 非正=不可用 None——逆境计数不因本腿调整）。
+            let cost_before = pre_exit_basis
+                .get(&local)
+                .and_then(|&(invested, recovered, face_pre)| {
+                    (face_pre > 0).then(|| {
+                        crate::account::Position::from_restored_parts(
+                            face_pre, 0, invested, recovered,
+                        )
+                        .cost_price()
+                        .filter(|price| price.cents() > 0)
+                    })
+                })
+                .flatten();
+            let code = crate::StockId(u32::from(stock));
+            let result = experience.record_fill_with_order(
+                &code,
+                Side::Sell,
+                Money::from_cents(fill.price),
+                fill.qty,
+                0,
+                cost_before,
+                minute,
+                Some(order_id_of(&fill.order).0),
+            );
+            if let Err(error) = result {
+                // 还槽后显式失败（组不变量破坏不静默）。
+                if let Some(slot) = self.belief_states.get_mut(local as usize) {
+                    *slot = Some(snapshot);
+                }
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "组 {group} 清仓经历转移失败：local={local}, code={code:?}：{error:?}"
+                    ),
+                });
+            }
+            // 拍前值入可逆日志（Personal）+还槽+dirty（经验行随 Belief
+            /// 上行通道同拍回写 session 镜像）。
+            self.undo.push(GroupUndo::Personal {
+                local,
+                prev: Box::new(prev),
+            });
+            if let Some(slot) = self.belief_states.get_mut(local as usize) {
+                *slot = Some(snapshot);
+            }
+            if let Some(flag) = self.belief_dirty.get_mut(local as usize) {
+                *flag = true;
             }
         }
         Ok(())

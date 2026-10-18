@@ -1921,6 +1921,42 @@ impl GameSession {
             .map_err(|e| format!("经历条目初始化失败：{e:?}"))
     }
 
+    /// Sol 终审四审经历族（fault2051）：清仓经历的**同拍投影面**——组端
+    /// apply_full_exit_experience 在最终 staging 落账（晚于本拍 Belief
+    /// 上行），save 面需要本拍即见的转移（与账户面 apply_same_tick_
+    /// fill_projection 同架构：组权威+同拍投影双写，下一拍组行整值
+    /// 同步后内容一致）。对齐旧管线 record_fill 的 Sell 且 after=0
+    /// 分支：清观察字段+设退出冷静期与 last_sell 身份。
+    pub fn runtime_record_full_exit(
+        &mut self,
+        id: &crate::AccountId,
+        code: &crate::StockId,
+        price_cents: i64,
+        before_qty: u32,
+        cost_before: Option<crate::money::Money>,
+        order_id: u64,
+    ) -> Result<(), String> {
+        let minute = self.current_market_minute();
+        // P2-3b：首写前值入 undo（改写前记录——回滚源）。
+        self.runtime_record_retail_undo(id);
+        let Some(ledger) = self.state.retail_experience.get_mut(id) else {
+            // 无经历账的账户（玩家惯例位）无 fault2051 约束——跳过。
+            return Ok(());
+        };
+        ledger
+            .record_fill_with_order(
+                code,
+                crate::orderbook::Side::Sell,
+                crate::money::Money::from_cents(price_cents),
+                before_qty,
+                0,
+                cost_before,
+                minute,
+                Some(order_id),
+            )
+            .map_err(|e| format!("清仓经历转移失败：{e:?}"))
+    }
+
     /// runtime 驱动器翻转面（Sol 二审修复集 3）：价格历史长度只读
     /// （fail-fast 断言——step 失败后安装不得写会话状态）。
     pub fn runtime_price_history_len(&self, code: &crate::StockId) -> usize {

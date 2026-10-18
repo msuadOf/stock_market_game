@@ -1582,6 +1582,10 @@ impl RuntimeDriver {
         }
         let mut by_account: BTreeMap<crate::AccountId, BTreeMap<crate::StockId, Delta>> =
             BTreeMap::new();
+        // Sol 终审四审经历族：卖腿最后一条成交（(账户,股)→(价,desk 序号)
+        /// ——清仓转移的身份/价格输入）。
+        let mut last_sell: BTreeMap<(crate::AccountId, crate::StockId), (i64, u64)> =
+            BTreeMap::new();
         for tr in trades {
             // maker≡卖方/taker≡买方（desk 产出侧两方向统一——台账备忘）。
             for (owner, is_buyer, fees) in [
@@ -1612,6 +1616,7 @@ impl RuntimeDriver {
                     d.recovered += gross;
                     // 卖腿净得（组现金下一 Start 才落账——同拍补齐）。
                     d.cash += gross - fees;
+                    last_sell.insert((id, code), (tr.price, tr.maker_order_serial));
                 }
             }
         }
@@ -1640,6 +1645,9 @@ impl RuntimeDriver {
             /// 首次持有永久缺经历条目→fault2038 保存校验）。收集后在
             /// 账户借用外执行。
             let mut new_hold_inits: Vec<(crate::StockId, i64, u32)> = Vec::new();
+            // Sol 终审四审经历族：清仓经历转移（账户借用外执行——同
+            /// new_hold_inits 模式）。
+            let mut full_exits: Vec<(crate::StockId, i64, u32, Option<Money>, u64)> = Vec::new();
             for (code, d) in &by_code {
                 let is_new_hold = d.qty > 0 && !positions.contains_key(code);
                 if is_new_hold {
@@ -1656,6 +1664,9 @@ impl RuntimeDriver {
                 let entry = positions
                     .entry(code.clone())
                     .or_insert_with(|| crate::account::Position::from_restored_parts(0, 0, 0, 0));
+                // 拍前口径（清仓转移的 before/cost_before 输入——变异前取值）。
+                let pre_qty = entry.qty();
+                let pre_cost = entry.cost_price().filter(|price| price.cents() > 0);
                 let new_qty = i64::from(entry.qty()) + d.qty;
                 let new_frozen = i64::from(entry.t1_locked()) + d.frozen;
                 let new_invested = entry.invested_cents() + d.invested;
@@ -1670,6 +1681,18 @@ impl RuntimeDriver {
                         ));
                     }
                     positions.remove(code);
+                    // Sol 终审四审经历族（fault2051）：卖腿清仓的 retail
+                    /// 经历同拍转移（清观察字段+退出冷静期——组权威侧
+                    /// apply_full_exit_experience 晚于本拍 Belief 上行，
+                    /// save 面由此双写闭合；无经历账账户内建跳过）。
+                    if d.qty < 0 && pre_qty > 0 {
+                        if let Some(&(price, serial)) = last_sell.get(&(id, *code)) {
+                            let order = crate::OrderId(
+                                (u64::from(code.0) << 48) | (serial & 0x0000_FFFF_FFFF_FFFF),
+                            );
+                            full_exits.push((code.clone(), price, pre_qty, pre_cost, order.0));
+                        }
+                    }
                     continue;
                 }
                 *entry = crate::account::Position::from_restored_parts(
@@ -1686,6 +1709,9 @@ impl RuntimeDriver {
             drop(engine_acct);
             for (code, entry, qty) in new_hold_inits {
                 self.pending_hold_inits.push((id, code, qty, entry));
+            }
+            for (code, price, pre_qty, pre_cost, order) in full_exits {
+                session.runtime_record_full_exit(&id, &code, price, pre_qty, pre_cost, order)?;
             }
         }
         Ok(())
