@@ -71,10 +71,16 @@ pub enum StepSegment {
     LockRoute,
     /// undo 槽清理（入口清+成功尾清；五域 ids/Vec clear）。
     UndoClear,
+    /// belief 线程往返收集（collect_group_belief——嵌套在 belief_echo 内；
+    /// 差额=安装循环）。
+    BeliefCollect,
+    /// resting 事实收集往返（collect_resting_facts——嵌套在 envelope 段内；
+    /// 差额=差分+增量应用）。
+    EnvelopeCollect,
 }
 
 impl StepSegment {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 26] = [
         Self::WorldRun,
         Self::VwapCalc,
         Self::AcctEchoCollect,
@@ -99,6 +105,8 @@ impl StepSegment {
         Self::StepEntry,
         Self::LockRoute,
         Self::UndoClear,
+        Self::BeliefCollect,
+        Self::EnvelopeCollect,
     ];
 
     /// 段名（诊断输出用；ASCII 稳定键）。
@@ -128,6 +136,8 @@ impl StepSegment {
             Self::StepEntry => "step_entry",
             Self::LockRoute => "lock_route",
             Self::UndoClear => "undo_clear",
+            Self::BeliefCollect => "belief_collect",
+            Self::EnvelopeCollect => "envelope_collect",
         }
     }
 
@@ -141,12 +151,12 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     /// 各段累计 ns + 进入次数（下标=StepSegment::index）。
-    static LEDGER: RefCell<Option<([u128; 24], [u64; 24])>> = const { RefCell::new(None) };
+    static LEDGER: RefCell<Option<([u128; 26], [u64; 26])>> = const { RefCell::new(None) };
 }
 
 /// 在当前线程启用分段画像（重复调用=账本重置）。
 pub fn enable_on_this_thread() {
-    LEDGER.with_borrow_mut(|slot| *slot = Some(([0; 24], [0; 24])));
+    LEDGER.with_borrow_mut(|slot| *slot = Some(([0; 26], [0; 26])));
     ENABLED.store(true, Ordering::Relaxed);
 }
 

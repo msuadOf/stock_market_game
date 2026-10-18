@@ -2397,6 +2397,32 @@ fn fnv(state: u64, value: u64) -> u64 {
 }
 
 /// 交易部主循环（批 3 引擎化）。
+/// P2-3（视图内生战役）：在途单观察面组装（bids+asks 全量——费用累计/
+/// 余量直取 desk 权威）。DeskReport 携带与 EchoResting 应答共用同源。
+fn build_resting_facts(state: &DeskState) -> Vec<super::protocol::RestingFact> {
+    let mut orders = Vec::new();
+    for (side, book) in [(crate::orderbook::Side::Buy, &state.bids), (crate::orderbook::Side::Sell, &state.asks)] {
+        for (_price, level) in book.iter() {
+            for order in level.iter() {
+                orders.push(super::protocol::RestingFact {
+                    owner: order.owner,
+                    side,
+                    price: order.price,
+                    qty: order.qty,
+                    purse: order.purse,
+                    filled_value: order.filled_value,
+                    filled_qty: order.filled_qty,
+                    charged_commission: order.charged_commission,
+                    charged_stamp_tax: order.charged_stamp_tax,
+                    charged_transfer_fee: order.charged_transfer_fee,
+                    order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
+                });
+            }
+        }
+    }
+    orders
+}
+
 pub fn desk_main(
     mut setup: DeskSetup,
     n_groups: usize,
@@ -2575,27 +2601,9 @@ fn process_msg(
     match msg {
         DeskMsg::EchoResting => {
             // D5 envelope 投影：在途单快照（bids+asks 全量——费用
-            // 累计/余量直取 desk 权威）。
-            let mut orders = Vec::new();
-            for (side, book) in [(Side::Buy, &state.bids), (Side::Sell, &state.asks)] {
-                for (_price, level) in book.iter() {
-                    for order in level.iter() {
-                        orders.push(super::protocol::RestingFact {
-                            owner: order.owner,
-                            side,
-                            price: order.price,
-                            qty: order.qty,
-                            purse: order.purse,
-                            filled_value: order.filled_value,
-                            filled_qty: order.filled_qty,
-                            charged_commission: order.charged_commission,
-                            charged_stamp_tax: order.charged_stamp_tax,
-                            charged_transfer_fee: order.charged_transfer_fee,
-                            order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
-                        });
-                    }
-                }
-            }
+            // 累计/余量直取 desk 权威）。P2-3 后生产读面走 DeskReport
+            /// 携带；本应答保留给日结/测试的 live 收集通道。
+            let orders = build_resting_facts(state);
             if up_tx
                 .send(UpMsg::DeskResting {
                     stock: state.setup.stock,
@@ -2729,6 +2737,10 @@ fn process_msg(
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
                         receipts_out_list: receipts_detail,
                         auction: std::mem::take(&mut state.auction_facts),
+                        // P2-3：在途单观察面随报告上行（组装与 DeskResting
+                        // 应答同源——EchoResting 应答处同式，见该分支）。
+                        resting_orders: build_resting_facts(state),
+                        next_serial: state.next_serial,
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {
                         RuntimeError::SendFailed {

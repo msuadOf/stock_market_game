@@ -1261,13 +1261,42 @@ impl RuntimeDriver {
     /// D5 envelope 投影：desk 在途单收集（session 信封账本重建输入）。
     /// 附带缓存每股 desk 真实 next_serial（Sol 四轮修复：save 投影/
     /// DeskBookMirror 游标源——空簿也保留已耗序号）。
+    /// P2-3（视图内生战役）：生产每拍读面改从**发布版本**取（在途单观察
+    /// 面已随 DeskReport 上行进 PublishedTick.desks——EchoResting 独立
+    /// 往返退役）。游标缓存同步自发布版本（save 投影权威源）。
+    /// 发布滞后=单点发布不变量破坏，显式失败（不静默装旧版）。
     pub fn collect_resting_facts(
+        &mut self,
+    ) -> Result<Vec<Vec<super::protocol::RestingFact>>, String> {
+        let published = self.world.publication().load();
+        if published.tick != self.world.global.committed_tick {
+            return Err(format!(
+                "发布版本滞后：published={} 而 committed={}（单点发布不变量破坏）",
+                published.tick, self.world.global.committed_tick
+            ));
+        }
+        let mut facts = vec![Vec::new(); published.desks.len()];
+        let mut cursors = vec![0u64; published.desks.len()];
+        for shard in &published.desks {
+            let idx = shard.stock as usize;
+            if let (Some(slot), Some(cursor)) = (facts.get_mut(idx), cursors.get_mut(idx)) {
+                *slot = shard.resting.as_ref().clone();
+                *cursor = shard.next_serial;
+            }
+        }
+        self.desk_next_serials = cursors;
+        Ok(facts)
+    }
+
+    /// P2-3：live 收集通道（日结重刷等**发布版本外**的静点读面——日结
+    /// 清簿后发布版本仍是清簿前 tick 的，须向 desk 现拉）。
+    pub fn collect_resting_facts_live(
         &mut self,
     ) -> Result<Vec<Vec<super::protocol::RestingFact>>, String> {
         let (facts, cursors) = self
             .world
             .collect_desk_resting()
-            .map_err(|e| format!("在途单快照收集失败：{e:?}"))?;
+            .map_err(|e| format!("在途单快照 live 收集失败：{e:?}"))?;
         self.desk_next_serials = cursors;
         Ok(facts)
     }

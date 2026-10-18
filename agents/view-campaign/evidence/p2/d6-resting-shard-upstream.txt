@@ -1,0 +1,39 @@
+# P2-3：D6 resting EchoResting 独立往返退役——观察面随 DeskReport 上行
+
+## 机制
+P0 子分段（envelope_collect）实测 39.6μs/tick（EchoResting 广播→desk
+应答→收集的独立往返）。desk 侧在 DeskReport 组装点构建在途单观察面
+（build_resting_facts——与 DeskResting 应答逐字同源，抽函数复用）+
+next_serial 游标；随报告上行；converge 收集进 TickEvidence.desk_
+resting_facts/desk_serial_cursors；install_tick 组装进 PublishedTick.
+desks[].resting/next_serial（按股序稳定排序——收束到达序不定）；
+驱动器 collect_resting_facts 生产读面改从发布版本取（发布滞后防御
+校验）。日结清簿后重刷 mirror 与测试读面走 collect_resting_facts_live
+（发布版本仍是清簿前 tick——live 通道保留）。
+
+## 测量（B 于 load 23.9 混合窗——如实登记；A 配对二进制同窗）
+- B 1000：713.5（P2-2 后 691.0，+3.3%；基线累计 +31.0%）
+- envelope_collect 段：39.6→4.4μs（往返退役，余=发布版本 clone）
+- envelope 段：117→80.5μs（差分+增量应用仍在——刀 B 目标）
+- B 300：356.7/351.1/334.5 → mean 347.4（高负载窗，与 P2-2 的 350.1
+  同级——净机复测待补）
+- A 3000：同窗配对 before 1337.1/1310.4/1226.2 vs knifeA 1250.3/
+  1277.7/1256.4 → 配对差 −2.3%（±15% 带内、三组方向不一致——desk
+  侧每轮组装 resting 的实现税，如实登记；单轮 932 为 load 23.9 离群
+  只登记不归因）
+- 逐位锚：events 300:2105 / 1000:6016；守恒 6701200/651403179/6668400
+
+## 守卫与突变红
+- publication_resting_shard_matches_live_collection（新）：静态点
+  发布分片与 desk live 读面逐位一致+游标一致+非空形态（卖侧 1010
+  挂单 fixture——买侧 999 在组端校验面消失，登记开放项）。
+- 突变红实证：desk 不带观察面（resting_orders 恒空）→ 守卫红。
+- 回归：默认+ENGINE_STEP_RUNTIME=1 全量 1669/0/11 双绿（一轮旧管线
+  rayon 域 flake 隔离复跑 3/3 绿，登记）。
+
+## 后续（刀 B：envelope 惰性化）
+- 增量应用 80.5μs 退役目标：ledger 每拍 upsert 改查询/hash/save 时
+  派生重建（business_state_hash 仅测试调用已证实；p2_4b 全量重建
+  守卫证内容等价）。undo 面退役（回滚=派生缓存失效）。
+- resting clone 优化：collect_resting_facts 返回 Arc 共享（调用面
+  三处改借用/Arc）。

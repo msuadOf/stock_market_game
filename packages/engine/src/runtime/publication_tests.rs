@@ -211,3 +211,65 @@ fn publication_group_belief_shard_matches_group_authority() {
     }
     world.shutdown().expect("关停");
 }
+
+// P2-3：在途单观察面随 DeskReport 上行——发布版本分片与 desk 权威
+// live 读面逐位一致（静态点：tick 收敛后、无新操作间，两者必同值）。
+#[test]
+fn publication_resting_shard_matches_live_collection() {
+    use super::skeleton_tests::basic_spec;
+    use crate::runtime::group::{GroupScript, TickPlan};
+    // 有挂单的脚本：tick 1 挂限价单（不成交——留簿）。
+    let script = |_g: GroupIdx| -> GroupScript {
+        Box::new(|tick: u64, _round: u32| {
+            let mut plan = TickPlan::default();
+            if tick == 1 {
+                plan.places.push(crate::runtime::group::PlaceSpec {
+                    local: 1,
+                    stock: 0,
+                    side: crate::orderbook::Side::Sell,
+                    price: 1010,
+                    qty: 100,
+                });
+            }
+            plan
+        })
+    };
+    let mut spec = basic_spec(1, 1, 2, Box::new(script));
+    spec.ticks_per_day = 30;
+    // 关价格笼子（999 买单挂出——避免笼子拒单干扰观察面对照）。
+    spec.config = std::sync::Arc::new(
+        crate::config::GameConfig::new(
+            0.000_25,
+            crate::money::Money::from_cents(500),
+            0.000_5,
+            0.10,
+            0.10,
+            false,
+            100,
+            crate::money::Money::from_cents(1_000_000_000_000),
+        )
+        .expect("测试配置合法"),
+    );
+    let mut world = World::spawn(spec).expect("世界构造");
+    world.run_ticks(1).expect("1 tick（挂单拍——TTL 内在簿）");
+    let version = world.publication().load();
+    assert_eq!(version.tick, 1);
+    let shard = &version.desks[0];
+    // 静态点 live 对照（收敛后无新操作——两读面同值）。
+    let live = world.collect_desk_resting().expect("live 收集");
+    let live_facts = &live.0[0];
+    assert_eq!(
+        shard.resting.len(),
+        live_facts.len(),
+        "发布分片在途单数==live 权威（逐位对照前提）"
+    );
+    for (published, live_fact) in shard.resting.iter().zip(live_facts.iter()) {
+        assert_eq!(published, live_fact, "分片条目==live 条目");
+    }
+    assert_eq!(shard.next_serial, live.1[0], "游标==live 权威");
+    assert!(
+        !shard.resting.is_empty(),
+        "tick1 挂单应留簿（TTL 内）——观察面非空形态"
+    );
+    world.shutdown().expect("关停");
+}

@@ -680,6 +680,13 @@ impl World {
                             stock: s as super::StockIdx,
                             view: view.clone(),
                             resting_count: 0,
+                            // P2-3：v0 空 observation 面；游标=初始种子
+                            ///（空簿保留已耗序号）。
+                            resting: std::sync::Arc::new(Vec::new()),
+                            next_serial: initial_desk_next_serial
+                                .get(s)
+                                .copied()
+                                .unwrap_or(0),
                         })
                         .collect(),
                     groups: Vec::new(),
@@ -1725,18 +1732,30 @@ impl World {
                 .map(|(_, n)| *n)
                 .unwrap_or(0)
         };
+        // P2-3：在途单观察面+游标进分片（随报告上行——读面源）。facts
+        // 按股索引 move 重排（免逐股 clone）。
+        let mut resting_facts = evidence.desk_resting_facts;
+        let serial_cursors = evidence.desk_serial_cursors;
         let mut desk_shards: Vec<super::publication::DeskShard> =
             Vec::with_capacity(self.public_views.len());
         for (stock, view) in evidence.desk_views {
             if let Some(slot) = self.public_views.get_mut(stock as usize) {
+                let facts_for_stock = match resting_facts.get_mut(stock as usize) {
+                    Some(buffer) => std::mem::take(buffer),
+                    None => Vec::new(),
+                };
                 desk_shards.push(super::publication::DeskShard {
                     stock,
                     view: view.clone(),
                     resting_count: resting_of(stock),
+                    resting: std::sync::Arc::new(facts_for_stock),
+                    next_serial: serial_cursors.get(stock as usize).copied().unwrap_or(0),
                 });
                 *slot = view;
             }
         }
+        // 收束到达序不定——发布分片按股序稳定排列（读者按下标=股消费）。
+        desk_shards.sort_by_key(|shard| shard.stock);
         self.global.committed_tick = tick;
         // Sol 终审四审 A2：day 按 World 自身的 ticks_per_day 推导（此前
         // 硬编码 240——非 240 配置（如 tpd=1 的存档契约 fixture）下组

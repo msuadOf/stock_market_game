@@ -46,6 +46,8 @@ fn synthetic_tick(publication: &ViewPublication, tick: u64) {
             stock: s as StockIdx,
             view: synthetic_view(tick),
             resting_count: 0,
+            resting: Arc::new(Vec::new()),
+            next_serial: 0,
         })
         .collect();
     publication.publish(Arc::new(PublishedTick {

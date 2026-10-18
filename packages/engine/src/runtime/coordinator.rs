@@ -98,6 +98,10 @@ pub struct TickEvidence {
         super::GroupIdx,
         std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>>,
     )>,
+    /// P2-3：各交易部在途单观察面（随 DeskReport 上行——下标=股）。
+    pub desk_resting_facts: Vec<Vec<super::protocol::RestingFact>>,
+    /// 各交易部序号游标（随 DeskReport 上行；save 投影权威源）。
+    pub desk_serial_cursors: Vec<u64>,
 }
 
 /// PreCommit 校验器（骨架注入点；批 3+ 换 PreCommitValidation）。
@@ -152,6 +156,10 @@ pub fn converge_round(
     let mut desk_auction = Vec::new();
     // P2-2：belief 稀疏分片句柄收集（随报告上行——Arc 零拷贝）。
     let mut group_belief = Vec::with_capacity(n_groups);
+    // P2-3：在途单观察面+游标收集（随 DeskReport 上行——发布源）。
+    let mut desk_resting_facts: Vec<Option<Vec<super::protocol::RestingFact>>> =
+        vec![None; n_stocks];
+    let mut desk_serial_cursors = vec![0u64; n_stocks];
     while groups_left > 0 || desks_left > 0 {
         let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
             Ok(m) => m,
@@ -187,6 +195,8 @@ pub fn converge_round(
                 desk_hashes.push((r.stock, r.committed_hash));
                 desk_views.push((r.stock, r.view.clone()));
                 desk_resting.push((r.stock, r.resting_count));
+                desk_resting_facts[r.stock as usize] = Some(r.resting_orders);
+                desk_serial_cursors[r.stock as usize] = r.next_serial;
                 desk_trades.extend(r.trades.iter().copied());
                 desk_lifecycle.extend(r.lifecycle.iter().copied());
                 desk_receipts.extend(r.receipts_out_list.iter().copied());
@@ -226,6 +236,11 @@ pub fn converge_round(
         group_rejections,
         desk_auction,
         group_belief,
+        desk_resting_facts: desk_resting_facts
+            .into_iter()
+            .map(|slot| slot.unwrap_or_default())
+            .collect(),
+        desk_serial_cursors,
     }))
 }
 

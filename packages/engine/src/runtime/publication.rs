@@ -36,6 +36,10 @@ pub struct DeskShard {
     pub view: StockPublic,
     /// 本收束点挂单数（观察面计数）。
     pub resting_count: u64,
+    /// P2-3：在途单观察面（随 DeskReport 上行——信封/簿镜像读面源）。
+    pub resting: Arc<Vec<super::protocol::RestingFact>>,
+    /// desk 序号游标（save 投影权威源；空簿保留已耗序号）。
+    pub next_serial: u64,
 }
 
 /// 组读面分片（P2-2 起 belief 稀疏观察面随报告上行；账户投影/计划

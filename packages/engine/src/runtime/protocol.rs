@@ -921,6 +921,12 @@ pub struct DeskReport {
     pub receipts_out_list: Vec<DeskReceipt>,
     /// 本轮竞价事实（拍卖窗 indicative/完成撮合）。
     pub auction: Vec<DeskAuctionFact>,
+    /// P2-3（视图内生战役）：在途单观察面随报告上行（替代驱动器每拍
+    /// EchoResting 独立往返——组装与 DeskResting 应答逐字同源）。终轮
+    /// 报告的分片进发布版本；Abort 时随 evidence 丢弃。
+    pub resting_orders: Vec<RestingFact>,
+    /// desk 序号游标（真实已耗序号——空簿也保留；save 投影权威源）。
+    pub next_serial: u64,
 }
 
 /// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。

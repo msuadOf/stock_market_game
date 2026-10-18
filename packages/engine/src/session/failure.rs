@@ -212,7 +212,7 @@ impl GameSession {
             .as_mut()
             .and_then(|cell| cell.lock().ok())
             .expect("runtime 驱动器在位（调用方已判）");
-        let facts = driver.collect_resting_facts().expect("在途簿收集");
+        let facts = driver.collect_resting_facts_live().expect("在途簿收集");
         let idx = code.0 as usize;
         facts
             .get(idx)
@@ -757,9 +757,13 @@ impl GameSession {
         /// p2_4b_envelope_incremental_matches_full_rebuild；全量读面/
         /// save/hash 均按内容消费，内容等价即全读面等价）。基线缺失
         ///（构造后首拍/红证强制/股面错配）退全量重建。
-        // 【P0 画像】envelope 段（D6：resting 收集+增量/全量信封账本）。
+        // 【P0 画像】envelope 段（D6：resting 收集+增量/全量信封账本；
+        /// 子分 envelope_collect=收集往返，差额=差分+增量应用）。
         let _seg_envelope = crate::runtime::step_profile::scope(
             crate::runtime::step_profile::StepSegment::Envelope,
+        );
+        let _seg_ecollect = crate::runtime::step_profile::scope(
+            crate::runtime::step_profile::StepSegment::EnvelopeCollect,
         );
         let resting_by_stock = match driver.collect_resting_facts() {
             Ok(facts) => facts,
@@ -777,6 +781,7 @@ impl GameSession {
         if capture_undo && self.state.runtime_envelope_undo.is_none() {
             self.state.runtime_envelope_undo = Some(self.state.envelope_ledger.clone());
         }
+        drop(_seg_ecollect);
         let delta = driver.resting_delta_since_last_echo(&resting_by_stock);
         if delta.full_rebuild {
             let mut envelopes = Vec::new();
@@ -1026,7 +1031,8 @@ impl GameSession {
                     .map(|v| (v.last_price, v.public_cutoff_serial))
                     .collect();
                 let mut mirror = std::collections::BTreeMap::new();
-                let facts = match driver.collect_resting_facts() {
+                // P2-3：日结清簿后发布版本仍是清簿前 tick——须 live 现拉。
+                let facts = match driver.collect_resting_facts_live() {
                     Ok(facts) => facts,
                     Err(e) => {
                         let fatal = StepFatal::InvariantViolation {

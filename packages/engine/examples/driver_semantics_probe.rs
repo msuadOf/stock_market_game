@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 注意：market_install 内嵌 attention_heap；step_outer 内嵌
             // 全部子段（完整 step wall）——占比按"去嵌套分母"解释。
             eprintln!("--- step 分段画像（累计 ns / 次 / 占分段和比例）---");
-            let nested = ["attention_heap", "step_outer", "driver_step"];
+            let nested = ["attention_heap", "step_outer", "driver_step", "belief_collect", "envelope_collect"];
             let net_total: u128 = total_ns
                 - ledger
                     .iter()
