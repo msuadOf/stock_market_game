@@ -55,6 +55,10 @@ pub mod plans;
 /// P0 分段画像探针（视图内生战役）：driver 线程 step 各段 wall 计时。
 /// 默认零开销（探针显式 enable；生产恒关闭）。
 pub mod step_profile;
+/// Q1 版化发布协议（方案 A·RwLock 先行版）：Arc<PublishedTick> 单点发布。
+pub mod publication;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod publication_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod plans_tests;
 pub mod watchdog;
@@ -67,7 +71,7 @@ pub mod world;
 pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
 pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, RoutedPrice};
-pub use protocol::{RestingDelta, RestingDeltaEntry, RestingFact};
+pub use protocol::{RestingDelta, RestingDeltaEntry, RestingFact, StockPublic};
 
 /// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
 /// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的

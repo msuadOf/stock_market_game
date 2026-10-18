@@ -1,0 +1,42 @@
+# P1 发布协议判据验证（第 19 任，2026-10-18，HEAD=提交后记录）
+
+## J1 发布开销（B/A 对比 P0 基线 56268e5f+P0 探针）
+- B 300：315.6/295.4/314.0 → mean 308.3（基线 307.3，+0.3%，噪声带内不可见）
+- B 1000：551.5（基线 544.7，+1.2%）
+- A 3000：1326.4/1327.8（基线 mean 1332.6，−0.4%，不降）
+- 逐位锚全保持：events 300:2105 / 1000:6016；A 守恒 6701200/651403179/6668400
+- 结论：publish（5 股 StockPublic clone + 组装 + RwLock 指针交换）开销不可见。
+  desk_views clone 税登记：P1 v1 口径（Arc 化留作 P2 数据决策）。
+
+## J2 读路径延迟（publication_bench，release，2 并发读者+满速写者）
+- load() p50=30ns / p99=2300ns / max=208μs（n=1.08M 读）
+- 判据"p99 ≤ 微秒级"过；RwLock 版无需升级 ArcSwap。
+
+## J3 保留内存（publication_bench + publication_old_version_retained）
+- 读者钉 N−1000 代：断言发布槽只持 1 代（新旧不同代）+ 旧版内容不可变 ✓
+- 每代估算 ≈24KB（5 股×512 档 recent）；无隐藏多代；旧代随读者 drop 释放。
+
+## J4 撕裂锤击（publication_concurrent_reader_zero_tears）
+- 3 并发读者 hammer（>100 读）+ world 满速 60 tick（tpd=30 含日结路径）：
+  违约计数 0（tick==global.committed_tick 恒成立、分片数恒定、无回退）。
+- 红证：断言 bug 修正过程（"重读同版本"误判为违约→改为仅回退违约）留档。
+
+## J5 失败原子性（publication_failed_tick_never_published）
+- validator 注入拒绝 tick 4：读者仍见 tick 3、global 一致、哈希族与
+  report_log 末条一致 ✓
+- 突变红实证：validator 校验前提前 publish（candidate 外泄旋钮）→
+  测试红（left:4 right:3）——判别力成立。突变无独立提交。
+
+## J6 查询面等价（publication_desks_match_public_views·desks 域）
+- 10 tick 逐拍：发布版本 desks[i].view（last_price/volume/best_bid/
+  best_ask）== world.public_views[i] 逐位 ✓
+- 边界登记：J6 的 groups 域（账户/个人态/计划）与 events 域为 P2
+  接入面（PublishedTick v1 占位）——查询面全面等价待 P2 拆迁后扩验。
+
+## P1 边界（如实登记）
+1. groups 分片占位（P2 随 D1 Echo 拆迁由组线程收尾构建随 GroupReport 上行）。
+2. events 段占位（P2 随事件投影迁移——R4 语义/seq 不变）。
+3. 存储槽 RwLock 先行版；J2 数据不支持升级 ArcSwap。
+4. 回归：默认 1666/0/11 绿；ENGINE_STEP_RUNTIME=1 5 轮 3 绿 2 flake
+  （panic_transport / npc_completion_channel rayon 域——两个不同既有
+  flake 家族随机出现，隔离复跑均绿 3/3，main 对照绿；登记不批改）。

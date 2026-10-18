@@ -366,6 +366,9 @@ pub struct World {
     /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
     /// 自然日权威在会话 civil clock）。
     civil_date: crate::calendar::CivilDate,
+    /// Q1 发布槽（方案 A）：install_tick 单点 publish；读者 load() 得
+    /// 一致读点。初值=spawn 时的 v0。
+    publication: std::sync::Arc<super::publication::ViewPublication>,
 }
 
 impl World {
@@ -658,12 +661,35 @@ impl World {
         }
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
         drop(up_tx);
+        let public_views = Self::initial_views(&stocks_specs, cage_on);
+        // Q1 发布槽 v0：初始公共态即第一个一致读点（tick=initial）。
+        let global_v0 = GlobalState {
+            committed_tick: initial_committed_tick,
+            day: (initial_committed_tick / ticks_per_day) as u32,
+            events_installed: 0,
+        };
+        let publication = std::sync::Arc::new(
+            super::publication::ViewPublication::new(std::sync::Arc::new(
+                super::publication::PublishedTick {
+                    tick: initial_committed_tick,
+                    global: global_v0,
+                    desks: public_views
+                        .iter()
+                        .enumerate()
+                        .map(|(s, view)| super::publication::DeskShard {
+                            stock: s as super::StockIdx,
+                            view: view.clone(),
+                            resting_count: 0,
+                        })
+                        .collect(),
+                    groups: Vec::new(),
+                    events: super::publication::EventSegment::default(),
+                    hashes: super::publication::TickHashes::default(),
+                },
+            )),
+        );
         Ok(World {
-            global: GlobalState {
-                committed_tick: initial_committed_tick,
-                day: (initial_committed_tick / ticks_per_day) as u32,
-                events_installed: 0,
-            },
+            global: global_v0,
             report_log: Vec::new(),
             group_txs,
             desk_txs,
@@ -680,7 +706,7 @@ impl World {
             n_stocks,
             dead_finals: None,
             dead_reason: None,
-            public_views: Self::initial_views(&stocks_specs, cage_on),
+            public_views,
             rights_computer,
             ticks_per_day,
             day_end_validator: Box::new(|_| Ok(())),
@@ -690,7 +716,13 @@ impl World {
             drained_lifecycle: Vec::new(),
             drained_auction: Vec::new(),
             civil_date: civil_start_date,
+            publication,
         })
+    }
+
+    /// Q1 发布槽句柄（读者面：load() 得一致读点；句柄可长期持有）。
+    pub fn publication(&self) -> std::sync::Arc<super::publication::ViewPublication> {
+        std::sync::Arc::clone(&self.publication)
     }
 
     /// 注入 PreCommit 校验器（测试/批 3+ 接线点）。
@@ -1682,8 +1714,26 @@ impl World {
     ) {
         // tick 成功转正：清除可能残留的全局中止标记（上一次 Abort 已回滚收敛）。
         self.abort.store(false, Ordering::SeqCst);
+        // Q1 分片组装（发布=提交=Abort 窗口关闭——C2）：公共态 move 进
+        // 广播基（public_views）的同时 clone 一份进 DeskShard（P1 v1
+        // 口径：clone 税由 J1 定标，可见再 Arc 化）；resting 计数自观察面。
+        let resting_of = |stock: super::StockIdx| {
+            evidence
+                .desk_resting
+                .iter()
+                .find(|(s, _)| *s == stock)
+                .map(|(_, n)| *n)
+                .unwrap_or(0)
+        };
+        let mut desk_shards: Vec<super::publication::DeskShard> =
+            Vec::with_capacity(self.public_views.len());
         for (stock, view) in evidence.desk_views {
             if let Some(slot) = self.public_views.get_mut(stock as usize) {
+                desk_shards.push(super::publication::DeskShard {
+                    stock,
+                    view: view.clone(),
+                    resting_count: resting_of(stock),
+                });
                 *slot = view;
             }
         }
@@ -1694,11 +1744,13 @@ impl World {
         // plan 事件 day，precedes 校验显红（save_contract 38 败同根因）。
         self.global.day = ((tick - 1) / self.ticks_per_day) as u32;
         self.global.events_installed += evidence.entities_out;
-        self.report_log.push(TickRecord {
+        let group_hashes = evidence.group_hashes;
+        let desk_hashes = evidence.desk_hashes;
+        let record = TickRecord {
             tick,
             rounds,
-            group_hashes: evidence.group_hashes,
-            desk_hashes: evidence.desk_hashes,
+            group_hashes: group_hashes.clone(),
+            desk_hashes: desk_hashes.clone(),
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
             unsettled_trades,
@@ -1706,7 +1758,23 @@ impl World {
             desk_receipts: evidence.desk_receipts,
             group_rejections: evidence.group_rejections,
             desk_auction: evidence.desk_auction,
-        });
+        };
+        self.report_log.push(record);
+        // Q1 单点发布（唯一 publish 调用点）：组装不可变版本并原子交换。
+        // P1 v1：groups/events 占位（P2 随 D1 拆迁与事件迁移填充）。
+        self.publication.publish(std::sync::Arc::new(
+            super::publication::PublishedTick {
+                tick,
+                global: self.global,
+                desks: desk_shards,
+                groups: Vec::new(),
+                events: super::publication::EventSegment::default(),
+                hashes: super::publication::TickHashes {
+                    groups: group_hashes,
+                    desks: desk_hashes,
+                },
+            },
+        ));
     }
 
     /// 日结序列（F §6.2）：

@@ -1231,6 +1231,24 @@ impl GameSession {
         Ok(())
     }
 
+    /// Q1 发布槽句柄（session 侧读者面）：外部读者（server actor/测试/
+    /// 存档）经此取一致读点——load() 一次 clone 即得"一个固定提交版本
+    /// + 它的全部分片句柄"。驱动器不在位=尚未步入 runtime 模式，显式
+    /// 失败（不静默返回空版本）。
+    pub fn runtime_publication(
+        &self,
+    ) -> Result<std::sync::Arc<crate::runtime::publication::ViewPublication>, String>
+    {
+        let cell = self
+            .runtime_driver
+            .as_ref()
+            .ok_or_else(|| "发布槽不可用：runtime 驱动器尚未构造".to_owned())?;
+        let driver = cell
+            .lock()
+            .map_err(|_| "驱动器锁被 poison（前次持有期 panic）".to_owned())?;
+        Ok(driver.publication())
+    }
+
     /// runtime 驱动器翻转面（P1-10）：逐账户注意力候选真实写回
     /// （组线程 next_due 是调度权威——替换"推到 tick"的假迁移）。
     /// Sol 二审修复集 5：candidate 与 attention_scheduler heap 同步

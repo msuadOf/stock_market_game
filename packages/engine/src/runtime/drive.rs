@@ -1175,6 +1175,14 @@ impl RuntimeDriver {
         self.world.global.committed_tick
     }
 
+    /// Q1 发布槽句柄（驱动器侧转发——session/server/测试读者经此取
+    /// 一致读点；install_tick 单点发布，load 一次 clone）。
+    pub fn publication(
+        &self,
+    ) -> std::sync::Arc<super::publication::ViewPublication> {
+        self.world.publication()
+    }
+
     /// world tick 记录只读（D0 常驻断言：单一世界连续累积）。
     pub fn world_report_log(&self) -> &[super::world::TickRecord] {
         &self.world.report_log
