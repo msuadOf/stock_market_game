@@ -43,7 +43,7 @@ use std::time::Duration;
 /// 兼容（调用点零改动）；`PartialEq` 手写按内容比（Inline/Heap 同内容
 /// 相等——变体不参与判等，分片对账/测试断言无变体歧义）。
 #[derive(Clone, Debug)]
-pub(crate) enum InlineVec<T: Copy + Default, const N: usize> {
+pub enum InlineVec<T: Copy + Default, const N: usize> {
     /// 内联（len≤N——栈存储，Clone=数组拷贝）。
     Inline {
         /// 固定容量存储（尾部长度内有效）。
@@ -106,29 +106,48 @@ impl<T: Copy + Default + PartialEq, const N: usize> PartialEq for InlineVec<T, N
     }
 }
 
+/// 迭代兼容（`&Vec<T>` 的 IntoIterator 面——`for x in &account.shares`
+/// 调用点零改动；委托切片迭代）。
+impl<'a, T: Copy + Default, const N: usize> IntoIterator for &'a InlineVec<T, N> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
+    }
+}
+
+impl<'a, T: Copy + Default, const N: usize> IntoIterator for &'a mut InlineVec<T, N> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_mut_slice().iter_mut()
+    }
+}
+
 impl<T: Copy + Default + PartialEq, const N: usize> Eq for InlineVec<T, N> {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupAccount {
     /// 现金聚合额（i64 分）。
     pub cash: i64,
-    /// 每股持仓聚合额（下标=StockIdx）。
-    pub shares: Vec<u32>,
+    /// 每股持仓聚合额（下标=StockIdx；Seal 攻顶刀 A-1'——InlineVec
+    /// 内联容量 8：现役口径 P100=5 股恒内联，clone=栈拷贝零堆分配）。
+    pub shares: InlineVec<u32, 8>,
     /// 每股当日买入冻结（T+1：日界解冻，非每 tick——批 5 DayEnd 接线）。
-    pub frozen_today: Vec<u32>,
+    pub frozen_today: InlineVec<u32, 8>,
     /// 每股在途挂单计数（下标=StockIdx；严格所有权口径的诊断面）。
-    pub foreign_active: Vec<u16>,
+    pub foreign_active: InlineVec<u16, 8>,
     /// 每股累计买入成交额（i64 分，仅成交额——开仓派生 cost_price 消费）。
-    pub invested_cents: Vec<i64>,
+    pub invested_cents: InlineVec<i64, 8>,
     /// 每股累计卖出成交额（i64 分，仅成交额）。
-    pub recovered_cents: Vec<i64>,
+    pub recovered_cents: InlineVec<i64, 8>,
     /// 每股"曾持有"位（D3a-3 收口：session positions 含清仓后零量条目
     /// ——观察面 held 集成员（sample_discovery_stock 持仓优先采样）；
     /// 组侧 qty=0 无条目概念，以独立位承载。清仓置位、再持有复位）。
-    pub ever_held: Vec<bool>,
+    pub ever_held: InlineVec<bool, 8>,
     /// 每股在途卖单余量（Sol 整改 3：child_in_flight 卖票的镜像——
     /// 回写/读面口径"在手+在途"对齐旧管线；挂出加、成交/终结减）。
-    pub pending_sell_qty: Vec<u32>,
+    pub pending_sell_qty: InlineVec<u32, 8>,
     /// 在途买单 desk 占用累计（分；账户级——**全部**在途买单，不限计划
     /// 链票：挂出 +purse、买腿成交 −实付、CashRefund −退款）。Sol 五审：
     /// 公开现金=组现金+此值（挂出不减、成交实付减、终结不变——旧管线
@@ -141,13 +160,13 @@ impl GroupAccount {
     pub fn new(cash: i64, n_stocks: usize) -> Self {
         GroupAccount {
             cash,
-            shares: vec![0; n_stocks],
-            frozen_today: vec![0; n_stocks],
-            foreign_active: vec![0; n_stocks],
-            invested_cents: vec![0; n_stocks],
-            recovered_cents: vec![0; n_stocks],
-            ever_held: vec![false; n_stocks],
-            pending_sell_qty: vec![0; n_stocks],
+            shares: InlineVec::filled(n_stocks, 0),
+            frozen_today: InlineVec::filled(n_stocks, 0),
+            foreign_active: InlineVec::filled(n_stocks, 0),
+            invested_cents: InlineVec::filled(n_stocks, 0),
+            recovered_cents: InlineVec::filled(n_stocks, 0),
+            ever_held: InlineVec::filled(n_stocks, false),
+            pending_sell_qty: InlineVec::filled(n_stocks, 0),
             buy_purse_held_cents: 0,
         }
     }
@@ -623,8 +642,11 @@ pub struct GroupFinalState {
 pub struct GroupState {
     /// 组索引。
     pub group: GroupIdx,
-    /// 组内账户（下标=LocalIdx）。
-    pub accounts: Vec<GroupAccount>,
+    /// 组内账户（下标=LocalIdx；Seal 攻顶刀 A-1：Arc+COW——写点经
+    /// `Arc::make_mut`（独占时零拷贝原地改；分片共享后首写 COW 一次），
+    /// SealAck 分片构建=Arc 指针共享（原全量 GroupAccount 深拷贝×
+    /// 活跃集 234μs 的搬运税消除——2000 账户×~450B→2000×8B）。
+    pub accounts: Vec<std::sync::Arc<GroupAccount>>,
     /// 可逆日志（本 tick 内累积；Start 转正时清空）。
     undo: Vec<GroupUndo>,
     /// eager 分域延迟载荷（F4/F5/F6 序敏感族——即时相暂存，延迟相
@@ -834,7 +856,7 @@ impl GroupState {
         let belief_roster = belief_states_seed.len();
         GroupState {
             group,
-            accounts,
+            accounts: accounts.into_iter().map(std::sync::Arc::new).collect(),
             undo: Vec::new(),
             staging_deferred: Vec::new(),
             account_dirty_set: Default::default(),
@@ -963,14 +985,14 @@ impl GroupState {
         for entry in self.undo.drain(..).rev() {
             match entry {
                 GroupUndo::Cash { local, delta } => {
-                    self.accounts[local as usize].cash -= delta;
+                    std::sync::Arc::make_mut(&mut self.accounts[local as usize]).cash -= delta;
                 }
                 GroupUndo::Shares {
                     local,
                     stock,
                     delta,
                 } => {
-                    let slot = &mut self.accounts[local as usize].shares[stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize]).shares[stock as usize];
                     *slot = (*slot as i64 - delta as i64) as u32;
                 }
                 GroupUndo::ForeignActive {
@@ -978,7 +1000,7 @@ impl GroupState {
                     stock,
                     delta,
                 } => {
-                    let slot = &mut self.accounts[local as usize].foreign_active[stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize]).foreign_active[stock as usize];
                     *slot = (*slot as i32 - delta as i32) as u16;
                 }
                 GroupUndo::Frozen {
@@ -986,7 +1008,7 @@ impl GroupState {
                     stock,
                     delta,
                 } => {
-                    let slot = &mut self.accounts[local as usize].frozen_today[stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize]).frozen_today[stock as usize];
                     *slot = (*slot as i64 - delta as i64) as u32;
                 }
                 GroupUndo::NextDue { local, prev } => {
@@ -1004,7 +1026,7 @@ impl GroupState {
                     d_invested,
                     d_recovered,
                 } => {
-                    let acct = &mut self.accounts[local as usize];
+                    let acct = std::sync::Arc::make_mut(&mut self.accounts[local as usize]);
                     acct.invested_cents[stock as usize] -= d_invested;
                     acct.recovered_cents[stock as usize] -= d_recovered;
                 }
@@ -1018,16 +1040,16 @@ impl GroupState {
                 }
                 GroupUndo::EverHeld { local, stock, prev } => {
                     if let Some(acct) = self.accounts.get_mut(local as usize) {
-                        acct.ever_held[stock as usize] = prev;
+                        std::sync::Arc::make_mut(acct).ever_held[stock as usize] = prev;
                     }
                 }
                 GroupUndo::PendingSell { local, stock, delta } => {
-                    let acct = &mut self.accounts[local as usize];
+                    let acct = std::sync::Arc::make_mut(&mut self.accounts[local as usize]);
                     let slot = &mut acct.pending_sell_qty[stock as usize];
                     *slot = (*slot as i64 - delta).max(0) as u32;
                 }
                 GroupUndo::BuyPurseHeld { local, delta } => {
-                    self.accounts[local as usize].buy_purse_held_cents -= delta;
+                    std::sync::Arc::make_mut(&mut self.accounts[local as usize]).buy_purse_held_cents -= delta;
                 }
                 GroupUndo::ChildInFlight { account, code, prev } => {
                     // Sol 整改 2：恢复变更前票值（None=原本不在途）。
@@ -1059,11 +1081,14 @@ impl GroupState {
 
     fn acct_mut(&mut self, local: LocalIdx) -> Result<&mut GroupAccount, RuntimeError> {
         let group = self.group;
-        self.accounts
+        let slot = self
+            .accounts
             .get_mut(local as usize)
             .ok_or_else(|| RuntimeError::ProtocolInvariant {
                 detail: format!("组 {group} 收到越界 local={local}"),
-            })
+            })?;
+        // Arc COW：分片共享后首写克隆一次（此后独占零拷贝）。
+        Ok(std::sync::Arc::make_mut(slot))
     }
 
     /// undo 入账统一入口：账户域族（F1/F2/F3 即时域+F4 曾持有）顺带登记
@@ -1174,7 +1199,7 @@ impl GroupState {
             let gross = i64::from(fill.price) * i64::from(fill.qty);
             match fill.side {
                 Side::Sell => {
-                    let acct = &mut self.accounts[fill.owner.1 as usize];
+                    let acct = std::sync::Arc::make_mut(&mut self.accounts[fill.owner.1 as usize]);
                     let before = acct.pending_sell_qty[stock_idx];
                     let after = before.saturating_sub(fill.qty);
                     acct.pending_sell_qty[stock_idx] = after;
@@ -1188,7 +1213,7 @@ impl GroupState {
                 }
                 Side::Buy => {
                     let charge = gross + fill.commission + fill.transfer_fee;
-                    let acct = &mut self.accounts[fill.owner.1 as usize];
+                    let acct = std::sync::Arc::make_mut(&mut self.accounts[fill.owner.1 as usize]);
                     acct.buy_purse_held_cents -= charge;
                     self.push_undo(GroupUndo::BuyPurseHeld {
                         local: fill.owner.1,
@@ -1263,7 +1288,7 @@ impl GroupState {
                     // RefundedShares 复位（原 apply_entity 批内位置）：qty>0
                     // 的再持有=曾持有位复位；读当前值翻转（即时相不写
                     /// ever_held——延迟相内按原序重放等价原批内判定）。
-                    let acct = &mut self.accounts[local as usize];
+                    let acct = std::sync::Arc::make_mut(&mut self.accounts[local as usize]);
                     if acct.ever_held[stock as usize] {
                         acct.ever_held[stock as usize] = false;
                         self.push_undo(GroupUndo::EverHeld {
@@ -1279,7 +1304,7 @@ impl GroupState {
         // shares==0 → true（对齐 session 清仓保留零量条目）；>0 → false。
         let touched = deferred.touched;
         for &(local, stock) in &touched {
-            let acct = &mut self.accounts[local as usize];
+            let acct = std::sync::Arc::make_mut(&mut self.accounts[local as usize]);
             let prev_ever = acct.ever_held[stock as usize];
             let now_ever = acct.shares[stock as usize] == 0;
             if prev_ever != now_ever {
@@ -1794,7 +1819,7 @@ impl GroupState {
     fn clear_flat_cost_basis(&mut self, touched: &[(LocalIdx, StockIdx)]) {
         for &(local, stock) in touched {
             let s = stock as usize;
-            let acct = &mut self.accounts[local as usize];
+            let acct = std::sync::Arc::make_mut(&mut self.accounts[local as usize]);
             if acct.shares[s] == 0
                 && acct.foreign_active[s] == 0
                 && (acct.invested_cents[s] != 0 || acct.recovered_cents[s] != 0)
@@ -2117,7 +2142,7 @@ impl GroupState {
             let frozen = self.accounts[local as usize].frozen_today.clone();
             for (stock, &f) in frozen.iter().enumerate() {
                 if f > 0 {
-                    self.accounts[local as usize].frozen_today[stock] = 0;
+                    std::sync::Arc::make_mut(&mut self.accounts[local as usize]).frozen_today[stock] = 0;
                     self.push_undo(GroupUndo::Frozen {
                         local,
                         stock: stock as StockIdx,
@@ -2656,8 +2681,9 @@ impl GroupState {
                 detail: format!("组 {group} 位 {local} 缺信念个人态"),
             });
         };
+        let accounts_ref: Vec<&GroupAccount> = self.accounts.iter().map(std::sync::Arc::as_ref).collect();
         let context = build_root_read_context(
-            &self.accounts,
+            &accounts_ref,
             &self.belief_states,
             &projection,
             &self.library,
@@ -2947,7 +2973,7 @@ impl GroupState {
                     .unwrap_or_else(|e| panic!("组内新计划读取失败 {plan_id:?}: {e:?}"))
                     .clone();
                 let (assessment, _) = group_urgency_at_view(
-                    &self.accounts,
+                    &self.accounts.iter().map(std::sync::Arc::as_ref).collect::<Vec<_>>(),
                     &out.belief,
                     &self.child_in_flight,
                     &projection,
@@ -4123,7 +4149,9 @@ impl GroupState {
     fn final_state(&self) -> GroupFinalState {
         GroupFinalState {
             group: self.group,
-            accounts: self.accounts.clone(),
+            // 低频（shutdown 一次）：展开为值（Arc COW 的分片收益在
+            /// SealAck 高频面——此处保持协议形状）。
+            accounts: self.accounts.iter().map(|a| (**a).clone()).collect(),
             skipped_orders: self.skipped_orders,
             decide_calls_total: self.decide_calls_total,
             cancel_intents_total: self.cancel_intents_total,
@@ -4200,7 +4228,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         crate::plans::urgency::risk::RiskUrgencyAssessment,
     ) {
         group_urgency_at_view(
-            &self.state.accounts,
+            &self.state.accounts.iter().map(std::sync::Arc::as_ref).collect::<Vec<_>>(),
             self.belief,
             &self.state.child_in_flight,
             self.state.root_projection.as_ref().expect("复审位投影在"),
@@ -4304,7 +4332,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         paused: Option<crate::plans::PauseReason>,
     ) -> crate::session::InstitutionBehavior {
         group_institution_behavior(
-            &self.state.accounts,
+            &self.state.accounts.iter().map(std::sync::Arc::as_ref).collect::<Vec<_>>(),
             self.local,
             &self.market,
             &self.moment,
@@ -4327,8 +4355,10 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
 /// 复审宿主与开仓后复评共用；与 session `institution_behavior` 同式：
 /// cost_price 自组账目推导（D3a-2c 件1 投影对账背书）、account_risk 面
 /// 同式 belief 权威。参数=组账户切片（开仓循环在簿可变借用旁调用）。
+// Seal 攻顶 A-1：借用视图（&[&GroupAccount]——Arc 解引用数组，调用点
+// 指针收集零值拷贝；体内字段访问经 &GroupAccount 自动 deref，语义不变）。
 fn group_institution_behavior(
-    accounts: &[GroupAccount],
+    accounts: &[&GroupAccount],
     local: LocalIdx,
     market: &crate::strategy::MarketView,
     moment: &crate::experience::ExperienceMoment,
@@ -4377,7 +4407,7 @@ fn group_institution_behavior(
 /// 经宿主委托或直接传字段）。
 #[allow(clippy::too_many_arguments)]
 fn group_urgency_at_view(
-    accounts: &[GroupAccount],
+    accounts: &[&GroupAccount],
     belief: &crate::strategy::BeliefBook,
     child_in_flight: &std::collections::BTreeMap<
         (crate::AccountId, crate::StockId),
@@ -4614,7 +4644,7 @@ fn initial_group_urgency(
 /// 版派生）显红。
 #[allow(clippy::too_many_arguments)]
 fn build_root_read_context(
-    accounts: &[GroupAccount],
+    accounts: &[&GroupAccount],
     belief_states: &[Option<super::world::BeliefParticipantSnapshot>],
     projection: &std::sync::Arc<crate::runtime::world::RootProjection>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
@@ -4949,7 +4979,11 @@ pub fn group_main(
                         let done = UpMsg::GroupDayDone {
                             group: state.group,
                             day: directive.day,
-                            accounts: state.accounts.clone(),
+                            accounts: state
+                                .accounts
+                                .iter()
+                                .map(|a| (**a).clone())
+                                .collect(),
                             state_hash: state.state_hash(),
                         };
                         if up_tx.send(done).is_err() {
@@ -5493,7 +5527,7 @@ pub fn group_main(
                 /// apply_staging 成交与退款驱动——全部买单，不限计划链票）。
                 let echo = UpMsg::GroupEcho {
                     group: state.group,
-                    accounts: state.accounts.clone(),
+                    accounts: state.accounts.iter().map(|a| (**a).clone()).collect(),
                 };
                 if up_tx.send(echo).is_err() {
                     abort.store(true, Ordering::SeqCst);
@@ -5632,7 +5666,7 @@ pub fn group_main(
                 /// 全部轮即时域落账的写点；等待窗/Seal drain 消化），Seal
                 /// 临界路径免原 O(undo_len) 全日志重扫。集合族与原扫描
                 /// 口径逐族一致（8 个账户域族），等价替换。
-                let accounts_sparse: Vec<(_, _)> = std::mem::take(&mut state.account_dirty_set)
+                let mut accounts_sparse: Vec<(_, _)> = std::mem::take(&mut state.account_dirty_set)
                     .into_iter()
                     .filter_map(|local| {
                         state
@@ -5641,6 +5675,20 @@ pub fn group_main(
                             .map(|acct| (local, acct.clone()))
                     })
                     .collect();
+                // Seal 攻顶批 旋钮（cfg(test) 突变判别）：①篡改首条目
+                /// cash+1（分片内容源=组账户终态的判别面）；②丢末条目
+                ///（dirty 集完整性判别面）。生产恒 false 零开销。
+                #[cfg(test)]
+                {
+                    if state.seal_knob_tamper_shard {
+                        if let Some((_, acct)) = accounts_sparse.first_mut() {
+                            std::sync::Arc::make_mut(acct).cash += 1;
+                        }
+                    }
+                    if state.seal_knob_skip_last_shard {
+                        accounts_sparse.pop();
+                    }
+                }
                 if up_tx
                     .send(UpMsg::SealAck {
                         group: state.group,
@@ -5686,7 +5734,7 @@ pub fn group_main(
                         });
                         break;
                     };
-                    accounts.push((local, account.clone()));
+                    accounts.push((local, (**account).clone()));
                 }
                 if result.is_err() {
                     abort.store(true, Ordering::SeqCst);
@@ -6023,7 +6071,7 @@ mod sol_recheck3_tests {
     #[test]
     fn sol4th_full_fill_completes_plan_to_terminal() {
         let mut state = chain_harness_target(Side::Buy, 100);
-        state.accounts[0].cash = 1_000_000;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000;
         state.apply_batch_immediate(batch(
             Vec::new(),
             vec![FillFact {
@@ -6129,8 +6177,8 @@ mod sol_recheck3_tests {
     fn sol2_held_read_face_tracks_remaining_after_partial_fill() {
         let mut state = chain_harness(Side::Sell);
         // 卖出扣除后（挂单在途）：在手 0；挂出时镜像加 200。
-        state.accounts[0].shares[0] = 0;
-        state.accounts[0].pending_sell_qty[0] = 200;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).shares[0] = 0;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
         state.apply_batch_immediate(batch(
             Vec::new(),
             vec![FillFact {
@@ -6184,7 +6232,7 @@ mod sol_recheck3_tests {
         // +2 过户费=200502（desk 余额语义独立推导）。
         const PURSE0: i64 = 200_000 + 500 + 2;
         const CHARGE: i64 = 90_000 + 500 + 1;
-        state.accounts[0].cash = 1_000_000 - PURSE0;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000 - PURSE0;
         state.apply_batch_immediate(batch(
             Vec::new(),
             vec![FillFact {
@@ -6239,7 +6287,7 @@ mod sol_recheck3_tests {
     #[test]
     fn sol3_closed_with_foreign_order_keeps_the_ticket() {
         let mut state = chain_harness(Side::Sell);
-        state.accounts[0].foreign_active[0] = 1;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).foreign_active[0] = 1;
         state
             .apply_batch_immediate(
                 batch(
@@ -6270,7 +6318,7 @@ mod sol_recheck3_tests {
             "他单的 Closed 不得释放执行腿"
         );
         // 对照：本单（serial 5）的 Closed 正常释放。
-        state.accounts[0].foreign_active[0] = 1;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).foreign_active[0] = 1;
         state
             .apply_batch_immediate(
                 batch(
@@ -6307,8 +6355,8 @@ mod sol_recheck3_tests {
             .get_mut(&key)
             .expect("票在")
             .order_id = None;
-        state.accounts[0].foreign_active[0] = 1;
-        state.accounts[0].pending_sell_qty[0] = 200;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).foreign_active[0] = 1;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
         // desk 真实形态：卖单终结 Closed 与余股回流 RefundedShares 成对
         //（镜像回收由 RefundedShares 实体驱动——Sol 五审统一口径）。
         state
@@ -6348,8 +6396,8 @@ mod sol_recheck3_tests {
             .get_mut(&key)
             .expect("票在")
             .order_id = None;
-        state.accounts[0].foreign_active[0] = 1;
-        state.accounts[0].pending_sell_qty[0] = 200;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).foreign_active[0] = 1;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
         // desk 拒收形态：RefundedShares（卖单原路退回）+ Closed 与回执
         // 同批（reject() 三件套）。
         state.apply_batch_immediate(DeskBatch {
@@ -6737,8 +6785,8 @@ mod eager_domain_tests {
                 "Abort 清空延迟载荷（到达序 {order}）"
             );
             // state_hash 不覆盖的成本基/曾持有位：字段级补充断言。
-            assert_eq!(state.accounts[0].invested_cents, vec![0; 3]);
-            assert_eq!(state.accounts[0].recovered_cents, vec![0; 3]);
+            assert_eq!(state.accounts[0].invested_cents.as_slice(), &[0, 0, 0]);
+            assert_eq!(state.accounts[0].recovered_cents.as_slice(), &[0, 0, 0]);
             assert!(
                 state.accounts[1].ever_held[0],
                 "RefundedShares 的曾持有复位属延迟域——即时相/Abort 均不得触碰"
@@ -6756,18 +6804,18 @@ mod eager_domain_tests {
         fn apply_forward(state: &mut GroupState, entry: &GroupUndo) {
             match entry {
                 GroupUndo::Cash { local, delta } => {
-                    state.accounts[*local as usize].cash += delta;
+                    std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).cash += delta;
                 }
                 GroupUndo::Shares { local, stock, delta } => {
-                    let slot = &mut state.accounts[*local as usize].shares[*stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).shares[*stock as usize];
                     *slot = (*slot as i64 + *delta as i64) as u32;
                 }
                 GroupUndo::ForeignActive { local, stock, delta } => {
-                    let slot = &mut state.accounts[*local as usize].foreign_active[*stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).foreign_active[*stock as usize];
                     *slot = (*slot as i32 + *delta as i32) as u16;
                 }
                 GroupUndo::Frozen { local, stock, delta } => {
-                    let slot = &mut state.accounts[*local as usize].frozen_today[*stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).frozen_today[*stock as usize];
                     *slot = (*slot as i64 + *delta as i64) as u32;
                 }
                 GroupUndo::CostBasis {
@@ -6776,16 +6824,16 @@ mod eager_domain_tests {
                     d_invested,
                     d_recovered,
                 } => {
-                    let acct = &mut state.accounts[*local as usize];
+                    let acct = std::sync::Arc::make_mut(&mut state.accounts[*local as usize]);
                     acct.invested_cents[*stock as usize] += d_invested;
                     acct.recovered_cents[*stock as usize] += d_recovered;
                 }
                 GroupUndo::PendingSell { local, stock, delta } => {
-                    let slot = &mut state.accounts[*local as usize].pending_sell_qty[*stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).pending_sell_qty[*stock as usize];
                     *slot = (*slot as i64 + delta) as u32;
                 }
                 GroupUndo::BuyPurseHeld { local, delta } => {
-                    state.accounts[*local as usize].buy_purse_held_cents += delta;
+                    std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).buy_purse_held_cents += delta;
                 }
                 other => panic!("合同 3 只覆盖即时域三族（F1/F2/F3），收到 {other:?}"),
             }
@@ -6835,8 +6883,8 @@ mod eager_domain_tests {
                 "{label}日志逆序回放=初始态（delta 族可交换性守卫）"
             );
             // 成本基（state_hash 不覆盖域）字段级补充。
-            assert_eq!(state.accounts[0].invested_cents, vec![0; 3], "{label} invested 冲回");
-            assert_eq!(state.accounts[0].recovered_cents, vec![0; 3], "{label} recovered 冲回");
+            assert_eq!(state.accounts[0].invested_cents.as_slice(), &[0, 0, 0], "{label} invested 冲回");
+            assert_eq!(state.accounts[0].recovered_cents.as_slice(), &[0, 0, 0], "{label} recovered 冲回");
         }
     }
 }

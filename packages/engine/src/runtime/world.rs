@@ -1682,7 +1682,12 @@ impl World {
     ) -> Result<
         Vec<(
             GroupIdx,
-            std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>,
+            std::sync::Arc<
+                Vec<(
+                    super::LocalIdx,
+                    std::sync::Arc<super::group::GroupAccount>,
+                )>,
+            >,
         )>,
         RuntimeError,
     > {
@@ -1844,7 +1849,12 @@ impl World {
         evidence: TickEvidence,
         seal_accounts: Vec<(
             GroupIdx,
-            std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>,
+            std::sync::Arc<
+                Vec<(
+                    super::LocalIdx,
+                    std::sync::Arc<super::group::GroupAccount>,
+                )>,
+            >,
         )>,
     ) {
         // tick 成功转正：清除可能残留的全局中止标记（上一次 Abort 已回滚收敛）。

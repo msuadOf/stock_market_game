@@ -329,7 +329,7 @@ fn shared_view_decision_sequence_golden() {
     // golden 断言（决策/RNG 流漂移即红）：
     assert_eq!((cash, fees, volume), (SHARED_VIEW_GOLDEN_CASH, SHARED_VIEW_GOLDEN_FEES, SHARED_VIEW_GOLDEN_VOLUME),
         "共享视图决策序列等价守卫（决策/RNG 流漂移即红）");
-    assert_eq!(group.accounts[0].shares, vec![SHARED_VIEW_GOLDEN_SHARES],
+    assert_eq!(group.accounts[0].shares.as_slice(), &[SHARED_VIEW_GOLDEN_SHARES],
         "持仓终态 golden");
     assert_eq!(group.decide_calls_total, 5, "每 tick due（该种子 wait 采样恒 1）——决策次数 golden");
     let expected_resting: Vec<Vec<(u16, u64)>> = (0..5)

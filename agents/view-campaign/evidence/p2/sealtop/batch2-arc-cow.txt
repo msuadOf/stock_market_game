@@ -1,0 +1,31 @@
+=== Seal 攻顶批 2——A-1' 负结果归因 + A-1 Arc COW 落地（2026-10-19）===
+
+【A-1'（SmallVec 内联化）负结果——如实归因】
+实测（A 3000 G=10）：长尾组分片 226→234μs（无效）；闲组 2.3-7.7→1.8-7.3μs（微降）。
+归因：组 0（唯一活跃组，2000 NPC 全 dirty）的分片成本主项是**搬运量**
+（2000 账户×~450B/拍≈900KB 有效搬运）而非分配次数——内联化只消 7-alloc/账户
+的分配开销（占比小），enum 尺寸膨胀（Vec 24B→~64B/域）反损缓存局部性。
+机制未打中成本结构 ⇒ 按协调者预留条款转 A-1（"A-1' 后仍有残余长尾再评估"触发）。
+InlineVec 类型保留（闲组微收益+ spill 等价合同+A-1 的 COW clone 栈拷贝复用）。
+
+【A-1（Arc COW）落地】
+- GroupState.accounts: Vec<Arc<GroupAccount>>；写点 23 处经 Arc::make_mut
+  （独占零拷贝原地改；分片共享后首写 COW 一次）；
+- SealAck/GroupShard 分片条目 Arc 共享（构建=2000×8B 指针 vs 900KB 深拷贝）；
+- 决策读点（build_root_read_context/group_urgency_at_view/group_institution_
+  behavior 签名 &[&GroupAccount]——指针数组零值拷贝）；
+- 低频面（GroupDayDone/EchoAccounts/GroupFinal）展开拷贝（日结/关停一次）。
+
+【实测（A 3000 G=10）】
+组端 Seal 处理：max 154-156 → **33-37μs（−78%）**；mean 19→7。
+Seal 相位：206-217 → **139-152μs（−30%）**。
+A 速度 3 轮：877.0/835.0/887.7 mean 866.6——窗 15min load 9.1-9.5 未静置
+（对照批 2 正式 912.7 取自 15min 5.5 窗）——**正式数字待静置窗补**；
+结构性指标（Seal 相位/组端处理）已确凿。
+B 1000 配对（load 2.4/8.4/9.1）：b-candle mean 798.8 vs b-arc mean 814.0
+（+1.9%——G=1 无屏障税，收益=组端 clone 省+COW；B 历史新高段）。
+9 股 spill 配对（A-1' 阶段测）：Vec 531.4 vs InlineVec-spill 509.6（−4%，
+噪声带内、非现役形态——A-1 后 spill 路径 clone 走 COW 已回避该面，登记）。
+
+【合同】inline_account 5/5 绿（分片等价/Abort 新鲜/InlineVec 等价/旋钮
+负控双翻转）；全量 1688/0/11。

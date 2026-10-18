@@ -235,7 +235,7 @@ fn day_end_candidate_roundtrip_rebuilds_equivalent_world() {
     rebuilt_spec.initial_shares = cand
         .groups
         .iter()
-        .map(|(_, accts)| accts.iter().map(|a| a.shares.clone()).collect())
+        .map(|(_, accts)| accts.iter().map(|a| a.shares.as_slice().to_vec()).collect())
         .collect();
     let mut rebuilt = World::spawn(rebuilt_spec).expect("候选重建世界");
     rebuilt.run_ticks(2).expect("重建后续跑 2 tick");

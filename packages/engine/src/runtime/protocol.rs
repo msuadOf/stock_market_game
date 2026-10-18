@@ -702,11 +702,13 @@ pub enum UpMsg {
         tick: u64,
         /// Seal 落账后组态哈希。
         final_hash: u64,
-        /// Q2 批 3：账户稀疏分片（Seal 落账后的 undo 集口径——决策扣除/
-        /// 本拍全部成交/日结全含；替代驱动器 EchoAccountsSparse 独立
-        /// 往返。全量读面走 EchoAccounts 全量通道）。
+        /// Q2 批 3+Seal 攻顶 A-1：账户稀疏分片（Seal 落账后的 undo 集
+        /// 口径——决策扣除/本拍全部成交/日结全含；替代驱动器
+        /// EchoAccountsSparse 独立往返。全量读面走 EchoAccounts 全量
+        /// 通道。A-1：条目 Arc 共享（组端写点 COW——分片构建免全量
+        /// GroupAccount 深拷贝的搬运税）。
         accounts_sparse:
-            std::sync::Arc<Vec<(LocalIdx, super::group::GroupAccount)>>,
+            std::sync::Arc<Vec<(LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
     },
     /// D5 #4 retail 链：本拍零售决策 trace 回执（瞬态——每拍清+装）。
     RetailTraces {

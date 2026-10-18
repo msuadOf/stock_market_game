@@ -26,11 +26,22 @@ use crate::{AccountId, Event, GameSession, SessionSetup};
 /// 等价物，请求集改述为本拍事实集）。独立自由函数供负控单测直击。
 pub(crate) fn ensure_fact_owners_covered_arc(
     fact_rec: Option<&super::world::TickRecord>,
-    snapshots: &[std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>],
+    snapshots: &[std::sync::Arc<
+        Vec<(
+            super::LocalIdx,
+            std::sync::Arc<super::group::GroupAccount>,
+        )>,
+    >],
     accounts_per_group: usize,
 ) -> Result<(), String> {
-    let snapshots_vec: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> =
-        snapshots.iter().map(|arc| (**arc).clone()).collect();
+    let snapshots_vec: Vec<Vec<(super::LocalIdx, super::group::GroupAccount)>> = snapshots
+        .iter()
+        .map(|arc| {
+            arc.iter()
+                .map(|(local, acct)| (*local, (**acct).clone()))
+                .collect()
+        })
+        .collect();
     ensure_fact_owners_covered(fact_rec, &snapshots_vec, accounts_per_group)
 }
 
@@ -686,8 +697,9 @@ impl RuntimeDriver {
                 let n_groups = self.world.n_groups();
                 // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
                 /// clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
-                let mut shards: Vec<std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>> =
-                    vec![std::sync::Arc::new(Vec::new()); n_groups];
+                let mut shards: Vec<
+                    std::sync::Arc<Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>>,
+                > = vec![std::sync::Arc::new(Vec::new()); n_groups];
                 for shard in &published.groups {
                     let Some(slot) = shards.get_mut(shard.group as usize) else {
                         return Err(format!(
@@ -720,7 +732,9 @@ impl RuntimeDriver {
                         accounts
                             .into_iter()
                             .enumerate()
-                            .map(|(local, acct)| (local as super::LocalIdx, acct))
+                            .map(|(local, acct)| {
+                                (local as super::LocalIdx, std::sync::Arc::new(acct))
+                            })
                             .collect(),
                     );
                 }
