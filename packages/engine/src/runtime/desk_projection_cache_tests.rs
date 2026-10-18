@@ -76,7 +76,7 @@ fn run_and_collect(disable_cache: bool) -> (Vec<Vec<StockPublic>>, i128, u64) {
     for _ in 0..13u64 {
         world.run_ticks(1).expect("单 tick 收敛");
         let version = world.publication().load();
-        snapshots.push(version.desks.iter().map(|s| s.view.clone()).collect());
+        snapshots.push(version.desks.iter().map(|s| (*s.view).clone()).collect());
     }
     let report = world.shutdown().expect("关停");
     let cash: i128 = report

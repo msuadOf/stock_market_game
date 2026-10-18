@@ -693,7 +693,7 @@ impl World {
                         .enumerate()
                         .map(|(s, view)| super::publication::DeskShard {
                             stock: s as super::StockIdx,
-                            view: view.clone(),
+                            view: std::sync::Arc::new(view.clone()),
                             resting_count: 0,
                             // P2-3：v0 空 observation 面；游标=初始种子
                             ///（空簿保留已耗序号）。
@@ -1886,18 +1886,22 @@ impl World {
             Vec::with_capacity(self.public_views.len());
         for (stock, view) in evidence.desk_views {
             if let Some(slot) = self.public_views.get_mut(stock as usize) {
+                // 刀 2b：resting 条目已 Arc（desk 报告直通——免整 Vec
+                /// 重建包装）；view Arc 直通分片；广播基保持值拷贝（组
+                /// 决策输入 &[StockPublic] 切片形态——P1 的"可见再 Arc
+                /// 化"面：发布分片与收束收集双 clone 退役）。
                 let facts_for_stock = match resting_facts.get_mut(stock as usize) {
-                    Some(buffer) => std::mem::take(buffer),
-                    None => Vec::new(),
+                    Some(buffer) => std::sync::Arc::clone(buffer),
+                    None => std::sync::Arc::new(Vec::new()),
                 };
                 desk_shards.push(super::publication::DeskShard {
                     stock,
-                    view: view.clone(),
+                    view: std::sync::Arc::clone(&view),
                     resting_count: resting_of(stock),
-                    resting: std::sync::Arc::new(facts_for_stock),
+                    resting: facts_for_stock,
                     next_serial: serial_cursors.get(stock as usize).copied().unwrap_or(0),
                 });
-                *slot = view;
+                *slot = (*view).clone();
             }
         }
         // 收束到达序不定——发布分片按股序稳定排列（读者按下标=股消费）。

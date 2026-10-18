@@ -450,10 +450,11 @@ impl DeskState {
         self.market_ver = self.market_ver.wrapping_add(1);
     }
 
-    /// 刀 2a：view 投影快照（版本+相位键缓存——命中免 O(簿+K 历史)
-    /// 重建，未命中构建并缓存）。等价面由 desk_projection_cache_tests
-    /// 双跑合同+J6 发布面守卫承载。
-    fn public_snapshot(&mut self, tick: u64) -> super::protocol::StockPublic {
+    /// 刀 2a/2b：view 投影快照（版本+相位键缓存——命中免 O(簿+K 历史)
+    /// 重建，未命中构建并缓存）。刀 2b 起返回 Arc（报告/收集/发布分片
+    /// 全链指针共享——desk 端缓存条目直通）。等价面由
+    /// desk_projection_cache_tests 双跑合同+J6 发布面守卫承载。
+    fn public_snapshot_arc(&mut self, tick: u64) -> std::sync::Arc<super::protocol::StockPublic> {
         let phase = self.setup.phase_at(tick);
         #[cfg(test)]
         let disabled = Self::projection_cache_disabled();
@@ -462,22 +463,22 @@ impl DeskState {
         if !disabled {
             if let Some((bv, mv, ph, cached)) = &self.view_cache {
                 if *bv == self.book_ver && *mv == self.market_ver && *ph == phase {
-                    return (**cached).clone();
+                    return std::sync::Arc::clone(cached);
                 }
             }
         }
-        let built = self.build_public(tick);
+        let built = std::sync::Arc::new(self.build_public(tick));
         self.view_cache = Some((
             self.book_ver,
             self.market_ver,
             phase,
-            std::sync::Arc::new(built.clone()),
+            std::sync::Arc::clone(&built),
         ));
         built
     }
 
-    /// 刀 2a：resting 投影快照（簿版本键缓存）。
-    fn resting_snapshot(&mut self) -> Vec<super::protocol::RestingFact> {
+    /// 刀 2a/2b：resting 投影快照（簿版本键缓存；Arc 共享同上）。
+    fn resting_snapshot_arc(&mut self) -> std::sync::Arc<Vec<super::protocol::RestingFact>> {
         #[cfg(test)]
         let disabled = Self::projection_cache_disabled();
         #[cfg(not(test))]
@@ -485,12 +486,12 @@ impl DeskState {
         if !disabled {
             if let Some((bv, cached)) = &self.resting_cache {
                 if *bv == self.book_ver {
-                    return (**cached).clone();
+                    return std::sync::Arc::clone(cached);
                 }
             }
         }
-        let built = build_resting_facts(self);
-        self.resting_cache = Some((self.book_ver, std::sync::Arc::new(built.clone())));
+        let built = std::sync::Arc::new(build_resting_facts(self));
+        self.resting_cache = Some((self.book_ver, std::sync::Arc::clone(&built)));
         built
     }
 
@@ -2767,7 +2768,7 @@ fn process_msg(
             // D5 envelope 投影：在途单快照（bids+asks 全量——费用
             // 累计/余量直取 desk 权威）。P2-3 后生产读面走 DeskReport
             /// 携带；本应答保留给日结/测试的 live 收集通道。
-            let orders = state.resting_snapshot();
+            let orders = (*state.resting_snapshot_arc()).clone();
             if up_tx
                 .send(UpMsg::DeskResting {
                     stock: state.setup.stock,
@@ -2896,14 +2897,14 @@ fn process_msg(
                         volume_today: state.market.volume_today,
                         trade_count: state.market.trade_count,
                         fee_sink: state.fee_sink,
-                        view: state.public_snapshot(tick),
+                        view: state.public_snapshot_arc(tick),
                         trades: std::mem::take(&mut state.trade_facts),
                         lifecycle: std::mem::take(&mut state.lifecycle_facts),
                         receipts_out_list: receipts_detail,
                         auction: std::mem::take(&mut state.auction_facts),
                         // P2-3：在途单观察面随报告上行（组装与 DeskResting
                         // 应答同源——EchoResting 应答处同式，见该分支）。
-                        resting_orders: state.resting_snapshot(),
+                        resting_orders: state.resting_snapshot_arc(),
                         next_serial: state.next_serial,
                     };
                     up_tx.send(UpMsg::DeskReport(report)).map_err(|_| {

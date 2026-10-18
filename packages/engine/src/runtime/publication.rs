@@ -33,7 +33,9 @@ pub struct DeskShard {
     /// 股索引。
     pub stock: StockIdx,
     /// 本收束点公共态（行情/深度/价格历史观察面）。
-    pub view: StockPublic,
+    /// 刀 2b：Arc 共享（desk 报告条目直通——安装免深拷贝；读者
+    /// 字段访问经 Deref 不变）。
+    pub view: std::sync::Arc<StockPublic>,
     /// 本收束点挂单数（观察面计数）。
     pub resting_count: u64,
     /// P2-3：在途单观察面（随 DeskReport 上行——信封/簿镜像读面源）。

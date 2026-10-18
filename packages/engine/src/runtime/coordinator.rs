@@ -78,7 +78,7 @@ pub struct TickEvidence {
     /// 本轮实体流出总数（守恒审计输入，批 3+ 扩展）。
     pub entities_out: u64,
     /// 各交易部公共态（安装进下一 tick 广播快照；决策观察基）。
-    pub desk_views: Vec<(StockIdx, super::protocol::StockPublic)>,
+    pub desk_views: Vec<(StockIdx, std::sync::Arc<super::protocol::StockPublic>)>,
     /// 各交易部本收束点挂单数（观察面）。
     pub desk_resting: Vec<(StockIdx, u64)>,
     /// 本 tick 双腿成交事实（事件映射输入）。
@@ -99,7 +99,7 @@ pub struct TickEvidence {
         std::sync::Arc<Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>>,
     )>,
     /// P2-3：各交易部在途单观察面（随 DeskReport 上行——下标=股）。
-    pub desk_resting_facts: Vec<Vec<super::protocol::RestingFact>>,
+    pub desk_resting_facts: Vec<std::sync::Arc<Vec<super::protocol::RestingFact>>>,
     /// 各交易部序号游标（随 DeskReport 上行；save 投影权威源）。
     pub desk_serial_cursors: Vec<u64>,
 }
@@ -157,7 +157,7 @@ pub fn converge_round(
     // P2-2：belief 稀疏分片句柄收集（随报告上行——Arc 零拷贝）。
     let mut group_belief = Vec::with_capacity(n_groups);
     // P2-3：在途单观察面+游标收集（随 DeskReport 上行——发布源）。
-    let mut desk_resting_facts: Vec<Option<Vec<super::protocol::RestingFact>>> =
+    let mut desk_resting_facts: Vec<Option<std::sync::Arc<Vec<super::protocol::RestingFact>>>> =
         vec![None; n_stocks];
     let mut desk_serial_cursors = vec![0u64; n_stocks];
     while groups_left > 0 || desks_left > 0 {
@@ -193,7 +193,7 @@ pub fn converge_round(
                 desks_left -= 1;
                 entities_out += r.entities_out;
                 desk_hashes.push((r.stock, r.committed_hash));
-                desk_views.push((r.stock, r.view.clone()));
+                desk_views.push((r.stock, std::sync::Arc::clone(&r.view)));
                 desk_resting.push((r.stock, r.resting_count));
                 desk_resting_facts[r.stock as usize] = Some(r.resting_orders);
                 desk_serial_cursors[r.stock as usize] = r.next_serial;

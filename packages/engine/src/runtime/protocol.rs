@@ -956,8 +956,10 @@ pub struct DeskReport {
     pub trade_count: u64,
     /// 费用桶累计（双边实收费用，守恒审计输入）。
     pub fee_sink: i64,
-    /// 本收束点公共态（协调者安装进下一 tick 广播快照）。
-    pub view: StockPublic,
+    /// 本收束点公共态（协调者安装进下一 tick 广播快照）。刀 2b（协调
+    /// 者刀单②续）：Arc 共享——converge 收集/发布分片安装免逐轮深拷贝
+    ///（desk 端缓存条目直通；内容语义不变——Arc 的 PartialEq 委托内值）。
+    pub view: std::sync::Arc<StockPublic>,
     /// 本轮双腿成交事实（TickFrame 事件映射输入；按成交序）。
     pub trades: Vec<DeskTradeFact>,
     /// 本轮生命周期事实（受理/撤单/到期）。
@@ -969,7 +971,7 @@ pub struct DeskReport {
     /// P2-3（视图内生战役）：在途单观察面随报告上行（替代驱动器每拍
     /// EchoResting 独立往返——组装与 DeskResting 应答逐字同源）。终轮
     /// 报告的分片进发布版本；Abort 时随 evidence 丢弃。
-    pub resting_orders: Vec<RestingFact>,
+    pub resting_orders: std::sync::Arc<Vec<RestingFact>>,
     /// desk 序号游标（真实已耗序号——空簿也保留；save 投影权威源）。
     pub next_serial: u64,
 }
