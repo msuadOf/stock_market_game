@@ -1,14 +1,15 @@
 # 视图内生战役收官台账（Sol 战役复核备料，2026-10-19 晨）
 
 > worktree `.worktree/view-campaign`，分支 exp/view-internalization。
-> 主线方向："裸引擎疯狂跑，分布式维护 view，外部直接观测，零会话层税"。
+> 主线方向："裸引擎疯狂跑，分布式维护 view，外部直接观测，零会话层税"
+>（**方向**而非已达成终态——残余镜像税见 §三，Sol 复核提示词同口径）。
 > 本文件=战役收官终数与可删项实录——供 Sol 战役级复核。
 
 ## 一、终数表
 
 | 口径 | 战役基线 | 终数 | 提升 | 备注 |
 |---|---|---|---|---|
-| **A 3000（G=10）绑核静置** | 544.7 t/s 同源起点（A 基线 774.7=Arc 优化后） | **1011.8 mean**（948.3/1132.1/954.9） | vs 774.7 **+30.6%**；vs 批 2 912.7 +10.8% | **tag perf/bare-1000x-viewcampaign**；单轮 1132.1 破 1100 |
+| **A 3000（G=10）绑核静置** | 1332.6 t/s（std-thread 战役终值近邻——**勘误**：初版误写 544.7，544.7 是 B 的同源起点；A 基线 774.7=Arc 优化后口径另计） | **1011.8 mean**（948.3/1132.1/954.9） | vs 774.7 **+30.6%**；vs 批 2 912.7 +10.8% | **tag perf/bare-1000x-viewcampaign**；单轮 1132.1 破 1100 |
 | **B 3000（G=1）静置** | 544.7（1000 tick 口径） | **终数 1032.7 mean**（04:23 静窗，1007.2/1036.1/1054.9）；刀 2b 后双窗互证 1006.3（05:24 窗）+**单轮 1168.1 全程最高**；稳态画像 863.1μs→~1159 极限 | 稳态对照折算 **+56%→+70% 量级** | **tag perf/fullsem-1000x-viewcampaign**（含口径勘误）；证据 b-final-3000-spin2b.txt |
 | 段级战果 | — | candle_install 41.13→0.335μs；envelope 80.5→2.7μs；attention_heap 258→23μs；belief_collect 归零；Seal 相位 206→139μs；组端 Seal 处理 max 154→33-37μs | — | 证据散见 evidence/p2/ |
 
@@ -20,10 +21,11 @@
 
 | 项 | 内容 | 状态 | 实录 |
 |---|---|---|---|
-| D1 | belief/账户/计划独立 Echo 往返 | **全退役** | belief 稀疏分片随 GroupReport 上行（P2-2，belief_collect 段归零）；账户分片随 SealAck（Q2 批 3，D2 退役后稀疏分片即终态）；EchoPlans 残余=plans_echo 16.6μs（⑤刀登记：dirty 往返与"空簿不覆盖"语义兼容已论证） |
+| D1 | belief/账户/计划独立 Echo 往返 | **belief/账户退役；EchoPlans 生产往返仍在**（**勘误**：初版"全退役"过计） | belief 稀疏分片随 SealAck 上行（P2-2→第 22 任 P1-2 迁移，belief_collect 段归零）；账户分片随 SealAck（Q2 批 3）；EchoPlans 残余=plans_echo 16.6μs 生产往返（⑤刀登记：dirty 往返与"空簿不覆盖"语义兼容已论证——**未退役**） |
 | D2 | 账户投影双写 | **类型级删除** | unsettled 字段类型级删除（Q2 批 4，5ebd0a4b）；组端权威→发布版本单源 |
-| D3 | 同拍投影 | **退役** | 同拍成交投影随 Seal 收敛（Q2 批 4）；fill_projection 段恒 0 |
+| D3 | 同拍投影 | **退役** | 同拍成交投影随 Seal 收敛（Q2 批 4）；fill_projection 段恒 0（清仓经历面的同拍补偿随 P1-2 由 SealAck 分片承接——见 §七） |
 | D4 | candle/行情安装往返 | **全退役** | install 读发布版本（candle 批 3991650f——段 41.13→0.335μs）；EchoCandles 生产往返退役（对账面 pub(crate) 保留+零调用登记） |
+| D5 | retail 诊断面派生 | **部分落地**（**勘误**：初版缺行） | 拒收诊断 Rejected 单遍派发（P2-3c）+决策 trace 收集（D5 #4）落地；受理/成交/撤销诊断面"随事件域迁移逐步补"仍为登记未补（failure.rs D5 注释口径） |
 | D6a | attention heap 每拍全名册重建 | **惰性化** | P2-1 dirty 惰性重建（258→23μs）；残余=每拍真变重建（⑤刀：延迟删除增量模式已论证） |
 | D6b | envelope 每拍全量重建 | **快照化** | P2-4 惰性派生（80.5→2.7μs）+resting 快照 Arc（刀 2b） |
 | （envelope collect） | DeskResting 每拍往返 | **随报告上行** | P2-3 观察面随 DeskReport（刀 2b Arc 直通） |
@@ -32,7 +34,9 @@
 
 - **发布协议**（Q1）：install_tick 单点 publish（Arc<PublishedTick>）；
   desks[].view=Arc<StockPublic>（刀 2b）/resting=Arc 分片（Q2 批 3+
-  刀 2b）/groups belief 稀疏分片/events 段/events hash。
+  刀 2b）/groups belief 稀疏分片（**第 22 任 P1-2 起随 SealAck 上行**
+  ——Seal 落账后构建，含清仓经历行）/events 段+events hash（**默认
+  占位——事件组装仍在驱动器 step 内，R4 事件迁移时填充，非已完成**）。
 - **提交语义**（Q2）：提交点=发布点=Seal（S1-S6+存活契约+Start 防御）；
   组端落账两相（eager 分域：即时相=Batch 到达/延迟相=消息点重放）；
   seal_acked_len 日结守卫；undo 跨发布冲回语义保持。
@@ -53,11 +57,23 @@
 - `perf/fullsem-1000x-viewcampaign`：B 1000 线（3000 tick 口径 1032.7
   ——含 1000 tick 口径 27% 冷启动税勘误声明）
 
-## 五、复核档索引
+## 五、复核档索引与 R19 登记三项处置结果（勘误补录）
 
 reviews/：independent-review-r19/r20/candle/q2/sealtop/b1-spin（无阻断
 贯穿；登记级建议全部处置或登记）；刀 2a/2b/③ 批复核（independent-
 review-knife2.txt——归来后补录结论）。
+
+R19 登记三项处置结果（**勘误补录**——初版未落处置去向）：
+1. **旧管线形态 hash 双源对照守卫**（heap 派生 vs npc_attention 派生
+   逐位一致）→ **未补，维持登记**（等价论证仍为注释级：heap=每账户恰
+   一项的权威快照，排序后同序列；第 22 任 P2-4 已把无快照 hash 收口到
+   实际 ledger，heap 双源守卫待旧管线退役前统一收口）。
+2. **死字段清理**（runtime_heap_undo 槽恒 None+failure.rs 消费段
+   no-op）→ **未清理，维持登记**（槽位仍在——clone/rollback 消费面
+   保持结构，防扩散）。
+3. **跨 Continue 多轮注入守卫**（经 ForceContinuationForTest 基建）
+   → **已闭合**：solfinal1b_continue_early_round_first_buy_initializes_
+   experience（Continue 早轮注入意图+经历初始化断言——基建已用上）。
 
 ## 六、登记项终态与升格触发点
 
@@ -95,3 +111,19 @@ start 冗余——依据见 current-state.md"第 21 任：登记项收口"节）
 > 账户 COW/自旋等待四条主线的语义合同完备性（守卫红证链）④遗留登记
 > 项与升格触发点的完备性⑤可合并性（无未守卫的语义漂移面）。产出：
 > 【阻断】/【建议】/【确认】三段式报告至 reviews/sol-campaign-final.txt。
+
+## 九、Sol 战役复核四阻断处置（第 22 任，2026-10-19）
+
+Sol 一审判四阻断+台账勘误；第 22 任逐项修复（红证先行+突变红实证+全量
+回归，一件一提交）：
+
+| 阻断 | 处置 | 提交 |
+|---|---|---|
+| P1-1 在途快照生命周期（shadow 克隆/commit/回滚清空+日终装于 Drain 前——checkpoint→rollback→driver 重建读 stale ledger） | 快照保留（shadow 携带）/移交（commit_from）/恢复（回滚基线）+日终 live 重刷+runtime_envelope_ledger_snapshot 快照感知（重建种子读现势）。四红证：交接/回滚投影集/重建种子/日终空在途 | c253361a |
+| P1-2 Seal 后清仓经历未入 belief 发布分片（分片构建早于 apply_deferred；同拍补偿已随 D3 删——fault2051 形态） | 分片随 SealAck 上行（apply_deferred 后构建——组权威单源四面同拍一致）。红证：跨日买建仓→全额卖出四面真对账（组权威/发布/session/save-restore 行级相等）；publication 测试升行级对账；突变红实证 | 08f07686 |
+| P1-3 真实 Seal 超时违反存活合同（[Seal,Abort] 队列竞态判协议错位退出；迟到 Ack 污染收束） | Seal drain 的 Abort=合法竞态（回滚+存活）；注入面迁广播后（真实路径+部分 Ack 形态）；seal_round 重复 Ack 跳过；converge_round 迟到 Ack 跳过。红证：liveness 真实路径红→绿+部分 Ack 测试+converge 单测；drain 外来消息测试改真外来消息；突变红实证 | 3f45b4b3 |
+| P2-4 无快照时业务 hash 漏真实 ledger | 统一"有快照派生、无快照读实际 ledger"合同（对齐 save 面先例）。红证：对照档设计（同档在途完整 vs 合法清空——JSON diff 证实其余域逐位同）hash 必异；突变红实证（恒派生→相等红） | 7a82ecc1 |
+
+台账勘误同步落地：A 基线 1332.6（544.7 是 B）/D1 EchoPlans 生产往返
+仍在/D5 补终态（部分落地）/events 段=默认占位/"零会话层税"改方向口径
+/R19 登记三项补处置结果（§五）。
