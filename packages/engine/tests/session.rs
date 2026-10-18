@@ -4222,9 +4222,14 @@ fn assert_book_cursor_continues_after_cancel(empty_book: bool) {
         serde_json::to_value(restored.step().unwrap()).unwrap()
     );
     let continued = restored.save().unwrap();
+    // 序号口径模式无关化（Sol 终审四审游标族）：旧管线 book seq 自 0
+    // 分配（三单 0/1/2→新单 3）；runtime desk serial 自 1（三单 1/2/3→
+    // 新单 4）。不变式=新单序号跟随已撤销的最高历史序号（max+1），
+    // 两种表示下同式成立。
+    let highest_historical = orders.iter().map(|order| order.seq).max().unwrap();
     assert_eq!(
         continued.resting_orders[&code].last().unwrap().seq,
-        3,
+        highest_historical + 1,
         "new orders must follow the canceled highest historical sequence"
     );
     assert_eq!(
@@ -5557,3 +5562,4 @@ fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
         vec![(Money::from_cents(50), 100)]
     );
 }
+
