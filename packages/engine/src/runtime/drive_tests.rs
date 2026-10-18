@@ -2923,7 +2923,6 @@ fn p2_4a_sparse_echo_missing_item_fails_loud() {
             maker_order_serial: 1,
             taker_order_serial: 2,
         }],
-        unsettled_trades: Vec::new(),
         desk_lifecycle: Vec::new(),
         desk_receipts: Vec::new(),
         group_rejections: Vec::new(),

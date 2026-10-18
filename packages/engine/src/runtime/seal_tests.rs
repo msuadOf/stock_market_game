@@ -58,13 +58,9 @@ fn seal_unsettled_tail_is_empty() {
         all.iter().any(|r| r.desk_trades.iter().any(|t| t.qty > 0)),
         "fixture 必须产生成交（合同前提）"
     );
-    for record in &all {
-        assert!(
-            record.unsettled_trades.is_empty(),
-            "Seal 后 unsettled 尾巴恒空（tick={} 违反）",
-            record.tick
-        );
-    }
+    let _ = &all;
+    // Q2 批 4：unsettled_trades 字段已从 TickRecord **删除**（类型级
+    /// 防复活——复活需显式重引入字段并过全部行为合同）。
     world.shutdown().expect("关停");
 }
 

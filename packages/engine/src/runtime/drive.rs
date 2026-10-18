@@ -20,7 +20,6 @@ use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
 
-
 /// Q2 批 3：账户分片覆盖校验——本拍 desk 事实（成交双腿/生命周期/回执）
 /// 的每个 owner 必须在对应组分片中（组端 undo 集漏标即红——不静默装
 /// 陈旧镜像；原 validate_sparse_echo_reply"缺项=RuntimeError"语义的
@@ -790,31 +789,11 @@ impl RuntimeDriver {
         }
         // 事件：Trade（双腿）+ 生命周期（受理/撤单/到期）+ 回执拒收。
         let rec = fact_rec;
-        // step_frame 接轨前置约束①：同拍叠加类投影只消费**终轮未落账
-        /// 尾巴**（unsettled_trades——实体仍在组 staging）。Continue 链
-        /// 的早轮成交已随组 Continue 落账进组账户（上方快照回写已含），
-        /// 以全量 desk_trades 叠加会把早轮重复应用（现金/持仓双计）。
-        /// 事件流/buy_vwap/裁剪/dirty 面保持全量（非叠加面——事实不丢）。
-        let unsettled_trades = rec
-            .as_ref()
-            .map(|r| r.unsettled_trades.clone())
-            .unwrap_or_default();
-        // Sol 五审修复 1：**本拍公开期末投影**——step() 返回前把本 tick
-        // 已成交事实合入公开 session 账户（ADR-0017 完整结算同拍交付；
-        /// 组内 staging 下一 Start 合并机制保留=双写：投影即时、内部
-        /// 权威随后对齐——下一拍回写为整值同步，天然不重复入账）。
-        // 【P0 画像】fill_projection 段（D3 同拍投影）。
-        {
-            let _seg = step_profile::scope(StepSegment::FillProjection);
-            if let Some(rec) = &rec {
-                self.apply_same_tick_fill_projection(
-                    session,
-                    &unsettled_trades,
-                    &buy_vwap,
-                    &last_prices,
-                )?;
-            }
-        }
+        // Q2 批 4（D3 退役）：同拍成交公开投影删除——Seal 落账（批 2）
+        // 使组账户在发布点已含本拍全部成交，驱动器回写（发布分片）
+        // 即期末权威值，无"组 staging 未落账尾巴"可叠加。原投影的
+        // 双写补偿语义（Sol 五审修复 1）由 Seal 承接；Continue 早轮
+        // 的恰一次落账不变（prereq1 合同承载）。
         // 【P0 画像】event_assembly 段（事件投影——R4 必留面的成本基线）。
         let (trades, events) = {
             let _seg = step_profile::scope(StepSegment::EventAssembly);
@@ -956,25 +935,11 @@ impl RuntimeDriver {
                         .find(|(_, plans)| plans.plan_ids().next().is_some())
                         .expect("上方已判非空");
                     // Sol 整改 4：权威状态控制的完整投影——组簿有任何
-                    // 计划记录（含 terminal：最后计划结束的事实必须覆盖
-                    /// session 旧镜像）即安装。
-                    // Sol 五审修复 1：本拍成交事实合入执行腿（组内
-                    /// staging 下一 Start 合并——公开计划读面同拍；
-                    /// 下一拍被组权威整值覆盖，不双计）。前置约束①：
-                    /// 叠加输入=终轮未落账尾巴（早轮已随组 Continue
-                    /// 落账推进——组簿 collect 已含，全量输入双计）。
-                    if !unsettled_trades.is_empty() {
-                        let day = u64::from(session.day());
-                        self.apply_same_tick_plan_fills(&mut plans, &unsettled_trades, day)?;
-                    }
+                    // 计划记录（含 terminal）即安装。
+                    // Q2 批 4（D3 退役）：本拍成交执行腿补写删除——
+                    // Seal 落账使组簿 collect 已含全部轮成交推进
+                    //（apply_staging 的 apply_fill_plan_progress）。
                     session.set_runtime_plans(plans);
-                } else if !unsettled_trades.is_empty() {
-                    // D5 cross_stock 收口：组簿无计划（迁移期注入面——
-                    /// session 侧测试注入的计划）时，本拍成交事实对
-                    /// session plans 同拍合入（与组簿非空路径同式；
-                    /// 下一拍组权威接管后此分支自然失效）。
-                    let day = u64::from(session.day());
-                    self.apply_same_tick_plan_fills_for_session(session, &unsettled_trades, day)?;
                 }
             }
             Err(projection_error) => return Err(projection_error),
@@ -1000,97 +965,6 @@ impl RuntimeDriver {
             }
         }
         outcome
-    }
-
-    /// Sol 五审修复 1：本拍成交的执行腿同拍投影——按 (账户,股,方向)
-    /// 匹配活跃计划的活动子单推进成交（record_child_fill 语义：余量/
-    /// 全成收口）。组内权威下一 Start 落账同值，投影不构成双计；无
-    /// 匹配子单的事实（外部单/非计划腿）自然跳过。
-    /// D5 cross_stock：session 侧计划簿的同拍成交合入（组簿空、迁移期
-    /// 注入面保护的计划——与组簿路径同式）。
-    fn apply_same_tick_plan_fills_for_session(
-        &mut self,
-        session: &mut GameSession,
-        trades: &[super::protocol::DeskTradeFact],
-        day: u64,
-    ) -> Result<(), String> {
-        let mut plans = session.take_runtime_plans();
-        // 身份核用低 48 位（迁移期注入面的计划子单持旧管线 OrderId 域
-        /// ——无 stock 高位编码；组内链子单为全等核，见下方 fn）。
-        let result = self.apply_same_tick_plan_fills_inner(&mut plans, trades, day, false);
-        session.set_runtime_plans(plans);
-        result
-    }
-
-    fn apply_same_tick_plan_fills(
-        &self,
-        plans: &mut crate::plans::PlanBook,
-        trades: &[super::protocol::DeskTradeFact],
-        day: u64,
-    ) -> Result<(), String> {
-        self.apply_same_tick_plan_fills_inner(plans, trades, day, true)
-    }
-
-    /// `strict_identity`：true=OrderId 全等核（组内链——stock 高位编码
-    /// 域）；false=低 48 位核（迁移期 session 注入面的旧管线 OrderId 域）。
-    fn apply_same_tick_plan_fills_inner(
-        &self,
-        plans: &mut crate::plans::PlanBook,
-        trades: &[super::protocol::DeskTradeFact],
-        day: u64,
-        strict_identity: bool,
-    ) -> Result<(), String> {
-        for tr in trades {
-            // maker≡卖方/taker≡买方（归一化身份——费用与订单序列同序）。
-            for (owner, is_buyer, order_serial) in [
-                (tr.maker, false, tr.maker_order_serial),
-                (tr.taker, true, tr.taker_order_serial),
-            ] {
-                let Some(&id) = self.id_map.get(self.global_index(owner)) else {
-                    continue;
-                };
-                let code = crate::StockId(tr.stock as u32);
-                let side = if is_buyer {
-                    crate::orderbook::Side::Buy
-                } else {
-                    crate::orderbook::Side::Sell
-                };
-                // Sol 六审修复 2：按**真实订单身份**推进——成交的 desk
-                // 序号必须等于计划活动子单身份（合成同式：OrderRef=
-                //（股, 序号）→OrderId 高位编码股）。外部/retail 单的同键
-                // 成交身份不匹配即跳过（此前按账户+股+方向套挂，把组内
-                // 已修好的身份关联漏洞带回投影层）。
-                let child_order = plans
-                    .active_plan(id, &code)
-                    .filter(|p| p.direction() == side)
-                    .and_then(|p| p.active_child_order_id());
-                let Some(child_order) = child_order else {
-                    continue;
-                };
-                let identity_ok = if strict_identity {
-                    // Sol 六审收官复核阻断 2：trade facts 的 order_serial
-                    // 已是 wire 编码 id——直接全等比较。
-                    child_order.0 == order_serial
-                } else {
-                    super::group::desk_order_serial(child_order.0)
-                        == super::group::desk_order_serial(order_serial)
-                };
-                if !identity_ok {
-                    continue;
-                }
-                // 身份已核——record_child_fill 的 Ok(false)/Err 均为投影
-                // 数据不一致（身份匹配后计划不应拒收），显式失败。
-                let pushed = plans
-                    .record_child_fill(id, &code, side, child_order, tr.qty, day)
-                    .map_err(|e| format!("同拍执行腿投影推进失败 {id:?} {code:?}: {e:?}"))?;
-                if !pushed {
-                    return Err(format!(
-                        "同拍执行腿投影未被计划消费（身份已核）：{id:?} {code:?} order={child_order:?}"
-                    ));
-                }
-            }
-        }
-        Ok(())
     }
 
     /// 事件 seq 游标（诊断）。
@@ -1750,168 +1624,6 @@ impl RuntimeDriver {
         Ok(())
     }
 
-    /// Sol 五审修复 1：本拍成交事实的公开期末投影。数据源=本 tick
-    /// desk_trades（双腿 owner/价/量/实收费用分项）；写入面=session 账户
-    /// （在组回写之后执行——回写值为本拍落账前权威，此处的本拍增量叠
-    /// 加后即期末公开态）。下一拍组回写为整值同步（已含落账），投影
-    /// 不构成重复入账。
-    fn apply_same_tick_fill_projection(
-        &mut self,
-        session: &mut GameSession,
-        trades: &[super::protocol::DeskTradeFact],
-        buy_vwap: &std::collections::BTreeMap<(super::GroupIdx, super::LocalIdx, super::StockIdx), i64>,
-        last_prices: &[i64],
-    ) -> Result<(), String> {
-        if trades.is_empty() {
-            return Ok(());
-        }
-        // (账户, 股) → 本拍增量：qty（买卖净额）、frozen（买入）、
-        // invested/recovered（成交额）、cash（买负实付/卖正净得）。
-        use std::collections::BTreeMap;
-        #[derive(Default)]
-        struct Delta {
-            qty: i64,
-            frozen: i64,
-            invested: i64,
-            recovered: i64,
-            cash: i64,
-        }
-        let mut by_account: BTreeMap<crate::AccountId, BTreeMap<crate::StockId, Delta>> =
-            BTreeMap::new();
-        // Sol 终审四审经历族：卖腿最后一条成交（(账户,股)→(价,desk 序号)
-        /// ——清仓转移的身份/价格输入）。
-        let mut last_sell: BTreeMap<(crate::AccountId, crate::StockId), (i64, u64)> =
-            BTreeMap::new();
-        for tr in trades {
-            // maker≡卖方/taker≡买方（desk 产出侧两方向统一——台账备忘）。
-            for (owner, is_buyer, fees) in [
-                (tr.maker, false, tr.maker_fees_cents),
-                (tr.taker, true, tr.taker_fees_cents),
-            ] {
-                let Some(&id) = self.id_map.get(self.global_index(owner)) else {
-                    continue;
-                };
-                let code = crate::StockId(tr.stock as u32);
-                let gross = i64::from(tr.price) * i64::from(tr.qty);
-                let d = by_account
-                    .entry(id)
-                    .or_default()
-                    .entry(code)
-                    .or_default();
-                if is_buyer {
-                    d.qty += i64::from(tr.qty);
-                    d.frozen += i64::from(tr.qty);
-                    d.invested += gross;
-                    // 买腿现金=实付（gross+费用）：公开现金基数=组现金+
-                    // 在途占用（挂出全额加回——基数不含 purse），本拍实付
-                    // 经此投影即时扣；下一拍占用/退款对齐后回写同值
-                    //（整值同步，不双计）。
-                    d.cash -= gross + fees;
-                } else {
-                    d.qty -= i64::from(tr.qty);
-                    d.recovered += gross;
-                    // 卖腿净得（组现金下一 Start 才落账——同拍补齐）。
-                    d.cash += gross - fees;
-                    last_sell.insert((id, code), (tr.price, tr.maker_order_serial));
-                }
-            }
-        }
-        for (id, by_code) in by_account {
-            // P2-2b：首写前值入 undo（同上）。
-            session.runtime_record_account_undo(id);
-            let Some(engine_acct) = session.fixture_account_mut(&id) else {
-                continue;
-            };
-            // Sol 终审二审阻断 1：全局名册下标换算 (组, 组内 local)
-            ///（此前全局下标直接当 local——组 1 账户查错组；VWAP 表按
-            /// 真实组建，错组 miss 后静默退步前价使经历入场参考价错）。
-            let global = self
-                .id_map
-                .iter()
-                .position(|map_id| *map_id == id)
-                .expect("投影账户必在名册");
-            let per_group = self.accounts_per_group.max(1);
-            let (owner_group, local) = (
-                (global / per_group) as super::GroupIdx,
-                (global % per_group) as super::LocalIdx,
-            );
-            let mut positions = engine_acct.positions().clone();
-            // Sol 六审修复 3：首买经历初始化（与回写路径同款——此前
-            /// 直接建条目，下一拍条目已在使 is_new_hold 永假，retail
-            /// 首次持有永久缺经历条目→fault2038 保存校验）。收集后在
-            /// 账户借用外执行。
-            let mut new_hold_inits: Vec<(crate::StockId, i64, u32)> = Vec::new();
-            // Sol 终审四审经历族：清仓经历转移（账户借用外执行——同
-            /// new_hold_inits 模式）。
-            let mut full_exits: Vec<(crate::StockId, i64, u32, Option<Money>, u64)> = Vec::new();
-            for (code, d) in &by_code {
-                let is_new_hold = d.qty > 0 && !positions.contains_key(code);
-                if is_new_hold {
-                    // Sol 终审二审阻断 1：VWAP 查表用真实组号（此前写死
-                    /// 组 0——组 1 首买 miss 后退步前价，经历入场价错）。
-                    let entry = buy_vwap
-                        .get(&(owner_group, local, code.0 as super::StockIdx))
-                        .copied()
-                        .or_else(|| last_prices.get(code.0 as usize).copied())
-                        .or_else(|| trades.iter().map(|t| t.price).min())
-                        .unwrap_or(1);
-                    new_hold_inits.push((code.clone(), entry, d.qty as u32));
-                }
-                let entry = positions
-                    .entry(code.clone())
-                    .or_insert_with(|| crate::account::Position::from_restored_parts(0, 0, 0, 0));
-                // 拍前口径（清仓转移的 before/cost_before 输入——变异前取值）。
-                let pre_qty = entry.qty();
-                let pre_cost = entry.cost_price().filter(|price| price.cents() > 0);
-                let new_qty = i64::from(entry.qty()) + d.qty;
-                let new_frozen = i64::from(entry.t1_locked()) + d.frozen;
-                let new_invested = entry.invested_cents() + d.invested;
-                let new_recovered = entry.recovered_cents() + d.recovered;
-                if new_qty <= 0 && new_frozen <= 0 {
-                    // 清仓（同拍）：删除条目——旧管线 apply_sell 语义
-                    ///（qty 已含在途卖余量口径的回写面；本拍卖增量后归零
-                    /// 即真清仓）。
-                    if new_qty < 0 || new_frozen < 0 {
-                        return Err(format!(
-                            "同拍投影持仓下穿：{id:?} {code:?} qty={new_qty} frozen={new_frozen}"
-                        ));
-                    }
-                    positions.remove(code);
-                    // Sol 终审四审经历族（fault2051）：卖腿清仓的 retail
-                    /// 经历同拍转移（清观察字段+退出冷静期——组权威侧
-                    /// apply_full_exit_experience 晚于本拍 Belief 上行，
-                    /// save 面由此双写闭合；无经历账账户内建跳过）。
-                    if d.qty < 0 && pre_qty > 0 {
-                        if let Some(&(price, serial)) = last_sell.get(&(id, *code)) {
-                            // serial（tr.maker_order_serial）已是 wire 编码 id。
-                            let order = crate::OrderId(serial);
-                            full_exits.push((code.clone(), price, pre_qty, pre_cost, order.0));
-                        }
-                    }
-                    continue;
-                }
-                *entry = crate::account::Position::from_restored_parts(
-                    new_qty as u32,
-                    new_frozen as u32,
-                    new_invested,
-                    new_recovered,
-                );
-            }
-            engine_acct.fixture_set_positions(positions);
-            let cash_delta: i64 = by_code.values().map(|d| d.cash).sum();
-            let cash = engine_acct.cash().cents() + cash_delta;
-            engine_acct.fixture_set_cash(crate::Money::from_cents(cash));
-            drop(engine_acct);
-            for (code, entry, qty) in new_hold_inits {
-                self.pending_hold_inits.push((id, code, qty, entry));
-            }
-            for (code, price, pre_qty, pre_cost, order) in full_exits {
-                session.runtime_record_full_exit(&id, &code, price, pre_qty, pre_cost, order)?;
-            }
-        }
-        Ok(())
-    }
-
     /// 测试面：切断协调者通道（构造失败路径——poison 等价验证）。
     pub fn sever_world_for_test(&mut self) {
         self.world.sever();
@@ -2243,7 +1955,6 @@ impl RuntimeDriver {
         self.world.public_views()
     }
 }
-
 
 impl RuntimeDriver {
     /// 翻转缺口②（批 8h·部分3）：tick 计数与 poison 安装面。
@@ -2769,7 +2480,6 @@ fn resting_order_seeds_from_session(
     }
     Ok(seeds)
 }
-
 
 /// P2-4b 判别面前置（cfg(test)）：差分三面计数（Added/Removed/Changed）
 /// ——等价守卫的 fixture 前置断言数据源。

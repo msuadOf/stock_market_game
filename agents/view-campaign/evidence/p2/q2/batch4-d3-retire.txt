@@ -1,0 +1,32 @@
+# Q2 批 4：D3 退役——同拍投影/执行腿补写/unsettled 尾巴类型级删除
+
+## 机制
+- drive.rs：apply_same_tick_fill_projection / apply_same_tick_plan_fills
+  （_for_session/_inner）四个函数删除；投影段与计划补写分支删（Seal
+  落账使组账户/组簿 collect 在发布点已含本拍全部成交——无尾巴可叠加；
+  Continue 早轮恰一次不变，prereq1 合同绿承载）。
+- world.rs：TickRecord.unsettled_trades 字段**删除**（类型级防复活——
+  协调者批注执行：复活需显式重引入字段并过全部行为合同）；
+  install_tick 参数清理。
+- seal_tests 合同 5 改述为类型级注释。
+
+## 测量（load 高窗——只登记）
+- B 300：363.1/362.2/364.3 → mean 363.2（批 3 后 357.3 回升）
+- B 1000：782.3（批 3 后 751.0，+4.2%；**较基线累计 +43.6%**）
+- A 3000：899.3（批 3 的 791 回升；批 2 前约 1174-1190——A 的
+  Seal+分片净税待净机归因，登记开放）
+- 守恒逐位保持。
+
+## 回归
+- 双模式全量 1673/0/11（翻转模式一轮 watchdog_timeout 相位时序 flake
+  ——隔离复跑绿；断言对停顿发生相位时序敏感，非本批回归）。
+- prereq1（Continue 恰一次）/seal 合同 8 条/p2_4a bitwise 全绿。
+
+## Q2 四批后的架构状态
+- 同拍交付提交点=Seal（S1-S6 全落地）；发布版本含 Seal 后账户分片
+  （undo 集口径）+belief 分片+resting 观察面。
+- Echo 链退役：EchoBelief/EchoResting/EchoAccountsSparse 生产往返全删
+  （全量/调试通道保留）。
+- D2/D3 退役：account_dirty_prev/同拍投影/计划补写/unsettled 字段删。
+- 残余镜像税：belief 安装侧（82μs）/candle（47μs）/retail_diag/回写
+  循环——下任刀序。

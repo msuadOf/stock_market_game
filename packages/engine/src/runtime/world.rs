@@ -286,13 +286,9 @@ pub struct TickRecord {
     /// 本 tick 双腿成交事实（事件映射输入；驱动器/测试面）。Continue
     /// 链下含**全轮**成交（早轮+终轮，每条恰一次——事实不丢）。
     pub desk_trades: Vec<super::protocol::DeskTradeFact>,
-    /// 终轮（最后一次 Continue 之后）成交——实体仍在组 staging、
-    /// **尚未随 Continue 落账**的尾巴。step_frame 接轨前置约束①：
-    /// 驱动器的同拍成交投影（"组回写后叠加增量"口径）必须只消费本
-    /// 尾巴——早轮成交已随组 Continue 落账进组账户（快照回写已含），
-    /// 以全量 desk_trades 叠加会把早轮重复应用（现金/持仓双计）。
-    /// rounds=0（无 Continue）时与 desk_trades 等值。
-    pub unsettled_trades: Vec<super::protocol::DeskTradeFact>,
+    /// Q2 批 4（D3 退役）：unsettled_trades 字段已删除——Seal 落账
+    ///（批 2）使"终轮未落账尾巴"结构性不存在（合同 5 由类型承载：
+    /// 复活需显式重新引入字段并过全部行为合同）。
     /// 本 tick 生命周期事实（受理/撤单/到期；事件映射输入）。
     pub desk_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// 本轮回执（拒收/不可撤；IntentRejected 映射输入）。
@@ -1632,8 +1628,8 @@ impl World {
                     // 终轮：以累积事实替换终轮单轮快照（恰一次进
                     // TickRecord——含全部 Continue 轮）。Q2 Seal 落地后
                     // 终轮成交已随 Seal 落账（S2）——unsettled 尾巴恒空
-                    ///（合同 5；D3 退役的类型级表达随批 4）。
-                    let unsettled_trades = Vec::new();
+                    //（合同 5；D3 退役的类型级表达随批 4）。
+
                     evidence.desk_trades = acc_trades;
                     evidence.desk_lifecycle = acc_lifecycle;
                     evidence.desk_receipts = acc_receipts;
@@ -1643,7 +1639,7 @@ impl World {
                     // Q2 Seal 收尾确认：组 drain+落账（S4/S2）→SealAck
                     // 收齐 → install_tick（发布=提交=Abort 窗口关闭）。
                     let seal_accounts = self.seal_round(tick, rounds)?;
-                    self.install_tick(tick, rounds, evidence, unsettled_trades, seal_accounts);
+                    self.install_tick(tick, rounds, evidence, seal_accounts);
                     break;
                 }
             }
@@ -1815,14 +1811,11 @@ impl World {
     }
 
     /// 单点安装（唯一安装点语义保持：成功路径才触碰全局域权威）。
-    /// `unsettled_trades`：终轮原始成交（前置约束①——从未随 Continue
-    /// 落账的尾巴，同拍投影的合法输入面）。
     fn install_tick(
         &mut self,
         tick: u64,
         rounds: u32,
         evidence: TickEvidence,
-        unsettled_trades: Vec<super::protocol::DeskTradeFact>,
         seal_accounts: Vec<(
             GroupIdx,
             std::sync::Arc<Vec<(super::LocalIdx, super::group::GroupAccount)>>,
@@ -1883,7 +1876,6 @@ impl World {
             desk_hashes: desk_hashes.clone(),
             desk_resting: evidence.desk_resting,
             desk_trades: evidence.desk_trades,
-            unsettled_trades,
             desk_lifecycle: evidence.desk_lifecycle,
             desk_receipts: evidence.desk_receipts,
             group_rejections: evidence.group_rejections,
