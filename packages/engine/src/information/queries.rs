@@ -218,7 +218,8 @@ mod tests {
     /// 最小合法年报 `ReportSet`（两行开局分录 → `generate_report_set`）。
     ///
     /// 分页边界与基准只关心条目数量与 id 序，报告内容允许同构——
-    /// 这样库装配成本与条目数线性相关，且全部走生产校验路径（`from_parts`）。
+    /// 这样库装配成本与条目数线性相关；入库形状合法性由 `library_with_reports`
+    /// 的首条 `from_parts` 生产校验兜底（见其注释）。
     fn minimal_annual_set() -> ReportSet {
         let mut books = Books::new(crate::company::industrial::industrial_account_chart());
         books
