@@ -2581,23 +2581,44 @@ impl RuntimeDriver {
             /// 占位语义——日终 commit 归档占位 K，档校验不因无交易日缺条
             /// fault2064）。desk active 仅在成交时建立——连续段缺席时以
             /// 收束点 last_price 合成（发布版本同源值）。
-            if view.daily_active.is_none() && !active_must_be_empty && !post_day_end {
-                let last = view.last_price.max(1);
-                let placeholder = crate::money::Money::from_cents(last);
-                session.set_active_candle_for_runtime(
-                    &code,
-                    crate::session::DailyCandle {
-                        time: candle_time,
-                        open: placeholder,
-                        high: placeholder,
-                        low: placeholder,
-                        close: placeholder,
-                        volume: 0,
-                        trade_stats: Some(Default::default()),
-                    },
-                );
+            /// W3 缺陷 2 修复：占位 K 只补**缺失**场景，不得覆盖已有
+            /// 活动 K 的量/额/笔数。占位形态两源：①发布版本 view.daily_
+            /// active 为 None；②desk `snapshot_market` 每拍对新日零占位
+            /// candle `get_or_insert`（日界拍 roll_day 归档真实 K 后立即
+            /// 重建）——view.daily_active=Some 但 v=0。两者同属占位。
+            /// session 侧已有当日活动 K（time 匹配——真实终态，日终迁移
+            /// commit_active 的唯一归档输入）时跳过安装，否则真实量/
+            /// 额/笔被零值整体覆盖归档（W3 接线实证缺陷）。
+            let view_is_placeholder = view
+                .daily_active
+                .is_none_or(|(_, _, _, _, v)| v == 0);
+            if view_is_placeholder && !active_must_be_empty && !post_day_end {
+                let existing = session.runtime_active_candle(&code);
+                let placeholder_needed = existing
+                    .as_ref()
+                    .is_none_or(|candle| candle.time != candle_time);
+                if placeholder_needed {
+                    let last = view.last_price.max(1);
+                    let placeholder = crate::money::Money::from_cents(last);
+                    session.set_active_candle_for_runtime(
+                        &code,
+                        crate::session::DailyCandle {
+                            time: candle_time,
+                            open: placeholder,
+                            high: placeholder,
+                            low: placeholder,
+                            close: placeholder,
+                            volume: 0,
+                            trade_stats: Some(Default::default()),
+                        },
+                    );
+                }
             }
-            if let Some((o, h, l, c, v)) = view.daily_active.filter(|_| !active_must_be_empty) {
+            if let Some((o, h, l, c, v)) = view
+                .daily_active
+                .filter(|(_, _, _, _, v)| *v > 0)
+                .filter(|_| !active_must_be_empty)
+            {
                 // 旋钮 1（cfg(test) 突变判别）：close 篡改 +1 分——判别
                 /// 安装数据源真为发布版本读路径（合同 1 负控）。
                 #[cfg(test)]

@@ -5200,6 +5200,60 @@ mod retained_snapshot_tests {
         assert_eq!(session.retained_market_days().len(), 1, "交易日不重复补条目");
     }
 
+    /// 真实成交局的日 K stats×分钟桶互检（W3 接线实证缺陷的红证补立：
+    /// 真实跨价成交后日结，日 K OHLC 真实但 volume/turnover/trade_count
+    /// 全零——install_candles 占位路径在 desk roll_day 后 view.daily_active
+    /// 短暂 None 时以 {stats:Default} 整体覆盖既有活动 K。B2 既有测试
+    /// 只断言 bars，漏了日 K stats 与 bars 的逐字段互检）。
+    #[test]
+    fn traded_day_daily_candle_stats_match_minute_bars() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        let code = execute_buy(&mut session);
+        for _ in 0..2 {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+        let page = session
+            .market_history_page(&crate::session::MarketHistoryRequest {
+                stock: code.clone(),
+                date_from: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+                date_to: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+                after: None,
+                page_size: 7,
+            })
+            .unwrap();
+        assert_eq!(page.entries.len(), 1);
+        let entry = &page.entries[0];
+        assert_eq!(
+            entry.availability,
+            crate::session::MarketHistoryAvailability::Traded
+        );
+        assert!(!entry.bars.is_empty(), "真实成交分钟桶非空");
+        let candle = entry
+            .daily_candle
+            .as_ref()
+            .expect("已结算开市日必有日 K");
+        let volume: u64 = entry.bars.iter().map(|bar| bar.volume_shares).sum();
+        let turnover: u128 = entry.bars.iter().map(|bar| bar.turnover_cents).sum();
+        let count: u64 = entry.bars.iter().map(|bar| bar.trade_count).sum();
+        assert!(volume > 0, "真实成交局日 K volume 不得为零");
+        assert_eq!(candle.volume, volume, "日 K 量==分钟桶累计");
+        let stats = candle
+            .trade_stats
+            .as_ref()
+            .expect("真实成交局日 K 必有成交统计");
+        assert_eq!(u128::from(stats.turnover_cents), turnover, "日 K 额==分钟桶累计");
+        assert_eq!(stats.trade_count, count, "日 K 笔数==分钟桶累计");
+        // OHLC 同样来自真实成交（互检外延：open/close=桶首尾）。
+        let first = &entry.bars[0];
+        let last = entry.bars.last().unwrap();
+        assert_eq!(candle.open, first.open);
+        assert_eq!(candle.close, last.close);
+    }
+
     #[test]
     fn closed_civil_day_appends_closed_retained_entry() {
         if !crate::runtime::step_runtime_enabled() {
