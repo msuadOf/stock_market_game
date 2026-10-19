@@ -59,3 +59,27 @@ driver 侧 attention_heap 段（22.9μs）为稀疏收集往返，本刀不动�
 附录 A（性能合同先行红原文）：
 thread 'runtime::drive_tests::knife5a_due_filter_touches_due_count_not_roster' panicked at packages/engine/src/runtime/drive_tests.rs:4093:5:
 due 筛选触达量 6000 须显著小于名册×拍数的一半 3000（heap 延迟删除只触 due 位）
+
+=== 补记：A 口径纯对照抽查与负结果归因（2026-10-19 11:45）===
+
+A 口径（runtime_s5_probe 3000 tick×10 组，taskset 0-31，高载窗
+load 30+）纯对照交替 3 对（a-main=dfd55bc8 树编译 vs a-5ab=本批）：
+- 974.3 vs 901.8（−7.6%）/ 1023.5 vs 926.6（−9.5%）/ 926.4 vs 932.5
+（+0.7%）——两负一平（噪声带 ±15% 内，方向性风险登记）。
+
+机制归因（负结果纪律——方案形态适配，非实现缺陷；等价性已由
+突变红+等价测试证）：A 探针是**合成浓密度 attention 形态**——
+`attention_gap_ticks: 4`（重排 next_due=tick+1+U[0,4) ⇒ 平均
+2.5 tick 间隔 ⇒ due 密度 ~40%/拍）+ next_due=i%8 初始+base 0.30。
+heap 路径成本≈pop due 项×log2(2000)+push+sort；线性扫描=顺序流
+（预取友好）。**due 密度越过 ~10-20% 后 heap 常数与随机访问不敌
+顺序扫描**。B 口径（真实生产形态：base_observation_probability
+派生 per-tick 概率 ~0.1-0.2%，due 20-40/20000）恰是 heap 最优域
+（两对全正 +8.3%/+14.8%）。
+
+处置：⑤a 语义等价不动摇（生产/测试全绿）；性能结论**分域**——
+真实 attention 形态（B/生产链）受益；A 探针合成形态（决策面压测
+用途，非 attention 真实负载）受 heap 常数税。静置窗 A 复测由
+监视器 v2 承载（.tmp/quiescent-knife5.sh——B+A 交替正式 3 轮）；
+若静置窗 A 仍显著为负，后续可考虑 gap 密集形态自适应回退线性
+扫描（登记，不在本批范围）。
