@@ -15,7 +15,7 @@ pub enum ReportError {
     Accounting(Box<AccountingError>),
     #[error("consolidation failure: {0}")]
     Consolidation(Box<ConsolidationError>),
-    #[error("consolidated report {scope} at {period} is missing income.net_income_to_parent")]
+    #[error("consolidated report {scope} at {period} is missing income.net_income_to_parent or income.report_period_net_income_to_parent")]
     MissingParentIncome {
         scope: crate::accounting::consolidation::ScopeId,
         period: AccountingPeriod,
@@ -79,6 +79,8 @@ pub enum ReportError {
     },
     #[error("internal window inconsistency: {detail}")]
     InternalWindowInconsistent { detail: String },
+    #[error("净资产收益率结果非法：{detail}")]
+    InvalidRoe { detail: &'static str },
     #[error("restatement is not supported for consolidated scopes")]
     ConsolidatedRestatementUnsupported,
 }

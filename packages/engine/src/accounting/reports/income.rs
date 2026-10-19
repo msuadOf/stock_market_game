@@ -239,11 +239,22 @@ fn columns(
 /// 利润表（当季 + 累计 + 上年同期 + 合并拆分）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct IncomeStatement {
+    pub report_period: IncomeColumns,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub report_period_net_income_to_parent: Option<AccountingAmount>,
     pub quarter: IncomeColumns,
     pub cumulative: IncomeColumns,
     pub prior_year: Comparative<IncomeColumns>,
     pub minority_net_income: Option<AccountingAmount>,
     pub net_income_to_parent: Option<AccountingAmount>,
+}
+
+fn deserialize_required_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer)
 }
 
 impl IncomeColumns {
@@ -268,6 +279,7 @@ pub(crate) fn generate(
     classification: &ReportClassification,
 ) -> Result<IncomeStatement, ReportError> {
     let facts = windows.consolidation.as_ref();
+    let report_period = columns(&windows.movement, classification)?;
     let quarter = columns(&windows.quarter, classification)?;
     let cumulative = columns(&windows.ytd, classification)?;
     let prior_year = match &windows.prior_year {
@@ -285,6 +297,8 @@ pub(crate) fn generate(
         }
     }
     Ok(IncomeStatement {
+        report_period,
+        report_period_net_income_to_parent: facts.map(|facts| facts.window_ni_to_parent),
         quarter,
         cumulative,
         prior_year,

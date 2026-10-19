@@ -8,14 +8,12 @@
 //! 期间覆盖：固定集团要求全部成员的**已记账期间集合**（日记账分录所属
 //! 期间）完全一致；不一致（例如子公司缺 2030-01 记账）显式拒绝。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::accounting::amount::AccountingAmount;
 use crate::accounting::error::AccountingError;
-use crate::accounting::journal::JournalEntry;
 use crate::accounting::ledger::{AccountDef, LedgerAccountId};
-use crate::accounting::period::AccountingPeriod;
-use crate::accounting::Books;
+use crate::accounting::{Books, Ledger};
 
 use super::error::ConsolidationError;
 use super::group::MemberId;
@@ -42,9 +40,18 @@ pub(crate) type AggregatedBalances = BTreeMap<LedgerAccountId, ConsolidatedBalan
 pub(crate) type AccountKeys = BTreeMap<(MemberId, LedgerAccountId), LedgerAccountId>;
 
 pub(crate) fn account_keys(members: &BTreeMap<MemberId, &Books>) -> AccountKeys {
+    ledger_account_keys(
+        &members
+            .iter()
+            .map(|(id, books)| (id.clone(), books.ledger()))
+            .collect(),
+    )
+}
+
+pub(crate) fn ledger_account_keys(members: &BTreeMap<MemberId, &Ledger>) -> AccountKeys {
     let mut definitions: BTreeMap<LedgerAccountId, Vec<&AccountDef>> = BTreeMap::new();
     for books in members.values() {
-        for (code, definition) in books.ledger().chart().iter() {
+        for (code, definition) in books.chart().iter() {
             definitions
                 .entry(code.clone())
                 .or_default()
@@ -53,12 +60,12 @@ pub(crate) fn account_keys(members: &BTreeMap<MemberId, &Books>) -> AccountKeys 
     }
     let mut keys = BTreeMap::new();
     for (member, books) in members {
-        for (code, definition) in books.ledger().chart().iter() {
+        for (code, definition) in books.chart().iter() {
             let differs = definitions[code]
                 .iter()
                 .any(|other| other.name != definition.name);
             let key = if differs {
-                LedgerAccountId(format!("v{}:{}", books.ledger().chart().version(), code.0))
+                LedgerAccountId(format!("v{}:{}", books.chart().version(), code.0))
             } else {
                 code.clone()
             };
@@ -68,46 +75,19 @@ pub(crate) fn account_keys(members: &BTreeMap<MemberId, &Books>) -> AccountKeys 
     keys
 }
 
-/// 校验期间覆盖一致（基准 = 首个成员的覆盖集合，按 id 序）。
-pub(crate) fn check_period_coverage(
-    members: &BTreeMap<MemberId, &Books>,
-) -> Result<(), ConsolidationError> {
-    let mut expected: Option<(MemberId, BTreeSet<AccountingPeriod>)> = None;
-    for (id, books) in members {
-        let covered: BTreeSet<AccountingPeriod> = books
-            .journal()
-            .entries()
-            .map(JournalEntry::period)
-            .collect();
-        match &expected {
-            None => expected = Some((id.clone(), covered)),
-            Some((_, base)) => {
-                if &covered != base {
-                    return Err(ConsolidationError::PeriodCoverageMismatch {
-                        member: id.clone(),
-                        expected: base.iter().copied().collect(),
-                        actual: covered.iter().copied().collect(),
-                    });
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// 单体汇总：按科目代码加总全部成员的 T 型合计。
 ///
 /// 只收录**有发生额**的科目（某成员借/贷合计非零即收录；全员零发生额的
 /// 科目不进合并账本——查询语义与 Ledger 读投影一致：无过账即零余额）。
 pub(crate) fn aggregate_balances(
-    members: &BTreeMap<MemberId, &Books>,
+    members: &BTreeMap<MemberId, &Ledger>,
 ) -> Result<AggregatedBalances, ConsolidationError> {
-    let keys = account_keys(members);
+    let keys = ledger_account_keys(members);
     let mut merged: AggregatedBalances = BTreeMap::new();
     // code → (首个定义该代码的成员, 定义) —— 语义冲突检测基准。
     let mut def_owners: BTreeMap<LedgerAccountId, (MemberId, AccountDef)> = BTreeMap::new();
     for (id, books) in members {
-        let ledger = books.ledger();
+        let ledger = books;
         for (code, def) in ledger.chart().iter() {
             let balance = ledger.account_balance(code);
             if balance.debit_total().is_zero() && balance.credit_total().is_zero() {

@@ -22,6 +22,9 @@ pub mod codes {
     pub const PREMIUM_RECEIVABLE: &str = "1122"; // 应收保费
     pub const LRC: &str = "2501"; // 未到期责任负债
     pub const LIC: &str = "2502"; // 已发生赔款负债
+    pub const DTA: &str = "1811";
+    pub const CIT_PAYABLE: &str = "222104";
+    pub const TAX_EXP: &str = "6801";
     pub const CAPITAL: &str = "4001"; // 实收资本
     pub const PROFIT_CURRENT: &str = "4103"; // 本年利润（结账科目）
     pub const INSURANCE_REVENUE: &str = "6051"; // 保险服务收入
@@ -77,7 +80,7 @@ pub fn insurance_presentation_lines(
     })
 }
 
-/// 保险归类表（报表生成器消费；AccountChart.version=4 全量 9 科目）。
+/// 保险归类表（报表生成器消费；包含独立纳税主体的所得税科目）。
 pub fn assignments() -> Vec<super::notes::Assignment> {
     use super::income::IncomeLine::{
         InsuranceFinanceExpense, InsuranceRevenue, InsuranceServiceExpense,
@@ -89,6 +92,18 @@ pub fn assignments() -> Vec<super::notes::Assignment> {
     };
     vec![
         a(codes::CASH, NoteTarget::BalanceSheet(CashFunds)),
+        a(
+            codes::DTA,
+            NoteTarget::BalanceSheet(super::BsLine::DeferredTaxAssets),
+        ),
+        a(
+            codes::CIT_PAYABLE,
+            NoteTarget::BalanceSheet(super::BsLine::TaxesPayable),
+        ),
+        a(
+            codes::TAX_EXP,
+            NoteTarget::Income(super::income::IncomeLine::IncomeTaxExpense),
+        ),
         a(
             codes::PREMIUM_RECEIVABLE,
             NoteTarget::BalanceSheet(InsuranceReceivables),

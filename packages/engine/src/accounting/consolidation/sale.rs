@@ -13,7 +13,7 @@ use crate::accounting::error::AccountingError;
 use crate::accounting::inventory::rhe_div;
 use crate::accounting::journal::PostingSide;
 use crate::accounting::ledger::{AccountElement, LedgerAccountId};
-use crate::accounting::Books;
+use crate::accounting::Ledger;
 
 use super::eliminate::{ensure_member, member_def};
 use super::error::ConsolidationError;
@@ -30,7 +30,7 @@ impl IntercompanySale {
     pub(super) fn validate_for<'a>(
         &'a self,
         group: &ValidatedGroup,
-        members: &BTreeMap<MemberId, &Books>,
+        members: &BTreeMap<MemberId, &Ledger>,
     ) -> Result<ValidatedIntercompanySale<'a>, ConsolidationError> {
         let sale = self;
         ensure_member(group, &sale.seller)?;
@@ -144,7 +144,7 @@ impl ValidatedIntercompanySale<'_> {
 
 /// 申报科目要素必须等于期望要素且非现金。
 fn require_element(
-    members: &BTreeMap<MemberId, &Books>,
+    members: &BTreeMap<MemberId, &Ledger>,
     id: &MemberId,
     account: &LedgerAccountId,
     expected: AccountElement,
@@ -181,7 +181,7 @@ mod tests {
                 minority_bp: 2000,
             }],
         };
-        let books = Books::new(AccountChart::generic_account_chart());
+        let books = Ledger::new(AccountChart::generic_account_chart());
         let members = BTreeMap::from([(root.clone(), &books), (sub.clone(), &books)]);
         let mut sale = IntercompanySale {
             seller: root,
