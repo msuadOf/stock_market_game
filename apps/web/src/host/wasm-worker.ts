@@ -54,7 +54,10 @@ export function isE2EStepMode(mode: unknown): boolean {
 const E2E_STEP_ENABLED = isE2EStepMode(import.meta.env?.MODE);
 
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
-let ingressBridge: { module: WebAssembly.Module; memory: WebAssembly.Memory; diagnostics: boolean } | null = null;
+// ingress 桥的 substrate 形态：真线程构建以 shared memory 导出（buffer 为
+// SharedArrayBuffer，可跨 worker 结构化克隆共享）；现行串行构建导出普通
+// 线性内存，不可克隆也无法与独立 ingress worker 共享。
+let ingressBridge: { module: WebAssembly.Module; memory: WebAssembly.Memory; diagnostics: boolean; shared: boolean } | null = null;
 const slot = new WasmSessionSlot(() => wasmModule);
 const taskScheduler = new WorkerTaskScheduler();
 const loop = new WasmTickLoop({
@@ -126,11 +129,30 @@ function postBaseline(): void {
 }
 
 function postIngressBridge(): void {
+  if (ingressBridge === null) throw new Error("WASM ingress memory 尚未初始化");
+  const generation = slot.readGeneration();
+  // 串行（非共享）substrate：非共享 WebAssembly.Memory 不可结构化克隆，
+  // 回传 module/memory 会在 postMessage 同步抛 DataCloneError，令所有本地
+  // 会话起局即崩（W3 遗留断裂）。ingress worker 依赖跨 worker 共享内存直写
+  // engine 队列，该前提在串行形态不成立——只上报形态标记，主线程 submitIntent
+  // 降级走本 worker 主通道 enqueue（engine 侧两路径同入 enqueue_player_intent，
+  // 语义等价，见 apps/web-wasm/src/lib.rs 的 enqueue/ingress_enqueue）。
+  if (!ingressBridge.shared) {
+    ctx.postMessage({ type: "ingress", generation, shared: false });
+    return;
+  }
   const [session, wasm] = slot.requireHandle();
-  if (ingressBridge === null) throw new Error("共享 WASM ingress memory 尚未初始化");
   const token = transportExtensions(wasm).ingress_token;
   if (token === undefined) throw new Error("当前 WASM bindings 缺少共享 ingress，请重建 bindings");
-  ctx.postMessage({ type: "ingress", generation: slot.readGeneration(), token: token(session), ...ingressBridge });
+  ctx.postMessage({
+    type: "ingress",
+    generation,
+    shared: true,
+    token: token(session),
+    module: ingressBridge.module,
+    memory: ingressBridge.memory,
+    diagnostics: ingressBridge.diagnostics,
+  });
 }
 
 function respondOperationError(message: WorkerMessage, error: unknown): void {
@@ -160,7 +182,11 @@ async function initialize(): Promise<void> {
   if (!response.ok) throw new Error(`加载 WASM 二进制失败：HTTP ${response.status}`);
   const module = await WebAssembly.compile(await response.arrayBuffer());
   const exports = await wasmModule.default(module);
-  ingressBridge = { module, memory: exports.memory, diagnostics: diagnosticsWasm };
+  // 非跨源隔离上下文不暴露 SharedArrayBuffer 全局：先确认标识符存在再
+  // instanceof，否则探测本身抛 ReferenceError（浏览器非隔离部署实测）。
+  // 隔离环境 + shared memory 才构成可跨 worker 共享的 ingress substrate。
+  const sharedSubstrate = typeof SharedArrayBuffer === "function" && exports.memory.buffer instanceof SharedArrayBuffer;
+  ingressBridge = { module, memory: exports.memory, diagnostics: diagnosticsWasm, shared: sharedSubstrate };
   ctx.postMessage({ type: "ready" });
 }
 
