@@ -40,6 +40,7 @@ pub struct InsuranceConfig {
     pub counterparties: Vec<ExternalCounterparty>,
     /// 版本化贴现假设（无默认——游戏假设显式配置）。
     pub discount: DiscountAssumption,
+    pub income_tax_policy: crate::accounting::IncomeTaxPolicy,
 }
 
 impl InsuranceConfig {

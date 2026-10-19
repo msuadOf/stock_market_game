@@ -47,6 +47,7 @@ fn config() -> BankConfig {
             stage1_default: scenarios(),
             lifetime_default: scenarios(),
         },
+        income_tax_policy: crate::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     }
 }
 

@@ -43,6 +43,12 @@ pub fn bank_account_chart() -> AccountChart {
             AccountDef::new("应付利息（存款）", Liability),
         ),
         acc(codes::CAPITAL, AccountDef::new("实收资本", Equity)),
+        acc(codes::DTA, AccountDef::new("递延所得税资产", Asset)),
+        acc(
+            codes::CIT_PAYABLE,
+            AccountDef::new("应交企业所得税", Liability),
+        ),
+        acc(codes::TAX_EXP, AccountDef::new("所得税费用", Expense)),
         acc(codes::PROFIT_CURRENT, AccountDef::new("本年利润", Equity)),
         acc(codes::INTEREST_INCOME, AccountDef::new("利息收入", Revenue)),
         acc(

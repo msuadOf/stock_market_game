@@ -7,7 +7,7 @@
 //! 参数，随存档固化）。
 
 use crate::accounting::reports::real_estate::codes;
-use crate::accounting::{AccountChart, JournalLine, LedgerAccountId};
+use crate::accounting::{AccountChart, IncomeTaxPolicy, JournalLine, LedgerAccountId};
 use crate::calendar::CivilDate;
 use crate::company::contracts::OperatingBudget;
 use crate::company::real_estate::RealEstateError;
@@ -48,6 +48,7 @@ pub struct RealEstateConfig {
     pub budget: OperatingBudget,
     /// 版本化资本化政策（游戏假设，无生产默认构造）。
     pub capitalization_policy: CapitalizationPolicy,
+    pub income_tax_policy: IncomeTaxPolicy,
     /// 单公司同时存续的项目数上限（需求与预算约束；≥1）。
     pub max_projects: usize,
 }
@@ -57,7 +58,7 @@ impl RealEstateConfig {
     /// 应收/借款/应付利息/收入成本/费用/减值）→ `OpeningRealEstateSeeded`。
     /// 现金（1002）与权益（4001/4103）是开局唯一合法落点。
     pub(super) fn check_opening_lines(&self) -> Result<(), RealEstateError> {
-        const SEEDED_ACCOUNTS: [&str; 11] = [
+        const SEEDED_ACCOUNTS: [&str; 13] = [
             codes::AR,
             codes::DEV_INVENTORY,
             codes::DEV_IMPAIR_ALLOW,
@@ -69,6 +70,8 @@ impl RealEstateConfig {
             codes::COGS,
             codes::FIN_EXP,
             codes::IMPAIR_LOSS,
+            codes::CIT_PAYABLE,
+            codes::TAX_EXP,
         ];
         for line in &self.opening_lines {
             if SEEDED_ACCOUNTS.contains(&line.account.0.as_str()) {

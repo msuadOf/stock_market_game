@@ -176,11 +176,97 @@ impl ContractGroupState {
 impl InsuranceBooks {
     pub fn validate_restore(&self) -> Result<(), InsuranceError> {
         self.discount.validate()?;
+        super::super::income_tax::validate_policy(&self.income_tax_policy)?;
+        self.income_tax_position
+            .validate(&self.income_tax_policy)
+            .map_err(super::super::income_tax::map_tax_error)?;
+        self.income_tax_position
+            .validate_books(&self.books)
+            .map_err(super::super::income_tax::map_tax_error)?;
         for (id, group) in &self.groups {
             group
                 .validate_restore()
                 .map_err(|error| invalid(format!("group {id:?}: {error}")))?;
             self.ensure_counterparty(group.policyholder())?;
+        }
+        if self.next_event_id < 2
+            || self
+                .books
+                .journal()
+                .entries()
+                .any(|entry| entry.source.value() >= self.next_event_id)
+        {
+            return Err(invalid("保险事件身份必须位于全部已使用凭证来源之后"));
+        }
+        self.validate_subledger_balances()?;
+        Ok(())
+    }
+
+    fn validate_subledger_balances(&self) -> Result<(), InsuranceError> {
+        use crate::accounting::reports::insurance::codes;
+        let mut terms: std::collections::BTreeMap<&str, Vec<(AccountingAmount, bool)>> = [
+            codes::PREMIUM_RECEIVABLE,
+            codes::LRC,
+            codes::LIC,
+            codes::INSURANCE_REVENUE,
+            codes::INSURANCE_EXPENSE,
+            codes::INSURANCE_FINANCE,
+        ]
+        .into_iter()
+        .map(|code| (code, Vec::new()))
+        .collect();
+        for group in self.groups.values() {
+            let measurement = &group.measurement;
+            terms
+                .get_mut(codes::PREMIUM_RECEIVABLE)
+                .expect("已登记保险科目")
+                .extend([(group.premium, true), (group.premium_collected, false)]);
+            terms.get_mut(codes::LRC).expect("已登记保险科目").extend([
+                (measurement.expected_claims_remaining, false),
+                (measurement.risk_adjustment_remaining, false),
+                (measurement.csm, false),
+                (measurement.finance_remaining, true),
+            ]);
+            terms
+                .get_mut(codes::INSURANCE_REVENUE)
+                .expect("已登记保险科目")
+                .push((measurement.released_revenue, false));
+            terms
+                .get_mut(codes::INSURANCE_FINANCE)
+                .expect("已登记保险科目")
+                .extend([
+                    (measurement.remeasure_finance, true),
+                    (measurement.released_finance, true),
+                ]);
+            terms
+                .get_mut(codes::INSURANCE_EXPENSE)
+                .expect("已登记保险科目")
+                .extend([
+                    (measurement.day_one_loss, true),
+                    (measurement.remeasure_loss, true),
+                ]);
+            for claim in group.claims.iter().map(|(_, claim)| claim) {
+                terms
+                    .get_mut(codes::LIC)
+                    .expect("已登记保险科目")
+                    .extend([(claim.incurred(), false), (claim.paid(), true)]);
+                terms
+                    .get_mut(codes::INSURANCE_EXPENSE)
+                    .expect("已登记保险科目")
+                    .push((claim.incurred(), true));
+            }
+        }
+        for (code, components) in terms {
+            let expected = signed_sum(&components)?;
+            let actual = self
+                .books
+                .ledger()
+                .account_net_debit(&crate::accounting::LedgerAccountId(code.into()))?;
+            if actual != expected {
+                return Err(invalid(format!(
+                    "保险总账科目 {code} 余额 {actual:?} 与合同及赔案子账 {expected:?} 不符"
+                )));
+            }
         }
         Ok(())
     }

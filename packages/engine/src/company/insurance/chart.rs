@@ -24,6 +24,12 @@ pub fn insurance_account_chart() -> AccountChart {
         ),
         acc(codes::LRC, AccountDef::new("未到期责任负债", Liability)),
         acc(codes::LIC, AccountDef::new("已发生赔款负债", Liability)),
+        acc(codes::DTA, AccountDef::new("递延所得税资产", Asset)),
+        acc(
+            codes::CIT_PAYABLE,
+            AccountDef::new("应交企业所得税", Liability),
+        ),
+        acc(codes::TAX_EXP, AccountDef::new("所得税费用", Expense)),
         acc(codes::CAPITAL, AccountDef::new("实收资本", Equity)),
         acc(codes::PROFIT_CURRENT, AccountDef::new("本年利润", Equity)),
         acc(

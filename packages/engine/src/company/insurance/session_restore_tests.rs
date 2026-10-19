@@ -27,6 +27,10 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
     let books = InsuranceBooks::new(InsuranceConfig {
         chart: insurance_account_chart(),
         as_of: date("2027-12-31"),
+        income_tax_policy: crate::accounting::IncomeTaxPolicy {
+            rate_bp: 2500,
+            loss_carryforward_years: 5,
+        },
         opening_lines: vec![
             line(
                 chart::acct::CASH,

@@ -194,6 +194,7 @@ pub enum CompanyKind {
 ///
 /// [`CompanyRegistry::validate_issuer_mapping`]: crate::company::CompanyRegistry::validate_issuer_mapping
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompanySpec {
     /// 字符串代码（边界身份，如 `"C-600101"`）：配置/存档/显示翻译用，
     /// 核心逻辑一律走数值 `CompanyId`（由 [`CompanyCatalog`] 分配）。
@@ -202,12 +203,42 @@ pub struct CompanySpec {
     pub industry: IndustryId,
     pub kind: CompanyKind,
     /// 发行人映射：`None` = 未上市独立测试实体。
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     pub listed_stock: Option<StockCode>,
     /// 已发行普通股总股数（>0；映射股票时与其 total_shares 精确相等）。
+    /// 序列化为规范十进制字符串（非数字），与 u64 全域无损。
+    #[serde(with = "positive_canonical_u64_decimal")]
     pub issued_shares: u64,
     /// 固定集团母公司代码（开局后不变；母公司必须在同一规格集合内，
     /// 数值 id 由目录在装配时翻译）。
+    #[serde(deserialize_with = "crate::company::persistence::required_nullable")]
     pub group_parent: Option<String>,
+}
+
+/// `issued_shares` 的 serde 面：复用 orderbook 的 canonical 十进制字符串
+/// 助手并附加正数校验（0 在反序列化时显式拒绝，不留静默默认）。
+mod positive_canonical_u64_decimal {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        crate::orderbook::canonical_u64_decimal::serialize(value, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = crate::orderbook::canonical_u64_decimal::deserialize(deserializer)?;
+        if value == 0 {
+            return Err(serde::de::Error::custom(
+                "issued_shares must be greater than zero",
+            ));
+        }
+        Ok(value)
+    }
 }
 
 impl CompanySpec {
@@ -279,5 +310,42 @@ impl CompanySpec {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompanyKind, CompanySpec, IndustryId};
+    use crate::account::StockCode;
+
+    fn spec(issued_shares: u64) -> CompanySpec {
+        CompanySpec {
+            code: "C-600101".to_string(),
+            name: "虚构上市公司600101".to_string(),
+            industry: IndustryId("listed-simple".to_string()),
+            kind: CompanyKind::Industrial,
+            listed_stock: Some(StockCode("600101".to_string())),
+            issued_shares,
+            group_parent: None,
+        }
+    }
+
+    #[test]
+    fn issued_shares_uses_canonical_decimal_string_and_round_trips_u64_max() {
+        let original = spec(u64::MAX);
+        let encoded = serde_json::to_string(&original).expect("公司规格序列化");
+        assert!(encoded.contains("\"issued_shares\":\"18446744073709551615\""));
+        let restored: CompanySpec = serde_json::from_str(&encoded).expect("股本无损恢复");
+        assert_eq!(restored, original);
+
+        for invalid in ["0", "01", "18446744073709551616"] {
+            let value = format!(
+                "{{\"code\":\"C-600101\",\"name\":\"公司\",\"industry\":\"listed-simple\",\"kind\":\"Industrial\",\"listed_stock\":\"600101\",\"issued_shares\":\"{invalid}\",\"group_parent\":null}}"
+            );
+            assert!(serde_json::from_str::<CompanySpec>(&value).is_err(), "{invalid}");
+        }
+        // 数字形态（非字符串）同样拒绝——canonical 十进制字符串是唯一形态。
+        let numeric = encoded.replace("\"18446744073709551615\"", "18446744073709551615");
+        assert!(serde_json::from_str::<CompanySpec>(&numeric).is_err());
     }
 }

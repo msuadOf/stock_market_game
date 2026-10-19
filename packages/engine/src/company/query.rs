@@ -5,7 +5,7 @@
 
 use crate::accounting::consolidation::ScopeId;
 use crate::accounting::reports::{
-    BsLine, Comparative, IncomeColumns, IncomeLine, NoteItem, NoteTarget, ReportSet,
+    BsLine, Comparative, IncomeColumns, IncomeLine, NoteItem, NoteTarget, ReportRoe, ReportSet,
     UnavailableReason, VersionKind,
 };
 use crate::accounting::AccountingAmount;
@@ -23,6 +23,35 @@ pub struct PublicReportQuery {
     pub page_size: Option<u16>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct PublicReportAvailabilityQuery {
+    pub company_id: String,
+    pub period_end: String,
+    pub kind: PublicReportKind,
+    pub scope: PublicReportScope,
+}
+
+#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
+#[serde(tag = "status")]
+#[ts(export)]
+pub enum PublicReportAvailability {
+    Available { report: PublicReportSummary },
+    Unavailable { reason: PublicReportUnavailableReason },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub enum PublicReportUnavailableReason {
+    BeforeOpening,
+    NotYetSettled,
+    PeriodNotRepresented,
+    NotYetPublished,
+    NotScheduled,
+    ScopeNotRepresented,
+}
+
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct PublicReportPage {
@@ -36,6 +65,7 @@ pub struct PublicReportSummary {
     /// PublicationId 使用不透明十进制字符串，且是分页排序的唯一 key。
     pub id: String,
     pub company_id: u32,
+    pub source: crate::information::PublicationSource,
     pub period: String,
     pub kind: PublicReportKind,
     pub version_sequence: String,
@@ -48,7 +78,7 @@ pub struct PublicReportSummary {
     pub financials: PublicReportFinancials,
 }
 
-#[derive(Clone, Copy, Debug, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum PublicReportKind {
     Monthly,
@@ -65,6 +95,7 @@ pub struct PublicReportAccountingSummary {
     pub total_liabilities: String,
     pub total_equity: String,
     pub closing_cash: String,
+    pub report_period_net_income: String,
     pub quarter_net_income: String,
     pub net_income: String,
     pub income_tax: String,
@@ -101,9 +132,11 @@ pub struct PublicReportFinancials {
     pub cash_flow: PublicReportCashFlow,
     pub equity: PublicReportEquity,
     pub notes: PublicReportNotes,
+    pub roe: ReportRoe,
 }
 
-#[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub enum PublicReportScope {
     Standalone { entity_id: u32 },
@@ -175,11 +208,13 @@ pub struct PublicReportIncomeColumns {
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct PublicReportIncome {
+    pub report_period: PublicReportIncomeColumns,
     pub quarter: PublicReportIncomeColumns,
     pub cumulative: PublicReportIncomeColumns,
     pub prior_year: PublicReportComparative<PublicReportIncomeColumns>,
     pub minority_net_income: Option<String>,
     pub net_income_to_parent: Option<String>,
+    pub report_period_net_income_to_parent: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, ts_rs::TS)]
@@ -393,6 +428,7 @@ impl From<&ReportSet> for PublicReportFinancials {
                 }),
             },
             income: PublicReportIncome {
+                report_period: PublicReportIncomeColumns::from(&reports.income.report_period),
                 quarter: PublicReportIncomeColumns::from(&reports.income.quarter),
                 cumulative: PublicReportIncomeColumns::from(&reports.income.cumulative),
                 prior_year: public_comparative(&reports.income.prior_year, |columns| {
@@ -405,6 +441,10 @@ impl From<&ReportSet> for PublicReportFinancials {
                 net_income_to_parent: reports
                     .income
                     .net_income_to_parent
+                    .map(|amount| amount.to_yuan_string()),
+                report_period_net_income_to_parent: reports
+                    .income
+                    .report_period_net_income_to_parent
                     .map(|amount| amount.to_yuan_string()),
             },
             cash_flow: PublicReportCashFlow {
@@ -454,6 +494,7 @@ impl From<&ReportSet> for PublicReportFinancials {
                     .map(PublicReportNoteItem::from)
                     .collect(),
             },
+            roe: reports.roe.clone(),
         }
     }
 }
@@ -466,6 +507,7 @@ impl From<&PublishedReport> for PublicReportSummary {
             total_liabilities: reports.balance_sheet.total_liabilities.to_yuan_string(),
             total_equity: reports.balance_sheet.total_equity.to_yuan_string(),
             closing_cash: reports.balance_sheet.closing_cash.to_yuan_string(),
+            report_period_net_income: reports.income.report_period.net_income.to_yuan_string(),
             quarter_net_income: reports.income.quarter.net_income.to_yuan_string(),
             net_income: reports.income.cumulative.net_income.to_yuan_string(),
             income_tax: reports.income.cumulative.income_tax.to_yuan_string(),
@@ -489,6 +531,7 @@ impl From<&PublishedReport> for PublicReportSummary {
         Self {
             id: report.id.value().to_string(),
             company_id: report.company.0,
+            source: report.source,
             period: period_end_date(reports.period)
                 .expect("a published report always has a valid period end")
                 .to_iso(),
