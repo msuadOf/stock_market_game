@@ -6,7 +6,7 @@ import { ChartDisplayMenu } from "./ChartDisplayMenu.tsx";
 import { CHART_INDICATORS } from "./chart-display-options.ts";
 import { useDispatch, useSelector } from "react-redux";
 import type { AppDispatch, RootState } from "../store/store.ts";
-import { changeChartViewport, selectChartViewport, setChartIndicator, toggleChartAverage } from "../store/chart-settings-slice.ts";
+import { changeChartViewport, selectChartViewport, setChartIndicator } from "../store/chart-settings-slice.ts";
 import { useMemo, useState, type CSSProperties } from "react";
 import type { KlinePoint } from "./PriceChart.tsx";
 import type { IndicatorCalculator } from "./indicator-results.ts";
@@ -16,24 +16,34 @@ import { KlineViewportControls } from "../mobile/KlineViewportControls.tsx";
 import { aggregateCandles, klineWindow, formatTradeLots, priceChangePercent, MobileKlineProjection, type KlineViewportAction } from "../mobile/market-model.ts";
 import type { MobileChartPeriod } from "../mobile/mobile-ui-state.ts";
 import "../mobile/MobileStockDetail.css";
+import { calendarCandlePeriod } from "./kline-periods.ts";
 import { coordinateTicks, formatCoordinateValue, klineTimeTicks, klineTradingDayLabel, klineVolumeTicks } from "./kline-coordinates.ts";
 import { KlineCoordinatePlot, KlineTimeAxis } from "./KlineCoordinatePlot.tsx";
-interface Props { code: string; dailyCandles: readonly KlinePoint[]; period: MobileChartPeriod; indicatorCalculator: IndicatorCalculator | null; }
-export function MarketKlinePanel({ code, dailyCandles, period, indicatorCalculator }: Props) {
-  const candlePeriod = period === "周K" || period === "月K" ? period : "日K";
+import type { IndicatorDataSource } from "../store/store.ts";
+import type { IndicatorCapabilities } from "../host/engine-host.ts";
+import { resolveIndicatorRoute } from "./indicator-source-policy.ts";
+import { useMovingAverageSettings } from "./useMovingAverageSettings.ts";
+import { MovingAverageSettings } from "./MovingAverageSettings.tsx";
+interface Props { code: string; dailyCandles: readonly KlinePoint[]; period: MobileChartPeriod; indicatorCalculator: IndicatorCalculator | null; indicatorDataSource?: IndicatorDataSource; indicatorCapabilities?: IndicatorCapabilities; }
+export function MarketKlinePanel({ code, dailyCandles, period, indicatorCalculator, indicatorDataSource = "frontend", indicatorCapabilities = { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false } }: Props) {
+  const candlePeriod = calendarCandlePeriod(period);
+  if (candlePeriod === null) throw new Error(`自然周期K线不能使用${period}`);
   const allCandles = useMemo(() => aggregateCandles(dailyCandles, candlePeriod), [candlePeriod, dailyCandles]);
   const indicatorInput = useMemo(() => ({
     prices: allCandles.map(candle => candle.close),
     candles: allCandles.map(({ high, low, close }) => ({ high, low, close })),
   }), [allCandles]);
-  const indicatorResult = useIndicatorResults(indicatorCalculator, indicatorInput, allCandles.length > 0);
+  const indicator = useSelector((state: RootState) => state.chartSettings.indicator);
+  const indicatorRoute = resolveIndicatorRoute(indicatorDataSource, indicator === "macd" ? "macd" : "candleKdj", indicatorCapabilities);
+  const indicatorResult = useIndicatorResults(indicatorRoute.kind === "rust" ? indicatorCalculator : null, indicatorInput, allCandles.length > 0 && (indicator === "macd" || indicator === "kdj") && indicatorRoute.kind === "rust");
   const dispatch = useDispatch<AppDispatch>();
   const storedViewport = useSelector((state: RootState) => selectChartViewport(state.chartSettings, code));
   const viewport = klineWindow(allCandles.length, storedViewport.capacity, storedViewport.offsetFromEnd);
-  const indicator = useSelector((state: RootState) => state.chartSettings.indicator);
   const selected = useSelector((state: RootState) => state.chartSettings.selectedAverages);
+  const movingAverages = useMovingAverageSettings();
+  const [editingAverages, setEditingAverages] = useState(false);
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
-  const toggleAverage = (days: number) => dispatch(toggleChartAverage(days));
+  const toggleAverage = (days: number) => movingAverages.save(movingAverages.settings.map((item) => item.period === days ? { ...item, visible: !item.visible } : item));
   const setIndicator = (value: typeof indicator) => dispatch(setChartIndicator(value));
   const act = (action: KlineViewportAction) => dispatch(changeChartViewport({ code, total: allCandles.length, action }));
   const gestureRef = useKlineGestures(act, (x, width) => {
@@ -41,9 +51,15 @@ export function MarketKlinePanel({ code, dailyCandles, period, indicatorCalculat
     const index = klineTapIndex(x, width, range.capacity, range.end - range.start);
     if (index !== null) setSelectedTime(allCandles[range.start + index].time);
   }, selectedTime !== null, () => setSelectedTime(null));
-  if (allCandles.length === 0) return <section ref={gestureRef} className="msd-kline msd-chart-empty" aria-label={`${period}图`}><b>{period}</b><p>等待游戏生成首个交易日 K 线…</p></section>;
   const window = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
-  const averages = KLINE_MOVING_AVERAGES.map(item => ({ ...item, points: klineMovingAverage(allCandles.slice(0, window.end), item.days, window.end - window.start) }));
+  const movingAveragePlot = useMemo(() => {
+    if (indicatorDataSource !== "frontend" || !movingAverages.available) return { averages: [], error: null };
+    try {
+      return { averages: movingAverages.settings.map((item, index) => ({ days: item.period, color: KLINE_MOVING_AVERAGES[index % KLINE_MOVING_AVERAGES.length].color, points: klineMovingAverage(allCandles.slice(0, window.end), item.period, window.end - window.start) })), error: null };
+    } catch (failure) { return { averages: [], error: `MA计算失败：${failure instanceof Error ? failure.message : String(failure)}；请反馈错误详情。` }; }
+  }, [allCandles, indicatorDataSource, movingAverages.available, movingAverages.settings, window.end, window.start]);
+  const averages = movingAveragePlot.averages;
+  if (allCandles.length === 0) return <section ref={gestureRef} className="msd-kline msd-chart-empty" aria-label={`${period}图`}><b>{period}</b><p>等待游戏生成首个交易日 K 线…</p><MovingAverageSettings {...movingAverages} /></section>;
   const projection = MobileKlineProjection.fromInputs(allCandles, viewport, indicatorResult, averages.filter(item => selected.includes(item.days)).flatMap(item => item.points.map(point => point.value)));
   const candles = projection.visibleCandles;
   const slots = new Map(candles.map((candle, index) => [candle.time, index]));
@@ -74,14 +90,18 @@ export function MarketKlinePanel({ code, dailyCandles, period, indicatorCalculat
     data-kline-count={allCandles.length}
     data-kline-signature={projection.latestSignature}
   >
-    <div className="msd-kline-meta" role="group" aria-label="均线（可多选）"><ChartDisplayMenu selected={selected} onToggleAverage={toggleAverage} indicator={indicator} onIndicator={setIndicator} />{averages.map(({ days, color, points }) => <button key={days} type="button" aria-pressed={selected.includes(days)} aria-label={`MA${days}：${maValue(points)?.toFixed(3) ?? "历史不足"}`} style={{ color, background: "transparent", textDecoration: selected.includes(days) ? "none" : "line-through" }} onClick={() => toggleAverage(days)}>MA{days}:{maValue(points)?.toFixed(3) ?? "—"}</button>)}</div>
-    {candlePeriod !== "日K" && <div className="kline-period-note">{candlePeriod}：{candlePeriod === "周K" ? "周一至周日的自然周" : "公历自然月"}，仅合并已有日K</div>}
-    <KlineCoordinatePlot className="kline-price-plot" height={190} label="价格坐标，单位为元" ticks={priceTicks} times={times} format={priceFormat}><svg className="msd-candle-chart" aria-label={`${period}价格，单位为元`} viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const { slot, rise, body, wick } = projection.candleBodyAndWick(index); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={wick.upper.start} y2={wick.upper.end}/><rect x={slot.center-slot.markWidth/2} y={body.top} width={slot.markWidth} height={Math.max(1,body.bottom-body.top)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={wick.lower.start} y2={wick.lower.end}/></g>; })}{averages.filter(item => selected.includes(item.days)).map(({ days, color, points }) => <polyline key={days} stroke={color} points={points.map(point => `${projection.slotFor(slots.get(point.time)!).center},${projection.priceY(point.value)}`).join(" ")} />)}<KlineCrosshair x={crosshairX} height={190} /></svg></KlineCoordinatePlot>
+    <div className="msd-kline-meta" role="group" aria-label="均线（可多选）"><ChartDisplayMenu averages={movingAverages.settings.map((item, index) => ({ days: item.period, color: KLINE_MOVING_AVERAGES[index % KLINE_MOVING_AVERAGES.length].color }))} onEditAverages={() => setEditingAverages(true)} selected={selected} onToggleAverage={toggleAverage} indicator={indicator} onIndicator={setIndicator} />{averages.map(({ days, color, points }) => <button key={days} type="button" aria-pressed={selected.includes(days)} aria-label={`MA${days}：${maValue(points)?.toFixed(3) ?? "历史不足"}`} style={{ color, background: "transparent", textDecoration: selected.includes(days) ? "none" : "line-through" }} onClick={() => toggleAverage(days)}>MA{days}:{maValue(points)?.toFixed(3) ?? "—"}</button>)}</div>
+    {editingAverages && <MovingAverageSettings {...movingAverages} initiallyOpen />}
+    {movingAverages.error !== null && <p role="alert">{movingAverages.error}</p>}
+    {movingAveragePlot.error !== null && <p role="alert">{movingAveragePlot.error}</p>}
+    {indicatorDataSource === "rust" && selected.length > 0 && <p role="status">Rust指标源不支持MA，未回退到前端。</p>}
+    {candlePeriod !== "日K" && <div className="kline-period-note">{candlePeriod}：{candlePeriod === "周K" ? "周一至周日的自然周" : candlePeriod === "月K" ? "公历自然月" : candlePeriod === "季K" ? "公历自然季度" : "公历自然年"}，仅合并已有日K</div>}
+    <KlineCoordinatePlot className="kline-price-plot" height={190} label="价格坐标，单位为元" ticks={priceTicks} times={times} format={priceFormat}><svg className="msd-candle-chart" aria-label={`${period}价格，单位为元`} viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const { slot, rise, body, wick } = projection.candleBodyAndWick(index); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={wick.upper.start} y2={wick.upper.end}/><rect x={slot.center-slot.markWidth/2} y={body.top} width={slot.markWidth} height={Math.max(1,body.bottom-body.top)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={wick.lower.start} y2={wick.lower.end}/></g>; })}{averages.filter(item => selected.includes(item.days) && item.points.length > 0).map(({ days, color, points }) => <polyline key={days} className={`ma${days}`} aria-label={`MA${days}曲线`} stroke={color} points={points.map(point => `${projection.slotFor(slots.get(point.time)!).center},${projection.priceY(point.value)}`).join(" ")} />)}<KlineCrosshair x={crosshairX} height={190} /></svg></KlineCoordinatePlot>
     <KlineTimeAxis times={times} selected={crosshairX === null ? null : { x: crosshairX, label: klineTradingDayLabel(candles[selectedIndex].time) }} />
     {selectedIndex >= 0 && <KlineDetails period={candlePeriod} previousRawClose={allCandles[window.start + selectedIndex - 1]?.rawPrices?.close} side={crosshairX !== null && crosshairX < 195 ? "right" : "left"} candle={candles[selectedIndex]} previousClose={allCandles[window.start + selectedIndex - 1]?.close} averages={averages.map(item => ({ days: item.days, color: item.color, value: maValue(item.points) }))} onClose={() => setSelectedTime(null)} />}
     {indicator !== "none" && <><div className="msd-volume-title">成交量（手）　<span>量:{formatTradeLots(volumes[displayIndex] ?? 0)}手</span></div><KlineCoordinatePlot className="kline-volume-plot" height={75} label="成交量坐标，单位为手" ticks={volumeTicks} times={times} format={formatTradeLots}><svg className="msd-k-volume" viewBox="0 0 390 75" preserveAspectRatio="none" aria-label={`${period}成交量，单位为手`}>{projection.volumeMarks().map(({ slot, height, rise }, index) => <rect key={index} className={rise?"rise":"fall"} x={slot.center-slot.markWidth/2} y={75-height} width={slot.markWidth} height={height}/>) }<KlineCrosshair x={crosshairX} height={75} /></svg></KlineCoordinatePlot></>}
-    {indicator === "kdj" && (kdj === null ? <div className="msd-kdj-title" role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>{indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : "等待 Rust 指标…"}</div> : <><div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k[displayIndex]?.toFixed(2)}　<span>D:{kdj.d[displayIndex]?.toFixed(2)}</span>　<em>J:{kdj.j[displayIndex]?.toFixed(2)}</em></div><KlineCoordinatePlot className="kline-indicator-plot" height={72} label="KDJ坐标" ticks={indicatorTicks} times={times} format={indicatorFormat}><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={projection.indicatorLine(kdj.k)}/><polyline className="orange" points={projection.indicatorLine(kdj.d)}/><polyline className="pink" points={projection.indicatorLine(kdj.j)}/><KlineCrosshair x={crosshairX} height={72} /></svg></KlineCoordinatePlot></>)}
-    {indicator === "macd" && <MacdPanel projection={projection} result={indicatorResult} crosshairX={crosshairX} displayIndex={displayIndex} />}
+    {indicator === "kdj" && (indicatorRoute.kind === "unsupported" ? <div className="msd-kdj-title" role="status">所选{indicatorDataSource === "rust" ? "Rust" : "前端"}指标源不支持KDJ，未回退到另一数据源。</div> : kdj === null ? <div className="msd-kdj-title" role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>{indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : "等待 Rust 指标…"}</div> : <><div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k[displayIndex]?.toFixed(2)}　<span>D:{kdj.d[displayIndex]?.toFixed(2)}</span>　<em>J:{kdj.j[displayIndex]?.toFixed(2)}</em></div><KlineCoordinatePlot className="kline-indicator-plot" height={72} label="KDJ坐标" ticks={indicatorTicks} times={times} format={indicatorFormat}><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={projection.indicatorLine(kdj.k)}/><polyline className="orange" points={projection.indicatorLine(kdj.d)}/><polyline className="pink" points={projection.indicatorLine(kdj.j)}/><KlineCrosshair x={crosshairX} height={72} /></svg></KlineCoordinatePlot></>)}
+    {indicator === "macd" && (indicatorRoute.kind === "unsupported" ? <p role="status">所选{indicatorDataSource === "rust" ? "Rust" : "前端"}指标源不支持MACD，未回退到另一数据源。</p> : <MacdPanel projection={projection} result={indicatorResult} crosshairX={crosshairX} displayIndex={displayIndex} />)}
     <div className="kline-footer"><div className="shared-indicator-controls">{CHART_INDICATORS.map(([value, label]) => <button key={value} className="chart-indicator-button" aria-pressed={indicator === value} onClick={() => setIndicator(value)}>{label}</button>)}</div><KlineViewportControls total={allCandles.length} viewport={viewport} onAction={act} /></div>
   </section>;
 }

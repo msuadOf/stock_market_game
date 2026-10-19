@@ -1,7 +1,8 @@
 import { SECURITY_LIST_VIEW_LABELS, type SecurityListView } from "../app/security-browser-model.ts";
 
 export type MobilePrimaryTab = "market" | "watchlist" | "positions" | "trades" | "user";
-export type MobileChartPeriod = "分时" | "日K" | "周K" | "月K";
+import type { ChartPeriod } from "../components/kline-periods.ts";
+export type MobileChartPeriod = ChartPeriod;
 export const MOBILE_INFO_TABS = ["财务", "盘口", "资金"] as const;
 export type MobileInfoTab = typeof MOBILE_INFO_TABS[number];
 

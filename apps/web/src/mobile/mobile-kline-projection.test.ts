@@ -55,16 +55,16 @@ test("KDJ 未就绪或失败时不制造指标，ready 时域包含 J 极值", (
   assert.equal(p.indicatorLine(p.kdj!.j), `${p.slotFor(0).center},68 ${p.slotFor(1).center},4`);
 });
 
-test("显式交易日模式按 5/20 日聚合，offset 超界归一与原始 OHLCV 保持不变", () => {
+test("自然周月聚合，offset 超界归一与原始 OHLCV 保持不变", { timeout: 10000 }, () => {
   const candles = Array.from({ length: 21 }, (_, i) => candle(i));
   const before = structuredClone(candles);
   for (const period of ["周K", "月K"] as const) {
-    const aggregated = model.aggregateCandles(candles, period, "trading-days");
+    const aggregated = model.aggregateCandles(candles, period);
     const p = model.MobileKlineProjection.fromInputs(aggregated, { capacity: 2, offsetFromEnd: 99 }, pending);
-    assert.equal(aggregated.length, period === "周K" ? 5 : 2);
+    assert.equal(aggregated.length, period === "周K" ? 4 : 1);
     assert.equal(p.visibleWindow.offsetFromEnd, p.visibleWindow.maxOffset);
     assert.equal(p.visibleCandles[0].open, 10);
-    assert.equal(p.visibleCandles[0].close, period === "周K" ? 15 : 30);
+    assert.equal(p.visibleCandles[0].close, period === "周K" ? 16 : 31);
   }
   assert.deepEqual(candles, before);
 });

@@ -27,6 +27,33 @@ export interface SpeedMetrics {
 
 export type DeliveryMode = "push" | "pull";
 
+/** 指标源能力面：宿主按指标名声明 Rust 侧是否可算；前端源能力由 indicator-source-policy 固定。 */
+export interface IndicatorCapabilities {
+  readonly intradayAverage: boolean;
+  readonly macd: boolean;
+  readonly priceKdj: boolean;
+  readonly candleKdj: boolean;
+}
+
+/** Rust 分时均价单点输入：真实累计成交额（分）、成交笔数与成交股数。 */
+export interface IntradayAverageInput {
+  readonly turnoverCents: string;
+  readonly tradeCount: number;
+  readonly volumeShares: number;
+}
+
+/** Rust 分时均价单点结果：回传经宿主核对的累计额与量，供前端换算均价。 */
+export interface IntradayAverageResult {
+  readonly turnoverCents: string;
+  readonly volumeShares: number;
+}
+
+/** Rust 分时均价曲线请求：seriesKey 标识幂等去重，samples 为按时间排序的累计样本。 */
+export interface IntradayAverageCurveInput {
+  readonly seriesKey: string;
+  readonly samples: readonly IntradayAverageInput[];
+}
+
 export interface HostCapabilities {
   deliveryModes: readonly DeliveryMode[];
   targetUiHz: number;

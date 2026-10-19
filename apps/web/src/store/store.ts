@@ -130,6 +130,7 @@ const tradesSlice = createSlice({
 // ── settingsSlice ──
 
 type Theme = "light" | "dark";
+export type IndicatorDataSource = "frontend" | "rust";
 
 interface SettingsState {
   speed: number;
@@ -137,6 +138,7 @@ interface SettingsState {
   theme: Theme;
   pauseAfterClose: boolean;
   pauseBeforeOpen: boolean;
+  indicatorDataSource: IndicatorDataSource;
 }
 
 const initialSettingsState: SettingsState = {
@@ -145,6 +147,7 @@ const initialSettingsState: SettingsState = {
   theme: "light",
   pauseAfterClose: false,
   pauseBeforeOpen: false,
+  indicatorDataSource: "frontend",
 };
 
 const settingsSlice = createSlice({
@@ -166,13 +169,16 @@ const settingsSlice = createSlice({
     setPauseBeforeOpen(state, action: PayloadAction<boolean>) {
       state.pauseBeforeOpen = action.payload;
     },
+    setIndicatorDataSource(state, action: PayloadAction<IndicatorDataSource>) {
+      state.indicatorDataSource = action.payload;
+    },
   },
 });
 
 export const { setSnapshot, applyProtocolFrame, installProtocolSnapshotBaseline, installProtocolWorkingOrdersBaseline, applyProtocolRuntimeDelta } = snapshotSlice.actions;
 export const snapshotReducer = snapshotSlice.reducer;
 export const { appendTrades, clearTrades } = tradesSlice.actions;
-export const { setSpeed, setRunning, setTheme, setPauseAfterClose, setPauseBeforeOpen } = settingsSlice.actions;
+export const { setSpeed, setRunning, setTheme, setPauseAfterClose, setPauseBeforeOpen, setIndicatorDataSource } = settingsSlice.actions;
 
 // ── autoOrdersSlice ──
 

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createServer, type ViteDevServer } from "vite";
 import { createElement } from "react";
+import { Provider } from "react-redux";
+import { configureStore } from "@reduxjs/toolkit";
+import { chartSettingsReducer, setChartAverageSettings } from "../store/chart-settings-slice.ts";
 let ChartSettingsFixture: typeof import("../test-support/ChartSettingsFixture.tsx").ChartSettingsFixture;
 import { renderToStaticMarkup } from "react-dom/server";
 import { aggregateCandles, MobileKlineProjection } from "../mobile/market-model.ts";
@@ -18,13 +21,22 @@ before(async () => {
 after(async () => { if (vite) await vite.close(); });
 
 test("共用 K 线包含五条可选均线、手机版蜡烛与量柱及缩放控件", { timeout: 10000 }, () => {
-  const dailyCandles = Array.from({ length: 75 }, (_, i) => ({ time: (START_DATE + i * 86400) as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, volume: 250 }));
+  const dailyCandles = Array.from({ length: 75 }, (_, i) => ({ time: (START_DATE + i * 86400) as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, rawPrices: { open: "1000", high: "1200", low: "900", close: "1100" }, volume: 250 }));
   const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null })));
   assert.match(html, /msd-candle-chart/);
   assert.match(html, /msd-k-volume/);
   assert.match(html, /MA60:11.000/);
   assert.equal((html.match(/aria-label="MA\d+：[^"]*"/g) ?? []).length, 5);
   assert.match(html, /msd-chart-tools/);
+});
+test("共享K线实际消费自定义周期及显示开关，不再保留固定五线owner", { timeout: 10000 }, () => {
+  const preferenceStore = configureStore({ reducer: { chartSettings: chartSettingsReducer } });
+  preferenceStore.dispatch(setChartAverageSettings([{ period: 3, visible: true }, { period: 25, visible: false }]));
+  const dailyCandles = Array.from({ length: 30 }, (_, index) => ({ time: (START_DATE + index * 86400) as import("lightweight-charts").UTCTimestamp, open: 9, high: 12, low: 9, close: 11, rawPrices: { open: "900", high: "1200", low: "900", close: "1100" }, volume: 100 }));
+  const html = renderToStaticMarkup(createElement(Provider, { store: preferenceStore, children: createElement(MarketKlinePanel, { code: "600101", dailyCandles, period: "日K", indicatorCalculator: null }) }));
+  assert.match(html, /aria-label="MA3：11\.000"/);
+  assert.match(html, /<polyline class="ma3" aria-label="MA3曲线"[^>]*points="[^" ]+,/);
+  assert.doesNotMatch(html, /<polyline class="ma25"|MA5：|MA60：/);
 });
 
 test("共用K线显示元价、手数量及真实公历交易日期坐标，不回退相对日序", { timeout: 10000 }, () => {
@@ -101,4 +113,15 @@ test("真实周K聚合保留高位精确OHLC与前收差额", { timeout: 10000 }
  assert.equal(weekly[0].rawPrices?.close, "900719925474099301");
  const html = renderToStaticMarkup(createElement(KlineDetails, {period:"周K", candle:weekly[1], previousRawClose:weekly[0].rawPrices!.close, averages:[], onClose() {}}));
  assert.match(html, /9007199254740993.02/); assert.match(html, /\+0.01/);
+});
+
+test("共享季年K消费者使用真实公历边界，不把新增选项仍画成日K", { timeout: 10000 }, () => {
+ const dates = ["2029-12-31", "2030-01-02", "2030-03-29", "2030-04-01", "2031-01-02"];
+ const dailyCandles = dates.map((date, index) => ({ time: (Date.parse(`${date}T00:00:00Z`) / 1000) as import("lightweight-charts").UTCTimestamp, open: 10 + index, high: 12 + index, low: 9 + index, close: 11 + index, volume: 100 }));
+ for (const [period, count, note] of [["季K", 4, "公历自然季度"], ["年K", 3, "公历自然年"]] as const) {
+   const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period, indicatorCalculator: null })));
+   assert.match(html, new RegExp(`data-kline-count="${count}"`));
+   assert.ok(html.includes(note));
+   assert.doesNotMatch(html, /游戏交易日合并|5\/20|NaN|Infinity/);
+ }
 });

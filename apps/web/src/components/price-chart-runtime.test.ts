@@ -4,6 +4,7 @@ import type { createChart } from "lightweight-charts";
 import { PriceChartRuntime, type PriceChartRuntimePorts } from "./price-chart-runtime.ts";
 import { buildPriceChartIndicatorSource } from "./price-chart-indicators.ts";
 import type { IndicatorResults } from "./indicator-results.ts";
+import { KLINE_MOVING_AVERAGES, klineMovingAverage } from "./kline-moving-averages.ts";
 
 function fixture(indicator = true) {
   const calls: string[] = [];
@@ -53,6 +54,29 @@ const points = [{ time: 0, value: 10, volume: 100, buy: true }, { time: 1, value
 const candles = [1, 2, 3].map((day) => ({ time: (1893456000 + day * 86400) as import("lightweight-charts").UTCTimestamp, open: 10, high: 12, low: 9, close: 11, volume: 100 }));
 const values = [1, 2];
 const results: IndicatorResults = { macd: { dif: values, dea: values, histogram: values }, priceKdj: { k: values, d: values, j: values }, candleKdj: { k: [], d: [], j: [] } };
+
+test("可编辑MA覆盖曲线复用period句柄，隐藏/删除和切分时清除旧线", { timeout: 10000 }, () => {
+  const f = fixture();
+  f.runtime.updateMovingAverageOverlays([{ period: 5, color: "#926b00", points: [{ time: 1, value: 10.5 }] }, { period: 60, color: "#28734b", points: [] }]);
+  assert.deepEqual(f.series[3].data, [{ time: 1, value: 10.5 }]);
+  assert.deepEqual(f.series[4].data, []);
+  f.runtime.updateMovingAverageOverlays([{ period: 60, color: "#335eae", points: [{ time: 2, value: 12 }] }]);
+  assert.ok(f.calls.includes(`removeSeries:${f.series[3].id}`));
+  assert.equal(f.series.length, 5);
+  assert.deepEqual(f.series[4].data, [{ time: 2, value: 12 }]);
+  f.runtime.updateMovingAverageOverlays([]);
+  assert.ok(f.calls.includes(`removeSeries:${f.series[4].id}`));
+  f.runtime.dispose();
+});
+
+test("分时均价曲线覆盖主价格图且清空时不替代价格点", { timeout: 10000 }, () => {
+  const f = fixture();
+  f.runtime.updateAverageOverlay([{ time: 1, value: 10.25 }, { time: 2, value: 10.5 }]);
+  assert.deepEqual(f.series[3].data, [{ time: 1, value: 10.25 }, { time: 2, value: 10.5 }]);
+  f.runtime.updateAverageOverlay([]);
+  assert.deepEqual(f.series[3].data, []);
+  f.runtime.dispose();
+});
 
 test("创建、独立 resize 与 cleanup 保持注册和释放顺序", { timeout: 10000 }, () => {
   const f = fixture();
@@ -174,20 +198,21 @@ test("主图与指标副图都关闭覆盖绘图区的品牌标志", { timeout: 
 
 test("均线可多选且按完整交易日收盘价计算，切换不改K线数据或窗口", { timeout: 10000 }, () => {
   const f = fixture();
-  const daily = Array.from({ length: 61 }, (_, index) => ({ ...candles[0], time: index as import("lightweight-charts").UTCTimestamp, close: index + 1 }));
+  const daily = Array.from({ length: 61 }, (_, index) => ({ ...candles[0], time: index as import("lightweight-charts").UTCTimestamp, close: index + 1, rawPrices: { open: "1000", high: "6200", low: "100", close: String((index + 1) * 100) } }));
+  const plot = (input: typeof daily, periods: readonly number[]) => periods.map((period) => ({ period, color: KLINE_MOVING_AVERAGES.find((item) => item.days === period)!.color, points: klineMovingAverage(input, period, 360) }));
   f.runtime.updatePrice([], daily, 10, "日K", 360);
   const before = f.charts[0].fits;
-  f.runtime.updateMovingAverages(daily, [20, 60], "日K", 360);
+  f.runtime.updateMovingAverageOverlays(plot(daily, [20, 60]));
   assert.equal(f.series.length, 5);
   assert.deepEqual((f.series[3].data as unknown[])[0], { time: 19, value: 10.5 });
   assert.deepEqual((f.series[4].data as unknown[])[0], { time: 59, value: 30.5 });
   assert.equal(f.charts[0].fits, before);
   assert.deepEqual(f.series[1].data, daily);
-  f.runtime.updateMovingAverages(daily, [60], "日K", 360);
+  f.runtime.updateMovingAverageOverlays(plot(daily, [60]));
   assert.ok(f.calls.includes(`removeSeries:${f.series[3].id}`));
-  f.runtime.updateMovingAverages(daily.slice(0, 10), [60], "日K", 360);
+  f.runtime.updateMovingAverageOverlays(plot(daily.slice(0, 10), [60]));
   assert.deepEqual(f.series[4].data, []);
-  f.runtime.updateMovingAverages(daily, [60], "分时", 360);
+  f.runtime.updateMovingAverageOverlays([]);
   assert.ok(f.calls.includes(`removeSeries:${f.series[4].id}`));
   f.runtime.dispose();
 });
