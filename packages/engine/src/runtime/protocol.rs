@@ -863,6 +863,15 @@ pub enum UpMsg {
         /// B2：当日分钟K桶（roll_day 清桶前的唯一窗口——保留历史冻结
         /// 的数据源；desk 应答后桶随下一 tick 日界重置）。
         drained_minute_bars: Vec<MinuteBarFact>,
+        /// 日界批：收盘竞价清算成交（`roll_day` 先于 Drain 的生产时序下
+        /// 原随下一拍 DeskReport 迟到——receipt civil_date 取组装时点
+        /// 成次日；应答捎带后 `trade_facts` 已 take，杜绝双报）。
+        drained_trades: Vec<DeskTradeFact>,
+        /// 日界批：当日终 K（含收盘段——desk `drain_all` 收盘清算的
+        /// reroll 产出；仅本次 Drain 实际执行收盘清算时携带（closing=0
+        /// 几何/未跨日手动日结=None）。install 面/`DayBoundary` 事件的
+        /// 权威补真值源。
+        drained_day_candle: Option<DeskDayCandleFinal>,
     },
     /// 组日结完成（权益落账后的账户投影）。
     GroupDayDone {
@@ -1135,6 +1144,27 @@ pub struct DeskTradeFact {
     pub maker_order_serial: u64,
     /// taker 腿订单 desk 序号。
     pub taker_order_serial: u64,
+}
+
+/// 日界批：当日终 K（`DeskDrained.drained_day_candle` 的载荷——desk
+/// `drain_all` 收盘段 unroll→清算→reroll 后的归档末条投影；含收盘
+/// 竞价段，install 面/`DayBoundary` 事件的权威补真值源）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeskDayCandleFinal {
+    /// 开盘价（分）。
+    pub open: i64,
+    /// 最高价（分）。
+    pub high: i64,
+    /// 最低价（分）。
+    pub low: i64,
+    /// 收盘价（分——收盘竞价成交价，无成交=最后成交价）。
+    pub close: i64,
+    /// 成交量（股）。
+    pub volume: u64,
+    /// 成交额（分——`trade_stats` 口径）。
+    pub turnover_cents: i64,
+    /// 成交笔数。
+    pub trade_count: u64,
 }
 
 /// 集合竞价事实（批 8f：AuctionTick/AuctionCompleted 事件输入）。

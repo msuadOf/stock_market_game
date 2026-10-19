@@ -369,6 +369,10 @@ pub struct World {
     pub drained_lifecycle: Vec<super::protocol::DeskLifecycleFact>,
     /// Sol 六审段 1.2：日结 Drain 的收盘竞价清算事实（末拍事件源）。
     pub drained_auction: Vec<super::protocol::DeskAuctionFact>,
+    /// 日界批：日结 Drain 捎带的收盘竞价成交（原随下一拍 DeskReport
+    /// 迟到——receipt civil_date 取组装时点成次日；驱动器在日结段
+    /// 消费入事件流+个人确认，取走即清）。
+    pub drained_day_trades: Vec<super::protocol::DeskTradeFact>,
     /// 当前自然日（D3a-2c：快照 civil_date 来源——驱动器自会话同步，
     /// 自然日权威在会话 civil clock）。
     civil_date: crate::calendar::CivilDate,
@@ -399,6 +403,9 @@ pub struct World {
     /// B2：日结 Drain 应答捎带的当日分钟K桶（驱动器编排冻结的消费面；
     /// 每日结一次，取走即清）。
     pending_day_bars: Vec<Option<Vec<super::protocol::MinuteBarFact>>>,
+    /// 日界批：日结 Drain 应答捎带的当日终 K（含收盘段——驱动器
+    /// install 面补真值的消费面；与 pending_day_bars 同生命周期）。
+    pending_day_candles: Vec<Option<super::protocol::DeskDayCandleFinal>>,
     /// B2：发布代次（每次 publish 递增——区分同 tick 的保留链推进）。
     publish_generation: u64,
 }
@@ -758,6 +765,7 @@ impl World {
             last_day_end_candidate: None,
             drained_lifecycle: Vec::new(),
             drained_auction: Vec::new(),
+            drained_day_trades: Vec::new(),
             civil_date: civil_start_date,
             publication,
             seal_ns_accumulated: 0,
@@ -767,6 +775,7 @@ impl World {
             retained_days: Vec::new(),
             retained_index: std::sync::Arc::new(super::publication::RetainedIndex::default()),
             pending_day_bars: vec![None; n_stocks],
+            pending_day_candles: vec![None; n_stocks],
             publish_generation: 0,
         })
     }
@@ -786,6 +795,22 @@ impl World {
         // 取走即按股数重建空槽（mem::take 的空 Vec 会使下次日结收集失效）。
         self.pending_day_bars = vec![None; self.n_stocks];
         taken
+    }
+
+    /// 日界批：取走日结 Drain 捎带的当日终 K（取走即清——每日结一次；
+    /// 与 `take_pending_day_bars` 同式）。
+    pub fn take_pending_day_candles(
+        &mut self,
+    ) -> Vec<Option<super::protocol::DeskDayCandleFinal>> {
+        let taken = std::mem::take(&mut self.pending_day_candles);
+        self.pending_day_candles = vec![None; self.n_stocks];
+        taken
+    }
+
+    /// 日界批：取走日结 Drain 捎带的收盘竞价成交（取走即清——驱动器
+    /// 日结段消费入事件流+个人确认）。
+    pub fn take_drained_day_trades(&mut self) -> Vec<super::protocol::DeskTradeFact> {
+        std::mem::take(&mut self.drained_day_trades)
     }
 
     /// B2：保留链只读（发布/查询面同源句柄）。
@@ -2121,6 +2146,11 @@ impl World {
         /// 双载（竞价事实 2→4 条实测）。
         self.drained_lifecycle.clear();
         self.drained_auction.clear();
+        // 日界批：drain 成交/终 K 同步作废（回滚对称——重跑重新收集）。
+        self.drained_day_trades.clear();
+        for slot in &mut self.pending_day_candles {
+            *slot = None;
+        }
         // B2：日结 Drain 捎带的桶同步作废（重跑日结重新收集——回滚对称）。
         for slot in &mut self.pending_day_bars {
             *slot = None;
@@ -2139,6 +2169,7 @@ impl World {
         if result.is_err() {
             self.drained_lifecycle.clear();
             self.drained_auction.clear();
+            self.drained_day_trades.clear();
         }
         result
     }
@@ -2163,15 +2194,23 @@ impl World {
                     drained_lifecycle,
                     drained_auction,
                     drained_minute_bars,
+                    drained_trades,
+                    drained_day_candle,
                 } => {
                     desks.push((stock, fee_sink, last_price));
                     // B2：当日桶暂存（驱动器编排冻结的消费面）。
                     if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
                         *slot = Some(drained_minute_bars);
                     }
+                    // 日界批：当日终 K 暂存（install 面补真值的消费面）。
+                    if let Some(slot) = self.pending_day_candles.get_mut(stock as usize) {
+                        *slot = drained_day_candle;
+                    }
                     self.drained_lifecycle.extend(drained_lifecycle);
                     // Sol 六审段 1.2：日结收盘竞价事实（末拍清算事件源）。
                     self.drained_auction.extend(drained_auction);
+                    // 日界批：收盘竞价成交（事件流+receipt 消费面）。
+                    self.drained_day_trades.extend(drained_trades);
                     drained += 1;
                 }
                 UpMsg::Failed { who, error } => {

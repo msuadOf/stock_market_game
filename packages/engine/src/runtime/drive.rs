@@ -1218,7 +1218,21 @@ impl RuntimeDriver {
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败（内部已 Abort 冲回）：{e:?}"))?;
-        self.collect_drained_events();
+        // 日界批：收盘成交事件/个人确认派生（civil_date=当日）。失败=日结
+        /// 冲回（drained_events 截断+Abort）。
+        let drained_receipts = match self.collect_drained_events(session.civil_date()) {
+            Ok(receipts) => receipts,
+            Err(e) => {
+                self.rollback_day_end(
+                    session,
+                    day_before,
+                    seq_before,
+                    next_seq_before,
+                    drained_len_before,
+                );
+                return Err(format!("收盘成交事件派生失败（日结已全量回滚）：{e}"));
+            }
+        };
         // B2 件 4：手动日结路径补保留冻结（civil 推进**前**——date=当日；
         /// 生产 step 的 ends_day 段之外的手动编排面。迁移缺席时对账按
         /// 登记跳过——见 assemble 注释）。
@@ -1252,6 +1266,18 @@ impl RuntimeDriver {
         // 逐账户事实事件——置强制全量回写标记（下一 step 全名册同步
         // 一次；低频路径语义安全优先）。
         self.force_full_accounts = true;
+        // 日界批：收盘成交个人确认入账（全序列成功尾点——此前入账会使
+        /// civil 失败回滚后确认残留）。
+        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
+            self.rollback_day_end(
+                session,
+                day_before,
+                seq_before,
+                next_seq_before,
+                drained_len_before,
+            );
+            return Err(format!("收盘成交个人确认入账失败（日结已全量回滚）：{e}"));
+        }
         Ok(())
     }
 
@@ -1371,6 +1397,50 @@ impl RuntimeDriver {
     /// 每股 desk 序号游标（最近一次在途快照收集时的权威值）。
     pub fn desk_next_serials(&self) -> &[u64] {
         &self.desk_next_serials
+    }
+
+    /// 日界批：取走 Drain 捎带的当日终 K（含收盘段），组装成 install 面
+    /// 形态（`time`=当日 `candle_date_time`——调用时点 civil 尚在当日）。
+    /// 供 ends_day 段补真：candle_book 历史末条升级 + `DayBoundary` 事件
+    /// `closed_daily_candles`（调用方消费返回值）。None 股（本次 Drain
+    /// 未执行收盘清算——closing=0 几何/未跨日手动日结）跳过不补真。
+    pub fn take_drained_day_candles(
+        &mut self,
+        session: &GameSession,
+    ) -> Result<Vec<(crate::StockId, crate::session::DailyCandle)>, String> {
+        let finals = self.world.take_pending_day_candles();
+        if finals.len() != session.stock_count_for_runtime() {
+            return Err(format!(
+                "日结终 K 股数不齐：pending={} 而 in-session={}",
+                finals.len(),
+                session.stock_count_for_runtime()
+            ));
+        }
+        let time = session.candle_date_time_for_runtime();
+        let mut out = Vec::with_capacity(finals.len());
+        for (idx, slot) in finals.into_iter().enumerate() {
+            let Some(k) = slot else {
+                continue;
+            };
+            out.push((
+                crate::StockId(u32::try_from(idx).map_err(|_| {
+                    format!("日结终 K 股下标 {idx} 超 u32（世界规模越界）")
+                })?),
+                crate::session::DailyCandle {
+                    time,
+                    open: Money::from_cents(k.open),
+                    high: Money::from_cents(k.high),
+                    low: Money::from_cents(k.low),
+                    close: Money::from_cents(k.close),
+                    volume: k.volume,
+                    trade_stats: Some(crate::session::DailyTradeStats {
+                        turnover_cents: k.turnover_cents.max(0) as u64,
+                        trade_count: k.trade_count,
+                    }),
+                },
+            ));
+        }
+        Ok(out)
     }
 
     /// B2 件 5：取走本拍待安装的个人确认（安装成功点消费——恰一次）。
@@ -1525,22 +1595,81 @@ impl RuntimeDriver {
     /// D5 日界·world 段（ends_day 拍在 step 内编排——desk roll_day/组
     /// 日翻；civil 侧不在内，生产显式 day_end 编排的 world 部分等价）。
     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
-    pub fn world_day_end_for_step(&mut self) -> Result<(), String> {
+    /// 日界批：收盘竞价成交随 Drain 应答上行——事件/个人确认在此消费
+    /// （civil_date=当日；receipts 返回调用方即时入账）。
+    pub fn world_day_end_for_step(
+        &mut self,
+        civil_date: crate::calendar::CivilDate,
+    ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String>
+    {
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 世界日结失败（内部已 Abort 冲回）：{e:?}"))?;
-        self.collect_drained_events();
-        Ok(())
+        self.collect_drained_events(civil_date)
     }
 
     /// 清簿撤单事实转事件（seq 分配），并入待取缓冲。
-    fn collect_drained_events(&mut self) {
+    /// 返回 Drain 收盘成交派生的个人确认（调用方即时入账——日结静点
+    /// save 不丢；组装时点 civil_date=当日，修复"迟到下一拍 DeskReport
+    /// 取次日"漂移）。
+    fn collect_drained_events(
+        &mut self,
+        civil_date: crate::calendar::CivilDate,
+    ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String> {
         // Sol 收官再复核阻断 3（最终形态）：分段编号分段取——竞价事件
         ///（DayBoundary 之前输出）先入独立缓冲；撤单事件编号**延迟**到
         /// DayBoundary 序号分配之后（collect_drained_lifecycle_after_
         /// boundary）。此前一次性编号使 DayBoundary(24) 晚于撤单(23)
         /// 而输出在其前——seq 非单调。
+        // 日界批：收盘成交事件段先于竞价事实编号（ Drain 缓冲按类分组、
+        /// 无法与 AuctionTick/Completed 逐条交错——真实序"指示价→成交
+        /// →完成"以类段近似，台账登记）。
+        let receipts = self.project_drained_day_trades(civil_date)?;
         self.collect_drained_auction_events();
+        Ok(receipts)
+    }
+
+    /// 日界批：Drain 收盘竞价成交 → Trade 事件（DayBoundary 之前编号）
+    /// + 个人确认派生（与每拍事件组装同式：receipt_id=trade_seq×2+leg，
+    /// owner→AccountId 缺失显式失败）。
+    fn project_drained_day_trades(
+        &mut self,
+        civil_date: crate::calendar::CivilDate,
+    ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String> {
+        let trades = self.world.take_drained_day_trades();
+        if trades.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut events = project_trade_events(&trades, &mut self.next_seq);
+        let trade_count = trades.len() as u64;
+        let first_trade_seq = self.next_seq + 1 - trade_count;
+        let mut pending: Vec<
+            crate::session::personal_trade_history::PendingTradeReceipt,
+        > = Vec::with_capacity(trades.len() * 2);
+        for (offset, fact) in trades.iter().enumerate() {
+            let trade_seq = first_trade_seq + offset as u64;
+            let legs =
+                crate::session::personal_trade_history::PersonalTradeConfirmation::from_legs(
+                    trade_seq, civil_date, fact,
+                );
+            for (leg_index, confirmation) in legs.into_iter().enumerate() {
+                let owner = if leg_index == 0 { fact.maker } else { fact.taker };
+                let account = self.account_by_owner(owner).ok_or_else(|| {
+                    format!(
+                        "收盘成交个人确认归户缺口：owner=({},{}) 不在名册（股 {}）",
+                        owner.0, owner.1, fact.stock
+                    )
+                })?;
+                pending.push(
+                    crate::session::personal_trade_history::PendingTradeReceipt {
+                        account,
+                        confirmation,
+                    },
+                );
+            }
+        }
+        self.drained_events.append(&mut events);
+        Ok(pending)
     }
 
     /// 日结竞价事件段（DayBoundary 之前输出）——立即编号。
@@ -1591,17 +1720,21 @@ impl RuntimeDriver {
     /// Sol 六审段 1.2（事件序）：分离取走日结 drained 事件中的**竞价**
     /// 事件（AuctionTick/AuctionCompleted——需先于 DayBoundary；余下
     /// 撤单事件仍由 take_drained_events 按原序取走）。
+    /// 日界批：收盘竞价**成交**事件（Trade）同属 DayBoundary 前段——
+    /// 一并取走（属当日成交流；余单撤单保持 DayBoundary 后）。
     pub fn take_drained_auction_events(&mut self) -> Vec<Event> {
         let mut out = Vec::new();
         self.drained_events.retain(|event| {
-            let is_auction = matches!(
+            let is_pre_boundary = matches!(
                 event,
-                Event::AuctionTick { .. } | Event::AuctionCompleted { .. }
+                Event::AuctionTick { .. }
+                    | Event::AuctionCompleted { .. }
+                    | Event::Trade { .. }
             );
-            if is_auction {
+            if is_pre_boundary {
                 out.push(event.clone());
             }
-            !is_auction
+            !is_pre_boundary
         });
         out
     }
@@ -1622,9 +1755,23 @@ impl RuntimeDriver {
         self.world
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败：{e:?}"))?;
-        self.collect_drained_events();
+        // 日界批：收盘成交事件/个人确认派生（civil_date=当日；入账在
+        /// 全序列成功尾点）。
+        let drained_receipts = match self.collect_drained_events(session.civil_date()) {
+            Ok(receipts) => receipts,
+            Err(e) => {
+                self.rollback_day_end(
+                    session,
+                    day_before,
+                    seq_before,
+                    next_seq_before,
+                    drained_len_before,
+                );
+                return Err(format!("收盘成交事件派生失败（日结已全量回滚）：{e}"));
+            }
+        };
         // driver 直调路径无 DayBoundary 事件——撤单段紧随竞价段编号
-        ///（编号序=输出序：auction → lifecycle）。
+        ///（编号序=输出序：trades/auction → lifecycle）。
         self.collect_drained_lifecycle_after_boundary();
         session.advance_runtime_market_day();
         if let Err(e) = session.end_civil_day() {
@@ -1645,6 +1792,16 @@ impl RuntimeDriver {
         session.set_runtime_seq(self.next_seq);
         // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
         session.clear_runtime_minute_history();
+        if let Err(e) = session.runtime_append_trade_receipts(&drained_receipts) {
+            self.rollback_day_end(
+                session,
+                day_before,
+                seq_before,
+                next_seq_before,
+                drained_len_before,
+            );
+            return Err(format!("收盘成交个人确认入账失败（日结已全量回滚）：{e}"));
+        }
         Ok(())
     }
 }

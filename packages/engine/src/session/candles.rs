@@ -134,6 +134,26 @@ impl SessionCandleBook {
         self.histories.entry(code.clone()).or_default().push(candle);
     }
 
+    /// 日界批：以日结 Drain 终 K 补真历史簿条目（`time` 匹配的**末条**
+    /// 整值替换——重建走 `From<Vec>` 同源推导，traded_count/recent_traded
+    /// 随终值重算）。返回 false=无匹配条目（调用方显式失败）。
+    pub(super) fn patch_history_entry(
+        &mut self,
+        code: &StockId,
+        candle: DailyCandle,
+    ) -> bool {
+        let Some(history) = self.histories.get_mut(code) else {
+            return false;
+        };
+        let mut entries: Vec<DailyCandle> = history.iter().cloned().collect();
+        let Some(pos) = entries.iter().rposition(|c| c.time == candle.time) else {
+            return false;
+        };
+        entries[pos] = candle;
+        *history = entries.into();
+        true
+    }
+
     pub(super) fn remove_active(&mut self, code: &StockId) {
         self.active.remove(code);
     }

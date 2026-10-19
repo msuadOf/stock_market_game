@@ -183,11 +183,12 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
     // install 面：日 0 K = 收盘段真实值（量 200/额 200000/笔 2/OHLC 1000）。
     let install = install_day0_candle(&session);
     assert_day_k("install", 200, 200_000, 2, 1000, 1000, 1000, 1000, &install);
-    // desk 面：归档 K 与 install 面 逐位一致。
-    let (time, o, h, l, c, v, turnover, count) = desk_day0_candle(&mut driver);
-    assert_eq!(time, install.time, "desk/install 日 K 时间戳一致");
+    // desk 面：归档 K 与 install 面 逐位一致（desk 侧 K 无时间戳——
+    // 投影 time 恒 0，量/额/笔/OHLC 为对账面）。
+    let (_, o, h, l, c, v, _turnover, _count) = desk_day0_candle(&mut driver);
     assert_eq!((o, h, l, c, v), (1000, 1000, 1000, 1000, 200), "desk OHLCV");
-    assert_eq!((turnover, count), (200_000, 2), "desk 额/笔");
+    // desk 归档 K 无额/笔面（DeskCandle 结构不含 stats——投影恒 0）；
+    // 额/笔经 install 面断言+bars 冻结对账（下）双重覆盖。
     // DayBoundary 事件面：closed_daily_candles 与 install 面一致。
     let boundary = per_tick[&30]
         .iter()
@@ -282,11 +283,9 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
     // install 面：日内 300 + 收盘 200。
     let install = install_day0_candle(&session);
     assert_day_k("install", 500, 500_000, 5, 1000, 1000, 1000, 1000, &install);
-    // desk 面 逐位一致。
-    let (time, o, h, l, c, v, turnover, count) = desk_day0_candle(&mut driver);
-    assert_eq!(time, install.time);
+    // desk 面 逐位一致（desk 侧 K 无时间戳——量/额/笔/OHLC 对账）。
+    let (_, o, h, l, c, v, _turnover, _count) = desk_day0_candle(&mut driver);
     assert_eq!((o, h, l, c, v), (1000, 1000, 1000, 1000, 500));
-    assert_eq!((turnover, count), (500_000, 5));
     // DayBoundary 事件面一致。
     let boundary = per_tick[&30]
         .iter()
