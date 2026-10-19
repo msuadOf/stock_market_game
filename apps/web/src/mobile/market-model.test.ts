@@ -392,7 +392,7 @@ test("迷你走势图只由真实价格历史生成", () => {
   );
 });
 
-test("可选交易日数量口径按5根日 K 聚合OHLCV", () => {
+test("自然周按真实日期边界聚合OHLCV，不按固定5根日K分组", { timeout: 10000 }, () => {
   const candles: KlinePoint[] = Array.from({ length: 6 }, (_, index) => ({
     time: (1893542400 + index * 86400) as KlinePoint["time"],
     open: 10 + index,
@@ -402,10 +402,11 @@ test("可选交易日数量口径按5根日 K 聚合OHLCV", () => {
     volume: 100 * (index + 1),
   }));
 
-  assert.deepEqual(aggregateCandles(candles, "周K", "trading-days"), [
+  assert.deepEqual(aggregateCandles(candles, "周K"), [
     { time: 1893542400, open: 10, high: 16, low: 9, close: 15, volume: 1500 },
     { time: 1893974400, open: 15, high: 17, low: 14, close: 16, volume: 600 },
   ]);
+  assert.equal(aggregateCandles(candles.slice(1), "周K").length, 2, "去掉周中首根后自然周界不移动，不能仍按每5根分组");
   assert.deepEqual(aggregateCandles(candles, "日K"), candles);
 });
 

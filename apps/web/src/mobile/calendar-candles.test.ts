@@ -23,10 +23,17 @@ test("自然月把虚拟前史与开局成交按同一个公历月份聚合", { 
   assert.equal(monthly[1].close, 14);
 });
 
-test("交易日数量模式保留固定5/20根口径而不是自然周月", { timeout: 10000 }, () => {
-  const candles = Array.from({ length: 21 }, (_, index) => candle(`2030-01-${String(index + 2).padStart(2, "0")}`, index));
-  assert.deepEqual(aggregateCandles(candles, "周K", "trading-days").map(({ volume }) => volume), [500, 500, 500, 500, 100]);
-  assert.deepEqual(aggregateCandles(candles, "月K", "trading-days").map(({ volume }) => volume), [2000, 100]);
+test("自然季年跨季度和跨年边界，未满周期保留", { timeout: 10000 }, () => {
+  const candles = ["2029-12-31", "2030-01-02", "2030-03-29", "2030-04-01", "2030-12-31", "2031-01-02"].map(candle);
+  assert.deepEqual(aggregateCandles(candles, "季K").map(({ volume }) => volume), [100, 200, 100, 100, 100]);
+  assert.deepEqual(aggregateCandles(candles, "年K").map(({ volume }) => volume), [100, 400, 100]);
+  assert.equal(aggregateCandles(candles, "年K")[1].close, candles[4].close);
+});
+
+test("真实金额和笔数精确聚合，混合虚拟前史不伪造金额统计", { timeout: 10000 }, () => {
+  const candles = [candle("2030-01-02", 0), candle("2030-01-03", 1)].map((item) => ({ ...item, tradeStats: { turnoverCents: "20000000000000000000", tradeCount: 2 } }));
+  assert.deepEqual(aggregateCandles(candles, "月K")[0].tradeStats, { turnoverCents: "40000000000000000000", tradeCount: 4 });
+  assert.equal(aggregateCandles([candle("2030-01-01", 0), ...candles], "月K")[0].tradeStats, undefined);
 });
 
 test("聚合拒绝乱序、非日期秒数及成交量溢出", { timeout: 10000 }, () => {
