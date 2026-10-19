@@ -14,6 +14,7 @@ interface Props {
   dayRange?: Readonly<{ high: number; low: number; volume?: number }>;
   indicator: PriceChartIndicator;
   result: IndicatorResultState;
+  averagePoints?: readonly { time: number; value: number }[];
 }
 const times = [[0, "09:15"], [16, "09:30"], [37, "10:30"], [58, "11:30/13:00"], [79, "14:00"], [100, "15:00"]] as const;
 function Grid() {
@@ -24,11 +25,16 @@ function TimeAxis() {
 }
 
 /** 与移动端共享行情投影；价格、量能和指标使用同一全天槽位，不拉伸已发生行情。 */
-export function DesktopIntradayChart({ projection: p, lastClose, dayRange, indicator, result }: Props) {
+export function DesktopIntradayChart({ projection: p, lastClose, dayRange, indicator, result, averagePoints = [] }: Props) {
   // 分时0%轴固定居中；复用手机的对称价域，按已出现的最大偏离展开。
   const close = moneyToChartNumber(lastClose) / 100;
   const auction = auctionDisplayPoints(p.visibleAuctionPoints, close);
   const prices = [...auction, ...p.visiblePoints].map(point => point.value);
+  for (const point of averagePoints) {
+    intradayChartX({ phase: "continuous", minute: point.time });
+    if (!Number.isFinite(point.value) || point.value <= 0) throw new Error("分时均价绘图必须使用真实有限正价");
+    prices.push(point.value);
+  }
   if (dayRange && dayRange.volume !== undefined && dayRange.volume > 0) prices.push(dayRange.high, dayRange.low);
   const { top: high, bottom: low } = symmetricIntradayScale(prices, close, 0);
   const priceY = (value: number) => value === close ? 50 : (high - value) / (high - low) * 100;
@@ -58,11 +64,12 @@ export function DesktopIntradayChart({ projection: p, lastClose, dayRange, indic
         {auction.filter(point => point.updated).map(point => <circle key={point.time} className="intraday-auction-point" cx={intradayChartX({ phase: "auction", minute: point.time })} cy={priceY(point.value)} r="0.15" stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke"><title>竞价指示价或可匹配量更新</title></circle>)}
         {sessionJoin.length > 0 && <polyline className="intraday-session-join" points={sessionJoin.map(point => `${point.x},${priceY(point.value)}`).join(" ")} />}
         {points.length > 0 && <polyline className="intraday-price-line" points={points.map(point => `${intradayChartX({ phase: "continuous", minute: point.time })},${priceY(point.value)}`).join(" ")} />}
+        {indicator === "intradayAverage" && averagePoints.length > 0 && <polyline className="intraday-average-line" stroke="#ad7900" fill="none" strokeWidth="1" vectorEffect="non-scaling-stroke" points={averagePoints.map(point => `${intradayChartX({ phase: "continuous", minute: point.time })},${priceY(point.value)}`).join(" ")} />}
       </svg>
       {empty && <div className="intraday-empty" role="status">等待行情<br /><small>暂无有效指示价，按昨收0%参考轴显示</small></div>}
     </div>
     <TimeAxis />
-    {indicator !== "none" && <div className="intraday-secondary">
+    {indicator !== "none" && indicator !== "intradayAverage" && <div className="intraday-secondary">
       <div className="intraday-volume-caption">{indicator === "volume" ? <><span>竞价累计量 · 上限 {formatSharesAsLots(p.volumeScale.auctionMax)}手</span><span>分钟成交量 · 上限 {formatSharesAsLots(p.volumeScale.continuousMax)}手</span></> : <span>{indicator.toUpperCase()} {lines.map(line => line.name).join(" / ")}</span>}</div>
       <div className="intraday-secondary-area"><svg className="intraday-volume-plot" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={indicator === "volume" ? "全天量能，与价格时间轴对齐；竞价累计量与分钟成交量分别缩放" : `${indicator.toUpperCase()} 全天指标`}>
         <Grid />

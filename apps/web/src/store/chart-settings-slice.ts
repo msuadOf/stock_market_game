@@ -2,15 +2,17 @@ import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import { CHART_INDICATORS, type ChartIndicator } from "../components/chart-display-options.ts";
 import { KLINE_MOVING_AVERAGES } from "../components/kline-moving-averages.ts";
 import { klineWindow, MOBILE_KLINE_DEFAULT_CAPACITY, reduceKlineViewport, type KlineViewport, type KlineViewportAction } from "../mobile/market-model.ts";
+import { parseMovingAverageSettings, type MovingAverageSetting } from "../config/moving-average-settings.ts";
 
 interface ChartSettingsState {
   selectedAverages: number[];
+  averagePeriods: number[];
   indicator: ChartIndicator;
   viewports: Record<string, KlineViewport>;
 }
 
 const defaultViewport: Readonly<KlineViewport> = Object.freeze({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
-const initialState: ChartSettingsState = { selectedAverages: KLINE_MOVING_AVERAGES.map(item => item.days), indicator: "kdj", viewports: {} };
+const initialState: ChartSettingsState = { selectedAverages: KLINE_MOVING_AVERAGES.map(item => item.days), averagePeriods: KLINE_MOVING_AVERAGES.map(item => item.days), indicator: "kdj", viewports: {} };
 
 /** 没有操作过的证券使用初始窗口；其他证券窗口不随当前选择改变。 */
 export function selectChartViewport(state: ChartSettingsState, code: string): Readonly<KlineViewport> {
@@ -21,9 +23,14 @@ const chartSettingsSlice = createSlice({
   name: "chartSettings",
   initialState,
   reducers: {
+    setChartAverageSettings(state, action: PayloadAction<readonly MovingAverageSetting[]>) {
+      const settings = parseMovingAverageSettings(action.payload);
+      state.averagePeriods = settings.map((item) => item.period);
+      state.selectedAverages = settings.filter((item) => item.visible).map((item) => item.period);
+    },
     toggleChartAverage(state, action: PayloadAction<number>) {
       const days = action.payload;
-      if (!KLINE_MOVING_AVERAGES.some(item => item.days === days)) throw new RangeError(`不支持的均线周期：${days}`);
+      if (!state.averagePeriods.includes(days)) throw new RangeError(`不支持的均线周期：${days}`);
       state.selectedAverages = state.selectedAverages.includes(days) ? state.selectedAverages.filter(day => day !== days) : [...state.selectedAverages, days];
     },
     setChartIndicator(state, action: PayloadAction<ChartIndicator>) {
@@ -39,5 +46,5 @@ const chartSettingsSlice = createSlice({
   },
 });
 
-export const { toggleChartAverage, setChartIndicator, changeChartViewport } = chartSettingsSlice.actions;
+export const { toggleChartAverage, setChartAverageSettings, setChartIndicator, changeChartViewport } = chartSettingsSlice.actions;
 export const chartSettingsReducer = chartSettingsSlice.reducer;
