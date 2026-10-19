@@ -16,6 +16,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 /// 合成分片（recent_prices 512 档——B 口径量级的观测面负载）。
+/// 战役收袋维护注：字段面随 StockPublic 演进（刀 2b Arc 化+扩
+/// turnover/trade_count 双字段）——bench 保持合成占位（非业务语义）。
 fn synthetic_view(tick: u64) -> StockPublic {
     StockPublic {
         last_price: 1000 + (tick as i64 % 50),
@@ -29,6 +31,8 @@ fn synthetic_view(tick: u64) -> StockPublic {
         minute_closes: Vec::new(),
         daily_bars: Vec::new(),
         daily_active: None,
+        daily_active_turnover_cents: 0,
+        daily_active_trade_count: 0,
         daily_total_completed: 0,
         daily_total_traded: 0,
         volume_today: 0,
@@ -44,7 +48,7 @@ fn synthetic_tick(publication: &ViewPublication, tick: u64) {
     let desks: Vec<DeskShard> = (0..5)
         .map(|s| DeskShard {
             stock: s as StockIdx,
-            view: synthetic_view(tick),
+            view: Arc::new(synthetic_view(tick)),
             resting_count: 0,
             resting: Arc::new(Vec::new()),
             next_serial: 0,
