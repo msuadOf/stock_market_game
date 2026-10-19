@@ -1,4 +1,4 @@
-import type { MarketHistoryRequest, MarketHistoryPage } from "../host/market-history.ts";
+import type { MarketHistoryEntry, MarketHistoryPage, MarketHistoryRequest } from "../host/market-history.ts";
 
 export function shiftHistoryDate(date: string, days: number): string {
   const parsed = new Date(`${date}T00:00:00Z`);
@@ -8,7 +8,8 @@ export function shiftHistoryDate(date: string, days: number): string {
 }
 
 export async function latestFiveTradingDays(query: (request: MarketHistoryRequest) => Promise<MarketHistoryPage>, code: string, currentDate: string): Promise<MarketHistoryPage> {
-  const entries: MarketHistoryPage["entries"] = [];
+  // 页面 entries 为只读视图；本地累积器用可变数组（排序后切片返回）。
+  const entries: MarketHistoryEntry[] = [];
   let end = shiftHistoryDate(currentDate, -1);
   let settled: string | null = null;
   while (entries.length < 5) {

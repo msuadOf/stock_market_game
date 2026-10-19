@@ -8,10 +8,19 @@ type MarketHistoryEntry = MarketHistoryPage["entries"][number];
 
 export const MINUTE_KLINE_PERIODS = [120, 60, 30, 15, 5, 1] as const;
 export type MinuteKlinePeriod = typeof MINUTE_KLINE_PERIODS[number];
-export type MinuteKline = Omit<MinuteBar, "minute_of_day" | "phase"> & {
+/** 聚合桶为本地可变累积器（视图 MinuteBar 只读字段不继承——桶内逐笔
+ *  合并 high/low/close/量/额/笔数）。 */
+export type MinuteKline = {
   date: string;
   minute_of_day: number;
   phase: MinuteBar["phase"];
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume_shares: string;
+  turnover_cents: string;
+  trade_count: string;
 };
 
 function assertPeriod(period: number): asserts period is MinuteKlinePeriod {

@@ -35,9 +35,11 @@ test("自然日尚未同步时仍显示查询表单且不伪造日期默认值",
   assert.match(html, /value=""/);
 });
 
-type LiveResponse = { code: string; date: string; observed_at: { date: string; second_of_day: number }; live: true; status: "Trading" | "Closed"; phase: "CallAuction" | "PreOpen" | "Continuous" | "ClosingAuction" | "AfterClose" | "Closed"; bars: MarketHistoryPage["entries"][number]["bars"] };
+// B2 wire：trading 布尔（旧 status/observed_at 不再随响应下发——观察时刻
+// 由调用方经 currentMinute prop 提供）。
+type LiveResponse = { code: string; date: string; live: true; trading: boolean; phase: "CallAuction" | "PreOpen" | "Continuous" | "ClosingAuction" | "AfterClose" | "Closed"; bars: MarketHistoryPage["entries"][number]["bars"] };
 function liveResponse(date: string, bars: LiveResponse["bars"] = []): LiveResponse {
-  return { code: "600001", date, observed_at: { date, second_of_day: 36000 }, live: true, status: "Trading", phase: "Continuous", bars };
+  return { code: "600001", date, live: true, trading: true, phase: "Continuous", bars };
 }
 function mountLive() {
   const slots: { value: unknown; deps?: readonly unknown[] }[] = [];

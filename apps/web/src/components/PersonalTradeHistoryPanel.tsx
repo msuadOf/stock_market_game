@@ -1,6 +1,6 @@
 import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "../host/engine-host.ts";
 import { useEffect, useRef, useState } from "react";
-import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage } from "../host/personal-trade-history.ts";
+import { normalizePersonalTradeHistoryRequest } from "../host/personal-trade-history.ts";
 import { TradeConfirmationTable } from "./TradeConfirmationTable.tsx";
 
 export interface PersonalTradeHistoryPanelProps {
@@ -42,7 +42,10 @@ export function PersonalTradeHistoryPanel({ query, scopeKey, initialDate = null,
     setError(null);
     try {
       const normalized = normalizePersonalTradeHistoryRequest(request);
-      const page = normalizePersonalTradeHistoryPage(await query(normalized), normalized);
+      // wire→视图归一已在 host 传输层（worker-host requestWorker*）完成——
+      // 旧 main 的双重归一在 wire==视图时代幂等；ADR-0041 翻译引入后边界
+      // 收敛为传输层单点，面板不再重复归一（防御深度由传输层承担）。
+      const page = await query(normalized);
       if (!owner.current.alive || sequence !== owner.current.sequence) return;
       setPages([...previous, page]);
       setPageIndex(previous.length);
