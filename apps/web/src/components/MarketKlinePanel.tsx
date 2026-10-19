@@ -16,11 +16,13 @@ import { KlineViewportControls } from "../mobile/KlineViewportControls.tsx";
 import { aggregateCandles, klineWindow, formatTradeLots, priceChangePercent, MobileKlineProjection, type KlineViewportAction } from "../mobile/market-model.ts";
 import type { MobileChartPeriod } from "../mobile/mobile-ui-state.ts";
 import "../mobile/MobileStockDetail.css";
+import { calendarCandlePeriod } from "./kline-periods.ts";
 import { coordinateTicks, formatCoordinateValue, klineTimeTicks, klineTradingDayLabel, klineVolumeTicks } from "./kline-coordinates.ts";
 import { KlineCoordinatePlot, KlineTimeAxis } from "./KlineCoordinatePlot.tsx";
 interface Props { code: string; dailyCandles: readonly KlinePoint[]; period: MobileChartPeriod; indicatorCalculator: IndicatorCalculator | null; }
 export function MarketKlinePanel({ code, dailyCandles, period, indicatorCalculator }: Props) {
-  const candlePeriod = period === "周K" || period === "月K" ? period : "日K";
+  const candlePeriod = calendarCandlePeriod(period);
+  if (candlePeriod === null) throw new Error(`自然周期K线不能使用${period}`);
   const allCandles = useMemo(() => aggregateCandles(dailyCandles, candlePeriod), [candlePeriod, dailyCandles]);
   const indicatorInput = useMemo(() => ({
     prices: allCandles.map(candle => candle.close),
@@ -75,7 +77,7 @@ export function MarketKlinePanel({ code, dailyCandles, period, indicatorCalculat
     data-kline-signature={projection.latestSignature}
   >
     <div className="msd-kline-meta" role="group" aria-label="均线（可多选）"><ChartDisplayMenu selected={selected} onToggleAverage={toggleAverage} indicator={indicator} onIndicator={setIndicator} />{averages.map(({ days, color, points }) => <button key={days} type="button" aria-pressed={selected.includes(days)} aria-label={`MA${days}：${maValue(points)?.toFixed(3) ?? "历史不足"}`} style={{ color, background: "transparent", textDecoration: selected.includes(days) ? "none" : "line-through" }} onClick={() => toggleAverage(days)}>MA{days}:{maValue(points)?.toFixed(3) ?? "—"}</button>)}</div>
-    {candlePeriod !== "日K" && <div className="kline-period-note">{candlePeriod}：{candlePeriod === "周K" ? "周一至周日的自然周" : "公历自然月"}，仅合并已有日K</div>}
+    {candlePeriod !== "日K" && <div className="kline-period-note">{candlePeriod}：{candlePeriod === "周K" ? "周一至周日的自然周" : candlePeriod === "月K" ? "公历自然月" : candlePeriod === "季K" ? "公历自然季度" : "公历自然年"}，仅合并已有日K</div>}
     <KlineCoordinatePlot className="kline-price-plot" height={190} label="价格坐标，单位为元" ticks={priceTicks} times={times} format={priceFormat}><svg className="msd-candle-chart" aria-label={`${period}价格，单位为元`} viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const { slot, rise, body, wick } = projection.candleBodyAndWick(index); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={wick.upper.start} y2={wick.upper.end}/><rect x={slot.center-slot.markWidth/2} y={body.top} width={slot.markWidth} height={Math.max(1,body.bottom-body.top)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={wick.lower.start} y2={wick.lower.end}/></g>; })}{averages.filter(item => selected.includes(item.days)).map(({ days, color, points }) => <polyline key={days} stroke={color} points={points.map(point => `${projection.slotFor(slots.get(point.time)!).center},${projection.priceY(point.value)}`).join(" ")} />)}<KlineCrosshair x={crosshairX} height={190} /></svg></KlineCoordinatePlot>
     <KlineTimeAxis times={times} selected={crosshairX === null ? null : { x: crosshairX, label: klineTradingDayLabel(candles[selectedIndex].time) }} />
     {selectedIndex >= 0 && <KlineDetails period={candlePeriod} previousRawClose={allCandles[window.start + selectedIndex - 1]?.rawPrices?.close} side={crosshairX !== null && crosshairX < 195 ? "right" : "left"} candle={candles[selectedIndex]} previousClose={allCandles[window.start + selectedIndex - 1]?.close} averages={averages.map(item => ({ days: item.days, color: item.color, value: maValue(item.points) }))} onClose={() => setSelectedTime(null)} />}

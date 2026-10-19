@@ -16,6 +16,7 @@ import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
 import { formatTradeLots, intradayChartX, MobileIntradayProjection, priceChangePercent, type AuctionPoint } from "./market-model";
 import { MOBILE_INFO_TABS, type MobileChartPeriod, type MobileInfoTab } from "./mobile-ui-state";
+import { calendarCandlePeriod, minuteKlinePeriod } from "../components/kline-periods.ts";
 import { formatDecimalCentsAsYuan, yuan } from "../utils/format";
 import "./MobileStockDetail.css";
 
@@ -30,6 +31,9 @@ interface Props {
   dailyCandles: readonly KlinePoint[];
   activeDailyCandle?: KlinePoint;
   indicatorCalculator: IndicatorCalculator | null;
+  /** 五日与分钟 K 面板内容；宿主接线（引擎查询 API 重建批次）后注入，缺省时显式提示未接入。 */
+  minuteHistoryContent?: ReactNode;
+  minuteKlineContent?: ReactNode;
   trades: readonly TradeEvent[];
   elapsedMinutes: number;
   totalMinutes: number;
@@ -57,6 +61,11 @@ interface Props {
 
 function tone(diff: number): "rise" | "fall" | "flat" {
   return diff > 0 ? "rise" : diff < 0 ? "fall" : "flat";
+}
+
+/** 五日/分钟 K 依赖跨日分钟数据，宿主面板接线前的显式占位：不伪造数据、不静默空白。 */
+function MinuteDataPendingPanel({ period }: { readonly period: MobileChartPeriod }) {
+  return <section className="msd-kline msd-chart-empty" aria-label={`${period}图`}><b>{period}</b><p>该周期依赖跨日分钟数据，当前版本尚未接入；可先使用日K/周K/月K/季K/年K。</p></section>;
 }
 
 
@@ -149,7 +158,6 @@ export function MobileStockDetail(props: Props) {
   const percent = priceChangePercent(market.last_price, market.last_close);
   const facts = marketQuoteFacts(props.activeDailyCandle);
   const { prices } = facts;
-  const chartType = props.period === "分时" ? "分时" : "日K";
 
   function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, items: readonly string[]) {
     const buttons = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);
@@ -190,8 +198,8 @@ export function MobileStockDetail(props: Props) {
       {props.watchlistControl && <div className="msd-watchlist">{props.watchlistControl}</div>}
       <ChartPeriodTabs period={props.period} onChange={props.onPeriodChange} panelId="mobile-chart-panel" variant="detail" />
       <div id="mobile-chart-panel" role="tabpanel" aria-label={`${props.period}图表`}>
-        <div hidden={chartType !== "分时"}><IntradayPanel {...props} /></div>
-        <div hidden={chartType === "分时"}><MarketKlinePanel code={props.code} key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} /></div>
+        <div hidden={props.period !== "分时"}><IntradayPanel {...props} /></div>
+        {props.period === "五日" ? (props.minuteHistoryContent ?? <MinuteDataPendingPanel period={props.period} />) : minuteKlinePeriod(props.period) !== null ? (props.minuteKlineContent ?? <MinuteDataPendingPanel period={props.period} />) : calendarCandlePeriod(props.period) !== null && <MarketKlinePanel code={props.code} key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} />}
       </div>
       <div className="msd-info-tabs" role="tablist" aria-label="股票详情信息">
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}

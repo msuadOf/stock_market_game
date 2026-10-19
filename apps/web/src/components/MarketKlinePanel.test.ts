@@ -102,3 +102,14 @@ test("真实周K聚合保留高位精确OHLC与前收差额", { timeout: 10000 }
  const html = renderToStaticMarkup(createElement(KlineDetails, {period:"周K", candle:weekly[1], previousRawClose:weekly[0].rawPrices!.close, averages:[], onClose() {}}));
  assert.match(html, /9007199254740993.02/); assert.match(html, /\+0.01/);
 });
+
+test("共享季年K消费者使用真实公历边界，不把新增选项仍画成日K", { timeout: 10000 }, () => {
+ const dates = ["2029-12-31", "2030-01-02", "2030-03-29", "2030-04-01", "2031-01-02"];
+ const dailyCandles = dates.map((date, index) => ({ time: (Date.parse(`${date}T00:00:00Z`) / 1000) as import("lightweight-charts").UTCTimestamp, open: 10 + index, high: 12 + index, low: 9 + index, close: 11 + index, volume: 100 }));
+ for (const [period, count, note] of [["季K", 4, "公历自然季度"], ["年K", 3, "公历自然年"]] as const) {
+   const html = renderToStaticMarkup(createElement(ChartSettingsFixture, null, createElement(MarketKlinePanel, { code: "600101", dailyCandles, period, indicatorCalculator: null })));
+   assert.match(html, new RegExp(`data-kline-count="${count}"`));
+   assert.ok(html.includes(note));
+   assert.doesNotMatch(html, /游戏交易日合并|5\/20|NaN|Infinity/);
+ }
+});

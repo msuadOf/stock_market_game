@@ -4,6 +4,7 @@ import { filterSecurityCodes, adjacentSecurityCode, securityListEmptyMessage, se
 import { SecurityListControls, WatchlistToggle } from "../components/SecurityListControls.tsx";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
 import { ChartPeriodTabs } from "../components/ChartPeriodTabs.tsx";
+import { calendarCandlePeriod } from "../components/kline-periods.ts";
 import { MarketQuotePanel } from "../components/MarketQuotePanel.tsx";
 import { addMoney, subtractMoney, compareMoney } from "../utils/money.ts";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
@@ -133,7 +134,7 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, on
   const chartCode = useMarketRuntimeSelection();
   const { queryChartHistory } = useMarketRuntimeActions();
   useEffect(() => {
-    if (chartPeriod === "日K") void queryChartHistory(chartCode);
+    if (calendarCandlePeriod(chartPeriod) !== null) void queryChartHistory(chartCode);
   }, [chartCode, chartPeriod, klineDays, queryChartHistory]);
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
   const trades = useSelector((state: RootState) => state.trades.items);
@@ -147,7 +148,7 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, on
   return <>
     <div className="chart-toolbar"><ChartPeriodTabs period={chartPeriod} onChange={setChartPeriod} panelId={panelId} variant="terminal" /></div>
     <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><WatchlistToggle browser={browser} code={chartCode} /><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
-    <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}><div hidden={chartPeriod === "分时"} className="shared-kline-host"><MarketKlinePanel code={chartCode} key={chartCode} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} /></div><div hidden={chartPeriod !== "分时"} className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ timeline, market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div></div>
+    <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}>{chartPeriod === "分时" ? <div className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ timeline, market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} /></div> : calendarCandlePeriod(chartPeriod) !== null ? <div className="shared-kline-host"><MarketKlinePanel code={chartCode} key={`${chartCode}:${calendarCandlePeriod(chartPeriod)}`} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} /></div> : <div className="chart-empty" role="status">该周期依赖跨日分钟数据，当前版本尚未接入；可先使用日K/周K/月K/季K/年K。</div>}</div>
     <div className="order-book"><MarketQuotePanel code={chartCode} market={market} candle={getActiveDailyCandles()[chartCode]} trades={trades} /></div>
   </>;
 }
@@ -197,7 +198,7 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const chartCode = useMarketRuntimeSelection();
   const { queryChartHistory } = useMarketRuntimeActions();
   useEffect(() => {
-    if (props.period !== "分时") void queryChartHistory(chartCode);
+    if (calendarCandlePeriod(props.period) !== null) void queryChartHistory(chartCode);
   }, [chartCode, props.klineDays, props.period, queryChartHistory]);
   const { chartData, auctionChartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
   const { getActiveDailyCandles } = useMarketRuntimeActions();
