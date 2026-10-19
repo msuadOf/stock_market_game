@@ -1026,9 +1026,31 @@ impl World {
         }
     }
 
-    /// 计划簿收集（D3a-2c 件5：EchoPlans 广播→收齐——交付点投影源）。
+    /// 计划簿收集（D3a-2c 件5：全量读面——EchoPlansFull 广播→收齐）。
+    /// ⑤b 起 `collect_plans` 是**读面**（幂等全量，不受生产通道 dirty
+    /// 门控影响）；生产安装链改走 [`Self::collect_plans_echo`]。
     pub fn collect_plans(
         &mut self,
+    ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
+        self.collect_plans_with(|| GroupIn::EchoPlansFull, "EchoPlansFull")
+    }
+
+    /// 计划簿收集（⑤b 生产通道：EchoPlans 广播→收齐——组端 dirty
+    /// 门控，未变拍回空簿；交付点投影源）。与读面 [`Self::collect_plans`]
+    /// 的分离同 collect_group_attention（全量）vs
+    /// collect_group_attention_sparse（生产稀疏）先例。
+    pub fn collect_plans_echo(
+        &mut self,
+    ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
+        self.collect_plans_with(|| GroupIn::EchoPlans, "EchoPlans")
+    }
+
+    /// 计划簿收集共用体（请求消息由调用面构造——读面全量/生产门控；
+    /// GroupIn 非 Clone，逐组以构造闭包产新值）。
+    fn collect_plans_with(
+        &mut self,
+        make_request: impl Fn() -> GroupIn,
+        request_name: &'static str,
     ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
@@ -1041,8 +1063,10 @@ impl World {
             });
         }
         for tx in &self.group_txs {
-            tx.send(GroupIn::EchoPlans).map_err(|_| {
-                RuntimeError::SendFailed { detail: "EchoPlans 广播失败".to_owned() }
+            tx.send(make_request()).map_err(|_| {
+                RuntimeError::SendFailed {
+                    detail: format!("{request_name} 广播失败"),
+                }
             })?;
         }
         let mut out = Vec::with_capacity(self.n_groups);
@@ -1056,7 +1080,9 @@ impl World {
                 other => {
                     return Err(RuntimeError::Disconnected {
                         who: None,
-                        stage: format!("collect_plans 期望 GroupPlans，收到 {other:?}"),
+                        stage: format!(
+                            "collect_plans 期望 GroupPlans，收到 {other:?}"
+                        ),
                     });
                 }
             }

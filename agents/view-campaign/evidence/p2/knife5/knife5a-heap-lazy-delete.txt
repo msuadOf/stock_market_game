@@ -1,0 +1,85 @@
+=== ⑤a 收袋刀：组端 due 筛选 heap 延迟删除（2026-10-19，perf/view-cleanup）===
+
+刀法（final-ledger §七 a）：push dirty 项新值+pop 时核验候选——标准
+延迟删除模式；等价合同=pop_due 序不变。
+
+【落点勘误登记】台账把 22.9μs 标注在画像 attention_heap 段（driver
+线程 install 段）名下；本刀实装前 perf 复核（perf-main.data，1059
+样本）实锤：该成本实际在**组线程 run_round 符号内**（world_run 段）
+——行级 annotate 归因 run_round 内 ~55-60% 为全名册 due 扫描循环
+（inc 循环计数+stride 0x240=576B 决策档流读+belief_states/
+chain_params/retail_style 三查询+next_due 比较）≈3.3% 总样本。
+driver 侧 attention_heap 段（22.9μs）为稀疏收集往返，本刀不动。
+两文件（handoff/final-ledger）刀法文字一致；段名归属差异按实测
+落点实施并在此登记。
+
+红证链（先行红）：
+1. knife5a_due_filter_touches_due_count_not_roster（性能合同）：
+   批 1（仅计数锚+全扫描现状）红——触达 300×20=6000 ≥ 阈值 3000
+   （panicked 实录：touched < roster*ticks/2 断言失败）。
+2. 批 2 落 heap 后绿：heap 触达=pop 项数（due+陈旧）<< 名册×拍数。
+3. knife5a_due_filter_equivalent_to_full_scan（等价合同，旋钮
+   DUE_FILTER_FULL_SCAN cfg(test) 双跑）：同种子 120 retail+10 inst
+   （链/普通双分支覆盖）×15 拍，中段注入 ForceDue（提前改排=陈旧项
+   形态）+DeferDueForTest（推远=核验丢弃形态），heap vs 全扫描终态
+   business_state_hash 逐位相等。批 1 同路径=绿基线；批 2 后仍绿。
+
+突变红实证：
+- 突变②（核验恒弃——筛选漏项）→ 等价红 ✓。
+- 突变③b（链/零售分支 evaluate 后漏 push 新值——不变式破）→ 等价红 ✓。
+- 突变①（核验破——陈旧项入集）**无害**：循环体内保留的
+  `if tick < next_due { continue; }` 判定纵深兜底（当前值未到的位被
+  判定跳过，dedup 去同值重复）——核验是性能门（少排/少判）非正确性
+  门。如实登记，不作为判别面。
+- 突变③（普通分支漏 push）在 retail-only fixture 无覆盖——补
+  inst 位后由 ③b 同型覆盖（两分支对称写点）。
+
+实现面（group.rs）：
+- GroupState.due_heap: BinaryHeap<Reverse<(u64, LocalIdx)>>。
+- 写点（宁多勿漏）：构造期全量 seed（due_heap_seed 先于 decision
+  move）/evaluate 重排×2 分支/ForceDue 改排/GroupUndo::NextDue 恢复/
+  DeferDueForTest。
+- 筛选（round 0）：pop 到 tick 截止+核验当前值（陈旧丢弃）→
+  sort by local（=原全扫描处理序——RNG 流/pendings 序逐位不变）→
+  dedup（每账户恰一次，同值重复 push 容忍）。循环体零改动（due
+  判定保留=纵深）。cfg(test) 全扫描对照路径（旋钮）。
+- 堆大小稳态≈名册规模（每轮 pop 清全部 ≤tick 项，无 P1-C 式无界
+  增长）；20000 位≈320KB。
+
+回归（debug 双模式；main 基线 5 个 save_contract 既有失败，零新增）：
+- 缺省模式 2572/5/13；runtime 模式 2572/5/13（+2 为本刀测试）。
+
+测量（A/B 交替抽查，**高载窗 load 39-52**——方向抽查非正式）：
+- 同窗背靠背配对（b-main vs b-5ab 两刀全）：1074.0→1162.6（+8.3%）/
+  927.2→1064.6（+14.8%）两对全正。
+- 画像结构性证据（较静轮）：world_run 831（b-main 高载窗）/488
+  （台账静置）→ 394.4μs/tick（本刀，同轮 wall 816μs=1225.5 t/s）。
+- 正式静置窗数字待窗口（当前机器 load 39-52 不满足静置条件）。
+
+附录 A（性能合同先行红原文）：
+thread 'runtime::drive_tests::knife5a_due_filter_touches_due_count_not_roster' panicked at packages/engine/src/runtime/drive_tests.rs:4093:5:
+due 筛选触达量 6000 须显著小于名册×拍数的一半 3000（heap 延迟删除只触 due 位）
+
+=== 补记：A 口径纯对照抽查与负结果归因（2026-10-19 11:45）===
+
+A 口径（runtime_s5_probe 3000 tick×10 组，taskset 0-31，高载窗
+load 30+）纯对照交替 3 对（a-main=dfd55bc8 树编译 vs a-5ab=本批）：
+- 974.3 vs 901.8（−7.6%）/ 1023.5 vs 926.6（−9.5%）/ 926.4 vs 932.5
+（+0.7%）——两负一平（噪声带 ±15% 内，方向性风险登记）。
+
+机制归因（负结果纪律——方案形态适配，非实现缺陷；等价性已由
+突变红+等价测试证）：A 探针是**合成浓密度 attention 形态**——
+`attention_gap_ticks: 4`（重排 next_due=tick+1+U[0,4) ⇒ 平均
+2.5 tick 间隔 ⇒ due 密度 ~40%/拍）+ next_due=i%8 初始+base 0.30。
+heap 路径成本≈pop due 项×log2(2000)+push+sort；线性扫描=顺序流
+（预取友好）。**due 密度越过 ~10-20% 后 heap 常数与随机访问不敌
+顺序扫描**。B 口径（真实生产形态：base_observation_probability
+派生 per-tick 概率 ~0.1-0.2%，due 20-40/20000）恰是 heap 最优域
+（两对全正 +8.3%/+14.8%）。
+
+处置：⑤a 语义等价不动摇（生产/测试全绿）；性能结论**分域**——
+真实 attention 形态（B/生产链）受益；A 探针合成形态（决策面压测
+用途，非 attention 真实负载）受 heap 常数税。静置窗 A 复测由
+监视器 v2 承载（.tmp/quiescent-knife5.sh——B+A 交替正式 3 轮）；
+若静置窗 A 仍显著为负，后续可考虑 gap 密集形态自适应回退线性
+扫描（登记，不在本批范围）。

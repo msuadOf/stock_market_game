@@ -436,3 +436,34 @@ load 2.4/4.5）——B 口径 1000 线触线**：
 **第 21 任刀单进度**：①双报协议 ✓（8bc6fe3b）②desk dirty 化 ✓
 （2a+2b）③step 未段化 110μs 段化归因（待做）⑤安装链小刀（待做）
 ④冷启动预热（协调者裁定延后）。
+
+## 第 23 任（收袋批）：⑤两小刀落地（2026-10-19，perf/view-cleanup 分支）
+
+战役合并 main 后收袋批（Sol 复核明判"收袋不阻断"）。分支基于最新
+main（dfd55bc8，本地 main 领先 origin/main）。三提交：
+
+| 提交 | 内容 | 实测 |
+|---|---|---|
+| c8522a29 | fix：publication_bench 适配刀 2b 字段面（main 树遗留编译错——刀 2b 漏更 example，阻塞全量 cargo test；战役树 --lib 口径未暴露） | 编译过 |
+| 0c939289 | **⑤b plans dirty 往返**：组端 plan_book dirty 标记+EchoPlans 未变回空；读面新消息 EchoPlansFull（collect_plans 幂等全量零变化）；生产链改 collect_plans_echo（分离同构 attention sparse 先例） | plans_echo 段 36.8→4.76μs/tick（同高载窗对照）；A/B 三对全正 |
+| 20d5f854 | **⑤a heap 延迟删除**：组端 round-0 due 筛选从全名册 O(名册)/拍线性扫描改 BinaryHeap 延迟删除（push 写点五处/核验丢弃/sort by local 保序） | 较静轮画像 world_run→394.4μs/tick（wall 816μs=1225.5 t/s 历史新高区）；同窗背靠背两对全正（+8.3%/+14.8%） |
+
+**刀法落点勘误（⑤a）**：台账 §七把 22.9μs 标注在 driver 侧
+attention_heap 段名下；perf 复核（perf-main.data）实锤成本在**组线程
+run_round 内**（world_run 段）——run_round 符号 ~55-60% 为全名册扫描
+（stride 576B 决策档流读+三查询）。driver 侧段=稀疏收集往返不动。
+按实测落点实施（knife5a 证据文件内详）。
+
+**红证纪律**：两刀均先行红（⑤b"未变拍回空"panicked/⑤a 触达量
+6000≥3000 panicked）+突变红实证（⑤b 双证；⑤a 恒弃+链位漏 push双证，
+核验破=无害突变——循环内 due 判定纵深兜底，如实登记）。
+
+**main 树基线既有失败登记（非本批引入）**：dfd55bc8 上
+tests/save_contract 5 例失败（tampered_calendar_policy/bank_ecl/
+duplicate_due_id/plan_horizons/industrial_loan_facts——digest/fault
+面，疑 H 批回购收口合并序遗留，**待归因，本批不修**）。本批门禁口径
+=相对基线零新增失败：双模式 2572/5/13 ×2（fail 恒=基线 5）。
+
+**正式数字窗口状态**：本批全程高载窗（load 39-52，他 agent 并行），
+A/B 为方向抽查；静置窗正式数字待窗口（画像较静轮 1225.5 t/s 已
+超战役 B 终态 1032.7——数字待静置窗复证后方可落账为正式）。

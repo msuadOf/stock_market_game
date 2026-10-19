@@ -26,6 +26,23 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// ⑤a 收袋刀红证锚（cfg(test)）：due 筛选每拍触达位计数（全进程累计
+/// ——测试读增量判别；并行测试用小 fixture 贡献微小，主测量由本测试
+/// 的大名册主导）。全扫描路径=名册长/拍；heap 延迟删除路径=O(due 数
+/// +陈旧项 pop)。测试 `knife5a_due_filter_touches_due_count_not_roster`
+/// 断言 heap 路径触达量 << 名册×拍数（防退化为重扫）。
+#[cfg(test)]
+pub(crate) static DUE_FILTER_TOUCHED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// ⑤a 等价合同旋钮（cfg(test)）：true 时 due 筛选走旧全名册线性扫描
+///（对照路径——双跑等价测试用：同种子 heap 路径 vs 全扫描路径终态
+/// 逐位一致）。生产恒 false（仅编译进测试构建；static 全局态在等价
+/// 测试顺序双跑下无交叉——先跑完一个世界再切换）。
+#[cfg(test)]
+pub(crate) static DUE_FILTER_FULL_SCAN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// 组内账户：现金聚合额 + 每股持仓聚合额 + T+1 冻结 + 每股在途挂单登记
 /// + 每股成本基（invested/recovered 累计器）。
 /// 不变量（期末审计断言）：`shares == sellable + frozen_today`（sellable 派生）。
@@ -795,6 +812,19 @@ pub struct GroupState {
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
+    /// ⑤a 收袋刀：attention due 筛选堆（延迟删除模式）。不变式：∀local，
+    /// (profiles[local].next_due, local) 在堆中——除非该项已被某轮
+    /// 筛选 pop 消费（消费即处理，evaluate 必重排并 push 新值）。写点：
+    /// 构造（全量 seed）/evaluate 重排/ForceDue 改排/NextDue undo 恢复/
+    /// DeferDueForTest。堆大小稳态≈名册规模（每 local 一个未来项+少量
+    /// 待 pop 陈旧项——每轮 pop 清全部 ≤tick 项，无 P1-C 式无界增长）。
+    due_heap: std::collections::BinaryHeap<std::cmp::Reverse<(u64, LocalIdx)>>,
+    /// ⑤b 收袋刀：计划簿 dirty 标记——真变置位（写点统一经
+    /// [`Self::save_plan_book_undo`] 前奏或 `GroupUndo::PlanBook` 恢复；
+    /// 宁多勿漏：多置=多一次全量上行无害，漏置=镜像漏更新红证抓）。
+    /// EchoPlans 生产通道消费（未变回空簿）；读面 EchoPlansFull 不动它。
+    /// 初始 true：首拍全量基线（与 session 镜像构造同源对齐）。
+    plan_book_dirty: bool,
     /// 决策脚本。
     script: GroupScript,
 }
@@ -854,6 +884,19 @@ impl GroupState {
         let n_stocks = accounts.first().map(|a| a.shares.len()).unwrap_or(0);
         // P2-1a：名册长度先于 seed move 记录（dirty 掩码初始化用）。
         let belief_roster = belief_states_seed.len();
+        // ⑤a：due 堆构造期全量 seed（先于 decision move 计算初始项
+        //——不变式起点：∀local 初始 (next_due, local) 在堆）。
+        let due_heap_seed: std::collections::BinaryHeap<std::cmp::Reverse<(u64, LocalIdx)>> =
+            decision
+                .as_ref()
+                .map(|(profiles, _)| {
+                    profiles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| std::cmp::Reverse((p.next_due, i as LocalIdx)))
+                        .collect()
+                })
+                .unwrap_or_default();
         GroupState {
             group,
             accounts: accounts.into_iter().map(std::sync::Arc::new).collect(),
@@ -914,6 +957,8 @@ impl GroupState {
             #[cfg(test)]
             force_continuation: false,
             plan_book: crate::plans::PlanBook::default(),
+            due_heap: due_heap_seed,
+            plan_book_dirty: true,
             script,
         }
     }
@@ -1017,6 +1062,9 @@ impl GroupState {
                     if let Some((profiles, _)) = &mut self.decision {
                         if let Some(p) = profiles.get_mut(local as usize) {
                             p.next_due = prev;
+                            // ⑤a：恢复也是变化——push 恢复值（失败尝试的
+                            // 重排项变陈旧，pop 核验自然丢弃）。
+                            self.due_heap.push(std::cmp::Reverse((prev, local)));
                         }
                     }
                 }
@@ -1037,6 +1085,10 @@ impl GroupState {
                 }
                 GroupUndo::PlanBook { prev } => {
                     self.plan_book = *prev;
+                    // ⑤b：回滚恢复也是变化——置 dirty 使下拍全量上行
+                    // 恢复值（驱动器装恢复值==session 回滚后镜像值，
+                    // 同值无害；漏置则镜像漏更新红证抓）。
+                    self.plan_book_dirty = true;
                 }
                 GroupUndo::EverHeld { local, stock, prev } => {
                     if let Some(acct) = self.accounts.get_mut(local as usize) {
@@ -2071,6 +2123,8 @@ impl GroupState {
                             prev: p.next_due,
                         });
                         p.next_due = target;
+                        // ⑤a：改排即 dirty 项——push 新值（延迟删除）。
+                        self.due_heap.push(std::cmp::Reverse((target, local)));
                         // P2-3e：ForceDue 改排=演进位（稀疏上行须携带）。
                         force_due_evolved.push(local);
                     }
@@ -3218,6 +3272,9 @@ impl GroupState {
 
     /// Sol 整改 1：簿变更前的可逆快照（本 tick 首次变更保存；后续复用）。
     fn save_plan_book_undo(&mut self) {
+        // ⑤b：真变置 dirty（门外——同拍多次写幂等无害；全部业务写点
+        // 的统一前奏=置位完备性由写点纪律保证，见字段注释）。
+        self.plan_book_dirty = true;
         if !self.plan_undo_saved {
             self.push_undo(GroupUndo::PlanBook {
                 prev: Box::new(self.plan_book.clone()),
@@ -3681,7 +3738,53 @@ impl GroupState {
                 /// 决策延后到借用释放（组态写回与决策档案借用互斥）。
                 let mut retail_due: Vec<LocalIdx> = Vec::new();
                 {
-                    for local in 0..profiles.len() as LocalIdx {
+                    // ⑤a 收袋刀：due 候选源——heap 延迟删除筛选（默认）。
+                    // 原全名册线性扫描 O(名册)/拍（B fixture 20000 位/组，
+                    // perf 实锤 run_round 符号内 ~55-60% 为扫描面：stride
+                    // 0x240 决策档流读+belief_states/chain_params/
+                    // retail_style 三查询对未 due 位全部空转）。延迟删除
+                    // 模式：next_due 变化点 push 新值（evaluate 重排/
+                    // ForceDue/undo 恢复/构造），pop 时核验
+                    // profiles[local].next_due==弹出值（陈旧项丢弃）。
+                    // 等价合同（pop_due 序不变）：筛出集=={local :
+                    // next_due≤tick}（不变式：∀local 当前值项在堆或已被
+                    // 本轮 pop——每写点必 push；pop 仅消费 ≤tick 项）；
+                    // sort by local=原全扫描处理序（RNG 流/pendings 序
+                    // 逐位不变）；dedup=「每账户恰一次」（同值重复 push
+                    // 容忍）。cfg(test) 全扫描对照路径承载双跑等价测试。
+                    #[cfg(test)]
+                    let full_scan = DUE_FILTER_FULL_SCAN.load(Ordering::Relaxed);
+                    #[cfg(not(test))]
+                    let full_scan = false;
+                    let due_candidates: Vec<LocalIdx> = if full_scan {
+                        // ⑤a 红证锚（cfg(test)）：对照路径触达=名册长/拍。
+                        #[cfg(test)]
+                        DUE_FILTER_TOUCHED.fetch_add(profiles.len() as u64, Ordering::Relaxed);
+                        (0..profiles.len() as LocalIdx).collect()
+                    } else {
+                        let mut due_locals: Vec<LocalIdx> = Vec::new();
+                        while let Some(&std::cmp::Reverse((due_tick, local))) =
+                            self.due_heap.peek()
+                        {
+                            if due_tick > tick {
+                                break;
+                            }
+                            self.due_heap.pop();
+                            #[cfg(test)]
+                            DUE_FILTER_TOUCHED.fetch_add(1, Ordering::Relaxed);
+                            // 延迟删除核验：弹出值≠当前 next_due=陈旧项
+                            //（已被 evaluate/ForceDue/undo 改排），丢弃。
+                            if profiles[local as usize].next_due == due_tick {
+                                due_locals.push(local);
+                            }
+                        }
+                        // 处理序=local 升序（与原全扫描序一致）；dedup
+                        // 容忍同值重复 push（undo 恢复 push 回原值等形态）。
+                        due_locals.sort_unstable();
+                        due_locals.dedup();
+                        due_locals
+                    };
+                    for local in due_candidates {
                         let belief_seeded = self
                             .belief_states
                             .get(local as usize)
@@ -3718,6 +3821,12 @@ impl GroupState {
                                 );
                             due_npcs += 1;
                             pending_next_due.push((local, prev_due));
+                            // ⑤a：重排即 dirty 项——push 新值（延迟删除：
+                            // 旧堆项留给 pop 时核验丢弃）。
+                            self.due_heap.push(std::cmp::Reverse((
+                                profiles[local as usize].next_due,
+                                local,
+                            )));
                             // P2-3e：evaluate 消费过 RNG/重排 next_due——
                             /// 稀疏上行演进位标记（observe=false 也演进）。
                             self.attention_evolved.push(local);
@@ -3746,6 +3855,11 @@ impl GroupState {
                         );
                         due_npcs += 1;
                         pending_next_due.push((local, prev_due));
+                        // ⑤a：重排即 dirty 项——push 新值（同上链位分支）。
+                        self.due_heap.push(std::cmp::Reverse((
+                            profiles[local as usize].next_due,
+                            local,
+                        )));
                         // P2-3e：同上——稀疏上行演进位标记。
                         self.attention_evolved.push(local);
                         if observes {
@@ -5310,6 +5424,8 @@ pub fn group_main(
                                     prev,
                                 });
                                 p.next_due = tick;
+                                // ⑤a：推远也是变化——push 新值。
+                                state.due_heap.push(std::cmp::Reverse((tick, local)));
                             }
                         }
                     }
@@ -5346,7 +5462,21 @@ pub fn group_main(
             GroupIn::EchoPlans => {
                 // D3a-2c 件5：组内计划簿上行（驱动器交付点回写 session
                 // plans_debug 投影源——D4 模式）。
-                let plans = state.plan_book.clone();
+                // ⑤b 收袋刀：生产通道 dirty 门控——组簿未变时回空簿
+                //（省每拍全量 PlanBook 克隆往返）；驱动器端「空簿不覆盖」
+                //（group_has_plans 判定）使 session 镜像保持现值，与
+                // 未变组簿仍一致。等价面（final-ledger §七 已论证）：
+                // - 变化拍：dirty 在 ⇒ 全量上行 ⇒ 镜像安装新值（同旧行为）；
+                // - 未变拍：回空 ⇒ 不装 ⇒ 镜像保持（==未变组簿）；
+                // - 清空拍（变化）：回空簿 ⇒ 不装 ⇒ 镜像留旧值——旧行为
+                //   同（全量上行空簿同样不装），语义不变；
+                // - Abort 回滚：undo 恢复置 dirty ⇒ 下拍全量上行恢复值。
+                let plans = if state.plan_book_dirty {
+                    state.plan_book_dirty = false;
+                    state.plan_book.clone()
+                } else {
+                    crate::plans::PlanBook::default()
+                };
                 if up_tx
                     .send(UpMsg::GroupPlans {
                         group: state.group,
@@ -5356,6 +5486,24 @@ pub fn group_main(
                 {
                     result = Err(RuntimeError::SendFailed {
                         detail: "GroupPlans 上行失败".to_owned(),
+                    });
+                    break;
+                }
+            }
+            GroupIn::EchoPlansFull => {
+                // ⑤b：计划簿读面（幂等全量）——不受生产通道 dirty 门控
+                // 影响；测试/诊断直读组簿现值（同 collect_group_attention
+                // 全量面先例）。
+                let plans = state.plan_book.clone();
+                if up_tx
+                    .send(UpMsg::GroupPlans {
+                        group: state.group,
+                        plans,
+                    })
+                    .is_err()
+                {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "GroupPlans(全量读面) 上行失败".to_owned(),
                     });
                     break;
                 }

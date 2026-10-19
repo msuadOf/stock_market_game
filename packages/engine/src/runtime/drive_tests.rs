@@ -3991,3 +3991,228 @@ fn sol_r22_restored_session_business_hash_reads_actual_ledger() {
 
 
 
+
+// ⑤b 收袋刀红证（批 1 先行红）：EchoPlans 生产通道的 dirty 门控合同——
+// 组簿未变拍回空簿（性能合同：省每拍全量 PlanBook 克隆往返）。
+// 等价合同（绿基线，d3a2c/日结/注入族既有测试承载）：变化拍全量上行、
+// 镜像安装；未变拍回空、驱动器「空簿不覆盖」（group_has_plans 判定）
+// 使 session 镜像保持现值==未变组簿；清空拍镜像留旧值（旧行为同——
+// 全量上行空簿同样不装，语义不变）。
+// 红证锚：无门控现状下「未变拍回空」断言必红（恒全量克隆上行）。
+#[test]
+fn knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged() {
+    let mut session = GameSession::new(setup_fixture(), 57).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进（组线程就位）");
+    // 直改注入计划一（mutate 面经 save_plan_book_undo ⇒ ⑤b 后置 dirty；
+    // 注入后不步进——组簿无业务写，后续拍=未变拍）。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        book.create(plan_open_for_knife5b(crate::StockId(0)))
+            .expect("注入计划一");
+    }));
+    // (1) 变化拍：生产通道上行全量（含注入计划）。
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    assert!(
+        echoed.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+        "变化拍生产通道必须上行全量（dirty 在位）：{echoed:?}"
+    );
+    // (2) 未变拍：生产通道回空（红证锚——现状恒全量，此断言红）。
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    assert!(
+        echoed.iter().all(|(_, p)| p.plan_ids().next().is_none()),
+        "未变拍生产通道必须回空（dirty 门控）"
+    );
+    // (3) 读面不受门控影响：collect_plans 幂等全量（任意拍拿组簿现值）。
+    for _ in 0..2 {
+        let full = driver.collect_plans().expect("读面收集");
+        assert!(
+            full.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+            "读面 collect_plans 幂等全量（不受 dirty 门控影响）"
+        );
+    }
+    // (4) 更新不漏：再次直改（计划二）后生产通道恢复全量。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        book.create(plan_open_for_knife5b(crate::StockId(1)))
+            .expect("注入计划二");
+    }));
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    assert!(
+        echoed.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+        "再变化拍生产通道恢复全量上行（dirty 重置）"
+    );
+}
+
+/// knife5b 注入用 PlanOpen 构造（atomic_event_tests::open 同式——
+/// 纯簿操作不触业务链；测试不步进故无子单副作用）。
+fn plan_open_for_knife5b(code: crate::StockId) -> crate::plans::PlanOpen {
+    crate::plans::PlanOpen {
+        account: crate::AccountId(0),
+        code,
+        direction: crate::Side::Buy,
+        target: crate::plans::PlanTarget::ShareCount(100),
+        opinion: crate::plans::PlanOpinion {
+            signal_score_bp: 3_000,
+            source: crate::plans::OpinionSource::Blended,
+        },
+        confidence_bp: 8_000,
+        urgency: crate::plans::Urgency::Normal,
+        horizon_trading_days: 5,
+        created_trading_day: 0,
+    }
+}
+
+// ⑤a 收袋刀红证（批 1 先行红）：due 筛选触达量合同——延迟删除 heap
+// 筛选只触 due 位（O(due 数+陈旧项 pop)），不重扫全名册。现状=全名册
+// 线性扫描 O(名册)/拍（B fixture 20000 位/组每拍全扫——perf 实锤
+// run_round 符号内 ~55-60% 为扫描面：stride 0x240 决策档流读+
+// belief_states/chain_params/retail_style 三查询），本断言红。
+// 300 retail 位×20 拍=6000 全扫描触达 vs 阈值 3000（名册×拍数/2）。
+// 并行噪声防御：小 fixture 测试贡献微小（<<阈值裕量）。
+#[test]
+fn knife5a_due_filter_touches_due_count_not_roster() {
+    use std::sync::atomic::Ordering;
+    let before = super::group::DUE_FILTER_TOUCHED.load(Ordering::Relaxed);
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 300;
+    setup.npcs.inst_count = 0;
+    let mut session = GameSession::new(setup, 91).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let ticks = 20u64;
+    for _ in 0..ticks {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+    }
+    let touched = super::group::DUE_FILTER_TOUCHED.load(Ordering::Relaxed) - before;
+    let roster: u64 = 300;
+    assert!(
+        touched < roster * ticks / 2,
+        "due 筛选触达量 {touched} 须显著小于名册×拍数的一半 {}（heap 延迟删除只触 due 位）",
+        roster * ticks / 2
+    );
+}
+
+// ⑤a 等价合同（双跑终态一致）：heap 延迟删除筛选 vs 旧全名册线性扫描
+// ——同种子同步数终态 business_state_hash 逐位相等（DUE_FILTER_FULL_SCAN
+// cfg(test) 旋钮承载对照路径）。批 1（同路径）=绿基线；批 2 落 heap 后
+// 仍须绿——due 集/处理序（local 升序）/RNG 流不变的等价实证。
+#[test]
+fn knife5a_due_filter_equivalent_to_full_scan() {
+    use std::sync::atomic::Ordering;
+    let run = |full_scan: bool| -> crate::session::StateHash {
+        let mut setup = setup_fixture();
+        setup.npcs.retail_count = 120;
+        // inst 位覆盖普通/链两种分支（DeepValue/Defensive 低频——
+        // due 稀疏形态与零售位混合；机构风格 ordinal%5 轮转五种；
+        // order_size 对齐 lot 整数倍——fault1015 校验）。
+        setup.npcs.inst_count = 10;
+        setup.strategy_params.inst.order_size = 100;
+        let mut session = GameSession::new(setup, 93).expect("会话构造");
+        let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+        driver.adopt_session_seq(&session);
+        super::group::DUE_FILTER_FULL_SCAN.store(full_scan, Ordering::SeqCst);
+        for tick_i in 0..15 {
+            // 中段注入 ForceDue（提前改排——旧堆项未到期仍留堆=陈旧项
+            // 形态；heap 路径靠 pop 核验丢弃，全扫描路径天然无感）。
+            if tick_i == 5 {
+                let forced: Vec<crate::AccountId> =
+                    [0usize, 5, 17, 40].iter().map(|&i| driver.id_map[i]).collect();
+                driver.force_due_for_test_at(&forced, tick_i + 3);
+            }
+            // DeferDueForTest 推远（旧堆项≤tick 到期 pop 时当前值已远
+            //——核验丢弃的判别形态；突变核验破=重复处理不该 due 位红）。
+            if tick_i == 6 {
+                let deferred: Vec<crate::AccountId> =
+                    [1usize, 9, 33].iter().map(|&i| driver.id_map[i]).collect();
+                driver.defer_due_for_test_at(&deferred, tick_i + 25);
+            }
+            driver
+                .step_frame_equivalent(&mut session)
+                .expect("步进");
+            driver.install_market_views(&mut session).expect("行情安装");
+        }
+        // 世界线程退出前复位旋钮（防泄漏污染其他测试）。
+        super::group::DUE_FILTER_FULL_SCAN.store(false, Ordering::SeqCst);
+        drop(driver);
+        session.business_state_hash().expect("终态 hash")
+    };
+    let heap_path = run(false);
+    let scan_path = run(true);
+    assert_eq!(
+        heap_path, scan_path,
+        "heap 延迟删除筛选与全名册扫描终态必须逐位一致（等价合同）"
+    );
+}
+
+// 复核建议②（收袋批独立复核）：⑤b 清空拍镜像语义固化。实测勘正：
+// PlanBook 是 append-only（terminal 记录仍在 plan_ids——Sol 整改 4
+// "含 terminal 即安装"），故"计划集清空"实为全员 terminal 化=**变化
+// 拍**（apply 置 dirty）⇒ 生产通道全量上行（含 terminal）⇒ 驱动器
+// 安装 ⇒ 镜像同步为 terminal 簿。真正的「空簿不覆盖」只发生在
+// plan_ids 真空（未变拍回空——knife5b 主测试 (2)(3) 段承载）。本
+// 测试固化两义边界，防后续演化产生"清空拍镜像应留旧 Active 值"或
+// "terminal 拍应不装"两类歧义回归（旧行为=变化拍必装）。
+#[test]
+fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
+    let mut session = GameSession::new(setup_fixture(), 59).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进（组线程就位）");
+    // 注入计划 → 生产通道全量 → 手动安装（生产链 set_runtime_plans 等价面）。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        book.create(plan_open_for_knife5b(crate::StockId(0)))
+            .expect("注入计划");
+    }));
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    let (_, plans) = echoed
+        .into_iter()
+        .find(|(_, p)| p.plan_ids().next().is_some())
+        .expect("变化拍全量上行");
+    session.set_runtime_plans(plans);
+    let debug_before = session.plans_debug();
+    assert!(!debug_before.is_empty(), "前置：镜像已安装注入计划");
+    // 计划集清空=全员 terminal 化（append-only：terminal 记录仍在
+    // plan_ids）——**变化拍**（apply 置 dirty）。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        let ids: Vec<_> = book.plan_ids().collect();
+        for id in ids {
+            let _ = book.apply(
+                id,
+                crate::plans::PlanEvent::Terminated {
+                    reason: crate::plans::TerminationReason::Cancelled,
+                    trading_day: 0,
+                },
+            );
+        }
+    }));
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    // 变化拍生产通道全量上行（含 terminal 记录——plan_ids 非空）。
+    assert!(
+        echoed.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+        "terminal 化是变化拍：dirty 在位，生产通道必须全量上行（含 terminal）"
+    );
+    // 驱动器安装语义（旧行为）：group_has_plans=true（含 terminal）⇒ 装。
+    let (_, plans) = echoed
+        .into_iter()
+        .find(|(_, p)| p.plan_ids().next().is_some())
+        .expect("上方已判非空");
+    session.set_runtime_plans(plans);
+    let debug_after = session.plans_debug();
+    // 镜像同步为 terminal 簿（非保留旧 Active 值——旧行为=变化拍必装）。
+    assert_eq!(
+        debug_after.len(),
+        debug_before.len(),
+        "镜像条目数不变（记录 append-only），但状态面已同步 terminal 簿"
+    );
+    assert!(
+        debug_after.iter().all(|(.., status)| status != "Active"),
+        "terminal 化后镜像不得保留 Active 状态（变化拍必装的旧语义固化）"
+    );
+}

@@ -1,0 +1,39 @@
+=== ⑤收袋批独立复核（fork，2026-10-19）===
+
+范围：perf/view-cleanup 分支 dfd55bc8..35b48fa9（收袋批三代码提交+
+一 docs 提交；后续 4f5cd1a7 为本复核建议②的处置提交）。
+
+【阻断】无。
+
+【建议】
+1. ⑤b 生产安装链直接断言较弱（d3a2c 既有测试走手动 collect+
+   set_runtime_plans，不经生产 plans_echo 段安装）——变化拍"组簿
+   演进→下拍 plans_debug 自动更新"目前靠 2572 例全量回归族兜底，
+   建议后续补生产链级断言。处置：登记待后续（等价测试+全量回归
+   双兜底）。
+2. ⑤b 清空拍语义无固化测试。处置：4f5cd1a7 落地（实测勘正——
+   PlanBook append-only，"清空"=全员 terminal 化=变化拍必装；真正
+   空簿不覆盖只在未变拍；两义边界固化）。
+3. main 基线 save_contract 5 例既有失败尽快归因（非本批引入已登记
+   ——后续批次"零新增失败"门禁口径的解释成本会持续叠加）。
+
+【确认】
+1. ⑤b 写点完备性（复核者独立 grep）：plan_book 全部可变调用
+   （record_child_submitted×2/record_child_fill/record_child_released×4
+   /apply×8/create×3/record_review×2/record_resource_review×2/
+   install_execution）逐一有同函数 save_plan_book_undo 前奏或属
+   GroupUndo::PlanBook 恢复点；cfg(test) 直改单测不经消息循环不构成
+   漏置面。
+2. ⑤a 不变式：next_due 写点全集（evaluate/undo/ForceDue/Defer/
+   构造 seed）逐一有 due_heap.push；decision 无构造后重装（堆起点
+   稳固）；sort by local=原扫描处理序；循环内 due 判定纵深兜底
+   真实存在（突变①无害登记属实）；Abort 重跑"决策次数不少一次"
+   保持；堆无界风险排除（每 round-0 清全部 ≤tick 项）。
+3. 大 A 语义：两刀均不触交易制度面；清空拍镜像行为与改动前逐位
+   一致（复核者核对 group_has_plas 判定逻辑同旧）；读面
+   EchoPlansFull 不动 dirty（生产状态不被测试读面污染）。
+4. 最小范围：diff 仅含两刀实现+测试+证据+example 修复，无夹带。
+5. publication_bench 补值与 StockPublic 定义逐一对上，合成占位无害。
+6. 测试判别力与突变红实证自洽。
+
+复核判定：阻断 0——收袋批可宣称完成（静置窗正式数字另计）。
