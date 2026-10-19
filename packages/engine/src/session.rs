@@ -2898,6 +2898,11 @@ impl GameSession {
         /// 形态（惰性构造驱动器与 step 同路由）。
         if crate::runtime::step_runtime_enabled() {
             self.freeze_closed_retained_day_if_needed(report.settled_date)?;
+        } else {
+            // B2 串行等价（W3 缺陷 1 修复）：wasm 串行无驱动器——休市/
+            // 未冻结自然日按每股日历补保留条目（交易日已由 finalize 的
+            // ends_day 段冻结，末条==settled 跳过）。
+            self.freeze_serial_closed_retained_day_if_needed(report.settled_date)?;
         }
         Ok(report)
     }
@@ -5122,6 +5127,9 @@ mod personal_receipt_tests {
 }
 
 #[cfg(test)]
+mod serial_b2_surface_tests;
+
+#[cfg(test)]
 mod retained_snapshot_tests {
     use super::*;
     use crate::runtime::publication::RetainedMinuteSession;
@@ -5252,6 +5260,76 @@ mod retained_snapshot_tests {
         let last = entry.bars.last().unwrap();
         assert_eq!(candle.open, first.open);
         assert_eq!(candle.close, last.close);
+    }
+
+    /// W3 接线实证测试的引擎直达等价（web-wasm protocol_tests 的
+    /// w3_query_surfaces_return_real_traded_data 断言集——ProtocolSession
+    /// 查询委托属 W3 接线批，此处经 GameSession 原生方法复跑同一实证：
+    /// 真实跨价成交局四查询面（当日分钟K/交割单/个人历史/保留历史）逐
+    /// 面出数）。
+    #[test]
+    fn w3_query_surfaces_equivalent_real_traded_data() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        let code = execute_buy(&mut session);
+
+        // 面板一：当日分钟K。
+        let current = session
+            .query_current_minute_history_for(
+                AccountId(0),
+                &crate::session::CurrentMinuteHistoryRequest { stock: code.clone() },
+            )
+            .unwrap();
+        assert!(current.trading);
+        assert!(!current.bars.is_empty(), "当日分钟桶含真实成交");
+
+        // 面板二/三：交割单与个人历史同源出数。
+        let confirmations = session
+            .personal_trade_confirmations(AccountId(0))
+            .expect("玩家成交必有买腿 receipt");
+        assert!(!confirmations.is_empty());
+        let history = session
+            .query_personal_trade_history(
+                AccountId(0),
+                crate::session::PersonalTradeHistoryRequest {
+                    date_from: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+                    date_to: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+                    stock: None,
+                    side: None,
+                    before_receipt: None,
+                    as_of_receipt: None,
+                    page_size: 100,
+                },
+            )
+            .unwrap();
+        assert!(!history.confirmations.is_empty(), "分页查询同源出数");
+
+        // 日结后面板四：保留历史（Traded + bars 非空）。
+        for _ in 0..2 {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+        let page = session
+            .query_market_history_for(
+                AccountId(0),
+                &crate::session::MarketHistoryRequest {
+                    stock: code.clone(),
+                    date_from: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+                    date_to: crate::CivilDate::from_iso("2030-01-02").unwrap(),
+                    after: None,
+                    page_size: 7,
+                },
+            )
+            .unwrap();
+        assert_eq!(page.entries.len(), 1, "单日范围单条目");
+        assert_eq!(
+            page.entries[0].availability,
+            crate::session::MarketHistoryAvailability::Traded,
+            "已结算开市日=Traded"
+        );
+        assert!(!page.entries[0].bars.is_empty(), "保留链冻结真实分钟 bars");
     }
 
     #[test]
@@ -6426,6 +6504,15 @@ impl CommittableSessionState {
         );
         self.next_receipt_base = next_receipt_base;
         self.next_order_id = next_order_id;
+        // W3 缺陷 1 修复配套：B2 派生域交接——串行安装（分钟桶聚合/
+        // receipts 入账/retained 冻结）写在 candidate（tick shadow），
+        // commit 边界此前只解构不赋回（runtime step 原地安装不经此边界
+        // 故未显红——Sol 五轮 desk_book_mirror 同款形态）。直接赋值
+        // （先例同上：不扩 FieldId/COMMIT_FIELD_EXPECTED 清单；桶
+        // market_minute_bars 已有 defer_swap）。undo 槽位仍有意丢弃。
+        self.personal_trade_confirmations = personal_trade_confirmations;
+        self.receipt_watermark = receipt_watermark;
+        self.retained_market_days = retained_market_days;
         self.tick = tick;
         self.day = day;
         self.seq = seq;

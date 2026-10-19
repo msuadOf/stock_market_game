@@ -67,6 +67,7 @@ mod retail_projection;
 mod session_execution_transaction;
 mod session_fact_producers;
 mod settlement;
+mod serial_b2_surfaces;
 mod stock_execution_transaction;
 mod stock_stream;
 pub(in crate::session) use stock_stream::TickWorkReady;

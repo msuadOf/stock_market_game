@@ -17,6 +17,12 @@ fn fixture(auction: bool) -> GameSession {
     setup.auction_ticks = if auction { 3 } else { 0 };
     setup.ticks_per_day = 8;
     setup.closing_auction_ticks = 1;
+    // B2 串行数据面适配：开局改开市日（原默认 2030-01-01 元旦休市——
+    // 旧管线模拟与日历解耦可休市撮合，但 B2 retained 冻结/查询面以
+    // 日历为权威（休市=Closed/空桶），串行日结冻结对"休市日出桶"显式
+    // 失败。本批测试断言并发不变式（分片记录/控制隔离），不涉日历
+    // 语义——对齐 B2 口径换开市开局，断言集不变。
+    setup.start_date = crate::CivilDate::from_ymd(2030, 1, 2).unwrap();
     let mut game = GameSession::new(setup, 42).unwrap();
     if auction {
         game.fixture_sync_market_modes_for_test();
