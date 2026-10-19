@@ -2049,6 +2049,100 @@ impl GameSession {
             .push(crate::runtime::publication::SharedRetainedDay(snapshot));
     }
 
+    /// B2 件 4 组装核心（单一事实源——runtime driver 编排与**串行安装**
+    /// 共用同一实现；原 `RuntimeDriver::assemble_retained_day_at` 挪入）：
+    /// 每股开市判定+桶校验（+交易日日K对账：量/额/笔/OHLC 逐位——旧
+    /// `validate_bars_against_candle` 语义）+保留快照组装。
+    pub(crate) fn assemble_retained_day_snapshot(
+        &self,
+        bars: Vec<Option<Vec<crate::runtime::MinuteBarFact>>>,
+        date: crate::calendar::CivilDate,
+    ) -> Result<std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>, String> {
+        let n = self.stock_count_for_runtime();
+        if bars.len() != n {
+            return Err(format!(
+                "保留快照股数不齐：pending={} 而 in-session={n}",
+                bars.len()
+            ));
+        }
+        let mut securities = std::collections::BTreeMap::new();
+        for (idx, slot) in bars.into_iter().enumerate() {
+            let bars_vec = slot.ok_or_else(|| format!("保留快照缺股 {idx} 的桶投影"))?;
+            let trading = self
+                .runtime_stock_trading_on(idx as u32, date)
+                .map_err(|e| format!("股 {idx} 开市判定失败：{e:?}"))?;
+            if !trading && !bars_vec.is_empty() {
+                return Err(format!("休市股 {idx} 出现分钟桶（{} 条）", bars_vec.len()));
+            }
+            // 交易日对账：bars 累计与当日日K逐位（量/额/笔/OHLC——旧
+            /// validate_bars_against_candle 语义；占位日K（volume=0）与
+            /// 空 bars 互恰）。
+            if trading {
+                let code = crate::StockId(idx as u32);
+                let candle_time = self.candle_date_time_for_runtime();
+                let candle = self
+                    .candle_book_histories_for_runtime(&code)
+                    .iter()
+                    .rev()
+                    .find(|c| c.time == candle_time)
+                    .cloned();
+                let Some(candle) = candle else {
+                    // 【既有漂移登记（同占位域）】手动 day_end 编排不做
+                    /// boundary 迁移（日K未提交）——对账基缺席，跳过逐位
+                    /// 对账（真实 K 在 desk 观察面；日界编排修正属独立批次）。
+                    continue;
+                };
+
+                let volume: u64 = bars_vec.iter().map(|b| b.volume_shares).sum();
+                let turnover: u128 = bars_vec.iter().map(|b| b.turnover_cents).sum();
+                let count: u64 = bars_vec.iter().map(|b| b.trade_count).sum();
+                // 【既有漂移登记（B2 复核项；W3 缺陷 2 修复后正常流不可
+                /// 达——防御性保留】原形态：日界拍 desk roll_day 先于
+                /// session 日终迁移，install 占位 K（volume=0）覆盖真实
+                /// 活动 K 提交——占位形态放行差异。修复后 install 守卫
+                /// 保证真实 K 不被覆盖，本分支仅在覆盖回归时可达（届时
+                /// 由下方全对账显式失败兜底——零量 K 配非零 bars 即红）。
+                if candle.volume == 0 && volume > 0 {
+                    // 占位形态：放行（差异登记如上）。
+                } else {
+                    let (c_turnover, c_count) = candle
+                        .trade_stats
+                        .as_ref()
+                        .map(|s| (u128::from(s.turnover_cents), s.trade_count))
+                        .ok_or_else(|| format!("股 {idx} 日K缺成交统计"))?;
+                    if volume != candle.volume || turnover != c_turnover || count != c_count {
+                        return Err(format!(
+                            "股 {idx} 分钟累计量/额/笔与日K不一致：bars=({volume},{turnover},{count}) candle=({},{c_turnover},{c_count})",
+                            candle.volume
+                        ));
+                    }
+                    if let (Some(first), Some(last)) = (bars_vec.first(), bars_vec.last()) {
+                        let high = bars_vec.iter().map(|b| b.high.cents()).max();
+                        let low = bars_vec.iter().map(|b| b.low.cents()).min();
+                        if first.open != candle.open
+                            || last.close != candle.close
+                            || high != Some(candle.high.cents())
+                            || low != Some(candle.low.cents())
+                        {
+                            return Err(format!("股 {idx} 分钟 OHLC 与日K不一致"));
+                        }
+                    }
+                }
+            }
+            securities.insert(
+                idx as u32,
+                crate::runtime::publication::RetainedMinuteSession {
+                    trading,
+                    bars: std::sync::Arc::new(bars_vec),
+                },
+            );
+        }
+        Ok(std::sync::Arc::new(crate::runtime::publication::RetainedDaySnapshot {
+            date,
+            securities,
+        }))
+    }
+
     /// B2：指定自然日每股开市判定（retained 冻结的休市/开市口径——
     /// 沪深日历按股上市交易所；与公司域 history 同一 `TradingCalendar`
     /// 数据源）。

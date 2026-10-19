@@ -94,6 +94,11 @@ pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
 pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, DeskTradeFact, RoutedPrice};
 pub use protocol::{MinuteBarFact, MinuteBarPhase, RestingDelta, RestingDeltaEntry, RestingFact, StockPublic};
+// B2 单一事实源纯函数/常量（desk 与串行安装共用——serial_b2_surfaces 经此路径引用）。
+pub use protocol::{
+    minute_bar_apply, continuous_minute_of_day, CLOSING_AUCTION_BAR_MINUTE,
+    OPEN_AUCTION_BAR_MINUTE,
+};
 
 /// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
 /// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的

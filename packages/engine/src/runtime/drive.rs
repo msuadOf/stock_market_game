@@ -1347,7 +1347,7 @@ impl RuntimeDriver {
     ) -> Result<(), String> {
         let empty: Vec<Option<Vec<super::protocol::MinuteBarFact>>> =
             vec![Some(Vec::new()); session.stock_count_for_runtime()];
-        let snapshot = self.assemble_retained_day_at(session, empty, date)?;
+        let snapshot = session.assemble_retained_day_snapshot(empty, date)?;
         self.world
             .freeze_retained_day(std::sync::Arc::clone(&snapshot));
         session.set_runtime_retained_day(snapshot);
@@ -1355,7 +1355,9 @@ impl RuntimeDriver {
     }
 
     /// 组装一日保留快照（交易日：bars=Drain 捎带+日K对账；`date` 取会话
-    /// 当前自然日）。
+    /// 当前自然日）。组装核心已挪 session 侧
+    /// （`GameSession::assemble_retained_day_snapshot`——串行安装同源
+    /// 单一事实源）；driver 只保留编排（world Drain+发布+镜像 push）。
     fn assemble_retained_day(
         &mut self,
         session: &mut GameSession,
@@ -1363,102 +1365,7 @@ impl RuntimeDriver {
         _trading_day: bool,
     ) -> Result<std::sync::Arc<super::publication::RetainedDaySnapshot>, String> {
         let date = session.civil_date();
-        self.assemble_retained_day_at(session, bars, date)
-    }
-
-    /// 组装核心：每股开市判定+桶校验（+交易日日K对账）。
-    fn assemble_retained_day_at(
-        &self,
-        session: &GameSession,
-        bars: Vec<Option<Vec<super::protocol::MinuteBarFact>>>,
-        date: crate::calendar::CivilDate,
-    ) -> Result<std::sync::Arc<super::publication::RetainedDaySnapshot>, String> {
-        let n = session.stock_count_for_runtime();
-        if bars.len() != n {
-            return Err(format!(
-                "保留快照股数不齐：pending={} 而 in-session={n}",
-                bars.len()
-            ));
-        }
-        let mut securities = std::collections::BTreeMap::new();
-        for (idx, slot) in bars.into_iter().enumerate() {
-            let bars_vec =
-                slot.ok_or_else(|| format!("保留快照缺股 {idx} 的桶投影"))?;
-            let trading = session
-                .runtime_stock_trading_on(idx as u32, date)
-                .map_err(|e| format!("股 {idx} 开市判定失败：{e:?}"))?;
-            if !trading && !bars_vec.is_empty() {
-                return Err(format!("休市股 {idx} 出现分钟桶（{} 条）", bars_vec.len()));
-            }
-            // 交易日对账：bars 累计与当日日K逐位（量/额/笔/OHLC——旧
-            /// validate_bars_against_candle 语义；占位日K（volume=0）与
-            /// 空 bars 互恰）。
-            if trading {
-                let code = crate::StockId(idx as u32);
-                let candle_time = session.candle_date_time_for_runtime();
-                let candle = session
-                    .candle_book_histories_for_runtime(&code)
-                    .iter()
-                    .rev()
-                    .find(|c| c.time == candle_time)
-                    .cloned();
-                let Some(candle) = candle else {
-                    // 【既有漂移登记（同占位域）】手动 day_end 编排不做
-                    /// boundary 迁移（日K未提交）——对账基缺席，跳过逐位
-                    /// 对账（真实 K 在 desk 观察面；日界编排修正属独立批次）。
-                    let _ = candle_time;
-                    continue;
-                };
-
-                let volume: u64 = bars_vec.iter().map(|b| b.volume_shares).sum();
-                let turnover: u128 = bars_vec.iter().map(|b| b.turnover_cents).sum();
-                let count: u64 = bars_vec.iter().map(|b| b.trade_count).sum();
-                // 【既有漂移登记（B2 复核项）】日界拍 desk roll_day 先于
-                /// session 日终迁移：发布版本 active 已 roll 为 None ⇒
-                /// install 合成占位 K（volume=0）提交——真实当日 K 只在
-                /// desk.candles 观察面（main 探针 2026-10-19 证实 vol=0
-                /// 既有形态）。占位形态跳过逐位对账（bars 与 candle 任一
-                /// 为零量即无对账基），非静默——登记于 agents/main-line-
-                /// reintegration/ 复核记录，日界编排修正属独立批次。
-                if candle.volume == 0 && volume > 0 {
-                    // 占位形态：放行（差异登记如上）。
-                } else {
-                let (c_turnover, c_count) = candle
-                    .trade_stats
-                    .as_ref()
-                    .map(|s| (u128::from(s.turnover_cents), s.trade_count))
-                    .ok_or_else(|| format!("股 {idx} 日K缺成交统计"))?;
-                if volume != candle.volume || turnover != c_turnover || count != c_count {
-                    return Err(format!(
-                        "股 {idx} 分钟累计量/额/笔与日K不一致：bars=({volume},{turnover},{count}) candle=({},{c_turnover},{c_count})",
-                        candle.volume
-                    ));
-                }
-                if let (Some(first), Some(last)) = (bars_vec.first(), bars_vec.last()) {
-                    let high = bars_vec.iter().map(|b| b.high.cents()).max();
-                    let low = bars_vec.iter().map(|b| b.low.cents()).min();
-                    if first.open != candle.open
-                        || last.close != candle.close
-                        || high != Some(candle.high.cents())
-                        || low != Some(candle.low.cents())
-                    {
-                        return Err(format!("股 {idx} 分钟 OHLC 与日K不一致"));
-                    }
-                }
-                }
-            }
-            securities.insert(
-                idx as u32,
-                super::publication::RetainedMinuteSession {
-                    trading,
-                    bars: std::sync::Arc::new(bars_vec),
-                },
-            );
-        }
-        Ok(std::sync::Arc::new(super::publication::RetainedDaySnapshot {
-            date,
-            securities,
-        }))
+        session.assemble_retained_day_snapshot(bars, date)
     }
 
     /// 每股 desk 序号游标（最近一次在途快照收集时的权威值）。
@@ -2581,23 +2488,45 @@ impl RuntimeDriver {
             /// 占位语义——日终 commit 归档占位 K，档校验不因无交易日缺条
             /// fault2064）。desk active 仅在成交时建立——连续段缺席时以
             /// 收束点 last_price 合成（发布版本同源值）。
-            if view.daily_active.is_none() && !active_must_be_empty && !post_day_end {
-                let last = view.last_price.max(1);
-                let placeholder = crate::money::Money::from_cents(last);
-                session.set_active_candle_for_runtime(
-                    &code,
-                    crate::session::DailyCandle {
-                        time: candle_time,
-                        open: placeholder,
-                        high: placeholder,
-                        low: placeholder,
-                        close: placeholder,
-                        volume: 0,
-                        trade_stats: Some(Default::default()),
-                    },
-                );
+            /// W3 缺陷 2 修复：占位 K 只补**缺失**场景，不得覆盖已有
+            /// 活动 K 的量/额/笔数。占位形态两源：①发布版本 view.daily_
+            /// active 为 None；②desk 行情收尾（`finish_round` 的 candle
+            /// `get_or_insert`——复核修正归因，原注释误写 snapshot_
+            /// market）对新日零占位重建（日界拍 roll_day 归档真实 K 后
+            /// 立即发生）——view.daily_active=Some 但 v=0。两者同属占位。
+            /// session 侧已有当日活动 K（time 匹配——真实终态，日终迁移
+            /// commit_active 的唯一归档输入）时跳过安装，否则真实量/
+            /// 额/笔被零值整体覆盖归档（W3 接线实证缺陷）。
+            let view_is_placeholder = view
+                .daily_active
+                .is_none_or(|(_, _, _, _, v)| v == 0);
+            if view_is_placeholder && !active_must_be_empty && !post_day_end {
+                let existing = session.runtime_active_candle(&code);
+                let placeholder_needed = existing
+                    .as_ref()
+                    .is_none_or(|candle| candle.time != candle_time);
+                if placeholder_needed {
+                    let last = view.last_price.max(1);
+                    let placeholder = crate::money::Money::from_cents(last);
+                    session.set_active_candle_for_runtime(
+                        &code,
+                        crate::session::DailyCandle {
+                            time: candle_time,
+                            open: placeholder,
+                            high: placeholder,
+                            low: placeholder,
+                            close: placeholder,
+                            volume: 0,
+                            trade_stats: Some(Default::default()),
+                        },
+                    );
+                }
             }
-            if let Some((o, h, l, c, v)) = view.daily_active.filter(|_| !active_must_be_empty) {
+            if let Some((o, h, l, c, v)) = view
+                .daily_active
+                .filter(|(_, _, _, _, v)| *v > 0)
+                .filter(|_| !active_must_be_empty)
+            {
                 // 旋钮 1（cfg(test) 突变判别）：close 篡改 +1 分——判别
                 /// 安装数据源真为发布版本读路径（合同 1 负控）。
                 #[cfg(test)]

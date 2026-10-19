@@ -208,6 +208,137 @@ pub struct MinuteBarFact {
     pub trade_count: u64,
 }
 
+/// 开盘集合竞价清算成交归一的固定墙钟分钟（09:25）。
+pub const OPEN_AUCTION_BAR_MINUTE: u16 = 565;
+/// 收盘集合竞价清算成交归一的固定墙钟分钟（15:00）。
+pub const CLOSING_AUCTION_BAR_MINUTE: u16 = 900;
+
+/// B2 分钟归一（单一事实源——desk `trade_minute_key` 与串行安装共用）：
+/// 连续竞价 tick → 墙钟分钟。tick 覆盖分钟区间的首分钟：
+/// idx = floor(cont_tick·240/continuous)，映射 570..=690 / 780..=900
+/// （对齐旧管线 `CivilInstant.second_of_day()/60` 的归一语义）。
+///
+/// 调用方保证 tick 落在连续竞价窗（其他相位的成交属结构性错误，由
+/// 调用方判别——desk 侧 `trade_minute_key` 全相位判别，串行侧按事件
+/// 流相位判别）。
+pub fn continuous_minute_of_day(
+    ticks_per_day: u64,
+    auction_ticks: u64,
+    closing_auction_ticks: u64,
+    tick: u64,
+) -> Result<(u16, MinuteBarPhase), RuntimeError> {
+    let continuous = ticks_per_day
+        .checked_sub(auction_ticks)
+        .and_then(|t| t.checked_sub(closing_auction_ticks))
+        .unwrap_or(0);
+    if continuous == 0 {
+        return Err(RuntimeError::ProtocolInvariant {
+            detail: "连续窗为 0 的局不可能产生连续成交（分钟归一无定义）".to_owned(),
+        });
+    }
+    let day_tick = tick % ticks_per_day.max(1);
+    let cont_tick = day_tick.saturating_sub(auction_ticks);
+    if cont_tick >= continuous {
+        return Err(RuntimeError::ProtocolInvariant {
+            detail: format!(
+                "连续成交 tick 超出连续窗：tick={tick}, cont={cont_tick}, continuous={continuous}"
+            ),
+        });
+    }
+    // u128 乘防溢出（与 desk 原实现同式）。
+    let idx = u128::from(cont_tick)
+        * u128::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
+        / u128::from(continuous);
+    let wall = if idx < 120 {
+        570 + idx
+    } else if idx < 240 {
+        780 + (idx - 120)
+    } else {
+        return Err(RuntimeError::ProtocolInvariant {
+            detail: format!("游戏分钟 idx 越界：{idx}（映射域 0..240）"),
+        });
+    };
+    u16::try_from(wall)
+        .map(|minute| (minute, MinuteBarPhase::Continuous))
+        .map_err(|_| {
+            RuntimeError::ProtocolInvariant {
+                detail: format!("墙钟分钟越界：{wall}"),
+            }
+        })
+}
+
+/// B2 分钟桶聚合（单一事实源——desk `apply_trade` 与串行安装共用）：
+/// 同键合并 OHLCV（high/low 极值、close 覆盖、量/额/笔 checked 累加），
+/// 新键追加。tick 单调 ⇒ 桶键单调；新键回退=结构性 bug 显式失败。
+pub fn minute_bar_apply(
+    bars: &mut Vec<MinuteBarFact>,
+    minute_of_day: u16,
+    phase: MinuteBarPhase,
+    price: crate::money::Money,
+    qty: u32,
+) -> Result<(), RuntimeError> {
+    // 价恒非负（Money 语义）；负值/转换溢出均为事实链破坏——显式报错
+    // （复核修复：不静默钳 0 兜底）。
+    let cents = u128::try_from(price.cents()).map_err(|_| {
+        RuntimeError::ProtocolInvariant {
+            detail: format!("分钟桶成交价非法（负值或转 u128 溢出）：{}", price.cents()),
+        }
+    })?;
+    let turnover = cents * u128::from(qty);
+    let same_bucket = bars
+        .last()
+        .is_some_and(|bar| (bar.minute_of_day, bar.phase) == (minute_of_day, phase));
+    if same_bucket {
+        let bar = bars.last_mut().expect("is_some_and 已核验");
+        bar.high = bar.high.max(price);
+        bar.low = bar.low.min(price);
+        bar.close = price;
+        bar.volume_shares = bar
+            .volume_shares
+            .checked_add(u64::from(qty))
+            .ok_or_else(|| over("分钟桶成交量溢出 u64"))?;
+        bar.turnover_cents = bar
+            .turnover_cents
+            .checked_add(turnover)
+            .ok_or_else(|| over("分钟桶成交额溢出 u128"))?;
+        bar.trade_count = bar
+            .trade_count
+            .checked_add(1)
+            .ok_or_else(|| over("分钟桶笔数溢出 u64"))?;
+    } else {
+        // 新键必须严格大于末键（tick 单调 ⇒ 桶键单调；回退=结构性 bug）。
+        if bars
+            .last()
+            .is_some_and(|last| (last.minute_of_day, last.phase) >= (minute_of_day, phase))
+        {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "分钟桶键回退：last={:?}, new=({minute_of_day:?}, {phase:?})",
+                    bars.last().map(|b| (b.minute_of_day, b.phase))
+                ),
+            });
+        }
+        bars.push(MinuteBarFact {
+            minute_of_day,
+            phase,
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+            volume_shares: u64::from(qty),
+            turnover_cents: turnover,
+            trade_count: 1,
+        });
+    }
+    Ok(())
+}
+
+fn over(detail: &str) -> RuntimeError {
+    RuntimeError::ProtocolInvariant {
+        detail: detail.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod minute_bar_wire_tests {
     use super::MinuteBarFact;

@@ -258,6 +258,10 @@ fn candle_post_day_end_clear() {
 /// （批 1 桩：读路径未接，旋钮无效果 ⇒ 无偏差 ⇒ 本测试红=注入面红
 /// 先行；批 2 后语义=开旋钮产生偏差红证翻转——本测试在批 2 时改为
 /// 断言"偏差出现后 desk 对照红"的负控形态）。
+/// W3 缺陷 2 修复适配：零量 view（desk 新日 snapshot 占位）改走占位
+/// 守卫分支（last_price 合成——发布版本同源但不受本旋钮篡改面），
+/// 判别场景换成**真实成交**（v>0 才走 active 装载分支——与旋钮 2
+/// 同款 inject 前提；真实 K 的 close 篡改判别面更强）。
 #[test]
 fn candle_knob1_tamper_proves_publication_source() {
     let mut session = GameSession::new(setup_fixture(), 45).expect("会话构造");
@@ -265,6 +269,7 @@ fn candle_knob1_tamper_proves_publication_source() {
     driver.adopt_session_seq(&session);
     driver.candle_knob_tamper_active_for_test();
     drive_ticks(&mut driver, &mut session, 25);
+    inject_crossing_intents(&mut driver, &mut session);
     let finals = driver
         .world_desk_finals_for_candles()
         .expect("desk 权威对账面");

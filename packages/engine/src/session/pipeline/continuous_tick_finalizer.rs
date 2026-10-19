@@ -218,6 +218,15 @@ pub(super) fn finalize_continuous_tick(
     }
     session.state.tick = boundary.tick_after;
 
+    // B2 串行数据面安装（W3 缺陷 1 修复）：本拍 Trade 事件聚合进当日
+    // 分钟桶镜像 + Fill 收据双腿入账——ends_day 迁移**之前**执行（迁移
+    // 清桶，此处桶=当日完整）。与 runtime 的 install_market_views/
+    // receipts 入账等价（共用同一套纯函数与 session 累积面——见
+    /// serial_b2_surfaces 模块注释）。
+    session
+        .install_serial_b2_surfaces(&facts, &receipts)
+        .map_err(finalize_error)?;
+
     if boundary.ends_day {
         facts.extend(
             ContinuousDayEndLifecycleProjection::new(
@@ -228,6 +237,10 @@ pub(super) fn finalize_continuous_tick(
             .apply()
             .map_err(finalize_error)?,
         );
+        // 当日分钟桶镜像在迁移内清空——迁移前 take 当日完整 bars，
+        // 迁移（日K已提交）后冻结保留快照（runtime freeze_retained_
+        // trading_day 等价：组装+日K对账+镜像 push）。
+        let day_bars = session.take_serial_minute_bars_for_day();
         facts.extend(
             TradingDayEndTransition::new(session)
                 .apply()
@@ -235,6 +248,9 @@ pub(super) fn finalize_continuous_tick(
                     finalize_error(invariant(&format!("continuous DayEnd failed: {error}")))
                 })?,
         );
+        session
+            .freeze_serial_trading_day(day_bars)
+            .map_err(finalize_error)?;
     }
     let mode_after = super::phase::PhasePolicy::capture(session).matching_mode();
     for market in session.state.markets.values_mut() {
