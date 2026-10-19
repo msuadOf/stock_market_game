@@ -97,15 +97,29 @@ impl GameSession {
             };
             let minute_key = match clearing.get(code) {
                 Some(key) => *key,
-                // 连续段成交：共用纯函数（内部校验连续窗——其他相位
-                // tick 显式失败，与 desk trade_minute_key 的相位判别同义）。
-                None => continuous_minute_of_day(
-                    tpd,
-                    setup.auction_ticks,
-                    setup.closing_auction_ticks,
-                    basis,
-                )
-                .map_err(|e| invariant(&format!("串行分钟归一失败：{e:?}")))?,
+                None => {
+                    // 连续段成交：先做全相位判别（复核修复——对齐 desk
+                    /// trade_minute_key：竞价窗/盘前/收盘竞价窗的成交若
+                    /// 不带清算标记=结构性 bug，显式失败；共用纯函数内部
+                    /// 的连续窗校验不覆盖 day_tick<auction_ticks 的拍
+                    ///（saturating_sub 归 0 恒合法，会静默归 570 桶）。
+                    let day_tick = basis % tpd;
+                    let closing_start = tpd.saturating_sub(setup.closing_auction_ticks);
+                    let in_continuous = setup.auction_ticks <= day_tick
+                        && (setup.closing_auction_ticks == 0 || day_tick < closing_start);
+                    if !in_continuous {
+                        return Err(invariant(&format!(
+                            "串行非清算窗相位（day_tick={day_tick}）产生连续成交——分钟归一无定义"
+                        )));
+                    }
+                    continuous_minute_of_day(
+                        tpd,
+                        setup.auction_ticks,
+                        setup.closing_auction_ticks,
+                        basis,
+                    )
+                    .map_err(|e| invariant(&format!("串行分钟归一失败：{e:?}")))?
+                }
             };
             let bars = self
                 .state

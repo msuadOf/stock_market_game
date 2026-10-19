@@ -277,11 +277,11 @@ pub fn minute_bar_apply(
     price: crate::money::Money,
     qty: u32,
 ) -> Result<(), RuntimeError> {
-    // 价恒非负（Money 语义）；i64→u128 理论不可溢出，转换失败=显式
-    // 报错（不静默饱和）。
-    let cents = u128::try_from(price.cents().max(0)).map_err(|_| {
+    // 价恒非负（Money 语义）；负值/转换溢出均为事实链破坏——显式报错
+    // （复核修复：不静默钳 0 兜底）。
+    let cents = u128::try_from(price.cents()).map_err(|_| {
         RuntimeError::ProtocolInvariant {
-            detail: "分钟桶成交价转 u128 溢出".to_owned(),
+            detail: format!("分钟桶成交价非法（负值或转 u128 溢出）：{}", price.cents()),
         }
     })?;
     let turnover = cents * u128::from(qty);

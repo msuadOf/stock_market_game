@@ -2490,9 +2490,10 @@ impl RuntimeDriver {
             /// 收束点 last_price 合成（发布版本同源值）。
             /// W3 缺陷 2 修复：占位 K 只补**缺失**场景，不得覆盖已有
             /// 活动 K 的量/额/笔数。占位形态两源：①发布版本 view.daily_
-            /// active 为 None；②desk `snapshot_market` 每拍对新日零占位
-            /// candle `get_or_insert`（日界拍 roll_day 归档真实 K 后立即
-            /// 重建）——view.daily_active=Some 但 v=0。两者同属占位。
+            /// active 为 None；②desk 行情收尾（`finish_round` 的 candle
+            /// `get_or_insert`——复核修正归因，原注释误写 snapshot_
+            /// market）对新日零占位重建（日界拍 roll_day 归档真实 K 后
+            /// 立即发生）——view.daily_active=Some 但 v=0。两者同属占位。
             /// session 侧已有当日活动 K（time 匹配——真实终态，日终迁移
             /// commit_active 的唯一归档输入）时跳过安装，否则真实量/
             /// 额/笔被零值整体覆盖归档（W3 接线实证缺陷）。
