@@ -4063,3 +4063,88 @@ fn plan_open_for_knife5b(code: crate::StockId) -> crate::plans::PlanOpen {
         created_trading_day: 0,
     }
 }
+
+// ⑤a 收袋刀红证（批 1 先行红）：due 筛选触达量合同——延迟删除 heap
+// 筛选只触 due 位（O(due 数+陈旧项 pop)），不重扫全名册。现状=全名册
+// 线性扫描 O(名册)/拍（B fixture 20000 位/组每拍全扫——perf 实锤
+// run_round 符号内 ~55-60% 为扫描面：stride 0x240 决策档流读+
+// belief_states/chain_params/retail_style 三查询），本断言红。
+// 300 retail 位×20 拍=6000 全扫描触达 vs 阈值 3000（名册×拍数/2）。
+// 并行噪声防御：小 fixture 测试贡献微小（<<阈值裕量）。
+#[test]
+fn knife5a_due_filter_touches_due_count_not_roster() {
+    use std::sync::atomic::Ordering;
+    let before = super::group::DUE_FILTER_TOUCHED.load(Ordering::Relaxed);
+    let mut setup = setup_fixture();
+    setup.npcs.retail_count = 300;
+    setup.npcs.inst_count = 0;
+    let mut session = GameSession::new(setup, 91).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    let ticks = 20u64;
+    for _ in 0..ticks {
+        driver
+            .step_frame_equivalent(&mut session)
+            .expect("步进");
+        driver.install_market_views(&mut session).expect("行情安装");
+    }
+    let touched = super::group::DUE_FILTER_TOUCHED.load(Ordering::Relaxed) - before;
+    let roster: u64 = 300;
+    assert!(
+        touched < roster * ticks / 2,
+        "due 筛选触达量 {touched} 须显著小于名册×拍数的一半 {}（heap 延迟删除只触 due 位）",
+        roster * ticks / 2
+    );
+}
+
+// ⑤a 等价合同（双跑终态一致）：heap 延迟删除筛选 vs 旧全名册线性扫描
+// ——同种子同步数终态 business_state_hash 逐位相等（DUE_FILTER_FULL_SCAN
+// cfg(test) 旋钮承载对照路径）。批 1（同路径）=绿基线；批 2 落 heap 后
+// 仍须绿——due 集/处理序（local 升序）/RNG 流不变的等价实证。
+#[test]
+fn knife5a_due_filter_equivalent_to_full_scan() {
+    use std::sync::atomic::Ordering;
+    let run = |full_scan: bool| -> crate::session::StateHash {
+        let mut setup = setup_fixture();
+        setup.npcs.retail_count = 120;
+        // inst 位覆盖普通/链两种分支（DeepValue/Defensive 低频——
+        // due 稀疏形态与零售位混合；机构风格 ordinal%5 轮转五种；
+        // order_size 对齐 lot 整数倍——fault1015 校验）。
+        setup.npcs.inst_count = 10;
+        setup.strategy_params.inst.order_size = 100;
+        let mut session = GameSession::new(setup, 93).expect("会话构造");
+        let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+        driver.adopt_session_seq(&session);
+        super::group::DUE_FILTER_FULL_SCAN.store(full_scan, Ordering::SeqCst);
+        for tick_i in 0..15 {
+            // 中段注入 ForceDue（提前改排——旧堆项未到期仍留堆=陈旧项
+            // 形态；heap 路径靠 pop 核验丢弃，全扫描路径天然无感）。
+            if tick_i == 5 {
+                let forced: Vec<crate::AccountId> =
+                    [0usize, 5, 17, 40].iter().map(|&i| driver.id_map[i]).collect();
+                driver.force_due_for_test_at(&forced, tick_i + 3);
+            }
+            // DeferDueForTest 推远（旧堆项≤tick 到期 pop 时当前值已远
+            //——核验丢弃的判别形态；突变核验破=重复处理不该 due 位红）。
+            if tick_i == 6 {
+                let deferred: Vec<crate::AccountId> =
+                    [1usize, 9, 33].iter().map(|&i| driver.id_map[i]).collect();
+                driver.defer_due_for_test_at(&deferred, tick_i + 25);
+            }
+            driver
+                .step_frame_equivalent(&mut session)
+                .expect("步进");
+            driver.install_market_views(&mut session).expect("行情安装");
+        }
+        // 世界线程退出前复位旋钮（防泄漏污染其他测试）。
+        super::group::DUE_FILTER_FULL_SCAN.store(false, Ordering::SeqCst);
+        drop(driver);
+        session.business_state_hash().expect("终态 hash")
+    };
+    let heap_path = run(false);
+    let scan_path = run(true);
+    assert_eq!(
+        heap_path, scan_path,
+        "heap 延迟删除筛选与全名册扫描终态必须逐位一致（等价合同）"
+    );
+}
