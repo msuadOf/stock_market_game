@@ -60,7 +60,7 @@ function entity(value: unknown, path: string): EntityTag {
       // stock-identity.ts，保证稳定键仍按数值比对。
       return { Stock: safeU32(payload, `${path}.Stock`) };
     case "Account":
-      return { Account: safeInteger(payload, `${path}.Account`) };
+      return { Account: parseDecimalId(payload, `${path}.Account`) };
     default:
       return malformed(path, `未知实体标签：${kind}`);
   }
@@ -89,7 +89,7 @@ function event(value: unknown, path: string): WireEvent {
   switch (kind) {
     case "Trade":
       exact(payload, ["seq", "code", "price", "qty", "maker", "taker"], `${path}.Trade`);
-      return { Trade: { seq, code: safeU32(field(payload, "code", `${path}.Trade`), `${path}.Trade.code`), price: parseMoney(field(payload, "price", `${path}.Trade`), `${path}.Trade.price`), qty: safeU32(field(payload, "qty", `${path}.Trade`), `${path}.Trade.qty`), maker: safeInteger(field(payload, "maker", `${path}.Trade`), `${path}.Trade.maker`), taker: safeInteger(field(payload, "taker", `${path}.Trade`), `${path}.Trade.taker`) } };
+      return { Trade: { seq, code: safeU32(field(payload, "code", `${path}.Trade`), `${path}.Trade.code`), price: parseMoney(field(payload, "price", `${path}.Trade`), `${path}.Trade.price`), qty: safeU32(field(payload, "qty", `${path}.Trade`), `${path}.Trade.qty`), maker: parseDecimalId(field(payload, "maker", `${path}.Trade`), `${path}.Trade.maker`), taker: parseDecimalId(field(payload, "taker", `${path}.Trade`), `${path}.Trade.taker`) } };
     case "AuctionTick":
       exact(payload, ["seq", "tick", "phase", "code", "indicative_price", "matched_volume", "imbalance"], `${path}.AuctionTick`);
       return { AuctionTick: { seq, tick: safeInteger(field(payload, "tick", `${path}.AuctionTick`), `${path}.AuctionTick.tick`), phase: enumValue(field(payload, "phase", `${path}.AuctionTick`), TRADING_PHASES, `${path}.AuctionTick.phase`), code: safeU32(field(payload, "code", `${path}.AuctionTick`), `${path}.AuctionTick.code`), indicative_price: nullable(field(payload, "indicative_price", `${path}.AuctionTick`), parseMoney, `${path}.AuctionTick.indicative_price`), matched_volume: safeInteger(field(payload, "matched_volume", `${path}.AuctionTick`), `${path}.AuctionTick.matched_volume`), imbalance: safeInteger(field(payload, "imbalance", `${path}.AuctionTick`), `${path}.AuctionTick.imbalance`) } };
@@ -110,16 +110,16 @@ function event(value: unknown, path: string): WireEvent {
       return { CompanyDisclosurePublished: { seq, publication_id: safeU32(field(payload, "publication_id", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.publication_id`), company: safeU32(field(payload, "company", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.company`), published_at: parseInstant(field(payload, "published_at", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.published_at`), kind: parseDisclosureKind(field(payload, "kind", `${path}.CompanyDisclosurePublished`), `${path}.CompanyDisclosurePublished.kind`) } };
     case "IntentRejected":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.IntentRejected`);
-      return { IntentRejected: { seq, account: safeInteger(field(payload, "account", `${path}.IntentRejected`), `${path}.IntentRejected.account`), code: safeU32(field(payload, "code", `${path}.IntentRejected`), `${path}.IntentRejected.code`), reason: enumValue(field(payload, "reason", `${path}.IntentRejected`), REJECTION_REASONS, `${path}.IntentRejected.reason`) } };
+      return { IntentRejected: { seq, account: parseDecimalId(field(payload, "account", `${path}.IntentRejected`), `${path}.IntentRejected.account`), code: safeU32(field(payload, "code", `${path}.IntentRejected`), `${path}.IntentRejected.code`), reason: enumValue(field(payload, "reason", `${path}.IntentRejected`), REJECTION_REASONS, `${path}.IntentRejected.reason`) } };
     case "SettlementError":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.SettlementError`);
-      return { SettlementError: { seq, account: safeInteger(field(payload, "account", `${path}.SettlementError`), `${path}.SettlementError.account`), code: safeU32(field(payload, "code", `${path}.SettlementError`), `${path}.SettlementError.code`), reason: text(field(payload, "reason", `${path}.SettlementError`), `${path}.SettlementError.reason`) } };
+      return { SettlementError: { seq, account: parseDecimalId(field(payload, "account", `${path}.SettlementError`), `${path}.SettlementError.account`), code: safeU32(field(payload, "code", `${path}.SettlementError`), `${path}.SettlementError.code`), reason: text(field(payload, "reason", `${path}.SettlementError`), `${path}.SettlementError.reason`) } };
     case "OrderCanceled":
       exact(payload, ["seq", "account", "code", "id", "remaining_qty"], `${path}.OrderCanceled`);
-      return { OrderCanceled: { seq, account: safeInteger(field(payload, "account", `${path}.OrderCanceled`), `${path}.OrderCanceled.account`), code: safeU32(field(payload, "code", `${path}.OrderCanceled`), `${path}.OrderCanceled.code`), id: safeInteger(field(payload, "id", `${path}.OrderCanceled`), `${path}.OrderCanceled.id`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderCanceled`), `${path}.OrderCanceled.remaining_qty`) } };
+      return { OrderCanceled: { seq, account: parseDecimalId(field(payload, "account", `${path}.OrderCanceled`), `${path}.OrderCanceled.account`), code: safeU32(field(payload, "code", `${path}.OrderCanceled`), `${path}.OrderCanceled.code`), id: safeInteger(field(payload, "id", `${path}.OrderCanceled`), `${path}.OrderCanceled.id`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderCanceled`), `${path}.OrderCanceled.remaining_qty`) } };
     case "OrderAccepted":
       exact(payload, ["seq", "account", "code", "id", "side", "price", "remaining_qty"], `${path}.OrderAccepted`);
-      return { OrderAccepted: { seq, account: safeInteger(field(payload, "account", `${path}.OrderAccepted`), `${path}.OrderAccepted.account`), code: safeU32(field(payload, "code", `${path}.OrderAccepted`), `${path}.OrderAccepted.code`), id: safeInteger(field(payload, "id", `${path}.OrderAccepted`), `${path}.OrderAccepted.id`), side: enumValue(field(payload, "side", `${path}.OrderAccepted`), ["Buy", "Sell"], `${path}.OrderAccepted.side`), price: parseMoney(field(payload, "price", `${path}.OrderAccepted`), `${path}.OrderAccepted.price`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderAccepted`), `${path}.OrderAccepted.remaining_qty`) } };
+      return { OrderAccepted: { seq, account: parseDecimalId(field(payload, "account", `${path}.OrderAccepted`), `${path}.OrderAccepted.account`), code: safeU32(field(payload, "code", `${path}.OrderAccepted`), `${path}.OrderAccepted.code`), id: safeInteger(field(payload, "id", `${path}.OrderAccepted`), `${path}.OrderAccepted.id`), side: enumValue(field(payload, "side", `${path}.OrderAccepted`), ["Buy", "Sell"], `${path}.OrderAccepted.side`), price: parseMoney(field(payload, "price", `${path}.OrderAccepted`), `${path}.OrderAccepted.price`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderAccepted`), `${path}.OrderAccepted.remaining_qty`) } };
     default:
       return malformed(path, `未处理事件变体：${kind}`);
   }

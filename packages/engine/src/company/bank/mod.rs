@@ -25,13 +25,19 @@ mod deposits;
 mod ecl;
 mod error;
 mod fees;
+mod income_tax;
 mod interest;
 mod lending;
 mod loans;
+mod claim_sources;
 mod writeoff;
 
 #[cfg(test)]
 mod behavior_tests;
+#[cfg(test)]
+mod income_tax_tests;
+#[cfg(test)]
+mod claim_source_tests;
 
 pub use chart::bank_account_chart;
 pub use config::BankConfig;
@@ -40,6 +46,7 @@ pub use ecl::{EclPolicy, EclScenario, EclStage, StageTransferRecord};
 pub use error::BankError;
 pub use interest::LoanAccrualItem;
 pub use loans::BankLoanState;
+pub use claim_sources::{BankLoanClaimKind, BankLoanClaimSource};
 
 use crate::accounting::reports::bank::{bank_presentation_lines, BankPresentationLines};
 use crate::accounting::{AccountingAmount, AccountingError, Books, JournalLine, LedgerAccountId};
@@ -93,14 +100,17 @@ impl BankProductKind {
 
 /// 银行账套：Books + 存款/贷款子账 + 对手方 + ECL 政策（全部随存档序列化；
 /// `Books` 恢复走重放路径，其余结构体 serde 直存）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize)]
 pub struct BankBooks {
     books: Books,
     deposits: DepositMap,
     loans: std::collections::BTreeMap<ContractId, BankLoanState>,
     counterparties: CounterpartyLedger,
     ecl_policy: EclPolicy,
+    income_tax_policy: crate::accounting::IncomeTaxPolicy,
+    income_tax_position: crate::company::income_tax::IncomeTaxPosition,
     next_event_id: u64,
+    loan_claim_sources: Vec<BankLoanClaimSource>,
 }
 
 impl BankBooks {
@@ -108,6 +118,7 @@ impl BankBooks {
     /// 对手方登记。任一步失败 ⇒ 不产生半构造账套。
     pub fn new(config: BankConfig) -> Result<Self, BankError> {
         config.ecl_policy.validate()?;
+        income_tax::validate_policy(&config.income_tax_policy)?;
         config.check_opening_lines()?;
         let mut books = Books::new(config.chart);
         books.post_batch(vec![crate::accounting::JournalEntry {
@@ -121,13 +132,18 @@ impl BankBooks {
         for counterparty in config.counterparties {
             counterparties.register(counterparty)?;
         }
+        let income_tax_position = crate::company::income_tax::IncomeTaxPosition::new(&books)
+            .map_err(income_tax::map_tax_error)?;
         Ok(Self {
             books,
             deposits: DepositMap::new(),
             loans: std::collections::BTreeMap::new(),
             counterparties,
             ecl_policy: config.ecl_policy,
+            income_tax_policy: config.income_tax_policy,
+            income_tax_position,
             next_event_id: 2,
+            loan_claim_sources: Vec::new(),
         })
     }
 

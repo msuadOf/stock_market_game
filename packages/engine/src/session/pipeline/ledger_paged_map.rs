@@ -314,31 +314,15 @@ mod tests {
             expected.values().copied().collect::<Vec<_>>()
         );
         assert_eq!(
-            serde_json::to_vec(
-                &rows
-                    .iter()
-                    .filter(|(key, _)| key.account.0 <= (1_u64 << 53) - 1)
-                    .collect::<Vec<_>>()
-            )
-            .unwrap(),
-            serde_json::to_vec(
-                &expected
-                    .iter()
-                    .filter(|(key, _)| key.account.0 <= (1_u64 << 53) - 1)
-                    .collect::<Vec<_>>()
-            )
-            .unwrap(),
+            serde_json::to_vec(&rows.iter().collect::<Vec<_>>()).unwrap(),
+            serde_json::to_vec(&expected.iter().collect::<Vec<_>>()).unwrap(),
         );
-        // Rust 顺序测试保留 u64::MAX；JSON entry 投影必须显式拒绝 JS 不安全整数。
-        for entries in [
-            rows.iter().collect::<Vec<_>>(),
-            expected.iter().collect::<Vec<_>>(),
-        ] {
-            assert!(serde_json::to_vec(&entries)
-                .unwrap_err()
-                .to_string()
-                .contains("exceeds JavaScript's safe integer range"));
-        }
+        // AccountId 走 canonical 十进制字符串（公司域存档基线），u64 全域可
+        // 无损序列化——不再存在 JS 安全整数域拒绝（OrderId/seq 仍守 js_safe）。
+        let encoded = serde_json::to_vec(&rows.iter().collect::<Vec<_>>()).unwrap();
+        assert!(String::from_utf8(encoded)
+            .unwrap()
+            .contains("\"18446744073709551615\""));
         // EnvelopeKey 是 struct，JSON map 不支持该 key；hash 使用上面的有序 entry 数组。
         // 明确核对错误契约，不能把两个 Err 相等冒充成功序列化的证据。
         assert_eq!(

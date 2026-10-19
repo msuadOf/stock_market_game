@@ -8,12 +8,12 @@ export function publicReportGold(): PublicReportSummary {
     discontinued: [], discontinued_subtotal: "0.00", income_tax: "22.00", net_income: "88.00",
   };
   return {
-    id: "7", company_id: "C-600101", period: "2030-03-31", kind: "Quarter" as const,
+    id: "7", company_id: "C-600101", source: "SimpleGenerated" as const, period: "2030-03-31", kind: "Quarter" as const,
     version_sequence: "2", supersedes: "6", approved_date: "2030-04-01", approved_second_of_day: 28_800,
     published_date: "2030-04-02", published_second_of_day: 64_800,
     accounting: {
       total_assets: "1620.00", total_liabilities: "532.00", total_equity: "1088.00", closing_cash: "1620.00",
-      quarter_net_income: "88.00", net_income: "88.00", income_tax: "22.00", operating_cash_flow: "120.00",
+      quarter_net_income: "88.00", net_income: "88.00", income_tax: "22.00", operating_cash_flow: "120.00", report_period_net_income: "88.00",
       investing_cash_flow: "0.00", financing_cash_flow: "500.00", net_cash_change: "620.00",
       prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } },
     },
@@ -34,9 +34,9 @@ export function publicReportGold(): PublicReportSummary {
         } },
       },
       income: {
-        quarter: structuredClone(columns), cumulative: structuredClone(columns),
+        quarter: structuredClone(columns), cumulative: structuredClone(columns), report_period: structuredClone(columns),
         prior_year: { Unavailable: { reason: "NoPriorYearHistory" as const } },
-        minority_net_income: null, net_income_to_parent: null,
+        minority_net_income: null, net_income_to_parent: null, report_period_net_income_to_parent: null,
       },
       cash_flow: {
         operating: "120.00", investing: "0.00", financing: "500.00", net_change: "620.00",
@@ -50,6 +50,14 @@ export function publicReportGold(): PublicReportSummary {
       notes: {
         items: [{ code: "1002", name: "银行存款", target: { BalanceSheet: "货币资金" }, opening: "1000.00", movement: "620.00", ytd_movement: "620.00", closing: "1620.00" }],
         consolidation_split_items: [],
+      },
+      roe: {
+        basis: "AttributableToOrdinaryShareholders" as const,
+        ordinary_roe: { Unavailable: { reason: "NonPositiveAverageEquity" as const } },
+        adjusted_roe: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" as const } },
+        weighted_average_parent_equity_cents: { Unavailable: { reason: "NonPositiveAverageEquity" as const } },
+        non_recurring: { Unavailable: { reason: "MissingNonRecurringIncomeFacts" as const } },
+        equity_events: { attributable_to_parent: { Items: [] }, minority_interest: { Items: [] } },
       },
     },
   };

@@ -1,0 +1,1152 @@
+use super::*;
+
+fn day(text: &str) -> CivilDate {
+    CivilDate::from_iso(text).unwrap()
+}
+fn account(id: u64) -> HolderId {
+    HolderId::Account(AccountId(id))
+}
+fn lot(id: &str, qty: u64, acquired: &str) -> ShareLot {
+    ShareLot {
+        id: id.into(),
+        qty,
+        acquired_on: day(acquired),
+        source: AcquisitionSource::InitialAllocation {
+            evidence: id.into(),
+        },
+        restriction: ShareRestriction::Unrestricted,
+    }
+}
+fn registry() -> ShareRegistry {
+    ShareRegistry::new(
+        StockCode("600001".into()),
+        CompanyId(0),
+        100,
+        day("2030-01-01"),
+        vec![
+            ShareHolding {
+                holder: account(1),
+                lots: vec![lot("old", 30, "2028-01-01"), lot("new", 20, "2029-01-01")],
+            },
+            ShareHolding {
+                holder: HolderId::External("nonfloat-owner".into()),
+                lots: vec![lot("external", 40, "2028-01-01")],
+            },
+            ShareHolding {
+                holder: HolderId::IssuerTreasury,
+                lots: vec![lot("treasury", 10, "2029-01-01")],
+            },
+        ],
+    )
+    .unwrap()
+}
+fn transfer(qty: i128) -> ShareDayRequest {
+    ShareDayRequest {
+        event_id: "day2".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::PublicMarket,
+        changes: vec![
+            DayNetChange {
+                holder: account(1),
+                change: -qty,
+                acquisition: None,
+                consume: None,
+            },
+            DayNetChange {
+                holder: account(u64::MAX),
+                change: qty,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "buyer".into(),
+                    source: AcquisitionSource::SecondaryMarket {
+                        settlement: "day2".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+                consume: None,
+            },
+        ],
+    }
+}
+
+#[test]
+fn net_disposal_consumes_oldest_lot_and_preserves_total() {
+    let mut registry = registry();
+    let receipt = registry.close_day(transfer(35)).unwrap();
+    assert_eq!(receipt.disposals.len(), 2);
+    assert_eq!(receipt.disposals[0].lot.id, "old");
+    assert_eq!(receipt.disposals[0].lot.qty, 30);
+    assert_eq!(receipt.disposals[1].lot.qty, 5);
+    assert_eq!(registry.holdings()[0].lots[0].qty, 15);
+    registry.validate().unwrap();
+}
+
+#[test]
+fn insufficient_shares_is_atomic_and_retry_is_idempotent() {
+    let mut registry = registry();
+    let before = registry.clone();
+    assert!(registry.close_day(transfer(51)).is_err());
+    assert_eq!(registry, before);
+    let request = transfer(5);
+    let first = registry.close_day(request.clone()).unwrap();
+    let settled = registry.clone();
+    assert_eq!(registry.close_day(request).unwrap(), first);
+    assert_eq!(registry, settled);
+    assert!(registry.close_day(transfer(6)).is_err());
+    assert_eq!(registry, settled);
+}
+
+#[test]
+fn registered_entitlement_does_not_follow_later_sale_or_include_treasury() {
+    let mut registry = registry();
+    let snapshot = registry
+        .register("dividend".into(), day("2030-01-01"))
+        .unwrap()
+        .clone();
+    assert_eq!(snapshot.holdings().len(), 3);
+    assert_eq!(snapshot.entitled_holdings().count(), 2);
+    registry.close_day(transfer(50)).unwrap();
+    assert_eq!(registry.registration("dividend"), Some(&snapshot));
+    assert!(
+        registry
+            .register("backdated".into(), day("2030-01-01"))
+            .is_err()
+    );
+    assert_eq!(
+        registry
+            .register("dividend".into(), day("2030-01-01"))
+            .unwrap(),
+        &snapshot
+    );
+}
+
+#[test]
+fn restore_rejects_invalid_lot_dates_and_preserves_max_account_id_string() {
+    let mut registry = registry();
+    registry.close_day(transfer(1)).unwrap();
+    let json = serde_json::to_value(&registry).unwrap();
+    assert!(json.to_string().contains("\"18446744073709551615\""));
+    let restored: ShareRegistry = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(restored, registry);
+    let mut corrupt = json;
+    corrupt["holdings"][0]["lots"][0]["acquired_on"] = serde_json::json!("2031-01-01");
+    assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+}
+
+#[test]
+fn share_quantities_and_signed_changes_use_exact_canonical_decimal_strings() {
+    let quantity = 9_007_199_254_741_117u64;
+    let capital = u64::MAX;
+    let mut registry = ShareRegistry::new(
+        StockCode("600001".into()),
+        CompanyId(0),
+        capital,
+        day("2030-01-01"),
+        vec![
+            ShareHolding {
+                holder: account(1),
+                lots: vec![lot("large", quantity, "2029-01-01")],
+            },
+            ShareHolding {
+                holder: HolderId::External("remainder".into()),
+                lots: vec![lot("remainder-lot", capital - quantity, "2029-01-01")],
+            },
+        ],
+    )
+    .unwrap();
+    let request = ShareDayRequest {
+        event_id: "large-transfer".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::PublicMarket,
+        changes: vec![
+            DayNetChange {
+                holder: account(1),
+                change: -i128::from(quantity),
+                acquisition: None,
+                consume: None,
+            },
+            DayNetChange {
+                holder: account(2),
+                change: quantity as i128,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "large-buyer".into(),
+                    source: AcquisitionSource::SecondaryMarket {
+                        settlement: "large-transfer".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+                consume: None,
+            },
+        ],
+    };
+    let serialized_request = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        serialized_request["changes"][0]["change"],
+        format!("-{quantity}")
+    );
+    assert_eq!(
+        serialized_request["changes"][1]["change"],
+        quantity.to_string()
+    );
+    assert_eq!(
+        serde_json::from_value::<ShareDayRequest>(serialized_request.clone()).unwrap(),
+        request
+    );
+    registry.close_day(request).unwrap();
+
+    let json = serde_json::to_value(&registry).unwrap();
+    assert_eq!(json["issued_shares"], capital.to_string());
+    assert_eq!(json["holdings"][0]["lots"], serde_json::json!([]));
+    let buyer = json["holdings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|holding| holding["holder"] == serde_json::json!({"Account": "2"}))
+        .unwrap();
+    assert_eq!(buyer["lots"][0]["qty"], quantity.to_string());
+    assert_eq!(
+        json["receipts"][0]["disposals"][0]["lot"]["qty"],
+        quantity.to_string()
+    );
+    let restored: ShareRegistry = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, registry);
+}
+
+#[test]
+fn share_registry_wire_rejects_numeric_and_noncanonical_share_counts() {
+    let registry = registry();
+    let valid = serde_json::to_value(registry).unwrap();
+    for invalid in [
+        serde_json::json!(100),
+        serde_json::json!("0100"),
+        serde_json::json!("+100"),
+    ] {
+        let mut corrupt = valid.clone();
+        corrupt["issued_shares"] = invalid;
+        assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+    }
+
+    let mut lot_numeric = valid.clone();
+    lot_numeric["holdings"][0]["lots"][0]["qty"] = serde_json::json!(30);
+    assert!(serde_json::from_value::<ShareRegistry>(lot_numeric).is_err());
+
+    let mut request = serde_json::to_value(transfer(5)).unwrap();
+    request["changes"][0]["change"] = serde_json::json!(-5);
+    assert!(serde_json::from_value::<ShareDayRequest>(request).is_err());
+}
+
+#[test]
+fn signed_share_change_codec_roundtrips_i128_bounds_and_rejects_invalid_values() {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct SignedValue {
+        #[serde(with = "super::canonical_i128_decimal")]
+        value: i128,
+    }
+
+    for value in [i128::MIN, i128::MAX] {
+        let encoded = serde_json::to_string(&SignedValue { value }).unwrap();
+        assert_eq!(encoded, format!("{{\"value\":\"{value}\"}}"));
+        assert_eq!(
+            serde_json::from_str::<SignedValue>(&encoded).unwrap().value,
+            value
+        );
+    }
+
+    for invalid in [
+        "\"-0\"",
+        "\"-170141183460469231731687303715884105729\"",
+        "\"170141183460469231731687303715884105728\"",
+    ] {
+        let encoded = format!("{{\"value\":{invalid}}}");
+        assert!(serde_json::from_str::<SignedValue>(&encoded).is_err());
+    }
+}
+
+#[test]
+fn zero_net_day_does_not_reset_acquisition_and_duplicate_input_is_rejected() {
+    let mut registry = registry();
+    let holdings = registry.holdings().to_vec();
+    registry
+        .close_day(ShareDayRequest {
+            event_id: "flat".into(),
+            day: day("2030-01-02"),
+            scope: MovementScope::PublicMarket,
+            changes: vec![DayNetChange {
+                holder: account(1),
+                change: 0,
+                acquisition: None,
+                consume: None,
+            }],
+        })
+        .unwrap();
+    assert_eq!(registry.holdings(), holdings);
+    let before = registry.clone();
+    let mut request = transfer(1);
+    request.day = day("2030-01-03");
+    request.changes.push(request.changes[0].clone());
+    assert!(registry.close_day(request).is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn restore_rejects_capital_receipt_and_snapshot_corruption() {
+    let mut registry = registry();
+    registry
+        .register("dividend".into(), day("2030-01-01"))
+        .unwrap();
+    registry.close_day(transfer(5)).unwrap();
+    let valid = serde_json::to_value(&registry).unwrap();
+    for path in ["capital", "receipt", "snapshot", "date", "extra", "missing"] {
+        let mut corrupt = valid.clone();
+        match path {
+            "capital" => corrupt["issued_shares"] = serde_json::json!(101),
+            "receipt" => {
+                corrupt["receipts"][0]["disposals"][0]["lot"]["qty"] = serde_json::json!(4)
+            }
+            "snapshot" => corrupt["registrations"][0]["issuer"] = serde_json::json!("wrong-issuer"),
+            "date" => {
+                corrupt["registrations"][0]["registered_on"] = serde_json::json!("2030-01-03")
+            }
+            "extra" => {
+                corrupt
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("version".into(), serde_json::json!(3));
+            }
+            "missing" => {
+                corrupt.as_object_mut().unwrap().remove("receipts");
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            serde_json::from_value::<ShareRegistry>(corrupt).is_err(),
+            "accepted {path}"
+        );
+    }
+}
+
+#[test]
+fn a_consumed_lot_identity_cannot_be_reused_in_the_same_day() {
+    let mut registry = registry();
+    let before = registry.clone();
+    let mut request = transfer(50);
+    request.changes[1].acquisition.as_mut().unwrap().lot_id = "old".into();
+    assert!(registry.close_day(request).is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn mixed_restricted_and_public_shares_allow_only_real_public_disposal() {
+    let original = registry();
+    let mut holdings = original.holdings().to_vec();
+    holdings[0].lots[0].restriction = ShareRestriction::Restricted {
+        reason: "explicit-opening-lock".into(),
+        release_on: day("2031-01-01"),
+    };
+    let mut registry = ShareRegistry::new(
+        original.stock().clone(),
+        original.issuer().clone(),
+        100,
+        original.settled_on(),
+        holdings,
+    )
+    .unwrap();
+    let snapshot = registry
+        .register("mixed-dividend".into(), day("2030-01-01"))
+        .unwrap()
+        .clone();
+    assert_eq!(
+        snapshot.holdings()[0]
+            .lots
+            .iter()
+            .map(|lot| lot.qty)
+            .sum::<u64>(),
+        50
+    );
+    let receipt = registry.close_day(transfer(5)).unwrap();
+    assert_eq!(receipt.disposals.len(), 1);
+    assert_eq!(receipt.disposals[0].lot.id, "new");
+    assert_eq!(registry.holdings()[0].lots[0].qty, 30);
+    assert_eq!(registry.holdings()[0].lots[1].qty, 15);
+    let mut excessive = transfer(16);
+    excessive.event_id = "day3".into();
+    excessive.day = day("2030-01-03");
+    excessive.changes[1].acquisition.as_mut().unwrap().lot_id = "next-buyer".into();
+    let before = registry.clone();
+    assert!(registry.close_day(excessive).is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn standalone_snapshot_deserialization_rejects_invalid_capital() {
+    let mut registry = registry();
+    let snapshot = registry
+        .register("dividend".into(), day("2030-01-01"))
+        .unwrap();
+    let mut corrupt = serde_json::to_value(snapshot).unwrap();
+    corrupt["issued_shares"] = serde_json::json!(101);
+    assert!(serde_json::from_value::<RegistrationSnapshot>(corrupt).is_err());
+}
+
+#[test]
+fn registry_restore_requires_nullable_issuer_repurchase_account_key() {
+    let registry = registry();
+    let mut wire = serde_json::to_value(&registry).unwrap();
+    wire.as_object_mut()
+        .unwrap()
+        .remove("issuer_repurchase_account");
+
+    assert!(serde_json::from_value::<ShareRegistry>(wire).is_err());
+}
+
+#[test]
+fn snapshot_restore_requires_nullable_issuer_repurchase_account_key() {
+    let mut registry = registry();
+    let snapshot = registry
+        .register("repurchase-account-facts".into(), day("2030-01-01"))
+        .unwrap();
+    let mut wire = serde_json::to_value(snapshot).unwrap();
+    wire.as_object_mut()
+        .unwrap()
+        .remove("issuer_repurchase_account");
+
+    assert!(serde_json::from_value::<RegistrationSnapshot>(wire).is_err());
+}
+
+#[test]
+fn issuer_repurchase_account_fact_is_validated_and_copied_into_registration() {
+    let mut registry = registry();
+    let facts = IssuerRepurchaseAccountFacts {
+        account_reference: "repurchase-account-1".into(),
+        source_evidence: "exchange-confirmation-1".into(),
+        established_on: day("2029-12-31"),
+    };
+    registry
+        .set_issuer_repurchase_account(facts.clone())
+        .unwrap();
+    let snapshot = registry
+        .register("repurchase-facts".into(), day("2030-01-01"))
+        .unwrap()
+        .clone();
+
+    assert_eq!(snapshot.issuer_repurchase_account(), Some(&facts));
+    registry
+        .set_issuer_repurchase_account(facts.clone())
+        .unwrap();
+    let registry_roundtrip = serde_json::from_value::<ShareRegistry>(
+        serde_json::to_value(&registry).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(registry_roundtrip, registry);
+    let snapshot_roundtrip = serde_json::from_value::<RegistrationSnapshot>(
+        serde_json::to_value(&snapshot).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot_roundtrip, snapshot);
+
+    let mut no_treasury_holding = ShareRegistry::new(
+        StockCode("600001".into()),
+        CompanyId(0),
+        100,
+        day("2030-01-01"),
+        vec![ShareHolding {
+            holder: account(1),
+            lots: vec![lot("only-holder", 100, "2029-01-01")],
+        }],
+    )
+    .unwrap();
+    no_treasury_holding
+        .set_issuer_repurchase_account(facts)
+        .unwrap();
+    assert!(no_treasury_holding
+        .issuer_repurchase_account()
+        .is_some());
+}
+
+#[test]
+fn issuer_repurchase_account_fact_cannot_be_future_dated_or_empty() {
+    let mut registry = registry();
+    for facts in [
+        IssuerRepurchaseAccountFacts {
+            account_reference: "repurchase-account-1".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2030-01-02"),
+        },
+        IssuerRepurchaseAccountFacts {
+            account_reference: " ".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2029-12-31"),
+        },
+    ] {
+        assert!(registry
+            .set_issuer_repurchase_account(facts)
+            .is_err());
+    }
+}
+
+#[test]
+fn issuer_repurchase_account_facts_cannot_be_backdated_across_registration() {
+    let mut registry = registry();
+    registry
+        .register("before-facts".into(), day("2030-01-01"))
+        .unwrap();
+    let before = registry.clone();
+    assert!(registry
+        .set_issuer_repurchase_account(IssuerRepurchaseAccountFacts {
+            account_reference: "repurchase-account-1".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2029-12-31"),
+        })
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn registry_restore_rejects_snapshot_repurchase_facts_that_diverge_from_history() {
+    let mut registry = registry();
+    let snapshot = registry
+        .register("before-facts".into(), day("2030-01-01"))
+        .unwrap()
+        .clone();
+    registry.close_day(transfer(1)).unwrap();
+    assert!(registry
+        .set_issuer_repurchase_account(IssuerRepurchaseAccountFacts {
+            account_reference: "repurchase-account-1".into(),
+            source_evidence: "exchange-confirmation-1".into(),
+            established_on: day("2030-01-02"),
+        })
+        .is_ok());
+    let later_snapshot = registry
+        .register("after-facts".into(), day("2030-01-02"))
+        .unwrap()
+        .clone();
+    assert_eq!(
+        later_snapshot.issuer_repurchase_account(),
+        registry.issuer_repurchase_account()
+    );
+    let mut wire = serde_json::to_value(&registry).unwrap();
+    assert_eq!(
+        wire["registrations"][0]["issuer_repurchase_account"],
+        serde_json::Value::Null
+    );
+    assert!(wire["registrations"][1]["issuer_repurchase_account"].is_object());
+    wire["registrations"][0]["issuer_repurchase_account"] = serde_json::json!({
+        "account_reference": "forged-account",
+        "source_evidence": "forged-evidence",
+        "established_on": "2030-01-01"
+    });
+    assert!(serde_json::from_value::<ShareRegistry>(wire).is_err());
+
+    let mut wire = serde_json::to_value(&registry).unwrap();
+    wire["registrations"][1]["issuer_repurchase_account"]["account_reference"] =
+        serde_json::json!("different-account");
+    assert!(serde_json::from_value::<ShareRegistry>(wire).is_err());
+    assert!(snapshot.issuer_repurchase_account().is_none());
+}
+
+#[test]
+fn nullable_acquisition_is_required_and_nontrading_scope_is_not_ordinary_transfer() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    let mut corrupt = serde_json::to_value(&registry).unwrap();
+    corrupt["receipts"][0]["request"]["changes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("acquisition");
+    assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+    let mut fresh = super::tests::registry();
+    let before = fresh.clone();
+    let mut request = transfer(5);
+    request.scope = MovementScope::NonTradingTransfer {
+        basis: "judicial-transfer-needs-separate-rule".into(),
+    };
+    // 非交易过户不得伪装普通二级市场过户：来源必须是公司行为。
+    assert!(fresh.close_day(request).is_err());
+    assert_eq!(fresh, before);
+}
+
+fn issuance_request(day_text: &str, event_id: &str) -> ShareDayRequest {
+    ShareDayRequest {
+        event_id: event_id.into(),
+        day: day(day_text),
+        scope: MovementScope::NonTradingTransfer {
+            basis: "shareholders-resolution-1".into(),
+        },
+        changes: vec![
+            DayNetChange {
+                holder: account(1),
+                change: 30,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "bonus-account-1".into(),
+                    source: AcquisitionSource::CorporateAction {
+                        event: "distribution-1".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+                consume: None,
+            },
+            DayNetChange {
+                holder: HolderId::External("nonfloat-owner".into()),
+                change: 20,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "bonus-external".into(),
+                    source: AcquisitionSource::CorporateAction {
+                        event: "distribution-1".into(),
+                    },
+                    restriction: ShareRestriction::Restricted {
+                        reason: "nonfloat-lock".into(),
+                        release_on: day("2030-06-01"),
+                    },
+                }),
+                consume: None,
+            },
+        ],
+    }
+}
+
+#[test]
+fn non_trading_transfer_issues_new_shares_on_the_settled_day_and_grows_issued_shares() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    let settled = registry.settled_on();
+    let receipt = registry.close_day(issuance_request("2030-01-02", "issue-1")).unwrap();
+    assert!(receipt.disposals.is_empty());
+    assert_eq!(registry.settled_on(), settled);
+    assert_eq!(registry.issued_shares(), 150);
+    // 幂等：同一事件身份重复提交同一请求直接返回原回执。
+    assert_eq!(
+        registry
+            .close_day(issuance_request("2030-01-02", "issue-1"))
+            .unwrap()
+            .request,
+        receipt.request
+    );
+    assert_eq!(registry.issued_shares(), 150);
+    // 公开市场次日继续推进，恢复仍严格合法。
+    registry
+        .close_day(ShareDayRequest {
+            event_id: "day3-empty".into(),
+            day: day("2030-01-03"),
+            scope: MovementScope::PublicMarket,
+            changes: vec![],
+        })
+        .unwrap();
+    let mut restored = serde_json::from_value::<ShareRegistry>(
+        serde_json::to_value(&registry).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(restored.issued_shares(), 150);
+    restored
+        .register("record-after-issue".into(), restored.settled_on())
+        .unwrap();
+    assert!(restored.validate().is_ok());
+}
+
+#[test]
+fn non_trading_transfer_rejects_disposal_secondary_source_and_zero_total() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    let before = registry.clone();
+    let mut disposal = issuance_request("2030-01-02", "issue-disposal");
+    disposal.changes.push(DayNetChange {
+        holder: account(1),
+        change: -1,
+        acquisition: None,
+        consume: None,
+    });
+    assert!(registry.close_day(disposal).is_err());
+    let mut secondary = issuance_request("2030-01-02", "issue-secondary");
+    if let Some(acquisition) = secondary.changes[0].acquisition.as_mut() {
+        acquisition.source = AcquisitionSource::SecondaryMarket {
+            settlement: "not-a-corporate-action".into(),
+        };
+    }
+    assert!(registry.close_day(secondary).is_err());
+    let mut zero = issuance_request("2030-01-02", "issue-zero");
+    zero.changes.clear();
+    assert!(registry.close_day(zero).is_err());
+    // 非交易过户不能凭空前移到已结算日前一天，也不能跳到未来自然日。
+    assert!(registry
+        .close_day(issuance_request("2030-01-01", "issue-past"))
+        .is_err());
+    assert!(registry
+        .close_day(issuance_request("2030-01-03", "issue-future"))
+        .is_err());
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn registration_snapshots_replay_issued_shares_before_later_non_trading_issuance() {
+    let mut registry = registry();
+    registry
+        .register("record-1".into(), day("2030-01-01"))
+        .unwrap();
+    registry.close_day(transfer(5)).unwrap();
+    // 同日"先登记、后送转入账"：快照冻结在增发前的发行股数上。
+    registry
+        .register("record-2".into(), day("2030-01-02"))
+        .unwrap();
+    assert_eq!(
+        registry.registration("record-2").unwrap().issued_shares(),
+        100
+    );
+    assert_eq!(registry.registration("record-2").unwrap().settled_receipts(), 1);
+    registry.close_day(issuance_request("2030-01-02", "issue-1")).unwrap();
+    // 同日"先送转入账、再登记"（另一事件）同样合法，快照冻结在增发后。
+    registry
+        .register("record-3".into(), day("2030-01-02"))
+        .unwrap();
+    assert_eq!(
+        registry.registration("record-3").unwrap().issued_shares(),
+        150
+    );
+    assert_eq!(registry.registration("record-3").unwrap().settled_receipts(), 2);
+    registry
+        .close_day(ShareDayRequest {
+            event_id: "day3-empty".into(),
+            day: day("2030-01-03"),
+            scope: MovementScope::PublicMarket,
+            changes: vec![],
+        })
+        .unwrap();
+    assert!(registry.validate().is_ok());
+    assert_eq!(
+        registry.registration("record-1").unwrap().issued_shares(),
+        100
+    );
+    let mut corrupt = serde_json::to_value(&registry).unwrap();
+    corrupt["registrations"][1]["settled_receipts"] = serde_json::json!("2");
+    assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+    let mut forged = serde_json::to_value(&registry).unwrap();
+    forged["registrations"][1]["issued_shares"] = serde_json::json!("150");
+    forged["registrations"][1]["holdings"][0]["lots"][0]["qty"] = serde_json::json!("80");
+    assert!(serde_json::from_value::<ShareRegistry>(forged).is_err());
+}
+
+#[test]
+fn public_market_cannot_disguise_initial_or_restricted_acquisition() {
+    for kind in ["initial", "corporate", "restricted"] {
+        let mut registry = registry();
+        let before = registry.clone();
+        let mut request = transfer(5);
+        let acquisition = request.changes[1].acquisition.as_mut().unwrap();
+        match kind {
+            "initial" => {
+                acquisition.source = AcquisitionSource::InitialAllocation {
+                    evidence: "not-a-market-trade".into(),
+                }
+            }
+            "corporate" => {
+                acquisition.source = AcquisitionSource::CorporateAction {
+                    event: "not-a-market-trade".into(),
+                }
+            }
+            "restricted" => {
+                acquisition.restriction = ShareRestriction::Restricted {
+                    reason: "not-a-market-trade".into(),
+                    release_on: day("2031-01-01"),
+                }
+            }
+            _ => unreachable!(),
+        }
+        assert!(registry.close_day(request).is_err());
+        assert_eq!(registry, before);
+    }
+}
+
+#[test]
+fn explicitly_released_physical_lot_is_transferable_and_receipt_cannot_forge_unlock() {
+    let original = registry();
+    let mut holdings = original.holdings().to_vec();
+    holdings[0].lots[0].restriction = ShareRestriction::Restricted {
+        reason: "explicit-opening-lock".into(),
+        release_on: day("2030-01-02"),
+    };
+    let mut registry = ShareRegistry::new(
+        original.stock().clone(),
+        original.issuer().clone(),
+        100,
+        original.settled_on(),
+        holdings,
+    )
+    .unwrap();
+    let receipt = registry.close_day(transfer(5)).unwrap();
+    assert_eq!(receipt.disposals[0].lot.id, "old");
+    let mut corrupt = serde_json::to_value(&registry).unwrap();
+    corrupt["receipts"][0]["disposals"][0]["lot"]["restriction"]["Restricted"]["release_on"] =
+        serde_json::json!("2031-01-01");
+    assert!(serde_json::from_value::<ShareRegistry>(corrupt).is_err());
+}
+
+// ---------- 拆股／缩股（ShareReDenomination）----------
+
+fn redenomination(event_id: &str, day_text: &str, changes: Vec<DayNetChange>) -> ShareDayRequest {
+    ShareDayRequest {
+        event_id: event_id.into(),
+        day: day(day_text),
+        scope: MovementScope::ShareReDenomination {
+            basis: "shareholders-resolution-redenomination".into(),
+        },
+        changes,
+    }
+}
+
+fn split_change(holder: HolderId, delta: i128, lot_id: &str) -> DayNetChange {
+    DayNetChange {
+        holder,
+        change: delta,
+        acquisition: Some(NetAcquisition {
+            lot_id: lot_id.into(),
+            source: AcquisitionSource::CorporateAction {
+                event: "split-1".into(),
+            },
+            restriction: ShareRestriction::Unrestricted,
+        }),
+        consume: None,
+    }
+}
+
+#[test]
+fn share_redenomination_split_grows_issued_shares_and_appends_new_lots() {
+    let mut registry = registry();
+    // 拆股 1 拆 2：账户 1 原 50 股（30+20）→ +50；外部持有人 40 → +40；专户 10 → +10。
+    let request = redenomination(
+        "split-1",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 50, "split-a1"),
+            split_change(HolderId::External("nonfloat-owner".into()), 40, "split-ext"),
+            split_change(HolderId::IssuerTreasury, 10, "split-treasury"),
+        ],
+    );
+    let receipt = registry.close_day(request).unwrap();
+    assert!(receipt.disposals.is_empty());
+    assert_eq!(registry.issued_shares(), 200);
+    let account_one = registry
+        .holdings()
+        .iter()
+        .find(|holding| holding.holder == account(1))
+        .unwrap();
+    assert_eq!(account_one.lots.len(), 3);
+    assert_eq!(account_one.lots.last().unwrap().id, "split-a1");
+    assert_eq!(account_one.lots.last().unwrap().qty, 50);
+    assert_eq!(account_one.lots.last().unwrap().acquired_on, day("2030-01-02"));
+    // serde 往返 + 恢复校验保留该回执。
+    let restored: ShareRegistry =
+        serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
+}
+
+#[test]
+fn share_redenomination_consolidation_consumes_restricted_lots_and_shrinks_issued() {
+    let original = registry();
+    let mut holdings = original.holdings().to_vec();
+    // 账户 1 的两笔 lot 全部限售且未解禁：缩股仍必须消耗它们（重新计值不是转让）。
+    for lot in holdings[0].lots.iter_mut() {
+        lot.restriction = ShareRestriction::Restricted {
+            reason: "ipo-lock".into(),
+            release_on: day("2031-06-01"),
+        };
+    }
+    let mut registry = ShareRegistry::new(
+        original.stock().clone(),
+        original.issuer().clone(),
+        100,
+        original.settled_on(),
+        holdings,
+    )
+    .unwrap();
+    // 缩股 2 并 1（手工构造目标）：账户 1 50→25（−25）；外部 40→20（−20）；专户 10→5（−5）。
+    let request = redenomination(
+        "consolidation-1",
+        "2030-01-02",
+        vec![
+            DayNetChange {
+                holder: account(1),
+                change: -25,
+                acquisition: None,
+                consume: None,
+            },
+            DayNetChange {
+                holder: HolderId::External("nonfloat-owner".into()),
+                change: -20,
+                acquisition: None,
+                consume: None,
+            },
+            DayNetChange {
+                holder: HolderId::IssuerTreasury,
+                change: -5,
+                acquisition: None,
+                consume: None,
+            },
+        ],
+    );
+    let receipt = registry.close_day(request).unwrap();
+    assert_eq!(registry.issued_shares(), 50);
+    // 消耗从最旧 lot 开始（FIFO）：账户 1 的 old(30) 被消耗 25 后余 5，
+    // 未消耗的 lot 保留原 id 与取得日（取得日延续）。
+    let account_one = registry
+        .holdings()
+        .iter()
+        .find(|holding| holding.holder == account(1))
+        .unwrap();
+    assert_eq!(account_one.lots.len(), 2);
+    assert_eq!(account_one.lots[0].id, "old");
+    assert_eq!(account_one.lots[0].qty, 5);
+    assert_eq!(account_one.lots[0].acquired_on, day("2028-01-01"));
+    assert_eq!(account_one.lots[1].id, "new");
+    assert_eq!(account_one.lots[1].qty, 20);
+    // 三个持有人各有一条负向净变动：账户 1（old 25）、外部（external 20）、
+    // 专户（treasury 5）各产生一条 lot 片段。
+    assert_eq!(receipt.disposals.len(), 3);
+    assert_eq!(receipt.disposals[0].holder, account(1));
+    assert_eq!(receipt.disposals[0].lot.id, "old");
+    assert_eq!(receipt.disposals[0].lot.qty, 25);
+    // 恢复校验接受本 scope 的未解禁限售消耗（同回执在 PublicMarket 下会被拒）。
+    let restored: ShareRegistry =
+        serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
+    let mut as_public = receipt.request.clone();
+    as_public.scope = MovementScope::PublicMarket;
+    let mut tampered = registry.clone();
+    tampered.receipts.push(ShareDayReceipt {
+        request: as_public,
+        disposals: receipt.disposals.clone(),
+    });
+    assert!(
+        serde_json::from_str::<ShareRegistry>(&serde_json::to_string(&tampered).unwrap()).is_err()
+    );
+}
+
+#[test]
+fn share_redenomination_validates_scope_specific_rules() {
+    let before = registry();
+    let mut registry = before.clone();
+    // 净变动为零（既不拆也不缩）显式拒绝。
+    let zero_total = redenomination(
+        "zero-1",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 30, "z1"),
+            DayNetChange {
+                holder: account(2),
+                change: -30,
+                acquisition: None,
+                consume: None,
+            },
+        ],
+    );
+    assert!(registry.close_day(zero_total).is_err());
+    // 混正负净变动拒绝：重新计值对全体持有人同向（拆股全增、缩股全减），混号
+    // 意味着在持有人之间转移股份。取净额为负（−20）的混号组合：账面勾稽
+    // （issued 按 |net| 核减）恰好自洽，只有同号校验能识破伪装成缩股的转移。
+    let mixed_signs = redenomination(
+        "mixed-1",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 10, "m1"),
+            DayNetChange {
+                holder: HolderId::External("nonfloat-owner".into()),
+                change: -30,
+                acquisition: None,
+                consume: None,
+            },
+        ],
+    );
+    let error = registry
+        .close_day(mixed_signs)
+        .expect_err("混正负净变动的重新计值必须被拒绝");
+    assert!(
+        error.to_string().contains("one direction"),
+        "拒绝必须指明重新计值须同向：{error}"
+    );
+    assert_eq!(registry, before);
+    // 同一持有人分桶多条净变动：Task174 起 Treasury 分桶重新计值允许同向多笔
+    //（各自携带独立取得 lot）；在克隆名册上验证接受，原名册保持 before 勾稽。
+    let duplicate = redenomination(
+        "dup-1",
+        "2030-01-02",
+        vec![split_change(account(1), 10, "d1"), split_change(account(1), 5, "d2")],
+    );
+    let mut bucketed = registry.clone();
+    bucketed.close_day(duplicate).unwrap();
+    assert_ne!(bucketed, before);
+    // 空 basis 拒绝。
+    let mut empty_basis =
+        redenomination("b-1", "2030-01-02", vec![split_change(account(1), 10, "b1")]);
+    empty_basis.scope = MovementScope::ShareReDenomination { basis: "  ".into() };
+    assert!(registry.close_day(empty_basis).is_err());
+    // 正向变动的取得来源必须是公司行为（与 NonTradingTransfer 同纪律）。
+    let mut secondary =
+        redenomination("s-1", "2030-01-02", vec![split_change(account(1), 10, "s1")]);
+    if let Some(acquisition) = secondary.changes[0].acquisition.as_mut() {
+        acquisition.source = AcquisitionSource::SecondaryMarket {
+            settlement: "fake".into(),
+        };
+    }
+    assert!(registry.close_day(secondary).is_err());
+    // 负向变动不得携带取得事实。
+    let negative_with_acquisition = redenomination(
+        "n-1",
+        "2030-01-02",
+        vec![DayNetChange {
+            holder: account(1),
+            change: -5,
+            acquisition: Some(NetAcquisition {
+                lot_id: "n1".into(),
+                source: AcquisitionSource::CorporateAction { event: "e".into() },
+                restriction: ShareRestriction::Unrestricted,
+            }),
+            consume: None,
+        }],
+    );
+    assert!(registry.close_day(negative_with_acquisition).is_err());
+    // 缩股超出持有数量拒绝（守恒）。
+    let overdraw = redenomination(
+        "o-1",
+        "2030-01-02",
+        vec![DayNetChange {
+            holder: account(1),
+            change: -500,
+            acquisition: None,
+            consume: None,
+        }],
+    );
+    let result = registry.close_day(overdraw);
+    assert!(matches!(
+        result,
+        Err(ShareRegistryError::InsufficientTransferableShares { .. })
+    ));
+    assert_eq!(registry, before);
+}
+
+#[test]
+fn share_redenomination_can_append_on_the_settled_day_and_replays_in_registrations() {
+    let mut registry = registry();
+    // 先做公开市场日结推进 settled_on 到 2030-01-02。
+    registry.close_day(transfer(5)).unwrap();
+    // 同日追加拆股重新计值（公开市场先落账、公司行为同日追加）。
+    let request = redenomination(
+        "split-same-day",
+        "2030-01-02",
+        vec![
+            split_change(account(1), 45, "ss1"),
+            split_change(HolderId::External("nonfloat-owner".into()), 40, "ss2"),
+            split_change(HolderId::IssuerTreasury, 10, "ss3"),
+        ],
+    );
+    registry.close_day(request).unwrap();
+    // 公开市场 100 股守恒后，1 拆 2：账户 1 现持 45（卖掉 5）→ +45，
+    // 外部 40 → +40，专户 10 → +10；合计 100 + 95 = 195。
+    assert_eq!(registry.issued_shares(), 195);
+    // 登记快照在追加后冻结：新快照股数为追加后的当前股数。
+    registry
+        .register("after-split".into(), day("2030-01-02"))
+        .unwrap();
+    let snapshot = registry.registration("after-split").unwrap();
+    assert_eq!(snapshot.issued_shares(), 195);
+    // 恢复（serde 往返）完整保留全部事实。
+    let restored: ShareRegistry =
+        serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+    assert_eq!(restored, registry);
+}
+
+/// 回购注销必须携带显式 lot 消耗选择（Task174）：不落入无条件 FIFO（FIFO 会
+/// 先吃 initial 残桶或别的 plan 的份额）；选择必须精确覆盖核减量。
+#[test]
+fn issuer_repurchase_cancellation_requires_explicit_lot_consumption() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    // 无显式消耗选择 → 显式拒绝。
+    let no_selection = ShareDayRequest {
+        event_id: "cancel-no-selection".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::IssuerRepurchaseCancellation { basis: "b".into() },
+        changes: vec![DayNetChange {
+            holder: HolderId::IssuerTreasury,
+            change: -3,
+            acquisition: None,
+            consume: None,
+        }],
+    };
+    let error = registry.close_day(no_selection).unwrap_err();
+    assert!(
+        error.to_string().contains("explicit lot consumption"),
+        "注销必须要求显式消耗选择：{error}"
+    );
+    // 选择量与核减量不一致 → 拒绝。
+    let mismatched = ShareDayRequest {
+        event_id: "cancel-mismatch".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::IssuerRepurchaseCancellation { basis: "b".into() },
+        changes: vec![DayNetChange {
+            holder: HolderId::IssuerTreasury,
+            change: -3,
+            acquisition: None,
+            consume: Some(vec![LotConsumption {
+                lot_id: "treasury".into(),
+                qty: 2,
+            }]),
+        }],
+    };
+    assert!(registry.close_day(mismatched).is_err());
+    // 显式选择核减指定 lot：只动 treasury lot，不动账户 lot。
+    let exact = ShareDayRequest {
+        event_id: "cancel-exact".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::IssuerRepurchaseCancellation { basis: "b".into() },
+        changes: vec![DayNetChange {
+            holder: HolderId::IssuerTreasury,
+            change: -3,
+            acquisition: None,
+            consume: Some(vec![LotConsumption {
+                lot_id: "treasury".into(),
+                qty: 3,
+            }]),
+        }],
+    };
+    let receipt = registry.close_day(exact).unwrap();
+    assert_eq!(receipt.disposals.len(), 1);
+    assert_eq!(receipt.disposals[0].lot.id, "treasury");
+    assert_eq!(registry.issued_shares(), 97);
+}
+
+/// 低级项①回归：显式消耗选择不得进入公开市场 scope（FIFO＋限售校验不得被
+/// 手改存档借显式路径绕过）。
+#[test]
+fn explicit_lot_consumption_is_rejected_in_public_market_scope() {
+    let mut registry = registry();
+    registry.close_day(transfer(5)).unwrap();
+    let sneaky = ShareDayRequest {
+        event_id: "public-explicit".into(),
+        day: day("2030-01-02"),
+        scope: MovementScope::PublicMarket,
+        changes: vec![
+            DayNetChange {
+                holder: account(1),
+                change: -3,
+                acquisition: None,
+                consume: Some(vec![LotConsumption {
+                    lot_id: "old".into(),
+                    qty: 3,
+                }]),
+            },
+            DayNetChange {
+                holder: account(7),
+                change: 3,
+                acquisition: Some(NetAcquisition {
+                    lot_id: "buyer-7".into(),
+                    source: AcquisitionSource::SecondaryMarket {
+                        settlement: "s".into(),
+                    },
+                    restriction: ShareRestriction::Unrestricted,
+                }),
+                consume: None,
+            },
+        ],
+    };
+    let error = registry.close_day(sneaky).unwrap_err();
+    assert!(
+        error.to_string().contains("explicit lot consumption"),
+        "公开市场负向带显式消耗必须拒绝：{error}"
+    );
+}

@@ -1,34 +1,72 @@
-//! 公司域：公司实体、开局账套、外部对手方与四行业经营会计。
+//! 公司域：公司实体、开局账套、外部对手方、四行业经营会计与公司行为建模。
 //!
 //! 资金边界：公司经营资金只存在于公司账套（[`Books`]，现金走科目
 //! 1001/1002），外部商业对手方用独立 `CounterpartyId`；投资者交易 `Account`
 //! 与公司账套互不复用。发行人映射要求股本精确匹配（`issued_shares` == 股票
-//! `total_shares`），不依据初始股价反推任何资产负债价值。
+//! `total_shares`），不依据初始股价反推任何资产负债价值。Simple 允许开局
+//! 按显式虚拟估值倍率反推初值，后续结算和恢复不重新锚定股价。
 //!
 //! 本模块提供公司实体、显式平衡开局账套、合同与授信数据、四行业处理器，
 //! 以及自然日经营演化、事件目录、到期调度、RNG 分流与前史生成
-//! （`operations`/`events`/`scheduler`/`rng`）。报表由 `accounting` 提供，
+//! （`operations`/`events`/`scheduler`/`rng`）；公司行为（现金分红/送转/
+//! 拆股/配股/回购）的登记、税务、方案事实和除息计算由对应子模块提供——
+//! 公司行为的登记与方案事实不等于已完成投资者付款（落账通道见日终编排）。
+//! Simple 公司现金只作账面展示，不是实际分红预算。报表由 `accounting` 提供，
 //! 历史公开库由 `information` 提供，会话装配由 `session` 负责。
 //! 公司注册表独立构建，不依赖 `session`；依赖方向为 session → company。
 
 pub(crate) mod assembly;
 pub mod bank;
+pub mod api;
+pub mod capabilities;
+pub mod config;
 mod contracts;
+mod correction;
 mod counterparty;
 pub mod customer_finance;
 mod defaults;
 mod error;
 pub mod events;
 pub mod groups;
+pub mod identity;
 pub mod industrial;
+pub(crate) mod income_tax;
 pub mod insurance;
 mod opening;
 pub mod operations;
+pub mod persistence;
 pub mod query;
 pub mod real_estate;
 pub mod rng;
+pub(crate) mod report_correction;
+pub mod rights_offering;
+pub mod issuer_repurchase;
 pub mod scheduler;
 mod spec;
+pub mod share_registry;
+pub mod stock_distribution;
+pub mod share_split;
+pub mod simple;
+mod system;
+pub use system::{CompanySystem, CompanySystemError};
+pub mod cash_dividend_tax;
+pub use cash_dividend_tax::{CashDividendTaxBook, CashDividendTaxMode, DividendTaxProfile};
+pub mod cash_dividend;
+pub mod ex_reference_price;
+mod dividend;
+pub use income_tax::{IncomeTaxOutcome, IncomeTaxOwnerError};
+pub use report_correction::CompanyCorrectionError;
+pub use dividend::{
+    DistributableProfit, DividendDeclaration, DividendLegalFacts, DividendPaymentFact,
+    DividendPaymentReceipt, DividendPlanFact, DividendPlanReceipt,
+};
+
+#[cfg(test)]
+mod capabilities_tests;
+#[cfg(test)]
+mod dividend_contract_tests;
+#[cfg(test)]
+mod error_classification_tests;
 
 pub use contracts::{
     ContractBook, ContractId, ContractRole, CreditLine, DayCountBasis, OperatingBudget,
@@ -45,6 +83,7 @@ pub use customer_finance::{
 };
 pub use defaults::default_companies;
 pub use error::CompanyError;
+pub use error::CompanyErrorClass;
 pub use events::{ActiveShock, ShockKind, ShockParams};
 pub use industrial::{
     IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,
@@ -62,11 +101,12 @@ pub use operations::{
     OperatingCompanyConfig, OperationsError, PaymentFailureRecord,
 };
 pub use query::{
-    PublicComparativeAmount, PublicReportAccountingSummary, PublicReportBalanceComparison,
-    PublicReportBalanceSheet, PublicReportCashFlow, PublicReportComparative, PublicReportEquity,
-    PublicReportFinancials, PublicReportIncome, PublicReportIncomeColumns, PublicReportKind,
-    PublicReportLine, PublicReportNoteItem, PublicReportNoteTarget, PublicReportNotes,
-    PublicReportPage, PublicReportQuery, PublicReportScope, PublicReportSummary,
+    PublicComparativeAmount, PublicReportAccountingSummary, PublicReportAvailability,
+    PublicReportAvailabilityQuery, PublicReportBalanceComparison, PublicReportBalanceSheet,
+    PublicReportCashFlow, PublicReportComparative, PublicReportEquity, PublicReportFinancials,
+    PublicReportIncome, PublicReportIncomeColumns, PublicReportKind, PublicReportLine,
+    PublicReportNoteItem, PublicReportNoteTarget, PublicReportNotes, PublicReportPage,
+    PublicReportQuery, PublicReportScope, PublicReportSummary, PublicReportUnavailableReason,
     PublicReportVersionKind, PublicUnavailableReason, DEFAULT_PUBLIC_REPORT_PAGE_SIZE,
     MAX_PUBLIC_REPORT_PAGE_SIZE,
 };

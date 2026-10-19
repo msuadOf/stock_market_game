@@ -30,13 +30,18 @@ mod delivery;
 mod development;
 mod error;
 mod impairment;
+mod income_tax;
 mod land;
 mod loans;
+mod owner_state;
 mod presales;
 mod projects;
 
 #[cfg(test)]
 mod ownership_tests;
+
+#[cfg(test)]
+mod owner_state_tests;
 
 pub use chart::real_estate_account_chart;
 pub use config::{CapitalizationPolicy, RealEstateConfig};
@@ -72,6 +77,8 @@ pub struct RealEstateBooks {
     counterparties: CounterpartyLedger,
     budget: OperatingBudget,
     capitalization_policy: CapitalizationPolicy,
+    income_tax_policy: crate::accounting::IncomeTaxPolicy,
+    income_tax_position: crate::company::income_tax::IncomeTaxPosition,
     max_projects: usize,
     next_event_id: u64,
 }
@@ -81,6 +88,7 @@ impl RealEstateBooks {
     /// （原子）→ 对手方登记。任一步失败 ⇒ 不产生半构造账套。
     pub fn new(config: RealEstateConfig) -> Result<Self, RealEstateError> {
         config.capitalization_policy.validate()?;
+        income_tax::validate_policy(&config.income_tax_policy)?;
         if config.max_projects < 1 {
             return Err(RealEstateError::InvalidPolicy {
                 detail: format!("max_projects must be >= 1, got {}", config.max_projects),
@@ -99,6 +107,8 @@ impl RealEstateBooks {
         for counterparty in config.counterparties {
             counterparties.register(counterparty)?;
         }
+        let income_tax_position = crate::company::income_tax::IncomeTaxPosition::new(&books)
+            .map_err(income_tax::map_tax_error)?;
         Ok(Self {
             books,
             projects: BTreeMap::new(),
@@ -108,6 +118,8 @@ impl RealEstateBooks {
             counterparties,
             budget: config.budget,
             capitalization_policy: config.capitalization_policy,
+            income_tax_policy: config.income_tax_policy,
+            income_tax_position,
             max_projects: config.max_projects,
             next_event_id: 2,
         })

@@ -608,6 +608,7 @@ mod material_priority_tests {
         PublishedReport {
             id: PublicationId::new(if kind == ReportKind::Annual { 0 } else { 1000 }),
             company: CompanyId(0),
+            source: crate::information::PublicationSource::SimulationAccounting,
             policy: AccountingPolicyRef { chart_version: 2 },
             approved_at: CivilInstant::from_hms(published_at.date(), 8, 0, 0).unwrap(),
             published_at,

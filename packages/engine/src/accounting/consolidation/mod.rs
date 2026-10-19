@@ -34,7 +34,7 @@ pub use worksheet::{
     IntercompanyBalance, IntercompanySale, WorksheetEntry, WorksheetLine, WorksheetReason,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::accounting::amount::AccountingAmount;
 
@@ -86,9 +86,36 @@ pub struct ConsolidationOutput {
 pub fn consolidate(
     request: ConsolidationRequest<'_>,
 ) -> Result<ConsolidationOutput, ConsolidationError> {
+    let ledgers = request
+        .members
+        .iter()
+        .map(|member| (member.spec.id.clone(), member.books.ledger()))
+        .collect();
+    let covered = request
+        .members
+        .iter()
+        .map(|member| {
+            (
+                member.spec.id.clone(),
+                member
+                    .books
+                    .journal()
+                    .entries()
+                    .map(crate::accounting::JournalEntry::period)
+                    .collect(),
+            )
+        })
+        .collect();
+    consolidate_with_projection(request, &ledgers, &covered)
+}
+
+pub(crate) fn consolidate_with_projection(
+    request: ConsolidationRequest<'_>,
+    ledgers: &BTreeMap<MemberId, &crate::accounting::Ledger>,
+    covered: &BTreeMap<MemberId, BTreeSet<crate::accounting::AccountingPeriod>>,
+) -> Result<ConsolidationOutput, ConsolidationError> {
     // 成员表（重复 id = 重复合并，先于一切检查拒绝）。
     let mut specs: BTreeMap<MemberId, MemberSpec> = BTreeMap::new();
-    let mut books: BTreeMap<MemberId, &crate::accounting::Books> = BTreeMap::new();
     for member in &request.members {
         if specs
             .insert(member.spec.id.clone(), member.spec.clone())
@@ -98,19 +125,31 @@ pub fn consolidate(
                 member: member.spec.id.clone(),
             });
         }
-        books.insert(member.spec.id.clone(), member.books);
     }
     let group = group::validate_group(&request.root, &specs)?;
-    aggregate::check_period_coverage(&books)?;
-    let mut balances = aggregate::aggregate_balances(&books)?;
+    let mut baseline: Option<&BTreeSet<crate::accounting::AccountingPeriod>> = None;
+    for (member, periods) in covered {
+        if let Some(expected) = baseline {
+            if periods != expected {
+                return Err(ConsolidationError::PeriodCoverageMismatch {
+                    member: member.clone(),
+                    expected: expected.iter().copied().collect(),
+                    actual: periods.iter().copied().collect(),
+                });
+            }
+        } else {
+            baseline = Some(periods);
+        }
+    }
+    let mut balances = aggregate::aggregate_balances(ledgers)?;
     let worksheet = eliminate::build_worksheet(
         &group,
-        &books,
+        ledgers,
         &request.intercompany_balances,
         &request.intercompany_sales,
     )?;
-    eliminate::apply_worksheet(&mut balances, &worksheet, &books)?;
-    let economics = minority::adjusted_economics(&books, &worksheet)?;
+    eliminate::apply_worksheet(&mut balances, &worksheet, ledgers)?;
+    let economics = minority::adjusted_economics(ledgers, &worksheet)?;
     let minority = minority::summarize(&group, &economics)?;
 
     // 合并总量（Σ 全员；溢出与舍入语义与底座一致）。

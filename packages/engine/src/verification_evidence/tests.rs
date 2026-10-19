@@ -1174,7 +1174,7 @@ fn event_projection_rejects_gapped_stock_indices_and_adr_key_tampering() {
     };
     for (field, forged_value) in [
         ("phase_rank", serde_json::json!(5)),
-        ("entity", serde_json::json!({ "Account": 2 })),
+        ("entity", serde_json::json!({ "Account": "2" })),
         ("source", serde_json::json!("QuoteExpiry")),
     ] {
         let mut tampered = frame(vec![event.clone()]);

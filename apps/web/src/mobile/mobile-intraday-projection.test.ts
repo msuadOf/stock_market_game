@@ -73,7 +73,7 @@ test("日内线使用完整累计分子分母，不因可见窗口截断而重�
 });
 
 test("分时保留单点竞价、最新优先的最近七笔及游戏时钟", () => {
-  const trades = Array.from({ length: 9 }, (_, index) => ({ seq: 8 - index, code: "600001", price: "1000", qty: 1, maker: 1, taker: 2 }));
+  const trades = Array.from({ length: 9 }, (_, index) => ({ seq: 8 - index, code: "600001", price: "1000", qty: 1, maker: "1", taker: "2" }));
   const source = { ...inputs(), auctionPoints: [{ time: 99, value: 11, volume: 0, buy: true }], trades, elapsedMinutes: 121, gameTick: 8100 };
   const p = model.MobileIntradayProjection.fromInputs(source);
   assert.equal(p.displayedAverage, null);
@@ -87,7 +87,7 @@ test("分时保留单点竞价、最新优先的最近七笔及游戏时钟", ()
 });
 
 test("审计G13：一百笔最新优先成交带只取前七笔，不取最旧尾部", () => {
-  const trades = Array.from({ length: 100 }, (_, index) => ({ seq: 100 - index, code: "600101", price: "1000", qty: 100, maker: 1, taker: 2 }));
+  const trades = Array.from({ length: 100 }, (_, index) => ({ seq: 100 - index, code: "600101", price: "1000", qty: 100, maker: "1", taker: "2" }));
   const projection = model.MobileIntradayProjection.fromInputs({ ...inputs(), trades });
   assert.deepEqual(projection.recentTrades.map(trade => trade.seq), [100, 99, 98, 97, 96, 95, 94]);
   assert.equal(trades[0].seq, 100);

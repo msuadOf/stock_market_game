@@ -28,11 +28,11 @@ test("an unsettled or intraday snapshot cannot be loaded as a persistent archive
 
 test("daily archives cannot restore live unified-book orders, including legacy auction fields", () => {
   const slot = archive();
-  const order = { id: 1, side: "Buy" as const, price: "1120", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", owner: 0, seq: 0 };
+  const order = { id: 1, side: "Buy" as const, price: "1120", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", owner: "0", seq: 0 };
   assert.throws(() => validate({ ...slot, resting_orders: { "600101": [order] } }), /活动委托/);
   // 统一 book 后存档不再有 auction_orders；旧字段在根校验即拒绝，不能绕过活动委托边界。
   assert.throws(
-    () => parseSaveSlot({ ...slot, auction_orders: { "600101": [{ owner: 0, side: "Buy", limit: "1120", qty: 100, order_id: 1 }] } }),
+    () => parseSaveSlot({ ...slot, auction_orders: { "600101": [{ owner: "0", side: "Buy", limit: "1120", qty: 100, order_id: 1 }] } }),
     /auction_orders/,
   );
 });
@@ -40,13 +40,13 @@ test("daily archives cannot restore live unified-book orders, including legacy a
 test("daily archives reject live resource envelopes and order expiry timers", () => {
   const slot = archive();
   assert.throws(() => validate({ ...slot, runtime_state: { ...slot.runtime_state, live_envelopes: [{ key: { account: 0, stock: 3, order: 1, side: "Buy" }, charged: { commission: "0", stamp_tax: "0", transfer_fee: "0" } }] } }), /活动委托/);
-  assert.throws(() => validate({ ...slot, npc_order_lifecycles: [{ account: 1, code: 3, order_id: 1, placed_market_minute: 0, expires_market_minute: 1 }] }), /活动委托/);
+  assert.throws(() => validate({ ...slot, npc_order_lifecycles: [{ account: "1", code: 3, order_id: 1, placed_market_minute: 0, expires_market_minute: 1 }] }), /活动委托/);
 });
 
 test("daily archives cannot contain unprocessed player requests; legacy pending_npc saves are rejected", () => {
   const slot = archive();
   const intent = { PlaceLimit: { code: 3, side: "Buy" as const, price: { Fixed: "1120" }, qty: 100 } };
-  const receipt = { owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" };
+  const receipt = { owner: "0", intent, account_ordinal: "0", stock_ordinal: "0" };
   assert.throws(() => validate({ ...slot, pending_player: [receipt] }), /日内请求/);
   // T3 批四：pending_npc 载体删除——携带该键的存档是旧格式，根解析层显式
   // 拒绝（原「日终不得含 NPC 待处理批」负例随键删除升级为格式拒绝）。

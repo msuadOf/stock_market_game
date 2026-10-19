@@ -59,7 +59,7 @@ const candle: KlinePoint = {
   tradeStats: { turnoverCents: "225000", tradeCount: 2 },
 };
 
-const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, maker: 1, taker: 2 };
+const trade: TradeEvent = { seq: 1, code: "600101", price: "1000", qty: 100, maker: "1", taker: "2" };
 
 type DetailProps = Parameters<typeof DetailComponent>[0];
 

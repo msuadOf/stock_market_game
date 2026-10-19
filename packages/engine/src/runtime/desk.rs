@@ -1573,6 +1573,16 @@ impl DeskState {
             close: price,
             volume: 0,
         });
+        // 占位 K（零成交轮/空簿开盘清算预置，volume=0、OHL=锚定最新价）
+        // 不得吸收首笔真实成交的开盘语义：大 A 开盘价=首笔成交价，且
+        // B2 分钟 bars 为纯成交口径——若沿用锚定 open/low，成交日日 K 会
+        // 与分钟聚合在 OHLC 对账面失配（retained_freeze 不变量显式红）。
+        // 昨收锚定仅保留给全日无成交的标记形态（volume 恒 0）。
+        if candle.volume == 0 {
+            candle.open = price;
+            candle.high = price;
+            candle.low = price;
+        }
         candle.high = candle.high.max(price);
         candle.low = candle.low.min(price);
         candle.close = price;

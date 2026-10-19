@@ -79,7 +79,7 @@ test("Given missing, duplicate, or mutated facts, when reduced, then input state
     ...current,
     facts: [{
       ...original,
-      key: { ...originalKey, entity: { Account: 1 } },
+      key: { ...originalKey, entity: { Account: "1" } },
     }, facts[1] ?? {}],
   }], snapshot(1, 2));
 

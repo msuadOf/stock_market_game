@@ -121,7 +121,7 @@ test("delta rejects NPC account data, invalid reservations and inconsistent orde
     { ...delta(), working_orders: { reset: false, upserts: [order], removed: [1] } },
     { ...delta(), working_orders: { reset: true, upserts: [], removed: [1] } },
     { ...delta(), working_orders: { reset: true, upserts: [{ ...order, remainingQty: 0 }], removed: [] } },
-    { ...delta(), working_orders: { reset: true, upserts: [{ ...order, owner: 1 }], removed: [] } },
+    { ...delta(), working_orders: { reset: true, upserts: [{ ...order, owner: "1" }], removed: [] } },
   ]) {
     assert.throws(() => reduceEngineUpdate(initial(), "1", batch(runtimeDelta)), (error: unknown) => {
       assert.ok(error instanceof ProtocolError);

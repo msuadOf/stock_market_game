@@ -20,7 +20,7 @@ export function projectPlayerOrders(slot: WorkingOrderSource, venue: PlayerWorki
   // 必须显式交出权威 venue，不从另一份委托集合或默认值猜测。
   for (const [code, restingOrders] of Object.entries(slot.resting_orders)) {
     for (const order of restingOrders) {
-      if (order.owner !== 0 || order.qty === 0) continue
+      if (order.owner !== "0" || order.qty === 0) continue
       orders.push({
         id: order.id,
         code,
@@ -55,9 +55,9 @@ export class PlayerOrderRefreshGate {
 
 export function playerOrderFactsRequireRefresh(facts: readonly PlayerOrderFact[]): boolean {
   return facts.some(({ event }) =>
-    ("OrderAccepted" in event && event.OrderAccepted.account === 0)
-    || ("OrderCanceled" in event && event.OrderCanceled.account === 0)
-    || ("Trade" in event && (event.Trade.maker === 0 || event.Trade.taker === 0))
+    ("OrderAccepted" in event && event.OrderAccepted.account === "0")
+    || ("OrderCanceled" in event && event.OrderCanceled.account === "0")
+    || ("Trade" in event && (event.Trade.maker === "0" || event.Trade.taker === "0"))
     || "AuctionCompleted" in event
     || "DayBoundary" in event,
   )

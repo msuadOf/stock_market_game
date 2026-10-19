@@ -133,8 +133,14 @@ fn assemble_companies(
         catalog: registry.catalog().clone(),
         companies: operating_configs,
     };
-    let prehistory =
-        assemble_seeded_prehistory(operations_config, ctx.start_date).map_err(|_error| {
+    // 报告频率 B4a 显式固定季度族（= 现状披露行为）；B4b 恢复 SessionSetup
+    // .report_frequency 字段后改接配置真值。
+    let prehistory = assemble_seeded_prehistory(
+        operations_config,
+        ctx.start_date,
+        crate::information::ReportFrequency::Quarterly,
+    )
+    .map_err(|_error| {
             // fault1152: 经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
             CompanyAssemblyError(ValidationFault::new(1152, vec![0]))
         })?;
@@ -204,8 +210,12 @@ fn assemble_custom_companies(
         )
         .map_err(company_error("custom issuer mapping"))?;
     scale_shock_params(&mut config.shock_params, event_multiplier_bp)?;
-    let mut prehistory =
-        assemble_seeded_prehistory(config, ctx.start_date).map_err(|_error| {
+    let mut prehistory = assemble_seeded_prehistory(
+        config,
+        ctx.start_date,
+        crate::information::ReportFrequency::Quarterly,
+    )
+    .map_err(|_error| {
             // fault1155: 自定义公司经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
             CompanyAssemblyError(ValidationFault::new(1155, vec![0]))
         })?;

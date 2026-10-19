@@ -76,6 +76,39 @@ pub(crate) struct MarketDelta {
     book: OrderBookDelta,
 }
 
+/// 涨跌停/价格笼子边界价的整数推导核心（单位：分）。
+///
+/// 语义与 [`Market`] 的 `price_bound` 完全一致，提取为共享纯函数供两处复用：
+/// （1）涨跌停推导参考；（2）公司行为偏好封顶的跌停链迭代
+/// （`company::simple::preferences`：闭式线性下界在低价域被证伪，跌停敞口
+/// 余量必须按本核心逐日迭代推导）。
+/// 推导：`reference × ratio_bps / 10000` 按正数四舍五入（half-up）取至最小
+/// 价位；**涨/跌幅度不足一个价位（舍入结果未离开昨收）时强制至少移动一个
+/// 价位**；最低不低于一个价位。
+/// 返回 `None` 表示输入非法（reference/tick 非正）或推导溢出，由调用方
+/// 显式映射为既有错误（铁律二：不静默吞错）。
+pub(crate) fn price_bound_cents(
+    reference_cents: i64,
+    ratio_bps: u32,
+    tick_cents: i64,
+    upward: bool,
+) -> Option<i64> {
+    if reference_cents <= 0 || tick_cents <= 0 {
+        return None;
+    }
+    let denominator = i128::from(10_000_u32) * i128::from(tick_cents);
+    let numerator = i128::from(reference_cents) * i128::from(ratio_bps);
+    let rounded_ticks = (numerator + denominator / 2) / denominator;
+    let rounded_cents = i64::try_from(rounded_ticks.checked_mul(i128::from(tick_cents))?).ok()?;
+    let mut bound = rounded_cents.max(tick_cents);
+    if upward && bound <= reference_cents {
+        bound = reference_cents.checked_add(tick_cents)?;
+    } else if !upward && bound >= reference_cents {
+        bound = (reference_cents - tick_cents).max(tick_cents);
+    }
+    Some(bound)
+}
+
 impl Market {
     pub(crate) fn hash_projection(&self) -> impl serde::Serialize + '_ {
         (
@@ -212,35 +245,31 @@ impl Market {
         }
     }
 
+    /// 涨跌停边界：直接委托 [`price_bound_cents`] 共享纯函数（单一事实源，
+    /// 与 `company::simple::preferences` 的跌停链迭代同核心）；本方法只负责
+    /// 把 domain 错误映射为既有 [`MarketError`] 形态（行为不变）。
     fn price_bound(
         &self,
         reference: Money,
         ratio_bps: u32,
         upward: bool,
     ) -> Result<Money, MarketError> {
-        if reference.cents() <= 0 {
-            return Err(MarketError::InvalidPriceState {
-                field: "reference",
-                value: reference,
-            });
-        }
-        let denominator = i128::from(10_000_u32) * i128::from(self.tick.cents());
-        let numerator = i128::from(reference.cents()) * i128::from(ratio_bps);
-        let rounded_ticks = (numerator + denominator / 2) / denominator;
-        let rounded_cents = rounded_ticks
-            .checked_mul(i128::from(self.tick.cents()))
-            .and_then(|value| i64::try_from(value).ok())
-            .ok_or_else(|| MoneyError::Overflow {
-                op: crate::money::MoneyOp::PositiveHalfUpBound,
-                operand: reference.cents(),
-            })?;
-        let mut bound = Money::from_cents(rounded_cents.max(self.tick.cents()));
-        if upward && bound <= reference {
-            bound = reference.add(self.tick)?;
-        } else if !upward && bound >= reference {
-            bound = reference.sub(self.tick)?.max(self.tick);
-        }
-        Ok(bound)
+        price_bound_cents(reference.cents(), ratio_bps, self.tick.cents(), upward)
+            .map(Money::from_cents)
+            .ok_or_else(|| {
+                if reference.cents() <= 0 {
+                    MarketError::InvalidPriceState {
+                        field: "reference",
+                        value: reference,
+                    }
+                } else {
+                    MoneyError::Overflow {
+                        op: crate::money::MoneyOp::PositiveHalfUpBound,
+                        operand: reference.cents(),
+                    }
+                    .into()
+                }
+            })
     }
 
     /// 最新成交价（只读）。

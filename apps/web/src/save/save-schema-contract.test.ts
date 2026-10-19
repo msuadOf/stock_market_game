@@ -230,7 +230,7 @@ test("pending player and NPC limit intents preserve fixed, highest and lowest pr
   ]
   const save = {
     ...currentSaveFixture(),
-    pending_player: intents.map((intent, index) => ({ owner: 0, intent, account_ordinal: String(index), stock_ordinal: String(index) })),
+    pending_player: intents.map((intent, index) => ({ owner: "0", intent, account_ordinal: String(index), stock_ordinal: String(index) })),
   }
   assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
   assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_player, save.pending_player)
@@ -247,7 +247,7 @@ test("receipt cursors and pending ordinals preserve lossless u64 decimal strings
   const current = currentSaveFixture()
   const { ingress_receipt_cursors: _removed, ...missing } = current
   assert.throws(() => parseSaveSlot(missing), /ingress_receipt_cursors.*必填/)
-  const item = { owner: 0, intent: { Cancel: { code: 600888, id: 1 } }, account_ordinal: "18446744073709551615", stock_ordinal: "18446744073709551615" }
+  const item = { owner: "0", intent: { Cancel: { code: 600888, id: 1 } }, account_ordinal: "18446744073709551615", stock_ordinal: "18446744073709551615" }
   assert.deepEqual(parseSaveSlot({ ...current, pending_player: [item] }).pending_player, [item])
   for (const ordinal of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, "01", "+1", "-1", "18446744073709551616"]) {
     assert.throws(() => parseSaveSlot({ ...current, pending_player: [{ ...item, account_ordinal: ordinal }] }), /pending_player\[0\]\.account_ordinal/)
@@ -260,7 +260,7 @@ test("receipt cursors and pending ordinals preserve lossless u64 decimal strings
 test("pending limit intents reject legacy numeric and malformed symbolic prices", () => {
   for (const price of [1000, { Fixed: 1000 }, { Fixed: "1.5" }, { Fixed: "01" }, { Fixed: "-0" }, { Fixed: "1000", Highest: true }, { Unknown: 1000 }, "Unknown", null]) {
     const intent = { PlaceLimit: { code: 600888, side: "Buy", price, qty: 100 } }
-    const queued = { owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" }
+    const queued = { owner: "0", intent, account_ordinal: "0", stock_ordinal: "0" }
     const save = { ...currentSaveFixture(), pending_player: [queued] }
     assert.throws(() => parseSaveSlot(save), /pending_player\[0\].*price/, JSON.stringify(price))
   }
@@ -269,7 +269,7 @@ test("pending limit intents reject legacy numeric and malformed symbolic prices"
 test("pending fixed price preserves integer amounts for later engine rejection", () => {
   for (const value of ["0", "-1"]) {
     const intent = { PlaceLimit: { code: 600888, side: "Buy", price: { Fixed: value }, qty: 100 } }
-    const save = { ...currentSaveFixture(), pending_player: [{ owner: 0, intent, account_ordinal: "0", stock_ordinal: "0" }] }
+    const save = { ...currentSaveFixture(), pending_player: [{ owner: "0", intent, account_ordinal: "0", stock_ordinal: "0" }] }
     assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
   }
 })

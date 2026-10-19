@@ -9,13 +9,13 @@ import { codedFactIdentity, translateEngineUpdate } from "./protocol/stock-ident
 import { baseState, snapshot, timeseries, tickBatch } from "./protocol-test-fixtures.ts";
 
 test("NPC普通拒单不冒充玩家反馈，原始事件、玩家拒单和结算错误继续保留", { timeout: 10000 }, () => {
-  for (const account of [1, 7, 60_003]) {
+  for (const account of ["1", "7", "60003"]) {
     // wire 事件 code 为数值 StockId（ADR 0041）；摄入翻译后回代码串 "000812"。
     const events: readonly Event[] = [
       { IntentRejected: { seq: 1, account, code: 0, reason: "AuctionOrderEntryClosed" } },
-      { IntentRejected: { seq: 2, account: 0, code: 0, reason: "InsufficientCash" } },
+      { IntentRejected: { seq: 2, account: "0", code: 0, reason: "InsufficientCash" } },
       { SettlementError: { seq: 3, account, code: 0, reason: "测试结算故障" } },
-      { Trade: { seq: 4, code: 0, price: "1000", qty: 100, maker: account, taker: 0 } },
+      { Trade: { seq: 4, code: 0, price: "1000", qty: 100, maker: account, taker: "0" } },
     ];
     const facts = events.map((event, index) => ({
       key: eventStableKey(event, index), event,
@@ -40,14 +40,14 @@ test("NPC普通拒单不冒充玩家反馈，原始事件、玩家拒单和结�
 });
 
 test("Given stable facts and timeseries, when projected, then notices, trades, and automatic points are type-grouped", () => {
-  const trade = { Trade: { seq: 1, code: 0, price: "1000", qty: 100, maker: 0, taker: 1 } };
-  const rejected = { IntentRejected: { seq: 2, account: 0, code: 0, reason: "InsufficientCash" } };
+  const trade = { Trade: { seq: 1, code: 0, price: "1000", qty: 100, maker: "0", taker: "1" } };
+  const rejected = { IntentRejected: { seq: 2, account: "0", code: 0, reason: "InsufficientCash" } };
   const update = {
     TickBatch: {
       frames: [{
         tick: 1,
         facts: [
-          { key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 }, event: rejected },
+          { key: { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 0 }, event: rejected },
           { key: { phase_rank: 4, entity: { Stock: 0 }, source: "Sealed", local_event_index: 0 }, event: trade },
         ],
         timeseries_payload: timeseries(1),
@@ -73,7 +73,7 @@ test("Given stable facts and timeseries, when projected, then notices, trades, a
 
 test("跨帧成交效果保留各自 tick，重试不重复追加", { timeout: 10000 }, () => {
   const frames = [1, 2].map((tick) => {
-    const event = { Trade: { seq: tick, code: 0, price: "1000", qty: 100, maker: 0, taker: 1 } };
+    const event = { Trade: { seq: tick, code: 0, price: "1000", qty: 100, maker: "0", taker: "1" } };
     return { tick, facts: [{
       key: { phase_rank: 4, entity: { Stock: 0 }, source: "Sealed", local_event_index: 0 },
       event,
@@ -90,7 +90,7 @@ test("Given an already filled cancellation, when projected, then the notice expl
   const rejected = {
     IntentRejected: {
       seq: 1,
-      account: 0,
+      account: "0",
       code: 0,
       reason: "OrderAlreadyFilled",
     },
@@ -100,7 +100,7 @@ test("Given an already filled cancellation, when projected, then the notice expl
       frames: [{
         tick: 1,
         facts: [{
-          key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 },
+          key: { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 0 },
           event: rejected,
         }],
         timeseries_payload: timeseries(1),

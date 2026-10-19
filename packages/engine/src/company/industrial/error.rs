@@ -14,6 +14,10 @@ use thiserror::Error;
 
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum IndustrialError {
+    #[error("tax correction of company {company:?} affects a fixed consolidated group and requires a grouped atomic correction")]
+    GroupedTaxCorrectionUnsupported { company: crate::company::CompanyId },
+    #[error("correction of account {account} requires structured subledger facts rather than plain journal lines")]
+    StructuredCorrectionRequired { account: LedgerAccountId },
     #[error("inconsistent income tax state: {detail}")]
     IncomeTaxStateInconsistent { detail: String },
 

@@ -1,8 +1,12 @@
 //! 经营编排装配输入：公司（规格 + 行业账套 + 流参数）与全局（seed + 冲击参数）。
 
-use crate::accounting::Books;
+use crate::accounting::{
+    AccountingAmount, AccountingPeriod, Books, BusinessEventId, IncomeTaxPolicy,
+};
+use crate::calendar::CivilDate;
 use crate::company::bank::BankBooks;
 use crate::company::events::ShockParams;
+use crate::company::income_tax::IncomeTaxPosition;
 use crate::company::industrial::IndustrialBooks;
 use crate::company::insurance::InsuranceBooks;
 use crate::company::operations::error::OperationsError;
@@ -79,6 +83,95 @@ impl IndustryBooks {
         match self {
             IndustryBooks::RealEstate(inner) => Some(inner),
             _ => None,
+        }
+    }
+
+    pub(crate) fn income_tax_owner(&self) -> (&Books, &IncomeTaxPosition, &IncomeTaxPolicy, u64) {
+        match self {
+            Self::Industrial(owner) => owner.income_tax_owner(),
+            Self::Bank(owner) => owner.income_tax_owner(),
+            Self::Insurance(owner) => owner.income_tax_owner(),
+            Self::RealEstate(owner) => owner.income_tax_owner(),
+        }
+    }
+
+    pub(crate) fn install_income_tax_owner(
+        &mut self,
+        books: Books,
+        position: IncomeTaxPosition,
+        next_event_id: u64,
+    ) {
+        match self {
+            Self::Industrial(owner) => {
+                owner.install_income_tax_owner(books, position, next_event_id)
+            }
+            Self::Bank(owner) => owner.install_income_tax_owner(books, position, next_event_id),
+            Self::Insurance(owner) => {
+                owner.install_income_tax_owner(books, position, next_event_id)
+            }
+            Self::RealEstate(owner) => {
+                owner.install_income_tax_owner(books, position, next_event_id)
+            }
+        }
+    }
+
+    pub(crate) fn validate_income_tax_state(&self) -> Result<(), OperationsError> {
+        match self {
+            Self::Industrial(owner) => owner.validate_income_tax_state().map_err(Into::into),
+            Self::Bank(owner) => owner.validate_income_tax_state().map_err(Into::into),
+            Self::Insurance(owner) => owner.validate_restore().map_err(Into::into),
+            Self::RealEstate(owner) => owner.validate_income_tax_state().map_err(Into::into),
+        }
+    }
+
+    pub(crate) fn validate_owner_state(&self) -> Result<(), OperationsError> {
+        match self {
+            Self::Industrial(owner) => {
+                owner.validate_income_tax_state()?;
+                owner.validate_credit_state()?;
+                owner.validate_trade_counterparty_events()?;
+                owner.validate_inventory_source_events()?;
+                Ok(())
+            }
+            Self::Bank(owner) => owner.validate_owner_state().map_err(Into::into),
+            Self::Insurance(owner) => owner.validate_restore().map_err(Into::into),
+            Self::RealEstate(owner) => owner.validate_owner_state().map_err(Into::into),
+        }
+    }
+
+    pub(crate) fn income_tax_restatements(
+        &self,
+    ) -> &std::collections::BTreeMap<BusinessEventId, AccountingPeriod> {
+        match self {
+            Self::Industrial(owner) => owner.income_tax_restatements(),
+            Self::Bank(owner) => owner.income_tax_restatements(),
+            Self::Insurance(owner) => owner.income_tax_restatements(),
+            Self::RealEstate(owner) => owner.income_tax_restatements(),
+        }
+    }
+
+    pub(crate) fn accrue_income_tax(
+        &mut self,
+        date: CivilDate,
+    ) -> Result<crate::company::IncomeTaxOutcome, OperationsError> {
+        match self {
+            Self::Industrial(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+            Self::Bank(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+            Self::Insurance(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+            Self::RealEstate(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+        }
+    }
+
+    pub(crate) fn pay_income_tax(
+        &mut self,
+        amount: AccountingAmount,
+        date: CivilDate,
+    ) -> Result<BusinessEventId, OperationsError> {
+        match self {
+            Self::Industrial(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
+            Self::Bank(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
+            Self::Insurance(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
+            Self::RealEstate(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
         }
     }
 }

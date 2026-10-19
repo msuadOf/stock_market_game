@@ -18,6 +18,7 @@ mod policy;
 pub mod data;
 
 pub use data::{embedded_lunar_facts, LunarYearFact, LunarYearFacts};
+pub(crate) use date::days_in_month;
 pub use date::{
     CivilDate, CivilDateError, CivilInstant, Weekday, CIVIL_YEAR_MAX, CIVIL_YEAR_MIN,
     SECONDS_PER_DAY,

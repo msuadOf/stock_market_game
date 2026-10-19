@@ -319,12 +319,14 @@ fn public_library_mixed_digest_clone_mutations_are_isolated_and_serde_stable() {
         company: crate::company::CompanyId(0),
         occurred_on,
         published_at: crate::calendar::CivilInstant::from_hms(occurred_on, 18, 0, 0).unwrap(),
-        event: crate::information::AnnouncedEvent {
-            kind: crate::company::ShockKind::CreditDeterioration,
-            amplitude_bp,
-            starts_on: occurred_on,
-            expires_on: occurred_on,
-        },
+        content: crate::information::AnnouncementContent::Shock(
+            crate::information::AnnouncedEvent {
+                kind: crate::company::ShockKind::CreditDeterioration,
+                amplitude_bp,
+                starts_on: occurred_on,
+                expires_on: occurred_on,
+            },
+        ),
     };
 
     cloned.publish_announcement(request(501)).unwrap();

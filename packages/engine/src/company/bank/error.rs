@@ -13,6 +13,17 @@ use thiserror::Error;
 
 #[derive(Clone, Eq, PartialEq, Debug, Error)]
 pub enum BankError {
+    #[error("invalid bank income tax state: {detail}")]
+    IncomeTaxStateInconsistent { detail: String },
+
+    #[error("income tax payment {requested:?} exceeds payable {payable:?}")]
+    TaxOverpayment {
+        requested: AccountingAmount,
+        payable: AccountingAmount,
+    },
+
+    #[error("invalid bank ownership state: {detail}")]
+    OwnershipStateInconsistent { detail: String },
     /// 付款/提款将打负现金（`NegativeCashProhibited` 的领域映射）：类型化
     /// 拒绝，账套与子账零改动（客户流动性约束：银行继续运行）。
     #[error("payment failed (insufficient cash): {source}")]

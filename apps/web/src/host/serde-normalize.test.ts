@@ -12,12 +12,14 @@ const financials = publicReportGold().financials;
 Object.assign(financials, { version_kind: "Original", version_supersedes: null });
 Object.assign(financials.balance_sheet, { total_assets: "9007199254740993.01", total_liabilities: "0.00", total_equity: "9007199254740993.01", closing_cash: "1.00" });
 Object.assign(financials.income.quarter, { net_income: "1.00" });
+Object.assign(financials.income.report_period, { net_income: "1.00" });
 Object.assign(financials.income.cumulative, { net_income: "1.00", income_tax: "0.00" });
 Object.assign(financials.cash_flow, { operating: "1.00", investing: "0.00", financing: "0.00", net_change: "1.00" });
 
 const publicReport = {
   id: "9007199254740993",
   company_id: "C-600101",
+  source: "SimpleGenerated",
   period: "2030-03-31",
   kind: "Quarter",
   version_sequence: "9007199254740993",
@@ -34,6 +36,7 @@ const publicReport = {
     closing_cash: "1.00",
     quarter_net_income: "1.00",
     net_income: "1.00",
+    report_period_net_income: "1.00",
     income_tax: "0.00",
     operating_cash_flow: "1.00",
     investing_cash_flow: "0.00",

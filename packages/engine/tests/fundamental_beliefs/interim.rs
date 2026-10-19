@@ -132,6 +132,35 @@ fn own_known_interim_supplements_growth_without_replacing_annual_earnings() {
         group.reports.scope = ScopeId::Consolidated(MemberId(0));
         group.reports.income.net_income_to_parent =
             Some(group.reports.income.cumulative.net_income);
+        // 合并报告勾稽：报告期归母口径与 Unsupported 形态 ROE 必须显式在场
+        // （同 session::decision_chain 合并夹具的补法）。
+        group.reports.income.report_period_net_income_to_parent =
+            Some(group.reports.income.report_period.net_income);
+        let roe_reason = engine::accounting::reports::ReportRoeUnavailable::ConsolidatedAttributionFactsUnavailable;
+        let roe_unavailable = engine::accounting::reports::ReportRoeValue::Unavailable {
+            reason: roe_reason,
+        };
+        group.reports.roe = engine::accounting::reports::ReportRoe {
+            basis: engine::accounting::reports::ReportRoeBasis::Unsupported {
+                reason: roe_reason,
+            },
+            ordinary_roe: roe_unavailable.clone(),
+            adjusted_roe: roe_unavailable.clone(),
+            weighted_average_parent_equity_cents: roe_unavailable.clone(),
+            non_recurring: engine::accounting::reports::ReportRoeNonRecurring::Unavailable {
+                reason: roe_reason,
+            },
+            equity_events: engine::accounting::reports::ReportRoeEquityEventBreakdown {
+                attributable_to_parent:
+                    engine::accounting::reports::ReportRoeEquityEventListing::Unavailable {
+                        reason: roe_reason,
+                    },
+                minority_interest:
+                    engine::accounting::reports::ReportRoeEquityEventListing::Unavailable {
+                        reason: roe_reason,
+                    },
+            },
+        };
         group.reports.income.minority_net_income = Some(AccountingAmount::ZERO);
         group.reports.equity.opening_minority = Some(AccountingAmount::ZERO);
         group.reports.equity.minority_net_income = Some(AccountingAmount::ZERO);

@@ -71,12 +71,13 @@ pub(crate) fn generate(windows: &StatementWindows) -> Result<EquityStatement, Re
                     capital = capital.sub(movement)?;
                 }
             }
+            let distributions = windows.owner_distributions;
             Ok(EquityStatement {
                 opening_parent: equity_rolling(windows, &opening_map)?,
                 net_income: net_income_of(&windows.movement, &windows.defs)?,
                 other_comprehensive: AccountingAmount::ZERO,
-                capital_contributions: capital,
-                distributions: AccountingAmount::ZERO,
+                capital_contributions: capital.add(distributions)?,
+                distributions,
                 closing_parent: equity_rolling(windows, &windows.closing)?,
                 opening_minority: None,
                 minority_net_income: None,

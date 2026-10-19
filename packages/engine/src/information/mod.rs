@@ -19,12 +19,18 @@
 //! 版本；普通查询面只见公开版本，不见未披露总账。
 
 mod acquisition;
+mod monthly_schedule;
 mod npc_view;
 mod prehistory;
 mod public_view;
 mod publication;
 mod queries;
 mod schedule;
+mod simple_disclosures;
+pub use simple_disclosures::publish_simple_scheduled;
+pub use monthly_schedule::{MonthlyReportDelay, MonthlyReportPreset, MonthlyReportSchedule};
+#[cfg(test)]
+mod source_tests;
 
 pub use acquisition::{
     discovery_candidates, AcquiredKind, AcquisitionError, AcquisitionOutcome, AcquisitionRecord,
@@ -37,11 +43,14 @@ pub use prehistory::{
 pub use public_view::{PublicLibrary, PublicLibrarySave};
 pub(crate) use publication::period_end_date;
 pub use publication::{
-    AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementRequest, PublicationId,
-    PublicationOrigin, PublicationRequest, PublishedReport, APPROVAL_HOUR, DISCLOSURE_PHASE_SECOND,
+    AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementContent, AnnouncementRequest,
+    CashDividendAnnouncement, IssuerRepurchaseAnnouncement, PublicationId, PublicationOrigin,
+    PublicationRequest, PublicationSource, PublishedReport, RightsOfferingAnnouncement,
+    APPROVAL_HOUR, DISCLOSURE_PHASE_SECOND,
 };
 pub use schedule::{
-    scheduled_instant, stable_company_offset, ScheduledReportKind, SCHEDULE_OFFSET_MAX,
+    scheduled_instant, stable_company_offset, ReportFrequency, ScheduledReportKind,
+    SCHEDULE_OFFSET_MAX,
 };
 
 use crate::accounting::closing::ClosingError;
@@ -56,6 +65,15 @@ use thiserror::Error;
 /// 合并 `DeclaredSide` 与报表 `Report` 的装箱方式）。
 #[derive(Debug, Error)]
 pub enum InformationError {
+    /// 集团更正公布时点早于被更正报告：原时点与请求时点逆序（更正必须晚于原版）。
+    #[error(
+        "集团更正公布时点早于被更正报告 {original:?}：原时点 {original_at:?}，请求时点 {published_at:?}"
+    )]
+    CorrectionPrecedesOriginal {
+        original: PublicationId,
+        original_at: CivilInstant,
+        published_at: CivilInstant,
+    },
     /// 日期算法层错误（排期加法越出 1900–2199 验证窗等）。
     #[error("civil date error: {0}")]
     Date(#[from] CivilDateError),

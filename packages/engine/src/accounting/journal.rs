@@ -59,6 +59,29 @@ impl BusinessEventId {
     ts_rs::TS,
 )]
 pub enum BusinessKind {
+    /// Simple 汇总收入确认（借 simple_receivable／贷 simple_revenue；非现金，
+    /// 不冒充客户交易；逐项分录，2026-10-10 分录级派生批）。
+    SimpleRevenueAccrual,
+    /// Simple 汇总固定费用计提（借 simple_fixed_expense／贷 simple_payable；
+    /// 非现金，逐项分录）。
+    SimpleFixedExpenseAccrual,
+    /// Simple 汇总变动费用计提（借 simple_variable_expense／贷 simple_payable；
+    /// 非现金，逐项分录）。
+    SimpleVariableExpenseAccrual,
+    CompanyDividendDeclaration,
+    CompanyDividendPayment,
+    /// 送转真实入账（权益内部结转：送股借 4103／转增借资本公积，贷 4001；
+    /// 非现金，N3 批 2026-10-08）。
+    CompanyStockDistributionCredit,
+    /// 配股／增发结算（募集资金挂非现金资产调整，面值贷 4001、溢价贷资本公积；
+    /// 非现金，N3 批 2026-10-08）。
+    CompanyRightsOfferingSettlement,
+    /// 回购注销（按面值核减 4001 并等额归集资本公积；简化口径见
+    /// docs/company-accounting.md，非现金，N3 批 2026-10-08）。
+    CompanyRepurchaseCancellation,
+    /// 缩股重新计值入账（按消灭面值核减 4001 并等额归集资本公积；拆股
+    /// 面值总额不变、不产生分录，非现金，N3 批 2026-10-08）。
+    CompanyShareReDenomination,
     /// 期初余额凭证（显式平衡的开业账套）。
     OpeningBalance,
     /// 取得借款（现金入，负债增）。
@@ -237,6 +260,18 @@ impl JournalEntry {
     /// 复式不变量验证（过账与存档恢复共用同一路径）：
     /// 非空行、每行正金额、借贷两侧俱全、借贷总额相等。
     pub fn validate_invariants(&self) -> Result<(), AccountingError> {
+        if matches!(
+            self.kind,
+            BusinessKind::SimpleRevenueAccrual
+                | BusinessKind::SimpleFixedExpenseAccrual
+                | BusinessKind::SimpleVariableExpenseAccrual
+        ) && self.cash_flow != CashFlowClass::NonCash
+        {
+            return Err(AccountingError::SimpleSettlementCashFlow {
+                event: self.source,
+                cash_flow: self.cash_flow,
+            });
+        }
         if self.lines.is_empty() {
             return Err(AccountingError::EmptyLines { event: self.source });
         }

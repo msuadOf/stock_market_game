@@ -52,6 +52,7 @@ impl WeekendScenario {
             .expect("saturday q1 instant")
             .date();
         let friday = saturday.prev().expect("friday before saturday");
+        // 报告频率固定季度族（B4a：SessionSetup 频率字段随 B4b 接线）。
         let seeded = assemble_seeded_prehistory(
             single_company_config(
                 history_start_of(friday)
@@ -59,6 +60,7 @@ impl WeekendScenario {
                     .expect("as_of before history"),
             ),
             friday,
+            engine::information::ReportFrequency::Quarterly,
         )
         .expect("prehistory assembles");
         let session =
@@ -305,11 +307,16 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
         announcement.published_at,
         saturday_report.disclosure_instant
     );
-    assert_eq!(announcement.event.kind, ShockKind::ContractWon);
-    assert_eq!(announcement.event.amplitude_bp, 1_500);
-    assert_eq!(announcement.event.starts_on, saturday);
+    let engine::information::AnnouncementContent::Shock(announcement_event) =
+        &announcement.content
+    else {
+        panic!("周末冲击公告内容必须是冲击");
+    };
+    assert_eq!(announcement_event.kind, ShockKind::ContractWon);
+    assert_eq!(announcement_event.amplitude_bp, 1_500);
+    assert_eq!(announcement_event.starts_on, saturday);
     assert_eq!(
-        announcement.event.expires_on,
+        announcement_event.expires_on,
         plus_days(saturday, 5).unwrap()
     );
     // 未来现金流是预测：公告类型上只有事件条款，无任何「已实现」金额声明。

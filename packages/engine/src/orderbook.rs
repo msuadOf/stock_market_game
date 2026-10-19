@@ -120,9 +120,10 @@ pub(crate) mod js_safe_u64 {
     }
 }
 
-/// u128 的规范十进制字符串 serde（B2 补面——按 18725d07 基线恢复）：
-/// 只接受 `0` 或非零开头的纯数字串（拒绝 `00`/`+1`/`-1`）；供日内均价
-/// wire 面复用（合法成交额可超 u64，字符串承载）。
+/// u128 的 canonical 十进制字符串 serde 助手：只接受 `0` 或非零开头的
+/// 纯数字串（拒绝 `00`/`+1`/`-1`），序列化恒为字符串。既供日内均价 wire
+/// 面复用（B2 补面——按 18725d07 基线恢复；合法成交额可超 u64，字符串承载），
+/// 也供公司域存档使用；受理域扩展留后续批次。
 pub(crate) mod canonical_u128_decimal {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -143,6 +144,37 @@ pub(crate) mod canonical_u128_decimal {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
         parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+/// u64 的 canonical 十进制字符串 serde 助手（公司域存档用；受理域扩展留
+/// 后续批次）。序列化恒为字符串；反序列化拒绝前导零等非规范形态。
+pub(crate) mod canonical_u64_decimal {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let bytes = value.as_bytes();
+        let nonzero_prefix = bytes
+            .first()
+            .is_some_and(|byte| (b'1'..=b'9').contains(byte));
+        let canonical = bytes == b"0" || (nonzero_prefix && bytes.iter().all(u8::is_ascii_digit));
+        if !canonical {
+            return Err(serde::de::Error::custom(
+                "u64 must use canonical decimal notation",
+            ));
+        }
+        value.parse::<u64>().map_err(serde::de::Error::custom)
     }
 }
 
@@ -257,9 +289,9 @@ pub enum OrderError {
     serde::Deserialize,
     ts_rs::TS,
 )]
-#[ts(type = "number")]
+#[ts(type = "string")]
 #[serde(transparent)]
-pub struct AccountId(#[serde(with = "js_safe_u64")] pub u64);
+pub struct AccountId(#[serde(with = "canonical_u64_decimal")] pub u64);
 
 /// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
 ///

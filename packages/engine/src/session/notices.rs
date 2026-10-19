@@ -290,11 +290,14 @@ pub(super) fn credit_default_cause(
 ) -> Result<Option<BeliefCause>, crate::information::InformationError> {
     let announcement = library.announcement(id, now)?;
     Ok(matches!(
-        announcement.event.kind,
-        crate::company::ShockKind::PaymentFailure {
-            obligation_status: crate::company::events::PaymentObligationStatus::ContractualOverdue,
+        announcement.content,
+        crate::information::AnnouncementContent::Shock(crate::information::AnnouncedEvent {
+            kind: crate::company::ShockKind::PaymentFailure {
+                obligation_status: crate::company::events::PaymentObligationStatus::ContractualOverdue,
+                ..
+            },
             ..
-        }
+        })
     )
     .then_some(BeliefCause::CreditDefault { announcement: id }))
 }
@@ -540,8 +543,13 @@ mod tests {
                         .unwrap();
                     (issuer == &company
                         && matches!(
-                            announcement.event.kind,
-                            crate::company::ShockKind::ContractWon
+                            announcement.content,
+                            crate::information::AnnouncementContent::Shock(
+                                crate::information::AnnouncedEvent {
+                                    kind: crate::company::ShockKind::ContractWon,
+                                    ..
+                                }
+                            )
                         ))
                     .then_some(*publication_id)
                 })
@@ -713,12 +721,12 @@ mod tests {
                     company: crate::company::CompanyId(0),
                     occurred_on: date,
                     published_at: now,
-                    event: AnnouncedEvent {
+                    content: crate::information::AnnouncementContent::Shock(AnnouncedEvent {
                         kind,
                         amplitude_bp: 0,
                         starts_on: date,
                         expires_on: date,
-                    },
+                    }),
                 })
                 .unwrap();
             assert_eq!(

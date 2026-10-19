@@ -113,8 +113,13 @@ fn failed_operating_payment_is_published_once_at_day_end() {
         assert_eq!(announcement.company, failure.company);
         assert_eq!(announcement.occurred_on, date);
         assert_eq!(announcement.published_at, report.disclosure_instant);
+        let engine::information::AnnouncementContent::Shock(announcement_event) =
+            &announcement.content
+        else {
+            panic!("逾期冲击公告内容必须是冲击");
+        };
         assert_eq!(
-            announcement.event.kind,
+            announcement_event.kind,
             engine::company::ShockKind::PaymentFailure {
                 obligation_status: failure.obligation_status,
                 what: failure.what.clone(),
@@ -236,7 +241,7 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
             company: CompanyId(0),
             occurred_on: date,
             published_at: engine::calendar::CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
-            event: AnnouncedEvent {
+            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                 kind: engine::company::ShockKind::PaymentFailure {
                     obligation_status:
                         engine::company::events::PaymentObligationStatus::ContractualOverdue,
@@ -246,14 +251,20 @@ fn risk_announcement_restore_rejects_nonpositive_failed_amount() {
                 amplitude_bp: 0,
                 starts_on: date,
                 expires_on: date,
-            },
+            }),
         })
         .unwrap();
     let mut saved = library.save();
-    saved.announcements[0].event.kind = engine::company::ShockKind::PaymentFailure {
+    let engine::information::AnnouncementContent::Shock(mut event) =
+        saved.announcements[0].content.clone()
+    else {
+        panic!("夹具公告必须是冲击公告");
+    };
+    event.kind = engine::company::ShockKind::PaymentFailure {
         obligation_status: engine::company::events::PaymentObligationStatus::ContractualOverdue,
         what: "overdue principal".into(),
         amount: amt(0),
     };
+    saved.announcements[0].content = engine::information::AnnouncementContent::Shock(event);
     assert!(PublicLibrary::from_parts(saved).is_err());
 }

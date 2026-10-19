@@ -10,7 +10,7 @@ function effectsFromEvent(event: CodedEvent, tick: number): readonly ProtocolEff
   if ("IntentRejected" in event) {
     const reason = rejectionMessage(event.IntentRejected.reason);
     // account 0 是现有玩家账户；NPC 业务拒单保留为事实，不冒充玩家操作反馈。
-    if (event.IntentRejected.account !== 0) return [];
+    if (event.IntentRejected.account !== "0") return [];
     return [{ kind: "notice", message: `委托被拒：${event.IntentRejected.code} - ${reason}` }];
   }
   if ("SettlementError" in event) {

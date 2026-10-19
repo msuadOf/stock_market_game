@@ -28,8 +28,8 @@ test("post-load refresh supersedes a baseline refresh and the loaded snapshot", 
 })
 
 test("requires authoritative refresh for same-tick acceptance and trade regardless of fact order", () => {
-  const accepted = { event: { OrderAccepted: { seq: 2, account: 0, code: "600101", id: 7, side: "Buy" as const, price: "1008", remaining_qty: 200 } } }
-  const trade = { event: { Trade: { seq: 1, code: "600101", price: "1008", qty: 100, maker: 0, taker: 4 } } }
+  const accepted = { event: { OrderAccepted: { seq: 2, account: "0", code: "600101", id: 7, side: "Buy" as const, price: "1008", remaining_qty: 200 } } }
+  const trade = { event: { Trade: { seq: 1, code: "600101", price: "1008", qty: 100, maker: "0", taker: "4" } } }
   assert.equal(playerOrderFactsRequireRefresh([trade, accepted]), true)
   assert.equal(playerOrderFactsRequireRefresh([accepted, trade]), true)
 })
@@ -37,8 +37,8 @@ test("requires authoritative refresh for same-tick acceptance and trade regardle
 test("keeps same-price orders distinct when projected from the authoritative save", () => {
   const orders = projectPlayerOrders({
     resting_orders: { "600101": [
-      { id: 7, owner: 0, side: "Buy", price: "1008", qty: 100, original_qty: 200, filled_qty: 100, filled_value: "100800", seq: 1 },
-      { id: 8, owner: 0, side: "Buy", price: "1008", qty: 200, original_qty: 200, filled_qty: 0, filled_value: "0", seq: 2 },
+      { id: 7, owner: "0", side: "Buy", price: "1008", qty: 100, original_qty: 200, filled_qty: 100, filled_value: "100800", seq: 1 },
+      { id: 8, owner: "0", side: "Buy", price: "1008", qty: 200, original_qty: 200, filled_qty: 0, filled_value: "0", seq: 2 },
     ] },
   }, "Continuous")
   assert.deepEqual(orders.map(({ id, remainingQty }) => [id, remainingQty]), [[7, 100], [8, 200]])
@@ -50,8 +50,8 @@ test("projects only the player's authoritative unified-book orders", () => {
   const auctionVenue = projectPlayerOrders({
     resting_orders: {
       "3": [
-        { id: 7, owner: 0, side: "Buy", price: "1105", qty: 200, original_qty: 200, filled_qty: 0, filled_value: "0", seq: 1 },
-        { id: 8, owner: 3, side: "Sell", price: "1120", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 2 },
+        { id: 7, owner: "0", side: "Buy", price: "1105", qty: 200, original_qty: 200, filled_qty: 0, filled_value: "0", seq: 1 },
+        { id: 8, owner: "3", side: "Sell", price: "1120", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 2 },
       ],
     },
   }, "Auction")
@@ -61,7 +61,7 @@ test("projects only the player's authoritative unified-book orders", () => {
   const continuousVenue = projectPlayerOrders({
     resting_orders: {
       "1": [
-        { id: 11, owner: 0, side: "Sell", price: "2700", qty: 100, original_qty: 200, filled_qty: 100, filled_value: "270000", seq: 19 },
+        { id: 11, owner: "0", side: "Sell", price: "2700", qty: 100, original_qty: 200, filled_qty: 100, filled_value: "270000", seq: 19 },
       ],
     },
   }, "Continuous")
@@ -74,8 +74,8 @@ test("sorts player orders by stable order id without mutating the save payload",
   const slot = {
     resting_orders: {
       "600101": [
-        { id: 20, owner: 0, side: "Sell" as const, price: "1100", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 3 },
-        { id: 3, owner: 0, side: "Buy" as const, price: "1000", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 2 },
+        { id: 20, owner: "0", side: "Sell" as const, price: "1100", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 3 },
+        { id: 3, owner: "0", side: "Buy" as const, price: "1000", qty: 100, original_qty: 100, filled_qty: 0, filled_value: "0", seq: 2 },
       ],
     },
   }
@@ -87,10 +87,10 @@ test("sorts player orders by stable order id without mutating the save payload",
 
 test("refreshes after player order lifecycle changes and auction transitions", () => {
   assert.equal(playerOrderFactsRequireRefresh([
-    { event: { OrderCanceled: { seq: 2, account: 0, code: "600101", id: 7, remaining_qty: 200 } } },
+    { event: { OrderCanceled: { seq: 2, account: "0", code: "600101", id: 7, remaining_qty: 200 } } },
   ]), true)
   assert.equal(playerOrderFactsRequireRefresh([
-    { event: { Trade: { seq: 3, code: "600101", price: "1120", qty: 100, maker: 0, taker: 4 } } },
+    { event: { Trade: { seq: 3, code: "600101", price: "1120", qty: 100, maker: "0", taker: "4" } } },
   ]), true)
   assert.equal(playerOrderFactsRequireRefresh([
     { event: { AuctionCompleted: { seq: 4, tick: 6, phase: "CallAuction", code: "600101", clearing_price: null, matched_volume: 0 } } },

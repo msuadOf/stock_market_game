@@ -30,6 +30,7 @@ impl RealEstateBooks {
                 project: project.clone(),
             })?;
         state.validate_development(project, amount)?;
+        state.validate_lifecycle_date(project, date)?;
 
         let base = self.next_event_id;
         let event = BusinessEventId::new(base);
@@ -72,6 +73,7 @@ impl RealEstateBooks {
                 project: project.clone(),
             })?;
         state.validate_suspend(project)?;
+        state.validate_lifecycle_date(project, date)?;
         self.projects_mut()
             .get_mut(project)
             .expect("validated above")
@@ -110,6 +112,7 @@ impl RealEstateBooks {
                 project: project.clone(),
             })?;
         state.validate_complete(project)?;
+        state.validate_lifecycle_date(project, date)?;
         self.projects_mut()
             .get_mut(project)
             .expect("validated above")

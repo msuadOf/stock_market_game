@@ -114,6 +114,7 @@ pub(crate) fn base_config() -> RealEstateConfig {
         .expect("fixture budget"),
         capitalization_policy: fixture_capitalization_policy(),
         max_projects: 2,
+        income_tax_policy: engine::accounting::IncomeTaxPolicy { rate_bp: 2500, loss_carryforward_years: 5 },
     }
 }
 

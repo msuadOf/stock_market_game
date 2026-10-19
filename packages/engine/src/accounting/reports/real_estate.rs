@@ -31,6 +31,9 @@ pub mod codes {
     pub const COGS: &str = "6401"; // 主营业务成本（营业成本）
     pub const FIN_EXP: &str = "6603"; // 财务费用（费用化借款利息）
     pub const IMPAIR_LOSS: &str = "6701"; // 资产减值损失
+    pub const DTA: &str = "1811";
+    pub const CIT_PAYABLE: &str = "222104";
+    pub const TAX_EXP: &str = "6801";
 }
 
 /// 地产列报行（分类结果；正负号 = 借贷方向，负债/收入行以正数呈现其
@@ -57,6 +60,10 @@ pub struct RealEstatePresentationLines {
     pub finance_cost: AccountingAmount,
     /// 资产减值损失（开发存货减值；转回为负）。
     pub impairment_loss: AccountingAmount,
+    pub income_tax_expense: AccountingAmount,
+    pub deferred_tax_assets: AccountingAmount,
+    pub current_tax_assets: AccountingAmount,
+    pub income_tax_payable: AccountingAmount,
 }
 
 /// 由总账读净借方余额（负值 = 贷方余额）。
@@ -72,6 +79,7 @@ pub fn real_estate_presentation_lines(
         |code: &str| -> Result<AccountingAmount, AccountingError> { debit(ledger, code)?.neg() };
     let gross = debit(ledger, codes::DEV_INVENTORY)?;
     let impairment = credit_of(codes::DEV_IMPAIR_ALLOW)?;
+    let income_tax_balance = debit(ledger, codes::CIT_PAYABLE)?;
     Ok(RealEstatePresentationLines {
         development_inventory_gross: gross,
         development_inventory_impairment: impairment,
@@ -83,10 +91,22 @@ pub fn real_estate_presentation_lines(
         operating_cost: debit(ledger, codes::COGS)?,
         finance_cost: debit(ledger, codes::FIN_EXP)?,
         impairment_loss: debit(ledger, codes::IMPAIR_LOSS)?,
+        income_tax_expense: debit(ledger, codes::TAX_EXP)?,
+        deferred_tax_assets: debit(ledger, codes::DTA)?,
+        current_tax_assets: if income_tax_balance.is_positive() {
+            income_tax_balance
+        } else {
+            AccountingAmount::ZERO
+        },
+        income_tax_payable: if income_tax_balance.is_negative() {
+            income_tax_balance.neg()?
+        } else {
+            AccountingAmount::ZERO
+        },
     })
 }
 
-/// 地产归类表（报表生成器消费；AccountChart.version=5 全量 14 科目）。
+/// 地产归类表（报表生成器消费；AccountChart.version=5 全量 17 科目）。
 pub fn assignments() -> Vec<super::notes::Assignment> {
     use super::income::IncomeLine::{
         FinanceExpense, ImpairmentLoss, OperatingCost, OperatingRevenue,
@@ -129,5 +149,17 @@ pub fn assignments() -> Vec<super::notes::Assignment> {
         a(codes::COGS, NoteTarget::Income(OperatingCost)),
         a(codes::FIN_EXP, NoteTarget::Income(FinanceExpense)),
         a(codes::IMPAIR_LOSS, NoteTarget::Income(ImpairmentLoss)),
+        a(
+            codes::DTA,
+            NoteTarget::BalanceSheet(super::BsLine::DeferredTaxAssets),
+        ),
+        a(
+            codes::CIT_PAYABLE,
+            NoteTarget::BalanceSheet(super::BsLine::TaxesPayable),
+        ),
+        a(
+            codes::TAX_EXP,
+            NoteTarget::Income(super::income::IncomeLine::IncomeTaxExpense),
+        ),
     ]
 }

@@ -15,7 +15,9 @@ use crate::money::Money;
 const BP_DENOM: i128 = 10_000;
 
 /// 会计金额：内部恒为「分」(元×100) 的 i128。有符号（亏损/负权益合法）。
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+// TS 投影 = 精确十进制字符串（与 serde 形态一致，禁用 JSON number）。
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default, ts_rs::TS)]
+#[ts(type = "string")]
 pub struct AccountingAmount(i128);
 
 impl AccountingAmount {

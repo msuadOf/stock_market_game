@@ -213,7 +213,7 @@ test("09:30 连续竞价首分钟量不重复计入集合竞价成交量", () =>
   const events: EngineEvent[] = [
     { AuctionCompleted: { seq: 1, tick: 900, phase: "CallAuction", code: "600460", clearing_price: "3030", matched_volume: 529_070 } },
     priceTick(2, "600460", 3030, 901, 529_070),
-    { Trade: { seq: 3, code: "600460", price: "3031", qty: 100, maker: 1, taker: 2 } },
+    { Trade: { seq: 3, code: "600460", price: "3031", qty: 100, maker: "1", taker: "2" } },
     priceTick(4, "600460", 3031, 902, 529_170),
   ];
 
@@ -225,7 +225,7 @@ test("09:30 连续竞价首分钟量不重复计入集合竞价成交量", () =>
 test("同一分钟跨事件批次持续更新同一根分时点和量柱", () => {
   const collector = new MinutePointCollector("600460");
   const firstSecond: EngineEvent[] = [
-    { Trade: { seq: 1, code: "600460", price: "3030", qty: 200, maker: 1, taker: 2 } },
+    { Trade: { seq: 1, code: "600460", price: "3030", qty: 200, maker: "1", taker: "2" } },
     priceTick(2, "600460", 3030, 1, 200),
   ];
   const remainingSeconds: EngineEvent[] = Array.from({ length: 59 }, (_, index) =>
@@ -277,7 +277,7 @@ test("高倍率批次跨日时只把最后日界后的事件交给新日分时",
 test("其它股票的成交量不会混入当前股票", () => {
   const collector = new MinutePointCollector("600460", 1);
   const events: EngineEvent[] = [
-    { Trade: { seq: 1, code: "000001", price: "1000", qty: 900, maker: 1, taker: 2 } },
+    { Trade: { seq: 1, code: "000001", price: "1000", qty: 900, maker: "1", taker: "2" } },
     priceTick(2, "000001", 1000),
     priceTick(3, "600460", 3034),
   ];
@@ -290,8 +290,8 @@ test("其它股票的成交量不会混入当前股票", () => {
 test("一分钟内最后成交价决定量柱方向", () => {
   const collector = new MinutePointCollector("600460");
   const events: EngineEvent[] = [
-    { Trade: { seq: 7, code: "600460", price: "3033", qty: 200, maker: 1, taker: 2 } },
-    { Trade: { seq: 8, code: "600460", price: "3034", qty: 300, maker: 3, taker: 4 } },
+    { Trade: { seq: 7, code: "600460", price: "3033", qty: 200, maker: "1", taker: "2" } },
+    { Trade: { seq: 8, code: "600460", price: "3034", qty: 300, maker: "3", taker: "4" } },
     priceTick(9, "600460", 3034, 1, 500),
   ];
 

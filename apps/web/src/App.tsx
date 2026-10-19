@@ -330,10 +330,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         void quickTrading.advance(reduction.state.snapshot);
         const playerOrderChanged = reduction.update.kind === "tick-batch" && reduction.update.frames.some((frame) =>
           frame.facts.some(({ event }) =>
-            ("OrderAccepted" in event && event.OrderAccepted.account === 0)
-            || ("OrderCanceled" in event && event.OrderCanceled.account === 0)
-            || ("IntentRejected" in event && event.IntentRejected.account === 0)
-            || ("Trade" in event && (event.Trade.maker === 0 || event.Trade.taker === 0)),
+            ("OrderAccepted" in event && event.OrderAccepted.account === "0")
+            || ("OrderCanceled" in event && event.OrderCanceled.account === "0")
+            || ("IntentRejected" in event && event.IntentRejected.account === "0")
+            || ("Trade" in event && (event.Trade.maker === "0" || event.Trade.taker === "0")),
           ),
         );
         if (playerOrderChanged) {

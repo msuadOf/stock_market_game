@@ -78,17 +78,17 @@ test("Given a structured-cloned WASM Snapshot, Map-backed markets and accounts s
 
 test("Given every Event wire variant, when parsed in an update, then all eleven tags are accepted", () => {
   const events: readonly JsonRecord[] = [
-    { Trade: { seq: 1, code: 0, price: "1000", qty: 100, maker: 0, taker: 1 } },
+    { Trade: { seq: 1, code: 0, price: "1000", qty: 100, maker: "0", taker: "1" } },
     { AuctionTick: { seq: 2, tick: 1, phase: "CallAuction", code: 0, indicative_price: null, matched_volume: 0, imbalance: 0 } },
     { AuctionCompleted: { seq: 3, tick: 1, phase: "ClosingAuction", code: 0, clearing_price: "1000", matched_volume: 100 } },
     { PriceTick: { seq: 4, tick: 1, code: 0, last_price: "1000", daily_candle: dailyCandle(), bids: [], asks: [] } },
     { DayBoundary: { seq: 5, day: 1, closed_daily_candles: { "0": dailyCandle() } } },
     { CivilDateAdvanced: { seq: 6, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: { Closed: { OfficialHoliday: { citation_id: "SSE-2030" } } } } },
     { CompanyDisclosurePublished: { seq: 7, publication_id: 7, company: 0, published_at: { date: "2030-01-03", second_of_day: 64_800 }, kind: { Report: { report_revision: 1 } } } },
-    { IntentRejected: { seq: 8, account: 0, code: 0, reason: "OrderAlreadyFilled" } },
-    { SettlementError: { seq: 9, account: 0, code: 0, reason: "settlement failed" } },
-    { OrderCanceled: { seq: 10, account: 0, code: 0, id: 8, remaining_qty: 100 } },
-    { OrderAccepted: { seq: 11, account: 0, code: 0, id: 9, side: "Buy", price: "1000", remaining_qty: 100 } },
+    { IntentRejected: { seq: 8, account: "0", code: 0, reason: "OrderAlreadyFilled" } },
+    { SettlementError: { seq: 9, account: "0", code: 0, reason: "settlement failed" } },
+    { OrderCanceled: { seq: 10, account: "0", code: 0, id: 8, remaining_qty: 100 } },
+    { OrderAccepted: { seq: 11, account: "0", code: 0, id: 9, side: "Buy", price: "1000", remaining_qty: 100 } },
   ];
   const keys: readonly JsonRecord[] = [
     { phase_rank: 4, entity: { Stock: 0 }, source: "Sealed", local_event_index: 0 },
@@ -98,10 +98,10 @@ test("Given every Event wire variant, when parsed in an update, then all eleven 
     { phase_rank: 5, entity: "Session", source: "DayEnd", local_event_index: 0 },
     { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
     { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 1 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 1 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 2 },
-    { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 3 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 0 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 1 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 2 },
+    { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 3 },
   ];
   const update = {
     TickBatch: {
@@ -127,7 +127,7 @@ test("Given malformed tags, fields, keys, bigint, or enums, when parsed, then ea
   const malformedInputs = [
     ["extra", tickBatch([{ ...current, extra: true }], snapshot(1, 1))],
     ["unknown", { Unknown: valid.TickBatch }],
-    ["badTag", tickBatch([{ ...current, facts: [{ key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 }, event: { Wrong: { seq: 1 } } }] }], snapshot(1, 1))],
+    ["badTag", tickBatch([{ ...current, facts: [{ key: { phase_rank: 4, entity: { Account: "0" }, source: "Sealed", local_event_index: 0 }, event: { Wrong: { seq: 1 } } }] }], snapshot(1, 1))],
     ["unsafe", tickBatch([{ ...current, tick: 9_007_199_254_740_992n }], snapshot(1, 1))],
   ] as const;
 

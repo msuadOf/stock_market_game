@@ -63,7 +63,7 @@ function renderView(view: ReactElement, activeSnapshot = snapshot): string {
   const state: RootState = {
     ...store.getState(),
     snapshot: { snapshot: activeSnapshot, lastSeq: 1, generation: "1", playerWorkingOrders: {}, playerOrdersReady: false },
-    trades: { items: [{ seq: 1, code: "600101", price: "1000", qty: 250, maker: 1, taker: 2 }] },
+    trades: { items: [{ seq: 1, code: "600101", price: "1000", qty: 250, maker: "1", taker: "2" }] },
   };
   const testStore = configureStore({ reducer: () => state });
   return renderToStaticMarkup(createElement(Provider, {

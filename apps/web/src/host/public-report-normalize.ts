@@ -78,6 +78,31 @@ function comparative(available: Validator): Validator {
 
 const line = object({ subject: text, amount });
 const lines = array(line);
+
+// ── ROE 面（B4a 披露域扩展：PublicReportFinancials.roe）──
+// 有符号整数串（i128 投影，ReportRational 分子/分母）。
+function integerString(value: unknown, path: string): void {
+  if (typeof value !== "string" || !/^-?(0|[1-9]\d*)$/.test(value)) throw new TypeError(`${path} 必须是规范整数十进制字符串`);
+}
+const roeUnavailableReason = choice([
+  "NonPositiveAverageEquity", "MissingNonRecurringIncomeFacts", "IncompleteEquityEventHistory",
+  "SameControlCombination", "ComparativePeriodSpecialTreatment", "UnclassifiedEquityEvent",
+  "ConsolidatedAttributionFactsUnavailable", "StandaloneHasNoMinorityInterest",
+]);
+const roeValue = tagged({ Available: object({ numerator: integerString, denominator: integerString }), Unavailable: object({ reason: roeUnavailableReason }) });
+const equityEvent = object({ effective_on: date, kind: choice(["Increase", "Decrease", "Other"]), amount });
+const equityListing = tagged({ Items: array(equityEvent), Unavailable: object({ reason: roeUnavailableReason }) });
+const roe = object({
+  basis: (value, path) => { if (value !== "AttributableToOrdinaryShareholders") tagged({ Unsupported: object({ reason: roeUnavailableReason }) })(value, path); },
+  ordinary_roe: roeValue,
+  adjusted_roe: roeValue,
+  weighted_average_parent_equity_cents: roeValue,
+  non_recurring: tagged({
+    Listed: object({ items: array(object({ code: text, name: text, amount })), parent_net_income_after_deduction: amount }),
+    Unavailable: object({ reason: roeUnavailableReason }),
+  }),
+  equity_events: object({ attributable_to_parent: equityListing, minority_interest: equityListing }),
+});
 const incomeColumns = object({
   operating: lines, investing: lines, financing: lines, discontinued: lines,
   ...amounts(["operating_subtotal", "investing_subtotal", "financing_subtotal", "discontinued_subtotal", "income_tax", "net_income"]),
@@ -98,20 +123,21 @@ const financials = object({
       lines, ...amounts(["total_assets", "total_liabilities", "total_equity", "equity_to_parent", "liabilities_and_equity"]),
     })),
   }),
-  income: object({ quarter: incomeColumns, cumulative: incomeColumns, prior_year: comparative(incomeColumns), minority_net_income: optional(amount), net_income_to_parent: optional(amount) }),
+  income: object({ quarter: incomeColumns, cumulative: incomeColumns, report_period: incomeColumns, prior_year: comparative(incomeColumns), minority_net_income: optional(amount), net_income_to_parent: optional(amount), report_period_net_income_to_parent: optional(amount) }),
   cash_flow: object({ ...amounts(["operating", "investing", "financing", "net_change", "opening_cash", "closing_cash"]), indirect: lines }),
   equity: object({
     ...amounts(["opening_parent", "net_income", "other_comprehensive", "capital_contributions", "distributions", "closing_parent"]),
     opening_minority: optional(amount), minority_net_income: optional(amount), closing_minority: optional(amount),
   }),
   notes: object({ items: array(note), consolidation_split_items: array(note) }),
+  roe,
 });
 const report = object({
-  id: decimalId, company_id: text, period: date, kind: choice(["Monthly", "Quarter", "HalfYear", "Annual"]),
+  id: decimalId, company_id: text, source: choice(["SimpleGenerated", "SimulationAccounting"]), period: date, kind: choice(["Monthly", "Quarter", "HalfYear", "Annual"]),
   version_sequence: decimalId, supersedes: optional(decimalId), approved_date: date, approved_second_of_day: secondOfDay,
   published_date: date, published_second_of_day: secondOfDay,
   accounting: object({
-    ...amounts(["total_assets", "total_liabilities", "total_equity", "closing_cash", "quarter_net_income", "net_income", "income_tax", "operating_cash_flow", "investing_cash_flow", "financing_cash_flow", "net_cash_change"]),
+    ...amounts(["total_assets", "total_liabilities", "total_equity", "closing_cash", "quarter_net_income", "net_income", "income_tax", "operating_cash_flow", "investing_cash_flow", "financing_cash_flow", "net_cash_change", "report_period_net_income"]),
     prior_year_net_income: comparative(object({ amount })),
   }),
   financials,
@@ -124,7 +150,7 @@ function validateConsistency(value: PublicReportSummary): void {
   const cash = details.cash_flow;
   const summaryValues = {
     total_assets: balance.total_assets, total_liabilities: balance.total_liabilities, total_equity: balance.total_equity,
-    closing_cash: balance.closing_cash, quarter_net_income: income.quarter.net_income, net_income: income.cumulative.net_income,
+    closing_cash: balance.closing_cash, quarter_net_income: income.quarter.net_income, net_income: income.cumulative.net_income, report_period_net_income: income.report_period.net_income,
     income_tax: income.cumulative.income_tax, operating_cash_flow: cash.operating, investing_cash_flow: cash.investing,
     financing_cash_flow: cash.financing, net_cash_change: cash.net_change,
   };

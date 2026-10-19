@@ -259,12 +259,12 @@ pub(crate) fn scenario() -> Scenario {
             company: company.clone(),
             occurred_on: announcement_date,
             published_at: CivilInstant::from_hms(announcement_date, 18, 0, 0).expect("phase"),
-            event: AnnouncedEvent {
+            content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                 kind: ShockKind::ContractWon,
                 amplitude_bp: 1_200,
                 starts_on: announcement_date,
                 expires_on: d("2031-04-10"),
-            },
+            }),
         })
         .expect("announcement publishes");
 
