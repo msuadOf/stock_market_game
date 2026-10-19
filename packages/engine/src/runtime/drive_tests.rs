@@ -3991,3 +3991,75 @@ fn sol_r22_restored_session_business_hash_reads_actual_ledger() {
 
 
 
+
+// ⑤b 收袋刀红证（批 1 先行红）：EchoPlans 生产通道的 dirty 门控合同——
+// 组簿未变拍回空簿（性能合同：省每拍全量 PlanBook 克隆往返）。
+// 等价合同（绿基线，d3a2c/日结/注入族既有测试承载）：变化拍全量上行、
+// 镜像安装；未变拍回空、驱动器「空簿不覆盖」（group_has_plans 判定）
+// 使 session 镜像保持现值==未变组簿；清空拍镜像留旧值（旧行为同——
+// 全量上行空簿同样不装，语义不变）。
+// 红证锚：无门控现状下「未变拍回空」断言必红（恒全量克隆上行）。
+#[test]
+fn knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged() {
+    let mut session = GameSession::new(setup_fixture(), 57).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进（组线程就位）");
+    // 直改注入计划一（mutate 面经 save_plan_book_undo ⇒ ⑤b 后置 dirty；
+    // 注入后不步进——组簿无业务写，后续拍=未变拍）。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        book.create(plan_open_for_knife5b(crate::StockId(0)))
+            .expect("注入计划一");
+    }));
+    // (1) 变化拍：生产通道上行全量（含注入计划）。
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    assert!(
+        echoed.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+        "变化拍生产通道必须上行全量（dirty 在位）：{echoed:?}"
+    );
+    // (2) 未变拍：生产通道回空（红证锚——现状恒全量，此断言红）。
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    assert!(
+        echoed.iter().all(|(_, p)| p.plan_ids().next().is_none()),
+        "未变拍生产通道必须回空（dirty 门控）"
+    );
+    // (3) 读面不受门控影响：collect_plans 幂等全量（任意拍拿组簿现值）。
+    for _ in 0..2 {
+        let full = driver.collect_plans().expect("读面收集");
+        assert!(
+            full.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+            "读面 collect_plans 幂等全量（不受 dirty 门控影响）"
+        );
+    }
+    // (4) 更新不漏：再次直改（计划二）后生产通道恢复全量。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        book.create(plan_open_for_knife5b(crate::StockId(1)))
+            .expect("注入计划二");
+    }));
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    assert!(
+        echoed.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+        "再变化拍生产通道恢复全量上行（dirty 重置）"
+    );
+}
+
+/// knife5b 注入用 PlanOpen 构造（atomic_event_tests::open 同式——
+/// 纯簿操作不触业务链；测试不步进故无子单副作用）。
+fn plan_open_for_knife5b(code: crate::StockId) -> crate::plans::PlanOpen {
+    crate::plans::PlanOpen {
+        account: crate::AccountId(0),
+        code,
+        direction: crate::Side::Buy,
+        target: crate::plans::PlanTarget::ShareCount(100),
+        opinion: crate::plans::PlanOpinion {
+            signal_score_bp: 3_000,
+            source: crate::plans::OpinionSource::Blended,
+        },
+        confidence_bp: 8_000,
+        urgency: crate::plans::Urgency::Normal,
+        horizon_trading_days: 5,
+        created_trading_day: 0,
+    }
+}

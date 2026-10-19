@@ -1,0 +1,46 @@
+=== ⑤b 收袋刀：plans dirty 往返（2026-10-19，perf/view-cleanup）===
+
+刀法（final-ledger §七 b）：组端 plan_book dirty 标记+EchoPlans 未变回空
+——与 drive「空簿不覆盖」语义兼容已论证；组端计划清空时 session 镜像
+现状也不清——等价。
+
+红证链（knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged）：
+1. 先行红（实现前，批 1 树）：第 (2) 段"未变拍生产通道必须回空"panicked
+   ——现状恒全量克隆上行（证据：本文件附录 A，红输出原文）。
+2. 绿（门控落地后）：4 段断言全过（变化拍全量/未变拍回空/读面幂等全量
+   ×2/再变化恢复全量）。
+3. 突变红实证：
+   - 突变①（save_plan_book_undo 漏置位）→ 第 (1) 段红（变化拍拿空簿）。
+   - 突变②（EchoPlans 恒全量不清 dirty）→ 第 (2) 段红。
+   两突变均还原后复绿。
+
+实现面：
+- GroupState.plan_book_dirty: bool（初始 true=首拍全量基线）。
+- 写点统一前奏 save_plan_book_undo 门外置位（业务写点纪律=写前必经
+  此前奏，单拍幂等锁 plan_undo_saved 不影响置位）；GroupUndo::PlanBook
+  回滚恢复点显式置位（回滚也是变化）；MutatePlanBookForTest 经 save
+  前奏天然覆盖。
+- GroupIn::EchoPlans（生产）：dirty 门控——真变全量上行+清标记，未变
+  回 PlanBook::default()（空簿）。驱动器端 group_has_plans 判定不变
+  （空簿不覆盖=镜像保持==未变组簿）。
+- GroupIn::EchoPlansFull（新读面消息）：无条件全量、不动 dirty——
+  collect_plans()（既有 20 处测试读面）内部改发 Full，签名与幂等全量
+  语义零变化；生产链（drive.rs plans_echo 段）改走 collect_plans_echo。
+  分离同构 collect_group_attention（全量）vs EchoAttentionSparse（生产）。
+
+回归（debug 双模式，main 基线含 5 个 save_contract 既有失败——
+dfd55bc8 基线即败，与本刀无关，登记）：
+- 缺省模式 2570 pass / 5 fail（=基线 5）/ 13 ignored——零新增失败。
+- runtime 模式 2570/5/13——同上零新增。
+
+测量（A/B 交替配对 3+3，**高载窗 load 45-52**——方向性抽查非正式数字）：
+- b-main（main 树）：1052.8/946.5/783.1 → mean 927.5
+- b-5b（本刀）：1094.5/1080.2/921.7 → mean 1032.1
+- 配对差三对全正（+39.5/+142.7/+138.6 t/s）；高载噪声大，幅度不作正式。
+- 段画像（同高载窗对照）：plans_echo 段 36.8μs/tick（b-main 同窗）→
+  4.76μs/tick（本刀）——门控后段内只剩通道往返+空簿构造。
+- 台账预期口径（静置基线 16.6μs 段）——正式静置窗数字见批次收尾。
+
+附录 A（先行红原文）：
+thread 'runtime::drive_tests::knife5b_plans_echo_gate_returns_empty_when_plan_book_unchanged' panicked at packages/engine/src/runtime/drive_tests.rs:4024:5:
+未变拍生产通道必须回空（dirty 门控）

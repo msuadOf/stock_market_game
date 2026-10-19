@@ -981,9 +981,11 @@ impl RuntimeDriver {
         // 【P0 画像】plans_echo 段（D1 EchoPlans + D3 同拍执行腿补写）。
         {
             let _seg = step_profile::scope(StepSegment::PlansEcho);
+            // ⑤b：生产通道（EchoPlans——组端 dirty 门控，未变拍回空簿
+            /// 省 PlanBook 全量克隆；读面 collect_plans 仍幂等全量）。
             let plans_projection = self
                 .world
-                .collect_plans()
+                .collect_plans_echo()
                 .map_err(|e| format!("计划簿交付投影失败：{e:?}"));
             match plans_projection {
             Ok(collected) => {
@@ -1905,11 +1907,21 @@ impl RuntimeDriver {
     }
 
     /// 计划簿收集（D3a-2c 件5：组内 PlanBook 上行——测试/红证面；生产
-    /// 交付点投影在 step 内）。
+    /// 交付点投影在 step 内）。⑤b 起为**读面**（EchoPlansFull 幂等全量）。
     pub fn collect_plans(
         &mut self,
     ) -> Result<Vec<(super::GroupIdx, crate::plans::PlanBook)>, String> {
         self.world.collect_plans().map_err(|e| format!("计划簿收集失败：{e:?}"))
+    }
+
+    /// 计划簿收集（⑤b 生产通道：EchoPlans——组端 dirty 门控；红证面。
+    /// 生产链消费点=step 内 plans_echo 段）。
+    pub fn collect_plans_echo(
+        &mut self,
+    ) -> Result<Vec<(super::GroupIdx, crate::plans::PlanBook)>, String> {
+        self.world
+            .collect_plans_echo()
+            .map_err(|e| format!("计划簿收集（生产通道）失败：{e:?}"))
     }
 
     /// 开仓派生读面收集（D3a-2c：组线程 observe 直调的派生——红证锚）。

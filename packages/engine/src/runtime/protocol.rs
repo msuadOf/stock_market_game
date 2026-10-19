@@ -334,8 +334,15 @@ pub enum GroupIn {
             (crate::company::CompanyKind, u64),
         >,
     },
-    /// 计划簿读面（D3a-2c 件5：组内 PlanBook 上行——plans_debug 投影源）。
+    /// 计划簿生产通道（D3a-2c 件5：组内 PlanBook 上行——plans_debug
+    /// 投影源）。⑤b 收袋刀：组端 dirty 门控——簿未变时回空簿（驱动器
+    /// 「空簿不覆盖」使 session 镜像保持现值==未变组簿，等价已论证）；
+    /// 读面（幂等全量）用 [`Self::EchoPlansFull`]。
     EchoPlans,
+    /// 计划簿读面（⑤b）：无条件全量上行——不受生产通道 dirty 门控
+    /// 影响（测试/诊断读面幂等合同保持；同 collect_group_attention
+    /// 全量面 vs EchoAttentionSparse 生产面的分离先例）。
+    EchoPlansFull,
     /// 受理事实下行（Sol 整改注入通道配套：desk 的 Accepted lifecycle
     /// 经协调者转发组——受理即身份（OrderRef 合成），不等首笔 fill；
     /// 生产通道非测试面）。

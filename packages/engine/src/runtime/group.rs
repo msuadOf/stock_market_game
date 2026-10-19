@@ -795,6 +795,12 @@ pub struct GroupState {
     /// D3a-2c 件4：组内计划簿（开仓产物落地——crate::plans 纯类型直载；
     /// 组装时起始空，runtime 模式 session plans 恒空天然一致）。
     plan_book: crate::plans::PlanBook,
+    /// ⑤b 收袋刀：计划簿 dirty 标记——真变置位（写点统一经
+    /// [`Self::save_plan_book_undo`] 前奏或 `GroupUndo::PlanBook` 恢复；
+    /// 宁多勿漏：多置=多一次全量上行无害，漏置=镜像漏更新红证抓）。
+    /// EchoPlans 生产通道消费（未变回空簿）；读面 EchoPlansFull 不动它。
+    /// 初始 true：首拍全量基线（与 session 镜像构造同源对齐）。
+    plan_book_dirty: bool,
     /// 决策脚本。
     script: GroupScript,
 }
@@ -914,6 +920,7 @@ impl GroupState {
             #[cfg(test)]
             force_continuation: false,
             plan_book: crate::plans::PlanBook::default(),
+            plan_book_dirty: true,
             script,
         }
     }
@@ -1037,6 +1044,10 @@ impl GroupState {
                 }
                 GroupUndo::PlanBook { prev } => {
                     self.plan_book = *prev;
+                    // ⑤b：回滚恢复也是变化——置 dirty 使下拍全量上行
+                    // 恢复值（驱动器装恢复值==session 回滚后镜像值，
+                    // 同值无害；漏置则镜像漏更新红证抓）。
+                    self.plan_book_dirty = true;
                 }
                 GroupUndo::EverHeld { local, stock, prev } => {
                     if let Some(acct) = self.accounts.get_mut(local as usize) {
@@ -3218,6 +3229,9 @@ impl GroupState {
 
     /// Sol 整改 1：簿变更前的可逆快照（本 tick 首次变更保存；后续复用）。
     fn save_plan_book_undo(&mut self) {
+        // ⑤b：真变置 dirty（门外——同拍多次写幂等无害；全部业务写点
+        // 的统一前奏=置位完备性由写点纪律保证，见字段注释）。
+        self.plan_book_dirty = true;
         if !self.plan_undo_saved {
             self.push_undo(GroupUndo::PlanBook {
                 prev: Box::new(self.plan_book.clone()),
@@ -5346,7 +5360,21 @@ pub fn group_main(
             GroupIn::EchoPlans => {
                 // D3a-2c 件5：组内计划簿上行（驱动器交付点回写 session
                 // plans_debug 投影源——D4 模式）。
-                let plans = state.plan_book.clone();
+                // ⑤b 收袋刀：生产通道 dirty 门控——组簿未变时回空簿
+                //（省每拍全量 PlanBook 克隆往返）；驱动器端「空簿不覆盖」
+                //（group_has_plans 判定）使 session 镜像保持现值，与
+                // 未变组簿仍一致。等价面（final-ledger §七 已论证）：
+                // - 变化拍：dirty 在 ⇒ 全量上行 ⇒ 镜像安装新值（同旧行为）；
+                // - 未变拍：回空 ⇒ 不装 ⇒ 镜像保持（==未变组簿）；
+                // - 清空拍（变化）：回空簿 ⇒ 不装 ⇒ 镜像留旧值——旧行为
+                //   同（全量上行空簿同样不装），语义不变；
+                // - Abort 回滚：undo 恢复置 dirty ⇒ 下拍全量上行恢复值。
+                let plans = if state.plan_book_dirty {
+                    state.plan_book_dirty = false;
+                    state.plan_book.clone()
+                } else {
+                    crate::plans::PlanBook::default()
+                };
                 if up_tx
                     .send(UpMsg::GroupPlans {
                         group: state.group,
@@ -5356,6 +5384,24 @@ pub fn group_main(
                 {
                     result = Err(RuntimeError::SendFailed {
                         detail: "GroupPlans 上行失败".to_owned(),
+                    });
+                    break;
+                }
+            }
+            GroupIn::EchoPlansFull => {
+                // ⑤b：计划簿读面（幂等全量）——不受生产通道 dirty 门控
+                // 影响；测试/诊断直读组簿现值（同 collect_group_attention
+                // 全量面先例）。
+                let plans = state.plan_book.clone();
+                if up_tx
+                    .send(UpMsg::GroupPlans {
+                        group: state.group,
+                        plans,
+                    })
+                    .is_err()
+                {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "GroupPlans(全量读面) 上行失败".to_owned(),
                     });
                     break;
                 }
