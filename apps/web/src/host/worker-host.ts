@@ -9,7 +9,15 @@ import type {
 import { wireIntentOf, type CodedSnapshot } from "./protocol/stock-identity.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
-import type { EngineHost, SpeedMetrics } from "./engine-host.ts";
+import type { EngineHost, IndicatorCapabilities, SpeedMetrics } from "./engine-host.ts";
+import type { IntradayAverageCurveInput, IntradayAverageInput, IntradayAverageResult, PersonalTradeConfirmation } from "./engine-host.ts";
+import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
+import type { MarketHistoryRequest, MarketHistoryPage } from "./market-history.ts";
+import type { PersonalTradeHistoryRequest, PersonalTradeHistoryPage } from "./personal-trade-history.ts";
+import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
+import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
+import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
+import { normalizeConfirmationCursor, normalizeIntradayAverageCurveInput, normalizeIntradayAverageCurveResult, normalizeIntradayAverageInput, normalizeIntradayAverageResult, normalizePersonalTradeConfirmations } from "./intraday-average.ts";
 import { createBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate, UI_TARGET_HZ } from "./host-update.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { parseIsoDate } from "./protocol/wire-values.ts";
@@ -76,6 +84,44 @@ export async function requestWorkerIndicators(requests: WorkerRequestScope, requ
   const normalized = normalizeIndicatorInput(input);
   const response = await requests.request({ type: "calculateIndicators", requestId, generation: currentGeneration, ...normalized }, "indicatorsCalculated");
   return normalizeIndicatorResults(response.result, normalized);
+}
+
+/** W3 查询面传输：主线程 → Worker → wasm FFI；请求在 worker 内完成
+ *  code→StockId 数值化（`wire*Request`，ADR-0041），响应经归一层译回视图词表。 */
+export async function requestWorkerMarketHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: MarketHistoryRequest): Promise<MarketHistoryPage> {
+  const normalized = normalizeMarketHistoryRequest(request);
+  const response = await requests.request({ type: "marketHistory", requestId, generation: currentGeneration, query: wireMarketHistoryRequest(normalized) }, "marketHistory");
+  return normalizeMarketHistoryPage(response.page, normalized);
+}
+
+export async function requestWorkerCurrentMinuteHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: CurrentMinuteHistoryRequest): Promise<CurrentMinuteHistoryResponse> {
+  const normalized = normalizeCurrentMinuteHistoryRequest(request);
+  const response = await requests.request({ type: "currentMinuteHistory", requestId, generation: currentGeneration, query: wireCurrentMinuteHistoryRequest(normalized) }, "currentMinuteHistory");
+  return normalizeCurrentMinuteHistoryResponse(response.response, normalized);
+}
+
+export async function requestWorkerPersonalTradeHistory(requests: WorkerRequestScope, requestId: number, currentGeneration: number, request: PersonalTradeHistoryRequest): Promise<PersonalTradeHistoryPage> {
+  const normalized = normalizePersonalTradeHistoryRequest(request);
+  const response = await requests.request({ type: "personalTradeHistory", requestId, generation: currentGeneration, query: wirePersonalTradeHistoryRequest(normalized) }, "personalTradeHistory");
+  return normalizePersonalTradeHistoryPage(response.page, normalized);
+}
+
+export async function requestWorkerPersonalTradeConfirmations(requests: WorkerRequestScope, requestId: number, currentGeneration: number, beforeReceipt: string | null = null): Promise<readonly PersonalTradeConfirmation[]> {
+  const response = await requests.request({ type: "personalTradeConfirmations", requestId, generation: currentGeneration, beforeReceipt: normalizeConfirmationCursor(beforeReceipt) }, "personalTradeConfirmations");
+  return normalizePersonalTradeConfirmations(response.confirmations);
+}
+
+export async function requestWorkerIntradayAverage(requests: WorkerRequestScope, requestId: number, currentGeneration: number, input: IntradayAverageInput): Promise<IntradayAverageResult | null> {
+  const normalized = normalizeIntradayAverageInput(input);
+  const response = await requests.request({ type: "calculateIntradayAverage", requestId, generation: currentGeneration, ...normalized }, "intradayAverageCalculated");
+  return normalizeIntradayAverageResult(response.result);
+}
+
+export async function requestWorkerIntradayAverageCurve(requests: WorkerRequestScope, requestId: number, currentGeneration: number, input: IntradayAverageCurveInput): Promise<readonly (IntradayAverageResult | null)[]> {
+  const normalized = normalizeIntradayAverageCurveInput(input);
+  const response = await requests.request({ type: "calculateIntradayAverageCurve", requestId, generation: currentGeneration, seriesKey: normalized.seriesKey, samples: normalized.samples }, "intradayAverageCurveCalculated");
+  if (response.seriesKey !== normalized.seriesKey) throw new Error("VWAP curve 响应 seriesKey 与请求不匹配");
+  return normalizeIntradayAverageCurveResult(response.results, normalized.samples.length, normalized.samples);
 }
 
 export async function stepWorkerOnce(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<number> {
@@ -166,6 +212,10 @@ export function createWorkerHost(
     let disposed = false;
     let currentGeneration = 0;
     let npcDecisionDiagnostics = false;
+    // W3 能力面：指标源能力与个人交割历史支持由 wasm host_capabilities 声明；
+    // 未声明（旧 bindings）按明确不支持处理，不静默回退。
+    let indicatorCapabilities: IndicatorCapabilities = { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false };
+    let personalTradeHistory = false;
     let pendingFailure: HostFailure | null = null;
     const timeout = setTimeout(() => {
       if (!initialized) {
@@ -246,10 +296,17 @@ export function createWorkerHost(
             currentGeneration = generation(incoming.generation, "Worker created generation");
             {
               const workerCapabilities = record(incoming.capabilities, "Worker capabilities");
-              if (Object.keys(workerCapabilities).length !== 1 || typeof workerCapabilities.npcDecisionDiagnostics !== "boolean") {
+              const indicators = workerCapabilities.indicatorCapabilities;
+              if (Object.keys(workerCapabilities).length !== 3 || typeof workerCapabilities.npcDecisionDiagnostics !== "boolean"
+                || indicators === null || typeof indicators !== "object" || Array.isArray(indicators)
+                || Object.keys(indicators as Record<string, unknown>).length !== 4
+                || !["intradayAverage", "macd", "priceKdj", "candleKdj"].every((key) => typeof (indicators as Record<string, unknown>)[key] === "boolean")
+                || typeof workerCapabilities.personalTradeHistory !== "boolean") {
                 throw new Error("Worker capabilities 契约无效");
               }
               npcDecisionDiagnostics = workerCapabilities.npcDecisionDiagnostics;
+              indicatorCapabilities = indicators as IndicatorCapabilities;
+              personalTradeHistory = workerCapabilities.personalTradeHistory;
             }
             return;
           case "baseline": {
@@ -338,6 +395,8 @@ export function createWorkerHost(
           reconnect: false,
           publicCompanyReports: true,
           npcDecisionDiagnostics,
+          indicatorCapabilities,
+          personalTradeHistory,
         },
         async start(onUpdate, onFatalError) {
           if (disposed) throw new Error("WASM Worker 已被销毁");
@@ -411,6 +470,48 @@ export function createWorkerHost(
         },
         async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
           return requestWorkerIndicators(requests, requests.nextRequestId(), currentGeneration, input);
+        },
+        async queryMarketHistory(request: MarketHistoryRequest): Promise<MarketHistoryPage> {
+          if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询保留历史");
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const page = await requestWorkerMarketHistory(requests, requests.nextRequestId(), queryGeneration, request);
+          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 保留历史响应属于已过期会话 generation");
+          return page;
+        },
+        async queryCurrentMinuteHistory(request: CurrentMinuteHistoryRequest): Promise<CurrentMinuteHistoryResponse> {
+          if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询当日分钟K");
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const response = await requestWorkerCurrentMinuteHistory(requests, requests.nextRequestId(), queryGeneration, request);
+          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 当日分钟K响应属于已过期会话 generation");
+          return response;
+        },
+        async queryPersonalTradeHistory(request: PersonalTradeHistoryRequest): Promise<PersonalTradeHistoryPage> {
+          if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询本人交割历史");
+          if (!personalTradeHistory) throw new Error("当前 WASM bindings 不支持本人交割历史查询，请重建 bindings");
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const page = await requestWorkerPersonalTradeHistory(requests, requests.nextRequestId(), queryGeneration, request);
+          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割历史响应属于已过期会话 generation");
+          return page;
+        },
+        async queryPersonalTradeConfirmations(beforeReceipt?: string | null): Promise<readonly PersonalTradeConfirmation[]> {
+          if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询本人交割单");
+          if (!personalTradeHistory) throw new Error("当前 WASM bindings 不支持本人交割单查询，请重建 bindings");
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const rows = await requestWorkerPersonalTradeConfirmations(requests, requests.nextRequestId(), queryGeneration, beforeReceipt ?? null);
+          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 本人交割单响应属于已过期会话 generation");
+          return rows;
+        },
+        async calculateIntradayAverage(input: IntradayAverageInput): Promise<IntradayAverageResult | null> {
+          if (!indicatorCapabilities.intradayAverage) throw new Error("当前 WASM bindings 不支持 Rust 分时均价计算，请重建 bindings");
+          return requestWorkerIntradayAverage(requests, requests.nextRequestId(), currentGeneration, input);
+        },
+        async calculateIntradayAverageCurve(input: IntradayAverageCurveInput): Promise<readonly (IntradayAverageResult | null)[]> {
+          if (!indicatorCapabilities.intradayAverage) throw new Error("当前 WASM bindings 不支持 Rust 分时均价曲线计算，请重建 bindings");
+          return requestWorkerIntradayAverageCurve(requests, requests.nextRequestId(), currentGeneration, input);
         },
         async stepOnceForE2E() {
           assertWorkerE2EStepAllowed(import.meta.env.MODE === "e2e", options.enableE2EStepping === true);

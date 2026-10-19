@@ -50,7 +50,7 @@ async function createFixture(
     prepare_public_baseline: (current: number) => { calls.push(`prepare:${current}`); if (failing === "prepare") throw new Error("prepare failed"); },
     drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop") throw new Error("drop failed"); },
     restore_json: (encoded: string) => { assert.deepEqual(JSON.parse(encoded), saved); calls.push(`restore:${handle}`); return handle; },
-    host_capabilities: () => ({ npcDecisionDiagnostics: false }),
+    host_capabilities: () => ({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false }),
     step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, [0])], snapshot(1, 1)); },
     tick: () => 1n,
     save: (current: number) => { calls.push(`save:${current}`); return saved; },
@@ -101,7 +101,7 @@ test("Worker 全部会话 caller 共用 owner，restore 旧 generation 回应先
     assert.ok(f.posted[0].module instanceof WebAssembly.Module);
     assert.ok((f.posted[0].memory as WebAssembly.Memory).buffer instanceof SharedArrayBuffer);
     assert.deepEqual(f.posted.slice(1), [
-      { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } },
+      { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } },
       { type: "baseline", generation: 1, snapshot: { handle: 7 }, civilDate: "2030-01-02" },
     ]);
     f.posted.length = 0;
