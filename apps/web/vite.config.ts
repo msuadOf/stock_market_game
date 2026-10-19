@@ -5,11 +5,31 @@ import { createRequire } from 'node:module'
 // Rolldown 无法解析 Popper 的 ESM 星号转导出；使用其官方 main 入口，避免修改依赖文件。
 const blueprintRequire = createRequire(createRequire(import.meta.url).resolve('@blueprintjs/core'))
 
-// 批 9 A10：COOP/COEP 头插件随 wasm-bindgen-rayon 多核退役删除
-//（串行 wasm 不需要 SharedArrayBuffer 跨源隔离）。
+// SharedArrayBuffer 支持（wasm-bindgen-rayon 多核需要）：
+// COOP/COEP 必须在**每个**响应头（含 HTML 入口）。
+// Vite 的 server.headers 对 HTML transform 响应不生效 → 用 plugin 注入。
+function crossOriginIsolation(): PluginOption {
+  return {
+    name: 'cross-origin-isolation',
+    configureServer(server) {
+      server.middlewares.use((_req, res, next) => {
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+        next()
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((_req, res, next) => {
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
+        next()
+      })
+    },
+  }
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), crossOriginIsolation()],
   assetsInclude: ['**/*.wasm'],
   resolve: {
     alias: [{ find: /^@popperjs\/core$/, replacement: blueprintRequire.resolve('@popperjs/core') }],
