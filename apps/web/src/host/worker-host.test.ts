@@ -256,7 +256,7 @@ test("Worker save pins candidate generation and rejects an old saved response af
     const ready = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const worker = SaveWorker.current;
     const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
-    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } });
+    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } });
     worker.emit({ type: "baseline", civilDate: "2030-01-01", generation: 1, snapshot });
     const host = await ready;
     const candidate = { seq: 42, settledDate: "2030-01-05" };

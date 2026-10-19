@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { currentSaveFixture } from "./current-save-fixture.ts";
+import { currentSaveFixture, withSettledDay } from "./current-save-fixture.ts";
 import { validateDayEndCandidate } from "./day-end-candidate.ts";
 
 function candidate() {
-  const fixture = currentSaveFixture();
+  const fixture = withSettledDay(currentSaveFixture(), "2030-01-01", "2030-01-02");
   const snapshot = fixture.snapshot as Record<string, unknown>;
   snapshot.seq = 1;
-  const clock = fixture.civil_clock as Record<string, unknown>;
-  clock.current_date = "2030-01-02";
-  clock.settled_through = "2030-01-01";
   return fixture;
 }
 

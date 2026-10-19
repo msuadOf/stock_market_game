@@ -118,3 +118,21 @@
   推进，Err 后重调 end_civil_day 会双推进（CivilClock 重复日结校验拦截
   ——显式失败非静默，但宿主需丢弃该会话态重建）。如实登记。
 - 复核方撤回建议 5（基线误判）——已确认。
+
+## W3 批补记（2026-10-20）
+
+- **验收遗漏——web 严格存档 schema 未随 B2 四新字段扩展**：B2 给 SaveSlot 增
+  `market_minute_bars`/`retained_market_days`/`personal_trade_confirmations`/
+  `receipt_watermark`（引擎侧 save/restore 三面验收通过），但 web
+  `parseStrictSaveEnvelope` 的 ROOT_KEYS 未收——wasm save→parseSaveSlot 被
+  exact() 拒绝，web 存读档 roundtrip 实断。W3 件 e8b50036 修复（保留链
+  日期连续性/分钟×日K互证/水位单调等旧 main 校验语义全量重立）。
+- **两个 B2 面 gap 经 main 批准按 18725d07 基线恢复**（W3 发现+恢复，非重设计）：
+  intraday_average 纯函数面（Serialize/TS 导出/curve/Input/parse_turnover_cents
+  ——B2 验收列表承诺的 IntradayAverage\*2 类型当时未生成，web 消费面未接线故
+  tsc 基线测不出）；交割单游标分页方法（TradeConfirmationTable onOlder 依赖）。
+- **W3 运行期发现（待引擎侧批次处理，非 W3 域）**：①wasm32 串行管线不安装
+  B2 三数据面（分钟桶/保留链/receipts 仅 runtime 驱动器路径安装）——web 产品
+  面板数据待串行路径补装；②runtime 路径日K stats 与分钟桶漂移（真实成交局
+  日K volume/stats 全零而 bars 有值，占位K覆盖嫌疑；B2 测试无此互检）。
+  证据：web-wasm protocol_tests w3_query_surfaces wire 输出。

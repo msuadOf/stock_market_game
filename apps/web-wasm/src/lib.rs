@@ -14,6 +14,9 @@
 
 use engine::company::{PublicReportPage, PublicReportQuery, PublicReportSummary};
 use engine::session::protocol::{EngineUpdate, ProtocolSession, SaveCandidateKey};
+use engine::session::{
+    CurrentMinuteHistoryRequest, MarketHistoryRequest, PersonalTradeHistoryRequest,
+};
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -502,6 +505,87 @@ pub fn query_stock_history(handle: u32, code: u32) -> Result<JsValue, JsValue> {
     })
 }
 
+/// B2 查询面（W3 接线）：保留历史分页（query 已为数值 StockId wire 形态——
+/// 主线程 host 归一层完成 code→id 翻译，ADR-0041）。
+#[wasm_bindgen]
+pub fn market_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let request: MarketHistoryRequest = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |session| {
+        let page = session
+            .query_market_history_for(AccountId(0), &request)
+            .map_err(session_error_to_js)?;
+        public_dto_to_js(&page)
+    })
+}
+
+/// B2 查询面（W3 接线）：当日分钟K。
+#[wasm_bindgen]
+pub fn current_minute_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let request: CurrentMinuteHistoryRequest = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |session| {
+        let response = session
+            .query_current_minute_history_for(AccountId(0), &request)
+            .map_err(session_error_to_js)?;
+        public_dto_to_js(&response)
+    })
+}
+
+/// B2 查询面（W3 接线）：个人交割历史分页。
+#[wasm_bindgen]
+pub fn personal_trade_history(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let request: PersonalTradeHistoryRequest = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |session| {
+        let page = session
+            .query_personal_trade_history(AccountId(0), request)
+            .map_err(session_error_to_js)?;
+        public_dto_to_js(&page)
+    })
+}
+
+/// B2 补面（W3 接线）：本人交割单游标分页（降序、排他游标、100 条页）。
+#[wasm_bindgen]
+pub fn personal_trade_confirmations(
+    handle: u32,
+    before_receipt: Option<u64>,
+) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        let page = session.personal_trade_confirmations_page(AccountId(0), before_receipt);
+        public_dto_to_js(&page)
+    })
+}
+
+/// W3 指标源：Rust 分时均价单点（纯函数——u128 wire 域直算，不经 u64
+/// 会话域转一道，杜绝静默截断）。
+#[wasm_bindgen]
+pub fn calculate_intraday_average(
+    turnover_cents: String,
+    trade_count: u64,
+    volume_shares: u64,
+) -> Result<JsValue, JsValue> {
+    let turnover_cents = engine::parse_turnover_cents(&turnover_cents)
+        .map_err(|error| JsValue::from_str(&format!("turnover_cents 无效：{error}")))?;
+    let input = engine::IntradayAverageInput {
+        turnover_cents,
+        trade_count,
+        volume_shares,
+    };
+    let average = engine::calculate_intraday_average_from_input(&input)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    to_js(&average)
+}
+
+/// W3 指标源：Rust 分时均价曲线（批量纯函数——单次 FFI 跨界）。
+#[wasm_bindgen]
+pub fn calculate_intraday_average_curve(samples: JsValue) -> Result<JsValue, JsValue> {
+    let samples: Vec<engine::IntradayAverageInput> = serde_wasm_bindgen::from_value(samples)?;
+    if samples.len() > 600 {
+        return Err(JsValue::from_str("VWAP curve 样本数不能超过 600"));
+    }
+    let curve = engine::calculate_intraday_average_curve(&samples)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    to_js(&curve)
+}
+
 #[wasm_bindgen]
 pub fn initial_allocation(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |session| {
@@ -522,12 +606,33 @@ pub fn calculate_indicators(prices: Vec<f64>, candles: JsValue) -> Result<JsValu
 #[serde(rename_all = "camelCase")]
 struct HostCapabilities {
     npc_decision_diagnostics: bool,
+    /// W3 指标源能力面（B2 补面后 VWAP 纯函数可算——恒 true，Rust 侧无
+    /// 构建形态门）。
+    indicator_capabilities: IndicatorCapabilities,
+    /// W3 个人交割历史查询能力（B2 查询面已接）。
+    personal_trade_history: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IndicatorCapabilities {
+    intraday_average: bool,
+    macd: bool,
+    price_kdj: bool,
+    candle_kdj: bool,
 }
 
 #[wasm_bindgen]
 pub fn host_capabilities() -> Result<JsValue, JsValue> {
     to_js(&HostCapabilities {
         npc_decision_diagnostics: cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
+        indicator_capabilities: IndicatorCapabilities {
+            intraday_average: true,
+            macd: true,
+            price_kdj: true,
+            candle_kdj: true,
+        },
+        personal_trade_history: true,
     })
 }
 

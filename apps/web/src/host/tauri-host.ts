@@ -360,5 +360,13 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const result = await invoke<unknown>("calculate_indicators", normalized);
       return normalizeIndicatorResults(result, normalized);
     },
+    // W3 查询面：Tauri 命令通道尚未接线对应命令（desktop 批次），显式失败
+    // 不静默回退（铁律二）——面板将错误原文展示给用户。
+    async queryMarketHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入保留历史查询命令"); },
+    async queryCurrentMinuteHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入当日分钟K查询命令"); },
+    async queryPersonalTradeHistory(): Promise<never> { throw new Error("Tauri 宿主尚未接入本人交割历史查询命令"); },
+    async queryPersonalTradeConfirmations(): Promise<never> { throw new Error("Tauri 宿主尚未接入本人交割单查询命令"); },
+    async calculateIntradayAverage(): Promise<never> { throw new Error("Tauri 宿主尚未接入分时均价计算命令"); },
+    async calculateIntradayAverageCurve(): Promise<never> { throw new Error("Tauri 宿主尚未接入分时均价曲线计算命令"); },
   };
 }

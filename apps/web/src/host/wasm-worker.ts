@@ -17,13 +17,20 @@ type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDec
 type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"), "query_stock_history"> & {
   readonly ingress_token?: (handle: number) => number;
   readonly prepare_public_baseline?: (handle: number) => void;
-  readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean };
+  readonly host_capabilities?: () => { readonly npcDecisionDiagnostics: boolean; readonly indicatorCapabilities?: { readonly intradayAverage: boolean; readonly macd: boolean; readonly priceKdj: boolean; readonly candleKdj: boolean }; readonly personalTradeHistory?: boolean };
   readonly player_working_orders?: (handle: number) => unknown;
   readonly query_stock_history?: (handle: number, code: number) => unknown;
   readonly initial_allocation?: (handle: number) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
   readonly save_candidate?: (handle: number, key: { readonly seq: number; readonly settledDate: string }) => unknown;
+  /** W3 查询面（B2 查询 API 的 wasm 绑定——请求已由主线程译为数值 StockId wire 形态）。 */
+  readonly market_history?: (handle: number, query: unknown) => unknown;
+  readonly current_minute_history?: (handle: number, query: unknown) => unknown;
+  readonly personal_trade_history?: (handle: number, query: unknown) => unknown;
+  readonly personal_trade_confirmations?: (handle: number, beforeReceipt: bigint | null) => unknown;
+  readonly calculate_intraday_average?: (turnoverCents: string, tradeCount: bigint, volumeShares: bigint) => unknown;
+  readonly calculate_intraday_average_curve?: (samples: unknown) => unknown;
 };
 type WorkerPort = {
   postMessage(message: unknown): void;
@@ -89,7 +96,9 @@ function requireRecord(value: unknown, label: string): Readonly<Record<string, u
 
 function readWasmCapabilities(wasm: typeof import("../../wasm-pkg/web_wasm.js")) {
   const capabilities = transportExtensions(wasm).host_capabilities;
-  return capabilities?.() ?? { npcDecisionDiagnostics: false };
+  // 旧 bindings 只带 npcDecisionDiagnostics——指标源与个人历史按明确不支持
+  // 处理（缺省 false，消费点显式报错不回退）。
+  return capabilities?.() ?? { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false };
 }
 
 function optionalNpcDecisionTrace(wasm: typeof import("../../wasm-pkg/web_wasm.js")): WasmNpcDecisionTrace | undefined {
@@ -328,6 +337,63 @@ ctx.addEventListener("message", (event) => {
           if (queryHistory === undefined) throw new Error("当前 WASM bindings 不支持股票历史查询，请重建 bindings");
           // 请求层翻译：主线程传来的代码串 code 译为数值 StockId 再调用 wasm FFI（u32）。
           ctx.postMessage({ type: "stockHistory", requestId: message.requestId, generation: requestedGeneration, data: queryHistory(session, stockIdOf(message.code)) });
+          return;
+        }
+        // W3 查询面：query 已由主线程归一并译为数值 StockId wire 形态（ADR-0041），
+        // worker 只做绑定存在性检查与透传；错误经 operationError 原文回传。
+        case "marketHistory": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const query = transportExtensions(wasm).market_history;
+          if (query === undefined) throw new Error("当前 WASM bindings 不支持保留历史查询，请重建 bindings");
+          ctx.postMessage({ type: "marketHistory", requestId: message.requestId, generation: requestedGeneration, page: query(session, message.query) });
+          return;
+        }
+        case "currentMinuteHistory": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const query = transportExtensions(wasm).current_minute_history;
+          if (query === undefined) throw new Error("当前 WASM bindings 不支持当日分钟K查询，请重建 bindings");
+          ctx.postMessage({ type: "currentMinuteHistory", requestId: message.requestId, generation: requestedGeneration, response: query(session, message.query) });
+          return;
+        }
+        case "personalTradeHistory": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [session, wasm] = slot.requireHandle();
+          const query = transportExtensions(wasm).personal_trade_history;
+          if (query === undefined) throw new Error("当前 WASM bindings 不支持本人交割历史查询，请重建 bindings");
+          ctx.postMessage({ type: "personalTradeHistory", requestId: message.requestId, generation: requestedGeneration, page: query(session, message.query) });
+          return;
+        }
+        case "personalTradeConfirmations": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (message.beforeReceipt !== null && typeof message.beforeReceipt !== "string") throw new Error("本人交割单 beforeReceipt 必须是规范 u64 字符串或 null");
+          const before = message.beforeReceipt === null ? null : BigInt(message.beforeReceipt);
+          const [session, wasm] = slot.requireHandle();
+          const query = transportExtensions(wasm).personal_trade_confirmations;
+          if (query === undefined) throw new Error("当前 WASM bindings 不支持本人交割单查询，请重建 bindings");
+          ctx.postMessage({ type: "personalTradeConfirmations", requestId: message.requestId, generation: requestedGeneration, confirmations: query(session, before) });
+          return;
+        }
+        case "calculateIntradayAverage": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const turnoverCents = message.turnoverCents;
+          const tradeCount = message.tradeCount;
+          const volumeShares = message.volumeShares;
+          if (typeof turnoverCents !== "string" || typeof tradeCount !== "number" || !Number.isSafeInteger(tradeCount) || typeof volumeShares !== "number" || !Number.isSafeInteger(volumeShares)) throw new Error("VWAP 输入必须是规范字符串额与安全整数");
+          const [, wasm] = slot.requireHandle();
+          const calculateAverage = transportExtensions(wasm).calculate_intraday_average;
+          if (calculateAverage === undefined) throw new Error("当前 WASM bindings 不支持 VWAP，请重建 bindings");
+          ctx.postMessage({ type: "intradayAverageCalculated", requestId: message.requestId, generation: requestedGeneration, result: calculateAverage(turnoverCents, BigInt(tradeCount), BigInt(volumeShares)) });
+          return;
+        }
+        case "calculateIntradayAverageCurve": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (typeof message.seriesKey !== "string" || !Array.isArray(message.samples)) throw new Error("VWAP curve 请求必须是字符串键与样本数组");
+          const [, wasm] = slot.requireHandle();
+          const calculateCurve = transportExtensions(wasm).calculate_intraday_average_curve;
+          if (calculateCurve === undefined) throw new Error("当前 WASM bindings 不支持 VWAP curve，请重建 bindings");
+          ctx.postMessage({ type: "intradayAverageCurveCalculated", requestId: message.requestId, generation: requestedGeneration, seriesKey: message.seriesKey, results: calculateCurve(message.samples) });
           return;
         }
         case "initialAllocation": {

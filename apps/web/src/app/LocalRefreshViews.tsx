@@ -4,10 +4,14 @@ import { filterSecurityCodes, adjacentSecurityCode, securityListEmptyMessage, se
 import { SecurityListControls, WatchlistToggle } from "../components/SecurityListControls.tsx";
 import { MarketKlinePanel } from "../components/MarketKlinePanel.tsx";
 import { ChartPeriodTabs } from "../components/ChartPeriodTabs.tsx";
-import { calendarCandlePeriod } from "../components/kline-periods.ts";
+import { calendarCandlePeriod, minuteKlinePeriod } from "../components/kline-periods.ts";
+import { MinuteKlinePanel } from "../components/MinuteKlinePanel.tsx";
+import { RetainedHistoryPanel } from "../components/RetainedHistoryPanel.tsx";
+import { PersonalTradeHistoryPanel } from "../components/PersonalTradeHistoryPanel.tsx";
+import { TradeConfirmationTable } from "../components/TradeConfirmationTable.tsx";
 import { MarketQuotePanel } from "../components/MarketQuotePanel.tsx";
 import { addMoney, subtractMoney, compareMoney } from "../utils/money.ts";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useSelector } from "react-redux";
 import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
 import { publicCompanyForStock } from "../components/company/company-catalog.ts";
@@ -18,10 +22,9 @@ import { MobileGameClock } from "../mobile/MobileGameClock.tsx";
 import { MobileStockDetail } from "../mobile/MobileStockDetail.tsx";
 import { marketCodesForView, priceChangePercent, MobileIntradayProjection } from "../mobile/market-model.ts";
 import type { MobileChartPeriod, MobileInfoTab } from "../mobile/mobile-ui-state.ts";
-import { store, setIndicatorDataSource, type RootState } from "../store/store.ts";
+import { store, setIndicatorDataSource, selectPlayerAccountId, type RootState } from "../store/store.ts";
 import { selectCompany, updateCompanyReading, type CompanyReading } from "../store/company-slice.ts";
-import type { DeliveryMode, IndicatorCapabilities } from "../host/engine-host.ts";
-import type { IndicatorCalculator } from "../components/indicator-results.ts";
+import type { DeliveryMode, PersonalTradeConfirmation } from "../host/engine-host.ts";
 import { colorClass, formatSharesAsLots, formatCentsAmount, yuan } from "../utils/format.ts";
 import { useTradingTimeline } from "../components/TradingTimelineContext.tsx";
 import { useMarketRuntimeActions, useMarketRuntimeData, useMarketRuntimeSelection } from "./MarketRuntimeProvider.tsx";
@@ -128,35 +131,68 @@ interface ChartPanelProps {
   klineDays: number;
   onTrade?: (side: "Buy" | "Sell") => void;
 }
-/** 指标源能力面：本地 WASM 宿主以指标计算器就绪与否声明 Rust 指标能力；分时均价曲线能力待引擎查询 API 批次接线。 */
-function localIndicatorCapabilities(indicatorCalculator: IndicatorCalculator | null): IndicatorCapabilities {
-  return { intradayAverage: false, macd: indicatorCalculator !== null, priceKdj: indicatorCalculator !== null, candleKdj: indicatorCalculator !== null };
-}
-
 export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, onTrade, browser }: ChartPanelProps) {
   const panelId = useId();
   const timeline = useTradingTimeline();
-  const { getActiveDailyCandles } = useMarketRuntimeActions();
+  const { getActiveDailyCandles, queryChartHistory, queryMarketHistory, queryCurrentMinuteHistory, queryPersonalTradeHistory, queryPersonalTradeConfirmations, calculateIntradayAverageCurve } = useMarketRuntimeActions();
+  // W3 查询域：作用域=宿主世代+本人账户（B3 词表）；面板按 scopeKey 丢弃跨世代的迟到响应。
+  const tradeScope = useSelector((state: RootState) => `${state.snapshot.generation}:${selectPlayerAccountId(state)}`);
+  const currentTradeDate = useSelector((state: RootState) => state.company.civilDate);
+  const hasPlayerAccount = useSelector((state: RootState) => selectPlayerAccountId(state) !== null);
+  const tradeMarkets = useSelector((state: RootState) => state.snapshot.snapshot?.markets);
+  const tradeCodes = Object.keys(tradeMarkets ?? {});
+  const [confirmations, setConfirmations] = useState<readonly PersonalTradeConfirmation[]>([]);
+  const [confirmationLoading, setConfirmationLoading] = useState(false);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
+  const [confirmationQueried, setConfirmationQueried] = useState(false);
+  const queryConfirmationPage = useCallback(async (beforeReceipt: string | null) => {
+    const accountId = selectPlayerAccountId(store.getState());
+    if (accountId === null) { setConfirmationError("尚未加入市场，无法查询本人交割单"); return; }
+    setConfirmationLoading(true);
+    setConfirmationError(null);
+    try {
+      const rows = await queryPersonalTradeConfirmations(beforeReceipt);
+      if (selectPlayerAccountId(store.getState()) !== accountId) return;
+      setConfirmations(rows);
+      setConfirmationQueried(true);
+    } catch (error) {
+      setConfirmationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConfirmationLoading(false);
+    }
+  }, [queryPersonalTradeConfirmations]);
+  const refreshConfirmations = useCallback(() => { void queryConfirmationPage(null); }, [queryConfirmationPage]);
+  const olderConfirmations = useCallback(() => {
+    const oldest = confirmations.at(-1);
+    if (oldest === undefined) throw new Error("交割单没有可用于分页的receipt");
+    void queryConfirmationPage(oldest.receipt_id);
+  }, [confirmations, queryConfirmationPage]);
   const chartCode = useMarketRuntimeSelection();
-  const { queryChartHistory } = useMarketRuntimeActions();
+  const minutePeriod = minuteKlinePeriod(chartPeriod);
+  const calendarPeriod = calendarCandlePeriod(chartPeriod);
   useEffect(() => {
-    if (calendarCandlePeriod(chartPeriod) !== null) void queryChartHistory(chartCode);
-  }, [chartCode, chartPeriod, klineDays, queryChartHistory]);
+    if (calendarPeriod !== null) void queryChartHistory(chartCode);
+  }, [calendarPeriod, chartCode, klineDays, queryChartHistory]);
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
   const trades = useSelector((state: RootState) => state.trades.items);
   const indicatorDataSource = useSelector((state: RootState) => state.settings.indicatorDataSource);
-  const { chartData, auctionChartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
+  const { chartData, auctionChartData, dailyChartData, indicatorCalculator, indicatorCapabilities } = useMarketRuntimeData();
   const day = useSelector((state: RootState) => state.snapshot.snapshot?.day ?? 0);
   const tick = useSelector((state: RootState) => state.snapshot.snapshot?.tick ?? 0);
   if (!market) return null;
   const diff = subtractMoney(market.last_price, market.last_close);
   const pct = priceChangePercent(market.last_price, market.last_close);
   const cls = colorClass(compareMoney(diff, "0"));
+  // B2 wire 不随当日分钟K下发观察时刻——"形成中"桶以游戏时钟（tick→墙钟分钟）提供。
+  const currentMinute = tick > 0 ? timeline.minuteSlot(tick) : null;
   return <>
     <div className="chart-toolbar"><ChartPeriodTabs period={chartPeriod} onChange={setChartPeriod} panelId={panelId} variant="terminal" /></div>
     <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{compareMoney(diff, "0") >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div>{onTrade && <div className="terminal-quote-actions"><WatchlistToggle browser={browser} code={chartCode} /><button type="button" className="terminal-buy" aria-label="买入此股票" onClick={() => onTrade("Buy")}>买入</button><button type="button" className="terminal-sell" aria-label="卖出此股票" onClick={() => onTrade("Sell")}>卖出</button></div>}</div>
     <label>指标数据源<select aria-label="指标数据源" value={indicatorDataSource} onChange={(event) => store.dispatch(setIndicatorDataSource(event.currentTarget.value === "rust" ? "rust" : "frontend"))}><option value="frontend">前端</option><option value="rust">Rust</option></select></label>
-    <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}>{chartPeriod === "分时" ? <div className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ timeline, market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} indicatorDataSource={indicatorDataSource} indicatorCapabilities={localIndicatorCapabilities(indicatorCalculator)} /></div> : calendarCandlePeriod(chartPeriod) !== null ? <div className="shared-kline-host"><MarketKlinePanel code={chartCode} key={`${chartCode}:${calendarCandlePeriod(chartPeriod)}`} dailyCandles={dailyChartData} period={chartPeriod} indicatorCalculator={indicatorCalculator} indicatorDataSource={indicatorDataSource} indicatorCapabilities={localIndicatorCapabilities(indicatorCalculator)} /></div> : <div className="chart-empty" role="status">该周期依赖跨日分钟数据，当前版本尚未接入；可先使用日K/周K/月K/季K/年K。</div>}</div>
+    <div className="market-chart-slot" id={panelId} role="tabpanel" aria-label={`${chartPeriod}图表`}>{chartPeriod === "分时" ? <div className="shared-intraday-host"><PriceChart dayRange={getActiveDailyCandles()[chartCode]} intraday={MobileIntradayProjection.fromInputs({ timeline, market, minutePoints: chartData, auctionPoints: auctionChartData, trades: [], elapsedMinutes: chartData.length, totalMinutes: TRADING_MINUTES_PER_DAY, gameDay: day, gameTick: tick })} data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close} chartType="分时" klineDays={klineDays} indicatorCalculator={indicatorCalculator} indicatorDataSource={indicatorDataSource} indicatorCapabilities={indicatorCapabilities} calculateIntradayAverageCurve={calculateIntradayAverageCurve} /></div> : chartPeriod === "五日" ? <RetainedHistoryPanel key={`${tradeScope}:${chartCode}:five`} scopeKey={tradeScope} code={chartCode} currentDate={currentTradeDate} query={queryMarketHistory} fiveDay /> : calendarPeriod !== null ? <div className="shared-kline-host"><MarketKlinePanel code={chartCode} key={`${chartCode}:${calendarPeriod}`} dailyCandles={dailyChartData} period={calendarPeriod} indicatorCalculator={indicatorCalculator} indicatorDataSource={indicatorDataSource} indicatorCapabilities={indicatorCapabilities} /></div> : minutePeriod !== null ? <MinuteKlinePanel key={`${tradeScope}:${chartCode}:${minutePeriod}`} scopeKey={tradeScope} code={chartCode} currentDate={currentTradeDate} query={queryMarketHistory} queryCurrentMinuteHistory={queryCurrentMinuteHistory} tickRefreshKey={`${day}:${tick}`} currentMinute={currentMinute} period={minutePeriod} /> : null}</div>
+    <details><summary>按日期查询分钟历史</summary><RetainedHistoryPanel key={`${tradeScope}:${chartCode}:dates`} scopeKey={tradeScope} code={chartCode} currentDate={currentTradeDate} query={queryMarketHistory} /></details>
+    <TradeConfirmationTable rows={confirmations} loading={confirmationLoading} error={confirmationError} hasQueried={confirmationQueried} onRefresh={refreshConfirmations} onOlder={olderConfirmations} />
+    {hasPlayerAccount ? <PersonalTradeHistoryPanel scopeKey={tradeScope} query={queryPersonalTradeHistory} initialDate={currentTradeDate} codes={tradeCodes} /> : <p className="empty">尚未加入市场，无法查询本人交割历史。</p>}
     <div className="order-book"><MarketQuotePanel code={chartCode} market={market} candle={getActiveDailyCandles()[chartCode]} trades={trades} /></div>
   </>;
 }
@@ -204,11 +240,41 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions & { stockContex
 
 export function ConnectedMobileDetail(props: MobileDetailProps) {
   const chartCode = useMarketRuntimeSelection();
-  const { queryChartHistory } = useMarketRuntimeActions();
+  const timeline = useTradingTimeline();
+  const { queryChartHistory, queryMarketHistory, queryCurrentMinuteHistory, queryPersonalTradeConfirmations, calculateIntradayAverageCurve } = useMarketRuntimeActions();
+  // W3 查询域：作用域与桌面 ConnectedChartPanel 同源；移动端复用同批状态机。
+  const tradeScope = useSelector((state: RootState) => `${state.snapshot.generation}:${selectPlayerAccountId(state)}`);
+  const currentTradeDate = useSelector((state: RootState) => state.company.civilDate);
+  const [confirmations, setConfirmations] = useState<readonly PersonalTradeConfirmation[]>([]);
+  const [confirmationLoading, setConfirmationLoading] = useState(false);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
+  const [confirmationQueried, setConfirmationQueried] = useState(false);
+  const queryConfirmationPage = useCallback(async (beforeReceipt: string | null) => {
+    const accountId = selectPlayerAccountId(store.getState());
+    if (accountId === null) { setConfirmationError("尚未加入市场，无法查询本人交割单"); return; }
+    setConfirmationLoading(true);
+    setConfirmationError(null);
+    try {
+      const rows = await queryPersonalTradeConfirmations(beforeReceipt);
+      if (selectPlayerAccountId(store.getState()) !== accountId) return;
+      setConfirmations(rows);
+      setConfirmationQueried(true);
+    } catch (error) {
+      setConfirmationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConfirmationLoading(false);
+    }
+  }, [queryPersonalTradeConfirmations]);
+  const refreshConfirmations = useCallback(() => { void queryConfirmationPage(null); }, [queryConfirmationPage]);
+  const olderConfirmations = useCallback(() => {
+    const oldest = confirmations.at(-1);
+    if (oldest === undefined) throw new Error("交割单没有可用于分页的receipt");
+    void queryConfirmationPage(oldest.receipt_id);
+  }, [confirmations, queryConfirmationPage]);
   useEffect(() => {
     if (calendarCandlePeriod(props.period) !== null) void queryChartHistory(chartCode);
   }, [chartCode, props.klineDays, props.period, queryChartHistory]);
-  const { chartData, auctionChartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
+  const { chartData, auctionChartData, dailyChartData, indicatorCalculator, indicatorCapabilities } = useMarketRuntimeData();
   const { getActiveDailyCandles } = useMarketRuntimeActions();
   const markets = useSelector((state: RootState) => state.snapshot.snapshot?.markets ?? {});
   const market = markets[chartCode];
@@ -221,10 +287,12 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const indicatorDataSource = useSelector((state: RootState) => state.settings.indicatorDataSource);
   if (!market) return null;
   const heldCodes = new Set(Object.entries(account?.positions ?? {}).filter(([, position]) => position.qty > 0).map(([code]) => code));
-  const orderedCodes = sortSecurityCodes(filterSecurityCodes({ codes: marketCodesForView(marketCodes, STOCK_LIST.map(stock => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: props.browser.favorites, heldCodes, query: props.browser.query, view: props.browser.view }), markets, mobileSecuritySort(props.browser.sortRules));
+  const orderedCodes = sortSecurityCodes(filterSecurityCodes({ codes: marketCodesForView(marketCodes, STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes), names: STOCK_NAMES, favorites: props.browser.favorites, heldCodes, query: props.browser.query, view: props.browser.view }), markets, mobileSecuritySort(props.browser.sortRules));
   const previous = adjacentSecurityCode(orderedCodes, chartCode, -1);
   const next = adjacentSecurityCode(orderedCodes, chartCode, 1);
   const latestMinute = chartData.at(-1)?.time;
   const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
-  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={getActiveDailyCandles()[chartCode]} indicatorCalculator={indicatorCalculator} indicatorDataSource={indicatorDataSource} indicatorCapabilities={localIndicatorCapabilities(indicatorCalculator)} onIndicatorDataSourceChange={(source) => store.dispatch(setIndicatorDataSource(source))} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={props.onSpeedChange} onPauseToggle={props.onPauseToggle} onBack={props.onBack} canSwitchStock={previous !== null && next !== null} onPrevious={() => { if (previous !== null) props.onSelect(previous); }} onNext={() => { if (next !== null) props.onSelect(next); }} watchlistControl={<WatchlistToggle browser={props.browser} code={chartCode} />} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
+  // B2 wire 不随当日分钟K下发观察时刻——"形成中"桶以游戏时钟（tick→墙钟分钟）提供。
+  const currentMinute = tick > 0 ? timeline.minuteSlot(tick) : null;
+  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={getActiveDailyCandles()[chartCode]} indicatorCalculator={indicatorCalculator} indicatorDataSource={indicatorDataSource} indicatorCapabilities={indicatorCapabilities} onIndicatorDataSourceChange={(source) => store.dispatch(setIndicatorDataSource(source))} calculateIntradayAverageCurve={calculateIntradayAverageCurve} confirmations={confirmations} confirmationLoading={confirmationLoading} confirmationError={confirmationError} confirmationQueried={confirmationQueried} onRefreshConfirmations={refreshConfirmations} onOlderConfirmations={olderConfirmations} minuteHistoryContent={props.period === "五日" ? <RetainedHistoryPanel key={`${tradeScope}:${chartCode}:five`} scopeKey={tradeScope} code={chartCode} currentDate={currentTradeDate} query={queryMarketHistory} fiveDay /> : undefined} minuteKlineContent={minuteKlinePeriod(props.period) !== null ? <MinuteKlinePanel key={`${tradeScope}:${chartCode}:${minuteKlinePeriod(props.period)}`} scopeKey={tradeScope} code={chartCode} currentDate={currentTradeDate} query={queryMarketHistory} queryCurrentMinuteHistory={queryCurrentMinuteHistory} tickRefreshKey={`${day}:${tick}`} currentMinute={currentMinute} period={minuteKlinePeriod(props.period)!} /> : undefined} dateMinuteHistoryContent={<details><summary>按日期查询分钟历史</summary><RetainedHistoryPanel key={`${tradeScope}:${chartCode}:dates`} scopeKey={tradeScope} code={chartCode} currentDate={currentTradeDate} query={queryMarketHistory} /></details>} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={props.onSpeedChange} onPauseToggle={props.onPauseToggle} onBack={props.onBack} canSwitchStock={previous !== null && next !== null} onPrevious={() => { if (previous !== null) props.onSelect(previous); }} onNext={() => { if (next !== null) props.onSelect(next); }} watchlistControl={<WatchlistToggle browser={props.browser} code={chartCode} />} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
 }

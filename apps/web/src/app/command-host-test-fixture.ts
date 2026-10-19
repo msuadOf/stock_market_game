@@ -12,6 +12,7 @@ export function commandHostFixture(overrides: Partial<EngineHost> = {}): EngineH
     setPausePreferences: async () => unsupported(), readSpeedMetrics: async () => unsupported(), submitIntent: async () => unsupported(),
     snapshot: () => baseState().snapshot, tick: unsupported, day: unsupported, save: async () => unsupported(),
     refreshBaseline: async () => unsupported(), playerWorkingOrders: async () => unsupported(), queryStockHistory: async () => unsupported(), initialAllocation: async () => unsupported(), calculateIndicators: async () => unsupported(),
+    queryMarketHistory: async () => unsupported(), queryCurrentMinuteHistory: async () => unsupported(), queryPersonalTradeHistory: async () => unsupported(), queryPersonalTradeConfirmations: async () => unsupported(), calculateIntradayAverage: async () => unsupported(), calculateIntradayAverageCurve: async () => unsupported(),
     load: async () => unsupported(), ...overrides,
   };
 }

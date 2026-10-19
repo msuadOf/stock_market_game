@@ -19,6 +19,11 @@ export function validateDayEndArchive(slot: StrictSaveEnvelope): StrictSaveEnvel
     || slot.npc_order_lifecycles.length > 0) {
     throw new Error("日终存档不能包含日内活动委托或冻结资源");
   }
+  // B2 保存域（W3 接入）：日结清空当日分钟K桶（bars 冻结进保留链——
+  // 引擎 clear_runtime_minute_history）。桶非空的档是日内档，不能当日终档。
+  if (Object.values(slot.market_minute_bars).some((bars) => bars.length > 0)) {
+    throw new Error("日终存档不能包含日内活动分钟（应当已冻结进保留历史）");
+  }
   return slot;
 }
 

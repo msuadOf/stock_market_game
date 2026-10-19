@@ -81,6 +81,46 @@ impl ProtocolSession {
         self.state.game.query_stock_history(account, code)
     }
 
+    /// B2 查询面透传（wasm 宿主用）：保留历史分页（记 history_reads 副作用）。
+    pub fn query_market_history_for(
+        &mut self,
+        account: crate::AccountId,
+        request: &crate::session::MarketHistoryRequest,
+    ) -> Result<crate::session::MarketHistoryPage, SessionError> {
+        self.state.game.query_market_history_for(account, request)
+    }
+
+    /// B2 查询面透传（wasm 宿主用）：当日分钟K（记 history_reads 副作用）。
+    pub fn query_current_minute_history_for(
+        &mut self,
+        account: crate::AccountId,
+        request: &crate::session::CurrentMinuteHistoryRequest,
+    ) -> Result<crate::session::CurrentMinuteHistoryResponse, SessionError> {
+        self.state
+            .game
+            .query_current_minute_history_for(account, request)
+    }
+
+    /// B2 查询面透传（wasm 宿主用）：个人交割历史分页（纯查询无副作用）。
+    pub fn query_personal_trade_history(
+        &mut self,
+        account: crate::AccountId,
+        request: crate::session::PersonalTradeHistoryRequest,
+    ) -> Result<crate::session::PersonalTradeHistoryPage, SessionError> {
+        self.state.game.query_personal_trade_history(account, request)
+    }
+
+    /// B2 补面透传（wasm 宿主用）：本人交割单游标分页（纯查询）。
+    pub fn personal_trade_confirmations_page(
+        &self,
+        account: crate::AccountId,
+        before_receipt: Option<u64>,
+    ) -> Vec<crate::session::PersonalTradeConfirmation> {
+        self.state
+            .game
+            .personal_trade_confirmations_page(account, before_receipt)
+    }
+
     /// 保存未发布宿主批次的 live state 与共享历史；避免文件投影丢失运行时诊断。
     pub fn checkpoint(&self) -> Result<ProtocolCheckpoint, StepFatal> {
         Ok(ProtocolCheckpoint {
