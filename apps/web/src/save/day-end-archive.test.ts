@@ -2,15 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as candidate from "./day-end-candidate.ts";
 import { parseSaveSlot } from "./save-schema.ts";
-import { currentSaveFixture } from "./current-save-fixture.ts";
+import { currentSaveFixture, withSettledDay } from "./current-save-fixture.ts";
 import type { StrictSaveEnvelope } from "./schema/root.ts";
 
 function archive(): StrictSaveEnvelope {
-  const slot = currentSaveFixture();
-  const clock = slot.civil_clock as Record<string, unknown>;
-  clock.current_date = "2030-01-02";
-  clock.settled_through = "2030-01-01";
-  return parseSaveSlot(slot);
+  return parseSaveSlot(withSettledDay(currentSaveFixture(), "2030-01-01", "2030-01-02"));
 }
 
 function validate(slot: StrictSaveEnvelope): StrictSaveEnvelope {

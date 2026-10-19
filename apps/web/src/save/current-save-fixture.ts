@@ -88,6 +88,12 @@ export function currentSaveFixture(): JsonObject {
     filled_orders: {},
     price_history: { "0": ["1120"] },
     market_minute_closes: { "0": [] },
+    // B2 保存域（W3 接入）：tick 0 无成交——分钟桶空、保留链空（未日结）、
+    // receipt 日志空、水位 0（next_receipt_base 初值）。
+    market_minute_bars: { "0": [] },
+    retained_market_days: [],
+    personal_trade_confirmations: {},
+    receipt_watermark: 0,
     rng_state: "0",
     npc_attention: {},
     retail_experience: {},
@@ -170,4 +176,40 @@ export function currentSaveFixture(): JsonObject {
       },
     },
   }
+}
+
+
+/** 测试用：把 fixture 推进为"已日结到 settled"的形态（B2 保存域）——
+ *  保留链覆盖 [start_date, settled]、已结算日的日K补真实零成交 stats
+ *  （零成交开市日语义：trading=true 且 bars=[]，与 stats 全零逐位一致）。
+ *  该日缺日K时按引擎日终形态合成（o=h=l=c=昨收、量额笔全零——与
+ *  representative fixture 已结算日一致）。原对象就地修改并返回。 */
+export function withSettledDay(save: JsonObject, settled: string, currentDate: string): JsonObject {
+  const clock = save.civil_clock as Record<string, unknown>
+  clock.current_date = currentDate
+  clock.settled_through = settled
+  const setup = save.setup as Record<string, unknown>
+  const snapshot = save.snapshot as Record<string, unknown>
+  const markets = snapshot.markets as Record<string, unknown>
+  const dailyCandles = snapshot.daily_candles as Record<string, Array<Record<string, unknown>>>
+  const days: unknown[] = []
+  for (let cursor = new Date(`${setup.start_date as string}T00:00:00Z`); cursor <= new Date(`${settled}T00:00:00Z`); cursor = new Date(cursor.getTime() + 86_400_000)) {
+    const date = cursor.toISOString().slice(0, 10)
+    const time = Date.parse(`${date}T00:00:00Z`) / 1000
+    days.push({ date, securities: Object.fromEntries(Object.keys(markets).map((id) => [id, { trading: true, bars: [] }])) })
+    for (const [id, candles] of Object.entries(dailyCandles)) {
+      const candle = candles.find((candle) => candle.time === time)
+      if (candle === undefined) {
+        // 零成交开市日的真实日K形态（引擎日结对无成交日发 o=h=l=c=昨收、
+        // volume 0、stats 全零——与 representative fixture 已结算日一致）。
+        const previous = candles.at(-1)
+        if (previous === undefined) throw new Error(`测试 fixture 缺 ${date}（stock ${id}）前史日K，不能标记为已日结`)
+        candles.push({ time, open: previous.close, high: previous.close, low: previous.close, close: previous.close, volume: 0, trade_stats: { turnover_cents: "0", trade_count: 0 } })
+      } else if (candle.trade_stats === undefined) {
+        candle.trade_stats = { turnover_cents: "0", trade_count: 0 }
+      }
+    }
+  }
+  save.retained_market_days = days
+  return save
 }
