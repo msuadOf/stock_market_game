@@ -238,12 +238,12 @@ impl Scenario {
                 company: company.clone(),
                 occurred_on: announcement_date,
                 published_at: announcement_instant,
-                event: AnnouncedEvent {
+                content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                     kind: ShockKind::ContractWon,
                     amplitude_bp: 1_200,
                     starts_on: announcement_date,
                     expires_on: d("2031-04-10"),
-                },
+                }),
             })
             .expect("announcement publishes");
 

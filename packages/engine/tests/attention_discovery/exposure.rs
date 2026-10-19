@@ -107,12 +107,12 @@ impl AnnouncementExposureFixture {
                 company: company_of(&code("600101")),
                 occurred_on: occurred,
                 published_at: published,
-                event: AnnouncedEvent {
+                content: engine::information::AnnouncementContent::Shock(AnnouncedEvent {
                     kind: ShockKind::ContractWon,
                     amplitude_bp: 1_200,
                     starts_on: occurred,
                     expires_on: d("2030-06-20"),
-                },
+                }),
             })
             .expect("announcement publishes");
         let codes = vec![code("600101"), code("600102")];

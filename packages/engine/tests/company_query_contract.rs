@@ -11,8 +11,12 @@ use engine::information::assemble_seeded_prehistory;
 fn library_at_start() -> (engine::information::PublicLibrary, CivilInstant) {
     let start = CivilDate::from_iso("2000-01-01").expect("valid start date");
     let as_of = CivilInstant::new(start, 0).expect("valid start instant");
-    let seeded = assemble_seeded_prehistory(fixture::two_company_config(11, start), start)
-        .expect("seeded public reports");
+    let seeded = assemble_seeded_prehistory(
+        fixture::two_company_config(11, start),
+        start,
+        engine::information::ReportFrequency::Quarterly,
+    )
+    .expect("seeded public reports");
     (seeded.library, as_of)
 }
 
@@ -123,6 +127,7 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
             "period",
             "published_date",
             "published_second_of_day",
+            "source",
             "supersedes",
             "version_sequence",
         ],
@@ -144,6 +149,7 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
             "operating_cash_flow",
             "prior_year_net_income",
             "quarter_net_income",
+            "report_period_net_income",
             "total_assets",
             "total_equity",
             "total_liabilities",

@@ -90,6 +90,10 @@ pub(crate) fn base_config() -> BankConfig {
             cent_line(acct::CASH, PostingSide::Debit, 200_000),
             cent_line(acct::CAPITAL, PostingSide::Credit, 200_000),
         ],
+        income_tax_policy: engine::accounting::IncomeTaxPolicy {
+            rate_bp: 2500,
+            loss_carryforward_years: 5,
+        },
         counterparties: counterparties(),
         ecl_policy: fixture_ecl_policy(),
     }

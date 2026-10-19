@@ -82,6 +82,7 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
     PublishedReport {
         id: PublicationId::new(901),
         company: CompanyId(0),
+        source: engine::information::PublicationSource::SimulationAccounting,
         policy: AccountingPolicyRef { chart_version: 2 },
         approved_at: CivilInstant::from_hms(d(spec.published_on), 8, 0, 0).expect("approval"),
         published_at,
@@ -124,7 +125,35 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
                     reason: UnavailableReason::NoPriorYearHistory,
                 },
             },
+            roe: engine::accounting::reports::ReportRoe {
+                basis: engine::accounting::reports::ReportRoeBasis::Unsupported {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                ordinary_roe: engine::accounting::reports::ReportRoeValue::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                adjusted_roe: engine::accounting::reports::ReportRoeValue::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                weighted_average_parent_equity_cents: engine::accounting::reports::ReportRoeValue::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                non_recurring: engine::accounting::reports::ReportRoeNonRecurring::Unavailable {
+                    reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                },
+                equity_events: engine::accounting::reports::ReportRoeEquityEventBreakdown {
+                    attributable_to_parent:
+                        engine::accounting::reports::ReportRoeEquityEventListing::Unavailable {
+                            reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                        },
+                    minority_interest:
+                        engine::accounting::reports::ReportRoeEquityEventListing::Unavailable {
+                            reason: engine::accounting::reports::ReportRoeUnavailable::IncompleteEquityEventHistory,
+                        },
+                },
+            },
             income: IncomeStatement {
+                report_period: income_columns(spec.revenue_cents, spec.ni_total_cents),
                 quarter: IncomeColumns::default(),
                 cumulative: income_columns(spec.revenue_cents, spec.ni_total_cents),
                 prior_year: match spec.prior_revenue_cents {
@@ -135,6 +164,9 @@ pub(crate) fn hand_report(spec: HandReportSpec) -> PublishedReport {
                 },
                 minority_net_income: minority_ni.map(AccountingAmount::from_cents),
                 net_income_to_parent: spec.ni_to_parent_cents.map(AccountingAmount::from_cents),
+                report_period_net_income_to_parent: spec
+                    .ni_to_parent_cents
+                    .map(AccountingAmount::from_cents),
             },
             cash_flow: CashFlowStatement {
                 operating: AccountingAmount::from_cents(spec.operating_cf_cents),

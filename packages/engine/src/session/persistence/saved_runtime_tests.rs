@@ -133,7 +133,7 @@ fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
 
     let mut wrong_owner = serde_json::to_value(&resaved).expect("save serializes");
     let institution_key = institution.0.to_string();
-    wrong_owner["belief_books"][institution_key]["npc"] = serde_json::json!(retail.0);
+    wrong_owner["belief_books"][institution_key]["npc"] = serde_json::json!(retail.0.to_string());
     let wrong_owner: SaveSlot = serde_json::from_value(wrong_owner).expect("typed edited save");
     // 数值断言替代原文本断言 "belief book owner"（fault2124：信念账 owner 与键不一致）。
     assert!(matches!(
@@ -807,7 +807,7 @@ fn runtime_envelope_rejects_injected_derived_fields() {
     /// 一等数值面（runtime 形态 desk 权威的唯一载体），在字段集内。
     for field in ["live", "nominal"] {
         let mut encoded = serde_json::json!({
-            "key": { "account": 1, "stock": 0, "order": 1, "side": "Sell" },
+            "key": { "account": "1", "stock": 0, "order": 1, "side": "Sell" },
             "charged": { "commission": "0", "stamp_tax": "0", "transfer_fee": "0" },
             "remaining_qty": 100,
             "filled_qty": 0,

@@ -117,7 +117,9 @@ impl DisclosureDispatch {
                         company: id.clone(),
                         occurred_on: settled,
                         published_at: phase,
-                        event: AnnouncedEvent::from_active(shock),
+                        content: crate::information::AnnouncementContent::Shock(
+                            AnnouncedEvent::from_active(shock),
+                        ),
                     })?;
                     out.announcements_published.push(announcement);
                 }
@@ -127,7 +129,7 @@ impl DisclosureDispatch {
                     company: failure.company.clone(),
                     occurred_on: settled,
                     published_at: phase,
-                    event: AnnouncedEvent {
+                    content: crate::information::AnnouncementContent::Shock(AnnouncedEvent {
                         kind: crate::company::ShockKind::PaymentFailure {
                             obligation_status: failure.obligation_status,
                             what: failure.what.clone(),
@@ -136,7 +138,7 @@ impl DisclosureDispatch {
                         amplitude_bp: 0,
                         starts_on: settled,
                         expires_on: settled,
-                    },
+                    }),
                 })?;
                 out.announcements_published.push(announcement);
             }

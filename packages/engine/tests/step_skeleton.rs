@@ -165,19 +165,27 @@ fn characterization_complete_projection_without_opening_auction() {
     /// desk_mirrored_resting 新键（runtime 形态标记）、收盘 cutoff
     /// 跨日残留值 1（新日 CallAuction 窗全隐藏——值无消费面）。
     /// 旧锚保留：14_183_549_150_061_140_820。
-    assert_complete_projection(0, 16_114_484_025_310_678_034);
+    /// B4a 公司域重锚：AccountId serde 切 canonical 十进制字符串（存档
+    /// 字节形态变化）+ main 侧公司经营/披露结构接线，投影字节随之变化；
+    /// 事件与业务事实语义不变（域测试与 save 契约独立覆盖）。旧锚保留：
+    /// 16_114_484_025_310_678_034。
+    assert_complete_projection(0, 16_039_080_022_122_580_669);
 }
 
 #[test]
 fn characterization_complete_projection_with_three_auction_ticks() {
     // 同上重锚；旧锚保留：862_635_824_146_359_871。
-    assert_complete_projection(3, 15_244_279_962_941_296_384);
+    // B4a 公司域重锚（同 without 用例依据）；旧锚保留：
+    // 15_244_279_962_941_296_384。
+    assert_complete_projection(3, 7_734_365_835_074_963_189);
 }
 
 #[test]
 fn characterization_complete_projection_with_six_auction_ticks() {
     // 同上重锚；旧锚保留：7_784_286_686_475_819_964。
-    assert_complete_projection(6, 12_603_764_770_532_460_219);
+    // B4a 公司域重锚（同 without 用例依据）；旧锚保留：
+    // 12_603_764_770_532_460_219。
+    assert_complete_projection(6, 6_825_886_869_182_669_854);
 }
 
 #[test]

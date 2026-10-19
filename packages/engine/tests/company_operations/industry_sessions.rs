@@ -36,8 +36,17 @@ fn assert_actual_publication(company: OperatingCompanyConfig, seed: u64, params:
                 .public_library
                 .announcement(*publication_id, report.disclosure_instant)
                 .unwrap();
-            if !matches!(announcement.event.kind, ShockKind::PaymentFailure { .. }) {
-                economic_announcements.push(&announcement.event.kind);
+            if !matches!(
+                &announcement.content,
+                engine::information::AnnouncementContent::Shock(engine::information::AnnouncedEvent {
+                    kind: ShockKind::PaymentFailure { .. },
+                    ..
+                })
+            ) {
+                economic_announcements.push(match &announcement.content {
+                    engine::information::AnnouncementContent::Shock(event) => &event.kind,
+                    _ => unreachable!("上面 matches 已排除非冲击公告"),
+                });
             }
         }
     }
