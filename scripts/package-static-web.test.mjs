@@ -18,7 +18,7 @@ test("static archives carry source metadata and license, reject reruns and canno
     await mkdir(input, { recursive: true });
     await writeFile(path.join(root, "LICENSE"), "MIT");
     await writeFile(path.join(input, "index.html"), "<script src='app.js'></script>");
-    // 批 9 A10 收尾：pages-isolation.js 产物断言随引导退役删除。
+    await writeFile(path.join(input, "pages-isolation.js"), "isolation worker");
     await writeFile(path.join(input, "web_wasm_bg.wasm"), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
     const unrelated = path.join(root, "unrelated");
     await mkdir(unrelated);
