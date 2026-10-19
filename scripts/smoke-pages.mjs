@@ -33,7 +33,10 @@ export async function smokePages(input, base) {
   let browser;
   try {
     const workers = Math.max(2, Math.min(4, availableParallelism()));
-    console.log(JSON.stringify({ kind: "Pages browser smoke", contexts: 2, cpuCount: availableParallelism() }));
+    // wasm P0 清单 5：恢复 wasmThreads / isolationHeadersAtOrigin 日志字段。
+    // 串行 wasm=单 WASM Worker（无 Rayon 池），真线程批落地时恢复池数；
+    // 静态伺服源不发隔离头，隔离由 pages-isolation.js SW 注入，故 false。
+    console.log(JSON.stringify({ kind: "Pages browser smoke", contexts: 2, wasmThreads: 1, cpuCount: availableParallelism(), isolationHeadersAtOrigin: false }));
     browser = await chromium.launch({ headless: true });
     const origin = `http://127.0.0.1:${server.address().port}`;
     await Promise.all(["", "index.html"].map(async (entry) => {
@@ -63,8 +66,12 @@ export async function smokePages(input, base) {
         await page.goto(`${origin}${base}${entry}`);
         await page.getByRole("heading", { name: "股票模拟游戏 · 启动选择" }).waitFor({ timeout: 15000 });
         console.log(`Pages bootstrap ready: ${entry || "repository root"}`);
-        // 批 9 A10 收尾：跨源隔离/SharedArrayBuffer/Rayon 池断言随
-        // wasm 多核退役删除——串行 wasm 无隔离需求。
+        // wasm P0 清单 5：恢复批 9 A10 收尾删除的三断言——SW 注入的 COOP/COEP
+        // 必须真实生效（跨源隔离 + SharedArrayBuffer 可用），首访刷新后的
+        // __stock_pages_isolation 标记必须已清理。串行 wasm 下隔离链与引擎
+        // 线程面无关，断言口径确定。
+        assert.equal(await page.evaluate(() => crossOriginIsolated && typeof SharedArrayBuffer === "function"), true);
+        assert.equal(new URL(page.url()).searchParams.has("__stock_pages_isolation"), false);
         assert.equal(await page.evaluate(() => window.__PAGES_SAVE_READS__), 0, "bootstrap must not read the quick save");
         assert.equal(await page.evaluate(() => "__STOCK_GAME_E2E__" in window), false);
         if (entry === "") {
@@ -74,6 +81,11 @@ export async function smokePages(input, base) {
           assert.equal(await page.locator(".app-error").count(), 0);
           const mainWorker = page.workers().find((worker) => /\/wasm-worker-[^/]+\.js$/.test(new URL(worker.url()).pathname));
           assert.ok(mainWorker, "missing main WASM Worker");
+          // wasm P0 清单 5：主 WASM Worker 同处跨源隔离的浏览上下文组——
+          // 真线程批（共享 linear memory）依赖该环境。wasm-bindgen-rayon 池
+          // 计数断言（workers + 1）与 init 线程注入随 Rayon 池架构退役不复刻，
+          // 真线程批按新池形态重写。
+          assert.equal(await mainWorker.evaluate(() => crossOriginIsolated), true);
         }
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
@@ -86,7 +98,10 @@ export async function smokePages(input, base) {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   }
-  console.log("Pages smoke passed including cleanup: repository subpath, first-visit isolation, SharedArrayBuffer, representative local game, real threaded Workers and direct index.html.");
+  // wasm P0 清单 5：尾日志与实际断言面同步勘正——批 9 A10 收尾删除断言时
+  // 未同步本行（"real threaded Workers" 失实残留）；当前断言面=隔离/SAB/
+  // 标记清理/串行 WASM Worker 会话，Rayon 池断言已随池架构退役。
+  console.log("Pages smoke passed including cleanup: repository subpath, first-visit isolation, SharedArrayBuffer, marker-free URL, representative local game in serial WASM Worker, isolated main Worker and direct index.html.");
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
