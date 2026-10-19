@@ -1,6 +1,10 @@
 # W3 遗留断裂修复批：postIngressBridge 对非共享 Memory 的 DataCloneError
 
-- 分支：`fix/w3-ingress-bridge-serial-crash`（基于 main @ a6911c52）
+- 分支：`fix/w3-ingress-bridge-serial-crash`（最初基于 main @ a6911c52 提交
+  29e192d4/4f1f6a9b；后按基线通报 rebase 到 main @ fd5f210a，重写为
+  c59d001e/f0ff51dc，无冲突——B4a 批对修复面 6 文件零改动，`git diff
+  a6911c52 fd5f210a -- <修复面>` 为空，main(fd5f210a) 的 postIngressBridge
+  仍是第 133 行 `...ingressBridge` 直传形态，断裂原样存在，红证等效成立）
 - 任务：修 `apps/web/src/host/wasm-worker.ts` 的 `postIngressBridge` 把非共享
   `exports.memory` 直接 postMessage 回主线程导致的
   `DataCloneError "#<Memory> could not be cloned"`（main 本地 wasm 起局即崩，
@@ -56,6 +60,23 @@ worker 主通道 `enqueue`。
    保留，提速大头），`scripts/smoke-pages.mjs` 内注释说明。
    Node 直调 wasm 佐证（200 个 seed）：裁剪小局 `initial_allocation` 恒返回
    2 只，engine 侧无缺股——错配确在主线程 expectedCodes 侧。
+   归因勘正（复核发现）：stocks 裁剪实由 6ac55d83（10-02）引入、7a94c401
+   （p0 支线，非 main 祖先）只是保留；实质论断（从未端到端执行、今日错配
+   确定性成立）不变。
+
+## 独立复核结论（未实施者 subagent，rebase 前版本 a6911c52..4f1f6a9b）
+
+7 项全 PASS，总结论**可合入**。要点：
+- 两形态兼容：判据三组合均正确；降级语义等价实证（lib.rs 两路同入
+  `enqueue_player_intent(AccountId(0))`；串行构建本无真线程，主通道是唯一
+  可行路径，无 A 股语义漂移）。
+- 红绿证独立实证：复核者用 a6911c52 旧源码树跑新测试 4/4 红（首例 actual
+  为 WASM_WORKER_PROTOCOL failure），修复后 4/4 绿。
+- 两条低严重度备注，处置：
+  1. 归因措辞（7a94c401→6ac55d83）——已在 smoke-pages.mjs 注释与本档案勘正；
+  2. `worker-host.ts` host() 的 `capabilities.sharedMemory: true` 在串行下
+    失真——全仓无消费方、属既有代码非本批引入，不扩范围处理，登记为
+    后续批顺手项（真线程批收口能力面时一并定真值）。
 
 ## 测试
 
