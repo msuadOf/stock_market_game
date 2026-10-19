@@ -3,4 +3,4 @@
 /**
  * 账户 id 占位 newtype（待 account 模块统一；本模块不依赖 account）。
  */
-export type AccountId = number;
+export type AccountId = string;
