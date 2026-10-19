@@ -520,3 +520,203 @@ fn registry_restore_failure_preserves_existing_session_and_civil_barrier() {
         "2030-01-07"
     );
 }
+
+/// W3 四面板出数验证：驱动真实会话成交，经 ProtocolSession 委托调 B2 四查询
+/// 面（wasm 绑定的引擎侧全路径——宿主 JsValue 胶水在 wasm 目标，serde wire
+/// 形态与本测试的 JSON 逐位一致），并打印 wire JSON 供 web 归一层测试对照。
+#[test]
+fn w3_query_surfaces_return_real_traded_data() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let handle = REGISTRY
+        .with(|registry| registry.borrow_mut().create(setup, 57))
+        .unwrap();
+
+    // 真实成交路径：养出 NPC 挂盘后按实时卖一价下买单（笼子内且确定跨价）；
+    // 意图在下一拍路由，其间簿可能漂移导致笼子参照价变化被拒——被拒即重读
+    // 重下（上限 12 轮），成交由真实跨价达成（非测试注单）。
+    let mut player_traded = false;
+    let mut any_trade = false;
+    let mut event_counts: std::collections::BTreeMap<String, usize> = Default::default();
+    'attempts: for _attempt in 0..12 {
+        // 先推进数拍养出稳定卖盘。
+        let mut ask_now = None;
+        for _ in 0..40 {
+            let update = step_update(handle).unwrap();
+            if !matches!(&update, EngineUpdate::TickBatch(_)) {
+                continue;
+            }
+            ask_now = REGISTRY
+                .with(|registry| {
+                    registry.borrow_mut().with_session(handle, |session| {
+                        let snapshot = session.game().snapshot();
+                        snapshot
+                            .markets
+                            .get(&engine::StockId(0))
+                            .and_then(|market| market.best_ask)
+                    })
+                })
+                .unwrap();
+            if ask_now.is_some() {
+                break;
+            }
+        }
+        let ask = ask_now.expect("活跃 NPC 盘必须在数十拍内出现卖一");
+        println!("w3 attempt buy at ask={}", ask.cents());
+        REGISTRY
+            .with(|registry| {
+                registry.borrow_mut().with_session(handle, |session| {
+                    session
+                        .enqueue_player_intent(
+                            AccountId(0),
+                            Intent::PlaceLimit {
+                                code: engine::StockId(0),
+                                side: engine::orderbook::Side::Buy,
+                                price: engine::LimitPrice::Fixed(ask),
+                                qty: 100,
+                            },
+                        )
+                        .unwrap()
+                })
+            })
+            .unwrap();
+        // 推进至多 30 拍观察成交/拒绝。
+        for _ in 0..30 {
+            let update = step_update(handle).unwrap();
+            let EngineUpdate::TickBatch(batch) = &update else {
+                continue;
+            };
+            let mut rejected = false;
+            for frame in &batch.frames {
+                for event in frame.events() {
+                    *event_counts.entry(event_name(event)).or_default() += 1;
+                    if let engine::Event::IntentRejected { reason, .. } = event {
+                        println!("w3 debug reject reason: {:?}", reason);
+                        rejected = true;
+                    }
+                    if matches!(event, engine::Event::Trade { .. }) {
+                        any_trade = true;
+                    }
+                    if matches!(
+                        event,
+                        engine::Event::Trade { maker: AccountId(0), .. }
+                            | engine::Event::Trade { taker: AccountId(0), .. }
+                    ) {
+                        player_traded = true;
+                    }
+                }
+            }
+            if player_traded {
+                break 'attempts;
+            }
+            if rejected {
+                continue 'attempts;
+            }
+        }
+    }
+    println!("w3 debug event counts: {:?}", event_counts);
+    assert!(any_trade, "活跃 NPC 盘必须有真实成交（分钟桶数据源）");
+    assert!(player_traded, "玩家对手价买单必须成交（真实跨价）");
+
+    // 面板一：当日分钟K（G2 实时视图）——真实 bars 非空。
+    let current = REGISTRY
+        .with(|registry| {
+            registry.borrow_mut().with_session(handle, |session| {
+                session
+                    .query_current_minute_history_for(
+                        AccountId(0),
+                        &engine::session::CurrentMinuteHistoryRequest {
+                            stock: engine::StockId(0),
+                        },
+                    )
+                    .unwrap()
+            })
+        })
+        .unwrap();
+    assert!(current.trading, "开市日 trading=true");
+    assert!(!current.bars.is_empty(), "当日分钟桶必须含真实成交");
+    println!("w3 current_minute_history wire: {}", serde_json::to_string(&current).unwrap());
+
+    // 面板二/三：本人交割单游标分页（G5）与个人历史（G6）——双腿费用真实落账。
+    let confirmations = REGISTRY
+        .with(|registry| {
+            registry.borrow_mut().with_session(handle, |session| {
+                session.personal_trade_confirmations_page(AccountId(0), None)
+            })
+        })
+        .unwrap();
+    assert!(!confirmations.is_empty(), "玩家成交必有买腿 receipt");
+    println!(
+        "w3 personal_trade_confirmations wire: {}",
+        serde_json::to_string(&confirmations).unwrap()
+    );
+    let history = REGISTRY
+        .with(|registry| {
+            registry.borrow_mut().with_session(handle, |session| {
+                session
+                    .query_personal_trade_history(
+                        AccountId(0),
+                        engine::session::PersonalTradeHistoryRequest {
+                            date_from: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+                            date_to: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+                            stock: None,
+                            side: None,
+                            before_receipt: None,
+                            as_of_receipt: None,
+                            page_size: 100,
+                        },
+                    )
+                    .unwrap()
+            })
+        })
+        .unwrap();
+    assert!(!history.confirmations.is_empty(), "分页查询同源出数");
+    println!("w3 personal_trade_history wire: {}", serde_json::to_string(&history).unwrap());
+
+    // 日结后面板四：保留历史（G8）——冻结日 Traded + bars 非空。
+    for _ in 0..130 {
+        if let EngineUpdate::CivilUpdate(_) = step_update(handle).unwrap() {
+            break;
+        }
+    }
+    let page = REGISTRY
+        .with(|registry| {
+            registry.borrow_mut().with_session(handle, |session| {
+                session
+                    .query_market_history_for(
+                        AccountId(0),
+                        &engine::session::MarketHistoryRequest {
+                            stock: engine::StockId(0),
+                            date_from: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+                            date_to: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+                            after: None,
+                            page_size: 7,
+                        },
+                    )
+                    .unwrap()
+            })
+        })
+        .unwrap();
+    assert_eq!(page.entries.len(), 1, "单日范围单条目");
+    assert_eq!(
+        page.entries[0].availability,
+        engine::session::MarketHistoryAvailability::Traded,
+        "已结算开市日=Traded"
+    );
+    assert!(!page.entries[0].bars.is_empty(), "保留链冻结真实分钟 bars");
+    println!("w3 market_history wire: {}", serde_json::to_string(&page).unwrap());
+
+    drop_session(handle).unwrap();
+}
+
+/// 事件形态名（诊断计数用）。
+fn event_name(event: &engine::Event) -> String {
+    match event {
+        engine::Event::Trade { .. } => "Trade".into(),
+        engine::Event::OrderAccepted { .. } => "OrderAccepted".into(),
+        engine::Event::IntentRejected { .. } => "IntentRejected".into(),
+        engine::Event::PriceTick { .. } => "PriceTick".into(),
+        engine::Event::OrderCanceled { .. } => "OrderCanceled".into(),
+        engine::Event::AuctionCompleted { .. } => "AuctionCompleted".into(),
+        _ => "Other".into(),
+    }
+}
