@@ -120,6 +120,32 @@ pub(crate) mod js_safe_u64 {
     }
 }
 
+/// u128 的规范十进制字符串 serde（B2 补面——按 18725d07 基线恢复）：
+/// 只接受 `0` 或非零开头的纯数字串（拒绝 `00`/`+1`/`-1`）；供日内均价
+/// wire 面复用（合法成交额可超 u64，字符串承载）。
+pub(crate) mod canonical_u128_decimal {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn parse(value: &str) -> Result<u128, String> {
+        let bytes = value.as_bytes();
+        let nonzero_prefix = bytes.first().is_some_and(|byte| (b'1'..=b'9').contains(byte));
+        if bytes != b"0" && !(nonzero_prefix && bytes.iter().all(u8::is_ascii_digit)) {
+            return Err("成交额必须使用规范非负十进制分字符串".to_owned());
+        }
+        value
+            .parse::<u128>()
+            .map_err(|error| format!("成交额超出 u128 范围：{error}"))
+    }
+
+    pub fn serialize<S: Serializer>(value: &u128, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+        parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
 /// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
 /// 委托价格被拒原因（数值枚举，ADR 0041）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

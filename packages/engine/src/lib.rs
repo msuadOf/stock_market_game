@@ -28,7 +28,10 @@ pub mod fees;
 pub use fees::FeeComponents;
 
 pub mod intraday_average;
-pub use intraday_average::{IntradayAverage, IntradayAverageError, calculate_intraday_average};
+pub use intraday_average::{
+    IntradayAverage, IntradayAverageError, IntradayAverageInput, calculate_intraday_average,
+    calculate_intraday_average_curve, calculate_intraday_average_from_input, parse_turnover_cents,
+};
 
 pub mod config;
 pub use config::{ConfigError, GameConfig};
