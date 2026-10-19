@@ -30,9 +30,12 @@
 - `packages/engine` 是 Rust crate，纯逻辑，参与 cargo workspace。
 - 前端经 `wasm-pack`/`wasm-bindgen` 调用；后端与 Tauri 直接复用同一 crate。
 - WASM 构建走**稳定工具链串行管线**（批 9 A10：wasm-bindgen-rayon 多核随 rayon
-  退役——`nightly`+`build-std`+atomics 链接链、COOP/COEP 隔离门与
-  `check-wasm-threading` 校验均已删除；串行 wasm 为本期语义，登记为简化）。执行
-  `scripts/wasm-build.sh`（Windows 用 `.bat`）。
+  退役——`nightly`+`build-std`+atomics 链接链已删除；串行 wasm 为本期语义，登记为
+  简化）。执行 `scripts/wasm-build.sh`（Windows 用 `.bat`）。
+- COOP/COEP 跨源隔离链已随 wasm 线程战役 P0 前置批恢复（Pages 自研 Service
+  Worker 隔离、vite dev/preview 注头插件、startup-policy 隔离/SharedArrayBuffer
+  门禁——ADR-0028）；产物串行形态校验并入 `scripts/check-web-release-wasm.mjs`
+  （`check-wasm-threading.mjs` 不复刻）。
 - 状态以 JSON 序列化跨端传输。`SaveSlot.runtime_state` 的类型为 `SavedRuntimeState`；
   Rust `saved_runtime` 与 Web `runtime-state` 负责同一严格当前结构的恢复契约。
   类型、模块和函数不附带内部版本后缀，游戏存档不设代际版本标记，
