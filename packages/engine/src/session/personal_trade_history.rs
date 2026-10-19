@@ -239,6 +239,29 @@ impl super::GameSession {
             .map(|history| history.iter().cloned().collect())
     }
 
+    /// 本人交割单游标分页（B2 补面——按 18725d07 基线恢复：降序、
+    /// `before_receipt` 排他游标、每页 100 条；交割单表的 onOlder 分页依赖）。
+    pub fn personal_trade_confirmations_page(
+        &self,
+        account: crate::AccountId,
+        before_receipt: Option<u64>,
+    ) -> Vec<PersonalTradeConfirmation> {
+        self.state
+            .personal_trade_confirmations
+            .get(&account)
+            .map(|history| {
+                history
+                    .iter_rev()
+                    .filter(|confirmation| {
+                        before_receipt.is_none_or(|cursor| confirmation.receipt_id < cursor)
+                    })
+                    .take(100)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// 回执水位（as_of 默认上界——恒大于一切已发 receipt_id；跨存档
     /// 由 `next_receipt_base` 持久恢复）。
     pub fn receipt_watermark(&self) -> u64 {

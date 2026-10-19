@@ -5051,6 +5051,43 @@ mod personal_receipt_tests {
         );
     }
 
+    /// B2 补面基线：交割单游标分页（对照 18725d07 personal_trade_confirmations_page
+    /// ——降序、排他游标、100 条页上限）。多笔成交用多账户下单造出同账户多条 receipt。
+    #[test]
+    fn confirmations_page_orders_descending_and_honors_exclusive_cursor() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        execute_buy(&mut session);
+        // 买方账户第一条 receipt（trade_seq*2+1）。
+        let first = session.personal_trade_confirmations_page(AccountId(0), None);
+        assert_eq!(first.len(), 1, "无游标=最新页");
+        let first_id = first[0].receipt_id;
+        // 第二笔成交（NPC 再卖、玩家再买）→ 买方第二条 receipt。
+        execute_buy(&mut session);
+        let page = session.personal_trade_confirmations_page(AccountId(0), None);
+        assert_eq!(page.len(), 2, "两笔成交两条买腿 receipt");
+        assert!(
+            page[0].receipt_id > page[1].receipt_id,
+            "页内按 receipt 降序（最新在前）"
+        );
+        // 排他游标：before=页首 id → 恰好排除该条及之后。
+        let older = session.personal_trade_confirmations_page(AccountId(0), Some(page[0].receipt_id));
+        assert!(
+            older.iter().all(|row| row.receipt_id < page[0].receipt_id),
+            "游标排他"
+        );
+        assert_eq!(older.len(), 1);
+        assert_eq!(older[0].receipt_id, first_id, "翻页命中上一页之前的 receipt");
+        // 无事实账户返回空页（不报错——空账户与空页同义）。
+        assert!(
+            session
+                .personal_trade_confirmations_page(AccountId(99), None)
+                .is_empty()
+        );
+    }
+
     #[test]
     fn repeated_steps_never_duplicate_and_aborted_ticks_never_leak() {
         if !crate::runtime::step_runtime_enabled() {
