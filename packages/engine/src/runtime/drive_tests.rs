@@ -4148,3 +4148,71 @@ fn knife5a_due_filter_equivalent_to_full_scan() {
         "heap 延迟删除筛选与全名册扫描终态必须逐位一致（等价合同）"
     );
 }
+
+// 复核建议②（收袋批独立复核）：⑤b 清空拍镜像语义固化。实测勘正：
+// PlanBook 是 append-only（terminal 记录仍在 plan_ids——Sol 整改 4
+// "含 terminal 即安装"），故"计划集清空"实为全员 terminal 化=**变化
+// 拍**（apply 置 dirty）⇒ 生产通道全量上行（含 terminal）⇒ 驱动器
+// 安装 ⇒ 镜像同步为 terminal 簿。真正的「空簿不覆盖」只发生在
+// plan_ids 真空（未变拍回空——knife5b 主测试 (2)(3) 段承载）。本
+// 测试固化两义边界，防后续演化产生"清空拍镜像应留旧 Active 值"或
+// "terminal 拍应不装"两类歧义回归（旧行为=变化拍必装）。
+#[test]
+fn knife5b_empty_group_book_keeps_session_mirror_on_clear() {
+    let mut session = GameSession::new(setup_fixture(), 59).expect("会话构造");
+    let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    driver
+        .step_frame_equivalent(&mut session)
+        .expect("步进（组线程就位）");
+    // 注入计划 → 生产通道全量 → 手动安装（生产链 set_runtime_plans 等价面）。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        book.create(plan_open_for_knife5b(crate::StockId(0)))
+            .expect("注入计划");
+    }));
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    let (_, plans) = echoed
+        .into_iter()
+        .find(|(_, p)| p.plan_ids().next().is_some())
+        .expect("变化拍全量上行");
+    session.set_runtime_plans(plans);
+    let debug_before = session.plans_debug();
+    assert!(!debug_before.is_empty(), "前置：镜像已安装注入计划");
+    // 计划集清空=全员 terminal 化（append-only：terminal 记录仍在
+    // plan_ids）——**变化拍**（apply 置 dirty）。
+    driver.mutate_plan_book_for_test(Box::new(|book| {
+        let ids: Vec<_> = book.plan_ids().collect();
+        for id in ids {
+            let _ = book.apply(
+                id,
+                crate::plans::PlanEvent::Terminated {
+                    reason: crate::plans::TerminationReason::Cancelled,
+                    trading_day: 0,
+                },
+            );
+        }
+    }));
+    let echoed = driver.collect_plans_echo().expect("生产通道收集");
+    // 变化拍生产通道全量上行（含 terminal 记录——plan_ids 非空）。
+    assert!(
+        echoed.iter().any(|(_, p)| p.plan_ids().next().is_some()),
+        "terminal 化是变化拍：dirty 在位，生产通道必须全量上行（含 terminal）"
+    );
+    // 驱动器安装语义（旧行为）：group_has_plans=true（含 terminal）⇒ 装。
+    let (_, plans) = echoed
+        .into_iter()
+        .find(|(_, p)| p.plan_ids().next().is_some())
+        .expect("上方已判非空");
+    session.set_runtime_plans(plans);
+    let debug_after = session.plans_debug();
+    // 镜像同步为 terminal 簿（非保留旧 Active 值——旧行为=变化拍必装）。
+    assert_eq!(
+        debug_after.len(),
+        debug_before.len(),
+        "镜像条目数不变（记录 append-only），但状态面已同步 terminal 簿"
+    );
+    assert!(
+        debug_after.iter().all(|(.., status)| status != "Active"),
+        "terminal 化后镜像不得保留 Active 状态（变化拍必装的旧语义固化）"
+    );
+}
