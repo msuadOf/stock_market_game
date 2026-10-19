@@ -26,6 +26,20 @@ pub(super) struct IngressBinding {
 }
 
 impl SharedSessionIngress {
+    /// B3 远程登录：join_market 为新成员账户登记共享收件入口。已关闭或
+    /// 账户已登记时显式拒绝（防御式，不静默覆盖）。
+    pub(super) fn register_player(&self, account: AccountId) -> Result<(), SessionError> {
+        let mut state = self.lock()?;
+        if state.closed || state.accounts.contains_key(&account) {
+            // 1253：共享收件入口已关闭或新玩家账户身份已存在；ctx[0]=AccountId。
+            return Err(SessionError::ResourceLimit(
+                crate::error::ValidationFault::new(1253, vec![account.0]),
+            ));
+        }
+        state.accounts.insert(account, AccountKind::Player);
+        Ok(())
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, IngressState>, SessionError> {
         self.inner.lock().map_err(|_error| {
             // 1250：ingress 元数据锁中毒（防御式显式暴露）。

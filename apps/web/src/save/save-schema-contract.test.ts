@@ -55,10 +55,12 @@ test("存档流通盘设置完整保存类间与类内方式，并拒绝旧 shap
 })
 
 test("存档 Money 保留完整 i64 分值并拒绝旧 number 编码", { timeout: 10_000 }, () => {
+  // B3 远程登录：成员关系恰好校验要求快照账户=members ∪ NPC——覆写时
+  // 保留 NPC 账户 1（fixture retail_count=1；18725d07 同型处理）。
   for (const cash of ["0", "9007199254740993", "9223372036854775807"]) {
     const save = currentSaveFixture()
     const snapshot = save.snapshot as Record<string, unknown>
-    snapshot.accounts = { "0": { cash, positions: {} } }
+    snapshot.accounts = { "0": { cash, positions: {} }, "1": { cash: "0", positions: {} } }
     assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
   }
   for (const cash of [0, 1000000000000, "00", "+1", "-0", "1.0", "-1", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"]) {

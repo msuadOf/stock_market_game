@@ -68,6 +68,9 @@ impl Drop for VerificationActorGuard {
 }
 mod initial_allocation;
 mod institutional_behavior;
+mod memberships;
+#[cfg(test)]
+mod memberships_tests;
 mod minimal_snapshot;
 mod observation_clock;
 mod persistence;
@@ -84,6 +87,10 @@ pub use crate::stock::StockId;
 pub use failure::StepFatal;
 pub use hash::StateHash;
 pub use history_reads::HistoricalStockData;
+// B3 远程登录批次：市场成员关系面（OpaqueSubjectId 鉴权主体→玩家账户）。
+pub use memberships::{
+    AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId,
+};
 pub use initial_allocation::{
     InitialAllocation, InitialAllocationCategory, InitialAllocationKind, InitialStockAllocation,
 };
@@ -489,6 +496,10 @@ pub struct DailyTradeStats {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SaveSlot {
+    /// 市场成员关系（B3 远程登录）：认证主体 → 玩家账户与入场资金事实。
+    /// 必填——缺失该字段的 JSON 不是当前 schema 的合法存档（单人本地局
+    /// 携带 local-owner 成员），恢复侧按 fault2020 域校验。
+    pub market_memberships: MarketMembershipState,
     /// Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
     /// parser 共同维护，避免把策略私有结构扩成通用宿主命令。
     #[ts(type = "import(\"../../save/schema/runtime-state\").SavedRuntimeState")]
@@ -1457,6 +1468,9 @@ pub struct GameSession {
 /// tick shadow 与自然日日结共同提交的唯一状态集合。
 struct CommittableSessionState {
     setup: SessionSetup,
+    /// 市场成员关系（B3 远程登录）：随 tick shadow 克隆与提交（权威状态，
+    /// save 投影为 SaveSlot.market_memberships）。
+    memberships: MarketMembershipState,
     /// Sol 六审段 1.3（weekend_publish）：信息投递权威标志——runtime
     /// 驱动器构造后置 true 并**随 state 克隆链走**（clone_for_tick_
     /// shadow 会把 runtime_driver 置 None，旧门判 self.runtime_driver
@@ -1624,19 +1638,21 @@ pub(in crate::session) enum FieldId {
     RetailProjectionSeen,
     CivilClock,
     SpeculativePrepare,
+    /// B3 远程登录批次追加：市场成员关系（尾部追加，不改变既有变体数值）。
+    Memberships,
 }
 
 /// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
 /// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
-/// 默认 features 为 30 项；开启 simulation-diagnostics 时为 32 项（追加
-/// NpcDecisionTraces/Causal）。owner8 批次④删除两字段后由 33/35 收窄为 31/33
-///（Astra 终审口径校正：下文一律按现行 31/33 口径表述）。一致性要求（Astra
-/// 增量六措辞校正；批四删除 PendingNpc 字段后 30/32 口径）：32 项变体去掉两个
-/// 诊断项（NpcDecisionTraces/Causal）后，其余 30 项与默认变体逐项一致——诊断项插在默认变体第 20 项
+/// 默认 features 为 31 项；开启 simulation-diagnostics 时为 33 项（追加
+/// NpcDecisionTraces/Causal）。owner8 批次④删除两字段后由 33/35 收窄为 30/32，
+/// B3 远程登录批次追加 Memberships 后为现行 31/33 口径。一致性要求（Astra
+/// 增量六措辞校正）：33 项变体去掉两个诊断项（NpcDecisionTraces/Causal）后，
+/// 其余 31 项与默认变体逐项一致——诊断项插在默认变体第 20 项
 /// （LastRetailOrderEvents）之后，其后的项在 33 项变体中下标后移，逐下标位置
 /// 并不一致（人工同步维护，盲区 1 的自报标签性质同样适用于此处清单）。
 #[cfg(not(feature = "simulation-diagnostics"))]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 31] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1667,10 +1683,11 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 30] = [
     FieldId::RetailProjectionSeen,
     FieldId::CivilClock,
     FieldId::SpeculativePrepare,
+    FieldId::Memberships,
 ];
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 33] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1703,11 +1720,12 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
     FieldId::RetailProjectionSeen,
     FieldId::CivilClock,
     FieldId::SpeculativePrepare,
+    FieldId::Memberships,
 ];
 
 /// FieldId 全变体数（含 simulation-diagnostics 两项），verify_metrics 计数数组长度。
-pub(in crate::session) const FIELD_ID_COUNT: usize = 32;
-const _: () = assert!(FieldId::SpeculativePrepare as usize == FIELD_ID_COUNT - 1);
+pub(in crate::session) const FIELD_ID_COUNT: usize = 33;
+const _: () = assert!(FieldId::Memberships as usize == FIELD_ID_COUNT - 1);
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
 ///
@@ -2076,6 +2094,9 @@ impl GameSession {
                 groups: setup.groups.clone(),
                 runtime_information_authority: false,
                 validated_config: setup.config.clone(),
+                // B3 远程登录：单人新局以 local-owner（账户 0）起步；共享市场
+                // 由宿主按 bind_market_creator/join_market 扩展成员。
+                memberships: MarketMembershipState::local_owner(setup.config.starting_cash),
                 setup,
                 stocks,
                 rng,
@@ -2712,6 +2733,12 @@ impl GameSession {
             })
             .collect()
     }
+    /// 全账户名册（id 升序——NPC 与全部玩家经济成员）。B3 远程登录：
+    /// runtime 世界名册投影（bridge::accounts_projection_from_session）
+    /// 自此取全量账户；共享市场的动态加入成员（无策略 Player）也在册。
+    pub fn account_roster(&self) -> Vec<AccountId> {
+        self.state.accounts.keys().copied().collect()
+    }
     /// 只读账户引用。
     pub fn account(&self, id: AccountId) -> Option<&Account> {
         self.state.accounts.get(&id)
@@ -3344,6 +3371,7 @@ impl GameSession {
 
     fn save_projection(&self, runtime_state: SavedRuntimeState) -> SaveSlot {
         SaveSlot {
+            market_memberships: self.state.memberships.clone(),
             runtime_state,
             setup: self.state.setup.clone(),
             seed: self.state.seed,
@@ -3550,6 +3578,18 @@ impl GameSession {
         validate_save_slot(save)?;
         let mut sess = GameSession::new_with_compute(save.setup.clone(), save.seed, compute)?;
         sess.fresh_initial_allocation = false;
+        // B3 远程登录：恢复成员关系并为快照中的成员账户补建 Player 账户
+        // （新局构造只带 local-owner 的账户 0 与 NPC 账户；多成员档的账户
+        // 在快照精确覆盖之前补齐，见 validate 的账户集合恰好校验）。
+        sess.state.memberships = save.market_memberships.clone();
+        for member in save.market_memberships.members.values() {
+            if !sess.state.accounts.contains_key(&member.account_id) {
+                sess.state.accounts.insert(
+                    member.account_id,
+                    Account::new(member.account_id, AccountKind::Player, Money::ZERO),
+                );
+            }
+        }
 
         // 清空初始持仓分配 → 用快照精确覆盖
         for acc in sess.state.accounts.values_mut() {
@@ -5130,6 +5170,7 @@ impl CommittableSessionState {
     fn clone_for_shadow(&self) -> Result<Self, StepFatal> {
         let Self {
             setup,
+            memberships,
             validated_config,
             stocks,
             rng,
@@ -5200,6 +5241,7 @@ impl CommittableSessionState {
                 })?;
         Ok(Self {
             setup: setup.clone(),
+            memberships: memberships.clone(),
             validated_config: validated_config.clone(),
             stocks: stocks.clone(),
             rng: rng.clone(),
@@ -5274,6 +5316,7 @@ impl CommittableSessionState {
         );
         let Self {
             setup,
+            memberships,
             validated_config,
             stocks,
             rng,
@@ -5340,6 +5383,11 @@ impl CommittableSessionState {
         // 池外移交后也不再产生池交互。Copy 字段仍直接赋值。
         self.urgency_policy = urgency_policy;
         defer_swap(&mut self.setup, setup, FieldId::Setup);
+        defer_swap(
+            &mut self.memberships,
+            memberships,
+            FieldId::Memberships,
+        );
         // 运行时费率快照随 shadow 原样回流（shadow 从权威克隆而来，二者恒相等；
         // 会话外的静默改写在下一 tick 门禁被指纹比对拒绝）。
         defer_swap(

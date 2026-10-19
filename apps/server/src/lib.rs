@@ -17,6 +17,8 @@
 
 pub mod actor;
 pub mod deployment;
+pub mod identity;
+pub mod identity_routes;
 pub mod publisher;
 pub mod routes;
 #[cfg(feature = "web-ui")]
@@ -61,7 +63,16 @@ pub fn app_router_with_manager(manager: SessionManager) -> Router {
 fn app_router_with_state(state: AppState) -> Router {
     let router = Router::new()
         .route("/healthz", get(healthz))
+        .merge(routes::archive_router())
         .route("/api/new", post(routes::api_new))
+        .route("/api/markets", get(routes::api_markets))
+        .route("/api/market/context", get(routes::api_market_context))
+        .route("/api/markets/join", post(routes::api_join_market))
+        .route("/api/market/reset", post(routes::api_reset_market))
+        .route(
+            "/api/market/admission-cash",
+            post(routes::api_admission_cash),
+        )
         .route("/api/intent", post(routes::api_intent))
         .route("/api/snapshot", get(routes::api_snapshot))
         .route(
@@ -105,6 +116,11 @@ fn app_router_with_state(state: AppState) -> Router {
             post(routes::api_host_parity_advance_civil_day),
         )
         .route("/api/host-parity/step", post(routes::api_host_parity_step));
+    // B3 远程登录：身份路由（register/login/guest/logout/me）挂共享
+    // SessionManager 的原生存储；独立 CORS 层（identity_router 自带
+    // 8 KiB body 上限，不走 MAX_LOAD_BODY_BYTES 的存档大包口径）。
+    let identities =
+        identity_routes::identity_router(identity::IdentityService::new(state.manager.database()));
     router
         .route("/api/session", delete(routes::api_delete_session))
         .route("/ws", get(routes::ws_handler))
@@ -113,6 +129,7 @@ fn app_router_with_state(state: AppState) -> Router {
         .layer(cors_layer())
         .layer(DefaultBodyLimit::max(routes::MAX_LOAD_BODY_BYTES))
         .with_state(state)
+        .merge(identities.layer(cors_layer()))
 }
 
 /// 构造 CORS 层。

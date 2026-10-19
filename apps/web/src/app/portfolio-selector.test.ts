@@ -13,9 +13,9 @@ function snapshot(markets: Record<string, unknown>) {
 test("审计G67：baseline拒绝没有行情的持仓引用，估值不能当零价", () => {
   const invalid = snapshot({});
   assert.throws(() => parseProtocolSnapshot(invalid), /缺少行情/);
-  assert.throws(() => selectPortfolioInput({ snapshot: { snapshot: invalid } } as unknown as RootState), /缺少行情/);
+  assert.throws(() => selectPortfolioInput({ remoteMembership: { accountId: "0", canControl: true, needsRejoin: false, remote: false }, snapshot: { snapshot: invalid } } as unknown as RootState), /缺少行情/);
   const valid = parseProtocolSnapshot(snapshot({ "3": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] } }));
-  assert.equal(selectPortfolioInput({ snapshot: { snapshot: valid } } as unknown as RootState).heldPrices["600101"], "1001");
+  assert.equal(selectPortfolioInput({ remoteMembership: { accountId: "0", canControl: true, needsRejoin: false, remote: false }, snapshot: { snapshot: valid } } as unknown as RootState).heldPrices["600101"], "1001");
 });
 
 test("审计G67：非玩家和零股持仓引用同样校验，继承属性不是行情", () => {
@@ -26,5 +26,5 @@ test("审计G67：非玩家和零股持仓引用同样校验，继承属性不�
   }
   const invalid = snapshot(Object.create({ "600101": { last_price: "1001", last_close: "1000", best_bid: null, best_ask: null, bids: [], asks: [] } }));
   assert.throws(() => parseProtocolSnapshot(invalid), /缺少行情/);
-  assert.throws(() => selectPortfolioInput({ snapshot: { snapshot: invalid } } as unknown as RootState), /缺少行情/);
+  assert.throws(() => selectPortfolioInput({ remoteMembership: { accountId: "0", canControl: true, needsRejoin: false, remote: false }, snapshot: { snapshot: invalid } } as unknown as RootState), /缺少行情/);
 });

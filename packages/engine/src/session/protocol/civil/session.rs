@@ -33,6 +33,33 @@ impl ProtocolState {
     }
 }
 
+impl ProtocolSession {
+    /// B3 远程登录：成员变更面转发（bind/join/set_admission_cash 是会话级
+    /// 静点操作，宿主在命令处理边界调用； ProtocolSession 未暴露通用
+    /// DerefMut——成员操作经显式转发保持发布状态封装）。
+    pub fn bind_market_creator(
+        &mut self,
+        subject: crate::session::OpaqueSubjectId,
+    ) -> Result<crate::session::MarketMembership, crate::session::MembershipError> {
+        self.state.game.bind_market_creator(subject)
+    }
+
+    pub fn join_market(
+        &mut self,
+        subject: crate::session::OpaqueSubjectId,
+        confirmed_rejoin: bool,
+    ) -> Result<crate::session::MarketMembership, crate::session::MembershipError> {
+        self.state.game.join_market(subject, confirmed_rejoin)
+    }
+
+    pub fn set_admission_cash(
+        &mut self,
+        cash: crate::Money,
+    ) -> Result<(), crate::session::MembershipError> {
+        self.state.game.set_admission_cash(cash)
+    }
+}
+
 pub struct ProtocolSession {
     state: ProtocolState,
     #[cfg(test)]

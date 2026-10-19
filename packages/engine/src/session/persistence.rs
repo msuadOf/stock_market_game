@@ -467,24 +467,13 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let npc_count = u64::from(save.setup.npcs.retail_count)
         + u64::from(save.setup.npcs.inst_count)
         + u64::from(save.setup.npcs.hot_count);
-    let expected_account_count = usize::try_from(npc_count)
-        .ok()
-        .and_then(|count| count.checked_add(1))
-        .ok_or_else(|| {
-            // fault2019：账户数超出平台上限。
-            SessionError::InvalidSave(ValidationFault::bare(2019))
-        })?;
-    if save.snapshot.accounts.len() != expected_account_count
-        || save
-            .snapshot
-            .accounts
-            .keys()
-            .enumerate()
-            .any(|(index, id)| id.0 != index as u64)
-    {
-        // fault2020：快照账户集合与 setup 不完全一致。
-        return Err(SessionError::InvalidSave(ValidationFault::bare(2020)));
-    }
+    // B3 远程登录：账户集合校验升级为成员关系语义（fault2020 域）——
+    // 快照账户必须恰好为 NPC 账户（1..=npc_count）与全部市场成员账户，
+    // 账户 0 必须是经济成员，成员账户不得占用 NPC 区间（单人 local-owner
+    // 局与多成员共享局同校验；取代旧"连续 0..=npc_count"单玩家口径）。
+    save.market_memberships
+        .validate(save)
+        .map_err(|_| SessionError::InvalidSave(ValidationFault::bare(2020)))?;
 
     let expected_attention_accounts: BTreeSet<AccountId> = (1..=npc_count).map(AccountId).collect();
     let actual_attention_accounts: BTreeSet<AccountId> =

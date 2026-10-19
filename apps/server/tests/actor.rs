@@ -500,9 +500,11 @@ async fn actor_advances_one_closed_civil_day_through_its_command_queue() {
         .expect("closed civil day must settle through the actor queue");
 
     // Then: it delivers the engine-owned date event and authoritative public date.
+    // main 现行契约：CivilUpdate.events 是方法（迭代器）而非 18725d07 的
+    /// Vec 字段——host-parity 面失修补（该 feature 自 std-thread 迁移后
+    /// 未编译过）。
     assert!(report
-        .events
-        .iter()
+        .events()
         .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. })));
     assert_eq!(
         handles

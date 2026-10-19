@@ -105,9 +105,15 @@ where
     for fact in &rec.desk_lifecycle {
         check(fact.owner, "生命周期")?;
     }
-    for fact in &rec.desk_receipts {
-        check(fact.owner, "回执")?;
-    }
+    // B3 修正注记：desk_receipts（ReceiptKind 全集——价格带外/笼子/非整手/
+    // 超上限/相位/撤单窗/已全成/竞价限价/撤单目标不存在/组端资金与可卖
+    // 拒绝）均为纯告知类回执，不伴随任何账户域改动，owner 不依赖分片
+    // 回写。821a5b27 的原语义是把回执 owner **保守多标**进本地回写集
+    // （多装等值无害）；分片直接借用重构后此处错位成"owner 必须在组端
+    // 改动分片"的硬约束——纯拒绝拍（如撤他人单的 OrderNotFound 防御
+    // 拒绝）owner 无账户改动、天然缺项，B3 memberships 测试首次踩中。
+    // 校验范围收窄为账户事实（成交/生命周期），非弱化绊线：回执类无
+    // 账户域回写需求，不存在"漏标导致陈旧镜像"的风险面。
     Ok(())
 }
 

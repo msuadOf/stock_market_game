@@ -1,13 +1,17 @@
 import type { AccountSnap, Cents } from "../types/engine.ts";
 import type { RootState } from "../store/store.ts";
 
+// B3 远程登录：组合输入跟随成员选择器（本地局=localMembership 的账户 0，
+// 远程局=本人成员账户——18725d07 语义；此前硬编码 accounts["0"]）。
+import { selectPlayerAccount } from "../store/remote-membership.ts";
+
 export interface PortfolioInput {
   account: AccountSnap | null;
   heldPrices: Readonly<Record<string, Cents>>;
 }
 
 export function selectPortfolioInput(state: RootState): PortfolioInput {
-  const account = state.snapshot.snapshot?.accounts["0"] ?? null;
+  const account = selectPlayerAccount(state);
   const markets = state.snapshot.snapshot?.markets ?? {};
   const heldPrices = Object.fromEntries(
     Object.entries(account?.positions ?? {})

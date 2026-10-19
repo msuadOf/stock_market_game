@@ -224,19 +224,27 @@ impl GameSession {
                 })
                 .collect()
         };
-        // 高频 protocol 只发布玩家账户；直接查找，避免每帧扫描全部 NPC 账户。
+        // 高频 protocol 只发布经济成员账户（B3 远程登录前=仅账户 0 的单人
+        // 优化；多成员市场=账户 0 ∪ 市场成员账户——NPC 账户仍不发）。
+        // 直接查找，避免每帧扫描全部 NPC 账户。
         let player = AccountId(0);
         let selected_accounts: Box<dyn Iterator<Item = (&AccountId, &Account)> + '_> =
             if include_npc_accounts {
                 Box::new(self.state.accounts.iter())
             } else {
-                Box::new(
-                    self.state
-                        .accounts
-                        .get(&player)
-                        .map(|account| (&player, account))
-                        .into_iter(),
-                )
+                // 成员名册（BTreeMap<OpaqueSubjectId, MarketMembership>）的
+                // 账户值即发布集；单人局退化为 {local-owner→0}（与旧单人
+                // 优化等价——恰好只含账户 0）。
+                let member_accounts: std::collections::BTreeSet<AccountId> = self
+                    .state
+                    .memberships
+                    .members
+                    .values()
+                    .map(|member| member.account_id)
+                    .collect();
+                Box::new(self.state.accounts.iter().filter(move |(id, _)| {
+                    member_accounts.contains(id) || **id == player
+                }))
             };
         let accounts = selected_accounts
             .map(|(id, a)| {

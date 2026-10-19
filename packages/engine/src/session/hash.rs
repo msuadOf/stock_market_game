@@ -47,6 +47,7 @@ impl GameSession {
         } = self;
         let super::CommittableSessionState {
             setup: _,
+            memberships: _,
             validated_config: _,
             stocks: _,
             rng: _,

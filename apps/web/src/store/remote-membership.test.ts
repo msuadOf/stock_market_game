@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { store, setRemoteMembership, selectPlayerAccount, selectPlayerAccountId, selectCanControl, setSnapshot } from "./store.ts";
+import type { Snapshot } from "../types/engine.ts";
+import { selectPortfolioInput } from "../app/portfolio-selector.ts";
+
+test("本人账户选择器不读取其他玩家，缺席时保留控制能力但没有交易账户", { timeout: 10000 }, () => {
+  const account = { cash: "1000", reserved_cash: "0", reserved_sell_qty: {}, positions: {} };
+  store.dispatch(setSnapshot({ accounts: { "0": account, "7": { ...account, cash: "7000" } }, markets: {}, seq: 0 } as unknown as Snapshot));
+  assert.equal(selectPlayerAccountId(store.getState()), "0");
+  assert.equal(selectPlayerAccount(store.getState())?.cash, "1000");
+  store.dispatch(setRemoteMembership({ remote: true, accountId: "7", canControl: false, needsRejoin: false }));
+  assert.equal(selectPlayerAccount(store.getState())?.cash, "7000");
+  assert.equal(selectPortfolioInput(store.getState()).account?.cash, "7000");
+  assert.equal(selectCanControl(store.getState()), false);
+  store.dispatch(setRemoteMembership({ remote: true, accountId: null, canControl: true, needsRejoin: true }));
+  assert.equal(selectPlayerAccount(store.getState()), null);
+  assert.equal(selectPlayerAccountId(store.getState()), null);
+  assert.deepEqual(selectPortfolioInput(store.getState()), { account: null, heldPrices: {} });
+  assert.equal(selectCanControl(store.getState()), true);
+  store.dispatch(setRemoteMembership({ remote: true, accountId: "8", canControl: false, needsRejoin: false }));
+  assert.throws(() => selectPlayerAccount(store.getState()), /8.*账户|账户.*8/);
+  store.dispatch(setRemoteMembership({ remote: true, accountId: "8", canControl: true, needsRejoin: false, generation: "next" }));
+  assert.equal(selectPlayerAccount(store.getState()), null);
+  const synchronized = store.getState();
+  assert.throws(() => selectPlayerAccount({ ...synchronized, snapshot: { ...synchronized.snapshot, generation: "next" } }), /8.*账户|账户.*8/);
+  store.dispatch(setRemoteMembership({ remote: true, accountId: "8", canControl: true, needsRejoin: false, ready: false }));
+  assert.equal(selectPlayerAccount(store.getState()), null, "同 generation 重新加入的资金账户也必须等待新本人 baseline");
+  store.dispatch(setRemoteMembership({ remote: false, accountId: "0", canControl: true, needsRejoin: false }));
+});

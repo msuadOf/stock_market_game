@@ -3,6 +3,7 @@ import type { AccountId } from "./AccountId";
 import type { CivilClockSave } from "./CivilClockSave";
 import type { FilledOrderSnap } from "./FilledOrderSnap";
 import type { IngressReceiptCursors } from "./IngressReceiptCursors";
+import type { MarketMembershipState } from "./MarketMembershipState";
 import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
@@ -24,6 +25,12 @@ import type { UrgencyPolicy } from "./UrgencyPolicy";
  * 前端分时采样属于派生 UI 数据，不进入权威存档；日 K 由 engine 持久化。
  */
 export type SaveSlot = {
+  /**
+   * 市场成员关系（B3 远程登录）：认证主体 → 玩家账户与入场资金事实。
+   * 必填——缺失该字段的 JSON 不是当前 schema 的合法存档（单人本地局
+   * 携带 local-owner 成员），恢复侧按 fault2020 域校验。
+   */
+  market_memberships: MarketMembershipState;
   /**
    * Escrow 并行 tick 的权威运行时状态。TypeScript 形状由 Web 严格存档
    * parser 共同维护，避免把策略私有结构扩成通用宿主命令。

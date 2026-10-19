@@ -75,6 +75,8 @@ export function currentSaveFixture(): JsonObject {
       },
       accounts: {
         "0": { cash: "1000000000", positions: {} },
+        // B3：NPC 账户（retail_count=1）——成员关系恰好校验要求快照含 NPC。
+        "1": { cash: "20000000", positions: {} },
       },
       daily_candles: {
         "0": [{ time: 1893369600, open: "1120", high: "1120", low: "1120", close: "1120", volume: 0 }],
@@ -159,6 +161,13 @@ export function currentSaveFixture(): JsonObject {
     belief_books: {},
     watchlists: {},
     price_memories: {},
-    history_reads: { "0": { stocks: {} } },
+    history_reads: { "0": { stocks: {} }, "1": { stocks: {} } },
+    // B3 远程登录：单人档的 local-owner 成员关系（账户 0；retail NPC=1——
+    // 账户集合恰好校验：members ∪ {1} == {0, 1}）。
+    market_memberships: {
+      members: {
+        "local-owner": { account_id: "0", admission_funding: { external_cash: "1000000000" } },
+      },
+    },
   }
 }

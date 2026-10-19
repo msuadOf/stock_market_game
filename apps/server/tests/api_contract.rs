@@ -60,12 +60,29 @@ fn sample_setup_json() -> Value {
 // --- POST /api/new ---
 
 async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
+    new_session_as(app, body, None).await
+}
+
+/// B3 远程登录：带身份 token 建共享市场（token=None 时先 guest 注册）。
+async fn new_session_as(
+    app: axum::Router,
+    body: Value,
+    bearer: Option<&str>,
+) -> (StatusCode, Value) {
+    let bearer = match bearer {
+        Some(token) => Some(token.to_owned()),
+        None => guest_token(&app).await,
+    };
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/api/new")
+        .header("content-type", "application/json");
+    if let Some(token) = &bearer {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
     let res = app
         .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/new")
-                .header("content-type", "application/json")
+            request
                 .body(axum::body::Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -79,9 +96,47 @@ async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
     (status, body)
 }
 
+/// guest 身份注册，返回 (subject_id, credential token)。
+async fn guest_identity(app: &axum::Router) -> (String, String) {
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth/guest")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .expect("guest 注册请求未返回响应");
+    assert_eq!(res.status(), StatusCode::CREATED, "guest 身份注册必须成功");
+    let bytes = to_bytes(res.into_body(), 1 << 20)
+        .await
+        .expect("读取 guest 响应 body 失败");
+    let body: Value = serde_json::from_slice(&bytes).expect("guest 响应必须是 JSON");
+    (
+        body["subject"]["subject_id"]
+            .as_str()
+            .expect("guest 响应含 subject_id")
+            .to_owned(),
+        body["token"].as_str().expect("guest 响应含 token").to_owned(),
+    )
+}
+
+async fn guest_token(app: &axum::Router) -> Option<String> {
+    let (_, token) = guest_identity(app).await;
+    Some(token)
+}
+
 async fn new_session_credentials(app: axum::Router) -> (String, String) {
-    let (status, body) =
-        new_session(app, json!({ "setup": sample_setup_json(), "seed": "42" })).await;
+    let (_, token) = guest_identity(&app).await;
+    let (status, body) = new_session_as(
+        app,
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&token),
+    )
+    .await;
     assert_eq!(
         status,
         StatusCode::OK,
@@ -91,11 +146,7 @@ async fn new_session_credentials(app: axum::Router) -> (String, String) {
         .as_str()
         .expect("new session returns its id")
         .to_owned();
-    let session_token = body["session_token"]
-        .as_str()
-        .expect("new session returns its session token")
-        .to_owned();
-    (session_id, session_token)
+    (session_id, token)
 }
 
 fn closed_day_setup_json() -> Value {
@@ -192,9 +243,11 @@ impl ApiTestSession {
             .map_err(|error| format!("ApiTestSession setup 解码失败：{error}"))?;
         let manager = server::SessionManager::default();
         let app = server::app_router_with_manager(manager.clone());
-        let (status, body) = new_session(
+        let (_, token) = guest_identity(&app).await;
+        let (status, body) = new_session_as(
             app.clone(),
             json!({ "setup": setup_json, "seed": seed.to_string() }),
+            Some(&token),
         )
         .await;
         if status != StatusCode::OK {
@@ -207,10 +260,7 @@ impl ApiTestSession {
         let handles = manager
             .lookup(&session_id)
             .ok_or_else(|| format!("ApiTestSession 注册表中找不到 session_id {session_id}"))?;
-        let session_token = body["session_token"]
-            .as_str()
-            .ok_or_else(|| format!("ApiTestSession 创建响应缺少 session_token：{body}"))?
-            .to_owned();
+        let session_token = token;
         let fixture = Self {
             app,
             manager,
@@ -311,9 +361,12 @@ async fn host_parity_civil_day_route_requires_bearer_authentication_and_uses_the
         .expect("request must return a response");
     let (success_status, report) = response_json(success).await;
     assert_eq!(success_status, StatusCode::OK);
-    assert!(report["events"].as_array().is_some_and(|events| events
+    // main 现行契约：CivilUpdate 事件面在 facts[].event（18725d07 为顶层
+    // events 数组）；host-parity 面自 std-thread 迁移后未编译过，本批
+    // 随身份化一并修复断言口径。
+    assert!(report["facts"].as_array().is_some_and(|facts| facts
         .iter()
-        .any(|event| event.get("CivilDateAdvanced").is_some())));
+        .any(|fact| fact["event"].get("CivilDateAdvanced").is_some())));
 }
 
 #[cfg(feature = "host-parity")]
@@ -347,11 +400,16 @@ async fn host_parity_step_route_completes_a_normal_market_day_before_civil_settl
     let app = app_router();
     let mut setup = sample_setup_json();
     setup["start_date"] = json!("2030-01-02");
-    let (new_status, new_body) =
-        new_session(app.clone(), json!({ "setup": setup, "seed": "42" })).await;
+    let (_, creator_token) = guest_identity(&app).await;
+    let (new_status, new_body) = new_session_as(
+        app.clone(),
+        json!({ "setup": setup, "seed": "42" }),
+        Some(&creator_token),
+    )
+    .await;
     assert_eq!(new_status, StatusCode::OK);
     let session_id = new_body["session_id"].as_str().unwrap().to_owned();
-    let session_token = new_body["session_token"].as_str().unwrap().to_owned();
+    let session_token = creator_token;
     let step_body = json!({ "session_id": session_id, "generation": "1" });
 
     for _ in 0..10 {
@@ -386,9 +444,25 @@ async fn host_parity_step_route_completes_a_normal_market_day_before_civil_settl
     let (status, report) = response_json(settle).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(report["events"].as_array().is_some_and(|events| events
+    // main 现行契约：CivilUpdate 事件面在 facts[].event（18725d07 为顶层
+    // events 数组）；host-parity 面自 std-thread 迁移后未编译过，本批
+    // 随身份化一并修复断言口径。
+    assert!(report["facts"].as_array().is_some_and(|facts| facts
         .iter()
-        .any(|event| event.get("CivilDateAdvanced").is_some())));
+        .any(|fact| fact["event"].get("CivilDateAdvanced").is_some())));
+}
+
+async fn assert_successful_intent(response: axum::response::Response, message: &str) {
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("intent response body should be readable");
+    if status != StatusCode::OK {
+        let error: Value = serde_json::from_slice(&body)
+            .expect("non-200 intent response should contain a JSON error");
+        panic!("{message}: {error}");
+    }
+    assert!(body.is_empty(), "successful intent acknowledgment should be empty");
 }
 
 async fn response_json(response: axum::response::Response) -> (StatusCode, Value) {
@@ -529,10 +603,14 @@ async fn new_session_requires_a_decimal_string_seed() {
 
 #[tokio::test]
 async fn snapshot_unknown_session_with_token_is_forbidden() {
-    let res = app_router()
+    // B3 远程登录：Bearer 是身份 credential（非会话令牌）；"不泄露会话
+    // 存在性"语义 = 已认证身份 + 未知 session → 403。
+    let app = app_router();
+    let (_, token) = guest_identity(&app).await;
+    let res = app
         .oneshot(
             Request::builder()
-                .header("authorization", "Bearer unknown-session-token")
+                .header("authorization", format!("Bearer {token}"))
                 .uri("/api/snapshot?session_id=does-not-exist")
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -551,15 +629,16 @@ async fn snapshot_returns_snapshot_json() {
     // 跨请求共享同一 manager：用 app_router_with_manager 而非 app_router（后者每次新 manager）。
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required").to_string();
+    let token = creator_token;
 
     // GET /api/snapshot 对刚创建的 session → 200 + Snapshot JSON。
     let res = app
@@ -926,18 +1005,34 @@ async fn intent_requires_current_canonical_generation() {
     let manager = server::SessionManager::default();
     let app = server::app_router_with_manager(manager.clone());
     let (session_id, token) = new_session_credentials(app.clone()).await;
+    // B3：main 的 credentials 返回二元组；初代世代恒为 "1"（新局 timeline_generation=1）。
+    let initial_generation = "1";
     let mut setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
     setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let expected_admission_cash = serde_json::to_value(setup.config.starting_cash).unwrap();
     let mut completed = engine::session::protocol::ProtocolSession::new(setup, 42).unwrap();
     completed.end_civil_day_update().unwrap();
+    completed.end_civil_day_update().unwrap();
+    assert_eq!(completed.civil_date().to_iso(), "2030-01-07");
     manager
         .lookup(&session_id)
         .unwrap()
         .restore(completed.save().unwrap())
         .await
         .unwrap();
+    let identity = server::identity::IdentityService::new(manager.database())
+        .authenticate(&token)
+        .unwrap();
+    let subject = engine::session::OpaqueSubjectId::new(identity.subject_id).unwrap();
+    let current_generation = manager
+        .lookup(&session_id)
+        .unwrap()
+        .market_context_for(subject.clone())
+        .await
+        .unwrap()
+        .generation;
     for generation in [
-        Some(json!("1")),
+        Some(json!(initial_generation)),
         None,
         Some(json!("01")),
         Some(json!(1)),
@@ -966,8 +1061,89 @@ async fn intent_requires_current_canonical_generation() {
             "旧 generation、缺失或非法 generation 必须在 intake 前拒绝"
         );
     }
-    let response = app.oneshot(Request::builder().method("POST").uri("/api/intent").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(axum::body::Body::from(json!({ "session_id": session_id, "generation": "2", "intent": player_buy_intent() }).to_string())).unwrap()).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    let context = manager
+        .lookup(&session_id)
+        .unwrap()
+        .market_context_for(subject.clone())
+        .await
+        .unwrap();
+    assert!(context.member.is_none(), "restore fixture must begin without membership");
+    let response = app
+        .clone()
+        .oneshot(Request::builder().method("POST").uri("/api/intent").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(axum::body::Body::from(json!({ "session_id": session_id, "generation": current_generation, "intent": player_buy_intent() }).to_string())).unwrap())
+        .await
+        .unwrap();
+    let (status, error) = response_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["code"], "INTENT_REJECTED");
+
+    let join = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/markets/join")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({
+                    "session_id": session_id,
+                    "generation": current_generation,
+                    "confirmed_rejoin": true
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (join_status, joined) = response_json(join).await;
+    assert_eq!(join_status, StatusCode::OK, "真实 join route 应完成重新加入：{joined}");
+    assert!(joined["member"].is_object(), "join route 应返回本人 membership");
+    let joined_account_id = joined["member"]["account_id"].as_str().unwrap();
+    assert_eq!(
+        joined["member"]["admission_funding"]["external_cash"],
+        expected_admission_cash,
+        "真实 join route 应按市场当前设置记录 AdmissionFunding"
+    );
+    let join_generation = joined["generation"].as_str().unwrap();
+
+    let repeated_join = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/markets/join")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({
+                    "session_id": session_id,
+                    "generation": join_generation,
+                    "confirmed_rejoin": true
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (repeat_status, repeated) = response_json(repeated_join).await;
+    assert_eq!(repeat_status, StatusCode::OK, "重复 join 应保持当前成员关系：{repeated}");
+    assert_eq!(repeated["member"]["account_id"], joined_account_id);
+    assert_eq!(
+        repeated["member"]["admission_funding"]["external_cash"],
+        expected_admission_cash,
+        "重复 join 不得再次改变 AdmissionFunding"
+    );
+    let current_context = manager
+        .lookup(&session_id)
+        .unwrap()
+        .market_context_for(subject)
+        .await
+        .unwrap();
+    assert_eq!(
+        current_context.member.as_ref().unwrap().account_id.0.to_string(),
+        joined_account_id,
+        "current context must retain the actual account allocated by join"
+    );
+    let current_generation = current_context.generation.to_string();
+    let response = app.oneshot(Request::builder().method("POST").uri("/api/intent").header("authorization", format!("Bearer {token}")).header("content-type", "application/json").body(axum::body::Body::from(json!({ "session_id": session_id, "generation": current_generation, "intent": player_buy_intent() }).to_string())).unwrap()).await.unwrap();
+    assert_successful_intent(response, "valid current-generation intent rejected").await;
     manager
         .remove(&session_id)
         .unwrap()
@@ -976,12 +1152,16 @@ async fn intent_requires_current_canonical_generation() {
         .unwrap();
 }
 
+
 #[tokio::test]
 async fn intent_unknown_session_with_token_is_forbidden() {
-    let res = app_router()
+    // 同上：已认证身份 + 未知 session → 403（不泄露存在性）。
+    let app = app_router();
+    let (_, token) = guest_identity(&app).await;
+    let res = app
         .oneshot(
             Request::builder()
-                .header("authorization", "Bearer unknown-session-token")
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/intent")
                 .header("content-type", "application/json")
@@ -1019,15 +1199,16 @@ async fn intent_malformed_body_returns_400() {
 async fn intent_known_session_returns_200() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required").to_string();
+    let token = creator_token;
 
     let res = app
         .oneshot(
@@ -1051,15 +1232,18 @@ async fn intent_known_session_returns_200() {
 
 #[tokio::test]
 async fn speed_unknown_session_with_token_is_forbidden() {
-    let res = app_router()
+    // 已认证身份 + 未知 session → 403（不泄露存在性）。
+    let app = app_router();
+    let (_, token) = guest_identity(&app).await;
+    let res = app
         .oneshot(
             Request::builder()
-                .header("authorization", "Bearer unknown-session-token")
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": "nope", "speed": 2.0 }).to_string(),
+                    json!({ "session_id": "nope", "generation": "1", "speed": 2.0 }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -1070,10 +1254,12 @@ async fn speed_unknown_session_with_token_is_forbidden() {
 
 #[tokio::test]
 async fn speed_metrics_unknown_session_with_token_is_forbidden() {
-    let res = app_router()
+    let app = app_router();
+    let (_, token) = guest_identity(&app).await;
+    let res = app
         .oneshot(
             Request::builder()
-                .header("authorization", "Bearer unknown-session-token")
+                .header("authorization", format!("Bearer {token}"))
                 .uri("/api/speed?session_id=does-not-exist")
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -1087,15 +1273,16 @@ async fn speed_metrics_unknown_session_with_token_is_forbidden() {
 async fn speed_known_session_returns_200() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required").to_string();
+    let token = creator_token;
 
     let res = app
         .oneshot(
@@ -1105,7 +1292,7 @@ async fn speed_known_session_returns_200() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "speed": 4.0 }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": 4.0 }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -1118,15 +1305,16 @@ async fn speed_known_session_returns_200() {
 async fn invalid_speed_is_rejected_instead_of_returning_false_success() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required");
+    let token = creator_token;
     let res = app
         .oneshot(
             Request::builder()
@@ -1135,7 +1323,7 @@ async fn invalid_speed_is_rejected_instead_of_returning_false_success() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "speed": 0.0 }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": 0.0 }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -1148,15 +1336,16 @@ async fn invalid_speed_is_rejected_instead_of_returning_false_success() {
 async fn excessive_numeric_speed_is_rejected() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required");
+    let token = creator_token;
     let res = app
         .oneshot(
             Request::builder()
@@ -1165,7 +1354,7 @@ async fn excessive_numeric_speed_is_rejected() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "speed": 1e100 }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": 1e100 }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -1247,7 +1436,7 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
     let response = app
         .oneshot(
             Request::builder()
-                .header("authorization", format!("Bearer {}", handles.session_token))
+                .header("authorization", format!("Bearer {}", fixture.session_token))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -1281,15 +1470,16 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
 async fn fastest_speed_mode_is_accepted() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required");
+    let token = creator_token;
     let res = app
         .oneshot(
             Request::builder()
@@ -1298,7 +1488,7 @@ async fn fastest_speed_mode_is_accepted() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "speed": "Fastest" }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": "Fastest" }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -1311,15 +1501,16 @@ async fn fastest_speed_mode_is_accepted() {
 async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required");
+    let token = creator_token;
 
     let set_response = app
         .clone()
@@ -1330,7 +1521,7 @@ async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
                 .uri("/api/speed")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id, "speed": "Fastest" }).to_string(),
+                    json!({ "session_id": id, "generation": generation, "speed": "Fastest" }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -1363,22 +1554,23 @@ async fn delete_session_stops_and_removes_it() {
     use server::{app_router_with_manager, SessionManager};
     let manager = SessionManager::default();
     let app = app_router_with_manager(manager.clone());
-    let (_, body) = new_session(
+    let (_, creator_token) = guest_identity(&app).await;
+    let (_, body) = new_session_as(
         app.clone(),
         json!({ "setup": sample_setup_json(), "seed": "42" }),
+        Some(&creator_token),
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
-    let token = body["session_token"]
-        .as_str()
-        .expect("session token required");
+    let generation = body["generation"].as_str().expect("generation required");
+    let token = creator_token;
     let res = app
         .clone()
         .oneshot(
             Request::builder()
                 .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
-                .uri(format!("/api/session?session_id={id}"))
+                .uri(format!("/api/session?session_id={id}&generation={generation}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -1393,7 +1585,7 @@ async fn delete_session_stops_and_removes_it() {
             Request::builder()
                 .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
-                .uri(format!("/api/session?session_id={id}"))
+                .uri(format!("/api/session?session_id={id}&generation={generation}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )

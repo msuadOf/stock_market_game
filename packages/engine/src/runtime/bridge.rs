@@ -162,14 +162,18 @@ pub fn accounts_projection_from_session(
     Vec<Vec<bool>>,
     Vec<crate::AccountId>,
 ) {
-    let profiles = session.account_strategy_profiles();
-    let mut cash = Vec::with_capacity(profiles.len() + 1);
-    let mut shares = Vec::with_capacity(profiles.len() + 1);
-    let mut invested = Vec::with_capacity(profiles.len() + 1);
-    let mut recovered = Vec::with_capacity(profiles.len() + 1);
-    let mut frozen = Vec::with_capacity(profiles.len() + 1);
-    let mut ever_held = Vec::with_capacity(profiles.len() + 1);
-    let mut ids = Vec::with_capacity(profiles.len() + 1);
+    // B3 远程登录：名册取全量账户（id 升序）而非仅有策略的 NPC——共享
+    // 市场的动态加入成员（无策略 Player，意图只走 ExternalPlan 路由）
+    /// 必须在 id_map 内，否则 owner 路由显式失败。账户 0 仍由下方惯例位
+    /// 先行并入，此处跳过。
+    let roster = session.account_roster();
+    let mut cash = Vec::with_capacity(roster.len() + 1);
+    let mut shares = Vec::with_capacity(roster.len() + 1);
+    let mut invested = Vec::with_capacity(roster.len() + 1);
+    let mut recovered = Vec::with_capacity(roster.len() + 1);
+    let mut frozen = Vec::with_capacity(roster.len() + 1);
+    let mut ever_held = Vec::with_capacity(roster.len() + 1);
+    let mut ids = Vec::with_capacity(roster.len() + 1);
     // 玩家并入（F §6.3 资源持有者同构）：AccountId(0) 惯例位先行。
     if let Some(player) = session.account(crate::AccountId(0)) {
         let mut row = vec![0u32; n_stocks];
@@ -195,7 +199,10 @@ pub fn accounts_projection_from_session(
         ever_held.push(row_ever);
         ids.push(crate::AccountId(0));
     }
-    for (id, _profile) in profiles {
+    for id in roster {
+        if id == crate::AccountId(0) {
+            continue;
+        }
         let Some(account) = session.account(id) else {
             continue;
         };

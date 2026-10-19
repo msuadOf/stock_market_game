@@ -13,6 +13,10 @@ import type { MarketSnap } from "../types/generated/MarketSnap.ts";
 import type { CodedRuntimeDelta, CodedSnapshot, CodedTradeEvent } from "../host/protocol/stock-identity.ts";
 import { priceHistoryReducer } from "./priceHistorySlice.ts";
 import { selectedStockReducer } from "./selectedStockSlice.ts";
+import { remoteMembershipReducer } from "./remote-membership.ts";
+// B3 远程登录：成员选择器/action 经 store 根重导出（18725d07 契约——
+// 消费方自 ./store.ts import）。
+export { setRemoteMembership, selectCanControl, selectPlayerAccount, selectPlayerAccountId } from "./remote-membership.ts";
 import { companyReducer } from "./company-slice.ts";
 import { chartSettingsReducer } from "./chart-settings-slice.ts";
 import type { PlayerWorkingOrder } from "../host/player-working-orders.ts";
@@ -244,6 +248,7 @@ export const store = configureStore({
     settings: settingsSlice.reducer,
     priceHistory: priceHistoryReducer,
     selectedStock: selectedStockReducer,
+    remoteMembership: remoteMembershipReducer,
     autoOrders: autoOrdersSlice.reducer,
     company: companyReducer,
     chartSettings: chartSettingsReducer,

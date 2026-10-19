@@ -84,9 +84,11 @@ impl RuntimeDelta {
 }
 
 fn validate_accounts(accounts: &BTreeMap<AccountId, AccountSnap>) -> Result<(), ProtocolError> {
-    for (id, account) in accounts {
-        if *id != AccountId(0)
-            || account.cash.cents() < 0
+    // B3 远程登录：发布账户集为经济成员（多成员合法——18725d07 同形；
+    // std-thread 单人期加的"仅账户 0"限制随成员面移除，数值不变量校验
+    // 保留）。
+    for account in accounts.values() {
+        if account.cash.cents() < 0
             || account.reserved_cash.cents() < 0
             || account.reserved_cash > account.cash
             || account.positions.values().any(|position| {

@@ -19,6 +19,7 @@ use engine::session::protocol::CivilUpdate;
 use engine::session::protocol::{
     EngineUpdate as ProtocolUpdate, PausePreferences, ProtocolSession,
 };
+use engine::session::{MarketMembership, OpaqueSubjectId};
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot, StockCode};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -206,6 +207,24 @@ impl HostFailure {
                     "复制脱敏错误详情反馈",
                 ],
             },
+        }
+    }
+
+    /// B3 远程登录（18725d07 语义）：日终已完成、SQLite 保存失败——上一份
+    /// 有效日终档保留，恢复推进后下一日终重试。**可恢复**失败（交易提交
+    /// 有效），只广播不致命停机。
+    pub(crate) fn archive(error: &str) -> Self {
+        Self {
+            code: "DAY_END_ARCHIVE_FAILED",
+            message: format!("日终已成功完成，但 SQLite 保存失败，上一份有效日终档仍保留：{error}"),
+            r#where: "server.actor.save_day_end".into(),
+            cause: None,
+            context: FailureContext::new("saveDayEnd"),
+            recoverable: true,
+            recovery_actions: vec![
+                "检查 SQLite 文件权限与磁盘空间后恢复推进，在下一日终重试保存",
+                "复制存档错误详情反馈",
+            ],
         }
     }
 }
@@ -479,6 +498,103 @@ pub enum SessionCommand {
     },
     /// 永久停止 actor。会话必须先从 manager 移除，避免新请求继续取得句柄。
     Shutdown { reply: oneshot::Sender<()> },
+    /// B3 远程登录：认证主体（subject）成员请求——鉴权后的成员/控制面
+    /// （加入市场、解析成员、市场上下文、重置/停止、控制命令 Subject 化）。
+    Member {
+        subject: OpaqueSubjectId,
+        request: MemberRequest,
+        reply: oneshot::Sender<Result<MemberResponse, SendCommandError>>,
+    },
+    /// B3 远程登录：归档槽元数据变更（重命名/复制——控制权）。
+    ArchiveMetadata {
+        subject: OpaqueSubjectId,
+        generation: u64,
+        slot_id: String,
+        name: String,
+        copy: bool,
+        reply: oneshot::Sender<Result<Option<native_store::ArchiveMetadata>, SendCommandError>>,
+    },
+    /// B3 远程登录：删除归档槽（活动槽删除后切换到新槽——控制权）。
+    DeleteArchive {
+        subject: OpaqueSubjectId,
+        generation: u64,
+        slot_id: String,
+        reply: oneshot::Sender<Result<(), SendCommandError>>,
+    },
+    /// B3 远程登录：选择启动归档槽（控制权）。
+    SelectArchive {
+        subject: OpaqueSubjectId,
+        generation: u64,
+        slot_id: String,
+        reply: oneshot::Sender<Result<bool, SendCommandError>>,
+    },
+}
+
+/// 共享市场成员请求（B3 子集——B2 查询面与公司契约面不在本批）。
+#[derive(Debug)]
+pub enum MemberRequest {
+    /// 重置市场（控制权 + 新 setup/seed；交易时钟配置必须与现会话一致）。
+    Reset {
+        generation: u64,
+        setup: Box<SessionSetup>,
+        seed: u64,
+    },
+    /// 本人公开基线（成员账户过滤后的 Snapshot）。
+    Baseline,
+    /// 市场上下文（成员关系/控制权/世代/setup/seed）。
+    Context,
+    /// 停止共享市场（控制权 + 关闭 ingress 与命令通道）。
+    Shutdown { generation: u64 },
+    /// 新局创建者绑定（仅 fresh 初始态一次）。
+    BindCreator,
+    /// 加入市场（确认重加入后按当前配置发一次入场资金）。
+    Join {
+        generation: Option<u64>,
+        confirmed_rejoin: bool,
+    },
+    /// 解析成员关系（非成员=需确认重加入）。
+    Resolve,
+    /// 市场控制权校验。
+    Control,
+    /// 本人快照。
+    Snapshot,
+    /// 本人在途委托。
+    WorkingOrders { generation: u64 },
+    /// 本人股票历史。
+    History { generation: u64, code: engine::StockId },
+    /// 调整入场资金（控制权）。
+    AdmissionCash { generation: u64, cash: engine::Money },
+    /// 改速（控制权 Subject 化——取代裸 SetSpeed 的远程形态）。
+    SetSpeed { generation: u64, speed: f64 },
+    /// 启停（控制权 Subject 化）。
+    SetRunning { generation: u64, running: bool },
+    /// 暂停偏好（控制权 Subject 化）。
+    SetPausePreferences {
+        generation: u64,
+        preferences: PausePreferences,
+    },
+}
+
+#[derive(Debug)]
+pub enum MemberResponse {
+    Baseline(PublicBaseline),
+    Context(MarketContext),
+    Membership(MarketMembership),
+    Control,
+    Snapshot(Snapshot),
+    Orders(u64, serde_json::Value),
+    History(u64, engine::session::HistoricalStockData),
+}
+
+/// 市场上下文（远程客户端接入/重连的首要应答体）。
+#[derive(Debug, Clone, Serialize)]
+pub struct MarketContext {
+    pub generation: String,
+    pub member: Option<MarketMembership>,
+    pub can_control: bool,
+    pub needs_rejoin: bool,
+    pub setup: SessionSetup,
+    pub seed: String,
 }
 
 #[cfg(test)]
@@ -650,11 +766,18 @@ mod interval_tests {
 pub struct SessionHandles {
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
+    /// B3 远程登录：subject → 玩家账户的成员名册（enqueue_for 路由源）。
+    members: Arc<RwLock<std::collections::BTreeMap<OpaqueSubjectId, AccountId>>>,
     event_tx: broadcast::Sender<EngineUpdate>,
     pub ticks_per_day: u64,
     pub auction_ticks: u64,
     pub closing_auction_ticks: u64,
     pub session_token: String,
+    /// B3 远程登录：启动形态（新局/恢复）与原始 setup/seed——市场列表与
+    /// 上下文应答（MarketContext/resumed）消费。
+    pub startup_setup: SessionSetup,
+    pub startup_seed: u64,
+    pub startup_resumed: bool,
 }
 
 impl SessionHandles {
@@ -700,6 +823,358 @@ impl SessionHandles {
             .1
             .enqueue_player_intent(player_id, intent)
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    /// B3 远程登录：按认证主体入队意图——subject 先经成员名册解析账户
+    /// （非成员显式拒绝，不回退账户 0）。
+    pub async fn enqueue_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        intent: Intent,
+    ) -> Result<(), SendCommandError> {
+        if self.cmd_tx.is_closed() {
+            return Err(SendCommandError::ActorGone);
+        }
+        let (ingress, members) = match (self.ingress.read(), self.members.read()) {
+            (Ok(ingress), Ok(members)) => (ingress, members),
+            _ => {
+                return Err(SendCommandError::Rejected(
+                    "session ingress lifecycle lock poisoned".into(),
+                ))
+            }
+        };
+        if generation != ingress.0 {
+            return Err(SendCommandError::Rejected(format!(
+                "STALE_SESSION_GENERATION: fault[1290] requested {generation}; current is {}",
+                ingress.0
+            )));
+        }
+        let account = members.get(&subject).copied().ok_or_else(|| {
+            SendCommandError::Rejected(
+                "当前市场没有该主体的成员关系，请确认重新加入".into(),
+            )
+        })?;
+        ingress
+            .1
+            .enqueue_player_intent(account, intent)
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    /// B3 远程登录：成员请求统一入口（鉴权后由路由层调用）。
+    pub async fn member_request(
+        &self,
+        subject: OpaqueSubjectId,
+        request: MemberRequest,
+    ) -> Result<MemberResponse, SendCommandError> {
+        let (reply, receive) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::Member {
+                subject,
+                request,
+                reply,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        receive.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
+    /// 市场上下文（成员关系/控制权/世代）。
+    pub async fn market_context_for(
+        &self,
+        subject: OpaqueSubjectId,
+    ) -> Result<MarketContext, SendCommandError> {
+        match self.member_request(subject, MemberRequest::Context).await? {
+            MemberResponse::Context(context) => Ok(context),
+            _ => Err(SendCommandError::Rejected("市场上下文响应类型错误".into())),
+        }
+    }
+
+    /// 本人公开基线（成员账户过滤后的 Snapshot）。
+    pub async fn public_baseline_for(
+        &self,
+        subject: OpaqueSubjectId,
+    ) -> Result<PublicBaseline, SendCommandError> {
+        match self.member_request(subject, MemberRequest::Baseline).await? {
+            MemberResponse::Baseline(baseline) => Ok(baseline),
+            _ => Err(SendCommandError::Rejected("本人基线响应类型错误".into())),
+        }
+    }
+
+    /// 解析成员关系（非成员报需确认重加入）。
+    pub async fn resolve_member(
+        &self,
+        subject: OpaqueSubjectId,
+    ) -> Result<MarketMembership, SendCommandError> {
+        match self.member_request(subject, MemberRequest::Resolve).await? {
+            MemberResponse::Membership(member) => Ok(member),
+            _ => Err(SendCommandError::Rejected("市场成员响应类型错误".into())),
+        }
+    }
+
+    /// 控制权校验（重置/停止/改速等控制面路由共用）。
+    pub async fn require_control(
+        &self,
+        subject: OpaqueSubjectId,
+    ) -> Result<(), SendCommandError> {
+        match self.member_request(subject, MemberRequest::Control).await? {
+            MemberResponse::Control => Ok(()),
+            _ => Err(SendCommandError::Rejected("市场控制响应类型错误".into())),
+        }
+    }
+
+    /// 加入市场。
+    pub async fn join_member(
+        &self,
+        subject: OpaqueSubjectId,
+        confirmed_rejoin: bool,
+    ) -> Result<MarketMembership, SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::Join {
+                    generation: None,
+                    confirmed_rejoin,
+                },
+            )
+            .await?
+        {
+            MemberResponse::Membership(member) => Ok(member),
+            _ => Err(SendCommandError::Rejected("市场加入响应类型错误".into())),
+        }
+    }
+
+    /// 带世代校验的加入市场。
+    pub async fn join_member_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        confirmed_rejoin: bool,
+    ) -> Result<MarketMembership, SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::Join {
+                    generation: Some(generation),
+                    confirmed_rejoin,
+                },
+            )
+            .await?
+        {
+            MemberResponse::Membership(member) => Ok(member),
+            _ => Err(SendCommandError::Rejected("市场加入响应类型错误".into())),
+        }
+    }
+
+    /// 重置市场（控制权 + 新 setup/seed；成功返回新世代快照）。
+    pub async fn reset_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        setup: SessionSetup,
+        seed: u64,
+    ) -> Result<Snapshot, SendCommandError> {
+        if setup.ticks_per_day != self.ticks_per_day
+            || setup.auction_ticks != self.auction_ticks
+            || setup.closing_auction_ticks != self.closing_auction_ticks
+        {
+            return Err(SendCommandError::Rejected(
+                "重置市场的交易时钟配置必须与当前共享会话一致".into(),
+            ));
+        }
+        match self
+            .member_request(
+                subject,
+                MemberRequest::Reset {
+                    generation,
+                    setup: Box::new(setup),
+                    seed,
+                },
+            )
+            .await?
+        {
+            MemberResponse::Snapshot(snapshot) => Ok(snapshot),
+            _ => Err(SendCommandError::Rejected("重置市场响应类型错误".into())),
+        }
+    }
+
+    /// 停止共享市场（控制权）。
+    pub async fn shutdown_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+    ) -> Result<(), SendCommandError> {
+        self.member_request(subject, MemberRequest::Shutdown { generation })
+            .await
+            .map(|_| ())
+    }
+
+    /// 调整入场资金（控制权）。
+    pub async fn set_admission_cash_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        cash: engine::Money,
+    ) -> Result<(), SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::AdmissionCash { generation, cash },
+            )
+            .await?
+        {
+            MemberResponse::Control => Ok(()),
+            _ => Err(SendCommandError::Rejected("入场资金响应类型错误".into())),
+        }
+    }
+
+    /// 改速（控制权 Subject 化）。
+    pub async fn set_speed_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        speed: f64,
+    ) -> Result<(), SendCommandError> {
+        if !(speed.is_finite() && speed > 0.0 && speed <= MAX_SPEED_MULTIPLIER
+            || speed == f64::INFINITY)
+        {
+            return Err(SendCommandError::Rejected("市场倍速无效".into()));
+        }
+        match self
+            .member_request(subject, MemberRequest::SetSpeed { generation, speed })
+            .await?
+        {
+            MemberResponse::Control => Ok(()),
+            _ => Err(SendCommandError::Rejected("市场倍速响应类型错误".into())),
+        }
+    }
+
+    /// 启停（控制权 Subject 化）。
+    pub async fn set_running_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        running: bool,
+    ) -> Result<(), SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::SetRunning { generation, running },
+            )
+            .await?
+        {
+            MemberResponse::Control => Ok(()),
+            _ => Err(SendCommandError::Rejected("市场启停响应类型错误".into())),
+        }
+    }
+
+    /// 暂停偏好（控制权 Subject 化）。
+    pub async fn set_pause_preferences_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        preferences: PausePreferences,
+    ) -> Result<(), SendCommandError> {
+        match self
+            .member_request(
+                subject,
+                MemberRequest::SetPausePreferences {
+                    generation,
+                    preferences,
+                },
+            )
+            .await?
+        {
+            MemberResponse::Control => Ok(()),
+            _ => Err(SendCommandError::Rejected("暂停偏好响应类型错误".into())),
+        }
+    }
+
+    /// 本人快照（成员账户过滤）。
+    pub async fn snapshot_for(
+        &self,
+        subject: OpaqueSubjectId,
+    ) -> Result<Snapshot, SendCommandError> {
+        match self.member_request(subject, MemberRequest::Snapshot).await? {
+            MemberResponse::Snapshot(snapshot) => Ok(snapshot),
+            _ => Err(SendCommandError::Rejected("成员快照响应类型错误".into())),
+        }
+    }
+
+    /// 本人股票历史。
+    pub async fn history_for(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        code: engine::StockId,
+    ) -> Result<(u64, engine::session::HistoricalStockData), SendCommandError> {
+        match self
+            .member_request(subject, MemberRequest::History { generation, code })
+            .await?
+        {
+            MemberResponse::History(generation, data) => Ok((generation, data)),
+            _ => Err(SendCommandError::Rejected("成员历史响应类型错误".into())),
+        }
+    }
+
+    /// 归档槽元数据变更（重命名/复制——控制权）。
+    pub async fn mutate_archive_metadata(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        slot_id: String,
+        name: String,
+        copy: bool,
+    ) -> Result<Option<native_store::ArchiveMetadata>, SendCommandError> {
+        let (reply, receive) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ArchiveMetadata {
+                subject,
+                generation,
+                slot_id,
+                name,
+                copy,
+                reply,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        receive.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
+    /// 删除归档槽（活动槽删除后 writer 切换到新槽——控制权）。
+    pub async fn delete_archive(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        slot_id: String,
+    ) -> Result<(), SendCommandError> {
+        let (reply, receive) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::DeleteArchive {
+                subject,
+                generation,
+                slot_id,
+                reply,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        receive.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
+    /// 选择启动归档槽（控制权）。
+    pub async fn select_archive(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        slot_id: String,
+    ) -> Result<bool, SendCommandError> {
+        let (reply, receive) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::SelectArchive {
+                subject,
+                generation,
+                slot_id,
+                reply,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        receive.await.map_err(|_| SendCommandError::ActorGone)?
     }
 
     /// 取完整快照。actor 关闭时返回 `ActorGone`（绝不静默返回空快照）。
@@ -965,6 +1440,10 @@ pub enum NewSessionError {
     InvalidSetup(#[from] SessionError),
     #[error("session capacity reached (maximum {max})")]
     Capacity { max: usize },
+    /// B3 远程登录：server 域错误（锁损坏/启动期限制/归档激活失败等）——
+    /// server 是引擎字符串边界，文本在此层显式携带（引擎域保持 fault 码）。
+    #[error("{0}")]
+    Text(String),
 }
 
 /// Session 注册表：`DashMap<session_id, Arc<SessionHandles>>`。
@@ -973,6 +1452,11 @@ pub enum NewSessionError {
 /// 这里只存消息端点——无共享可变游戏状态。
 #[derive(Clone)]
 pub struct SessionManager {
+    /// B3 远程登录：原生存储（身份 credential/归档槽）。默认构造开内存
+    /// 库（测试/无持久化部署）；生产经 `with_database` 绑定文件库。
+    database: native_store::NativeDatabase,
+    /// 共享市场创建/恢复互斥（单市场全局语义的并发防线）。
+    shared_market_gate: Arc<std::sync::Mutex<()>>,
     sessions: Arc<DashMap<String, Arc<SessionHandles>>>,
     active_count: Arc<AtomicUsize>,
     base_ms: u64,
@@ -984,11 +1468,34 @@ impl SessionManager {
         Self::with_base_ms(BASE_TICK_MS)
     }
 
+    /// 绑定持久化原生存储（生产入口——文件 SQLite 独占 writer）。
+    pub fn with_database(database: native_store::NativeDatabase) -> Self {
+        Self::with_base_ms_and_database(BASE_TICK_MS, database)
+    }
+
+    /// 身份服务的存储入口（identity_routes 装配用）。
+    pub fn database(&self) -> native_store::NativeDatabase {
+        self.database.clone()
+    }
+
     /// 批 9 A1（std-thread 迁移收官）：compute 注入退役——线程模型
     /// 由引擎内部决定（一股一持久线程），CPU 限制走 OS 级
     /// cgroup/taskset（memory/project_std_thread_migration）。
     pub fn with_base_ms(base_ms: u64) -> Self {
+        Self::with_base_ms_and_database(
+            base_ms,
+            native_store::NativeDatabase::open_in_memory()
+                .expect("测试 SQLite 初始化失败"),
+        )
+    }
+
+    fn with_base_ms_and_database(
+        base_ms: u64,
+        database: native_store::NativeDatabase,
+    ) -> Self {
         Self {
+            database,
+            shared_market_gate: Arc::new(std::sync::Mutex::new(())),
             sessions: Arc::new(DashMap::new()),
             active_count: Arc::new(AtomicUsize::new(0)),
             base_ms,
@@ -999,41 +1506,173 @@ impl SessionManager {
     ///
     /// 失败显式返回 `SessionError`（构造非法参数），绝不静默吞（铁律二）。
     pub fn new_session(&self, setup: SessionSetup, seed: u64) -> Result<String, NewSessionError> {
+        self.new_session_bound(setup, seed, None)
+    }
+
+    /// B3 远程登录：创建共享市场（单市场全局；已有市场返回 (id, false)
+    /// 不另开）。creator 绑定市场创建者并授予控制权。
+    pub fn new_shared_session(
+        &self,
+        setup: SessionSetup,
+        seed: u64,
+        creator: OpaqueSubjectId,
+    ) -> Result<(String, bool), NewSessionError> {
+        let _guard = self
+            .shared_market_gate
+            .lock()
+            .map_err(|error| NewSessionError::Text(format!("共享市场创建锁损坏：{error}")))?;
+        if let Some(entry) = self.sessions.iter().next() {
+            return Ok((entry.key().clone(), false));
+        }
+        self.new_session_bound(setup, seed, Some(creator))
+            .map(|id| (id, true))
+    }
+
+    /// 当前全部市场 id。
+    pub fn market_ids(&self) -> Vec<String> {
+        self.sessions
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    fn new_session_bound(
+        &self,
+        setup: SessionSetup,
+        seed: u64,
+        creator: Option<OpaqueSubjectId>,
+    ) -> Result<String, NewSessionError> {
         self.active_count
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current < MAX_SESSIONS).then_some(current + 1)
             })
             .map_err(|_| NewSessionError::Capacity { max: MAX_SESSIONS })?;
-        let ticks_per_day = setup.ticks_per_day;
-        let auction_ticks = setup.auction_ticks;
-        let closing_auction_ticks = setup.closing_auction_ticks;
-        let game = match ProtocolSession::new(setup, seed) {
+        let mut game = match ProtocolSession::new(setup.clone(), seed) {
             Ok(game) => game,
             Err(error) => {
                 self.active_count.fetch_sub(1, Ordering::AcqRel);
                 return Err(error.into());
             }
         };
+        if let Some(creator) = &creator {
+            if let Err(error) = game.bind_market_creator(creator.clone()) {
+                self.active_count.fetch_sub(1, Ordering::AcqRel);
+                return Err(NewSessionError::Text(error.to_string()));
+            }
+        }
+        self.register_game(game, setup, seed, "current", false, creator)
+    }
+
+    /// B3 远程登录：从日终档恢复共享市场（只允许启动期无内存市场时）。
+    pub fn resume_session(&self, slot_id: &str) -> Result<Option<String>, NewSessionError> {
+        let _guard = self
+            .shared_market_gate
+            .lock()
+            .map_err(|error| NewSessionError::Text(format!("共享市场创建锁损坏：{error}")))?;
+        if self.active_session_count() != 0 {
+            return Err(NewSessionError::Text(
+                "只允许在启动且没有内存市场时恢复日终档".into(),
+            ));
+        }
+        let slot = self
+            .database
+            .load(slot_id)
+            .map_err(|error| NewSessionError::Text(error.to_string()))?;
+        let Some(slot) = slot else {
+            return Ok(None);
+        };
+        let setup = slot.setup.clone();
+        let seed = slot.seed;
+        let game = ProtocolSession::restore(&slot)?;
+        self.active_count.fetch_add(1, Ordering::AcqRel);
+        self.register_game(game, setup, seed, slot_id, true, None)
+            .map(Some)
+    }
+
+    /// B3 远程登录：按启动槽选择恢复（无选择=不恢复；已清空选择=显式报错
+    /// 不自动回退其他档）。
+    pub fn resume_selected_session(&self) -> Result<Option<String>, NewSessionError> {
+        let selection = self
+            .database
+            .selection()
+            .map_err(|error| NewSessionError::Text(error.to_string()))?;
+        match selection {
+            native_store::ArchiveSelection::Selected(slot_id) => self.resume_session(&slot_id),
+            native_store::ArchiveSelection::Uninitialized => Ok(None),
+            native_store::ArchiveSelection::Cleared => Err(NewSessionError::Text(
+                "已选启动槽已删除；请明确选择其他日终档或创建新局，不自动回退其他档".into(),
+            )),
+        }
+    }
+
+    /// 装配 actor 与句柄并注册（新局/恢复共用；creator 优先入控制权集，
+    /// 数据库既有授权主体并入）。
+    fn register_game(
+        &self,
+        game: ProtocolSession,
+        setup: SessionSetup,
+        seed: u64,
+        slot_id: &str,
+        resumed: bool,
+        creator: Option<OpaqueSubjectId>,
+    ) -> Result<String, NewSessionError> {
+        let archive = match native_store::ArchiveWriter::activate(self.database.clone(), slot_id) {
+            Ok(archive) => Some(archive),
+            Err(error) => {
+                self.active_count.fetch_sub(1, Ordering::AcqRel);
+                return Err(NewSessionError::Text(error.to_string()));
+            }
+        };
+        let mut controllers: std::collections::BTreeSet<OpaqueSubjectId> =
+            self.database
+                .market_controllers("shared-market")
+                .map_err(|error| {
+                    self.active_count.fetch_sub(1, Ordering::AcqRel);
+                    NewSessionError::Text(error.to_string())
+                })?
+                .into_iter()
+                .filter_map(|subject| OpaqueSubjectId::new(subject).ok())
+                .collect();
+        if let Some(creator) = &creator {
+            self.database
+                .grant_market_control("shared-market", creator.as_str())
+                .map_err(|error| {
+                    self.active_count.fetch_sub(1, Ordering::AcqRel);
+                    NewSessionError::Text(error.to_string())
+                })?;
+            controllers.insert(creator.clone());
+        }
+        let ticks_per_day = setup.ticks_per_day;
+        let auction_ticks = setup.auction_ticks;
+        let closing_auction_ticks = setup.closing_auction_ticks;
         let session_id = uuid::Uuid::new_v4().to_string();
 
         // 命令按提交顺序入队；不以固定条数暂停投递，调用方仍等待逐条处理回执。
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (event_tx, _event_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let ingress = Arc::new(RwLock::new((1, game.shared_ingress())));
+        let members = Arc::new(RwLock::new(game.trading_subject_accounts()));
 
         let handles = Arc::new(SessionHandles {
             cmd_tx,
             ingress: Arc::clone(&ingress),
+            members: Arc::clone(&members),
             event_tx,
             ticks_per_day,
             auction_ticks,
             closing_auction_ticks,
             session_token: uuid::Uuid::new_v4().to_string(),
+            startup_setup: setup,
+            startup_seed: seed,
+            startup_resumed: resumed,
         });
         self.sessions.insert(session_id.clone(), handles.clone());
 
         let actor = SessionActor {
             ingress,
+            members,
+            controllers,
+            archive,
             #[cfg(test)]
             injected_step_failure: None,
             pacing: ServerPacing::new(self.base_ms, game.tick()),
@@ -1109,6 +1748,15 @@ fn gate_deferred_drop_report(
 
 struct SessionActor {
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
+    /// B3 远程登录：subject → 玩家账户的成员名册（ingress 写锁内同步维护
+    /// ——enqueue 路由与 join/bind 一致）。
+    members: Arc<RwLock<std::collections::BTreeMap<OpaqueSubjectId, AccountId>>>,
+    /// B3 远程登录：市场控制权主体集（创建者+授权主体；重置/停止/改速等
+    /// 控制命令的门禁）。
+    controllers: std::collections::BTreeSet<OpaqueSubjectId>,
+    /// B3 远程登录：日终归档 writer（None=无归档面——纯内存会话或 writer
+    /// 失效后的降级；日终档不再写）。
+    archive: Option<native_store::ArchiveWriter>,
     #[cfg(test)]
     injected_step_failure: Option<(usize, engine::session::StepFatal)>,
     pacing: ServerPacing,
@@ -1284,6 +1932,9 @@ impl SessionActor {
             self.broadcast_at(update, tick_date);
         }
         for update in civil_updates {
+            // B3 远程登录：日终档随广播前持久化（写失败=可恢复失败——上一份
+            // 有效档保留，交易提交有效；18725d07 persist_day_end 语义）。
+            self.persist_day_end(&update);
             let pause = self.pause_preferences.pauses(&update);
             self.public_revision = self.public_revision.saturating_add(1);
             let date = update.civil_date.clone();
@@ -1332,6 +1983,300 @@ impl SessionActor {
         Ok(updates)
     }
 
+    /// 日终档持久化（B3 远程登录）：写失败为可恢复失败——交易提交有效、
+    /// 上一份有效日终档保留，仅广播 HostFailure::archive 提示人工反馈。
+    fn persist_day_end(&mut self, update: &engine::session::protocol::CivilUpdate) {
+        let Some(writer) = &self.archive else {
+            return;
+        };
+        let key = engine::session::protocol::SaveCandidateKey {
+            seq: update.seq_to,
+            settled_date: update.boundary.settled_date,
+        };
+        let saved = native_store::DayEndCandidate::capture(&self.game, &key)
+            .map_err(|error| error.to_string())
+            .and_then(|slot| writer.save_day_end(&slot).map_err(|error| error.to_string()));
+        if let Err(error) = saved {
+            self.stop_with_failure(HostFailure::archive(&error));
+        }
+    }
+
+    /// 控制权门禁：subject 必须在 controllers 集内。
+    fn require_market_control(
+        &self,
+        subject: &OpaqueSubjectId,
+    ) -> Result<(), SendCommandError> {
+        if self.controllers.contains(subject) {
+            Ok(())
+        } else {
+            Err(SendCommandError::Rejected(
+                "该主体没有当前市场控制能力".into(),
+            ))
+        }
+    }
+
+    /// 成员请求处理（B3 子集——鉴权后的成员/控制面统一入口）。
+    fn handle_member_request(
+        &mut self,
+        subject: OpaqueSubjectId,
+        request: MemberRequest,
+    ) -> Result<MemberResponse, SendCommandError> {
+        let reject =
+            |error: engine::session::MembershipError| SendCommandError::Rejected(error.to_string());
+        let request_generation = match &request {
+            MemberRequest::AdmissionCash { generation, .. }
+            | MemberRequest::SetSpeed { generation, .. }
+            | MemberRequest::SetRunning { generation, .. }
+            | MemberRequest::SetPausePreferences { generation, .. } => Some(*generation),
+            _ => None,
+        };
+        if request_generation.is_some_and(|generation| generation != self.timeline_generation) {
+            return Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()));
+        }
+        match request {
+            MemberRequest::Reset {
+                generation,
+                setup,
+                seed,
+            } => {
+                if generation != self.timeline_generation {
+                    return Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ));
+                }
+                self.require_market_control(&subject)?;
+                if setup.ticks_per_day != self.game.current_setup().ticks_per_day
+                    || setup.auction_ticks != self.game.current_setup().auction_ticks
+                    || setup.closing_auction_ticks != self.game.current_setup().closing_auction_ticks
+                {
+                    return Err(SendCommandError::Rejected(
+                        "重置市场的交易时钟配置必须与当前共享会话一致".into(),
+                    ));
+                }
+                let mut replacement = ProtocolSession::new(*setup, seed)
+                    .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
+                replacement
+                    .bind_market_creator(subject.clone())
+                    .map_err(reject)?;
+                // 独立复核阻断 1 修复：Reset 是时间线替换（与 Restore 同型）——
+                // 必须同步替换 ingress（新代次+新会话的收件入口）与成员名册，
+                /// 并 renew 归档 writer 到新时间线（18725d07 replace_timeline 语义；
+                // 此前漏换 ingress 使 reset 后新代次下单全部 STALE、旧单打进已
+                // 脱离的旧 ingress）。
+                let next_generation = self
+                    .timeline_generation
+                    .checked_add(1)
+                    .ok_or(SendCommandError::Rejected("世代计数耗尽".into()))?;
+                let replacement_ingress = self
+                    .ingress
+                    .write()
+                    .map_err(|error| {
+                        SendCommandError::Rejected(format!(
+                            "session ingress lifecycle lock poisoned: {error}"
+                        ))
+                    })
+                    .and_then(|mut ingress| {
+                        ingress
+                            .1
+                            .close()
+                            .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
+                        *ingress = (next_generation, replacement.shared_ingress());
+                        let mut members = self.members.write().map_err(|error| {
+                            SendCommandError::Rejected(format!("成员名册锁损坏：{error}"))
+                        })?;
+                        *members = replacement.trading_subject_accounts();
+                        Ok(())
+                    });
+                if let Err(error) = replacement_ingress {
+                    return Err(error);
+                }
+                let renewed_archive = match &self.archive {
+                    Some(writer) => writer
+                        .renew(None)
+                        .map(|next| Some(next))
+                        .map_err(|error| SendCommandError::Rejected(error.to_string())),
+                    None => Ok(None),
+                };
+                match renewed_archive {
+                    Ok(archive) => self.archive = archive,
+                    Err(error) => return Err(error),
+                }
+                self.game = replacement;
+                self.timeline_generation = next_generation;
+                self.public_revision = self.public_revision.saturating_add(1);
+                self.pacing.reset_after_restore(self.game.tick());
+                self.broadcast_timeline_reset();
+                Ok(MemberResponse::Snapshot(self.game.snapshot()))
+            }
+            MemberRequest::Baseline => {
+                let account = match self.game.market_membership(&subject) {
+                    Ok(member) => Some(member.account_id),
+                    Err(engine::session::MembershipError::RejoinConfirmationRequired) => None,
+                    Err(error) => return Err(reject(error)),
+                };
+                self.game.prepare_public_baseline();
+                let mut snapshot: PublicBaselineSnapshot = self.game.snapshot().into();
+                snapshot.accounts.retain(|id, _| Some(*id) == account);
+                Ok(MemberResponse::Baseline(PublicBaseline {
+                    timeline_generation: self.timeline_generation,
+                    snapshot,
+                    civil_date: self.game.civil_date().to_iso(),
+                    public_revision: self.public_revision,
+                    public_report_ids: self
+                        .game
+                        .publication_ids()
+                        .into_iter()
+                        .map(|id| id.value().to_string())
+                        .collect(),
+                    failure: self.fatal_failure.clone(),
+                }))
+            }
+            MemberRequest::Context => {
+                let member = match self.game.market_membership(&subject) {
+                    Ok(member) => Some(member.clone()),
+                    Err(engine::session::MembershipError::RejoinConfirmationRequired) => None,
+                    Err(error) => return Err(reject(error)),
+                };
+                Ok(MemberResponse::Context(MarketContext {
+                    generation: self.timeline_generation.to_string(),
+                    needs_rejoin: member.is_none(),
+                    member,
+                    can_control: self.controllers.contains(&subject),
+                    setup: self.game.current_setup().clone(),
+                    seed: self.game.initial_seed().to_string(),
+                }))
+            }
+            MemberRequest::Shutdown { generation } => {
+                if generation != self.timeline_generation {
+                    return Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ));
+                }
+                self.require_market_control(&subject)?;
+                self.game
+                    .shared_ingress()
+                    .close()
+                    .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
+                self.cmd_rx.close();
+                Ok(MemberResponse::Control)
+            }
+            MemberRequest::BindCreator => {
+                let member = self
+                    .game
+                    .bind_market_creator(subject.clone())
+                    .map_err(reject)?;
+                if let Ok(mut members) = self.members.write() {
+                    *members = self.game.trading_subject_accounts();
+                }
+                self.controllers = std::collections::BTreeSet::from([subject]);
+                Ok(MemberResponse::Membership(member))
+            }
+            MemberRequest::Join {
+                generation,
+                confirmed_rejoin,
+            } => {
+                if generation.is_some_and(|generation| generation != self.timeline_generation) {
+                    return Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ));
+                }
+                let member = self
+                    .game
+                    .join_market(subject.clone(), confirmed_rejoin)
+                    .map_err(reject)?;
+                if let Ok(mut members) = self.members.write() {
+                    members.insert(subject, member.account_id);
+                }
+                Ok(MemberResponse::Membership(member))
+            }
+            MemberRequest::AdmissionCash { cash, .. } => {
+                self.require_market_control(&subject)?;
+                self.game
+                    .set_admission_cash(cash)
+                    .map(|()| MemberResponse::Control)
+                    .map_err(reject)
+            }
+            MemberRequest::Control => self
+                .require_market_control(&subject)
+                .map(|()| MemberResponse::Control),
+            MemberRequest::SetSpeed { speed, .. } => {
+                self.require_market_control(&subject)?;
+                if let Some(error) = self.fatal_rejection() {
+                    return Err(SendCommandError::Rejected(error.to_string()));
+                }
+                self.pacing.apply_speed(speed, self.game.tick());
+                Ok(MemberResponse::Control)
+            }
+            MemberRequest::SetRunning { running, .. } => {
+                self.require_market_control(&subject)?;
+                if let Some(error) = self.fatal_rejection() {
+                    return Err(SendCommandError::Rejected(error.to_string()));
+                }
+                self.pacing.set_running(running, self.game.tick());
+                Ok(MemberResponse::Control)
+            }
+            MemberRequest::SetPausePreferences {
+                generation,
+                preferences,
+            } => {
+                self.require_market_control(&subject)?;
+                if generation != self.timeline_generation {
+                    return Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ));
+                }
+                self.pause_preferences = preferences;
+                Ok(MemberResponse::Control)
+            }
+            MemberRequest::Resolve => {
+                self.game
+                    .resolve_trading_account(&subject)
+                    .map_err(reject)?;
+                self.game
+                    .market_membership(&subject)
+                    .cloned()
+                    .map(MemberResponse::Membership)
+                    .map_err(reject)
+            }
+            MemberRequest::Snapshot => {
+                let account = self
+                    .game
+                    .resolve_trading_account(&subject)
+                    .map_err(reject)?;
+                let mut snapshot = self.game.snapshot();
+                // 18725d07 语义：本人快照只含成员自身账户（创建者视他人
+                // 账户需各自鉴权——不附带账户 0）。
+                snapshot.accounts.retain(|id, _| *id == account);
+                Ok(MemberResponse::Snapshot(snapshot))
+            }
+            MemberRequest::WorkingOrders { generation } => {
+                // B3 读面注记：main 的 player_working_orders 是账户 0 的单人
+                // 读面（PlayerWorkingOrder 无 owner 字段、多玩家过滤形态尚无）
+                // ——远程在途读面待 W3/B2 后随读面多玩家化接线；当前显式
+                // 拒绝（不返回他人账户 0 的在途单冒充本人数据）。
+                let _ = (generation, &subject);
+                Err(SendCommandError::Rejected(
+                    "WORKING_ORDERS_REMOTE_PENDING_MULTI_MEMBER_READ_FACE".into(),
+                ))
+            }
+            MemberRequest::History { generation, code } => {
+                let account = self
+                    .game
+                    .resolve_trading_account(&subject)
+                    .map_err(reject)?;
+                if generation != self.timeline_generation {
+                    return Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ));
+                }
+                self.game
+                    .query_stock_history(account, &code)
+                    .map(|data| MemberResponse::History(self.timeline_generation, data))
+                    .map_err(|error| SendCommandError::Rejected(error.to_string()))
+            }
+        }
+    }
+
     fn rollback_cycle(
         &mut self,
         checkpoint: engine::session::protocol::ProtocolCheckpoint,
@@ -1342,16 +2287,24 @@ impl SessionActor {
     }
 
     fn stop_with_failure(&mut self, mut failure: HostFailure) {
-        if let Err(error) = self.game.shared_ingress().close() {
-            failure
-                .message
-                .push_str(&format!("；关闭 ingress 失败：{error}"));
+        // B3：可恢复失败（如日终存档写失败）不关 ingress、不停机——交易
+        // 提交有效，恢复推进后自动重试（18725d07 persist_day_end 语义）。
+        if !failure.recoverable {
+            if let Err(error) = self.game.shared_ingress().close() {
+                failure
+                    .message
+                    .push_str(&format!("；关闭 ingress 失败：{error}"));
+            }
         }
         failure.context.tick = Some(self.game.tick());
         failure.context.seq = Some(self.game.seq());
         failure.context.day = Some(self.game.day());
         failure.context.generation = Some(self.timeline_generation.to_string());
         self.pacing.stop_after_failure();
+        if failure.recoverable {
+            self.broadcast_failure(failure);
+            return;
+        }
         if self.fatal_failure.is_none() {
             self.broadcast_failure(failure.clone());
             self.fatal_failure = Some(failure);
@@ -1546,6 +2499,17 @@ impl SessionActor {
                         .and_then(|mut ingress| {
                             ingress.1.close()?;
                             *ingress = (next_generation, restored.shared_ingress());
+                            // B3 远程登录+复核建议 5：恢复档是成员名册权威——
+                            // 名册更新并入 ingress 写锁段（嵌套序恒 ingress→
+                            // members，与 enqueue_for 读锁同序无死锁；此前分
+                            // 两段的失败窗会留下部分替换状态）。
+                            let mut members = self.members.write().map_err(|_| {
+                                // 1293：成员名册锁中毒（与 ingress 同码域）。
+                                SessionError::ResourceLimit(
+                                    engine::error::ValidationFault::bare(1293),
+                                )
+                            })?;
+                            *members = restored.trading_subject_accounts();
                             Ok(())
                         });
                     if let Err(error) = replacement {
@@ -1582,6 +2546,9 @@ impl SessionActor {
                     ))
                 };
                 if let Ok(report) = &result {
+                    // B3 远程登录：日终档随广播前持久化（与 tick 循环同点——
+                    // 写失败为可恢复失败，上一份有效档保留）。
+                    self.persist_day_end(report);
                     self.public_revision = self.public_revision.saturating_add(1);
                     self.broadcast_update(ProtocolUpdate::CivilUpdate(Box::new(report.clone())));
                     if self.pause_preferences.pauses(report) {
@@ -1603,8 +2570,13 @@ impl SessionActor {
                 } else if generation == self.timeline_generation {
                     self.game.civil_day_ready().and_then(|ready| {
                         if ready {
+                            // 1294：日结静点未发布前不允许 host-parity 单步
+                            //（main 既有缺陷修复：原 `.into()` 到
+                            // ValidationFault 编译失败——fault 码化时漏改，
+                            // host-parity feature 自此才可编译；码取 129x 段
+                            // 下一个空闲位）。
                             return Err(SessionError::InvalidSave(
-                                "civil day barrier must be published before stepping".into(),
+                                engine::error::ValidationFault::bare(1294),
                             ));
                         }
                         self.game
@@ -1694,6 +2666,92 @@ impl SessionActor {
                     self.stop_with_failure(HostFailure::civil(&error));
                 }
                 let _ = reply.send(());
+            }
+            SessionCommand::Member {
+                subject,
+                request,
+                reply,
+            } => {
+                let result = if let Some(error) = self.fatal_rejection() {
+                    Err(SendCommandError::Rejected(error.to_string()))
+                } else {
+                    self.handle_member_request(subject, request)
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::ArchiveMetadata {
+                subject,
+                generation,
+                slot_id,
+                name,
+                copy,
+                reply,
+            } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()))
+                } else {
+                    self.require_market_control(&subject).and_then(|()| {
+                        let writer = self.archive.as_ref().ok_or_else(|| {
+                            SendCommandError::Rejected("Native 存档目标未初始化".into())
+                        })?;
+                        if copy {
+                            writer
+                                .copy_slot(&slot_id, &uuid::Uuid::new_v4().to_string(), &name)
+                                .map(Some)
+                                .map_err(|error| SendCommandError::Rejected(error.to_string()))
+                        } else {
+                            writer
+                                .rename_slot(&slot_id, &name)
+                                .map(|()| None)
+                                .map_err(|error| SendCommandError::Rejected(error.to_string()))
+                        }
+                    })
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::DeleteArchive {
+                subject,
+                generation,
+                slot_id,
+                reply,
+            } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()))
+                } else {
+                    self.require_market_control(&subject).and_then(|()| {
+                        let writer = self.archive.as_ref().ok_or_else(|| {
+                            SendCommandError::Rejected("Native 存档目标未初始化".into())
+                        })?;
+                        let next = writer
+                            .delete_slot(&slot_id, &uuid::Uuid::new_v4().to_string())
+                            .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
+                        self.archive = Some(next);
+                        Ok(())
+                    })
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::SelectArchive {
+                subject,
+                generation,
+                slot_id,
+                reply,
+            } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SendCommandError::Rejected("STALE_SESSION_GENERATION".into()))
+                } else {
+                    self.require_market_control(&subject).and_then(|()| {
+                        self.archive
+                            .as_ref()
+                            .ok_or_else(|| {
+                                SendCommandError::Rejected("Native 存档目标未初始化".into())
+                            })?
+                            .select(&slot_id)
+                            .map(|()| true)
+                            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+                    })
+                };
+                let _ = reply.send(result);
             }
         }
     }

@@ -7,6 +7,7 @@ members = [
     "apps/server",
     "apps/desktop/src-tauri",
     "packages/std-thread-proto",
+    "packages/native-store",
 ]
 
 [workspace.package]
@@ -21,6 +22,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
+# native-store 的原生存储后端：bundled 特性内嵌 SQLite，免去宿主环境依赖。
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [profile.release]
 # Keep release builds parallelizable. Fat LTO with one codegen unit turns the

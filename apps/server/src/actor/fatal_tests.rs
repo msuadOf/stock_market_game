@@ -15,6 +15,9 @@ fn production_actor_steps_and_delivers_tick_batches() {
     let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        members: Arc::new(RwLock::new(game.trading_subject_accounts())),
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
         injected_step_failure: None,
         pacing: ServerPacing::new(1, game.tick()),
         game,
@@ -77,12 +80,16 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let handles = SessionHandles {
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         cmd_tx,
         event_tx,
         ticks_per_day: setup.ticks_per_day,
         auction_ticks: setup.auction_ticks,
         closing_auction_ticks: setup.closing_auction_ticks,
         session_token: "shared-ingress".into(),
+        startup_setup: setup.clone(),
+        startup_seed: 7,
+        startup_resumed: false,
     };
     tokio::time::timeout(
         Duration::from_millis(100),
@@ -257,6 +264,9 @@ async fn capture(successful_steps: usize) {
     let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        members: Arc::new(RwLock::new(Default::default())),
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
         injected_step_failure: Some((successful_steps, fatal.clone())),
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -527,6 +537,9 @@ async fn authority_reads_reject_stale_generations() {
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
         ingress: Arc::new(RwLock::new((7, game.shared_ingress()))),
+        members: Arc::new(RwLock::new(game.trading_subject_accounts())),
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
         #[cfg(test)]
         injected_step_failure: None,
         pacing: ServerPacing {
@@ -598,15 +611,22 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let handles = SessionHandles {
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         cmd_tx,
         event_tx: event_tx.clone(),
         ticks_per_day: setup.ticks_per_day,
         auction_ticks: setup.auction_ticks,
         closing_auction_ticks: setup.closing_auction_ticks,
         session_token: "command-burst".into(),
+        startup_setup: setup.clone(),
+        startup_seed: 42,
+        startup_resumed: false,
     };
     let mut actor = SessionActor {
         ingress: Arc::clone(&handles.ingress),
+        members: Arc::new(RwLock::new(Default::default())),
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
         injected_step_failure: None,
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -748,6 +768,9 @@ fn batch_checkpoint_drop_is_deferred_to_dedicated_thread() {
     let (event_tx, _receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
+        members: Arc::new(RwLock::new(game.trading_subject_accounts())),
+        controllers: std::collections::BTreeSet::new(),
+        archive: None,
         injected_step_failure: None,
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),

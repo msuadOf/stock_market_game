@@ -33,6 +33,11 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_MULTIPLIER};
+mod archives;
+
+pub(crate) fn archive_router() -> axum::Router<AppState> {
+    archives::router()
+}
 use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
 
 const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);
@@ -48,25 +53,120 @@ pub struct AppState {
 }
 
 /// 缺 token 返回 401；携带 token 但 session 不存在或 token 不匹配时统一返回 403，避免探测 session ID。
-fn authorized_session(
+/// B3 远程登录：Bearer 头解析为身份 credential，经 IdentityService 认证
+/// 得认证主体（OpaqueSubjectId）。缺凭据/无效凭据 → 401；存储/密码学
+/// 异常 → 500（不与凭据错误混淆）。
+fn request_subject(
+    state: &AppState,
+    token: Option<&str>,
+) -> Result<engine::session::OpaqueSubjectId, Box<Response>> {
+    let token = token.filter(|token| !token.is_empty()).ok_or_else(|| {
+        Box::new(api_error(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            "缺少登录凭据，请先登录",
+        ))
+    })?;
+    let identity = crate::identity::IdentityService::new(state.manager.database())
+        .authenticate(token)
+        .map_err(|error| {
+            let status = if matches!(
+                error,
+                crate::identity::IdentityError::Storage
+                    | crate::identity::IdentityError::Cryptography
+            ) {
+                StatusCode::INTERNAL_SERVER_ERROR
+            } else {
+                StatusCode::UNAUTHORIZED
+            };
+            Box::new(api_error(
+                status,
+                "IDENTITY_AUTHENTICATION_FAILED",
+                error.to_string(),
+            ))
+        })?;
+    engine::session::OpaqueSubjectId::new(identity.subject_id).map_err(|_| {
+        Box::new(api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "IDENTITY_INVALID",
+            "登录主体异常，请反馈 Server.identity",
+        ))
+    })
+}
+
+/// 本人金融接口：身份解析主体 + 当前市场的资金成员关系校验。
+async fn authorized_session(
     state: &AppState,
     session_id: &str,
     token: Option<&str>,
-) -> Result<Arc<crate::actor::SessionHandles>, Box<Response>> {
-    let Some(token) = token.filter(|token| !token.is_empty()) else {
-        return Err(Box::new(api_error(
-            StatusCode::UNAUTHORIZED,
-            "UNAUTHORIZED",
-            "missing session token",
-        )));
-    };
+) -> Result<
+    (
+        Arc<crate::actor::SessionHandles>,
+        engine::session::OpaqueSubjectId,
+    ),
+    Box<Response>,
+> {
+    let subject = request_subject(state, token)?;
     let Some(handles) = state.manager.lookup(session_id) else {
         return Err(session_forbidden());
     };
-    if handles.session_token != token {
-        return Err(session_forbidden());
-    }
-    Ok(handles)
+    handles
+        .resolve_member(subject.clone())
+        .await
+        .map_err(|error| {
+            Box::new(api_error(
+                StatusCode::FORBIDDEN,
+                "MARKET_MEMBERSHIP_REQUIRED",
+                error.to_string(),
+            ))
+        })?;
+    Ok((handles, subject))
+}
+
+/// 市场级接口：身份解析主体（不要求成员——列表/加入/上下文用）。
+async fn authorized_market(
+    state: &AppState,
+    session_id: &str,
+    token: Option<&str>,
+) -> Result<
+    (
+        Arc<crate::actor::SessionHandles>,
+        engine::session::OpaqueSubjectId,
+    ),
+    Box<Response>,
+> {
+    let subject = request_subject(state, token)?;
+    let handles = state
+        .manager
+        .lookup(session_id)
+        .ok_or_else(session_forbidden)?;
+    Ok((handles, subject))
+}
+
+/// 控制面接口：身份解析主体 + 市场控制权校验。
+pub(crate) async fn authorized_market_controller(
+    state: &AppState,
+    session_id: &str,
+    token: Option<&str>,
+) -> Result<
+    (
+        Arc<crate::actor::SessionHandles>,
+        engine::session::OpaqueSubjectId,
+    ),
+    Box<Response>,
+> {
+    let (handles, subject) = authorized_market(state, session_id, token).await?;
+    handles
+        .require_control(subject.clone())
+        .await
+        .map_err(|error| {
+            Box::new(api_error(
+                StatusCode::FORBIDDEN,
+                "MARKET_CONTROL_FORBIDDEN",
+                error.to_string(),
+            ))
+        })?;
+    Ok((handles, subject))
 }
 
 fn session_forbidden() -> Box<Response> {
@@ -116,11 +216,17 @@ pub struct NewSessionBody {
     pub seed: String,
 }
 
-/// /api/new 200 响应体。
+/// /api/new 200 响应体（B3 共享市场上下文——18725d07 契约）。
 #[derive(Debug, Serialize)]
 pub struct NewSessionResp {
     pub session_id: String,
-    pub session_token: String,
+    pub setup: engine::SessionSetup,
+    pub seed: String,
+    pub resumed: bool,
+    pub generation: String,
+    pub member: Option<engine::session::MarketMembership>,
+    pub can_control: bool,
+    pub needs_rejoin: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -156,6 +262,7 @@ pub struct IntentBody {
 #[derive(Debug, Deserialize)]
 pub struct SpeedBody {
     pub session_id: String,
+    pub generation: String,
     speed: SpeedValue,
 }
 
@@ -198,6 +305,7 @@ mod speed_value_tests {
 #[derive(Debug, Deserialize)]
 pub struct RunningBody {
     pub session_id: String,
+    pub generation: String,
     pub running: bool,
 }
 
@@ -217,17 +325,19 @@ pub async fn api_pause_preferences(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     let generation = match parse_host_parity_generation(&body.generation) {
         Ok(generation) => generation,
         Err(response) => return *response,
     };
     match handles
-        .set_pause_preferences(generation, body.preferences)
+        .set_pause_preferences_for(generation, subject, body.preferences)
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -408,6 +518,13 @@ fn preflight_save_depth(json: &[u8]) -> Result<(), String> {
 
 /// /api/snapshot / /ws 共用的 query 参数。
 #[derive(Debug, Deserialize)]
+pub struct DeleteSessionQuery {
+    pub session_id: String,
+    pub generation: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionQuery {
     pub session_id: String,
 }
@@ -480,16 +597,21 @@ enum ClientCommand {
     },
 }
 
-/// POST /api/new：构造 session → spawn actor → 返回 session_id。
+/// POST /api/new：身份鉴权 → 创建共享市场（单市场全局）→ 返回市场上下文。
 ///
-/// - 反序列化失败 / engine 构造失败 → 400（带原因文案）。
+/// - 缺/无效凭据 → 401；已有市场 → 409（列出并加入，不另开）；非法 body → 400。
 pub async fn api_new(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Result<Json<NewSessionBody>, JsonRejection>,
 ) -> Response {
     let Json(body) = match body {
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
+    };
+    let subject = match request_subject(&state, authorization_token(&headers)) {
+        Ok(subject) => subject,
+        Err(response) => return *response,
     };
     let seed = match body.seed.parse::<u64>() {
         Ok(seed) => seed,
@@ -501,8 +623,16 @@ pub async fn api_new(
             );
         }
     };
-    match state.manager.new_session(body.setup, seed) {
-        Ok(id) => {
+    match state
+        .manager
+        .new_shared_session(body.setup, seed, subject.clone())
+    {
+        Ok((_, false)) => api_error(
+            StatusCode::CONFLICT,
+            "MARKET_ALREADY_EXISTS",
+            "Server 已有共享市场，请查看市场列表并明确加入，不能为另一个主体另开市场",
+        ),
+        Ok((id, true)) => {
             info!(session = %id, "new session created");
             let Some(handles) = state.manager.lookup(&id) else {
                 return api_error(
@@ -511,14 +641,7 @@ pub async fn api_new(
                     "session actor was not registered",
                 );
             };
-            (
-                StatusCode::OK,
-                Json(NewSessionResp {
-                    session_id: id,
-                    session_token: handles.session_token.clone(),
-                }),
-            )
-                .into_response()
+            market_context_response(id, handles, subject).await
         }
         Err(NewSessionError::InvalidSetup(e)) => {
             warn!(error = %e, "new_session rejected");
@@ -536,6 +659,225 @@ pub async fn api_new(
                 format!("server permits at most {max} active sessions"),
             )
         }
+        Err(NewSessionError::Text(message)) => {
+            warn!(error = %message, "new_session rejected (server domain)");
+            api_error(StatusCode::INTERNAL_SERVER_ERROR, "SESSION_SETUP_FAILED", message)
+        }
+    }
+}
+
+/// 市场上下文应答（创建/加入/查询共用的 200 形态）。
+async fn market_context_response(
+    id: String,
+    handles: Arc<crate::actor::SessionHandles>,
+    subject: engine::session::OpaqueSubjectId,
+) -> Response {
+    let context = match handles.market_context_for(subject).await {
+        Ok(context) => context,
+        Err(error) => {
+            return api_error(
+                StatusCode::FORBIDDEN,
+                "MARKET_CONTEXT_FAILED",
+                error.to_string(),
+            )
+        }
+    };
+    Json(NewSessionResp {
+        session_id: id,
+        setup: context.setup,
+        seed: context.seed,
+        resumed: handles.startup_resumed,
+        generation: context.generation,
+        member: context.member,
+        can_control: context.can_control,
+        needs_rejoin: context.needs_rejoin,
+    })
+    .into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JoinMarketBody {
+    pub session_id: String,
+    pub generation: String,
+    pub confirmed_rejoin: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResetMarketBody {
+    pub session_id: String,
+    pub generation: String,
+    pub setup: engine::SessionSetup,
+    pub seed: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionCashBody {
+    pub session_id: String,
+    pub generation: String,
+    pub admission_cash: engine::Money,
+}
+
+/// POST /api/market/reset：控制权重置市场（交易时钟配置必须一致）。
+pub async fn api_reset_market(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<ResetMarketBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    let seed = match parse_host_parity_generation(&body.seed) {
+        Ok(seed) => seed,
+        Err(_) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_SEED",
+                "seed 必须是规范十进制 u64 字符串",
+            )
+        }
+    };
+    match handles
+        .reset_for(generation, subject.clone(), body.setup, seed)
+        .await
+    {
+        Ok(_) => market_context_response(body.session_id, handles, subject).await,
+        Err(error) => api_error(
+            StatusCode::BAD_REQUEST,
+            "MARKET_RESET_REJECTED",
+            error.to_string(),
+        ),
+    }
+}
+
+/// POST /api/market/admission-cash：控制权调整入场资金。
+pub async fn api_admission_cash(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<AdmissionCashBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles
+        .set_admission_cash_for(generation, subject, body.admission_cash)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => api_error(
+            StatusCode::BAD_REQUEST,
+            "ADMISSION_CASH_REJECTED",
+            error.to_string(),
+        ),
+    }
+}
+
+/// GET /api/markets：身份鉴权后的市场列表（每市场附本人上下文）。
+pub async fn api_markets(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let subject = match request_subject(&state, authorization_token(&headers)) {
+        Ok(subject) => subject,
+        Err(response) => return *response,
+    };
+    let mut markets = Vec::new();
+    for id in state.manager.market_ids() {
+        let Some(handles) = state.manager.lookup(&id) else {
+            continue;
+        };
+        let context = match handles.market_context_for(subject.clone()).await {
+            Ok(context) => context,
+            Err(error) => {
+                return api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "MARKET_CONTEXT_FAILED",
+                    error.to_string(),
+                )
+            }
+        };
+        markets.push(serde_json::json!({
+            "session_id": id,
+            "setup": context.setup,
+            "seed": context.seed,
+            "resumed": handles.startup_resumed,
+            "generation": context.generation,
+            "member": context.member,
+            "can_control": context.can_control,
+            "needs_rejoin": context.needs_rejoin,
+        }));
+    }
+    Json(serde_json::json!({ "markets": markets })).into_response()
+}
+
+/// GET /api/market/context：本人市场上下文。
+pub async fn api_market_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SessionQuery>,
+) -> Response {
+    let (handles, subject) =
+        match authorized_market(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    market_context_response(query.session_id, handles, subject).await
+}
+
+/// POST /api/markets/join：加入市场（确认重加入后按当前配置发一次入场资金）。
+pub async fn api_join_market(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<JoinMarketBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let subject = match request_subject(&state, authorization_token(&headers)) {
+        Ok(subject) => subject,
+        Err(response) => return *response,
+    };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    let Some(handles) = state.manager.lookup(&body.session_id) else {
+        return *session_forbidden();
+    };
+    match handles
+        .join_member_for(generation, subject.clone(), body.confirmed_rejoin)
+        .await
+    {
+        Ok(_) => market_context_response(body.session_id, handles, subject).await,
+        Err(error) => api_error(
+            StatusCode::CONFLICT,
+            "MARKET_JOIN_REJECTED",
+            error.to_string(),
+        ),
     }
 }
 
@@ -545,9 +887,9 @@ pub async fn api_public_report_page(
     Path(company_id): Path<u32>,
     Query(params): Query<PublicReportQueryParams>,
 ) -> Response {
-    let handles =
-        match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
-            Ok(handles) => handles,
+    let (handles, _) =
+        match authorized_market(&state, &params.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
             Err(response) => return *response,
         };
     let query = engine::company::PublicReportQuery {
@@ -575,9 +917,9 @@ pub async fn api_public_report(
     Path((company_id, report_id)): Path<(u32, String)>,
     Query(params): Query<PublicReportQueryParams>,
 ) -> Response {
-    let handles =
-        match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
-            Ok(handles) => handles,
+    let (handles, _) =
+        match authorized_market(&state, &params.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
             Err(response) => return *response,
         };
     match handles.public_report(report_id).await {
@@ -614,11 +956,18 @@ pub async fn api_npc_decision_diagnostics(
             "NPC 决策诊断仅在启用开发诊断的非 release 服务端可用",
         );
     }
-    let handles =
-        match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
-            Ok(handles) => handles,
-            Err(response) => return *response,
-        };
+    // 复核建议 4：NPC 决策细节属控制面诊断——鉴权升级为控制权
+    // （authorized_market_controller，18725d07 契约）。
+    let (handles, _) = match authorized_market_controller(
+        &state,
+        &params.session_id,
+        authorization_token(&headers),
+    )
+    .await
+    {
+        Ok(context) => context,
+        Err(response) => return *response,
+    };
     match handles
         .npc_decision_diagnostics(params.generation, engine::AccountId(account))
         .await
@@ -656,7 +1005,7 @@ pub async fn api_host_capabilities(
     headers: HeaderMap,
     Query(query): Query<SessionQuery>,
 ) -> Response {
-    match authorized_session(&state, &query.session_id, authorization_token(&headers)) {
+    match authorized_market(&state, &query.session_id, authorization_token(&headers)).await {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({
             "npcDecisionDiagnostics": cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
         }))).into_response(),
@@ -683,7 +1032,7 @@ pub(crate) async fn api_calculate_indicators(
         Err(error) => return invalid_json_response(error),
     };
     if let Err(response) =
-        authorized_session(&state, &body.session_id, authorization_token(&headers))
+        authorized_market(&state, &body.session_id, authorization_token(&headers)).await
     {
         return *response;
     }
@@ -725,16 +1074,19 @@ pub async fn api_intent(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    let (handles, subject) =
+        match authorized_market(&state, &body.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     let generation = match parse_host_parity_generation(&body.generation) {
         Ok(generation) => generation,
         Err(response) => return *response,
     };
-    match handles.enqueue(generation, body.intent).await {
+    match handles
+        .enqueue_for(generation, subject, body.intent)
+        .await
+    {
         Ok(()) => StatusCode::OK.into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %body.session_id, "intent: actor gone");
@@ -760,11 +1112,12 @@ pub async fn api_snapshot(
     headers: HeaderMap,
     Query(q): Query<SessionQuery>,
 ) -> Response {
-    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
-    match handles.snapshot().await {
+    let (handles, subject) =
+        match authorized_session(&state, &q.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    match handles.snapshot_for(subject).await {
         Ok(snap) => (StatusCode::OK, Json(snap)).into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %q.session_id, "snapshot: actor gone");
@@ -787,9 +1140,13 @@ pub async fn api_player_working_orders(
     Query(query): Query<PlayerWorkingOrdersQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers))
+    // 复核建议 2：成员鉴权（authorized_session——非成员不得读取在途单）。
+    // 读面仍是 main 的账户 0 单人形态（PlayerWorkingOrder 无 owner 字段，
+    // 多成员本人过滤形态待 W3 读面多玩家化；actor 侧 MemberRequest::
+    // WorkingOrders 对远程多成员已显式拒绝）。
+    let (handles, _) = match authorized_session(&state, &query.session_id, authorization_token(&headers)).await
     {
-        Ok(handles) => handles,
+        Ok(context) => context,
         Err(response) => return *response,
     };
     match handles.player_working_orders(query.generation).await {
@@ -822,13 +1179,16 @@ pub async fn api_stock_history(
     Query(query): Query<StockHistoryQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    // 复核建议 2：本人股票历史——成员鉴权 + history_for（按成员账户查询
+    /// 与记账 read_count；此前 authorized_market+账户 0 通道使非成员可读
+    // 且经历账本记在账户 0 上越权）。
+    let (handles, subject) =
+        match authorized_session(&state, &query.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     match handles
-        .query_stock_history(query.generation, query.code)
+        .history_for(query.generation, subject, query.code)
         .await
     {
         Ok((generation, data)) => (
@@ -861,9 +1221,10 @@ pub async fn api_initial_allocation(
     Query(query): Query<InitialAllocationQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers))
+    let (handles, _) = match authorized_market(&state, &query.session_id, authorization_token(&headers))
+        .await
     {
-        Ok(handles) => handles,
+        Ok(context) => context,
         Err(response) => return *response,
     };
     match handles.initial_allocation(query.generation).await {
@@ -905,11 +1266,13 @@ pub async fn api_save(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    let (handles, _) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     let generation = match parse_host_parity_generation(&body.generation) {
         Ok(generation) => generation,
         Err(response) => return *response,
@@ -954,11 +1317,13 @@ pub async fn api_load(State(state): State<AppState>, headers: HeaderMap, body: B
             );
         }
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     if let Err(message) = preflight_save_depth(body.slot.get().as_bytes()) {
         return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
     }
@@ -1002,16 +1367,22 @@ pub async fn api_speed(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     let speed = match body.speed.multiplier() {
         Ok(speed) => speed,
         Err(message) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SPEED", message),
     };
-    match handles.set_speed(speed).await {
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.set_speed_for(generation, subject, speed).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %body.session_id, "speed: actor gone");
@@ -1040,8 +1411,8 @@ pub async fn api_speed_metrics(
     headers: HeaderMap,
     Query(q): Query<SessionQuery>,
 ) -> Response {
-    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
-        Ok(handles) => handles,
+    let (handles, _) = match authorized_market(&state, &q.session_id, authorization_token(&headers)).await {
+        Ok(context) => context,
         Err(response) => return *response,
     };
     match handles.speed_metrics().await {
@@ -1074,12 +1445,18 @@ pub async fn api_running(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
         Err(response) => return *response,
     };
-    match handles.set_running(body.running).await {
+    match handles.set_running_for(generation, subject, body.running).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1105,11 +1482,13 @@ pub async fn api_host_parity_advance_civil_day(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     let generation = match parse_host_parity_generation(&body.generation) {
         Ok(generation) => generation,
         Err(response) => return *response,
@@ -1140,11 +1519,13 @@ pub async fn api_host_parity_step(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
-    {
-        Ok(handles) => handles,
-        Err(response) => return *response,
-    };
+    let (handles, subject) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
     let generation = match parse_host_parity_generation(&body.generation) {
         Ok(generation) => generation,
         Err(response) => return *response,
@@ -1170,15 +1551,24 @@ pub async fn api_host_parity_step(
 pub async fn api_delete_session(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<SessionQuery>,
+    Query(q): Query<DeleteSessionQuery>,
 ) -> Response {
-    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
-        Ok(handles) => handles,
+    let (handles, subject) =
+        match authorized_market_controller(&state, &q.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&q.generation) {
+        Ok(generation) => generation,
         Err(response) => return *response,
     };
-    state.manager.remove(&q.session_id);
-    match handles.shutdown().await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    match handles.shutdown_for(generation, subject).await {
+        Ok(()) => {
+            state.manager.remove(&q.session_id);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(SendCommandError::ActorGone) => StatusCode::NO_CONTENT.into_response(),
         Err(SendCommandError::Rejected(reason)) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1201,8 +1591,13 @@ pub async fn ws_handler(
     State(state): State<AppState>,
 ) -> Response {
     let token = websocket_token(&headers);
-    let handles = match authorized_session(&state, &q.session_id, token.as_deref()) {
-        Ok(handles) => handles,
+    // 复核建议 3（登记为 W3 接线批范围）：ws 推送帧的 per-subject 账户
+    // 过滤（18725d07 run_ws 按 subject 过滤发布内容）随 W3 的 engine-host
+    // 视图类型族/发布协议接线一起做——本批 ws 已要求身份鉴权（非成员可
+    // 连接但无控制权/下单面），帧内成员账户可见性待 W3 收口（局域网+
+    // 登录门槛下低危，如实登记不静默）。
+    let (handles, _) = match authorized_market(&state, &q.session_id, token.as_deref()).await {
+        Ok(context) => context,
         Err(response) => return *response,
     };
     ws.protocols(["stock-game"])
