@@ -24,3 +24,5 @@
 - [std-thread迁移](project_std_thread_migration.md) — 一股一持久线程+内联决策；代码本体无线程数概念；CPU限制走OS级（cgroup/taskset）
 - [NPC分组+放松延迟](project_npc_grouping_relaxed_latency.md) — 备选方案：NPC分组线程+决策→执行延迟1~2tick；基础迁移后视性能再试
 - [两阶段循环模型](project_two_phase_loop_model.md) — 用户判定：tick=决策∥→撮合∥+commit前同步；多核倒退=并行模型不对；一股一核
+- [正确架构不能少](feedback_architecture_not_sacrificed.md) — 性能/功能推进不许牺牲架构：分批不混、单一事实源、旧耦合不复生、性能刀破坏边界走设计门
+- [wasm线程抽象层](project_wasm_thread_abstraction.md) — 废串行回退，std::thread 兼容层跑一份纯净代码全平台（性能优先，Worker+SAB/Atomics），解锁C桶删除
