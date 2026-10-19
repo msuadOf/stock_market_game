@@ -5,18 +5,21 @@ import type { FilledOrderSnap } from "./FilledOrderSnap";
 import type { IngressReceiptCursors } from "./IngressReceiptCursors";
 import type { MarketMembershipState } from "./MarketMembershipState";
 import type { MarketMinuteClose } from "./MarketMinuteClose";
+import type { MinuteBarFact } from "./MinuteBarFact";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
 import type { NpcOrderLifecycle } from "./NpcOrderLifecycle";
 import type { Order } from "./Order";
 import type { PersonalHistoryReadLedger } from "./PersonalHistoryReadLedger";
 import type { PersonalPriceMemory } from "./PersonalPriceMemory";
+import type { PersonalTradeConfirmation } from "./PersonalTradeConfirmation";
 import type { PersonalWatchlist } from "./PersonalWatchlist";
 import type { PlanBook } from "./PlanBook";
 import type { ReceiptBearingIntent } from "./ReceiptBearingIntent";
 import type { RetailExperienceState } from "./RetailExperienceState";
 import type { SaveSnapshot } from "./SaveSnapshot";
 import type { SessionSetup } from "./SessionSetup";
+import type { SharedRetainedDay } from "./SharedRetainedDay";
 import type { StockId } from "./StockId";
 import type { UrgencyPolicy } from "./UrgencyPolicy";
 
@@ -69,6 +72,27 @@ export type SaveSlot = {
    * 到日界后清空，跨日窗口读取已经完成的日 K。
    */
   market_minute_closes: { [key in StockId]: Array<MarketMinuteClose> };
+  /**
+   * 当日分钟K桶（B2：desk 权威投影镜像——save/restore 链与 desk
+   * `DeskMarketSeed` 续接；与 `market_minute_closes` 语义分离——本面
+   * 只含真实成交，零成交分钟不占位）。
+   */
+  market_minute_bars: { [key in StockId]: Array<MinuteBarFact> };
+  /**
+   * 个人确认日志（B2 件 5：按账户展开——wire 形态平铺 Vec）。
+   */
+  personal_trade_confirmations: {
+    [key in AccountId]: Array<PersonalTradeConfirmation>;
+  };
+  /**
+   * 回执水位（B2 件 5 派生域游标——持久续号）。
+   */
+  receipt_watermark: number;
+  /**
+   * 保留历史链（B2：日结冻结的不可变日快照——全部保留（ADR-0034）；
+   * serde 按值（`Arc` 为进程内共享形态））。
+   */
+  retained_market_days: Array<SharedRetainedDay>;
   /**
    * 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
    */

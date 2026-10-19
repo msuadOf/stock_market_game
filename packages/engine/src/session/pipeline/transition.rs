@@ -1,5 +1,5 @@
 use super::{FeeComponents, ReceiptDelta, ResVec};
-use crate::{session::buy_order_reservation, session::fee_delta, GameConfig, Money};
+use crate::{GameConfig, Money, session::buy_order_reservation, session::fee_delta};
 
 #[derive(Clone, Copy)]
 pub struct BuyFillInput<'a> {
@@ -45,7 +45,10 @@ impl FillTransition {
         let nominal_before = buyer_nominal_total(input.config, input.filled_value_before)?;
         let nominal_after = buyer_nominal_total(input.config, filled_value_after)?;
         let nominal = nominal_after.checked_sub(nominal_before)?;
-        let spent_cash = input.gross_delta.add(nominal.total()?).map_err(invariant)?;
+        let spent_cash = input
+            .gross_delta
+            .add(nominal.total().map_err(invariant)?)
+            .map_err(invariant)?;
         let live_after_cash = buy_order_reservation(
             input.config,
             input.limit,
@@ -84,7 +87,7 @@ impl FillTransition {
             ));
         }
         validate_charged_chain(input.charged_before, nominal_before)?;
-        if input.charged_before.total()? > input.filled_value_before {
+        if input.charged_before.total().map_err(invariant)? > input.filled_value_before {
             return Err(invariant_message(
                 "seller charged history exceeds cumulative gross value",
             ));
@@ -200,7 +203,7 @@ impl SellerChargeAllocation {
         gross_delta: Money,
     ) -> Result<Self, super::super::StepFatal> {
         let unpaid = nominal_after.checked_sub(charged_before)?;
-        let charge_cap = unpaid.total()?.min(gross_delta);
+        let charge_cap = unpaid.total().map_err(invariant)?.min(gross_delta);
         let charged_delta = Self::allocate_components(unpaid, charge_cap)?;
         let charged_after = charged_before.checked_add(charged_delta)?;
         validate_charged_chain(charged_after, nominal_after)?;
@@ -226,7 +229,7 @@ impl SellerChargeAllocation {
             stamp_tax,
             transfer_fee,
         };
-        if charged.total()? != charge_cap {
+        if charged.total().map_err(invariant)? != charge_cap {
             return Err(invariant_message(
                 "seller charge allocation does not exhaust capped charge",
             ));

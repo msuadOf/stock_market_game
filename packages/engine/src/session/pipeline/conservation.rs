@@ -66,27 +66,11 @@ impl ReceiptDelta {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize)]
-pub struct FeeComponents {
-    pub commission: Money,
-    pub stamp_tax: Money,
-    pub transfer_fee: Money,
-}
-
-impl FeeComponents {
-    pub const ZERO: Self = Self {
-        commission: Money::ZERO,
-        stamp_tax: Money::ZERO,
-        transfer_fee: Money::ZERO,
-    };
-
-    pub fn total(self) -> Result<Money, StepFatal> {
-        self.commission
-            .add(self.stamp_tax)
-            .and_then(|fee| fee.add(self.transfer_fee))
-            .map_err(invariant)
-    }
-}
+/// B2 搬家：`FeeComponents` 定义移入中立费用域 [`crate::fees`]（市场域
+/// desk 扣费三分项/个人域交割单与旧管线守恒审计共用）。此处仅重导出，
+/// 不保留旧定义（不依赖逃生门）；`total()` 语义变化=返回 `MoneyError`，
+/// 旧管线调用层（`ledger_validation` 等）自行映射为 `StepFatal`。
+pub use crate::fees::FeeComponents;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ConservationBasis {

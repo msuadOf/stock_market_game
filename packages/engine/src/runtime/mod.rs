@@ -45,6 +45,15 @@ mod bridge_tests;
 mod candle_retirement_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod inline_account_tests;
+/// B2 件 2：desk 分钟K观察面语义测试（对照 18725d07 MinuteBar 基线）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod minute_bars_tests;
+/// B2 件 3：DeskTradeFact 双腿费用三分项测试（旧收据 actual_fees 基线）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod trade_fee_split_tests;
+/// B2 件 4：保留历史快照链测试（18725d07 RetainedHistoryDay 基线）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod retained_history_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod drive_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -83,8 +92,8 @@ pub mod world;
 
 pub use entities::Entity;
 pub use facts::{DeskReceipt, FillFact, FillFactError, ReceiptKind};
-pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, RoutedPrice};
-pub use protocol::{RestingDelta, RestingDeltaEntry, RestingFact, StockPublic};
+pub use protocol::{DeskBatch, DeskBatchMismatch, DeskIn, DeskTradeFact, RoutedPrice};
+pub use protocol::{MinuteBarFact, MinuteBarPhase, RestingDelta, RestingDeltaEntry, RestingFact, StockPublic};
 
 /// D5 wasm 方向 A：wasm 串行冒烟（编译级断言——wasm 宿主无测试
 /// runner，测试体编译通过即承载「step_runtime_enabled 恒 false 的

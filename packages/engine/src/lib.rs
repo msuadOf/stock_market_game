@@ -23,8 +23,12 @@ pub mod indicators;
 pub mod money;
 pub use money::{Money, MoneyError};
 
+/// 中立费用域（B2：三分项共享概念，旧管线仅重导出）。
+pub mod fees;
+pub use fees::FeeComponents;
+
 pub mod intraday_average;
-pub use intraday_average::{calculate_intraday_average, IntradayAverage, IntradayAverageError};
+pub use intraday_average::{IntradayAverage, IntradayAverageError, calculate_intraday_average};
 
 pub mod config;
 pub use config::{ConfigError, GameConfig};
@@ -34,14 +38,14 @@ pub use orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderI
 
 pub mod strategy;
 pub use strategy::{
-    decide_data, BeliefInstitutionStrategy, HotParams, InstParams, Intent, LimitPrice, MarketView,
+    BeliefInstitutionStrategy, HotParams, InstParams, Intent, LimitPrice, MarketView,
     MomentumStrategy, PositionView, RetailParams, RetailStyle, Rng, SelfView, StockView, Strategy,
     StrategyData, StrategyDecision, StrategyError, StrategyFactory, StrategyFamily, StrategyParams,
-    StrategyProfile, TargetPolicy, ZiNoiseStrategy,
+    StrategyProfile, TargetPolicy, ZiNoiseStrategy, decide_data,
 };
 
 pub mod error;
-pub use error::{ymd_context, ValidationFault};
+pub use error::{ValidationFault, ymd_context};
 
 pub mod stock;
 pub use stock::{StockCatalog, StockCatalogError, StockId, StockMeta};
@@ -51,14 +55,14 @@ pub use account::{Account, AccountError, AccountKind, Position, StockCode};
 
 pub mod behavior;
 pub use behavior::{
-    decide_retail_position, decide_retail_position_with_experience, BehaviorMarketObservation,
-    DecisionReason, PositionAction, PositionDecision,
+    BehaviorMarketObservation, DecisionReason, PositionAction, PositionDecision,
+    decide_retail_position, decide_retail_position_with_experience,
 };
 
 pub mod experience;
 pub use experience::{
-    ExperienceError, RetailExperienceState, RetailStockExperience, MAX_UNHELD_WATCHLIST_STOCKS,
-    POST_EXIT_COOLDOWN_MINUTES,
+    ExperienceError, MAX_UNHELD_WATCHLIST_STOCKS, POST_EXIT_COOLDOWN_MINUTES,
+    RetailExperienceState, RetailStockExperience,
 };
 
 pub mod market;
@@ -66,45 +70,44 @@ pub use market::{Market, MarketError};
 
 pub mod compute;
 pub use compute::{
-    create_backend, ComputeBackend, ComputeContext, ComputeError, ComputeInitError, ComputeMode,
-    ComputeWork, CpuBackend,
+    ComputeBackend, ComputeContext, ComputeError, ComputeInitError, ComputeMode, ComputeWork,
+    CpuBackend, create_backend,
 };
 
 pub mod verification_evidence;
 
 pub mod session;
 pub use session::{
-    decode_save_slot, AccountSnap, AuctionOrderSnap, BetweenKindDistribution, DailyCandle,
-    DailyTradeStats, Event, FloatAllocation, GameSession, IngressReceiptCursors, MarketSnap,
-    NpcAttentionState, NpcSetup, PositionSnap,
-    ReceiptBearingIntent, RejectionReason, SaveDecodeLimits, SaveSlot,
-    SavedEnvelopeKey, SavedFeeComponents, SavedJournalRank, SavedLiveEnvelope,
-    SavedReceiptLocalKey, SavedReceiptSource, SavedReceiptTransition, SavedRetailReceiptIdentity,
-    SavedRuntimeState, SecurityCategory, SessionError, SessionSetup, SharedSessionIngress,
-    Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase, WithinKindDistribution,
-    MAX_SAVE_DECODE_BYTES, SIMULATION_POLICY_ID,
+    AccountSnap, AuctionOrderSnap, BetweenKindDistribution, DailyCandle, DailyTradeStats, Event,
+    FloatAllocation, GameSession, IngressReceiptCursors, MAX_SAVE_DECODE_BYTES, MarketSnap,
+    NpcAttentionState, NpcSetup, PositionSnap, ReceiptBearingIntent, RejectionReason,
+    SIMULATION_POLICY_ID, SaveDecodeLimits, SaveSlot, SavedEnvelopeKey, SavedFeeComponents,
+    SavedJournalRank, SavedLiveEnvelope, SavedReceiptLocalKey, SavedReceiptSource,
+    SavedReceiptTransition, SavedRetailReceiptIdentity, SavedRuntimeState, SecurityCategory,
+    SessionError, SessionSetup, SharedSessionIngress, Snapshot, SplitMix64, StockExchange,
+    StockSpec, TradingPhase, WithinKindDistribution, decode_save_slot,
 };
 
 pub mod diagnostics;
 pub use diagnostics::NpcDecisionDiagnostics;
+pub use diagnostics::{
+    BaselineError, DistributionSummary, ExtremeSeedCase, ParticipantExecutionRunReport,
+    PriceVolumeBaselineReport, PriceVolumeRunReport, StockEnsembleReport, StockPriceVolumeReport,
+    run_price_volume_baseline,
+};
 #[cfg(feature = "simulation-diagnostics")]
 pub use diagnostics::{
-    run_combined_diagnostics, CombinedCausalRunReport, CombinedDiagnosticsReport,
-    CombinedRunSource, NpcDecisionTraceRecord, MAX_NPC_DECISION_TRACE_RECORDS,
-};
-pub use diagnostics::{
-    run_price_volume_baseline, BaselineError, DistributionSummary, ExtremeSeedCase,
-    ParticipantExecutionRunReport, PriceVolumeBaselineReport, PriceVolumeRunReport,
-    StockEnsembleReport, StockPriceVolumeReport,
+    CombinedCausalRunReport, CombinedDiagnosticsReport, CombinedRunSource,
+    MAX_NPC_DECISION_TRACE_RECORDS, NpcDecisionTraceRecord, run_combined_diagnostics,
 };
 
 pub mod observation;
 pub use observation::{
-    build_account_risk_observation, build_equal_weight_market_observation,
+    AccountRiskObservation, CompletedDayClose, EqualWeightMarketObservation,
+    GAME_INTRADAY_MINUTES_PER_DAY, HorizonReturn, MarketMinuteClose, MarketTickPrice,
+    ObservationError, PositionRiskObservation, PricePathObservation, PriorRangeObservation,
+    RiskPositionInput, build_account_risk_observation, build_equal_weight_market_observation,
     build_market_minute_closes, build_price_path_observation, completed_market_minute_count,
-    AccountRiskObservation, CompletedDayClose, EqualWeightMarketObservation, HorizonReturn,
-    MarketMinuteClose, MarketTickPrice, ObservationError, PositionRiskObservation,
-    PricePathObservation, PriorRangeObservation, RiskPositionInput, GAME_INTRADAY_MINUTES_PER_DAY,
 };
 
 pub mod plans;

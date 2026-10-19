@@ -29,6 +29,7 @@ fn synthetic_view(tick: u64) -> StockPublic {
         min_sell_price: 900,
         recent_prices: vec![1000; 512],
         minute_closes: Vec::new(),
+        minute_bars: std::sync::Arc::new(Vec::new()),
         daily_bars: Vec::new(),
         daily_active: None,
         daily_active_turnover_cents: 0,
@@ -56,6 +57,8 @@ fn synthetic_tick(publication: &ViewPublication, tick: u64) {
         .collect();
     publication.publish(Arc::new(PublishedTick {
         tick,
+        generation: tick,
+        retained: std::sync::Arc::new(Default::default()),
         global: GlobalState {
             committed_tick: tick,
             day: 0,
@@ -76,6 +79,8 @@ fn main() {
 
     let publication = Arc::new(ViewPublication::new(Arc::new(PublishedTick {
         tick: 0,
+        generation: 0,
+        retained: std::sync::Arc::new(Default::default()),
         global: GlobalState::new(),
         desks: Vec::new(),
         groups: Vec::new(),

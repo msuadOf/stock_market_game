@@ -65,6 +65,10 @@ impl<'candidate> TradingDayEndTransition<'candidate> {
         for history in session.state.market_minute_closes.values_mut() {
             history.clear();
         }
+        // B2：分钟K桶同步清空（desk roll_day 清桶的会话镜像对齐）。
+        for bars in session.state.market_minute_bars.values_mut() {
+            bars.clear();
+        }
         let event = Event::DayBoundary {
             seq: 0,
             day: session.state.day,

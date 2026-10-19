@@ -88,6 +88,8 @@ pub struct DeskMarketSeed {
     pub candle: Option<(i64, i64, i64, i64, u64)>,
     /// 分钟收盘（绝对交易分钟, 分）。
     pub minute_closes: Vec<(u64, i64)>,
+    /// 当日分钟K桶（B2：save 点 desk 权威投影——restore 链续接）。
+    pub minute_bars: Vec<super::protocol::MinuteBarFact>,
 }
 
 /// 每股交易部构造参数（世界构造期确定，运行期不变）。
@@ -188,6 +190,48 @@ impl DeskSetup {
             .and_then(|t| t.checked_sub(self.closing_auction_ticks))
             .unwrap_or(0)
     }
+
+    /// B2 分钟归一：连续竞价 tick → 墙钟分钟（240 游戏分钟线性映射后折
+    /// 墙钟域 570..=690 / 780..=900——对齐旧管线 `CivilInstant
+    /// .second_of_day()/60` 的归一语义；desk 无墙钟，映射由 tick 承载，
+    /// 与 `finish_round` 分钟收盘回填同一 idx 口径）。
+    fn continuous_minute_of_day(&self, tick: u64) -> Result<u16, RuntimeError> {
+        let continuous = self.continuous_ticks_per_day();
+        if continuous == 0 {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: "连续窗为 0 的局不可能产生连续成交（分钟归一无定义）".to_owned(),
+            });
+        }
+        let day_tick = tick % self.ticks_per_day.max(1);
+        let cont_tick = day_tick.saturating_sub(self.auction_ticks);
+        if cont_tick >= continuous {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "连续成交 tick 超出连续窗：tick={tick}, cont={cont_tick}, continuous={continuous}"
+                ),
+            });
+        }
+        // tick 覆盖分钟区间的首分钟：idx = floor(cont_tick·240/continuous)
+        // ——与观察面 completed(elapsed) 口径互补（tick T 覆盖游戏分钟
+        // [floor(cT·240/c), floor((cT+1)·240/c))，tick 末闭合 completed
+        // 个分钟；tick 内成交归本 tick 覆盖段的首分钟。tpd=3 压缩日首拍
+        // 成交归 570——旧管线 quiet_session 基线）。u128 乘防溢出。
+        let idx = u128::from(cont_tick)
+            * u128::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
+            / u128::from(continuous);
+        let wall = if idx < 120 {
+            570 + idx
+        } else if idx < 240 {
+            780 + (idx - 120)
+        } else {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!("游戏分钟 idx 越界：{idx}（映射域 0..240）"),
+            });
+        };
+        u16::try_from(wall).map_err(|_| RuntimeError::ProtocolInvariant {
+            detail: format!("墙钟分钟越界：{wall}"),
+        })
+    }
 }
 
 /// 挂单：资源实体随单驻留交易部（买单 purse=剩余可花；卖单 qty=剩余股数）。
@@ -257,6 +301,10 @@ pub struct DeskMarket {
     /// 分钟收盘（绝对交易分钟，无成交分钟沿用当时最新价——对齐
     /// `observation.rs MarketMinuteClose` 语义）。
     pub minute_closes: Vec<(u64, i64)>,
+    /// 当日分钟K桶（B2 观察面：真实成交聚合 OHLC+量+额+笔数，按键
+    /// （minute_of_day, phase）严格递增；零成交分钟不造 bar——占位收盘
+    /// 由 `minute_closes` 承载，两读面语义分离）。
+    pub minute_bars: Vec<super::protocol::MinuteBarFact>,
     /// tick 收盘价历史（容量 history_len）。
     pub recent_prices: VecDeque<i64>,
     /// 已完成交易日 K 历史（日界时活动 K 入列）。
@@ -281,6 +329,8 @@ struct MarketSnapshot {
     recent_len: usize,
     candles_len: usize,
     turnover_today: i64,
+    /// B2：分钟K桶尾长（Abort 回滚 truncate 基准）。
+    bars_len: usize,
 }
 
 /// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
@@ -363,6 +413,17 @@ pub struct DeskState {
     pub resting_count: u64,
     /// 本 tick 是否已执行开盘清算（防御：一次）。
     opening_cleared: bool,
+    /// B2 分钟归一：竞价清算执行窗标记（Some=当前 settle_fill 处于开盘
+    /// /收盘清算——成交归固定分钟 565/900；None=连续竞价按 tick 推导墙钟
+    /// 分钟）。置/清由两条清算路径的调用者承担；rollback 统一复位。
+    clearing_minute: Option<(u16, super::protocol::MinuteBarPhase)>,
+    /// B2：跨日暂存桶（生产时序 roll_day 先于日结 Drain——tick=tpd 首
+    /// 拍清当日桶；暂存待 Drain 应答捎带，冻结链才能拿到完整当日桶
+    /// ＋收盘清算 900 桶）。每日结消费一次。
+    rolled_day_bars: Option<Vec<super::protocol::MinuteBarFact>>,
+    /// B2：当日桶已随 Drain 捎带（未跨日手动日结形态——防后续 roll_day
+    /// 把已捎带的桶再暂存造成下次日结双计；roll_day 重置）。
+    bars_shipped_today: bool,
     /// 本 tick 双腿成交事实缓冲（出口随 DeskReport；Abort 清空）。
     trade_facts: Vec<super::protocol::DeskTradeFact>,
     /// 本 tick 生命周期事实缓冲（受理/撤单/到期）。
@@ -508,6 +569,7 @@ impl DeskState {
             trade_count: 0,
             candle: None,
             minute_closes: Vec::new(),
+            minute_bars: Vec::new(),
             recent_prices: VecDeque::new(),
             candles: setup.initial_daily_bars.iter().map(|&(o, h, l, c, v)| DeskCandle {
                 open: o,
@@ -547,6 +609,9 @@ impl DeskState {
             cancelled_orders: 0,
             resting_count: 0,
             opening_cleared: false,
+            clearing_minute: None,
+            rolled_day_bars: None,
+            bars_shipped_today: false,
             trade_facts: Vec::new(),
             lifecycle_facts: Vec::new(),
             auction_facts: Vec::new(),
@@ -577,9 +642,21 @@ impl DeskState {
             m.volume_today,
             m.trade_count,
             m.minute_closes.len() as u64,
+            m.minute_bars.len() as u64,
             m.recent_prices.len() as u64,
         ] {
             h = fnv(h, v);
+        }
+        for bar in &m.minute_bars {
+            h = fnv(h, u64::from(bar.minute_of_day));
+            h = fnv(h, bar.open.cents() as u64);
+            h = fnv(h, bar.high.cents() as u64);
+            h = fnv(h, bar.low.cents() as u64);
+            h = fnv(h, bar.close.cents() as u64);
+            h = fnv(h, bar.volume_shares);
+            h = fnv(h, bar.turnover_cents as u64);
+            h = fnv(h, (bar.turnover_cents >> 64) as u64);
+            h = fnv(h, bar.trade_count);
         }
         if let Some(c) = m.candle {
             for v in [
@@ -639,6 +716,7 @@ impl DeskState {
             recent_len: m.recent_prices.len(),
             candles_len: m.candles.len(),
             turnover_today: m.turnover_today,
+            bars_len: m.minute_bars.len(),
         }));
     }
 
@@ -692,6 +770,7 @@ impl DeskState {
                     m.trade_count = s.trade_count;
                     m.candle = s.candle;
                     m.minute_closes.truncate(s.minute_len);
+                    m.minute_bars.truncate(s.bars_len);
                     m.recent_prices.truncate(s.recent_len);
                     m.candles.truncate(s.candles_len);
                     m.turnover_today = s.turnover_today;
@@ -714,6 +793,8 @@ impl DeskState {
         self.lifecycle_facts.clear();
         self.auction_facts.clear();
         self.cur_tick = self.committed_tick;
+        // B2：清算窗标记复位（Err 泄漏防御——Abort/panic 回滚统一恢复点）。
+        self.clearing_minute = None;
         self.cur_round = 0;
         self.opening_cleared = false;
     }
@@ -1440,6 +1521,18 @@ impl DeskState {
             taker_side,
             maker_fees_cents: sell_fees,
             taker_fees_cents: buy_fees,
+            // B2 件 3：扣费处直录双腿实收三分项（卖=封顶分配 charged、
+            // 买=边际佣金+边际过户且印花恒 0）——与合计同源构造。
+            maker_fee_split: crate::fees::FeeComponents {
+                commission: charged.commission,
+                stamp_tax: charged.stamp_tax,
+                transfer_fee: charged.transfer_fee,
+            },
+            taker_fee_split: crate::fees::FeeComponents {
+                commission: Money::from_cents(buy_commission_delta),
+                stamp_tax: Money::ZERO,
+                transfer_fee: Money::from_cents(buy_transfer_delta),
+            },
             maker_order_serial: (u64::from(maker_order.0) << 32) | maker_order.1,
             taker_order_serial: (u64::from(taker_order.0) << 32) | taker_order.1,
         });
@@ -1476,6 +1569,9 @@ impl DeskState {
             transfer_fee: charged.transfer_fee.cents(),
         });
         // 行情更新：末笔成交价、日内高低、量、笔数、活动日 K。
+        // B2 分钟K桶并入同一循环（不加第二遍遍历）——键=竞价清算窗
+        // 固定分钟或连续 tick 推导墙钟分钟。
+        let minute_key = self.trade_minute_key()?;
         let m = &mut self.market;
         m.last_price = price;
         m.day_high = m.day_high.max(price);
@@ -1483,6 +1579,59 @@ impl DeskState {
         m.volume_today += qty as u64;
         m.turnover_today += value;
         m.trade_count += 1;
+        {
+            // value=price×qty 恒正（settle_fill 上游校验），经 u64 转 u128。
+            let turnover =
+                u128::from(u64::try_from(value).map_err(|_| over("成交额转 u128 溢出"))?);
+            let price_money = crate::money::Money::from_cents(price);
+            let same_bucket = m
+                .minute_bars
+                .last()
+                .is_some_and(|bar| (bar.minute_of_day, bar.phase) == minute_key);
+            if same_bucket {
+                let bar = m.minute_bars.last_mut().expect("is_some_and 已核验");
+                bar.high = bar.high.max(price_money);
+                bar.low = bar.low.min(price_money);
+                bar.close = price_money;
+                bar.volume_shares = bar
+                    .volume_shares
+                    .checked_add(u64::from(qty))
+                    .ok_or_else(|| over("分钟桶成交量溢出 u64"))?;
+                bar.turnover_cents = bar
+                    .turnover_cents
+                    .checked_add(turnover)
+                    .ok_or_else(|| over("分钟桶成交额溢出 u128"))?;
+                bar.trade_count = bar
+                    .trade_count
+                    .checked_add(1)
+                    .ok_or_else(|| over("分钟桶笔数溢出 u64"))?;
+            } else {
+                // 新键必须严格大于末键（tick 单调 ⇒ 桶键单调；回退=结构性 bug）。
+                if m
+                    .minute_bars
+                    .last()
+                    .is_some_and(|last| (last.minute_of_day, last.phase) >= minute_key)
+                {
+                    return Err(RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "分钟桶键回退：last={:?}, new={minute_key:?}",
+                            m.minute_bars.last().map(|b| (b.minute_of_day, b.phase))
+                        ),
+                    });
+                }
+                m.minute_bars.push(super::protocol::MinuteBarFact {
+                    minute_of_day: minute_key.0,
+                    phase: minute_key.1,
+                    open: price_money,
+                    high: price_money,
+                    low: price_money,
+                    close: price_money,
+                    volume_shares: u64::from(qty),
+                    turnover_cents: turnover,
+                    trade_count: 1,
+                });
+            }
+        }
         let candle = m.candle.get_or_insert(DeskCandle {
             open: price,
             high: price,
@@ -1495,6 +1644,34 @@ impl DeskState {
         candle.close = price;
         candle.volume += qty as u64;
         Ok(())
+    }
+
+    /// B2 分钟归一：当前成交所属分钟键。竞价清算窗（`clearing_minute`
+    /// 置位）取固定分钟 565/900（旧契约：竞价完成事实归一，不从指示价
+    /// 反推）；否则连续竞价按 tick 推导墙钟分钟。其他相位（申报窗/盘前/
+    /// 收盘竞价窗）产生连续成交=结构性 bug，显式失败。
+    fn trade_minute_key(
+        &self,
+    ) -> Result<(u16, super::protocol::MinuteBarPhase), RuntimeError> {
+        if let Some(key) = self.clearing_minute {
+            return Ok(key);
+        }
+        // 撮合窗基准=cur_tick−1（与 place 的受理基准同式——成交的撮合
+        // 语义属上一拍的连续段；sol3r：收盘窗首拍受理的单以连续末拍
+        // 基准立即撮合，归连续分钟而非 900）。
+        let basis = self.cur_tick.saturating_sub(1);
+        match self.setup.phase_at(basis) {
+            DeskPhase::Continuous => Ok((
+                self.setup.continuous_minute_of_day(basis)?,
+                super::protocol::MinuteBarPhase::Continuous,
+            )),
+            other => Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "非清算窗的 {other:?} 相位产生成交——分钟归一无定义（stock={}）",
+                    self.setup.stock
+                ),
+            }),
+        }
     }
 
     /// maker 写回：清零移除（记 Removed），否则字段恢复（档首原位）。
@@ -1914,8 +2091,12 @@ impl DeskState {
         };
         let price = sel.price.cents();
         // P1-2（Sol）：公开成交量=实际成交量（内部选择量只是上界——
-        // 自单剔除后可配对量可低于选择量）。
-        let actual = self.execute_clearing_at(price, sel.volume)?;
+        // 自单剔除后可配对量可低于选择量）。开盘清算成交归固定分钟 565。
+        let actual = self.execute_clearing_at(
+            price,
+            sel.volume,
+            (565, super::protocol::MinuteBarPhase::OpenAuction),
+        )?;
         self.auction_facts.push(super::protocol::DeskAuctionFact {
             stock: self.setup.stock,
             tick: self.cur_tick,
@@ -1929,7 +2110,21 @@ impl DeskState {
     }
 
     /// 按清算价配对成交（买卖双方都从最优价 FIFO 取，eligible 按清算价过滤）。
-    fn execute_clearing_at(&mut self, price: i64, volume: u64) -> Result<u64, RuntimeError> {
+    /// B2 分钟归一：`minute_key` 由清算路径传入（开盘 565/收盘 900）——
+    /// 本函数进出对称置/清 `clearing_minute`（Err 也不泄漏标记）。
+    fn execute_clearing_at(
+        &mut self,
+        price: i64,
+        volume: u64,
+        minute_key: (u16, super::protocol::MinuteBarPhase),
+    ) -> Result<u64, RuntimeError> {
+        self.clearing_minute = Some(minute_key);
+        let result = self.execute_clearing_inner(price, volume);
+        self.clearing_minute = None;
+        result
+    }
+
+    fn execute_clearing_inner(&mut self, price: i64, volume: u64) -> Result<u64, RuntimeError> {
         let mut matched = 0u64;
         while matched < volume {
             let buy = {
@@ -2027,6 +2222,23 @@ impl DeskState {
             m.candles.push(candle);
         }
         m.minute_closes.clear();
+        // B2：当日桶跨日暂存（roll_day 先于日结 Drain 的生产时序——见
+        // 字段注释）。上一暂存未消费=连续两日未日结（结构性 bug，防御
+        /// 显式覆盖前先断言）。
+        debug_assert!(
+            self.rolled_day_bars.is_none(),
+            "跨日暂存桶未被日结消费（连续日结缺失）"
+        );
+        // 未跨日手动日结已捎带过（bars_shipped_today）——不再暂存（防
+        /// 下次日结双计）且**清 live**（复核终核登记 a：day-1 仅 565 一桶
+        /// 的窄形态会与 day-2 同桶静默合并——多数形态键回退显式 Err，窄
+        /// 形态必须同样终结）；生产自动形态（roll 先于 Drain）恒 false。
+        if !self.bars_shipped_today {
+            self.rolled_day_bars = Some(std::mem::take(&mut m.minute_bars));
+        } else {
+            m.minute_bars.clear();
+        }
+        self.bars_shipped_today = false;
     }
 
     /// 新 tick 起点：隐式转正 → （日界重置）→ 行情快照 → 开盘清算 → 到期撤销。
@@ -2186,6 +2398,8 @@ impl DeskState {
             min_sell_price: down,
             recent_prices: self.market.recent_prices.iter().copied().collect(),
             minute_closes: self.market.minute_closes.clone(),
+            // B2：活动桶发布（Arc 共享——成交轮 view 重建时换新，零成交稳态轮缓存命中复用）。
+            minute_bars: std::sync::Arc::new(self.market.minute_bars.clone()),
             // D3a-2 观察基：已完成日 K 尾部 250（不过滤）+绝对计数。
             // 刀 2a：尾部 250 直取（原全历史 collect 再 drain 头部——
             /// O(全历史)/轮×每股；361 日档每轮多遍历 111 条）。
@@ -2413,7 +2627,11 @@ impl DeskState {
             });
             if let Some(sel) = selection {
                 let price = sel.price.cents();
-                let actual = self.execute_clearing_at(price, sel.volume)?;
+                let actual = self.execute_clearing_at(
+                    price,
+                    sel.volume,
+                    (900, super::protocol::MinuteBarPhase::ClosingAuction),
+                )?;
                 self.auction_facts.push(super::protocol::DeskAuctionFact {
                     stock: self.setup.stock,
                     tick: self.cur_tick,
@@ -2690,6 +2908,7 @@ pub fn desk_main(
                 volume,
             });
         m.minute_closes = seed.minute_closes;
+        m.minute_bars = seed.minute_bars;
     }
     let mut result = Ok(());
     loop {
@@ -2957,6 +3176,30 @@ fn process_msg(
                         .drain(..)
                         .filter(|f| f.phase == crate::TradingPhase::ClosingAuction)
                         .collect(),
+                    // B2：当日桶=跨日暂存（日内段——roll_day 先于 Drain 的
+                    /// 生产形态）＋live 段（本 Drain 收盘清算 900 桶；手动
+                    /// 日结未跨日形态下 live 即全量）。键序天然衔接（日内
+                    /// <900）。
+                    drained_minute_bars: {
+                        // B2 日结形态两分（期末 Final 观察面保留桶）：
+                        // - 跨日形态（rolled 在）：live 段=Drain 收盘清算的
+                        //   900 桶（建于已 roll 的新日数组），并入应答后清
+                        //   （残留会使次日连续桶键回退——探针 tick241 实证）；
+                        // - 未跨日形态（手动日结）：应答=live 全量，置已
+                        //   捎带标记（防后续 roll_day 双计）；live 保留供
+                        //   期末 Final 观察面。
+                        match state.rolled_day_bars.take() {
+                            Some(mut rolled) => {
+                                rolled.extend(state.market.minute_bars.iter().copied());
+                                state.market.minute_bars.clear();
+                                rolled
+                            }
+                            None => {
+                                state.bars_shipped_today = true;
+                                state.market.minute_bars.clone()
+                            }
+                        }
+                    },
                 })
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),

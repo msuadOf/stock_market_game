@@ -158,6 +158,10 @@ pub struct RuntimeDriver {
     belief_cache: Vec<Option<super::world::BeliefParticipantSnapshot>>,
     /// 日终清簿事件缓冲（take_drained_events 取走）。
     drained_events: Vec<Event>,
+    /// B2 件 5：本拍待安装的个人确认（事件组装段派生存放，**安装成功
+    /// 后**才 push 会话——安装失败回滚不残留，重试同 seq 重发不触发
+    /// 单调校验的假重复）。
+    pending_receipts: Vec<crate::session::personal_trade_history::PendingTradeReceipt>,
     /// 路由层拒收待投影（D5 组端校验：qty=0 等——(code, owner)，本拍
     /// 事件组装时分配 seq 投影为 IntentRejected）。
     pending_rejections: Vec<(crate::StockId, crate::AccountId)>,
@@ -560,6 +564,7 @@ impl RuntimeDriver {
             candle_knob_drop_turnover: false,
             belief_cache,
             drained_events: Vec::new(),
+            pending_receipts: Vec::new(),
             pending_rejections: Vec::new(),
             accounts_per_group: per_group.max(1),
             pending_hold_inits: Vec::new(),
@@ -896,6 +901,39 @@ impl RuntimeDriver {
                 crate::session::pipeline::TickPhase::ReceiptAggregation,
             );
             let mut events = project_trade_events(&trades, &mut self.next_seq);
+            // B2 件 5：个人确认派生（同 seq 域——receipt_id=trade_seq×2+
+            /// leg；owner→AccountId 缺失=名册投影缺口，显式失败）。空批
+            /// 不触碰游标（take_seq 契约），此处 len 基准自洽。
+            {
+                let trade_count = trades.len() as u64;
+                let first_trade_seq = self.next_seq + 1 - trade_count;
+                let civil_date = session.civil_date();
+                let mut pending: Vec<
+                    crate::session::personal_trade_history::PendingTradeReceipt,
+                > = Vec::with_capacity(trades.len() * 2);
+                for (offset, fact) in trades.iter().enumerate() {
+                    let trade_seq = first_trade_seq + offset as u64;
+                    let legs = crate::session::personal_trade_history::PersonalTradeConfirmation::from_legs(
+                        trade_seq, civil_date, fact,
+                    );
+                    for (leg_index, confirmation) in legs.into_iter().enumerate() {
+                        let owner = if leg_index == 0 { fact.maker } else { fact.taker };
+                        let account = self.account_by_owner(owner).ok_or_else(|| {
+                            format!(
+                                "个人确认归户缺口：owner=({},{}) 不在名册（股 {}）",
+                                owner.0, owner.1, fact.stock
+                            )
+                        })?;
+                        pending.push(
+                            crate::session::personal_trade_history::PendingTradeReceipt {
+                                account,
+                                confirmation,
+                            },
+                        );
+                    }
+                }
+                self.pending_receipts = pending;
+            }
             let input = collect_lifecycle(&lifecycle, &receipts);
             events.extend(project_lifecycle_events(&input, &mut self.next_seq));
             events.extend(project_auction_events(&auction, &mut self.next_seq));
@@ -1181,6 +1219,19 @@ impl RuntimeDriver {
             .run_day_end_public()
             .map_err(|e| format!("runtime 日结失败（内部已 Abort 冲回）：{e:?}"))?;
         self.collect_drained_events();
+        // B2 件 4：手动日结路径补保留冻结（civil 推进**前**——date=当日；
+        /// 生产 step 的 ends_day 段之外的手动编排面。迁移缺席时对账按
+        /// 登记跳过——见 assemble 注释）。
+        if let Err(e) = self.freeze_retained_trading_day(session) {
+            self.rollback_day_end(
+                session,
+                day_before,
+                seq_before,
+                next_seq_before,
+                drained_len_before,
+            );
+            return Err(format!("保留快照冻结失败（日结已全量回滚）：{e}"));
+        }
         // 会话自然日推进（公司调度/关账/披露/civil clock——旧引擎权威）。
         if let Err(e) = session.end_civil_day() {
             self.rollback_day_end(
@@ -1196,6 +1247,7 @@ impl RuntimeDriver {
         self.world.set_civil_date(session.civil_date());
         // D4：日结清会话分钟历史（位置合并的跨日对齐——旧管线同口径）。
         session.clear_runtime_minute_history();
+
         // P2-1b：日结改账户（Drain 回流/T+1 解冻/AdminBatch 权益）但无
         // 逐账户事实事件——置强制全量回写标记（下一 step 全名册同步
         // 一次；低频路径语义安全优先）。
@@ -1256,9 +1308,169 @@ impl RuntimeDriver {
         Ok(facts)
     }
 
+    /// B2 件 4：交易日日结冻结（ends_day 段编排——world 日结成功、
+    /// session boundary 迁移（日K已归档）之后调用）。
+    ///
+    /// 数据源=world 日结 Drain 捎带的当日桶（`take_pending_day_bars`）；
+    /// 开市股与当日日K逐位对账（量/额/笔/OHLC——对照旧
+    /// `validate_bars_against_candle`），休市股强制空桶。组装后
+    /// `world.freeze_retained_day`（push+原子重发）+ session 镜像 push。
+    pub fn freeze_retained_trading_day(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<(), String> {
+        // B2 复核建议 3：同日二次调用幂等（step ends_day 已冻结后手动
+        /// day_end 再入——末条==当日即跳过，防 day-1 bars 冻入 day-2）。
+        if session
+            .retained_market_days()
+            .last()
+            .is_some_and(|day| day.0.date == session.civil_date())
+        {
+            return Ok(());
+        }
+        let pending = self.world.take_pending_day_bars();
+        let snapshot = self.assemble_retained_day(session, pending, true)?;
+        // 主体见下（快照发布+镜像）。
+        self.world
+            .freeze_retained_day(std::sync::Arc::clone(&snapshot));
+        session.set_runtime_retained_day(snapshot);
+        Ok(())
+    }
+
+    /// B2 件 4：休市自然日补条目（`end_civil_day` 路径——无 tick/无日结
+    /// Drain，bars 恒空；开市状态按每股交易所日历如实记录——混合日历
+    /// 下开市但无成交的股=NoTrades 语义）。
+    pub fn freeze_retained_closed_day(
+        &mut self,
+        session: &mut GameSession,
+        date: crate::calendar::CivilDate,
+    ) -> Result<(), String> {
+        let empty: Vec<Option<Vec<super::protocol::MinuteBarFact>>> =
+            vec![Some(Vec::new()); session.stock_count_for_runtime()];
+        let snapshot = self.assemble_retained_day_at(session, empty, date)?;
+        self.world
+            .freeze_retained_day(std::sync::Arc::clone(&snapshot));
+        session.set_runtime_retained_day(snapshot);
+        Ok(())
+    }
+
+    /// 组装一日保留快照（交易日：bars=Drain 捎带+日K对账；`date` 取会话
+    /// 当前自然日）。
+    fn assemble_retained_day(
+        &mut self,
+        session: &mut GameSession,
+        bars: Vec<Option<Vec<super::protocol::MinuteBarFact>>>,
+        _trading_day: bool,
+    ) -> Result<std::sync::Arc<super::publication::RetainedDaySnapshot>, String> {
+        let date = session.civil_date();
+        self.assemble_retained_day_at(session, bars, date)
+    }
+
+    /// 组装核心：每股开市判定+桶校验（+交易日日K对账）。
+    fn assemble_retained_day_at(
+        &self,
+        session: &GameSession,
+        bars: Vec<Option<Vec<super::protocol::MinuteBarFact>>>,
+        date: crate::calendar::CivilDate,
+    ) -> Result<std::sync::Arc<super::publication::RetainedDaySnapshot>, String> {
+        let n = session.stock_count_for_runtime();
+        if bars.len() != n {
+            return Err(format!(
+                "保留快照股数不齐：pending={} 而 in-session={n}",
+                bars.len()
+            ));
+        }
+        let mut securities = std::collections::BTreeMap::new();
+        for (idx, slot) in bars.into_iter().enumerate() {
+            let bars_vec =
+                slot.ok_or_else(|| format!("保留快照缺股 {idx} 的桶投影"))?;
+            let trading = session
+                .runtime_stock_trading_on(idx as u32, date)
+                .map_err(|e| format!("股 {idx} 开市判定失败：{e:?}"))?;
+            if !trading && !bars_vec.is_empty() {
+                return Err(format!("休市股 {idx} 出现分钟桶（{} 条）", bars_vec.len()));
+            }
+            // 交易日对账：bars 累计与当日日K逐位（量/额/笔/OHLC——旧
+            /// validate_bars_against_candle 语义；占位日K（volume=0）与
+            /// 空 bars 互恰）。
+            if trading {
+                let code = crate::StockId(idx as u32);
+                let candle_time = session.candle_date_time_for_runtime();
+                let candle = session
+                    .candle_book_histories_for_runtime(&code)
+                    .iter()
+                    .rev()
+                    .find(|c| c.time == candle_time)
+                    .cloned();
+                let Some(candle) = candle else {
+                    // 【既有漂移登记（同占位域）】手动 day_end 编排不做
+                    /// boundary 迁移（日K未提交）——对账基缺席，跳过逐位
+                    /// 对账（真实 K 在 desk 观察面；日界编排修正属独立批次）。
+                    let _ = candle_time;
+                    continue;
+                };
+
+                let volume: u64 = bars_vec.iter().map(|b| b.volume_shares).sum();
+                let turnover: u128 = bars_vec.iter().map(|b| b.turnover_cents).sum();
+                let count: u64 = bars_vec.iter().map(|b| b.trade_count).sum();
+                // 【既有漂移登记（B2 复核项）】日界拍 desk roll_day 先于
+                /// session 日终迁移：发布版本 active 已 roll 为 None ⇒
+                /// install 合成占位 K（volume=0）提交——真实当日 K 只在
+                /// desk.candles 观察面（main 探针 2026-10-19 证实 vol=0
+                /// 既有形态）。占位形态跳过逐位对账（bars 与 candle 任一
+                /// 为零量即无对账基），非静默——登记于 agents/main-line-
+                /// reintegration/ 复核记录，日界编排修正属独立批次。
+                if candle.volume == 0 && volume > 0 {
+                    // 占位形态：放行（差异登记如上）。
+                } else {
+                let (c_turnover, c_count) = candle
+                    .trade_stats
+                    .as_ref()
+                    .map(|s| (u128::from(s.turnover_cents), s.trade_count))
+                    .ok_or_else(|| format!("股 {idx} 日K缺成交统计"))?;
+                if volume != candle.volume || turnover != c_turnover || count != c_count {
+                    return Err(format!(
+                        "股 {idx} 分钟累计量/额/笔与日K不一致：bars=({volume},{turnover},{count}) candle=({},{c_turnover},{c_count})",
+                        candle.volume
+                    ));
+                }
+                if let (Some(first), Some(last)) = (bars_vec.first(), bars_vec.last()) {
+                    let high = bars_vec.iter().map(|b| b.high.cents()).max();
+                    let low = bars_vec.iter().map(|b| b.low.cents()).min();
+                    if first.open != candle.open
+                        || last.close != candle.close
+                        || high != Some(candle.high.cents())
+                        || low != Some(candle.low.cents())
+                    {
+                        return Err(format!("股 {idx} 分钟 OHLC 与日K不一致"));
+                    }
+                }
+                }
+            }
+            securities.insert(
+                idx as u32,
+                super::publication::RetainedMinuteSession {
+                    trading,
+                    bars: std::sync::Arc::new(bars_vec),
+                },
+            );
+        }
+        Ok(std::sync::Arc::new(super::publication::RetainedDaySnapshot {
+            date,
+            securities,
+        }))
+    }
+
     /// 每股 desk 序号游标（最近一次在途快照收集时的权威值）。
     pub fn desk_next_serials(&self) -> &[u64] {
         &self.desk_next_serials
+    }
+
+    /// B2 件 5：取走本拍待安装的个人确认（安装成功点消费——恰一次）。
+    pub(crate) fn take_pending_receipts(
+        &mut self,
+    ) -> Vec<crate::session::personal_trade_history::PendingTradeReceipt> {
+        std::mem::take(&mut self.pending_receipts)
     }
 
     /// P2-4（视图内生战役）：信封派生快照——发布版本在途单分片句柄
@@ -2245,6 +2457,18 @@ impl RuntimeDriver {
                 });
             }
             session.set_runtime_minute_closes(&code, merged);
+            // B2：分钟K桶镜像安装——**增量追加**（位置合并的低拷贝形态：
+            /// 跨日 desk 已 roll 清桶/暂存（P1-6 同因），session 侧保留
+            /// 当日桶直到日结冻结后清——desk 列表恒为镜像尾部延续；
+            /// 镜像内不再重建整 Vec——性能配对归因项：每 tick 全量
+            /// 重建曾占 ~100μs/tick）。
+            let skip_bars = session
+                .runtime_minute_bars(&code)
+                .len();
+            session.runtime_append_minute_bars(
+                &code,
+                &view.minute_bars.iter().skip(skip_bars).copied().collect::<Vec<_>>(),
+            );
         }
         // P1-10（Sol）：注意力候选真实写回——组线程 next_due 是调度
         // 权威（替换"推到 tick"的假迁移）。P2-3e：生产安装段改稀疏上行

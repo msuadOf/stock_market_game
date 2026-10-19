@@ -6730,6 +6730,7 @@ mod sol_recheck1_tests {
             min_sell_price: last * 9 / 10,
             recent_prices: Vec::new(),
             minute_closes: Vec::new(),
+            minute_bars: std::sync::Arc::new(Vec::new()),
             daily_bars: Vec::new(),
             daily_active: None,
             daily_total_completed: 0,

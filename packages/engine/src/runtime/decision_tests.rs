@@ -35,6 +35,7 @@ fn snapshot_one_stock(last: i64, upper: i64, lower: i64) -> TickSnapshot {
             min_sell_price: (last / 10).max(1),
             recent_prices: vec![last],
             minute_closes: Vec::new(),
+            minute_bars: std::sync::Arc::new(Vec::new()),
             daily_bars: Vec::new(),
             daily_active: None,
             daily_active_turnover_cents: 0,

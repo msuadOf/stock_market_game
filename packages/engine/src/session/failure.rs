@@ -41,8 +41,14 @@ pub(crate) struct RuntimeInstallBaseline {
         crate::StockId,
         Vec<crate::observation::MarketMinuteClose>,
     >,
+    // B2 复核阻断 1：当日分钟K桶拍前整值（回滚源——bars 增量追加域）。
+    minute_bars:
+        std::collections::BTreeMap<crate::StockId, Vec<crate::runtime::MinuteBarFact>>,
     candle_histories: std::collections::BTreeMap<crate::StockId, super::candles::DailyCandleHistory>,
     candle_active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
+    // B2 件 4：保留链拍前尾长（ends_day 段冻结 push 的回滚源——轻量
+    // 截断，避免整链深拷贝进每拍基线）。
+    retained_len: usize,
     // Sol 复核阻断 P1-1：在途快照拍前值（Arc 廉价克隆）。回滚恢复拍前
     // 快照（上一成功拍发布版本——与账户/镜像回滚面同源），替代清空：
     // ledger 已停逐拍维护（P2-4），清空使失败拍后的信封查询/save 与
@@ -366,6 +372,88 @@ impl GameSession {
         self.state.pending_player.splice(0..0, intents);
     }
 
+    /// B2 件 4：休市自然日补保留条目（末条日期==settled 跳过；惰性构造
+    /// 驱动器与 step 同路由——休市日无 step 也保证 world 发布面同步）。
+    pub(in crate::session) fn freeze_closed_retained_day_if_needed(
+        &mut self,
+        settled: crate::calendar::CivilDate,
+    ) -> Result<(), StepFatal> {
+        let already = self
+            .state
+            .retained_market_days
+            .last()
+            .is_some_and(|day| day.0.date == settled);
+        if already {
+            return Ok(());
+        }
+        // 直调模式（不走 `with_routed_runtime_driver`——其锁步校验是
+        /// step 拍语义的前置，end_civil_day 时点（restore 重放等形态）
+        /// 校验错位；此处仅需驱动器在位）。
+        if self.runtime_driver.is_none() {
+            self.construct_runtime_driver_lazy()?;
+        }
+        let cell = self
+            .runtime_driver
+            .take()
+            .expect("上方已构造或在位");
+        let outcome = (|| {
+            let mut driver = cell.lock().map_err(|_| {
+                StepFatal::InvariantViolation {
+                    location: "GameSession::end_civil_day::retained_closed".to_owned(),
+                    description: "runtime 驱动器锁 poison（休市冻结）".to_owned(),
+                }
+            })?;
+            driver
+                .freeze_retained_closed_day(self, settled)
+                .map_err(|e| StepFatal::InvariantViolation {
+                    location: "GameSession::end_civil_day::retained_closed".to_owned(),
+                    description: e,
+                })
+        })();
+        self.runtime_driver = Some(cell);
+        outcome
+    }
+
+    /// 惰性构造常驻驱动器（`with_routed_runtime_driver` 的构造段抽公共
+    /// ——首步与 end_civil_day 补冻结两消费面共用）。
+    fn construct_runtime_driver_lazy(&mut self) -> Result<(), StepFatal> {
+        // 与 `with_routed_runtime_driver` 的构造段逐字一致（D0 惰性构造：
+        // initial_committed_tick 对齐当前 session.tick；cfg(test) 的 staged
+        /// handover 消费——首步与 end_civil_day 补冻结两消费面同源）。
+        #[cfg(test)]
+        let queued_intents = crate::session::pipeline::take_staged_intents_for_runtime(self);
+        let mut driver =
+            crate::runtime::drive::RuntimeDriver::from_session_grouped(
+                self,
+                self.runtime_group_count,
+            )
+            .map_err(|e| StepFatal::InvariantViolation {
+                location: "GameSession::ensure_runtime_driver".to_owned(),
+                description: e,
+            })?;
+        driver.adopt_session_seq(self);
+        #[cfg(test)]
+        if let Some(intents) = queued_intents {
+            if !intents.is_empty() {
+                let upper: Vec<i64> = driver
+                    .world_public_views()
+                    .iter()
+                    .map(|v| v.daily_upper_limit)
+                    .collect();
+                driver
+                    .inject_player_intents(&intents, &upper)
+                    .map_err(|e| StepFatal::InvariantViolation {
+                        location: "GameSession::ensure_runtime_driver::queue 消费".to_owned(),
+                        description: e,
+                    })?;
+            }
+        }
+        self.runtime_driver = Some(std::sync::Mutex::new(driver));
+        // Sol 六审段 1.3：信息投递权威归组（停跑门随 state 克隆链走）。
+        self.state.runtime_information_authority = true;
+        Ok(())
+    }
+
     /// runtime 驱动翻转入口（翻转批）：环境变量 ENGINE_STEP_RUNTIME=1
     /// 时 `step()` 走 RuntimeDriver（常驻 World+安装面），否则旧管线
     /// （缺省 0=旧管线，见 `runtime::step_runtime_enabled`）。
@@ -418,43 +506,9 @@ impl GameSession {
         // D0 常驻 driver：首次调用惰性构造（initial_committed_tick 对齐
         // 当前 session.tick——全新会话即 0）。
         if self.runtime_driver.is_none() {
-            // Sol 三审修复 2：首步前 queue 的 staged handover 消费（恰一次，
-            // cfg(test)——staged 槽位仅测试适配器存在；消费器内含消费拍抑制
-            /// ——重排落在消费 tick 的账户顶到 tick+2，对齐旧消费 seam 的
-            /// "消费 tick 不再决策"）。attention 已由 produce 写回镜像，
-            /// 构造器恢复即组 next_due（不重复推进）。
-            #[cfg(test)]
-            let queued_intents = crate::session::pipeline::take_staged_intents_for_runtime(self);
-            let mut driver =
-                crate::runtime::drive::RuntimeDriver::from_session_grouped(
-                    self,
-                    self.runtime_group_count,
-                )
-                .map_err(|e| StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime".to_owned(),
-                    description: e,
-                })?;
-            driver.adopt_session_seq(self);
-            #[cfg(test)]
-            if let Some(intents) = queued_intents {
-                if !intents.is_empty() {
-                    let upper: Vec<i64> = driver
-                        .world_public_views()
-                        .iter()
-                        .map(|v| v.daily_upper_limit)
-                        .collect();
-                    driver
-                        .inject_player_intents(&intents, &upper)
-                        .map_err(|e| StepFatal::InvariantViolation {
-                            location: "GameSession::step_via_runtime::queue 消费".to_owned(),
-                            description: e,
-                        })?;
-                }
-            }
-            self.runtime_driver = Some(std::sync::Mutex::new(driver));
-            // Sol 六审段 1.3：信息投递权威归组（deliver_public_information
-            // 的停跑门随 state 克隆链走——见字段注记）。
-            self.state.runtime_information_authority = true;
+            // 构造细节见 `construct_runtime_driver_lazy`（D0 惰性构造+
+            /// cfg(test) staged handover 消费——两消费面共用）。
+            self.construct_runtime_driver_lazy()?;
         }
         // 取出锁单元（避免 &mut self 与 guard 交叉借用）；失败/成功都
         // 放回——Abort 语义下 worker 存活，driver 可重跑。例外：body 内
@@ -731,6 +785,18 @@ impl GameSession {
                 description: emit_err,
             }));
         }
+        // B2 件 5：个人确认入账（安装链成功后——失败回滚不残留；重试
+        /// 同 seq 重发经 take 恰一次语义不触发假重复）。
+        {
+            let receipts = driver.take_pending_receipts();
+            if let Err(e) = self.runtime_append_trade_receipts(&receipts) {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::receipts".to_owned(),
+                    description: e,
+                }));
+            }
+        }
         // D5 诊断面派生：retail 拒收诊断（旧管线 continuous lifecycle
         /// projection 的 Rejected 面——路由层组端校验拒收/交易部回执的
         /// runtime 等价；受理/成交/撤销诊断面随事件域迁移逐步补，此处
@@ -929,6 +995,15 @@ impl GameSession {
                     description: e,
                 }));
             }
+            // B2 件 4：交易日保留快照冻结（boundary 迁移已提交日K、
+            /// world 日结 Drain 已收当日桶——组装+日K对账+原子发布+镜像）。
+            if let Err(e) = driver.freeze_retained_trading_day(self) {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::retained_freeze".to_owned(),
+                    description: e,
+                }));
+            }
             events.extend(driver.take_drained_auction_events());
             for fact in facts {
                 // step_frame 接轨件 4：分配走驱动器游标（take_event_seq
@@ -1096,6 +1171,11 @@ impl GameSession {
             markets: self.state.markets.clone(),
             price_history: self.state.price_history.clone(),
             minute_closes: self.state.market_minute_closes.clone(),
+            // B2 复核阻断 1：当日分钟K桶入回滚面（candidate 投影失败
+            /// 不 poison 可重试——泄漏的 ghost bars 会经 from_session
+            /// 重建播回 desk 与重试成交合并，静默错桶入保留链）。
+            minute_bars: self.state.market_minute_bars.clone(),
+            retained_len: self.state.retained_market_days.len(),
             candle_histories: self.state.candle_book.histories().clone(),
             candle_active: self.state.candle_book.active().clone(),
             // P1-1：快照拍前值入基线（回滚恢复源）。
@@ -1428,6 +1508,8 @@ impl GameSession {
         self.state.runtime_belief_undo_ids.clear();
         self.state.runtime_retail_undo.clear();
         self.state.runtime_retail_undo_ids.clear();
+        self.state.runtime_receipts_undo.clear();
+        self.state.runtime_receipts_undo_ids.clear();
         self.state.runtime_history_undo.clear();
         self.state.runtime_history_undo_ids.clear();
         // step_frame 接轨件 4b：扩展回滚面同清。
@@ -1466,6 +1548,8 @@ impl GameSession {
             markets,
             price_history,
             minute_closes,
+            minute_bars,
+            retained_len,
             candle_histories,
             candle_active,
             resting_snapshot,
@@ -1500,6 +1584,11 @@ impl GameSession {
         self.state.markets = markets;
         self.state.price_history = price_history;
         self.state.market_minute_closes = minute_closes;
+        // B2 复核阻断 1：当日分钟K桶随整面恢复（bars 增量追加域的
+        // 回滚源——与 minute_closes 同式整值替换）。
+        self.state.market_minute_bars = minute_bars;
+        // B2：保留链截断回拍前尾长（冻结 push 的失败零泄漏）。
+        self.state.retained_market_days.truncate(retained_len);
         self.state.candle_book.replace_histories(candle_histories);
         self.state.candle_book.replace_active(candle_active);
         // P2-3b：五域回滚改写时 undo 消费（原全量快照恢复退役）。
@@ -1554,6 +1643,20 @@ impl GameSession {
             }
         }
         self.state.runtime_history_undo_ids.clear();
+        // B2 件 5：个人确认回滚（首写尾长截断——AppendOnlyHistory 支持
+        /// pop 或重建；用重建（chunk 共享尾不可中途截断）。
+        for (id, prev_len) in std::mem::take(&mut self.state.runtime_receipts_undo) {
+            if let Some(history) = self.state.personal_trade_confirmations.get(&id) {
+                let mut restored = crate::experience::AppendOnlyHistory::default();
+                for row in history.iter().take(prev_len) {
+                    restored.push(row.clone());
+                }
+                self.state
+                    .personal_trade_confirmations
+                    .insert(id, restored);
+            }
+        }
+        self.state.runtime_receipts_undo_ids.clear();
         // step_frame 接轨件 4b：扩展回滚面（整值替换域 move-undo 恢复——
         /// malformed_frame 契约：投影失败后 save==步前）。
         if let Some((mirror, cursors)) = self.state.runtime_mirror_undo.take() {
@@ -1909,6 +2012,97 @@ impl GameSession {
             .unwrap_or(&[])
     }
 
+    /// B2：在册股数（驱动器保留快照组装的维度源）。
+    pub fn stock_count_for_runtime(&self) -> usize {
+        self.state.setup.stocks.len()
+    }
+
+    /// B2：日K历史只读（保留快照日K对账的数据源——按时间倒序）。
+    pub fn candle_book_histories_for_runtime(
+        &self,
+        code: &crate::StockId,
+    ) -> Vec<crate::session::DailyCandle> {
+        self.state
+            .candle_book
+            .histories()
+            .get(code)
+            .map(|h| h.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// B2：保留历史链只读（查询面/发布对账的数据源）。
+    pub fn retained_market_days(
+        &self,
+    ) -> &[crate::runtime::publication::SharedRetainedDay] {
+        &self.state.retained_market_days
+    }
+
+    /// B2：日结冻结条目安装（交易日=驱动器编排；休市日=end_civil_day
+    /// 补条目——两者都经此 push 镜像）。
+    pub fn set_runtime_retained_day(
+        &mut self,
+        snapshot: std::sync::Arc<crate::runtime::publication::RetainedDaySnapshot>,
+    ) {
+        self.mark_external_mutation();
+        self.state
+            .retained_market_days
+            .push(crate::runtime::publication::SharedRetainedDay(snapshot));
+    }
+
+    /// B2：指定自然日每股开市判定（retained 冻结的休市/开市口径——
+    /// 沪深日历按股上市交易所；与公司域 history 同一 `TradingCalendar`
+    /// 数据源）。
+    pub fn runtime_stock_trading_on(
+        &self,
+        stock_idx: u32,
+        date: crate::calendar::CivilDate,
+    ) -> Result<bool, crate::calendar::CalendarError> {
+        let stock = self.state.setup.stocks.get(stock_idx as usize).ok_or(
+            crate::calendar::CalendarError::BeforeInitFloor {
+                date,
+                floor: date,
+            },
+        )?;
+        let calendar = crate::calendar::TradingCalendar::current_default_calendar()?;
+        Ok(
+            matches!(
+                calendar.day_status(super::session_calendar_exchange(stock.exchange), date)?,
+                crate::calendar::DayStatus::Trading
+            ),
+        )
+    }
+
+    /// B2：当日分钟K桶镜像**增量追加**（install 位置合并的低拷贝形态——
+    /// 调用方保证 tail 为镜像尾部延续；跨日 desk 空 tail=无追加）。
+    pub fn runtime_append_minute_bars(
+        &mut self,
+        code: &crate::StockId,
+        tail: &[crate::runtime::MinuteBarFact],
+    ) {
+        if tail.is_empty() {
+            return;
+        }
+        self.mark_external_mutation();
+        self.state
+            .market_minute_bars
+            .entry(*code)
+            .or_default()
+            .extend_from_slice(tail);
+    }
+
+    /// B2：当日分钟K桶镜像只读（install 位置合并的前缀源——同
+    /// `runtime_minute_history` 式）。
+    pub fn runtime_minute_bars(
+        &self,
+        code: &crate::StockId,
+    ) -> &[crate::runtime::MinuteBarFact] {
+        self.state
+            .market_minute_bars
+            .get(code)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// D5 restore 链最后一层：日内行情聚合种子读面（每股——save 点的
     /// desk 行情权威投影源）。活动 K 为空（日界空窗/竞价窗）→ None
     /// （desk 从构造零点=昨收锚定起，恰为新日起点语义）。昨收=日 K
@@ -1964,6 +2158,13 @@ impl GameSession {
                         .iter()
                         .map(|m| (m.absolute_trading_minute, m.close.cents()))
                         .collect(),
+                    // B2：当日分钟K桶投影（save 链——session 镜像权威源）。
+                    minute_bars: self
+                        .state
+                        .market_minute_bars
+                        .get(code)
+                        .cloned()
+                        .unwrap_or_default(),
                 },
             );
         }
@@ -1976,6 +2177,10 @@ impl GameSession {
         self.mark_external_mutation();
         for history in self.state.market_minute_closes.values_mut() {
             history.clear();
+        }
+        // B2：分钟K桶同步清（desk roll_day 对齐）。
+        for bars in self.state.market_minute_bars.values_mut() {
+            bars.clear();
         }
     }
 
@@ -2164,6 +2369,17 @@ impl GameSession {
     ) {
         self.mark_external_mutation();
         self.state.market_minute_closes.insert(code.clone(), closes);
+    }
+
+    /// B2：当日分钟K桶安装（驱动器 install 段——发布版本读面投影进
+    /// session 镜像；save/查询面的权威源）。
+    pub fn set_runtime_minute_bars(
+        &mut self,
+        code: &crate::StockId,
+        bars: Vec<crate::runtime::MinuteBarFact>,
+    ) {
+        self.mark_external_mutation();
+        self.state.market_minute_bars.insert(code.clone(), bars);
     }
 
     /// runtime 驱动器翻转面（翻转批）：注意力候选推进。

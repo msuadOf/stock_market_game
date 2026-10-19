@@ -131,11 +131,12 @@ fn validate_audit(receipt: &EnvelopeReceipt, audit: EnvelopeAudit) -> Result<(),
     }
     let nominal_after = fee_add(audit.nominal, receipt.nominal)?;
     if receipt.charged_after != fee_add(audit.charged, receipt.charged)?
-        || receipt.charged_after.total()?
+        || receipt.charged_after.total().map_err(money)?
             != receipt
                 .charged_before
-                .total()?
-                .add(receipt.charged.total()?)
+                .total()
+                .map_err(money)?
+                .add(receipt.charged.total().map_err(money)?)
                 .map_err(money)?
         || exceeds(receipt.charged_after, nominal_after)
     {
@@ -216,7 +217,9 @@ fn validate_buyer_resources(
                 .value_after
                 .sub(receipt.value_before)
                 .map_err(money)?;
-            let expected_spent = gross.add(receipt.charged.total()?).map_err(money)?;
+            let expected_spent = gross
+                .add(receipt.charged.total().map_err(money)?)
+                .map_err(money)?;
             if receipt.deliver_qty != filled
                 || receipt.deliver_cash != Money::ZERO
                 || receipt.delta.spent.cash != expected_spent
@@ -261,10 +264,10 @@ fn validate_seller_delivery(
                 || receipt.delta.released.shares != 0
                 || receipt.delta.live_after.shares != receipt.qty_after
                 || receipt.deliver_cash < Money::ZERO
-                || receipt.charged.total()? > gross
+                || receipt.charged.total().map_err(money)? > gross
                 || receipt
                     .deliver_cash
-                    .add(receipt.charged.total()?)
+                    .add(receipt.charged.total().map_err(money)?)
                     .map_err(money)?
                     != gross
             {
@@ -296,7 +299,7 @@ fn validate_seller_fill_charge(
     if exceeds(receipt.charged_before, audit.nominal) {
         return Err(invariant("seller charged history exceeds nominal history"));
     }
-    let charged_before_total = receipt.charged_before.total()?;
+    let charged_before_total = receipt.charged_before.total().map_err(money)?;
     if charged_before_total > receipt.value_before {
         return Err(invariant(
             "seller charged history exceeds cumulative gross value",
@@ -306,7 +309,8 @@ fn validate_seller_fill_charge(
     let nominal_after = fee_add(audit.nominal, receipt.nominal)?;
     let unpaid = fee_sub(nominal_after, receipt.charged_before)?;
     let unpaid_total = nominal_after
-        .total()?
+        .total()
+        .map_err(money)?
         .sub(charged_before_total)
         .map_err(money)?;
     let charge_cap = unpaid_total.min(gross);
@@ -344,7 +348,7 @@ fn allocate_seller_charge(
         stamp_tax,
         transfer_fee,
     };
-    if allocated.total()? != charge_cap {
+    if allocated.total().map_err(money)? != charge_cap {
         return Err(invariant("seller charge allocation did not exhaust cap"));
     }
     Ok(allocated)

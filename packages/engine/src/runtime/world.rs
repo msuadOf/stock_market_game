@@ -308,6 +308,9 @@ pub struct ShutdownReport {
     pub desk_finals: Vec<DeskFinalState>,
     /// worker 线程返回值（Err=线程主循环显式失败，已通过 Failed 上抛过）。
     pub worker_results: Vec<(WorkerId, Result<(), RuntimeError>)>,
+    /// B2：期末 Drain 应答捎带的当日分钟K桶（下标=股——观察面与日结
+    /// 统一；跨日形态 live 桶已并入应答）。
+    pub drained_minute_bars: Vec<Option<Vec<super::protocol::MinuteBarFact>>>,
 }
 
 /// 世界（协调者视角持有全部通道与线程句柄）。
@@ -387,6 +390,17 @@ pub struct World {
     /// 最晚组集中在低 handle 闲组=唤醒假设成立；集中在活跃组=组端
     /// 处理主导，假设推翻回设计台）。瞬态诊断面，不入存档/hash。
     pub seal_last_ack_groups: Vec<u32>,
+    /// B2 保留历史链（日结冻结的不可变快照——ADR-0034 全部保留；发布
+    /// 面共享外壳见 `retained_index`）。
+    retained_days: Vec<std::sync::Arc<super::publication::RetainedDaySnapshot>>,
+    /// B2：保留链发布外壳（非冻结 tick `Arc::clone` 复用——避免逐拍
+    /// 重建 Vec）。
+    retained_index: std::sync::Arc<super::publication::RetainedIndex>,
+    /// B2：日结 Drain 应答捎带的当日分钟K桶（驱动器编排冻结的消费面；
+    /// 每日结一次，取走即清）。
+    pending_day_bars: Vec<Option<Vec<super::protocol::MinuteBarFact>>>,
+    /// B2：发布代次（每次 publish 递增——区分同 tick 的保留链推进）。
+    publish_generation: u64,
 }
 
 impl World {
@@ -690,6 +704,8 @@ impl World {
             super::publication::ViewPublication::new(std::sync::Arc::new(
                 super::publication::PublishedTick {
                     tick: initial_committed_tick,
+                    generation: 0,
+                    retained: std::sync::Arc::new(super::publication::RetainedIndex::default()),
                     global: global_v0,
                     desks: public_views
                         .iter()
@@ -748,12 +764,68 @@ impl World {
             seal_first_ack_ns: 0,
             seal_ack_spread_ns: 0,
             seal_last_ack_groups: Vec::new(),
+            retained_days: Vec::new(),
+            retained_index: std::sync::Arc::new(super::publication::RetainedIndex::default()),
+            pending_day_bars: vec![None; n_stocks],
+            publish_generation: 0,
         })
     }
 
     /// Q1 发布槽句柄（读者面：load() 得一致读点；句柄可长期持有）。
     pub fn publication(&self) -> std::sync::Arc<super::publication::ViewPublication> {
         std::sync::Arc::clone(&self.publication)
+    }
+
+    /// B2：取走日结 Drain 捎带的当日分钟K桶（取走即清——每日结一次）。
+    /// 返回 `Vec<Option<Vec<MinuteBarFact>>>`（下标=股；None=本日结未
+    /// 收集到该股应答——结构性 bug 由调用方显式失败）。
+    pub fn take_pending_day_bars(
+        &mut self,
+    ) -> Vec<Option<Vec<super::protocol::MinuteBarFact>>> {
+        let taken = std::mem::take(&mut self.pending_day_bars);
+        // 取走即按股数重建空槽（mem::take 的空 Vec 会使下次日结收集失效）。
+        self.pending_day_bars = vec![None; self.n_stocks];
+        taken
+    }
+
+    /// B2：保留链只读（发布/查询面同源句柄）。
+    pub fn retained_days(&self) -> &[std::sync::Arc<super::publication::RetainedDaySnapshot>] {
+        &self.retained_days
+    }
+
+    /// B2：冻结一日保留快照——push 链 + **原子重发布**（同 tick、
+    /// generation+1：history/日期随发布原子可见；"日结全成功后原子
+    /// 发布"的合同入口）。调用方（驱动器编排）负责快照内容校验。
+    pub fn freeze_retained_day(
+        &mut self,
+        snapshot: std::sync::Arc<super::publication::RetainedDaySnapshot>,
+    ) {
+        self.retained_days.push(std::sync::Arc::clone(&snapshot));
+        self.retained_index = std::sync::Arc::new(super::publication::RetainedIndex {
+            days: self.retained_days.clone(),
+        });
+        self.publish_generation += 1;
+        let generation = self.publish_generation;
+        self.publication.publish(std::sync::Arc::new(
+            super::publication::PublishedTick {
+                tick: self.global.committed_tick,
+                generation,
+                retained: std::sync::Arc::clone(&self.retained_index),
+                global: self.global,
+                desks: self.current_desk_shards_for_republish(),
+                groups: Vec::new(),
+                events: super::publication::EventSegment::default(),
+                hashes: super::publication::TickHashes::default(),
+            },
+        ));
+        let _ = snapshot;
+    }
+
+    /// 重发布用分片重组（B2 冻结重发——复用最近发布版本的 desk 分片
+    /// 句柄，避免重拉）。从当前发布版本读取（其 tick 与 committed 一致
+    /// 的不变量由调用时点保证：日结冻结发生在 install_tick 之后）。
+    fn current_desk_shards_for_republish(&self) -> Vec<super::publication::DeskShard> {
+        self.publication.load().desks.clone()
     }
 
     /// 注入 PreCommit 校验器（测试/批 3+ 接线点）。
@@ -805,6 +877,7 @@ impl World {
                     min_sell_price: down.cents(),
                     recent_prices: vec![last],
                     minute_closes: Vec::new(),
+                    minute_bars: std::sync::Arc::new(Vec::new()),
                 daily_bars: Vec::new(),
                 daily_active: None,
                 daily_active_turnover_cents: 0,
@@ -1997,9 +2070,13 @@ impl World {
                 }
             })
             .collect();
+        self.publish_generation += 1;
+        let generation = self.publish_generation;
         self.publication.publish(std::sync::Arc::new(
             super::publication::PublishedTick {
                 tick,
+                generation,
+                retained: std::sync::Arc::clone(&self.retained_index),
                 global: self.global,
                 desks: desk_shards,
                 groups: group_shards,
@@ -2044,6 +2121,10 @@ impl World {
         /// 双载（竞价事实 2→4 条实测）。
         self.drained_lifecycle.clear();
         self.drained_auction.clear();
+        // B2：日结 Drain 捎带的桶同步作废（重跑日结重新收集——回滚对称）。
+        for slot in &mut self.pending_day_bars {
+            *slot = None;
+        }
         self.last_day_end_candidate = None;
         self.last_day_end_tick = None;
     }
@@ -2081,8 +2162,13 @@ impl World {
                     last_price,
                     drained_lifecycle,
                     drained_auction,
+                    drained_minute_bars,
                 } => {
                     desks.push((stock, fee_sink, last_price));
+                    // B2：当日桶暂存（驱动器编排冻结的消费面）。
+                    if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
+                        *slot = Some(drained_minute_bars);
+                    }
                     self.drained_lifecycle.extend(drained_lifecycle);
                     // Sol 六审段 1.2：日结收盘竞价事实（末拍清算事件源）。
                     self.drained_auction.extend(drained_auction);
@@ -2199,7 +2285,16 @@ impl World {
             let mut drained = 0usize;
             while drained < self.n_stocks {
                 match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
-                    UpMsg::DeskDrained { .. } => drained += 1,
+                    UpMsg::DeskDrained {
+                    stock, drained_minute_bars, ..
+                } => {
+                    // B2：期末 Drain 应答同样收集桶（观察面与日结统一；
+                    /// DeskFinal 的 live 桶在跨日形态已并入应答）。
+                    if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
+                        *slot = Some(drained_minute_bars);
+                    }
+                    drained += 1;
+                }
                     UpMsg::Failed { who, error } => {
                         return Err(RuntimeError::WorkerFailed {
                             who,
@@ -2303,7 +2398,9 @@ impl World {
                 ),
             });
         }
+        let drained_minute_bars = std::mem::take(&mut self.pending_day_bars);
         Ok(ShutdownReport {
+            drained_minute_bars,
             group_finals: group_finals
                 .into_iter()
                 .map(|f| f.expect("已核验非空"))

@@ -23,9 +23,94 @@
 //!   J2 数据若显示读侧争用，升级 `arc-swap` 走 ADR。
 
 use super::coordinator::GlobalState;
-use super::protocol::StockPublic;
+use super::protocol::{MinuteBarFact, StockPublic};
 use super::{GroupIdx, StockIdx};
+use crate::calendar::CivilDate;
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// 一日分钟K历史快照（B2：日结冻结的不可变块——保留链节点）。
+///
+/// 语义合同（对照 18725d07 `RetainedHistoryDay`/`SharedHistoryDay`）：
+/// - `securities` 覆盖**全部**在册证券（开市与休市日都留条目——休市
+///   `trading=false` 且 bars 恒空）；
+/// - bars 为封闭块共享（`Arc`——冻结后不可变；发布/查询零复制）；
+/// - ADR-0034：保留链**全部保留**（五日窗只是显示语义，非存储窗）。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct RetainedDaySnapshot {
+    /// 自然日。
+    pub date: CivilDate,
+    /// 每证券当日分钟会话（键=股索引）。
+    pub securities: BTreeMap<u32, RetainedMinuteSession>,
+}
+
+/// 单证券一日分钟会话（开市/休市状态+bars）。
+///
+/// serde 手写（`Arc` 委托内值——旧 `SharedHistoryDay` 同式：存档序列化
+/// 按值，恢复重建 `Arc`；`Arc` 是进程内共享形态而非 wire 形态）。
+#[derive(Clone, Debug, PartialEq, Eq, ts_rs::TS)]
+#[ts(export)]
+pub struct RetainedMinuteSession {
+    /// 开市=true（Trading）/休市=false（Closed）——旧 `HistorySessionStatus` 二值。
+    pub trading: bool,
+    /// 当日分钟K桶（零成交开市日为空——NoTrades 语义；休市恒空）。
+    pub bars: Arc<Vec<MinuteBarFact>>,
+}
+
+impl serde::Serialize for RetainedMinuteSession {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("RetainedMinuteSession", 2)?;
+        state.serialize_field("trading", &self.trading)?;
+        state.serialize_field("bars", self.bars.as_ref())?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RetainedMinuteSession {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            trading: bool,
+            bars: Vec<MinuteBarFact>,
+        }
+        let wire = Wire::deserialize(deserializer)?;
+        Ok(Self {
+            trading: wire.trading,
+            bars: Arc::new(wire.bars),
+        })
+    }
+}
+
+/// 保留链节点的进程内共享形态（serde 按值委托内值——旧 `SharedHistoryDay`
+/// 同式；存档序列化与恢复重建 `Arc`，`Arc` 不是 wire 形态）。
+#[derive(Clone, Debug, PartialEq, Eq, ts_rs::TS)]
+#[ts(export, as = "RetainedDaySnapshot")]
+pub struct SharedRetainedDay(pub Arc<RetainedDaySnapshot>);
+
+impl serde::Serialize for SharedRetainedDay {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.as_ref().serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SharedRetainedDay {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(Arc::new(RetainedDaySnapshot::deserialize(
+            deserializer,
+        )?)))
+    }
+}
+
+/// 保留链索引（发布槽共享外壳——非冻结 tick 发布时 `Arc::clone` 复用，
+/// 不逐拍复制全历史）。
+#[derive(Clone, Debug, Default)]
+pub struct RetainedIndex {
+    /// 已冻结自然日（按日序严格递增，全部保留）。
+    pub days: Vec<Arc<RetainedDaySnapshot>>,
+}
 
 /// 交易部读面分片（owner=desk 线程；观测快照——事实域在 report_log）。
 #[derive(Clone, Debug)]
@@ -103,8 +188,13 @@ pub struct TickHashes {
 pub struct PublishedTick {
     /// 版本身份=tick 编号（锁步不变量保证全局唯一递增）。
     pub tick: u64,
+    /// 发布代次（B2：每次 publish 递增——区分**同 tick** 的保留链/civil
+    /// 推进（日结冻结重发）；tick 语义不变）。
+    pub generation: u64,
     /// 全局域快照（committed_tick/day/events_installed）。
     pub global: GlobalState,
+    /// 保留历史链（B2：日结冻结后原子换新；平日 Arc 复用零复制）。
+    pub retained: Arc<RetainedIndex>,
     /// 各交易部读面分片（下标=股）。
     pub desks: Vec<DeskShard>,
     /// 各组读面分片（P2 填充；P1 恒空）。

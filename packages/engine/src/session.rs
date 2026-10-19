@@ -32,6 +32,11 @@ mod execution;
 mod failure;
 mod hash;
 mod history_reads;
+/// B2 件 5：个人成交确认（交割单）——事实派生域（驱动器侧 receipt
+/// 派生入口 pub(crate)）。
+pub(crate) mod personal_trade_history;
+/// B2 件 5：市场历史查询面（保留历史分页/当日分钟K/日内均价）。
+mod market_history_query;
 mod shared_ingress;
 pub use shared_ingress::SharedSessionIngress;
 #[cfg(feature = "verification-harness")]
@@ -90,6 +95,14 @@ pub use history_reads::HistoricalStockData;
 // B3 远程登录批次：市场成员关系面（OpaqueSubjectId 鉴权主体→玩家账户）。
 pub use memberships::{
     AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId,
+};
+pub use personal_trade_history::PersonalTradeConfirmation;
+pub use market_history_query::{
+    CurrentMinuteHistoryPhase, CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse,
+    MarketHistoryAvailability, MarketHistoryEntry, MarketHistoryPage, MarketHistoryRequest,
+};
+pub use personal_trade_history::{
+    PersonalTradeHistoryPage, PersonalTradeHistoryRequest, TradeHistoryReceiptCursor,
 };
 pub use initial_allocation::{
     InitialAllocation, InitialAllocationCategory, InitialAllocationKind, InitialStockAllocation,
@@ -531,6 +544,19 @@ pub struct SaveSlot {
     /// 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
     /// 到日界后清空，跨日窗口读取已经完成的日 K。
     pub market_minute_closes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
+    /// 当日分钟K桶（B2：desk 权威投影镜像——save/restore 链与 desk
+    /// `DeskMarketSeed` 续接；与 `market_minute_closes` 语义分离——本面
+    /// 只含真实成交，零成交分钟不占位）。
+    pub market_minute_bars: BTreeMap<StockId, Vec<crate::runtime::MinuteBarFact>>,
+    /// 个人确认日志（B2 件 5：按账户展开——wire 形态平铺 Vec）。
+    pub personal_trade_confirmations:
+        BTreeMap<AccountId, Vec<PersonalTradeConfirmation>>,
+    /// 回执水位（B2 件 5 派生域游标——持久续号）。
+    #[serde(default)]
+    pub receipt_watermark: u64,
+    /// 保留历史链（B2：日结冻结的不可变日快照——全部保留（ADR-0034）；
+    /// serde 按值（`Arc` 为进程内共享形态））。
+    pub retained_market_days: Vec<crate::runtime::publication::SharedRetainedDay>,
     /// 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
@@ -1492,6 +1518,8 @@ struct CommittableSessionState {
     history_reads: AccountPagedMap<crate::experience::PersonalHistoryReadLedger>,
     price_history: BTreeMap<StockId, VecDeque<Money>>,
     market_minute_closes: BTreeMap<StockId, Vec<MarketMinuteClose>>,
+    market_minute_bars: BTreeMap<StockId, Vec<crate::runtime::MinuteBarFact>>,
+    retained_market_days: Vec<crate::runtime::publication::SharedRetainedDay>,
     candle_book: SessionCandleBook,
     pending_player: Vec<ReceiptBearingIntent>,
     ingress_receipt_cursors: IngressReceiptCursors,
@@ -1544,6 +1572,10 @@ struct CommittableSessionState {
     runtime_belief_undo_ids: std::collections::HashSet<AccountId>,
     runtime_retail_undo: Vec<(AccountId, Option<RetailExperienceState>)>,
     runtime_retail_undo_ids: std::collections::HashSet<AccountId>,
+    /// B2 件 5：个人确认写时 undo（首写账户尾长——安装失败回滚截断；
+    /// 与 runtime_history_undo 同模式）。
+    runtime_receipts_undo: Vec<(AccountId, usize)>,
+    runtime_receipts_undo_ids: std::collections::HashSet<AccountId>,
     runtime_history_undo:
         Vec<(AccountId, Option<crate::experience::PersonalHistoryReadLedger>)>,
     runtime_history_undo_ids: std::collections::HashSet<AccountId>,
@@ -1581,6 +1613,14 @@ struct CommittableSessionState {
     retail_projection_seen: pipeline::RetailProjectionSeen,
     /// 下一个全局回执索引；跨存档由 `SavedRuntimeState` 的 `next_receipt_base` 持久恢复。
     next_receipt_base: u64,
+    /// B2 件 5：个人确认日志（AppendOnlyHistory——candidate 共享尾块；
+    /// receipt_id=trade_seq×2+leg 派生）。
+    personal_trade_confirmations:
+        BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
+    /// B2 件 5：回执水位（as_of 默认上界——receipt_id 派生域自己的游标；
+    /// **不复用** `next_receipt_base`（envelope ledger 游标语义，一致性
+    /// 校验绑定旧域——挪用会破坏 ledger 对账）。
+    receipt_watermark: u64,
     next_order_id: u64,
     tick: u64,
     day: u32,
@@ -1613,6 +1653,7 @@ pub(in crate::session) enum FieldId {
     HistoryReads,
     PriceHistory,
     MarketMinuteCloses,
+    MarketMinuteBars,
     CandleBook,
     PendingPlayer,
     IngressReceiptCursors,
@@ -1644,15 +1685,16 @@ pub(in crate::session) enum FieldId {
 
 /// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
 /// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
-/// 默认 features 为 31 项；开启 simulation-diagnostics 时为 33 项（追加
-/// NpcDecisionTraces/Causal）。owner8 批次④删除两字段后由 33/35 收窄为 30/32，
-/// B3 远程登录批次追加 Memberships 后为现行 31/33 口径。一致性要求（Astra
-/// 增量六措辞校正）：33 项变体去掉两个诊断项（NpcDecisionTraces/Causal）后，
-/// 其余 31 项与默认变体逐项一致——诊断项插在默认变体第 20 项
-/// （LastRetailOrderEvents）之后，其后的项在 33 项变体中下标后移，逐下标位置
+/// owner8 批次④删除两字段后由 33/35 收窄为 30/32；B3 远程登录批次追加
+/// Memberships 与 B2 查询 API 批次追加 SpeculativePrepare 后为现行 32/34
+/// 口径（默认 features 32 项；开启 simulation-diagnostics 时 34 项，追加
+/// NpcDecisionTraces/Causal）。一致性要求（Astra
+/// 增量六措辞校正）：34 项变体去掉两个诊断项（NpcDecisionTraces/Causal）后，
+/// 其余 32 项与默认变体逐项一致——诊断项插在默认变体第 20 项
+/// （LastRetailOrderEvents）之后，其后的项在 34 项变体中下标后移，逐下标位置
 /// 并不一致（人工同步维护，盲区 1 的自报标签性质同样适用于此处清单）。
 #[cfg(not(feature = "simulation-diagnostics"))]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 31] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1662,6 +1704,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 31] = [
     FieldId::HistoryReads,
     FieldId::PriceHistory,
     FieldId::MarketMinuteCloses,
+    FieldId::MarketMinuteBars,
     FieldId::CandleBook,
     FieldId::PendingPlayer,
     FieldId::IngressReceiptCursors,
@@ -1687,7 +1730,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 31] = [
 ];
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 33] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 34] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1697,6 +1740,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 33] = [
     FieldId::HistoryReads,
     FieldId::PriceHistory,
     FieldId::MarketMinuteCloses,
+    FieldId::MarketMinuteBars,
     FieldId::CandleBook,
     FieldId::PendingPlayer,
     FieldId::IngressReceiptCursors,
@@ -1724,7 +1768,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 33] = [
 ];
 
 /// FieldId 全变体数（含 simulation-diagnostics 两项），verify_metrics 计数数组长度。
-pub(in crate::session) const FIELD_ID_COUNT: usize = 33;
+pub(in crate::session) const FIELD_ID_COUNT: usize = 34;
 const _: () = assert!(FieldId::Memberships as usize == FIELD_ID_COUNT - 1);
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
@@ -2020,6 +2064,7 @@ impl GameSession {
         let mut markets = BTreeMap::new();
         let mut price_history = BTreeMap::new();
         let mut market_minute_closes = BTreeMap::new();
+        let mut market_minute_bars = BTreeMap::new();
         for (spec_index, s) in setup.stocks.iter().enumerate() {
             // 边界代码 → 数值 id；目录刚由同一批 specs 构造，查不到即内部不变量破损。
             // 1002：规格代码未入目录；ctx[0]=规格下标。
@@ -2029,6 +2074,7 @@ impl GameSession {
             markets.insert(id, Market::new(id, s.initial_price, s.limit_pct, s.tick)?);
             price_history.insert(id, VecDeque::new());
             market_minute_closes.insert(id, Vec::new());
+            market_minute_bars.insert(id, Vec::new());
         }
         let daily_candles = generate_preset_daily_candles(&setup, &stocks, seed)?;
         let mut accounts = AccountBook::default();
@@ -2106,6 +2152,8 @@ impl GameSession {
                 history_reads,
                 price_history,
                 market_minute_closes,
+                market_minute_bars,
+                retained_market_days: Vec::new(),
                 candle_book: SessionCandleBook::new(daily_candles, BTreeMap::new()),
                 pending_player: Vec::new(),
                 ingress_receipt_cursors: IngressReceiptCursors::default(),
@@ -2131,6 +2179,8 @@ impl GameSession {
                 runtime_belief_undo_ids: std::collections::HashSet::new(),
                 runtime_retail_undo: Vec::new(),
                 runtime_retail_undo_ids: std::collections::HashSet::new(),
+                runtime_receipts_undo: Vec::new(),
+                runtime_receipts_undo_ids: std::collections::HashSet::new(),
                 runtime_history_undo: Vec::new(),
                 runtime_history_undo_ids: std::collections::HashSet::new(),
                 runtime_mirror_undo: None,
@@ -2150,6 +2200,8 @@ impl GameSession {
                     .expect("an empty envelope ledger is valid"),
                 retail_projection_seen: pipeline::RetailProjectionSeen::default(),
                 next_receipt_base: 0,
+                personal_trade_confirmations: BTreeMap::new(),
+                receipt_watermark: 0,
                 next_order_id: 1,
                 tick: 0,
                 day: 0,
@@ -2839,7 +2891,15 @@ impl GameSession {
     /// 恰好一次派发当日公司到期）→ 月/年末封账（`close_accounting_periods`）→
     /// 披露派发（`DisclosureDispatch::run_day_end`，公告先于定期报告）。
     pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
-        self.with_prepared_civil_day(|_, report| Ok(report))
+        let report = self.with_prepared_civil_day(|_, report| Ok(report))?;
+        // B2 件 4：休市自然日补保留条目（交易日已由 step 的 ends_day 段
+        /// 冻结——末条日期==settled_date 时跳过；休市日无 tick，此处按
+        /// 每股日历如实补 Closed/NoTrades 条目并原子重发布）。仅 runtime
+        /// 形态（惰性构造驱动器与 step 同路由）。
+        if crate::runtime::step_runtime_enabled() {
+            self.freeze_closed_retained_day_if_needed(report.settled_date)?;
+        }
+        Ok(report)
     }
 
     /// 自然日与 market tick 一样先在同版 candidate 完成全部 publication callback，
@@ -3470,6 +3530,15 @@ impl GameSession {
                 .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
                 .collect(),
             market_minute_closes: self.state.market_minute_closes.clone(),
+            market_minute_bars: self.state.market_minute_bars.clone(),
+            retained_market_days: self.state.retained_market_days.clone(),
+            personal_trade_confirmations: self
+                .state
+                .personal_trade_confirmations
+                .iter()
+                .map(|(account, history)| (*account, history.iter().cloned().collect()))
+                .collect(),
+            receipt_watermark: self.state.receipt_watermark,
             rng_state: self.state.rng.state,
             npc_attention: self.state.npc_attention.to_map(),
             retail_experience: self.state.retail_experience.to_map(),
@@ -3763,6 +3832,20 @@ impl GameSession {
             .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
             .collect();
         sess.state.market_minute_closes = save.market_minute_closes.clone();
+        sess.state.market_minute_bars = save.market_minute_bars.clone();
+        sess.state.retained_market_days = save.retained_market_days.clone();
+        sess.state.personal_trade_confirmations = save
+            .personal_trade_confirmations
+            .iter()
+            .map(|(account, rows)| {
+                let mut history = crate::experience::AppendOnlyHistory::default();
+                for row in rows {
+                    history.push(row.clone());
+                }
+                (*account, history)
+            })
+            .collect();
+        sess.state.receipt_watermark = save.receipt_watermark;
         sess.state.rng.state = save.rng_state;
         let mut restored_attention = BTreeMap::new();
         for (id, saved_state) in &save.npc_attention {
@@ -4430,6 +4513,763 @@ impl GameSession {
 }
 
 #[cfg(test)]
+/// B2 件 4：保留历史快照链（session 编排面——交易日冻结/休市补条目/
+/// save-restore roundtrip）。
+#[cfg(test)]
+/// B2 复核阻断 1 回归：安装失败回滚后重试——当日分钟K桶零 ghost
+/// （泄漏的镜像会经 from_session 重建播回 desk 与重试成交合并）。
+#[cfg(test)]
+mod b2_bars_rollback_tests {
+    use super::*;
+    use crate::orderbook::Side;
+
+    fn b2_session() -> GameSession {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.ticks_per_day = 3;
+        setup.npcs.inst_count = 0;
+        setup.npcs.retail_count = 1;
+        setup.stocks[0].float_shares = 1_000;
+        GameSession::new(setup, 71).unwrap()
+    }
+
+    fn execute_buy(session: &mut GameSession) {
+        let code = crate::StockId(0);
+        let mut events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
+            crate::Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            &mut events,
+        );
+        // seed 单补信封账本（重建路径 adopt 依赖——旧 prepare_buy 同式）。
+        session
+            .hydrate_or_validate_envelope_ledger()
+            .expect("seed 单账本 hydrate");
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        assert!(
+            session
+                .step()
+                .expect("成交")
+                .iter()
+                .any(|e| matches!(e, crate::Event::Trade { .. }))
+        );
+    }
+
+    #[test]
+    fn install_failure_rolls_back_bars_and_retry_does_not_ghost() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session();
+        execute_buy(&mut session);
+        let code = crate::StockId(0);
+        assert_eq!(session.runtime_minute_bars(&code).len(), 1, "首笔一桶");
+        // 注入安装失败（Sol 三审 b 面：market_views 写入后失败）→ step
+        // Err + 整面回滚（bars 含）。
+        session.runtime_install_failure = true;
+        assert!(session.step().is_err(), "注入的安装失败");
+        // 安装失败=毒化终态（既有设计：与 v0 投影失败的可重试路径
+        /// 不同层——后者经 driver 丢弃+from_session 重建，重建 seed 携
+        /// 回滚后的 bars 镜像，ghost 播回由本回滚锚定+重建等价共同
+        /// 保证）。
+        assert!(session.poison.is_some(), "安装失败必须毒化（终态）");
+        assert_eq!(
+            session.runtime_minute_bars(&code).len(),
+            1,
+            "失败拍桶零泄漏（回滚到步前——ghost 不留镜像）"
+        );
+    }
+
+    /// 复核②补强：candidate 投影失败（可重试路径——driver 丢弃+
+    /// from_session 重建，seed 携回滚后镜像）→ 重试成交无 ghost 播回。
+    #[test]
+    fn candidate_projection_failure_rebuild_is_ghost_free() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session();
+        execute_buy(&mut session);
+        let code = crate::StockId(0);
+        assert_eq!(session.runtime_minute_bars(&code).len(), 1);
+        // 投影回调失败（v0 合同 1 同式——可重试形态）。
+        let outcome = session.step_frame_and_commit(false, |_, _| {
+            Err::<crate::session::protocol::TickFrame, _>(StepFatal::InvariantViolation {
+                description: "B2 ghost 注入：投影失败".to_owned(),
+                location: "b2_bars_rollback_tests".to_owned(),
+            })
+        });
+        assert!(outcome.is_err(), "投影失败必须整拍失败");
+        assert_eq!(
+            session.runtime_minute_bars(&code).len(),
+            1,
+            "失败拍镜像零泄漏（回滚源）"
+        );
+        // 重建输入面锚定（driver 丢弃后重试经 from_session 重建——seed
+        /// 投影的数据源即回滚后的镜像/save）：断言重建输入零 ghost；
+        /// 端到端重试链（seed/ledger 交互）登记台账，随 W3 接线批补。
+        let seeds = session.runtime_market_seeds();
+        assert_eq!(
+            seeds.get(&code).map(|seed| seed.minute_bars.len()).unwrap_or(0),
+            1,
+            "重建 seed 携回滚后镜像（ghost 不入重建输入）"
+        );
+        let save = session.save().expect("投影失败不毒化——save 可走");
+        assert_eq!(
+            save.market_minute_bars[&code].len(),
+            1,
+            "save 面同样零 ghost"
+        );
+    }
+}
+
+/// B2 件 5：查询契约测试（对照 18725d07 session 级契约——五态/分页
+/// 游标/history_reads 副作用/个人分页快照）。
+#[cfg(test)]
+mod b2_query_contract_tests {
+    use super::*;
+    use crate::orderbook::Side;
+
+    fn b2_session(start: &str) -> GameSession {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_iso(start).unwrap();
+        setup.ticks_per_day = 3;
+        setup.npcs.inst_count = 0;
+        setup.npcs.retail_count = 1;
+        setup.stocks[0].float_shares = 1_000;
+        GameSession::new(setup, 71).unwrap()
+    }
+
+    fn execute_buy(session: &mut GameSession) {
+        let code = crate::StockId(0);
+        let mut events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
+            crate::Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        assert!(
+            session
+                .step()
+                .expect("首步成交")
+                .iter()
+                .any(|e| matches!(e, crate::Event::Trade { .. }))
+        );
+    }
+
+    fn date(s: &str) -> crate::calendar::CivilDate {
+        crate::calendar::CivilDate::from_iso(s).unwrap()
+    }
+
+    /// 三自然日局：1/2（周三）成交、1/3（周四）无成交、1/4（周五）无成交
+    /// ——各日 end_civil_day；查询窗 2029-12-31..2030-01-06 覆盖五态。
+    fn three_day_session() -> GameSession {
+        let mut session = b2_session("2030-01-02");
+        execute_buy(&mut session);
+        for _ in 0..2 {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+        for _ in 0..3 {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+        for _ in 0..3 {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+        // 1/5（周五）无 tick 直接结（开市零成交）；1/6（周六）休市结。
+        session.end_civil_day().unwrap();
+        session.end_civil_day().unwrap();
+        session
+    }
+
+    #[test]
+    fn all_five_availabilities_appear_with_stable_pagination_and_cursors() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let session = three_day_session();
+        let mut request = MarketHistoryRequest {
+            stock: crate::StockId(0),
+            date_from: date("2029-12-31"),
+            date_to: date("2030-01-07"),
+            after: None,
+            page_size: 3,
+        };
+        let mut entries = Vec::new();
+        let mut pages = 0;
+        loop {
+            let page = session.market_history_page(&request).unwrap();
+            pages += 1;
+            assert!(pages <= 4, "分页必须收敛");
+            entries.extend(page.entries.iter().map(|e| (e.date, e.availability)));
+            match page.next_cursor {
+                Some(cursor) => request.after = Some(cursor),
+                None => break,
+            }
+        }
+        assert_eq!(entries.len(), 8, "八自然日全覆盖（含元旦）");
+        let states: Vec<_> = entries.iter().map(|(_, a)| *a).collect();
+        assert_eq!(states[0], MarketHistoryAvailability::BeforeStart, "2029-12-31 早于开局");
+        assert_eq!(states[1], MarketHistoryAvailability::BeforeStart, "2030-01-01 元旦仍在开局前");
+        assert_eq!(states[2], MarketHistoryAvailability::Traded, "1/2 有成交");
+        assert_eq!(states[3], MarketHistoryAvailability::NoTrades, "1/3 开市零成交");
+        assert_eq!(states[4], MarketHistoryAvailability::NoTrades, "1/4 开市零成交");
+        assert_eq!(states[5], MarketHistoryAvailability::Closed, "1/5 周六休市");
+        assert_eq!(states[6], MarketHistoryAvailability::Closed, "1/6 周日休市");
+        assert_eq!(states[7], MarketHistoryAvailability::NotEnded, "1/7 未结束");
+        assert!(
+            entries.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "严格日序"
+        );
+        // settled_through 权威值（至 1/6 已结）。
+        let page = session.market_history_page(&request).unwrap();
+        assert_eq!(page.settled_through, Some(date("2030-01-06")));
+        // 成交日的 bar 值（desk 归一端到端贯通：首拍成交=570 分钟）。
+        let traded = session
+            .market_history_page(&MarketHistoryRequest {
+                stock: crate::StockId(0),
+                date_from: date("2030-01-02"),
+                date_to: date("2030-01-02"),
+                after: None,
+                page_size: 1,
+            })
+            .unwrap();
+        assert_eq!(traded.entries[0].bars.len(), 1);
+        assert_eq!(traded.entries[0].bars[0].minute_of_day, 570);
+        assert_eq!(traded.entries[0].bars[0].volume_shares, 100);
+        assert_eq!(traded.entries[0].bars[0].turnover_cents, 100_000);
+    }
+
+    #[test]
+    fn market_history_reads_recorded_only_by_for_variants_and_personal_never() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = three_day_session();
+        let stock = crate::StockId(0);
+        let request = MarketHistoryRequest {
+            stock,
+            date_from: date("2030-01-02"),
+            date_to: date("2030-01-03"),
+            after: None,
+            page_size: 2,
+        };
+        let before = session.state.history_reads.to_map();
+        session.market_history_page(&request).unwrap();
+        assert_eq!(session.state.history_reads.to_map(), before, "纯查询不记");
+        session.query_market_history_for(AccountId(0), &request).unwrap();
+        assert_eq!(
+            session.state.history_reads[&AccountId(0)].stocks[&stock].read_count,
+            1,
+            "query_for 记请求账户"
+        );
+        assert!(
+            session.state.history_reads[&AccountId(1)].stocks.is_empty(),
+            "不记他人"
+        );
+        let current = CurrentMinuteHistoryRequest { stock };
+        session.query_current_minute_history_for(AccountId(0), &current).unwrap();
+        assert_eq!(
+            session.state.history_reads[&AccountId(0)].stocks[&stock].read_count,
+            2,
+            "current_for 同记"
+        );
+        session.current_minute_history(&current).unwrap();
+        assert_eq!(
+            session.state.history_reads[&AccountId(0)].stocks[&stock].read_count,
+            2,
+            "current 纯查询不记"
+        );
+        let personal = session
+            .query_personal_trade_history(
+                AccountId(0),
+                PersonalTradeHistoryRequest {
+                    date_from: date("2030-01-02"),
+                    date_to: date("2030-01-04"),
+                    stock: None,
+                    side: None,
+                    before_receipt: None,
+                    as_of_receipt: None,
+                    page_size: 10,
+                },
+            )
+            .unwrap();
+        assert_eq!(personal.confirmations.len(), 1, "成交一笔一腿");
+        assert_eq!(
+            session.state.history_reads[&AccountId(0)].stocks[&stock].read_count,
+            2,
+            "个人查询不记 history_reads"
+        );
+        // 无效请求不记（权限先行）。
+        assert!(matches!(
+            session.query_market_history_for(AccountId(99), &request),
+            Err(SessionError::UnknownHistoryAccount(_))
+        ));
+        assert_eq!(
+            session.state.history_reads[&AccountId(0)].stocks[&stock].read_count,
+            2
+        );
+    }
+
+    #[test]
+    fn personal_pagination_snapshots_new_fills_and_boundaries() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        execute_buy(&mut session);
+        execute_buy(&mut session);
+        session.step().unwrap();
+        let request = || PersonalTradeHistoryRequest {
+            date_from: date("2030-01-02"),
+            date_to: date("2030-01-02"),
+            stock: None,
+            side: None,
+            before_receipt: None,
+            as_of_receipt: None,
+            page_size: 1,
+        };
+        let first = session.query_personal_trade_history(AccountId(0), request()).unwrap();
+        assert_eq!(first.confirmations.len(), 1, "页大小 1");
+        let second = session
+            .query_personal_trade_history(
+                AccountId(0),
+                PersonalTradeHistoryRequest {
+                    before_receipt: first.next_cursor,
+                    as_of_receipt: Some(first.as_of_receipt),
+                    ..request()
+                },
+            )
+            .unwrap();
+        assert_eq!(second.confirmations.len(), 1, "第二页一条");
+        assert_eq!(second.next_cursor, None, "两腿恰尽");
+        assert!(
+            first.confirmations[0].receipt_id > second.confirmations[0].receipt_id,
+            "降序分页"
+        );
+        // 读己之写快照：as_of 之后的新成交不入旧窗。
+        let frozen = first.as_of_receipt;
+        execute_buy(&mut session);
+        let stale = session
+            .query_personal_trade_history(
+                AccountId(0),
+                PersonalTradeHistoryRequest {
+                    as_of_receipt: Some(frozen),
+                    ..request()
+                },
+            )
+            .unwrap();
+        assert_eq!(stale.confirmations.len(), 1, "旧窗不见新成交");
+        // 过滤与边界。
+        let filtered = session
+            .query_personal_trade_history(
+                AccountId(0),
+                PersonalTradeHistoryRequest {
+                    side: Some(Side::Buy),
+                    page_size: 10,
+                    ..request()
+                },
+            )
+            .unwrap();
+        assert!(filtered.confirmations.iter().all(|r| r.side == Side::Buy));
+        for invalid in [
+            PersonalTradeHistoryRequest { page_size: 0, ..request() },
+            PersonalTradeHistoryRequest { page_size: 101, ..request() },
+            PersonalTradeHistoryRequest {
+                as_of_receipt: Some(TradeHistoryReceiptCursor(u64::MAX)),
+                ..request()
+            },
+        ] {
+            assert!(
+                session.query_personal_trade_history(AccountId(0), invalid).is_err(),
+                "参数不合法显式拒绝"
+            );
+        }
+        assert!(matches!(
+            session.query_personal_trade_history(AccountId(99), request()),
+            Err(SessionError::UnknownHistoryAccount(_))
+        ));
+        // 空过滤域合法返回空页（NPC 卖方账户按买腿过滤——恒空）。
+        let empty = session
+            .query_personal_trade_history(
+                AccountId(1),
+                PersonalTradeHistoryRequest { side: Some(Side::Buy), ..request() },
+            )
+            .unwrap();
+        assert!(empty.confirmations.is_empty());
+        assert_eq!(empty.next_cursor, None);
+    }
+
+    #[test]
+    fn current_minute_history_phase_follows_trading_day_shape() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        execute_buy(&mut session);
+        let current = session
+            .current_minute_history(&CurrentMinuteHistoryRequest { stock: crate::StockId(0) })
+            .unwrap();
+        assert!(current.trading);
+        assert_eq!(current.phase, CurrentMinuteHistoryPhase::Continuous);
+        assert_eq!(current.bars.len(), 1, "当日桶贯通");
+        assert_eq!(current.bars[0].minute_of_day, 570);
+        // 休市日局：Closed 相位+空桶。
+        let closed = b2_session("2030-01-05");
+        let response = closed
+            .current_minute_history(&CurrentMinuteHistoryRequest { stock: crate::StockId(0) })
+            .unwrap();
+        assert_eq!(response.phase, CurrentMinuteHistoryPhase::Closed);
+        assert!(response.bars.is_empty());
+        assert!(!response.trading);
+    }
+}
+
+/// B2 件 5：个人成交确认累积（receipt_id=trade_seq*2+leg 派生——对照
+/// 18725d07 旧收据语义：Continue 恰一次、Abort 零泄漏、恢复续号）。
+#[cfg(test)]
+mod personal_receipt_tests {
+    use super::*;
+
+    fn b2_session(start: &str) -> GameSession {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_iso(start).unwrap();
+        setup.ticks_per_day = 3;
+        setup.npcs.inst_count = 0;
+        setup.npcs.retail_count = 1;
+        setup.stocks[0].float_shares = 1_000;
+        GameSession::new(setup, 71).unwrap()
+    }
+
+    /// 一笔成交（NPC 卖 1000×100、玩家买 1005）→ 两条 receipt。
+    fn execute_buy(session: &mut GameSession) -> crate::Event {
+        let code = crate::StockId(0);
+        let mut events = Vec::new();
+        session.seed_order_for_test(
+            AccountId(1),
+            crate::Intent::PlaceLimit {
+                code: code.clone(),
+                side: crate::orderbook::Side::Sell,
+                price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let step_events = session.step().expect("首步成交");
+        step_events
+            .into_iter()
+            .find(|e| matches!(e, crate::Event::Trade { .. }))
+            .expect("首步必须成交")
+    }
+
+    #[test]
+    fn trade_produces_two_leg_receipts_with_derived_ids_and_fee_splits() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        let trade = match execute_buy(&mut session) {
+            crate::Event::Trade { seq, .. } => seq,
+            _ => unreachable!(),
+        };
+        let seller = session
+            .personal_trade_confirmations(AccountId(1))
+            .expect("卖腿 receipt 归卖方");
+        let buyer = session
+            .personal_trade_confirmations(AccountId(0))
+            .expect("买腿 receipt 归买方");
+        assert_eq!(seller.len(), 1, "卖腿恰一条");
+        assert_eq!(buyer.len(), 1, "买腿恰一条");
+        // receipt_id = trade_seq*2 + leg（0=卖/maker、1=买/taker）。
+        assert_eq!(seller[0].receipt_id, trade * 2);
+        assert_eq!(buyer[0].receipt_id, trade * 2 + 1);
+        assert_eq!(seller[0].side, crate::orderbook::Side::Sell);
+        assert_eq!(buyer[0].side, crate::orderbook::Side::Buy);
+        assert_eq!(seller[0].stock, crate::StockId(0));
+        assert_eq!(seller[0].quantity_shares, 100);
+        assert_eq!(seller[0].gross_cents, 100_000);
+        assert_eq!(buyer[0].gross_cents, 100_000);
+        // 费用三分项=DeskTradeFact split（件 3 手算 oracle：卖{500,50,1}、
+        // 买{500,0,1}——maker 价 1000×100）。
+        assert_eq!(seller[0].actual_fees.commission.cents(), 500);
+        assert_eq!(seller[0].actual_fees.stamp_tax.cents(), 50);
+        assert_eq!(seller[0].actual_fees.transfer_fee.cents(), 1);
+        assert_eq!(buyer[0].actual_fees.commission.cents(), 500);
+        assert_eq!(buyer[0].actual_fees.stamp_tax.cents(), 0);
+        assert_eq!(buyer[0].actual_fees.transfer_fee.cents(), 1);
+        assert_eq!(
+            seller[0].civil_date,
+            crate::CivilDate::from_iso("2030-01-02").unwrap()
+        );
+        // watermark 推进（as_of 默认上界>一切已发 receipt_id）。
+        assert!(
+            session.receipt_watermark() > trade * 2 + 1,
+            "watermark 必须超过最大已发 receipt_id"
+        );
+    }
+
+    #[test]
+    fn repeated_steps_never_duplicate_and_aborted_ticks_never_leak() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        execute_buy(&mut session);
+        let after_first = session
+            .personal_trade_confirmations(AccountId(0))
+            .map(|rows| rows.len())
+            .unwrap_or(0);
+        assert_eq!(after_first, 1);
+        // 后续空拍不重复（Continue 累积器恰一次的 session 面合同）。
+        session.step().unwrap();
+        assert_eq!(
+            session
+                .personal_trade_confirmations(AccountId(0))
+                .map(|rows| rows.len())
+                .unwrap_or(0),
+            1
+        );
+        // 失败拍零泄漏：注入 post-shadow 失败 → step Err → receipt 不增。
+        session.post_shadow_failure = Some(StepFatal::InvariantViolation {
+            location: "receipt 泄漏注入".to_owned(),
+            description: "受控失败".to_owned(),
+        });
+        assert!(session.step().is_err());
+        assert_eq!(
+            session
+                .personal_trade_confirmations(AccountId(0))
+                .map(|rows| rows.len())
+                .unwrap_or(0),
+            1
+        );
+    }
+
+    #[test]
+    fn receipts_survive_save_restore_and_ids_continue_monotonically() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        let trade = match execute_buy(&mut session) {
+            crate::Event::Trade { seq, .. } => seq,
+            _ => unreachable!(),
+        };
+        let save = session.save().unwrap();
+        let restored = GameSession::restore(&save).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored.personal_trade_confirmations(AccountId(0))).unwrap(),
+            serde_json::to_value(session.personal_trade_confirmations(AccountId(0))).unwrap(),
+            "receipt 日志 roundtrip 逐位"
+        );
+        let watermark_before = restored.receipt_watermark();
+        // 恢复后新成交的 receipt_id 单调续号（seq 恢复自驱动器游标——
+        /// 禁直接改 seq，派生域天然单调）。
+        let mut second = restored;
+        execute_buy(&mut second);
+        let buyer = second
+            .personal_trade_confirmations(AccountId(0))
+            .expect("恢复后日志在册");
+        assert_eq!(buyer.len(), 2, "第二笔入账");
+        assert!(
+            buyer[1].receipt_id > trade * 2 + 1,
+            "续号单调（新 receipt_id 超越存档前最大值）"
+        );
+        assert!(second.receipt_watermark() > watermark_before);
+    }
+}
+
+#[cfg(test)]
+mod retained_snapshot_tests {
+    use super::*;
+    use crate::runtime::publication::RetainedMinuteSession;
+
+    /// 静默局（tpd=3、无 NPC 到期）——旧 quiet_session 形态。
+    fn b2_session(start: &str) -> GameSession {
+        let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+        setup.start_date = crate::CivilDate::from_iso(start).unwrap();
+        setup.ticks_per_day = 3;
+        setup.npcs.inst_count = 0;
+        setup.npcs.retail_count = 1;
+        // NPC 浮筹（卖种子持仓源——旧 quiet_session 的 float_shares 式）。
+        setup.stocks[0].float_shares = 1_000;
+        GameSession::new(setup, 71).unwrap()
+    }
+
+    /// 玩家买 100 股成交（seed 挂卖对手盘+玩家限价买——runtime 构造期
+    /// 迁移形态，首步受理+撮合）。
+    fn execute_buy(session: &mut GameSession) -> crate::StockId {
+        let code = crate::StockId(0);
+        let mut events = Vec::new();
+        // NPC（AccountId(1)）seed 挂卖 1000×100；玩家（AccountId(0)）限价买。
+        session.seed_order_for_test(
+            AccountId(1),
+            crate::Intent::PlaceLimit {
+                code: code.clone(),
+                side: crate::orderbook::Side::Sell,
+                price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1000)),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                crate::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: crate::orderbook::Side::Buy,
+                    price: crate::LimitPrice::Fixed(crate::money::Money::from_cents(1005)),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let step_events = session.step().expect("首步成交");
+        assert!(
+            step_events
+                .iter()
+                .any(|e| matches!(e, crate::Event::Trade { .. })),
+            "首步必须发生成交（对手盘已 seed）"
+        );
+        code
+    }
+
+    #[test]
+    fn trading_day_end_freezes_retained_snapshot_with_candle_agreement() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        let _code = execute_buy(&mut session);
+        // 跑满 tpd 步（第 3 步步后 tick=tpd → ends_day 冻结）。
+        for _ in 0..2 {
+            session.step().unwrap();
+        }
+        let retained = session.retained_market_days().to_vec();
+        assert_eq!(retained.len(), 1, "交易日冻结恰一条（ends_day 段）");
+        let day = &retained[0].0;
+        assert_eq!(day.date, crate::CivilDate::from_iso("2030-01-02").unwrap());
+        let session_0 = day.securities.get(&0).expect("在册证券有条目");
+        assert!(session_0.trading, "开市日 trading=true");
+        assert_eq!(session_0.bars.len(), 1, "成交一笔恰一桶");
+        assert_eq!(session_0.bars[0].volume_shares, 100);
+        assert_eq!(session_0.bars[0].turnover_cents, 100_000);
+        // end_civil_day 不重复补条目（末条==settled）。
+        session.end_civil_day().unwrap();
+        assert_eq!(session.retained_market_days().len(), 1, "交易日不重复补条目");
+    }
+
+    #[test]
+    fn closed_civil_day_appends_closed_retained_entry() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        // 休市开局（2030-01-05 周六）：无 tick 直接 end_civil_day。
+        let mut session = b2_session("2030-01-05");
+        session.end_civil_day().unwrap();
+        let retained = session.retained_market_days().to_vec();
+        assert_eq!(retained.len(), 1, "休市日补恰一条");
+
+        let day = &retained[0].0;
+        assert_eq!(day.date, crate::CivilDate::from_iso("2030-01-05").unwrap());
+        let session_0 = day.securities.get(&0).expect("休市日也留证券条目");
+        assert!(!session_0.trading, "休市 trading=false");
+        assert!(session_0.bars.is_empty(), "休市恒空桶");
+        // 发布面同步（generation 递增、retained 原子可见）。
+        let published = session
+            .runtime_driver_for_test()
+            .expect("runtime 在位")
+            .lock()
+            .expect("锁")
+            .publication()
+            .load();
+        assert_eq!(published.retained.days.len(), 1, "发布面保留链同步");
+        // 幂等锚定（复核终核登记 b）：连续推进第二日（1/6 周日）恰加
+        /// 一条 Closed——1/5 不因二次调用重复（already 幂等）。
+        session.end_civil_day().unwrap();
+        assert_eq!(
+            session.retained_market_days().len(),
+            2,
+            "连续两休市日恰两条（同日不重复）"
+        );
+        assert_eq!(
+            session.retained_market_days()[1].0.date,
+            crate::CivilDate::from_iso("2030-01-06").unwrap()
+        );
+    }
+
+    #[test]
+    fn retained_chain_survives_save_restore_and_continues() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut session = b2_session("2030-01-02");
+        let _code = execute_buy(&mut session);
+        for _ in 0..2 {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+        let save = session.save().unwrap();
+        let restored = GameSession::restore(&save).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored.retained_market_days()).unwrap(),
+            serde_json::to_value(session.retained_market_days()).unwrap(),
+            "保留链 roundtrip 逐位"
+        );
+        // 第二交易日续冻（链长 2、日期连续）。
+        let mut second = restored;
+        for _ in 0..3 {
+            second.step().unwrap();
+        }
+        second.end_civil_day().unwrap();
+        let chain = second.retained_market_days();
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[1].0.date, crate::CivilDate::from_iso("2030-01-03").unwrap());
+        let _: Option<RetainedMinuteSession> = None;
+    }
+}
+
 mod npc_working_quote_tests {
     use super::*;
     use crate::{HotParams, InstParams, RetailParams};
@@ -5180,6 +6020,8 @@ impl CommittableSessionState {
             history_reads,
             price_history,
             market_minute_closes,
+            market_minute_bars,
+            retained_market_days,
             candle_book,
             pending_player,
             ingress_receipt_cursors,
@@ -5206,6 +6048,8 @@ impl CommittableSessionState {
             runtime_belief_undo_ids: _,
             runtime_retail_undo: _,
             runtime_retail_undo_ids: _,
+            runtime_receipts_undo: _,
+            runtime_receipts_undo_ids: _,
             runtime_history_undo: _,
             runtime_history_undo_ids: _,
             runtime_mirror_undo: _,
@@ -5225,6 +6069,8 @@ impl CommittableSessionState {
             envelope_ledger,
             retail_projection_seen,
             next_receipt_base,
+            personal_trade_confirmations,
+            receipt_watermark,
             next_order_id,
             tick,
             day,
@@ -5251,6 +6097,8 @@ impl CommittableSessionState {
             history_reads: history_reads.clone(),
             price_history: price_history.clone(),
             market_minute_closes: market_minute_closes.clone(),
+            market_minute_bars: market_minute_bars.clone(),
+            retained_market_days: retained_market_days.clone(),
             candle_book: candle_book.clone(),
             pending_player: pending_player.clone(),
             ingress_receipt_cursors: ingress_receipt_cursors.clone(),
@@ -5280,6 +6128,8 @@ impl CommittableSessionState {
             runtime_belief_undo_ids: std::collections::HashSet::new(),
             runtime_retail_undo: Vec::new(),
             runtime_retail_undo_ids: std::collections::HashSet::new(),
+            runtime_receipts_undo: Vec::new(),
+            runtime_receipts_undo_ids: std::collections::HashSet::new(),
             runtime_history_undo: Vec::new(),
             runtime_history_undo_ids: std::collections::HashSet::new(),
             runtime_mirror_undo: None,
@@ -5299,6 +6149,8 @@ impl CommittableSessionState {
             envelope_ledger: envelope_ledger.clone(),
             retail_projection_seen: retail_projection_seen.clone(),
             next_receipt_base: *next_receipt_base,
+            personal_trade_confirmations: personal_trade_confirmations.clone(),
+            receipt_watermark: *receipt_watermark,
             next_order_id: *next_order_id,
             tick: *tick,
             day: *day,
@@ -5326,6 +6178,8 @@ impl CommittableSessionState {
             history_reads,
             price_history,
             market_minute_closes,
+            market_minute_bars,
+            retained_market_days,
             candle_book,
             pending_player,
             ingress_receipt_cursors,
@@ -5352,6 +6206,8 @@ impl CommittableSessionState {
             runtime_belief_undo_ids: _,
             runtime_retail_undo: _,
             runtime_retail_undo_ids: _,
+            runtime_receipts_undo: _,
+            runtime_receipts_undo_ids: _,
             runtime_history_undo: _,
             runtime_history_undo_ids: _,
             runtime_mirror_undo: _,
@@ -5370,6 +6226,8 @@ impl CommittableSessionState {
             envelope_ledger,
             retail_projection_seen,
             next_receipt_base,
+            personal_trade_confirmations,
+            receipt_watermark,
             next_order_id,
             tick,
             day,
@@ -5414,6 +6272,11 @@ impl CommittableSessionState {
             &mut self.market_minute_closes,
             market_minute_closes,
             FieldId::MarketMinuteCloses,
+        );
+        defer_swap(
+            &mut self.market_minute_bars,
+            market_minute_bars,
+            FieldId::MarketMinuteBars,
         );
         defer_swap(&mut self.candle_book, candle_book, FieldId::CandleBook);
         defer_swap(

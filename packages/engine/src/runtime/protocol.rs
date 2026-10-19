@@ -155,6 +155,115 @@ impl std::fmt::Display for WorkerId {
     }
 }
 
+/// 分钟K交易阶段（B2 市场域观察面）：竞价分钟固定 565/900（旧契约
+/// `HistoryTradingPhase` 语义——竞价成交按清算完成事实归一，不从指示
+/// 价或成交时刻反推）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "PascalCase")]
+#[ts(export)]
+pub enum MinuteBarPhase {
+    /// 开盘集合竞价（分钟 565）。
+    OpenAuction,
+    /// 连续竞价（墙钟分钟 570..=690 / 780..=900 开区间语义由校验面承载）。
+    Continuous,
+    /// 收盘集合竞价（分钟 900）。
+    ClosingAuction,
+}
+
+/// 一个交易分钟的 OHLC+量+额+笔数桶（desk 权威聚合，B2 观察面）。
+///
+/// 语义合同（对照 18725d07 `MinuteBar` 基线）：
+/// - 零成交分钟**不造 bar**（观察面占位收盘价由 `minute_closes` 承载——
+///   两读面语义分离）；
+/// - `turnover_cents` 用 u128（旧契约：合法成交额可超 u64，serde 面以
+///   十进制字符串承载）；
+/// - 全数值字段（engine 无字符串纪律）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct MinuteBarFact {
+    /// 墙钟分钟（565 / 570..=690 / 780..=900）。
+    pub minute_of_day: u16,
+    /// 交易阶段。
+    pub phase: MinuteBarPhase,
+    /// 开盘价＝本分钟首笔成交价（`Money`：wire 面十进制字符串）。
+    pub open: crate::money::Money,
+    /// 最高价。
+    pub high: crate::money::Money,
+    /// 最低价。
+    pub low: crate::money::Money,
+    /// 收盘价＝本分钟末笔成交价。
+    pub close: crate::money::Money,
+    /// 累计成交量（股）。
+    #[serde(with = "crate::u64_decimal")]
+    #[ts(type = "string")]
+    pub volume_shares: u64,
+    /// 累计成交额（分，u128）。
+    #[serde(with = "u128_decimal")]
+    #[ts(type = "string")]
+    pub turnover_cents: u128,
+    /// 累计成交笔数。
+    #[serde(with = "crate::u64_decimal")]
+    #[ts(type = "string")]
+    pub trade_count: u64,
+}
+
+#[cfg(test)]
+mod minute_bar_wire_tests {
+    use super::MinuteBarFact;
+    use crate::money::Money;
+
+    /// 旧基线 legal_trade_turnover_can_exceed_u64 的重立：合法成交额可
+    /// 超 u64（4 笔×5e18 分=2e19>u64::MAX）——serde 面以十进制字符串
+    /// 承载，roundtrip 逐位。
+    #[test]
+    fn turnover_exceeding_u64_roundtrips_as_decimal_string() {
+        let fact = MinuteBarFact {
+            minute_of_day: 570,
+            phase: super::MinuteBarPhase::Continuous,
+            open: Money::from_cents(5_000_000_000_000_000_000),
+            high: Money::from_cents(5_000_000_000_000_000_000),
+            low: Money::from_cents(5_000_000_000_000_000_000),
+            close: Money::from_cents(5_000_000_000_000_000_000),
+            volume_shares: 4,
+            turnover_cents: 20_000_000_000_000_000_000_u128,
+            trade_count: 4,
+        };
+        let value = serde_json::to_value(&fact).unwrap();
+        assert_eq!(value["turnover_cents"], "20000000000000000000");
+        assert_eq!(
+            serde_json::from_value::<MinuteBarFact>(value).unwrap(),
+            fact
+        );
+        // 非规范形态显式拒绝（旧基线 minute_wire_rejects 形态）。
+        let mut bad = serde_json::to_value(&fact).unwrap();
+        bad["turnover_cents"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<MinuteBarFact>(bad).is_err());
+    }
+}
+
+/// u128 的十进制字符串 serde 约定（旧 wire 契约：成交额可超 u64，
+/// JS Number 不安全——字符串承载；对齐 `crate::u64_decimal` 同式）。
+mod u128_decimal {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse::<u128>()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// 单股上一收束点公共态（协调者广播快照元素；字段对齐 `strategy::StockView`）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct StockPublic {
@@ -177,6 +286,9 @@ pub struct StockPublic {
     pub recent_prices: Vec<i64>,
     /// 已完成标准交易分钟收盘（绝对分钟, 分）——P1-6 起带绝对键。
     pub minute_closes: Vec<(u64, i64)>,
+    /// 当日分钟K桶（B2：真实成交聚合——零成交分钟不造 bar；Arc 共享
+    /// 随发布/安装零深拷贝，成交轮 view 重建才换新）。
+    pub minute_bars: std::sync::Arc<Vec<MinuteBarFact>>,
     /// D3a-2 观察基：已完成日 K（**不过滤**——行为路径口径同
     /// retained_behavior_daily_closes_history；尾部 250 窗）。不含活动 K。
     pub daily_bars: Vec<(i64, i64, i64, i64, u64)>,
@@ -617,6 +729,9 @@ pub enum UpMsg {
         ///（末拍 AuctionTick/AuctionCompleted——此前 Drain 只上行
         /// lifecycle，竞价事实无人收集）。
         drained_auction: Vec<DeskAuctionFact>,
+        /// B2：当日分钟K桶（roll_day 清桶前的唯一窗口——保留历史冻结
+        /// 的数据源；desk 应答后桶随下一 tick 日界重置）。
+        drained_minute_bars: Vec<MinuteBarFact>,
     },
     /// 组日结完成（权益落账后的账户投影）。
     GroupDayDone {
@@ -877,6 +992,13 @@ pub struct DeskTradeFact {
     pub maker_fees_cents: i64,
     /// taker 腿本笔实收费用合计（分；taker 恒为买方——佣金+过户边际）。
     pub taker_fees_cents: i64,
+    /// B2 件 3：maker（卖）腿实收费用三分项（扣费处直录——封顶分配
+    /// 实收口径；合计 ≡ `maker_fees_cents`）。个人域交割单 actual_fees
+    /// 的数据源（对照 18725d07 旧收据逐位）。
+    pub maker_fee_split: crate::fees::FeeComponents,
+    /// B2 件 3：taker（买）腿实收费用三分项（边际佣金+边际过户、印花
+    /// 税恒 0——A 股印花税单边卖出）。
+    pub taker_fee_split: crate::fees::FeeComponents,
     /// maker 腿订单 desk 序号（Sol 六审：执行腿同拍投影按真实订单
     /// 身份推进——OrderRef.1）。
     pub maker_order_serial: u64,
