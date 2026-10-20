@@ -57,36 +57,45 @@ test("实际移动行情、持仓与导航表面上的小字号文字满足 WCAG
     await page.addStyleTag({ content: appCss });
     await page.addStyleTag({ content: mobileCss });
 
-    const measure = (selector: string) => page.locator(selector).evaluate((element) => {
-      const parse = (color: string) => {
-        const content = color.match(/rgba?\((.+)\)/)?.[1];
-        if (content === undefined) throw new Error(`无法解析浏览器颜色：${color}`);
-        const [channelText, slashAlpha] = content.split("/");
-        const components = channelText.trim().split(/[\s,]+/).filter(Boolean);
-        const legacyAlpha = components.length === 4 ? components.pop() : undefined;
-        const channels = components.map((component) => component.endsWith("%") ? Number.parseFloat(component) * 2.55 : Number.parseFloat(component));
-        const alphaValue = slashAlpha?.trim() ?? legacyAlpha ?? "1";
-        const alpha = alphaValue.endsWith("%") ? Number.parseFloat(alphaValue) / 100 : Number.parseFloat(alphaValue);
-        return { channels, alpha };
+    // 十秒硬上限合规：17 个选择器合一次往返测量（亮/暗各一次），消除 34 次
+    // 串行 evaluate 往返的本机抖动放大；元素缺失显式报错，不静默跳过。
+    const measureAll = (selectorList: string[]) => page.evaluate((list: string[]) => {
+      const measureElement = (element: Element) => {
+        const parse = (color: string) => {
+          const content = color.match(/rgba?\((.+)\)/)?.[1];
+          if (content === undefined) throw new Error(`无法解析浏览器颜色：${color}`);
+          const [channelText, slashAlpha] = content.split("/");
+          const components = channelText.trim().split(/[\s,]+/).filter(Boolean);
+          const legacyAlpha = components.length === 4 ? components.pop() : undefined;
+          const channels = components.map((component) => component.endsWith("%") ? Number.parseFloat(component) * 2.55 : Number.parseFloat(component));
+          const alphaValue = slashAlpha?.trim() ?? legacyAlpha ?? "1";
+          const alpha = alphaValue.endsWith("%") ? Number.parseFloat(alphaValue) / 100 : Number.parseFloat(alphaValue);
+          return { channels, alpha };
+        };
+        const layers: Array<{ channels: number[]; alpha: number }> = [];
+        let ancestor: Element | null = element;
+        while (ancestor) {
+          const background = parse(getComputedStyle(ancestor).backgroundColor);
+          layers.push(background);
+          if (background.alpha >= 1) break;
+          ancestor = ancestor.parentElement;
+        }
+        let color = [255, 255, 255];
+        for (const layer of layers.reverse()) {
+          color = layer.channels.map((channel, index) => channel * layer.alpha + color[index] * (1 - layer.alpha));
+        }
+        return {
+          foreground: getComputedStyle(element).color,
+          background: `rgb(${color.map(Math.round).join(", ")})`,
+          fontSize: getComputedStyle(element).fontSize,
+        };
       };
-      const layers: Array<{ channels: number[]; alpha: number }> = [];
-      let ancestor: Element | null = element;
-      while (ancestor) {
-        const background = parse(getComputedStyle(ancestor).backgroundColor);
-        layers.push(background);
-        if (background.alpha >= 1) break;
-        ancestor = ancestor.parentElement;
-      }
-      let color = [255, 255, 255];
-      for (const layer of layers.reverse()) {
-        color = layer.channels.map((channel, index) => channel * layer.alpha + color[index] * (1 - layer.alpha));
-      }
-      return {
-        foreground: getComputedStyle(element).color,
-        background: `rgb(${color.map(Math.round).join(", ")})`,
-        fontSize: getComputedStyle(element).fontSize,
-      };
-    });
+      return list.map((selector) => {
+        const element = document.querySelector(selector);
+        if (element === null) throw new Error(`对比度测量选择器未命中任何元素：${selector}`);
+        return { selector, ...measureElement(element) };
+      });
+    }, selectorList);
 
     const selectors = [
       ".app-root",
@@ -107,8 +116,7 @@ test("实际移动行情、持仓与导航表面上的小字号文字满足 WCAG
       ".mobile-tabbar .tab-btn.active",
       ".mobile-tabbar .tab-btn:not(.active)",
     ];
-    for (const selector of selectors) {
-      const style = await measure(selector);
+    for (const { selector, ...style } of await measureAll(selectors)) {
       assert.ok(contrastRatio(style.foreground, style.background) >= 4.5, `${selector} 对比度不足：${style.foreground} / ${style.background} (${style.fontSize})`);
       if (selector === ".msd-header small") assert.ok(parseColor(style.foreground).alpha < 1, "标题副行应覆盖半透明前景的 alpha 合成路径");
     }
@@ -121,8 +129,7 @@ test("实际移动行情、持仓与导航表面上的小字号文字满足 WCAG
 
     await page.locator("html").evaluate((element) => element.setAttribute("data-theme", "dark"));
     const viewport = await page.evaluate(() => ({ inner: [innerWidth, innerHeight], screen: [screen.width, screen.height], landscape: matchMedia("(orientation: landscape)").matches, themeToken: getComputedStyle(document.documentElement).getPropertyValue("--up-text"), surfaceToken: getComputedStyle(document.documentElement).getPropertyValue("--up-text-on-dark") }));
-    for (const selector of selectors) {
-      const style = await measure(selector);
+    for (const { selector, ...style } of await measureAll(selectors)) {
       assert.ok(contrastRatio(style.foreground, style.background) >= 4.5, `暗色主题 ${selector} 对比度不足：${style.foreground} / ${style.background} (${style.fontSize}) ${JSON.stringify(viewport)}`);
     }
   } finally {
