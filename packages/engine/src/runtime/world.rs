@@ -2170,6 +2170,11 @@ impl World {
             self.drained_lifecycle.clear();
             self.drained_auction.clear();
             self.drained_day_trades.clear();
+            // 复核建议 S1：终 K 暂存对称清理（良性缺口——下次成功 Drain
+            /// 全槽覆写、take 仅在成功后发生；此处补齐与 abort_day_end 同式）。
+            for slot in &mut self.pending_day_candles {
+                *slot = None;
+            }
         }
         result
     }

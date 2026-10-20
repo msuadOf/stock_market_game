@@ -39,10 +39,12 @@ fn boundary_setup() -> crate::session::SessionSetup {
     setup
 }
 
-/// 交叉限价意图对（1000=初始价，必交叉成交）。
-fn crossing_intents(
+/// 交叉限价意图对（双边同价限价，必交叉成交；价由调用方给定——
+/// 1000=初始锚定价，1005=清算价≠锚定的区分性变体）。
+fn crossing_intents_at(
     buyer: AccountId,
     seller: AccountId,
+    price_cents: i64,
 ) -> Vec<crate::session::ReceiptBearingIntent> {
     vec![
         crate::session::ReceiptBearingIntent {
@@ -50,7 +52,7 @@ fn crossing_intents(
             intent: crate::Intent::PlaceLimit {
                 code: StockId(0),
                 side: Side::Buy,
-                price: LimitPrice::Fixed(Money::from_cents(1000)),
+                price: LimitPrice::Fixed(Money::from_cents(price_cents)),
                 qty: 100,
             },
             account_ordinal: 0,
@@ -61,7 +63,7 @@ fn crossing_intents(
             intent: crate::Intent::PlaceLimit {
                 code: StockId(0),
                 side: Side::Sell,
-                price: LimitPrice::Fixed(Money::from_cents(1000)),
+                price: LimitPrice::Fixed(Money::from_cents(price_cents)),
                 qty: 100,
             },
             account_ordinal: 0,
@@ -114,7 +116,7 @@ fn run_boundary(
                 .map(|v| v.daily_upper_limit)
                 .collect();
             driver
-                .inject_player_intents(&crossing_intents(buyer, seller), &upper)
+                .inject_player_intents(&crossing_intents_at(buyer, seller, 1000), &upper)
                 .expect("意图注入");
         }
         let events = session
@@ -321,5 +323,127 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
         driver.world_public_views()[0].daily_active.map(|(_, _, _, _, v)| v),
         Some(0),
         "日 1 活动 K 零量"
+    );
+}
+
+
+/// 场景三（复核建议 S3）：多日连续日界——日 1 收盘段同样归位，日 0
+/// 冻结结果不被日 1 覆盖（retained 链两条、逐日独立）。
+#[test]
+fn second_day_boundary_keeps_days_independent() {
+    // 日 0：收盘窗挂单（tick28/29→清算 200）；日 1（tick31..60）：连续段
+    // tick52/53（200）+收盘窗 tick58/59（清算 200）。双时钟契约：纯 step
+    // 路径不推进 civil（authoritative_tick_tests 同式——休市日/已收盘日
+    // 先 end_civil_day 对齐交易日序，否则日 1 冻结被同日幂等检查跳过）。
+    let mut session = GameSession::new(boundary_setup(), 93).expect("会话构造");
+    let (buyer, seller) = trade_pair(&session);
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session)
+        .expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for t in 1..=62u64 {
+        while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay
+            || session
+                .civil_clock()
+                .completed_trading_sessions_expected()
+                .unwrap()
+                != session.day() + 1
+        {
+            session.end_civil_day().expect("civil 推进");
+        }
+        if [28, 29, 52, 53, 58, 59].contains(&t) {
+            let upper: Vec<i64> = driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect();
+            driver
+                .inject_player_intents(&crossing_intents_at(buyer, seller, 1000), &upper)
+                .expect("意图注入");
+        }
+        session
+            .runtime_step_with_install(&mut driver)
+            .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
+    }
+    let driver = driver;
+    let retained = session.retained_market_days();
+    assert_eq!(retained.len(), 2, "两日各冻一条");
+    let day1_bars = &retained[1].0.securities[&0].bars;
+    let vol: u64 = day1_bars.iter().map(|b| b.volume_shares).sum();
+    assert_eq!(vol, 400, "日 1 bars=日内 200+收盘 200");
+    // install 面：末条=日 1 终 K；其前=日 0 终 K（不被覆盖）。
+    let hist = session.candle_book_histories_for_runtime(&StockId(0));
+    assert_day_k(
+        "install 日 1",
+        400,
+        400_000,
+        4,
+        1000,
+        1000,
+        1000,
+        1000,
+        hist.last().expect("日 1 K"),
+    );
+    assert_day_k(
+        "install 日 0",
+        200,
+        200_000,
+        2,
+        1000,
+        1000,
+        1000,
+        1000,
+        &hist[hist.len() - 2],
+    );
+    // 日 2 活动 K 零量（第二日收盘段不跨日残留）。
+    assert_eq!(
+        driver.world_public_views()[0].daily_active.map(|(_, _, _, _, v)| v),
+        Some(0),
+        "日 2 活动 K 零量"
+    );
+}
+
+/// 场景四（复核建议 S4）：收盘清算价≠昨收锚定——全日仅收盘竞价成交、
+/// 双边同价 1005（>锚定 1000）：开盘价=首笔成交价=清算价（B4a 的
+/// settle_fill 重锚定经本批 unroll 通道同样生效），额=1005×200。
+#[test]
+fn closing_only_candle_opens_at_clearing_price_not_anchor() {
+    let mut session = GameSession::new(boundary_setup(), 94).expect("会话构造");
+    let (buyer, seller) = trade_pair(&session);
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session)
+        .expect("驱动器构造");
+    driver.adopt_session_seq(&session);
+    for t in 1..=32u64 {
+        if (28..=29).contains(&t) {
+            let upper: Vec<i64> = driver
+                .world_public_views()
+                .iter()
+                .map(|v| v.daily_upper_limit)
+                .collect();
+            driver
+                .inject_player_intents(&crossing_intents_at(buyer, seller, 1005), &upper)
+                .expect("意图注入");
+        }
+        session
+            .runtime_step_with_install(&mut driver)
+            .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
+    }
+    let install = install_day0_candle(&session);
+    assert_day_k(
+        "install",
+        200,
+        201_000,
+        2,
+        1005,
+        1005,
+        1005,
+        1005,
+        &install,
+    );
+    // 次日昨收=官方收盘价 1005（涨跌停基准随 reroll 归正——读面抽查）。
+    let views = driver.world_public_views();
+    assert!(
+        views[0].last_price == 1005,
+        "清算后最新价=1005（实为 {}）",
+        views[0].last_price
     );
 }
