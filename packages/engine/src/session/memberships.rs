@@ -155,13 +155,16 @@ impl MarketMembershipState {
                 crate::error::ValidationFault::bare(2020),
             ));
         }
-        let expected: BTreeSet<_> = accounts
+        let mut expected: BTreeSet<_> = accounts
             .into_iter()
             .chain((1..=npc_count).map(AccountId))
             .collect();
-        // B3 裁剪注记：18725d07 在此按 setup.issuer_repurchase_enabled 追加
-        // 发行人回购专户（NPC 序列后确定性账户）；main 现状无公司系统，
-        // 该分支随 B4b 恢复 setup 字段后一并恢复。
+        // B4b 恢复（基 18725d07）：启用回购的公司局在 NPC 序列后确定性开立
+        // 发行人回购专户（id = npc_count + 1，构造期 accounts_projection 之前
+        // 的 session 侧串行段）——期望账户集按 setup 开关如实追加。
+        if save.setup.issuer_repurchase_enabled && save.setup.company_system.is_some() {
+            expected.insert(AccountId(npc_count.saturating_add(1)));
+        }
         if expected != save.snapshot.accounts.keys().copied().collect() {
             // fault2020：账户集合必须恰好为 NPC 与市场成员账户。
             return Err(SessionError::InvalidSave(

@@ -57,7 +57,9 @@ fn effective_observation_probability(kind: AccountKind, base_probability: f64, s
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
         AccountKind::Hot => 1.25,
-        AccountKind::Player => 0.0,
+        // 回购专户无策略（委托由执行器产生，B4d），不参与注意力观察——
+        // 与玩家同形：零信号放大。
+        AccountKind::Player | AccountKind::IssuerRepurchase => 0.0,
     };
     (base_probability * (1.0 + sensitivity * signal)).min(1.0)
 }
@@ -67,7 +69,7 @@ pub(crate) fn maximum_observation_probability(kind: AccountKind, base_probabilit
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
         AccountKind::Hot => 1.25,
-        AccountKind::Player => 0.0,
+        AccountKind::Player | AccountKind::IssuerRepurchase => 0.0,
     };
     (base_probability * (1.0 + sensitivity * 3.0)).min(1.0)
 }

@@ -57,6 +57,9 @@ pub struct CompanyAssemblyContext<'a> {
     pub custom: Option<&'a CompanyOperationsConfig>,
     pub groups: &'a [GroupStructure],
     pub start_date: CivilDate,
+    /// 报告频率（B4b 接线：前史公开库的排期频率；session 侧由
+    /// `SessionSetup.report_frequency` 解析——缺席 = Quarterly 既有行为）。
+    pub report_frequency: crate::information::ReportFrequency,
     pub seed: u64,
     pub event_multiplier_bp: u16,
 }
@@ -133,12 +136,12 @@ fn assemble_companies(
         catalog: registry.catalog().clone(),
         companies: operating_configs,
     };
-    // 报告频率 B4a 显式固定季度族（= 现状披露行为）；B4b 恢复 SessionSetup
-    // .report_frequency 字段后改接配置真值。
+    // 报告频率 B4b 起=配置真值（SessionSetup.report_frequency 解析后传入；
+    // 缺席回落 Quarterly=既有披露行为）。
     let prehistory = assemble_seeded_prehistory(
         operations_config,
         ctx.start_date,
-        crate::information::ReportFrequency::Quarterly,
+        ctx.report_frequency,
     )
     .map_err(|_error| {
             // fault1152: 经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。
@@ -213,7 +216,7 @@ fn assemble_custom_companies(
     let mut prehistory = assemble_seeded_prehistory(
         config,
         ctx.start_date,
-        crate::information::ReportFrequency::Quarterly,
+        ctx.report_frequency,
     )
     .map_err(|_error| {
             // fault1155: 自定义公司经营前史装配失败。槽0 待 C 批数值化（原文本为内层装配错误文本）。

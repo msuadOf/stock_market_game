@@ -304,6 +304,19 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     save.setup
         .validate()
         .map_err(|_| SessionError::InvalidSave(ValidationFault::bare(2002)))?;
+    // 公司线在场性配对（B4b）：company_system 与 corporate_actions 必须同在场
+    // 或同缺席——单边档是不完整存档，显式拒绝（不静默补空容器）。
+    if save.company_system.is_some() != save.corporate_actions.is_some() {
+        // fault2101：公司字段在场性不配对（一侧缺席）。
+        // ctx[0] = company_system 在场（1/0）；ctx[1] = corporate_actions 在场（1/0）。
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2101,
+            vec![
+                u64::from(save.company_system.is_some()),
+                u64::from(save.corporate_actions.is_some()),
+            ],
+        )));
+    }
 
     let (saved_day, day_tick, auction_entry_ticks, saved_phase) =
         SaveValidationContext::derive_trading_clock(save)?;
