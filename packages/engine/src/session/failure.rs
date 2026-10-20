@@ -981,22 +981,68 @@ impl GameSession {
             /// 迁移（facts 收集不 push）→ world 日结（drain 事实收集）
             /// → 竞价事件 → DayBoundary 事件。迁移先行仍满足"组内/
             /// 计划事件日历以 session day 为准"（world 日结在迁移后）。
-            let facts = match crate::session::pipeline::install_runtime_day_boundary(self) {
+            let mut facts = match crate::session::pipeline::install_runtime_day_boundary(self) {
                 Ok(facts) => facts,
                 Err(fatal) => {
                     self.rollback_runtime_step(baseline);
                     return Err(self.poison_runtime_step(fatal));
                 }
             };
-            if let Err(e) = driver.world_day_end_for_step() {
+            // 日界批：收盘竞价成交（Drain 应答捎带）——Trade 事件入
+            /// DayBoundary 前段、个人确认以**当日** civil_date 即时入账
+            /// （修复迟到下一拍取次日+日结静点 save 丢失两漂移）。
+            let drained_receipts = match driver.world_day_end_for_step(self.civil_date()) {
+                Ok(receipts) => receipts,
+                Err(e) => {
+                    self.rollback_runtime_step(baseline);
+                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime::day_end_world".to_owned(),
+                        description: e,
+                    }));
+                }
+            };
+            // 日界批：install 面补真——candle_book 历史末条升级为含收盘
+            /// 段的 Drain 终 K（commit_active 先于 Drain 提交的是日内段
+            /// 形态）；DayBoundary 事件 `closed_daily_candles` 同源补值
+            ///（facts 尚未编号 push，原地改写）。
+            let day_candles = match driver.take_drained_day_candles(self) {
+                Ok(candles) => candles,
+                Err(e) => {
+                    self.rollback_runtime_step(baseline);
+                    return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                        location: "GameSession::step_via_runtime::day_end_candle_patch".to_owned(),
+                        description: e,
+                    }));
+                }
+            };
+            if let Err(e) = self.replace_runtime_committed_daily_candles(&day_candles) {
                 self.rollback_runtime_step(baseline);
                 return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
-                    location: "GameSession::step_via_runtime::day_end_world".to_owned(),
+                    location: "GameSession::step_via_runtime::day_end_candle_patch".to_owned(),
+                    description: e,
+                }));
+            }
+            for fact in facts.iter_mut() {
+                if let Event::DayBoundary {
+                    closed_daily_candles,
+                    ..
+                } = &mut fact.event
+                {
+                    for (code, candle) in &day_candles {
+                        closed_daily_candles.insert(code.clone(), candle.clone());
+                    }
+                }
+            }
+            if let Err(e) = self.runtime_append_trade_receipts(&drained_receipts) {
+                self.rollback_runtime_step(baseline);
+                return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "GameSession::step_via_runtime::day_end_receipts".to_owned(),
                     description: e,
                 }));
             }
             // B2 件 4：交易日保留快照冻结（boundary 迁移已提交日K、
-            /// world 日结 Drain 已收当日桶——组装+日K对账+原子发布+镜像）。
+            /// world 日结 Drain 已收当日桶——组装+日K对账+原子发布+镜像；
+            /// 日界批后日 K 已补真，对账在全对账分支闭合）。
             if let Err(e) = driver.freeze_retained_trading_day(self) {
                 self.rollback_runtime_step(baseline);
                 return Err(self.poison_runtime_step(StepFatal::InvariantViolation {
@@ -2049,6 +2095,30 @@ impl GameSession {
             .push(crate::runtime::publication::SharedRetainedDay(snapshot));
     }
 
+    /// 日界批：以日结 Drain 终 K 补真 install 面（candle_book 历史中
+    /// `time` 匹配的**末条**整值替换——`commit_active` 先于 Drain 提交
+    /// 的是日内段形态，收盘竞价段在此并入）。缺条目=迁移提交面缺失，
+    /// 显式失败。
+    pub fn replace_runtime_committed_daily_candles(
+        &mut self,
+        candles: &[(crate::StockId, crate::session::DailyCandle)],
+    ) -> Result<(), String> {
+        self.mark_external_mutation();
+        for (code, candle) in candles {
+            if !self
+                .state
+                .candle_book
+                .patch_history_entry(code, candle.clone())
+            {
+                return Err(format!(
+                    "股 {code:?} 日 K 补真缺当日条目（time={}）——迁移提交面缺失",
+                    candle.time
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// B2 件 4 组装核心（单一事实源——runtime driver 编排与**串行安装**
     /// 共用同一实现；原 `RuntimeDriver::assemble_retained_day_at` 挪入）：
     /// 每股开市判定+桶校验（+交易日日K对账：量/额/笔/OHLC 逐位——旧
@@ -2087,45 +2157,41 @@ impl GameSession {
                     .find(|c| c.time == candle_time)
                     .cloned();
                 let Some(candle) = candle else {
-                    // 【既有漂移登记（同占位域）】手动 day_end 编排不做
-                    /// boundary 迁移（日K未提交）——对账基缺席，跳过逐位
-                    /// 对账（真实 K 在 desk 观察面；日界编排修正属独立批次）。
+                    // 【既有登记（manual 面）】手动 day_end 编排不做
+                    /// boundary 迁移（日K未提交 install 面）——对账基缺席
+                    /// 跳过（生产 step 的 ends_day 段恒有提交条目+日界批
+                    /// 终 K 补真；manual 面差异登记于
+                    /// agents/day-boundary-kline/ledger.md 遗留节）。
                     continue;
                 };
 
                 let volume: u64 = bars_vec.iter().map(|b| b.volume_shares).sum();
                 let turnover: u128 = bars_vec.iter().map(|b| b.turnover_cents).sum();
                 let count: u64 = bars_vec.iter().map(|b| b.trade_count).sum();
-                // 【既有漂移登记（B2 复核项；W3 缺陷 2 修复后正常流不可
-                /// 达——防御性保留】原形态：日界拍 desk roll_day 先于
-                /// session 日终迁移，install 占位 K（volume=0）覆盖真实
-                /// 活动 K 提交——占位形态放行差异。修复后 install 守卫
-                /// 保证真实 K 不被覆盖，本分支仅在覆盖回归时可达（届时
-                /// 由下方全对账显式失败兜底——零量 K 配非零 bars 即红）。
-                if candle.volume == 0 && volume > 0 {
-                    // 占位形态：放行（差异登记如上）。
-                } else {
-                    let (c_turnover, c_count) = candle
-                        .trade_stats
-                        .as_ref()
-                        .map(|s| (u128::from(s.turnover_cents), s.trade_count))
-                        .ok_or_else(|| format!("股 {idx} 日K缺成交统计"))?;
-                    if volume != candle.volume || turnover != c_turnover || count != c_count {
-                        return Err(format!(
-                            "股 {idx} 分钟累计量/额/笔与日K不一致：bars=({volume},{turnover},{count}) candle=({},{c_turnover},{c_count})",
-                            candle.volume
-                        ));
-                    }
-                    if let (Some(first), Some(last)) = (bars_vec.first(), bars_vec.last()) {
-                        let high = bars_vec.iter().map(|b| b.high.cents()).max();
-                        let low = bars_vec.iter().map(|b| b.low.cents()).min();
-                        if first.open != candle.open
-                            || last.close != candle.close
-                            || high != Some(candle.high.cents())
-                            || low != Some(candle.low.cents())
-                        {
-                            return Err(format!("股 {idx} 分钟 OHLC 与日K不一致"));
-                        }
+                // 日界批收口：原"占位 K（volume=0）配非零 bars 放行"的
+                /// 豁免退役——日结 Drain 终 K 已补真 install 面（含收盘
+                /// 竞价段），全形态逐位对账（B2 台账"占位形态跳过逐位"
+                /// 收紧；占位 K 仅与空 bars 互恰仍自然通过）。
+                let (c_turnover, c_count) = candle
+                    .trade_stats
+                    .as_ref()
+                    .map(|s| (u128::from(s.turnover_cents), s.trade_count))
+                    .ok_or_else(|| format!("股 {idx} 日K缺成交统计"))?;
+                if volume != candle.volume || turnover != c_turnover || count != c_count {
+                    return Err(format!(
+                        "股 {idx} 分钟累计量/额/笔与日K不一致：bars=({volume},{turnover},{count}) candle=({},{c_turnover},{c_count})",
+                        candle.volume
+                    ));
+                }
+                if let (Some(first), Some(last)) = (bars_vec.first(), bars_vec.last()) {
+                    let high = bars_vec.iter().map(|b| b.high.cents()).max();
+                    let low = bars_vec.iter().map(|b| b.low.cents()).min();
+                    if first.open != candle.open
+                        || last.close != candle.close
+                        || high != Some(candle.high.cents())
+                        || low != Some(candle.low.cents())
+                    {
+                        return Err(format!("股 {idx} 分钟 OHLC 与日K不一致"));
                     }
                 }
             }

@@ -396,6 +396,17 @@ pub struct DeskState {
     /// 拍清当日桶；暂存待 Drain 应答捎带，冻结链才能拿到完整当日桶
     /// ＋收盘清算 900 桶）。每日结消费一次。
     rolled_day_bars: Option<Vec<super::protocol::MinuteBarFact>>,
+    /// 日界批：跨日暂存的日内段成交统计（额/笔——`roll_day` 清零前的
+    /// `turnover_today`/`trade_count`；量在归档 K 内）。`drain_all` 收盘
+    /// 段 unroll 还原当日累计用；与 `rolled_day_bars` 同生命周期。
+    rolled_day_stats: Option<(i64, u64)>,
+    /// 日界批：roll_day 归档的当日 K 暂存（unroll 还原活动位用——不经
+    /// `candles.pop`，杜绝预置历史误取；与 `rolled_day_bars` 成对）。
+    rolled_day_candle: Option<DeskCandle>,
+    /// 日界批：本 Drain 收盘清算产出的当日终 K（含收盘段；reroll 写入、
+    /// `DeskDrained` 应答取走。None=本次 Drain 未执行收盘清算（closing=0
+    /// 几何/未跨日手动日结）——应答不带终 K，install 面维持既有形态）。
+    drain_cleared_closing: Option<super::protocol::DeskDayCandleFinal>,
     /// B2：当日桶已随 Drain 捎带（未跨日手动日结形态——防后续 roll_day
     /// 把已捎带的桶再暂存造成下次日结双计；roll_day 重置）。
     bars_shipped_today: bool,
@@ -586,6 +597,9 @@ impl DeskState {
             opening_cleared: false,
             clearing_minute: None,
             rolled_day_bars: None,
+            rolled_day_stats: None,
+            rolled_day_candle: None,
+            drain_cleared_closing: None,
             bars_shipped_today: false,
             trade_facts: Vec::new(),
             lifecycle_facts: Vec::new(),
@@ -2150,20 +2164,19 @@ impl DeskState {
         // 跨日不残留（此前第二日开盘窗被首日标记抑制，
         // batch4_second_day_auction_window 显红）。
         self.opening_cleared = false;
-        let m = &mut self.market;
-        m.last_close = m.last_price;
-        m.day_high = m.last_price;
-        m.day_low = m.last_price;
-        m.volume_today = 0;
-        m.turnover_today = 0;
-        m.trade_count = 0;
-        if let Some(candle) = m.candle.take() {
-            if candle.volume > 0 {
-                m.traded_days_total = m.traded_days_total.saturating_add(1);
+        // 日内段归档（量在 K；K/额/笔随桶一并暂存——drain_all 收盘段
+        // unroll 还原当日形态用）。
+        {
+            let m = &mut self.market;
+            if let Some(candle) = m.candle.take() {
+                if candle.volume > 0 {
+                    m.traded_days_total = m.traded_days_total.saturating_add(1);
+                }
+                self.rolled_day_candle = Some(candle);
+                m.candles.push(candle);
             }
-            m.candles.push(candle);
+            m.minute_closes.clear();
         }
-        m.minute_closes.clear();
         // B2：当日桶跨日暂存（roll_day 先于日结 Drain 的生产时序——见
         // 字段注释）。上一暂存未消费=连续两日未日结（结构性 bug，防御
         /// 显式覆盖前先断言）。
@@ -2176,11 +2189,139 @@ impl DeskState {
         /// 的窄形态会与 day-2 同桶静默合并——多数形态键回退显式 Err，窄
         /// 形态必须同样终结）；生产自动形态（roll 先于 Drain）恒 false。
         if !self.bars_shipped_today {
+            let m = &mut self.market;
+            self.rolled_day_stats = Some((m.turnover_today, m.trade_count));
             self.rolled_day_bars = Some(std::mem::take(&mut m.minute_bars));
         } else {
-            m.minute_bars.clear();
+            // 已随先前 Drain 捎带（未跨日手动日结后再 roll）——不再暂存
+            //（防双计）；candle 同置 None（后续无 unroll 消费）。
+            self.rolled_day_stats = None;
+            self.rolled_day_candle = None;
+            self.market.minute_bars.clear();
         }
         self.bars_shipped_today = false;
+        self.reset_market_for_new_day();
+    }
+
+    /// 日界批：跨日行情段重置（`roll_day` 与 `drain_all` 收盘段 reroll
+    /// 共用——昨收=最新价、日内高低/量/额/笔清零。reroll 时点的
+    /// `last_price` 已含收盘竞价成交 ⇒ 昨收=官方收盘价（大 A：收盘价
+    /// =收盘竞价成交价，无成交=最后成交价））。
+    fn reset_market_for_new_day(&mut self) {
+        let m = &mut self.market;
+        m.last_close = m.last_price;
+        m.day_high = m.last_price;
+        m.day_low = m.last_price;
+        m.volume_today = 0;
+        m.turnover_today = 0;
+        m.trade_count = 0;
+    }
+
+    /// 日界批：收盘段 unroll——还原被 `roll_day` 归档的当日行情段
+    /// （归档 K 弹回活动位/量额累计还原/暂存桶回填），使收盘竞价清算
+    /// 成交自然落**当日** K 与 900 桶（roll 先于 Drain 的生产时序修正）。
+    /// 返回 Some(日内段 K)=跨日形态已还原（reroll 消费）；None=未跨日
+    /// 手动日结形态（K/桶仍 live，无需还原亦无需 reroll）。
+    fn unroll_day_for_drain_clearing(
+        &mut self,
+    ) -> Result<Option<DeskCandle>, RuntimeError> {
+        if self.rolled_day_bars.is_none() {
+            return Ok(None);
+        }
+        let bars = self.rolled_day_bars.take().expect("上方已判在位");
+        let (turnover, count) = self.rolled_day_stats.take().ok_or_else(|| {
+            RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "收盘段 unroll 缺跨日暂存统计（stock={}——与桶的成对不变量破坏）",
+                    self.setup.stock
+                ),
+            }
+        })?;
+        let day0 = self.rolled_day_candle.take().ok_or_else(|| {
+            RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "收盘段 unroll 缺当日归档 K 暂存（stock={}——roll_day 归档面缺失）",
+                    self.setup.stock
+                ),
+            }
+        })?;
+        let m = &mut self.market;
+        // 次日零占位 K（finish_round 于新日申报窗首拍建）丢弃待 reroll 重建
+        // ——申报窗无撮合，占位必零量；非零=结构性错序，显式失败不静默丢。
+        if m.candle.as_ref().is_some_and(|next| next.volume != 0) {
+            return Err(RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "收盘段 unroll：次日占位 K 非零量（stock={}——新日申报窗不应成交）",
+                    self.setup.stock
+                ),
+            });
+        }
+        m.volume_today = day0.volume;
+        m.turnover_today = turnover;
+        m.trade_count = count;
+        m.day_high = day0.high;
+        m.day_low = day0.low;
+        m.candle = Some(day0);
+        m.minute_bars = bars;
+        Ok(Some(day0))
+    }
+
+    /// 日界批：收盘段 reroll——清算成交已落当日 K/桶后归档终 K、重置
+    /// 跨日行情段、按现价重建次日零占位 K（不被收盘段污染）。
+    /// `unrolled=None`（未跨日形态）为无操作。`traded_days_total` 恰一次：
+    /// 首 roll 已按日内段量计过，收盘段补计仅限"日内零量、终 K 非零"
+    /// （全日仅收盘竞价成交）形态。
+    fn reroll_after_drain_clearing(
+        &mut self,
+        unrolled: Option<DeskCandle>,
+    ) -> Result<(), RuntimeError> {
+        let Some(day0_intraday) = unrolled else {
+            return Ok(());
+        };
+        let m = &mut self.market;
+        let final_candle = m.candle.take().ok_or_else(|| RuntimeError::ProtocolInvariant {
+            detail: format!(
+                "收盘段 reroll 缺当日 K（stock={}——unroll 后清算段必在位）",
+                self.setup.stock
+            ),
+        })?;
+        if final_candle.volume > 0 && day0_intraday.volume == 0 {
+            m.traded_days_total = m.traded_days_total.saturating_add(1);
+        }
+        // 归档末条原位覆写为终 K（unroll 未 pop——末条即当日归档位）。
+        let archive = m.candles.last_mut().ok_or_else(|| {
+            RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "收盘段 reroll 缺当日归档位（stock={}——candles 空）",
+                    self.setup.stock
+                ),
+            }
+        })?;
+        *archive = final_candle;
+        // 终 K 产出（应答消费）+ 桶/统计再暂存 + 跨日段重置 + 次日零占位重建。
+        self.drain_cleared_closing = Some(super::protocol::DeskDayCandleFinal {
+            open: final_candle.open,
+            high: final_candle.high,
+            low: final_candle.low,
+            close: final_candle.close,
+            volume: final_candle.volume,
+            turnover_cents: m.turnover_today,
+            trade_count: m.trade_count,
+        });
+        self.rolled_day_candle = Some(final_candle);
+        self.rolled_day_stats = Some((m.turnover_today, m.trade_count));
+        self.rolled_day_bars = Some(std::mem::take(&mut m.minute_bars));
+        m.minute_closes.clear();
+        let last = m.last_price;
+        m.candle = Some(DeskCandle {
+            open: last,
+            high: last,
+            low: last,
+            close: last,
+            volume: 0,
+        });
+        self.reset_market_for_new_day();
+        Ok(())
     }
 
     /// 新 tick 起点：隐式转正 → （日界重置）→ 行情快照 → 开盘清算 → 到期撤销。
@@ -2523,6 +2664,9 @@ impl DeskState {
         if self.cur_tick > 0
             && self.setup.phase_at(self.cur_tick - 1) == DeskPhase::ClosingAuction
         {
+            // 日界批：收盘段 unroll——还原被 roll_day 归档的当日行情段，
+            // 使清算成交落**当日** K/量额/900 桶（reroll 在清算后对称执行）。
+            let unrolled = self.unroll_day_for_drain_clearing()?;
             // 不置 opening_cleared——该标记只属开盘清算语义；日结 Drain
             // 置位会跨日残留（roll_day 在 Drain 前已跑过当日重置），
             /// 抑制第二日开盘窗的指示价与清算（batch4 二日窗实证）。
@@ -2584,6 +2728,9 @@ impl DeskState {
                     imbalance: sel.imbalance,
                 });
                 let cleared = Ok(Some((price, actual)));
+                // 日界批：收盘段 reroll——终 K 归档+跨日段重置（昨收=官方
+                /// 收盘价）+次日零占位重建；桶/统计再暂存供应答捎带。
+                self.reroll_after_drain_clearing(unrolled)?;
                 // 清算后**继续清余单**（收盘竞价一次清算后清簿——模块
                 /// 语义；此前清算分支提前 return 使余单跨日残留，
                 /// sol3r 余 100 不退回/closing_keeps bids 不空两测显红）。
@@ -2601,6 +2748,7 @@ impl DeskState {
                 completed: true,
                 imbalance: 0,
             });
+            self.reroll_after_drain_clearing(unrolled)?;
             self.drain_remaining_orders();
             return Ok(None);
         }
@@ -3124,9 +3272,11 @@ fn process_msg(
                     /// <900）。
                     drained_minute_bars: {
                         // B2 日结形态两分（期末 Final 观察面保留桶）：
-                        // - 跨日形态（rolled 在）：live 段=Drain 收盘清算的
-                        //   900 桶（建于已 roll 的新日数组），并入应答后清
-                        //   （残留会使次日连续桶键回退——探针 tick241 实证）；
+                        // - 跨日形态（rolled 在）：日界批后收盘清算经
+                        //   unroll 落**当日**桶（reroll 再暂存=全量）；
+                        //   live 段=新日数组（申报窗无撮合恒空）并入即
+                        //   全量当日桶；并入后清（残留会使次日连续桶键
+                        //   回退——探针 tick241 实证）；
                         // - 未跨日形态（手动日结）：应答=live 全量，置已
                         //   捎带标记（防后续 roll_day 双计）；live 保留供
                         //   期末 Final 观察面。
@@ -3142,6 +3292,16 @@ fn process_msg(
                             }
                         }
                     },
+                    // 日界批：收盘竞价清算成交随应答上行（原随下一拍
+                    /// DeskReport 迟到——receipt civil_date 取组装时点成
+                    /// 次日；take 后缓冲清空，杜绝下一拍双报）。
+                    drained_trades: std::mem::take(&mut state.trade_facts),
+                    // 日界批：当日终 K（含收盘段——install 面/DayBoundary
+                    /// 事件的权威补真值源）。仅本次 Drain 实际执行了收盘
+                    /// 清算时携带（reroll 产出）；closing=0 几何/未跨日
+                    /// 手动日结=None——install 面维持既有形态（不对
+                    /// 非收盘段日界补真，防预置历史/双属拍污染）。
+                    drained_day_candle: state.drain_cleared_closing.take(),
                 })
                 .map_err(|_| RuntimeError::SendFailed {
                     detail: format!("交易部 {} DeskDrained 发送失败", state.setup.stock),

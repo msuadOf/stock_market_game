@@ -114,6 +114,8 @@ pub use initial_allocation::{
 #[cfg(test)]
 mod continuous_cancellation_tests;
 #[cfg(test)]
+mod day_boundary_kline_tests;
+#[cfg(test)]
 mod envelope_projection_hydration_tests;
 #[cfg(test)]
 mod envelope_projection_tests;
