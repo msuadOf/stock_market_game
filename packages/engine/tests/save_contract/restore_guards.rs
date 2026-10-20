@@ -1,5 +1,5 @@
 use engine::plans::PlanOpen;
-use engine::session::{decode_save_slot, GameSession, SaveDecodeLimits};
+use engine::session::{GameSession, SaveDecodeLimits, SessionError, decode_save_slot};
 use engine::{AccountId, OpinionSource, PlanOpinion, PlanTarget, Side, StockId, Urgency};
 
 fn baseline() -> serde_json::Value {
@@ -26,19 +26,42 @@ fn baseline() -> serde_json::Value {
                 })
                 .unwrap();
             GameSession::restore(&save).expect("被修改之前的完整基线必须能恢复");
-            serde_json::to_value(save).unwrap()
+            let wire = serde_json::to_value(save).unwrap();
+            // 夹具完整性：未篡改基线也必须通过完整 JSON 解码——后续各例的
+            // fault2080 断言才可归因于本例篡改而非基线腐化。
+            decode_save_slot(
+                &serde_json::to_vec(&wire).unwrap(),
+                &SaveDecodeLimits::default(),
+            )
+            .expect("未篡改基线必须通过完整 SaveSlot JSON 解码");
+            wire
         })
         .clone()
 }
 
-fn decode_error(wire: serde_json::Value) -> String {
+/// 完整解码边界断言：语义篡改（serde 自定义校验拒绝）统一落 fault2080
+/// （8447ecd6 错误契约数值化；语义错误的专用码登记为 C 批待办）。
+fn assert_decode_rejects_with_fault2080(wire: &serde_json::Value) {
     match decode_save_slot(
-        &serde_json::to_vec(&wire).unwrap(),
+        &serde_json::to_vec(wire).unwrap(),
         &SaveDecodeLimits::default(),
     ) {
-        Err(error) => error.to_string(),
+        Err(SessionError::InvalidSave(fault)) => assert_eq!(
+            fault.code, 2080,
+            "语义篡改须在完整解码边界以 fault2080 拒绝：{fault}"
+        ),
+        Err(other) => panic!("完整解码须以 InvalidSave 拒绝，实际：{other}"),
         Ok(_) => panic!("损坏状态不应通过完整 SaveSlot 解码"),
     }
+}
+
+/// 库级 serde 定位断言：语义校验在 Deserialize 内以自定义错误拒绝，其文本
+/// 只在库级 `serde_json` 错误面保留——在此钉住"是哪条校验拒绝"，替代
+/// 数值化前的边界文本断言（不弱化定位）。
+fn serde_rejection_text(wire: &serde_json::Value) -> String {
+    serde_json::from_value::<engine::session::SaveSlot>(wire.clone())
+        .expect_err("库级 serde 必须拒绝语义篡改")
+        .to_string()
 }
 
 fn restore_error(wire: serde_json::Value) -> String {
@@ -69,8 +92,8 @@ fn audit_credit_complete_save_rejects_invalid_industrial_loan_facts() {
     assert!(!loans.is_empty());
     loans.values_mut().next().unwrap()["outstanding"] =
         serde_json::to_value(engine::accounting::AccountingAmount::from_cents(-1)).unwrap();
-    let error = decode_error(invalid);
-    assert!(error.contains("industrial credit state"), "{error}");
+    assert_decode_rejects_with_fault2080(&invalid);
+    assert!(serde_rejection_text(&invalid).contains("industrial credit state"));
     let mut overflowing = baseline;
     let company = overflowing["company_operations"]["companies"]
         .as_object_mut()
@@ -96,8 +119,8 @@ fn audit_credit_complete_save_rejects_invalid_industrial_loan_facts() {
     extra_contract["principal"] =
         serde_json::to_value(engine::accounting::AccountingAmount::MAX).unwrap();
     contracts.insert("synthetic-overflow-loan".into(), extra_contract);
-    let error = decode_error(overflowing);
-    assert!(error.contains("amount overflow in add"), "{error}");
+    assert_decode_rejects_with_fault2080(&overflowing);
+    assert!(serde_rejection_text(&overflowing).contains("amount overflow in add"));
 }
 
 #[test]
@@ -115,8 +138,8 @@ fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
             .unwrap();
         plan["created_trading_day"] = serde_json::json!(created);
         plan["horizon_trading_days"] = serde_json::json!(horizon);
-        let error = decode_error(wire);
-        assert!(error.contains(reason), "{error}");
+        assert_decode_rejects_with_fault2080(&wire);
+        assert!(serde_rejection_text(&wire).contains(reason));
     }
 }
 
@@ -136,8 +159,8 @@ fn complete_save_decoding_rejects_duplicate_operating_due_id() {
             due["id"].as_u64().unwrap(),
         )
     });
-    let error = decode_error(wire);
-    assert!(error.contains("duplicate due id"), "{error}");
+    assert_decode_rejects_with_fault2080(&wire);
+    assert!(serde_rejection_text(&wire).contains("duplicate due id"));
 }
 
 #[test]

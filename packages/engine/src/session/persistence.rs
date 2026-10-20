@@ -844,9 +844,15 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         // fault2061：日 K 市场集合与 setup 不完全一致。
         return Err(SessionError::InvalidSave(ValidationFault::bare(2061)));
     }
+    // 日历政策属 civil_clock 域（save.civil_clock.policy）：政策/digest 校验失败
+    // 必须与会话恢复路径（CivilClock::from_parts）同域透传为
+    // SessionError::CivilClock(CivilClockError::Calendar(..))，不得经 From 直落
+    // SessionError::Calendar 造成同一篡改在两个校验点产生不同错误域。
     let candle_calendar = crate::calendar::TradingCalendar::from_policy(
-        crate::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())?,
-    )?;
+        crate::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())
+            .map_err(CivilClockError::from)?,
+    )
+    .map_err(CivilClockError::from)?;
     for (code, candles) in &save.snapshot.daily_candles {
         if !expected_markets.contains(code) {
             // fault2062：日 K 含未知股票；ctx[0]=StockId。
@@ -1187,18 +1193,20 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     super::company_groups::validate_groups(&save.groups, &save.company_operations)
         .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2089, vec![0])))?;
     // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
+    // 2090-2096 的 ctx[0] 统一落数值 CompanyId（C 批数值化收口：定位到具体公司，
+    // 不再以 0 占位）；ctx[1]（错误种别/字符串 id）仍待 C 批登记。
     let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
-    for (_id, company) in &save.company_operations.companies {
+    for (id, company) in &save.company_operations.companies {
         if company
             .economy()
             .active()
             .iter()
             .any(|shock| !shock.kind.applies_to(company.spec().kind))
         {
-            // fault2090：公司存有行业不适用的活跃冲击；ctx[0] 待 C 批数值化（原文本 "{id:?}" CompanyId）。
+            // fault2090：公司存有行业不适用的活跃冲击；ctx[0]=CompanyId。
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2090,
-                vec![0],
+                vec![u64::from(id.0)],
             )));
         }
         if let Some(real_estate) = company.books().as_real_estate() {
@@ -1206,40 +1214,40 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
                 if loan.maturity_date() < save.civil_clock.policy.init_only_min_start
                     || loan.maturity_date() > save.civil_clock.policy.runtime_max_end
                 {
-                    // fault2091：项目贷款到期日越出日历政策窗；ctx[0] 待 C 批数值化（原文本 "{id:?}" CompanyId），
+                    // fault2091：项目贷款到期日越出日历政策窗；ctx[0]=CompanyId，
                     // ctx[1] 待 C 批数值化（原文本 "{contract:?}" 合同 id）。
                     return Err(SessionError::InvalidSave(ValidationFault::new(
                         2091,
-                        vec![0, 0],
+                        vec![u64::from(id.0), 0],
                     )));
                 }
             }
         }
         if let Some(insurance) = company.books().as_insurance() {
-            // fault2092：保险账状态非法；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（原文本 "{error}"）。
-            insurance
-                .validate_restore()
-                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2092, vec![0, 0])))?;
+            // fault2092：保险账状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（原文本 "{error}"）。
+            insurance.validate_restore().map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(2092, vec![u64::from(id.0), 0]))
+            })?;
         }
         if let Some(industrial) = company.books().as_industrial() {
-            // fault2093：工业贸易对手方事件非法；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（"{error}"）。
-            industrial
-                .validate_trade_counterparty_events()
-                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2093, vec![0, 0])))?;
-            // fault2094：工业库存来源事件非法；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（"{error}"）。
-            industrial
-                .validate_inventory_source_events()
-                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2094, vec![0, 0])))?;
-            // fault2095：工业信用状态非法；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（"{error}"）。
-            industrial
-                .validate_credit_state()
-                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2095, vec![0, 0])))?;
+            // fault2093：工业贸易对手方事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+            industrial.validate_trade_counterparty_events().map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(2093, vec![u64::from(id.0), 0]))
+            })?;
+            // fault2094：工业库存来源事件非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+            industrial.validate_inventory_source_events().map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(2094, vec![u64::from(id.0), 0]))
+            })?;
+            // fault2095：工业信用状态非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+            industrial.validate_credit_state().map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(2095, vec![u64::from(id.0), 0]))
+            })?;
         }
         if let Some(bank) = company.books().as_bank() {
-            // fault2096：银行 ECL 政策非法；ctx[0] 待 C 批（CompanyId），ctx[1] 待 C 批（"{error}"）。
-            bank.ecl_policy()
-                .validate()
-                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2096, vec![0, 0])))?;
+            // fault2096：银行 ECL 政策非法；ctx[0]=CompanyId，ctx[1] 待 C 批（"{error}"）。
+            bank.ecl_policy().validate().map_err(|_| {
+                SessionError::InvalidSave(ValidationFault::new(2096, vec![u64::from(id.0), 0]))
+            })?;
         }
         let Some(listed) = company.spec().listed_stock.as_ref() else {
             continue;

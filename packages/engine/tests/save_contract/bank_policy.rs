@@ -52,8 +52,19 @@ fn complete_save_restore_rejects_invalid_bank_ecl_with_company_context() {
             Err(error) => error,
             Ok(_) => panic!("损坏 ECL 政策不得安装为运行会话"),
         };
-        assert!(matches!(error, SessionError::InvalidSave(_)), "{error}");
-        assert!(error.to_string().contains("ECL"), "{error}");
-        assert!(error.to_string().contains(&id), "{error}");
+        // fault2096（银行 ECL 政策非法）ctx[0]=CompanyId（C 批数值化收口）：
+        // 码+数值公司定位断言替代原文本 "ECL"/公司 id contains（错误契约
+        // 8447ecd6 数值化后文本不再随错误返回，见 ADR 0041 阶段二）。
+        let expected_company = id
+            .parse::<u64>()
+            .expect("存档公司键是 CompanyId 的十进制文本");
+        assert!(
+            matches!(
+                &error,
+                SessionError::InvalidSave(fault)
+                    if fault.code == 2096 && fault.context.first() == Some(&expected_company)
+            ),
+            "损坏 ECL 政策须以 fault2096+公司 {expected_company} 拒绝：{error}"
+        );
     }
 }

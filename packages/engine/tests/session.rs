@@ -1956,9 +1956,13 @@ fn player_snapshot_excludes_private_npc_accounts_but_save_keeps_them() {
     assert_eq!(ms.last_price.cents(), 1000);
     assert_eq!(snap.accounts.len(), 1);
     assert_eq!(s.save().expect("healthy save").snapshot.accounts.len(), 5);
+    // 073d03e6 统一玩家默认入场资金为一百亿元：玩家快照现金 = 配置 starting_cash。
+    // 断言与 fixture 配置（proposed_defaults）同源锚定，避免再随默认资金调整漂移。
     assert_eq!(
         snap.accounts.get(&AccountId(0)).unwrap().cash.cents(),
-        10_000_000
+        engine::GameConfig::proposed_defaults()
+            .starting_cash
+            .cents()
     );
 }
 
