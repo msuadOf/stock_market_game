@@ -12,7 +12,8 @@
 | `1383b859` | feat(engine): B4b 主刀——容器+字段族+构造期装配+save/restore（49 文件） |
 | `827849df` | test(engine): 验收测试+夹具+save_contract 信封对齐 |
 | `66f5bf68` | chore(engine): ts_rs 生成物同步（SessionSetup.ts +51 行） |
-| （本提交） | docs(agents): B4b 台账 |
+| `eb0f1ac5` | docs(agents): B4b 台账 |
+| `54216500` | test(engine): 独立复核修复集——P1 登记+P2 断言精确化+边界补测（3 例） |
 
 ## 设计决策（与 18725d07 的差异及理由）
 
@@ -144,3 +145,14 @@ events/snapshot/save 字节（旧局 save 字节未变），亦不受影响。
 - `GameSession::new` 构造期 `report_frequency` 只影响前史公开库排期；
   公司系统线的 Simple 披露发布（`publish_simple_scheduled` 构造期调用）
   属披露面融合 → B4e。
+
+## 独立复核（fork 两轮，未实施改动方）
+
+- 第一轮：无 P0；P1×1（validate_registry 第 4 参接口缺口未登记）+P2×5
+  （法定事实子串断言/注释失实/边界遗漏 3 类/ts bool 宽化/哈希口径）。
+  三问结论：大 A 语义**通过**（三态链/foundation/专户与 18725d07 逐条
+  等价，数值身份不破坏旧语义）；最小范围**通过**（serde skip 完备、
+  fault2020 仅公司局、无越界文件）；测试与漂移**基本通过**。
+- 修复集 `54216500` 后第二轮：**通过**——四项核对全部落实，无新发现
+  （P1 登记含 B4c/B4d 触发条件；断言精确到 JSON 路径换算正确；3 例
+  边界为真断言；两条 P2 入台账交接段）。
