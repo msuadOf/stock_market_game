@@ -16,6 +16,48 @@ class FakeWorker implements WorkerRequestPort {
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
 
+test("串行 substrate（shared:false ingress）不 spawn intake worker，submitIntent 走 engine 主通道 enqueue", { timeout: 10000 }, async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class IntakeWorker extends EventTarget {
+    static readonly instances: IntakeWorker[] = [];
+    readonly sent: Record<string, unknown>[] = [];
+    terminations = 0;
+    constructor() { super(); IntakeWorker.instances.push(this); }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() { this.terminations++; }
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: IntakeWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const engine = IntakeWorker.instances[0];
+    // 串行 substrate：engine worker 的 wasm memory 非共享，ingress 消息只声明
+    // 形态（shared:false），不携带 module/memory——独立 intake worker 无从
+    // 共享内存直写 engine 队列，submitIntent 必须降级走 engine 主通道。
+    engine.emit({ type: "ingress", generation: 1, shared: false });
+    engine.emit({ type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
+    host = await creating;
+    assert.equal(IntakeWorker.instances.length, 1, "串行 substrate 不得 spawn intake worker");
+    const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
+    const submitting = host.submitIntent(intent);
+    await Promise.resolve();
+    const request = engine.sent.at(-1)!;
+    assert.equal(request.type, "enqueue");
+    // 与共享路径同一词表：公共 Intent 代码串译为 wire 数值 StockId（ADR 0041）。
+    assert.deepEqual(request.intent, { Cancel: { code: 0, id: 7 } });
+    assert.equal(request.generation, 1);
+    engine.emit({ type: "enqueued", requestId: request.requestId, generation: 1 });
+    await submitting;
+    await host.dispose();
+    assert.equal(engine.terminations, 1);
+  } finally {
+    await host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
 test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class IntakeWorker extends EventTarget {
@@ -32,7 +74,7 @@ test("Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确�
   try {
     const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
     const engine = IntakeWorker.instances[0];
-    engine.emit({ type: "ingress", generation: 1, token: 42 });
+    engine.emit({ type: "ingress", generation: 1, token: 42, shared: true });
     const intake = IntakeWorker.instances[1];
     const binding = intake.sent[0];
     assert.equal(binding.type, "bindIngress");
@@ -80,7 +122,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
       const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const engine = IntakeWorker.instances[0];
       if (scenario === "initializationTimeout") context.mock.timers.tick(1);
-      engine.emit({ type: "ingress", generation: 1, token: 42 });
+      engine.emit({ type: "ingress", generation: 1, token: 42, shared: true });
       const intake = IntakeWorker.instances[1];
       if (scenario === "initializationTimeout") {
         const rejected = assert.rejects(creating, /初始化超时/);

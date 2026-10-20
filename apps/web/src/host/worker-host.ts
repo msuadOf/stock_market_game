@@ -197,6 +197,10 @@ export function createWorkerHost(
     let ingressRequests: WorkerRequestScope | null = null;
     let ingressReady: Promise<unknown> | null = null;
     let ingressGeneration = 0;
+    // substrate 形态：engine worker 的 wasm memory 为共享（真线程）时走独立
+    // ingress worker；串行（非共享）时 ingress 桥不成立，submitIntent 降级走
+    // engine worker 主通道 enqueue（engine 侧两路径同入 enqueue_player_intent）。
+    let serialIngress = false;
     const closeIngress = (error: Error) => {
       ingressRequests?.close(error);
       ingressWorker?.terminate();
@@ -272,6 +276,15 @@ export function createWorkerHost(
           case "ingress": {
             const nextGeneration = generation(incoming.generation, "Browser ingress generation");
             if (nextGeneration <= ingressGeneration) throw new Error("Browser ingress generation 必须严格推进");
+            ingressGeneration = nextGeneration;
+            // 串行 substrate：engine worker 的 wasm memory 非共享，module/memory
+            // 不可跨 worker 共享（postMessage 即 DataCloneError），独立 ingress
+            // worker 无从直写 engine 队列——submitIntent 降级走 engine 主通道。
+            if (incoming.shared !== true) {
+              serialIngress = true;
+              return;
+            }
+            serialIngress = false;
             if (ingressWorker === null) {
               ingressWorker = new Worker(new URL("./wasm-ingress-worker.ts", import.meta.url), { type: "module" });
               ingressRequests = new WorkerRequestScope(ingressWorker);
@@ -280,7 +293,6 @@ export function createWorkerHost(
               });
             }
             if (ingressRequests === null) throw new Error("Browser ingress request scope 尚未初始化");
-            ingressGeneration = nextGeneration;
             ingressReady = ingressRequests.request({
               ...incoming, type: "bindIngress", requestId: ingressRequests.nextRequestId(), generation: nextGeneration,
             }, "ingressBound");
@@ -519,13 +531,22 @@ export function createWorkerHost(
         },
         async submitIntent(intent) {
           const requestedGeneration = currentGeneration;
+          // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再入队（ADR 0041）。
+          const wiredIntent = wireIntentOf(intent);
+          if (serialIngress) {
+            // 串行 substrate：ingress 桥不成立（非共享 memory 无法跨 worker 直写），
+            // intent 经主通道直递 engine worker 会话队列；engine worker 内部
+            // requireGeneration 校验过期代，响应后同享共享路径的过期防护。
+            await requests.request({ type: "enqueue", requestId: requests.nextRequestId(), generation: requestedGeneration, intent: wiredIntent }, "enqueued");
+            if (disposed || requestedGeneration !== currentGeneration) throw new Error("Worker 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
+            return;
+          }
           const ready = ingressReady;
           if (ready === null) throw new Error("Browser 共享 ingress 尚未就绪，请重建 WASM bindings");
           await ready;
           if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 请求属于已过期 generation");
           if (ingressRequests === null) throw new Error("Browser ingress 已关闭");
-          // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再入队（ADR 0041）。
-          await ingressRequests.request({ type: "enqueue", requestId: ingressRequests.nextRequestId(), generation: requestedGeneration, intent: wireIntentOf(intent) }, "enqueued");
+          await ingressRequests.request({ type: "enqueue", requestId: ingressRequests.nextRequestId(), generation: requestedGeneration, intent: wiredIntent }, "enqueued");
           if (disposed || requestedGeneration !== currentGeneration || requestedGeneration !== ingressGeneration) throw new Error("Browser ingress 入队确认属于已过期或已销毁 generation，请核对权威委托状态，勿重复提交");
         },
         snapshot() {

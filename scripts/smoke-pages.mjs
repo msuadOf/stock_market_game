@@ -53,7 +53,14 @@ export async function smokePages(input, base) {
           const postMessage = Worker.prototype.postMessage;
           Worker.prototype.postMessage = function (message, ...options) {
             if (message.type === "create") {
-              message = { ...message, setup: { ...message.setup, stocks: message.setup.stocks.slice(0, 2),
+              // 不裁剪 stocks：initialAllocation 的 expectedCodes 取自主线程
+              // createWorkerHost 闭包里的完整 setup，裁剪 engine 侧股票集合会令
+              // 两者必然错配（初始分配响应"遗漏本局证券"）。小局提速由
+              // npcs/history_len/ticks 裁剪承担（该 stocks 裁剪自 6ac55d83 引入、
+              // 7a94c401 保留，d803b937 起局断裂后从未被端到端执行过——一直被
+              // ingress 桥 DataCloneError 挡住，w3-bridge-fix 批修复后首次暴露
+              // 并在此更正）。
+              message = { ...message, setup: { ...message.setup,
                 npcs: { ...message.setup.npcs, retail_count: 4, inst_count: 2, hot_count: 1 },
                 float_allocation: { between_kinds: "Random", within_kind: "Random" }, history_len: 2, ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 } };
             }
@@ -77,7 +84,7 @@ export async function smokePages(input, base) {
         if (entry === "") {
           await page.getByRole("button", { name: "启动游戏", exact: true }).click();
           await page.locator(".app-root").waitFor({ timeout: 15000 });
-          console.log("Representative two-stock/seven-NPC session loaded in actual WASM Worker (test-only input instrumentation, unchanged production assets).");
+          console.log("Representative five-stock/seven-NPC session loaded in actual WASM Worker (test-only input instrumentation, unchanged production assets).");
           assert.equal(await page.locator(".app-error").count(), 0);
           const mainWorker = page.workers().find((worker) => /\/wasm-worker-[^/]+\.js$/.test(new URL(worker.url()).pathname));
           assert.ok(mainWorker, "missing main WASM Worker");
