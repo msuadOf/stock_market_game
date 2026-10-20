@@ -29,6 +29,14 @@ pub(super) fn session_with_company(
     company.spec.listed_stock = Some(StockCode("600101".into()));
     GameSession::new(
         SessionSetup {
+        company_system: None,
+        dividend_tax_mode: None,
+        flat_withholding_bp: None,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
+        par_value_per_share: None,
+        auto_corporate_foundation: false,
+        report_frequency: None,
             stocks: vec![StockSpec {
                 code: StockCode("600101".into()),
                 exchange: StockExchange::Shanghai,

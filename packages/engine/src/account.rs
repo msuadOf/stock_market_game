@@ -32,7 +32,7 @@ use thiserror::Error;
 #[serde(transparent)]
 pub struct StockCode(pub String);
 
-/// 账户种类：NPC 三类 + 玩家。
+/// 账户种类：NPC 三类 + 玩家 + 发行人回购专户。
 #[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum AccountKind {
     /// 散户 NPC。
@@ -43,6 +43,10 @@ pub enum AccountKind {
     Hot,
     /// 玩家（真人，strategy=None）。
     Player,
+    /// 发行人回购专用账户（ADR-0038，B4b 恢复）：真实交易账户，但不是玩家
+    /// 也不是 NPC 策略主体——委托由回购方案执行器产生（执行通道随 B4d 接线）；
+    /// 其名册身份是 IssuerTreasury（专户股份失权，不参与分红/送转/配售）。
+    IssuerRepurchase,
 }
 
 /// 账户操作失败。绝不静默吞掉（铁律二），错误携带上下文。

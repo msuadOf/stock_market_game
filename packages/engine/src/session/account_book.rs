@@ -79,7 +79,13 @@ impl AccountBook {
                     page.accounts.values().any(|account| {
                         #[cfg(test)]
                         STRATEGY_PRESENCE_SCANS.with(|count| count.set(count.get() + 1));
-                        account.kind() != crate::AccountKind::Player && account.strategy().is_none()
+                        // 玩家与发行人回购专户（ADR-0038，B4b）都是无策略账户：
+                        // 前者是真人意图，后者委托由回购执行器产生（通道随 B4d
+                        // 接线）。除此之外的 NPC 账户必须有权威策略。
+                        !matches!(
+                            account.kind(),
+                            crate::AccountKind::Player | crate::AccountKind::IssuerRepurchase
+                        ) && account.strategy().is_none()
                     })
                 })
             })

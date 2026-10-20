@@ -37,6 +37,14 @@ fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
 fn sample_setup() -> SessionSetup {
     SessionSetup {
+        company_system: None,
+        dividend_tax_mode: None,
+        flat_withholding_bp: None,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
+        par_value_per_share: None,
+        auto_corporate_foundation: false,
+        report_frequency: None,
         company_operations: None,
         groups: Vec::new(),
         stocks: vec![StockSpec {

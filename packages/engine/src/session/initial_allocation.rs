@@ -74,7 +74,10 @@ impl GameSession {
                     AccountKind::Retail => &mut categories[0],
                     AccountKind::Inst => &mut categories[1],
                     AccountKind::Hot => &mut categories[2],
-                    AccountKind::Player => {
+                    // 玩家与发行人回购专户不属于 NPC 分配类目；开局持股必须为零
+                    //（专户 B4b 开立时零持仓，获批回购计划后才有真实持仓——
+                    // 那时已不满足本查询的「首次开跑前」前提）。
+                    AccountKind::Player | AccountKind::IssuerRepurchase => {
                         if quantity != 0 {
                             // fault1101: 初始玩家持股非零。槽0 待 C 批数值化（原文本为代码串 "{}"，spec.code.0）。
                             return Err(SessionError::InvalidSave(ValidationFault::new(

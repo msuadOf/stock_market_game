@@ -16,6 +16,7 @@ mod company_assembly;
 mod company_closing_tests;
 mod company_groups;
 mod continuous_cancellation;
+mod corporate_actions;
 mod decision_chain;
 mod deferred_drop;
 use crate::u64_decimal;
@@ -97,6 +98,9 @@ pub use memberships::{
     AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId,
 };
 pub use personal_trade_history::PersonalTradeConfirmation;
+/// 公司行为 spine 状态容器（B4b：容器+装配期写入面；日终链/命令/查询面随
+/// B4c/B4d/B4e 接线）。
+pub use corporate_actions::SessionCorporateActions;
 pub use market_history_query::{
     CurrentMinuteHistoryPhase, CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse,
     MarketHistoryAvailability, MarketHistoryEntry, MarketHistoryPage, MarketHistoryRequest,
@@ -587,6 +591,18 @@ pub struct SaveSlot {
     /// 余额在反序列化重放边界校验）。
     #[ts(type = "import(\"../../save/schema/company/operations\").CompanyOperations")]
     pub company_operations: crate::company::operations::CompanyOperations,
+    /// 公司系统 spine（B4b：Simple 基本面+发行人登记）。`None` = 旧局
+    /// （不序列化——旧档字节零变化）；`Some` 必与 `corporate_actions` 同在场
+    /// （恢复侧 fault2101 勾稽）。TS 形态随 B4f 的 web 存档 schema 接线
+    /// （与 closing_registry/public_library 同款 `ts(skip)` 过渡形态）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub company_system: Option<crate::company::CompanySystem>,
+    /// 公司行为 spine 状态容器（名册+五类账簿+回执；B4b 装配期与存读面）。
+    /// 在场性配对同上。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub corporate_actions: Option<SessionCorporateActions>,
     /// 结账版本登记簿（不可变期间版本 + 重述底稿）。
     #[ts(skip)]
     pub closing_registry: crate::accounting::closing::ClosingEngine,
@@ -1180,6 +1196,53 @@ pub struct SessionSetup {
     #[ts(optional)]
     #[ts(type = "import(\"../../save/schema/company/groups\").GroupStructure[]")]
     pub groups: Vec<GroupStructure>,
+    /// 公司系统配置（B4b 恢复，基 18725d07）：`Some` = 本局启用公司线
+    /// （CompanySystem spine + 公司行为装配）；`None` = 旧局（零公司行为，
+    /// 行为与本批之前完全一致）。缺席时公司字段族其余成员必须全部缺席
+    /// （残缺配置显式拒绝，fault1048）。serde 缺席跳过=旧档兼容面。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub company_system: Option<crate::company::config::CompanySystemConfig>,
+    /// 新局现金分红税务模式（2026-10-08 三层产品决策，严格三态契约——仅
+    /// `FlatWithholding` 可携带 `flat_withholding_bp`）。公司局必填；非公司局
+    /// 必须缺席。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub dividend_tax_mode: Option<crate::company::cash_dividend_tax::CashDividendTaxMode>,
+    /// 简税比例（basis points，1000bp = 10%）：仅 `FlatWithholding` 模式必填
+    /// （合法域 0..=10000bp）；其他模式显式拒绝携带。默认值 1000bp 由宿主
+    /// UI 草稿层提供，不设 serde 默认（公司局缺席公司系统时本字段必须缺席）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub flat_withholding_bp: Option<u32>,
+    /// 「配股／增发」机制开关（ADR-0039）：关闭时机制不触发、显式 API 被拒
+    /// （命令面随 B4d 接线）。仅公司局可携带。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>")]
+    pub rights_offering_enabled: bool,
+    /// 「发行人回购」机制开关（ADR-0038）：开启时构造期开立回购专户
+    /// （`AccountKind::IssuerRepurchase`，零现金起步）。仅公司局可携带。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>")]
+    pub issuer_repurchase_enabled: bool,
+    /// 每股面值（`Money` 分；默认 1 元/股 = 100 分）：开局自动装配按
+    /// 「面值 × 总股本」推定注册资本法定事实（bind-once）。公司局必填为正。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub par_value_per_share: Option<Money>,
+    /// 开局自动装配公司行为基础（N2a 决策，产品默认开启）：`true` 时
+    /// `GameSession::new` 在初始筹码分配完成后为每家 Simple 上市公司构建
+    /// 全流通名册 + 法定事实 + 按税务模式自动开个人税账（仅
+    /// `AShareIndividual`）。`false` 保持空装配（显式装配入口随后续批接线）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>")]
+    pub auto_corporate_foundation: bool,
+    /// 披露排期频率（月报排期校验在 setup 校验内执行）：`Some` 经装配
+    /// 上下文进入前史公开库排期；`None` = 既有行为（Quarterly）。该字段
+    /// 不依赖公司系统（经营披露线独立消费），非公司局亦可携带。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub report_frequency: Option<crate::information::ReportFrequency>,
     pub npcs: NpcSetup,
     pub config: GameConfig,
     pub strategy_params: StrategyParams,
@@ -1266,6 +1329,8 @@ impl SessionSetup {
                 vec![0, 0],
             )));
         }
+        // ── 公司字段族三态校验链（B4b 恢复，基 18725d07；缺省=旧局跳过）──
+        self.validate_company_fields()?;
         // 冻结日历与双时钟 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
         TradingCalendar::current_default_calendar()?.validate_runtime_start(self.start_date)?;
         if self.ticks_per_day == 0 {
@@ -1451,6 +1516,153 @@ impl SessionSetup {
         }
         Ok(())
     }
+
+    /// 公司字段族三态校验链（B4b 恢复，语义基 18725d07 `SessionSetup::validate`
+    /// 的公司段）。公司线缺席（`company_system == None`）时除 `report_frequency`
+    /// （经营披露线独立消费）外全部字段必须缺席——残缺配置显式拒绝，杜绝
+    /// 静默忽略（铁律二）。
+    fn validate_company_fields(&self) -> Result<(), SessionError> {
+        if self.company_system.is_none() {
+            // 残缺位图：bit0=dividend_tax_mode，bit1=flat_withholding_bp，
+            // bit2=rights_offering_enabled，bit3=issuer_repurchase_enabled，
+            // bit4=par_value_per_share，bit5=auto_corporate_foundation。
+            let mut residue = 0u64;
+            if self.dividend_tax_mode.is_some() {
+                residue |= 1 << 0;
+            }
+            if self.flat_withholding_bp.is_some() {
+                residue |= 1 << 1;
+            }
+            if self.rights_offering_enabled {
+                residue |= 1 << 2;
+            }
+            if self.issuer_repurchase_enabled {
+                residue |= 1 << 3;
+            }
+            if self.par_value_per_share.is_some() {
+                residue |= 1 << 4;
+            }
+            if self.auto_corporate_foundation {
+                residue |= 1 << 5;
+            }
+            if residue != 0 {
+                // fault1048: 携带公司字段而 company_system 缺席=配置残缺。
+                // ctx[0] = 残缺位图（按上注槽位）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1048, vec![residue],
+                )));
+            }
+            return Ok(());
+        }
+        // 公司局：发行人规格与 Simple 参数完整性（发行人构造级错误在此显式
+        // 化；Simple 参数域错误透传内层 fault1049 语义位）。
+        let issuers = crate::company::identity::IssuerRegistry::new(
+            company_assembly::issuer_specs(self)?,
+        )
+        .map_err(|_error| {
+            // fault1049: 发行人规格集合非法（重复/映射断裂）。槽0 待 C 批数值化
+            // （原文本为公司域错误文本）。
+            SessionError::InvalidSetup(ValidationFault::new(1049, vec![0]))
+        })?;
+        if let crate::company::config::CompanySystemConfig::Simple(config) =
+            self.company_system.as_ref().expect("上文已确认在场")
+        {
+            config.validate_for_issuers(&issuers).map_err(|_error| {
+                // fault1049: Simple 参数非法（重复/未知发行人/参数域）。
+                // 槽0 待 C 批数值化（原文本为公司域错误文本）。
+                SessionError::InvalidSetup(ValidationFault::new(1049, vec![0]))
+            })?;
+        }
+        // 月报排期域校验（携带即校验；报告频率独立于公司系统）。
+        if let Some(crate::information::ReportFrequency::Monthly { schedule }) = self.report_frequency
+        {
+            schedule.validate().map_err(|_error| {
+                // fault1050: 月报排期参数非法。槽0 待 C 批数值化
+                // （原文本为排期域错误文本）。
+                SessionError::InvalidSetup(ValidationFault::new(1050, vec![0]))
+            })?;
+        }
+        // 三层税制（2026-10-08 决策）严格三态：公司局必填模式；仅 Flat 可携带
+        // 比例；比例域 0..=10000bp（最高全额代扣，超过破坏原子代扣不变量）。
+        let tax_mode = self.dividend_tax_mode.ok_or_else(|| {
+            // fault1051: 公司局缺现金分红税务模式（严格持久化字段无默认）。
+            SessionError::InvalidSetup(ValidationFault::bare(1051))
+        })?;
+        use crate::company::cash_dividend_tax::CashDividendTaxMode;
+        match (tax_mode, self.flat_withholding_bp) {
+            (CashDividendTaxMode::FlatWithholding, None) => {
+                // fault1052: FlatWithholding 模式必须携带 flat_withholding_bp。
+                return Err(SessionError::InvalidSetup(ValidationFault::bare(1052)));
+            }
+            (CashDividendTaxMode::FlatWithholding, Some(rate_bp)) => {
+                if rate_bp > crate::company::cash_dividend_tax::MAX_FLAT_WITHHOLDING_BP {
+                    // fault1053: 简税比例超出合法域。ctx = [实际 bp, 上限 bp]。
+                    return Err(SessionError::InvalidSetup(ValidationFault::new(
+                        1053,
+                        vec![u64::from(rate_bp), u64::from(
+                            crate::company::cash_dividend_tax::MAX_FLAT_WITHHOLDING_BP,
+                        )],
+                    )));
+                }
+            }
+            (_, Some(_)) => {
+                // fault1054: 非 FlatWithholding 模式不得携带简税比例。
+                // ctx[0] = 模式判别值（0=FlatWithholding/1=AShareIndividual/2=Exempt）。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1054,
+                    vec![tax_mode as u64],
+                )));
+            }
+            _ => {}
+        }
+        // 印花税按税务模式门禁（2026-10-08 决策）：不扣税模式连印花税也免，
+        // 佣金与过户费照付。该配对在 setup 校验的单一入口强制。
+        let expected_stamp_rate = if tax_mode == CashDividendTaxMode::Exempt {
+            0.0
+        } else {
+            0.0005
+        };
+        if (self.config.stamp_tax_rate - expected_stamp_rate).abs() > f64::EPSILON {
+            // fault1055: 印花税率与税务模式配对失败。ctx = [期望位模式, 实际位模式]
+            // （f64 IEEE-754；C 批可改定点点表示）。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1055,
+                vec![expected_stamp_rate.to_bits(), self.config.stamp_tax_rate.to_bits()],
+            )));
+        }
+        // 面值参数域（N2a 决策）：公司局必填且为正；开局自动装配按
+        // 「面值 × 总股本」推定注册资本法定事实，乘积必须可表示为 i128 分。
+        let par_cents = self
+            .par_value_per_share
+            .ok_or_else(|| {
+                // fault1056: 公司局缺每股面值。ctx[0] = 0（缺席）。
+                SessionError::InvalidSetup(ValidationFault::new(1056, vec![0]))
+            })?
+            .cents();
+        if par_cents <= 0 {
+            // fault1056: 面值非正。ctx[0] = 实际面值分。
+            return Err(SessionError::InvalidSetup(ValidationFault::new(
+                1056,
+                vec![par_cents.unsigned_abs()],
+            )));
+        }
+        for stock in &self.stocks {
+            // AccountingAmount 值域=完整 i128 分，只需排除乘法溢出（防御性
+            // 显式化：正 i64 分 × u64 总股本在数学上可溢出 i128）。
+            if i128::from(par_cents)
+                .checked_mul(i128::from(stock.total_shares))
+                .is_none()
+            {
+                // fault1057: 注册资本（面值×总股本）溢出 i128 分。
+                // ctx = [面值分, 总股本]。
+                return Err(SessionError::InvalidSetup(ValidationFault::new(
+                    1057,
+                    vec![par_cents.unsigned_abs(), stock.total_shares],
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// 编排层。持有全部状态；纯逻辑、无全局可变状态（实例即隔离）。
@@ -1593,6 +1805,12 @@ struct CommittableSessionState {
     // 公司域与完整决策链的权威状态；全部经完整存档保存恢复。
     /// 发行人注册表（公司规格与开局账套）：股票 ↔ 公司映射与开局账套。
     company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
+    /// 公司系统 spine（B4b：Simple 基本面状态机+发行人登记；日终推进链随
+    /// B4c 接入 `end_civil_day` seam）。`None` = 本局无公司线（旧局）。
+    company_system: Option<std::sync::Arc<crate::company::CompanySystem>>,
+    /// 公司行为 spine 状态容器（名册+五类账簿；装配期写入，日终链随 B4c）。
+    /// `None` = 本局无公司线（与 `company_system` 在场性严格配对）。
+    corporate_actions: Option<SessionCorporateActions>,
     /// 自然日经营编排（自然日经营演化；前史已推进到开局日）。
     operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
     groups: Vec<GroupStructure>,
@@ -1681,20 +1899,24 @@ pub(in crate::session) enum FieldId {
     SpeculativePrepare,
     /// B3 远程登录批次追加：市场成员关系（尾部追加，不改变既有变体数值）。
     Memberships,
+    /// B4b 公司线批次追加：公司系统 spine 与公司行为状态容器（尾部追加）。
+    CompanySystem,
+    CorporateActions,
 }
 
 /// commit_from 必须移交的字段全集（修复1·Astra 增量四复检 cfg 缺陷处置：按 cfg
 /// 条件化，与 commit_from 的条件 swap 对齐，绊线在所有真实构建组合内有效）。
 /// owner8 批次④删除两字段后由 33/35 收窄为 30/32；B3 远程登录批次追加
-/// Memberships 与 B2 查询 API 批次追加 SpeculativePrepare 后为现行 32/34
-/// 口径（默认 features 32 项；开启 simulation-diagnostics 时 34 项，追加
+/// Memberships 与 B2 查询 API 批次追加 SpeculativePrepare 后为 32/34 口径；
+/// B4b 公司线批次追加 CompanySystem/CorporateActions 后为现行 34/36
+/// 口径（默认 features 34 项；开启 simulation-diagnostics 时 36 项，追加
 /// NpcDecisionTraces/Causal）。一致性要求（Astra
 /// 增量六措辞校正）：34 项变体去掉两个诊断项（NpcDecisionTraces/Causal）后，
 /// 其余 32 项与默认变体逐项一致——诊断项插在默认变体第 20 项
 /// （LastRetailOrderEvents）之后，其后的项在 34 项变体中下标后移，逐下标位置
 /// 并不一致（人工同步维护，盲区 1 的自报标签性质同样适用于此处清单）。
 #[cfg(not(feature = "simulation-diagnostics"))]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 34] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1715,6 +1937,8 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
     FieldId::LastRetailOrderEvents,
     FieldId::AttentionScheduler,
     FieldId::CompanyRegistry,
+    FieldId::CompanySystem,
+    FieldId::CorporateActions,
     FieldId::Operations,
     FieldId::Groups,
     FieldId::Closing,
@@ -1730,7 +1954,7 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 32] = [
 ];
 
 #[cfg(feature = "simulation-diagnostics")]
-pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 34] = [
+pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 36] = [
     FieldId::Setup,
     FieldId::ValidatedConfig,
     FieldId::Stocks,
@@ -1753,6 +1977,8 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 34] = [
     FieldId::Causal,
     FieldId::AttentionScheduler,
     FieldId::CompanyRegistry,
+    FieldId::CompanySystem,
+    FieldId::CorporateActions,
     FieldId::Operations,
     FieldId::Groups,
     FieldId::Closing,
@@ -1768,8 +1994,8 @@ pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 34] = [
 ];
 
 /// FieldId 全变体数（含 simulation-diagnostics 两项），verify_metrics 计数数组长度。
-pub(in crate::session) const FIELD_ID_COUNT: usize = 34;
-const _: () = assert!(FieldId::Memberships as usize == FIELD_ID_COUNT - 1);
+pub(in crate::session) const FIELD_ID_COUNT: usize = 36;
+const _: () = assert!(FieldId::CorporateActions as usize == FIELD_ID_COUNT - 1);
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
 ///
@@ -1841,7 +2067,8 @@ fn sample_npc_cash(
         AccountKind::Retail => (1.0, 1.0),
         AccountKind::Inst => (25_000.0, 0.35),
         AccountKind::Hot => (5_000.0, 0.50),
-        AccountKind::Player => (1.0, 0.0),
+        // 回购专户不走现金采样（构造期显式零现金开立）。
+        AccountKind::Player | AccountKind::IssuerRepurchase => (1.0, 0.0),
     };
     let mut rng = SplitMix64::new(
         seed ^ account.0.wrapping_mul(0xD1B5_4A32_D192_ED03) ^ 0xC45A_5EED_5CA1_E001,
@@ -2101,6 +2328,22 @@ impl GameSession {
             registry,
             prehistory,
         } = company_assembly::assemble_companies(&setup, seed, event_multiplier_bp)?;
+        // 公司系统 spine 装配（B4b：coupling 映射 #11——WorldSpec 构造前 session
+        // 侧串行段，pre-spawn 无并发）。旧局（company_system 缺席）恒 None，
+        /// 零行为变化。
+        let company_system = match &setup.company_system {
+            Some(_) => Some(std::sync::Arc::new(company_assembly::assemble_company_system(
+                &setup, seed,
+            )?)),
+            None => None,
+        };
+        // 公司行为状态容器初始值与回购开关在 setup move 进 state 前捕获
+        //（旧局容器缺席=零行为变化；公司局=空容器起步）。
+        let corporate_actions_init = company_system
+            .as_ref()
+            .map(|_| SessionCorporateActions::default());
+        let issuer_repurchase_enabled_at_creation = setup.issuer_repurchase_enabled
+            && company_system.is_some();
         let seeded_through = prehistory.last_published_instant();
         let crate::information::SeededPrehistory {
             ops,
@@ -2189,6 +2432,10 @@ impl GameSession {
                 runtime_lifecycles_undo: None,
                 runtime_retail_diag_undo: None,
                 company_registry: std::sync::Arc::new(registry),
+                company_system,
+                // 公司行为状态容器：公司局=空容器起步（装配随后按
+                // auto_corporate_foundation 填充）；旧局=None。
+                corporate_actions: corporate_actions_init,
                 operations: std::sync::Arc::new(ops),
                 closing: std::sync::Arc::new(closing),
                 library: std::sync::Arc::new(library),
@@ -2218,12 +2465,335 @@ impl GameSession {
         sess.populate_npcs(AccountKind::Retail)?;
         sess.populate_npcs(AccountKind::Inst)?;
         sess.populate_npcs(AccountKind::Hot)?;
+        if issuer_repurchase_enabled_at_creation {
+            // 发行人回购专用账户（ADR-0038，B4b）：确定性创建于 NPC 序列之后
+            // （id = npc_count + 1），零现金起步；获批回购计划按额度合成入账
+            // （执行通道随 B4d 接线）。名册身份为 IssuerTreasury。在 seed_float
+            // 之前开立——split_float 按三类 NPC 分桶，专户自然不参与分配。
+            let npc_count = u64::from(sess.state.setup.npcs.retail_count)
+                + u64::from(sess.state.setup.npcs.inst_count)
+                + u64::from(sess.state.setup.npcs.hot_count);
+            let repurchase_id = AccountId(npc_count.saturating_add(1));
+            sess.accounts_insert_with_history_reads(
+                repurchase_id,
+                Account::new(repurchase_id, AccountKind::IssuerRepurchase, Money::ZERO),
+            );
+        }
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
+        // 开局自动装配公司行为基础（N2a 决策，产品默认开启）：名册 + 注册资本
+        // 法定事实 + 按三层税制模式的个人税账。任一步失败显式失败（铁律二）。
+        if sess.state.setup.auto_corporate_foundation && sess.state.company_system.is_some() {
+            sess.assemble_corporate_foundation()?;
+        }
         sess.initialize_retail_experience()?;
         sess.reconcile_institutional_holdings()?;
         // 日界不提前生成日内请求，首个 tick 在隔离 shadow 上基于日结后的版本准备。
         // 因此休市日日结和交易日日结都能产生不含待处理请求的公共存档。
         Ok(sess)
+    }
+
+    /// 账户入册（含个人历史读取台账占位）：构造期回购专户开立用，
+    /// 保证 snapshot.accounts 与 history_reads 键位一致（web 存档解析器的
+    /// exact 契约；B3 成员补建路径不经此 helper——成员账户走惰性台账）。
+    fn accounts_insert_with_history_reads(&mut self, id: AccountId, account: Account) {
+        self.state.accounts.insert(id, account);
+        if !self.state.history_reads.contains_key(&id) {
+            self.state.history_reads.insert(
+                id,
+                crate::experience::PersonalHistoryReadLedger::default(),
+            );
+        }
+    }
+
+    /// 开局自动装配公司行为基础（N2a，基 18725d07 同名方法；调用前提=
+    /// 公司线在场且初始筹码分配已完成）：
+    ///
+    /// 对每家 Simple 上市公司：
+    /// 1. 按分配结果（NPC 账户真实持仓 lot）构建**全流通名册**——无发行人
+    ///    自持股（Simple 无发行人真实账户，自持股语义留给 Simulation 分支）；
+    ///    未分配余量（总股本 − 流通盘）登记为单一具名外部股东（无游戏账户、
+    ///    不参与交易），发行股数守恒由 `configure_registry` 既有校验承担；
+    /// 2. 按 `par_value_per_share` 推定注册资本法定事实（注册资本 = 面值 ×
+    ///    总股本），走 `define_dividend_legal_facts` 既有 bind-once 路径；
+    /// 3. 税账按三层税制模式自动开账（`configure_cash_dividend_tax_book`
+    ///    既有逻辑）：仅 `AShareIndividual` 为「个人」身份持有人自动开
+    ///    `IndividualPublicMarket` 税账；`FlatWithholding`/`Exempt` 不开。
+    ///
+    /// 全部复用既有状态机入口，不复制任何校验；任何失败原样上抛，整个
+    /// 新局创建失败，不留半装配状态。
+    fn assemble_corporate_foundation(&mut self) -> Result<(), SessionError> {
+        let par_cents = self
+            .state
+            .setup
+            .par_value_per_share
+            .expect("setup 校验已保证公司局面值为正")
+            .cents();
+        // 名册结算日取开局自然日的**前一自然日**：`close_registries_through`
+        // （B4c）只推进 (settled_on, through] 区间，开局日自身的成交也要进入
+        // 名册日结；批次取得日同取该日（开局前的筹码分配，早于任何交易日）。
+        let settled_on = self.civil_date().prev().map_err(|_error| {
+            // fault1058: 开局自动装配无法回退自然日（开局日为日历下界）。
+            // ctx = [开局日期 ymd]。
+            let (y, m, d) = self.civil_date().ymd();
+            SessionError::InvalidSetup(ValidationFault::new(
+                1058,
+                vec![crate::error::ymd_context(y, m, d)],
+            ))
+        })?;
+        // 先按股票建名册（同一容器事务内逐只推进；任一失败显式失败）。
+        let specs = self.state.setup.stocks.clone();
+        for spec in specs {
+            // 账户持仓按数值 StockId 键（ADR 0041）；公司域按字符串 StockCode 键
+            //（B4a 域保持）——本函数内两域经目录互译。
+            let stock_id = self
+                .state
+                .stocks
+                .id(&spec.code.0)
+                .expect("setup 校验已保证代码入目录");
+            let issuer = self
+                .state
+                .company_system
+                .as_ref()
+                .expect("调用前提：公司线在场")
+                .issuers()
+                .issuer_of(&spec.code)
+                .ok_or_else(|| {
+                    // fault1059: 股票缺少发行人身份，无法装配名册。ctx=[StockId]。
+                    SessionError::InvalidSetup(ValidationFault::new(
+                        1059,
+                        vec![u64::from(stock_id.0)],
+                    ))
+                })?;
+            let mut granted: u64 = 0;
+            let mut holdings = Vec::new();
+            let account_ids: Vec<AccountId> = self.state.accounts.keys().copied().collect();
+            for account in account_ids {
+                let qty = u64::from(
+                    self.state.accounts[&account]
+                        .positions()
+                        .get(&stock_id)
+                        .map(|position| position.qty())
+                        .unwrap_or(0),
+                );
+                if qty == 0 {
+                    continue;
+                }
+                granted = granted.checked_add(qty).ok_or_else(|| {
+                    // fault1060: 初始筹码分配总量溢出 u64。ctx=[StockId]。
+                    SessionError::InvalidSetup(ValidationFault::new(
+                        1060,
+                        vec![u64::from(stock_id.0)],
+                    ))
+                })?;
+                holdings.push(crate::company::share_registry::ShareHolding {
+                    holder: crate::company::share_registry::HolderId::Account(account),
+                    lots: vec![crate::company::share_registry::ShareLot {
+                        id: format!("initial:{}:{}", spec.code.0, account.0),
+                        qty,
+                        acquired_on: settled_on,
+                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                            evidence: format!("session-auto:initial-allocation:{}", spec.code.0),
+                        },
+                        restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+                    }],
+                });
+            }
+            let remainder = spec.total_shares.checked_sub(granted).ok_or_else(|| {
+                // fault1060: 初始筹码分配总量超过总股本。ctx=[StockId, 分配量, 总股本]。
+                SessionError::InvalidSetup(ValidationFault::new(
+                    1060,
+                    vec![u64::from(stock_id.0), granted, spec.total_shares],
+                ))
+            })?;
+            if remainder > 0 {
+                // 全流通口径的未分配余量：登记为单一具名外部股东（非发行人
+                // 自持股）。外部股东无游戏账户、不参与交易、不代扣，其分红
+                // 走既有外部回执事实。
+                holdings.push(crate::company::share_registry::ShareHolding {
+                    holder: crate::company::share_registry::HolderId::External(format!(
+                        "session-auto:founding:{}",
+                        spec.code.0
+                    )),
+                    lots: vec![crate::company::share_registry::ShareLot {
+                        id: format!("initial:{}:founding", spec.code.0),
+                        qty: remainder,
+                        acquired_on: settled_on,
+                        source: crate::company::share_registry::AcquisitionSource::InitialAllocation {
+                            evidence: format!(
+                                "session-auto:initial-allocation:{}:founding",
+                                spec.code.0
+                            ),
+                        },
+                        restriction: crate::company::share_registry::ShareRestriction::Unrestricted,
+                    }],
+                });
+            }
+            let registry = crate::company::share_registry::ShareRegistry::new(
+                spec.code.clone(),
+                issuer,
+                spec.total_shares,
+                settled_on,
+                holdings,
+            )
+            .map_err(|_error| {
+                // fault1061: 开局自动名册装配失败（域内校验拒绝）。
+                // 槽0 待 C 批数值化（原文本为内层 ShareRegistryError 文本）。
+                SessionError::InvalidSetup(ValidationFault::new(1061, vec![0]))
+            })?;
+            // 走既有容器写入面（勾稽账户持仓/发行人身份/开个人税账）。
+            // 持仓 StockId → 公司域 StockCode（目录互译；持仓只含目录内股票）。
+            let positions = self
+                .state
+                .accounts
+                .iter()
+                .map(|(id, account)| {
+                    (
+                        *id,
+                        account
+                            .positions()
+                            .iter()
+                            .map(|(held_id, position)| {
+                                (
+                                    StockCode(
+                                        self.state
+                                            .stocks
+                                            .code(*held_id)
+                                            .expect("持仓股票必在目录内")
+                                            .to_owned(),
+                                    ),
+                                    u64::from(position.qty()),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            let issuers = self
+                .state
+                .company_system
+                .as_ref()
+                .expect("调用前提：公司线在场")
+                .issuers()
+                .clone();
+            let mut candidate = self
+                .state
+                .corporate_actions
+                .clone()
+                .expect("公司局构造起点已初始化容器");
+            candidate
+                .configure_registry(registry.clone(), &positions, &issuers)
+                .map_err(|_error| {
+                    // fault1061: 开局自动名册装配失败（容器勾稽拒绝）。
+                    // 槽0 待 C 批数值化（原文本为容器错误文本）。
+                    SessionError::InvalidSetup(ValidationFault::new(1061, vec![0]))
+                })?;
+            if self.state.setup.dividend_tax_mode
+                == Some(crate::company::cash_dividend_tax::CashDividendTaxMode::AShareIndividual)
+            {
+                let personal_accounts: Vec<AccountId> = registry
+                    .holdings()
+                    .iter()
+                    .filter_map(|holding| {
+                        let crate::company::share_registry::HolderId::Account(account) =
+                            &holding.holder
+                        else {
+                            return None;
+                        };
+                        Some(*account)
+                    })
+                    .filter(|account| {
+                        matches!(
+                            corporate_actions::taxpayer_identity_of_kind(
+                                self.state
+                                    .accounts
+                                    .get(account)
+                                    .expect("configure_registry 已验证名册持有人账户存在")
+                                    .kind()
+                            ),
+                            corporate_actions::TaxpayerIdentity::Personal
+                        )
+                    })
+                    .collect();
+                for account in personal_accounts {
+                    candidate
+                        .configure_cash_dividend_tax_book(
+                            account,
+                            registry.stock().clone(),
+                            crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
+                        )
+                        .map_err(|_error| {
+                            // fault1061: 个人税账自动开账失败。
+                            // 槽0 待 C 批数值化（原文本为容器错误文本）。
+                            SessionError::InvalidSetup(ValidationFault::new(1061, vec![0]))
+                        })?;
+                }
+            }
+            self.state.corporate_actions = Some(candidate);
+        }
+        // 名册全部就位后，按面值推定各发行人的注册资本法定事实（bind-once）。
+        let system = std::sync::Arc::make_mut(
+            self.state
+                .company_system
+                .as_mut()
+                .expect("调用前提：公司线在场"),
+        );
+        let issuer_ids: Vec<crate::company::CompanyId> =
+            system.issuers().iter().map(|(id, _)| *id).collect();
+        for issuer in issuer_ids {
+            let stock = system
+                .issuers()
+                .get(&issuer)
+                .and_then(|issuer| issuer.listed_stock.clone())
+                .ok_or_else(|| {
+                    // fault1059: 发行人缺少上市证券，无法推定注册资本。
+                    // ctx=[CompanyId]。
+                    SessionError::InvalidSetup(ValidationFault::new(
+                        1059,
+                        vec![u64::from(issuer.0)],
+                    ))
+                })?;
+            let total_shares = self
+                .state
+                .setup
+                .stocks
+                .iter()
+                .find(|spec| spec.code == stock)
+                .map(|spec| spec.total_shares)
+                .ok_or_else(|| {
+                    // fault1059: 发行人的上市证券不在 setup 股票清单内。
+                    // ctx=[CompanyId]。
+                    SessionError::InvalidSetup(ValidationFault::new(
+                        1059,
+                        vec![u64::from(issuer.0)],
+                    ))
+                })?;
+            let registered_capital_cents =
+                i128::from(par_cents).checked_mul(i128::from(total_shares)).ok_or_else(|| {
+                    // fault1057: 注册资本（面值×总股本）溢出（setup 校验已防御，
+                    // 此处复验兜底）。ctx=[面值分, 总股本]。
+                    SessionError::InvalidSetup(ValidationFault::new(
+                        1057,
+                        vec![par_cents.unsigned_abs(), total_shares],
+                    ))
+                })?;
+            system
+                .define_dividend_legal_facts(
+                    &issuer,
+                    crate::accounting::AccountingAmount::from_cents(registered_capital_cents),
+                    format!(
+                        "session-auto:registered-capital:par-cents={par_cents}:shares={total_shares}"
+                    ),
+                )
+                .map_err(|_error| {
+                    // fault1062: 注册资本法定事实装配失败（bind-once 冲突等）。
+                    // ctx=[CompanyId]；槽1 待 C 批数值化（原文本为域错误文本）。
+                    SessionError::InvalidSetup(ValidationFault::new(
+                        1062,
+                        vec![u64::from(issuer.0)],
+                    ))
+                })?;
+        }
+        Ok(())
     }
 
     fn account_equity(&self, id: AccountId) -> Result<Money, MoneyError> {
@@ -2540,7 +3110,7 @@ impl GameSession {
                         AccountKind::Retail => 1.5,
                         AccountKind::Inst => 2.0,
                         AccountKind::Hot => 1.7,
-                        AccountKind::Player => 3.0,
+                        AccountKind::Player | AccountKind::IssuerRepurchase => 3.0,
                     };
                     self.split_random_with_tail(kind_float, &eligible_ids, tail_exponent)
                 }
@@ -2601,7 +3171,8 @@ impl GameSession {
             AccountKind::Retail => self.state.setup.npcs.retail_count,
             AccountKind::Inst => self.state.setup.npcs.inst_count,
             AccountKind::Hot => self.state.setup.npcs.hot_count,
-            AccountKind::Player => 0,
+            // 玩家与回购专户不批量生成（专户在 new_configured 显式开立）。
+            AccountKind::Player | AccountKind::IssuerRepurchase => 0,
         };
         let first_id = self
             .state
@@ -2758,6 +3329,17 @@ impl GameSession {
     /// runtime 驱动器导出：确定性配置面副本（批 8d 纵切）。
     pub fn export_setup_for_runtime(&self) -> SessionSetup {
         self.state.setup.clone()
+    }
+
+    /// 公司系统 spine 只读面（B4b）：`None` = 本局无公司线。查询/协议面随
+    /// B4e 在此基础上扩展。
+    pub fn company_system(&self) -> Option<&crate::company::CompanySystem> {
+        self.state.company_system.as_deref()
+    }
+
+    /// 公司行为状态容器只读面（B4b）：`None` = 本局无公司线。
+    pub fn corporate_actions(&self) -> Option<&SessionCorporateActions> {
+        self.state.corporate_actions.as_ref()
     }
 
     /// 账户数量（含玩家）。
@@ -3264,7 +3846,9 @@ impl GameSession {
             AccountKind::Retail => 18_u64,
             AccountKind::Inst => 36_u64,
             AccountKind::Hot => 8_u64,
-            AccountKind::Player => panic!("player orders must not receive NPC quote lifecycles"),
+            AccountKind::Player | AccountKind::IssuerRepurchase => panic!(
+                "non-strategy accounts must not receive NPC quote lifecycles",
+            ),
         };
         let code_str = self
             .state
@@ -3590,6 +4174,12 @@ impl GameSession {
             civil_clock: self.state.civil_clock.save(),
             // 权威状态连续性（完整存档）：公司域与个体决策链权威状态全量入档。
             company_operations: self.state.operations.as_ref().clone(),
+            company_system: self
+                .state
+                .company_system
+                .as_ref()
+                .map(|system| system.as_ref().export_state()),
+            corporate_actions: self.state.corporate_actions.clone(),
             groups: self.state.groups.clone(),
             closing_registry: self.state.closing.as_ref().clone(),
             public_library: self.state.library.as_ref().clone(),
@@ -3946,6 +4536,37 @@ impl GameSession {
             )));
         }
         sess.state.operations = std::sync::Arc::new(save.company_operations.clone());
+        // 公司线 spine 恢复（B4b）：new() 按同一 setup 确定性重建公司系统与
+        // 基础装配，此处先勾稽重建等价（发行人登记一致——Simple 财务推进态
+        // 以档为准整体覆盖），再从档覆盖两域权威状态。旧局（双 None）跳过。
+        match (&save.company_system, &save.corporate_actions) {
+            (Some(saved_system), Some(saved_actions)) => {
+                let rebuilt = sess
+                    .state
+                    .company_system
+                    .as_ref()
+                    .expect("公司档的 setup 携带公司系统，new() 必然重建 spine")
+                    .issuers()
+                    .clone();
+                if &rebuilt != saved_system.issuers() {
+                    // fault1063: 存档公司系统发行人登记与 setup 重建不一致
+                    // （恢复侧勾稽——杜绝名册/法定事实与 setup 撕裂）。
+                    // 槽0/槽1 待 C 批数值化（原文本为两侧 IssuerRegistry Debug）。
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        1063,
+                        vec![0, 0],
+                    )));
+                }
+                sess.state.company_system = Some(std::sync::Arc::new(saved_system.export_state()));
+                sess.state.corporate_actions = Some(saved_actions.clone());
+            }
+            (None, None) => {}
+            // 在场性配对由 validate_save_slot（fault2101）先行拒绝；此处为
+            // 防御性兜底（不静默吞掉不一致档）。
+            _ => {
+                return Err(SessionError::InvalidSave(ValidationFault::bare(1064)));
+            }
+        }
         sess.state.groups = save.groups.clone();
         sess.state.closing = std::sync::Arc::new(save.closing_registry.clone());
         sess.state.library = std::sync::Arc::new(save.public_library.clone());
@@ -4111,6 +4732,14 @@ mod candle_open_tests {
 
     fn gap_stock_setup() -> SessionSetup {
         SessionSetup {
+        company_system: None,
+        dividend_tax_mode: None,
+        flat_withholding_bp: None,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
+        par_value_per_share: None,
+        auto_corporate_foundation: false,
+        report_frequency: None,
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {
@@ -5445,6 +6074,14 @@ mod npc_working_quote_tests {
 
     pub(super) fn quote_setup(auction_ticks: u64) -> SessionSetup {
         SessionSetup {
+        company_system: None,
+        dividend_tax_mode: None,
+        flat_withholding_bp: None,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
+        par_value_per_share: None,
+        auto_corporate_foundation: false,
+        report_frequency: None,
             company_operations: None,
             groups: Vec::new(),
             stocks: vec![StockSpec {
@@ -6227,6 +6864,8 @@ impl CommittableSessionState {
             runtime_lifecycles_undo: _,
             runtime_retail_diag_undo: _,
             company_registry,
+            company_system,
+            corporate_actions,
             operations,
             groups,
             closing,
@@ -6307,6 +6946,8 @@ impl CommittableSessionState {
             runtime_lifecycles_undo: None,
             runtime_retail_diag_undo: None,
             company_registry: company_registry.clone(),
+            company_system: company_system.clone(),
+            corporate_actions: corporate_actions.clone(),
             groups: groups.clone(),
             operations: operations.clone(),
             closing: closing.clone(),
@@ -6385,6 +7026,8 @@ impl CommittableSessionState {
             runtime_lifecycles_undo: _,
             runtime_retail_diag_undo: _,
             company_registry,
+            company_system,
+            corporate_actions,
             operations,
             groups,
             closing,
@@ -6517,6 +7160,16 @@ impl CommittableSessionState {
             &mut self.company_registry,
             company_registry,
             FieldId::CompanyRegistry,
+        );
+        defer_swap(
+            &mut self.company_system,
+            company_system,
+            FieldId::CompanySystem,
+        );
+        defer_swap(
+            &mut self.corporate_actions,
+            corporate_actions,
+            FieldId::CorporateActions,
         );
         defer_swap(&mut self.operations, operations, FieldId::Operations);
         defer_swap(&mut self.groups, groups, FieldId::Groups);

@@ -56,6 +56,14 @@ fn full_session_restore_rejects_corrupt_insurance_group_in_memory() {
     .unwrap();
     let mut session = GameSession::new(
         SessionSetup {
+        company_system: None,
+        dividend_tax_mode: None,
+        flat_withholding_bp: None,
+        rights_offering_enabled: false,
+        issuer_repurchase_enabled: false,
+        par_value_per_share: None,
+        auto_corporate_foundation: false,
+        report_frequency: None,
             stocks: vec![StockSpec {
                 code: stock.clone(),
                 exchange: StockExchange::Shanghai,

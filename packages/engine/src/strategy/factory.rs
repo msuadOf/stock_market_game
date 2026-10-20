@@ -174,7 +174,8 @@ impl StrategyFactory {
                 );
                 Ok(Some(Box::new(strategy)))
             }
-            AccountKind::Player => Ok(None),
+            // 玩家与回购专户都不产生 NPC 策略（专户委托由回购执行器产生，B4d）。
+            AccountKind::Player | AccountKind::IssuerRepurchase => Ok(None),
         }
     }
 }
