@@ -70,4 +70,69 @@ B 探针（1000 tick）预期持平；如实测量。
 
 ## 实施记录
 
-（随批补）
+- 提交链（rebase 至 main `74006973` 后）：
+  - `7f45bfa7` 红证（双形态；占位=install v0 vs 期望 200、部分丢失=冻结对账
+    bars=500/candle=300 硬红——**在新 main 上复跑仍双红**，归因闭合：B4a 的
+    `settle_fill` 占位 K 重锚定修复（main `5a940264` 带入）是测试锚定泄漏层，
+    与本批编排本体不同层，无重复功劳）。
+  - `8a9da711` 修复主体（desk unroll/reroll+协议扩两字段+ends_day 段补真+豁免
+    收紧）。
+  - `ab45c082` main 预存编译红收口（74006973 回收批夹具漏 B4a 新增
+    `PublishedReport.source`——文本干净合并语义断裂；取值对齐生产前史播种
+    `publish_closed`=SimulationAccounting。**非本批引入**，解锁全量测试）。
+- 实施修正 1：应答终 K 初版取 `candles.last()`（closing=0/tpd=1 极端几何下取到
+  **预置历史**条目，`public_step_day_boundary_candle_state_machine` 显红）——
+  重构为 `roll_day` 显式暂存归档 K（`rolled_day_candle`），unroll 从暂存还原
+  （不 pop 归档位）、reroll 原位覆写归档末条；应答终 K 仅在**本次 Drain 实际
+  执行收盘清算**时携带（`drain_cleared_closing`），closing=0/未跨日手动日结
+  =None（driver 跳过补真，install 面维持既有形态）。
+- 实施修正 2（B4a 合并后重定位）：rebase 零冲突；B4a 的 settle_fill 首笔成交
+  重锚定与本批正交（收盘-only 日的开盘价=清算价由 B4a 侧保证，归当日量/额/
+  笔由本批保证）。
+- desk 面 8 元组的额/笔投影恒 0（`DeskCandle` 结构无 stats）——desk/install
+  逐位对账覆盖 OHLCV；额/笔经 install 面断言+bars 冻结对账双重覆盖（测试注释
+  锚定）。
+
+## 独立复核（fork，未实施者）
+
+结论：**阻断 0**；建议 7（S1-S7）。处置：
+- S1 run_day_end 失败路径补 `pending_day_candles` 对称清理——**已修**（b24b82c9）。
+- S3 多日连续日界 session 级测试——**已补**（双时钟契约 civil 驱动；日 0/日 1
+  独立冻结+install 面两条不互覆）。红证期间实证：纯 step 路径不推进 civil，
+  日 1 冻结会被同日幂等检查跳过——测试按 authoritative_tick_tests 同式驱动。
+- S4 清算价≠锚定变体——**已补**（双边同价 1005：开盘价=首笔成交价 1005，
+  B4a settle_fill 重锚定经本批 unroll 通道生效；次日昨收=官方收盘价）。
+- S2 手动路径 receipt 入账失败回滚不完整（civil 不回退）——登记（既有类，
+  触发=结构性单调违约防御）。
+- S5 restore 后继续跑次日——登记遗留。
+- S6 手动日中日结后（bars_shipped_today 分支跳过 unroll）边界 Drain 收盘
+  成交落次日 live K——manual 面既有漂移类窄形态，登记。
+- S7 Trade/Auction 类段近似——已登记（web 按 seq 排序展示，无正确性影响）。
+- 复核确认项：C1 大 A 语义（收盘段归当日 K/官方收盘价/涨跌停基准/traded_
+  days_total 恰一次）C2 None 边界（fault1009 ⇒ tpd=1 必 closing=0，防御
+  Err 合法 setup 不可达）C3 queries.rs 修复正确 C4 字段还原完整+abort 对称
+  C5 ends_day 顺序与 seq 单调 C6 豁免退役安全 C7 回滚覆盖。
+
+## 性能门（B 探针 1000 tick 配对，load 45-50 外部污染窗）
+
+| 口径 | main 74006973 | 分支 | 差 |
+|---|---:|---:|---:|
+| 1000tick×3 轮中位（speed_x） | 952.2 | 905.8 | −4.9% |
+| events（逐位） | 5931×3 | 5931×3 | 一致 |
+
+固定侧逐轮劣化（924→905→832）与外部负载下行并存、跑窗仅 ~1.06s——
+1 秒级窗噪声主导疑点大；本批热路径（每拍 desk/driver/install）零改动、
+fixture 单日不跨日结（tpd=15300），机制上无回归面。3000 tick×5 对
+加长窗仲裁见下（追加）。
+
+## 遗留登记（更新）
+
+- Abort-重跑双计：日结 Drain 的市场面变更（清算成交入 K/桶）无 Market 快照
+  进 undo（既有形态——今日 main 同样在重跑时经 live 桶 merge 双计）；本批
+  unroll/reroll 未扩大该类（成功路径单遍精确）。独立批次可评估 Drain 前推
+  Market 快照。
+- manual `day_end` 路径（driver.day_end / day_end_with_runtime_market_day）：
+  receipt 已即时入账（本批）；但该路径不做 boundary 迁移 ⇒ install 面无当日
+  提交条目，终 K 无补真落点（冻结对账跳过分支保留）——既有登记不扩批。
+- 收盘成交的 `buy_vwap` 入场参考：t31 不再复现（事实移入日结段）——收盘开仓
+  的经历入场参考退化为现价近似（D3 之前既有形态）。
