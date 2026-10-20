@@ -32,6 +32,25 @@ test("无开盘或收盘的简化局不除零，分钟和跨日端点仍有效",
   assert.equal(oneOpening.auctionSlot(1, true), 99);
 });
 
+test("开盘集合竞价窗口内不提供形成中分钟槽——起局首渲染不得抛错", { timeout: 10000 }, () => {
+  // 会话从 tick 1 起处于开盘集合竞价窗口（本地起局首快照即此形态）：
+  // 连续竞价尚未开始，"形成中分钟桶"不存在，须返回 null 而非抛
+  // RangeError（否则分钟面板首渲染即触发 UI 错误边界，见 2026-10-20
+  // smoke 第 4 层断裂）。
+  const timeline = new TradingTimeline({ ticks_per_day: 30, auction_ticks: 9, closing_auction_ticks: 3 });
+  assert.equal(timeline.currentMinuteSlot(0), null);
+  assert.equal(timeline.currentMinuteSlot(1), null);
+  assert.equal(timeline.currentMinuteSlot(9), null);
+  assert.equal(timeline.currentMinuteSlot(10), 0);
+  assert.equal(timeline.currentMinuteSlot(11), 13);
+  // 默认局（含真实开盘窗口）起局 tick 1 同样为 null；无开盘窗口的简化局
+  // 从 tick 1 起即有形成中分钟槽。
+  const standard = new TradingTimeline();
+  assert.equal(standard.currentMinuteSlot(1), null);
+  const noOpening = new TradingTimeline({ ticks_per_day: 4, auction_ticks: 0, closing_auction_ticks: 0 });
+  assert.equal(noOpening.currentMinuteSlot(1), 0);
+});
+
 test("非法 timing 与事件不能被静默修补到零分钟", { timeout: 10000 }, () => {
   for (const timing of [
     { ticks_per_day: 0, auction_ticks: 0, closing_auction_ticks: 0 },

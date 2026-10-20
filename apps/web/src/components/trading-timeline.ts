@@ -46,6 +46,13 @@ export class TradingTimeline {
     return Math.floor(this.tradingSecond(offset) / 60);
   }
 
+  /** 形成中分钟槽：开盘集合竞价窗口内（含 tick 0）连续竞价尚未开始，返回 null。
+   *  供分钟面板以游戏时钟提供"形成中桶"观察时刻；调用方不得直接用
+   *  minuteSlot（其对开盘窗口 tick 按契约抛 RangeError）。 */
+  currentMinuteSlot(tick: number): number | null {
+    return tick > this.openingTicks ? this.minuteSlot(tick) : null;
+  }
+
   clock(tick: number): string {
     if (!Number.isSafeInteger(tick) || tick < 0) throw new RangeError(`游戏 tick 必须是非负安全整数，收到 ${tick}`);
     return this.formatOffset(tick % this.ticksPerDay, false);
