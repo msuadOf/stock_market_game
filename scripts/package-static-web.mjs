@@ -20,7 +20,8 @@ export async function packageStaticWeb({ input, output, sha }, { archive = creat
   await verifyWebReleaseWasm(input);
   const html = await readFile(path.join(input, "index.html"), "utf8");
   if (!html.includes("<script")) throw new Error("static Web is missing its HTML entry script");
-  // 批 9 A10 收尾：pages-isolation.js 要求随跨源隔离引导退役删除。
+  // wasm P0 清单 4：Pages 静态包必须携带隔离 SW（引导链已在 main.tsx 恢复）。
+  await readFile(path.join(input, "pages-isolation.js"));
   await writeFile(path.join(input, "build-info.json"), `${JSON.stringify({ commit: sha, product: "web", engine: "browser-wasm" })}\n`, { flag: "wx" });
   await cp(license, path.join(input, "LICENSE"), { errorOnExist: true, force: false });
   await mkdir(output, { recursive: true });
