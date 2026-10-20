@@ -1,4 +1,5 @@
 import type { PublicReportSummary } from "../../types/engine.ts";
+import { companyIdOf } from "../../config/company-ids.ts";
 
 export function publicReportGold(): PublicReportSummary {
   const columns = {
@@ -7,8 +8,12 @@ export function publicReportGold(): PublicReportSummary {
     financing: [{ subject: "财务费用", amount: "10.00" }], financing_subtotal: "-10.00",
     discontinued: [], discontinued_subtotal: "0.00", income_tax: "22.00", net_income: "88.00",
   };
+  // wire 的 company_id/entity_id 是数值（ADR 0041）：company_id 经前端目录表
+  // 翻译（C-600101 → 数值 CompanyId）；scope 的 MemberId 与 CompanyId 数值同源
+  // （packages/engine/src/company/groups.rs `MemberId(id.0)`），单体报表 scope 即发行人自身。
+  const issuerId = companyIdOf("C-600101");
   return {
-    id: "7", company_id: "C-600101", source: "SimpleGenerated" as const, period: "2030-03-31", kind: "Quarter" as const,
+    id: "7", company_id: issuerId, source: "SimpleGenerated" as const, period: "2030-03-31", kind: "Quarter" as const,
     version_sequence: "2", supersedes: "6", approved_date: "2030-04-01", approved_second_of_day: 28_800,
     published_date: "2030-04-02", published_second_of_day: 64_800,
     accounting: {
@@ -18,7 +23,7 @@ export function publicReportGold(): PublicReportSummary {
       prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } },
     },
     financials: {
-      scope: { Standalone: { entity_id: "C-600101" } },
+      scope: { Standalone: { entity_id: issuerId } },
       window_start: "2030-01-01", window_end: "2030-03-31",
       version_kind: { Correction: { reason: "已公布更正说明" } },
       version_supersedes: "1",

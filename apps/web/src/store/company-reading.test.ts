@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { companyReducer, installCompanyBaseline, recordCompanyPage, startCompanyQuery, recordCompanyQueryFailure } from "./company-slice.ts";
 import { publicReportGold } from "../components/company/public-report-fixture.ts";
+import { companyIdOf } from "../config/company-ids.ts";
 
 const companyId = "C-600101";
 const otherCompanyId = "C-002156";
@@ -9,9 +10,11 @@ const otherCompanyId = "C-002156";
 function fixture() {
   let state = companyReducer(undefined, installCompanyBaseline({ generation: 1, civilDate: "2030-01-02", revision: "1", seq: 0 }));
   for (const id of [companyId, otherCompanyId]) {
+    // store 键保持代码串视图身份；wire 字段（company_id/entity_id）用数值 CompanyId。
+    const numericCompanyId = companyIdOf(id);
     const reports = ["7", "8"].map((reportId) => {
       const report = publicReportGold();
-      return { ...report, company_id: id, id: reportId, financials: { ...report.financials, scope: { Standalone: { entity_id: id } } } };
+      return { ...report, company_id: numericCompanyId, id: reportId, financials: { ...report.financials, scope: { Standalone: { entity_id: numericCompanyId } } } };
     });
     state = companyReducer(state, recordCompanyPage({ generation: 1, companyId: id, cursor: null, reports, nextCursor: null }));
   }

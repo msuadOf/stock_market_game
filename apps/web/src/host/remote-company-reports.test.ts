@@ -37,7 +37,7 @@ async function remoteFixture(respond: (request: number) => Response | Promise<Re
 
 test("remote report ownership cannot survive a restored timeline with reused IDs", async () => {
   const old = reportFixture();
-  const replacement = { ...old, company_id: "C-replacement" };
+  const replacement = { ...old, company_id: 4 };
   let restored = false;
   const socket = {
     readyState: 1,
@@ -80,13 +80,15 @@ test("remote advertises its public company report capability", { concurrency: tr
 });
 
 test("remote page uses the company route, opaque cursor, server limit and owning token", { concurrency: true }, async () => {
-  const report = { ...reportFixture(), id: "9007199254740993", company_id: "C-/ ?&" };
+  const report = { ...reportFixture(), id: "9007199254740993", company_id: 7 };
+  // wire 游标是 PublicationId（u32）数值；不透明性由 by-ID 的十进制串 id 保留。
+  const cursor = 4_294_967_295;
   const page = { reports: [report], next_cursor: report.id };
   const { query, requests } = await remoteFixture(() => json(page));
-  assert.deepEqual(await query({ company_id: report.company_id, cursor: report.id, page_size: 1 }), page);
+  assert.deepEqual(await query({ company_id: report.company_id, cursor, page_size: 1 }), page);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0]!.url.pathname, `/api/companies/${encodeURIComponent(report.company_id)}/reports`);
-  assert.deepEqual([...requests[0]!.url.searchParams], [["session_id", "session /?&"], ["cursor", report.id], ["limit", "1"]]);
+  assert.equal(requests[0]!.url.pathname, `/api/companies/${report.company_id}/reports`);
+  assert.deepEqual([...requests[0]!.url.searchParams], [["session_id", "session /?&"], ["cursor", String(cursor)], ["limit", "1"]]);
   assert.equal(requests[0]!.init?.method, "GET");
   assert.equal(new Headers(requests[0]!.init?.headers).get("authorization"), "Bearer session-token");
 });
@@ -94,7 +96,7 @@ test("remote page uses the company route, opaque cursor, server limit and owning
 test("remote omits null pagination rather than sending null or inventing limits", { concurrency: true }, async () => {
   const page = { reports: [], next_cursor: null };
   const { query, requests } = await remoteFixture(() => json(page));
-  assert.deepEqual(await query({ company_id: "C-600101", cursor: null, page_size: null }), page);
+  assert.deepEqual(await query({ company_id: reportFixture().company_id, cursor: null, page_size: null }), page);
   assert.deepEqual([...requests[0]!.url.searchParams], [["session_id", "session /?&"]]);
 });
 
@@ -119,7 +121,7 @@ test("remote rejects unknown report ownership without guessing a company or fetc
 test("remote rejects cross-company pages atomically without registering their valid prefix", { concurrency: true }, async () => {
   const report = reportFixture();
   const { query, byId, requests } = await remoteFixture(() => json({
-    reports: [report, { ...report, id: "123", company_id: "C-other" }], next_cursor: null,
+    reports: [report, { ...report, id: "123", company_id: 5 }], next_cursor: null,
   }));
   await assert.rejects(query({ company_id: report.company_id, cursor: null, page_size: null }), /公司.*不匹配/);
   await assert.rejects(byId(report.id), /公司.*先查询/);
@@ -130,14 +132,14 @@ test("remote rejects conflicting report ownership without overwriting the verifi
   const report = reportFixture();
   const { query, byId, requests } = await remoteFixture((request) => json(request === 1
     ? { reports: [report], next_cursor: null }
-    : request === 2 ? { reports: [{ ...report, company_id: "C-other" }], next_cursor: null } : report));
+    : request === 2 ? { reports: [{ ...report, company_id: 5 }], next_cursor: null } : report));
   await query({ company_id: report.company_id, cursor: null, page_size: null });
-  await assert.rejects(query({ company_id: "C-other", cursor: null, page_size: null }), /公司.*不匹配/);
+  await assert.rejects(query({ company_id: 5, cursor: null, page_size: null }), /公司.*不匹配/);
   assert.deepEqual(await byId(report.id), report);
   assert.equal(requests[2]!.url.pathname, `/api/companies/${report.company_id}/reports/${report.id}`);
 });
 
-for (const changed of [{ company_id: "C-other" }, { id: "123" }]) {
+for (const changed of [{ company_id: 5 }, { id: "123" }]) {
   test(`remote rejects a by-ID response with mismatched ${Object.keys(changed)[0]}`, { concurrency: true }, async () => {
     const report = reportFixture();
     const { query, byId } = await remoteFixture((request) => json(request === 1

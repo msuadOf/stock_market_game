@@ -17,7 +17,9 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const report = (company: string, id: string) => {
+// wire 字段（company_id/entity_id）是数值 CompanyId（ADR 0041）；协调器的
+// companyId 视图身份是其 canonical 十进制串。
+const report = (company: number, id: string) => {
   const value = publicReportGold();
   value.id = id;
   value.company_id = company;
@@ -90,8 +92,8 @@ test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能�
       rejectPage(new Error("old page failed"));
       rejectById(new Error("old by-id failed"));
     } else {
-      page.resolve({ reports: [report("600001", "7")], next_cursor: null });
-      byId.resolve(report("600001", "7"));
+      page.resolve({ reports: [report(600_001, "7")], next_cursor: null });
+      byId.resolve(report(600_001, "7"));
     }
     await Promise.all([oldPage, oldReport]);
     old.installBaseline({ civilDate: "1999-01-01", revision: "99", seq: 0 });
@@ -132,27 +134,27 @@ test("rejects delayed prior-session page and by-id responses while accepting cur
   const queryHost = {
     capabilities: { ...host.capabilities, publicCompanyReports: true },
     queryPublicReports(query) {
-      return query.company_id === "old" ? late.promise : Promise.resolve({
-        reports: [report("new", query.cursor === null ? "7" : "8")],
+      return query.company_id === 11 ? late.promise : Promise.resolve({
+        reports: [report(22, query.cursor === null ? "7" : "8")],
         next_cursor: query.cursor === null ? "7" : null,
       });
     },
-    publicReportById(id) { return id === "old-report" ? lateById.promise : Promise.resolve(report("new", id)); },
+    publicReportById(id) { return id === "old-report" ? lateById.promise : Promise.resolve(report(22, id)); },
   } satisfies QueryHost;
   const coordinator = new CompanyQueryCoordinator(queryHost, (action) => updates.push(action));
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  const oldRequest = coordinator.query({ companyId: "old", cursor: null });
-  const oldReportRequest = coordinator.queryReportById({ companyId: "old", reportId: "old-report" });
+  const oldRequest = coordinator.query({ companyId: "11", cursor: null });
+  const oldReportRequest = coordinator.queryReportById({ companyId: "11", reportId: "old-report" });
   coordinator.installBaseline({ civilDate: "2031-01-01", revision: "2", seq: 0 });
-  await coordinator.query({ companyId: "new", cursor: null });
-  await coordinator.query({ companyId: "new", cursor: "7" });
-  late.resolve({ reports: [report("old", "7")], next_cursor: null });
-  lateById.resolve(report("old", "old-report"));
+  await coordinator.query({ companyId: "22", cursor: null });
+  await coordinator.query({ companyId: "22", cursor: "7" });
+  late.resolve({ reports: [report(11, "7")], next_cursor: null });
+  lateById.resolve(report(11, "old-report"));
   await oldRequest;
   await oldReportRequest;
-  assert.equal(updates.some((action) => JSON.stringify(action).includes('"companyId":"old"') && JSON.stringify(action).includes('"reports"')), false);
-  assert.equal(updates.some((action) => JSON.stringify(action).includes('"companyId":"old"') && JSON.stringify(action).includes("recordCompanyReport")), false);
-  assert.equal(updates.filter((action) => JSON.stringify(action).includes('"companyId":"new"') && JSON.stringify(action).includes('"reports"')).length, 2);
+  assert.equal(updates.some((action) => JSON.stringify(action).includes('"companyId":"11"') && JSON.stringify(action).includes('"reports"')), false);
+  assert.equal(updates.some((action) => JSON.stringify(action).includes('"companyId":"11"') && JSON.stringify(action).includes("recordCompanyReport")), false);
+  assert.equal(updates.filter((action) => JSON.stringify(action).includes('"companyId":"22"') && JSON.stringify(action).includes('"reports"')).length, 2);
 });
 
 test("reports malformed public DTOs as explicit query errors and unavailable capability separately", async () => {
@@ -174,9 +176,9 @@ test("reports malformed public DTOs as explicit query errors and unavailable cap
 
 test("rejects public reports that violate shared opaque ID, decimal, or second-of-day contracts", async () => {
   const invalidReports = [
-    { ...report("600001", "01") },
-    { ...report("600001", "1"), accounting: { ...report("600001", "1").accounting, total_assets: "1" } },
-    { ...report("600001", "1"), approved_second_of_day: 86_401 },
+    { ...report(600_001, "01") },
+    { ...report(600_001, "1"), accounting: { ...report(600_001, "1").accounting, total_assets: "1" } },
+    { ...report(600_001, "1"), approved_second_of_day: 86_401 },
   ];
   for (const invalidReport of invalidReports) {
     const updates: unknown[] = [];
@@ -310,12 +312,12 @@ test("同 key force 请求替换后旧成功或失败的 finally 不删除新请
     const replacement = coordinator.query(query, true);
     assert.equal(pending.length, 2);
     if (rejectOld) pending[0]!.reject(new Error("旧请求失败"));
-    else pending[0]!.resolve({ reports: [report("600001", "7")], next_cursor: null });
+    else pending[0]!.resolve({ reports: [report(600_001, "7")], next_cursor: null });
     await first;
     await coordinator.query(query);
     assert.equal(pending.length, 2);
     assert.equal(updates.some((action) => /recordCompanyPage|recordCompanyQueryFailure/.test(action.type)), false);
-    pending[1]!.resolve({ reports: [report("600001", "8")], next_cursor: null });
+    pending[1]!.resolve({ reports: [report(600_001, "8")], next_cursor: null });
     await replacement;
     const next = coordinator.query(query);
     assert.equal(pending.length, 3);

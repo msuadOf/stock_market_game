@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { publicReportGold } from "../components/company/public-report-fixture.ts";
+import { companyIdOf } from "../config/company-ids.ts";
 import {
   normalizePublicReportById,
   normalizePublicReportPage,
@@ -18,7 +19,8 @@ Object.assign(financials.cash_flow, { operating: "1.00", investing: "0.00", fina
 
 const publicReport = {
   id: "9007199254740993",
-  company_id: "C-600101",
+  // wire 的 company_id 是数值 CompanyId（u32，ADR 0041）；十进制串 id 仍按不透明文本保留。
+  company_id: companyIdOf("C-600101"),
   source: "SimpleGenerated",
   period: "2030-03-31",
   kind: "Quarter",

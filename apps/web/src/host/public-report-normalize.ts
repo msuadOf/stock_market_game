@@ -68,6 +68,11 @@ function secondOfDay(value: unknown, path: string): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 86_400) throw new TypeError(`${path} 必须是有效日内秒数`);
 }
 
+/** wire 的 company_id / scope entity_id 是 u32 数值（ADR 0041 CompanyId/MemberId 数值身份）。 */
+function u32Id(value: unknown, path: string): void {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 0xFFFF_FFFF) throw new TypeError(`${path} 必须是 u32 数值身份`);
+}
+
 function amounts(keys: readonly string[]): Shape {
   return Object.fromEntries(keys.map((key) => [key, amount]));
 }
@@ -112,7 +117,7 @@ const note = object({
   ...amounts(["opening", "movement", "ytd_movement", "closing"]),
 });
 const financials = object({
-  scope: tagged({ Standalone: object({ entity_id: text }), Consolidated: object({ root_entity_id: text }) }),
+  scope: tagged({ Standalone: object({ entity_id: u32Id }), Consolidated: object({ root_entity_id: u32Id }) }),
   window_start: date, window_end: date,
   version_supersedes: optional(decimalId),
   version_kind: (value, path) => { if (value !== "Original") tagged({ Correction: object({ reason: text }) })(value, path); },
@@ -133,7 +138,7 @@ const financials = object({
   roe,
 });
 const report = object({
-  id: decimalId, company_id: text, source: choice(["SimpleGenerated", "SimulationAccounting"]), period: date, kind: choice(["Monthly", "Quarter", "HalfYear", "Annual"]),
+  id: decimalId, company_id: u32Id, source: choice(["SimpleGenerated", "SimulationAccounting"]), period: date, kind: choice(["Monthly", "Quarter", "HalfYear", "Annual"]),
   version_sequence: decimalId, supersedes: optional(decimalId), approved_date: date, approved_second_of_day: secondOfDay,
   published_date: date, published_second_of_day: secondOfDay,
   accounting: object({

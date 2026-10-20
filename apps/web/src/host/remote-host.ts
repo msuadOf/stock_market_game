@@ -448,9 +448,9 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
       const queryEpoch = reports.captureEpoch();
       const params = new URLSearchParams({ session_id: created.id });
-      if (query.cursor !== null) params.set("cursor", query.cursor);
+      if (query.cursor !== null) params.set("cursor", String(query.cursor));
       if (query.page_size !== null) params.set("limit", String(query.page_size));
-      const page = normalizePublicReportPage(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(query.company_id)}/reports?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
+      const page = normalizePublicReportPage(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(String(query.company_id))}/reports?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
       reports.acceptPage(query.company_id, queryEpoch, page);
       return page;
     },
@@ -458,7 +458,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       const queryEpoch = reports.captureEpoch();
       const companyId = reports.companyFor(id);
       const params = new URLSearchParams({ session_id: created.id });
-      const report = normalizePublicReportById(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(companyId)}/reports/${encodeURIComponent(id)}?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
+      const report = normalizePublicReportById(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(String(companyId))}/reports/${encodeURIComponent(id)}?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
       reports.validateReport(queryEpoch, companyId, id, report);
       return report;
     },

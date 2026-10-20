@@ -13,8 +13,10 @@ import {
 
 const report = (companyId: string, id: string, version = "1") => {
   const value = publicReportGold();
-  Object.assign(value, { id, company_id: companyId, version_sequence: version });
-  value.financials.scope = { Standalone: { entity_id: companyId } };
+  // store 键保持字符串视图身份（CompanyId 十进制串）；wire 字段取其数值形态（ADR 0041）。
+  const numericCompanyId = Number(companyId);
+  Object.assign(value, { id, company_id: numericCompanyId, version_sequence: version });
+  value.financials.scope = { Standalone: { entity_id: numericCompanyId } };
   if (version === "1") {
     Object.assign(value, { supersedes: null });
     Object.assign(value.financials, { version_kind: "Original", version_supersedes: null });
@@ -44,7 +46,7 @@ test("keeps report versions immutable and isolates same report id by company", (
   state = companyReducer(state, recordCompanyPage({ generation: 1, companyId: "000001", cursor: null, reports: [report("000001", "7")], nextCursor: null }));
   state = companyReducer(state, recordCompanyPage({ generation: 1, companyId: "600001", cursor: "7", reports: [report("600001", "8", "2")], nextCursor: null }));
   assert.equal(state.companies["600001"]?.reports["7"]?.accounting.total_assets, "9007199254740993.01");
-  assert.equal(state.companies["000001"]?.reports["7"]?.company_id, "000001");
+  assert.equal(state.companies["000001"]?.reports["7"]?.company_id, 1);
   assert.equal(typeof state.companies["600001"]?.reports["7"]?.accounting.total_assets, "string");
   assert.equal(state.companies["600001"]?.reports["7"]?.accounting.total_assets, "9007199254740993.01");
   const secondPage = state.companies["600001"]?.pages["7"];

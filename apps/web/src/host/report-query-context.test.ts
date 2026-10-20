@@ -9,11 +9,11 @@ test("ReportQueryContext 拒绝冲突页且不登记有效前缀，opaque ID 保
   const context = new ReportQueryContext();
   const report = { ...publicReportGold(), id: "9007199254740993" };
   const epoch = context.captureEpoch();
-  assert.throws(() => context.acceptPage(report.company_id, epoch, { reports: [report, { ...report, id: "123", company_id: "other" }], next_cursor: null }), /不匹配/);
+  assert.throws(() => context.acceptPage(report.company_id, epoch, { reports: [report, { ...report, id: "123", company_id: 9 }], next_cursor: null }), /不匹配/);
   assert.throws(() => context.companyFor(report.id), /归属未知/);
   context.acceptPage(report.company_id, epoch, { reports: [report], next_cursor: null });
   assert.equal(context.companyFor(report.id), report.company_id);
-  assert.throws(() => context.acceptPage("other", epoch, { reports: [{ ...report, company_id: "other" }], next_cursor: null }), /不匹配/);
+  assert.throws(() => context.acceptPage(9, epoch, { reports: [{ ...report, company_id: 9 }], next_cursor: null }), /不匹配/);
   assert.equal(context.companyFor(report.id), report.company_id);
 });
 
@@ -27,7 +27,7 @@ test("ReportQueryContext invalidate 清归属并拒绝晚到页和 by-ID，允�
   assert.throws(() => context.companyFor(report.id), /归属未知/);
   assert.throws(() => context.acceptPage(report.company_id, oldEpoch, { reports: [report], next_cursor: null }), /请重新查询/);
   assert.throws(() => context.validateReport(oldEpoch, report.company_id, report.id, report), /请先查询新时间线/);
-  const next = { ...report, company_id: "replacement" };
+  const next = { ...report, company_id: 8 };
   context.acceptPage(next.company_id, context.captureEpoch(), { reports: [next], next_cursor: null });
   assert.equal(context.companyFor(report.id), next.company_id);
   assert.throws(() => context.validateReport(context.captureEpoch(), next.company_id, report.id, report), /不匹配/);

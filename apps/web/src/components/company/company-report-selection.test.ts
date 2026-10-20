@@ -5,6 +5,7 @@ import { createServer, type ViteDevServer } from "vite";
 import { memoryHook } from "../../app/hook-test-runtime.ts";
 import { companyReducer, installCompanyBaseline, recordCompanyPage, recordCompanyQueryFailure, startCompanyQuery, updateCompanyReading } from "../../store/company-slice.ts";
 import { publicReportGold } from "./public-report-fixture.ts";
+import { companyIdOf } from "../../config/company-ids.ts";
 
 let vite: ViteDevServer;
 let views: typeof import("./CompanyPanel.tsx");
@@ -99,8 +100,9 @@ test("公开报告真正 empty 后清除选择，重新出现报告时使用当�
 test("切换公司时旧选择失效后使用新公司的可见报告", () => {
   const { ready } = fixture();
   const view = selectionView(ready);
-  const nextReport = { ...publicReportGold(), company_id: "C-002156", id: "9" };
-  nextReport.financials.scope = { Standalone: { entity_id: "C-002156" } };
+  const nextCompanyId = companyIdOf("C-002156");
+  const nextReport = { ...publicReportGold(), company_id: nextCompanyId, id: "9" };
+  nextReport.financials.scope = { Standalone: { entity_id: nextCompanyId } };
   view.apply(recordCompanyPage({ generation: 1, companyId: "C-002156", cursor: null, reports: [nextReport], nextCursor: null }));
   assert.equal(view.selected("C-002156"), "9");
   assert.equal(view.selected("C-002156"), "9");

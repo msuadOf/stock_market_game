@@ -24,6 +24,7 @@ interface Baseline {
   seq: number;
 }
 
+/** companyId = CompanyId 数值的 canonical 十进制串；cursor = PublicationId 数值的十进制文本。 */
 interface CompanyQuery {
   companyId: string;
   cursor: string | null;
@@ -37,17 +38,44 @@ interface PublicMetadata {
   revision: string | null;
 }
 
+/**
+ * 视图层公司身份约定：CompanyId 数值的 canonical 十进制字符串（与 AccountId
+ * canonical 化同式；披露事件摄入层 stock-identity.ts 也按此形态输出）。
+ * wire 面 `PublicReportQuery.company_id` 是数值（ADR 0041 CompanyId u32），
+ * 请求边界在此解析转换，不匹配规范十进制即显式失败。
+ */
+function wireCompanyId(companyId: string): number {
+  if (!/^(0|[1-9]\d*)$/.test(companyId) || !Number.isSafeInteger(Number(companyId))) {
+    throw new TypeError(`公司查询身份必须是 CompanyId 的规范十进制串：${companyId}`);
+  }
+  return Number(companyId);
+}
+
+/**
+ * 分页游标是 PublicationId（u32）数值的十进制文本（`PublicReportPage.next_cursor`
+ * 原样回传）；wire 面 `PublicReportQuery.cursor` 是数值，此处同式解析转换。
+ */
+function wireCursor(cursor: string | null): number | null {
+  if (cursor === null) return null;
+  if (!/^(0|[1-9]\d*)$/.test(cursor) || !Number.isSafeInteger(Number(cursor))) {
+    throw new TypeError(`公开报告分页游标必须是 PublicationId 的规范十进制串：${cursor}`);
+  }
+  return Number(cursor);
+}
+
 function parsePage(value: unknown, companyId: string): { reports: PublicReportSummary[]; nextCursor: string | null } {
+  const expected = wireCompanyId(companyId);
   const page = normalizePublicReportPage(value);
-  if (page.reports.some((report) => report.company_id !== companyId)) {
+  if (page.reports.some((report) => report.company_id !== expected)) {
     throw new TypeError("公开公司报告响应不符合公共 DTO 契约");
   }
   return { reports: page.reports, nextCursor: page.next_cursor };
 }
 
 function parseReport(value: unknown, companyId: string): PublicReportSummary {
+  const expected = wireCompanyId(companyId);
   const report = normalizePublicReportById(value);
-  if (report.company_id !== companyId) {
+  if (report.company_id !== expected) {
     throw new TypeError("公开公司报告响应不符合公共 DTO 契约");
   }
   return report;
@@ -97,7 +125,7 @@ export class CompanyQueryCoordinator {
     this.dispatch(startCompanyQuery({ generation, ...query }));
     try {
       const response = parsePage(await this.host.queryPublicReports({
-        company_id: query.companyId, cursor: query.cursor, page_size: null,
+        company_id: wireCompanyId(query.companyId), cursor: wireCursor(query.cursor), page_size: null,
       }), query.companyId);
       if (this.isCurrentRequest(generation, key, request)) {
         this.dispatch(recordCompanyPage({ generation, ...query, ...response }));
