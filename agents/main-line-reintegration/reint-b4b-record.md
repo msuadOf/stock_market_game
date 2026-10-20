@@ -122,12 +122,25 @@ events/snapshot/save 字节（旧局 save 字节未变），亦不受影响。
 
 ## 遗留与交接
 
+- **接口缺口（复核 P1，B4c/B4d 必办）**：`session/corporate_actions.rs`
+  `validate_registry` 相比 18725d07 少第 4 参
+  `issuer_repurchase_account_id: Option<AccountId>`（旧版在账户持仓↔名册
+  勾稽时跳过回购专户——其一致性由回购批次勾稽承担）。本批装配期专户恒
+  零持仓故语义不破；**B4c 日结名册重建（close_registries_through）与
+  B4d 专户真实持股落地时必须恢复该参数**，否则勾稽必断。
 - `packages/std-thread-proto` 在基点 fd5f210a 与当前 main（a341d9ba）均
   18 处编译错（StockId/StockCode 迁移未跟进的旧原型包）——**预存破损，
   非本批引入**，未修（越界）；--workspace 全目标门禁因此不能整体跑绿，
   各包单列验证。
 - 公司局存档的 web 解析面（ROOT_KEYS/parseSetup 扩展 +
   save/schema/company/system.ts + corporate-actions.ts）→ B4f。
+- **ts bool 开关形态宽化**（复核 P2）：`rights_offering_enabled?:
+  boolean | null` 宽于 serde 面（Rust 非 Option bool 拒显式 null）——
+  宿主按 TS 发 null 会被 Rust 拒。B4f 接 web 输入件时收口（可选
+  `#[ts(type="boolean|undefined")]` 改精确可选键）。
+- **旧局 tick 哈希数值变化**（复核 P2 重申）：状态哈希字段流新增两 null
+  定界字段使所有局的 `business_state_hash` 数值改变（已核全树无字面值锚，
+  断言均为前后自比——无破坏）；B5 收尾重立基线计数时需知晓此口径变化。
 - `GameSession::new` 构造期 `report_frequency` 只影响前史公开库排期；
   公司系统线的 Simple 披露发布（`publish_simple_scheduled` 构造期调用）
   属披露面融合 → B4e。

@@ -200,7 +200,6 @@ fn auto_foundation_builds_full_float_registry_and_legal_facts() {
     );
     // 持有人 = 有真实持仓的账户（含零分配外的全部真实持仓者）+ 未分配余量的
     // 具名外部股东；无发行人自持股。账户面名册记录数与实际持仓户数逐一对应。
-    let stock = &StockCode("600101".to_owned());
     let expected_holders: Vec<AccountId> = (1..=4_u64)
         .map(AccountId)
         .filter(|id| {
@@ -231,16 +230,96 @@ fn auto_foundation_builds_full_float_registry_and_legal_facts() {
         .map(|lot| lot.qty)
         .sum();
     assert_eq!(granted, 100_000, "名册登记总量 = 总股本（含外部股东余量）");
-    let _ = stock;
-    // 法定事实：注册资本 = 面值 100 分 × 100_000 股 = 10_000_000 分。
+    // 法定事实：注册资本 = 面值 100 分 × 100_000 股 = 10_000_000 分——按
+    // 精确 JSON 路径取值断言（Simple 公司 0 的 finance.legal_facts）。
     let saved = session.save().unwrap();
     let company_json = serde_json::to_value(&saved.company_system).unwrap();
-    assert!(
-        serde_json::to_string(&company_json)
-            .unwrap()
-            .contains("10000000"),
-        "注册资本法定事实必须按面值×总股本落账，实际 {company_json:?}"
+    let capital = &company_json["implementation"]["state"]["companies"]["0"]["finance"]
+        ["legal_facts"]["registered_capital"];
+    assert_eq!(
+        capital, &serde_json::json!("100000.00"),
+        "注册资本法定事实必须按面值×总股本落账（AccountingAmount 元两位小数 wire），实际路径值 {capital:?}"
     );
+}
+
+#[test]
+fn flat_withholding_boundary_values_are_accepted() {
+    // 合法域闭边界：0bp（零代扣）与 10000bp（全额代扣）都应通过构造。
+    for boundary in [0_u32, 10_000] {
+        let mut setup = company_setup();
+        setup.flat_withholding_bp = Some(boundary);
+        GameSession::new(setup, 7)
+            .unwrap_or_else(|error| panic!("边界 bp={boundary} 必须合法：{error}"));
+    }
+}
+
+#[test]
+fn incomplete_company_config_residue_is_isolated_per_field() {
+    // 残缺位图逐 bit 隔离：单独携带每个公司字段（company_system 缺席）都
+    // 拒绝且 fault 码一致（1048）——杜绝「位图合并掩盖单字段拒绝」。
+    let residue_cases: Vec<(String, Box<dyn FnOnce(&mut SessionSetup)>)> = vec![
+        (
+            "dividend_tax_mode".to_owned(),
+            Box::new(|setup: &mut SessionSetup| {
+                setup.dividend_tax_mode = Some(CashDividendTaxMode::FlatWithholding)
+            }),
+        ),
+        (
+            "flat_withholding_bp".to_owned(),
+            Box::new(|setup: &mut SessionSetup| setup.flat_withholding_bp = Some(1000)),
+        ),
+        (
+            "rights_offering_enabled".to_owned(),
+            Box::new(|setup: &mut SessionSetup| setup.rights_offering_enabled = true),
+        ),
+        (
+            "issuer_repurchase_enabled".to_owned(),
+            Box::new(|setup: &mut SessionSetup| setup.issuer_repurchase_enabled = true),
+        ),
+        (
+            "par_value_per_share".to_owned(),
+            Box::new(|setup: &mut SessionSetup| {
+                setup.par_value_per_share = Some(Money::from_cents(100))
+            }),
+        ),
+        (
+            "auto_corporate_foundation".to_owned(),
+            Box::new(|setup: &mut SessionSetup| setup.auto_corporate_foundation = true),
+        ),
+    ];
+    for (field, mutate) in residue_cases {
+        let mut setup = plain_setup();
+        mutate(&mut setup);
+        assert_eq!(
+            invalid_setup_code(GameSession::new(setup, 7)),
+            1048,
+            "无公司系统携带 {field} 必须以 fault1048 拒绝"
+        );
+    }
+}
+
+#[test]
+fn restore_rejects_company_system_diverging_from_setup_issuers() {
+    // 篡改档的发行人登记与 setup 重建不一致（fault1063）：直接替换存档
+    // company_system 为「另一份配置」构造局的系统状态。
+    let session = GameSession::new(company_setup(), 7).unwrap();
+    let saved = session.save().unwrap();
+    // 用两家股（不同 setup 形状）构造一份不同发行人集的公司系统。
+    let mut two_stock = company_setup();
+    let second = StockCode("600889".to_owned());
+    let mut spec = two_stock.stocks[0].clone();
+    spec.code = second.clone();
+    two_stock.stocks.push(spec);
+    two_stock.company_system = Some(simple_company_fixture!(engine; ["600101", "600889"]));
+    let other = GameSession::new(two_stock, 7).unwrap();
+    let other_saved = other.save().unwrap();
+    let mut tampered = saved.clone();
+    tampered.company_system = other_saved.company_system.clone();
+    match GameSession::restore(&tampered) {
+        Err(engine::SessionError::InvalidSave(fault)) => assert_eq!(fault.code, 1063),
+        Err(other_err) => panic!("期望 InvalidSave(fault1063)，实际 {other_err}"),
+        Ok(_) => panic!("发行人登记与 setup 不一致的档必须显式拒绝"),
+    }
 }
 
 #[test]

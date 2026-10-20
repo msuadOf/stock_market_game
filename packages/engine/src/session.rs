@@ -2492,9 +2492,9 @@ impl GameSession {
         Ok(sess)
     }
 
-    /// 账户入册（含个人历史读取台账占位）：构造期专户开立与 B3 成员补建共用，
+    /// 账户入册（含个人历史读取台账占位）：构造期回购专户开立用，
     /// 保证 snapshot.accounts 与 history_reads 键位一致（web 存档解析器的
-    /// exact 契约）。
+    /// exact 契约；B3 成员补建路径不经此 helper——成员账户走惰性台账）。
     fn accounts_insert_with_history_reads(&mut self, id: AccountId, account: Account) {
         self.state.accounts.insert(id, account);
         if !self.state.history_reads.contains_key(&id) {
