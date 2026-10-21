@@ -160,3 +160,48 @@ called `Result::unwrap()` on an `Err` value: InvariantViolation {
   tampered_trade_event 三个负测）。
 - **engine tests 面最后一个预存红清零**——"全量绿"基线自此恢复，后续批次
   可用 `--no-fail-fast` 全目标门禁，不再需要按目标区分预存红。
+
+---
+
+## ⚠️ 撤回：上节「非产品缺陷」归因不成立（2026-10-22，Sol 裁决 A：FAIL）
+
+**上节结论「非产品缺陷、为测试 fixture 缺陷」应予撤回。** Sol 审查判定该归因不成立，
+并给出构造反例。以下内容按裁决如实改写。
+
+### 撤回理由（Sol 裁决要点）
+
+1. 「休市证券必须空桶」这一产品语义**成立**（`runtime/drive.rs:1337` 要求休市股空桶、
+   `session/failure.rs:2144` 对休市出桶显式拒绝，合 `docs/simulation-calendar.md:91`
+   的"无 tick、无成交"契约，并与上交所现行规则 2.4.1「法定假日和公告休市日休市」
+   一致，该版自 2026-07-06 施行）。
+2. 但**「撮合原语不判日历 ⇒ 公开入口也可无门禁执行」不成立**。
+   共用权威入口 `session/failure.rs:1303`（`check_step_start`）只检查健康状态与
+   策略完整性，**无日历门**。等到日结冻结才拒绝，无法撤销前面已成功提交的休市 tick。
+3. **构造反例**：`sample_setup()` 开局 `2030-01-01`（元旦休市）；
+   `full_day_accounting_fixture()`（`tests/session.rs:1550`）安装卖单并提交买入
+   100 股，调用 `step_with_commit_evidence()` 并断言真实产生 `Trade { qty: 100 }`——
+   **休市日先成交，继续运行到日结才报 retained 不变量错误。**
+4. 我在 `tests/session.rs:1669` 加的 `advance_civil_to_session_start` 位于
+   fixture **已完成上述成交之后**，因此"先推进再 step"的说明**甚至没有覆盖
+   fixture 的第一次 step**。
+
+**结论：Leader 确实止步于恢复目标测试的绿色，没有追到公开市场入口与日历契约的
+语义断裂。** 真缺陷是「公开 `GameSession` 市场入口无日历门禁」。
+
+### 真缺陷登记（待修，不属已收口）
+
+- **P0（语义）**：公开市场事务入口 `check_step_start` 无日历门，休市日可提交成交，
+  直到日结冻结才被拒（不可撤销已提交 tick）。
+  正确修法：先写"休市日直接调用市场入口"的失败测试 → 在共用权威入口阻止全场休市的
+  市场执行；自然日推进继续走显式 `end_civil_day`；fixture 应在第一次市场执行前进入
+  合法交易日。**混合交易所场景还须逐股限制申报/撮合/行情，不能只检查首股。**
+- **P1（跨层漂移）**：`session/failure.rs:2226` retained 开闭市判定重新读取
+  `current_default_calendar()`，**并非存档冻结政策**。若冻结政策将某日设为 Closed
+  而默认政策仍为 Trading，retained 会按默认政策接受该日桶。入口与冻结面应使用
+  同一本局政策。
+
+### 已确认保留的部分
+
+`df4e62fa` 的断言**未被弱化**（`should_panic` 期望串原样保留，panic 仍发生在
+`assert_completed_market_day` 的 `assert_eq!(boundaries, 1, ...)`），故该修法本身
+不回退；但**其"非产品缺陷"的定性结论已作废**，上述 P0/P1 为真实待修项。
