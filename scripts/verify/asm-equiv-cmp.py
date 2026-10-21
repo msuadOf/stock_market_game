@@ -1,37 +1,55 @@
 #!/usr/bin/env python3
-"""native 逐指令等价对照：两份 `--emit asm` 产物的函数级多重集比较。
+"""native 逐指令等价对照：两份 `--emit asm` 产物的函数/数据区比较器。
+
+⚠️ **判据地位（2026-10-22 Sol 审查后降级）**：本工具是 §0「native 零损耗」的
+**必要非充分**条件。它只覆盖 `--emit asm` 阶段的 `.s` 内容；最终链接产物的
+代码/常量/布局、以及 I-cache/BTB 等真实运行效应，须另以生产 ELF/链接产物检查
++ 条件一致的吞吐测量补足。**本工具报 identical 不构成"已证明逐指令等价"。**
 
 用途
 ----
-验证 §0 硬约束「native 生产构建零损耗」：改动前后的 engine release 汇编
-必须在函数级等价。CGU 分区会因代码量变化而漂移（同一函数可能从 cgu.09
-挪到 cgu.14），因此**不能按文件或段顺序直接 diff**——本脚本按 mangled
-符号聚合函数体，并对 CGU 相关的局部标签与符号哈希归一化后比较。
+比较两份 `cargo rustc -p engine --release -- --emit asm` 的产物，回答：
+改动是否引入**任何**机器码/常量/布局层面的差异。
 
-产出汇编
---------
+产出汇编（两份须各用**独立** CARGO_TARGET_DIR、同工具链同 profile）：
+
     CARGO_TARGET_DIR=<dir> cargo +1.96.1 rustc -p engine --release -- --emit asm
-
-两份产物必须用**独立** CARGO_TARGET_DIR，且同工具链同 profile，否则比较无意义。
 
 用法
 ----
     python3 scripts/verify/asm-equiv-cmp.py <baseline_dir> <candidate_dir>
 
-    # 两个目录下都应有 release/deps/*.s
-
-归一化规则（否则会误报大量差异）
---------------------------------
-1. 符号尾部 `17h<16hex>E` → `17hHASHE`：同一函数在不同 CGU 下实例化哈希不同。
-2. Rust 局部标签 `.LBB<bb>_<n>` / `.Ltmp<n>` / `.Lanon.<hex>` 会被 CGU 内
-   编号重排，比较时抹平。
-3. 跳过 `.cfi_*`（调用帧信息）与 `.p2align`（对齐指令）——它们随布局漂移，
-   不承载语义，也非性能相关的指令序列。
-
 退出码
 ------
-0 = 函数集合与函数体全部一致
-1 = 存在差异（逐条打印）
+0 = 完全无差异（函数体、数据区、规模三项全等）
+1 = 存在任何差异（**包括** drop glue / 格式化泛型 / 对齐 / 常量池）
+2 = 输入不可信（零解析、无文件、目录错）
+
+分类（business/drop_glue/generic_format）**仅用于报告**，不影响退出码——
+按名称豁免会在热路径（每 tick 大量 Vec 分配/释放）上放行真实劣化。
+
+归一化规则（只抹平"纯命名噪声"，不抹平任何语义）
+--------------------------------------------------
+1. 符号实例哈希 `17h<16hex>E` → `17hHASHE`：同一函数跨 CGU 实例化哈希不同。
+2. 局部标签（`.L*`）**按每个文件内首次出现顺序做 α-重命名**：
+   合法改名（整体一致重排）判等；**引用身份改变**（如 `jmp .LBB0_1`→`jmp .LBB0_2`，
+   两目标语义不同）保留可检出。整段刚性平移不改内部跳转编码，但跨函数距离/
+   对齐/链接布局变化可能改变编码——故 `.p2align` **保留比较**，不当噪声删除。
+3. 跳过 `#` 注释与 `.cfi_*`（调用帧信息随布局漂移、不承载指令语义）。
+4. **不跳过** `.p2align`（对齐影响性能相关布局）。
+5. 比较范围除 `.text*` 函数块外，还包括**非 `.text` 数据区块**
+   （`.rodata*`/`.gcc_except_table*` 等）的内容多重集——常量池、跳转表、
+   LSDA 的字节变化在此层捕获，不再因"函数体没变"而放行。
+6. CGU 编号漂移（同一函数从 cgu.09 搬到 cgu.14）通过**全体文件聚合后的
+   内容多重集**处理，不做逐 CGU 对齐。
+
+回归（本工具须对以下全部给出非 0 退出，或按要求判等）：
+- 纯标签一致改名 ⇒ identical
+- `jmp` 目标在两个不同后继之间改变 ⇒ differs
+- 被引用的 `.LCPI` 常量值改变 ⇒ differs
+- `.p2align 4` → `.p2align 7` ⇒ differs
+- drop glue 函数体增加指令 ⇒ differs
+- 两份 `.s` 全部解析失败 ⇒ exit 2
 """
 
 import glob
@@ -39,140 +57,127 @@ import os
 import re
 import sys
 
-HASH_RE = re.compile(r"17h[0-9a-f]{16}E$")
+HASH_RE = re.compile(r"17h[0-9a-f]{16}E")
+LABEL_RE = re.compile(r"\.L[A-Za-z0-9_\.]*[A-Za-z0-9_]|\.L")
+SECTION_RE = re.compile(r'^\t\.section\t"?([^",\s]+)"?')
+CANON_PREFIX = "__LAB"
 
 
-CGU_RE = re.compile(r"-cgu\.(\d+)\.rcgu\.s$")
+def canon_labels(lines):
+    """按每文件内首次出现顺序把 `.L*` 标签重命名为 `__LAB<k>`。"""
+    mapping = {}
+    out = []
+    for line in lines:
+        def repl(m):
+            tok = m.group(0)
+            if tok not in mapping:
+                mapping[tok] = f"{CANON_PREFIX}{len(mapping)}"
+            return mapping[tok]
+        out.append(LABEL_RE.sub(repl, line))
+    return out
 
 
-def load_functions(root: str) -> dict:
-    """从 <root>/release/deps/*.s 抽取 {cgu 编号: {段名: 函数体}}。
+def parse_file(path):
+    """返回 (funcs, blocks)：符号名/区段名 → 规范化后的内容行列表。"""
+    raw = []
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if line.lstrip().startswith(".file "):
+                continue  # CGU 文件名本身随分区漂移，不承载内容
+            raw.append(line)
+    lines = canon_labels(raw)
+    funcs, blocks = {}, {}
+    cur_key, cur_bucket = None, None
+    for line in lines:
+        m = SECTION_RE.match(line)
+        if m:
+            name = HASH_RE.sub("17hHASHE", m.group(1))
+            if name.startswith(".text"):
+                cur_key, cur_bucket = name, funcs
+            else:
+                cur_key, cur_bucket = name, blocks
+            cur_bucket.setdefault(cur_key, [])
+            continue
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith(".cfi_"):
+            continue
+        if cur_bucket is not None:
+            s = HASH_RE.sub("17hHASHE", s)
+            cur_bucket[cur_key].append(s)
+    return funcs, blocks
 
-    必须**按 CGU 分开**保存：同一符号会在多个 CGU 各生成一份实例（monomorphized
-    copy），把不同 CGU 的同名实例混进同一个列表再比较会产生大量假阳性——列表
-    顺序取决于文件遍历顺序。正确做法是同一 CGU 编号内逐符号比较。
-    """
+
+def load(root):
     pattern = os.path.join(root, "release", "deps", "*.s")
-    files = glob.glob(pattern)
+    files = sorted(glob.glob(pattern))
     if not files:
-        sys.exit(f"no .s files under {pattern} — did you pass the CARGO_TARGET_DIR?")
-
-    by_cgu: dict = {}
+        print(f"INPUT UNTRUSTED: no .s files under {pattern} — wrong CARGO_TARGET_DIR?", file=sys.stderr)
+        raise SystemExit(2)
+    funcs, blocks = {}, {}
+    parsed = 0
     for path in files:
-        m = CGU_RE.search(os.path.basename(path))
-        cgu = m.group(1) if m else "_"
-        bucket = by_cgu.setdefault(cgu, {})
-        text = open(path, errors="replace").read()
-        # 每个函数的开始是一个 `.section .text.<mangled>`（可能带引号）
-        for chunk in re.split(r'(?m)^\t\.section\t"?\.text\.', text)[1:]:
-            name = None
-            body = []
-            for line in chunk.splitlines():
-                if name is None:
-                    name = line.split('"', 1)[0].split(",", 1)[0].strip()
-                    continue
-                s = line.strip()
-                if s.startswith(".section"):
-                    break
-                if not s or s.startswith("#") or s.startswith(".cfi_") or s.startswith(".p2align"):
-                    continue
-                # 局部标签与常量池序号随 CGU 编号整体平移，属纯布局噪声。
-                # 少归一化任何一类都会把"整体平移"误报成函数体变更——实测
-                # 漏掉下面 4 类时，一份真实只有 3 处差异的对照会报出 4506 条。
-                s = re.sub(r"\.Lanon\.[0-9a-f]+(\.\d+)?", ".Lanon.X", s)
-                s = re.sub(r"\.LBB\d+_\d+", ".LBB", s)
-                s = re.sub(r"\.Ltmp\d+", ".Ltmp", s)
-                s = re.sub(r"\.Lfunc_end\d+", ".Lfunc_end=X", s)
-                s = re.sub(r"\.Lfunc_begin\d+", ".Lfunc_begin=X", s)
-                s = re.sub(r"\.LJTI\d+", ".LJTI=X", s)
-                s = re.sub(r"\.LCPI\d+_\d+", ".LCPI=X", s)
-                s = re.sub(r"\.Ljtbl\d+", ".Ljtbl=X", s)
-                body.append(s)
-            if name:
-                bucket[name] = tuple(body)
-    return by_cgu
+        f, b = parse_file(path)
+        if f or b:
+            parsed += 1
+        for k, v in f.items():
+            funcs.setdefault(k, []).append(tuple(v))
+        for k, v in b.items():
+            blocks.setdefault(k, []).append(tuple(v))
+    if parsed == 0:
+        print(
+            "INPUT UNTRUSTED: 0 files produced any parseable section — parser/format"
+            " mismatch; this is NOT evidence of equivalence.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if parsed != len(files):
+        print(f"WARN: parsed {parsed}/{len(files)} .s files — partial coverage")
+    return {k: tuple(sorted(v)) for k, v in funcs.items()}, {
+        k: tuple(sorted(v)) for k, v in blocks.items()
+    }, len(files), parsed
 
 
-def normalize_symbol(name: str) -> str:
-    return HASH_RE.sub("17hHASHE", name)
+def classify(name):
+    if "core..ptr" in name and "drop_in_place" in name or "core3ptr" in name:
+        return "drop_glue"
+    if "fmt" in name or "box_new_uninit" in name or "core3fmt" in name:
+        return "generic_format"
+    return "business"
 
 
-def main() -> int:
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-
-    a_by_cgu = load_functions(sys.argv[1])
-    b_by_cgu = load_functions(sys.argv[2])
-
-    # 同一函数常被多个 CGU 各实例化一份；分区漂移会让它们在不同 CGU 间搬家。
-    # 因此按"函数体内容多重集"在**全体 CGU 上**聚合同一规范化符号，而不是逐
-    # CGU 对齐——后者会把搬家误判为增删。
-    def collect(by_cgu):
-        out: dict = {}
-        for bucket in by_cgu.values():
-            for name, body in bucket.items():
-                out.setdefault(normalize_symbol(name), []).append(body)
-        return {k: tuple(sorted(v)) for k, v in out.items()}
-
-    a, b = collect(a_by_cgu), collect(b_by_cgu)
+def diff_sets(a, b, label):
     ka, kb = set(a), set(b)
     only_a, only_b = sorted(ka - kb), sorted(kb - ka)
     changed = sorted(k for k in ka & kb if a[k] != b[k])
-
-    def classify(name: str) -> str:
-        """按 mangled 符号粗分三类，便于判读差异是否触及真实业务代码。
-
-        - `drop_glue`：`core::ptr::drop_in_place` 清理辅助，随 CGU 分区漂移改变
-          内联/归属形态，不在热路径上。
-        - `generic_format`：`core::fmt` 系列（Debug/Display/num 格式化）与
-          `alloc::boxed::box_new_uninit` 等无业务语义的泛型实例，其展开形态受
-          调用点集变化影响。
-        - `business`：其余，即 engine 自身逻辑或与之直接相关的实例化。
-        """
-        if ("core..ptr" in name and "drop_in_place" in name) or "core3ptr" in name:
-            return "drop_glue"
-        if "fmt" in name or "box_new_uninit" in name or "core3fmt" in name:
-            return "generic_format"
-        return "business"
-
-    groups: dict = {"business": [], "drop_glue": [], "generic_format": []}
+    total = len(only_a) + len(only_b) + len(changed)
+    print(f"{label}: only_base={len(only_a)} only_cand={len(only_b)} changed={len(changed)}")
+    for tag, items in ((f"only in baseline", only_a), (f"only in candidate", only_b)):
+        for name in items[:20]:
+            print(f"  [{tag}] {name[:110]}")
+    groups = {}
     for k in changed:
-        groups[classify(k)].append(k)
-    changed_business = groups["business"]
-    changed_glue = groups["drop_glue"]
-    changed_fmt = groups["generic_format"]
+        groups.setdefault(classify(k), []).append(k)
+    for kind in ("business", "generic_format", "drop_glue"):
+        for name in groups.get(kind, [])[:20]:
+            print(f"  [changed:{kind}] {name[:110]}")
+    return total
 
-    print(f"baseline : {len(ka)} functions  ({sys.argv[1]})")
-    print(f"candidate: {len(kb)} functions  ({sys.argv[2]})")
-    print(
-        f"only_in_baseline={len(only_a)}  only_in_candidate={len(only_b)}  "
-        f"body_changed={len(changed)} (business={len(changed_business)}, "
-        f"drop_glue={len(changed_glue)}, generic_format={len(changed_fmt)})"
-    )
 
-    if not (only_a or only_b or changed):
-        print("\nRESULT: identical")
+def main():
+    if len(sys.argv) != 3:
+        print(__doc__)
+        return 2
+    fa, ba, nf_a, np_a = load(sys.argv[1])
+    fb, bb, nf_b, np_b = load(sys.argv[2])
+    print(f"baseline : {len(fa)} symbols / {len(ba)} data blocks / {nf_a} files ({sys.argv[1]})")
+    print(f"candidate: {len(fb)} symbols / {len(bb)} data blocks / {nf_b} files ({sys.argv[2]})")
+    total = diff_sets(fa, fb, "functions(.text)") + diff_sets(ba, bb, "data sections")
+    if total == 0:
+        print("\nRESULT: identical (necessary condition only — see module docstring)")
         return 0
-
-    for label, items in (
-        ("only in baseline", only_a),
-        ("only in candidate", only_b),
-        ("body changed — business", changed_business),
-        ("body changed — drop glue (CGU layout artifact)", changed_glue),
-        ("body changed — generic format/alloc (no business semantics)", changed_fmt),
-    ):
-        if items:
-            print(f"\n-- {label} ({len(items)}) --")
-            for name in items[:50]:
-                print(f"  {name}")
-            if len(items) > 50:
-                print(f"  ... and {len(items) - 50} more")
-
-    if changed_business or only_a or only_b:
-        print("\nRESULT: differs (business code affected)")
-        return 1
-    print("\nRESULT: differs only in drop glue / generic format (no business instruction change)")
-    return 0
+    print(f"\nRESULT: differs ({total} diff entries; classification is report-only)")
+    return 1
 
 
 if __name__ == "__main__":
