@@ -176,3 +176,41 @@ crate 目录**内**——按上表属安全形态。
 两次事故都因「显式 pathspec 提交、禁用 `git add -A`」而未被裹挟进提交历史。
 该纪律已再次向全体实现 agent 重申，并追加一条：构建后
 `git status --short | grep -v '^??'` 自查，非本批范围内的文件被改动即红灯。
+
+### Luna 复核批注（2026-10-22）与证据补齐
+
+Luna 检查结论：**通过**，但对上节"生产不受影响"标了范围限定——
+> 仓库里没有附上该次构建的原始命令和完整日志，因此我只能确认台账有实测记录，
+> 不能独立复核那次历史运行；"CI 不受影响"也未见独立 CI 运行记录。
+
+该批注成立（证据链"不可回填"纪律）。补齐如下。
+
+**复跑命令（主区 main `74ed65ab`，2026-10-22）**：
+
+```bash
+cd /data1/baiyifan/workplace/stock_market_game
+before=$(sha256sum LICENSE | cut -c1-16); echo "前: $before  size=$(stat -c %s LICENSE)"
+# 命令取自 node scripts/frontend-build.mjs --dry-run 的实际出参（绝对路径 out-dir）
+export RUSTUP_TOOLCHAIN=nightly-2026-09-05
+wasm-pack build apps/web-wasm --target web --release \
+  --out-dir /data1/baiyifan/workplace/stock_market_game/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+after=$(sha256sum LICENSE | cut -c1-16); echo "后: $after  size=$(stat -c %s LICENSE)"
+```
+
+**实测输出**：
+
+```
+前: e57d1f88b21c0b41  size=1062
+warning: `web-wasm` (lib) generated 1 warning (run `cargo fix --lib -p web-wasm` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 1m 24s
+[INFO]: ⬇️  Installing wasm-bindgen...
+[INFO]: ✨   Done in 1m 30s
+[INFO]: 📦   Your wasm pkg is ready to publish at .../apps/web-wasm/wasm-pack-output/frontend/wasm/pkg.
+后: e57d1f88b21c0b41  size=1062   ✅ 未受影响
+```
+
+**仍如实保留的限定**：
+- 这是**本机**单次运行（wasm-pack 0.13.1、nightly-2026-09-05），不是 CI 流水线运行；
+  "CI 不受影响"仍是**由本机实测 + 路径形态（crate 目录内）推断**，未见 CI 实跑记录。
+- 若要彻底消除该不确定性，应加 **post-build 校验门**（构建后断言 LICENSE 非空且
+  sha 不变）。当前未做，登记为待办，不声称已解决。
