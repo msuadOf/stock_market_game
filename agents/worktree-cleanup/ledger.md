@@ -114,3 +114,25 @@
 145M / agent-afc 3.8G）。三者均零未合并提交（agent-afc 分支已 merged），但
 该目录归 Claude Code harness 管理，是否复用在协调者可见范围外，未经确认
 不动。
+
+### 追加：reint-b2（29G）
+
+**先验证再删**（该分支 `git rev-list --count main..HEAD` = 126，看起来"未合并"，
+不能仅凭此判死）：
+
+1. `fe9e2ff5` 确为**单父提交**（`rev-list --parents` 输出 parents: 1）——
+   重集成战役的既定"单父重联"模式：内容以复制方式进入 main，分支历史不
+   作为第二父保留。
+2. B2 五件套逐项在 main 树上锚定存在：`FeeComponents`（lib.rs）、
+   `MinuteBarFact`（session.rs）、`RetainedDaySnapshot`（session/failure.rs）、
+   `history_reads`（experience.rs）、`DeskTradeFact`（orderbook.rs）；
+   台账 `b2-side-effects-ledger.md` 亦在 main。
+3. `git diff fe9e2ff5..分支` 的 113 文件/8207 行差异方向为**分支侧缺失**——
+   即 main 在 B2 之后又长出 native-store 等新内容，不是 B2 有未落地工作。
+4. 工作区：已跟踪脏文件 0，仅 `node_modules` 未跟踪（构建依赖，可再生）。
+
+结论：可回收。`git worktree remove --force` + `git branch -D`。
+
+**回收后 worktree 共 4 个，全部必要**：reint-b4c 11G（B4c 在途）、
+wasm-r4a 18G（R4a 阶段 2 在途）、wasm-toolchain 4.9G（待并入 foundation）、
+wasm-p0 1.1G（P0 已合并，留作 wasm 线现场参照）。
