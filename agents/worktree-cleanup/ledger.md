@@ -148,29 +148,23 @@ LICENSE 始终完好，范围未扩散。
 
 ### 根因（由 R4a 复现，非手误）
 `wasm-pack 0.13.1` 的 "Copying license from crate" 步骤：当 `--out-dir` 传
-**绝对路径且落在 crate 解析路径之外**时，`license-file = "../../LICENSE"` 的
-目标会退化成**源文件本身**，先截断再写空。相对路径则正常。
+**源路径与目标路径解析到同一个文件**时触发，与"绝对路径 / crate 目录外"无关。
 
-复现矩阵（R4a 实测）：
+wasm-pack v0.13.1 源码（经 `gh` 核对固定版本）：
+- `src/command/build.rs:221`：`out_dir = crate_path.join(argument).clean()`
+- `src/license.rs:73`：源 = `crate_path.join(license_file)`，目标 = `out_dir.join(license_file)`，随后 `fs::copy`
 
-| `--out-dir` | LICENSE |
-|---|---|
-| `apps/web-wasm/.../pkgA`（相对） | 1062 ✓ |
-| `$PWD/.tmp/pkgB`（绝对，**crate 目录外**） | **0** ✗ |
-| `$PWD/apps/web-wasm/.../pkg-lictest2`（绝对，crate 内） | 1062 ✓ |
+本仓库 `license_file = "../../LICENSE"`（相对 crate 目录 `/repo/apps/web-wasm`）。
+令仓库根为 `/repo`：
 
-### 协调者独立核实：生产路径**不受影响**
-`scripts/frontend-build.mjs:36` 的 `wasmPackage` 是绝对路径
-`path.join(root, "apps/web-wasm/wasm-pack-output/frontend/wasm/pkg")`，落在
-crate 目录**内**——按上表属安全形态。
+| out-dir 参数 | 目标 LICENSE | 与源相同？ |
+|---|---|---|
+| `/repo/.tmp/pkgB` | `/repo/LICENSE` | **是 ⇒ 触发** |
+| `../../.tmp/pkgB` (**相对路径**) | `/repo/LICENSE` | **也是 ⇒ 触发** |
+| `/repo/.tmp/deeper/pkgB` | `/repo/.tmp/LICENSE` | 否 |
 
-实测（主区真实跑一次生产 wasm-pack，nightly-2026-09-05）：
-```
-前: e57d1f88b21c0b41  1062 bytes
-后: e57d1f88b21c0b41  1062 bytes   ✅
-```
-**结论：生产前端构建与 CI 不会清空 LICENSE。** R4a 台账 §八 的"CI 风险"表述
-据此收窄——风险仅存在于**手工把 out-dir 指到 crate 目录外**的场景。
+**"相对路径正常 / 仅 crate 外触发"的归因错误**——上表第二行是其反例。
+**仅把 out-dir 改成相对路径无法解决**（取决于拼接结果是否等于源）。
 
 ### 纪律收获
 两次事故都因「显式 pathspec 提交、禁用 `git add -A`」而未被裹挟进提交历史。
@@ -214,3 +208,23 @@ warning: `web-wasm` (lib) generated 1 warning (run `cargo fix --lib -p web-wasm`
   "CI 不受影响"仍是**由本机实测 + 路径形态（crate 目录内）推断**，未见 CI 实跑记录。
 - 若要彻底消除该不确定性，应加 **post-build 校验门**（构建后断言 LICENSE 非空且
   sha 不变）。当前未做，登记为待办，不声称已解决。
+
+### Sol 复核（2026-10-22）与 D 项改写
+
+**机制归因已更正**（见上节）：触发条件是**源=目标同文件**，不是"绝对路径且
+crate 外"。Sol 给出反例：`../../.tmp/pkgB` 这样的**相对** out-dir 同样会触发，
+故"改成相对路径"不是解法。
+
+**另两处 Sol 指出的不足，如实登记为待办（未做）**：
+
+1. **产物 LICENSE 缺位**：生产 out-dir 下 LICENSE 的实际目标是
+   `apps/web-wasm/wasm-pack-output/frontend/LICENSE`（已存在、hash 与源一致），
+   而 **`frontend/wasm/pkg/LICENSE` 缺失**。因此"源 LICENSE hash 不变"**不能**
+   证明 package 的许可文件被正确复制。待办：验证实际 pkg 中的 LICENSE 内容。
+2. **应当加的门禁（当前未实现，不声称已解决）**：
+   - 构建前/后校验源 LICENSE 非空且 hash 不变；
+   - **源/目标别名检查**（同文件即拒绝）；
+   - 异常必须**阻断**构建，而不是仅告警。
+
+**仍保留的限定**：本机单次实测只支持"这次构建未截断源 LICENSE"，**不支持**
+无条件的"生产与 CI 不会清空"；CI 未实测。
