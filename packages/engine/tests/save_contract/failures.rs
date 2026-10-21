@@ -327,21 +327,19 @@ fn tampered_calendar_policy_is_rejected() {
         Value::from("0000000000000000");
 
     let error = expect_rejection(&tampered);
-    // B4b 信封对齐：日历政策摘要篡改的拒绝点自 restore 层（CivilClock 信封）
-    // 前移到 decode 层（SessionError::Calendar 直达，B4a 合并记录登记的
-    // 「错误从 restore 层提前到 decode 层」行为变化）。两信封承载同一
-    // 类型化载荷 DigestMismatch（field/stored/computed 全保留）——断言
-    // 双信封形态，保证篡改必被类型化拒绝且语义字段不丢。
+    // B4b 信封对齐：日历政策摘要篡改的拒绝点自 restore 层前移到 decode 层。
+    // 单臂收口（原为 CivilClock | Calendar 双分支）：原登记「CivilClock 臂
+    // 在归域后不可达」经实测**证伪**——篡改 simulated_fallback digest 的
+    // 实际产出恒为 CivilClock(Calendar(DigestMismatch))。双分支下 Calendar
+    // 臂才是不可达的那个，断言强度被稀释；收窄为单臂后字段级断言真正生效。
     assert!(
         matches!(
             &error,
             SessionError::CivilClock(engine::session::CivilClockError::Calendar(
                 engine::calendar::CalendarError::DigestMismatch { .. }
-            )) | SessionError::Calendar(
-                engine::calendar::CalendarError::DigestMismatch { .. }
-            )
+            ))
         ),
-        "a calendar policy whose facts digest fails recomputation must be a typed digest rejection: {error:?}"
+        "a calendar policy whose facts digest fails recomputation must be a typed digest mismatch under the CivilClock envelope: {error:?}"
     );
 }
 
