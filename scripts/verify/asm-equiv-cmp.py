@@ -76,9 +76,17 @@ def load_functions(root: str) -> dict:
                     break
                 if not s or s.startswith("#") or s.startswith(".cfi_") or s.startswith(".p2align"):
                     continue
-                s = re.sub(r"\.Lanon\.[0-9a-f]+", ".Lanon.X", s)
+                # 局部标签与常量池序号随 CGU 编号整体平移，属纯布局噪声。
+                # 少归一化任何一类都会把"整体平移"误报成函数体变更——实测
+                # 漏掉下面 4 类时，一份真实只有 3 处差异的对照会报出 4506 条。
+                s = re.sub(r"\.Lanon\.[0-9a-f]+(\.\d+)?", ".Lanon.X", s)
                 s = re.sub(r"\.LBB\d+_\d+", ".LBB", s)
                 s = re.sub(r"\.Ltmp\d+", ".Ltmp", s)
+                s = re.sub(r"\.Lfunc_end\d+", ".Lfunc_end=X", s)
+                s = re.sub(r"\.Lfunc_begin\d+", ".Lfunc_begin=X", s)
+                s = re.sub(r"\.LJTI\d+", ".LJTI=X", s)
+                s = re.sub(r"\.LCPI\d+_\d+", ".LCPI=X", s)
+                s = re.sub(r"\.Ljtbl\d+", ".Ljtbl=X", s)
                 body.append(s)
             if name:
                 bucket[name] = tuple(body)
