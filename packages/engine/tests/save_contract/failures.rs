@@ -328,10 +328,20 @@ fn tampered_calendar_policy_is_rejected() {
 
     let error = expect_rejection(&tampered);
     // B4b 信封对齐：日历政策摘要篡改的拒绝点自 restore 层前移到 decode 层。
-    // 单臂收口（原为 CivilClock | Calendar 双分支）：原登记「CivilClock 臂
-    // 在归域后不可达」经实测**证伪**——篡改 simulated_fallback digest 的
-    // 实际产出恒为 CivilClock(Calendar(DigestMismatch))。双分支下 Calendar
-    // 臂才是不可达的那个，断言强度被稀释；收窄为单臂后字段级断言真正生效。
+    // 单臂收口（原为 `CivilClock(..) | Calendar(..)` 双分支），即执行 B4b 合并
+    // 记录 P2 的建议「收口为单臂 CivilClock 形态」——实测产出恒为
+    // CivilClock(Calendar(DigestMismatch{..}))，`SessionError::Calendar` 臂不可达。
+    //
+    // 双分支的问题不是"多留一条防护"，而是**稀释强度**：它对同一个错误结果
+    // 接受两个候选形态，错误类型跑偏到任一同级 Calendar 变体也会放行。收窄后
+    // 只接受 CivilClock 信封的错误域形态。
+    //
+    // （2026-10-22 更正：早前注释称原登记说的是「CivilClock 不可达」并把本次
+    //  改动称为"证伪原登记"，属误述——原登记本就指向收窄为 CivilClock，
+    //  与实测一致，不存在方向冲突。以 Sol 审查结论为准。）
+    //
+    // 注：`DigestMismatch { .. }` 未核对 field/stored/computed 的值，因此本断言
+    // 不等于字段级锚定，仅钉住错误域形态；字段级锚定如需则另立批。
     assert!(
         matches!(
             &error,

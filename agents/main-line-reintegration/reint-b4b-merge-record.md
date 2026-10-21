@@ -101,16 +101,14 @@ company-ids tsc 架构（main 侧）与 B4b `SessionSetup.ts` 生成物（+51 �
 
 ---
 
-## 勘误（2026-10-21）：P2「tampered_calendar 死臂」登记方向错误
+## 更正（2026-10-21 收窄；2026-10-22 依 Sol 审查再更正表述）
 
-原文（本文件"独立复核"节末条）称：
+### 结论：与原登记一致，不是方向反转
 
-> P2：failures.rs tampered_calendar 断言的 `SessionError::Calendar` 臂在
-> 预存债归域后不可达（死臂）——该 bug 若复发此测试不设防；现兜底为
-> session_boundary.rs 的 CivilClock 域锚测试。
+原 P2 登记写的是「`SessionError::Calendar` 臂在预存债归域后不可达（死臂）……
+建议后续批把断言收口为单臂 CivilClock 形态。」
 
-**实测证伪**。篡改 `civil_clock.policy.simulated_fallback.digest` 的实际
-拒绝产出为：
+本批实测产出：
 
 ```
 CivilClock(Calendar(DigestMismatch { field: "simulated_fallback",
@@ -118,13 +116,30 @@ CivilClock(Calendar(DigestMismatch { field: "simulated_fallback",
                                       computed: "86220c9edd316634" }))
 ```
 
-即 **`CivilClock` 臂才是命中路径**，`SessionError::Calendar` 才是那个不可达
-的分支——登记把两侧搞反了。原断言 `CivilClock(..) | Calendar(..)` 的实际
-效果不是"兜住死臂"，而是**稀释强度**：错误类型跑偏到任一同级 Calendar
-变体也会放行。
+**与原登记判断完全一致**：命中的是 `CivilClock(Calendar(..))` 臂，
+`SessionError::Calendar` 才是不可达的那个。收窄为单臂即按原建议执行。
 
-处置见 `3038df5f`（收窄为单臂）。本勘误不改变 B4b 合并结论——该 P2 原本
-就标注为"非本合并义务"，属登记级问题。
+### 2026-10-22 再更正：前一版「方向反了」的表述是错的
 
-**过程教训**：本条的判断依据是"归域后应当走新信封"的推理，未经实测；
-同批其余 P2 若有同类推理型登记，复用时须先跑一次探针确认方向再采信。
+前一版本节标题与正文声称「登记把两侧搞反了 / 方向反了」，并称原登记说的是
+「CivilClock 不可达」。**这是错误表述，已删除**：原登记本就说 `Calendar` 臂
+不可达、建议收窄为 `CivilClock`——与实测及收窄处置一致，**不存在方向冲突**。
+以「勘误」之名宣称反转，等于写入一条错误的审查历史，会误导后人反向改回。
+
+同一错误表述也写进了 `packages/engine/tests/save_contract/failures.rs` 的
+测试注释，一并改正。
+
+### 收窄的实质收益（保留）
+
+原断言 `CivilClock(..) | Calendar(..)` 对**同一个错误结果**接受两个候选形态，
+并非分别测试两个入口。实际效果是**稀释强度**：错误类型跑偏到任一同级
+Calendar 变体也会放行。收窄后约束变强。
+
+注：`DigestMismatch { .. }` 未核对 `field/stored/computed` 的**值**，故本批
+**不算新增字段值断言**，仅收紧错误域形态；字段级锚定如需则另立批。
+
+### 过程教训
+
+动断言前先做实测（不采信推理）这一条是对的；但对**原登记的语义**未逐字读准
+就宣布「方向反了」，是判断失误。教训：**改他人登记前先逐字核对原文**，不要把
+「我实测的结论」直接等同于「对方写错了」。
