@@ -98,3 +98,33 @@ company-ids tsc 架构（main 侧）与 B4b `SessionSetup.ts` 生成物（+51 �
   断言的 `SessionError::Calendar` 臂在预存债归域后不可达（死臂）——该 bug 若
   复发此测试不设防；现兜底为 session_boundary.rs 的 CivilClock 域锚测试。
   建议后续批把断言收口为单臂 CivilClock 形态。
+
+---
+
+## 勘误（2026-10-21）：P2「tampered_calendar 死臂」登记方向错误
+
+原文（本文件"独立复核"节末条）称：
+
+> P2：failures.rs tampered_calendar 断言的 `SessionError::Calendar` 臂在
+> 预存债归域后不可达（死臂）——该 bug 若复发此测试不设防；现兜底为
+> session_boundary.rs 的 CivilClock 域锚测试。
+
+**实测证伪**。篡改 `civil_clock.policy.simulated_fallback.digest` 的实际
+拒绝产出为：
+
+```
+CivilClock(Calendar(DigestMismatch { field: "simulated_fallback",
+                                      stored: "0000000000000000",
+                                      computed: "86220c9edd316634" }))
+```
+
+即 **`CivilClock` 臂才是命中路径**，`SessionError::Calendar` 才是那个不可达
+的分支——登记把两侧搞反了。原断言 `CivilClock(..) | Calendar(..)` 的实际
+效果不是"兜住死臂"，而是**稀释强度**：错误类型跑偏到任一同级 Calendar
+变体也会放行。
+
+处置见 `3038df5f`（收窄为单臂）。本勘误不改变 B4b 合并结论——该 P2 原本
+就标注为"非本合并义务"，属登记级问题。
+
+**过程教训**：本条的判断依据是"归域后应当走新信封"的推理，未经实测；
+同批其余 P2 若有同类推理型登记，复用时须先跑一次探针确认方向再采信。
