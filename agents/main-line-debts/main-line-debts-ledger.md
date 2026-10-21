@@ -111,3 +111,52 @@ invalid_industrial_loan_facts；player_snapshot（session 二进制）1 败。
   竞态残留）：按"等待重试勿盲删"先轮询+进程核验后移除，提交正常。
 - 既有 stash（stray-w3-web-files-in-b4a / pre-rewrite-main-local-changes）非本批
   产物，未动。
+
+---
+
+## 收口追加（2026-10-21）：full_day 双亲分层差异已归因并修复
+
+**登记来源**：本台账"登记"节末条、`agents/day-boundary-kline/ledger.md:85`、
+`agents/main-line-reintegration/reint-b4b-merge-record.md:53` 三处一致登记为
+"main 双亲预存红，待独立批归因"。
+
+### 归因（证据链）
+
+实测 `cargo test -p engine --test session full_day_accounting_rejects_a_missing_day_boundary`：
+
+```
+panicked at tests/session.rs:1668:39:
+called `Result::unwrap()` on an `Err` value: InvariantViolation {
+  description: "休市股 0 出现分钟桶（1 条）",
+  location: "GameSession::step_via_runtime::retained_freeze" }
+```
+
+三条证据判定**非产品缺陷、为测试 fixture 缺陷**：
+
+1. `session/pipeline/executor_perturbation_tests.rs:20-24` 明示设计口径：
+   撮合层**不判日历**（"旧管线模拟与日历解耦可休市撮合"），而 **B2 之后的
+   retained 冻结/查询面以冻结日历为权威**（休市=Closed/空桶），日结冻结对
+   "休市日出桶"显式失败，属正确产品行为。
+2. `check_step_start`（`session/failure.rs`）与 `prepare_market_tick*` 全链
+   无日历门——休市日 step 是允许的，失败点在日结冻结校验，不在撮合。
+3. fixture `sample_setup()` 开局 `2030-01-01` = **元旦（模拟假日）**，同文件
+   姊妹全量日用例（`session.rs:1741-1743`）在 step 前显式调用
+   `advance_civil_to_session_start` 推进到首个交易日；本测试漏了这一步。
+
+### 处置
+
+`df4e62fa test(engine): 清最后一个预存红——缺失日界负测补推进到首个交易日`
+——补上 `advance_civil_to_session_start(&mut session)`，与同文件其余用例同口径。
+
+**断言强度不降**：`should_panic(expected = "每个实例必须恰好完成一次完整交易日日结")`
+原样保留；实测 panic 体为该断言本体（`left: 0, right: 1 / 每个实例必须恰好完成
+一次完整交易日日结`），非被遮蔽的 retained_freeze 不变量。
+
+### 验证
+
+- `cargo test -p engine --test session`：**138 passed / 0 failed / 4 ignored**
+  （原 137/1）。
+- `full_day_accounting` 同族 6 例全绿（含 tampered_cash/tampered_shares/
+  tampered_trade_event 三个负测）。
+- **engine tests 面最后一个预存红清零**——"全量绿"基线自此恢复，后续批次
+  可用 `--no-fail-fast` 全目标门禁，不再需要按目标区分预存红。
