@@ -67,3 +67,50 @@
 | .worktree/reint-b2 | 29G | 前置核对未通过：feat/reintegration-b2-query-api 未并入 main（领先 main 126 commits、落后 147，双向分叉）；分支与提交保留原样，待上司决定合并后再回收 |
 | .worktree/std-thread-model | 51G | 活跃 codex 运行时进程（app-server-broker/app-server/code-mode-host，2 天前启动）cwd 占用；待相关 codex 会话结束后再回收 |
 | .worktree/reint-b4b、.worktree/w3-bridge-fix | 新增 | 清理期间外部新建的在途战役工作区，不属于本次候选，未触碰 |
+
+## 第二轮回收（2026-10-21）
+
+用户批准后回收。**原则：先验证零未合并提交 + 干净工作区，再删；有未归档产物的先补档入库。**
+
+### 已合并分支 worktree（5 个，约 107G）
+
+全部核验 `git rev-list --count main..HEAD == 0` 且 `status --short` 干净：
+
+| worktree | 分支 | 体积 |
+|---|---|---|
+| dayk-fix | feat/day-boundary-kline-fix | 60G |
+| reint-b4b | feat/reintegration-b4b-session-assembly | 34G |
+| reint-b4a | feat/reintegration-b4a-company-domain | 7.5G |
+| recovery-gaps | fix/branch-gap-recovery | 7.1G |
+| w3-bridge-fix | fix/w3-ingress-bridge-serial-crash | 863M |
+
+`git worktree remove --force` + `git branch -d`（普通删除，非 -D）。
+
+### std-thread-model（51G，exp/std-thread-model）
+
+**未直接删除**——发现 24 项未跟踪的终验收证据（25M）。先补档入库两个提交再做：
+
+- `3f4020bf` closing-independent：独立复核 review.md、终态 final-status.json、
+  取证对照 forensic-comparison.json、变异测试结果、探针源码与四组输出日志。
+- `6c379917` v5-p1-final + v5-repair-recheck：P1 终轮与修复再核验的探针/
+  回归脚本（run_probes.py 等）、构建与用例 jsonl、失败清单。
+
+`.log` 文件按仓库既有惯例（`.gitignore:44`）不入库，与主区既有 reviews
+目录口径一致（60 个文件入库 31 个，其余均为日志）。补档后复核：无剩余
+非日志未跟踪文件、无已跟踪脏文件，方执行 `git worktree remove --force` +
+`git branch -D`（该分支内容已随 #102 压缩重做入 main，diff 显示 main 侧
+净删 89081 行，即 main 为后续演化版本）。
+
+### 结果
+
+- 磁盘：76% → **72%**（可用 909G → 1.1T，回收约 158G）
+- worktree：14 → **9**（剩 reint-b2 29G 未合并 126 提交、reint-b4c/wasm-r4a
+  在途、wasm-p0 1.1G、wasm-toolchain 4.9G）
+- `git worktree prune` 清掉 1 个 gitdir 指向失效位置的 `n3-review-baseline` 残留
+
+### 未处理（如实登记）
+
+`.claude/worktrees/` 下三个 harness 托管 worktree（agent-a448 95M / agent-abb
+145M / agent-afc 3.8G）。三者均零未合并提交（agent-afc 分支已 merged），但
+该目录归 Claude Code harness 管理，是否复用在协调者可见范围外，未经确认
+不动。
