@@ -136,3 +136,43 @@
 **回收后 worktree 共 4 个，全部必要**：reint-b4c 11G（B4c 在途）、
 wasm-r4a 18G（R4a 阶段 2 在途）、wasm-toolchain 4.9G（待并入 foundation）、
 wasm-p0 1.1G（P0 已合并，留作 wasm 线现场参照）。
+
+---
+
+## 附：LICENSE 被清空事件的根因与风险核实（2026-10-21/22）
+
+### 现象
+`.worktree/wasm-r4a/LICENSE` 两次被清空为 0 字节（20:33、21:56），均为
+`git checkout --` 恢复，**未进任何提交**。全仓排查：主区与另三个 worktree 的
+LICENSE 始终完好，范围未扩散。
+
+### 根因（由 R4a 复现，非手误）
+`wasm-pack 0.13.1` 的 "Copying license from crate" 步骤：当 `--out-dir` 传
+**绝对路径且落在 crate 解析路径之外**时，`license-file = "../../LICENSE"` 的
+目标会退化成**源文件本身**，先截断再写空。相对路径则正常。
+
+复现矩阵（R4a 实测）：
+
+| `--out-dir` | LICENSE |
+|---|---|
+| `apps/web-wasm/.../pkgA`（相对） | 1062 ✓ |
+| `$PWD/.tmp/pkgB`（绝对，**crate 目录外**） | **0** ✗ |
+| `$PWD/apps/web-wasm/.../pkg-lictest2`（绝对，crate 内） | 1062 ✓ |
+
+### 协调者独立核实：生产路径**不受影响**
+`scripts/frontend-build.mjs:36` 的 `wasmPackage` 是绝对路径
+`path.join(root, "apps/web-wasm/wasm-pack-output/frontend/wasm/pkg")`，落在
+crate 目录**内**——按上表属安全形态。
+
+实测（主区真实跑一次生产 wasm-pack，nightly-2026-09-05）：
+```
+前: e57d1f88b21c0b41  1062 bytes
+后: e57d1f88b21c0b41  1062 bytes   ✅
+```
+**结论：生产前端构建与 CI 不会清空 LICENSE。** R4a 台账 §八 的"CI 风险"表述
+据此收窄——风险仅存在于**手工把 out-dir 指到 crate 目录外**的场景。
+
+### 纪律收获
+两次事故都因「显式 pathspec 提交、禁用 `git add -A`」而未被裹挟进提交历史。
+该纪律已再次向全体实现 agent 重申，并追加一条：构建后
+`git status --short | grep -v '^??'` 自查，非本批范围内的文件被改动即红灯。
