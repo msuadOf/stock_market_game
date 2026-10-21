@@ -1,0 +1,5 @@
+fc2145b0 与 b1171ac5 的 order_id_of 逐字节一致：
+fn order_id_of(order: &OrderRef) -> crate::OrderId {
+    crate::OrderId((u64::from(order.0) << 48) | (order.1 & 0x0000_FFFF_FFFF_FFFF))
+}
+SHA-256=0ef261048018e5d45028cc94451bad2372a3806c63b2188aad32ab89cfbffadb

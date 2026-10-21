@@ -1,0 +1,512 @@
+[engine] step_skeleton::characterization_complete_projection_with_six_auction_ticks rc=101
+
+running 1 test
+test characterization_complete_projection_with_six_auction_ticks ... FAILED
+
+failures:
+
+---- characterization_complete_projection_with_six_auction_ticks stdout ----
+
+thread 'characterization_complete_projection_with_six_auction_ticks' (8755) panicked at packages/engine/tests/step_skeleton.rs:151:5:
+assertion `left == right` failed
+  left: 11099401053095399120
+ right: 7784286686475819964
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    characterization_complete_projection_with_six_auction_ticks
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 3.20s
+
+
+[engine] step_skeleton::characterization_complete_projection_with_three_auction_ticks rc=101
+
+running 1 test
+test characterization_complete_projection_with_three_auction_ticks ... FAILED
+
+failures:
+
+---- characterization_complete_projection_with_three_auction_ticks stdout ----
+
+thread 'characterization_complete_projection_with_three_auction_ticks' (8757) panicked at packages/engine/tests/step_skeleton.rs:151:5:
+assertion `left == right` failed
+  left: 7475044998736442199
+ right: 862635824146359871
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    characterization_complete_projection_with_three_auction_ticks
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 3.22s
+
+
+[engine] step_skeleton::characterization_complete_projection_without_opening_auction rc=101
+
+running 1 test
+test characterization_complete_projection_without_opening_auction ... FAILED
+
+failures:
+
+---- characterization_complete_projection_without_opening_auction stdout ----
+
+thread 'characterization_complete_projection_without_opening_auction' (8758) panicked at packages/engine/tests/step_skeleton.rs:151:5:
+assertion `left == right` failed
+  left: 6371579219763069474
+ right: 14183549150061140820
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    characterization_complete_projection_without_opening_auction
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 3.23s
+
+
+[engine] publications::weekend_publish::weekend_report_publishes_without_trade rc=101
+
+running 1 test
+test weekend_publish::weekend_report_publishes_without_trade ... FAILED
+
+failures:
+
+---- weekend_publish::weekend_report_publishes_without_trade stdout ----
+
+thread 'weekend_publish::weekend_report_publishes_without_trade' (9446) panicked at packages/engine/tests/publications/weekend_publish.rs:164:5:
+assertion `left == right` failed
+  left: {AccountId(1): NpcAttentionState { information_cadence: EveryDays { days: 7 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 27 }, second_of_day: 38880 }, base_probability: 0.0023903153164688503, next_attention_candidate_tick: 240, rng_state: 12114118551426554960 }, AccountId(2): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 5, day: 20 }, second_of_day: 64800 }, base_probability: 0.003730795756409968, next_attention_candidate_tick: 165, rng_state: 1271481399797329694 }, AccountId(3): NpcAttentionState { information_cadence: EveryDays { days: 4 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 24 }, second_of_day: 36360 }, base_probability: 0.012519718676240316, next_attention_candidate_tick: 174, rng_state: 1950860700144187238 }, AccountId(4): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 5, day: 20 }, second_of_day: 64800 }, base_probability: 0.0021877501615215505, next_attention_candidate_tick: 129, rng_state: 16861577866235541872 }, AccountId(5): NpcAttentionState { information_cadence: EveryDays { days: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 22 }, second_of_day: 64800 }, base_probability: 0.011073300939583131, next_attention_candidate_tick: 157, rng_state: 14728274598003456146 }, AccountId(6): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 5, day: 20 }, second_of_day: 64800 }, base_probability: 0.0038918430031820665, next_attention_candidate_tick: 129, rng_state: 8754024852202623806 }, AccountId(7): NpcAttentionState { information_cadence: EveryDays { days: 7 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 27 }, second_of_day: 64800 }, base_probability: 0.003644509000293597, next_attention_candidate_tick: 332, rng_state: 6363758239534434946 }, AccountId(8): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 22 }, second_of_day: 64800 }, base_probability: 0.04074441781649538, next_attention_candidate_tick: 121, rng_state: 11008742025870303288 }, AccountId(9): NpcAttentionState { information_cadence: Daily { checks: 2 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 22 }, second_of_day: 32400 }, base_probability: 0.03905544299070123, next_attention_candidate_tick: 134, rng_state: 8361475234052542398 }, AccountId(10): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 22 }, second_of_day: 64800 }, base_probability: 0.04210785260198292, next_attention_candidate_tick: 122, rng_state: 11353858754305876600 }, AccountId(11): NpcAttentionState { information_cadence: Daily { checks: 2 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 22 }, second_of_day: 32400 }, base_probability: 0.04663263675207752, next_attention_candidate_tick: 143, rng_state: 510922399164920154 }, AccountId(12): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 22 }, second_of_day: 64800 }, base_probability: 0.05661542647887555, next_attention_candidate_tick: 130, rng_state: 16435319234816148880 }, AccountId(13): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 64800 }, base_probability: 0.052157369988889424, next_attention_candidate_tick: 123, rng_state: 9762387542194668738 }, AccountId(14): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 64800 }, base_probability: 0.14975115744922168, next_attention_candidate_tick: 123, rng_state: 1461110635592305600 }, AccountId(15): NpcAttentionState { information_cadence: Daily { checks: 2 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 22 }, second_of_day: 32400 }, base_probability: 0.04139429495683808, next_attention_candidate_tick: 128, rng_state: 3711136946760867148 }, AccountId(16): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 64800 }, base_probability: 0.19749272389363504, next_attention_candidate_tick: 121, rng_state: 2173526023300868594 }, AccountId(17): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 64800 }, base_probability: 0.0013533828929923372, next_attention_candidate_tick: 269, rng_state: 14189607225383347482 }, AccountId(18): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 20 }, second_of_day: 0 }, base_probability: 0.9033374743522264, next_attention_candidate_tick: 121, rng_state: 18288365280403172705 }}
+ right: {AccountId(1): NpcAttentionState { information_cadence: EveryDays { days: 7 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 27 }, second_of_day: 38880 }, base_probability: 0.0023903153164688503, next_attention_candidate_tick: 240, rng_state: 12114118551426554960 }, AccountId(2): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 5, day: 20 }, second_of_day: 64800 }, base_probability: 0.003730795756409968, next_attention_candidate_tick: 165, rng_state: 1271481399797329694 }, AccountId(3): NpcAttentionState { information_cadence: EveryDays { days: 4 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 24 }, second_of_day: 36360 }, base_probability: 0.012519718676240316, next_attention_candidate_tick: 174, rng_state: 1950860700144187238 }, AccountId(4): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 5, day: 20 }, second_of_day: 64800 }, base_probability: 0.0021877501615215505, next_attention_candidate_tick: 129, rng_state: 16861577866235541872 }, AccountId(5): NpcAttentionState { information_cadence: EveryDays { days: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 49200 }, base_probability: 0.011073300939583131, next_attention_candidate_tick: 157, rng_state: 14728274598003456146 }, AccountId(6): NpcAttentionState { information_cadence: Monthly, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 5, day: 20 }, second_of_day: 64800 }, base_probability: 0.0038918430031820665, next_attention_candidate_tick: 129, rng_state: 8754024852202623806 }, AccountId(7): NpcAttentionState { information_cadence: EveryDays { days: 7 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 27 }, second_of_day: 64800 }, base_probability: 0.003644509000293597, next_attention_candidate_tick: 332, rng_state: 6363758239534434946 }, AccountId(8): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 64800 }, base_probability: 0.04074441781649538, next_attention_candidate_tick: 121, rng_state: 11008742025870303288 }, AccountId(9): NpcAttentionState { information_cadence: Daily { checks: 2 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 32400 }, base_probability: 0.03905544299070123, next_attention_candidate_tick: 134, rng_state: 8361475234052542398 }, AccountId(10): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 64800 }, base_probability: 0.04210785260198292, next_attention_candidate_tick: 122, rng_state: 11353858754305876600 }, AccountId(11): NpcAttentionState { information_cadence: Daily { checks: 2 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 32400 }, base_probability: 0.04663263675207752, next_attention_candidate_tick: 143, rng_state: 510922399164920154 }, AccountId(12): NpcAttentionState { information_cadence: Daily { checks: 1 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 64800 }, base_probability: 0.05661542647887555, next_attention_candidate_tick: 130, rng_state: 16435319234816148880 }, AccountId(13): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 20 }, second_of_day: 64800 }, base_probability: 0.052157369988889424, next_attention_candidate_tick: 123, rng_state: 9762387542194668738 }, AccountId(14): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 20 }, second_of_day: 64800 }, base_probability: 0.14975115744922168, next_attention_candidate_tick: 123, rng_state: 1461110635592305600 }, AccountId(15): NpcAttentionState { information_cadence: Daily { checks: 2 }, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 21 }, second_of_day: 32400 }, base_probability: 0.04139429495683808, next_attention_candidate_tick: 128, rng_state: 3711136946760867148 }, AccountId(16): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 20 }, second_of_day: 64800 }, base_probability: 0.19749272389363504, next_attention_candidate_tick: 121, rng_state: 2173526023300868594 }, AccountId(17): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 20 }, second_of_day: 64800 }, base_probability: 0.0013533828929923372, next_attention_candidate_tick: 269, rng_state: 14189607225383347482 }, AccountId(18): NpcAttentionState { information_cadence: Immediate, next_information_check: CivilInstant { date: CivilDate { year: 2035, month: 4, day: 20 }, second_of_day: 0 }, base_probability: 0.9033374743522264, next_attention_candidate_tick: 121, rng_state: 18288365280403172705 }}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    weekend_publish::weekend_report_publishes_without_trade
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 1.23s
+
+
+[engine] save_contract::bank_policy::complete_save_restore_rejects_invalid_bank_ecl_with_company_context rc=101
+
+running 1 test
+test bank_policy::complete_save_restore_rejects_invalid_bank_ecl_with_company_context ... FAILED
+
+failures:
+
+---- bank_policy::complete_save_restore_rejects_invalid_bank_ecl_with_company_context stdout ----
+
+thread 'bank_policy::complete_save_restore_rejects_invalid_bank_ecl_with_company_context' (10085) panicked at packages/engine/tests/save_contract/bank_policy.rs:56:9:
+invalid save: fault[2096] [0, 0]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    bank_policy::complete_save_restore_rejects_invalid_bank_ecl_with_company_context
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 37 filtered out; finished in 2.48s
+
+
+[engine] save_contract::failures::tampered_calendar_policy_is_rejected rc=101
+
+running 1 test
+test failures::tampered_calendar_policy_is_rejected ... FAILED
+
+failures:
+
+---- failures::tampered_calendar_policy_is_rejected stdout ----
+
+thread 'failures::tampered_calendar_policy_is_rejected' (10245) panicked at packages/engine/tests/save_contract/failures.rs:330:5:
+a calendar policy whose facts digest fails recomputation must be a typed digest rejection: Calendar(DigestMismatch { field: "simulated_fallback", stored: "0000000000000000", computed: "86220c9edd316634" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    failures::tampered_calendar_policy_is_rejected
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 37 filtered out; finished in 1.74s
+
+
+[engine] save_contract::restore_guards::audit_credit_complete_save_rejects_invalid_industrial_loan_facts rc=101
+
+running 1 test
+test restore_guards::audit_credit_complete_save_rejects_invalid_industrial_loan_facts ... FAILED
+
+failures:
+
+---- restore_guards::audit_credit_complete_save_rejects_invalid_industrial_loan_facts stdout ----
+
+thread 'restore_guards::audit_credit_complete_save_rejects_invalid_industrial_loan_facts' (10267) panicked at packages/engine/tests/save_contract/restore_guards.rs:73:5:
+invalid save: fault[2080] [0]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restore_guards::audit_credit_complete_save_rejects_invalid_industrial_loan_facts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 37 filtered out; finished in 2.55s
+
+
+[engine] save_contract::restore_guards::complete_save_decoding_rejects_duplicate_operating_due_id rc=101
+
+running 1 test
+test restore_guards::complete_save_decoding_rejects_duplicate_operating_due_id ... FAILED
+
+failures:
+
+---- restore_guards::complete_save_decoding_rejects_duplicate_operating_due_id stdout ----
+
+thread 'restore_guards::complete_save_decoding_rejects_duplicate_operating_due_id' (10277) panicked at packages/engine/tests/save_contract/restore_guards.rs:140:5:
+invalid save: fault[2080] [0]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restore_guards::complete_save_decoding_rejects_duplicate_operating_due_id
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 37 filtered out; finished in 2.46s
+
+
+[engine] save_contract::restore_guards::complete_save_decoding_rejects_zero_and_overflowing_plan_horizons rc=101
+
+running 1 test
+test restore_guards::complete_save_decoding_rejects_zero_and_overflowing_plan_horizons ... FAILED
+
+failures:
+
+---- restore_guards::complete_save_decoding_rejects_zero_and_overflowing_plan_horizons stdout ----
+
+thread 'restore_guards::complete_save_decoding_rejects_zero_and_overflowing_plan_horizons' (10279) panicked at packages/engine/tests/save_contract/restore_guards.rs:119:9:
+invalid save: fault[2080] [0]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restore_guards::complete_save_decoding_rejects_zero_and_overflowing_plan_horizons
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 37 filtered out; finished in 2.45s
+
+
+[engine] scale_restore_limits::restore_rejects_duplicate_order_id_without_mutating_the_source_session rc=101
+
+running 1 test
+test restore_rejects_duplicate_order_id_without_mutating_the_source_session ... FAILED
+
+failures:
+
+---- restore_rejects_duplicate_order_id_without_mutating_the_source_session stdout ----
+
+thread 'restore_rejects_duplicate_order_id_without_mutating_the_source_session' (10504) panicked at packages/engine/tests/scale_restore_limits.rs:252:5:
+unexpected duplicate-order rejection: InvalidSave(ValidationFault { code: 2162, context: [1] })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restore_rejects_duplicate_order_id_without_mutating_the_source_session
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.72s
+
+
+[engine] session::player_snapshot_excludes_private_npc_accounts_but_save_keeps_them rc=101
+
+running 1 test
+test player_snapshot_excludes_private_npc_accounts_but_save_keeps_them ... FAILED
+
+failures:
+
+---- player_snapshot_excludes_private_npc_accounts_but_save_keeps_them stdout ----
+
+thread 'player_snapshot_excludes_private_npc_accounts_but_save_keeps_them' (10865) panicked at packages/engine/tests/session.rs:1959:5:
+assertion `left == right` failed
+  left: 1000000000000
+ right: 10000000
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    player_snapshot_excludes_private_npc_accounts_but_save_keeps_them
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 141 filtered out; finished in 0.21s
+
+
+[engine] session::retail_decision_diagnostics_are_not_authoritative_or_replay_state rc=101
+
+running 1 test
+test retail_decision_diagnostics_are_not_authoritative_or_replay_state ... FAILED
+
+failures:
+
+---- retail_decision_diagnostics_are_not_authoritative_or_replay_state stdout ----
+
+thread 'retail_decision_diagnostics_are_not_authoritative_or_replay_state' (10977) panicked at packages/engine/tests/session.rs:4581:5:
+test seed must produce at least one real retail decision sample
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    retail_decision_diagnostics_are_not_authoritative_or_replay_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 141 filtered out; finished in 0.23s
+
+
+[server] api_contract::public_report_by_id_rejects_unknown_and_company_mismatched_reports rc=101
+
+running 1 test
+test public_report_by_id_rejects_unknown_and_company_mismatched_reports ... FAILED
+
+failures:
+
+---- public_report_by_id_rejects_unknown_and_company_mismatched_reports stdout ----
+
+thread 'public_report_by_id_rejects_unknown_and_company_mismatched_reports' (12229) panicked at apps/server/tests/api_contract.rs:399:47:
+response body should be JSON: Error("expected value", line: 1, column: 1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    public_report_by_id_rejects_unknown_and_company_mismatched_reports
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.21s
+
+
+[server] api_contract::public_report_page_requires_the_owning_session_token rc=101
+
+running 1 test
+test public_report_page_requires_the_owning_session_token ... FAILED
+
+failures:
+
+---- public_report_page_requires_the_owning_session_token stdout ----
+
+thread 'public_report_page_requires_the_owning_session_token' (12231) panicked at apps/server/tests/api_contract.rs:399:47:
+response body should be JSON: Error("expected value", line: 1, column: 1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    public_report_page_requires_the_owning_session_token
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.21s
+
+
+[server] api_contract::public_report_routes_reject_invalid_pagination_and_credentials rc=101
+
+running 1 test
+test public_report_routes_reject_invalid_pagination_and_credentials ... FAILED
+
+failures:
+
+---- public_report_routes_reject_invalid_pagination_and_credentials stdout ----
+
+thread 'public_report_routes_reject_invalid_pagination_and_credentials' (12236) panicked at apps/server/tests/api_contract.rs:399:47:
+response body should be JSON: Error("expected value", line: 1, column: 1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    public_report_routes_reject_invalid_pagination_and_credentials
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.21s
+
+
+[server] ws::browser_subprotocol_credentials_authorize_only_the_matching_session rc=101
+
+running 1 test
+test browser_subprotocol_credentials_authorize_only_the_matching_session ... FAILED
+
+failures:
+
+---- browser_subprotocol_credentials_authorize_only_the_matching_session stdout ----
+
+thread 'browser_subprotocol_credentials_authorize_only_the_matching_session' (12270) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    browser_subprotocol_credentials_authorize_only_the_matching_session
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::gateway_reports_malformed_commands_and_queues_writes_explicitly rc=101
+
+running 1 test
+test gateway_reports_malformed_commands_and_queues_writes_explicitly ... FAILED
+
+failures:
+
+---- gateway_reports_malformed_commands_and_queues_writes_explicitly stdout ----
+
+thread 'gateway_reports_malformed_commands_and_queues_writes_explicitly' (12271) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    gateway_reports_malformed_commands_and_queues_writes_explicitly
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::pull_publisher_waits_for_client_and_then_returns_accumulated_frame rc=101
+
+running 1 test
+test pull_publisher_waits_for_client_and_then_returns_accumulated_frame ... FAILED
+
+failures:
+
+---- pull_publisher_waits_for_client_and_then_returns_accumulated_frame stdout ----
+
+thread 'pull_publisher_waits_for_client_and_then_returns_accumulated_frame' (12274) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    pull_publisher_waits_for_client_and_then_returns_accumulated_frame
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline rc=101
+
+running 1 test
+test restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline ... FAILED
+
+failures:
+
+---- restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline stdout ----
+
+thread 'restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline' (12275) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::server_fixture_cleans_resources_after_assertion_panic rc=101
+
+running 1 test
+test server_fixture_cleans_resources_after_assertion_panic ... FAILED
+
+failures:
+
+---- server_fixture_cleans_resources_after_assertion_panic stdout ----
+
+thread 'server_fixture_cleans_resources_after_assertion_panic' (12279) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'server_fixture_cleans_resources_after_assertion_panic' (12279) panicked at apps/server/tests/ws.rs:768:10:
+panic 前应保存资源句柄
+
+
+failures:
+    server_fixture_cleans_resources_after_assertion_panic
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::server_fixture_shutdown_stops_listener_and_removes_sessions rc=101
+
+running 1 test
+test server_fixture_shutdown_stops_listener_and_removes_sessions ... FAILED
+
+failures:
+
+---- server_fixture_shutdown_stops_listener_and_removes_sessions stdout ----
+
+thread 'server_fixture_shutdown_stops_listener_and_removes_sessions' (12281) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    server_fixture_shutdown_stops_listener_and_removes_sessions
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::ws_closes_when_client_does_not_answer_ping_before_deadline rc=101
+
+running 1 test
+test ws_closes_when_client_does_not_answer_ping_before_deadline ... FAILED
+
+failures:
+
+---- ws_closes_when_client_does_not_answer_ping_before_deadline stdout ----
+
+thread 'ws_closes_when_client_does_not_answer_ping_before_deadline' (12283) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ws_closes_when_client_does_not_answer_ping_before_deadline
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::ws_rejects_missing_or_query_string_credentials rc=101
+
+running 1 test
+test ws_rejects_missing_or_query_string_credentials ... FAILED
+
+failures:
+
+---- ws_rejects_missing_or_query_string_credentials stdout ----
+
+thread 'ws_rejects_missing_or_query_string_credentials' (12286) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ws_rejects_missing_or_query_string_credentials
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::ws_rejects_unknown_session rc=101
+
+running 1 test
+test ws_rejects_unknown_session ... FAILED
+
+failures:
+
+---- ws_rejects_unknown_session stdout ----
+
+thread 'ws_rejects_unknown_session' (12287) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ws_rejects_unknown_session
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+
+[server] ws::ws_sends_baseline_snapshot_then_events rc=101
+
+running 1 test
+test ws_sends_baseline_snapshot_then_events ... FAILED
+
+failures:
+
+---- ws_sends_baseline_snapshot_then_events stdout ----
+
+thread 'ws_sends_baseline_snapshot_then_events' (12290) panicked at apps/server/tests/ws.rs:62:75:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ws_sends_baseline_snapshot_then_events
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
