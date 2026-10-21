@@ -1663,6 +1663,10 @@ fn full_day_accounting_small_population_roundtrips_and_completes() {
 fn full_day_accounting_rejects_a_missing_day_boundary() {
     let (mut session, _, _, _) = full_day_accounting_fixture();
     let ticks_per_day = sample_setup().ticks_per_day;
+    // 开局 2030-01-01 为元旦休市：日结保留面以冻结日历为权威（休市必须空桶），
+    // 未推进到首个交易日就 step 会先在 retained_freeze 不变量处失败，
+    // 掩盖本测试真正要锚定的"缺失日界被拒"。与同文件其余全量日用例同口径推进。
+    advance_civil_to_session_start(&mut session);
     let mut final_events = Vec::new();
     for _ in 1..ticks_per_day {
         final_events = session.step().unwrap();
