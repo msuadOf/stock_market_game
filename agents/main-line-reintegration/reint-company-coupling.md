@@ -114,7 +114,7 @@ rights_offerings / issuer_repurchases / share_splits / stock_distributions）+
 （`account_dividend_tax_status`/`dividend_tax_outstanding_views`/
 `company_capabilities`/`owner_rights_offerings`/`company_period_explanation`/
 `corporate_actions`/`query_public_reports` 等）、`player_proposals` 提案面。
-其中**认购/审批类直接动玩家账户现金**（中央直改），是新架构下必须重新设计通道的部分。
+其中**"认购/审批类直接动玩家账户现金（中央直改）"与实测不符**（2026-10-22 更正，Sol 裁定以逐函数核查为准）：七个主命令中真写账户的只有**回购批准与注销，目标均为回购专户**——`approve_issuer_repurchase` 对 `issuer_repurchase_account_id()` 账户 `credit_cash`（合成预算），`execute_issuer_repurchase_cancellation` 对专户 `write_down_position_shares`；`subscribe_rights_offering` **只做现金预检并入队**（`if account_state.cash() < cost` 预检 + `.rights_subscription_queue.push(...)`），实际扣款在日终第 8 步；其余 `configure_cash_dividend_tax_book`/`define_dividend_legal_facts`/`approve_cash_dividend`/`approve_share_split`/`approve_rights_offering` **函数体内零账户写入**（只改 spine 公司状态）。故必须重新设计的通道是**"日终权益落账（spine→组）"与"回购专户执行"**，而非"七个命令都在动玩家现金"。
 
 ### 2.3 事件 / 协议面
 
@@ -187,9 +187,15 @@ rights_offerings / issuer_repurchases / share_splits / stock_distributions）+
 
 1. 先回纯域闭包（company 域文件+accounting+tests，63%+，几乎无冲突）；
 2. `SessionSetup`/save/account.rs 公共 diff 小步恢复；
-3. spine 公司状态 + `end_civil_day` 内 12 步链（位置等价，#7）——此时回写窗口
+3. spine 公司状态 + `end_civil_day` 内 12 步链（位置等价，#7）——~~此时回写窗口
    （`force_full_accounts` 全量同步，drive.rs:1189）使 spine 直改在日终同步语义下成立，
-   可作为**过渡态**先跑通正确性；
+   可作为**过渡态**先跑通正确性~~；**此结论已被 B4c 实测推翻（2026-10-22）**：
+   `force_full_accounts`（实际置位点 `drive.rs:1268`；`drive.rs:718`
+   `let skip_all = !self.force_full_accounts`、`:866` 复位）**只决定安装段走全量快照
+   还是发布分片——即只兜读面**，不改变 group→session 写入方向，全树不存在
+   session→group 回灌通道，故 spine 直改**不成立过渡态**（实测缺陷 R-B4c-1：现金当日
+   可见后回落，持仓当日可见但跨拍持久未证明）。顺序建议保留（先 12 步链再终态通道），
+   但**"先跑通正确性"不能作为已达成的前置**；
 4. 再做 AdminRight 扩展 + rights_computer 接线（性能/一致性终态）；
 5. 最后 desk 除权面、回购执行器、host 协议/查询面。
 
