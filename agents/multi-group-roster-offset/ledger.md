@@ -324,3 +324,48 @@ test result: FAILED. 6 passed; 4 failed
   分支卫生、台账计数）仍需处理后再送审。
 - ⚠️ 该命令完整运行 31.50s，**超过普通测试 10 秒上限**（Luna P1 之一）
   ⇒ 合入前需缩小 fixture 或归入长验收分类。
+
+---
+
+# 调用层红证交付与剩余缺口（2026-10-22 12:39）
+
+提交 `96f80511` `test(engine): 补调用层红证——组切分不得改变开仓计划`
+
+## 交付内容
+
+3 个 case：`multi_group_open_plans_match_single_group_at_{4,8,12}_ticks`
+（`packages/engine/src/runtime/group_roster_offset_tests.rs:231/238/245`）
+
+**走的生产入口**（不碰 helper）：
+`step_frame_equivalent → GroupIn::Start → run_chain_decision(write_back=true) → collect_plans`
+
+判据为**跨组数不变式**：账户分到组 0 还是组 1 是纯调度事实，不该改变它自己的开仓计划；单组
+`roster_offset==0` 恒正确 ⇒ 单组指纹即 oracle。指纹含账户/股票/方向/目标量/已成交量/状态
+（`open_position_action` 全部输出字段）。
+
+## mutation 结果（分别验证，符合 Sol 要求）
+
+| 回退点 | 结果 |
+|---|---|
+| `run_chain_decision` 的 `roster_chain_params`（group.rs:2858）→ offset=0 | **红** 3/3 |
+| `chain_quote_children` 的 `roster_chain_params`（group.rs:3387）→ offset=0 | **红** 3/3 |
+| `roster_slice` 五处（2917/2987/3017/4622/4859）→ offset=0 / 传全局切片 / 恒空段 | **仍绿** ⚠️ |
+
+两处 `roster_chain_params` **分别**回退各自显红 ⇒ 满足 Sol「一处回退不能证明两点都受保护」。
+
+失败形态是 panic：`组 1 belief 位 0 缺链参数投影`（组 1 local0 落到玩家位，链参数为 None）
+——是崩溃而非数值静默。
+
+## ⚠️ 剩余缺口（未闭合，如实登记，不得写成"全覆盖"）
+
+`roster_slice` 那族（现金/持仓/在途读面）**没钉住**，三种回退形态都仍绿。
+原因：本 fixture 里没有跨拍在途票 ⇒ `cash/held_..._with_pending` 的加回量恒为 0
+⇒ 该族失效在计划指纹上不可观测。
+闭合需另立一条：构造跨拍持有在途票的世界（组间现金/在途互异，加回量非 0）。
+
+## 回归
+
+`cargo test -p engine --lib`（128 核并行）**2223 passed / 0 failed / 12 ignored**，98.58s。
+单 case 最长 ~3.2s，满足 10s 硬限（此前的 31.5s 超时问题已随本批解决）。
+
+工作区干净，无 mutation 残留；只改测试文件一个，显式 pathspec 提交。
