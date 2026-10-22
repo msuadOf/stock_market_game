@@ -84,3 +84,26 @@
 - 计划文档"过渡态成立"必须更正（不等 B5）；耦合盘点与计划的"动玩家现金"表述必须更正。
 - B4c 台账 R-B4c-1 影响面表更正为"现金+持仓全部"，并补跨拍红证。
 - B4c 合并与否按上述排期建议：先更正与补红证，不先按"已跑通"名义合入。
+
+## 执行记录与一个待整理项
+
+**已执行的"必须现在改"更正**（文档更正 agent，2026-10-22，3 个提交）：
+
+| sha | 文件 | 内容 |
+|---|---|---|
+| `812626d8` | `.worktree/reint-b4c/…/reint-b4c-record.md` | R-B4c-1 现象段与影响面表更正（持仓=受影响，非生效）；回购执行器缺口登记 |
+| `9e000da6` | `reintegration-campaign-plan.md` | §B4c 过渡态不成立；§B4d"动玩家现金"更正（函数级证据）；前置与验收项 |
+| `937231ff` | `reint-company-coupling.md` | 行 117 "直接动玩家现金"更正；§5 步骤 3 置位点 1189→1268 |
+
+**⚠️ 待整理（分支卫生）**：后两个提交（`9e000da6`/`937231ff`）落在
+`fix/multi-group-roster-offset` 分支上，而该分支是 roster_offset 修复批（#117）的工作分支——
+两个无关改动混进了同一分支。待 #117 提交收工后，把这两个 cherry-pick 到独立文档分支
+（建议 `docs/sol-b4d-corrections`）并从修复分支移除。
+
+**已核实的行号更正**：计划/coupling 原引 `drive.rs:1194`/`1189`，实际置位点为 **`drive.rs:1268`**
+（另 `718` skip_all 判定、`866` 消费后清）。
+
+**Sol "全树不存在"的精确化**：`place_issuer_repurchase_orders` 在主线（main + reint-b4c 分支）
+grep 0 命中；旧实现仍存于历史基线
+`.claude/worktrees/agent-afc56ec75b2f12651/packages/engine/src/session.rs:4617`（12 处命中，
+含 `pipeline/mod.rs:269` 调用点）——不在主线上，但可作 B4d 迁移参考。
