@@ -133,7 +133,7 @@ grep 全仓 + subagent 逐点核验）确认修复面更大，且**两处静默�
 | mutation：回退 B 类切片六处 | 改为全局切片 | **3 passed（未覆盖）** ⇒ 故补 `roster_slice` 单测 |
 | mutation：回退 1565 | 改回裸 `fill.owner.1` | **4 passed（未覆盖）** ⇒ 故补 `fill_plan_progress_resolves_owner_within_group_roster` 直测；补后回退 ⇒ **1 failed（filled=0 静默跳过）** |
 | 多拍探针 | 2 组 × 6 拍 | **passed**（4.42s，10s 门内） |
-| 全量回归 | `cargo test -p engine --lib` | **2219 passed / 0 failed / 12 ignored** |
+| 全量回归 | `cargo test -p engine --lib -- --test-threads=4` | 复核整改后 **2220 passed / 0 failed / 12 ignored**（整改前 2219） |
 
 ### 全量回归的两条假失败（已证伪为负载相关 flake，非本批引入）
 
@@ -152,11 +152,37 @@ grep 全仓 + subagent 逐点核验）确认修复面更大，且**两处静默�
 `roster_chain_params(.., 0, local)` == 原 `.get(local)` ⇒
 **单组逐位不变**（生产路径零行为变化，缺陷修复只作用于多组）。
 
+### 独立复核发现（未实施改动的 subagent，已修）
+
+**`roster_slice` 的 `assert!` 会在合法配置上 panic（自引入缺陷）。**
+
+- 原实现 `assert!(roster_offset <= account_ids.len())` 把"尾组偏移越界"
+  当作不可解释状态 ⇒ 显式崩溃。
+- 但**组数多于名册数**是合法配置：`per_group = npcs.div_ceil(n_groups)`，
+  npcs=5 / n_groups=4 ⇒ per_group=2 ⇒ 尾组 offset=6 > 5，该组全是补齐空槽
+  （world.rs 明确以 None 补齐支持）。⇒ 崩在组线程内，且崩的是合法世界。
+- 已复现：`组名册偏移越界：offset=4 全局名册长=3`。
+- **修**：`offset >= len` ⇒ 空段（与修复前 `.get()`→None 语义一致）。
+  原 `should_panic` 用例随断言退役，补 `roster_slice_empty_for_group_beyond_
+  roster`（offset >/==/远超 三例）与 `roster_slice_starts_at_group_offset_
+  not_zero`（起点须为本组偏移——起点退化为 0 正是漏偏移的失效形态）。
+
+复核另确认：A 股语义未触碰（纯坐标管线，规则机器与 helper 体均未改）；
+单组不变性成立且 clamp 可证为不可观测；**未发现新的漏站点**（17 处
+`account_ids`/`chain_params` 逐一核对，其余 `RootProjection` 字段均为
+`StockId` 键或全局标量）。
+
+复核提出的 cosmetic 项（`run_chain_decision` 内 3 处 `roster_slice(...)`
+重复表达式提为局部变量）**未做**——相邻且无歧义，避免无谓改动。
+
 ### 待办（未修）
 
 - **5380**（`#[cfg(test)]` `MutateBeliefForTest`）：`account_ids.iter().position()`
   返回**全局**下标却当组内 `local` 用（5388 索引 `belief_states`）。同类但
   仅测试专用通道，不并入本批（避免扩大范围）。多组下该 fixture 通道会取错位。
+  **已补警示注释**：当前不显错仅因该消息硬连线到 `group_txs.first()`
+  （world.rs）——只在组 0 可达，而组 0 的 `roster_offset==0` 使全局序恰等于
+  局部序。原注释把错的坐标当正确描述，易误导后来者放开路由后踩静默错。
 
 ## 状态
 
@@ -166,7 +192,8 @@ grep 全仓 + subagent 逐点核验）确认修复面更大，且**两处静默�
 - [x] 1565 影响面确认 —— **同类，同批已修**；A5（5380）测试通道登记待办
 - [x] 全量回归（2219 passed / 0 failed；两条假失败已证伪为 flake）
 - [x] 多组 2/3/4 探针恢复（补 B4c 规模敏感性维度）—— 2/3/4 组收集 + 2 组×6 拍全通过
-- [ ] 独立 subagent 复核 diff
+- [x] 独立 subagent 复核 diff —— **approve-with-fixes**；发现的自引入缺陷
+      （`roster_slice` assert 在合法配置 panic）已修并补测；无新漏站点
 
 ## 缺陷来历（2026-10-22 追查）
 
