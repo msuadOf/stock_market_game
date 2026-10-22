@@ -7365,6 +7365,129 @@ mod roster_offset_tests {
         assert!(roster_slice(&ids, 3, 2).is_empty());
     }
 
+    /// 1565 红证：`apply_fill_plan_progress` 用 `fill.owner.1`（**组内**
+    /// LocalIdx）查全局 `account_ids`，须加 `roster_offset`。
+    ///
+    /// 漏偏移是**静默**的：尾组 local0 解析成组 0 的账户 ⇒ 该账户无在途票
+    /// ⇒ `return Ok(())` ⇒ 计划成交推进整段跳过（不 panic、不报错）。
+    /// 故直接断言**本组计划的 filled_qty 被推进**。
+    #[test]
+    fn fill_plan_progress_resolves_owner_within_group_roster() {
+        // 全局名册：[0]=组 0 的账户、[1]=本组（组 1）的账户。
+        let mine = crate::AccountId(9);
+        let other = crate::AccountId(7);
+        let code = crate::StockId(0);
+        let mut state = GroupState::new(
+            1,
+            vec![GroupAccount::new(10_000_000, 1)],
+            8,
+            100,
+            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+            240,
+            None,
+            Vec::new(),
+            Box::new(|_t, _r| TickPlan::default()),
+        );
+        state.cur_tick = 1;
+        state.cur_round = 0;
+        // 本组在全局名册的偏移=1（组 1）。
+        state.roster_offset = 1;
+        state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
+            catalog: crate::stock::StockCatalog::from_metas(vec![crate::stock::StockMeta::new(
+                "600000",
+            )])
+            .expect("目录构造"),
+            company_registry: std::sync::Arc::new(
+                crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
+            ),
+            operations: std::sync::Arc::new(
+                crate::company::operations::CompanyOperations::new(
+                    crate::company::operations::CompanyOperationsConfig {
+                        seed: 1,
+                        shock_params: crate::company::events::ShockParams::current_default_parameters(),
+                        catalog: crate::company::CompanyCatalog::from_codes(&[])
+                            .expect("空公司目录"),
+                        companies: Vec::new(),
+                    },
+                    crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
+                )
+                .expect("空经营"),
+            ),
+            account_ids: vec![other, mine],
+            auction_ticks: 0,
+            closing_auction_ticks: 3,
+            chain_params: vec![None, None],
+            session_seed: 1,
+            urgency_policy: crate::plans::UrgencyPolicy::default(),
+            total_shares: Default::default(),
+            max_order_qty_limit: Default::default(),
+            tick_size_cents: Default::default(),
+            stock_codes: Vec::new(),
+        }));
+        // 本组账户的计划 + 执行腿 + 已受理在途票（身份=serial 5）。
+        let order_id = order_id_of(&(0, 5));
+        let pid = state
+            .plan_book
+            .create(crate::plans::PlanOpen {
+                account: mine,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: crate::plans::PlanTarget::ShareCount(200),
+                opinion: crate::plans::PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: crate::plans::Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .expect("计划创建");
+        state
+            .plan_book
+            .install_execution(pid, 200, crate::money::Money::from_cents(1_000), 240)
+            .expect("执行腿登记");
+        state
+            .plan_book
+            .record_child_submitted(mine, &code, Side::Buy, order_id, 200, 0)
+            .expect("子单身份登记");
+        state.child_in_flight.insert(
+            (mine, code.clone()),
+            ChildTicket {
+                qty: 200,
+                side: Side::Buy,
+                price: 1_000,
+                order_id: Some(order_id),
+                remaining: 200,
+                charged_cents: 0,
+            },
+        );
+        // 成交事实：owner=(组 1, local 0) ⇒ 应解析到全局第 1 位=mine。
+        let fill = FillFact {
+            order: (0, 5),
+            owner: (1, 0),
+            side: Side::Buy,
+            price: 1_000,
+            qty: 100,
+            commission: 0,
+            stamp_tax: 0,
+            transfer_fee: 0,
+        };
+        state
+            .apply_fill_plan_progress(0, &fill)
+            .expect("本组成交推进正常");
+        let filled = state
+            .plan_book
+            .active_plan(mine, &code)
+            .expect("本组计划仍在")
+            .filled_qty();
+        assert_eq!(
+            filled, 100,
+            "本组（roster_offset=1）local0 的成交须推进**本组账户 9** 的计划：\
+             漏 roster_offset 会解析成组 0 的账户 7（无在途票 ⇒ 静默跳过，filled=0）"
+        );
+    }
+
     /// 组 g≥1 的链参数须取**本组**投影值，不得与组 0 相同（钉住
     /// 2798/3323：裸 local 会静默取到组 0 的链参数——不 panic）。
     /// 用**互异的 order_size** 构造，使"取错组"必然显红。
