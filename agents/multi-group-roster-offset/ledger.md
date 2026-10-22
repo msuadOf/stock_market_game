@@ -289,3 +289,38 @@ cherry-pick 目的：让 B4c 性能探针能在含修复的代码上跑多组维
 
 Luna 指出：台账的红测与独立复核勾选有历史证据，但**不能替代尚未闭合的合并门**。
 ⇒ 合并前必须补齐 P0，并重跑一次双人复核。
+
+---
+
+# 阻断项闭合验证（2026-10-22，协调者亲自跑）
+
+Sol 与 Luna 判定的**同一条 P0 阻断项**：「缺静默缺陷的生产调用层红证——
+helper 单测不能替代调用点红证，调用点 mutation 仍可全绿」。
+
+## 验证做法
+
+在**生产调用点** `group.rs:2858`（`roster_chain_params` 的实参位置）
+把 `self.roster_offset` 改成 `0`（即"传错参数"的典型失效形态），
+**不改动任何 helper 自身**，然后跑测试。
+
+## 结果：阻断项闭合 ✅
+
+```
+test result: FAILED. 6 passed; 4 failed
+    multi_group_account_ids_do_not_collide_across_groups
+    multi_group_open_derivation_does_not_panic_on_tail_group
+    multi_group_open_derivation_scales_over_group_counts
+    multi_group_stays_consistent_over_several_ticks   ← 多拍一致性
+```
+失败形态与生产一致：
+`collect_open_derivations 期望 GroupOpenDerivations，收到 Failed(desk-1, ..)`
+
+⇒ **现有测试确实能捕获"调用点传错参数"**，不是只验 helper 自身。
+
+## 说明
+
+- 验证后已 `git checkout` 还原，工作区干净、0 处 MUTATION 残留。
+- 这**不构成**"跳过复核"的理由：Sol/Luna 的其余意见（红测 31.5s 超 10s 上限、
+  分支卫生、台账计数）仍需处理后再送审。
+- ⚠️ 该命令完整运行 31.50s，**超过普通测试 10 秒上限**（Luna P1 之一）
+  ⇒ 合入前需缩小 fixture 或归入长验收分类。
