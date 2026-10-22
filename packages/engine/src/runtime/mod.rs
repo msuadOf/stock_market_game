@@ -56,6 +56,9 @@ mod trade_fee_split_tests;
 mod retained_history_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod drive_tests;
+/// P0 预存缺陷红证：多组名册偏移（组端坐标 vs 全局投影坐标）。
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod group_roster_offset_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod day_end_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
