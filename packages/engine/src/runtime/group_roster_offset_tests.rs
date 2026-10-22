@@ -149,3 +149,99 @@ fn multi_group_stays_consistent_over_several_ticks() {
         }
     }
 }
+
+/// 组数参数化下推进 `ticks` 拍，取**全量计划指纹**（生产读面
+/// `collect_plans`——组线程簿现值，非 Echo 门控通道）。
+///
+/// 指纹含账户/股票/方向/目标量/已成交量/状态——即 `open_position_action`
+/// 的全部输出字段（消费链参数、权益、持仓）。
+fn plan_fingerprints(n_groups: usize, ticks: usize) -> Vec<String> {
+    let (mut session, mut driver) = grouped_world(n_groups, 4);
+    for _ in 0..ticks {
+        advance_one_tick(&mut session, &mut driver);
+    }
+    let mut out: Vec<String> = driver
+        .collect_plans()
+        .unwrap_or_else(|error| panic!("{n_groups} 组计划收集失败：{error}"))
+        .iter()
+        .flat_map(|(_group, book)| {
+            book.plan_ids()
+                .filter_map(|pid| book.plan(pid).ok())
+                .map(|plan| {
+                    format!(
+                        "{:?} {:?} {:?} {:?} filled={} {:?}",
+                        plan.account(),
+                        plan.code(),
+                        plan.direction(),
+                        plan.target(),
+                        plan.filled_qty(),
+                        plan.status()
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    // 组序/簿序不参与语义（组切分只改归属，不改计划内容）⇒ 排序消除。
+    out.sort();
+    out
+}
+
+/// 红证 5（**调用层**·生产入口级）：组切分不得改变任何账户的开仓计划。
+///
+/// 与红证 1~4 的区别：本红证**不直接调** `roster_slice` /
+/// `roster_chain_params`，而是走生产入口——`step_frame_equivalent`
+/// → `GroupIn::Start` → `run_chain_decision(write_back=true)` →
+/// `collect_plans`。计划由 `open_position_action` 派生，其输入的链参数
+/// 来自收口点 `roster_chain_params`、权益来自 `equity_cents_with_pending`
+/// （→ `cash/held_..._with_pending` → `roster_slice`）。
+///
+/// 判据=**跨组数不变式**：账户被分到组 0 还是组 1 是纯调度事实，不得
+/// 影响它自己的决策产物（单组 `roster_offset==0` 恒正确 ⇒ 单组指纹即
+/// oracle）。这是 Sol 阻断项要的"调用点传对参数"证明。
+///
+/// 实测覆盖范围（mutation 结论，勿夸大）：
+/// - 回退 `run_chain_decision` 的 `roster_chain_params`（group.rs:2858）
+///   → **显红**；
+/// - 回退 `chain_quote_children` 的 `roster_chain_params`（group.rs:3387）
+///   → **显红**（两点分别验证——Sol：一处回退不能证明两点都受保护）；
+/// - 回退 `roster_slice` 五处（2917/2987/3017/4622/4859，含改传全局切片
+///   与恒空段两种形态）→ **仍绿**：本 fixture 无跨拍在途票，
+///   `cash/held_..._with_pending` 的加回量恒为 0，该族失效在计划指纹
+///   上不可观测。故本红证只钉 chain 参数族；roster_slice 族的调用层
+///   红证仍需另立（需构造跨拍在途票的世界）。
+fn assert_grouping_preserves_plans(ticks: usize) {
+    let single = plan_fingerprints(1, ticks);
+    let grouped = plan_fingerprints(2, ticks);
+    assert!(
+        !single.is_empty(),
+        "{ticks} 拍单组须有开仓计划（空指纹=本红证未触达开仓面，\
+         退化为假绿）"
+    );
+    assert_eq!(
+        grouped, single,
+        "{ticks} 拍：双组下各账户开仓计划须与单组逐字段相同——\
+         组切分是纯调度事实，不得影响决策产物。\
+         差异即某个 `roster_offset` 调用点传错（组 g≥1 读到组 0 的\
+         链参数/现金/持仓）。\n单组={single:#?}\n双组={grouped:#?}"
+    );
+}
+
+/// 短程（4 拍）：首开仓面（链参数 + 权益 → 目标量）。
+#[test]
+fn multi_group_open_plans_match_single_group_at_4_ticks() {
+    assert_grouping_preserves_plans(4);
+}
+
+/// 中程（8 拍）：开仓 + 复审面（`equity_cents_with_pending` 的复审权益
+/// 读面——单拍覆盖不到）。
+#[test]
+fn multi_group_open_plans_match_single_group_at_8_ticks() {
+    assert_grouping_preserves_plans(8);
+}
+
+/// 长程（12 拍）：跨拍成交推进（`apply_fill_plan_progress` 的 owner
+/// 解析面 + 二次开仓）。
+#[test]
+fn multi_group_open_plans_match_single_group_at_12_ticks() {
+    assert_grouping_preserves_plans(12);
+}
