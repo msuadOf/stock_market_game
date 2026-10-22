@@ -309,6 +309,30 @@ struct ChildTicket {
     charged_cents: i64,
 }
 
+/// 本组名册段（P0 缺陷修复的统一收口点）：全局名册投影按 `roster_offset`
+/// 切出**本组局部切片**，供 `cash_with_pending_at` / `held_qty_with_pending_at`
+/// / `equity_cents_with_pending` 直接以组内 local 索引（三者的
+/// `account_ids` 形参语义=局部切片，体内 `get(local)` 因此不变）。
+///
+/// 上界按全局名册长**截断**（非 panic）：尾组常带补齐空槽（`per_group
+/// = npcs.div_ceil(n_groups)`，world.rs 尾组 resize 到 per_group——
+/// `roster_offset + group_len` 可超出名册长）。截断后超出位取不到账户，
+/// 与修复前 `.get()` 返回 None 的语义一致（空槽本就不参与决策）；
+/// 此处**不**静默回退空切片——只截不扩，偏移本身仍严格。
+/// 偏移起点越界（roster_offset > 名册长）才属不可解释，显式失败。
+fn roster_slice(
+    account_ids: &[crate::AccountId],
+    roster_offset: usize,
+    group_len: usize,
+) -> &[crate::AccountId] {
+    assert!(
+        roster_offset <= account_ids.len(),
+        "组名册偏移越界：offset={roster_offset} 全局名册长={}",
+        account_ids.len()
+    );
+    &account_ids[roster_offset..(roster_offset + group_len).min(account_ids.len())]
+}
+
 /// Sol 整改 3：含在途的权益（现金含在途买 purse；持仓含在途卖余量
 /// ×最新价——对齐旧管线权益观察口径）。
 fn equity_cents_with_pending(
@@ -1559,10 +1583,19 @@ impl GroupState {
         fill: &FillFact,
     ) -> Result<(), RuntimeError> {
         let group = self.group;
+        // P0 缺陷修复：`fill.owner.1` 是**组内** LocalIdx（Owner=(GroupIdx,
+        // LocalIdx)，同文件 apply_fill_cost_basis 即以其索引 self.accounts），
+        // 而 account_ids 为全局名册序 ⇒ 须加 roster_offset。漏偏移时组 g≥1
+        // 命中组 0 的账户（有票则错推进，无票则静默 return Ok(())——尾组
+        // 计划推进整段跳过，不 panic）。
         let Some(&account) = self
             .root_projection
             .as_ref()
-            .and_then(|projection| projection.account_ids.get(fill.owner.1 as usize))
+            .and_then(|projection| {
+                projection
+                    .account_ids
+                    .get(self.roster_offset + fill.owner.1 as usize)
+            })
         else {
             return Ok(());
         };
@@ -2747,6 +2780,7 @@ impl GroupState {
             snapshot.tick,
             self.ticks_per_day,
             &snapshot,
+            self.roster_offset,
         );
         let observation = build_chain_observation(
             &self.observation_inputs,
@@ -2793,9 +2827,11 @@ impl GroupState {
             }
         }
         let assessments: Vec<_> = assessments_map.iter().map(|(k, v)| (*k, v.clone())).collect();
+        // P0 缺陷修复：`chain_params` 为全局名册序（与 account_ids 同式），
+        // 裸 local 会静默取到组 0 的链参数（不 panic——比账户簿缺键更隐蔽）。
         let (params, style) = projection
             .chain_params
-            .get(local as usize)
+            .get(self.roster_offset + local as usize)
             .and_then(|slot| *slot)
             .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         // D3b 件 4：复审消费（session Lifecycle operation 等价——observe
@@ -2853,7 +2889,7 @@ impl GroupState {
             let equity = equity_cents_with_pending(
                 group_account,
                 &self.child_in_flight,
-                &projection.account_ids,
+                roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
                 local,
                 &self.config,
                 &observation.market,
@@ -2923,7 +2959,7 @@ impl GroupState {
             let held_qty = held_qty_with_pending_at(
                 &group_account.shares,
                 &self.child_in_flight,
-                &projection.account_ids,
+                roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
                 local,
                 code.0 as usize,
             );
@@ -2953,7 +2989,7 @@ impl GroupState {
                 equity_cents_with_pending(
                     group_account,
                     &self.child_in_flight,
-                    &projection.account_ids,
+                    roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
                     local,
                     &self.config,
                     &observation.market,
@@ -3038,6 +3074,7 @@ impl GroupState {
                     &plan,
                     crate::session::ratio_to_bp(path.thirty_minute.return_ratio),
                     crate::session::ratio_to_bp(path.one_minute.return_ratio),
+                    self.roster_offset,
                 );
                 if let crate::plans::PauseAssessment::PauseAndRequestCancel(reason) =
                     assessment.pause
@@ -3318,9 +3355,11 @@ impl GroupState {
                 detail: format!("组 {group} belief 位 {local} 账户缺失"),
             });
         };
+        // P0 缺陷修复：`chain_params` 为全局名册序——裸 local 会静默取到
+        // 组 0 的链参数（不 panic，仅报价参数错——比账户簿缺键更隐蔽）。
         let (params, _style) = projection
             .chain_params
-            .get(local as usize)
+            .get(self.roster_offset + local as usize)
             .and_then(|slot| *slot)
             .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         // Sol 整改 3：预算现金=可用（已扣在途 purse——所有权口径；frozen
@@ -4360,6 +4399,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             plan,
             return_30min_bp,
             return_1min_bp,
+            self.state.roster_offset,
         )
     }
     fn review_facts(&self, _account: crate::AccountId, code: &crate::StockId) -> (Money, u32) {
@@ -4542,6 +4582,8 @@ fn group_urgency_at_view(
     plan: &crate::plans::TradingPlan,
     return_30min_bp: Option<i32>,
     return_1min_bp: Option<i32>,
+    // 本组在全局名册的偏移（P0 缺陷修复——名册段切片的唯一入口）。
+    roster_offset: usize,
 ) -> (
     crate::plans::UrgencyAssessment,
     crate::plans::urgency::risk::RiskUrgencyAssessment,
@@ -4550,6 +4592,8 @@ fn group_urgency_at_view(
         assess_existing_reduction_urgency, RiskUrgencyAssessment,
     };
     use crate::plans::UrgencyInputs;
+    // 本组名册段（局部切片——helper 的 account_ids 形参语义）。
+    let roster = roster_slice(&projection.account_ids, roster_offset, accounts.len());
     let acct = &accounts[local as usize];
     let experience = belief.experience();
     let risk = match experience.peak_equity {
@@ -4561,7 +4605,7 @@ fn group_urgency_at_view(
             let equity = equity_cents_with_pending(
                 acct,
                 child_in_flight,
-                &projection.account_ids,
+                roster,
                 local,
                 config,
                 market,
@@ -4607,7 +4651,7 @@ fn group_urgency_at_view(
                 crate::money::Money::from_cents(cash_with_pending_at(
                     acct,
                     child_in_flight,
-                    &projection.account_ids,
+                    roster,
                     local,
                     config,
                 )),
@@ -4778,13 +4822,24 @@ fn build_root_read_context(
     tick: u64,
     ticks_per_day: u64,
     snapshot: &TickSnapshot,
+    // 本组在全局名册的偏移（P0 缺陷修复：`account_ids` / `chain_params`
+    // 均为全局名册序，组内 local 须加偏移；单组=0）。
+    roster_offset: usize,
 ) -> crate::session::RootReadContext {
+    // 本组名册段（预切片——`cash_with_pending_at` / `held_qty_with_pending_at`
+    // 的 `account_ids` 形参按**组内局部切片**语义索引（372/401 不变），
+    // 传全局切片+裸 local 会取到组 0 的账户 ⇒ 切片在入口一次收口，
+    // 同类漏偏移不再可能。
+    let roster = roster_slice(&projection.account_ids, roster_offset, accounts.len());
     let mut book = crate::session::AccountBook::default();
     for (local, slot) in belief_states.iter().enumerate() {
         if slot.is_none() {
             continue;
         }
-        let Some(&account_id) = projection.account_ids.get(local) else {
+        // P0 缺陷根因（原 `account_ids.get(local)` 裸 local）：组 g≥1 取到
+        // 组 0 的账户 id 装进 AccountBook，而 run_chain_decision 解析的是
+        // `roster_offset+local` 的全局 id ⇒ roots.rs "account ID is absent"。
+        let Some(&account_id) = projection.account_ids.get(roster_offset + local) else {
             continue;
         };
         let group_account = &accounts[local];
@@ -4796,7 +4851,7 @@ fn build_root_read_context(
             crate::money::Money::from_cents(cash_with_pending_at(
                 group_account,
                 child_in_flight,
-                &projection.account_ids,
+                roster,
                 local as LocalIdx,
                 config,
             )),
@@ -4809,7 +4864,7 @@ fn build_root_read_context(
             let qty = held_qty_with_pending_at(
                 &group_account.shares,
                 child_in_flight,
-                &projection.account_ids,
+                roster,
                 local as LocalIdx,
                 stock,
             );
