@@ -7295,3 +7295,58 @@ fn seal_drain_foreign_message_fails_explicitly() {
 }
 
 }
+
+/// P0 缺陷红证：`roster_slice` 名册段切片（B 类静默缺陷的**唯一收口点**
+/// ——六个 `cash/held/equity_with_pending` 调用方全部经此取本组段）。
+///
+/// B 类失效不 panic（组 g≥1 静默读到组 0 的现金/持仓/在途），World 级红证
+/// 无法断言到（数值差不足以翻转决策断言——已由 mutation 实测确认：单独
+/// 回退 B 类三处，World 级红证仍全绿）。故在此直接钉住切片本身。
+#[cfg(test)]
+mod roster_offset_tests {
+    use super::*;
+
+    #[test]
+    fn roster_slice_yields_this_groups_segment() {
+        let ids = vec![
+            crate::AccountId(7),
+            crate::AccountId(8),
+            crate::AccountId(9),
+        ];
+        // 组 0（偏移 0）：本组段=前 1 位。
+        assert_eq!(
+            roster_slice(&ids, 0, 1),
+            &[crate::AccountId(7)],
+            "组 0 名册段=全局第 0 位"
+        );
+        // 组 1（偏移 1，组宽 2）：本组段=8/9——裸 local 会取到 7/8。
+        assert_eq!(
+            roster_slice(&ids, 1, 2),
+            &[crate::AccountId(8), crate::AccountId(9)],
+            "组 1 名册段须从 offset=1 起（漏偏移即从组 0 起）"
+        );
+    }
+
+    /// 尾组补齐空槽：偏移+组宽可超出名册长（per_group=npcs.div_ceil），
+    /// 须**截断**而非 panic（与修复前 `.get()`→None 的空槽语义一致）。
+    #[test]
+    fn roster_slice_truncates_tail_padding_instead_of_panicking() {
+        let ids = vec![
+            crate::AccountId(7),
+            crate::AccountId(8),
+            crate::AccountId(9),
+        ];
+        // 组 1 声明宽 2，但只剩 2 位 ⇒ 恰好；再模拟超出。
+        assert_eq!(roster_slice(&ids, 2, 2), &[crate::AccountId(9)]);
+        // 偏移等于名册长（全空槽组）：空切片，不 panic。
+        assert!(roster_slice(&ids, 3, 2).is_empty());
+    }
+
+    /// 偏移本身越界（>名册长）属不可解释，显式失败（不静默回退）。
+    #[test]
+    #[should_panic(expected = "组名册偏移越界")]
+    fn roster_slice_rejects_out_of_range_offset() {
+        let ids = vec![crate::AccountId(7)];
+        let _ = roster_slice(&ids, 5, 1);
+    }
+}
