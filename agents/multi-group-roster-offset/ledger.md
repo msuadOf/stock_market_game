@@ -84,7 +84,15 @@ grep 全仓 + subagent 逐点核验）确认修复面更大，且**两处静默�
 - 切片上界**截断**不 panic：尾组常带补齐空槽（`per_group=npcs.div_ceil`
   ，world.rs 尾组 resize 到 per_group ⇒ `offset+len` 可超名册长），
   截断与修复前 `.get()`→None 语义一致；偏移量本身越界才显式失败。
+  ⚠️ **表述限定（Sol 合并门裁定）**：`offset <= account_ids.len()` 是
+  **`roster_slice` 这一 helper 的调用前置条件**，**不是整个拓扑的不变量**——
+  允许存在**全空组**，其 offset 本就可以超过名册长。当前有效 belief 调用路径
+  未发现因此新增 panic，但不得据此断言"越界即不可解释"。
 - 4787 作为 AccountBook 键仍显式加偏移（切片不替代键解析）。
+- **等价性表述须改（Sol 裁定）**：
+  `roster_slice(ids, offset, group_len).get(local) == ids.get(offset + local)`，
+  它**不等价于**缺陷版 `ids.get(local)`（后者对尾部空槽仍可能命中组 0）。
+  空槽不参与的依据：`world.rs:603` 补 `None`、`group.rs:4858` 跳过无 belief 的槽。
 
 ## 红测试
 
