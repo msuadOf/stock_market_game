@@ -153,7 +153,8 @@
 
 ### B4c — 日终 12 步链嵌入（过渡态）+desk 除权基准（档位 L，Sol 复核门）
 
-- **范围**：`session/corporate_actions.rs`（4,430 行）编排循环改写为嵌入 `session.end_civil_day` 的 12 步链（状态容器形状可搬，"中央 `&mut accounts` 直改"暂以 **force_full_accounts 全量回写过渡窗口**兜底——`drive.rs:1194` 日结后置位、下一 step 全名册同步，coupling §5 步骤 3 明示此过渡态成立）；名册推进消费 `DayEndCandidate.groups`/`snapshot_accounts` 只读面（#3 等价已建）；desk 除权基准价消息**新建**（映射 #5：`DeskMsg` 增除权日基准消息或 Start 附带覆盖；`ex_reference_price.rs` 纯函数直搬；消费侧涨跌停基准=`StockPublic.daily_upper/lower_limit` 路径核对）；回购执行器放单走 `ExternalPlan`（#4 近等价，`broadcast_external_plan` 已翻转玩家意图同通道）。
+- **范围**：`session/corporate_actions.rs`（4,430 行）编排循环改写为嵌入 `session.end_civil_day` 的 12 步链（**"中央 `&mut accounts` 直改"暂无兜底——原记 `force_full_accounts` 全量回写"过渡窗口"兜底已被 B4c 实测推翻，见下"过渡态更正"**）；名册推进消费 `DayEndCandidate.groups`/`snapshot_accounts` 只读面（#3 等价已建）；desk 除权基准价消息**新建**（映射 #5：`DeskMsg` 增除权日基准消息或 Start 附带覆盖；`ex_reference_price.rs` 纯函数直搬；消费侧涨跌停基准=`StockPublic.daily_upper/lower_limit` 路径核对）；**回购执行器放单（`place_issuer_repurchase_orders`）本批未实现，迁移责任归 B4d**（原计划列入本批；该函数在主树与 B4c 分支均不存在，grep 命中 0，验收要求见 §B4d）。
+  - **过渡态更正（2026-10-22，Sol 裁定"必须现在改"，不等 B5）**：原表述"`force_full_accounts` 全量回写过渡窗口兜底（`drive.rs:1194` 日结后置位、下一 step 全名册同步，coupling §5 步骤 3 明示此过渡态成立）"**不成立**。`force_full_accounts`（`drive.rs:1268` 日结后置位；`drive.rs:718` `let skip_all = !self.force_full_accounts`、`:866` 复位）**只决定安装段是走全量快照还是发布分片——即只兜读面**，不改变 group→session 的写入方向；全树不存在 session→group 回灌通道。实测登记为 **R-B4c-1**（B4c 台账 §1）：现金当日可见后回落，持仓当日可见但跨拍持久未证明。coupling §5 步骤 3 的"过渡态成立"据此失效。**影响**：否定"过渡态正确性已跑通"这一 B4d 前置（见 §B4d）。
 - **前置**：B4b。
 - **验收**：12 步全序日终黄金用例（对照 18725d07 公司域测试重立）；现金/股份守恒逐位；`day_end` 双侧回滚编排下公司步骤的失败回滚等价（`rollback_day_end` 扩展覆盖）；除权日涨跌停基准用例（分红/送转/配股除权价）。
 - **风险**：**本战役最高语义风险**——12 步顺序语义+回滚窗口+过渡态性能（全量回写每日一次，可接受但要测量）。
@@ -161,9 +162,11 @@
 
 ### B4d — AdminRight 扩展+rights_computer 接线+回购专户+认购命令通道（档位 XL，Sol 设计门）
 
-- **范围**：`AdminRight` 3 变体→扩展（配股缴款**现金+股双腿**、碎股、回购户结算）；`WorldSpec.rights_computer` 接公司日终计算（`bridge.rs:111` None→实接）；组端可逆日志落账消费 `DayEndDirective.rights`；**回购专户归属设计**（映射 #9 二选一：专户入组名册走 ExternalPlan+AdminRight vs spine 影像户+日终对账——需独立小设计文档+对照测量后拍板）；审批/认购族命令（动玩家现金的 ~7 个 pub 方法）通道重设计（意图受理域 ExternalPlan 或日终权益，逐命令分类）；`corporate_actions.rs` 落账尾巴从"直改"切换到 AdminRight 批次（撤过渡态）。
-- **前置**：B4c（过渡态跑通正确性后做终态）。
-- **验收**：权益落账守恒逐位；Abort 回滚等价（tick 起终快照哈希一致——R2 锚）；日结 wall 不劣化（权益批次并行度测量）；过渡态↔终态行为等价对照（同种子同结果）。
+- **范围**：`AdminRight` 3 变体→扩展（配股缴款**现金+股双腿**、碎股、回购户结算）；`WorldSpec.rights_computer` 接公司日终计算（`bridge.rs:111` None→实接）；组端可逆日志落账消费 `DayEndDirective.rights`；**回购专户归属设计**（映射 #9 二选一：专户入组名册走 ExternalPlan+AdminRight vs spine 影像户+日终对账——需独立小设计文档+对照测量后拍板）；审批/认购族命令（~7 个 pub 方法）通道重设计（意图受理域 ExternalPlan 或日终权益，逐命令分类；**其中"动玩家现金"的表述已更正，见下"认购/审批族更正"**）；`corporate_actions.rs` 落账尾巴从"直改"切换到 AdminRight 批次（撤过渡态）；**回购执行器 `place_issuer_repurchase_orders` 的实现与接线（原计划归 B4c，B4c 未实现）**。
+  - **认购/审批族更正（2026-10-22，Sol 裁定以逐函数核查为准）**：七个主命令中**真写账户的只有回购批准与注销，目标均为回购专户**——`approve_issuer_repurchase` 对 `issuer_repurchase_account_id()` 账户 `credit_cash`（合成预算）；`execute_issuer_repurchase_cancellation` 对专户 `write_down_position_shares`。`subscribe_rights_offering` **只做现金预检并入队**（`if account_state.cash() < cost` 预检 + `.rights_subscription_queue.push(...)`），实际扣款在日终第 8 步。其余 `configure_cash_dividend_tax_book`/`define_dividend_legal_facts`/`approve_cash_dividend`/`approve_share_split`/`approve_rights_offering` **函数体内零账户写入**（只改 spine 公司状态）。逐函数核查基准：历史实现 `.claude/worktrees/agent-afc56ec75b2f12651/packages/engine/src/session.rs`（`configure` 2819 / `define_dividend_legal_facts` 2938 / `approve_cash_dividend` 2958 / `approve_share_split` 3290 / `approve_rights_offering` 3886 / `subscribe_rights_offering` 4071 / `approve_issuer_repurchase` 4237 / `execute_issuer_repurchase_cancellation` 4392）。故需重设计的通道是"日终权益落账（spine→组）"与"回购专户执行"，**不是七个命令都在动玩家现金**。
+- **前置**：B4c 代码落地；**但"过渡态跑通正确性"不成立，不能作为本批前置**——R-B4c-1 表明当前日终落账在 runtime 下不持久（现金回落、持仓跨拍未证明）。落账尾巴切到 AdminRight 批次前，须先闭合 spine→组回灌/组端权益通道（Sol：先更正计划与 B4c 台账、补跨拍红证，再过 B4d 设计门）。
+- **验收**：权益落账守恒逐位；Abort 回滚等价（tick 起终快照哈希一致——R2 锚）；日结 wall 不劣化（权益批次并行度测量）；过渡态↔终态行为等价对照（同种子同结果）；**回购执行器真实成交与零自主委托验收（见下）**；**跨拍持久红证**（事件后至少一次真实交易 step 的持仓/现金断言——两个自然日不保证跨过交易拍）。
+  - **回购执行器验收（新增）**：①**真实成交**——有回购方案时执行器产生可成交委托并真实成交，不得仅断言"调用不报错/成交为空"；②**仅方案执行器可下单、无方案零自主委托**——`IssuerRepurchase`（`account.rs:49`，strategy 恒 None）当前**会被误判进组线程自主决策通道**：`drive.rs:299-306` 的策略分配豁免判据是 `Some(Some(Some(strategy)))`/玩家判断（**非 `AccountKind`**），故落入 `_ => Self::baseline_strategy_data(&setup, i)` 取零售回退策略，且 `next_due = (i % 8) as u64`（`drive.rs:323`）而非 `u64::MAX`。因此"无执行器⇒成交恒空"不严谨：专户可能误走自主决策通道。须**代码级显式禁止**，不能只补注释。**实现待办，非文档能闭合。**
 - **风险**：新通道设计错误会污染组端可逆日志语义；**设计门必须先行**（对照实验数据拍板，不许空口）。
 - **交互点**：组端 DayEnd 权益通道（rights_computer→DayEndDirective→组可逆日志）；ExternalPlan（认购命令若走意图）。
 
