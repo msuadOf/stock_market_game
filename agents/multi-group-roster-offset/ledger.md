@@ -123,7 +123,26 @@ grep 全仓 + subagent 逐点核验）确认修复面更大，且**两处静默�
 | 补切片/链参数单测 | `cargo test -p engine --lib roster_offset` | **7 passed** |
 | mutation：回退 chain_params 两处 | 改回裸 local | **4 failed**（含 `roster_chain_params_yields_this_groups_params`）——断言非恒真 |
 | mutation：回退 B 类切片六处 | 改为全局切片 | **3 passed（未覆盖）** ⇒ 故补 `roster_slice` 单测 |
-| 全量回归 | `cargo test -p engine --lib` | 见下 |
+| mutation：回退 1565 | 改回裸 `fill.owner.1` | **4 passed（未覆盖）** ⇒ 故补 `fill_plan_progress_resolves_owner_within_group_roster` 直测；补后回退 ⇒ **1 failed（filled=0 静默跳过）** |
+| 多拍探针 | 2 组 × 6 拍 | **passed**（4.42s，10s 门内） |
+| 全量回归 | `cargo test -p engine --lib` | **2219 passed / 0 failed / 12 ignored** |
+
+### 全量回归的两条假失败（已证伪为负载相关 flake，非本批引入）
+
+| 运行 | 失败用例 | 单独复跑 | 结论 |
+|---|---|---|---|
+| 第 1 次 | `desk_semantics_tests::r09_partial_fill_cancel_releases_remainder_only` | 5/5 passed（且在未改动 main 上亦 passed） | 单组、`root_projection: None`，不触本批路径 |
+| 第 2 次 | `npc_decisions_tests::external_host_consumes_npc_results_on_its_calling_thread` | 3/3 passed | 同上 |
+
+两次失败**用例不同**且各自单独全绿 ⇒ 并行满载下的时序 flake。以
+`--test-threads=4` 复跑全量：**2219 passed / 0 failed**。
+
+### 单组不变性（生产缺省 n_groups=1）
+
+`roster_offset==0` 且 `per_group==npcs==account_ids.len()` ⇒
+`roster_slice(ids, 0, per_group)` == `&ids[..]`（全量视图），
+`roster_chain_params(.., 0, local)` == 原 `.get(local)` ⇒
+**单组逐位不变**（生产路径零行为变化，缺陷修复只作用于多组）。
 
 ### 待办（未修）
 
@@ -137,8 +156,8 @@ grep 全仓 + subagent 逐点核验）确认修复面更大，且**两处静默�
 - [x] 红测试修复前显红（3 failed，panic 签名与生产一致）
 - [x] 修复（A1–A4 + B 六处，`roster_slice` / `roster_chain_params` 收口）
 - [x] 1565 影响面确认 —— **同类，同批已修**；A5（5380）测试通道登记待办
-- [ ] 全量回归
-- [ ] 多组 2/3/4 探针恢复（补 B4c 规模敏感性维度）
+- [x] 全量回归（2219 passed / 0 failed；两条假失败已证伪为 flake）
+- [x] 多组 2/3/4 探针恢复（补 B4c 规模敏感性维度）—— 2/3/4 组收集 + 2 组×6 拍全通过
 - [ ] 独立 subagent 复核 diff
 
 ## 缺陷来历（2026-10-22 追查）
