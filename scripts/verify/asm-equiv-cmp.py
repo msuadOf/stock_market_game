@@ -64,7 +64,13 @@ CANON_PREFIX = "__LAB"
 
 
 def canon_labels(lines):
-    """按每文件内首次出现顺序把 `.L*` 标签重命名为 `__LAB<k>`。"""
+    """按**传入行序列内**的首次出现顺序把 `.L*` 标签重命名为 `__LAB<k>`。
+
+    调用方对每个区块单独调用本函数 ⇒ 重命名作用域是**区块内部**，不是整个文件。
+    这一点必须保持：若在文件级重命名，往开头插入一个符号就会把后续所有标签的
+    编号整体平移，于是**内容未变的区块也被报成 changed**（假阳性方向）。
+    按区块重命名后，每个区块的编号只取决于它自身的内容。
+    """
     mapping = {}
     out = []
     for line in lines:
@@ -78,33 +84,39 @@ def canon_labels(lines):
 
 
 def parse_file(path):
-    """返回 (funcs, blocks)：符号名/区段名 → 规范化后的内容行列表。"""
-    raw = []
+    """返回 (funcs, blocks)：符号名/区段名 → 规范化后的内容行列表。
+
+    先按 `.section` 切块，**再对每块单独做标签 α-重命名**（见 `canon_labels`）。
+    顺序不能反：先重命名再切块会让编号受整文件影响，产生平移型假阳性。
+    """
+    sections = []  # [(section_name, [raw line, ...])]
+    cur_name, cur_lines = None, []
     with open(path, errors="replace") as fh:
         for line in fh:
             line = line.rstrip("\n")
             if line.lstrip().startswith(".file "):
                 continue  # CGU 文件名本身随分区漂移，不承载内容
-            raw.append(line)
-    lines = canon_labels(raw)
+            m = SECTION_RE.match(line)
+            if m:
+                if cur_name is not None:
+                    sections.append((cur_name, cur_lines))
+                cur_name, cur_lines = m.group(1), []
+                continue
+            if cur_name is not None:
+                cur_lines.append(line)
+    if cur_name is not None:
+        sections.append((cur_name, cur_lines))
+
     funcs, blocks = {}, {}
-    cur_key, cur_bucket = None, None
-    for line in lines:
-        m = SECTION_RE.match(line)
-        if m:
-            name = HASH_RE.sub("17hHASHE", m.group(1))
-            if name.startswith(".text"):
-                cur_key, cur_bucket = name, funcs
-            else:
-                cur_key, cur_bucket = name, blocks
-            cur_bucket.setdefault(cur_key, [])
-            continue
-        s = line.strip()
-        if not s or s.startswith("#") or s.startswith(".cfi_"):
-            continue
-        if cur_bucket is not None:
-            s = HASH_RE.sub("17hHASHE", s)
-            cur_bucket[cur_key].append(s)
+    for name, raw_lines in sections:
+        canon = HASH_RE.sub("17hHASHE", name)
+        bucket = funcs if canon.startswith(".text") else blocks
+        body = bucket.setdefault(canon, [])
+        for line in canon_labels(raw_lines):
+            s = line.strip()
+            if not s or s.startswith("#") or s.startswith(".cfi_"):
+                continue
+            body.append(HASH_RE.sub("17hHASHE", s))
     return funcs, blocks
 
 
