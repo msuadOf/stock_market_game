@@ -314,22 +314,25 @@ struct ChildTicket {
 /// / `equity_cents_with_pending` 直接以组内 local 索引（三者的
 /// `account_ids` 形参语义=局部切片，体内 `get(local)` 因此不变）。
 ///
-/// 上界按全局名册长**截断**（非 panic）：尾组常带补齐空槽（`per_group
-/// = npcs.div_ceil(n_groups)`，world.rs 尾组 resize 到 per_group——
-/// `roster_offset + group_len` 可超出名册长）。截断后超出位取不到账户，
-/// 与修复前 `.get()` 返回 None 的语义一致（空槽本就不参与决策）；
-/// 此处**不**静默回退空切片——只截不扩，偏移本身仍严格。
-/// 偏移起点越界（roster_offset > 名册长）才属不可解释，显式失败。
+/// 上界按全局名册长**截断**（非 panic），偏移**越界则为空段**（同样非
+/// panic）——两者都是**合法**世界配置，不是损坏状态：
+/// · 尾组带补齐空槽：`per_group = npcs.div_ceil(n_groups)`（world.rs
+///   尾组 resize 到 per_group）⇒ `roster_offset + group_len` 可超出名册长；
+/// · **组数多于名册数**（如 npcs=5 / n_groups=4 ⇒ per_group=2，尾组
+///   offset=6 > 5）⇒ 该组全是空槽，本就无任何账户参与决策。
+///
+/// 两种情形下超出位取不到账户，与修复前 `.get()` 返回 `None` 的语义一致
+/// （空槽从不参与决策）。对空段断言"越界即显式失败"会把合法配置打成
+/// 组线程崩溃（独立复核发现：原 `assert!(offset <= len)` 在 npcs=5/G=4
+/// 上 panic，而该配置 world.rs 明确以 None 补齐支持）。
 fn roster_slice(
     account_ids: &[crate::AccountId],
     roster_offset: usize,
     group_len: usize,
 ) -> &[crate::AccountId] {
-    assert!(
-        roster_offset <= account_ids.len(),
-        "组名册偏移越界：offset={roster_offset} 全局名册长={}",
-        account_ids.len()
-    );
+    if roster_offset >= account_ids.len() {
+        return &[];
+    }
     &account_ids[roster_offset..(roster_offset + group_len).min(account_ids.len())]
 }
 
@@ -5451,6 +5454,15 @@ pub fn group_main(
             GroupIn::MutateBeliefForTest { account, mutate } => {
                 // D3b 件 4 fixture 通道：belief 簿测试变换（account→local
                 /// 经投影名册映射——目标位缺失=显式失败）。
+                //
+                // ⚠️ 已知坐标缺陷（未修，见 agents/multi-group-roster-offset
+                // /ledger.md「待办」）：`position()` 返回的是**全局**名册
+                // 下标，此处却当**组内** local 用（正确式应为
+                // `idx - roster_offset`）。当前不显错仅因该消息硬连线到
+                // `group_txs.first()`（world.rs）——只在组 0 可达，而组 0
+                // 的 roster_offset==0 使全局序恰好等于局部序。
+                // **不要**据此认为"映射正确"：一旦放开路由到非 0 组，
+                // 此式会静默改错 belief 位（不 panic）。
                 let local = state
                     .root_projection
                     .as_ref()
@@ -7523,11 +7535,50 @@ mod roster_offset_tests {
         assert!(roster_chain_params(&chain_params, 1, 9).is_none());
     }
 
-    /// 偏移本身越界（>名册长）属不可解释，显式失败（不静默回退）。
+    /// 组数多于名册数（npcs=5 / n_groups=4 ⇒ per_group=2 ⇒ 尾组 offset=6
+    /// > 5）：该组全是补齐空槽，须得**空段**——不得 panic（合法配置，
+    /// world.rs 明确以 None 补齐支持）。独立复核发现此前 `assert!` 会
+    /// 把该配置打成组线程崩溃。
     #[test]
-    #[should_panic(expected = "组名册偏移越界")]
-    fn roster_slice_rejects_out_of_range_offset() {
-        let ids = vec![crate::AccountId(7)];
-        let _ = roster_slice(&ids, 5, 1);
+    fn roster_slice_empty_for_group_beyond_roster() {
+        let ids = vec![
+            crate::AccountId(7),
+            crate::AccountId(8),
+            crate::AccountId(9),
+        ];
+        assert!(
+            roster_slice(&ids, 4, 2).is_empty(),
+            "offset>名册长 ⇒ 空段（非 panic）"
+        );
+        assert!(
+            roster_slice(&ids, 3, 2).is_empty(),
+            "offset==名册长 ⇒ 空段（尾组全空槽）"
+        );
+        assert!(
+            roster_slice(&ids, 99, 2).is_empty(),
+            "远超名册长的偏移同样为空段"
+        );
+    }
+
+    /// 切片**起点**必须是本组偏移（不得从 0 起）——漏 roster_offset 的
+    /// 失效形态正是起点退化为 0（组 g≥1 读到组 0 的账户）。
+    #[test]
+    fn roster_slice_starts_at_group_offset_not_zero() {
+        let ids = vec![
+            crate::AccountId(7),
+            crate::AccountId(8),
+            crate::AccountId(9),
+            crate::AccountId(10),
+        ];
+        assert_eq!(
+            roster_slice(&ids, 2, 2),
+            &[crate::AccountId(9), crate::AccountId(10)],
+            "组 2 段须从 offset=2 起（起点退化为 0 即漏偏移）"
+        );
+        assert_ne!(
+            roster_slice(&ids, 2, 2),
+            &ids[0..2],
+            "组 2 段不得与组 0 段相同"
+        );
     }
 }
