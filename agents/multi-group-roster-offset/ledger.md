@@ -59,3 +59,49 @@ let Some(&account_id) = projection.account_ids.get(local) else { ... };
 - [ ] 修复 4787 + 两处伴生取数点
 - [ ] 1565 影响面确认
 - [ ] 多组探针恢复（补 B4c 规模敏感性维度）
+
+## 修复面扩大（2026-10-22，修复 agent 扫描 + 协调者核实）
+
+初版登记只写 4787 一处；扫描后确认为**整族约 10 个坐标点**。`account_ids` 与
+`chain_params` 均为**全局长度**数组（`drive.rs:402` 同由全局 `ids` 映射）；
+`roster_offset` 字段文档（`group.rs:791`）明示"组内 local 访问需加偏移；单组=0"。
+
+### A. 直接读全局投影数组
+
+| # | line | 坐标 | 后果 |
+|---|---|---|---|
+| A1 | **4787** `account_ids.get(local)` | 裸 local | **panic**（根因） |
+| A2 | **2798** `chain_params.get(local as usize)` | 裸 local | **静默**：复审用组 0 链参数 |
+| A3 | **3323** `chain_params.get(local as usize)` | 裸 local | **静默**：报价用组 0 链参数 |
+| A4 | **1565** `account_ids.get(fill.owner.1)` | LocalIdx | **静默**：尾组计划推进整段跳过 |
+| A5 | 5380 `position()` | 全局 idx | `#[cfg(test)]` 专用，非 P0 |
+
+A2/A3 是 `account_ids.get(` 的 grep **结构性看不见**的（跨行 `.chain_params\n.get(`）。
+协调者已核实：2798/3323 为裸 `local as usize`、同文件 3798 为正确 `roster_offset + local`。
+**静默类比 panic 更隐蔽**——不崩、只是取错组。
+
+### B. helper 的 6 个生产调用方
+
+372/401（helper 体）对**局部切片**正确，但生产方全传**全局切片 + 裸 local**：
+2856 / 2926 / 2956（`run_chain_decision`）、4564 / 4610（`group_urgency_at_view`）、
+4799 / 4812（`build_root_read_context`）。
+
+⇒ **只改 4787：现金/持仓/在途仍读组 0；只改 4787+1565：链参数仍错。必须整族收口。**
+
+### 修法（协调者拍板）
+
+采用**统一传预切片** `&account_ids[offset..offset+size]`（一次修好全部 helper 调用、
+无需给自由函数加参数、同类难再犯）；4787 作为 map 键仍显式加偏移。
+helper 体 372/401 **不改**（它们对局部切片自洽）。
+
+### 红测试策略
+
+`run_chain_decision`（2725 解析出正确全局 id）→ `observe(&context)` → roots.rs:276 缺键 panic，
+**整条 observe 链必须跑完才显红** ⇒ fixture 需携带完整 legal 个人态。
+采用**改造既有 `n_groups=1` 绿 harness**（`sol_recheck3_tests::chain_harness`）为双组，
+而非从零造 fixture。
+
+### 验收增强（防止只验"不 panic"）
+
+除"2/3/4 组能跑完"外，须加断言：**双组下组 1 的链参数/账户 id 不等于组 0 对应值**——
+否则 2798/3323 这类**静默**取错组不会被检出。
