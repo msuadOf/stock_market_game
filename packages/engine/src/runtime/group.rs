@@ -333,6 +333,27 @@ fn roster_slice(
     &account_ids[roster_offset..(roster_offset + group_len).min(account_ids.len())]
 }
 
+/// 本组 belief 位的**链参数**读取（P0 缺陷修复：`chain_params` 与
+/// `account_ids` 同为全局名册序，组内 local 须加 `roster_offset`）。
+/// 与 `roster_slice` 同为坐标收口点——两处 `chain_params` 读取（run_chain_
+/// decision / chain_quote_children）经此取本组参数；裸 local 会静默取到
+/// 组 0 的参数（不 panic，仅喂错决策链——比账户簿缺键更隐蔽）。
+fn roster_chain_params(
+    chain_params: &[Option<(
+        crate::strategy::BeliefChainParams,
+        Option<crate::strategy::InstitutionStyle>,
+    )>],
+    roster_offset: usize,
+    local: usize,
+) -> Option<(
+    crate::strategy::BeliefChainParams,
+    Option<crate::strategy::InstitutionStyle>,
+)> {
+    chain_params
+        .get(local)
+        .and_then(|slot| *slot)
+}
+
 /// Sol 整改 3：含在途的权益（现金含在途买 purse；持仓含在途卖余量
 /// ×最新价——对齐旧管线权益观察口径）。
 fn equity_cents_with_pending(
@@ -2829,11 +2850,12 @@ impl GroupState {
         let assessments: Vec<_> = assessments_map.iter().map(|(k, v)| (*k, v.clone())).collect();
         // P0 缺陷修复：`chain_params` 为全局名册序（与 account_ids 同式），
         // 裸 local 会静默取到组 0 的链参数（不 panic——比账户簿缺键更隐蔽）。
-        let (params, style) = projection
-            .chain_params
-            .get(self.roster_offset + local as usize)
-            .and_then(|slot| *slot)
-            .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
+        let (params, style) = roster_chain_params(
+            &projection.chain_params,
+            self.roster_offset,
+            local as usize,
+        )
+        .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         // D3b 件 4：复审消费（session Lifecycle operation 等价——observe
         // 之后、开仓循环之前；record_review/quiet 门控在 apply_lifecycle_
         // action 内——每动作前记录簿内基线）。读面（write_back=false）不
@@ -3357,11 +3379,12 @@ impl GroupState {
         };
         // P0 缺陷修复：`chain_params` 为全局名册序——裸 local 会静默取到
         // 组 0 的链参数（不 panic，仅报价参数错——比账户簿缺键更隐蔽）。
-        let (params, _style) = projection
-            .chain_params
-            .get(self.roster_offset + local as usize)
-            .and_then(|slot| *slot)
-            .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
+        let (params, _style) = roster_chain_params(
+            &projection.chain_params,
+            self.roster_offset,
+            local as usize,
+        )
+        .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         // Sol 整改 3：预算现金=可用（已扣在途 purse——所有权口径；frozen
         /// 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
         /// 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
@@ -7340,6 +7363,41 @@ mod roster_offset_tests {
         assert_eq!(roster_slice(&ids, 2, 2), &[crate::AccountId(9)]);
         // 偏移等于名册长（全空槽组）：空切片，不 panic。
         assert!(roster_slice(&ids, 3, 2).is_empty());
+    }
+
+    /// 组 g≥1 的链参数须取**本组**投影值，不得与组 0 相同（钉住
+    /// 2798/3323：裸 local 会静默取到组 0 的链参数——不 panic）。
+    /// 用**互异的 order_size** 构造，使"取错组"必然显红。
+    #[test]
+    fn roster_chain_params_yields_this_groups_params() {
+        fn params(order_size: u32) -> crate::strategy::BeliefChainParams {
+            crate::strategy::BeliefChainParams {
+                position_step_bp: 1_000,
+                margin: 0.05,
+                order_size,
+                daily_plan_review: false,
+            }
+        }
+        // 全局名册三位：组 0 一位（order_size=100）、组 1 两位（200/300）。
+        let chain_params = vec![
+            Some((params(100), None)),
+            Some((params(200), None)),
+            Some((params(300), None)),
+        ];
+        // 组 0：local 0 → 全局 0（order_size=100）。
+        let (p0, _) = roster_chain_params(&chain_params, 0, 0).expect("组 0 local0 有链参数");
+        assert_eq!(p0.order_size, 100, "组 0 取本组参数");
+        // 组 1（偏移 1）：local 0/1 → 全局 1/2（200/300）——裸 local 会取 100/200。
+        let (p1a, _) = roster_chain_params(&chain_params, 1, 0).expect("组 1 local0 有链参数");
+        let (p1b, _) = roster_chain_params(&chain_params, 1, 1).expect("组 1 local1 有链参数");
+        assert_eq!(p1a.order_size, 200, "组 1 local0 取本组参数（非组 0 的 100）");
+        assert_eq!(p1b.order_size, 300, "组 1 local1 取本组参数（非全局 1 的 200）");
+        assert_ne!(
+            p1a.order_size, p0.order_size,
+            "组 1 链参数不得与组 0 相同（漏 roster_offset 即相等）"
+        );
+        // 越界位=None（不 panic）。
+        assert!(roster_chain_params(&chain_params, 1, 9).is_none());
     }
 
     /// 偏移本身越界（>名册长）属不可解释，显式失败（不静默回退）。
