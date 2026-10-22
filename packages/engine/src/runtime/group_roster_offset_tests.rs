@@ -127,3 +127,25 @@ fn multi_group_open_derivation_scales_over_group_counts() {
         }
     }
 }
+
+/// 多拍探针：多组下连续步进（含成交 → `apply_fill_plan_progress` 的
+/// 1565 路径）。1565 漏偏移是**静默**的（尾组命中组 0 账户 ⇒ 无票则
+/// `return Ok(())`，计划推进整段跳过），不 panic；本探针确认多拍不失败
+/// 且派生面持续出数（尾组不因静默跳过而退化为空）。
+#[test]
+fn multi_group_stays_consistent_over_several_ticks() {
+    let (mut session, mut driver) = grouped_world(2, 6);
+    for tick in 1..=6 {
+        advance_one_tick(&mut session, &mut driver);
+        let collected = driver
+            .collect_open_derivations()
+            .unwrap_or_else(|error| panic!("第 {tick} 拍双组派生收集失败：{error:?}"));
+        assert_eq!(collected.len(), 2, "第 {tick} 拍两组各一条上行");
+        for (group, .., records) in &collected {
+            assert!(
+                !records.is_empty(),
+                "第 {tick} 拍组 {group} 须有派生记录（空=尾组静默跳过）"
+            );
+        }
+    }
+}
