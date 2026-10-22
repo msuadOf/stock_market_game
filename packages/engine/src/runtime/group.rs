@@ -350,7 +350,7 @@ fn roster_chain_params(
     Option<crate::strategy::InstitutionStyle>,
 )> {
     chain_params
-        .get(local)
+        .get(roster_offset + local)
         .and_then(|slot| *slot)
 }
 
