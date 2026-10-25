@@ -1,3 +1,6 @@
+import { installHostBaseline } from "./host-baseline.ts";
+import type { CompanyCatalogEntry } from "../types/generated/CompanyCatalogEntry.ts";
+import type { StockIdentityEntry } from "../types/generated/StockIdentityEntry.ts";
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { PublicReportSummary } from "../types/engine.ts";
 import type { DayStatus } from "../types/generated/DayStatus.ts";
@@ -26,6 +29,8 @@ interface CompanyCache {
 }
 
 interface CompanyState {
+  companyCatalog: readonly CompanyCatalogEntry[];
+  stockCatalog: readonly StockIdentityEntry[];
   generation: number;
   civilDate: string | null;
   dayStatus: DayStatus | null;
@@ -89,14 +94,15 @@ interface PublicMetadataPayload {
 }
 
 const initialState: CompanyState = {
+  companyCatalog: [], stockCatalog: [],
   generation: 0,
   civilDate: null,
   dayStatus: null,
   revision: null,
   lastEventSeq: 0,
   selectedCompanyId: null,
-  companies: {},
-  readingByCompany: {},
+  companies: Object.create(null),
+  readingByCompany: Object.create(null),
 };
 
 /** 阅读选择只属于当前界面会话，按公司隔离；未操作过的公司使用初始阅读位置。 */
@@ -109,7 +115,7 @@ function pageKey(cursor: string | null): string {
 }
 
 function companyCache(state: CompanyState, companyId: string): CompanyCache {
-  const existing = state.companies[companyId];
+  const existing = Object.hasOwn(state.companies, companyId) ? state.companies[companyId] : undefined;
   if (existing) return existing;
   const created: CompanyCache = { reports: {}, pages: {}, currentReportId: null, revision: state.revision ?? "" };
   state.companies[companyId] = created;
@@ -126,14 +132,15 @@ const companySlice = createSlice({
   reducers: {
     installCompanyBaseline(_state, action: PayloadAction<BaselinePayload>): CompanyState {
       return {
+        companyCatalog: [], stockCatalog: [],
         generation: action.payload.generation,
         civilDate: action.payload.civilDate,
         dayStatus: null,
         revision: action.payload.revision,
         lastEventSeq: action.payload.seq,
         selectedCompanyId: null,
-        companies: {},
-        readingByCompany: {},
+        companies: Object.create(null),
+        readingByCompany: Object.create(null),
       };
     },
     selectCompany(state, action: PayloadAction<string | null>) {
@@ -142,7 +149,7 @@ const companySlice = createSlice({
     updateCompanyReading(state, action: PayloadAction<{ generation: number; companyId: string; changes: Partial<CompanyReading> }>) {
       const { generation, companyId, changes } = action.payload;
       if (!isCurrentGeneration(state, generation)) return;
-      const cache = state.companies[companyId];
+      const cache = Object.hasOwn(state.companies, companyId) ? state.companies[companyId] : undefined;
       if (cache === undefined) throw new RangeError(`公司阅读操作缺少公开报告缓存：${companyId}`);
       if (changes === null || typeof changes !== "object" || Array.isArray(changes)
         || Object.keys(changes).some(key => !["selectedReportId", "selectedStatementId", "exactAmountsVisible"].includes(key))) throw new RangeError("公司阅读操作字段无效");
@@ -196,7 +203,7 @@ const companySlice = createSlice({
     invalidateCompanyForDisclosure(state, action: PayloadAction<DisclosurePayload>) {
       if (!isCurrentGeneration(state, action.payload.generation) || action.payload.seq <= state.lastEventSeq) return;
       state.lastEventSeq = action.payload.seq;
-      const cache = state.companies[action.payload.companyId];
+      const cache = Object.hasOwn(state.companies, action.payload.companyId) ? state.companies[action.payload.companyId] : undefined;
       if (!cache) return;
       cache.pages = {};
       cache.currentReportId = null;
@@ -210,6 +217,14 @@ const companySlice = createSlice({
       if (action.payload.civilDate !== null) state.civilDate = action.payload.civilDate;
       if (action.payload.revision !== null) state.revision = action.payload.revision;
     },
+  },
+  extraReducers(builder) {
+    builder.addCase(installHostBaseline, (_state, { payload }): CompanyState => ({
+      companyCatalog: payload.companyCatalog, stockCatalog: payload.stockCatalog,
+      generation: payload.companyGeneration, civilDate: payload.civilDate, dayStatus: null,
+      revision: payload.revision, lastEventSeq: payload.snapshot.seq, selectedCompanyId: null,
+      companies: Object.create(null), readingByCompany: Object.create(null),
+    }));
   },
 });
 
