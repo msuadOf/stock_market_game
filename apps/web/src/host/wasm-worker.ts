@@ -75,8 +75,11 @@ function structuredHostFailure(error: unknown, where: string): WorkerFailureDeta
   const classified = classifyWasmFailure(error);
   if (classified.kind === "structured") {
     const source = error as Readonly<Record<string, unknown>>;
-    const allowed = ["code", "where", "message", "cause", "context", "recoverable", "recoveryActions"];
-    return parseHostFailure(Object.fromEntries(Object.entries(source).filter(([key]) => allowed.includes(key))), where);
+    const details: Record<string, unknown> = { code: classified.code, message: classified.message };
+    for (const key of ["where", "cause", "context", "recoverable", "recoveryActions"]) {
+      if (Object.hasOwn(source, key)) details[key] = source[key];
+    }
+    return parseHostFailure(details, where);
   }
   if (classified.kind === "access-error") {
     return { code: "WASM_WORKER_PROTOCOL", where, message: `读取结构化错误失败：${classified.reason}` };

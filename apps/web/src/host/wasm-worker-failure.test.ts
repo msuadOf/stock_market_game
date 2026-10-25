@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 
 const posted: unknown[] = [];
 let messageListener: ((event: MessageEvent<Record<string, unknown> & { type: string }>) => void) | null = null;
 const originalSelf = Object.getOwnPropertyDescriptor(globalThis, "self");
+const originalMessageChannel = globalThis.MessageChannel;
+const channels: MessageChannel[] = [];
+globalThis.MessageChannel = class extends originalMessageChannel {
+  constructor() {
+    super();
+    channels.push(this);
+  }
+};
+after(() => {
+  for (const channel of channels) {
+    channel.port1.close();
+    channel.port2.close();
+  }
+});
 Object.defineProperty(globalThis, "self", {
   configurable: true,
   value: {
@@ -15,9 +29,15 @@ Object.defineProperty(globalThis, "self", {
     },
   },
 });
-const { isE2EStepMode, postFailure } = await import("./wasm-worker.ts");
-if (originalSelf === undefined) delete (globalThis as { self?: unknown }).self;
-else Object.defineProperty(globalThis, "self", originalSelf);
+const { isE2EStepMode, postFailure } = await (async () => {
+  try {
+    return await import("./wasm-worker.ts");
+  } finally {
+    globalThis.MessageChannel = originalMessageChannel;
+    if (originalSelf === undefined) delete (globalThis as { self?: unknown }).self;
+    else Object.defineProperty(globalThis, "self", originalSelf);
+  }
+})();
 
 test("WASM Worker enables controlled stepping only for an explicit E2E build mode", () => {
   assert.equal(isE2EStepMode("e2e"), true);
@@ -47,6 +67,68 @@ test("WASM Worker preserves a structured HostFailure code and message", () => {
     where: "wasm-worker.step",
     message: "invariant violation at web-wasm.step: receipt chain broke",
   }]);
+});
+
+test("WASM Worker 保留标准 Error 的 code 和非枚举 message", () => {
+  posted.length = 0;
+  const error = Object.assign(new Error("模块加载失败，原始原因必须可见"), { code: "MODULE_LOAD_FAILED" });
+
+  postFailure("wasm-worker.init", error);
+
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "MODULE_LOAD_FAILED",
+    where: "wasm-worker.init", message: "模块加载失败，原始原因必须可见",
+  }]);
+});
+
+test("WASM Worker 保留非枚举 code 和有效的 HostFailure 可选字段", () => {
+  posted.length = 0;
+  const error = Object.assign(new Error("模块初始化失败", {
+    cause: { code: "BINDINGS_INVALID", message: "导出不完整" },
+  }), {
+    where: "bindings.initialize",
+    context: { module: "bindings" },
+    recoverable: false,
+    recoveryActions: ["反馈错误详情"],
+  });
+  Object.defineProperty(error, "code", { value: "MODULE_INIT_FAILED" });
+
+  postFailure("wasm-worker.init", error);
+
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "MODULE_INIT_FAILED",
+    where: "bindings.initialize", message: "模块初始化失败",
+    cause: { code: "BINDINGS_INVALID", message: "导出不完整" },
+    context: { module: "bindings" },
+    recoverable: false, recoveryActions: ["反馈错误详情"],
+  }]);
+});
+
+test("WASM Worker 仍显式拒绝非法的 HostFailure 可选字段", () => {
+  for (const [details, reason] of [
+    [{ recoverable: "yes" }, /HostFailure\.recoverable 必须是布尔值或 null/],
+    [{ recoveryActions: [""] }, /HostFailure\.recoveryActions 必须是非空字符串/],
+  ] as const) {
+    posted.length = 0;
+    const error = Object.assign(new Error("原始错误"), { code: "INIT_FAILED", ...details });
+
+    assert.throws(() => postFailure("wasm-worker.init", error), reason);
+    assert.deepEqual(posted, []);
+  }
+});
+
+test("WASM Worker 仍显式报告可选字段的 getter 和 Proxy 访问错误", () => {
+  const accessFailure = new Error("读取 context 失败");
+  const error = Object.assign(new Error("原始错误"), { code: "INIT_FAILED" });
+  Object.defineProperty(error, "context", { enumerable: true, get() { throw accessFailure; } });
+  const proxy = new Proxy({ code: "INIT_FAILED", message: "原始错误" }, {
+    getOwnPropertyDescriptor() { throw accessFailure; },
+  });
+  for (const thrown of [error, proxy]) {
+    posted.length = 0;
+    assert.throws(() => postFailure("wasm-worker.init", thrown), (actual) => actual === accessFailure);
+    assert.deepEqual(posted, []);
+  }
 });
 
 test("WASM Worker preserves an explicit engine error origin", () => {
