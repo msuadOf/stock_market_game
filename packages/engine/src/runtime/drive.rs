@@ -212,6 +212,80 @@ impl RuntimeDriver {
         )
     }
 
+    /// 组线程的实际决策档案投影；构造器与边界测试共用此入口。
+    pub(super) fn profiles_from_session(
+        session: &GameSession,
+        setup: &SessionSetup,
+        ids: &[AccountId],
+    ) -> Vec<NpcProfile> {
+        let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
+            .runtime_attention_state()
+            .into_iter()
+            .map(|(id, due, rng)| (id, (due, rng)))
+            .collect();
+        // 个体策略投影沿用账户已采样的全参数，不以族基线覆盖个体差异。
+        (0..ids.len().max(1))
+            .map(|i| {
+                let id = ids.get(i).copied();
+                let account = id.and_then(|id| session.account(id));
+                let is_repurchase = account
+                    .is_some_and(|a| a.kind() == crate::account::AccountKind::IssuerRepurchase);
+                let attention_entry = id.and_then(|id| attention.get(&id)).copied();
+                let strategy = if is_repurchase {
+                    // NpcProfile 的参数槽必填；专户 kind 保真使 decide_data 恒空，
+                    // 零值仅承载该 kind 不读取的字段，不给专户分配零售基线策略。
+                    StrategyData {
+                        kind: crate::account::AccountKind::IssuerRepurchase,
+                        ..StrategyData::retail(0.0, 0, 0.0)
+                    }
+                } else {
+                    match account.and_then(|a| a.strategy()) {
+                        Some(strategy) => {
+                            Self::individual_strategy_data(strategy).unwrap_or_else(|e| {
+                                panic!("个体策略投影失败：{e}")
+                            })
+                        }
+                        None => Self::baseline_strategy_data(setup, i),
+                    }
+                };
+                let fallback_due = if id.is_none()
+                    || account.is_some_and(|a| matches!(
+                        a.kind(),
+                        crate::account::AccountKind::Player
+                            | crate::account::AccountKind::IssuerRepurchase
+                    ))
+                {
+                    u64::MAX
+                } else {
+                    (i % 8) as u64
+                };
+                let attention_base = id
+                    .map(|id| session.runtime_attention_base_for(&id))
+                    .unwrap_or(None)
+                    // 无 attention 的非自主账户永不到期，占位值不会参与观察。
+                    .unwrap_or(1.0);
+                let retail_style = id.and_then(|id| session.account(id)).and_then(|a| {
+                    a.strategy().and_then(|s| s.retail_style())
+                });
+                let (due, seed) = match attention_entry {
+                    Some((due, rng)) => (due, rng),
+                    None => (
+                        fallback_due,
+                        0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
+                    ),
+                };
+                NpcProfile {
+                    strategy,
+                    seed,
+                    // 账户语义优先于已存 attention，Some/None 均不能唤醒专户。
+                    next_due: if is_repurchase { u64::MAX } else { due },
+                    attention_base,
+                    retail_style,
+                }
+            })
+            .collect()
+    }
+
     /// 从会话构造驱动器（配置面+账户面投影；全 retail 决策缺省装配）。
     /// Sol 二审修复集 5：决策档案恢复会话 attention 真实状态——
     /// `next_due` ← 会话下次候选 tick、`seed` ← 注意力 RNG 状态
@@ -285,73 +359,7 @@ impl RuntimeDriver {
             per_group,
             vec![false; n_stocks],
         );
-        let attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)> = session
-            .runtime_attention_state()
-            .into_iter()
-            .map(|(id, due, rng)| (id, (due, rng)))
-            .collect();
-        // D3 台账收口（D1 登记差异→闭合）：策略面直接投影账户的**已采样
-        // 个体策略**（StrategyState::from_strategy → 三族 strategy_data()
-        // ——含风格修饰后的到达率/阈值/步幅/观察概率），族基线参数仅作
-        // 无策略账户的回退。此前用 setup 基线参数，个体风格 RNG 采样
-        // 差异已登记（.tmp/multi-tick-design.md D1 节），本批收口。
-        let profiles: Vec<NpcProfile> = (0..npcs.max(1))
-            .map(|i| {
-                let id = ids.get(i).copied();
-                let attention_entry = id.and_then(|id| attention.get(&id)).copied();
-                // 玩家不经组线程自主决策（意图只走 ExternalPlan——D2 路由）；
-                // next_due=u64::MAX 显式永不到期。
-                let strategy = match id.map(|id| session.account(id).map(|a| a.strategy())) {
-                    Some(Some(Some(strategy))) => {
-                        Self::individual_strategy_data(strategy).unwrap_or_else(|e| {
-                            // 个体策略不可投影=数据面缺失，显式失败（不静默
-                            // 回退基线——两路径决策分歧不可解释）。
-                            panic!("个体策略投影失败：{e}")
-                        })
-                    }
-                    _ => Self::baseline_strategy_data(&setup, i),
-                };
-                let fallback_due = if matches!(
-                    id.map(|id| session.account(id).map(|a| a.kind())),
-                    Some(Some(crate::account::AccountKind::Player)) | None
-                ) && id.map(|id| session.account(id).map(|a| a.kind())) != Some(Some(crate::account::AccountKind::Retail))
-                    && id.map(|id| session.account(id).map(|a| a.kind())) != Some(Some(crate::account::AccountKind::Inst))
-                    && id.map(|id| session.account(id).map(|a| a.kind())) != Some(Some(crate::account::AccountKind::Hot))
-                {
-                    u64::MAX
-                } else {
-                    (i % 8) as u64
-                };
-                // D5 #2：个体基础观察概率投影（npc_attention 的个体采样
-                /// 值；无 attention 态的位（玩家惯例位）不消费 evaluate。
-                let attention_base = id
-                    .map(|id| session.runtime_attention_base_for(&id))
-                    .unwrap_or(None)
-                    // 玩家惯例位无 attention 态：base 不被 evaluate 消费
-                    //（next_due=MAX 恒不 due）——占位 1.0 非静默兜底。
-                    .unwrap_or(1.0);
-                // D5 #4 retail 链：零售风格投影（retail 位决策内核输入）。
-                let retail_style = id.and_then(|id| session.account(id)).and_then(|a| {
-                    a.strategy().and_then(|s| s.retail_style())
-                });
-                match attention_entry {
-                    Some((due, rng)) => NpcProfile {
-                        strategy,
-                        seed: rng,
-                        next_due: due,
-                        attention_base,
-                        retail_style,
-                    },
-                    None => NpcProfile {
-                        strategy,
-                        seed: 0x5EED_0000_0000_0001u64.wrapping_add(i as u64),
-                        next_due: fallback_due,
-                        attention_base,
-                        retail_style,
-                    },
-                }
-            })
-            .collect();
+        let profiles = Self::profiles_from_session(session, &setup, &ids);
         let decision = DecisionSetup {
             profiles,
             attention_gap_ticks: 4,
