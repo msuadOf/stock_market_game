@@ -21,6 +21,7 @@ pub mod orun;
 pub mod oworker;
 pub mod run;
 pub mod setup;
+mod stock_identity;
 pub mod worker;
 pub mod xrun;
 pub mod xsetup;

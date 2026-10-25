@@ -20,6 +20,7 @@
 
 use crate::npc::{FeeTable, Npc, XPos};
 use crate::setup::ProtoConfig;
+use crate::stock_identity::StockIdentity;
 use crate::worker::{MarketSnapshot, RoutedPrice, TickDone};
 use crate::ProtoError;
 use engine::account::StockCode;
@@ -31,6 +32,154 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use crate::worker::StockPublicState;
+    use engine::strategy::{StrategyData, TargetPolicy};
+    use engine::StockId;
+
+    #[test]
+    fn ownership_view_and_sent_orders_preserve_catalog_to_desk_mapping() {
+        let mut cfg = ProtoConfig::small(7);
+        cfg.stocks[0].code = "Z-stock".into();
+        cfg.stocks[1].code = "A-stock".into();
+        let codes: Vec<_> = cfg
+            .stocks
+            .iter()
+            .map(|stock| StockCode(stock.code.clone()))
+            .collect();
+        let shared = Arc::new(OwnShared {
+            cfg: Arc::new(cfg),
+            game_cfg: Arc::new(engine::config::GameConfig::proposed_defaults()),
+            code_idx: codes
+                .iter()
+                .enumerate()
+                .map(|(index, code)| (code.0.clone(), index as u8))
+                .collect(),
+            codes,
+            bands: vec![(1_000, 1_222), (3_000, 3_666)],
+            initial_prices: vec![1_111, 3_333],
+        });
+        let identity =
+            StockIdentity::from_codes(shared.codes.iter().map(|code| code.0.as_str())).unwrap();
+        let state = |price| StockPublicState {
+            last_price: price,
+            recent_prices: vec![],
+            minute_prices: vec![],
+            rel_volume: 1.0,
+            expected_volume: 0.0,
+            best_bid: None,
+            best_ask: None,
+            imbalance: 0.0,
+        };
+        let snapshot = MarketSnapshot {
+            tick: 1,
+            market_minute: 0,
+            stocks: vec![state(1_111), state(3_333)],
+        };
+        let views = build_views_own(&shared, &identity, &snapshot, &[1, 2, 3]);
+        assert_eq!(
+            views[1]
+                .as_ref()
+                .unwrap()
+                .stocks
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![StockId(1)]
+        );
+        assert_eq!(
+            views[2].as_ref().unwrap().stocks[&StockId(0)]
+                .last_price
+                .cents(),
+            3_333
+        );
+        let mut npc = Npc::new(
+            1,
+            StrategyData::inst(TargetPolicy::Fixed(Money::from_cents(500)), 0.02, 100),
+            1_000_000,
+            300,
+            1_111,
+        );
+        npc.secondaries.push(XPos {
+            stock_idx: 1,
+            qty: 700,
+            sellable: 700,
+            reserved_shares: 0,
+            frozen_today: 0,
+            cost_price_cents: 3_333,
+        });
+        let mut roster = vec![npc];
+        let mut singles: Vec<_> = (0..2)
+            .map(|index| SelfView {
+                cash: Money::ZERO,
+                positions: BTreeMap::from([(
+                    identity.id(index),
+                    PositionView {
+                        qty: 0,
+                        sellable_qty: 0,
+                        cost_price: None,
+                    },
+                )]),
+            })
+            .collect();
+        let mut own_multi = SelfView {
+            cash: Money::ZERO,
+            positions: BTreeMap::new(),
+        };
+        let (tx0, rx0) = std::sync::mpsc::channel();
+        let (tx1, rx1) = std::sync::mpsc::channel();
+        let mut foreign_active = [[0; 8]];
+        let mut skipped = 0;
+        let mut cancelled = 0;
+        let mut cross_places = 0;
+        let mut home_places = 0;
+        let mut aligned = 0;
+        let mut flushes = 0;
+        let (calls, intents) = decide_and_ship(
+            &shared,
+            &identity,
+            &FeeTable::from_config(&shared.game_cfg),
+            0,
+            1,
+            &mut roster,
+            &[0],
+            &[3],
+            &mut foreign_active,
+            &mut singles,
+            &mut own_multi,
+            &views,
+            &[tx0, tx1],
+            1,
+            1,
+            &mut skipped,
+            &mut cancelled,
+            &mut cross_places,
+            &mut home_places,
+            &mut aligned,
+            &mut flushes,
+        )
+        .unwrap();
+        assert_eq!(
+            (calls, intents, skipped, cross_places, home_places),
+            (1, 2, 0, 1, 1)
+        );
+        for (receiver, expected_price) in [(rx0, 1_111), (rx1, 3_333)] {
+            match receiver.recv_timeout(Duration::from_secs(1)).unwrap() {
+                DeskMsg::Ops { ops, .. } => assert!(
+                    matches!(ops.as_slice(), [DeskIn::Place { owner: (0, 0), side: engine::orderbook::Side::Sell, qty: 100, price: RoutedPrice::Fixed(price), .. }] if *price == expected_price)
+                ),
+                _ => panic!("交易部收到非委托批次"),
+            }
+        }
+        assert_eq!(roster[0].qty, 200);
+        assert_eq!(roster[0].secondaries[0].qty, 600);
+        assert_eq!((foreign_active[0][0], foreign_active[0][1]), (1, 1));
+    }
+}
 
 /// 资源所有者身份：(组索引, 组内名册下标)。实体回流时原样回带，
 /// 组线程零查找落账。
@@ -1027,6 +1176,7 @@ pub fn group_main(
     abort: Arc<AtomicBool>,
 ) -> Result<(), ProtoError> {
     let fees = FeeTable::from_config(&shared.game_cfg);
+    let identity = StockIdentity::from_codes(shared.codes.iter().map(|code| code.0.as_str()))?;
     let n_stocks = shared.cfg.stocks.len();
     let chunk = flush_chunk();
     let mut roster = roster;
@@ -1037,7 +1187,7 @@ pub fn group_main(
         .map(|s| {
             let mut positions = BTreeMap::new();
             positions.insert(
-                shared.codes[s].clone(),
+                identity.id(s),
                 PositionView {
                     qty: 0,
                     sellable_qty: 0,
@@ -1111,9 +1261,10 @@ pub fn group_main(
                     npc.unfreeze_t1_all();
                 }
                 let tick = snapshot.tick;
-                let views = build_views_own(&shared, &snapshot, &views_masks);
+                let views = build_views_own(&shared, &identity, &snapshot, &views_masks);
                 let step = decide_and_ship(
                     &shared,
+                    &identity,
                     &fees,
                     group_idx,
                     n_groups,
@@ -1286,6 +1437,7 @@ fn apply_entities(
 #[allow(clippy::too_many_arguments)]
 fn decide_and_ship(
     shared: &Arc<OwnShared>,
+    identity: &StockIdentity,
     fees: &FeeTable,
     group_idx: u8,
     _n_groups: u8,
@@ -1348,7 +1500,7 @@ fn decide_and_ship(
             let own = &mut singles[home as usize];
             let pos = own
                 .positions
-                .get_mut(&shared.codes[home as usize])
+                .get_mut(&identity.id(home as usize))
                 .expect("模板已插入 home 股键");
             pos.qty = npc.qty;
             pos.sellable_qty = npc.sellable;
@@ -1357,7 +1509,7 @@ fn decide_and_ship(
         } else {
             own_multi.positions.clear();
             own_multi.positions.insert(
-                shared.codes[home as usize].clone(),
+                identity.id(home as usize),
                 PositionView {
                     qty: npc.qty,
                     sellable_qty: npc.sellable,
@@ -1366,7 +1518,7 @@ fn decide_and_ship(
             );
             for p in &npc.secondaries {
                 own_multi.positions.insert(
-                    shared.codes[p.stock_idx as usize].clone(),
+                    identity.id(p.stock_idx as usize),
                     PositionView {
                         qty: p.qty,
                         sellable_qty: p.sellable,
@@ -1411,9 +1563,7 @@ fn decide_and_ship(
                 | Intent::PlaceMarket { code, .. }
                 | Intent::Cancel { code, .. } => code,
             };
-            let target = *shared.code_idx.get(code.0.as_str()).ok_or_else(|| {
-                ProtoError::InvalidConfig(format!("意图指向未知股票：{:?}", code.0))
-            })?;
+            let target = identity.original_index(*code)? as u8;
             let t = target as usize;
             let (side, rp, qty) = match &intent {
                 Intent::PlaceLimit {
@@ -1526,6 +1676,7 @@ fn decide_and_ship(
 /// 一致——组线程看不到任何活簿，决策信息集两臂等价）。
 fn build_views_own(
     shared: &OwnShared,
+    identity: &StockIdentity,
     snap: &MarketSnapshot,
     views_masks: &[u8],
 ) -> Vec<Option<Arc<MarketView>>> {
@@ -1535,7 +1686,6 @@ fn build_views_own(
             let st = &snap.stocks[i];
             let (lower, upper) = shared.bands[i];
             StockView {
-                is_trading: true,
                 best_bid: st.best_bid.map(Money::from_cents),
                 best_ask: st.best_ask.map(Money::from_cents),
                 last_price: Money::from_cents(st.last_price.max(0)),
@@ -1562,7 +1712,7 @@ fn build_views_own(
         let mut map = BTreeMap::new();
         for i in 0..n {
             if mask & (1 << i) != 0 {
-                map.insert(shared.codes[i].clone(), base[i].clone());
+                map.insert(identity.id(i), base[i].clone());
             }
         }
         out[mask as usize] = Some(Arc::new(MarketView {

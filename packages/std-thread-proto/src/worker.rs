@@ -11,7 +11,8 @@ use crate::book::{Arena, Placement, StockBook};
 use crate::npc::{FeeTable, Npc};
 use crate::setup::{build_roster, ProtoConfig, StockSpec};
 use crate::ProtoError;
-use engine::account::StockCode;
+use crate::stock_identity::StockIdentity;
+use engine::StockId;
 use engine::money::Money;
 use engine::session::SplitMix64;
 use engine::strategy::{
@@ -21,6 +22,77 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
+
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use engine::strategy::{StrategyData, TargetPolicy};
+
+    #[test]
+    fn private_view_and_decision_use_sorted_identity_for_unsorted_configuration() {
+        let mut cfg = ProtoConfig::small(7);
+        cfg.stocks[0].code = "Z-stock".into();
+        cfg.stocks[1].code = "A-stock".into();
+        let identity =
+            StockIdentity::from_codes(cfg.stocks.iter().map(|stock| stock.code.as_str())).unwrap();
+        let state = |price| StockPublicState {
+            last_price: price,
+            recent_prices: vec![],
+            minute_prices: vec![],
+            rel_volume: 1.0,
+            expected_volume: 0.0,
+            best_bid: None,
+            best_ask: None,
+            imbalance: 0.0,
+        };
+        let snapshot = MarketSnapshot {
+            tick: 1,
+            market_minute: 0,
+            stocks: vec![state(1_111), state(3_333)],
+        };
+        let market = Arc::new(build_market_view(
+            &snapshot,
+            0,
+            identity.id(0),
+            &StockBook::new(),
+            1_222,
+            1_000,
+        ));
+        assert_eq!(
+            market.stocks.keys().copied().collect::<Vec<_>>(),
+            vec![StockId(1)]
+        );
+        assert_eq!(market.stocks[&StockId(1)].last_price.cents(), 1_111);
+        for (target, expected_side) in [
+            (500, engine::orderbook::Side::Sell),
+            (2_000, engine::orderbook::Side::Buy),
+        ] {
+            let npc = Npc::new(
+                1,
+                StrategyData::inst(TargetPolicy::Fixed(Money::from_cents(target)), 0.02, 100),
+                1_000_000,
+                300,
+                1_111,
+            );
+            let (records, stats) = decide_range(
+                &[npc],
+                0,
+                1,
+                identity.id(0),
+                &market,
+                &engine::config::GameConfig::proposed_defaults(),
+                cfg.seed,
+                1,
+            );
+            assert_eq!(stats.decide_calls, 1);
+            assert_eq!(records.len(), 1, "持仓键不得错位造成卖方空转");
+            assert!(
+                matches!(records[0].intent, Intent::PlaceLimit { code: StockId(1), side, qty: 100, .. } if side == expected_side)
+            );
+        }
+    }
+}
 
 /// 全局（进程内）线程计量：决策线程的并发峰值（精确计数）。
 pub struct ThreadGauge {
@@ -230,7 +302,8 @@ pub fn worker_main(
     persist_mode: bool,
 ) -> Result<(), ProtoError> {
     let (npcs, float_remainder) = build_roster(&cfg, stock_idx, &spec, id_base)?;
-    let code = StockCode(spec.code.clone());
+    let identity = StockIdentity::from_codes(cfg.stocks.iter().map(|stock| stock.code.as_str()))?;
+    let stock_id = identity.id(stock_idx);
     let arena: Arc<RwLock<Arena>> = Arc::new(RwLock::new(Arena::new(npcs, stock_idx as u8)));
     let mut book = StockBook::new();
     let fees = FeeTable::from_config(&game_cfg);
@@ -244,7 +317,7 @@ pub fn worker_main(
     let pool = if persist_mode && per_stock_threads > 0 {
         Some(spawn_persist_pool(
             Arc::clone(&arena),
-            Arc::new(code.clone()),
+            stock_id,
             Arc::clone(&cfg),
             Arc::clone(&game_cfg),
             Arc::clone(&gauge),
@@ -264,7 +337,7 @@ pub fn worker_main(
         let step = run_tick(
             &cfg,
             &game_cfg,
-            &code,
+            stock_id,
             stock_idx,
             &arena,
             &mut book,
@@ -324,7 +397,7 @@ pub fn worker_main(
 fn run_tick(
     cfg: &ProtoConfig,
     game_cfg: &engine::config::GameConfig,
-    code: &StockCode,
+    stock_id: StockId,
     stock_idx: usize,
     arena: &Arc<RwLock<Arena>>,
     book: &mut StockBook,
@@ -339,7 +412,7 @@ fn run_tick(
     gauge: &Arc<ThreadGauge>,
 ) -> Result<TickDone, ProtoError> {
     // ── 相位 1：决策（只读共享名册）──
-    let market = build_market_view(snapshot, stock_idx, code, book, upper, lower);
+    let market = build_market_view(snapshot, stock_idx, stock_id, book, upper, lower);
     let market = Arc::new(market);
     let trade_count_before = book.trade_count;
     let volume_before = book.volume_shares;
@@ -348,7 +421,7 @@ fn run_tick(
         let guard = arena
             .read()
             .map_err(|_| ProtoError::ChannelClosed("npcs 读锁中毒".into()))?;
-        decide_range(guard.accounts(), 0, guard.roster_len, code, &market, game_cfg, cfg.seed, tick)
+        decide_range(guard.accounts(), 0, guard.roster_len, stock_id, &market, game_cfg, cfg.seed, tick)
     } else if let Some(pool) = pool {
         // persist 池：派工 → 收结果。
         let len = arena_len(arena)?;
@@ -394,7 +467,6 @@ fn run_tick(
                 let (from, to) = chunk_range(len, per_stock_threads, slot);
                 let roster = guard.accounts();
                 let market = &market;
-                let code = code;
                 let game_cfg = game_cfg;
                 let gauge = gauge;
                 handles.push(scope.spawn(move || {
@@ -403,7 +475,7 @@ fn run_tick(
                         roster,
                         from,
                         to,
-                        code,
+                        stock_id,
                         market,
                         game_cfg,
                         seed,
@@ -461,7 +533,7 @@ fn decide_range(
     npcs: &[Npc],
     from: u32,
     to: u32,
-    code: &StockCode,
+    stock_id: StockId,
     market: &Arc<MarketView>,
     game_cfg: &engine::config::GameConfig,
     seed: u64,
@@ -470,7 +542,7 @@ fn decide_range(
     // SelfView 模板只建一次：每 NPC 就地更新字段，避免每 NPC 重建 BTreeMap。
     let mut positions = BTreeMap::new();
     positions.insert(
-        code.clone(),
+        stock_id,
         PositionView {
             qty: 0,
             sellable_qty: 0,
@@ -489,7 +561,7 @@ fn decide_range(
         {
             let pos = self_view
                 .positions
-                .get_mut(code)
+                .get_mut(&stock_id)
                 .expect("模板已插入本股键");
             pos.qty = npc.qty;
             pos.sellable_qty = npc.sellable;
@@ -573,14 +645,13 @@ fn apply_intents(
 fn build_market_view(
     snapshot: &MarketSnapshot,
     stock_idx: usize,
-    code: &StockCode,
+    stock_id: StockId,
     book: &StockBook,
     upper: i64,
     lower: i64,
 ) -> MarketView {
     let st = &snapshot.stocks[stock_idx];
     let view = StockView {
-        is_trading: true,
         best_bid: book.best_bid().map(Money::from_cents),
         best_ask: book.best_ask().map(Money::from_cents),
         last_price: Money::from_cents(st.last_price.max(0)),
@@ -597,7 +668,7 @@ fn build_market_view(
         order_book_imbalance: book.top5_imbalance(),
     };
     let mut stocks = BTreeMap::new();
-    stocks.insert(code.clone(), view);
+    stocks.insert(stock_id, view);
     MarketView {
         stocks,
         tick: snapshot.tick,
@@ -633,7 +704,7 @@ fn chunk_range(len: u32, threads: u32, slot: usize) -> (u32, u32) {
 /// 起 persist 模式常驻决策线程池（每股 per_stock_threads 个）。
 fn spawn_persist_pool(
     arena: Arc<RwLock<Arena>>,
-    code: Arc<StockCode>,
+    stock_id: StockId,
     cfg: Arc<ProtoConfig>,
     game_cfg: Arc<engine::config::GameConfig>,
     gauge: Arc<ThreadGauge>,
@@ -646,7 +717,6 @@ fn spawn_persist_pool(
         let (work_tx, work_rx) = std::sync::mpsc::channel::<PersistWork>();
         work_txs.push(work_tx);
         let arena = Arc::clone(&arena);
-        let code = Arc::clone(&code);
         let cfg = Arc::clone(&cfg);
         let game_cfg = Arc::clone(&game_cfg);
         let gauge = Arc::clone(&gauge);
@@ -662,7 +732,7 @@ fn spawn_persist_pool(
                             guard.accounts(),
                             work.npc_from,
                             work.npc_to,
-                            &code,
+                            stock_id,
                             &work.market,
                             &game_cfg,
                             cfg.seed,

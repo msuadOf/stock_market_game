@@ -21,7 +21,7 @@ use crate::worker::{
 };
 use crate::xsetup::{build_cross_roster, CrossSetupInfo};
 use crate::ProtoError;
-use engine::account::StockCode;
+use crate::stock_identity::StockIdentity;
 use engine::money::Money;
 use engine::session::SplitMix64;
 use engine::strategy::{
@@ -30,6 +30,107 @@ use engine::strategy::{
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, RwLock};
+
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use crate::worker::StockPublicState;
+    use engine::strategy::{StrategyData, TargetPolicy};
+    use engine::StockId;
+
+    #[test]
+    fn masked_view_and_cross_intents_route_to_original_configuration_slots() {
+        let mut cfg = ProtoConfig::small(7);
+        cfg.stocks[0].code = "Z-stock".into();
+        cfg.stocks[1].code = "A-stock".into();
+        let identity =
+            StockIdentity::from_codes(cfg.stocks.iter().map(|stock| stock.code.as_str())).unwrap();
+        let state = |price| StockPublicState {
+            last_price: price,
+            recent_prices: vec![],
+            minute_prices: vec![],
+            rel_volume: 1.0,
+            expected_volume: 0.0,
+            best_bid: None,
+            best_ask: None,
+            imbalance: 0.0,
+        };
+        let snapshot = MarketSnapshot {
+            tick: 1,
+            market_minute: 0,
+            stocks: vec![state(1_111), state(3_333)],
+        };
+        let views = build_views(
+            &cfg,
+            &snapshot,
+            &identity,
+            &[(1_000, 1_222), (3_000, 3_666)],
+            &[1, 2, 3],
+        );
+        let home_view = views[1].as_ref().unwrap();
+        assert_eq!(
+            home_view.stocks.keys().copied().collect::<Vec<_>>(),
+            vec![StockId(1)]
+        );
+        let foreign_view = views[2].as_ref().unwrap();
+        assert_eq!(
+            foreign_view.stocks.keys().copied().collect::<Vec<_>>(),
+            vec![StockId(0)]
+        );
+        assert_eq!(foreign_view.stocks[&StockId(0)].last_price.cents(), 3_333);
+        let mut npc = Npc::new(
+            1,
+            StrategyData::inst(TargetPolicy::Fixed(Money::from_cents(500)), 0.02, 100),
+            1_000_000,
+            300,
+            1_111,
+        );
+        npc.secondaries.push(XPos {
+            stock_idx: 1,
+            qty: 700,
+            sellable: 700,
+            reserved_shares: 0,
+            frozen_today: 0,
+            cost_price_cents: 3_333,
+        });
+        let (records, stats) = decide_range_x(
+            &[npc],
+            &[3],
+            0,
+            1,
+            0,
+            &identity,
+            &views,
+            &engine::config::GameConfig::proposed_defaults(),
+            cfg.seed,
+            1,
+        )
+        .unwrap();
+        assert_eq!(stats.decide_calls, 1);
+        assert_eq!(records.len(), 2, "主股与次级持仓必须各产生真实卖单");
+        let mut targets: Vec<_> = records.iter().map(|record| record.target).collect();
+        targets.sort_unstable();
+        assert_eq!(targets, vec![0, 1]);
+        for record in records {
+            match record.intent {
+                Intent::PlaceLimit {
+                    code: StockId(0),
+                    side: engine::orderbook::Side::Sell,
+                    qty: 100,
+                    ..
+                } => assert_eq!(record.target, 1),
+                Intent::PlaceLimit {
+                    code: StockId(1),
+                    side: engine::orderbook::Side::Sell,
+                    qty: 100,
+                    ..
+                } => assert_eq!(record.target, 0),
+                other => panic!("意图身份或数量错误：{other:?}"),
+            }
+        }
+    }
+}
 
 /// coordinator → 家端/目标股 worker 的下行消息。
 pub enum XMsg {
@@ -134,13 +235,7 @@ pub fn xworker_main(
     if xdbg {
         eprintln!("[w{stock_idx}] 名册构造完成 npcs={}", roster.len());
     }
-    // 全股静态表：code / 涨跌停带 / code→索引。
-    let codes: Vec<StockCode> = cfg.stocks.iter().map(|s| StockCode(s.code.clone())).collect();
-    let code_idx: HashMap<String, u8> = codes
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.0.clone(), i as u8))
-        .collect();
+    let identity = StockIdentity::from_codes(cfg.stocks.iter().map(|stock| stock.code.as_str()))?;
     let bands: Vec<(i64, i64)> = cfg
         .stocks
         .iter()
@@ -215,14 +310,13 @@ pub fn xworker_main(
                 vol_before = book.volume_shares;
                 trades_before = book.trade_count;
                 // ── 相位 1：决策 → 到期 → 本股应用 → 外股 escrow ──
-                let views = build_views(&cfg, &snapshot, &codes, &bands, &views_masks);
+                let views = build_views(&cfg, &snapshot, &identity, &bands, &views_masks);
                 let step = phase1(
                     &cfg,
                     &game_cfg,
                     home,
                     stock_idx,
-                    &codes,
-                    &code_idx,
+                    &identity,
                     &bands,
                     &views,
                     &masks,
@@ -447,8 +541,7 @@ fn phase1(
     game_cfg: &engine::config::GameConfig,
     home: u8,
     stock_idx: usize,
-    codes: &[StockCode],
-    code_idx: &HashMap<String, u8>,
+    identity: &StockIdentity,
     bands: &[(i64, i64)],
     views: &[Option<Arc<MarketView>>],
     masks: &[u8],
@@ -477,8 +570,7 @@ fn phase1(
                 0,
                 guard.roster_len,
                 home,
-                codes,
-                code_idx,
+                identity,
                 views,
                 game_cfg,
                 cfg.seed,
@@ -500,8 +592,7 @@ fn phase1(
                             from,
                             to,
                             home,
-                            codes,
-                            code_idx,
+                            identity,
                             views,
                             game_cfg,
                             cfg.seed,
@@ -942,8 +1033,7 @@ fn decide_range_x(
     from: u32,
     to: u32,
     home: u8,
-    codes: &[StockCode],
-    code_idx: &HashMap<String, u8>,
+    identity: &StockIdentity,
     views: &[Option<Arc<MarketView>>],
     game_cfg: &engine::config::GameConfig,
     seed: u64,
@@ -952,7 +1042,7 @@ fn decide_range_x(
     // 单持仓模板（≈70% NPC 的快路径：模板就地把主股字段刷新，零分配）。
     let mut single_positions = BTreeMap::new();
     single_positions.insert(
-        codes[home as usize].clone(),
+        identity.id(home as usize),
         PositionView {
             qty: 0,
             sellable_qty: 0,
@@ -980,7 +1070,7 @@ fn decide_range_x(
         if npc.secondaries.is_empty() {
             let pos = own_single
                 .positions
-                .get_mut(&codes[home as usize])
+                .get_mut(&identity.id(home as usize))
                 .expect("模板已插入主股键");
             pos.qty = npc.qty;
             pos.sellable_qty = npc.sellable;
@@ -989,7 +1079,7 @@ fn decide_range_x(
         } else {
             own_multi.positions.clear();
             own_multi.positions.insert(
-                codes[home as usize].clone(),
+                identity.id(home as usize),
                 PositionView {
                     qty: npc.qty,
                     sellable_qty: npc.sellable,
@@ -998,7 +1088,7 @@ fn decide_range_x(
             );
             for p in &npc.secondaries {
                 own_multi.positions.insert(
-                    codes[p.stock_idx as usize].clone(),
+                    identity.id(p.stock_idx as usize),
                     PositionView {
                         qty: p.qty,
                         sellable_qty: p.sellable,
@@ -1025,9 +1115,7 @@ fn decide_range_x(
                 | Intent::PlaceMarket { code, .. }
                 | Intent::Cancel { code, .. } => code,
             };
-            let target = *code_idx.get(code.0.as_str()).ok_or_else(|| {
-                ProtoError::InvalidConfig(format!("意图指向未知股票：{:?}", code.0))
-            })?;
+            let target = identity.original_index(*code)? as u8;
             records.push(XRecord {
                 npc_idx: idx,
                 target,
@@ -1044,7 +1132,7 @@ fn decide_range_x(
 fn build_views(
     cfg: &ProtoConfig,
     snap: &MarketSnapshot,
-    codes: &[StockCode],
+    identity: &StockIdentity,
     bands: &[(i64, i64)],
     views_masks: &[u8],
 ) -> Vec<Option<Arc<MarketView>>> {
@@ -1054,7 +1142,6 @@ fn build_views(
             let st = &snap.stocks[i];
             let (lower, upper) = bands[i];
             StockView {
-                is_trading: true,
                 best_bid: st.best_bid.map(Money::from_cents),
                 best_ask: st.best_ask.map(Money::from_cents),
                 last_price: Money::from_cents(st.last_price.max(0)),
@@ -1077,7 +1164,7 @@ fn build_views(
         let mut map = BTreeMap::new();
         for i in 0..n {
             if mask & (1 << i) != 0 {
-                map.insert(codes[i].clone(), base[i].clone());
+                map.insert(identity.id(i), base[i].clone());
             }
         }
         out[mask as usize] = Some(Arc::new(MarketView {
