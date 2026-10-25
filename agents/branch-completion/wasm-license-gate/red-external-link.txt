@@ -20,9 +20,9 @@
 test at scripts/wasm-pack-build.test.mjs:193:5
 ✖ 拒绝 package LICENSE 的非源 symlink，避免改写无关文件 (30.413781ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /LICENSE/. Input:
-  
+
   'AssertionError [ERR_ASSERTION]: unsafe compiler target accepted'
-  
+
       at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:202:7
       at async fixture (file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:14:5)
       at async Test.run (node:internal/test_runner/test:1208:7)
@@ -46,9 +46,9 @@ test at scripts/wasm-pack-build.test.mjs:193:5
 test at scripts/wasm-pack-build.test.mjs:193:5
 ✖ 拒绝 package LICENSE 的非源 hardlink，避免改写无关文件 (8.056126ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /LICENSE/. Input:
-  
+
   'AssertionError [ERR_ASSERTION]: unsafe compiler target accepted'
-  
+
       at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:202:7
       at async fixture (file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:14:5)
       at async Test.run (node:internal/test_runner/test:1208:7)
@@ -72,9 +72,9 @@ test at scripts/wasm-pack-build.test.mjs:193:5
 test at scripts/wasm-pack-build.test.mjs:193:5
 ✖ 拒绝 package LICENSE 的非源 dangling-symlink，避免改写无关文件 (5.656798ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /LICENSE/. Input:
-  
+
   'AssertionError [ERR_ASSERTION]: unsafe compiler target accepted'
-  
+
       at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:202:7
       at async fixture (file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:14:5)
       at async Test.run (node:internal/test_runner/test:1208:7)
@@ -98,9 +98,9 @@ test at scripts/wasm-pack-build.test.mjs:193:5
 test at scripts/wasm-pack-build.test.mjs:193:5
 ✖ 拒绝 wasm-pack LICENSE 的非源 symlink，避免改写无关文件 (5.225787ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /LICENSE/. Input:
-  
+
   'AssertionError [ERR_ASSERTION]: unsafe compiler target accepted'
-  
+
       at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:202:7
       at async fixture (file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:14:5)
       at async Test.run (node:internal/test_runner/test:1208:7)
@@ -124,9 +124,9 @@ test at scripts/wasm-pack-build.test.mjs:193:5
 test at scripts/wasm-pack-build.test.mjs:193:5
 ✖ 拒绝 wasm-pack LICENSE 的非源 hardlink，避免改写无关文件 (4.623683ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /LICENSE/. Input:
-  
+
   'AssertionError [ERR_ASSERTION]: unsafe compiler target accepted'
-  
+
       at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:202:7
       at async fixture (file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:14:5)
       at async Test.run (node:internal/test_runner/test:1208:7)
@@ -150,9 +150,9 @@ test at scripts/wasm-pack-build.test.mjs:193:5
 test at scripts/wasm-pack-build.test.mjs:193:5
 ✖ 拒绝 wasm-pack LICENSE 的非源 dangling-symlink，避免改写无关文件 (6.634732ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /LICENSE/. Input:
-  
+
   'AssertionError [ERR_ASSERTION]: unsafe compiler target accepted'
-  
+
       at async file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:202:7
       at async fixture (file:///data1/baiyifan/workplace/stock_market_game/.worktree/w0l-gate/scripts/wasm-pack-build.test.mjs:14:5)
       at async Test.run (node:internal/test_runner/test:1208:7)

@@ -32,6 +32,9 @@ hardlink 均显式拒绝，构建后再次检查，保留无关文件原字节�
 
 ## TDD 与验证原件
 
+原始 .log 留在本工作树；提交的 .txt 为内容副本。`red-external-link.txt` 仅移除测试
+reporter 空行缩进的行末空白，未改断言、错误内容或结果，原始 .log 保留可核对。
+
 - `red.txt`：helper 不存在时，同一组最初的行为测试失败。
 - `red-replaced-inode.txt`：相同内容替换源 inode 后，旧实现漏拒绝 hardlink，断言失败；
   修复为使用构建后的当前源身份。
