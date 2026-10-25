@@ -1,9 +1,9 @@
 //! 冻结 Calendar 与显式会话进度的冷路径纯投影；不读取 live 行情或存档。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::calendar::{CalendarError, CalendarExchange, CivilDate, DayStatus, TradingCalendar};
-use crate::observation::ObservationError;
+use crate::observation::{completed_market_minute_count, ObservationError};
 use crate::stock::StockId;
 
 #[derive(Clone, Copy, Debug)]
@@ -106,6 +106,7 @@ impl CalendarDayModel {
     pub(crate) fn current_date(&self) -> CivilDate {
         self.current_date
     }
+    /// 半开区间 [start_date, current_date) 的配置交易所 union 会话数量。
     pub(crate) fn shared_sessions_before_date(&self) -> u64 {
         self.shared_sessions_before_date
     }
@@ -138,6 +139,7 @@ impl StockCalendarClock {
     pub(crate) fn completed_session_count(&self) -> u64 {
         self.sessions_before_date + u64::from(self.session_completed)
     }
+    /// 当前 civil date 开市时的 0-based 会话 ordinal；收盘后仍指向当日会话。
     pub(crate) fn date_session_ordinal(&self) -> Option<u64> {
         self.trading_on_date.then_some(self.sessions_before_date)
     }
@@ -147,10 +149,12 @@ impl StockCalendarClock {
     pub(crate) fn completed_minute_count(&self) -> u64 {
         self.completed_minutes
     }
+    /// 当前日期闭市则无新分钟键；开市时为当日第一根 0-based 绝对分钟键。
     pub(crate) fn current_date_first_minute_key(&self) -> Option<u64> {
         self.trading_on_date
             .then_some(self.completed_minutes - u64::from(self.current_date_completed_minutes))
     }
+    /// 闭市时可指向上一真实会话末分钟，不表示当前日期产生新样本。
     pub(crate) fn last_completed_minute_key(&self) -> Option<u64> {
         self.completed_minutes.checked_sub(1)
     }
@@ -183,58 +187,191 @@ impl CalendarClockProjection {
     }
 }
 
+/// 仅按 bindings 实际出现的交易所，对 [start_date, current_date) 逐日计数。
+/// 这是独立冷路径 oracle，不能直接放入每 tick 的生产热路径。
 pub(crate) fn calendar_day_model(
-    _calendar: &TradingCalendar,
+    calendar: &TradingCalendar,
     start_date: CivilDate,
     current_date: CivilDate,
     bindings: &[(StockId, CalendarExchange)],
 ) -> Result<CalendarDayModel, CalendarClockModelError> {
+    calendar.validate_runtime_start(start_date)?;
+    calendar.validate_runtime_start(current_date)?;
+    if current_date < start_date {
+        return Err(CalendarClockModelError::CurrentBeforeStart {
+            start: start_date,
+            current: current_date,
+        });
+    }
+    if bindings.is_empty() {
+        return Err(CalendarClockModelError::EmptyBindings);
+    }
+    let mut identities = BTreeSet::new();
+    for (stock, _) in bindings {
+        if !identities.insert(*stock) {
+            return Err(CalendarClockModelError::DuplicateStock { stock: *stock });
+        }
+    }
+    // 先按 exchange 去重；一段日期只扫描一次，不按股票数量重复扫描。
+    let mut counts: BTreeMap<_, u64> = bindings
+        .iter()
+        .map(|(_, exchange)| (*exchange, 0))
+        .collect();
+    let mut shared_before = 0u64;
+    let mut date = start_date;
+    while date < current_date {
+        let mut any_open = false;
+        for (exchange, count) in &mut counts {
+            if calendar.is_trading_day(*exchange, date)? {
+                *count = count
+                    .checked_add(1)
+                    .ok_or(CalendarClockModelError::ArithmeticOverflow)?;
+                any_open = true;
+            }
+        }
+        if any_open {
+            shared_before = shared_before
+                .checked_add(1)
+                .ok_or(CalendarClockModelError::ArithmeticOverflow)?;
+        }
+        date = date.next().map_err(CalendarError::from)?;
+    }
+    let mut stocks = BTreeMap::new();
+    let mut shared_open = false;
+    for (exchange, before) in counts {
+        let status = calendar.day_status(exchange, current_date)?;
+        shared_open |= status == DayStatus::Trading;
+        for (stock, _) in bindings
+            .iter()
+            .filter(|(_, binding_exchange)| *binding_exchange == exchange)
+        {
+            stocks.insert(
+                *stock,
+                StockCalendarDay {
+                    exchange,
+                    status: status.clone(),
+                    sessions_before_date: before,
+                },
+            );
+        }
+    }
     Ok(CalendarDayModel {
         start_date,
         current_date,
-        shared_sessions_before_date: 0,
-        shared_trading_on_date: true,
-        stocks: bindings
-            .iter()
-            .map(|(stock, exchange)| {
-                (
-                    *stock,
-                    StockCalendarDay {
-                        exchange: *exchange,
-                        status: DayStatus::Trading,
-                        sessions_before_date: 0,
-                    },
-                )
-            })
-            .collect(),
+        shared_sessions_before_date: shared_before,
+        shared_trading_on_date: shared_open,
+        stocks,
     })
 }
 
+/// progress 同时受 Calendar、tick、completed_shared_sessions 约束；不按 tick 取模猜测阶段。
 pub(crate) fn calendar_clock_projection(
     day: &CalendarDayModel,
-    _layout: SessionTickLayout,
-    _input: SharedClockInput,
+    layout: SessionTickLayout,
+    input: SharedClockInput,
 ) -> Result<CalendarClockProjection, CalendarClockModelError> {
+    let invalid_layout = || CalendarClockModelError::InvalidTickLayout {
+        ticks_per_day: layout.ticks_per_day,
+        auction_ticks: layout.auction_ticks,
+        closing_auction_ticks: layout.closing_auction_ticks,
+    };
+    let windows = layout
+        .auction_ticks
+        .checked_add(layout.closing_auction_ticks)
+        .filter(|windows| *windows < layout.ticks_per_day)
+        .ok_or_else(invalid_layout)?;
+    let continuous_ticks = layout
+        .ticks_per_day
+        .checked_sub(windows)
+        .ok_or_else(invalid_layout)?;
+    let is_trading_progress = !matches!(input.progress, SharedDayProgress::ClosedDay);
+    if is_trading_progress != day.shared_trading_on_date {
+        return Err(CalendarClockModelError::ProgressCalendarMismatch {
+            progress: input.progress,
+            shared_open: day.shared_trading_on_date,
+        });
+    }
+    let before = day.shared_sessions_before_date;
+    let (expected_sessions, completed_ticks, date_minutes) = match input.progress {
+        SharedDayProgress::ClosedDay => (before, 0, 0),
+        SharedDayProgress::Trading { completed_ticks } => {
+            if completed_ticks >= layout.ticks_per_day {
+                return Err(CalendarClockModelError::TradingTicksOutsideSession {
+                    completed_ticks,
+                    ticks_per_day: layout.ticks_per_day,
+                });
+            }
+            let continuous_completed = if completed_ticks > layout.auction_ticks {
+                (completed_ticks - layout.auction_ticks).min(continuous_ticks)
+            } else {
+                0
+            };
+            (
+                before,
+                completed_ticks,
+                completed_market_minute_count(continuous_completed, continuous_ticks)?,
+            )
+        }
+        SharedDayProgress::TradingCompleted => (
+            before
+                .checked_add(1)
+                .ok_or(CalendarClockModelError::ArithmeticOverflow)?,
+            0,
+            240,
+        ),
+    };
+    let expected_tick = expected_sessions
+        .checked_mul(layout.ticks_per_day)
+        .and_then(|base| base.checked_add(completed_ticks))
+        .ok_or(CalendarClockModelError::ArithmeticOverflow)?;
+    if input.tick != expected_tick || input.completed_shared_sessions != expected_sessions {
+        return Err(CalendarClockModelError::CountersMismatch {
+            expected_tick,
+            actual_tick: input.tick,
+            expected_shared_sessions: expected_sessions,
+            actual_shared_sessions: input.completed_shared_sessions,
+        });
+    }
+    let completed_shared_minutes = minute_count(before, date_minutes)?;
+    let mut stocks = BTreeMap::new();
+    for (stock, row) in &day.stocks {
+        let trading_on_date = row.status == DayStatus::Trading;
+        let session_completed =
+            trading_on_date && matches!(input.progress, SharedDayProgress::TradingCompleted);
+        // getter 的会话加法在构造时先校验；输出字段私有，调用方不能绕过此不变式。
+        row.sessions_before_date
+            .checked_add(u64::from(session_completed))
+            .ok_or(CalendarClockModelError::ArithmeticOverflow)?;
+        let current_date_completed_minutes = if trading_on_date { date_minutes } else { 0 };
+        stocks.insert(
+            *stock,
+            StockCalendarClock {
+                sessions_before_date: row.sessions_before_date,
+                trading_on_date,
+                session_completed,
+                current_date_completed_minutes,
+                completed_minutes: minute_count(
+                    row.sessions_before_date,
+                    current_date_completed_minutes,
+                )?,
+            },
+        );
+    }
     Ok(CalendarClockProjection {
-        completed_shared_sessions: 0,
-        completed_shared_minutes: 0,
-        stocks: day
-            .stocks
-            .iter()
-            .map(|(stock, row)| {
-                (
-                    *stock,
-                    StockCalendarClock {
-                        sessions_before_date: row.sessions_before_date,
-                        trading_on_date: true,
-                        session_completed: false,
-                        current_date_completed_minutes: 0,
-                        completed_minutes: 0,
-                    },
-                )
-            })
-            .collect(),
+        completed_shared_sessions: expected_sessions,
+        completed_shared_minutes,
+        stocks,
     })
+}
+
+fn minute_count(
+    sessions_before_date: u64,
+    current_date_minutes: u16,
+) -> Result<u64, CalendarClockModelError> {
+    sessions_before_date
+        .checked_mul(240)
+        .and_then(|base| base.checked_add(u64::from(current_date_minutes)))
+        .ok_or(CalendarClockModelError::ArithmeticOverflow)
 }
 
 #[cfg(test)]
