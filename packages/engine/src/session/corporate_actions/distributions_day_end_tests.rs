@@ -676,47 +676,40 @@ fn exempt_keeps_explicit_tax_book_without_auto_creating_other_books() {
 }
 
 #[test]
-fn stock_distribution_updates_tax_lot_and_bonus_basis_without_buy_freeze() {
-    let (mut actions, mut system, cal, catalog, cash) = fixture();
-    stock_plan(&mut actions, &mut system);
-    actions.dividend_tax_books.push(tax_book());
-    let reg = prepare(
-        &actions,
-        &system,
-        &cal,
-        &catalog,
-        &cash,
-        "2030-06-03",
+fn personal_bonus_rejects_missing_original_registered_equity_tax_basis_atomically() {
+    for mode in [
         CashDividendTaxMode::AShareIndividual,
-    )
-    .unwrap();
-    let mut held = reg.actions;
-    held.dividend_tax_books[0]
-        .record_net_day("held".into(), date("2030-06-04"), 0, None)
-        .unwrap();
-    let credited = prepare(
-        &held,
-        &reg.company_system,
-        &cal,
-        &catalog,
-        &cash,
-        "2030-06-04",
-        CashDividendTaxMode::AShareIndividual,
-    )
-    .unwrap();
-    let tax = &credited.actions.dividend_tax_books[0];
-    let new_lot = tax
-        .lots()
-        .iter()
-        .find(|l| matches!(l.source, TaxAcquisitionSource::CorporateAction { .. }))
-        .unwrap();
-    assert_eq!(new_lot.acquired_on, date("2030-06-04"));
-    assert_eq!(
-        tax.lots().iter().map(|l| l.qty).sum::<u64>(),
-        3 + new_lot.qty
-    );
-    let encoded = serde_json::to_value(tax).unwrap();
-    assert_eq!(encoded["stock_bonus_bases"].as_array().unwrap().len(), 1);
+        CashDividendTaxMode::Exempt,
+    ] {
+        let (mut actions, mut system, cal, catalog, cash) = fixture();
+        stock_plan(&mut actions, &mut system);
+        actions.dividend_tax_books.push(tax_book());
+        let registered =
+            prepare(&actions, &system, &cal, &catalog, &cash, "2030-06-03", mode).unwrap();
+        let mut held = registered.actions;
+        held.dividend_tax_books[0]
+            .record_net_day("held".into(), date("2030-06-04"), 0, None)
+            .unwrap();
+        let before = (held.clone(), registered.company_system.clone());
+        let error = prepare(
+            &held,
+            &registered.company_system,
+            &cal,
+            &catalog,
+            &cash,
+            "2030-06-04",
+            mode,
+        )
+        .unwrap_err();
+        assert_eq!(error.account, Some(AccountId(1)));
+        assert_eq!(error.stock, Some(crate::stock::StockId(0)));
+        assert_eq!(error.event_id, "stock");
+        assert!(matches!(
+            error.source,
+            DistributionsDayEndFailure::UnsupportedPersonalStockBonus
+        ));
+        assert_eq!((held, registered.company_system), before);
+    }
 }
 
 #[test]
@@ -904,7 +897,7 @@ fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
         .record_net_day("held".into(), date("2030-06-04"), 0, None)
         .unwrap();
     let before = (held.clone(), registered.company_system.clone());
-    for source in [
+    for (case, source) in [
         None,
         Some(CapitalReserveTaxSource::Other {
             evidence: "回购注销转入".into(),
@@ -917,7 +910,10 @@ fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
             evidence: "发行溢价权威引用".into(),
             capital_increase: amount(499),
         }),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let sources = source
             .map(|s| BTreeMap::from([("stock".into(), s)]))
             .unwrap_or_default();
@@ -935,6 +931,28 @@ fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
             result.is_err(),
             "缺失、非溢价、空证据或不完整金额不得被kind静默当免税"
         );
+        let error = result.unwrap_err();
+        assert_eq!(error.account, Some(AccountId(1)));
+        assert_eq!(error.stock, Some(crate::stock::StockId(0)));
+        assert_eq!(error.event_id, "stock");
+        match case {
+            0 => assert!(matches!(
+                error.source,
+                DistributionsDayEndFailure::MissingCapitalReserveTaxSource
+            )),
+            1 => assert!(matches!(
+                error.source,
+                DistributionsDayEndFailure::NonPremiumCapitalReserveUnsupported { .. }
+            )),
+            2 => assert!(matches!(
+                error.source,
+                DistributionsDayEndFailure::EmptyPremiumEvidence
+            )),
+            3 => assert!(
+                matches!(error.source, DistributionsDayEndFailure::PremiumCapitalMismatch { expected, actual } if expected == amount(500) && actual == amount(499))
+            ),
+            _ => unreachable!("固定四种来源边界"),
+        }
         assert_eq!((held.clone(), registered.company_system.clone()), before);
     }
     let premium = CapitalReserveTaxSource::StockPremium {
@@ -957,4 +975,19 @@ fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
     assert!(credited.sources.iter().all(|s| matches!(s, DistributionSource::StockDistribution { capital_reserve_tax_source: Some(source), .. } if *source == premium)));
     let tax = serde_json::to_value(&credited.actions.dividend_tax_books[0]).unwrap();
     assert!(tax["stock_bonus_bases"].as_array().unwrap().is_empty());
+    let new_lot = credited.actions.dividend_tax_books[0]
+        .lots()
+        .iter()
+        .find(|lot| matches!(lot.source, TaxAcquisitionSource::CorporateAction { .. }))
+        .unwrap();
+    assert_eq!(new_lot.acquired_on, date("2030-06-04"));
+    assert_eq!(
+        credited.actions.dividend_tax_books[0]
+            .lots()
+            .iter()
+            .map(|lot| lot.qty)
+            .sum::<u64>(),
+        3 + new_lot.qty
+    );
+    assert!(credited.intents.iter().all(|intent| matches!(intent, DistributionIntent::StockDistributionCredit { available_on, .. } if *available_on == date("2030-06-04"))));
 }

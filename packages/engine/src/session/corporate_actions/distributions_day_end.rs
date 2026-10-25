@@ -134,6 +134,8 @@ pub(crate) enum DistributionsDayEndFailure {
     NegativeAvailableCash { account: AccountId, actual: Money },
     #[error("有个人税账的资本公积转增缺少来源事实")]
     MissingCapitalReserveTaxSource,
+    #[error("尚不支持送股的原登记权益个人税基与持有期关联，禁止按新股持有期计本次红利税")]
+    UnsupportedPersonalStockBonus,
     #[error("尚不支持非股票溢价资本公积转增的个人税基：{evidence}")]
     NonPremiumCapitalReserveUnsupported { evidence: String },
     #[error("股票溢价来源证据为空")]
