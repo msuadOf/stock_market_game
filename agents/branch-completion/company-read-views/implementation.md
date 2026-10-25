@@ -48,6 +48,23 @@ C5：合法 `CashDividendTaxBook` 的同日 `collections` 物理数组可被交�
 
 原始红绿：`sequence-red-tests.log`、`sequence-green-tests.log`；修复不削弱既有断言。最终独立复跑仍等待 Exempt 前置。
 
-## 待完成
+## 最终依赖与实际验证
 
-当前尚未声明完成：等待 Exempt 前置提交、重跑全部新增短测与foundation、完整diff独立复核及本地小提交。主 agent 安排 `sol61_review_company_views`（未实施者）独立审查；有效发现均交实现修复后复查。
+收到可信独立 `sol61_review_exempt` 批准后，按主 agent 授权顺序叠加 `669b2948` 与 `7cdb36d3`，本树分别为 `349e9a7b` 与 `558a870d`。这两笔属于独立已审 Exempt 修复，不混称本批只读实现。
+
+当前受验源码提交 `558a870d`；完整 query 增量为 `b2d8b0ac` + `69e1b27e`。最终构建 `final-build.log`：Cargo `--no-run -j16`，外部300000ms deadline，`CARGO_PROFILE_TEST_DEBUG=0`，实报1m54s。原有486条警告仍存在，未声称警告清零。
+
+两个预构建 binary 用8个 harness threads并行执行，各有10000ms进程树门禁，真实exit均为0：
+
+- `final-query-tests.log`：11/11通过，2.19s，包含真实 Exempt 构造与账户税务状态/税账查询，不再被前置拒绝。
+- `final-foundation-tests.log`：23/23通过，2.79s；并非此前16条，也不是24条（Exempt作者24合计含另一旧A股校验case，未混报为本套件）。
+
+`final-source-fingerprint.txt`、`final-binary-fingerprint.txt` 和 `final-binding.json` 绑定当前5份源码、两个实际binary及构建/运行原件SHA。查询前后save bytes不变、owner隔离、未划收/部分划收后新评税、合法同日回执顺序交换均在11条中验证；不扩大为B4c全量跨账勾稽或实际公司付款完成。
+
+最终 source/binary 已保持冻结，交未实施 `sol61_review_company_views` 完整diff与独立并行复跑；最终裁决待追加。未运行all、未推送、未合并main。
+
+## 独立终裁
+
+未实施者 `sol61_review_company_views` 已对完整diff与最终冻结源码/产物复核，给出 **APPROVED**，C1–C5有效发现全部关闭。其独立并行运行：query11/11，harness2.19s / wall2.306s；foundation23/23，harness2.78s / wall2.890s；各8threads、各10000ms进程树deadline。五份源指纹与两个binary SHA前后均一致。
+
+独立原件位于主工作区 `agents/branch-completion/company-views-review-evidence/final-query-independent.log` 与 `final-foundation-independent.log`。此终裁限本批只读切片与已审Exempt依赖，不代替完整回归；后续 host owner授权过滤、数值错误映射、ts-rs 与 UI 接线仍属后续批次。
