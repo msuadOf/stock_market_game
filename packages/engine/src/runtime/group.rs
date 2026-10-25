@@ -26,6 +26,10 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "pending_cash_tests.rs"]
+mod pending_cash_tests;
+
 /// ⑤a 收袋刀红证锚（cfg(test)）：due 筛选每拍触达位计数（全进程累计
 /// ——测试读增量判别；并行测试用小 fixture 贡献微小，主测量由本测试
 /// 的大名册主导）。全扫描路径=名册长/拍；heap 延迟删除路径=O(due 数
@@ -367,16 +371,9 @@ fn equity_cents_with_pending(
     >,
     account_ids: &[crate::AccountId],
     local: LocalIdx,
-    config: &std::sync::Arc<crate::config::GameConfig>,
     market: &crate::strategy::MarketView,
 ) -> crate::money::Money {
-    let mut equity = crate::money::Money::from_cents(cash_with_pending_at(
-        group_account,
-        child_in_flight,
-        account_ids,
-        local,
-        config,
-    ));
+    let mut equity = crate::money::Money::from_cents(cash_with_pending_at(group_account));
     for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
         let qty = held_qty_with_pending_at(
             &group_account.shares,
@@ -427,51 +424,12 @@ fn held_qty_with_pending_at(
     qty
 }
 
-/// Sol 整改 3：含在途的现金读面（在途买 purse 加回——挂单期间权益
-/// 观察不缩水）。Sol 四审修复 1：**desk 实际占用**口径——加回=挂出全额
-/// purse−票上累计 desk 扣减（Σ buyer_charge：成交额+边际佣金+过户费）。
-/// 三层现金语义：`GroupAccount.cash`=可分配预算（严格所有权，在途已扣
-/// ——报价预算消费）；本读面=总现金观察（权益观察消费）；价优部分成交
-/// 的差额仍在 desk（此前按余量重算 buy_purse_limit 下界——漏计价优
-/// 差额，三审反例：限价 1000 挂 200、100 股以 900 成交，desk 余额
-/// 110001 vs 下界 100001）。
-fn cash_with_pending_at(
-    group_account: &GroupAccount,
-    child_in_flight: &std::collections::BTreeMap<
-        (crate::AccountId, crate::StockId),
-        ChildTicket,
-    >,
-    account_ids: &[crate::AccountId],
-    local: LocalIdx,
-    config: &std::sync::Arc<crate::config::GameConfig>,
-) -> i64 {
-    let mut cash = group_account.cash;
-    if let Some(&account_id) = account_ids.get(local as usize) {
-        for ((owner, _code), ticket) in child_in_flight {
-            if *owner == account_id && matches!(ticket.side, Side::Buy) {
-                if let Ok(purse) = super::fees::buy_purse_limit(
-                    config,
-                    Money::from_cents(ticket.price.max(1)),
-                    ticket.qty,
-                    Money::ZERO,
-                ) {
-                    // desk 占用扣减（票上累计 buyer_charge；超挂出全额=
-                    /// desk 扣减溢出——票/簿推进失同步，显式失败）。
-                    let occupancy = purse
-                        .cents()
-                        .checked_sub(ticket.charged_cents)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "在途 purse 占用下穿：price={} qty={} charged={}",
-                                ticket.price, ticket.qty, ticket.charged_cents
-                            )
-                        });
-                    cash = cash.saturating_add(occupancy);
-                }
-            }
-        }
-    }
-    cash
+// 现金和占用由同批实体同步更新；按原票重算会重复计入已退回的价优差额。
+fn cash_with_pending_at(group_account: &GroupAccount) -> i64 {
+    group_account
+        .cash
+        .checked_add(group_account.buy_purse_held_cents)
+        .expect("组现金与在途占用合计溢出")
 }
 
 /// FillFact.order 的确定性身份合成（Sol 整改 2：不另造计数器——
@@ -2819,7 +2777,6 @@ impl GroupState {
             &self.library,
             &self.plan_book,
             &self.child_in_flight,
-            &self.config,
             snapshot.tick,
             self.ticks_per_day,
             &snapshot,
@@ -2935,7 +2892,6 @@ impl GroupState {
                 &self.child_in_flight,
                 roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
                 local,
-                &self.config,
                 &observation.market,
             );
             // equity<=0 不复审（session PlanLifecycleReview::capture 同式
@@ -3035,7 +2991,6 @@ impl GroupState {
                     &self.child_in_flight,
                     roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
                     local,
-                    &self.config,
                     &observation.market,
                 ),
                 score,
@@ -3111,7 +3066,6 @@ impl GroupState {
                     &out.belief,
                     &self.child_in_flight,
                     &projection,
-                    &self.config,
                     local,
                     &observation.market,
                     &moment,
@@ -4437,7 +4391,6 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             self.belief,
             &self.state.child_in_flight,
             self.state.root_projection.as_ref().expect("复审位投影在"),
-            &self.state.config,
             self.local,
             &self.market,
             &self.moment,
@@ -4620,7 +4573,6 @@ fn group_urgency_at_view(
         ChildTicket,
     >,
     projection: &std::sync::Arc<super::world::RootProjection>,
-    config: &std::sync::Arc<crate::config::GameConfig>,
     local: LocalIdx,
     market: &crate::strategy::MarketView,
     moment: &crate::experience::ExperienceMoment,
@@ -4652,7 +4604,6 @@ fn group_urgency_at_view(
                 child_in_flight,
                 roster,
                 local,
-                config,
                 market,
             );
             let mut positions: std::collections::BTreeMap<
@@ -4693,13 +4644,7 @@ fn group_urgency_at_view(
                 );
             }
             let observed = crate::observation::build_account_risk_observation(
-                crate::money::Money::from_cents(cash_with_pending_at(
-                    acct,
-                    child_in_flight,
-                    roster,
-                    local,
-                    config,
-                )),
+                crate::money::Money::from_cents(cash_with_pending_at(acct)),
                 &positions,
                 experience.reference_equity,
                 Some(peak.max(equity)),
@@ -4863,7 +4808,6 @@ fn build_root_read_context(
         (crate::AccountId, crate::StockId),
         ChildTicket,
     >,
-    config: &std::sync::Arc<crate::config::GameConfig>,
     tick: u64,
     ticks_per_day: u64,
     snapshot: &TickSnapshot,
@@ -4871,10 +4815,7 @@ fn build_root_read_context(
     // 均为全局名册序，组内 local 须加偏移；单组=0）。
     roster_offset: usize,
 ) -> crate::session::RootReadContext {
-    // 本组名册段（预切片——`cash_with_pending_at` / `held_qty_with_pending_at`
-    // 的 `account_ids` 形参按**组内局部切片**语义索引（372/401 不变），
-    // 传全局切片+裸 local 会取到组 0 的账户 ⇒ 切片在入口一次收口，
-    // 同类漏偏移不再可能。
+    // 在途卖股仍按本组名册匹配，现金占用直接由资源实体聚合。
     let roster = roster_slice(&projection.account_ids, roster_offset, accounts.len());
     let mut book = crate::session::AccountBook::default();
     for (local, slot) in belief_states.iter().enumerate() {
@@ -4893,13 +4834,7 @@ fn build_root_read_context(
         let mut account = crate::account::Account::new(
             account_id,
             crate::account::AccountKind::Inst,
-            crate::money::Money::from_cents(cash_with_pending_at(
-                group_account,
-                child_in_flight,
-                roster,
-                local as LocalIdx,
-                config,
-            )),
+            crate::money::Money::from_cents(cash_with_pending_at(group_account)),
         );
         let mut positions = std::collections::BTreeMap::new();
         for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
@@ -6547,6 +6482,7 @@ mod sol_recheck3_tests {
         const PURSE0: i64 = 200_000 + 500 + 2;
         const CHARGE: i64 = 90_000 + 500 + 1;
         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000 - PURSE0;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).buy_purse_held_cents = PURSE0;
         state.apply_batch_immediate(batch(
             Vec::new(),
             vec![FillFact {
@@ -6563,13 +6499,7 @@ mod sol_recheck3_tests {
         state
             .apply_deferred()
             .expect("本单部分成交正常推进");
-        let face = cash_with_pending_at(
-            &state.accounts[0],
-            &state.child_in_flight,
-            &[crate::AccountId(9)],
-            0,
-            &state.config,
-        );
+        let face = cash_with_pending_at(&state.accounts[0]);
         assert_eq!(
             face,
             1_000_000 - CHARGE,
@@ -6580,15 +6510,23 @@ mod sol_recheck3_tests {
             PURSE0 - CHARGE,
             "在途 purse 加回=desk 余额 110001（价优差额不漏计——重算下界=100001 显红）"
         );
+        state
+            .apply_batch_immediate(
+                batch(
+                    vec![Entity::CashRefund { local: 0, amount: 10_000 }],
+                    Vec::new(),
+                ),
+                1,
+                0,
+            )
+            .expect("实际价优退款落账");
+        state.apply_deferred().expect("退款批次收尾");
+        assert_eq!(cash_with_pending_at(&state.accounts[0]), 1_000_000 - CHARGE);
+        assert_eq!(state.accounts[0].buy_purse_held_cents, 100_001);
+        assert_eq!(state.accounts[0].cash, 1_000_000 - PURSE0 + 10_000);
         // Abort 验证：票占用随 undo 冲回——读面恢复挂出全额。
         state.rollback();
-        let face_after = cash_with_pending_at(
-            &state.accounts[0],
-            &state.child_in_flight,
-            &[crate::AccountId(9)],
-            0,
-            &state.config,
-        );
+        let face_after = cash_with_pending_at(&state.accounts[0]);
         assert_eq!(
             face_after - state.accounts[0].cash,
             PURSE0,
