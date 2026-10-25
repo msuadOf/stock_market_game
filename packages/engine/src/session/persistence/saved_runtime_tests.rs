@@ -2114,6 +2114,111 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
         .expect("adopt 静点档必须可恢复（种子 purse=精确 escrow——fault2220 即 purse 口径错）");
 }
 
+// OrderId 边界只需要合法发行人；静态工商配置保留真实前史/披露装配，
+// 避免为 33 股重复生成与编码域无关的经营交易、借款和固定资产。
+fn order_id_boundary_companies(
+    setup: &SessionSetup,
+) -> crate::company::operations::CompanyOperationsConfig {
+    use crate::accounting::{
+        AccountingAmount, InventoryItemCode, JournalLine, LedgerAccountId, PostingSide,
+    };
+    use crate::company::industrial::{industrial_account_chart, IndustrialBooks, IndustrialConfig};
+    use crate::company::operations::{
+        CompanyOperationsConfig, FlowParams, IndustrialFlowParams, IndustryBooks,
+        OperatingCompanyConfig,
+    };
+    use crate::company::{
+        CompanyCatalog, CompanyKind, CompanySpec, CounterpartyId, IndustryId, OperatingBudget,
+    };
+
+    let as_of = crate::calendar::CivilDate::from_ymd(setup.start_date.year() - 3, 12, 31)
+        .expect("前史账套日期");
+    let books = IndustrialBooks::new(IndustrialConfig {
+        chart: industrial_account_chart(),
+        as_of,
+        opening_lines: vec![
+            JournalLine {
+                account: LedgerAccountId("1002".into()),
+                side: PostingSide::Debit,
+                amount: AccountingAmount::from_cents(100_000_000),
+            },
+            JournalLine {
+                account: LedgerAccountId("4001".into()),
+                side: PostingSide::Credit,
+                amount: AccountingAmount::from_cents(100_000_000),
+            },
+        ],
+        opening_inventory: Vec::new(),
+        opening_assets: Vec::new(),
+        opening_debt: None,
+        counterparties: Vec::new(),
+        budget: OperatingBudget::new(AccountingAmount::ZERO, Vec::new()).expect("无授信预算"),
+        // 与既有工商 Fixture 相同的合成税率；本用例没有经营应税流。
+        tax_policy: crate::accounting::TaxPolicy {
+            version: 1,
+            vat: crate::accounting::VatPolicy {
+                output_rate_bp: 1_300,
+                input_rate_bp: 1_300,
+                deductible_share_bp: 10_000,
+            },
+            income_tax: crate::accounting::IncomeTaxPolicy {
+                rate_bp: 2_500,
+                loss_carryforward_years: 5,
+            },
+        },
+    })
+    .expect("静态工商账套");
+    let companies: Vec<_> = setup
+        .stocks
+        .iter()
+        .map(|stock| OperatingCompanyConfig {
+            spec: CompanySpec {
+                code: format!("C-{}", stock.code.0),
+                name: "虚构静态发行人".into(),
+                industry: IndustryId("industrial".into()),
+                kind: CompanyKind::Industrial,
+                listed_stock: Some(stock.code.clone()),
+                issued_shares: stock.total_shares,
+                group_parent: None,
+            },
+            books: IndustryBooks::Industrial(books.clone()),
+            flow: FlowParams::Industrial(IndustrialFlowParams {
+                customer: CounterpartyId("UNUSED-CUSTOMER".into()),
+                supplier: CounterpartyId("UNUSED-SUPPLIER".into()),
+                raw_item: InventoryItemCode("RAW".into()),
+                finished_item: InventoryItemCode("FG".into()),
+                raw_account: LedgerAccountId("1403".into()),
+                finished_account: LedgerAccountId("1405".into()),
+                base_daily_demand_units: 0,
+                unit_price_excl_vat: AccountingAmount::from_cents(100),
+                receivable_credit_days: 1,
+                raw_replenish_target_units: 0,
+                raw_unit_cost_excl_vat: AccountingAmount::from_cents(1),
+                daily_production_units: 0,
+                daily_conversion_cost: AccountingAmount::ZERO,
+                daily_admin_expense: AccountingAmount::ZERO,
+                bad_debt_base_bp: 0,
+                asset_impairment_fraction_bp: 0,
+            }),
+        })
+        .collect();
+    let codes: Vec<_> = companies
+        .iter()
+        .map(|company| company.spec.code.as_str())
+        .collect();
+    let catalog = CompanyCatalog::from_codes(&codes).expect("33 家唯一发行人目录");
+    let mut shock_params = crate::company::events::ShockParams::current_default_parameters();
+    shock_params.market_candidate_bp = 0;
+    shock_params.industry_candidate_bp = 0;
+    shock_params.company_candidate_bp = 0;
+    CompanyOperationsConfig {
+        seed: 42,
+        shock_params,
+        catalog,
+        companies,
+    }
+}
+
 /// Sol 六审 v6 判 B 必修（OrderId 编码域）：33 股局（股序 0..=32）的
 /// 合成 id `(stock<<48)|serial` 在第 33 股起超 js_safe wire 域——事件
 /// id/存档往返全链红证（next_order_id 夹取只修下界，未修编码域）。
@@ -2141,6 +2246,7 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
     setup.config.starting_cash = crate::money::Money::from_cents(1_000_000);
+    setup.company_operations = Some(order_id_boundary_companies(&setup));
     let mut session = GameSession::new(setup, 42).expect("33 股 fixture 必须有效");
     // 第 33 股（idx 32）玩家限价单——受理事件的 id 即超域编码。
     session

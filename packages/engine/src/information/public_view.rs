@@ -514,7 +514,9 @@ impl PublicLibrary {
                     ),
                 });
             }
-            library.insert_report(report)?;
+            // 私有候选库完成验证后才统一计算 digest，避免历史报告反复全库 hash。
+            let following = library.validate_report_insertion(&report)?;
+            library.commit_report_insertion(report, following);
         }
         for announcement in save.announcements {
             if announcement.id.value() >= save.next_seq {
@@ -601,29 +603,39 @@ impl PublicLibrary {
     }
 
     fn insert_report(&mut self, report: PublishedReport) -> Result<(), InformationError> {
-        ensure_report_shape(&report)?;
-        self.validate_correction_target(&report)?;
+        let following = self.validate_report_insertion(&report)?;
         let id = report.id;
-        let company = report.company.clone();
-        if self.reports.contains_key(&id) || self.announcements.contains_key(&id) {
-            return Err(InformationError::DuplicatePublicationId { id });
-        }
-        let following =
-            id.value()
-                .checked_add(1)
-                .ok_or_else(|| InformationError::InconsistentLibrary {
-                    detail: "公开材料 ID 空间耗尽".into(),
-                })?;
         let content_digest = if id.value() == self.next_seq {
             extend_content_digest(self.content_digest, b'R', id, &report)?
         } else {
             self.recompute_content_digest_with_report(&report)?
         };
+        self.commit_report_insertion(report, following);
+        self.content_digest = content_digest;
+        Ok(())
+    }
+
+    fn validate_report_insertion(&self, report: &PublishedReport) -> Result<u32, InformationError> {
+        ensure_report_shape(report)?;
+        self.validate_correction_target(report)?;
+        let id = report.id;
+        if self.reports.contains_key(&id) || self.announcements.contains_key(&id) {
+            return Err(InformationError::DuplicatePublicationId { id });
+        }
+        id.value()
+            .checked_add(1)
+            .ok_or_else(|| InformationError::InconsistentLibrary {
+                detail: "公开材料 ID 空间耗尽".into(),
+            })
+    }
+
+    // 调用方先完成验证；正常发布还须先成功计算 digest，恢复则在返回库前统一计算。
+    fn commit_report_insertion(&mut self, report: PublishedReport, following: u32) {
+        let id = report.id;
+        let company = report.company.clone();
         self.reports.insert(id, report);
         self.by_company.entry(company).or_default().insert(id);
         self.next_seq = self.next_seq.max(following);
-        self.content_digest = content_digest;
-        Ok(())
     }
 
     fn validate_correction_target(&self, report: &PublishedReport) -> Result<(), InformationError> {
@@ -767,6 +779,299 @@ mod tests {
                 expires_on: occurred_on,
             }),
         }
+    }
+
+    fn report_fixture() -> (ClosingEngine, PublicationRequest) {
+        use crate::accounting::consolidation::ScopeId;
+        use crate::accounting::reports::{
+            generate_report_set, ReportKind, ReportRequest, ReportSource, ReportVersion,
+            VersionKind,
+        };
+        let period = crate::accounting::AccountingPeriod::from_ymd(2029, 12).unwrap();
+        let books = Books::new(crate::company::industrial::industrial_account_chart());
+        let member = MemberId(0);
+        let report = generate_report_set(ReportRequest {
+            period,
+            kind: ReportKind::Annual,
+            source: ReportSource::Standalone {
+                id: member.clone(),
+                books: &books,
+                industry: IndustryPresentation::Industrial,
+            },
+            version: ReportVersion {
+                sequence: 1,
+                supersedes: None,
+                kind: VersionKind::Original,
+            },
+            adjustments: &BTreeMap::new(),
+        })
+        .unwrap();
+        let mut closing = ClosingEngine::new();
+        closing.record(report).unwrap();
+        let date = CivilDate::from_iso("2030-03-20").unwrap();
+        let request = PublicationRequest {
+            company: CompanyId(0),
+            scope: ScopeId::Standalone(member),
+            period,
+            kind: ReportKind::Annual,
+            sequence: 1,
+            policy: super::super::AccountingPolicyRef { chart_version: 2 },
+            approved_at: CivilInstant::from_hms(date, 8, 0, 0).unwrap(),
+            published_at: CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
+            origin: super::super::PublicationOrigin::ScheduledDisclosure {
+                fiscal_year: 2029,
+                kind: super::super::ScheduledReportKind::Annual,
+                offset_days: 0,
+            },
+            supersedes: None,
+        };
+        (closing, request)
+    }
+
+    fn publish_correction(
+        library: &mut PublicLibrary,
+        closing: &mut ClosingEngine,
+        original: &PublicationRequest,
+        target: PublicationId,
+        sequence: u32,
+    ) -> PublicationId {
+        use crate::accounting::reports::{ReportVersion, VersionKind};
+        let mut report = library.reports[&target].reports.clone();
+        report.version = ReportVersion {
+            sequence,
+            supersedes: Some(sequence - 1),
+            kind: VersionKind::Correction {
+                reason: "恢复后仍保留公开更正链".into(),
+            },
+        };
+        closing.record(report).unwrap();
+        let mut request = original.clone();
+        request.sequence = sequence;
+        request.origin = super::super::PublicationOrigin::Correction;
+        request.supersedes = Some(target);
+        library.publish_closed(closing, request).unwrap()
+    }
+
+    fn mixed_library() -> (PublicLibrary, ClosingEngine, PublicationRequest) {
+        let (mut closing, request) = report_fixture();
+        let mut library = PublicLibrary::new();
+        let original = library.publish_closed(&closing, request.clone()).unwrap();
+        library.publish_announcement(announcement(500)).unwrap();
+        let correction = publish_correction(&mut library, &mut closing, &request, original, 2);
+        let mut other = announcement(501);
+        other.company = CompanyId(1);
+        library.publish_announcement(other).unwrap();
+        publish_correction(&mut library, &mut closing, &request, correction, 3);
+        (library, closing, request)
+    }
+
+    #[test]
+    fn restore_mixed_publications_matches_publish_and_continues_correction_chain() {
+        let (mut published, mut closing, request) = mixed_library();
+        let mut save = published.save();
+        save.reports.reverse();
+        save.announcements.reverse();
+        let mut restored = PublicLibrary::from_parts(save.clone()).unwrap();
+        let from_serde: PublicLibrary =
+            serde_json::from_slice(&serde_json::to_vec(&save).unwrap()).unwrap();
+        assert_eq!(restored, published);
+        assert_eq!(from_serde, published);
+        assert_eq!(restored.hash_projection(), published.hash_projection());
+        assert_eq!(
+            serde_json::to_vec(&restored).unwrap(),
+            serde_json::to_vec(&published).unwrap()
+        );
+        assert_eq!(
+            restored.by_company[&CompanyId(0)],
+            [0, 1, 2, 4].map(PublicationId::new).into()
+        );
+        assert_eq!(
+            restored.by_company[&CompanyId(1)],
+            [PublicationId::new(3)].into()
+        );
+        assert_eq!(restored.next_seq, 5);
+        let mut restored_closing = closing.clone();
+        let target = PublicationId::new(4);
+        assert_eq!(
+            publish_correction(&mut restored, &mut restored_closing, &request, target, 4),
+            publish_correction(&mut published, &mut closing, &request, target, 4),
+        );
+        assert_eq!(
+            restored.publish_announcement(announcement(502)).unwrap(),
+            published.publish_announcement(announcement(502)).unwrap()
+        );
+        assert_eq!(restored, published);
+        assert_eq!(restored.hash_projection(), published.hash_projection());
+        assert_eq!(
+            serde_json::to_vec(&restored).unwrap(),
+            serde_json::to_vec(&published).unwrap()
+        );
+    }
+
+    #[test]
+    fn restore_rejects_invalid_correction_relationships_without_preinserting_targets() {
+        let (library, _, _) = mixed_library();
+        let base = library.save();
+        // 每项分别保留既有拒错；公司与范围必须同时改，才能到达更正目标校验。
+        let mutations: &[fn(&mut PublishedReport)] = &[
+            |r| r.source = super::super::PublicationSource::SimpleGenerated,
+            |r| {
+                r.company = CompanyId(1);
+                r.reports.scope =
+                    crate::accounting::consolidation::ScopeId::Standalone(MemberId(1));
+            },
+            |r| {
+                r.reports.version.sequence = 1;
+                r.reports.version.supersedes = Some(0);
+            },
+            |r| r.reports.version.supersedes = Some(0),
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut save = base.clone();
+            mutate(&mut save.reports[1]);
+            let error = PublicLibrary::from_parts(save).unwrap_err();
+            assert!(
+                matches!(error, InformationError::CorrectionTargetMismatch { .. }),
+                "mutation {index}: {error}"
+            );
+        }
+        let mut save = base.clone();
+        save.reports[1].reports.scope =
+            crate::accounting::consolidation::ScopeId::Standalone(MemberId(1));
+        assert!(matches!(
+            PublicLibrary::from_parts(save),
+            Err(InformationError::ScopeCompanyMismatch { .. })
+        ));
+        let mut save = base.clone();
+        save.reports[1].reports.period =
+            crate::accounting::AccountingPeriod::from_ymd(2028, 12).unwrap();
+        assert!(matches!(
+            PublicLibrary::from_parts(save),
+            Err(InformationError::ReportNotPublishable(_))
+        ));
+        let mut save = base.clone();
+        save.reports[1].supersedes = Some(PublicationId::new(4));
+        assert!(
+            matches!(PublicLibrary::from_parts(save), Err(InformationError::CorrectionTargetUnknown { target }) if target == PublicationId::new(4))
+        );
+        let mut save = base;
+        save.reports[1].published_at =
+            CivilInstant::from_hms(CivilDate::from_iso("2030-03-19").unwrap(), 18, 0, 0).unwrap();
+        save.reports[1].approved_at =
+            CivilInstant::from_hms(CivilDate::from_iso("2030-03-19").unwrap(), 8, 0, 0).unwrap();
+        assert!(matches!(
+            PublicLibrary::from_parts(save),
+            Err(InformationError::CorrectionPrecedesOriginal { .. })
+        ));
+    }
+
+    #[test]
+    fn restore_preserves_report_error_order_and_counter_boundaries() {
+        let (library, _, _) = mixed_library();
+        let mut save = library.save();
+        let mut duplicate = save.reports[1].clone();
+        duplicate.source = super::super::PublicationSource::SimpleGenerated;
+        save.reports.push(duplicate);
+        assert!(matches!(
+            PublicLibrary::from_parts(save.clone()),
+            Err(InformationError::CorrectionTargetMismatch { .. })
+        ));
+        save.reports.last_mut().unwrap().supersedes = None;
+        assert!(matches!(
+            PublicLibrary::from_parts(save),
+            Err(InformationError::OriginSupersedesMismatch)
+        ));
+        let mut save = library.save();
+        save.reports.push(save.reports[0].clone());
+        assert!(matches!(
+            PublicLibrary::from_parts(save),
+            Err(InformationError::DuplicatePublicationId { .. })
+        ));
+        let mut save = library.save();
+        save.next_seq = 4;
+        assert!(matches!(
+            PublicLibrary::from_parts(save),
+            Err(InformationError::InconsistentLibrary { .. })
+        ));
+        let mut save = library.save();
+        save.next_seq += 1;
+        assert!(matches!(
+            PublicLibrary::from_parts(save),
+            Err(InformationError::InconsistentLibrary { .. })
+        ));
+        let mut exhausted = PublicLibrary::new();
+        exhausted.next_seq = u32::MAX;
+        let before = exhausted.clone();
+        let mut report = library.save().reports.remove(0);
+        report.id = PublicationId::new(u32::MAX);
+        assert!(matches!(exhausted.insert_report(report), Err(InformationError::InconsistentLibrary { .. })));
+        assert_eq!(exhausted, before);
+        assert_eq!(
+            PublicLibrary::from_parts(PublicLibrary::new().save()).unwrap(),
+            PublicLibrary::new()
+        );
+        assert!(matches!(
+            PublicLibrary::from_parts(PublicLibrarySave {
+                next_seq: 1,
+                reports: vec![],
+                announcements: vec![]
+            }),
+            Err(InformationError::InconsistentLibrary { .. })
+        ));
+    }
+
+    #[test]
+    fn restore_preserves_announcement_input_order_and_validation_before_duplicate() {
+        let (library, _, _) = mixed_library();
+        let mut save = library.save();
+        save.announcements.push(save.announcements[0].clone());
+        assert!(matches!(
+            PublicLibrary::from_parts(save.clone()),
+            Err(InformationError::DuplicatePublicationId { .. })
+        ));
+        let occurred_on = save.announcements[0].occurred_on;
+        let mut invalid_plan = crate::company::cash_dividend::CashDividendPlan {
+            plan_id: "恢复内容先于重复 ID 校验".into(),
+            issuer: CompanyId(0),
+            stock: crate::account::StockCode("600001".into()),
+            exchange: crate::calendar::CalendarExchange::Sse,
+            formula: crate::company::ex_reference_price::CashDividendFormula::StandardCashOnly,
+            approved_on: CivilDate::from_iso("2030-04-01").unwrap(),
+            announced_on: occurred_on,
+            registered_on: occurred_on.next().unwrap(),
+            ex_dividend_on: CivilDate::from_iso("2030-04-22").unwrap(),
+            payable_on: CivilDate::from_iso("2030-04-23").unwrap(),
+            gross_per_share: crate::money::Money::from_cents(10),
+            distributable_amount: crate::money::Money::from_cents(1000),
+        };
+        invalid_plan.issuer = CompanyId(1);
+        save.announcements.last_mut().unwrap().content =
+            AnnouncementContent::CashDividend(crate::information::CashDividendAnnouncement {
+                plan: invalid_plan,
+                total_gross: crate::money::Money::from_cents(100),
+            });
+        assert!(matches!(
+            PublicLibrary::from_parts(save.clone()),
+            Err(InformationError::InconsistentLibrary { .. })
+        ));
+        let duplicate = save.announcements.last_mut().unwrap();
+        duplicate.published_at = CivilInstant::from_hms(duplicate.occurred_on, 17, 0, 0).unwrap();
+        let timing_error = PublicLibrary::from_parts(save.clone()).unwrap_err();
+        assert!(matches!(
+            timing_error,
+            InformationError::PublicationOutsidePhase { .. }
+        ));
+        // 第一条无效公告的域错误先于后一条的时序错误；公告不能为恢复重排。
+        save.announcements[0].id = PublicationId::new(save.next_seq);
+        assert!(matches!(
+            PublicLibrary::from_parts(save.clone()),
+            Err(InformationError::InconsistentLibrary { .. })
+        ));
+        save.announcements.reverse();
+        assert_eq!(
+            PublicLibrary::from_parts(save).unwrap_err().to_string(),
+            timing_error.to_string()
+        );
     }
 
     #[test]
