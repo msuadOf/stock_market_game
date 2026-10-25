@@ -3,7 +3,7 @@ import test from "node:test"
 import { representativeCompanyOperationsFixture } from "./company-slice-test-fixture.ts"
 import { parseBooks, parseChartOfAccounts, parseCompanySpec, parsePeriodStates } from "./schema/company/accounting/index.ts"
 
-const company = (representativeCompanyOperationsFixture() as any).companies["C-000812"]
+const company = (representativeCompanyOperationsFixture() as any).companies["0"]
 
 test("accounting parsers preserve a populated mature common company slice", () => {
   assert.deepEqual(parseCompanySpec(company.spec, "company.spec"), company.spec)

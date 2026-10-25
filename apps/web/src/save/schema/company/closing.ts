@@ -1,4 +1,5 @@
-import { SaveSchemaError, array, exact, oneOf, record, string } from "../primitives.ts"
+import { u32 } from "../personal/common.ts"
+import { SaveSchemaError, array, exact, oneOf, record } from "../primitives.ts"
 import { period, u64 } from "./value.ts"
 import { parseReportSet, type ReportSet, type Scope } from "./reports.ts"
 
@@ -14,8 +15,8 @@ function parseScope(value: unknown, path: string): Scope {
   if (entries.length !== 1) throw new SaveSchemaError(path, "必须是单一范围变体")
   const entry = entries[0]
   if (entry === undefined) throw new SaveSchemaError(path, "必须是单一范围变体")
-  if (entry[0] === "Standalone") return { Standalone: string(entry[1], `${path}.Standalone`) }
-  if (entry[0] === "Consolidated") return { Consolidated: string(entry[1], `${path}.Consolidated`) }
+  if (entry[0] === "Standalone") return { Standalone: u32(entry[1], `${path}.Standalone`) }
+  if (entry[0] === "Consolidated") return { Consolidated: u32(entry[1], `${path}.Consolidated`) }
   throw new SaveSchemaError(path, "包含无效范围变体")
 }
 

@@ -122,6 +122,7 @@ export function currentSaveFixture(): JsonObject {
     },
     groups: [],
     company_operations: {
+      catalog: { metas: [] },
       payment_failures: {},
       seed: "0",
       shock_params: {

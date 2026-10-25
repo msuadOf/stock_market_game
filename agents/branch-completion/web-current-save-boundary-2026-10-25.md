@@ -41,3 +41,33 @@
 - setup 当前模式字段需按现 Rust 定义严格适配，不冒称新局 UI 模式旅程已覆盖。
 - 所有批次后须在同一未改动原档上执行完整 Web parse，并闭合 Rust restore 见证；目前未宣称此门禁通过。
 - 可信独立 reviewer `sol61_pending122_contract` 逐批审查增量完整 diff；未完成终审前不宣称交付完成。
+
+## 第二批：公司身份、披露结构和税务仓位
+
+此批由同一原档逐域失败直接驱动，没有更改 Rust 生产语义：
+
+| 当前字段 | Rust/生成类型依据 | Web 适配 |
+|---|---|---|
+| `CompanySpec.code/issued_shares` | `company/spec.rs` | code 取代旧 id；股份正 canonical u64 string |
+| `CompanyOperations.catalog.metas[].code/name` | `company/spec.rs::CompanyCatalog` | exact 两项元数据；拒绝重复代码及派生 by_code |
+| `companies` map key、`PaymentFailure.company`、`ScheduledAction.company` | `CompanyId(u32)` | key 为规范 u32 十进制串，值身份为 u32 number |
+| `PublishedReport.company/source` | `information/publication.rs`、`PublicationSource.ts` | 数值 CompanyId；严格两种 source |
+| 报表和 ClosingRegistry 的 `Standalone/Consolidated` | `MemberId(u32)` | 数值 u32，拒旧公司代码串 |
+| `ReportSet.roe` 六项结构 | `accounting/reports/mod.rs`、`ReportRoe.ts` | 复用已有公共 DTO 的完整 ROE validator；新增断言入口无类型绕过 |
+| `income.report_period/report_period_net_income_to_parent` | `accounting/reports/income.rs` | 必填列及 nullable 金额，原样保存 |
+| `BsLine` 新增列 | `accounting/reports/balance_sheet.rs` | 补 `SimpleDividendSettlementAdjustment`、`SimpleIssuerFundingAdjustment`、`CapitalReserve`、`StatutoryReserve`；只接受 Rust 实际枚举 |
+| `Announcement.content` | `information/publication.rs` | 接独立 writer 六变体 parser；外层 exact content，保 PaymentFailure 单日幅度校验 |
+| `IncomeTaxPosition` | `company/income_tax.rs` | 严格 loss_pool、assessments 年度 map、initial_deferred_tax_asset、restatements；年度项 strict pretax/current_tax/opening_loss_pool/deferred_tax_asset |
+
+- 公告独立实现 `d6aa0d05` 精确 cherry-pick 为本树 `283afef0`，未在本批重写。
+- 公司字段红灯原日志 `company-wire-red.log`；逐域暴露后续 `roe`、`income.report_period`、`BsLine` 的原失败在 `company-wire-green.log`、`company-wire-green-2.log`、`company-wire-green-3.log`，不是通过收据。
+- 所得税仓位单独红灯 `tax-position-red.log`、绿灯 `tax-position-green.log`；原档税务完整子对象已原样加入短 fixture。
+- 旧 fixture 关联回归首轮28/30绿，两个旧输入分别仍用旧 assessment 和把合法数值 CompanyId 当非法；更新输入形状后 `company-related-regression-2.log` 50/50绿，exit=0，wall3.92s。全程保留原断言意图、未知字段/坏类型/缺字段拒绝，不弱化断言。
+- 历史大 JSON 及历史公司切片原字节保留；仅测试 helper 投影 schema，并明确税务/ROE 新增事实不作为 Rust 恢复证据。
+
+## 真实原档闭环（不是历史 projection）
+
+- 本树 `.tmp/plan-identity-web-receipts/full-save-roundtrip-green.log`：`run-with-deadline.mjs 10000 -- node .tmp/plan-identity-web-receipts/roundtrip.mjs`，exit=0，wall0.46s。脚本先核原03a7哈希，执行完整 `parseSaveSlot → deepEqual原对象 → JSON.stringify → 再parse → deepEqual原对象`，最后再核原档未变。
+- Web 输出 `.tmp/plan-identity-web-receipts/roundtrip-save.json`，SHA-256 `e5541bd1e4fd6a3f4aab201095e98176a5b6721a0226731354c9425e9ef534fe`。
+- 核心随后对该确切回写文件执行真实 Rust `decode_save_slot → GameSession::restore`，2计划，外10000ms，exit0。证据 commit `90e9b624` 的 `plan-identity-web-roundtrip-evidence.json.log` 绑定完整命令、probe源码/二进制/engine rlib及两份原档SHA；说明 `5237591a`。原03a7在最终核心重新构建后逐字节一致。
+- 本原档没有 `company_system` 等8项 setup 可选键；此闭环不证明 Simple 公司模式或税务新局 UI 的完整旅程。8项新parser由另独立 writer 提供并以类型/单测验证；真实Simple含选项存档证据由后续 B4f 任务补。
