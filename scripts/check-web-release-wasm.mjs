@@ -1,3 +1,4 @@
+import { Session } from "node:inspector/promises";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,23 +129,40 @@ function parseWasmImports(bytes) {
   return imports;
 }
 
-/// code section（id=10）内扫描 0xFE 前缀原子指令（子码 ≤0x4F：notify/
-/// wait/加载/存储/RMW 全族；其余 0xFE 高码位属 GC/relaxed-SIMD 等后继提案）。
-function containsAtomicInstructions(bytes) {
-  let cursor = 8;
-  while (cursor < bytes.length) {
-    const sectionId = bytes[cursor];
-    const { value: sectionSize, cursor: afterSize } = readLeb32Unsigned(bytes, cursor + 1);
-    const sectionEnd = afterSize + sectionSize;
-    if (sectionEnd > bytes.length) throw new Error(`wasm section ${sectionId} 声明长度越界`);
-    if (sectionId === 0x0a) {
-      for (let index = afterSize; index < sectionEnd - 1; index += 1) {
-        if (bytes[index] === 0xfe && bytes[index + 1] <= 0x4f) return true;
-      }
+/// 用Node内置V8反汇编读取真实指令，不能把LEB立即数/自定义名称中的0xFE当opcode。
+/// debugger会回放其他module，故捕获窗口仅包围同步编译，并逐字节核对bytecode身份。
+async function containsAtomicInstructions(bytes) {
+  const session = new Session();
+  session.connect();
+  try {
+    await session.post("Debugger.enable");
+    const ids = [];
+    const capture = ({ params }) => { if (params.scriptLanguage === "WebAssembly") ids.push(params.scriptId); };
+    session.on("Debugger.scriptParsed", capture);
+    try { new WebAssembly.Module(bytes); }
+    finally { session.off("Debugger.scriptParsed", capture); }
+    if (ids.length !== 1) throw new Error(`原子指令门无法唯一绑定本次WASM scriptId，实际${ids.length}个`);
+    const source = await session.post("Debugger.getScriptSource", { scriptId: ids[0] });
+    if (typeof source.bytecode !== "string" || !Buffer.from(source.bytecode, "base64").equals(Buffer.from(bytes))) {
+      throw new Error("原子指令门反汇编module字节身份不符");
     }
-    cursor = sectionEnd;
-  }
-  return false;
+    const disassembly = await session.post("Debugger.disassembleWasmModule", { scriptId: ids[0] });
+    let chunk = disassembly.chunk;
+    let seen = 0;
+    let atomic = false;
+    for (;;) {
+      // 只匹配线性反汇编的首个指令token；函数名/注释/custom段都不能冒充指令。
+      for (const line of chunk.lines) {
+        if (/^\s*(?:atomic\.fence|memory\.atomic\.[a-z0-9_]+|(?:i32|i64)\.atomic\.[a-z0-9_.]+)(?:\s|$)/.test(line)) atomic = true;
+      }
+      seen += chunk.lines.length;
+      if (seen === disassembly.totalNumberOfLines) return atomic;
+      if (seen > disassembly.totalNumberOfLines || chunk.lines.length === 0 || !disassembly.streamId) {
+        throw new Error("原子指令门反汇编chunks不完整");
+      }
+      ({ chunk } = await session.post("Debugger.nextWasmDisassemblyChunk", { streamId: disassembly.streamId }));
+    }
+  } finally { session.disconnect(); }
 }
 
 async function verifyTimeImportWhitelist(bytes) {
@@ -173,14 +191,14 @@ export async function verifyWebReleaseWasm(directory) {
   await Promise.all(modules.map(async (filename) => {
     const bytes = await readFile(path.join(directory, filename));
     const module = new WebAssembly.Module(bytes);
-    const forbidden = WebAssembly.Module.exports(module).filter(({ name }) => /npc_decision_(trace|diagnostics)/.test(name));
+    const forbidden = WebAssembly.Module.exports(module).filter(({ name }) => /npc_decision_(trace|diagnostics)|^verification_facade_/.test(name));
     if (forbidden.length > 0) throw new Error(`release WASM 暴露私有诊断导出 ${forbidden.map(({ name }) => name).join(", ")}: ${filename}`);
   }));
   const gameBytes = new Uint8Array(await readFile(path.join(directory, files[0])));
   await verifyTimeImportWhitelist(gameBytes);
   // 4. 原子码位（tripwire）。
-  if (!containsAtomicInstructions(gameBytes)) {
-    throw new Error("game WASM code section 无 0xFE 原子指令：+atomics 产物链疑似漂移为串行链");
+  if (!await containsAtomicInstructions(gameBytes)) {
+    throw new Error("game WASM 无真实原子指令：+atomics 产物链疑似漂移为串行链");
   }
   return files;
 }

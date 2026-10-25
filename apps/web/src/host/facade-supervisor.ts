@@ -194,25 +194,14 @@ export function evaluateOkRecovery(
   slot: number,
   gen: number,
 ): RecoveryOutcome {
-  const w = u32(Atomics.load(arena.words, slotWordOffset(slot)));
-  if (w !== encodeW(gen, SlotState.Ok, arena.genBits)) return "gates-not-met";
-  // join 槽与请求槽按 index 配对（H3 发布写 SLOT_JOIN_INDEX = 槽 index）。
-  const joinIndex = u32(Atomics.load(arena.words, slotFieldOffset(slot, SLOT_JOIN_INDEX)));
-  const joinOffset = joinWordOffset(joinIndex, arena.capacity);
-  if (u32(Atomics.load(arena.words, joinOffset)) !== encodeJoin(gen, JoinState.Consumed, arena.genBits)) {
-    return "gates-not-met";
-  }
-  // 门 (c)：仍存在 ACTIVE 的该 (slot,gen) 条目 ⇒ 子还活着，不得回收。
-  for (const entry of state.manifest.values()) {
-    if (entry.slot === slot && entry.gen === gen && entry.status === "active") {
-      return "gates-not-met";
-    }
-  }
+  if (!recoveryGatesMet(arena, state, slot, gen)) return "gates-not-met";
   if (!tryLock(arena.words)) {
     if (!state.pendingRecovery.some(([s, g]) => s === slot && g === gen)) state.pendingRecovery.push([slot, gen]);
     return "delayed";
   }
   try {
+    // H1前初检只用于快返；engine可已复用，持锁后必须重验完整门链。
+    if (!recoveryGatesMet(arena, state, slot, gen)) return "gates-not-met";
     // 槽保持 OK 到下次分配；H1 内查询空闲表，防重复事件二次 push。
     let cursor = u32(Atomics.load(arena.words, FREE_HEAD));
     for (let walked = 0; cursor !== FREE_HEAD_EMPTY; walked += 1) {
@@ -225,6 +214,25 @@ export function evaluateOkRecovery(
     pushFree(arena, slot);
     return "pushed";
   } finally { unlock(arena.words); }
+}
+
+/** 完整代、join消费与manifest门链；只有H1内二检可授权入free list。 */
+function recoveryGatesMet(arena: FacadeArenaView, state: SupervisorState, slot: number, gen: number): boolean {
+  const w = u32(Atomics.load(arena.words, slotWordOffset(slot)));
+  if (w !== encodeW(gen, SlotState.Ok, arena.genBits)) return false;
+  // join 槽与请求槽按 index 配对（H3 发布写 SLOT_JOIN_INDEX = 槽 index）。
+  const joinIndex = u32(Atomics.load(arena.words, slotFieldOffset(slot, SLOT_JOIN_INDEX)));
+  const joinOffset = joinWordOffset(joinIndex, arena.capacity);
+  if (u32(Atomics.load(arena.words, joinOffset)) !== encodeJoin(gen, JoinState.Consumed, arena.genBits)) {
+    return false;
+  }
+  // 门 (c)：仍存在 ACTIVE 的该 (slot,gen) 条目 ⇒ 子还活着，不得回收。
+  for (const entry of state.manifest.values()) {
+    if (entry.slot === slot && entry.gen === gen && entry.status === "active") {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** 延迟回收检查点重试（下一 facadeSpawn / workerExit 事件驱动）。返回成功 push 数。 */

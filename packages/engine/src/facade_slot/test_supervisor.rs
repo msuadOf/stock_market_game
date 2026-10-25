@@ -233,18 +233,7 @@ pub fn on_worker_exit<P: FacadePlatform>(
     slot: u32,
     gen: u32,
 ) -> RecoveryOutcome {
-    let gb = arena.gen_bits();
-    let w = arena.slot_word(slot).load(Ordering::SeqCst);
-    // 门 (a)：(gen,OK) 终态（FAIL/CANCELLED 槽归 engine 自回收/RA 账，
-    // 非 supervisor 回收面——§12.1.3 回收权按终态写者归属拆分）。
-    if w != encode_w(gen, SlotState::Ok, gb) {
-        return RecoveryOutcome::GatesNotMet;
-    }
-    // 门 (b)：join 槽 (gen,CONSUMED)（engine join 消费后不再触碰的证明）。
-    let join_index = arena.join_index_of(slot);
-    if arena.join_word(join_index).load(Ordering::SeqCst)
-        != encode_join(gen, JoinState::Consumed, gb)
-    {
+    if !recovery_gates_met(arena, slot, gen) {
         return RecoveryOutcome::GatesNotMet;
     }
     // 门 (c)：摘除已发生（本函数即摘除动作；生产 = TS manifest ACTIVE→REMOVED）。
@@ -256,13 +245,32 @@ pub fn on_worker_exit<P: FacadePlatform>(
         }
         return RecoveryOutcome::Delayed;
     }
-    if arena.is_free(slot) {
+    if !recovery_gates_met(arena, slot, gen) || arena.is_free(slot) {
         arena.h1_unlock(platform);
         return RecoveryOutcome::GatesNotMet;
     }
     arena.push_free(slot);
     arena.h1_unlock(platform);
     RecoveryOutcome::Pushed
+}
+
+/// 测试驱动的manifest摘除由调用方保证；槽与join完整代在H1内再次核对。
+fn recovery_gates_met(arena: &SlotArena, slot: u32, gen: u32) -> bool {
+    let gb = arena.gen_bits();
+    let w = arena.slot_word(slot).load(Ordering::SeqCst);
+    // 门 (a)：(gen,OK) 终态（FAIL/CANCELLED 槽归 engine 自回收/RA 账，
+    // 非 supervisor 回收面——§12.1.3 回收权按终态写者归属拆分）。
+    if w != encode_w(gen, SlotState::Ok, gb) {
+        return false;
+    }
+    // 门 (b)：join 槽 (gen,CONSUMED)（engine join 消费后不再触碰的证明）。
+    let join_index = arena.join_index_of(slot);
+    if arena.join_word(join_index).load(Ordering::SeqCst)
+        != encode_join(gen, JoinState::Consumed, gb)
+    {
+        return false;
+    }
+    true
 }
 
 /// 延迟回收检查点重试（下一 facadeSpawn/workerExit 事件驱动）。
@@ -272,29 +280,13 @@ pub fn recover_pending<P: FacadePlatform>(
     platform: &P,
     state: &mut SupervisorState,
 ) -> usize {
-    let gb = arena.gen_bits();
     let mut pushed = 0;
-    let mut remaining = Vec::new();
-    for (slot, gen) in state.pending_recovery.drain(..) {
-        let w = arena.slot_word(slot).load(Ordering::SeqCst);
-        let join_ok = arena
-            .join_word(arena.join_index_of(slot))
-            .load(Ordering::SeqCst)
-            == encode_join(gen, JoinState::Consumed, gb);
-        if w == encode_w(gen, SlotState::Ok, gb) && join_ok {
-            platform.seam_recovery_before_lock();
-        }
-        if w == encode_w(gen, SlotState::Ok, gb) && join_ok && arena.h1_try_lock() {
-            if !arena.is_free(slot) {
-                arena.push_free(slot);
-                pushed += 1;
-            }
-            arena.h1_unlock(platform);
-        } else {
-            remaining.push((slot, gen));
+    // 先移走有限快照，只有取锁失败的同代登记留给下次检查点。
+    for (slot, gen) in std::mem::take(&mut state.pending_recovery) {
+        if on_worker_exit(arena, platform, state, slot, gen) == RecoveryOutcome::Pushed {
+            pushed += 1;
         }
     }
-    state.pending_recovery = remaining;
     pushed
 }
 

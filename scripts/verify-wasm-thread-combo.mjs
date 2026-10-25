@@ -23,6 +23,7 @@
 //   shared-memory-gate 已随工具链解阻塞批转绿，不再是待转绿项。
 
 import { execFileSync } from "node:child_process";
+import { availableParallelism } from "node:os";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,7 +61,9 @@ export function combineGateResults(results) {
   };
 }
 
-async function main(withBrowser, lockOnly) {
+async function runWorker(withBrowser, lockOnly, jobs) {
+  const startedAt = Date.now();
+  process.stdout.write(`[combo/resources] ${JSON.stringify({jobs, available: availableParallelism(), sharedDeadlineMs:300000})}\n`);
   const results = [];
 
   // 门 1：锁定矩阵（rustc 工具链 + rust-src + wasm32 target + wasm-pack 版本
@@ -94,8 +97,8 @@ async function main(withBrowser, lockOnly) {
       command: "wasm-pack",
       args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", "wasm-pack-output/frontend/wasm/pkg-combo"],
       cwd: rootDirectory,
-      env: { ...process.env, RUSTUP_TOOLCHAIN: LOCKED_TOOLCHAIN, CARGO_TARGET_DIR: path.join(rootDirectory, "target") },
-      timeoutMs: 290000,
+      env: { ...process.env, RUSTUP_TOOLCHAIN: LOCKED_TOOLCHAIN, CARGO_BUILD_JOBS: String(jobs), CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR ?? path.join(rootDirectory, ".tmp/wasm-thread-combo-target") },
+      timeoutMs: Math.max(1, Math.min(290000, startedAt + 299000 - Date.now())),
       cleanupReserveMs: 1000,
     }, (chunk) => process.stdout.write(`[combo/wasm-build] ${chunk}`));
     return "wasm-pack build 完成（nightly + build-std + atomics）";
@@ -146,6 +149,33 @@ async function main(withBrowser, lockOnly) {
   return summary;
 }
 
+/** 正式长入口由进程外supervisor覆盖矩阵、构建、检查与清理的共享总时限。 */
+export async function main(argv, { run = runBoundedCommand, env = process.env, nodeExecutable = process.execPath } = {}) {
+  const args = [...argv];
+  const jobsIndex = args.indexOf("--jobs");
+  let jobs = availableParallelism();
+  if (jobsIndex !== -1) {
+    const raw = args[jobsIndex + 1];
+    if (!/^[1-9]\d*$/.test(raw ?? "") || !Number.isSafeInteger(Number(raw))) throw new Error("--jobs需要正整数");
+    jobs = Number(raw); args.splice(jobsIndex, 2);
+  }
+  for (const arg of args) if (!["--lock-only", "--browser", "--internal-worker"].includes(arg)) throw new Error(`未知组合参数${arg}`);
+  if (args.includes("--internal-worker")) {
+    if (env.STOCK_GAME_WASM_COMBO_INTERNAL_WORKER !== "1") throw new Error("组合worker必须由进程外supervisor启动");
+    return runWorker(args.includes("--browser"), args.includes("--lock-only"), jobs);
+  }
+  const lockOnly = args.includes("--lock-only");
+  return run({
+    command: nodeExecutable,
+    args: [fileURLToPath(import.meta.url), "--internal-worker", ...args, "--jobs", String(jobs)],
+    cwd: rootDirectory,
+    env: { ...env, STOCK_GAME_WASM_COMBO_INTERNAL_WORKER: "1" },
+    timeoutMs: lockOnly ? 10000 : 300000,
+    cleanupReserveMs: lockOnly ? 200 : 1000,
+  }, (chunk) => process.stdout.write(chunk));
+}
+
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await main(process.argv.includes("--browser"), process.argv.includes("--lock-only"));
+  try { await main(process.argv.slice(2)); }
+  catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }

@@ -95,6 +95,14 @@ function wasmModuleBytes({ imports = [], body = plainBody, exports = [] }) {
   return Buffer.from(parts.flat());
 }
 
+const diagnosticsExportModule = Buffer.from([
+  0, 97, 115, 109, 1, 0, 0, 0,
+  1, 4, 1, 96, 0, 0,
+  3, 2, 1, 0,
+  7, 28, 1, 24, ...Buffer.from("npc_decision_diagnostics"), 0, 0,
+  10, 4, 1, 2, 0, 11,
+]);
+
 const traceExportModule = Buffer.from([
   0, 97, 115, 109, 1, 0, 0, 0,
   1, 4, 1, 96, 0, 0,
@@ -271,4 +279,39 @@ test("release WASM checker rejects verification facade exports", async () => {
     await writeFile(path.join(assets, "web_wasm_bg-verify.wasm"), bytes);
     await assert.rejects(verifyWebReleaseWasm(assets), /verification_facade_spawn/);
   });
+});
+
+
+test("release WASM checker identifies the actual forbidden diagnostics export", async () => {
+  await withAssets(async (assets) => {
+    await writeFile(path.join(assets, "web_wasm_bg-debug.wasm"), diagnosticsExportModule);
+    await assert.rejects(verifyWebReleaseWasm(assets), /npc_decision_diagnostics/);
+  });
+});
+
+
+test("release WASM checker rejects 0xFE inside a constant LEB immediate", async () => {
+  await withAssets(async (assets) => {
+    const bytes = productModuleBytes({ body: [0x00, 0x41, 0xfe, 0x00, 0x1a, 0x0b] });
+    assert.equal(WebAssembly.validate(bytes), true);
+    await writeFile(path.join(assets, "web_wasm_bg-fakeatomic.wasm"), bytes);
+    await assert.rejects(verifyWebReleaseWasm(assets), /原子|atomic/i);
+  });
+});
+
+
+test("原子门不把函数名atomic.fence当指令，且不混入同process其他module", async () => {
+  const atomic = productModuleBytes();
+  const plain = wasmModuleBytes({ imports: [importFunc("env", "engine_clock_now", 1)], body: plainBody,
+    exports: [[...name("atomic.fence"), 0x00, 0x01]],
+  });
+  new WebAssembly.Module(atomic);
+  await withAssets(async (good) => withAssets(async (bad) => {
+    await writeFile(path.join(good, "web_wasm_bg-atomic.wasm"), atomic);
+    await writeFile(path.join(bad, "web_wasm_bg-named.wasm"), plain);
+    await assert.rejects(verifyWebReleaseWasm(bad), /原子|atomic/i);
+    await verifyWebReleaseWasm(good);
+    await Promise.all([verifyWebReleaseWasm(good), assert.rejects(verifyWebReleaseWasm(bad), /原子|atomic/i)]);
+    await assert.rejects(verifyWebReleaseWasm(bad), /原子|atomic/i);
+  }));
 });

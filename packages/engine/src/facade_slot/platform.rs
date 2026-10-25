@@ -166,7 +166,9 @@ impl<P: FacadePlatform + Send> FacadePlatform for std::sync::Arc<P> {
     fn terminate_child(&self, worker_id: u32) {
         (**self).terminate_child(worker_id)
     }
-    fn seam_recovery_before_lock(&self) { (**self).seam_recovery_before_lock() }
+    fn seam_recovery_before_lock(&self) {
+        (**self).seam_recovery_before_lock()
+    }
     fn seam_dead_after_acquire(&self, join: u32) {
         (**self).seam_dead_after_acquire(join)
     }

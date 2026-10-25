@@ -124,15 +124,22 @@ export function decodeJoinState(w: number, genBits: number = GEN_BITS_DEFAULT): 
 
 /** join 复合字（与请求槽同一布局，§9.2.3）。 */
 export function encodeJoin(gen: number, state: number, genBits: number = GEN_BITS_DEFAULT): number {
-  return encodeW(gen, state, genBits);
+  assertEncodingDomain(gen, genBits);
+  if (!Object.values(JoinState).some((value) => value === state)) throw new Error(`encodeJoin: 非法JoinState ${state}`);
+  return (gen * 2 ** (32 - genBits) + state) >>> 0;
 }
 
 /** W = gen << (32 − gen_bits) | state（§12.1.1）。 */
 export function encodeW(gen: number, state: number, genBits: number = GEN_BITS_DEFAULT): number {
+  assertEncodingDomain(gen, genBits);
+  if (!Object.values(SlotState).some((value) => value === state)) throw new Error(`encodeW: 非法SlotState ${state}`);
+  return (gen * 2 ** (32 - genBits) + state) >>> 0;
+}
+
+function assertEncodingDomain(gen: number, genBits: number): void {
+  if (!Number.isInteger(genBits) || genBits < 1 || genBits > 29) throw new Error(`gen_bits必须为1..29，实际${genBits}`);
   assertU32(gen, "gen");
-  const shifted = gen * 2 ** (32 - genBits);
-  if (!Number.isSafeInteger(shifted)) throw new Error(`encodeW: gen ${gen} 超出 gen_bits=${genBits} 域`);
-  return (shifted | state) >>> 0;
+  if (gen >= 2 ** genBits) throw new Error(`gen ${gen} 超出gen_bits=${genBits}域`);
 }
 
 /** 解码 gen（高位）。 */

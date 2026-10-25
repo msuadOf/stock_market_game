@@ -234,7 +234,9 @@ impl FacadePlatform for TestPlatform {
             .expect("terminate 日志锁中毒")
             .push(worker_id);
     }
-    fn seam_recovery_before_lock(&self) { self.seams.recovery.hit_and_wait(); }
+    fn seam_recovery_before_lock(&self) {
+        self.seams.recovery.hit_and_wait();
+    }
     fn seam_dead_after_acquire(&self, _join: u32) {
         self.seams.d.hit_and_wait();
     }
