@@ -3,13 +3,13 @@
 //! §9.2.3（join 单向状态机）、§9.2.1（Box 所有权表）。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
 use super::TestPlatform;
+use crate::facade_slot::arena::AnswerField;
 use crate::facade_slot::arena::SlotArena;
 use crate::facade_slot::codec::*;
-use crate::facade_slot::arena::AnswerField;
 use crate::facade_slot::platform::NullPlatform;
 use crate::facade_slot::roles::*;
 use crate::facade_slot::test_supervisor;
@@ -68,15 +68,29 @@ fn 全链ok_闭包恰跑一次join取回结果() {
         .expect("全链 OK 应返回句柄");
     let child_out = child.join().expect("trampoline 不应 panic");
     assert!(matches!(child_out, TrampolineExit::Ran { .. }));
-    let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen)
-        .expect("join DONE 应取回结果");
+    let (): () =
+        join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join DONE 应取回结果");
     // join 槽 → CONSUMED。
     assert_eq!(
         arena.join_word(0).load(Ordering::SeqCst),
         encode_join(0, JoinState::Consumed, GEN_BITS_DEFAULT)
     );
+    assert_eq!(
+        platform.wake_count(arena.slot_word_ptr(0)),
+        2,
+        "I6：H4与OK发布各唤醒一次"
+    );
+    assert_eq!(
+        platform.wake_count(arena.join_word_ptr(0)),
+        2,
+        "I6：DONE与CONSUMED各唤醒一次"
+    );
     assert_eq!(counters.run.load(Ordering::SeqCst), 1);
-    assert_eq!(counters.drop.load(Ordering::SeqCst), 1, "OK 臂闭包随 invoke 消费析构（§9.2.1 drop 恰一次）");
+    assert_eq!(
+        counters.drop.load(Ordering::SeqCst),
+        1,
+        "OK 臂闭包随 invoke 消费析构（§9.2.1 drop 恰一次）"
+    );
     assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
 }
 
@@ -91,6 +105,7 @@ fn fail链_错误码移交与自回收() {
     let (a2, p2) = (Arc::clone(&arena), Arc::clone(&platform));
     let requester = thread::spawn(move || request_spawn::<(), _>(&a2, &p2, job, 10_000));
     platform.wait_notify_spawn(0);
+    platform.seams.b.arm();
     let outcome = test_supervisor::answer_fail(&arena, &platform, 0, 0, 0xC0DE);
     assert!(matches!(outcome, test_supervisor::AnswerOutcome::Answered));
     assert_eq!(
@@ -98,16 +113,30 @@ fn fail链_错误码移交与自回收() {
         1,
         "FAIL 写者应把槽计入 RA 账"
     );
+    platform.seams.b.release_once();
     let result = requester.join().expect("请求者不应 panic");
     match result {
         Err(SpawnFailure::WorkerFailed { errcode }) => assert_eq!(errcode, 0xC0DE),
         other => panic!("FAIL 链应返回 WorkerFailed：{other:?}"),
     }
-    assert_eq!(counters.drop.load(Ordering::SeqCst), 1, "FAIL 臂闭包由 engine drop 恰一次");
-    assert_eq!(arena.retired_fail_unacked_word().load(Ordering::SeqCst), 0, "ACK 后 RA 归零");
+    assert_eq!(
+        counters.drop.load(Ordering::SeqCst),
+        1,
+        "FAIL 臂闭包由 engine drop 恰一次"
+    );
+    assert_eq!(
+        arena.retired_fail_unacked_word().load(Ordering::SeqCst),
+        0,
+        "ACK 后 RA 归零"
+    );
     let acc = arena.accounts();
     assert_eq!(acc.free, 1, "FAIL_ACKED 后自回收入空闲表");
     assert!(acc.identity_holds(&arena));
+    assert_eq!(
+        platform.wake_count(arena.slot_word_ptr(0)),
+        3,
+        "I6：H4、FAIL、FAIL_ACKED各唤醒一次"
+    );
 }
 
 /// CANCELLED 链：虚拟截止注入 → 取消 CAS → 自回收 → Err(AckTimeout)；
@@ -127,7 +156,11 @@ fn cancelled链_超时取消自回收() {
     platform.fire_deadline(arena.slot_word_ptr(0));
     let result = requester.join().expect("请求者不应 panic");
     assert!(matches!(result, Err(SpawnFailure::AckTimeout)));
-    assert_eq!(counters.drop.load(Ordering::SeqCst), 1, "CANCELLED 臂闭包由 engine drop 恰一次");
+    assert_eq!(
+        counters.drop.load(Ordering::SeqCst),
+        1,
+        "CANCELLED 臂闭包由 engine drop 恰一次"
+    );
     assert_eq!(
         arena.slot_word(0).load(Ordering::SeqCst),
         encode_w(0, SlotState::Cancelled, GEN_BITS_DEFAULT)
@@ -137,8 +170,17 @@ fn cancelled链_超时取消自回收() {
     let child_out = child.join().expect("trampoline 不应 panic");
     assert!(matches!(child_out, TrampolineExit::Superseded));
     assert_eq!(counters.run.load(Ordering::SeqCst), 0);
-    assert_eq!(counters.drop.load(Ordering::SeqCst), 1, "Superseded 不得触碰闭包（无二次 drop）");
+    assert_eq!(
+        counters.drop.load(Ordering::SeqCst),
+        1,
+        "Superseded 不得触碰闭包（无二次 drop）"
+    );
     let _ = platform.wait_worker_exit();
+    assert_eq!(
+        platform.wake_count(arena.slot_word_ptr(0)),
+        2,
+        "I6：H4与超时CANCEL各唤醒一次"
+    );
 }
 
 /// join DEAD_HARDTRAP（D5）：监督者写死亡信号 → join Err；CONSUMED 后迟到写丢弃。
@@ -162,21 +204,18 @@ fn join死亡信号与consumed输家() {
     assert!(matches!(out, test_supervisor::DeadOutcome::Written));
     let joined: Result<(), _> = join_typed(&arena, &platform, 0, 0);
     let err = joined.expect_err("DEAD 应使 join 失败");
-    assert!(format!("{err}").contains("0xD5"), "死亡信号细节应随错误面：{err}");
+    assert!(
+        format!("{err}").contains("0xD5"),
+        "死亡信号细节应随错误面：{err}"
+    );
     assert_eq!(
         arena.join_word(0).load(Ordering::SeqCst),
         encode_join(0, JoinState::Consumed, GEN_BITS_DEFAULT),
         "DEAD 消费后 CONSUMED，迟到写者 CAS 必败"
     );
     // 迟到 DEAD 写（已 CONSUMED）：CAS 输家丢弃、不改写结果。
-    let late = test_supervisor::write_dead(
-        &arena,
-        &platform,
-        0,
-        0,
-        test_supervisor::DeadKind::Panic,
-        1,
-    );
+    let late =
+        test_supervisor::write_dead(&arena, &platform, 0, 0, test_supervisor::DeadKind::Panic, 1);
     assert!(matches!(late, test_supervisor::DeadOutcome::LostToConsumed));
     assert_eq!(
         arena.join_word(0).load(Ordering::SeqCst),
@@ -195,9 +234,10 @@ fn 迟到d5撞换代过期即弃() {
         a.h3_h4_publish(&platform, alloc, 0, 0);
     });
     // join 槽已复用为新一代 (1,WAITING)（等价 H3 复位后的位形）。
-    arena
-        .join_word(0)
-        .store(encode_join(1, JoinState::Waiting, GEN_BITS_DEFAULT), Ordering::SeqCst);
+    arena.join_word(0).store(
+        encode_join(1, JoinState::Waiting, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
     let out = test_supervisor::write_dead(
         &arena,
         &platform,
@@ -206,8 +246,15 @@ fn 迟到d5撞换代过期即弃() {
         test_supervisor::DeadKind::HardTrap,
         0xD5,
     );
-    assert!(matches!(out, test_supervisor::DeadOutcome::LostToStaleGeneration));
-    assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0, "迟到 D5 不得落 tombstone");
+    assert!(matches!(
+        out,
+        test_supervisor::DeadOutcome::LostToStaleGeneration
+    ));
+    assert_eq!(
+        arena.tombstone_word().load(Ordering::SeqCst),
+        0,
+        "迟到 D5 不得落 tombstone"
+    );
     assert_eq!(
         arena.join_word(0).load(Ordering::SeqCst),
         encode_join(1, JoinState::Waiting, GEN_BITS_DEFAULT),
@@ -236,9 +283,10 @@ fn ok回收三门与延迟登记() {
     // 门 (b) 闭合：写真实 result 并 DONE → join 消费 → CONSUMED。
     let result_box = Box::into_raw(Box::new(())) as usize;
     arena.set_join_result(0, result_box);
-    arena
-        .join_word(0)
-        .store(encode_join(0, JoinState::Done, GEN_BITS_DEFAULT), Ordering::SeqCst);
+    arena.join_word(0).store(
+        encode_join(0, JoinState::Done, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
     let (a2, p2) = (Arc::clone(&arena), Arc::clone(&platform));
     let joiner = thread::spawn(move || join_typed::<(), _>(&a2, &p2, 0, 0));
     joiner
@@ -265,9 +313,10 @@ fn ok回收三门与延迟登记() {
     test_supervisor::answer_ok(&arena, &platform, slot2, gen2, 2);
     let result2 = Box::into_raw(Box::new(())) as usize;
     arena.set_join_result(slot2, result2);
-    arena
-        .join_word(slot2)
-        .store(encode_join(gen2, JoinState::Done, GEN_BITS_DEFAULT), Ordering::SeqCst);
+    arena.join_word(slot2).store(
+        encode_join(gen2, JoinState::Done, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
     let (a3, p3) = (Arc::clone(&arena), Arc::clone(&platform));
     let joiner2 = thread::spawn(move || join_typed::<(), _>(&a3, &p3, slot2, gen2));
     joiner2
@@ -279,9 +328,16 @@ fn ok回收三门与延迟登记() {
         test_supervisor::RecoveryOutcome::Delayed => {}
         other => panic!("try-lock 失败应转延迟登记：{other:?}"),
     }
-    assert_eq!(arena.accounts().free, 0, "延迟期间不入表（周期 2 槽已被 LIFO 取走在途）");
+    assert_eq!(
+        arena.accounts().free,
+        0,
+        "延迟期间不入表（周期 2 槽已被 LIFO 取走在途）"
+    );
     arena.h1_unlock(&platform);
-    assert_eq!(test_supervisor::recover_pending(&arena, &platform, &mut state), 1);
+    assert_eq!(
+        test_supervisor::recover_pending(&arena, &platform, &mut state),
+        1
+    );
     assert_eq!(arena.accounts().free, 1, "检查点重试成功");
     assert!(arena.accounts().identity_holds(&arena));
 }
@@ -298,6 +354,11 @@ fn 迟到应答零槽写与terminate卫生() {
     // engine 超时写者路径：CANCELLED + 自回收（闭包 drop 由该路径承担）。
     let cancel = engine_cancel(&arena, &platform, published);
     assert!(matches!(cancel, CancelOutcome::Cancelled));
+    assert_eq!(
+        platform.wake_count(arena.slot_word_ptr(0)),
+        2,
+        "I6：H4与显式CANCEL各唤醒一次"
+    );
     assert_eq!(counters.drop.load(Ordering::SeqCst), 1);
     // 同槽 g+1 发布（LIFO 必得同槽）。
     let job1 = counted_job("g1", &counters);
@@ -309,9 +370,14 @@ fn 迟到应答零槽写与terminate卫生() {
         .answer_word(0, AnswerField::WorkerId)
         .store(0xBEEF, Ordering::SeqCst);
     let outcome = test_supervisor::answer_ok(&arena, &platform, 0, 0, 9);
-    assert!(matches!(outcome, test_supervisor::AnswerOutcome::DroppedLate));
+    assert!(matches!(
+        outcome,
+        test_supervisor::AnswerOutcome::DroppedLate
+    ));
     assert_eq!(
-        arena.answer_word(0, AnswerField::WorkerId).load(Ordering::SeqCst),
+        arena
+            .answer_word(0, AnswerField::WorkerId)
+            .load(Ordering::SeqCst),
         0xBEEF,
         "迟到应答零载荷写：canary 必须原样"
     );
@@ -320,7 +386,11 @@ fn 迟到应答零槽写与terminate卫生() {
         encode_w(1, SlotState::Req, GEN_BITS_DEFAULT),
         "槽字不变（仍 (g+1,REQ)）"
     );
-    assert_eq!(*platform.terminate_log.lock().unwrap(), vec![9], "迟到构造子 terminate 卫生");
+    assert_eq!(
+        *platform.terminate_log.lock().unwrap(),
+        vec![9],
+        "迟到构造子 terminate 卫生"
+    );
     // g+1 正常走完。
     let outcome1 = test_supervisor::answer_ok(&arena, &platform, 0, 1, 10);
     assert!(matches!(outcome1, test_supervisor::AnswerOutcome::Answered));
@@ -357,7 +427,10 @@ fn 超时撞answering转等终态() {
     // 虚拟截止到点：请求者取消 CAS 必败（ANSWERING）。
     platform.fire_deadline(arena.slot_word_ptr(0));
     std::thread::sleep(std::time::Duration::from_millis(30));
-    assert!(!returned.load(Ordering::SeqCst), "撞 ANSWERING 不得以超时失败返回");
+    assert!(
+        !returned.load(Ordering::SeqCst),
+        "撞 ANSWERING 不得以超时失败返回"
+    );
     assert_eq!(
         arena.slot_word(0).load(Ordering::SeqCst),
         encode_w(0, SlotState::Answering, GEN_BITS_DEFAULT),
@@ -380,4 +453,145 @@ fn 超时撞answering转等终态() {
     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join");
     assert_eq!(counters.run.load(Ordering::SeqCst), 1);
     assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
+}
+
+/// D5 两阶段发布：暂停载荷写权持有者，join 必须等最终 DEAD，不能消费旧 code。
+#[test]
+fn d5写权暂停不提前消费且重复通知零写() {
+    let arena = Arc::new(SlotArena::alloc(1, GEN_BITS_DEFAULT));
+    let platform = Arc::new(TestPlatform::default());
+    super::with_h1(&arena, |a| {
+        let alloc = a.h2_take(&NullPlatform).unwrap();
+        a.h3_h4_publish(&platform, alloc, 0, 0);
+    });
+    platform.seams.d.arm();
+    let (a, p) = (arena.clone(), platform.clone());
+    let writer = thread::spawn(move || {
+        test_supervisor::write_dead(&a, &p, 0, 0, test_supervisor::DeadKind::HardTrap, 0xD5)
+    });
+    platform.seams.d.wait_hit();
+    assert_eq!(
+        arena.join_word(0).load(Ordering::SeqCst),
+        encode_join(0, JoinState::DeadWriting, GEN_BITS_DEFAULT)
+    );
+    assert_eq!(
+        test_supervisor::write_dead(
+            &arena,
+            &platform,
+            0,
+            0,
+            test_supervisor::DeadKind::Panic,
+            0xBAD
+        ),
+        test_supervisor::DeadOutcome::LostToDead
+    );
+    assert_eq!(arena.join_dead_code(0), 0);
+    let (a, p) = (arena.clone(), platform.clone());
+    let joiner = thread::spawn(move || join_typed::<(), _>(&a, &p, 0, 0));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !platform.wait_log.lock().unwrap().contains(&encode_join(
+        0,
+        JoinState::DeadWriting,
+        GEN_BITS_DEFAULT,
+    )) {
+        assert!(std::time::Instant::now() < deadline, "join 未进入写权等待");
+        thread::yield_now();
+    }
+    assert!(!joiner.is_finished(), "载荷未发布不得返回旧 code");
+    platform.seams.d.release_once();
+    assert_eq!(
+        writer.join().unwrap(),
+        test_supervisor::DeadOutcome::Written
+    );
+    assert!(joiner
+        .join()
+        .unwrap()
+        .unwrap_err()
+        .to_string()
+        .contains("0xD5"));
+    assert_eq!(
+        platform.wake_count(arena.join_word_ptr(0)),
+        2,
+        "I6：DEAD发布与CONSUMED各唤醒一次"
+    );
+}
+
+/// 误报 D5 先于 W2 时结果仍归 trampoline；退出不能 panic 或泄漏结果。
+#[test]
+fn trampoline输给死亡信号结果恰一释放() {
+    for writing in [false, true] {
+        let arena = Arc::new(SlotArena::alloc(1, GEN_BITS_DEFAULT));
+        let platform = Arc::new(TestPlatform::default());
+        let drops = Arc::new(JobCounters::default());
+        let result = DropGuard(drops.clone());
+        let a = arena.clone();
+        let job = SpawnJob::from_closure(
+            move || {
+                if writing {
+                    a.join_word(0).store(
+                        encode_join(0, JoinState::DeadWriting, GEN_BITS_DEFAULT),
+                        Ordering::SeqCst,
+                    );
+                } else {
+                    test_supervisor::write_dead(
+                        &a,
+                        &NullPlatform,
+                        0,
+                        0,
+                        test_supervisor::DeadKind::Panic,
+                        7,
+                    );
+                }
+                result
+            },
+            "D5-result".to_owned(),
+        );
+        let published = publish_spawn(&arena, &platform, job).unwrap();
+        test_supervisor::answer_ok(&arena, &platform, published.slot, published.gen, 1);
+        assert!(matches!(
+            trampoline_run(&arena, &platform, 0, 0, 1),
+            TrampolineExit::Ran { .. }
+        ));
+        assert_eq!(drops.drop.load(Ordering::SeqCst), 1, "D5输家结果恰一次释放");
+        assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
+    }
+}
+
+#[test]
+fn 重复退出不重复回收且延迟登记去重() {
+    let arena = SlotArena::alloc(1, GEN_BITS_DEFAULT);
+    let platform = TestPlatform::default();
+    super::with_h1(&arena, |a| {
+        let alloc = a.h2_take(&NullPlatform).unwrap();
+        a.h3_h4_publish(&platform, alloc, 0, 0);
+    });
+    test_supervisor::answer_ok(&arena, &platform, 0, 0, 1);
+    arena.join_word(0).store(
+        encode_join(0, JoinState::Consumed, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
+    let mut state = test_supervisor::SupervisorState::default();
+    let guard = super::H1Guard::new(&arena, &platform);
+    for _ in 0..3 {
+        assert_eq!(
+            test_supervisor::on_worker_exit(&arena, &platform, &mut state, 0, 0),
+            test_supervisor::RecoveryOutcome::Delayed
+        );
+    }
+    assert_eq!(state.pending_recovery.len(), 1);
+    assert_eq!(
+        test_supervisor::recover_pending(&arena, &platform, &mut state),
+        0
+    );
+    assert_eq!(state.pending_recovery.len(), 1);
+    drop(guard);
+    assert_eq!(
+        test_supervisor::recover_pending(&arena, &platform, &mut state),
+        1
+    );
+    assert_eq!(
+        test_supervisor::on_worker_exit(&arena, &platform, &mut state, 0, 0),
+        test_supervisor::RecoveryOutcome::GatesNotMet
+    );
+    assert_eq!(arena.accounts().free, 1);
 }

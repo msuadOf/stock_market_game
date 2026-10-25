@@ -22,10 +22,8 @@ use crate::facade_slot::platform::{FacadePlatform, FutexWait, NullPlatform};
 /// H1 持有下执行（分配器锁纪律：H2/H3-H4/push 均须持锁；单线程静点无竞争，
 /// NullPlatform 不等待）。
 pub(crate) fn with_h1<R>(arena: &SlotArena, f: impl FnOnce(&SlotArena) -> R) -> R {
-    arena.h1_lock_blocking(&NullPlatform);
-    let r = f(arena);
-    arena.h1_unlock(&NullPlatform);
-    r
+    let _guard = H1Guard::new(arena, &NullPlatform);
+    f(arena)
 }
 
 /// 测试缝闸（§12.1.5：命中即 post PAUSED 并 wait 冻结字——harness 定序）。
@@ -87,6 +85,7 @@ pub(crate) struct SeamSet {
     pub c0: SeamGate,
     /// SEAM-C1：supervisor A1 成功后、A2 首次载荷 store 前。
     pub c1: SeamGate,
+    pub d: SeamGate,
 }
 
 /// native 测试平台：wait 为轮询（值变化即返）；TimedOut **仅**由 harness
@@ -98,6 +97,7 @@ pub(crate) struct TestPlatform {
     pub worker_exit_log: Mutex<Vec<(u32, u32, u32)>>,
     pub terminate_log: Mutex<Vec<u32>>,
     pub wake_log: Mutex<Vec<usize>>,
+    pub wait_log: Mutex<Vec<u32>>,
     spin_cap: Duration,
 }
 
@@ -110,6 +110,7 @@ impl Default for TestPlatform {
             worker_exit_log: Mutex::new(Vec::new()),
             terminate_log: Mutex::new(Vec::new()),
             wake_log: Mutex::new(Vec::new()),
+            wait_log: Mutex::new(Vec::new()),
             spin_cap: Duration::from_secs(8),
         }
     }
@@ -169,15 +170,6 @@ impl TestPlatform {
 /// 平台实现方不必也不该提供这些。写进 trait 会强制 wasm 生产平台与
 /// `NullPlatform` 实现无意义的测试桩；故留在 inherent impl，测试侧直接调用）。
 impl TestPlatform {
-    /// 测试用 H1 取锁（与 `with_h1` 同，但记录 platform 的 wake 事件）。
-    pub fn h1_lock_for_test(&self, arena: &SlotArena) {
-        arena.h1_lock_blocking(self);
-    }
-    /// 测试用 H1 放锁（配对 `h1_lock_for_test`）。
-    pub fn h1_unlock_for_test(&self, arena: &SlotArena) {
-        arena.h1_unlock(self);
-    }
-
     /// harness 观测：某地址上的 wake 次数（I6 断言面）。
     pub fn wake_count(&self, addr: *const AtomicU32) -> usize {
         self.wake_log
@@ -191,6 +183,7 @@ impl TestPlatform {
 
 impl FacadePlatform for TestPlatform {
     fn wait_u32(&self, addr: *const AtomicU32, expected: u32, _timeout_ms: u64) -> FutexWait {
+        self.wait_log.lock().unwrap().push(expected);
         let start = Instant::now();
         loop {
             let cur = unsafe { (*addr).load(Ordering::SeqCst) };
@@ -240,6 +233,9 @@ impl FacadePlatform for TestPlatform {
             .expect("terminate 日志锁中毒")
             .push(worker_id);
     }
+    fn seam_dead_after_acquire(&self, _join: u32) {
+        self.seams.d.hit_and_wait();
+    }
     fn seam_trampoline_wake(&self, slot: u32) {
         let _ = slot;
         self.seams.a.hit_and_wait();
@@ -259,5 +255,22 @@ impl FacadePlatform for TestPlatform {
     fn seam_supervisor_after_acquire(&self, slot: u32) {
         let _ = slot;
         self.seams.c1.hit_and_wait();
+    }
+}
+
+/// 局部测试锁守卫：panic 展开时也归还 H1。
+pub(crate) struct H1Guard<'a, P: FacadePlatform> {
+    arena: &'a SlotArena,
+    platform: &'a P,
+}
+impl<'a, P: FacadePlatform> H1Guard<'a, P> {
+    pub fn new(arena: &'a SlotArena, platform: &'a P) -> Self {
+        arena.h1_lock_blocking(platform);
+        Self { arena, platform }
+    }
+}
+impl<P: FacadePlatform> Drop for H1Guard<'_, P> {
+    fn drop(&mut self) {
+        self.arena.h1_unlock(self.platform);
     }
 }

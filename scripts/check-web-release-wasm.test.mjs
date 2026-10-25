@@ -68,7 +68,7 @@ function importFunc(moduleText, fieldText, typeIndex) {
 }
 
 /// limits: flags=0x03（shared + max，线程提案要求共享内存必带 max）。
-function importSharedMemory(moduleText = "env", fieldText = "memory", minimum = 1, maximum = 2) {
+function importSharedMemory(moduleText = "env", fieldText = "memory", minimum = 1, maximum = 32768) {
   return [...name(moduleText), ...name(fieldText), 0x02, 0x03, ...leb32(minimum), ...leb32(maximum)];
 }
 

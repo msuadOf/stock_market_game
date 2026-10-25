@@ -62,10 +62,12 @@ export const SlotState = Object.freeze({
 /** join 槽状态（§9.2.3 单向状态机）。 */
 export const JoinState = Object.freeze({
   Waiting: 0,
-  Done: 1,
-  DeadHardtrap: 2,
-  DeadPanic: 3,
-  Consumed: 4,
+  // D5 先领写权，code 写完才发布 DEAD；join 不消费此中间态。
+  DeadWriting: 1,
+  Done: 2,
+  DeadHardtrap: 3,
+  DeadPanic: 4,
+  Consumed: 5,
 } as const);
 
 /** tombstone 结构化码（arena.rs::TombstoneCode）。 */

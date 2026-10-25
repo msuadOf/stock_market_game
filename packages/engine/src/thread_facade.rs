@@ -56,7 +56,9 @@ mod wasm_impl {
     pub fn init_wasm_facade(capacity: u32) -> Result<(), &'static str> {
         RUNTIME
             .set(Arc::new(SlotArena::alloc(capacity, GEN_BITS_DEFAULT)))
-            .map_err(|_| "facade runtime 已初始化（重复 init 拒绝——换实例走整实例废弃，非重初始化）")
+            .map_err(|_| {
+                "facade runtime 已初始化（重复 init 拒绝——换实例走整实例废弃，非重初始化）"
+            })
     }
 
     fn runtime() -> io::Result<Arc<SlotArena>> {
@@ -71,9 +73,9 @@ mod wasm_impl {
     /// 子 trampoline 导出入口（子 Worker bootstrap 调）：返回 0=Ran、
     /// 1=Superseded；协议违约 panic ⇒ trap ⇒ 宿主 D5（§8.2.2）。
     pub fn child_trampoline(slot: u32, gen: u32, worker_id: u32) -> u32 {
-        let arena = RUNTIME
-            .get()
-            .expect("facade_child_trampoline 在 runtime 未初始化时不可达（spawn 先行 ⇒ init 先行）");
+        let arena = RUNTIME.get().expect(
+            "facade_child_trampoline 在 runtime 未初始化时不可达（spawn 先行 ⇒ init 先行）",
+        );
         match trampoline_run(&**arena, &WasmFacadePlatform, slot, gen, worker_id) {
             TrampolineExit::Ran { .. } => 0,
             TrampolineExit::Superseded => 1,
@@ -154,13 +156,14 @@ mod wasm_impl {
         pub fn join_index(&self) -> u32 {
             self.inner.join_index
         }
-        pub fn join(self) -> io::Result<T> {
+        pub fn join(self) -> std::thread::Result<T> {
             join_typed::<T, _>(
                 &self.inner.arena,
                 &WasmFacadePlatform,
                 self.inner.join_index,
                 self.inner.gen,
             )
+            .map_err(|error| Box::new(error) as Box<dyn std::any::Any + Send>)
         }
     }
 

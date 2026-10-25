@@ -1,0 +1,85 @@
+✔ 时钟 bootstrap 返回绝对毫秒且随调用单调非递减 (2.018871ms)
+✔ timeOrigin 能力位显式登记，不静默 (0.169826ms)
+✔ W3→W5 序：先 post workerExit，再置 rust_done，最后 close (3.161345ms)
+✔ close 后 onmessage 一律丢弃（W4 迟到消息守卫） (0.191236ms)
+✔ 重复关闭显式失败（trampoline 单出口） (0.464884ms)
+✔ workerExit 消息形状守卫拒绝畸形输入 (0.273869ms)
+✔ 头部/槽字段偏移与 Rust arena.rs 逐字一致 (3.533406ms)
+✔ 状态码与 Rust codec.rs 逐字一致（I3 严格递增） (0.836505ms)
+✔ W 编解码往返且位域不重叠 (0.288499ms)
+✔ 槽/join 基址与 Rust 布局公式一致 (0.198195ms)
+✔ A1-A3 OK 全序：REQ→ANSWERING→OK，载荷 worker_id 落槽 (2.471764ms)
+✔ 迟到应答：A1 期望失配 ⇒ 零槽写 + terminate 卫生 (1.33049ms)
+✔ FAIL 应答计入 RA 账 (0.274478ms)
+✔ OK 回收三门：join 未 CONSUMED 不回收，闭合后 push，H1 占用转延迟 (0.583758ms)
+✔ 未知 workerExit 只丢弃，不写槽 (0.194706ms)
+✔ D5 死亡信号：WAITING→DEAD；已 CONSUMED 的迟到写丢弃 (0.297799ms)
+✔ A1→A3 间出现协议外写者 ⇒ 先落 tombstone 再抛 (0.553987ms)
+✔ 四账快照镜像 Rust accounts：健康回收后恒等式成立 (0.425573ms)
+✔ 门 (c)：子仍 ACTIVE 时不得回收（复核修正项） (0.236637ms)
+✔ 迟到 D5 撞换代：过期即弃，不崩不落 tombstone (0.32401ms)
+✔ H1 持续占用时延迟回收只处理快照且登记去重 (0.324059ms)
+✔ 同 pair 重复 workerExit 只入空闲表一次，未知 id 零写 (0.269608ms)
+✔ DEAD 对 join 可见时诊断 code 必须已发布 (0.612118ms)
+✔ D5 领写权暂停时重入零载荷写，完成后重复死亡通知幂等 (0.310669ms)
+✔ D5 输给 DONE/CONSUMED/换代时零载荷写 (0.278199ms)
+✔ workerExit 身份错配不得摘除活跃 manifest (0.167165ms)
+✔ env 模块导出全部槽协议 import 名（否则 wasm 实例化 link error） (1.867866ms)
+✔ 槽协议环境函数在未装配的宿主上显式失败，不静默成功 (0.637839ms)
+✔ release WASM checker accepts the threaded product contract (123.489501ms)
+✔ release WASM checker rejects a second game WASM artifact (2.787224ms)
+✔ release WASM checker rejects debug trace exports without instantiating modules (2.101973ms)
+✔ release WASM checker rejects any non-whitelisted time import (18.415093ms)
+✔ release WASM checker rejects a duplicate engine_clock_now import (3.33556ms)
+✔ release WASM checker rejects a missing engine_clock_now import (1.799264ms)
+✔ release WASM checker rejects a module without atomic instructions (1.810094ms)
+✔ release WASM checker rejects a private module nested anywhere in dist (2.083802ms)
+✔ shared memory gate accepts the shared artifact contract (3.028981ms)
+✔ shared memory gate accepts minified glue from the bundled dist (2.195916ms)
+✔ shared memory gate rejects a non-shared memory import (1.66909ms)
+✔ shared memory gate rejects a shared memory import without explicit maximum (2.572527ms)
+✔ shared memory gate rejects glue missing the shared memory bootstrap (1.727292ms)
+✔ shared memory gate rejects historical 4GiB binary maximum (1.532756ms)
+✔ shared memory gate rejects historical 4GiB glue maximum (1.802105ms)
+✔ checks generated bindings after the Rust export tests have actually run (2.01579ms)
+✔ omits costly native debug symbols without disabling assertions or tests (0.36252ms)
+✔ gives native and WASM builds an explicit CPU budget and external deadline (0.32558ms)
+✔ reuses same-platform Cargo artifacts when dependency manifests change (0.233677ms)
+✔ pins wasm-pack after Cargo cache restoration and verifies the installed version (0.217587ms)
+✔ verifies the WASM thread lock matrix right after the wasm-pack version gate (0.162125ms)
+✔ Windows cold builds prepare libraries in a separate bounded stage before sealing test executables (0.285319ms)
+✔ library preparation failures preserve progress without pretending a sealed build ran (1.777344ms)
+✔ shared frontend plan owns install, threaded WASM, copy, TypeScript, Vite and release checks on every host (19.211208ms)
+✔ native UI builds use the same frontend command factory with isolated staging (2.642339ms)
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] copy-wasm /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web/node_modules/typescript/bin/tsc --build --force
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web/node_modules/vite/bin/vite.js build --outDir /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web/dist
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web/dist
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-build-ixmn4v/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+✔ WASM copy replaces stale generated files only after source checks succeed (180.922587ms)
+✔ frontend entry supervises the whole build once, and dry-run creates nothing (1.817504ms)
+✔ frontend parser rejects duplicate, unsafe and native-only options (0.493405ms)
+✔ Pages frontend explicitly uses repository base and production pages mode, without changing ordinary builds (1.029671ms)
+[frontend build] pnpm install --frozen-lockfile
+[frontend build] wasm-pack build apps/web-wasm --target web --release --out-dir /home/baiyifan/.claude/tmp/frontend-link-YoHict/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] /home/linuxbrew/.linuxbrew/Cellar/node/25.8.2/bin/node /home/baiyifan/.claude/tmp/frontend-link-YoHict/scripts/check-web-release-wasm.mjs /home/baiyifan/.claude/tmp/frontend-link-YoHict/apps/web-wasm/wasm-pack-output/frontend/wasm/pkg
+[frontend build] copy-wasm /home/baiyifan/.claude/tmp/frontend-link-YoHict/apps/web
+✔ WASM copy refuses a symlink destination without changing the referenced files (287.928953ms)
+✔ legacy shell and batch frontend entries delegate to the shared build instead of duplicating it (1.485485ms)
+✔ 锁定矩阵常量与设计 §6.3 R3-1 一致 (1.842716ms)
+✔ wasm-bindgen 锁版解析接受精确锁定并拒绝浮动/未锁形态 (0.285128ms)
+✔ 组合结果聚合：未登记红门使整体失败，登记红/跳过显式呈现 (1.371681ms)
+ℹ tests 62
+ℹ suites 0
+ℹ pass 62
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 664.535662

@@ -43,12 +43,16 @@ fn t耗1_单槽连续耗尽() {
     let counters = Arc::new(JobCounters::default());
     let mut sup = test_supervisor::SupervisorState::default();
     // LIFO：同一槽反复复用——首用 gen0 + 15 次复用（gen1..15）= 16 次全链。
-    let mut last = (0, 0);
     for round in 0..16u32 {
-        last = healthy_cycle(&arena, &platform, &mut sup, &counters, round);
+        let last = healthy_cycle(&arena, &platform, &mut sup, &counters, round);
         assert_eq!(last.0, 0, "LIFO 下全部落同槽");
         assert_eq!(last.1, round, "gen 逐轮 +1");
-        assert_eq!(arena.retired_gen_exhausted_word().load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            arena
+                .retired_gen_exhausted_word()
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
     // 第 17 次分配：pop 出 gen=15（=2^4−1）⇒ 退休，必得他槽。
     let job = counted_job("t1", &counters);
@@ -56,7 +60,9 @@ fn t耗1_单槽连续耗尽() {
     assert_eq!(published.slot, 1, "canary：后续分配必得他槽");
     assert_eq!(published.gen, 0);
     assert_eq!(
-        arena.retired_gen_exhausted_word().load(std::sync::atomic::Ordering::SeqCst),
+        arena
+            .retired_gen_exhausted_word()
+            .load(std::sync::atomic::Ordering::SeqCst),
         1,
         "恰在第 15 次复用后转 RETIRED"
     );
@@ -83,17 +89,32 @@ fn t耗2_全池耗尽显式失败恒等式() {
         let job = counted_job("t2", &counters);
         match publish_spawn(&arena, &platform, job) {
             Ok(published) => {
-                test_supervisor::answer_ok(&arena, &platform, published.slot, published.gen, spawned);
+                test_supervisor::answer_ok(
+                    &arena,
+                    &platform,
+                    published.slot,
+                    published.gen,
+                    spawned,
+                );
                 let out = trampoline_run(&arena, &platform, published.slot, published.gen, spawned);
                 assert!(matches!(out, TrampolineExit::Ran { .. }));
                 let (): () = join_typed(&arena, &platform, published.slot, published.gen).unwrap();
-                match test_supervisor::on_worker_exit(&arena, &platform, &mut sup, published.slot, published.gen) {
+                match test_supervisor::on_worker_exit(
+                    &arena,
+                    &platform,
+                    &mut sup,
+                    published.slot,
+                    published.gen,
+                ) {
                     test_supervisor::RecoveryOutcome::Pushed => {}
                     other => panic!("健康路径应回收：{other:?}"),
                 }
                 spawned += 1;
             }
-            Err(SpawnFailure::SlotPoolExhausted { retired_fail_unacked: ra, retired_gen_exhausted: rb }) => {
+            Err(SpawnFailure::SlotPoolExhausted {
+                retired_fail_unacked: ra,
+                retired_gen_exhausted: rb,
+            }) => {
                 assert_eq!(ra, 0, "两类分账直接断言：健康耗尽 RA=0");
                 assert_eq!(rb, 2, "两槽全退休");
                 break;
@@ -171,12 +192,13 @@ fn t耗4_混合分账互不串账() {
         // 测试计数不计 drop——本断言面只看账目不串）。
     }
     assert_eq!(
-        arena.retired_fail_unacked_word().load(std::sync::atomic::Ordering::SeqCst),
+        arena
+            .retired_fail_unacked_word()
+            .load(std::sync::atomic::Ordering::SeqCst),
         k
     );
     // 阶段 2：剩余槽健康循环至 RB 耗尽。
-    let mut exhausted = None;
-    loop {
+    let exhausted = loop {
         let job = counted_job("mix", &counters);
         match publish_spawn(&arena, &platform, job) {
             Ok(p) => {
@@ -189,15 +211,17 @@ fn t耗4_混合分账互不串账() {
                 let (): () = join_typed(&arena, &platform, p.slot, p.gen).unwrap();
                 test_supervisor::on_worker_exit(&arena, &platform, &mut sup, p.slot, p.gen);
             }
-            Err(SpawnFailure::SlotPoolExhausted { retired_fail_unacked: ra, retired_gen_exhausted: rb }) => {
-                exhausted = Some((ra, rb));
-                break;
+            Err(SpawnFailure::SlotPoolExhausted {
+                retired_fail_unacked: ra,
+                retired_gen_exhausted: rb,
+            }) => {
+                break (ra, rb);
             }
             Err(o) => panic!("{o:?}"),
         }
-    }
+    };
     // 两类计数互不串账：错误载荷计数 = 注入数；RB = 全部剩余槽。
-    let (ra, rb) = exhausted.expect("必达耗尽");
+    let (ra, rb) = exhausted;
     assert_eq!(ra, k, "错误载荷 RA 计数与注入数一致");
     assert_eq!(rb, 3 - k);
     let acc = arena.accounts();
@@ -209,7 +233,12 @@ fn t耗4_混合分账互不串账() {
     // RA 槽账面状态仍为 FAIL（冻结、未 ACK）。
     for slot in ra_slots {
         assert_eq!(
-            decode_state(arena.slot_word(slot).load(std::sync::atomic::Ordering::SeqCst), 4),
+            decode_state(
+                arena
+                    .slot_word(slot)
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                4
+            ),
             SlotState::Fail
         );
     }

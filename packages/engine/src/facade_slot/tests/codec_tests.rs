@@ -21,10 +21,10 @@ fn 状态枚举值与设计表一致() {
 #[test]
 fn join状态枚举值单调() {
     assert_eq!(JoinState::Waiting as u32, 0);
-    assert_eq!(JoinState::Done as u32, 1);
-    assert_eq!(JoinState::DeadHardtrap as u32, 2);
-    assert_eq!(JoinState::DeadPanic as u32, 3);
-    assert_eq!(JoinState::Consumed as u32, 4);
+    assert_eq!(JoinState::Done as u32, 2);
+    assert_eq!(JoinState::DeadHardtrap as u32, 3);
+    assert_eq!(JoinState::DeadPanic as u32, 4);
+    assert_eq!(JoinState::Consumed as u32, 5);
 }
 
 /// §12.1.1：W = gen<<3|state（默认 gen_bits=29）；新槽首用 gen=0、W 初值 0。
@@ -84,7 +84,11 @@ fn 转移表全边严格递增() {
     assert!(encode_w(1, SlotState::Req, g) > encode_w(0, any_state, g));
     assert!(encode_w(1, SlotState::Req, g) > encode_w(0, SlotState::Idle, g));
     // join 槽状态机：WAITING→{DONE|DEAD_*}→CONSUMED。
-    for dead in [JoinState::Done, JoinState::DeadHardtrap, JoinState::DeadPanic] {
+    for dead in [
+        JoinState::Done,
+        JoinState::DeadHardtrap,
+        JoinState::DeadPanic,
+    ] {
         assert!(
             encode_join(0, dead, g) > encode_join(0, JoinState::Waiting, g),
             "join 转移 Waiting→{dead:?} 未严格递增"
@@ -112,5 +116,20 @@ fn 非法状态位形显式失败() {
 #[test]
 fn 状态全集恰八值() {
     assert_eq!(all_slot_states().len(), 8);
-    assert_eq!(all_join_states().len(), 5);
+    assert_eq!(all_join_states().len(), 6);
+}
+
+#[test]
+fn join载荷写权中间态仍单调且非法位形拒绝() {
+    let gb = GEN_BITS_DEFAULT;
+    for dead in [JoinState::DeadHardtrap, JoinState::DeadPanic] {
+        assert!(
+            encode_join(0, JoinState::Waiting, gb) < encode_join(0, JoinState::DeadWriting, gb)
+        );
+        assert!(encode_join(0, JoinState::DeadWriting, gb) < encode_join(0, dead, gb));
+        assert!(encode_join(0, dead, gb) < encode_join(0, JoinState::Consumed, gb));
+    }
+    for raw in [6, 7] {
+        assert!(std::panic::catch_unwind(|| decode_join_state(raw, gb)).is_err());
+    }
 }

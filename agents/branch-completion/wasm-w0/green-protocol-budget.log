@@ -1,0 +1,40 @@
+✔ 头部/槽字段偏移与 Rust arena.rs 逐字一致 (3.410489ms)
+✔ 状态码与 Rust codec.rs 逐字一致（I3 严格递增） (0.760712ms)
+✔ W 编解码往返且位域不重叠 (0.263287ms)
+✔ 槽/join 基址与 Rust 布局公式一致 (0.199015ms)
+✔ A1-A3 OK 全序：REQ→ANSWERING→OK，载荷 worker_id 落槽 (2.536544ms)
+✔ 迟到应答：A1 期望失配 ⇒ 零槽写 + terminate 卫生 (1.317868ms)
+✔ FAIL 应答计入 RA 账 (0.254897ms)
+✔ OK 回收三门：join 未 CONSUMED 不回收，闭合后 push，H1 占用转延迟 (0.581617ms)
+✔ 未知 workerExit 只丢弃，不写槽 (0.195626ms)
+✔ D5 死亡信号：WAITING→DEAD；已 CONSUMED 的迟到写丢弃 (0.297469ms)
+✔ A1→A3 间出现协议外写者 ⇒ 先落 tombstone 再抛 (0.538846ms)
+✔ 四账快照镜像 Rust accounts：健康回收后恒等式成立 (0.419683ms)
+✔ 门 (c)：子仍 ACTIVE 时不得回收（复核修正项） (0.287018ms)
+✔ 迟到 D5 撞换代：过期即弃，不崩不落 tombstone (0.33634ms)
+✔ H1 持续占用时延迟回收只处理快照且登记去重 (0.316129ms)
+✔ 同 pair 重复 workerExit 只入空闲表一次，未知 id 零写 (0.282248ms)
+✔ DEAD 对 join 可见时诊断 code 必须已发布 (0.595897ms)
+✔ release WASM checker accepts the threaded product contract (14.320446ms)
+✔ release WASM checker rejects a second game WASM artifact (2.669937ms)
+✔ release WASM checker rejects debug trace exports without instantiating modules (2.139352ms)
+✔ release WASM checker rejects any non-whitelisted time import (2.367409ms)
+✔ release WASM checker rejects a duplicate engine_clock_now import (3.066599ms)
+✔ release WASM checker rejects a missing engine_clock_now import (1.855004ms)
+✔ release WASM checker rejects a module without atomic instructions (1.887935ms)
+✔ release WASM checker rejects a private module nested anywhere in dist (2.201734ms)
+✔ shared memory gate accepts the shared artifact contract (2.800702ms)
+✔ shared memory gate accepts minified glue from the bundled dist (2.202594ms)
+✔ shared memory gate rejects a non-shared memory import (1.790822ms)
+✔ shared memory gate rejects a shared memory import without explicit maximum (2.567195ms)
+✔ shared memory gate rejects glue missing the shared memory bootstrap (1.855054ms)
+✔ shared memory gate rejects historical 4GiB binary maximum (1.657848ms)
+✔ shared memory gate rejects historical 4GiB glue maximum (1.971477ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 237.406497

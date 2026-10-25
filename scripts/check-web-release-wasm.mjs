@@ -213,11 +213,22 @@ export async function verifySharedMemoryArtifact(directory) {
     const names = noMax.map(({ module, field }) => `${module}.${field}`).join(", ");
     throw new Error(`game WASM 的 shared memory import 缺明确 maximum：${names}（缺 --max-memory link-arg——共享内存无上限在 JS 侧无法构造）`);
   }
+  const wrongMaximum = memoryImports.filter((entry) => entry.memory.maximum !== 32768);
+  if (wrongMaximum.length > 0) {
+    throw new Error("game WASM shared memory maximum 必须为32768页（2GiB，设计 §7.5/§8.5/§17.1）");
+  }
   const glueFiles = await jsFiles(directory);
   let glueFound = false;
   for (const filename of glueFiles) {
     const glue = await readFile(path.join(directory, filename), "utf8");
     if (sharedMemoryGluePattern.test(glue) && sharedFlagGluePattern.test(glue)) {
+      // 只核共享 Memory 构造体，允许 wasm-bindgen 与 Vite 的字段顺序/压缩。
+      const constructors = [...glue.matchAll(/new\s+WebAssembly\.Memory\s*\(\s*\{([^}]+)\}\s*\)/g)];
+      const sharedConstructors = constructors.filter((match) => sharedFlagGluePattern.test(match[1]));
+      if (sharedConstructors.length === 0 || sharedConstructors.some((match) =>
+        !/\bmaximum\s*:\s*32768\b/.test(match[1]))) {
+        throw new Error("game WASM glue shared memory maximum 必须为32768页（2GiB）");
+      }
       glueFound = true;
       break;
     }

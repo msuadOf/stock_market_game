@@ -42,13 +42,14 @@
 #   __stack_pointer/__tls_base（实例局部 global，互不覆盖）；跨实例共享
 #   读写/wait/notify/memory.grow 已由判据③探针验证。宿主装配（G+N Worker
 #   传同一 module+memory）属阶段 2 槽协议。
+# W0：旧解阻塞实证使用4GiB；最终工程预算按设计 §7.5/§8.5/§17.1 收紧至2GiB。
 [target.wasm32-unknown-unknown]
 rustflags = [
   "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
   "-C", "panic=abort",
   "-C", "link-arg=--import-memory",
   "-C", "link-arg=--shared-memory",
-  "-C", "link-arg=--max-memory=4294967296",
+  "-C", "link-arg=--max-memory=2147483648",
   "-C", "link-arg=--export=__heap_base",
   "-C", "link-arg=--export=__wasm_init_tls",
   "-C", "link-arg=--export=__tls_size",

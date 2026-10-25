@@ -1,0 +1,53 @@
+
+running 48 tests
+test clock::tests::native_门面即std_instant本体 ... ok
+test clock::tests::连续取时单调非递减 ... ok
+test clock::tests::门面覆盖引擎调用面的instant_api子集 ... ok
+test facade_slot::tests::arena_tests::h1锁互斥与try_lock ... ok
+test facade_slot::tests::arena_tests::gen耗尽槽退休永不复用 ... ok
+test facade_slot::tests::arena_tests::i6_退休转移同样唤醒 ... ok
+test facade_slot::tests::arena_tests::分配新槽发布req ... ok
+test facade_slot::tests::arena_tests::h4期望失配tombstone ... ok
+test facade_slot::tests::arena_tests::初始态四账全零可用满额 ... ok
+test facade_slot::tests::arena_tests::四账恒等式随分配回收演进 ... ok
+test facade_slot::tests::arena_tests::指针双字承载全宽往返 ... ok
+test facade_slot::tests::arena_tests::池耗尽显式err携带两计数 ... ok
+test facade_slot::tests::arena_tests::空闲表lifo复用gen递增 ... ok
+test facade_slot::tests::codec_tests::gen_bits缩空间布局 ... ok
+test facade_slot::tests::codec_tests::join状态枚举值单调 ... ok
+test facade_slot::tests::codec_tests::join载荷写权中间态仍单调且非法位形拒绝 ... ok
+test facade_slot::tests::codec_tests::复合字布局与往返 ... ok
+test facade_slot::tests::codec_tests::状态全集恰八值 ... ok
+test facade_slot::tests::codec_tests::状态枚举值与设计表一致 ... ok
+test facade_slot::tests::codec_tests::转移表全边严格递增 ... ok
+test facade_slot::tests::codec_tests::非法状态位形显式失败 - should panic ... ok
+test facade_slot::tests::exhaustion_tests::t耗1_单槽连续耗尽 ... ok
+test facade_slot::tests::exhaustion_tests::t耗2_全池耗尽显式失败恒等式 ... ok
+test facade_slot::tests::exhaustion_tests::t耗3_换实例重置恢复式断言 ... ok
+test facade_slot::tests::exhaustion_tests::t耗4_混合分账互不串账 ... ok
+test facade_slot::tests::exhaustion_tests::恒等式ra注入中点仍平 ... ok
+test facade_slot::tests::interleave_tests::n2_fail载荷移交窗口 ... ok
+test facade_slot::tests::lifecycle_tests::fail链_错误码移交与自回收 ... ok
+test facade_slot::tests::lifecycle_tests::join死亡信号与consumed输家 ... ok
+test facade_slot::tests::lifecycle_tests::trampoline输给死亡信号结果恰一释放 ... ok
+test facade_slot::tests::lifecycle_tests::全链ok_闭包恰跑一次join取回结果 ... ok
+test facade_slot::tests::lifecycle_tests::cancelled链_超时取消自回收 ... ok
+test thread_facade::tests::available_parallelism经门面可用 ... ok
+test facade_slot::tests::interleave_tests::n3_迟到应答跨代cas负测 ... ok
+test facade_slot::tests::lifecycle_tests::迟到d5撞换代过期即弃 ... ok
+test facade_slot::tests::lifecycle_tests::ok回收三门与延迟登记 ... ok
+test thread_facade::tests::命名spawn_join经门面往返 ... ok
+test facade_slot::tests::lifecycle_tests::迟到应答零槽写与terminate卫生 ... ok
+test wait_ledger_tests::等待点账_锚注释在位 ... ok
+test facade_slot::tests::interleave_tests::n1_跨代载荷负测 ... ok
+test facade_slot::tests::lifecycle_tests::重复退出不重复回收且延迟登记去重 ... ok
+test thread_facade::tests::native_门面即std_thread本体 ... ok
+test facade_slot::tests::interleave_tests::n1b_合法ok载荷窗口 ... ok
+test wait_ledger_tests::等待点账_deferred_drop提交面只允许try_send ... ok
+test facade_slot::tests::lifecycle_tests::d5写权暂停不提前消费且重复通知零写 ... ok
+test wait_ledger_tests::等待点账_capture_slot临界区不得send ... ok
+test facade_slot::tests::interleave_tests::n3b_写权获取窗口 ... ok
+test facade_slot::tests::lifecycle_tests::超时撞answering转等终态 ... ok
+
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 
 use super::with_h1;
 use crate::facade_slot::arena::{Exhausted, SlotAllocation, SlotArena};
-use crate::facade_slot::codec::{encode_join, encode_w, GEN_BITS_DEFAULT, JoinState, SlotState};
+use crate::facade_slot::codec::{encode_join, encode_w, JoinState, SlotState, GEN_BITS_DEFAULT};
 use crate::facade_slot::platform::NullPlatform;
 
 fn publish(arena: &SlotArena, alloc: SlotAllocation, payload: usize) {
@@ -32,7 +32,9 @@ fn 初始态四账全零可用满额() {
 #[test]
 fn 分配新槽发布req() {
     let arena = SlotArena::alloc(2, GEN_BITS_DEFAULT);
-    let alloc = with_h1(&arena, |a| a.h2_take(&NullPlatform).expect("bump 首槽应可得"));
+    let alloc = with_h1(&arena, |a| {
+        a.h2_take(&NullPlatform).expect("bump 首槽应可得")
+    });
     assert_eq!(alloc.index, 0);
     assert_eq!(alloc.new_gen, 0);
     assert_eq!(alloc.expected_w, 0, "新槽 W 初值必须为 0");
@@ -58,14 +60,18 @@ fn 空闲表lifo复用gen递增() {
     let alloc = with_h1(&arena, |a| a.h2_take(&NullPlatform).unwrap());
     with_h1(&arena, |a| publish(a, alloc, 1));
     // 模拟终态 (0,CANCELLED) 后自回收 push。
-    arena
-        .slot_word(0)
-        .store(encode_w(0, SlotState::Cancelled, GEN_BITS_DEFAULT), Ordering::SeqCst);
+    arena.slot_word(0).store(
+        encode_w(0, SlotState::Cancelled, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
     with_h1(&arena, |a| a.push_free(0));
     let again = with_h1(&arena, |a| a.h2_take(&NullPlatform).unwrap());
     assert_eq!(again.index, 0, "空闲表仅此一槽 ⇒ LIFO 必得同槽");
     assert_eq!(again.new_gen, 1, "复用 gen 严格 +1");
-    assert_eq!(again.expected_w, encode_w(0, SlotState::Cancelled, GEN_BITS_DEFAULT));
+    assert_eq!(
+        again.expected_w,
+        encode_w(0, SlotState::Cancelled, GEN_BITS_DEFAULT)
+    );
 }
 
 /// RB 退休（§13.3 T-耗-1 内核）：gen_bits=4 ⇒ gen 至 15 后 pop 即退休、
@@ -81,7 +87,9 @@ fn gen耗尽槽退休永不复用() {
         .slot_word(0)
         .store(encode_w(15, SlotState::FailAcked, 4), Ordering::SeqCst);
     with_h1(&arena, |a| a.push_free(0));
-    let next = with_h1(&arena, |a| a.h2_take(&NullPlatform).expect("槽 0 退休后应得槽 1"));
+    let next = with_h1(&arena, |a| {
+        a.h2_take(&NullPlatform).expect("槽 0 退休后应得槽 1")
+    });
     assert_eq!(next.index, 1, "退休槽不可再分配，必得他槽");
     assert_eq!(arena.retired_gen_exhausted_word().load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -113,7 +121,10 @@ fn 池耗尽显式err携带两计数() {
     let alloc = with_h1(&arena, |a| a.h2_take(&NullPlatform).unwrap());
     with_h1(&arena, |a| publish(a, alloc, 1));
     match with_h1(&arena, |a| a.h2_take(&NullPlatform)) {
-        Err(Exhausted { retired_fail_unacked, retired_gen_exhausted }) => {
+        Err(Exhausted {
+            retired_fail_unacked,
+            retired_gen_exhausted,
+        }) => {
             assert_eq!(retired_fail_unacked, 0);
             assert_eq!(retired_gen_exhausted, 0);
         }
@@ -127,9 +138,10 @@ fn h4期望失配tombstone() {
     let arena = SlotArena::alloc(1, GEN_BITS_DEFAULT);
     let alloc = with_h1(&arena, |a| a.h2_take(&NullPlatform).unwrap());
     // H2 与 H4 之间注入"迟到写者"改写 W（测试直接 store 模拟分配器 bug）。
-    arena
-        .slot_word(0)
-        .store(encode_w(5, SlotState::Req, GEN_BITS_DEFAULT), Ordering::SeqCst);
+    arena.slot_word(0).store(
+        encode_w(5, SlotState::Req, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
     let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_h1(&arena, |a| publish(a, alloc, 1));
     }));
@@ -175,9 +187,10 @@ fn 四账恒等式随分配回收演进() {
     let a1 = with_h1(&arena, |a| a.h2_take(&NullPlatform).unwrap());
     with_h1(&arena, |a| publish(a, a1, 1));
     // a0 达终态 CANCELLED 并自回收。
-    arena
-        .slot_word(0)
-        .store(encode_w(0, SlotState::Cancelled, GEN_BITS_DEFAULT), Ordering::SeqCst);
+    arena.slot_word(0).store(
+        encode_w(0, SlotState::Cancelled, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
     with_h1(&arena, |a| a.push_free(0));
     let acc = arena.accounts();
     assert_eq!(acc.active, 1, "槽 1 在途");
@@ -185,9 +198,10 @@ fn 四账恒等式随分配回收演进() {
     assert_eq!(acc.unallocated, 1);
     assert!(acc.identity_holds(&arena));
     // FAIL 未 ACK ⇒ RA 账（计数器由监督者 FAIL 写者递增，见 lifecycle 测试）。
-    arena
-        .slot_word(1)
-        .store(encode_w(0, SlotState::Fail, GEN_BITS_DEFAULT), Ordering::SeqCst);
+    arena.slot_word(1).store(
+        encode_w(0, SlotState::Fail, GEN_BITS_DEFAULT),
+        Ordering::SeqCst,
+    );
     arena
         .retired_fail_unacked_word()
         .fetch_add(1, Ordering::SeqCst);
@@ -220,9 +234,9 @@ fn i6_退休转移同样唤醒() {
 
     // 退休发生在这次 h2_take：槽 0 gen=15 达上界 ⇒ 钉 RETIRED + wake。
     let before = platform.wake_count(arena.slot_word_ptr(0));
-    platform.h1_lock_for_test(&arena);
+    let guard = super::H1Guard::new(&arena, &platform);
     let next = arena.h2_take(&platform).expect("槽 0 退休后应得槽 1");
-    platform.h1_unlock_for_test(&arena);
+    drop(guard);
     assert_eq!(next.index, 1, "退休槽不可再分配");
     assert_eq!(arena.retired_gen_exhausted_word().load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -231,10 +245,10 @@ fn i6_退休转移同样唤醒() {
         "I6：退休也是一次 W 转移，必须 wake_all"
     );
     // 对照：H4 发布同样 wake（既有纪律，用同一观测面钉住）。
-    platform.h1_lock_for_test(&arena);
+    let guard = super::H1Guard::new(&arena, &platform);
     let alloc = arena.h2_take(&platform).unwrap();
     arena.h3_h4_publish(&platform, alloc, 1, alloc.index);
-    platform.h1_unlock_for_test(&arena);
+    drop(guard);
     assert_eq!(
         platform.wake_count(arena.slot_word_ptr(alloc.index)),
         1,

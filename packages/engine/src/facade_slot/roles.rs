@@ -11,7 +11,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::arena::{SlotArena, TombstoneCode};
-use super::codec::{decode_gen, decode_join_state, decode_state, encode_join, encode_w, JoinState, SlotState};
+use super::codec::{
+    decode_gen, decode_join_state, decode_state, encode_join, encode_w, JoinState, SlotState,
+};
 use super::platform::FacadePlatform;
 
 /// 擦除后的 spawn 闭包盒（H3 载荷字指向的本体；随 REQ 发布所有权入槽）。
@@ -22,6 +24,8 @@ pub struct SpawnJob {
     pub invoke: unsafe fn(*mut u8) -> *mut u8,
     /// FAIL/CANCELLED 臂由 engine 就地 drop 闭包（§9.2.1 所有权表）。
     pub drop_fn: unsafe fn(*mut u8),
+    /// W2 输给死亡信号时释放未交付的结果，避免擦除类型后泄漏。
+    pub drop_result: unsafe fn(*mut u8),
     /// 线程名（H5 消息携带；arena 不设 name 字——无槽上读者，台账登记偏差）。
     pub name: String,
 }
@@ -52,6 +56,7 @@ impl SpawnJob {
             closure: Box::into_raw(Box::new(f)) as *mut u8,
             invoke: invoke_erased::<F, T>,
             drop_fn: drop_erased::<F>,
+            drop_result: drop_erased::<T>,
             name,
         })
     }
@@ -70,7 +75,10 @@ fn drop_job(job: *mut SpawnJob) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpawnFailure {
     /// 池耗尽（携带 arena 级 RA/RB 两计数，区分成因，§14.1）。
-    SlotPoolExhausted { retired_fail_unacked: u32, retired_gen_exhausted: u32 },
+    SlotPoolExhausted {
+        retired_fail_unacked: u32,
+        retired_gen_exhausted: u32,
+    },
     /// ACK 超时且取消成立（§8.2.1-3 SPAWN_ACK_TIMEOUT）。
     AckTimeout,
     /// 构造失败（errcode=WORKER_CONSTRUCT/SCRIPT_LOAD/INSTANTIATE/…）。
@@ -170,7 +178,10 @@ where
     loop {
         let w = arena.slot_word(slot).load(Ordering::SeqCst);
         if decode_gen(w, gb) != gen {
-            arena.tombstone_word().store(TombstoneCode::RequesterGenerationAdvanced as u32, Ordering::SeqCst);
+            arena.tombstone_word().store(
+                TombstoneCode::RequesterGenerationAdvanced as u32,
+                Ordering::SeqCst,
+            );
             panic!(
                 "facade_slot 绊线：请求者在途见换代（槽 {slot} 期望 gen {gen} 实读 {w:#x}）——I5′ 门链破坏"
             );
@@ -178,10 +189,15 @@ where
         match decode_state(w, gb) {
             SlotState::Ok => {
                 // 读 worker_id 载荷 + 双检绊线（§13.2：防御性，不参与证明）。
-                let worker_id = arena.answer_word(slot, super::arena::AnswerField::WorkerId).load(Ordering::SeqCst);
+                let worker_id = arena
+                    .answer_word(slot, super::arena::AnswerField::WorkerId)
+                    .load(Ordering::SeqCst);
                 let recheck = arena.slot_word(slot).load(Ordering::SeqCst);
                 if recheck != w {
-                    arena.tombstone_word().store(TombstoneCode::RequesterGenerationAdvanced as u32, Ordering::SeqCst);
+                    arena.tombstone_word().store(
+                        TombstoneCode::RequesterGenerationAdvanced as u32,
+                        Ordering::SeqCst,
+                    );
                     panic!("facade_slot 绊线：OK 载荷读窗口 W 变更（槽 {slot}）");
                 }
                 let _ = worker_id; // 诊断面（句柄 join 对账经 manifest）
@@ -197,10 +213,15 @@ where
             SlotState::Fail => {
                 // SEAM-B：醒见 FAIL 后、错误码载荷读前（N2）。
                 platform.seam_engine_fail_seen(slot);
-                let errcode = arena.answer_word(slot, super::arena::AnswerField::Errcode).load(Ordering::SeqCst);
+                let errcode = arena
+                    .answer_word(slot, super::arena::AnswerField::Errcode)
+                    .load(Ordering::SeqCst);
                 let recheck = arena.slot_word(slot).load(Ordering::SeqCst);
                 if recheck != w {
-                    arena.tombstone_word().store(TombstoneCode::RequesterGenerationAdvanced as u32, Ordering::SeqCst);
+                    arena.tombstone_word().store(
+                        TombstoneCode::RequesterGenerationAdvanced as u32,
+                        Ordering::SeqCst,
+                    );
                     panic!("facade_slot 绊线：FAIL 载荷读窗口 W 变更（槽 {slot}）");
                 }
                 // CAS (g,FAIL)→(g,FAIL_ACKED)（第四门回执）。
@@ -211,14 +232,18 @@ where
                     .compare_exchange(fail_w, acked_w, Ordering::SeqCst, Ordering::SeqCst)
                     .is_err()
                 {
-                    arena.tombstone_word().store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+                    arena
+                        .tombstone_word()
+                        .store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
                     panic!("facade_slot：FAIL_ACKED CAS 出现协议外写者（槽 {slot}）");
                 }
                 platform.wake_all_u32(w_ptr);
                 drop_job(published.job);
                 // RA 账递减（监督者写 FAIL 时计入）+ 即刻自回收（H1）。
                 arena.h1_lock_blocking(platform);
-                arena.retired_fail_unacked_word().fetch_sub(1, Ordering::SeqCst);
+                arena
+                    .retired_fail_unacked_word()
+                    .fetch_sub(1, Ordering::SeqCst);
                 arena.push_free(slot);
                 arena.h1_unlock(platform);
                 return Err(SpawnFailure::WorkerFailed { errcode });
@@ -234,7 +259,12 @@ where
                             let cancelled_w = encode_w(gen, SlotState::Cancelled, gb);
                             if arena
                                 .slot_word(slot)
-                                .compare_exchange(req_w, cancelled_w, Ordering::SeqCst, Ordering::SeqCst)
+                                .compare_exchange(
+                                    req_w,
+                                    cancelled_w,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
                                 .is_ok()
                             {
                                 platform.wake_all_u32(w_ptr);
@@ -249,7 +279,9 @@ where
                             // 计诊断一次、不再尝试；终态 ⇒ 循环处理。
                             let now = arena.slot_word(slot).load(Ordering::SeqCst);
                             if decode_state(now, gb) == SlotState::Answering {
-                                arena.timeout_hit_answering_word().fetch_add(1, Ordering::SeqCst);
+                                arena
+                                    .timeout_hit_answering_word()
+                                    .fetch_add(1, Ordering::SeqCst);
                             }
                             continue;
                         }
@@ -262,7 +294,9 @@ where
             // 请求者在途不可达位形（CANCELLED 唯一写者=本函数超时臂且写后
             // 即返；IDLE/FAIL_ACKED/RETIRED 无写路径）⇒ 协议外 ⇒ 绊线。
             other => {
-                arena.tombstone_word().store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+                arena
+                    .tombstone_word()
+                    .store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
                 panic!("facade_slot：请求者在途非法状态 {other:?}（槽 {slot}，W={w:#x}）");
             }
         }
@@ -352,27 +386,50 @@ pub fn trampoline_run<P: FacadePlatform>(
     // 双检绊线（§13.2：门链被未来改动破坏时的显式失败，不参与正确性证明）。
     let recheck = arena.slot_word(slot).load(Ordering::SeqCst);
     if recheck != expected_ok {
-        arena.tombstone_word().store(TombstoneCode::TrampolinePayloadTripwire as u32, Ordering::SeqCst);
+        arena.tombstone_word().store(
+            TombstoneCode::TrampolinePayloadTripwire as u32,
+            Ordering::SeqCst,
+        );
         panic!("facade_slot 绊线：trampoline 载荷读窗口 W 变更（槽 {slot}，gen {gen}）");
     }
     // W1：恰一闭包恰一跑。
     let job = unsafe { Box::from_raw(job_ptr) };
     let result = unsafe { (job.invoke)(job.closure) };
+    let drop_result = job.drop_result;
     drop(job);
     // W2：join 槽写 result + CAS WAITING→DONE + wake（§9.2.3）。
     let join_index = arena.join_index_of(slot);
     arena.set_join_result(join_index, result as usize);
     let waiting_w = encode_join(gen, JoinState::Waiting, gb);
     let done_w = encode_join(gen, JoinState::Done, gb);
-    if arena
-        .join_word(join_index)
-        .compare_exchange(waiting_w, done_w, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        arena.tombstone_word().store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
-        panic!("facade_slot：W2 DONE CAS 出现协议外写者（join {join_index}，gen {gen}）");
+    match arena.join_word(join_index).compare_exchange(
+        waiting_w,
+        done_w,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    ) {
+        Ok(_) => platform.wake_all_u32(arena.join_word_ptr(join_index)),
+        Err(actual) => {
+            // D5 获胜：join 只消费死亡载荷，结果仍归本线程，恰一次释放。
+            unsafe {
+                drop_result(result);
+            }
+            if decode_gen(actual, gb) != gen
+                || !matches!(
+                    decode_join_state(actual, gb),
+                    JoinState::DeadWriting
+                        | JoinState::DeadHardtrap
+                        | JoinState::DeadPanic
+                        | JoinState::Consumed
+                )
+            {
+                arena
+                    .tombstone_word()
+                    .store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+                panic!("facade_slot：W2 DONE CAS 出现协议外写者（join {join_index}，gen {gen}）");
+            }
+        }
     }
-    platform.wake_all_u32(arena.join_word_ptr(join_index));
     // W3：workerExit（W4 rust_done/W5 self.close 由宿主 import 承接）。
     platform.worker_exit(worker_id, slot, gen);
     TrampolineExit::Ran { worker_id }
@@ -394,18 +451,22 @@ where
     loop {
         let jw = arena.join_word(join_index).load(Ordering::SeqCst);
         if decode_gen(jw, gb) != gen {
-            arena.tombstone_word().store(TombstoneCode::JoinResetMismatch as u32, Ordering::SeqCst);
+            arena
+                .tombstone_word()
+                .store(TombstoneCode::JoinResetMismatch as u32, Ordering::SeqCst);
             panic!("facade_slot：join 在途换代（join {join_index} 期望 gen {gen}）——门链破坏");
         }
         match decode_join_state(jw, gb) {
-            JoinState::Waiting => {
+            JoinState::Waiting | JoinState::DeadWriting => {
                 platform.wait_u32(arena.join_word_ptr(join_index), jw, u64::MAX);
             }
             JoinState::Done => {
                 let ptr = arena.join_result(join_index);
                 let recheck = arena.join_word(join_index).load(Ordering::SeqCst);
                 if recheck != jw {
-                    arena.tombstone_word().store(TombstoneCode::JoinResetMismatch as u32, Ordering::SeqCst);
+                    arena
+                        .tombstone_word()
+                        .store(TombstoneCode::JoinResetMismatch as u32, Ordering::SeqCst);
                     panic!("facade_slot 绊线：join result 读窗口 JW 变更（join {join_index}）");
                 }
                 let consumed_w = encode_join(gen, JoinState::Consumed, gb);
@@ -414,7 +475,9 @@ where
                     .compare_exchange(jw, consumed_w, Ordering::SeqCst, Ordering::SeqCst)
                     .is_err()
                 {
-                    arena.tombstone_word().store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+                    arena
+                        .tombstone_word()
+                        .store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
                     panic!("facade_slot：CONSUMED CAS 出现协议外写者（join {join_index}）");
                 }
                 platform.wake_all_u32(arena.join_word_ptr(join_index));
@@ -428,7 +491,9 @@ where
                     .compare_exchange(jw, consumed_w, Ordering::SeqCst, Ordering::SeqCst)
                     .is_err()
                 {
-                    arena.tombstone_word().store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+                    arena
+                        .tombstone_word()
+                        .store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
                     panic!("facade_slot：DEAD 消费 CAS 出现协议外写者（join {join_index}）");
                 }
                 platform.wake_all_u32(arena.join_word_ptr(join_index));
@@ -443,7 +508,9 @@ where
                 ));
             }
             JoinState::Consumed => {
-                arena.tombstone_word().store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+                arena
+                    .tombstone_word()
+                    .store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
                 panic!("facade_slot：join 句柄重复消费（join {join_index}）");
             }
         }

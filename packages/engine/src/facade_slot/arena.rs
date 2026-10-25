@@ -35,8 +35,8 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::codec::{
-    decode_gen, decode_join_state, decode_state, encode_join, encode_w, gen_bits_valid,
-    gen_max, JoinState, SlotState, GEN_BITS_DEFAULT,
+    decode_gen, decode_join_state, decode_state, encode_join, encode_w, gen_bits_valid, gen_max,
+    JoinState, SlotState, GEN_BITS_DEFAULT,
 };
 use super::platform::FacadePlatform;
 
@@ -148,7 +148,9 @@ impl Accounts {
             }
             in_free[idx] = true;
             walked += 1;
-            cursor = arena.slot_field_word(idx, SLOT_FREE_NEXT).load(Ordering::SeqCst);
+            cursor = arena
+                .slot_field_word(idx, SLOT_FREE_NEXT)
+                .load(Ordering::SeqCst);
         }
         if walked != arena.word(FREE_LEN).load(Ordering::SeqCst) {
             return false; // 表长与链长不符
@@ -158,7 +160,12 @@ impl Accounts {
         let gen_bits = arena.gen_bits;
         let (mut active, mut ra, mut rb) = (0u32, 0u32, 0u32);
         for i in 0..capacity.min(bump) {
-            let state = decode_state(arena.slot_field_word(i as usize, SLOT_W).load(Ordering::SeqCst), gen_bits);
+            let state = decode_state(
+                arena
+                    .slot_field_word(i as usize, SLOT_W)
+                    .load(Ordering::SeqCst),
+                gen_bits,
+            );
             if in_free[i as usize] {
                 // 空闲表内必为终态（Ok/FailAcked/Cancelled）——FAIL（RA）与
                 // RETIRED 不得在表。
@@ -209,17 +216,20 @@ impl SlotArena {
         if !gen_bits_valid(gen_bits) {
             panic!("gen_bits 非法：{gen_bits}（须 1..=29）");
         }
-        let words = HEADER_WORDS + capacity as usize * SLOT_STRIDE + capacity as usize * JOIN_STRIDE;
+        let words =
+            HEADER_WORDS + capacity as usize * SLOT_STRIDE + capacity as usize * JOIN_STRIDE;
         let mut raw = Vec::with_capacity(words);
         for _ in 0..words {
             raw.push(AtomicU32::new(0));
         }
-        let mut arena = SlotArena {
+        let arena = SlotArena {
             capacity,
             gen_bits,
             raw: raw.into_boxed_slice(),
         };
-        arena.word(FREE_HEAD).store(FREE_HEAD_EMPTY, Ordering::SeqCst);
+        arena
+            .word(FREE_HEAD)
+            .store(FREE_HEAD_EMPTY, Ordering::SeqCst);
         arena.word(CAPACITY).store(capacity, Ordering::SeqCst);
         arena.word(GEN_BITS).store(gen_bits, Ordering::SeqCst);
         arena
@@ -239,7 +249,9 @@ impl SlotArena {
     #[inline]
     fn word(&self, index: usize) -> &AtomicU32 {
         // 索引域由内部常量保证；越界 = 内部 bug ⇒ 显式 panic。
-        self.raw.get(index).unwrap_or_else(|| panic!("arena 字越界：{index}"))
+        self.raw
+            .get(index)
+            .unwrap_or_else(|| panic!("arena 字越界：{index}"))
     }
     #[inline]
     fn word_ptr(&self, index: usize) -> *const AtomicU32 {
@@ -290,17 +302,23 @@ impl SlotArena {
     }
     /// join result 双字读取（wasm32 上 hi=0，`as usize` 无损）。
     pub fn join_result(&self, index: u32) -> usize {
-        let lo = self.word(self.join_base(index) + JOIN_RESULT_LO).load(Ordering::SeqCst) as u64;
-        let hi = self.word(self.join_base(index) + JOIN_RESULT_HI).load(Ordering::SeqCst) as u64;
+        let lo = self
+            .word(self.join_base(index) + JOIN_RESULT_LO)
+            .load(Ordering::SeqCst) as u64;
+        let hi = self
+            .word(self.join_base(index) + JOIN_RESULT_HI)
+            .load(Ordering::SeqCst) as u64;
         (lo | (hi << 32)) as usize
     }
     /// join 槽死亡信号细节码（D5 写者存、join 读面取）。
     pub fn join_dead_code(&self, index: u32) -> u32 {
-        self.word(self.join_base(index) + JOIN_DEAD_CODE).load(Ordering::SeqCst)
+        self.word(self.join_base(index) + JOIN_DEAD_CODE)
+            .load(Ordering::SeqCst)
     }
     /// join 槽死亡信号细节码写入（D5 写者）。
     pub fn set_join_dead_code(&self, index: u32, code: u32) {
-        self.word(self.join_base(index) + JOIN_DEAD_CODE).store(code, Ordering::SeqCst);
+        self.word(self.join_base(index) + JOIN_DEAD_CODE)
+            .store(code, Ordering::SeqCst);
     }
     pub fn tombstone_word(&self) -> &AtomicU32 {
         self.word(TOMBSTONE)
@@ -322,8 +340,12 @@ impl SlotArena {
     }
     /// 载荷指针（H3 写、trampoline 读；u64 承载同 set_join_result）。
     pub fn payload_ptr(&self, index: u32) -> usize {
-        let lo = self.word(self.slot_base(index) + SLOT_PAYLOAD_LO).load(Ordering::SeqCst) as u64;
-        let hi = self.word(self.slot_base(index) + SLOT_PAYLOAD_HI).load(Ordering::SeqCst) as u64;
+        let lo = self
+            .word(self.slot_base(index) + SLOT_PAYLOAD_LO)
+            .load(Ordering::SeqCst) as u64;
+        let hi = self
+            .word(self.slot_base(index) + SLOT_PAYLOAD_HI)
+            .load(Ordering::SeqCst) as u64;
         (lo | (hi << 32)) as usize
     }
     /// 配对 join index（H3 写）。
@@ -336,6 +358,25 @@ impl SlotArena {
     fn tombstone_panic(&self, code: TombstoneCode, detail: &str) -> ! {
         self.word(TOMBSTONE).store(code as u32, Ordering::SeqCst);
         panic!("facade_slot tombstone({code:?})：{detail}");
+    }
+
+    /// H1 持锁下检查回收是否已完成，避免重复退出事件使空闲表成环。
+    pub fn is_free(&self, index: u32) -> bool {
+        let mut cursor = self.word(FREE_HEAD).load(Ordering::SeqCst);
+        let mut walked = 0;
+        while cursor != FREE_HEAD_EMPTY {
+            if cursor >= self.capacity || walked >= self.capacity {
+                self.tombstone_panic(TombstoneCode::FreeListCorrupt, "重复回收检查遇到损坏空闲表");
+            }
+            if cursor == index {
+                return true;
+            }
+            cursor = self
+                .slot_field_word(cursor as usize, SLOT_FREE_NEXT)
+                .load(Ordering::SeqCst);
+            walked += 1;
+        }
+        false
     }
 
     /// 四账快照（静点核对用：走查空闲表 + 逐槽分类）。
@@ -453,14 +494,19 @@ impl SlotArena {
                     }
                 }
                 // pop（LIFO）。
-                let next = self.slot_field_word(idx, SLOT_FREE_NEXT).load(Ordering::SeqCst);
+                let next = self
+                    .slot_field_word(idx, SLOT_FREE_NEXT)
+                    .load(Ordering::SeqCst);
                 self.word(FREE_HEAD).store(next, Ordering::SeqCst);
                 self.word(FREE_LEN).fetch_sub(1, Ordering::SeqCst);
                 // RB 退休：gen 达上界 ⇒ 钉 (max_gen,RETIRED) 永不复用（§13.3）。
                 if gen >= gen_max(self.gen_bits) {
-                    self.slot_field_word(idx, SLOT_W)
-                        .store(encode_w(gen, SlotState::Retired, self.gen_bits), Ordering::SeqCst);
-                    self.word(RETIRED_GEN_EXHAUSTED).fetch_add(1, Ordering::SeqCst);
+                    self.slot_field_word(idx, SLOT_W).store(
+                        encode_w(gen, SlotState::Retired, self.gen_bits),
+                        Ordering::SeqCst,
+                    );
+                    self.word(RETIRED_GEN_EXHAUSTED)
+                        .fetch_add(1, Ordering::SeqCst);
                     self.word(FACADE_RB_TOTAL).fetch_add(1, Ordering::SeqCst);
                     // I6：这也是一次 W 转移，退出的等待者必须被冲刷。
                     // 该槽此后永不复用 ⇒ 不会有后续的 H4 wake 来兜底，
@@ -482,7 +528,9 @@ impl SlotArena {
                     retired_gen_exhausted: self.word(RETIRED_GEN_EXHAUSTED).load(Ordering::SeqCst),
                 });
             }
-            let w_old = self.slot_field_word(b as usize, SLOT_W).load(Ordering::SeqCst);
+            let w_old = self
+                .slot_field_word(b as usize, SLOT_W)
+                .load(Ordering::SeqCst);
             if w_old != 0 {
                 self.tombstone_panic(
                     TombstoneCode::FreeListCorrupt,
@@ -536,8 +584,10 @@ impl SlotArena {
                 &format!("join 槽 {join_index} 旧代状态 {jw_old:#x} 非 CONSUMED（门链破坏）"),
             );
         }
-        self.join_word(join_index)
-            .store(encode_join(alloc.new_gen, JoinState::Waiting, self.gen_bits), Ordering::SeqCst);
+        self.join_word(join_index).store(
+            encode_join(alloc.new_gen, JoinState::Waiting, self.gen_bits),
+            Ordering::SeqCst,
+        );
         // H4：CAS 期望=完整旧字；失败 = 迟到写者 = 分配器 bug ⇒ tombstone。
         let new_w = encode_w(alloc.new_gen, SlotState::Req, self.gen_bits);
         if self
@@ -551,7 +601,8 @@ impl SlotArena {
                     "H4 CAS 期望失配：槽 {} 期望 {:#x} 实为 {:#x}（迟到写者 = 分配器 bug）",
                     alloc.index,
                     alloc.expected_w,
-                    self.slot_field_word(alloc.index as usize, SLOT_W).load(Ordering::SeqCst)
+                    self.slot_field_word(alloc.index as usize, SLOT_W)
+                        .load(Ordering::SeqCst)
                 ),
             );
         }
@@ -566,7 +617,9 @@ impl SlotArena {
     // -----------------------------------------------------------------
     pub fn push_free(&self, index: u32) {
         self.assert_h1_held("push_free");
-        let w = self.slot_field_word(index as usize, SLOT_W).load(Ordering::SeqCst);
+        let w = self
+            .slot_field_word(index as usize, SLOT_W)
+            .load(Ordering::SeqCst);
         match decode_state(w, self.gen_bits) {
             SlotState::Ok | SlotState::FailAcked | SlotState::Cancelled => {}
             SlotState::Retired => {

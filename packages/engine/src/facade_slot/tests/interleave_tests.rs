@@ -11,10 +11,10 @@ use std::thread;
 
 use super::lifecycle_tests::{counted_job, JobCounters};
 use super::TestPlatform;
-use crate::facade_slot::arena::SlotArena;
 use crate::facade_slot::arena::AnswerField;
-use crate::facade_slot::platform::NullPlatform;
+use crate::facade_slot::arena::SlotArena;
 use crate::facade_slot::codec::*;
+use crate::facade_slot::platform::NullPlatform;
 use crate::facade_slot::roles::*;
 use crate::facade_slot::test_supervisor;
 
@@ -48,8 +48,15 @@ fn n1_跨代载荷负测() {
     // —— T-缩：engine 超时 → CANCELLED + 自回收。
     platform.fire_deadline(arena.slot_word_ptr(0));
     let result0 = requester0.join().expect("请求者不应 panic");
-    assert!(matches!(result0, Err(SpawnFailure::AckTimeout)), "{result0:?}");
-    assert_eq!(counters0.drop.load(Ordering::SeqCst), 1, "g 代闭包 Drop 恰 1（engine 计）");
+    assert!(
+        matches!(result0, Err(SpawnFailure::AckTimeout)),
+        "{result0:?}"
+    );
+    assert_eq!(
+        counters0.drop.load(Ordering::SeqCst),
+        1,
+        "g 代闭包 Drop 恰 1（engine 计）"
+    );
     // 撤销虚拟截止（粘性标志；g+1 请求者复用同槽同字，不撤则立即被误判超时）。
     platform.clear_deadline(arena.slot_word_ptr(0));
 
@@ -79,11 +86,23 @@ fn n1_跨代载荷负测() {
     let new_out = new_child.join().expect("新子不应 panic");
     assert!(matches!(new_out, TrampolineExit::Ran { .. }));
     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("g+1 join");
-    assert_eq!(counters1.run.load(Ordering::SeqCst), 1, "g+1 代闭包 run 恰 1（新子计）");
+    assert_eq!(
+        counters1.run.load(Ordering::SeqCst),
+        1,
+        "g+1 代闭包 run 恰 1（新子计）"
+    );
     let old_out = old_child.join().expect("旧子不应 panic");
     assert!(matches!(old_out, TrampolineExit::Superseded), "{old_out:?}");
-    assert_eq!(counters0.run.load(Ordering::SeqCst), 0, "旧子不得执行 g 代闭包");
-    assert_eq!(counters0.drop.load(Ordering::SeqCst), 1, "旧子不得触碰 g 代闭包（无二次 drop）");
+    assert_eq!(
+        counters0.run.load(Ordering::SeqCst),
+        0,
+        "旧子不得执行 g 代闭包"
+    );
+    assert_eq!(
+        counters0.drop.load(Ordering::SeqCst),
+        1,
+        "旧子不得触碰 g 代闭包（无二次 drop）"
+    );
 
     // —— (ii) 旧子 worker 退出（workerExit 收到）。
     let (wid, wslot, wgen) = platform.wait_worker_exit();
@@ -93,16 +112,24 @@ fn n1_跨代载荷负测() {
     assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
 
     // —— 尾巴：放 C0 → 迟到应答 CAS 期望 (g,REQ) 必败 → 丢弃 + terminate 幂等。
-    let worker_id_canary = arena.answer_word(0, AnswerField::WorkerId).load(Ordering::SeqCst);
+    let worker_id_canary = arena
+        .answer_word(0, AnswerField::WorkerId)
+        .load(Ordering::SeqCst);
     assert_eq!(worker_id_canary, 2, "g+1 应答载荷在位（canary 基线）");
     let late = test_supervisor::answer_ok(&arena, &platform, 0, 0, 1);
     assert!(matches!(late, test_supervisor::AnswerOutcome::DroppedLate));
     assert_eq!(
-        arena.answer_word(0, AnswerField::WorkerId).load(Ordering::SeqCst),
+        arena
+            .answer_word(0, AnswerField::WorkerId)
+            .load(Ordering::SeqCst),
         2,
         "迟到应答零载荷写"
     );
-    assert_eq!(*platform.terminate_log.lock().unwrap(), vec![1], "迟到构造子 terminate（幂等卫生）");
+    assert_eq!(
+        *platform.terminate_log.lock().unwrap(),
+        vec![1],
+        "迟到构造子 terminate（幂等卫生）"
+    );
 }
 
 /// N1-b 合法 OK 载荷窗口（§12.1.5）：SEAM-A2 冻住子于"读 W=(g,OK) 后、
@@ -167,7 +194,11 @@ fn n2_fail载荷移交窗口() {
     test_supervisor::answer_fail(&arena, &platform, 0, 0, 0xFA);
     // engine 醒见 FAIL → SEAM-B 冻结。
     platform.seams.b.wait_hit();
-    assert_eq!(arena.retired_fail_unacked_word().load(Ordering::SeqCst), 1, "FAIL 已计 RA");
+    assert_eq!(
+        arena.retired_fail_unacked_word().load(Ordering::SeqCst),
+        1,
+        "FAIL 已计 RA"
+    );
     // 分配压力：第四门（ACK 在载荷读之后）未成立 ⇒ 槽不可分配。
     match super::with_h1(&arena, |a| a.h2_take(&NullPlatform)) {
         Err(crate::facade_slot::arena::Exhausted {
@@ -180,7 +211,9 @@ fn n2_fail载荷移交窗口() {
     platform.seams.b.release_once();
     let result = requester.join().expect("请求者不应 panic");
     match result {
-        Err(SpawnFailure::WorkerFailed { errcode }) => assert_eq!(errcode, 0xFA, "g 代错误码未被覆写"),
+        Err(SpawnFailure::WorkerFailed { errcode }) => {
+            assert_eq!(errcode, 0xFA, "g 代错误码未被覆写")
+        }
         other => panic!("FAIL 链：{other:?}"),
     }
     assert_eq!(arena.retired_fail_unacked_word().load(Ordering::SeqCst), 0);
@@ -274,7 +307,10 @@ fn n3b_写权获取窗口() {
     // (i) engine 取消 CAS 必败：注入虚拟截止（模拟 engine 超时写者）。
     platform.fire_deadline(arena.slot_word_ptr(0));
     thread::sleep(std::time::Duration::from_millis(30));
-    assert!(!returned.load(Ordering::SeqCst), "取消窗关闭 ⇒ 请求者不得超时失败返回");
+    assert!(
+        !returned.load(Ordering::SeqCst),
+        "取消窗关闭 ⇒ 请求者不得超时失败返回"
+    );
     assert_eq!(
         arena.slot_word(0).load(Ordering::SeqCst),
         encode_w(0, SlotState::Answering, GEN_BITS_DEFAULT),
@@ -288,7 +324,9 @@ fn n3b_写权获取窗口() {
     let outcome = answerer.join().expect("应答线程不应 panic");
     assert!(matches!(outcome, test_supervisor::AnswerOutcome::Answered));
     assert_eq!(
-        arena.answer_word(0, AnswerField::WorkerId).load(Ordering::SeqCst),
+        arena
+            .answer_word(0, AnswerField::WorkerId)
+            .load(Ordering::SeqCst),
         8,
         "载荷写落 g 代槽（写入对象正确）"
     );
@@ -302,4 +340,3 @@ fn n3b_写权获取窗口() {
     assert_eq!(counters.run.load(Ordering::SeqCst), 1);
     assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
 }
-

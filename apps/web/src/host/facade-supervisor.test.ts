@@ -68,6 +68,7 @@ test("OK 回收三门：join 未 CONSUMED 不回收，闭合后 push，H1 占用
   const state = createSupervisorState();
   publish(arena, 0, 0);
   answerOk(arena, 0, 0, 1);
+  registerChild(state, 1, 0, 0);
   assert.equal(onWorkerExit(arena, state, 1, 0, 0), "gates-not-met");
   assert.equal(Atomics.load(arena.words, FREE_LEN), 0);
   // join → CONSUMED。
@@ -214,7 +215,7 @@ test("DEAD 对 join 可见时诊断 code 必须已发布", () => {
   const arena = freshArena();
   publish(arena, 0, 0);
   const compare = Atomics.compareExchange;
-  const patch = mock.method(Atomics, "compareExchange", (words, offset, expected, replacement) => {
+  const patch = mock.method(Atomics, "compareExchange", (words: Int32Array, offset: number, expected: number, replacement: number) => {
     const previous = compare(words, offset, expected, replacement);
     if (offset === joinWordOffset(0, CAP) && previous === expected &&
         [encodeJoin(0, JoinState.DeadHardtrap, GEN_BITS), encodeJoin(0, JoinState.DeadPanic, GEN_BITS)].includes(replacement)) {
@@ -224,4 +225,47 @@ test("DEAD 对 join 可见时诊断 code 必须已发布", () => {
   });
   try { assert.equal(writeDead(arena, 0, 0, "hardtrap", 0xD5), "written"); }
   finally { patch.mock.restore(); }
+});
+
+
+test("D5 领写权暂停时重入零载荷写，完成后重复死亡通知幂等", () => {
+  const arena = freshArena();
+  publish(arena, 0, 0);
+  const compare = Atomics.compareExchange;
+  const patch = mock.method(Atomics, "compareExchange", (words: Int32Array, offset: number, expected: number, replacement: number) => {
+    const previous = compare(words, offset, expected, replacement);
+    if (offset === joinWordOffset(0, CAP) && previous === expected && replacement === encodeJoin(0, JoinState.DeadWriting, GEN_BITS)) {
+      assert.equal(Atomics.load(arena.words, joinFieldOffset(0, CAP, JOIN_DEAD_CODE)), 0);
+      assert.equal(writeDead(arena, 0, 0, "panic", 0xBAD), "lost-to-dead");
+      assert.equal(Atomics.load(arena.words, joinFieldOffset(0, CAP, JOIN_DEAD_CODE)), 0);
+    }
+    return previous;
+  });
+  try { assert.equal(writeDead(arena, 0, 0, "hardtrap", 0xD5), "written"); }
+  finally { patch.mock.restore(); }
+  const before = Array.from(arena.words);
+  assert.equal(writeDead(arena, 0, 0, "panic", 1), "lost-to-dead");
+  assert.deepEqual(Array.from(arena.words), before);
+});
+
+test("D5 输给 DONE/CONSUMED/换代时零载荷写", () => {
+  for (const [gen, state, outcome] of [
+    [0, JoinState.Done, "lost-to-done"], [0, JoinState.Consumed, "lost-to-consumed"],
+    [1, JoinState.Waiting, "lost-to-stale-generation"],
+  ] as const) {
+    const arena = freshArena();
+    publish(arena, 0, 0);
+    Atomics.store(arena.words, joinWordOffset(0, CAP), encodeJoin(gen, state, GEN_BITS));
+    Atomics.store(arena.words, joinFieldOffset(0, CAP, JOIN_DEAD_CODE), 0xBEEF);
+    const before = Array.from(arena.words);
+    assert.equal(writeDead(arena, 0, 0, "hardtrap", 0xD5), outcome);
+    assert.deepEqual(Array.from(arena.words), before);
+  }
+});
+
+test("workerExit 身份错配不得摘除活跃 manifest", () => {
+  const arena = freshArena(); const state = createSupervisorState();
+  publish(arena, 0, 0); answerOk(arena, 0, 0, 1); registerChild(state, 1, 0, 0);
+  assert.equal(onWorkerExit(arena, state, 1, 1, 0), "gates-not-met");
+  assert.equal(state.manifest.get(1)?.status, "active");
 });

@@ -171,7 +171,8 @@ export function onWorkerExit(
 ): RecoveryOutcome {
   // 摘除只认 workerExit；未知 id 的迟到 workerExit 丢弃（不写槽）。
   const entry = state.manifest.get(workerId);
-  if (entry !== undefined && entry.status === "active") {
+  if (entry === undefined || entry.slot !== slot || entry.gen !== gen) return "gates-not-met";
+  if (entry.status === "active") {
     state.manifest.set(workerId, { slot: entry.slot, gen: entry.gen, status: "removed" });
   }
   return evaluateOkRecovery(arena, state, slot, gen);
@@ -208,30 +209,40 @@ export function evaluateOkRecovery(
     }
   }
   if (!tryLock(arena.words)) {
-    state.pendingRecovery.push([slot, gen]);
+    if (!state.pendingRecovery.some(([s, g]) => s === slot && g === gen)) state.pendingRecovery.push([slot, gen]);
     return "delayed";
   }
-  pushFree(arena, slot);
-  unlock(arena.words);
-  return "pushed";
+  try {
+    // 槽保持 OK 到下次分配；H1 内查询空闲表，防重复事件二次 push。
+    let cursor = u32(Atomics.load(arena.words, FREE_HEAD));
+    for (let walked = 0; cursor !== FREE_HEAD_EMPTY; walked += 1) {
+      if (cursor >= arena.capacity || walked >= arena.capacity) {
+        tombstone(arena, TombstoneCode.FreeListCorrupt, "回收遇到损坏空闲表");
+      }
+      if (cursor === slot) return "gates-not-met";
+      cursor = u32(Atomics.load(arena.words, slotFieldOffset(cursor, SLOT_FREE_NEXT)));
+    }
+    pushFree(arena, slot);
+    return "pushed";
+  } finally { unlock(arena.words); }
 }
 
 /** 延迟回收检查点重试（下一 facadeSpawn / workerExit 事件驱动）。返回成功 push 数。 */
 export function recoverPending(arena: FacadeArenaView, state: SupervisorState): number {
   let pushed = 0;
-  const remaining: Array<readonly [number, number]> = [];
-  for (const [slot, gen] of state.pendingRecovery) {
-    if (evaluateOkRecovery(arena, state, slot, gen) === "pushed") pushed += 1;
-    else remaining.push([slot, gen]);
+  // 先移走快照，评估期间只向下一批登记，绝不遍历仍在增长的数组。
+  const pending = state.pendingRecovery.splice(0);
+  for (const [slot, gen] of pending) {
+    const outcome = evaluateOkRecovery(arena, state, slot, gen);
+    if (outcome === "pushed") pushed += 1;
   }
-  state.pendingRecovery.length = 0;
-  state.pendingRecovery.push(...remaining);
   return pushed;
 }
 
 export type DeadKind = "hardtrap" | "panic";
 export type DeadOutcome =
   | "written"
+  | "lost-to-dead"
   | "lost-to-done"
   | "lost-to-consumed"
   /** 输给换代：迟到的旧代死亡信号晚于槽复用到达——过期即弃，不崩。 */
@@ -252,8 +263,12 @@ export function writeDead(
     kind === "hardtrap" ? JoinState.DeadHardtrap : JoinState.DeadPanic,
     arena.genBits,
   );
-  if (compareExchange(arena.words, offset, waitingW, deadW)) {
+  const writingW = encodeJoin(gen, JoinState.DeadWriting, arena.genBits);
+  if (compareExchange(arena.words, offset, waitingW, writingW)) {
     Atomics.store(arena.words, joinFieldOffset(joinIndex, arena.capacity, JOIN_DEAD_CODE), code | 0);
+    if (!compareExchange(arena.words, offset, writingW, deadW)) {
+      tombstone(arena, TombstoneCode.UnexpectedWriter, "D5 载荷写权被协议外写者破坏");
+    }
     Atomics.notify(arena.words, offset);
     return "written";
   }
@@ -262,6 +277,10 @@ export function writeDead(
   const now = u32(Atomics.load(arena.words, offset));
   if (decodeGen(now, arena.genBits) !== gen) return "lost-to-stale-generation";
   switch (decodeJoinState(now, arena.genBits)) {
+    case JoinState.DeadWriting:
+    case JoinState.DeadHardtrap:
+    case JoinState.DeadPanic:
+      return "lost-to-dead";
     case JoinState.Done:
       return "lost-to-done";
     case JoinState.Consumed:

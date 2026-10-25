@@ -36,15 +36,13 @@ export function engine_clock_now(): number {
 //
 // 这些名字是 Rust `facade_slot::platform` 的 `#[link(wasm_import_module =
 // "env")]` extern。**必须在本模块导出**——否则 wasm 实例化期即 link error
-// （import 解析发生在实例化，不在调用）。当前产物链（wasm-bindgen 0.2.93
-// 无共享内存 substrate）下槽协议不可达，函数体一律**显式抛出**，不静默
-// no-op 伪装成功（铁律二）。真实实现 = 共享内存 substrate 解封批（宿主
-// facade-supervisor 接线，阶段 3 前）。
+// （import 解析发生在实例化，不在调用）。当前宿主尚未装配 supervisor/子 Worker，槽协议不可达，函数体一律**显式抛出**，不静默
+// no-op 伪装成功（铁律二）。真实实现由 W1 宿主 facade-supervisor 接线承接。
 // ---------------------------------------------------------------------------
 
 function facadeUnsupported(name: string): never {
   throw new Error(
-    `facade_thread_env.${name}：当前产物链无共享内存 substrate（wasm-bindgen 0.2.93 未产出 shared memory import），` +
+    `facade_thread_env.${name}：当前宿主尚未装配 supervisor/子 Worker/bootstrap，` +
       `槽协议路径不可达——这是构建形态违约而非运行时容错（设计 §12-14，阶段边界见 agents/wasm-thread-r4a/）`,
   );
 }

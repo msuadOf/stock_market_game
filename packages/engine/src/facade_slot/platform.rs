@@ -29,7 +29,12 @@ pub enum FutexWait {
 pub trait FacadePlatform: Sync {
     /// 在 addr 上等待至值 ≠ expected 或超时（标准 futex 循环的一步；
     /// 虚假唤醒由调用者谓词循环吸收，I6）。
-    fn wait_u32(&self, addr: *const std::sync::atomic::AtomicU32, expected: u32, timeout_ms: u64) -> FutexWait;
+    fn wait_u32(
+        &self,
+        addr: *const std::sync::atomic::AtomicU32,
+        expected: u32,
+        timeout_ms: u64,
+    ) -> FutexWait;
     /// 对 addr futex_wake_all（一切 W 转移后必呼，I6；换代转移同样唤醒）。
     fn wake_all_u32(&self, addr: *const std::sync::atomic::AtomicU32);
     /// H5：REQ 已发布后向监督者发 facadeSpawn 消息（§13.2 时序：H4 之后、
@@ -52,6 +57,8 @@ pub trait FacadePlatform: Sync {
     fn seam_supervisor_msg_entry(&self, _slot: u32) {}
     /// SEAM-C1：supervisor A1 成功后、A2 首次载荷 store 前（§13.1）。
     fn seam_supervisor_after_acquire(&self, _slot: u32) {}
+    /// D5 已领 join 载荷写权、尚未写 code（仅确定性交错测试）。
+    fn seam_dead_after_acquire(&self, _join: u32) {}
 }
 
 /// 无操作平台（arena 级测试用：不等待、不发消息、缝恒 no-op）。
@@ -103,7 +110,11 @@ mod wasm_impl {
     impl FacadePlatform for WasmFacadePlatform {
         fn wait_u32(&self, addr: *const AtomicU32, expected: u32, timeout_ms: u64) -> FutexWait {
             // timeout：u64::MAX 视为无限等（宿主转 Atomics.wait 无超时形）。
-            let timeout = if timeout_ms == u64::MAX { -1i64 } else { timeout_ms as i64 };
+            let timeout = if timeout_ms == u64::MAX {
+                -1i64
+            } else {
+                timeout_ms as i64
+            };
             let r = unsafe { facade_futex_wait(addr as u32, expected, timeout) };
             match r {
                 0 | 1 => FutexWait::ValueChanged,
@@ -133,7 +144,12 @@ pub use wasm_impl::WasmFacadePlatform;
 /// `Arc<P>` 平台穿透（测试/门面持 Arc 共享平台对象；生产 wasm 为零包装
 /// 静态分派单态化——Arc 仅为别名层，无运行期间接差异：所有方法转发）。
 impl<P: FacadePlatform + Send> FacadePlatform for std::sync::Arc<P> {
-    fn wait_u32(&self, addr: *const std::sync::atomic::AtomicU32, expected: u32, timeout_ms: u64) -> FutexWait {
+    fn wait_u32(
+        &self,
+        addr: *const std::sync::atomic::AtomicU32,
+        expected: u32,
+        timeout_ms: u64,
+    ) -> FutexWait {
         (**self).wait_u32(addr, expected, timeout_ms)
     }
     fn wake_all_u32(&self, addr: *const std::sync::atomic::AtomicU32) {
@@ -148,9 +164,22 @@ impl<P: FacadePlatform + Send> FacadePlatform for std::sync::Arc<P> {
     fn terminate_child(&self, worker_id: u32) {
         (**self).terminate_child(worker_id)
     }
-    fn seam_trampoline_wake(&self, slot: u32) { (**self).seam_trampoline_wake(slot) }
-    fn seam_trampoline_ok_read(&self, slot: u32) { (**self).seam_trampoline_ok_read(slot) }
-    fn seam_engine_fail_seen(&self, slot: u32) { (**self).seam_engine_fail_seen(slot) }
-    fn seam_supervisor_msg_entry(&self, slot: u32) { (**self).seam_supervisor_msg_entry(slot) }
-    fn seam_supervisor_after_acquire(&self, slot: u32) { (**self).seam_supervisor_after_acquire(slot) }
+    fn seam_dead_after_acquire(&self, join: u32) {
+        (**self).seam_dead_after_acquire(join)
+    }
+    fn seam_trampoline_wake(&self, slot: u32) {
+        (**self).seam_trampoline_wake(slot)
+    }
+    fn seam_trampoline_ok_read(&self, slot: u32) {
+        (**self).seam_trampoline_ok_read(slot)
+    }
+    fn seam_engine_fail_seen(&self, slot: u32) {
+        (**self).seam_engine_fail_seen(slot)
+    }
+    fn seam_supervisor_msg_entry(&self, slot: u32) {
+        (**self).seam_supervisor_msg_entry(slot)
+    }
+    fn seam_supervisor_after_acquire(&self, slot: u32) {
+        (**self).seam_supervisor_after_acquire(slot)
+    }
 }

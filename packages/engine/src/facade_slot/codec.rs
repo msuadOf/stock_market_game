@@ -40,14 +40,16 @@ pub enum SlotState {
 pub enum JoinState {
     /// H3 发布时复位。
     Waiting = 0,
+    /// D5 已领载荷写权；code 写完后发布 DEAD，join 等待。
+    DeadWriting = 1,
     /// W2：trampoline 正常出口（result 已写、Release）。
-    Done = 1,
+    Done = 2,
     /// D5：supervisor 死亡信号（硬 trap）。
-    DeadHardtrap = 2,
+    DeadHardtrap = 3,
     /// panic hook 死亡信号。
-    DeadPanic = 3,
+    DeadPanic = 4,
     /// JoinHandle::join 消费后（迟到写者 CAS 必败）。
-    Consumed = 4,
+    Consumed = 5,
 }
 
 /// 默认 gen 位宽：29（state 恰 3 bit）。
@@ -69,14 +71,15 @@ pub const fn all_slot_states() -> [SlotState; 8] {
     ]
 }
 
-/// join 状态全集（5 值）。
-pub const fn all_join_states() -> [JoinState; 5] {
+/// join 状态全集（6 值，含载荷写入中间态）。
+pub const fn all_join_states() -> [JoinState; 6] {
     [
         JoinState::Waiting,
         JoinState::Done,
         JoinState::DeadHardtrap,
         JoinState::DeadPanic,
         JoinState::Consumed,
+        JoinState::DeadWriting,
     ]
 }
 
@@ -103,15 +106,24 @@ pub const fn gen_max(gen_bits: u32) -> u32 {
 /// 的立足点，静默截断等于绕过跨代身份检查。改为 const fn 内 assert!
 /// （常量求值期即失败；运行期调用亦有断言）。
 pub const fn encode_w(gen: u32, state: SlotState, gen_bits: u32) -> u32 {
-    assert!(gen_bits_valid(gen_bits), "encode_w: gen_bits 越界（须 1..=29）");
+    assert!(
+        gen_bits_valid(gen_bits),
+        "encode_w: gen_bits 越界（须 1..=29）"
+    );
     assert!(gen <= gen_max(gen_bits), "encode_w: gen 超出 gen_bits 域");
     (gen << (32 - gen_bits)) | (state as u32)
 }
 
 /// 编码 join 槽复合字（同一布局；断言同 `encode_w`）。
 pub const fn encode_join(gen: u32, state: JoinState, gen_bits: u32) -> u32 {
-    assert!(gen_bits_valid(gen_bits), "encode_join: gen_bits 越界（须 1..=29）");
-    assert!(gen <= gen_max(gen_bits), "encode_join: gen 超出 gen_bits 域");
+    assert!(
+        gen_bits_valid(gen_bits),
+        "encode_join: gen_bits 越界（须 1..=29）"
+    );
+    assert!(
+        gen <= gen_max(gen_bits),
+        "encode_join: gen 超出 gen_bits 域"
+    );
     (gen << (32 - gen_bits)) | (state as u32)
 }
 
@@ -134,7 +146,10 @@ pub fn decode_state(w: u32, gen_bits: u32) -> SlotState {
         6 => SlotState::FailAcked,
         7 => SlotState::Retired,
         // gen_bits=29 时 raw ≤ 7 不可达；缩空间下杂散位达此。
-        _ => panic!("非法 SlotState 位形：低 {} 位值 {raw}（协议破坏，须排查写者）", 32 - gen_bits),
+        _ => panic!(
+            "非法 SlotState 位形：低 {} 位值 {raw}（协议破坏，须排查写者）",
+            32 - gen_bits
+        ),
     }
 }
 
@@ -143,10 +158,11 @@ pub fn decode_join_state(w: u32, gen_bits: u32) -> JoinState {
     let raw = w & gen_state_mask(gen_bits);
     match raw {
         0 => JoinState::Waiting,
-        1 => JoinState::Done,
-        2 => JoinState::DeadHardtrap,
-        3 => JoinState::DeadPanic,
-        4 => JoinState::Consumed,
+        1 => JoinState::DeadWriting,
+        2 => JoinState::Done,
+        3 => JoinState::DeadHardtrap,
+        4 => JoinState::DeadPanic,
+        5 => JoinState::Consumed,
         _ => panic!("非法 JoinState 位形：低 {} 位值 {raw}", 32 - gen_bits),
     }
 }

@@ -7,9 +7,7 @@
 use std::sync::atomic::Ordering;
 
 use super::arena::{AnswerField, SlotArena};
-use super::codec::{
-    decode_gen, decode_join_state, decode_state, encode_join, encode_w, JoinState, SlotState,
-};
+use super::codec::{decode_gen, decode_join_state, encode_join, encode_w, JoinState, SlotState};
 use super::platform::FacadePlatform;
 use super::roles::SpawnFailure;
 
@@ -47,7 +45,7 @@ pub fn answer_ok<P: FacadePlatform>(
         return AnswerOutcome::DroppedLate;
     }
     platform.seam_supervisor_after_acquire(slot); // SEAM-C1
-    // A2：原子写 worker_id 载荷（槽被 A1 钉死，A4 排他）。
+                                                  // A2：原子写 worker_id 载荷（槽被 A1 钉死，A4 排他）。
     arena
         .answer_word(slot, AnswerField::WorkerId)
         .store(worker_id, Ordering::SeqCst);
@@ -59,7 +57,10 @@ pub fn answer_ok<P: FacadePlatform>(
         .is_err()
     {
         // A4：领权即钉死——A1→A3 间唯一写者 = supervisor 自身 ⇒ 不可达。
-        arena.tombstone_word().store(super::arena::TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+        arena.tombstone_word().store(
+            super::arena::TombstoneCode::UnexpectedWriter as u32,
+            Ordering::SeqCst,
+        );
         panic!("facade_slot：A3 OK CAS 出现协议外写者（槽 {slot}，gen {gen_from_msg}）");
     }
     platform.wake_all_u32(arena.slot_word_ptr(slot));
@@ -95,7 +96,9 @@ pub fn answer_fail<P: FacadePlatform>(
     // 观察到我代 FAIL 的一方，必同时观察到本次递增。
     // FAIL 未 ACK 前计入（engine ACK 自回收时递减）；facade 级 monotone
     // 累计（跨实例，仅诊断）。
-    arena.retired_fail_unacked_word().fetch_add(1, Ordering::SeqCst);
+    arena
+        .retired_fail_unacked_word()
+        .fetch_add(1, Ordering::SeqCst);
     arena.facade_ra_total_word().fetch_add(1, Ordering::SeqCst);
     arena
         .answer_word(slot, AnswerField::Errcode)
@@ -106,7 +109,10 @@ pub fn answer_fail<P: FacadePlatform>(
         .compare_exchange(answering_w, fail_w, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        arena.tombstone_word().store(super::arena::TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+        arena.tombstone_word().store(
+            super::arena::TombstoneCode::UnexpectedWriter as u32,
+            Ordering::SeqCst,
+        );
         panic!("facade_slot：A3 FAIL CAS 出现协议外写者（槽 {slot}，gen {gen_from_msg}）");
     }
     platform.wake_all_u32(arena.slot_word_ptr(slot));
@@ -126,6 +132,8 @@ pub enum DeadOutcome {
     Written,
     /// 输给 DONE：join 已按正常出口解析——诊断日志，不触发 R2（§9.2.3）。
     LostToDone,
+    /// 另一死亡通知已领写权或完成发布。
+    LostToDead,
     /// 已 CONSUMED：迟到写丢弃，join 结果不被改写。
     LostToConsumed,
     /// 输给换代：join 槽已被复用为新一代（CAS 期望 (g,WAITING) 对
@@ -153,10 +161,25 @@ pub fn write_dead<P: FacadePlatform>(
     };
     if arena
         .join_word(join_index)
-        .compare_exchange(waiting_w, dead_w, Ordering::SeqCst, Ordering::SeqCst)
+        .compare_exchange(
+            waiting_w,
+            encode_join(gen, JoinState::DeadWriting, gb),
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
         .is_ok()
     {
+        platform.seam_dead_after_acquire(join_index);
         arena.set_join_dead_code(join_index, code);
+        arena
+            .join_word(join_index)
+            .compare_exchange(
+                encode_join(gen, JoinState::DeadWriting, gb),
+                dead_w,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .expect("D5 载荷写权被协议外写者破坏");
         platform.wake_all_u32(arena.join_word_ptr(join_index));
         return DeadOutcome::Written;
     }
@@ -169,9 +192,15 @@ pub fn write_dead<P: FacadePlatform>(
     }
     match decode_join_state(now, gb) {
         JoinState::Done => DeadOutcome::LostToDone,
+        JoinState::DeadWriting | JoinState::DeadHardtrap | JoinState::DeadPanic => {
+            DeadOutcome::LostToDead
+        }
         JoinState::Consumed => DeadOutcome::LostToConsumed,
         other => {
-            arena.tombstone_word().store(super::arena::TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+            arena.tombstone_word().store(
+                super::arena::TombstoneCode::UnexpectedWriter as u32,
+                Ordering::SeqCst,
+            );
             panic!("facade_slot：D5 CAS 输家位形非法 {other:?}（join {join_index}，gen {gen}）");
         }
     }
@@ -213,15 +242,22 @@ pub fn on_worker_exit<P: FacadePlatform>(
     }
     // 门 (b)：join 槽 (gen,CONSUMED)（engine join 消费后不再触碰的证明）。
     let join_index = arena.join_index_of(slot);
-    if arena.join_word(join_index).load(Ordering::SeqCst) != encode_join(gen, JoinState::Consumed, gb)
+    if arena.join_word(join_index).load(Ordering::SeqCst)
+        != encode_join(gen, JoinState::Consumed, gb)
     {
         return RecoveryOutcome::GatesNotMet;
     }
     // 门 (c)：摘除已发生（本函数即摘除动作；生产 = TS manifest ACTIVE→REMOVED）。
     // try-lock 快路径（主线程不 Atomics.wait）。
     if !arena.h1_try_lock() {
-        state.pending_recovery.push((slot, gen));
+        if !state.pending_recovery.contains(&(slot, gen)) {
+            state.pending_recovery.push((slot, gen));
+        }
         return RecoveryOutcome::Delayed;
+    }
+    if arena.is_free(slot) {
+        arena.h1_unlock(platform);
+        return RecoveryOutcome::GatesNotMet;
     }
     arena.push_free(slot);
     arena.h1_unlock(platform);
@@ -244,13 +280,12 @@ pub fn recover_pending<P: FacadePlatform>(
             .join_word(arena.join_index_of(slot))
             .load(Ordering::SeqCst)
             == encode_join(gen, JoinState::Consumed, gb);
-        if w == encode_w(gen, SlotState::Ok, gb)
-            && join_ok
-            && arena.h1_try_lock()
-        {
-            arena.push_free(slot);
+        if w == encode_w(gen, SlotState::Ok, gb) && join_ok && arena.h1_try_lock() {
+            if !arena.is_free(slot) {
+                arena.push_free(slot);
+                pushed += 1;
+            }
             arena.h1_unlock(platform);
-            pushed += 1;
         } else {
             remaining.push((slot, gen));
         }
