@@ -1046,3 +1046,305 @@ fn closed_day_fixture_facts_probe_is_deterministic_evidence() {
     // 改道，不以不成立的对照作证据。
 }
 
+
+/// 合成年度覆盖只为验证 mixed 聚合，不冒称真实交易所公告。
+fn mixed_clock_session_save(
+    first: StockExchange,
+    closed: engine::calendar::CalendarExchange,
+) -> engine::session::SaveSlot {
+    use engine::calendar::OfficialCoverageEntry;
+    let mut setup = civil_setup("2030-01-02");
+    setup.ticks_per_day = 2;
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.stocks[0].float_shares = 0;
+    let mut shenzhen = setup.stocks[0].clone();
+    shenzhen.code = StockCode("000101".into());
+    shenzhen.exchange = StockExchange::Shenzhen;
+    setup.stocks.push(shenzhen);
+    if first == StockExchange::Shenzhen {
+        setup.stocks.reverse();
+    }
+    let session = GameSession::new(setup, 73).expect("合法的双股票新局");
+    let mut save = session.save().expect("合法的初始存档");
+    // Official 覆盖替代该所全年回退，保留 1 月 1 日休市才能保持原有前史合法。
+    save.civil_clock
+        .policy
+        .official_coverage
+        .push(OfficialCoverageEntry::new(
+            closed,
+            2030,
+            vec![(date("2030-01-01"), date("2030-01-02"))],
+            "synthetic-test-mixed-clock".into(),
+            "synthetic-test-source-digest".into(),
+        ));
+    save
+}
+
+#[test]
+fn mixed_clock_session_uses_all_setup_exchanges_after_restore() {
+    use engine::calendar::{CalendarExchange, CalendarPolicy, TradingCalendar};
+    for closed in [CalendarExchange::Sse, CalendarExchange::Szse] {
+        for first in [StockExchange::Shanghai, StockExchange::Shenzhen] {
+            let save = mixed_clock_session_save(first, closed);
+            let calendar = TradingCalendar::from_policy(
+                CalendarPolicy::from_parts(save.civil_clock.policy.clone()).unwrap(),
+            )
+            .unwrap();
+            assert!(!calendar.is_trading_day(closed, date("2030-01-02")).unwrap());
+            let open = if closed == CalendarExchange::Sse {
+                CalendarExchange::Szse
+            } else {
+                CalendarExchange::Sse
+            };
+            assert!(calendar.is_trading_day(open, date("2030-01-02")).unwrap());
+            let restored =
+                GameSession::restore(&save).expect("前史与冻结政策一致的 mixed 存档应可恢复");
+            assert_eq!(
+                restored.civil_clock().phase(),
+                CivilPhase::IntradayTrading,
+                "任一实际配置交易所开市均须进入共享会话，首股={first:?}，休市所={closed:?}"
+            );
+            assert_eq!(
+                restored
+                    .civil_clock()
+                    .completed_trading_sessions_expected()
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                restored.save().unwrap().civil_clock.policy,
+                save.civil_clock.policy,
+                "完整冻结 policy 不得被默认表替换"
+            );
+        }
+    }
+}
+
+#[test]
+fn mixed_clock_empty_exchange_set_is_rejected() {
+    use engine::calendar::CalendarExchange;
+    use engine::session::CivilClock;
+    let start = date("2030-01-02");
+    let saved = CivilClock::new(start, CalendarExchange::Sse)
+        .unwrap()
+        .save();
+    assert!(matches!(
+        CivilClock::new_for_exchanges(start, []),
+        Err(CivilClockError::SaveInconsistent { .. })
+    ));
+    assert!(matches!(
+        CivilClock::from_parts_for_exchanges(start, &saved, []),
+        Err(CivilClockError::SaveInconsistent { .. })
+    ));
+}
+
+#[test]
+fn mixed_clock_union_count_phase_and_next_status_share_one_calendar_rule() {
+    use engine::calendar::{CalendarExchange, OfficialCoverageEntry};
+    use engine::session::CivilClock;
+    let start = date("2030-01-01");
+    let mut saved = CivilClock::new(start, CalendarExchange::Sse)
+        .unwrap()
+        .save();
+    for (exchange, last) in [
+        (CalendarExchange::Sse, "2030-01-03"),
+        (CalendarExchange::Szse, "2030-01-02"),
+    ] {
+        saved
+            .policy
+            .official_coverage
+            .push(OfficialCoverageEntry::new(
+                exchange,
+                2030,
+                vec![(start, date(last))],
+                "synthetic-test-union".into(),
+                "synthetic-test-digest".into(),
+            ));
+    }
+    for exchanges in [
+        vec![CalendarExchange::Sse, CalendarExchange::Szse],
+        vec![
+            CalendarExchange::Szse,
+            CalendarExchange::Sse,
+            CalendarExchange::Szse,
+        ],
+    ] {
+        let mut clock = CivilClock::from_parts_for_exchanges(start, &saved, exchanges).unwrap();
+        for (day, phase, count, next) in [
+            (
+                "2030-01-01",
+                CivilPhase::ClosedDay,
+                0,
+                CivilPhase::ClosedDay,
+            ),
+            (
+                "2030-01-02",
+                CivilPhase::ClosedDay,
+                0,
+                CivilPhase::IntradayTrading,
+            ),
+            (
+                "2030-01-03",
+                CivilPhase::IntradayTrading,
+                1,
+                CivilPhase::IntradayTrading,
+            ),
+            (
+                "2030-01-04",
+                CivilPhase::IntradayTrading,
+                2,
+                CivilPhase::ClosedDay,
+            ),
+        ] {
+            assert_eq!(clock.current_date(), date(day));
+            assert_eq!(clock.phase(), phase);
+            assert_eq!(
+                clock.completed_trading_sessions_expected().unwrap(),
+                count,
+                "同日多所开市只计一个共享会话"
+            );
+            let report = clock.end_day(date(day)).unwrap();
+            assert_eq!(
+                matches!(report.next_status, DayStatus::Trading),
+                next == CivilPhase::IntradayTrading
+            );
+            assert_eq!(clock.phase(), next);
+            let restored = CivilClock::from_parts_for_exchanges(
+                start,
+                &clock.save(),
+                [CalendarExchange::Szse, CalendarExchange::Sse],
+            )
+            .unwrap();
+            assert_eq!(restored.phase(), clock.phase());
+            assert_eq!(
+                restored.completed_trading_sessions_expected().unwrap(),
+                clock.completed_trading_sessions_expected().unwrap()
+            );
+        }
+    }
+    let only_sse = CivilClock::from_parts(start, &saved, CalendarExchange::Sse).unwrap();
+    let mut only_sse = only_sse;
+    only_sse.end_day(start).unwrap();
+    only_sse.end_day(date("2030-01-02")).unwrap();
+    assert_eq!(
+        only_sse.phase(),
+        CivilPhase::ClosedDay,
+        "未配置的 SZSE 开市不得触发单所 SSE 局"
+    );
+    assert_eq!(only_sse.completed_trading_sessions_expected().unwrap(), 0);
+}
+
+#[test]
+fn mixed_clock_closed_reason_is_a_canonical_representative() {
+    use engine::calendar::{
+        CalendarExchange, CalendarPolicy, OfficialCoverageEntry, TradingCalendar,
+    };
+    use engine::session::CivilClock;
+    let start = date("2029-12-31");
+    let mut saved = CivilClock::new(start, CalendarExchange::Sse)
+        .unwrap()
+        .save();
+    saved
+        .policy
+        .official_coverage
+        .push(OfficialCoverageEntry::new(
+            CalendarExchange::Sse,
+            2030,
+            vec![(date("2030-01-01"), date("2030-01-01"))],
+            "synthetic-test-representative".into(),
+            "synthetic-test-digest".into(),
+        ));
+    let calendar =
+        TradingCalendar::from_policy(CalendarPolicy::from_parts(saved.policy.clone()).unwrap())
+            .unwrap();
+    let sse = calendar
+        .day_status(CalendarExchange::Sse, date("2030-01-01"))
+        .unwrap();
+    let szse = calendar
+        .day_status(CalendarExchange::Szse, date("2030-01-01"))
+        .unwrap();
+    assert!(matches!(
+        sse,
+        DayStatus::Closed(ClosedReason::OfficialHoliday { .. })
+    ));
+    assert_eq!(
+        szse,
+        DayStatus::Closed(ClosedReason::SimulatedHoliday(HolidayKind::NewYearDay))
+    );
+    for exchanges in [
+        [CalendarExchange::Sse, CalendarExchange::Szse],
+        [CalendarExchange::Szse, CalendarExchange::Sse],
+    ] {
+        let mut clock = CivilClock::from_parts_for_exchanges(start, &saved, exchanges).unwrap();
+        assert_eq!(
+            clock.end_day(start).unwrap().next_status,
+            sse,
+            "全闭市诊断取 canonical 第一所，不能暗示每所原因相同"
+        );
+        assert_eq!(clock.phase(), CivilPhase::ClosedDay);
+        clock
+            .validate_due_horizon(date("2030-01-01"))
+            .expect("公司 due 只检查范围，休市仍合法");
+    }
+}
+
+#[test]
+fn mixed_clock_restore_rejects_current_date_beyond_frozen_policy() {
+    use engine::calendar::{CalendarError, CalendarExchange};
+    use engine::session::CivilClock;
+    let start = date("2099-12-30");
+    let mut saved = CivilClock::new(start, CalendarExchange::Sse)
+        .unwrap()
+        .save();
+    saved.current_date = date("2100-01-01");
+    saved.settled_through = Some(date("2099-12-31"));
+    for exchanges in [
+        vec![CalendarExchange::Sse],
+        vec![CalendarExchange::Sse, CalendarExchange::Szse],
+    ] {
+        assert!(matches!(
+            CivilClock::from_parts_for_exchanges(start, &saved, exchanges),
+            Err(CivilClockError::Calendar(
+                CalendarError::AfterRuntimeCeiling { .. }
+            ))
+        ));
+    }
+    assert!(matches!(
+        CivilClock::from_parts(start, &saved, CalendarExchange::Sse),
+        Err(CivilClockError::Calendar(
+            CalendarError::AfterRuntimeCeiling { .. }
+        ))
+    ));
+}
+
+#[test]
+fn mixed_clock_single_exchange_wrappers_preserve_saved_policy_and_validation() {
+    use engine::calendar::CalendarExchange;
+    use engine::session::CivilClock;
+    for day in ["2032-02-29", "2099-12-31"] {
+        let single = CivilClock::new(date(day), CalendarExchange::Sse).unwrap();
+        let set = CivilClock::new_for_exchanges(
+            date(day),
+            [CalendarExchange::Sse, CalendarExchange::Sse],
+        )
+        .unwrap();
+        assert_eq!(single.save(), set.save());
+        assert_eq!(single.phase(), set.phase());
+        assert_eq!(
+            single.completed_trading_sessions_expected().unwrap(),
+            set.completed_trading_sessions_expected().unwrap()
+        );
+    }
+    let mut saved = CivilClock::new(date("2030-01-02"), CalendarExchange::Sse)
+        .unwrap()
+        .save();
+    saved.policy.simulated_fallback.digest.push_str("-tampered");
+    assert!(CivilClock::from_parts_for_exchanges(
+        date("2030-01-02"),
+        &saved,
+        [CalendarExchange::Sse, CalendarExchange::Szse]
+    )
+    .is_err());
+}

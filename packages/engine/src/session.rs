@@ -2342,9 +2342,12 @@ impl GameSession {
             crate::experience::PersonalHistoryReadLedger::default(),
         );
         let rng = SplitMix64::new(seed);
-        let civil_clock = CivilClock::new(
+        let civil_clock = CivilClock::new_for_exchanges(
             setup.start_date,
-            session_calendar_exchange(setup.stocks[0].exchange),
+            setup
+                .stocks
+                .iter()
+                .map(|stock| session_calendar_exchange(stock.exchange)),
         )?;
         // 会话装配与执行接线 新局装配：公司注册表 + 前史经营 + 公开库 + 时钟/披露接线。
         let company_assembly::CompanyAssembly {
@@ -4425,10 +4428,13 @@ impl GameSession {
             })?;
         sess.state.seq = save.snapshot.seq;
         // 恢复自然日时钟；全量校验其自洽性，并使用随存档冻结的政策。
-        sess.state.civil_clock = CivilClock::from_parts(
+        sess.state.civil_clock = CivilClock::from_parts_for_exchanges(
             save.setup.start_date,
             &save.civil_clock,
-            session_calendar_exchange(save.setup.stocks[0].exchange),
+            save.setup
+                .stocks
+                .iter()
+                .map(|stock| session_calendar_exchange(stock.exchange)),
         )?;
         validate_saved_order_state(&sess, save)?;
         sess.state.next_order_id = save.next_order_id;
