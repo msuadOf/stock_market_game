@@ -11,6 +11,7 @@ import { prepareWorkspacePaths, validateWorkspaceOutputPath } from "./workspace-
 import { WEB_TEST_INTERNAL_WORKER_ENV } from "./run-web-tests.mjs";
 import { runScriptTestBatch } from "./run-script-tests.mjs";
 import { hashArtifactFiles } from "./full-regression-artifact-hash.mjs";
+import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_CONCURRENT_RUST_TEST_BINARIES = 8;
@@ -354,7 +355,8 @@ export function parseRustTestCases(stdout) {
   return [...names];
 }
 
-export async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remainingMs, now, log = () => undefined }) {
+export async function executeRustTestBinaries({ artifacts, policy, run = runBoundedCommand, cwd, env, remainingMs, now, log = () => undefined }) {
+  if (run === runBoundedCommand) return executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log });
   let nextIndex = 0;
   let stop = false;
   const failures = [];

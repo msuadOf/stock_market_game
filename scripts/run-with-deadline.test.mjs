@@ -270,3 +270,60 @@ it("accumulates captured streams and passes their original chunks to callbacks",
   assert.equal(stdoutChunks[1], chunks[1]);
   assert.equal(stderrChunks[0], chunks[2]);
 });
+
+
+it("合法 spawn 的同步耗时计入 deadline，不能由随后 close 0 假绿", async () => {
+  const child = new EventEmitter();
+  const result = runBoundedCommand({
+    command: "delayed-spawn", timeoutMs: 60, cleanupReserveMs: 15,
+    spawnProcess: () => {
+      const until = performance.now() + 90;
+      while (performance.now() < until) {}
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child;
+    },
+  });
+  await assert.rejects(result, /deadline|execution budget/);
+});
+
+it("父事件循环阻塞后先收到 close 0 仍必须拒绝过期成功", async () => {
+  const child = new EventEmitter();
+  const result = runBoundedCommand({
+    command: "blocked-parent", timeoutMs: 60, cleanupReserveMs: 15,
+    spawnProcess: () => child,
+  });
+  const until = performance.now() + 90;
+  while (performance.now() < until) {}
+  child.emit("close", 0, null);
+  await assert.rejects(result, /deadline|execution budget/);
+});
+
+it("系统 wall clock 跳变不延长真实执行与清理预算", async () => {
+  const originalNow = Date.now;
+  try {
+    const result = runBoundedCommand({ command: process.execPath,
+      args: ["-e", "setInterval(()=>{},1000)"], timeoutMs: 250, cleanupReserveMs: 75 });
+    Date.now = () => originalNow() - 3_600_000;
+    const started = performance.now();
+    await assert.rejects(result, /total 250ms deadline/);
+    assert.ok(performance.now() - started < 750);
+  } finally { Date.now = originalNow; }
+});
+
+it("自定义 terminateProcessTree 保持第三参 Date 绝对截止与原三参接口", async () => {
+  const child = new EventEmitter();
+  const wallStarted = Date.now();
+  let received;
+  const result = runBoundedCommand({ command: "custom-cleanup-clock", timeoutMs: 250,
+    spawnProcess: () => {
+      const until = performance.now() + 40;
+      while (performance.now() < until) {}
+      return child;
+    },
+    terminateProcessTree: (...args) => { received = args; },
+  });
+  child.emit("close", 17, null);
+  await assert.rejects(result, /exited with 17/);
+  assert.equal(received.length, 3);
+  assert.ok(received[2] >= wallStarted + 200 && received[2] <= wallStarted + 275, String(received[2]));
+});
