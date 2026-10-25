@@ -2,6 +2,9 @@ use crate::company::CompanyId;
 use crate::plans::PlanId;
 use crate::{AccountId, CivilInstant, OrderId, Side, StockId};
 use serde::Serialize;
+use std::sync::OnceLock;
+
+use crate::shared_history::AppendOnlyHistory;
 
 mod aggregate;
 mod decimal;
@@ -125,18 +128,33 @@ pub struct CausalFact {
     pub kind: CausalFactKind,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub(crate) struct CausalCollector {
-    facts: Vec<CausalFact>,
+    facts: AppendOnlyHistory<CausalFact>,
+    /// 仅显式全量查询构建；checkpoint 不携带这份副本。
+    #[serde(skip)]
+    flat_facts: OnceLock<Vec<CausalFact>>,
     decision: std::collections::BTreeMap<AccountId, u64>,
     pub termination: Option<Termination>,
     #[serde(serialize_with = "crate::money::cents_decimal::map")]
     filled_values: std::collections::BTreeMap<OrderId, i64>,
 }
 
+impl Clone for CausalCollector {
+    fn clone(&self) -> Self {
+        Self {
+            facts: self.facts.clone(),
+            flat_facts: OnceLock::new(),
+            decision: self.decision.clone(),
+            termination: self.termination,
+            filled_values: self.filled_values.clone(),
+        }
+    }
+}
+
 impl CausalCollector {
     pub(crate) fn facts(&self) -> &[CausalFact] {
-        &self.facts
+        self.flat_facts.get_or_init(|| self.facts.iter().cloned().collect())
     }
 
     pub(crate) fn decision_for(&self, account: AccountId) -> Option<u64> {
@@ -215,6 +233,8 @@ impl CausalCollector {
     }
 
     pub fn record(&mut self, time: FactTime, kind: CausalFactKind) {
+        // 回收显式全量查询的副本可能为 O(history)；普通 append 不构建副本。
+        self.flat_facts.take();
         self.facts.push(CausalFact {
             sequence: self.facts.len() as u64,
             time,
@@ -226,6 +246,55 @@ impl CausalCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collector_checkpoint_shares_three_chunks_and_isolates_later_appends() {
+        let mut collector = CausalCollector::default();
+        for _ in 0..101 {
+            collector.record(time(), CausalFactKind::ObservationRestart);
+        }
+        let checkpoint = collector.clone();
+        for index in [0, 31, 32, 63, 64, 95, 100] {
+            assert!(
+                std::ptr::eq(&collector.facts[index], &checkpoint.facts[index]),
+                "checkpoint 应共享已有事实，不能复制历史：index={index}"
+            );
+        }
+        for _ in 0..67 {
+            collector.record(time(), CausalFactKind::ObservationRestart);
+        }
+        assert_eq!(checkpoint.facts().len(), 101);
+        assert_eq!(collector.facts().len(), 168);
+        for index in [0, 31, 32, 63, 64, 95] {
+            assert!(std::ptr::eq(&collector.facts[index], &checkpoint.facts[index]));
+        }
+        collector = checkpoint;
+        collector.record(time(), CausalFactKind::ObservationRestart);
+        assert_eq!(collector.facts().len(), 102);
+        assert_eq!(collector.facts()[101].sequence, 101);
+    }
+
+    #[test]
+    fn collector_full_query_cache_is_lazy_not_cloned_and_preserves_serialization() {
+        let mut collector = CausalCollector::default();
+        for _ in 0..101 {
+            collector.record(time(), CausalFactKind::ObservationRestart);
+        }
+        assert!(collector.flat_facts.get().is_none());
+        let before = serde_json::to_value(&collector).unwrap();
+        assert!(collector.flat_facts.get().is_none(), "serde 直接流式读取共享历史");
+        let first = collector.facts().as_ptr();
+        assert_eq!(collector.facts().as_ptr(), first);
+        let checkpoint = collector.clone();
+        assert!(checkpoint.flat_facts.get().is_none());
+        assert_eq!(before, serde_json::to_value(&checkpoint).unwrap());
+        assert_eq!(before, serde_json::to_value(&collector).unwrap());
+        collector.record(time(), CausalFactKind::ObservationRestart);
+        assert!(collector.flat_facts.get().is_none());
+        assert_eq!(collector.facts().len(), 102);
+        assert_eq!(checkpoint.facts().len(), 101);
+        assert_eq!(before, serde_json::to_value(&checkpoint).unwrap());
+    }
 
     #[test]
     fn collector_filled_values_serialize_as_exact_decimal_cents() {
