@@ -2014,22 +2014,11 @@ impl World {
                     }
                 }
                 Ok(UpMsg::Failed { who, error }) => {
-                    // 组端 Seal 处理失败（apply_staging 数据损坏类）——
-                    // worker 已退出：撤退关停+死亡（同 converge_or_die）。
                     self.abort_tick(tick);
-                    for tx in &self.group_txs {
-                        let _ = tx.send(GroupIn::Shutdown);
-                    }
-                    for tx in &self.desk_txs {
-                        let _ = tx.send(DeskMsg::Shutdown);
-                    }
-                    let report = self.collect_finals().map_err(|e| RuntimeError::ProtocolInvariant {
-                        detail: format!("Seal 失败撤退路径 Final 收集失败：{e}"),
-                    })?;
-                    self.dead_finals = Some(report);
-                    self.dead_reason =
-                        Some(format!("worker {who} Seal 收尾失败（{error}）"));
-                    return Err(RuntimeError::WorkerFailed { who, error: Box::new(error) });
+                    self.send_worker_shutdown();
+                    return Err(self.stop_after_fatal_failure(
+                        tick, round_final, "Seal", RuntimeError::WorkerFailed { who, error: Box::new(error) }, false, None,
+                    ));
                 }
                 Ok(other) => {
                     self.abort_tick(tick);
@@ -2053,12 +2042,30 @@ impl World {
     /// Start 部分发送后参与者可能分处两拍，不能对全员广播任一拍的 Abort。
     /// 永久停止并 join 后再耗尽上行：Final 只作诊断，不安装半拍或重开日结窗口。
     fn stop_after_start_failure(&mut self, tick: u64, error: RuntimeError) -> RuntimeError {
-        self.dead_reason = Some(format!(
-            "Start(tick={tick}) 发送失败，world 已终止且不可重试：{error}"
-        ));
-        self.worker_shutdown.store(true, Ordering::SeqCst);
+        self.stop_after_fatal_failure(tick, 0, "Start", error, true, None)
+    }
+
+    /// 失败退出统一先 join 再收上行，允许失败轮已发出的报告到达；不安装这些报告。
+    /// Start 部分发送时不能统一 Abort；其他失败已先排队 Abort/Shutdown，须让其被消费。
+    fn stop_after_fatal_failure(
+        &mut self,
+        tick: u64,
+        round: u32,
+        stage: &str,
+        error: RuntimeError,
+        stop_immediately: bool,
+        original_panic: Option<(WorkerId, Box<dyn std::any::Any + Send>)>,
+    ) -> RuntimeError {
+        self.dead_reason = Some(format!("{stage}(tick={tick}) 失败，world 已终止且不可重试：{error}"));
+        if stop_immediately {
+            self.worker_shutdown.store(true, Ordering::SeqCst);
+        }
+        let expected_failure = match &error {
+            RuntimeError::WorkerFailed { who, error } => Some((*who, error.as_ref())),
+            _ => None,
+        };
         let mut errors = Vec::new();
-        let mut panics: Vec<(WorkerId, Box<dyn std::any::Any + Send>)> = Vec::new();
+        let mut panics: Vec<(WorkerId, Box<dyn std::any::Any + Send>)> = original_panic.into_iter().collect();
         let mut worker_results = Vec::new();
         // 上行通道无界，worker 不等待协调者读 Final；先 join 可保证异常收集也不漏线程。
         for (who, handle) in std::mem::take(&mut self.handles) {
@@ -2075,7 +2082,9 @@ impl World {
                 }
             };
             if let Err(failure) = &result {
-                errors.push(format!("join {who}：{failure}"));
+                if expected_failure != Some((who, failure)) {
+                    errors.push(format!("join {who}：{failure}"));
+                }
             }
             worker_results.push((who, result));
         }
@@ -2105,19 +2114,22 @@ impl World {
                     }
                 }
                 UpMsg::GroupReport(report) => match group_reports.get_mut(usize::from(report.group)) {
-                    Some(seen) if !*seen && report.tick == tick && report.round == 0 => *seen = true,
-                    _ => errors.push(format!("Start 清理收到错位或重复 GroupReport：{report:?}")),
+                    Some(seen) if !*seen && report.tick == tick && report.round == round => *seen = true,
+                    _ => errors.push(format!("{stage} 清理收到错位或重复 GroupReport：{report:?}")),
                 },
                 UpMsg::DeskReport(report) => match desk_reports.get_mut(usize::from(report.stock)) {
-                    Some(seen) if !*seen && report.tick == tick && report.round == 0 => *seen = true,
-                    _ => errors.push(format!("Start 清理收到错位或重复 DeskReport：{report:?}")),
+                    Some(seen) if !*seen && report.tick == tick && report.round == round => *seen = true,
+                    _ => errors.push(format!("{stage} 清理收到错位或重复 DeskReport：{report:?}")),
                 },
                 UpMsg::Failed { who, error } => {
                     failed_count += 1;
-                    errors.push(format!("worker {who} 显式失败：{error}"));
+                    if expected_failure != Some((who, &error)) {
+                        errors.push(format!("worker {who} 显式失败：{error}"));
+                    }
                 }
                 UpMsg::TaskDied { who, payload } => panics.push((who, payload)),
-                other => errors.push(format!("Start 清理收到非期望消息：{other:?}")),
+                UpMsg::SealAck { group, tick: ack_tick, .. } if stage == "Seal" && ack_tick == tick && usize::from(group) < self.n_groups => {}
+                other => errors.push(format!("{stage} 清理收到非期望消息：{other:?}")),
             }
         }
         let joined_count = worker_results.len();
@@ -2150,7 +2162,7 @@ impl World {
             });
         }
         let detail = format!(
-                "Start(tick={tick}) 发送失败，world 已终止且不可重试：{error}；已 join {} 个真实 worker；在途 GroupReport={}、DeskReport={}、Failed={}、TaskDied/线程panic={}；清理异常={errors:?}",
+                "{stage}(tick={tick}, round={round}) 失败，world 已终止且不可重试：{error}；已 join {} 个真实 worker；在途 GroupReport={}、DeskReport={}、Failed={}、TaskDied/线程panic={}；清理异常={errors:?}",
                 joined_count,
                 group_reports.iter().filter(|&&seen| seen).count(),
                 desk_reports.iter().filter(|&&seen| seen).count(),
@@ -2168,7 +2180,10 @@ impl World {
             std::panic::resume_unwind(payload);
         }
         if errors.is_empty() {
-            RuntimeError::SendFailed { detail }
+            match error {
+                RuntimeError::SendFailed { .. } => RuntimeError::SendFailed { detail },
+                other => other,
+            }
         } else {
             RuntimeError::ProtocolInvariant { detail }
         }
@@ -2187,52 +2202,33 @@ impl World {
         match outcome {
             RoundOutcome::Converged(ev) => Ok(ev),
             RoundOutcome::TaskDied { who, payload } => {
-                // 全体撤退：Abort（幸存者回滚）+ Shutdown（含已死者，发送失败忽略）。
-                self.abort.store(true, Ordering::SeqCst);
-                for tx in &self.group_txs {
-                    let _ = tx.send(GroupIn::Abort { tick });
-                    let _ = tx.send(GroupIn::Shutdown);
-                }
-                for tx in &self.desk_txs {
-                    let _ = tx.send(DeskMsg::Abort { tick });
-                    let _ = tx.send(DeskMsg::Shutdown);
-                }
-                match self.collect_finals() {
-                    Ok(report) => {
-                        let joined = self.join_workers(report).expect("join 不可失败");
-                        self.dead_finals = Some(joined);
-                        self.dead_reason = Some(format!("worker {who} panic（payload 已 resume）"));
-                    }
-                    Err(e) => {
-                        // 撤退对账失败是第二重失败：显式登记到 stderr，但原 panic
-                        // payload 优先（不吞不改写）。
-                        eprintln!("panic 撤退路径 Final 收集失败（worker {who}）：{e}");
-                    }
-                }
-                std::panic::resume_unwind(payload);
-            }
-            RoundOutcome::Failed(RuntimeError::WorkerFailed { who, error }) => {
-                // worker 显式失败：撤退（幸存者回滚存活）+ 收齐 Final + 标记死亡。
                 self.abort_tick(tick);
-                for tx in &self.group_txs {
-                    let _ = tx.send(GroupIn::Shutdown);
-                }
-                for tx in &self.desk_txs {
-                    let _ = tx.send(DeskMsg::Shutdown);
-                }
-                let report =
-                    self.collect_finals()
-                        .map_err(|e| RuntimeError::ProtocolInvariant {
-                            detail: format!("失败撤退路径 Final 收集失败：{e}"),
-                        })?;
-                self.dead_finals = Some(report);
-                self.dead_reason = Some(format!("worker {who} 显式失败"));
-                Err(RuntimeError::WorkerFailed { who, error })
+                self.send_worker_shutdown();
+                let error = RuntimeError::ProtocolInvariant {
+                    detail: format!("worker {who} panic（原 payload 待恢复）"),
+                };
+                self.stop_after_fatal_failure(tick, round, "收束", error, false, Some((who, payload)));
+                unreachable!("原 panic 必须在完整清理后恢复")
+            }
+            RoundOutcome::Failed(error @ RuntimeError::WorkerFailed { .. }) => {
+                self.abort_tick(tick);
+                self.send_worker_shutdown();
+                Err(self.stop_after_fatal_failure(tick, round, "收束", error, false, None))
             }
             RoundOutcome::Failed(e) => {
                 self.abort_tick(tick);
                 Err(e)
             }
+        }
+    }
+
+    /// 终态失败的正常下行仍可达，Abort 排在 Shutdown 前，确保幸存者先回滚。
+    fn send_worker_shutdown(&self) {
+        for tx in &self.group_txs {
+            let _ = tx.send(GroupIn::Shutdown);
+        }
+        for tx in &self.desk_txs {
+            let _ = tx.send(DeskMsg::Shutdown);
         }
     }
 
@@ -2739,36 +2735,40 @@ impl World {
                     });
                 }
             }
-            for tx in &self.desk_txs {
-                tx.send(DeskMsg::Drain)
-                    .map_err(|_| RuntimeError::SendFailed {
-                        detail: "Drain 广播失败".to_owned(),
-                    })?;
-            }
-            let mut drained = 0usize;
-            while drained < self.n_stocks {
-                match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
-                    UpMsg::DeskDrained {
-                    stock, drained_minute_bars, ..
-                } => {
-                    // B2：期末 Drain 应答同样收集桶（观察面与日结统一；
-                    /// DeskFinal 的 live 桶在跨日形态已并入应答）。
-                    if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
-                        *slot = Some(drained_minute_bars);
-                    }
-                    drained += 1;
+            // 成功日结（含恢复）已完成清簿与完整结果收集；无新成功 tick 时复用。
+            // AbortDayEnd 清标，新 tick 成功推进 committed_tick，二者均恢复真实 Drain。
+            if self.last_day_end_tick != Some(self.global.committed_tick) {
+                for tx in &self.desk_txs {
+                    tx.send(DeskMsg::Drain)
+                        .map_err(|_| RuntimeError::SendFailed {
+                            detail: "Drain 广播失败".to_owned(),
+                        })?;
                 }
-                    UpMsg::Failed { who, error } => {
-                        return Err(RuntimeError::WorkerFailed {
-                            who,
-                            error: Box::new(error),
-                        });
+                let mut drained = 0usize;
+                while drained < self.n_stocks {
+                    match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                        UpMsg::DeskDrained {
+                        stock, drained_minute_bars, ..
+                    } => {
+                        // B2：期末 Drain 应答同样收集桶（观察面与日结统一；
+                        /// DeskFinal 的 live 桶在跨日形态已并入应答）。
+                        if let Some(slot) = self.pending_day_bars.get_mut(stock as usize) {
+                            *slot = Some(drained_minute_bars);
+                        }
+                        drained += 1;
                     }
-                    other => {
-                        return Err(RuntimeError::Disconnected {
-                            who: None,
-                            stage: format!("Drain 期望 DeskDrained，收到 {other:?}（实现 bug）"),
-                        });
+                        UpMsg::Failed { who, error } => {
+                            return Err(RuntimeError::WorkerFailed {
+                                who,
+                                error: Box::new(error),
+                            });
+                        }
+                        other => {
+                            return Err(RuntimeError::Disconnected {
+                                who: None,
+                                stage: format!("Drain 期望 DeskDrained，收到 {other:?}（实现 bug）"),
+                            });
+                        }
                     }
                 }
             }
@@ -2968,3 +2968,86 @@ pub(in crate::runtime) fn validate_sparse_echo_reply(
 #[cfg(test)]
 #[path = "group_roster_consumer_tests.rs"]
 mod group_roster_consumer_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod failed_cleanup_tests {
+    use super::*;
+    use crate::runtime::decision::PendingOp;
+    use crate::runtime::group::{PlaceSpec, TickPlan};
+    use crate::runtime::protocol::RoutedPrice;
+    use crate::runtime::skeleton_tests::basic_spec;
+    use crate::Side;
+
+    #[test]
+    fn failed_desk_keeps_original_error_and_joins_with_in_flight_group_report() {
+        let mut spec = basic_spec(2, 1, 1, Box::new(|group| {
+            Box::new(move |tick, _| {
+                let mut plan = TickPlan::default();
+                if tick == 1 && group == 0 {
+                    plan.places.push(PlaceSpec {
+                        local: 0, stock: 0, side: Side::Buy, price: 900, qty: 100,
+                    });
+                }
+                plan
+            })
+        }));
+        let mut config = GameConfig::proposed_defaults();
+        config.price_cage_enabled = false;
+        spec.config = Arc::new(config);
+        let mut world = World::spawn(spec).expect("构造两组真实线程");
+        world.run_ticks(1).expect("先发布真实扣款 tick1");
+        let before = world.snapshot_accounts().expect("已发布账户");
+        let publication = world.publication();
+        let published = publication.load();
+        // 模拟旧行情导致的错误预留：受理价 1100 分，组端只预留 1000 分×100股。
+        world.broadcast_external_plan(vec![PendingOp {
+            local: 0, stock: 0, side: Side::Buy,
+            routed: RoutedPrice::Fixed(1100), purse_reference: 1000, qty: 100,
+        }], vec![]);
+        // 只置换真实上行的交错：先交付交易部 Failed，再交付同轮真实 GroupReport。
+        // 不合成错误或报告，避免依赖 OS 调度偶然命中历史撤退窗口。
+        let (relay_tx, relay_rx) = channel();
+        let original_rx = std::mem::replace(&mut world.up_rx, relay_rx);
+        let relay = std::thread::spawn(move || {
+            let mut pending = Vec::new();
+            let failure = loop {
+                let message = original_rx.recv_timeout(Duration::from_secs(2)).expect("真实交易部失败应有限到达");
+                if matches!(&message, UpMsg::Failed { who: WorkerId::Desk(0), .. }) {
+                    break message;
+                }
+                pending.push(message);
+            };
+            while !pending.iter().any(|m| matches!(m, UpMsg::GroupReport(_))) {
+                pending.push(original_rx.recv_timeout(Duration::from_secs(2)).expect("真实组报告应有限到达"));
+            }
+            relay_tx.send(failure).expect("失败接收端存活");
+            for message in pending {
+                if relay_tx.send(message).is_err() { return; }
+            }
+            while let Ok(message) = original_rx.recv() {
+                if relay_tx.send(message).is_err() { return; }
+            }
+        });
+        let error = world.run_ticks(1).expect_err("低于精确需求必须显式失败");
+        let live_workers = world.handles.len();
+        let same_publication = Arc::ptr_eq(&published, &publication.load());
+        let committed_tick = world.global.committed_tick;
+        let dead = world.run_ticks(1).expect_err("死亡世界不能重试");
+        let shutdown = world.shutdown();
+        relay.join().expect("上行置换线程退出");
+        assert!(matches!(&error, RuntimeError::WorkerFailed { who: WorkerId::Desk(0), error }
+            if matches!(error.as_ref(), RuntimeError::ProtocolInvariant { detail }
+                if detail.contains("purse=100501, required=110501"))), "保留原交易部错误：{error:?}");
+        assert_eq!(live_workers, 0, "失败返回前 join 全部真实线程");
+        assert!(same_publication, "失败不发布半拍");
+        assert_eq!(committed_tick, 1, "已发布 tick1 不得被撤销");
+        assert!(matches!(dead, RuntimeError::ProtocolInvariant { detail } if detail.contains("world 已死亡")));
+        let finals = shutdown.expect("失败撤退应缓存完整 Final");
+        assert_eq!(finals.group_finals.len(), 2);
+        assert_eq!(finals.desk_finals.len(), 1);
+        assert_eq!(finals.worker_results.len(), 3);
+        assert_eq!(finals.group_finals.iter().map(|g| (g.group, g.accounts.clone())).collect::<Vec<_>>(), before,
+            "只回滚失败 tick2，保留 tick1 的真实扣款");
+        assert_eq!(finals.desk_finals[0].resting.len(), 1, "tick1 已发布挂单仍在诊断 Final");
+    }
+}

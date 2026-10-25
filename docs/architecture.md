@@ -129,7 +129,7 @@ engine 是被依赖的叶子，不依赖任何 app。
 ## Escrow tick 与验证边界（ADR-0017）
 
 本节描述候选实现的契约；完整语料、性能和最终宿主验收仍以独立证据为准，不由文档宣告通过。
-市场 tick 的 native 生产路径是 std-thread 运行时（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）消息协议：协调者 `broadcast_start` 广播 `Arc<TickSnapshot>` → NPC 组线程决策∥+实体扣除+分段 flush，与每股交易部线程 `begin_tick`（隐式转正→日界重置→行情快照→开盘清算→到期撤销）边收边撮∥ → `converge_round` 收齐 G+N 报告（commit 前唯一同步）→ `TickEvidence` 过校验后单点安装，或广播 Abort 逆序回放三层 working overlay（组账户/交易部簿/协调者 candidate）。等价语义保持：失败原子性、现金/股份守恒、事件 seq 单调、同拍交付（`apply_same_tick_fill_projection`）。账户/股票可并行，同股票受理先后不变。串行管线仅 wasm 宿主回退使用；native 恒为并行拓扑。
+市场 tick 的 native 生产路径是 std-thread 运行时（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）消息协议：协调者 `broadcast_start` 广播 `Arc<TickSnapshot>` → NPC 组线程决策∥+实体扣除+分段 flush，与每股交易部线程 `begin_tick`（隐式转正→行情快照→开盘清算→到期撤销）边收边撮∥ → `converge_round` 收齐 G+N 报告（commit 前唯一同步）→ `TickEvidence` 过校验后单点安装，或广播 Abort 逆序回放三层 working overlay（组账户/交易部簿/协调者 candidate）。等价语义保持：失败原子性、现金/股份守恒、事件 seq 单调、同拍交付（`apply_same_tick_fill_projection`）。账户/股票可并行，同股票受理先后不变。串行管线仅 wasm 宿主回退使用；native 恒为并行拓扑。
 
 `engine::StrategyState` 保存策略权威状态；展示 profile 不另立权威。
 `engine::ResVec` 的 cash（分）与 shares（股）分别守恒，聚合方程就是逐 envelope 方程之和。

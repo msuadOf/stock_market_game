@@ -1168,7 +1168,7 @@ pub struct DeskTradeFact {
 }
 
 /// 日界批：当日终 K（`DeskDrained.drained_day_candle` 的载荷——desk
-/// `drain_all` 收盘段 unroll→清算→reroll 后的归档末条投影；含收盘
+/// `drain_all` 完成收盘清算、自然日日末归档前取得的真实投影；含收盘
 /// 竞价段，install 面/`DayBoundary` 事件的权威补真值源）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeskDayCandleFinal {
