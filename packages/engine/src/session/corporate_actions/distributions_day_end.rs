@@ -128,6 +128,21 @@ pub(crate) struct DistributionsDayEndError {
 pub(crate) enum DistributionsDayEndFailure {
     #[error("{0}")]
     Invalid(String),
+    #[error("账户 {account:?} 缺少最终可用现金")]
+    MissingAvailableCash { account: AccountId },
+    #[error("账户 {account:?} 最终可用现金为负数：{actual:?} 分")]
+    NegativeAvailableCash { account: AccountId, actual: Money },
+    #[error("有个人税账的资本公积转增缺少来源事实")]
+    MissingCapitalReserveTaxSource,
+    #[error("尚不支持非股票溢价资本公积转增的个人税基：{evidence}")]
+    NonPremiumCapitalReserveUnsupported { evidence: String },
+    #[error("股票溢价来源证据为空")]
+    EmptyPremiumEvidence,
+    #[error("股票溢价来源覆盖金额 {actual:?} 与本次转增 {expected:?} 不一致")]
+    PremiumCapitalMismatch {
+        expected: crate::accounting::AccountingAmount,
+        actual: crate::accounting::AccountingAmount,
+    },
     #[error(transparent)]
     CashDividend(#[from] crate::company::cash_dividend::CashDividendError),
     #[error(transparent)]
@@ -194,7 +209,10 @@ impl SessionCorporateActions {
                     account: Some(*account),
                     ..ctx
                 }
-                .error("最终可用现金为负数"));
+                .error(DistributionsDayEndFailure::NegativeAvailableCash {
+                    account: *account,
+                    actual: *cash,
+                }));
             }
         }
         let mut result = DistributionsDayEndCandidate {
@@ -226,7 +244,7 @@ impl DistributionsDayEndCandidate {
                     event_id: ctx.event_id.clone(),
                     stock: ctx.stock,
                 }
-                .error("缺少最终可用现金账户")
+                .error(DistributionsDayEndFailure::MissingAvailableCash { account })
             })
     }
 
@@ -374,15 +392,17 @@ impl DistributionsDayEndCandidate {
                             );
                             let balance = self.balance_mut(&ctx, *account)?;
                             *balance = balance.sub(withheld).map_err(|e| ctx.error(e))?;
-                            self.intents.push(DistributionIntent::DividendWithholding {
-                                account: *account,
-                                stock,
-                                amount: withheld,
-                                source: WithholdingSource::FlatPayment {
-                                    payment_id: payment_id.clone(),
-                                    plan_id: plan.plan_id.clone(),
-                                },
-                            });
+                            if withheld.cents() > 0 {
+                                self.intents.push(DistributionIntent::DividendWithholding {
+                                    account: *account,
+                                    stock,
+                                    amount: withheld,
+                                    source: WithholdingSource::FlatPayment {
+                                        payment_id: payment_id.clone(),
+                                        plan_id: plan.plan_id.clone(),
+                                    },
+                                });
+                            }
                             self.actions
                                 .flat_withholding_receipts
                                 .push(FlatWithholdingReceipt {
@@ -556,6 +576,61 @@ impl DistributionsDayEndCandidate {
                 .ok_or_else(|| ctx.error("送转缺少冻结分配回执"))?
                 .clone();
             let credit_lots = holder_credit_lots(&receipt, input.day).map_err(|e| ctx.error(e))?;
+            let capital_reserve_tax_source =
+                if plan.kind == StockDistributionKind::CapitalReserveConversion {
+                    input
+                        .capital_reserve_tax_sources
+                        .get(&plan.event_id)
+                        .cloned()
+                } else {
+                    None
+                };
+            if plan.kind == StockDistributionKind::CapitalReserveConversion {
+                let personal_holder = credit_lots.iter().find_map(|lot| match lot.holder {
+                    HolderId::Account(account)
+                        if self.actions.dividend_tax_books.iter().any(|book| {
+                            book.account() == account && book.stock() == &plan.stock
+                        }) =>
+                    {
+                        Some(account)
+                    }
+                    _ => None,
+                });
+                if let Some(account) = personal_holder {
+                    ctx.account = Some(account);
+                    match &capital_reserve_tax_source {
+                        None => {
+                            return Err(ctx
+                                .error(DistributionsDayEndFailure::MissingCapitalReserveTaxSource))
+                        }
+                        Some(CapitalReserveTaxSource::Other { evidence }) => {
+                            return Err(ctx.error(
+                                DistributionsDayEndFailure::NonPremiumCapitalReserveUnsupported {
+                                    evidence: evidence.clone(),
+                                },
+                            ))
+                        }
+                        Some(CapitalReserveTaxSource::StockPremium {
+                            evidence,
+                            capital_increase,
+                        }) => {
+                            if evidence.trim().is_empty() {
+                                return Err(
+                                    ctx.error(DistributionsDayEndFailure::EmptyPremiumEvidence)
+                                );
+                            }
+                            if *capital_increase != fact.capital_increase {
+                                return Err(ctx.error(
+                                    DistributionsDayEndFailure::PremiumCapitalMismatch {
+                                        expected: fact.capital_increase,
+                                        actual: *capital_increase,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             let mut changes = vec![];
             for lot in &credit_lots {
                 ctx.account = match lot.holder {
@@ -621,7 +696,7 @@ impl DistributionsDayEndCandidate {
                     holder: lot.holder.clone(),
                     stock,
                     shares: lot.qty,
-                    capital_reserve_tax_source: None,
+                    capital_reserve_tax_source: capital_reserve_tax_source.clone(),
                 });
             }
             let registry = self

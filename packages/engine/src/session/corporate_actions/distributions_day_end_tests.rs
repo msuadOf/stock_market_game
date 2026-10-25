@@ -506,16 +506,27 @@ fn missing_account_and_overflow_abort_whole_candidate() {
         ]),
     ] {
         let before = (reg.actions.clone(), reg.company_system.clone());
-        assert!(prepare(
+        let error = prepare(
             &reg.actions,
             &reg.company_system,
             &cal,
             &catalog,
             &bad,
             "2030-06-04",
-            CashDividendTaxMode::Exempt
+            CashDividendTaxMode::Exempt,
         )
-        .is_err());
+        .unwrap_err();
+        if !bad.contains_key(&AccountId(2)) {
+            assert!(matches!(
+                error.source,
+                DistributionsDayEndFailure::MissingAvailableCash {
+                    account: AccountId(2)
+                }
+            ));
+        } else {
+            assert!(matches!(error.source, DistributionsDayEndFailure::Money(_)));
+        }
+
         assert_eq!((reg.actions.clone(), reg.company_system.clone()), before);
     }
 }
@@ -864,6 +875,9 @@ fn negative_available_cash_error_keeps_account_and_actual_cents() {
     .unwrap_err();
     assert_eq!(error.account, Some(AccountId(2)));
     assert!(error.to_string().contains("-17"), "{error}");
+    assert!(
+        matches!(error.source, DistributionsDayEndFailure::NegativeAvailableCash { account: AccountId(2), actual } if actual.cents() == -17)
+    );
 }
 
 #[test]
@@ -919,7 +933,7 @@ fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
         });
         assert!(
             result.is_err(),
-            "缺失、非溢价、空证据或不完整金额不得被kind静默当免税：{result:?}"
+            "缺失、非溢价、空证据或不完整金额不得被kind静默当免税"
         );
         assert_eq!((held.clone(), registered.company_system.clone()), before);
     }
