@@ -733,3 +733,46 @@ fn rejected_explicit_npc_request_does_not_fall_back_to_automatic_purchase() {
     assert!(candidate.intents.is_empty());
     assert!(candidate.rights_offerings[0].subscriptions().is_empty());
 }
+
+#[test]
+fn installed_rejected_npc_request_suppresses_default_purchase_on_same_day_retry() {
+    let mut actions = actions();
+    actions
+        .rights_subscription_queue
+        .push(queued(plan().payment_start_on, 11));
+    let resources = resource(8800, AccountKind::Retail);
+    let first = rights_offering_day_end_candidate(
+        &actions,
+        plan().payment_start_on,
+        &calendar(),
+        &resources,
+        &BTreeSet::new(),
+    )
+    .unwrap();
+    assert_eq!(first.results.len(), 1);
+    assert!(matches!(
+        first.results[0].disposition,
+        RightsAccountDisposition::Rejected { .. }
+    ));
+    assert!(first.intents.is_empty());
+    install(&mut actions, first);
+    actions = serde_json::from_str(&serde_json::to_string(&actions).unwrap()).unwrap();
+    for _ in 0..2 {
+        let retried = rights_offering_day_end_candidate(
+            &actions,
+            plan().payment_start_on,
+            &calendar(),
+            &resources,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert!(retried.results.is_empty());
+        assert!(retried.intents.is_empty());
+        assert!(retried.rights_offerings[0].subscriptions().is_empty());
+        assert_eq!(
+            retried.rejected_rights_subscriptions,
+            actions.rejected_rights_subscriptions
+        );
+        install(&mut actions, retried);
+    }
+}
