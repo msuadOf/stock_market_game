@@ -2918,3 +2918,7 @@ pub(in crate::runtime) fn validate_sparse_echo_reply(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "group_roster_consumer_tests.rs"]
+mod group_roster_consumer_tests;
