@@ -1,0 +1,21 @@
+
+running 1 test
+test independent_accounts_first_plan_identities_do_not_collide ... FAILED
+
+failures:
+
+---- independent_accounts_first_plan_identities_do_not_collide stdout ----
+
+thread 'independent_accounts_first_plan_identities_do_not_collide' (2281865) panicked at packages/engine/tests/plan_identity_behavior.rs:26:5:
+assertion `left != right` failed: 两个合法独立 writer 的首个计划必须具有不同的可合并身份
+  left: Number(0)
+ right: Number(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    independent_accounts_first_plan_identities_do_not_collide
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+bounded command exited with 101

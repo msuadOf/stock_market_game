@@ -1,0 +1,21 @@
+
+running 1 test
+test restore_guards::complete_save_rejects_unknown_owner_cursor_without_any_plan ... FAILED
+
+failures:
+
+---- restore_guards::complete_save_rejects_unknown_owner_cursor_without_any_plan stdout ----
+
+thread 'restore_guards::complete_save_rejects_unknown_owner_cursor_without_any_plan' (1914715) panicked at packages/engine/tests/save_contract/restore_guards.rs:221:5:
+assertion failed: matches!(GameSession::restore(&save), Err(SessionError::InvalidSave(fault)) if
+    fault.code == 2690 && fault.context ==
+    vec![u32::MAX as u64,u32::MAX as u64])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restore_guards::complete_save_rejects_unknown_owner_cursor_without_any_plan
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 3.82s
+
+bounded command exited with 101
