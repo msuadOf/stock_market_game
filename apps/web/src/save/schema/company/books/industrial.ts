@@ -75,7 +75,7 @@ function parseAsset(value: unknown, path: string): FixedAssetEntry {
   return { cost: amount(parsed.cost, `${path}.cost`), salvage_value: amount(parsed.salvage_value, `${path}.salvage_value`), life_months: integer(parsed.life_months, `${path}.life_months`), depreciated_months: integer(parsed.depreciated_months, `${path}.depreciated_months`, 0), accumulated_depreciation: amount(parsed.accumulated_depreciation, `${path}.accumulated_depreciation`), accumulated_impairment: amount(parsed.accumulated_impairment, `${path}.accumulated_impairment`) }
 }
 
-function parseTaxPolicy(value: unknown, path: string): TaxPolicy {
+export function parseTaxPolicy(value: unknown, path: string): TaxPolicy {
   const parsed = record(value, path)
   exact(parsed, ["version", "vat", "income_tax"], path)
   return { version: integer(parsed.version, `${path}.version`, 0), vat: parseVat(parsed.vat, `${path}.vat`), income_tax: parseIncomeTax(parsed.income_tax, `${path}.income_tax`) }

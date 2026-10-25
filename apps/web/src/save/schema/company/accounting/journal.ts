@@ -17,7 +17,7 @@ function parseAmount(value: unknown, path: string): string {
   return parsed
 }
 
-function parseJournalLine(value: unknown, path: string): JournalLine {
+export function parseJournalLine(value: unknown, path: string): JournalLine {
   const parsed = record(value, path)
   exact(parsed, ["account", "side", "amount"], path)
   return { account: string(parsed.account, `${path}.account`), side: oneOf(parsed.side, `${path}.side`, postingSides), amount: parseAmount(parsed.amount, `${path}.amount`) }

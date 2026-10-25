@@ -1,0 +1,4 @@
+类型检查与lint为独立child并行；共享300000ms deadline；tsc依赖图由工具单进程处理，oxlint --threads=4。
+0 { status: 'fulfilled', value: { stdout: '', stderr: '' } }
+1 { status: 'fulfilled', value: { stdout: '', stderr: '' } }
+wall_ms 7760
