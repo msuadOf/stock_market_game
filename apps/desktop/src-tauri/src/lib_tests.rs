@@ -103,6 +103,8 @@ async fn enqueue_ipc_requires_current_canonical_generation() {
     setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
     let mut completed = engine::session::protocol::ProtocolSession::new(setup.clone(), 7).unwrap();
     completed.end_civil_day_update().unwrap();
+    let stock_id = completed.stock_id("600101").unwrap();
+    assert_eq!(completed.stock_catalog().code(stock_id), Some("600101"));
     let slot = completed.save().unwrap();
     let session_id = invoke_json(
         &webview,
@@ -116,7 +118,7 @@ async fn enqueue_ipc_requires_current_canonical_generation() {
         json!({ "sessionId": session_id, "generation": "1", "slot": slot }),
     )
     .unwrap();
-    let intent = json!({ "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } });
+    let intent = json!({ "PlaceLimit": { "code": stock_id, "side": "Buy", "price": { "Fixed": "1000" }, "qty": 100 } });
     for generation in [
         Some(json!("1")),
         None,
