@@ -9,7 +9,7 @@
 //! - 日终 12 步链（`close_registries_through` / `process_*_on_day_end` /
 //!   日终勾稽 `validate`）→ B4c；
 //! - 权益计算与 AdminRight 通道、审批/认购命令面 → B4d；
-//! - 查询视图族（`dividend_tax_outstanding_views` 等）与 ts_rs 导出面 → B4e/B4f。
+//! - 其余查询视图与 ts_rs 导出面 → B4e/B4f；本文件已恢复最小税账只读投影。
 //!
 //! 因此本文件恢复的结构体不带 `#[ts(export)]`：web 存档 schema
 //! （`save/schema/corporate-actions.ts`）随 B4f 的查询面一起接线，届时再
@@ -151,6 +151,40 @@ pub enum TaxpayerIdentity {
     NonIndividualPending,
 }
 
+/// 单账户在单个已登记证券上的税账状态。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountStockDividendTaxStatus {
+    pub stock: StockCode,
+    pub status: DividendTaxStatus,
+}
+
+/// 单账户的现金分红税务状态查询视图：会话税务模式、按账户种类映射的身份分类
+/// 与每个已配置完整名册证券上的税账状态。只读汇总既有事实，不产生新事实。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountDividendTaxStatusView {
+    /// 本局新选定的现金分红税务模式。
+    pub mode: crate::company::cash_dividend_tax::CashDividendTaxMode,
+    /// 账户的纳税人身份分类（个人 / 非个人待实现）。
+    pub identity: TaxpayerIdentity,
+    /// 每个已配置完整名册证券上的税账状态；无任何名册时为空。
+    pub stocks: Vec<AccountStockDividendTaxStatus>,
+}
+
+/// 单账户单证券的个人现金分红税未划收状态查询视图；只汇总税账既有事实，不产生新事实。
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DividendTaxOutstandingView {
+    pub account: AccountId,
+    pub stock: StockCode,
+    /// 尚未划收的应纳税额（分，已约简非负分数；按每笔分红合计四舍五入到分后汇总）。
+    pub outstanding: crate::company::cash_dividend_tax::ExactDividendTaxAmount,
+    /// 最近一次实际划收回执；None 表示尚无划收事实。
+    /// 回执保留其发生时的余额与资金事实，不代表当前余额全部已经尝试划收。
+    pub latest_collection: Option<crate::company::cash_dividend_tax::TaxCollectionReceipt>,
+}
+
 /// 账户种类 → 税务身份：玩家与自然人散户 NPC 是个人；机构/游资/回购专户
 /// 是非个人（待企业口径）。装配期自动开账（`AShareIndividual` 模式）只对
 /// 个人身份开 `IndividualPublicMarket` 税账。
@@ -173,6 +207,30 @@ pub enum SessionCorporateActionsError {
 }
 
 impl SessionCorporateActions {
+    /// 查询个人股息税账的未划收税额；只读，不触发划收。
+    pub fn dividend_tax_outstanding_views(
+        &self,
+    ) -> Result<Vec<DividendTaxOutstandingView>, SessionCorporateActionsError> {
+        self.dividend_tax_books
+            .iter()
+            .map(|book| {
+                let outstanding = book.outstanding_tax().map_err(|error| {
+                    SessionCorporateActionsError::Invalid(format!(
+                        "查询账户 {:?} 的证券 {:?} 未划收股息税失败：{error}",
+                        book.account(),
+                        book.stock(),
+                    ))
+                })?;
+                Ok(DividendTaxOutstandingView {
+                    account: book.account(),
+                    stock: book.stock().clone(),
+                    outstanding,
+                    latest_collection: book.collections().last().cloned(),
+                })
+            })
+            .collect()
+    }
+
     /// 装配期写入面：登记一份完整股东名册（勾稽账户持仓与发行人身份后入册）。
     pub(crate) fn configure_registry(
         &mut self,

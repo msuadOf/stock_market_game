@@ -23,6 +23,7 @@ pub use owner_rights_views::{
 #[cfg(test)]
 mod company_closing_tests;
 mod company_groups;
+mod company_read_views;
 mod continuous_cancellation;
 mod corporate_actions;
 mod decision_chain;
@@ -110,9 +111,12 @@ pub use memberships::{
     AdmissionFunding, MarketMembership, MarketMembershipState, MembershipError, OpaqueSubjectId,
 };
 pub use personal_trade_history::PersonalTradeConfirmation;
-/// 公司行为 spine 状态容器（B4b：容器+装配期写入面；日终链/命令/查询面随
-/// B4c/B4d/B4e 接线）。
-pub use corporate_actions::SessionCorporateActions;
+/// 公司行为 spine 容器与 B4e 最小税务查询视图；不包含日终或命令接线。
+pub use corporate_actions::{
+    AccountDividendTaxStatusView, AccountStockDividendTaxStatus,
+    DividendTaxOutstandingView, DividendTaxStatus, FlatWithholdingReceipt,
+    SessionCorporateActions, SessionCorporateActionsError, TaxpayerIdentity,
+};
 pub use market_history_query::{
     CurrentMinuteHistoryPhase, CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse,
     MarketHistoryAvailability, MarketHistoryEntry, MarketHistoryPage, MarketHistoryRequest,
