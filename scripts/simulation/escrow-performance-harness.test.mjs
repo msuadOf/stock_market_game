@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -20,7 +20,9 @@ import {
 const BEFORE_FINGERPRINT = "a".repeat(64);
 const AFTER_FINGERPRINT = "b".repeat(64);
 const SETUP_FINGERPRINT = "c".repeat(64);
-const FIXTURE_ROOT = path.join(process.cwd(), ".tmp", "process-tmp", "escrow-performance-test", "perf-fixtures");
+const FIXTURE_PARENT = path.join(process.cwd(), ".tmp", "process-tmp", "escrow-performance-test");
+mkdirSync(FIXTURE_PARENT, { recursive: true });
+const FIXTURE_ROOT = mkdtempSync(path.join(FIXTURE_PARENT, "perf-fixtures-"));
 const FIXTURE_BEFORE = path.join(FIXTURE_ROOT, "before-tree");
 const FIXTURE_AFTER = path.join(FIXTURE_ROOT, "after-tree");
 mkdirSync(FIXTURE_BEFORE, { recursive: true });
@@ -32,8 +34,8 @@ after(async () => {
 });
 
 async function newTemporaryDirectory() {
-  assert.ok(path.isAbsolute(process.env.TMPDIR ?? ""), "TMPDIR must be an absolute workspace path");
-  const directory = await mkdtemp(path.join(process.env.TMPDIR, "perf-runner-test-"));
+  // TMPDIR 可能由外层 runner 指向另一 worktree；main 只接受本 workspace 内的路径。
+  const directory = await mkdtemp(path.join(FIXTURE_ROOT, "perf-runner-test-"));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -50,7 +52,7 @@ function config() {
       profile: "release",
       features: ["simulation-diagnostics"],
     },
-    environment_contract: { cargo: "cargo 1.96.0", rustc: "rustc 1.96.0", target: "x86_64-unknown-linux-gnu", rustflags: "", cargo_jobs: 4, rayon_threads: 4 },
+    environment_contract: { cargo: "cargo 1.96.0", rustc: "rustc 1.96.0", target: "x86_64-unknown-linux-gnu", rustflags: "", cargo_jobs: 4 },
     warmup_runs: 1,
     sample_count: 2,
     rss_sample_interval_ms: 10,
@@ -119,7 +121,7 @@ describe("performance harness", () => {
     assert.match(report.measurement_contract.runnable_thread_source, /\/proc/);
     assert.deepEqual(Object.keys(report.after.samples[0].phase_wall_ns), ["expiry_shadow", "seal_allocation_snapshot", "decision_and_coordinator_work", "account_validation", "stock_processing", "receipt_aggregation", "settlement_shadow", "derivation_audit", "pre_commit_validation", "commit_tick"]);
     assert.equal(report.after.samples[0].process_tree_thread_state.runnable_threads.maximum, 2);
-    assert.deepEqual(report.after.samples[0].rayon_registry_capacity_samples, [4, 4, 4, 4]);
+    assert.equal(Object.hasOwn(report.after.samples[0], "rayon_registry_capacity_samples"), false);
     assert.equal(report.measurement_contract.same_machine_for_both_sides, true);
     assert.deepEqual(report.environment_manifest, { fixture: true });
     assert.equal(report.before.role, "baseline");
@@ -144,9 +146,29 @@ describe("performance harness", () => {
     noRunnable.stdout = JSON.stringify({ ...JSON.parse(noRunnable.stdout), runnable_samples: null });
     assert.throws(() => validateMeasuredSample(noRunnable, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /runnable/);
 
-    const wrongCapacity = measured("after");
-    wrongCapacity.stdout = JSON.stringify({ ...JSON.parse(wrongCapacity.stdout), runnable_samples: [1, 1] });
-    assert.throws(() => validateMeasuredSample(wrongCapacity, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /registry-capacity/);
+    // registry-capacity 对照已退役；现行样本要求非空、非负整数，不能恢复池宽约束。
+    for (const runnableSamples of [[], [-1], [1.5]]) {
+      const invalidRunnable = measured("after");
+      invalidRunnable.stdout = JSON.stringify({ ...JSON.parse(invalidRunnable.stdout), runnable_samples: runnableSamples });
+      assert.throws(() => validateMeasuredSample(invalidRunnable, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /runnable_samples must be null or a non-empty array of non-negative integers/);
+    }
+
+    const independentRunnable = measured("after");
+    independentRunnable.stdout = JSON.stringify({ ...JSON.parse(independentRunnable.stdout), runnable_samples: [1, 1] });
+    assert.doesNotThrow(() => validateMeasuredSample(independentRunnable, configuration.after, configuration.workload, "after", true, configuration.environment_contract));
+
+    const retiredCapacity = measured("after");
+    retiredCapacity.stdout = JSON.stringify({ ...JSON.parse(retiredCapacity.stdout), rayon_registry_capacity_samples: [4, 4] });
+    assert.throws(() => validateMeasuredSample(retiredCapacity, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /after sample keys mismatch/);
+
+    const excessRunnable = measured("after");
+    excessRunnable.process_tree_thread_state.runnable_threads = {
+      minimum: 5,
+      maximum: 5,
+      mean: 5,
+      histogram: { 5: 4 },
+    };
+    assert.throws(() => validateMeasuredSample(excessRunnable, configuration.after, configuration.workload, "after", true, configuration.environment_contract), /runnable threads exceed sampled total threads/);
 
     const fakeRunnable = measured("after");
     fakeRunnable.process_tree_thread_state.runnable_threads = {
@@ -288,9 +310,15 @@ describe("performance harness", () => {
   });
 
   it("rejects hidden environment differences and invalid sample-count shortcuts in config", () => {
+    assert.doesNotThrow(() => validatePerformanceConfig(config()));
+
     const missingEnvironment = config();
     missingEnvironment.environment_contract = {};
     assert.throws(() => validatePerformanceConfig(missingEnvironment), /environment contract/);
+
+    const retiredEnvironment = config();
+    retiredEnvironment.environment_contract.rayon_threads = 4;
+    assert.throws(() => validatePerformanceConfig(retiredEnvironment), /performance environment contract keys mismatch/);
 
     const zeroSamples = config();
     zeroSamples.sample_count = 0;
