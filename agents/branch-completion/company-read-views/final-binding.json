@@ -1,0 +1,45 @@
+{
+  "source_commit": "558a870d29fee0a043a2bbb6863f1fef915f3935",
+  "build": {
+    "jobs": 16,
+    "profile_test_debug": 0,
+    "deadline_ms": 300000,
+    "cargo_reported_elapsed": "1m 54s",
+    "log_sha256": "c5b2a166eeffff54fdcf1eac0f7ba9d95b0d50851e2a6ebae61a5d4485837ad2"
+  },
+  "sources": {
+    "packages/engine/src/session.rs": "6bcf961b6d8e63eb938e5f1b51cc9fecb636adedc274b997c8e70c73c9a8a7d6",
+    "packages/engine/src/session/corporate_actions.rs": "402f86fce2f668122c915bec7527adcadf86f79d18169931ef0c9c0d6fa8d9ee",
+    "packages/engine/src/session/company_read_views.rs": "549e9406517e3534ab22c908469b90cefe5ad34dd84f05c2b48a967a8af4baa0",
+    "packages/engine/tests/session_company_read_views.rs": "e2029a269695e734e55c779510dc64bff8ca36a331ff33a36ad00df7a2f5c0dc",
+    "packages/engine/tests/session_company_foundation.rs": "1b661c2a75d629749fb914b367eedb980b323a8567b4ee97051f3027fbf60450"
+  },
+  "binaries": {
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/session_company_read_views-c678e4c7f9c4b645": "5d3a28e4c9b4ac7ba06bb1810c0608ad766093d8c4b0ccf4f7d67e18b21efa2c",
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/company-read-views-target/debug/deps/session_company_foundation-c3d45966a29b05a7": "7a42749b24a7edb460c6e4436db5a1da470c6ead567bc53cf3aaf51d6c6d6147"
+  },
+  "runs": [
+    {
+      "suite": "query",
+      "cases": 11,
+      "passed": 11,
+      "deadline_ms": 10000,
+      "harness_threads": 8,
+      "exit_code": 0,
+      "harness_elapsed_seconds": 2.19,
+      "log_sha256": "2931d8fb01a0ddcbae557f0a02211f6bd7869af6c83acb5eed22d32d084c450a"
+    },
+    {
+      "suite": "foundation",
+      "cases": 23,
+      "passed": 23,
+      "deadline_ms": 10000,
+      "harness_threads": 8,
+      "exit_code": 0,
+      "harness_elapsed_seconds": 2.79,
+      "log_sha256": "ad29c29823c3371f976648c33c1f833e8d8726f49d24a41ade73cae40f6fb8c4"
+    }
+  ],
+  "runs_started_in_parallel": true,
+  "scope": "B4e只读query与已审Exempt依赖的定向验证；未运行完整回归"
+}
