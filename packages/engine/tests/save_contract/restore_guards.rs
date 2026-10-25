@@ -1,5 +1,5 @@
 use engine::plans::PlanOpen;
-use engine::session::{GameSession, SaveDecodeLimits, SessionError, decode_save_slot};
+use engine::session::{decode_save_slot, GameSession, SaveDecodeLimits, SessionError};
 use engine::{AccountId, OpinionSource, PlanOpinion, PlanTarget, Side, StockId, Urgency};
 
 fn baseline() -> serde_json::Value {
@@ -131,10 +131,9 @@ fn complete_save_decoding_rejects_zero_and_overflowing_plan_horizons() {
     ] {
         let mut wire = baseline();
         let plan = wire["plans"]["plans"]
-            .as_object_mut()
+            .as_array_mut()
             .unwrap()
-            .values_mut()
-            .next()
+            .first_mut()
             .unwrap();
         plan["created_trading_day"] = serde_json::json!(created);
         plan["horizon_trading_days"] = serde_json::json!(horizon);

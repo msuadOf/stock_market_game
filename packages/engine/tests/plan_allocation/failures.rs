@@ -92,9 +92,9 @@ fn unaffordable_buy_fee_leaves_zero_budget_without_aborting_other_plans() {
         .expect("insufficient cash is a normal budget constraint");
 
     assert_eq!(result.total_allocated, Money::ZERO);
-    assert_eq!(result.grants[0].plan_id.0, 2);
+    assert_eq!(result.grants[0].plan_id.sequence, 2);
     assert_eq!(result.grants[0].constraint, None);
-    assert_eq!(result.grants[1].plan_id.0, 1);
+    assert_eq!(result.grants[1].plan_id.sequence, 1);
     assert_eq!(result.grants[1].allocated_cash, Money::ZERO);
     assert_eq!(
         result.grants[1].constraint,
@@ -162,7 +162,7 @@ fn duplicate_plan_requests_are_rejected_before_order_can_affect_allocation() {
     // When / Then: invalid duplicate identity is explicit rather than caller-order-dependent.
     assert!(matches!(
         allocate_soft_budgets(&funds, &requests),
-        Err(AllocationError::DuplicatePlanRequest { plan_id }) if plan_id.0 == 7
+        Err(AllocationError::DuplicatePlanRequest { plan_id }) if plan_id.sequence == 7
     ));
 }
 

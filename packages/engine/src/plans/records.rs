@@ -16,7 +16,7 @@ struct Node {
 impl PlanRecords {
     pub(super) fn get(&self, id: &PlanId) -> Option<&TradingPlan> {
         let mut node = self.root.as_ref();
-        for byte in id.0.to_be_bytes() {
+        for byte in id.key_bytes() {
             node = node.children.get(&byte)?.as_ref();
         }
         node.value.as_ref().map(|(_, plan)| plan)
@@ -25,7 +25,7 @@ impl PlanRecords {
     pub(super) fn get_mut(&mut self, id: &PlanId) -> Option<&mut TradingPlan> {
         self.get(id)?;
         let mut node = Arc::make_mut(&mut self.root);
-        for byte in id.0.to_be_bytes() {
+        for byte in id.key_bytes() {
             node = Arc::make_mut(node.children.get_mut(&byte)?);
         }
         node.value.as_mut().map(|(_, plan)| plan)
@@ -33,7 +33,7 @@ impl PlanRecords {
 
     pub(super) fn insert(&mut self, id: PlanId, plan: TradingPlan) {
         let mut node = Arc::make_mut(&mut self.root);
-        for byte in id.0.to_be_bytes() {
+        for byte in id.key_bytes() {
             node = Arc::make_mut(node.children.entry(byte).or_default());
         }
         node.value = Some((id, plan));
@@ -74,10 +74,10 @@ impl serde::Serialize for PlanRecords {
         &self,
         serializer: Serializer,
     ) -> Result<Serializer::Ok, Serializer::Error> {
-        use serde::ser::SerializeMap;
-        let mut entries = serializer.serialize_map(None)?;
-        for (id, plan) in self.iter() {
-            entries.serialize_entry(id, plan)?;
+        use serde::ser::SerializeSeq;
+        let mut entries = serializer.serialize_seq(None)?;
+        for (_, plan) in self.iter() {
+            entries.serialize_element(plan)?;
         }
         entries.end()
     }

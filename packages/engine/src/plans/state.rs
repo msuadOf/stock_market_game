@@ -9,7 +9,7 @@ use super::PlanPolicy;
 use crate::account::StockId;
 use crate::orderbook::{AccountId, OrderId, Side};
 
-/// 计划稳定 id：由 [`super::PlanBook`] 单调分配，永不复用。
+/// 账户内单调分配的稳定计划身份；不包含分组或线程身份。
 #[derive(
     Copy,
     Clone,
@@ -23,9 +23,41 @@ use crate::orderbook::{AccountId, OrderId, Side};
     serde::Deserialize,
     ts_rs::TS,
 )]
-#[ts(type = "number")]
-#[serde(transparent)]
-pub struct PlanId(#[serde(with = "crate::orderbook::js_safe_u64")] pub u64);
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct PlanId {
+    pub owner: AccountId,
+    #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+    #[ts(type = "string")]
+    pub sequence: u64,
+}
+
+impl PlanId {
+    /// 数值 radix 键；字节序与数值 owner、sequence 的 Ord 一致。
+    pub(super) fn key_bytes(self) -> [u8; 16] {
+        let mut bytes = [0; 16];
+        bytes[..8].copy_from_slice(&self.owner.0.to_be_bytes());
+        bytes[8..].copy_from_slice(&self.sequence.to_be_bytes());
+        bytes
+    }
+
+    /// 在身份上下文后附加该错误的其它数值字段。
+    pub fn error_context_with(self, suffix: impl IntoIterator<Item = u64>) -> Vec<u64> {
+        let mut context = self.error_context();
+        context.extend(suffix);
+        context
+    }
+
+    /// wire 数值错误上下文：owner 高/低 u32、sequence 高/低 u32。
+    pub fn error_context(self) -> Vec<u64> {
+        vec![
+            self.owner.0 >> 32,
+            self.owner.0 & 0xffff_ffff,
+            self.sequence >> 32,
+            self.sequence & 0xffff_ffff,
+        ]
+    }
+}
 
 /// 计划目标：目标仓位（权益占比 bp）或目标股数，两者都可表达。
 /// 股数目标才有股数级完成/超额语义；比例目标由预算换算层转成股数。
@@ -159,7 +191,6 @@ pub struct PlanOpen {
     pub horizon_trading_days: u32,
     pub created_trading_day: u64,
 }
-
 
 /// 母单执行子状态：一次执行腿的调度参数与唯一在途子单事实。
 ///
@@ -377,6 +408,12 @@ impl TradingPlan {
         policy: &PlanPolicy,
     ) -> Result<Self, PlanError> {
         validate_open(&open)?;
+        if plan_id.owner != open.account {
+            return Err(PlanError::PlanOwnerMismatch {
+                plan_id,
+                account: open.account,
+            });
+        }
         Ok(Self {
             plan_id,
             account: open.account,
@@ -471,6 +508,12 @@ impl<'de> serde::Deserialize<'de> for TradingPlan {
             last_event_trading_day: u64,
         }
         let raw = Raw::deserialize(decoder)?;
+        if raw.plan_id.owner != raw.account {
+            return Err(serde::de::Error::custom(PlanError::PlanOwnerMismatch {
+                plan_id: raw.plan_id,
+                account: raw.account,
+            }));
+        }
         super::validation::validate_horizon(raw.created_trading_day, raw.horizon_trading_days)
             .map_err(serde::de::Error::custom)?;
         Ok(Self {
@@ -504,7 +547,10 @@ mod owner_tests {
     #[test]
     fn review_preview_preserves_authoritative_plan_and_wire_facts() {
         let plan = TradingPlan::from_open(
-            PlanId(7),
+            PlanId {
+                owner: AccountId(1),
+                sequence: 7,
+            },
             PlanOpen {
                 account: AccountId(1),
                 code: StockId(0),

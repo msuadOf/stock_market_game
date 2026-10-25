@@ -214,7 +214,13 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
         .expect("an execution leg without a child is valid");
     {
         let mut encoded = serde_json::to_value(&forged).unwrap();
-        encoded["plans"]["plans"][&plan_id.0.to_string()]["active_child_order_id"] =
+        let plan_index = encoded["plans"]["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap())
+            .unwrap();
+        encoded["plans"]["plans"][plan_index]["active_child_order_id"] =
             serde_json::json!(player_order.0);
         forged = serde_json::from_value(encoded).unwrap();
     }
@@ -732,8 +738,14 @@ fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
-        ["active_child_remaining_qty"] = serde_json::json!(1);
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
+    encoded["plans"]["plans"][plan_index]["execution"]["active_child_remaining_qty"] =
+        serde_json::json!(1);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     let restored = GameSession::restore(&forged).expect("stale serialized remaining is rebuilt");
     assert_eq!(
@@ -753,7 +765,13 @@ fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 字段缺失：唯一 owner 从真实订单簿重建。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
+    encoded["plans"]["plans"][plan_index]["execution"]
         .as_object_mut()
         .unwrap()
         .remove("active_child_remaining_qty");
@@ -776,7 +794,13 @@ fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // filled=350（≤ target 400，2144 不触发），真实余量 300 ⇒ exposure 650 > 400。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["filled_qty"] = serde_json::json!(350);
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
+    encoded["plans"]["plans"][plan_index]["filled_qty"] = serde_json::json!(350);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     assert!(matches!(
         GameSession::restore(&forged),
@@ -791,8 +815,14 @@ fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(999) > 真实余量(300)：虚增敞口直接拒绝。
-    encoded["plans"]["plans"][&plan_id.0.to_string()]["execution"]
-        ["active_child_remaining_qty"] = serde_json::json!(999);
+    let plan_index = encoded["plans"]["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap())
+        .unwrap();
+    encoded["plans"]["plans"][plan_index]["execution"]["active_child_remaining_qty"] =
+        serde_json::json!(999);
     let forged: crate::SaveSlot = serde_json::from_value(encoded).unwrap();
     assert!(matches!(
         GameSession::restore(&forged),
@@ -855,14 +885,7 @@ fn partial_plan_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
     source
         .state
         .plans
-        .record_child_submitted(
-            key.account,
-            &key.stock,
-            Side::Sell,
-            key.order,
-            50_002,
-            0,
-        )
+        .record_child_submitted(key.account, &key.stock, Side::Sell, key.order, 50_002, 0)
         .unwrap();
     source
         .state
@@ -881,10 +904,7 @@ fn partial_plan_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
     let restored = GameSession::restore(&saved).expect("plan must rebuild from its live child");
     let plan = restored.state.plans.plan(plan_id).unwrap();
     assert_eq!(plan.active_child_remaining_qty(), Some(1));
-    assert_eq!(
-        plan.target(),
-        crate::plans::PlanTarget::ShareCount(50_100)
-    );
+    assert_eq!(plan.target(), crate::plans::PlanTarget::ShareCount(50_100));
     assert_eq!(plan.filled_qty(), 50_001);
     assert_eq!(
         restored.state.markets[&key.stock].resting_orders_for(key.account)[0].qty,
@@ -1132,7 +1152,9 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
                 },
             )
             .unwrap();
-        session.step().expect("buyer crosses seeded seller tick must commit");
+        session
+            .step()
+            .expect("buyer crosses seeded seller tick must commit");
         cash_before_fill = session.state.accounts[&AccountId(0)].cash();
         // 双账户下买方首拍即付（gross 断言的"卖拍后现金"基线=首拍后值）。
         let gross_pre = Money::from_cents(100);
@@ -1141,9 +1163,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             .unwrap()
             .add(session.state.setup.config.transfer_fee(gross_pre).unwrap())
             .unwrap();
-        cash_before_fill = session
-            .state
-            .accounts[&AccountId(0)]
+        cash_before_fill = session.state.accounts[&AccountId(0)]
             .cash()
             .add(pre_cost)
             .unwrap();
@@ -1965,8 +1985,7 @@ fn restore_carries_true_fill_facts_and_continues_buy_with_cumulative_fees() {
                 .unwrap_or_else(|| panic!("leg{leg} 买余量在册"));
             assert_eq!(buy.qty, remaining, "leg{leg} 余量");
             assert_eq!(
-                buy.filled_qty,
-                expected_filled,
+                buy.filled_qty, expected_filled,
                 "leg{leg} 真实成交数量贯穿（价优换算不成立——判决反例 99）"
             );
             assert_eq!(buy.original_qty, 300, "原始委托量=余量+真实成交量");
@@ -2023,7 +2042,11 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
     let base = GameSession::new(setup, 42).expect("fixture 必须有效");
     let mut save = base.save().expect("基线档");
     {
-        let account = save.snapshot.accounts.get_mut(&AccountId(1)).expect("NPC 买方");
+        let account = save
+            .snapshot
+            .accounts
+            .get_mut(&AccountId(1))
+            .expect("NPC 买方");
         account.cash = crate::money::Money::from_cents(500_000);
         account.positions.insert(
             code.clone(),
@@ -2261,8 +2284,7 @@ fn v6_order_id_encoding_stays_in_wire_domain_beyond_32_stocks() {
         )
         .expect("入队");
     let events = session.step().expect("步进");
-    let json = serde_json::to_value(&events)
-        .expect("事件面序列化");
+    let json = serde_json::to_value(&events).expect("事件面序列化");
     assert!(json.to_string().len() > 0);
     let save = session.save().expect("存档");
     GameSession::restore(&save).expect("33 股局档往返");

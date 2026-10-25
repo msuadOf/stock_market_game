@@ -246,8 +246,7 @@ impl ObservationInputs {
             .iter()
             .enumerate()
             .map(|(offset, bar)| crate::observation::CompletedDayClose {
-                trading_day: u32::try_from(start + offset as u64)
-                    .expect("行为日索引超 u32"),
+                trading_day: u32::try_from(start + offset as u64).expect("行为日索引超 u32"),
                 close: crate::money::Money::from_cents(bar.3.max(1)),
             })
             .collect();
@@ -265,8 +264,7 @@ impl ObservationInputs {
         // （60）滚动；valid_sample_count=历史累计 traded 总数（同
         // session traded_count()）。
         let mut bars: Vec<crate::strategy::TechnicalDailyBar> = Vec::new();
-        let mut all: Vec<&(i64, i64, i64, i64, u64)> =
-            self.daily_bars.iter().collect();
+        let mut all: Vec<&(i64, i64, i64, i64, u64)> = self.daily_bars.iter().collect();
         if let Some(active) = &self.daily_active {
             all.push(active);
         }
@@ -285,7 +283,7 @@ impl ObservationInputs {
             &bars,
             self.daily_total_traded as usize,
         );
-                (price_path, technical)
+        (price_path, technical)
     }
 }
 
@@ -365,10 +363,7 @@ fn roster_chain_params(
 /// ×最新价——对齐旧管线权益观察口径）。
 fn equity_cents_with_pending(
     group_account: &GroupAccount,
-    child_in_flight: &std::collections::BTreeMap<
-        (crate::AccountId, crate::StockId),
-        ChildTicket,
-    >,
+    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     account_ids: &[crate::AccountId],
     local: LocalIdx,
     market: &crate::strategy::MarketView,
@@ -405,10 +400,7 @@ fn equity_cents_with_pending(
 /// 成 100 后组加回 200、session 镜像只见 100，两口径分叉）。
 fn held_qty_with_pending_at(
     shares: &[u32],
-    child_in_flight: &std::collections::BTreeMap<
-        (crate::AccountId, crate::StockId),
-        ChildTicket,
-    >,
+    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     account_ids: &[crate::AccountId],
     local: LocalIdx,
     stock: usize,
@@ -480,10 +472,7 @@ enum GroupUndo {
     /// attention 重排（decide 后 next_due 前移；`prev`=重排前值）。
     /// Sol 二审修复集 5：不记则失败 tick Abort 后 NPC 已被排到未来，
     /// 重跑同 tick 时少一次决策。
-    NextDue {
-        local: LocalIdx,
-        prev: u64,
-    },
+    NextDue { local: LocalIdx, prev: u64 },
     /// 成本基变动（D3a-2c 件1：FillFact 落账的 invested/recovered 增量，
     /// 含清仓清零的负增量；回滚时逆序减回）。
     CostBasis {
@@ -500,9 +489,7 @@ enum GroupUndo {
     },
     /// 计划簿创建前快照（D3a-3：组内开仓 create 的可逆化——Abort 恢复；
     /// tick 内首个创建时保存一次）。
-    PlanBook {
-        prev: Box<crate::plans::PlanBook>,
-    },
+    PlanBook { prev: Box<crate::plans::PlanBook> },
     /// 曾持有位回滚（D3a-3 收口：清仓置位/再持有复位的逆操作）。
     EverHeld {
         local: LocalIdx,
@@ -523,10 +510,7 @@ enum GroupUndo {
         delta: i64,
     },
     /// 在途买占用累计回滚（Sol 五审：挂出加/买腿实付减/退款减的逆增量）。
-    BuyPurseHeld {
-        local: LocalIdx,
-        delta: i64,
-    },
+    BuyPurseHeld { local: LocalIdx, delta: i64 },
 }
 
 /// eager 分域延迟载荷（单批）：即时相（F1/F2/F3 delta 族）到达即应用后，
@@ -784,8 +768,7 @@ pub struct GroupState {
     /// D3a-3 复核收口+Sol 整改 2：计划子单在途票（挂出量+受理身份）——
     /// 身份=FillFact.order 的确定性合成（不另造计数器）；部分成交推进、
     /// 全成/终结（Closed/到期/日终清簿/拒收）清除。
-    child_in_flight:
-        std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
+    child_in_flight: std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     /// Sol 整改 1：簿快照已保存标志（本 tick 内首个簿变更前保存一次；
     /// 转正/回滚清 undo 时重置）。
     plan_undo_saved: bool,
@@ -808,8 +791,10 @@ pub struct GroupState {
     /// D3b 件 4 fixture 通道：注入复审候选（账户键——run_chain_decision
     /// 消费一次即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
-    injected_assessments:
-        Vec<(crate::AccountId, std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>)>,
+    injected_assessments: Vec<(
+        crate::AccountId,
+        std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
+    )>,
     /// D3b 件 4 fixture 通道：观察基分钟覆盖（股 idx 键——Start 整值
     /// 刷新后套用；set_urgency_minutes 的组内等价面，持续到显式改写）。
     #[cfg(test)]
@@ -1008,9 +993,21 @@ impl GroupState {
         }
         // Sol 整改 1：计划域新状态入哈希（簿数值面+在途+身份计数——
         // Abort 回滚等价判据覆盖计划/身份漂移）。
+        let policy = self.plan_book.policy();
+        h = fnv(h, policy.reverse_revision_threshold_bp as u64);
+        h = fnv(h, policy.review_signal_delta_bp as u64);
+        h = fnv(h, policy.review_price_change_bp as u64);
+        for cursor in self.plan_book.owner_sequences() {
+            h = fnv(h, cursor.owner.0);
+            h = fnv(h, cursor.next_sequence.is_some() as u64);
+            if let Some(next) = cursor.next_sequence {
+                h = fnv(h, next);
+            }
+        }
         for plan_id in self.plan_book.plan_ids() {
             if let Ok(plan) = self.plan_book.plan(plan_id) {
-                h = fnv(h, plan_id.0);
+                h = fnv(h, plan_id.owner.0);
+                h = fnv(h, plan_id.sequence);
                 h = fnv(h, u64::from(plan.filled_qty()));
                 h = fnv(
                     h,
@@ -1051,7 +1048,8 @@ impl GroupState {
                     stock,
                     delta,
                 } => {
-                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize]).shares[stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize])
+                        .shares[stock as usize];
                     *slot = (*slot as i64 - delta as i64) as u32;
                 }
                 GroupUndo::ForeignActive {
@@ -1059,7 +1057,8 @@ impl GroupState {
                     stock,
                     delta,
                 } => {
-                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize]).foreign_active[stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize])
+                        .foreign_active[stock as usize];
                     *slot = (*slot as i32 - delta as i32) as u16;
                 }
                 GroupUndo::Frozen {
@@ -1067,7 +1066,8 @@ impl GroupState {
                     stock,
                     delta,
                 } => {
-                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize]).frozen_today[stock as usize];
+                    let slot = &mut std::sync::Arc::make_mut(&mut self.accounts[local as usize])
+                        .frozen_today[stock as usize];
                     *slot = (*slot as i64 - delta as i64) as u32;
                 }
                 GroupUndo::NextDue { local, prev } => {
@@ -1109,15 +1109,24 @@ impl GroupState {
                         std::sync::Arc::make_mut(acct).ever_held[stock as usize] = prev;
                     }
                 }
-                GroupUndo::PendingSell { local, stock, delta } => {
+                GroupUndo::PendingSell {
+                    local,
+                    stock,
+                    delta,
+                } => {
                     let acct = std::sync::Arc::make_mut(&mut self.accounts[local as usize]);
                     let slot = &mut acct.pending_sell_qty[stock as usize];
                     *slot = (*slot as i64 - delta).max(0) as u32;
                 }
                 GroupUndo::BuyPurseHeld { local, delta } => {
-                    std::sync::Arc::make_mut(&mut self.accounts[local as usize]).buy_purse_held_cents -= delta;
+                    std::sync::Arc::make_mut(&mut self.accounts[local as usize])
+                        .buy_purse_held_cents -= delta;
                 }
-                GroupUndo::ChildInFlight { account, code, prev } => {
+                GroupUndo::ChildInFlight {
+                    account,
+                    code,
+                    prev,
+                } => {
                     // Sol 整改 2：恢复变更前票值（None=原本不在途）。
                     match prev {
                         Some(ticket) => {
@@ -1147,12 +1156,11 @@ impl GroupState {
 
     fn acct_mut(&mut self, local: LocalIdx) -> Result<&mut GroupAccount, RuntimeError> {
         let group = self.group;
-        let slot = self
-            .accounts
-            .get_mut(local as usize)
-            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+        let slot = self.accounts.get_mut(local as usize).ok_or_else(|| {
+            RuntimeError::ProtocolInvariant {
                 detail: format!("组 {group} 收到越界 local={local}"),
-            })?;
+            }
+        })?;
         // Arc COW：分片共享后首写克隆一次（此后独占零拷贝）。
         Ok(std::sync::Arc::make_mut(slot))
     }
@@ -1203,12 +1211,7 @@ impl GroupState {
                 detail: format!("组 {} 批次防御核对失败：{m}", self.group),
             })?;
         let stock_idx = batch.stock as usize;
-        if stock_idx >= self
-            .accounts
-            .first()
-            .map(|a| a.shares.len())
-            .unwrap_or(0)
-        {
+        if stock_idx >= self.accounts.first().map(|a| a.shares.len()).unwrap_or(0) {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("组 {} 批次股索引越界：{stock_idx}", self.group),
             });
@@ -1237,9 +1240,13 @@ impl GroupState {
                     (
                         acct.invested_cents.get(stock_idx).copied().unwrap_or(0),
                         acct.recovered_cents.get(stock_idx).copied().unwrap_or(0),
-                        acct.shares.get(stock_idx).copied().unwrap_or(0).saturating_add(
-                            acct.pending_sell_qty.get(stock_idx).copied().unwrap_or(0),
-                        ),
+                        acct.shares
+                            .get(stock_idx)
+                            .copied()
+                            .unwrap_or(0)
+                            .saturating_add(
+                                acct.pending_sell_qty.get(stock_idx).copied().unwrap_or(0),
+                            ),
                     ),
                 );
             }
@@ -1426,15 +1433,16 @@ impl GroupState {
             }
             let local = fill.owner.1;
             let face = {
-                let acct = self
-                    .accounts
-                    .get(local as usize)
-                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                let acct = self.accounts.get(local as usize).ok_or_else(|| {
+                    RuntimeError::ProtocolInvariant {
                         detail: format!("组 {group} 经历转移账户越界：local={local}"),
-                    })?;
-                acct.shares.get(idx).copied().unwrap_or(0).saturating_add(
-                    acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
-                )
+                    }
+                })?;
+                acct.shares
+                    .get(idx)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(acct.pending_sell_qty.get(idx).copied().unwrap_or(0))
             };
             if face != 0 {
                 continue;
@@ -1517,10 +1525,7 @@ impl GroupState {
         let group = self.group;
         if fill.owner.0 != group {
             return Err(RuntimeError::ProtocolInvariant {
-                detail: format!(
-                    "组 {group} 批次收到外组成交事实 owner={:?}",
-                    fill.owner
-                ),
+                detail: format!("组 {group} 批次收到外组成交事实 owner={:?}", fill.owner),
             });
         }
         let local = fill.owner.1;
@@ -1539,22 +1544,22 @@ impl GroupState {
         };
         let acct = self.acct_mut(local)?;
         let slot = &mut acct.invested_cents[stock as usize];
-        *slot = slot.checked_add(d_invested).ok_or_else(|| {
-            RuntimeError::ProtocolInvariant {
+        *slot = slot
+            .checked_add(d_invested)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
                 detail: format!(
                     "组 {group} invested 溢出：local={local}, stock={stock}, delta={d_invested}"
                 ),
-            }
-        })?;
+            })?;
         let acct = self.acct_mut(local)?;
         let slot = &mut acct.recovered_cents[stock as usize];
-        *slot = slot.checked_add(d_recovered).ok_or_else(|| {
-            RuntimeError::ProtocolInvariant {
+        *slot = slot
+            .checked_add(d_recovered)
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
                 detail: format!(
                     "组 {group} recovered 溢出：local={local}, stock={stock}, delta={d_recovered}"
                 ),
-            }
-        })?;
+            })?;
         self.push_undo(GroupUndo::CostBasis {
             local,
             stock,
@@ -1578,15 +1583,11 @@ impl GroupState {
         // 而 account_ids 为全局名册序 ⇒ 须加 roster_offset。漏偏移时组 g≥1
         // 命中组 0 的账户（有票则错推进，无票则静默 return Ok(())——尾组
         // 计划推进整段跳过，不 panic）。
-        let Some(&account) = self
-            .root_projection
-            .as_ref()
-            .and_then(|projection| {
-                projection
-                    .account_ids
-                    .get(self.roster_offset + fill.owner.1 as usize)
-            })
-        else {
+        let Some(&account) = self.root_projection.as_ref().and_then(|projection| {
+            projection
+                .account_ids
+                .get(self.roster_offset + fill.owner.1 as usize)
+        }) else {
             return Ok(());
         };
         let code = crate::StockId(u32::from(stock));
@@ -1628,7 +1629,8 @@ impl GroupState {
                     charged_cents: ticket.charged_cents,
                 }),
             });
-            self.child_in_flight.insert((account, code.clone()), ticket.clone());
+            self.child_in_flight
+                .insert((account, code.clone()), ticket.clone());
         }
         let Some(order_id) = ticket.order_id else {
             return Ok(());
@@ -1675,9 +1677,7 @@ impl GroupState {
             });
             let gross = crate::money::Money::from_cents(fill.price)
                 .mul_shares(fill.qty)
-                .unwrap_or_else(|error| {
-                    panic!("组 {group} 在途票成交额溢出：{error:?}")
-                })
+                .unwrap_or_else(|error| panic!("组 {group} 在途票成交额溢出：{error:?}"))
                 .cents();
             // Sol 四审修复 1：desk 实际扣减累计（买腿 buyer_charge=成交额
             // +边际佣金+过户费；卖腿收方不占 purse——StampTax 由净得扣）。
@@ -1686,7 +1686,9 @@ impl GroupState {
                     .checked_add(fill.commission)
                     .and_then(|v| v.checked_add(fill.transfer_fee))
                     .unwrap_or_else(|| {
-                        panic!("组 {group} 在途票 desk 扣减溢出：account={account:?}, code={code:?}")
+                        panic!(
+                            "组 {group} 在途票 desk 扣减溢出：account={account:?}, code={code:?}"
+                        )
                     });
                 ticket.charged_cents = ticket
                     .charged_cents
@@ -1700,7 +1702,8 @@ impl GroupState {
                 code: code.clone(),
                 prev: Some(prev_ticket),
             });
-            self.child_in_flight.insert((account, code.clone()), ticket.clone());
+            self.child_in_flight
+                .insert((account, code.clone()), ticket.clone());
         }
         // 在途卖余量镜像已上移至 apply_staging 统一 fill 段（Sol 五审：
         // 外部/retail 卖单同口径——票域减法会造成外部单双计/漏计）。
@@ -1721,13 +1724,11 @@ impl GroupState {
     /// 保护集外的 watchlist/price_memory 按 MAX_UNHELD_WATCHLIST_STOCKS
     /// 驱逐；Personal undo 可逆）。
     fn prune_personal_memory_after_completion(&mut self, local: LocalIdx) {
-        let Some(&account) = self
-            .root_projection
-            .as_ref()
-            .and_then(|projection| {
-                projection.account_ids.get(self.roster_offset + local as usize)
-            })
-        else {
+        let Some(&account) = self.root_projection.as_ref().and_then(|projection| {
+            projection
+                .account_ids
+                .get(self.roster_offset + local as usize)
+        }) else {
             return;
         };
         let Some(mut snap) = self.belief_states.get(local as usize).cloned().flatten() else {
@@ -1775,13 +1776,11 @@ impl GroupState {
         local: LocalIdx,
         order_serial: u64,
     ) -> Result<(), RuntimeError> {
-        let Some(&account) = self
-            .root_projection
-            .as_ref()
-            .and_then(|projection| {
-                projection.account_ids.get(self.roster_offset + local as usize)
-            })
-        else {
+        let Some(&account) = self.root_projection.as_ref().and_then(|projection| {
+            projection
+                .account_ids
+                .get(self.roster_offset + local as usize)
+        }) else {
             return Ok(());
         };
         let code = crate::StockId(u32::from(stock));
@@ -1800,9 +1799,7 @@ impl GroupState {
         self.save_plan_book_undo();
         self.plan_book
             .record_child_submitted(account, &code, side, order_id, qty, day)
-            .unwrap_or_else(|error| {
-                panic!("组内受理身份登记失败 {account:?} {code:?}: {error}")
-            });
+            .unwrap_or_else(|error| panic!("组内受理身份登记失败 {account:?} {code:?}: {error}"));
         ticket.order_id = Some(order_id);
         self.push_undo(GroupUndo::ChildInFlight {
             account,
@@ -1832,13 +1829,11 @@ impl GroupState {
         local: LocalIdx,
         order_serial: u64,
     ) -> Result<(), RuntimeError> {
-        let Some(&account) = self
-            .root_projection
-            .as_ref()
-            .and_then(|projection| {
-                projection.account_ids.get(self.roster_offset + local as usize)
-            })
-        else {
+        let Some(&account) = self.root_projection.as_ref().and_then(|projection| {
+            projection
+                .account_ids
+                .get(self.roster_offset + local as usize)
+        }) else {
             return Ok(());
         };
         let code = crate::StockId(u32::from(stock));
@@ -1870,9 +1865,7 @@ impl GroupState {
             let released = self
                 .plan_book
                 .record_child_released(account, &code, order_id, day, true)
-                .unwrap_or_else(|error| {
-                    panic!("组内子单释放失败 {account:?} {code:?}: {error}")
-                });
+                .unwrap_or_else(|error| panic!("组内子单释放失败 {account:?} {code:?}: {error}"));
             if !released {
                 // 迟到 Closed 的合法面：多轮推进后计划 active_child 可能
                 /// 已换新单（旧票身份不再匹配——非漂移；无害跳过）。
@@ -2017,7 +2010,10 @@ impl GroupState {
                     delta: qty as i32,
                 });
             }
-            Entity::Closed { local, order_serial } => {
+            Entity::Closed {
+                local,
+                order_serial,
+            } => {
                 // Sol 整改 2：子单终结信号（撤销/到期/日终清簿——组侧
                 // 在途票与执行腿释放；order_serial=订单身份关联，二审修复 3）。
                 // 票域（F6）延迟重放——原批内位置由 actions 追加序保持；
@@ -2176,7 +2172,10 @@ impl GroupState {
     fn rollback_day_end(&mut self, tick: u64) -> Result<(), RuntimeError> {
         if tick != self.cur_tick {
             return Err(RuntimeError::ProtocolInvariant {
-                detail: format!("组 {} 日结撤销 tick 错配：{tick} != {}", self.group, self.cur_tick),
+                detail: format!(
+                    "组 {} 日结撤销 tick 错配：{tick} != {}",
+                    self.group, self.cur_tick
+                ),
             });
         }
         // Seal 前日志已经发布；Drain 即时增量必须保留在独立撤销范围内。
@@ -2238,7 +2237,8 @@ impl GroupState {
             let frozen = self.accounts[local as usize].frozen_today.clone();
             for (stock, &f) in frozen.iter().enumerate() {
                 if f > 0 {
-                    std::sync::Arc::make_mut(&mut self.accounts[local as usize]).frozen_today[stock] = 0;
+                    std::sync::Arc::make_mut(&mut self.accounts[local as usize]).frozen_today
+                        [stock] = 0;
                     self.push_undo(GroupUndo::Frozen {
                         local,
                         stock: stock as StockIdx,
@@ -2431,12 +2431,12 @@ impl GroupState {
             });
         };
         // P2-3d：经验行自 snap 取走（journal 已持拍前副本——无需 clone）。
-        let mut experience = snap
-            .retail_experience
-            .take()
-            .ok_or_else(|| RuntimeError::ProtocolInvariant {
-                detail: format!("组 {group} retail 位 {local} 缺经验行投影"),
-            })?;
+        let mut experience =
+            snap.retail_experience
+                .take()
+                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {group} retail 位 {local} 缺经验行投影"),
+                })?;
         // 组账户 → 零售分析 ctx（旧管线 view 依赖面的组内等价——
         /// qty 口径=在手+在途卖（回写同式）；零量条目按曾持有位保留
         /// （旧管线 positions 的清仓残留键语义）。
@@ -2444,9 +2444,8 @@ impl GroupState {
         let mut positions: std::collections::BTreeMap<crate::StockId, crate::Position> =
             std::collections::BTreeMap::new();
         for idx in 0..acct.shares.len() {
-            let qty = acct.shares[idx].saturating_add(
-                acct.pending_sell_qty.get(idx).copied().unwrap_or(0),
-            );
+            let qty = acct.shares[idx]
+                .saturating_add(acct.pending_sell_qty.get(idx).copied().unwrap_or(0));
             let invested = acct.invested_cents.get(idx).copied().unwrap_or(0);
             let recovered = acct.recovered_cents.get(idx).copied().unwrap_or(0);
             if qty > 0 {
@@ -2473,12 +2472,7 @@ impl GroupState {
         > = projection
             .stock_codes
             .iter()
-            .map(|(code, id)| {
-                (
-                    *id,
-                    projection.company_registry.issuer_of(code),
-                )
-            })
+            .map(|(code, id)| (*id, projection.company_registry.issuer_of(code)))
             .collect();
         let minute = u64::from(snapshot.market_minute);
         let day = tick.saturating_sub(1) / self.ticks_per_day.max(1);
@@ -2518,12 +2512,11 @@ impl GroupState {
                 let Some(stock) = observation.market.stocks.get(code) else {
                     continue;
                 };
-                let market_value = stock
-                    .last_price
-                    .mul_shares(position.qty())
-                    .map_err(|e| RuntimeError::ProtocolInvariant {
+                let market_value = stock.last_price.mul_shares(position.qty()).map_err(|e| {
+                    RuntimeError::ProtocolInvariant {
                         detail: format!("组 {group} retail {account:?} 市值计算失败：{e}"),
-                    })?;
+                    }
+                })?;
                 equity = equity
                     .add(market_value)
                     .map_err(|e| RuntimeError::ProtocolInvariant {
@@ -2599,13 +2592,11 @@ impl GroupState {
         /// 一次——下游 decide_* 直接消费共享引用）。
         let mut risk_inputs = std::collections::BTreeMap::new();
         for (code, position) in &ctx.positions {
-            let stock = observation
-                .market
-                .stocks
-                .get(code)
-                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+            let stock = observation.market.stocks.get(code).ok_or_else(|| {
+                RuntimeError::ProtocolInvariant {
                     detail: format!("组 {group} retail {account:?} 持仓 {code:?} 无行情"),
-                })?;
+                }
+            })?;
             risk_inputs.insert(
                 *code,
                 crate::observation::RiskPositionInput {
@@ -2638,11 +2629,7 @@ impl GroupState {
             .map_err(|e| RuntimeError::ProtocolInvariant {
                 detail: format!("组 {group} retail {account:?} 经验时刻失败：{e}"),
             })?;
-        let npc_seed = crate::session::npc_rng_seed(
-            projection.session_seed,
-            tick,
-            account,
-        );
+        let npc_seed = crate::session::npc_rng_seed(projection.session_seed, tick, account);
         let mut rng = crate::session::SplitMix64::new(npc_seed);
         let data = profile.strategy.clone();
         // 决策组装（ZiNoiseStrategy::decide_with_experience 等价——
@@ -2698,11 +2685,12 @@ impl GroupState {
         }
         experience.prune_watchlist(&held);
         // trace 收集（本拍缓冲——驱动器段投影 session）。
-        self.retail_traces.push(crate::session::RetailDecisionTrace {
-            account,
-            decision: position,
-            execution_urgency: urgency,
-        });
+        self.retail_traces
+            .push(crate::session::RetailDecisionTrace {
+                account,
+                decision: position,
+                execution_urgency: urgency,
+            });
         // 意图 → PendingOp。
         let mut ops = Vec::with_capacity(intents.len());
         for intent in intents {
@@ -2751,10 +2739,7 @@ impl GroupState {
         RuntimeError,
     > {
         let group = self.group;
-        let (projection, snapshot) = match (
-            self.root_projection.clone(),
-            self.snapshot.clone(),
-        ) {
+        let (projection, snapshot) = match (self.root_projection.clone(), self.snapshot.clone()) {
             (Some(p), Some(s)) => (p, s),
             _ => {
                 return Err(RuntimeError::ProtocolInvariant {
@@ -2777,7 +2762,8 @@ impl GroupState {
                 detail: format!("组 {group} 位 {local} 缺信念个人态"),
             });
         };
-        let accounts_ref: Vec<&GroupAccount> = self.accounts.iter().map(std::sync::Arc::as_ref).collect();
+        let accounts_ref: Vec<&GroupAccount> =
+            self.accounts.iter().map(std::sync::Arc::as_ref).collect();
         let context = build_root_read_context(
             &accounts_ref,
             &self.belief_states,
@@ -2834,15 +2820,15 @@ impl GroupState {
                 assessments_map = injected_map;
             }
         }
-        let assessments: Vec<_> = assessments_map.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let assessments: Vec<_> = assessments_map
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
         // P0 缺陷修复：`chain_params` 为全局名册序（与 account_ids 同式），
         // 裸 local 会静默取到组 0 的链参数（不 panic——比账户簿缺键更隐蔽）。
-        let (params, style) = roster_chain_params(
-            &projection.chain_params,
-            self.roster_offset,
-            local as usize,
-        )
-        .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
+        let (params, style) =
+            roster_chain_params(&projection.chain_params, self.roster_offset, local as usize)
+                .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         // D3b 件 4：复审消费（session Lifecycle operation 等价——observe
         // 之后、开仓循环之前；record_review/quiet 门控在 apply_lifecycle_
         // action 内——每动作前记录簿内基线）。读面（write_back=false）不
@@ -2898,7 +2884,11 @@ impl GroupState {
             let equity = equity_cents_with_pending(
                 group_account,
                 &self.child_in_flight,
-                roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
+                roster_slice(
+                    &projection.account_ids,
+                    self.roster_offset,
+                    self.accounts.len(),
+                ),
                 local,
                 &observation.market,
             );
@@ -2967,7 +2957,11 @@ impl GroupState {
             let held_qty = held_qty_with_pending_at(
                 &group_account.shares,
                 &self.child_in_flight,
-                roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
+                roster_slice(
+                    &projection.account_ids,
+                    self.roster_offset,
+                    self.accounts.len(),
+                ),
                 local,
                 code.0 as usize,
             );
@@ -2997,7 +2991,11 @@ impl GroupState {
                 equity_cents_with_pending(
                     group_account,
                     &self.child_in_flight,
-                    roster_slice(&projection.account_ids, self.roster_offset, self.accounts.len()),
+                    roster_slice(
+                        &projection.account_ids,
+                        self.roster_offset,
+                        self.accounts.len(),
+                    ),
                     local,
                     &observation.market,
                 ),
@@ -3029,10 +3027,9 @@ impl GroupState {
             );
             if let Some(open) = open {
                 self.save_plan_book_undo();
-                let plan_id = self
-                    .plan_book
-                    .create(open.clone())
-                    .unwrap_or_else(|error| panic!("组内计划创建失败 {account:?} {code:?}: {error}"));
+                let plan_id = self.plan_book.create(open.clone()).unwrap_or_else(|error| {
+                    panic!("组内计划创建失败 {account:?} {code:?}: {error}")
+                });
                 // D3b 件 4：新建计划复审基线+报价前 urgency 复评（session
                 /// Create 动作同式：record_review/record_resource_review 后
                 /// 按 PauseAssessment 判停——组内此前缺失，quiet 首拍无基线）。
@@ -3070,7 +3067,11 @@ impl GroupState {
                     .unwrap_or_else(|e| panic!("组内新计划读取失败 {plan_id:?}: {e:?}"))
                     .clone();
                 let (assessment, _) = group_urgency_at_view(
-                    &self.accounts.iter().map(std::sync::Arc::as_ref).collect::<Vec<_>>(),
+                    &self
+                        .accounts
+                        .iter()
+                        .map(std::sync::Arc::as_ref)
+                        .collect::<Vec<_>>(),
                     &out.belief,
                     &self.child_in_flight,
                     &projection,
@@ -3089,7 +3090,10 @@ impl GroupState {
                     self.plan_book
                         .apply(
                             plan_id,
-                            crate::plans::PlanEvent::Paused { reason, trading_day },
+                            crate::plans::PlanEvent::Paused {
+                                reason,
+                                trading_day,
+                            },
                         )
                         .unwrap_or_else(|e| panic!("组内新计划判停失败 {plan_id:?}: {e:?}"));
                 }
@@ -3187,9 +3191,10 @@ impl GroupState {
         };
         if let Some(plan_id) = existing {
             let code = {
-                let plan = self.plan_book.plan(plan_id).unwrap_or_else(|e| {
-                    panic!("组内复审动作计划读取失败 {plan_id:?}: {e:?}")
-                });
+                let plan = self
+                    .plan_book
+                    .plan(plan_id)
+                    .unwrap_or_else(|e| panic!("组内复审动作计划读取失败 {plan_id:?}: {e:?}"));
                 plan.code().clone()
             };
             // 复审事实：price=快照行情；acquired=issuer 记录计数
@@ -3233,7 +3238,10 @@ impl GroupState {
                     .apply(plan_id, crate::plans::PlanEvent::Revised { revision })
                     .unwrap_or_else(|e| panic!("组内复审修订失败 {plan_id:?}: {e:?}"));
             }
-            A::Observe { plan_id, trading_day } => {
+            A::Observe {
+                plan_id,
+                trading_day,
+            } => {
                 self.save_plan_book_undo();
                 self.plan_book
                     .apply(
@@ -3254,16 +3262,16 @@ impl GroupState {
                 // release 路径同源；簿侧腿引用同拍释放——session 执行链
                 /// 的撤单即清语义，Closed 落账的 release 幂等跳过）。
                 if let Some(order_id) = child_order_id {
-                    cancels.push((
-                        local,
-                        code.0 as StockIdx,
-                        desk_order_serial(order_id.0),
-                    ));
+                    cancels.push((local, code.0 as StockIdx, desk_order_serial(order_id.0)));
                     // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
                     /// 迁移）显式失败——铁律二。
-                    let released = self
-                        .plan_book
-                        .record_child_released(account, &code, order_id, trading_day, true);
+                    let released = self.plan_book.record_child_released(
+                        account,
+                        &code,
+                        order_id,
+                        trading_day,
+                        true,
+                    );
                     if let Err(error) = released {
                         panic!("组内复审终止腿释放失败 {plan_id:?}: {error:?}");
                     }
@@ -3272,7 +3280,10 @@ impl GroupState {
                 self.plan_book
                     .apply(
                         plan_id,
-                        crate::plans::PlanEvent::Terminated { reason, trading_day },
+                        crate::plans::PlanEvent::Terminated {
+                            reason,
+                            trading_day,
+                        },
                     )
                     .unwrap_or_else(|e| panic!("组内复审终止失败 {plan_id:?}: {e:?}"));
             }
@@ -3288,16 +3299,16 @@ impl GroupState {
                 /// 同向 Forward 修订不清腿，簿侧腿引用随撤单同拍释放——
                 /// session 执行链语义，Closed 落账的 release 幂等跳过）。
                 if let Some(order_id) = child_order_id {
-                    cancels.push((
-                        local,
-                        code.0 as StockIdx,
-                        desk_order_serial(order_id.0),
-                    ));
+                    cancels.push((local, code.0 as StockIdx, desk_order_serial(order_id.0)));
                     // 幂等（Ok(false)=Closed 落账先行清理）容忍；Err（非法
                     /// 迁移）显式失败——铁律二。
-                    let released = self
-                        .plan_book
-                        .record_child_released(account, &code, order_id, trading_day, true);
+                    let released = self.plan_book.record_child_released(
+                        account,
+                        &code,
+                        order_id,
+                        trading_day,
+                        true,
+                    );
                     if let Err(error) = released {
                         panic!("组内复审重构腿释放失败 {plan_id:?}: {error:?}");
                     }
@@ -3342,8 +3353,13 @@ impl GroupState {
         personal: &crate::session::PlanPersonalState,
         snapshot: &std::sync::Arc<TickSnapshot>,
         existing_before: &[crate::plans::PlanId],
-    ) -> Result<(Vec<super::decision::PendingOp>, Vec<(LocalIdx, StockIdx, u64)>), RuntimeError>
-    {
+    ) -> Result<
+        (
+            Vec<super::decision::PendingOp>,
+            Vec<(LocalIdx, StockIdx, u64)>,
+        ),
+        RuntimeError,
+    > {
         let group = self.group;
         let mut ops = Vec::new();
         // D3b 件 3：定向撤单目标（local, stock, desk serial）——
@@ -3363,12 +3379,9 @@ impl GroupState {
         };
         // P0 缺陷修复：`chain_params` 为全局名册序——裸 local 会静默取到
         // 组 0 的链参数（不 panic，仅报价参数错——比账户簿缺键更隐蔽）。
-        let (params, _style) = roster_chain_params(
-            &projection.chain_params,
-            self.roster_offset,
-            local as usize,
-        )
-        .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
+        let (params, _style) =
+            roster_chain_params(&projection.chain_params, self.roster_offset, local as usize)
+                .unwrap_or_else(|| panic!("组 {group} belief 位 {local} 缺链参数投影"));
         // Sol 整改 3：预算现金=可用（已扣在途 purse——所有权口径；frozen
         /// 单独为 0 防重复扣，裁决登记）。Sol 整改 3b：existing=本轮开仓
         /// 前集合（此前从全部 active 构造——新计划全成 ExistingPlan，
@@ -3416,9 +3429,8 @@ impl GroupState {
                 crate::orderbook::Side::Buy => {
                     // 涨停价预留（session 用 market.up_stop()——公共态
                     // daily_upper_limit 同值）。
-                    let reservation_price = crate::money::Money::from_cents(
-                        view.daily_upper_limit.max(1),
-                    );
+                    let reservation_price =
+                        crate::money::Money::from_cents(view.daily_upper_limit.max(1));
                     crate::session::buy_allocation_request(
                         &self.config,
                         plan_id,
@@ -3561,14 +3573,15 @@ impl GroupState {
                 .stocks
                 .get(stock_idx)
                 .unwrap_or_else(|| panic!("组内报价缺股 {code:?} 公共态"));
-            let per_share = personal.belief.entry(code).and_then(|entry| {
-                match &entry.valuation {
+            let per_share = personal
+                .belief
+                .entry(code)
+                .and_then(|entry| match &entry.valuation {
                     crate::strategy::ValuationOutcome::Available { per_share, .. } => {
                         Some(*per_share)
                     }
                     crate::strategy::ValuationOutcome::Unavailable { .. } => None,
-                }
-            });
+                });
             let max_order_qty = projection
                 .max_order_qty_limit
                 .get(code)
@@ -3706,9 +3719,7 @@ impl GroupState {
                     price,
                     u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY),
                 )
-                .unwrap_or_else(|error| {
-                    panic!("组内执行腿登记失败 {account:?} {code:?}: {error}")
-                });
+                .unwrap_or_else(|error| panic!("组内执行腿登记失败 {account:?} {code:?}: {error}"));
             ops.push(super::decision::PendingOp {
                 local,
                 stock,
@@ -3809,8 +3820,7 @@ impl GroupState {
                         (0..profiles.len() as LocalIdx).collect()
                     } else {
                         let mut due_locals: Vec<LocalIdx> = Vec::new();
-                        while let Some(&std::cmp::Reverse((due_tick, local))) =
-                            self.due_heap.peek()
+                        while let Some(&std::cmp::Reverse((due_tick, local))) = self.due_heap.peek()
                         {
                             if due_tick > tick {
                                 break;
@@ -3837,15 +3847,13 @@ impl GroupState {
                             .is_some_and(|slot| slot.is_some());
                         // D5 #4：链位判定加链参数面——retail 位个人态在位
                         /// 但无机构链参数，走 retail 链（观察+behavior 决策）。
-                        let chain_params_seeded = self
-                            .root_projection
-                            .as_ref()
-                            .is_some_and(|p| {
-                                p.chain_params.get(self.roster_offset + local as usize).is_some_and(|c| c.is_some())
-                            });
-                        let chain_local = self.root_projection.is_some()
-                            && belief_seeded
-                            && chain_params_seeded;
+                        let chain_params_seeded = self.root_projection.as_ref().is_some_and(|p| {
+                            p.chain_params
+                                .get(self.roster_offset + local as usize)
+                                .is_some_and(|c| c.is_some())
+                        });
+                        let chain_local =
+                            self.root_projection.is_some() && belief_seeded && chain_params_seeded;
                         let retail_local = self.root_projection.is_some()
                             && belief_seeded
                             && !chain_params_seeded
@@ -3859,12 +3867,11 @@ impl GroupState {
                             /// observe 门+wait 采样；observe=false 只重排不
                             /// 决策（链轮跳过——决策频率语义与旧管线对齐，
                             /// 此前均匀 gap 近似使 epoch 双轨显红）。
-                            let (observes, prev_due) =
-                                super::decision::evaluate_attention(
-                                    &mut profiles[local as usize],
-                                    shared_signal,
-                                    tick,
-                                );
+                            let (observes, prev_due) = super::decision::evaluate_attention(
+                                &mut profiles[local as usize],
+                                shared_signal,
+                                tick,
+                            );
                             due_npcs += 1;
                             pending_next_due.push((local, prev_due));
                             // ⑤a：重排即 dirty 项——push 新值（延迟删除：
@@ -3930,7 +3937,10 @@ impl GroupState {
                 // retail 的 undo 入账 + belief 位 observe 链（借用已释放）。
                 for (local, prev_due) in std::mem::take(&mut pending_next_due) {
                     self.decide_calls_total += 1;
-                    self.push_undo(GroupUndo::NextDue { local, prev: prev_due });
+                    self.push_undo(GroupUndo::NextDue {
+                        local,
+                        prev: prev_due,
+                    });
                 }
                 for local in chain_due {
                     let (_record, child_ops, cancels) =
@@ -3973,10 +3983,7 @@ impl GroupState {
                     let thirty_minute_market =
                         crate::observation::build_equal_weight_market_observation(&returns)
                             .map_err(|e| RuntimeError::ProtocolInvariant {
-                                detail: format!(
-                                    "组 {} 零售公共观察市场聚合失败：{e}",
-                                    self.group
-                                ),
+                                detail: format!("组 {} 零售公共观察市场聚合失败：{e}", self.group),
                             })?;
                     let behavior = crate::behavior::BehaviorMarketObservation {
                         price_paths: chain.paths.clone(),
@@ -3996,7 +4003,6 @@ impl GroupState {
                         }
                     }
                 }
-
             }
         } else {
             let plan = (self.script)(tick, round);
@@ -4066,8 +4072,7 @@ impl GroupState {
                 order: (stock, serial),
             });
         }
-        let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> =
-            external_cancels;
+        let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> = external_cancels;
         let mut buffered = 0usize;
         let mut ops_sent = 0u64;
         // D4 相位计时：账户校验段（purse/持仓扣除+在途登记）。
@@ -4099,8 +4104,9 @@ impl GroupState {
             if matches!(p.routed, super::protocol::RoutedPrice::Market) {
                 let day_tick = (tick.saturating_sub(1)) % self.ticks_per_day;
                 let entry = self.auction_ticks - self.auction_ticks / 3;
-                let closing_start =
-                    self.ticks_per_day.saturating_sub(self.closing_auction_ticks);
+                let closing_start = self
+                    .ticks_per_day
+                    .saturating_sub(self.closing_auction_ticks);
                 let in_auction = day_tick < entry
                     || (day_tick >= closing_start && self.closing_auction_ticks > 0);
                 if in_auction {
@@ -4379,7 +4385,8 @@ struct GroupReviewHost<'a> {
     information: &'a crate::information::NpcInformationState,
     /// 复审时刻的分钟收盘（observation_inputs 预转换——run_chain_decision
     /// 组装时映射复审候选股；价格路径观察输入）。
-    minutes_by_code: std::collections::BTreeMap<crate::StockId, Vec<crate::observation::MarketMinuteClose>>,
+    minutes_by_code:
+        std::collections::BTreeMap<crate::StockId, Vec<crate::observation::MarketMinuteClose>>,
     /// 复审时刻（ExperienceMoment 组装——快照 civil+市场分钟）。
     moment: crate::experience::ExperienceMoment,
 }
@@ -4395,7 +4402,12 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         crate::plans::urgency::risk::RiskUrgencyAssessment,
     ) {
         group_urgency_at_view(
-            &self.state.accounts.iter().map(std::sync::Arc::as_ref).collect::<Vec<_>>(),
+            &self
+                .state
+                .accounts
+                .iter()
+                .map(std::sync::Arc::as_ref)
+                .collect::<Vec<_>>(),
             self.belief,
             &self.state.child_in_flight,
             self.state.root_projection.as_ref().expect("复审位投影在"),
@@ -4449,7 +4461,12 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             projection.closing_auction_ticks,
         )
     }
-    fn initial_urgency(&self, direction: Side, confidence_bp: u32, horizon: u32) -> crate::plans::Urgency {
+    fn initial_urgency(
+        &self,
+        direction: Side,
+        confidence_bp: u32,
+        horizon: u32,
+    ) -> crate::plans::Urgency {
         let style = self.belief_style();
         initial_group_urgency(
             direction,
@@ -4499,7 +4516,12 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         paused: Option<crate::plans::PauseReason>,
     ) -> crate::session::InstitutionBehavior {
         group_institution_behavior(
-            &self.state.accounts.iter().map(std::sync::Arc::as_ref).collect::<Vec<_>>(),
+            &self
+                .state
+                .accounts
+                .iter()
+                .map(std::sync::Arc::as_ref)
+                .collect::<Vec<_>>(),
             self.local,
             &self.market,
             &self.moment,
@@ -4576,10 +4598,7 @@ fn group_institution_behavior(
 fn group_urgency_at_view(
     accounts: &[&GroupAccount],
     belief: &crate::strategy::BeliefBook,
-    child_in_flight: &std::collections::BTreeMap<
-        (crate::AccountId, crate::StockId),
-        ChildTicket,
-    >,
+    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     projection: &std::sync::Arc<super::world::RootProjection>,
     local: LocalIdx,
     market: &crate::strategy::MarketView,
@@ -4593,9 +4612,7 @@ fn group_urgency_at_view(
     crate::plans::UrgencyAssessment,
     crate::plans::urgency::risk::RiskUrgencyAssessment,
 ) {
-    use crate::plans::urgency::risk::{
-        assess_existing_reduction_urgency, RiskUrgencyAssessment,
-    };
+    use crate::plans::urgency::risk::{assess_existing_reduction_urgency, RiskUrgencyAssessment};
     use crate::plans::UrgencyInputs;
     // 本组名册段（局部切片——helper 的 account_ids 形参语义）。
     let roster = roster_slice(&projection.account_ids, roster_offset, accounts.len());
@@ -4607,13 +4624,7 @@ fn group_urgency_at_view(
         },
         Some(peak) => {
             // 权益观察（含在途口径——组读面）。
-            let equity = equity_cents_with_pending(
-                acct,
-                child_in_flight,
-                roster,
-                local,
-                market,
-            );
+            let equity = equity_cents_with_pending(acct, child_in_flight, roster, local, market);
             let mut positions: std::collections::BTreeMap<
                 crate::StockId,
                 crate::observation::RiskPositionInput,
@@ -4660,13 +4671,12 @@ fn group_urgency_at_view(
             .expect("组内机构风险观察构建失败");
             let reducing = plan.direction() == Side::Sell
                 && plan.remaining_share_qty().is_some_and(|qty| qty > 0)
-                && acct.shares.get(plan.code().0 as usize).is_some_and(|q| *q > 0);
-            assess_existing_reduction_urgency(
-                reducing,
-                &observed,
-                &projection.urgency_policy,
-            )
-            .expect("组内计划风险紧迫度失败")
+                && acct
+                    .shares
+                    .get(plan.code().0 as usize)
+                    .is_some_and(|q| *q > 0);
+            assess_existing_reduction_urgency(reducing, &observed, &projection.urgency_policy)
+                .expect("组内计划风险紧迫度失败")
         }
     };
     let (risk_reduction_active, account_drawdown_bp) = match &risk {
@@ -4703,7 +4713,8 @@ fn group_urgency_at_view(
         risk_reduction_active,
         account_drawdown_bp,
         remaining_trading_days: u32::try_from(
-            plan.last_valid_trading_day().saturating_sub(moment.trading_day),
+            plan.last_valid_trading_day()
+                .saturating_sub(moment.trading_day),
         )
         .expect("live plan remaining days fit its u32 horizon"),
         confidence_bp: plan.confidence_bp(),
@@ -4714,9 +4725,8 @@ fn group_urgency_at_view(
             _ => crate::plans::PatienceStyle::Other,
         },
     };
-    let urgency =
-        crate::plans::assess_urgency(&inputs, &projection.urgency_policy)
-            .expect("组内计划紧迫度评估失败");
+    let urgency = crate::plans::assess_urgency(&inputs, &projection.urgency_policy)
+        .expect("组内计划紧迫度评估失败");
     (urgency, risk)
 }
 
@@ -4812,10 +4822,7 @@ fn build_root_read_context(
     projection: &std::sync::Arc<crate::runtime::world::RootProjection>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
     plans: &crate::plans::PlanBook,
-    child_in_flight: &std::collections::BTreeMap<
-        (crate::AccountId, crate::StockId),
-        ChildTicket,
-    >,
+    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     tick: u64,
     ticks_per_day: u64,
     snapshot: &TickSnapshot,
@@ -4873,7 +4880,12 @@ fn build_root_read_context(
         book.insert(account_id, account);
     }
     let day = u32::try_from(tick.saturating_sub(1) / ticks_per_day).expect("交易日序号超 u32");
-    let market_minute = market_minute_at(tick, ticks_per_day, projection.auction_ticks, projection.closing_auction_ticks);
+    let market_minute = market_minute_at(
+        tick,
+        ticks_per_day,
+        projection.auction_ticks,
+        projection.closing_auction_ticks,
+    );
     crate::session::RootReadContext::from_parts(
         book,
         projection.catalog.clone(),
@@ -5015,10 +5027,7 @@ pub fn group_main(
         capture: &Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
         work: impl FnOnce() -> R,
     ) -> R {
-        let binding = capture
-            .lock()
-            .expect("capture 槽锁被 poison")
-            .clone();
+        let binding = capture.lock().expect("capture 槽锁被 poison").clone();
         crate::verification_evidence::with_phase_timing_binding(binding, work)
     }
     let who = WorkerId::Group(state.group);
@@ -5154,11 +5163,13 @@ pub fn group_main(
             }
             #[cfg(test)]
             GroupIn::EchoTickForTest => {
-                up_tx.send(UpMsg::GroupTickForTest {
-                    group: state.group,
-                    tick: state.cur_tick,
-                    committed_tick: state.committed_tick,
-                }).expect("测试游标回声通道必须可达");
+                up_tx
+                    .send(UpMsg::GroupTickForTest {
+                        group: state.group,
+                        tick: state.cur_tick,
+                        committed_tick: state.committed_tick,
+                    })
+                    .expect("测试游标回声通道必须可达");
             }
             GroupIn::Abort { tick } => {
                 state.observed.push(Observed::Abort(tick));
@@ -5167,13 +5178,18 @@ pub fn group_main(
             GroupIn::AbortDayEnd { tick } => {
                 state.observed.push(Observed::Abort(tick));
                 let outcome = state.rollback_day_end(tick).and_then(|()| {
-                    up_tx.send(UpMsg::DayEndAborted { who, tick }).map_err(|_| RuntimeError::SendFailed {
-                        detail: format!("组 {who} 日结撤销确认发送失败"),
+                    up_tx.send(UpMsg::DayEndAborted { who, tick }).map_err(|_| {
+                        RuntimeError::SendFailed {
+                            detail: format!("组 {who} 日结撤销确认发送失败"),
+                        }
                     })
                 });
                 if let Err(error) = outcome {
                     abort.store(true, Ordering::SeqCst);
-                    let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                    let _ = up_tx.send(UpMsg::Failed {
+                        who,
+                        error: error.clone(),
+                    });
                     result = Err(error);
                     break;
                 }
@@ -5188,11 +5204,7 @@ pub fn group_main(
                         let done = UpMsg::GroupDayDone {
                             group: state.group,
                             day: directive.day,
-                            accounts: state
-                                .accounts
-                                .iter()
-                                .map(|a| (**a).clone())
-                                .collect(),
+                            accounts: state.accounts.iter().map(|a| (**a).clone()).collect(),
                             state_hash: state.state_hash(),
                         };
                         if up_tx.send(done).is_err() {
@@ -5243,22 +5255,23 @@ pub fn group_main(
                     let market = super::decision::build_market_view(&snapshot);
                     for (local, account_id, attention) in attentions {
                         let li = local as usize;
-                        let Some(snap) = state.belief_states.get_mut(li).and_then(|s| s.as_mut()) else {
+                        let Some(snap) = state.belief_states.get_mut(li).and_then(|s| s.as_mut())
+                        else {
                             continue;
                         };
-                        let mut codes: std::collections::BTreeSet<crate::StockId> =
-                            state.accounts[li]
-                                .shares
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, &q)| q > 0)
-                                .map(|(idx, _)| crate::StockId(idx as u32))
-                                .collect();
+                        let mut codes: std::collections::BTreeSet<crate::StockId> = state.accounts
+                            [li]
+                            .shares
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, &q)| q > 0)
+                            .map(|(idx, _)| crate::StockId(idx as u32))
+                            .collect();
                         codes.extend(snap.watchlist.stocks.keys().copied());
-                        let issuer_of =
-                            |code: crate::StockId| issuer_map.get(&code).copied();
-                        let spec_of =
-                            |company: &crate::company::CompanyId| company_specs.get(company).copied();
+                        let issuer_of = |code: crate::StockId| issuer_map.get(&code).copied();
+                        let spec_of = |company: &crate::company::CompanyId| {
+                            company_specs.get(company).copied()
+                        };
                         match crate::session::notices::deliver_information_for_npc(
                             account_id,
                             now,
@@ -5352,7 +5365,10 @@ pub fn group_main(
                         .push(Observed::ChildAccepted(stock, owner, order_serial));
                     if let Err(e) = state.adopt_child_on_accepted(stock, owner.1, order_serial) {
                         abort.store(true, Ordering::SeqCst);
-                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                        let _ = up_tx.send(UpMsg::Failed {
+                            who,
+                            error: e.clone(),
+                        });
                         result = Err(e);
                         break;
                     }
@@ -5371,7 +5387,10 @@ pub fn group_main(
                         if let Err(e) = state.adopt_child_on_accepted(stock, owner.1, order_serial)
                         {
                             abort.store(true, Ordering::SeqCst);
-                            let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                            let _ = up_tx.send(UpMsg::Failed {
+                                who,
+                                error: e.clone(),
+                            });
                             result = Err(e);
                             break;
                         }
@@ -5404,7 +5423,10 @@ pub fn group_main(
                                 state.group
                             ),
                         };
-                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                        let _ = up_tx.send(UpMsg::Failed {
+                            who,
+                            error: e.clone(),
+                        });
                         result = Err(e);
                         break;
                     }
@@ -5426,7 +5448,10 @@ pub fn group_main(
                                 state.group
                             ),
                         };
-                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                        let _ = up_tx.send(UpMsg::Failed {
+                            who,
+                            error: e.clone(),
+                        });
                         result = Err(e);
                         break;
                     }
@@ -5513,10 +5538,7 @@ pub fn group_main(
                         if let Some(p) = profiles.get_mut(local as usize) {
                             let prev = p.next_due;
                             if prev < tick {
-                                state.undo.push(GroupUndo::NextDue {
-                                    local,
-                                    prev,
-                                });
+                                state.undo.push(GroupUndo::NextDue { local, prev });
                                 p.next_due = tick;
                                 // ⑤a：推远也是变化——push 新值。
                                 state.due_heap.push(std::cmp::Reverse((tick, local)));
@@ -5543,14 +5565,15 @@ pub fn group_main(
                             state.group, state.committed_tick
                         ),
                     };
-                    let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                    let _ = up_tx.send(UpMsg::Failed {
+                        who,
+                        error: e.clone(),
+                    });
                     result = Err(e);
                     break;
                 }
                 for local in locals {
-                    state
-                        .pending_force_due
-                        .push((local, tick, ensure_observe));
+                    state.pending_force_due.push((local, tick, ensure_observe));
                 }
             }
             GroupIn::EchoPlans => {
@@ -5612,16 +5635,18 @@ pub fn group_main(
                 if let Some(projection) = state.root_projection.clone() {
                     if let Some(snapshot) = state.snapshot.clone() {
                         derivation_market = Some(super::decision::build_market_view(&snapshot));
-                        derivation_now = Some(crate::calendar::CivilInstant::new(
-                            snapshot.civil_date,
-                            crate::session::intraday_observation_second(
-                                snapshot.tick % state.ticks_per_day,
-                                state.ticks_per_day,
-                                projection.auction_ticks,
-                                projection.closing_auction_ticks,
-                            ),
-                        )
-                        .expect("快照自然日与日内秒构成合法 CivilInstant"));
+                        derivation_now = Some(
+                            crate::calendar::CivilInstant::new(
+                                snapshot.civil_date,
+                                crate::session::intraday_observation_second(
+                                    snapshot.tick % state.ticks_per_day,
+                                    state.ticks_per_day,
+                                    projection.auction_ticks,
+                                    projection.closing_auction_ticks,
+                                ),
+                            )
+                            .expect("快照自然日与日内秒构成合法 CivilInstant"),
+                        );
                         for local in 0..state.belief_states.len() as LocalIdx {
                             if state.belief_states[local as usize].is_none() {
                                 continue;
@@ -5630,7 +5655,10 @@ pub fn group_main(
                                 Ok((record, _, _)) => derivations.push(record),
                                 Err(e) => {
                                     abort.store(true, Ordering::SeqCst);
-                                    let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                                    let _ = up_tx.send(UpMsg::Failed {
+                                        who,
+                                        error: e.clone(),
+                                    });
                                     result = Err(e);
                                     break;
                                 }
@@ -5742,7 +5770,11 @@ pub fn group_main(
                             let mixed = (state.group as u64)
                                 .wrapping_mul(0x9E3779B97F4A7C15)
                                 .wrapping_add(u64::from(i));
-                            (i, profiles[i as usize].next_due, profiles[i as usize].seed ^ mixed)
+                            (
+                                i,
+                                profiles[i as usize].next_due,
+                                profiles[i as usize].seed ^ mixed,
+                            )
                         })
                         .collect(),
                     None => Vec::new(),
@@ -5789,10 +5821,7 @@ pub fn group_main(
                     break;
                 }
             }
-            GroupIn::Seal {
-                tick,
-                round_final,
-            } => {
+            GroupIn::Seal { tick, round_final } => {
                 // Q2 Seal 收尾确认（S1-S4）：drain 本拍全部批次——S4 锁步
                 /// 不变量：协调者收齐全部 DeskReport（desk 批次 FIFO 先于
                 /// DeskReport 入组收件箱）后才发 Seal ⇒ 组处理到 Seal 时
@@ -5836,11 +5865,12 @@ pub fn group_main(
                             /// 同路径——S4 FIFO 锁步语义不变）。
                             state.observed.push(Observed::Batch(batch.tick));
                             state.seal_drain_batches += 1;
-                            if let Err(e) =
-                                state.apply_batch_immediate(batch, tick, round_final)
-                            {
+                            if let Err(e) = state.apply_batch_immediate(batch, tick, round_final) {
                                 abort.store(true, Ordering::SeqCst);
-                                let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                                let _ = up_tx.send(UpMsg::Failed {
+                                    who,
+                                    error: e.clone(),
+                                });
                                 result = Err(e);
                                 break;
                             }
@@ -5848,14 +5878,19 @@ pub fn group_main(
                         Ok(GroupIn::AcceptedBatch { entries }) => {
                             for (stock, owner, order_serial) in entries {
                                 if owner.0 == state.group {
-                                    state
-                                        .observed
-                                        .push(Observed::ChildAccepted(stock, owner, order_serial));
+                                    state.observed.push(Observed::ChildAccepted(
+                                        stock,
+                                        owner,
+                                        order_serial,
+                                    ));
                                     if let Err(e) =
                                         state.adopt_child_on_accepted(stock, owner.1, order_serial)
                                     {
                                         abort.store(true, Ordering::SeqCst);
-                                        let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                                        let _ = up_tx.send(UpMsg::Failed {
+                                            who,
+                                            error: e.clone(),
+                                        });
                                         result = Err(e);
                                         break;
                                     }
@@ -5918,7 +5953,10 @@ pub fn group_main(
                 /// 消费，只剩终轮）。
                 if let Err(e) = state.apply_deferred() {
                     abort.store(true, Ordering::SeqCst);
-                    let _ = up_tx.send(UpMsg::Failed { who, error: e.clone() });
+                    let _ = up_tx.send(UpMsg::Failed {
+                        who,
+                        error: e.clone(),
+                    });
                     result = Err(e);
                     break;
                 }
@@ -5998,8 +6036,7 @@ pub fn group_main(
                 /// 原来要写的同一批值）；全量读面用 EchoAccounts 不变。
                 /// 回执集与请求集的精确一致由收集端校验（缺项
                 /// =RuntimeError 不静默）。
-                let mut accounts: Vec<(LocalIdx, GroupAccount)> =
-                    Vec::with_capacity(wanted.len());
+                let mut accounts: Vec<(LocalIdx, GroupAccount)> = Vec::with_capacity(wanted.len());
                 for &local in &wanted {
                     let Some(account) = state.accounts.get(local as usize) else {
                         result = Err(RuntimeError::ProtocolInvariant {
@@ -6145,9 +6182,7 @@ mod v5_shutdown_idle_window_tests {
         /// 旧缺陷形态在此窗内提前退出）。
         std::thread::sleep(std::time::Duration::from_millis(120));
         // 正常关停消息（协议路径——不置永久标记）。
-        group_tx
-            .send(GroupIn::Shutdown)
-            .expect("Shutdown 发送");
+        group_tx.send(GroupIn::Shutdown).expect("Shutdown 发送");
         let outcome = handle.join().expect("组线程退出");
         outcome.expect("正常关停协议成功（无失败）");
         // Final 必经协议上交；期末账户含在途回流落账。
@@ -6156,8 +6191,7 @@ mod v5_shutdown_idle_window_tests {
             other => panic!("期望 GroupFinal，收到 {other:?}"),
         };
         assert_eq!(
-            final_state.accounts[0].cash,
-            10_000_500,
+            final_state.accounts[0].cash, 10_000_500,
             "在途退款实体在 Shutdown 处 apply_staging 落账（>50ms 空闲窗不丢回流）"
         );
         assert!(
@@ -6205,7 +6239,6 @@ mod v5_shutdown_idle_window_tests {
             assert!(result.is_ok(), "worker {who:?} 正常退出：{result:?}");
         }
     }
-
 }
 
 /// Sol 五审再复核 P1-2（确定性 seam 落地后的 World 级回归）：
@@ -6281,7 +6314,8 @@ mod sol_recheck3_tests {
                 crate::company::operations::CompanyOperations::new(
                     crate::company::operations::CompanyOperationsConfig {
                         seed: 1,
-                        shock_params: crate::company::events::ShockParams::current_default_parameters(),
+                        shock_params:
+                            crate::company::events::ShockParams::current_default_parameters(),
                         catalog: crate::company::CompanyCatalog::from_codes(&[])
                             .expect("空公司目录"),
                         companies: Vec::new(),
@@ -6350,22 +6384,24 @@ mod sol_recheck3_tests {
     fn sol4th_full_fill_completes_plan_to_terminal() {
         let mut state = chain_harness_target(Side::Buy, 100);
         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000;
-        state.apply_batch_immediate(batch(
-            Vec::new(),
-            vec![FillFact {
-                order: (0, 5),
-                owner: (0, 0),
-                side: Side::Buy,
-                price: 900,
-                qty: 100,
-                commission: 500,
-                stamp_tax: 0,
-                transfer_fee: 1,
-            }],
-        ), 1, 0);
-        state
-            .apply_deferred()
-            .expect("全额成交正常推进");
+        state.apply_batch_immediate(
+            batch(
+                Vec::new(),
+                vec![FillFact {
+                    order: (0, 5),
+                    owner: (0, 0),
+                    side: Side::Buy,
+                    price: 900,
+                    qty: 100,
+                    commission: 500,
+                    stamp_tax: 0,
+                    transfer_fee: 1,
+                }],
+            ),
+            1,
+            0,
+        );
+        state.apply_deferred().expect("全额成交正常推进");
         // terminal 记录不再出现在 active 面——按 id 直查（记录保留在簿）。
         let plan = state
             .plan_book
@@ -6457,22 +6493,24 @@ mod sol_recheck3_tests {
         // 卖出扣除后（挂单在途）：在手 0；挂出时镜像加 200。
         std::sync::Arc::make_mut(&mut state.accounts[0]).shares[0] = 0;
         std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
-        state.apply_batch_immediate(batch(
-            Vec::new(),
-            vec![FillFact {
-                order: (0, 5),
-                owner: (0, 0),
-                side: Side::Sell,
-                price: 1_000,
-                qty: 100,
-                commission: 0,
-                stamp_tax: 50,
-                transfer_fee: 1,
-            }],
-        ), 1, 0);
-        state
-            .apply_deferred()
-            .expect("本单部分成交正常推进");
+        state.apply_batch_immediate(
+            batch(
+                Vec::new(),
+                vec![FillFact {
+                    order: (0, 5),
+                    owner: (0, 0),
+                    side: Side::Sell,
+                    price: 1_000,
+                    qty: 100,
+                    commission: 0,
+                    stamp_tax: 50,
+                    transfer_fee: 1,
+                }],
+            ),
+            1,
+            0,
+        );
+        state.apply_deferred().expect("本单部分成交正常推进");
         // session 镜像口径（fill 推进减 fill.qty）。
         assert_eq!(state.accounts[0].pending_sell_qty[0], 100, "镜像减成交部分");
         // 组读面必须同口径：在手(0)+在途余量(100)=100——原挂出量口径=200。
@@ -6512,22 +6550,24 @@ mod sol_recheck3_tests {
         const CHARGE: i64 = 90_000 + 500 + 1;
         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000 - PURSE0;
         std::sync::Arc::make_mut(&mut state.accounts[0]).buy_purse_held_cents = PURSE0;
-        state.apply_batch_immediate(batch(
-            Vec::new(),
-            vec![FillFact {
-                order: (0, 5),
-                owner: (0, 0),
-                side: Side::Buy,
-                price: 900,
-                qty: 100,
-                commission: 500,
-                stamp_tax: 0,
-                transfer_fee: 1,
-            }],
-        ), 1, 0);
-        state
-            .apply_deferred()
-            .expect("本单部分成交正常推进");
+        state.apply_batch_immediate(
+            batch(
+                Vec::new(),
+                vec![FillFact {
+                    order: (0, 5),
+                    owner: (0, 0),
+                    side: Side::Buy,
+                    price: 900,
+                    qty: 100,
+                    commission: 500,
+                    stamp_tax: 0,
+                    transfer_fee: 1,
+                }],
+            ),
+            1,
+            0,
+        );
+        state.apply_deferred().expect("本单部分成交正常推进");
         let face = cash_with_pending_at(&state.accounts[0]);
         assert_eq!(
             face,
@@ -6542,7 +6582,10 @@ mod sol_recheck3_tests {
         state
             .apply_batch_immediate(
                 batch(
-                    vec![Entity::CashRefund { local: 0, amount: 10_000 }],
+                    vec![Entity::CashRefund {
+                        local: 0,
+                        amount: 10_000,
+                    }],
                     Vec::new(),
                 ),
                 1,
@@ -6613,15 +6656,13 @@ mod sol_recheck3_tests {
                 0,
             )
             .expect("本单终结批次即时相落账");
-        state
-            .apply_deferred()
-            .expect("本单终结正常释放");
+        state.apply_deferred().expect("本单终结正常释放");
         assert!(
             !state.child_in_flight.contains_key(&key),
             "本单的 Closed 释放在途票"
         );
     }
-// Sol 三审修复 4：未受理票（order_id=None）的终结关联边界——同
+    // Sol 三审修复 4：未受理票（order_id=None）的终结关联边界——同
     // (账户,股) 唯一挂出守卫下，未受理票的 Closed/拒收回执即本票的终结
     //（desk 对被拒单的 Closed 与回执共用同一 serial；票尚无受理身份可比
     // 对，(账户,股) 释放是唯一可判定关联）。固化现状语义：释放+卖量镜像
@@ -6631,11 +6672,7 @@ mod sol_recheck3_tests {
         // Closed 路径（未受理票）。
         let mut state = chain_harness(Side::Sell);
         let key = (crate::AccountId(9), crate::StockId(0));
-        state
-            .child_in_flight
-            .get_mut(&key)
-            .expect("票在")
-            .order_id = None;
+        state.child_in_flight.get_mut(&key).expect("票在").order_id = None;
         std::sync::Arc::make_mut(&mut state.accounts[0]).foreign_active[0] = 1;
         std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
         // desk 真实形态：卖单终结 Closed 与余股回流 RefundedShares 成对
@@ -6644,10 +6681,7 @@ mod sol_recheck3_tests {
             .apply_batch_immediate(
                 batch(
                     vec![
-                        Entity::RefundedShares {
-                            local: 0,
-                            qty: 200,
-                        },
+                        Entity::RefundedShares { local: 0, qty: 200 },
                         Entity::Closed {
                             local: 0,
                             order_serial: 42,
@@ -6659,9 +6693,7 @@ mod sol_recheck3_tests {
                 0,
             )
             .expect("即时相落账");
-        state
-            .apply_deferred()
-            .expect("未受理票的 Closed 正常释放");
+        state.apply_deferred().expect("未受理票的 Closed 正常释放");
         assert!(
             !state.child_in_flight.contains_key(&key),
             "未受理票的 Closed 释放在途票（唯一挂出守卫下即本票终结）"
@@ -6672,39 +6704,34 @@ mod sol_recheck3_tests {
         );
         // 拒收回执路径（未受理票——被拒单从未受理，serial 无身份可比）。
         let mut state = chain_harness(Side::Sell);
-        state
-            .child_in_flight
-            .get_mut(&key)
-            .expect("票在")
-            .order_id = None;
+        state.child_in_flight.get_mut(&key).expect("票在").order_id = None;
         std::sync::Arc::make_mut(&mut state.accounts[0]).foreign_active[0] = 1;
         std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
         // desk 拒收形态：RefundedShares（卖单原路退回）+ Closed 与回执
         // 同批（reject() 三件套）。
-        state.apply_batch_immediate(DeskBatch {
-            stock: 0,
-            tick: 1,
-            round: 0,
-            entities: vec![
-                Entity::RefundedShares {
-                    local: 0,
-                    qty: 200,
-                },
-                Entity::Closed {
-                    local: 0,
-                    order_serial: 43,
-                },
-            ],
-            fills: Vec::new(),
-            receipts: vec![crate::runtime::DeskReceipt {
-                order: (0, 43),
-                owner: (0, 0),
-                kind: crate::runtime::ReceiptKind::PriceOutOfBand,
-            }],
-        }, 1, 0);
-        state
-            .apply_deferred()
-            .expect("未受理票的拒收回执正常释放");
+        state.apply_batch_immediate(
+            DeskBatch {
+                stock: 0,
+                tick: 1,
+                round: 0,
+                entities: vec![
+                    Entity::RefundedShares { local: 0, qty: 200 },
+                    Entity::Closed {
+                        local: 0,
+                        order_serial: 43,
+                    },
+                ],
+                fills: Vec::new(),
+                receipts: vec![crate::runtime::DeskReceipt {
+                    order: (0, 43),
+                    owner: (0, 0),
+                    kind: crate::runtime::ReceiptKind::PriceOutOfBand,
+                }],
+            },
+            1,
+            0,
+        );
+        state.apply_deferred().expect("未受理票的拒收回执正常释放");
         assert!(
             !state.child_in_flight.contains_key(&key),
             "拒收回执释放在途票（被拒单即本票）"
@@ -6715,7 +6742,6 @@ mod sol_recheck3_tests {
         );
     }
 }
-
 
 #[cfg(test)]
 mod sol_recheck1_tests {
@@ -6746,52 +6772,47 @@ mod sol_recheck1_tests {
             order_size: 100,
             daily_plan_review: false,
         };
-        state.root_projection = Some(std::sync::Arc::new(
-            crate::runtime::world::RootProjection {
-                catalog: crate::stock::StockCatalog::from_metas(vec![
-                    crate::stock::StockMeta::new("600000"),
-                    crate::stock::StockMeta::new("600001"),
-                ])
-                .expect("目录构造"),
-                company_registry: std::sync::Arc::new(
-                    crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
-                ),
-                operations: std::sync::Arc::new(
-                    crate::company::operations::CompanyOperations::new(
-                        crate::company::operations::CompanyOperationsConfig {
-                            seed: 1,
-                            shock_params:
-                                crate::company::events::ShockParams::current_default_parameters(),
-                            catalog: crate::company::CompanyCatalog::from_codes(&[])
-                                .expect("空公司目录"),
-                            companies: Vec::new(),
-                        },
-                        crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
-                    )
-                    .expect("空经营"),
-                ),
-                account_ids: vec![account],
-                auction_ticks: 2,
-                closing_auction_ticks: 3,
-                chain_params: vec![Some((chain_params, None))],
-                session_seed: 1,
-                urgency_policy: crate::plans::UrgencyPolicy::default(),
-                total_shares: Default::default(),
-                max_order_qty_limit: [
-                    (crate::StockId(0), 1_000_000),
-                    (crate::StockId(1), 1_000_000),
-                ]
+        state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
+            catalog: crate::stock::StockCatalog::from_metas(vec![
+                crate::stock::StockMeta::new("600000"),
+                crate::stock::StockMeta::new("600001"),
+            ])
+            .expect("目录构造"),
+            company_registry: std::sync::Arc::new(
+                crate::company::CompanyRegistry::new(Vec::new()).expect("空注册表"),
+            ),
+            operations: std::sync::Arc::new(
+                crate::company::operations::CompanyOperations::new(
+                    crate::company::operations::CompanyOperationsConfig {
+                        seed: 1,
+                        shock_params:
+                            crate::company::events::ShockParams::current_default_parameters(),
+                        catalog: crate::company::CompanyCatalog::from_codes(&[])
+                            .expect("空公司目录"),
+                        companies: Vec::new(),
+                    },
+                    crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("日期合法"),
+                )
+                .expect("空经营"),
+            ),
+            account_ids: vec![account],
+            auction_ticks: 2,
+            closing_auction_ticks: 3,
+            chain_params: vec![Some((chain_params, None))],
+            session_seed: 1,
+            urgency_policy: crate::plans::UrgencyPolicy::default(),
+            total_shares: Default::default(),
+            max_order_qty_limit: [
+                (crate::StockId(0), 1_000_000),
+                (crate::StockId(1), 1_000_000),
+            ]
+            .into_iter()
+            .collect(),
+            tick_size_cents: [(crate::StockId(0), 1), (crate::StockId(1), 1)]
                 .into_iter()
                 .collect(),
-                tick_size_cents: [
-                    (crate::StockId(0), 1),
-                    (crate::StockId(1), 1),
-                ]
-                .into_iter()
-                .collect(),
-                stock_codes: Vec::new(),
-            },
-        ));
+            stock_codes: Vec::new(),
+        }));
         // 计划 A（股 0，信心 3000）与计划 B（股 1，信心 9000）。
         for (stock, confidence) in [(0u32, 3_000u32), (1, 9_000)] {
             state
@@ -6836,7 +6857,7 @@ mod sol_recheck1_tests {
             volume_today: 0,
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
-                public_cutoff_serial: 0,
+            public_cutoff_serial: 0,
             depth_bids: Vec::new(),
             depth_asks: Vec::new(),
         };
@@ -6852,8 +6873,9 @@ mod sol_recheck1_tests {
 
     fn personal(account: crate::AccountId) -> crate::session::PlanPersonalState {
         let mut rng = crate::session::SplitMix64::new(7);
-        let profile =
-            crate::strategy::StrategyProfile::Institution(crate::strategy::InstitutionStyle::Balanced);
+        let profile = crate::strategy::StrategyProfile::Institution(
+            crate::strategy::InstitutionStyle::Balanced,
+        );
         let analysis =
             crate::strategy::derive_analysis_profile(&profile, account, &mut rng).unwrap();
         crate::session::PlanPersonalState {
@@ -6910,7 +6932,14 @@ mod sol_recheck1_tests {
             .expect("计划 B")
             .plan_id();
         let (ops, _) = buggy
-            .chain_quote_children(0, account, &projection, &personal(account), &snapshot, &[a, b])
+            .chain_quote_children(
+                0,
+                account,
+                &projection,
+                &personal(account),
+                &snapshot,
+                &[a, b],
+            )
             .expect("报价");
         assert!(
             !ops.is_empty() && ops.iter().all(|op| op.stock == 1),
@@ -7088,16 +7117,31 @@ mod eager_domain_tests {
                 GroupUndo::Cash { local, delta } => {
                     std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).cash += delta;
                 }
-                GroupUndo::Shares { local, stock, delta } => {
-                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).shares[*stock as usize];
+                GroupUndo::Shares {
+                    local,
+                    stock,
+                    delta,
+                } => {
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize])
+                        .shares[*stock as usize];
                     *slot = (*slot as i64 + *delta as i64) as u32;
                 }
-                GroupUndo::ForeignActive { local, stock, delta } => {
-                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).foreign_active[*stock as usize];
+                GroupUndo::ForeignActive {
+                    local,
+                    stock,
+                    delta,
+                } => {
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize])
+                        .foreign_active[*stock as usize];
                     *slot = (*slot as i32 + *delta as i32) as u16;
                 }
-                GroupUndo::Frozen { local, stock, delta } => {
-                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).frozen_today[*stock as usize];
+                GroupUndo::Frozen {
+                    local,
+                    stock,
+                    delta,
+                } => {
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize])
+                        .frozen_today[*stock as usize];
                     *slot = (*slot as i64 + *delta as i64) as u32;
                 }
                 GroupUndo::CostBasis {
@@ -7110,12 +7154,18 @@ mod eager_domain_tests {
                     acct.invested_cents[*stock as usize] += d_invested;
                     acct.recovered_cents[*stock as usize] += d_recovered;
                 }
-                GroupUndo::PendingSell { local, stock, delta } => {
-                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).pending_sell_qty[*stock as usize];
+                GroupUndo::PendingSell {
+                    local,
+                    stock,
+                    delta,
+                } => {
+                    let slot = &mut std::sync::Arc::make_mut(&mut state.accounts[*local as usize])
+                        .pending_sell_qty[*stock as usize];
                     *slot = (*slot as i64 + delta) as u32;
                 }
                 GroupUndo::BuyPurseHeld { local, delta } => {
-                    std::sync::Arc::make_mut(&mut state.accounts[*local as usize]).buy_purse_held_cents += delta;
+                    std::sync::Arc::make_mut(&mut state.accounts[*local as usize])
+                        .buy_purse_held_cents += delta;
                 }
                 other => panic!("合同 3 只覆盖即时域三族（F1/F2/F3），收到 {other:?}"),
             }
@@ -7123,20 +7173,74 @@ mod eager_domain_tests {
         // 记录集：全族覆盖+同键多条（同账户同股的重复 delta 是交错判别面）。
         // 取值保证任意应用前缀不触底（pending/占用初始垫高）。
         let entries: Vec<GroupUndo> = vec![
-            GroupUndo::Cash { local: 0, delta: -50_000 },
-            GroupUndo::Cash { local: 1, delta: 7_000 },
-            GroupUndo::Shares { local: 0, stock: 0, delta: 100 },
-            GroupUndo::Shares { local: 0, stock: 0, delta: -40 },
-            GroupUndo::Shares { local: 1, stock: 2, delta: 30 },
-            GroupUndo::ForeignActive { local: 0, stock: 0, delta: 1 },
-            GroupUndo::ForeignActive { local: 0, stock: 0, delta: -1 },
-            GroupUndo::Frozen { local: 1, stock: 1, delta: 55 },
-            GroupUndo::CostBasis { local: 0, stock: 0, d_invested: 100_000, d_recovered: 0 },
-            GroupUndo::CostBasis { local: 0, stock: 0, d_invested: 0, d_recovered: 60_000 },
-            GroupUndo::PendingSell { local: 0, stock: 0, delta: 100 },
-            GroupUndo::PendingSell { local: 0, stock: 0, delta: -40 },
-            GroupUndo::BuyPurseHeld { local: 1, delta: -7_000 },
-            GroupUndo::BuyPurseHeld { local: 0, delta: 50_000 },
+            GroupUndo::Cash {
+                local: 0,
+                delta: -50_000,
+            },
+            GroupUndo::Cash {
+                local: 1,
+                delta: 7_000,
+            },
+            GroupUndo::Shares {
+                local: 0,
+                stock: 0,
+                delta: 100,
+            },
+            GroupUndo::Shares {
+                local: 0,
+                stock: 0,
+                delta: -40,
+            },
+            GroupUndo::Shares {
+                local: 1,
+                stock: 2,
+                delta: 30,
+            },
+            GroupUndo::ForeignActive {
+                local: 0,
+                stock: 0,
+                delta: 1,
+            },
+            GroupUndo::ForeignActive {
+                local: 0,
+                stock: 0,
+                delta: -1,
+            },
+            GroupUndo::Frozen {
+                local: 1,
+                stock: 1,
+                delta: 55,
+            },
+            GroupUndo::CostBasis {
+                local: 0,
+                stock: 0,
+                d_invested: 100_000,
+                d_recovered: 0,
+            },
+            GroupUndo::CostBasis {
+                local: 0,
+                stock: 0,
+                d_invested: 0,
+                d_recovered: 60_000,
+            },
+            GroupUndo::PendingSell {
+                local: 0,
+                stock: 0,
+                delta: 100,
+            },
+            GroupUndo::PendingSell {
+                local: 0,
+                stock: 0,
+                delta: -40,
+            },
+            GroupUndo::BuyPurseHeld {
+                local: 1,
+                delta: -7_000,
+            },
+            GroupUndo::BuyPurseHeld {
+                local: 0,
+                delta: 50_000,
+            },
         ];
         // 固定交错置换（决策段/批次记录交错的形态模拟——非逆序非原序）。
         let interleave: [usize; 14] = [7, 0, 13, 3, 8, 1, 9, 4, 10, 2, 11, 5, 12, 6];
@@ -7165,8 +7269,16 @@ mod eager_domain_tests {
                 "{label}日志逆序回放=初始态（delta 族可交换性守卫）"
             );
             // 成本基（state_hash 不覆盖域）字段级补充。
-            assert_eq!(state.accounts[0].invested_cents.as_slice(), &[0, 0, 0], "{label} invested 冲回");
-            assert_eq!(state.accounts[0].recovered_cents.as_slice(), &[0, 0, 0], "{label} recovered 冲回");
+            assert_eq!(
+                state.accounts[0].invested_cents.as_slice(),
+                &[0, 0, 0],
+                "{label} invested 冲回"
+            );
+            assert_eq!(
+                state.accounts[0].recovered_cents.as_slice(),
+                &[0, 0, 0],
+                "{label} recovered 冲回"
+            );
         }
     }
 }
@@ -7176,167 +7288,172 @@ mod eager_domain_tests {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod seal_failed_injection_tests {
     use super::*;
-// ═══ 组端 Seal Failed 路径注入（第 20 任登记项收口）═══
-//
-// 协调者侧 SealAck 收集失败已有合同（seal_ack_failure_aborts_then_
-// retry_survives）；组端 Seal 相位自身的两条显式失败防御此前无注入
-// 测试：①Seal tick/round 错位（5183 形态防御）；②Seal drain 期收到
-// 非数据面消息（协议错位——Batch/AcceptedBatch 之外的消息属 Seal
-// 相位不可达形态，显式失败不静默）。组线程直连形态（v5 同款真实
-// 通道）承载。
+    // ═══ 组端 Seal Failed 路径注入（第 20 任登记项收口）═══
+    //
+    // 协调者侧 SealAck 收集失败已有合同（seal_ack_failure_aborts_then_
+    // retry_survives）；组端 Seal 相位自身的两条显式失败防御此前无注入
+    // 测试：①Seal tick/round 错位（5183 形态防御）；②Seal drain 期收到
+    // 非数据面消息（协议错位——Batch/AcceptedBatch 之外的消息属 Seal
+    // 相位不可达形态，显式失败不静默）。组线程直连形态（v5 同款真实
+    // 通道）承载。
 
-/// 防御 ①：Seal tick 错位——组在（tick=1, round=0）收到 Seal{tick=2}。
-#[test]
-fn seal_mismatched_tick_fails_explicitly() {
-    
-    use super::GroupIn;
+    /// 防御 ①：Seal tick 错位——组在（tick=1, round=0）收到 Seal{tick=2}。
+    #[test]
+    fn seal_mismatched_tick_fails_explicitly() {
+        use super::GroupIn;
         use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
-    let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
-    let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
-    let abort = Arc::new(AtomicBool::new(false));
-    let shutdown_flag = Arc::new(AtomicBool::new(false));
-    let capture = Arc::new(Mutex::new(
-        crate::verification_evidence::current_phase_timing_binding(),
-    ));
-    let mut state = GroupState::new(
-        0,
-        vec![GroupAccount::new(1_000_000, 1)],
-        8,
-        100,
-        Arc::new(crate::config::GameConfig::proposed_defaults()),
-        240,
-        None,
-        Vec::new(),
-        Box::new(|_t, _r| TickPlan::default()),
-    );
-    state.cur_tick = 1;
-    state.cur_round = 0;
-    let handle = {
-        let (abort, shutdown_flag, capture) = (Arc::clone(&abort), Arc::clone(&shutdown_flag), Arc::clone(&capture));
-        std::thread::spawn(move || {
-            group_main(
-                state,
-                vec![_desk_tx],
-                group_rx,
-                up_tx,
-                abort,
-                shutdown_flag,
-                crate::runtime::watchdog::WatchdogConfig {
-                    normal: std::time::Duration::from_secs(30),
-                    long: std::time::Duration::from_secs(120),
-                },
-                capture,
-            )
-        })
-    };
-    // 错位 Seal（期望 (1,0)，发 (2,0)）——显式失败（ProtocolInvariant）。
-    group_tx
-        .send(GroupIn::Seal {
-            tick: 2,
-            round_final: 0,
-        })
-        .expect("错位 Seal 发送");
-    let outcome = handle.join().expect("组线程退出");
-    let err = outcome.expect_err("Seal 错位必须显式失败");
-    assert!(
-        matches!(err, RuntimeError::ProtocolInvariant { .. }),
-        "错误面可辨识（ProtocolInvariant）：{err:?}"
-    );
-    // 线程退出后 Failed 上行到达（break 前已发送；单消费者按序收）。
-    let mut saw_failed = false;
-    while let Ok(msg) = up_rx.try_recv() {
-        if matches!(msg, UpMsg::Failed { .. }) {
-            saw_failed = true;
+        use std::sync::{Arc, Mutex};
+        let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+        let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+        let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+        let abort = Arc::new(AtomicBool::new(false));
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let capture = Arc::new(Mutex::new(
+            crate::verification_evidence::current_phase_timing_binding(),
+        ));
+        let mut state = GroupState::new(
+            0,
+            vec![GroupAccount::new(1_000_000, 1)],
+            8,
+            100,
+            Arc::new(crate::config::GameConfig::proposed_defaults()),
+            240,
+            None,
+            Vec::new(),
+            Box::new(|_t, _r| TickPlan::default()),
+        );
+        state.cur_tick = 1;
+        state.cur_round = 0;
+        let handle = {
+            let (abort, shutdown_flag, capture) = (
+                Arc::clone(&abort),
+                Arc::clone(&shutdown_flag),
+                Arc::clone(&capture),
+            );
+            std::thread::spawn(move || {
+                group_main(
+                    state,
+                    vec![_desk_tx],
+                    group_rx,
+                    up_tx,
+                    abort,
+                    shutdown_flag,
+                    crate::runtime::watchdog::WatchdogConfig {
+                        normal: std::time::Duration::from_secs(30),
+                        long: std::time::Duration::from_secs(120),
+                    },
+                    capture,
+                )
+            })
+        };
+        // 错位 Seal（期望 (1,0)，发 (2,0)）——显式失败（ProtocolInvariant）。
+        group_tx
+            .send(GroupIn::Seal {
+                tick: 2,
+                round_final: 0,
+            })
+            .expect("错位 Seal 发送");
+        let outcome = handle.join().expect("组线程退出");
+        let err = outcome.expect_err("Seal 错位必须显式失败");
+        assert!(
+            matches!(err, RuntimeError::ProtocolInvariant { .. }),
+            "错误面可辨识（ProtocolInvariant）：{err:?}"
+        );
+        // 线程退出后 Failed 上行到达（break 前已发送；单消费者按序收）。
+        let mut saw_failed = false;
+        while let Ok(msg) = up_rx.try_recv() {
+            if matches!(msg, UpMsg::Failed { .. }) {
+                saw_failed = true;
+            }
         }
+        assert!(saw_failed, "组端退出前 Failed 上行（不静默）");
+        assert!(abort.load(Ordering::SeqCst), "abort 标记置位（通知对端）");
     }
-    assert!(saw_failed, "组端退出前 Failed 上行（不静默）");
-    assert!(abort.load(Ordering::SeqCst), "abort 标记置位（通知对端）");
-}
 
-/// 防御 ②：Seal drain 期非数据面消息显式失败不静默吞。Sol 复核 P1-3
-/// 起 Abort 是合法竞态例外（收集超时后 [Seal, Abort] 同队列——存活
-/// 合同由 seal_tests 的真实路径测试承载）；本测试用真外来消息
-///（EchoAttention 回声请求）锚定 drain 的协议错位面。两条消息在组
-/// 线程启动**前**入队（FIFO——Seal 先处理、drain 确定性消费到回声
-/// 请求，无调度竞态）。
-#[test]
-fn seal_drain_foreign_message_fails_explicitly() {
-
-    use super::GroupIn;
+    /// 防御 ②：Seal drain 期非数据面消息显式失败不静默吞。Sol 复核 P1-3
+    /// 起 Abort 是合法竞态例外（收集超时后 [Seal, Abort] 同队列——存活
+    /// 合同由 seal_tests 的真实路径测试承载）；本测试用真外来消息
+    ///（EchoAttention 回声请求）锚定 drain 的协议错位面。两条消息在组
+    /// 线程启动**前**入队（FIFO——Seal 先处理、drain 确定性消费到回声
+    /// 请求，无调度竞态）。
+    #[test]
+    fn seal_drain_foreign_message_fails_explicitly() {
+        use super::GroupIn;
         use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
-    let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
-    let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
-    let abort = Arc::new(AtomicBool::new(false));
-    let shutdown_flag = Arc::new(AtomicBool::new(false));
-    let capture = Arc::new(Mutex::new(
-        crate::verification_evidence::current_phase_timing_binding(),
-    ));
-    let mut state = GroupState::new(
-        0,
-        vec![GroupAccount::new(1_000_000, 1)],
-        8,
-        100,
-        Arc::new(crate::config::GameConfig::proposed_defaults()),
-        240,
-        None,
-        Vec::new(),
-        Box::new(|_t, _r| TickPlan::default()),
-    );
-    state.cur_tick = 1;
-    state.cur_round = 0;
-    // 先入队 Seal（匹配 cur_tick/cur_round——进入 drain），紧随真外来
-    // 消息（EchoAttention——Seal 相位不可达的协议错位形态）。
-    group_tx
-        .send(GroupIn::Seal {
-            tick: 1,
-            round_final: 0,
-        })
-        .expect("Seal 入队");
-    group_tx
-        .send(GroupIn::EchoAttention)
-        .expect("协议错位消息入队");
-    let handle = {
-        let (abort, shutdown_flag, capture) = (Arc::clone(&abort), Arc::clone(&shutdown_flag), Arc::clone(&capture));
-        std::thread::spawn(move || {
-            group_main(
-                state,
-                vec![_desk_tx],
-                group_rx,
-                up_tx,
-                abort,
-                shutdown_flag,
-                crate::runtime::watchdog::WatchdogConfig {
-                    normal: std::time::Duration::from_secs(30),
-                    long: std::time::Duration::from_secs(120),
-                },
-                capture,
-            )
-        })
-    };
-    let outcome = handle.join().expect("组线程退出");
-    let err = outcome.expect_err("Seal drain 期非数据面消息必须显式失败");
-    assert!(
-        matches!(err, RuntimeError::ProtocolInvariant { .. }),
-        "错误面可辨识（协议错位）：{err:?}"
-    );
-    assert!(
-        err.to_string().contains("非数据面消息"),
-        "失败须来自 drain 协议错位面（非 Seal 错位）：{err}"
-    );
-    let mut saw_failed = false;
-    while let Ok(msg) = up_rx.try_recv() {
-        if matches!(msg, UpMsg::Failed { .. }) {
-            saw_failed = true;
+        use std::sync::{Arc, Mutex};
+        let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+        let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+        let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+        let abort = Arc::new(AtomicBool::new(false));
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let capture = Arc::new(Mutex::new(
+            crate::verification_evidence::current_phase_timing_binding(),
+        ));
+        let mut state = GroupState::new(
+            0,
+            vec![GroupAccount::new(1_000_000, 1)],
+            8,
+            100,
+            Arc::new(crate::config::GameConfig::proposed_defaults()),
+            240,
+            None,
+            Vec::new(),
+            Box::new(|_t, _r| TickPlan::default()),
+        );
+        state.cur_tick = 1;
+        state.cur_round = 0;
+        // 先入队 Seal（匹配 cur_tick/cur_round——进入 drain），紧随真外来
+        // 消息（EchoAttention——Seal 相位不可达的协议错位形态）。
+        group_tx
+            .send(GroupIn::Seal {
+                tick: 1,
+                round_final: 0,
+            })
+            .expect("Seal 入队");
+        group_tx
+            .send(GroupIn::EchoAttention)
+            .expect("协议错位消息入队");
+        let handle = {
+            let (abort, shutdown_flag, capture) = (
+                Arc::clone(&abort),
+                Arc::clone(&shutdown_flag),
+                Arc::clone(&capture),
+            );
+            std::thread::spawn(move || {
+                group_main(
+                    state,
+                    vec![_desk_tx],
+                    group_rx,
+                    up_tx,
+                    abort,
+                    shutdown_flag,
+                    crate::runtime::watchdog::WatchdogConfig {
+                        normal: std::time::Duration::from_secs(30),
+                        long: std::time::Duration::from_secs(120),
+                    },
+                    capture,
+                )
+            })
+        };
+        let outcome = handle.join().expect("组线程退出");
+        let err = outcome.expect_err("Seal drain 期非数据面消息必须显式失败");
+        assert!(
+            matches!(err, RuntimeError::ProtocolInvariant { .. }),
+            "错误面可辨识（协议错位）：{err:?}"
+        );
+        assert!(
+            err.to_string().contains("非数据面消息"),
+            "失败须来自 drain 协议错位面（非 Seal 错位）：{err}"
+        );
+        let mut saw_failed = false;
+        while let Ok(msg) = up_rx.try_recv() {
+            if matches!(msg, UpMsg::Failed { .. }) {
+                saw_failed = true;
+            }
         }
+        assert!(saw_failed, "组端退出前 Failed 上行（不静默）");
+        assert!(abort.load(Ordering::SeqCst), "abort 标记置位");
     }
-    assert!(saw_failed, "组端退出前 Failed 上行（不静默）");
-    assert!(abort.load(Ordering::SeqCst), "abort 标记置位");
-}
-
 }
 
 /// P0 缺陷红证：`roster_slice` 名册段切片（B 类静默缺陷的**唯一收口点**
@@ -7424,7 +7541,8 @@ mod roster_offset_tests {
                 crate::company::operations::CompanyOperations::new(
                     crate::company::operations::CompanyOperationsConfig {
                         seed: 1,
-                        shock_params: crate::company::events::ShockParams::current_default_parameters(),
+                        shock_params:
+                            crate::company::events::ShockParams::current_default_parameters(),
                         catalog: crate::company::CompanyCatalog::from_codes(&[])
                             .expect("空公司目录"),
                         companies: Vec::new(),
@@ -7533,8 +7651,14 @@ mod roster_offset_tests {
         // 组 1（偏移 1）：local 0/1 → 全局 1/2（200/300）——裸 local 会取 100/200。
         let (p1a, _) = roster_chain_params(&chain_params, 1, 0).expect("组 1 local0 有链参数");
         let (p1b, _) = roster_chain_params(&chain_params, 1, 1).expect("组 1 local1 有链参数");
-        assert_eq!(p1a.order_size, 200, "组 1 local0 取本组参数（非组 0 的 100）");
-        assert_eq!(p1b.order_size, 300, "组 1 local1 取本组参数（非全局 1 的 200）");
+        assert_eq!(
+            p1a.order_size, 200,
+            "组 1 local0 取本组参数（非组 0 的 100）"
+        );
+        assert_eq!(
+            p1b.order_size, 300,
+            "组 1 local1 取本组参数（非全局 1 的 200）"
+        );
         assert_ne!(
             p1a.order_size, p0.order_size,
             "组 1 链参数不得与组 0 相同（漏 roster_offset 即相等）"

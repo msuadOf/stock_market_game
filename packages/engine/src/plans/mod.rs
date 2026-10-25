@@ -33,9 +33,9 @@ pub use quote_policy::{
 };
 pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
 pub use state::{
-    OpinionSource, PauseReason, PlanId, PlanOpen, PlanOpinion, PlanStatus, PlanTarget,
-    PlanExecutionLeg, ResumeReason, ReviewConditions, ReviewResources, TerminationReason,
-    TradingPlan, Urgency,
+    OpinionSource, PauseReason, PlanExecutionLeg, PlanId, PlanOpen, PlanOpinion, PlanStatus,
+    PlanTarget, ResumeReason, ReviewConditions, ReviewResources, TerminationReason, TradingPlan,
+    Urgency,
 };
 pub use urgency::{
     assess_recovery, assess_urgency, PatienceStyle, PauseAssessment, RecoveryAssessment,
@@ -134,15 +134,39 @@ pub enum PlanEvent {
     },
 }
 
-/// 计划集合：按账户+股票至多一个非终止计划；PlanId 单调分配、永不复用。
-///
-/// 存档只序列化 `policy / next_plan_seq / plans`；当前非终止计划的
-/// (账户,股票) 索引在恢复时重建，不一致的存档被显式拒绝。
+/// 每账户的下一分配值；None 显式表示完整 u64 序列已经耗尽。
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct OwnerSequence {
+    pub owner: AccountId,
+    #[serde(with = "owner_sequence_wire")]
+    #[ts(type = "string | null")]
+    pub next_sequence: Option<u64>,
+}
+
+mod owner_sequence_wire {
+    use serde::{Deserialize, Deserializer, Serializer};
+    #[derive(Deserialize)]
+    struct Sequence(#[serde(with = "crate::orderbook::canonical_u64_decimal")] u64);
+    pub fn serialize<S: Serializer>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(value) => serializer.serialize_some(&value.to_string()),
+            None => serializer.serialize_none(),
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+        Ok(Option::<Sequence>::deserialize(decoder)?.map(|value| value.0))
+    }
+}
+
+/// 计划集合：每账户+股票至多一个非终止计划，账户内身份永不复用。
 #[derive(Clone, Eq, PartialEq, Debug, ts_rs::TS)]
 pub struct PlanBook {
     policy: PlanPolicy,
-    next_plan_seq: u64,
-    #[ts(as = "BTreeMap<PlanId, TradingPlan>")]
+    #[ts(as = "Vec<OwnerSequence>")]
+    owner_sequences: BTreeMap<AccountId, Option<u64>>,
+    #[ts(as = "Vec<TradingPlan>")]
     plans: records::PlanRecords,
     #[ts(skip)]
     by_account_stock: BTreeMap<AccountId, BTreeMap<StockId, PlanId>>,
@@ -152,40 +176,28 @@ pub struct PlanBook {
 #[serde(deny_unknown_fields)]
 struct PlanBookSave {
     policy: PlanPolicy,
-    #[serde(with = "crate::orderbook::js_safe_u64")]
-    next_plan_seq: u64,
-    plans: BTreeMap<PlanId, TradingPlan>,
-}
-
-#[derive(serde::Serialize)]
-struct PlanBookSaveRef<'a> {
-    policy: PlanPolicy,
-    #[serde(with = "crate::orderbook::js_safe_u64")]
-    next_plan_seq: u64,
-    plans: &'a records::PlanRecords,
+    owner_sequences: Vec<OwnerSequence>,
+    plans: Vec<TradingPlan>,
 }
 
 impl serde::Serialize for PlanBook {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        PlanBookSaveRef {
-            policy: self.policy,
-            next_plan_seq: self.next_plan_seq,
-            plans: &self.plans,
-        }
-        .serialize(serializer)
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut save = serializer.serialize_struct("PlanBook", 3)?;
+        save.serialize_field("policy", &self.policy)?;
+        save.serialize_field(
+            "owner_sequences",
+            &self.owner_sequences().collect::<Vec<_>>(),
+        )?;
+        save.serialize_field("plans", &self.plans)?;
+        save.end()
     }
 }
 
 impl<'de> serde::Deserialize<'de> for PlanBook {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = PlanBookSave::deserialize(deserializer)?;
-        PlanBook::from_parts(raw.policy, raw.next_plan_seq, raw.plans)
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        let raw = PlanBookSave::deserialize(decoder)?;
+        Self::from_parts(raw.policy, raw.owner_sequences, raw.plans)
             .map_err(serde::de::Error::custom)
     }
 }
@@ -241,7 +253,7 @@ impl PlanBook {
         validate_policy(&policy)?;
         Ok(Self {
             policy,
-            next_plan_seq: 0,
+            owner_sequences: BTreeMap::new(),
             plans: records::PlanRecords::default(),
             by_account_stock: BTreeMap::new(),
         })
@@ -254,19 +266,32 @@ impl PlanBook {
     /// 非终止计划，旧历史不参与每次日终遍历。
     pub fn from_parts(
         policy: PlanPolicy,
-        next_plan_seq: u64,
-        plans: BTreeMap<PlanId, TradingPlan>,
+        owner_sequences: Vec<OwnerSequence>,
+        plans: Vec<TradingPlan>,
     ) -> Result<Self, PlanError> {
         validate_policy(&policy)?;
+        let mut sequences = BTreeMap::new();
+        for entry in owner_sequences {
+            if sequences.insert(entry.owner, entry.next_sequence).is_some() {
+                return Err(PlanError::PlanWriterOwnershipViolation { owner: entry.owner });
+            }
+        }
+        let mut identities = std::collections::BTreeSet::new();
+        for plan in &plans {
+            if !identities.insert(plan.plan_id()) {
+                return Err(PlanError::DuplicatePlanIdentity {
+                    plan_id: plan.plan_id(),
+                });
+            }
+        }
         let mut by_account_stock = BTreeMap::new();
-        for (plan_id, plan) in &plans {
+        for plan in &plans {
+            let plan_id = plan.plan_id();
             plan.validate_horizon()?;
-            if plan.plan_id() != *plan_id {
-                return Err(PlanError::SaveInconsistent {
-                    detail: format!(
-                        "plan entry key {plan_id:?} does not match its id {:?}",
-                        plan.plan_id()
-                    ),
+            if plan_id.owner != plan.account() {
+                return Err(PlanError::PlanOwnerMismatch {
+                    plan_id,
+                    account: plan.account(),
                 });
             }
             if plan
@@ -284,18 +309,21 @@ impl PlanBook {
                     detail: format!("plan {plan_id:?} has an invalid review baseline"),
                 });
             }
-            if plan_id.0 >= next_plan_seq {
-                return Err(PlanError::SaveInconsistent {
-                    detail: format!(
-                        "plan id {plan_id:?} is not below next plan seq {next_plan_seq}"
-                    ),
-                });
+            match sequences.get(&plan_id.owner) {
+                Some(None) => {}
+                Some(Some(next)) if *next > plan_id.sequence => {}
+                next => {
+                    return Err(PlanError::InvalidPlanSequence {
+                        owner: plan_id.owner,
+                        next_sequence: next.copied().flatten(),
+                    })
+                }
             }
             if !plan.is_terminal()
                 && by_account_stock
                     .entry(plan.account())
                     .or_insert_with(BTreeMap::new)
-                    .insert(plan.code().clone(), *plan_id)
+                    .insert(*plan.code(), plan_id)
                     .is_some()
             {
                 return Err(PlanError::SaveInconsistent {
@@ -309,10 +337,31 @@ impl PlanBook {
         }
         Ok(Self {
             policy,
-            next_plan_seq,
-            plans: plans.into(),
+            owner_sequences: sequences,
+            plans: plans
+                .into_iter()
+                .map(|plan| (plan.plan_id(), plan))
+                .collect::<BTreeMap<_, _>>()
+                .into(),
             by_account_stock,
         })
+    }
+
+    /// 按数值账户顺序返回全部游标，包含没有当前计划的历史游标。
+    pub fn owner_sequences(&self) -> impl Iterator<Item = OwnerSequence> + '_ {
+        self.owner_sequences
+            .iter()
+            .map(|(&owner, &next_sequence)| OwnerSequence {
+                owner,
+                next_sequence,
+            })
+    }
+
+    /// 权威移交的完整部件；不重算游标或替换 policy。
+    pub fn into_parts(self) -> (PlanPolicy, Vec<OwnerSequence>, Vec<TradingPlan>) {
+        let sequences = self.owner_sequences().collect();
+        let plans = self.plans.iter().map(|(_, plan)| plan.clone()).collect();
+        (self.policy, sequences, plans)
     }
 
     pub fn policy(&self) -> &PlanPolicy {
@@ -332,12 +381,18 @@ impl PlanBook {
                 code: open.code,
             });
         }
-        let plan_id = PlanId(self.next_plan_seq);
-        self.next_plan_seq = self
-            .next_plan_seq
-            .checked_add(1)
-            .ok_or(PlanError::PlanSequenceExhausted)?;
+        let sequence = match self.owner_sequences.get(&open.account) {
+            Some(Some(next)) => *next,
+            Some(None) => return Err(PlanError::PlanSequenceExhausted),
+            None => 0,
+        };
+        let plan_id = PlanId {
+            owner: open.account,
+            sequence,
+        };
         let plan = TradingPlan::from_open(plan_id, open, &self.policy)?;
+        self.owner_sequences
+            .insert(plan_id.owner, sequence.checked_add(1));
         self.by_account_stock
             .entry(plan.account())
             .or_default()
@@ -474,19 +529,25 @@ impl PlanBook {
         qty: u32,
         trading_day: u64,
     ) -> Result<bool, PlanError> {
-        let Some(plan) = self.active_plan(account, code) else { return Ok(false); };
+        let Some(plan) = self.active_plan(account, code) else {
+            return Ok(false);
+        };
         if plan.direction() != side || plan.active_child_order_id() != Some(order_id) {
             return Ok(false);
         }
         let id = plan.plan_id();
-        let remaining = plan.active_child_remaining_qty()
+        let remaining = plan
+            .active_child_remaining_qty()
             .ok_or(PlanError::MissingExecutionLeg { plan_id: id })?;
-        self.apply(id, PlanEvent::ChildOrderFilled {
-            order_id,
-            qty,
-            child_complete: qty == remaining,
-            trading_day,
-        })?;
+        self.apply(
+            id,
+            PlanEvent::ChildOrderFilled {
+                order_id,
+                qty,
+                child_complete: qty == remaining,
+                trading_day,
+            },
+        )?;
         Ok(true)
     }
 
@@ -675,8 +736,18 @@ mod atomic_event_tests {
         let live = plans.create(open(0)).unwrap();
         let mut shadow = plans.clone();
         assert!(std::ptr::eq(
-            plans.plan(PlanId(0)).unwrap(),
-            shadow.plan(PlanId(0)).unwrap()
+            plans
+                .plan(PlanId {
+                    owner: AccountId(1),
+                    sequence: 0
+                })
+                .unwrap(),
+            shadow
+                .plan(PlanId {
+                    owner: AccountId(1),
+                    sequence: 0
+                })
+                .unwrap()
         ));
         assert!(std::ptr::eq(
             plans.plan(live).unwrap(),
@@ -686,8 +757,18 @@ mod atomic_event_tests {
             .record_review(live, 0, crate::Money::from_cents(1000), 1)
             .unwrap();
         assert!(std::ptr::eq(
-            plans.plan(PlanId(0)).unwrap(),
-            shadow.plan(PlanId(0)).unwrap()
+            plans
+                .plan(PlanId {
+                    owner: AccountId(1),
+                    sequence: 0
+                })
+                .unwrap(),
+            shadow
+                .plan(PlanId {
+                    owner: AccountId(1),
+                    sequence: 0
+                })
+                .unwrap()
         ));
         assert!(!std::ptr::eq(
             plans.plan(live).unwrap(),
@@ -706,12 +787,8 @@ mod atomic_event_tests {
         assert_eq!(restored, shadow);
         let legacy = PlanBookSave {
             policy: shadow.policy,
-            next_plan_seq: shadow.next_plan_seq,
-            plans: shadow
-                .plans
-                .iter()
-                .map(|(id, plan)| (*id, plan.clone()))
-                .collect(),
+            owner_sequences: shadow.owner_sequences().collect(),
+            plans: shadow.plans.iter().map(|(_, plan)| plan.clone()).collect(),
         };
         assert_eq!(
             serde_json::to_vec(&shadow).unwrap(),

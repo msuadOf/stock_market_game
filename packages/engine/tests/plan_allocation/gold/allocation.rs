@@ -153,7 +153,7 @@ fn two_competing_stocks_cannot_overcommit_available_cash() {
 
     // Then: actual cash is the boundary; PlanId(1) wins the first full request.
     assert_eq!(result.total_allocated.cents(), 100_000);
-    assert_eq!(result.grants[0].plan_id.0, 1);
+    assert_eq!(result.grants[0].plan_id.sequence, 1);
     assert_eq!(result.grants[0].allocated_cash.cents(), 80_500);
     assert_eq!(result.grants[1].allocated_cash.cents(), 19_500);
 }
@@ -205,7 +205,7 @@ fn risk_exit_is_processed_before_continuation_and_new_opportunity() {
         result
             .grants
             .iter()
-            .map(|grant| grant.plan_id.0)
+            .map(|grant| grant.plan_id.sequence)
             .collect::<Vec<_>>(),
         vec![9, 2, 1]
     );

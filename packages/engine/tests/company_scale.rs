@@ -163,7 +163,13 @@ fn short_checkpoint_preserves_bytes_and_rejects_unknown_plan_references() {
         ),
     ] {
         let mut tampered = original.clone();
-        tampered["plans"]["plans"][plan_id.0.to_string()][field] = value;
+        let plan_index = tampered["plans"]["plans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|plan| plan["plan_id"] == serde_json::to_value(plan_id).unwrap())
+            .unwrap();
+        tampered["plans"]["plans"][plan_index][field] = value;
         let tampered_bytes = serde_json::to_vec(&tampered).expect("tampered save serializes");
         let decoded = engine::decode_save_slot(&tampered_bytes, &Default::default())
             .expect("plan reference tampering remains structurally decodable");
