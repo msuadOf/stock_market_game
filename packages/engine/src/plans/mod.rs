@@ -850,7 +850,8 @@ mod atomic_event_tests {
             )
             .unwrap();
         let successor = plans.create(open(0)).unwrap();
-        assert_eq!(plans.active_plan_ids(), vec![second, other, successor]);
+        // 数值 owner → sequence 排序；该列表不代表受理优先级。
+        assert_eq!(plans.active_plan_ids(), vec![second, successor, other]);
         assert_eq!(
             plans.active_plan_ids_for_account(AccountId(1)),
             vec![second, successor]
@@ -865,12 +866,12 @@ mod atomic_event_tests {
         );
         assert_eq!(
             plans.plan_ids().collect::<Vec<_>>(),
-            vec![first, second, other, successor]
+            vec![first, second, successor, other]
         );
 
         let restored: PlanBook =
             serde_json::from_slice(&serde_json::to_vec(&plans).unwrap()).unwrap();
-        assert_eq!(restored.active_plan_ids(), vec![second, other, successor]);
+        assert_eq!(restored.active_plan_ids(), vec![second, successor, other]);
         assert_eq!(
             restored.active_plan_ids_for_account(AccountId(1)),
             vec![second, successor]
