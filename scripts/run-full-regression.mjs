@@ -10,6 +10,7 @@ import { COMMAND_CLEANUP_RESERVE_MAX_MS, LONG_VALIDATION_MAX_MS, ORDINARY_TEST_M
 import { prepareWorkspacePaths, validateWorkspaceOutputPath } from "./workspace-paths.mjs";
 import { WEB_TEST_INTERNAL_WORKER_ENV } from "./run-web-tests.mjs";
 import { runScriptTestBatch } from "./run-script-tests.mjs";
+import { hashArtifactFiles } from "./full-regression-artifact-hash.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_CONCURRENT_RUST_TEST_BINARIES = 8;
@@ -144,25 +145,27 @@ export async function collectFullRegressionSourceFingerprint(sourceRoot) {
   return { ...state, digest: sha256(JSON.stringify(state)) };
 }
 
-async function sealTestArtifacts(artifacts, workspacePaths) {
-  const sealed = [];
-  for (const artifact of artifacts) {
-    const executable = await fsp.realpath(artifact.executable);
-    const relativeToTarget = path.relative(workspacePaths.cargoTargetDir, executable);
-    if (!relativeToTarget || relativeToTarget.startsWith("..") || path.isAbsolute(relativeToTarget)) {
-      throw new Error(`prebuilt Rust test executable escaped the Cargo target: ${executable}`);
-    }
-    const stat = await fsp.lstat(executable);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`prebuilt Rust test executable must be a regular non-symlink file: ${executable}`);
-    const bytes = await fsp.readFile(executable);
-    sealed.push({
-      label: artifact.label,
-      executable_relative_path: path.relative(workspacePaths.workspaceRoot, executable).split(path.sep).join("/"),
-      bytes: bytes.length,
-      sha256: sha256(bytes),
-    });
-  }
-  return sealed;
+async function sealTestArtifacts(artifacts, workspacePaths, cpuCount, hashArtifacts) {
+  const executables = new Array(artifacts.length);
+  const hashes = await hashArtifacts(artifacts, {
+    cpuCount,
+    prepare: async (artifact, index) => {
+      const executable = await fsp.realpath(artifact.executable);
+      const relativeToTarget = path.relative(workspacePaths.cargoTargetDir, executable);
+      if (!relativeToTarget || relativeToTarget.startsWith("..") || path.isAbsolute(relativeToTarget)) {
+        throw new Error(`prebuilt Rust test executable escaped the Cargo target: ${executable}`);
+      }
+      const stat = await fsp.lstat(executable);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`prebuilt Rust test executable must be a regular non-symlink file: ${executable}`);
+      executables[index] = executable;
+      return executable;
+    },
+  });
+  return artifacts.map((artifact, index) => ({
+    label: artifact.label,
+    executable_relative_path: path.relative(workspacePaths.workspaceRoot, executables[index]).split(path.sep).join("/"),
+    ...hashes[index],
+  }));
 }
 
 function freezeInventoryRecord(value) {
@@ -264,7 +267,7 @@ async function prepareInventoryPath(workspaceRoot, inventoryPath) {
   return path.join(validatedParent, path.basename(candidate));
 }
 
-async function readAndValidateInventory(inventoryPath, sourceRoot, workspacePaths, fingerprint) {
+async function readAndValidateInventory(inventoryPath, sourceRoot, workspacePaths, fingerprint, cpuCount, log, hashArtifacts) {
   const stat = await fsp.lstat(inventoryPath);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`full regression inventory must be a regular non-symlink file: ${inventoryPath}`);
   let inventory;
@@ -274,30 +277,40 @@ async function readAndValidateInventory(inventoryPath, sourceRoot, workspacePath
     throw new Error(`full regression artifact inventory is not valid JSON at ${inventoryPath}: ${error.message}`, { cause: error });
   }
   const sealedInventory = ArtifactInventory.fromDecodedInventory(inventory, { sourceRoot, workspacePaths, fingerprint });
-  const artifacts = [];
-  for (const [index, entry] of sealedInventory.artifactDescriptors().entries()) {
-    // 逐条验证 descriptor，保留前一条 filesystem 失败的优先级。
-    sealedInventory.validateArtifactDescriptor(index);
-    const lexicalExecutable = path.resolve(workspacePaths.workspaceRoot, ...entry.executable_relative_path.split("/"));
-    const lexicalRelativeToTarget = path.relative(workspacePaths.cargoTargetDir, lexicalExecutable);
-    if (!lexicalRelativeToTarget || lexicalRelativeToTarget.startsWith("..") || path.isAbsolute(lexicalRelativeToTarget)) {
-      throw new Error(`full regression artifact inventory executable escaped the Cargo target: ${lexicalExecutable}`);
-    }
-    const lexicalStat = await fsp.lstat(lexicalExecutable);
-    if (lexicalStat.isSymbolicLink()) throw new Error(`full regression artifact must not be a symbolic link: ${lexicalExecutable}`);
-    const executable = await fsp.realpath(lexicalExecutable);
-    const relativeToTarget = path.relative(workspacePaths.cargoTargetDir, executable);
-    if (!relativeToTarget || relativeToTarget.startsWith("..") || path.isAbsolute(relativeToTarget)) {
-      throw new Error(`full regression artifact inventory executable escaped the Cargo target: ${executable}`);
-    }
-    const stat = await fsp.lstat(executable);
-    sealedInventory.validateArtifactMetadata(index, {
-      executable, isFile: stat.isFile(), isSymbolicLink: stat.isSymbolicLink(), bytes: stat.size,
-    });
-    const digest = sha256(await fsp.readFile(executable));
-    sealedInventory.validateArtifactDigest(index, { executable, digest });
-    artifacts.push({ executable, label: entry.label });
-  }
+  const entries = sealedInventory.artifactDescriptors();
+  const artifacts = new Array(entries.length);
+  log(JSON.stringify({ phase: "artifact-hash-start", stage: "inventory_validation", artifact_count: entries.length,
+    hash_worker_count: Math.min(cpuCount, entries.length), stream_chunk_bytes: 65536 }));
+  await hashArtifacts(entries, {
+    cpuCount,
+    prepare: async (entry, index) => {
+      // 按原 index 收敛错误，后项 descriptor 失败不能掩盖先前 filesystem 或 SHA 失败。
+      sealedInventory.validateArtifactDescriptor(index);
+      const lexicalExecutable = path.resolve(workspacePaths.workspaceRoot, ...entry.executable_relative_path.split("/"));
+      const lexicalRelativeToTarget = path.relative(workspacePaths.cargoTargetDir, lexicalExecutable);
+      if (!lexicalRelativeToTarget || lexicalRelativeToTarget.startsWith("..") || path.isAbsolute(lexicalRelativeToTarget)) {
+        throw new Error(`full regression artifact inventory executable escaped the Cargo target: ${lexicalExecutable}`);
+      }
+      const lexicalStat = await fsp.lstat(lexicalExecutable);
+      if (lexicalStat.isSymbolicLink()) throw new Error(`full regression artifact must not be a symbolic link: ${lexicalExecutable}`);
+      const executable = await fsp.realpath(lexicalExecutable);
+      const relativeToTarget = path.relative(workspacePaths.cargoTargetDir, executable);
+      if (!relativeToTarget || relativeToTarget.startsWith("..") || path.isAbsolute(relativeToTarget)) {
+        throw new Error(`full regression artifact inventory executable escaped the Cargo target: ${executable}`);
+      }
+      const stat = await fsp.lstat(executable);
+      sealedInventory.validateArtifactMetadata(index, {
+        executable, isFile: stat.isFile(), isSymbolicLink: stat.isSymbolicLink(), bytes: stat.size,
+      });
+      artifacts[index] = { executable, label: entry.label };
+      return executable;
+    },
+    verify: ({ bytes, sha256 }, _entry, index) => {
+      const { executable } = artifacts[index];
+      sealedInventory.validateArtifactDigest(index, { executable, digest: sha256 });
+      sealedInventory.validateArtifactMetadata(index, { executable, isFile: true, isSymbolicLink: false, bytes });
+    },
+  });
   return { inventory: sealedInventory, artifacts };
 }
 
@@ -520,6 +533,7 @@ export async function buildFullRegressionArtifacts({
   cwd = DEFAULT_REPO_ROOT,
   inventoryPath,
   collectFingerprint = collectFullRegressionSourceFingerprint,
+  hashArtifacts = hashArtifactFiles,
   log = () => undefined,
   writeDiagnostic = (chunk) => process.stderr.write(chunk),
   progressIntervalMs = 30_000,
@@ -567,8 +581,9 @@ export async function buildFullRegressionArtifacts({
     throw new Error("full regression source changed during the cold build; refusing to publish an artifact inventory");
   }
   phaseRemainingMs(startedAt, now, "artifact sealing");
-  progress.snapshot("started", { stage: "artifact_sealing", artifact_count: artifacts.length });
-  const sealedArtifacts = await sealTestArtifacts(artifacts, workspacePaths);
+  progress.snapshot("started", { stage: "artifact_sealing", artifact_count: artifacts.length,
+    hash_worker_count: Math.min(cpuCount, artifacts.length), stream_chunk_bytes: 65536 });
+  const sealedArtifacts = await sealTestArtifacts(artifacts, workspacePaths, cpuCount, hashArtifacts);
   const inventory = ArtifactInventory.fromBuild({
     schema: FULL_REGRESSION_INVENTORY_SCHEMA,
     schema_version: FULL_REGRESSION_INVENTORY_SCHEMA_VERSION,
@@ -604,6 +619,7 @@ export async function executeFullRegression({
   cwd = DEFAULT_REPO_ROOT,
   inventoryPath,
   collectFingerprint = collectFullRegressionSourceFingerprint,
+  hashArtifacts = hashArtifactFiles,
   log = () => undefined,
   runScripts = runScriptTestBatch,
 } = {}) {
@@ -613,7 +629,7 @@ export async function executeFullRegression({
   const startedAt = now();
   const fingerprint = await collectFingerprint(sourceRoot);
   phaseRemainingMs(startedAt, now, "artifact inventory validation");
-  const { artifacts } = await readAndValidateInventory(resolvedInventoryPath, sourceRoot, workspacePaths, fingerprint);
+  const { artifacts } = await readAndValidateInventory(resolvedInventoryPath, sourceRoot, workspacePaths, fingerprint, cpuCount, log, hashArtifacts);
   const steps = fullRegressionSteps(cpuCount, sourceRoot, process.env, workspacePaths.workspaceRoot);
   const binaryStep = steps.find((step) => step.kind === "rust-test-binaries");
   const doctestStep = steps.find((step) => step.kind === "rust-doctests");

@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { it } from "node:test";
+import { Worker } from "node:worker_threads";
+import { hashArtifactFiles } from "./full-regression-artifact-hash.mjs";
 
 import path from "node:path";
 
@@ -1025,4 +1027,53 @@ it("validates explicit build and execute CLI modes", () => {
 
 it("rejects direct invocation of an unsupervised internal phase worker", async () => {
   await assert.rejects(main(["--internal-build"], {}), /external five-minute supervisor/i);
+});
+
+for (const firstError of ["filesystem", "SHA"]) it(`较早 ${firstError} 错误优先于后项非法 descriptor`, { timeout: 10000 }, async () => {
+  const fixture = await createSealedFixture();
+  try {
+    const decoded = JSON.parse(await readFile(fixture.inventoryPath, "utf8"));
+    decoded.artifacts.push({ label: "非法后项" });
+    if (firstError === "filesystem") await rm(fixture.artifact);
+    else decoded.artifacts[0].sha256 = "0".repeat(64);
+    await writeFile(fixture.inventoryPath, JSON.stringify(resealInventory(decoded)));
+    let runs = 0;
+    await assert.rejects(executeFullRegression({
+      cpuCount: 2, inventoryPath: fixture.inventoryPath,
+      collectFingerprint: async () => fixture.fingerprint,
+      run: async () => { runs += 1; },
+    }), firstError === "filesystem" ? /ENOENT/ : /SHA-256 mismatch/);
+    assert.equal(runs, 0);
+  } finally { await fixture.cleanup(); }
+});
+
+it("真实 hash worker 崩溃时 build 不发布、execute 不启动测试且全部线程退出", { timeout: 10000 }, async () => {
+  const fixture = await createSealedFixture();
+  const observed = [];
+  const hashArtifacts = (entries, options) => hashArtifactFiles(entries, { ...options,
+    createWorker: () => {
+      const worker = new Worker(new URL("data:text/javascript,throw new Error('注入 hash worker 崩溃')"));
+      observed.push(worker);
+      return worker;
+    },
+  });
+  let runs = 0;
+  const unpublished = `${fixture.inventoryPath}.unpublished`;
+  try {
+    await assert.rejects(buildFullRegressionArtifacts({
+      cwd: process.cwd(), cpuCount: 2, inventoryPath: unpublished, hashArtifacts,
+      collectFingerprint: async () => fixture.fingerprint,
+      run: async () => ({ stdout: JSON.stringify({ reason: "compiler-artifact", package_id: "fixture",
+        target: { name: "fixture", kind: ["test"], test: true }, profile: { test: true }, executable: fixture.artifact }) }),
+    }), /注入 hash worker 崩溃/);
+    await assert.rejects(readFile(unpublished), /ENOENT/);
+    await assert.rejects(executeFullRegression({
+      cwd: process.cwd(), cpuCount: 2, inventoryPath: fixture.inventoryPath, hashArtifacts,
+      collectFingerprint: async () => fixture.fingerprint,
+      run: async () => { runs += 1; },
+    }), /注入 hash worker 崩溃/);
+    assert.equal(runs, 0);
+    assert.equal(observed.length, 2);
+    assert.ok(observed.every((worker) => worker.threadId === -1));
+  } finally { await rm(unpublished, { force: true }); await fixture.cleanup(); }
 });
