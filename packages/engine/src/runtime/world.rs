@@ -2065,6 +2065,9 @@ impl World {
             let result = match handle.join() {
                 Ok(result) => result,
                 Err(payload) => {
+                    // wasm join 的 io::Error 保留诊断载荷，在此统一进入失败收集。
+                    #[cfg(target_family = "wasm")]
+                    let payload = Box::new(payload) as Box<dyn std::any::Any + Send>;
                     panics.push((who, payload));
                     Err(RuntimeError::ProtocolInvariant {
                         detail: format!("worker {who} 未经 TaskDied 运输的线程 panic"),

@@ -727,7 +727,7 @@ pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
 //
 // 仅 wasm32 编译（native 上 facade 运行时不存在；宿主 bootstrap 在 substrate
 // 就绪后调 facade_slot_init，子 Worker bootstrap 调 facade_child_trampoline）。
-// 当前产品产物链（wasm-bindgen 0.2.93 无共享内存）下 spawn 不可达，本导出面
+// 当前宿主尚未装配 supervisor/子 Worker/bootstrap，spawn 不可达，本导出面
 // 是宿主装配的接口锚，不改变既有运行时行为（阶段边界见 agents 台账）。
 // ---------------------------------------------------------------------------
 

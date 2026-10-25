@@ -156,14 +156,13 @@ mod wasm_impl {
         pub fn join_index(&self) -> u32 {
             self.inner.join_index
         }
-        pub fn join(self) -> std::thread::Result<T> {
+        pub fn join(self) -> io::Result<T> {
             join_typed::<T, _>(
                 &self.inner.arena,
                 &WasmFacadePlatform,
                 self.inner.join_index,
                 self.inner.gen,
             )
-            .map_err(|error| Box::new(error) as Box<dyn std::any::Any + Send>)
         }
     }
 
