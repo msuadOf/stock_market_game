@@ -97,7 +97,7 @@ fn two_groups_create_sequence_zero_and_complete_real_driver_delivery() {
     let mut session = GameSession::new(setup_fixture(), 34).unwrap();
     let mut driver = RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
     for owner in [AccountId(0), AccountId(2)] {
-        driver.mutate_plan_book_for_test(Box::new(move |book| {
+        driver.mutate_plan_book_for_test(owner, Box::new(move |book| {
             let id = book.create(open(owner, 0)).unwrap();
             assert_eq!(id.owner, owner);
             assert_eq!(id.sequence, 0, "不同owner的首计划均从0分配");
@@ -110,4 +110,73 @@ fn two_groups_create_sequence_zero_and_complete_real_driver_delivery() {
         let owners: Vec<_> = book.plan_ids().map(|id| id.owner).collect();
         assert_eq!(owners, vec![if group == 0 { AccountId(0) } else { AccountId(2) }], "一账户仅由所属组写入");
     }
+}
+
+#[test]
+fn complete_merge_rejects_missing_duplicate_wrong_group_and_policy_conflicts() {
+    let roster = [AccountId(0), AccountId(1), AccountId(2)];
+    let book = seed_book();
+    let split = super::plan_ownership::split(book.clone(), &roster, 3, 1).unwrap();
+    let complete = || split.iter().cloned().enumerate().map(|(group, book)| (group as u16, book)).collect::<Vec<_>>();
+    let merge = |parts| super::plan_ownership::merge(parts, &roster, 3, 1, *book.policy());
+    assert_eq!(merge(complete()).unwrap(), book);
+    let mut missing = complete(); missing.pop();
+    assert!(matches!(merge(missing), Err(super::protocol::RuntimeError::ProtocolInvariant { .. })));
+    let mut duplicate = complete(); duplicate[2].0 = 1;
+    assert!(merge(duplicate).is_err());
+    let mut out_of_range = complete(); out_of_range[2].0 = 3;
+    assert!(merge(out_of_range).is_err());
+    let mut wrong_owner = complete(); wrong_owner.swap(0, 2); wrong_owner[0].0 = 0; wrong_owner[2].0 = 2;
+    assert!(merge(wrong_owner).is_err(), "同一合法owner不得被其他组冒领");
+    let mut policy = complete();
+    let (_, cursors, plans) = policy[1].1.clone().into_parts();
+    policy[1].1 = PlanBook::from_parts(PlanPolicy::default(), cursors, plans).unwrap();
+    assert!(merge(policy).is_err(), "无当前计划的组也必须保留相同policy");
+}
+
+#[test]
+fn invalid_seed_is_rejected_before_any_group_constructor_or_worker_starts() {
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let started = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&started);
+    let mut spec = super::skeleton_tests::basic_spec(2, 1, 1, Box::new(move |_| {
+        count.fetch_add(1, Ordering::SeqCst);
+        Box::new(|_, _| super::group::TickPlan::default())
+    }));
+    let mut unknown = PlanBook::default(); unknown.create(open(AccountId(999), 0)).unwrap();
+    spec.initial_plan_books = vec![unknown, PlanBook::default()];
+    assert!(matches!(super::world::World::spawn(spec), Err(super::protocol::RuntimeError::ProtocolInvariant { .. })));
+    assert_eq!(started.load(Ordering::SeqCst), 0, "坏种子不得启动任何组或线程");
+}
+
+#[test]
+fn empty_tail_groups_keep_policy_without_invented_owner_cursors() {
+    let mut session = GameSession::new(setup_fixture(), 35).unwrap();
+    let book = seed_book(); session.set_runtime_plans(book.clone());
+    let mut driver = RuntimeDriver::from_session_grouped(&mut session, 5).unwrap();
+    let books = driver.collect_plans().unwrap();
+    assert_eq!(books.len(), 5);
+    for (group, shard) in books {
+        assert_eq!(shard.policy(), book.policy());
+        if group >= 3 {
+            assert_eq!(shard.owner_sequences().count(), 0);
+            assert_eq!(shard.plan_ids().count(), 0);
+        }
+    }
+}
+
+#[test]
+fn tail_owner_force_and_defer_due_change_only_the_addressed_account() {
+    let mut session = GameSession::new(setup_fixture(), 36).unwrap();
+    let mut driver = RuntimeDriver::from_session_grouped(&mut session, 3).unwrap();
+    driver.defer_due_for_test_at(&[AccountId(1), AccountId(2)], u64::MAX);
+    let before = driver.collect_attention().unwrap();
+    for (group, entries) in &before {
+        if *group == 1 || *group == 2 { assert_eq!(entries[0].1, u64::MAX, "两个NPC必须各自在所属组推远due"); }
+    }
+    driver.force_due_for_test_at(&[AccountId(2)], 1);
+    driver.step_frame_equivalent(&mut session).unwrap();
+    let after = driver.collect_attention().unwrap();
+    assert_eq!(after[1].1[0].1, u64::MAX, "未被force的另一组账户保持原调度");
+    assert_ne!(after[2].1[0].1, u64::MAX, "末组owner在真实Start执行后重排下一due");
 }

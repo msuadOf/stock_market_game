@@ -89,6 +89,8 @@ mod institutional_behavior;
 mod memberships;
 #[cfg(test)]
 mod memberships_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod plan_identity_runtime_tests;
 mod minimal_snapshot;
 mod observation_clock;
 mod persistence;

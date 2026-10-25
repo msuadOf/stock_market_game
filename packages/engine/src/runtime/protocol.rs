@@ -750,7 +750,10 @@ pub enum GroupIn {
     /// restore_child_remaining_qty/record_child_fill 等手工簿推进的组内
     /// 等价（镜像簿写入组权威不感知；变换经簿快照 undo 可逆）。
     #[cfg(test)]
-    MutatePlanBookForTest(Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>),
+    MutatePlanBookForTest {
+        owner: crate::AccountId,
+        mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
+    },
     /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入——
     /// set_urgency_minutes 的组内等价（组观察基=observation_inputs，
     /// session 侧分钟缓存组内不感知；直改 session tick 会与世界权威

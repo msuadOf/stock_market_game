@@ -92,7 +92,7 @@ fn price_improvement_world() -> World {
 
 fn install_buy_assessment(world: &mut World) {
     world.inject_review_assessments_for_test(
-        OWNER,
+        0, OWNER,
         std::collections::BTreeMap::from([(
             StockId(0),
             crate::plans::CandidateAssessment::Scored {

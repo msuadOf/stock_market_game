@@ -167,6 +167,8 @@ pub struct RootProjection {
 
 /// 世界构造参数。
 pub struct WorldSpec {
+    /// 按组移交的完整计划簿；空 Vec 仅表示无历史的新世界。
+    pub initial_plan_books: Vec<crate::plans::PlanBook>,
     /// 组数 G。
     pub n_groups: usize,
     /// 每组账户数。
@@ -456,6 +458,7 @@ impl World {
             });
         }
         let WorldSpec {
+            initial_plan_books,
             n_groups,
             accounts_per_group,
             initial_cash,
@@ -502,6 +505,20 @@ impl World {
             first_tick,
         ) == super::desk::DeskPhase::Continuous;
         let public_views = Self::initial_views(&stocks, cage_on, cage_applies_first_tick)?;
+        // 任何线程启动前校验完整组集合、唯一账户 writer 与所有 child 引用。
+        let roster = root_projection.as_ref().map(|root| root.account_ids.as_slice()).unwrap_or(&[]);
+        let books = if initial_plan_books.is_empty() {
+            vec![crate::plans::PlanBook::default(); n_groups]
+        } else { initial_plan_books };
+        let policy = books.first().map(|book| *book.policy()).unwrap_or_default();
+        super::plan_ownership::merge(
+            books.iter().cloned().enumerate().map(|(group, book)| (group as GroupIdx, book)).collect(),
+            roster, n_groups, accounts_per_group.max(1), policy,
+        )?;
+        let prepared_plans = super::group::prepare_plan_seeds(
+            books, roster, accounts_per_group.max(1), &initial_desk_orders,
+        )?;
+        let mut prepared_plans = prepared_plans.into_iter();
         let library_seed: std::sync::Arc<crate::information::PublicLibrary> =
             library.unwrap_or_default();
         let mut stock_seed_bars: Vec<Vec<(i64, i64, i64, i64, u64)>> = stocks
@@ -666,6 +683,7 @@ impl World {
             );
             // 翻转批组参数化：本组全局名 roster 偏移。
             state.roster_offset = g as usize * accounts_per_group;
+            state.install_plan_seed(prepared_plans.next().expect("全部组已预检"));
             let rx = group_rxs.remove(0);
             let handle = crate::thread_facade::Builder::new()
                 .name(format!("rt-group-{g}"))
@@ -1106,24 +1124,27 @@ impl World {
     /// 惯例单组；组验证目标 tick 后前移 next_due）。
     #[cfg(test)]
     pub fn force_due_for_test(&mut self, locals: Vec<super::LocalIdx>, tick: u64) {
-        if let Some(tx) = self.group_txs.first() {
-            // D5 #2：ensure_observe=true——测试强制到期=决策语义（绕
-            /// observe 门——rng 续流照常）。
-            let _ = tx.send(GroupIn::ForceDue {
-                locals,
-                tick,
-                ensure_observe: true,
-            });
-        }
+        self.force_due_group_for_test(0, locals, tick);
     }
 
-    /// D5 #4 fixture 通道：推远 next_due 下行组 0（cfg(test)——"无 due
-    /// tick"形态构造）。
+    /// 按真实组内坐标发送到期指令；AccountId 路由由 driver 完成。
+    #[cfg(test)]
+    pub fn force_due_group_for_test(&mut self, group: GroupIdx, locals: Vec<super::LocalIdx>, tick: u64) {
+        self.group_txs.get(group as usize).expect("注意力账户组存在")
+            .send(GroupIn::ForceDue { locals, tick, ensure_observe: true }).expect("到期注入通道连通");
+    }
+
+    /// 保留明确使用组 0 局部坐标的底层 fixture 入口。
     #[cfg(test)]
     pub fn defer_due_for_test(&mut self, locals: Vec<super::LocalIdx>, tick: u64) {
-        if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::DeferDueForTest { locals, tick });
-        }
+        self.defer_due_group_for_test(0, locals, tick);
+    }
+
+    /// 按真实组内坐标推远 next_due；不把全局下标当 local。
+    #[cfg(test)]
+    pub fn defer_due_group_for_test(&mut self, group: GroupIdx, locals: Vec<super::LocalIdx>, tick: u64) {
+        self.group_txs.get(group as usize).expect("注意力账户组存在")
+            .send(GroupIn::DeferDueForTest { locals, tick }).expect("推远到期注入通道连通");
     }
 
     /// step_frame 接轨前置约束① fixture 通道：下行组 0 强制续行标记
@@ -1147,45 +1168,43 @@ impl World {
         }
     }
 
-    /// D3b 复审注入通道（cfg(test)）：计划事件直接下行组 0（组簿
+    /// D3b 复审注入通道（cfg(test)）：计划事件定向下行所属组（组簿
     /// apply 权威+可逆——Abort 冲回后指令失效需重发）。
     #[cfg(test)]
     pub fn apply_plan_events_for_test(
         &mut self,
+        group: GroupIdx,
         events: Vec<(crate::plans::PlanId, crate::plans::PlanEvent)>,
     ) {
-        if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::ApplyPlanEvents { events });
-        }
+        self.group_txs.get(group as usize).expect("计划事件组存在")
+            .send(GroupIn::ApplyPlanEvents { events }).expect("计划事件通道连通");
     }
 
-    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选注入下行组 0（组内
+    /// D3b 件 4 fixture 通道（cfg(test)）：复审候选定向注入所属组（组内
     /// run_chain_decision 的复审块+开仓循环用注入值替代 observe 产物
     /// ——一次消费即清；chain_restructure 测试的 drive_once 等价面）。
     #[cfg(test)]
     pub fn inject_review_assessments_for_test(
         &mut self,
+        group: GroupIdx,
         account: crate::AccountId,
         assessments: std::collections::BTreeMap<crate::StockId, crate::plans::CandidateAssessment>,
     ) {
-        if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::InjectReviewAssessments {
-                account,
-                assessments,
-            });
-        }
+        self.group_txs.get(group as usize).expect("复审账户组存在")
+            .send(GroupIn::InjectReviewAssessments { account, assessments }).expect("复审通道连通");
     }
 
-    /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换下行组 0（手工
+    /// D3b 件 4 fixture 通道（cfg(test)）：组簿测试变换定向下行所属组（手工
     /// 簿推进的组内等价——restore/record 等 API 以闭包直施组权威簿）。
     #[cfg(test)]
     pub fn mutate_plan_book_for_test(
         &mut self,
+        group: GroupIdx,
+        owner: crate::AccountId,
         mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
     ) {
-        if let Some(tx) = self.group_txs.first() {
-            let _ = tx.send(GroupIn::MutatePlanBookForTest(mutate));
-        }
+        self.group_txs.get(group as usize).expect("计划账户组存在")
+            .send(GroupIn::MutatePlanBookForTest { owner, mutate }).expect("计划变换通道连通");
     }
 
     /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行组 0
@@ -1244,18 +1263,14 @@ impl World {
     }
 
     /// 计划簿收集（D3a-2c 件5：全量读面——EchoPlansFull 广播→收齐）。
-    /// ⑤b 起 `collect_plans` 是**读面**（幂等全量，不受生产通道 dirty
-    /// 门控影响）；生产安装链改走 [`Self::collect_plans_echo`]。
+    /// EveryTick 生产安装与诊断完整读取共用本面，不受 dirty 门控影响。
     pub fn collect_plans(
         &mut self,
     ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
         self.collect_plans_with(|| GroupIn::EchoPlansFull, "EchoPlansFull")
     }
 
-    /// 计划簿收集（⑤b 生产通道：EchoPlans 广播→收齐——组端 dirty
-    /// 门控，未变拍回空簿；交付点投影源）。与读面 [`Self::collect_plans`]
-    /// 的分离同 collect_group_attention（全量）vs
-    /// collect_group_attention_sparse（生产稀疏）先例。
+    /// 保留 dirty 诊断读面，未变时回空；不用于完整镜像汇合。
     pub fn collect_plans_echo(
         &mut self,
     ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
@@ -1288,9 +1303,15 @@ impl World {
         }
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
+        let mut seen_groups = std::collections::BTreeSet::new();
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
                 UpMsg::GroupPlans { group, plans } => {
+                    if group as usize >= self.n_groups || !seen_groups.insert(group) {
+                        return Err(RuntimeError::ProtocolInvariant {
+                            detail: format!("计划组应答重复或越界：group={group}"),
+                        });
+                    }
                     out.push((group, plans));
                     left -= 1;
                 }

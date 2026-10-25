@@ -304,6 +304,7 @@ impl GameSession {
     #[cfg(test)]
     pub(super) fn mutate_plan_book_via_runtime(
         &mut self,
+        owner: crate::AccountId,
         mutate: Box<dyn FnOnce(&mut crate::plans::PlanBook) + Send>,
     ) {
         let mut driver = self
@@ -311,7 +312,7 @@ impl GameSession {
             .as_mut()
             .and_then(|cell| cell.lock().ok())
             .expect("runtime 驱动器在位（调用方已判）");
-        driver.mutate_plan_book_for_test(mutate);
+        driver.mutate_plan_book_for_test(owner, mutate);
     }
 
     /// D3b 件 4 fixture 通道（cfg(test)）：观察基分钟序列注入下行
@@ -1915,6 +1916,11 @@ impl GameSession {
             .runtime_plans_undo
             .get_or_insert_with(|| self.state.plans.clone());
         self.state.plans = plans;
+    }
+
+    /// native 构造期读取完整计划镜像，成功构造后由所属组独占写入。
+    pub(crate) fn runtime_plans_snapshot(&self) -> &crate::plans::PlanBook {
+        &self.state.plans
     }
 
     /// D5 cross_stock：session 侧计划簿 take/restore（迁移期注入面保护
