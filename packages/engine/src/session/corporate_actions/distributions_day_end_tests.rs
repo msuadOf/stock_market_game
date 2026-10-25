@@ -113,7 +113,8 @@ fn fixture() -> (
                 },
                 finance: SimpleFinanceConfig {
                     opening_lines: vec![
-                        line("1002", PostingSide::Debit, 2_000),
+                        line("1002", PostingSide::Debit, 3_000),
+                        line("simple_capital_reserve", PostingSide::Credit, 1_000),
                         line("4001", PostingSide::Credit, 1_000),
                         line("simple_statutory_reserve", PostingSide::Credit, 1_000),
                     ],
@@ -224,6 +225,13 @@ fn cash_plan(
     actions.dividends.push(CashDividendBook::new(plan).unwrap());
 }
 fn stock_plan(actions: &mut SessionCorporateActions, system: &mut CompanySystem) {
+    stock_plan_kind(actions, system, StockDistributionKind::BonusShares)
+}
+fn stock_plan_kind(
+    actions: &mut SessionCorporateActions,
+    system: &mut CompanySystem,
+    kind: StockDistributionKind,
+) {
     let new_shares = actions.registries[0]
         .holdings()
         .iter()
@@ -238,7 +246,7 @@ fn stock_plan(actions: &mut SessionCorporateActions, system: &mut CompanySystem)
         issuer: CompanyId(0),
         stock: code(),
         exchange: CalendarExchange::Sse,
-        kind: StockDistributionKind::BonusShares,
+        kind,
         approved_on: date("2030-06-03"),
         announced_on: date("2030-06-03"),
         registered_on: date("2030-06-03"),
@@ -281,6 +289,7 @@ fn prepare(
         company_system: system,
         available_cash: cash,
         tax_mode,
+        capital_reserve_tax_sources: &BTreeMap::new(),
         flat_withholding_bp: (tax_mode == CashDividendTaxMode::FlatWithholding).then_some(5_000),
     })
 }
@@ -533,6 +542,7 @@ fn flat_tax_book_and_bad_rate_are_explicitly_rejected() {
             company_system: &system,
             available_cash: &cash,
             tax_mode: CashDividendTaxMode::FlatWithholding,
+            capital_reserve_tax_sources: &BTreeMap::new(),
             flat_withholding_bp: Some(10_001)
         })
         .is_err());
@@ -819,6 +829,7 @@ fn zero_flat_withholding_keeps_receipts_without_zero_tax_admin_intents() {
                 company_system: &reg.company_system,
                 available_cash: &cash,
                 tax_mode: CashDividendTaxMode::FlatWithholding,
+                capital_reserve_tax_sources: &BTreeMap::new(),
                 flat_withholding_bp: Some(rate),
             })
             .unwrap();
@@ -853,4 +864,83 @@ fn negative_available_cash_error_keeps_account_and_actual_cents() {
     .unwrap_err();
     assert_eq!(error.account, Some(AccountId(2)));
     assert!(error.to_string().contains("-17"), "{error}");
+}
+
+#[test]
+fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
+    let (mut actions, mut system, cal, catalog, cash) = fixture();
+    stock_plan_kind(
+        &mut actions,
+        &mut system,
+        StockDistributionKind::CapitalReserveConversion,
+    );
+    actions.dividend_tax_books.push(tax_book());
+    let registered = prepare(
+        &actions,
+        &system,
+        &cal,
+        &catalog,
+        &cash,
+        "2030-06-03",
+        CashDividendTaxMode::AShareIndividual,
+    )
+    .unwrap();
+    let mut held = registered.actions;
+    held.dividend_tax_books[0]
+        .record_net_day("held".into(), date("2030-06-04"), 0, None)
+        .unwrap();
+    let before = (held.clone(), registered.company_system.clone());
+    for source in [
+        None,
+        Some(CapitalReserveTaxSource::Other {
+            evidence: "回购注销转入".into(),
+        }),
+        Some(CapitalReserveTaxSource::StockPremium {
+            evidence: " ".into(),
+            capital_increase: amount(500),
+        }),
+        Some(CapitalReserveTaxSource::StockPremium {
+            evidence: "发行溢价权威引用".into(),
+            capital_increase: amount(499),
+        }),
+    ] {
+        let sources = source
+            .map(|s| BTreeMap::from([("stock".into(), s)]))
+            .unwrap_or_default();
+        let result = held.distributions_day_end_candidate(DistributionsDayEndInput {
+            day: date("2030-06-04"),
+            calendar: &cal,
+            catalog: &catalog,
+            company_system: &registered.company_system,
+            available_cash: &cash,
+            tax_mode: CashDividendTaxMode::AShareIndividual,
+            flat_withholding_bp: None,
+            capital_reserve_tax_sources: &sources,
+        });
+        assert!(
+            result.is_err(),
+            "缺失、非溢价、空证据或不完整金额不得被kind静默当免税：{result:?}"
+        );
+        assert_eq!((held.clone(), registered.company_system.clone()), before);
+    }
+    let premium = CapitalReserveTaxSource::StockPremium {
+        evidence: "发行溢价权威引用".into(),
+        capital_increase: amount(500),
+    };
+    let sources = BTreeMap::from([("stock".into(), premium.clone())]);
+    let credited = held
+        .distributions_day_end_candidate(DistributionsDayEndInput {
+            day: date("2030-06-04"),
+            calendar: &cal,
+            catalog: &catalog,
+            company_system: &registered.company_system,
+            available_cash: &cash,
+            tax_mode: CashDividendTaxMode::AShareIndividual,
+            flat_withholding_bp: None,
+            capital_reserve_tax_sources: &sources,
+        })
+        .unwrap();
+    assert!(credited.sources.iter().all(|s| matches!(s, DistributionSource::StockDistribution { capital_reserve_tax_source: Some(source), .. } if *source == premium)));
+    let tax = serde_json::to_value(&credited.actions.dividend_tax_books[0]).unwrap();
+    assert!(tax["stock_bonus_bases"].as_array().unwrap().is_empty());
 }

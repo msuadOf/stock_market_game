@@ -35,6 +35,20 @@ pub(crate) struct DistributionsDayEndInput<'a> {
     pub available_cash: &'a BTreeMap<AccountId, Money>,
     pub tax_mode: CashDividendTaxMode,
     pub flat_withholding_bp: Option<u32>,
+    /// 调用者提供的逐事件来源事实；不得从 kind 或混合资本公积总额反推。
+    pub capital_reserve_tax_sources: &'a BTreeMap<String, CapitalReserveTaxSource>,
+}
+
+/// 来源仅为外部传入的候选契约，evidence 字符串本身不是权威证明。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CapitalReserveTaxSource {
+    StockPremium {
+        evidence: String,
+        capital_increase: crate::accounting::AccountingAmount,
+    },
+    Other {
+        evidence: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,6 +108,7 @@ pub(crate) enum DistributionSource {
         holder: HolderId,
         stock: StockId,
         shares: u64,
+        capital_reserve_tax_source: Option<CapitalReserveTaxSource>,
     },
 }
 
@@ -606,6 +621,7 @@ impl DistributionsDayEndCandidate {
                     holder: lot.holder.clone(),
                     stock,
                     shares: lot.qty,
+                    capital_reserve_tax_source: None,
                 });
             }
             let registry = self
