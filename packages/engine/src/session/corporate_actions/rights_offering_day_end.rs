@@ -343,6 +343,12 @@ pub(crate) fn rights_offering_day_end_candidate(
                         if entitlement.rights_shares > 0
                             && !subscribed
                             && !explicit_accounts.contains(&account)
+                            // 拒绝事实已随候选安装／恢复保留，同日重试不能自动替换该显式意图。
+                            && !candidate.rejected_rights_subscriptions.iter().any(|rejected| {
+                                rejected.event_id == plan.event_id
+                                    && rejected.account == account
+                                    && rejected.rejected_on == day
+                            })
                             && !matches!(
                                 resource.kind,
                                 AccountKind::Player | AccountKind::IssuerRepurchase
