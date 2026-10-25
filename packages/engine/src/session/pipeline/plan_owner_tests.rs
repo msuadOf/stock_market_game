@@ -616,6 +616,7 @@ fn adopted_plan_with_released_child(authority: &mut GameSession) -> crate::plans
                 side: Side::Buy,
                 order_id: crate::OrderId(1),
                 qty: 100,
+                gross: Money::from_cents(95_000),
             }],
         )
         .unwrap();
