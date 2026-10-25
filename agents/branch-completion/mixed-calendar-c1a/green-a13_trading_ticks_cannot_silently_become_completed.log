@@ -1,0 +1,14 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/green",
+  "args": [
+    "exchange_calendar_model::tests::a13_trading_ticks_cannot_silently_become_completed",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 23,
+  "exitCode": 0,
+  "stdout": "\nrunning 1 test\ntest exchange_calendar_model::tests::a13_trading_ticks_cannot_silently_become_completed ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s\n\n",
+  "stderr": ""
+}

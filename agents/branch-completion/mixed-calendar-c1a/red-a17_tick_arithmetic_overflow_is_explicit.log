@@ -1,0 +1,15 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/red",
+  "args": [
+    "exchange_calendar_model::tests::a17_tick_arithmetic_overflow_is_explicit",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 210,
+  "exitCode": 1,
+  "stdout": "\nrunning 1 test\ntest exchange_calendar_model::tests::a17_tick_arithmetic_overflow_is_explicit ... FAILED\n\nfailures:\n\nfailures:\n    exchange_calendar_model::tests::a17_tick_arithmetic_overflow_is_explicit\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s\n\n",
+  "stderr": "\nthread 'exchange_calendar_model::tests::a17_tick_arithmetic_overflow_is_explicit' (2783166) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:664:9:\nassertion failed: matches!(calendar_clock_projection(&model(\"2030-01-03\"), l,\n    input(0, 2, TradingCompleted)),\n    Err(CalendarClockModelError::ArithmeticOverflow))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+  "error": "bounded command exited with 101: thread 'exchange_calendar_model::tests::a17_tick_arithmetic_overflow_is_explicit' (2783166) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:664:9:\nassertion failed: matches!(calendar_clock_projection(&model(\"2030-01-03\"), l,\n    input(0, 2, TradingCompleted)),\n    Err(CalendarClockModelError::ArithmeticOverflow))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+}

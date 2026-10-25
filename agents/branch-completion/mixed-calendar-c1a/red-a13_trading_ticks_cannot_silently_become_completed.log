@@ -1,0 +1,15 @@
+{
+  "command": "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/red",
+  "args": [
+    "exchange_calendar_model::tests::a13_trading_ticks_cannot_silently_become_completed",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "timeoutMs": 10000,
+  "elapsedMs": 256,
+  "exitCode": 1,
+  "stdout": "\nrunning 1 test\ntest exchange_calendar_model::tests::a13_trading_ticks_cannot_silently_become_completed ... FAILED\n\nfailures:\n\nfailures:\n    exchange_calendar_model::tests::a13_trading_ticks_cannot_silently_become_completed\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s\n\n",
+  "stderr": "\nthread 'exchange_calendar_model::tests::a13_trading_ticks_cannot_silently_become_completed' (2783158) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:583:9:\nassertion failed: matches!(calendar_clock_projection(&model(\"2030-01-02\"), layout(),\n    input(2, 1, Trading { completed_ticks: 2 })),\n    Err(CalendarClockModelError::TradingTicksOutsideSession\n    { completed_ticks: 2, ticks_per_day: 2 }))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+  "error": "bounded command exited with 101: thread 'exchange_calendar_model::tests::a13_trading_ticks_cannot_silently_become_completed' (2783158) panicked at /data1/baiyifan/workplace/stock_market_game/.worktree/mixed-calendar-c1a/agents/branch-completion/mixed-calendar-c1a/../../../packages/engine/src/session/exchange_calendar_model.rs:583:9:\nassertion failed: matches!(calendar_clock_projection(&model(\"2030-01-02\"), layout(),\n    input(2, 1, Trading { completed_ticks: 2 })),\n    Err(CalendarClockModelError::TradingTicksOutsideSession\n    { completed_ticks: 2, ticks_per_day: 2 }))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+}

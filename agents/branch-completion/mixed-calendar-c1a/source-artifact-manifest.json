@@ -1,0 +1,47 @@
+{
+  "base_main": "791858d468113d9ac8cdf9794a237b171cd41673",
+  "red_commit": "fc19fcb2",
+  "implementation_commit": "4556ecfe",
+  "files": {
+    "packages/engine/src/session/exchange_calendar_model.rs": {
+      "sha256": "173c0633b3489a852612458832046f3106e21b28c0c571d6f2ede90f8e33caf5",
+      "bytes": 30770
+    },
+    "packages/engine/src/session.rs": {
+      "sha256": "2c997ae7b2d2ff8b1d23e3581b75448cd021fbb0aacb46d6e1f8d7d98f3ef3a3",
+      "bytes": 339009
+    },
+    "agents/branch-completion/mixed-calendar-c1a/harness.rs": {
+      "sha256": "cc5ff72d3c9d1b39f2a7f3ef3d28ec4a2cf05bf200fb3936df32fee986e4fa71",
+      "bytes": 258
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/target/debug/libengine.rlib": {
+      "sha256": "e64df868878f8b575522ad454bf0d44928267504263aab427e7b85ce3b29df3d",
+      "bytes": 189152498
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/red": {
+      "sha256": "57411f20fcd0162148075ac15a984c56696c85ce7c0cbf133f89f16d8faeb511",
+      "bytes": 19482680
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/green": {
+      "sha256": "052cbfdb435dedb901b0212bdbb89a2fc70a98e30308f8be1a13cdc9473f590c",
+      "bytes": 19581512
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/unknown-negative": {
+      "sha256": "003bb6902d8ea90c4a8a2cf1ac70a0e31c14c78c152788b7821770bae512f1b1",
+      "bytes": 19584888
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/unknown-negative.rs": {
+      "sha256": "48ad8ef7e559eb5b9faff2545f0a74a481d42724b9278c2dd3a23f9814829d4a",
+      "bytes": 30778
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/unknown-negative-r2": {
+      "sha256": "41b020401d4a54fab1213101640996d99c09c8fe58ce78d2bc4b6796f8868add",
+      "bytes": 19590856
+    },
+    "/data1/baiyifan/workplace/stock_market_game/.tmp/mixed-calendar-c1a/unknown-negative-r2.rs": {
+      "sha256": "2e3176d2e16e59c5b761fe26815c84a789e19935944dfccc779f00538ea86feb",
+      "bytes": 30850
+    }
+  }
+}
