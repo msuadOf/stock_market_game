@@ -226,6 +226,7 @@ fn restore_rejects_plan_child_that_does_not_match_a_live_order() {
     assert!(matches!(
         GameSession::restore(&forged),
         Err(SessionError::InvalidSave(fault)) if fault.code == 1042
+            && fault.context == plan_id.error_context_with([u64::from(code.0)])
     ));
 }
 
@@ -730,7 +731,7 @@ fn live_child_case() -> (GameSession, crate::plans::PlanId, StockId) {
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(1) < 真实订单余量(300)：restore 必须以真实簿为准。
@@ -753,7 +754,7 @@ fn restore_rebuilds_remaining_from_live_book_when_serialized_value_is_stale() {
 
 #[test]
 fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 字段缺失：唯一 owner 从真实订单簿重建。
@@ -778,7 +779,7 @@ fn restore_rebuilds_remaining_from_live_book_when_field_is_absent() {
 
 #[test]
 fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // filled=350（≤ target 400，2144 不触发），真实余量 300 ⇒ exposure 650 > 400。
@@ -789,13 +790,14 @@ fn restore_rejects_live_exposure_beyond_target_with_fault2185() {
     assert!(matches!(
         GameSession::restore(&forged),
         Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+            && fault.context == plan_id.error_context_with([u64::from(code.0)])
     ));
     assert!(authority.state.plans.plan(plan_id).is_ok());
 }
 
 #[test]
 fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
-    let (mut authority, plan_id, _code) = live_child_case();
+    let (mut authority, plan_id, code) = live_child_case();
     let saved = authority.save().unwrap();
     let mut encoded = serde_json::to_value(&saved).unwrap();
     // 序列化余量(999) > 真实余量(300)：虚增敞口直接拒绝。
@@ -807,6 +809,7 @@ fn restore_rejects_inflated_serialized_remaining_with_fault2185() {
     assert!(matches!(
         GameSession::restore(&forged),
         Err(SessionError::InvalidSave(fault)) if fault.code == 2185
+            && fault.context == plan_id.error_context_with([u64::from(code.0)])
     ));
 }
 

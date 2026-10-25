@@ -252,3 +252,67 @@ fn export_bindings_plan_identity() {
     let config = ts_rs::Config::from_env();
     <PlanBook as ts_rs::TS>::export_all(&config).unwrap();
 }
+
+#[test]
+fn identity_and_owner_cursor_wire_cover_javascript_boundary_without_caps() {
+    for value in [0, (1_u64 << 53) - 1, 1 << 53, (1 << 53) + 1, u64::MAX] {
+        let id = PlanId {
+            owner: AccountId(value),
+            sequence: value,
+        };
+        let wire = serde_json::json!({"owner":value.to_string(),"sequence":value.to_string()});
+        assert_eq!(serde_json::to_value(id).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<PlanId>(wire).unwrap(), id);
+        let cursor = OwnerSequence {
+            owner: AccountId(value),
+            next_sequence: Some(value),
+        };
+        let wire = serde_json::json!({"owner":value.to_string(),"next_sequence":value.to_string()});
+        assert_eq!(serde_json::to_value(cursor).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<OwnerSequence>(wire).unwrap(),
+            cursor
+        );
+    }
+    let exhausted = OwnerSequence {
+        owner: AccountId(u64::MAX),
+        next_sequence: None,
+    };
+    assert_eq!(
+        serde_json::to_value(exhausted).unwrap(),
+        serde_json::json!({"owner":u64::MAX.to_string(),"next_sequence":null})
+    );
+    assert_eq!(
+        serde_json::from_value::<OwnerSequence>(serde_json::to_value(exhausted).unwrap()).unwrap(),
+        exhausted
+    );
+    for bad in [
+        serde_json::json!(0),
+        serde_json::json!(""),
+        serde_json::json!("+1"),
+        serde_json::json!("-1"),
+        serde_json::json!("-0"),
+        serde_json::json!(" 1"),
+        serde_json::json!("1 "),
+        serde_json::json!("1.0"),
+        serde_json::json!("1e3"),
+        serde_json::json!("01"),
+        serde_json::json!("18446744073709551616"),
+    ] {
+        assert!(serde_json::from_value::<PlanId>(
+            serde_json::json!({"owner":"1","sequence":bad.clone()})
+        )
+        .is_err());
+        assert!(serde_json::from_value::<OwnerSequence>(
+            serde_json::json!({"owner":"1","next_sequence":bad})
+        )
+        .is_err());
+    }
+    for bad in [
+        serde_json::json!({"owner":"1"}),
+        serde_json::json!({"next_sequence":"0"}),
+        serde_json::json!({"owner":"1","next_sequence":"0","extra":0}),
+    ] {
+        assert!(serde_json::from_value::<OwnerSequence>(bad).is_err());
+    }
+}
